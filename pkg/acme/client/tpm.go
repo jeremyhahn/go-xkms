@@ -508,7 +508,7 @@ func (a *XKMSTPMAdapter) ProvisionEKCert(certDER []byte) error {
 // device-attest-01 challenge (deviceattest01.Setup, via IAKCertificate) can
 // read it back for the statement's x5c[0].
 func (a *XKMSTPMAdapter) ProvisionIAKCert(cert *x509.Certificate) error {
-	if err := a.tpm.ProvisionIAKCert(cert); err != nil {
+	if err := a.tpm.ProvisionIAKCert(nil, cert); err != nil {
 		return caerrors.StorageFailureError("failed to provision IAK certificate: %v", err)
 	}
 	return nil

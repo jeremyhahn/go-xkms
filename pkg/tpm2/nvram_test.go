@@ -912,7 +912,7 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 		cert := nvramTestCert(t)
 		nvIndex := tpm2.TPMHandle(0x01C90100)
 
-		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, cert.Raw))
+		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, nil, cert.Raw))
 		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex) }()
 
 		got, err := tpmImpl.readCertFromNVRAM(nvIndex)
@@ -930,7 +930,7 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 		cert := nvramTestCert(t)
 		nvIndex := tpm2.TPMHandle(0x01C90101)
 
-		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, cert.Raw))
+		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, nil, cert.Raw))
 		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex) }()
 
 		rsp, err := tpm2.NVReadPublic{NVIndex: nvIndex}.Execute(tpmImpl.transport)
@@ -953,7 +953,7 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 			"the test certificate must span more than one NV_Write")
 
 		nvIndex := tpm2.TPMHandle(0x01C90102)
-		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, cert.Raw))
+		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, nil, cert.Raw))
 		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex) }()
 
 		got, err := tpmImpl.readCertFromNVRAM(nvIndex)
@@ -966,13 +966,13 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 		require.NoError(t, err)
 
 		oversized := make([]byte, int(indexMax)+1)
-		err = tpmImpl.writeCertToNVRAM(tpm2.TPMHandle(0x01C90103), oversized)
+		err = tpmImpl.writeCertToNVRAM(tpm2.TPMHandle(0x01C90103), nil, oversized)
 		require.ErrorIs(t, err, ErrNVCertTooLarge,
 			"the size limit must be reported as a typed error, not a bare TPM_RC_SIZE")
 	})
 
 	t.Run("writeCertToNVRAM rejects empty certificate DER", func(t *testing.T) {
-		err := tpmImpl.writeCertToNVRAM(tpm2.TPMHandle(0x01C90104), nil)
+		err := tpmImpl.writeCertToNVRAM(tpm2.TPMHandle(0x01C90104), nil, nil)
 		require.ErrorIs(t, err, ErrNVCertEmpty)
 	})
 

@@ -235,10 +235,10 @@ type TrustedPlatformModule interface {
 
 	// IDevID/IAK Certificate management
 	IDevIDCertificate() (*x509.Certificate, error)
-	ProvisionIDevIDCert(cert *x509.Certificate) error
+	ProvisionIDevIDCert(hierarchyAuth []byte, cert *x509.Certificate) error
 	DeleteIDevIDCertificate() error
 	IAKCertificate() (*x509.Certificate, error)
-	ProvisionIAKCert(cert *x509.Certificate) error
+	ProvisionIAKCert(hierarchyAuth []byte, cert *x509.Certificate) error
 	DeleteIAKCertificate() error
 
 	// Local Attestation Key (go-xkms#715): a Restricted signing key created
@@ -253,7 +253,7 @@ type TrustedPlatformModule interface {
 	CertifyLAK(nonce []byte, backend store.KeyBackend) (*CertifyResult, error)
 	CertifyKeyWithLAK(keyAttrs *types.KeyAttributes, nonce []byte, backend store.KeyBackend) (*CertifyResult, error)
 	LAKCertificate() (*x509.Certificate, error)
-	ProvisionLAKCert(cert *x509.Certificate) error
+	ProvisionLAKCert(hierarchyAuth []byte, cert *x509.Certificate) error
 	DeleteLAKCertificate() error
 
 	VerifyTCGCSR(

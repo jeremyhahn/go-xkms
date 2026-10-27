@@ -31,8 +31,11 @@ var (
 
 // ProvisionIDevIDCert stores the IDevID certificate.
 // If CertHandle is 0, the certificate is stored in the certificate store.
-// If CertHandle is set, the certificate is stored in TPM NVRAM.
-func (tpm *TPM2) ProvisionIDevIDCert(cert *x509.Certificate) error {
+// If CertHandle is set, the certificate is stored in TPM NVRAM, under the
+// Owner hierarchy authorized by hierarchyAuth: the Owner hierarchy
+// authorization (the SO PIN), nil when none is set (see writeCertToNVRAM).
+// The certificate store ignores hierarchyAuth.
+func (tpm *TPM2) ProvisionIDevIDCert(hierarchyAuth []byte, cert *x509.Certificate) error {
 	if tpm.config.IDevID == nil {
 		return ErrNotConfigured
 	}
@@ -51,7 +54,7 @@ func (tpm *TPM2) ProvisionIDevIDCert(cert *x509.Certificate) error {
 		return tpm.writeCertToStore(idevidAttrs, cert)
 	}
 
-	return tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.IDevID.CertHandle), cert.Raw)
+	return tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.IDevID.CertHandle), hierarchyAuth, cert.Raw)
 }
 
 // IDevIDCertificate retrieves the IDevID certificate.
@@ -113,8 +116,11 @@ func (tpm *TPM2) DeleteIDevIDCertificate() error {
 
 // ProvisionIAKCert stores the IAK certificate.
 // If CertHandle is 0, the certificate is stored in the certificate store.
-// If CertHandle is set, the certificate is stored in TPM NVRAM.
-func (tpm *TPM2) ProvisionIAKCert(cert *x509.Certificate) error {
+// If CertHandle is set, the certificate is stored in TPM NVRAM, under the
+// Owner hierarchy authorized by hierarchyAuth: the Owner hierarchy
+// authorization (the SO PIN), nil when none is set (see writeCertToNVRAM).
+// The certificate store ignores hierarchyAuth.
+func (tpm *TPM2) ProvisionIAKCert(hierarchyAuth []byte, cert *x509.Certificate) error {
 	if tpm.config.IAK == nil {
 		return ErrNotConfigured
 	}
@@ -133,7 +139,7 @@ func (tpm *TPM2) ProvisionIAKCert(cert *x509.Certificate) error {
 		return tpm.writeCertToStore(iakAttrs, cert)
 	}
 
-	return tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.IAK.CertHandle), cert.Raw)
+	return tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.IAK.CertHandle), hierarchyAuth, cert.Raw)
 }
 
 // IAKCertificate retrieves the IAK certificate.
@@ -195,8 +201,11 @@ func (tpm *TPM2) DeleteIAKCertificate() error {
 
 // ProvisionLAKCert stores the Local Attestation Key certificate (go-xkms#715).
 // If CertHandle is 0, the certificate is stored in the certificate store.
-// If CertHandle is set, the certificate is stored in TPM NVRAM.
-func (tpm *TPM2) ProvisionLAKCert(cert *x509.Certificate) error {
+// If CertHandle is set, the certificate is stored in TPM NVRAM, under the
+// Owner hierarchy authorized by hierarchyAuth: the Owner hierarchy
+// authorization (the SO PIN), nil when none is set (see writeCertToNVRAM).
+// The certificate store ignores hierarchyAuth.
+func (tpm *TPM2) ProvisionLAKCert(hierarchyAuth []byte, cert *x509.Certificate) error {
 	if tpm.config.LAK == nil {
 		return ErrNotConfigured
 	}
@@ -215,7 +224,7 @@ func (tpm *TPM2) ProvisionLAKCert(cert *x509.Certificate) error {
 		return tpm.writeCertToStore(lakAttrs, cert)
 	}
 
-	return tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.LAK.CertHandle), cert.Raw)
+	return tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.LAK.CertHandle), hierarchyAuth, cert.Raw)
 }
 
 // LAKCertificate retrieves the Local Attestation Key certificate.

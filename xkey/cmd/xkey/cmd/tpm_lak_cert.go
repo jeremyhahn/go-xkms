@@ -248,7 +248,7 @@ func runLAKCertImport(cmd *cobra.Command, args []string) (err error) {
 		_, _ = fmt.Fprintln(out, "Public key verification: SKIPPED (--force)")
 	}
 
-	if err := tpm.ProvisionLAKCert(cert); err != nil {
+	if err := tpm.ProvisionLAKCert(nil, cert); err != nil {
 		return &SentinelCauseError{Sentinel: ErrLAKCertImportFailed, Cause: err}
 	}
 

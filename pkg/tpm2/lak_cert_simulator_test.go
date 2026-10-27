@@ -30,7 +30,7 @@ func newLAKCertHarness(t *testing.T) *simHarness {
 func TestLAKCertificate_NotConfigured(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	assert.ErrorIs(t, h.TPM.ProvisionLAKCert(nil), ErrNotConfigured)
+	assert.ErrorIs(t, h.TPM.ProvisionLAKCert(nil, nil), ErrNotConfigured)
 	_, err := h.TPM.LAKCertificate()
 	assert.ErrorIs(t, err, ErrNotConfigured)
 	assert.ErrorIs(t, h.TPM.DeleteLAKCertificate(), ErrNotConfigured)
@@ -43,7 +43,7 @@ func TestLAKCertificate_NotCreated(t *testing.T) {
 	h := newLAKHarness(t)
 	cert := createTestCertWithKey(t, &mustECDSAKey(t).PublicKey)
 
-	assert.Error(t, h.TPM.ProvisionLAKCert(cert))
+	assert.Error(t, h.TPM.ProvisionLAKCert(nil, cert))
 	_, err := h.TPM.LAKCertificate()
 	assert.Error(t, err)
 }
@@ -59,7 +59,7 @@ func TestLAKCertificate_StoreRoundTrip(t *testing.T) {
 	_, err = h.TPM.LAKCertificate()
 	require.ErrorIs(t, err, ErrLAKCertNotFound, "no certificate is stored yet")
 
-	require.NoError(t, h.TPM.ProvisionLAKCert(cert))
+	require.NoError(t, h.TPM.ProvisionLAKCert(nil, cert))
 	stored, err := h.TPM.LAKCertificate()
 	require.NoError(t, err)
 	assert.Equal(t, cert.Raw, stored.Raw)
@@ -79,7 +79,7 @@ func TestLAKCertificate_NVRAMRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	cert := certForTPMKey(t, lakAttrs, "lak-device-001")
 
-	require.NoError(t, h.TPM.ProvisionLAKCert(cert))
+	require.NoError(t, h.TPM.ProvisionLAKCert(nil, cert))
 	stored, err := h.TPM.LAKCertificate()
 	require.NoError(t, err)
 	assert.Equal(t, cert.Raw, stored.Raw)
@@ -95,7 +95,7 @@ func TestProvisionLAKCert_PublicKeyMismatch(t *testing.T) {
 	h := newLAKCertHarness(t)
 	cert := createTestCertWithKey(t, &mustECDSAKey(t).PublicKey)
 
-	assert.ErrorIs(t, h.TPM.ProvisionLAKCert(cert), ErrCertPublicKeyMismatch)
+	assert.ErrorIs(t, h.TPM.ProvisionLAKCert(nil, cert), ErrCertPublicKeyMismatch)
 	_, err := h.TPM.LAKCertificate()
 	assert.ErrorIs(t, err, ErrLAKCertNotFound)
 }

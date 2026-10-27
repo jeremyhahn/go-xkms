@@ -359,7 +359,7 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Store the certificate
-	if err := tpm.ProvisionIDevIDCert(cert); err != nil {
+	if err := tpm.ProvisionIDevIDCert(nil, cert); err != nil {
 		return &SentinelCauseError{Sentinel: ErrIDevIDCertImportFailed, Cause: err}
 	}
 

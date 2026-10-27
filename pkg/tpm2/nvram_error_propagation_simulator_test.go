@@ -257,7 +257,7 @@ func TestWriteCertToNVRAM_EveryCommandFailurePropagates(t *testing.T) {
 		h := newSimHarness(t, nil)
 		return h.TPM.transport, func(tr transport.TPM) error {
 			h.TPM.transport = tr
-			return h.TPM.writeCertToNVRAM(tpm2.TPMHandle(nvramOwnerIndex), []byte("fake-certificate-der"))
+			return h.TPM.writeCertToNVRAM(tpm2.TPMHandle(nvramOwnerIndex), nil, []byte("fake-certificate-der"))
 		}
 	})
 }
@@ -267,7 +267,7 @@ func TestWriteCertToNVRAM_EveryCommandFailurePropagates(t *testing.T) {
 func TestReadCertFromNVRAM_EveryCommandFailurePropagates(t *testing.T) {
 	sweepEachCommandFailure(t, func(t *testing.T) (transport.TPM, func(transport.TPM) error) {
 		h := newSimHarness(t, nil)
-		require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(nvramOwnerIndex), []byte("fake-certificate-der")))
+		require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(nvramOwnerIndex), nil, []byte("fake-certificate-der")))
 
 		return h.TPM.transport, func(tr transport.TPM) error {
 			h.TPM.transport = tr
@@ -282,7 +282,7 @@ func TestReadCertFromNVRAM_EveryCommandFailurePropagates(t *testing.T) {
 func TestDeleteCertFromNVRAM_EveryCommandFailurePropagates(t *testing.T) {
 	sweepEachCommandFailure(t, func(t *testing.T) (transport.TPM, func(transport.TPM) error) {
 		h := newSimHarness(t, nil)
-		require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(nvramOwnerIndex), []byte("fake-certificate-der")))
+		require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(nvramOwnerIndex), nil, []byte("fake-certificate-der")))
 
 		return h.TPM.transport, func(tr transport.TPM) error {
 			h.TPM.transport = tr

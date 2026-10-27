@@ -221,11 +221,11 @@ func (m *mockTPM) WriteEKCert(ekCert []byte) error { return m.writeEKCertErr }
 func (m *mockTPM) IAKCertificate() (*x509.Certificate, error) {
 	return m.iakCert, m.iakCertErr
 }
-func (m *mockTPM) ProvisionIAKCert(cert *x509.Certificate) error { return m.writeIAKCertErr }
+func (m *mockTPM) ProvisionIAKCert(_ []byte, cert *x509.Certificate) error { return m.writeIAKCertErr }
 func (m *mockTPM) IDevIDCertificate() (*x509.Certificate, error) {
 	return m.idevidCert, m.idevidCertErr
 }
-func (m *mockTPM) ProvisionIDevIDCert(cert *x509.Certificate) error { return m.writeIDevIDErr }
+func (m *mockTPM) ProvisionIDevIDCert(_ []byte, cert *x509.Certificate) error { return m.writeIDevIDErr }
 func (m *mockTPM) SupportedAlgorithms() ([]string, error) {
 	return m.supportedAlgos, m.supportedAlgosErr
 }
@@ -481,7 +481,7 @@ func (m *mockTPM) CertifyKeyWithLAK(_ *xkms.KeyAttributes, _ []byte, _ xkms.TPMK
 func (m *mockTPM) LAKCertificate() (*x509.Certificate, error) {
 	panic("mockTPM: LAKCertificate not expected")
 }
-func (m *mockTPM) ProvisionLAKCert(_ *x509.Certificate) error {
+func (m *mockTPM) ProvisionLAKCert(_ []byte, _ *x509.Certificate) error {
 	panic("mockTPM: ProvisionLAKCert not expected")
 }
 func (m *mockTPM) DeleteLAKCertificate() error {
