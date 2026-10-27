@@ -1,0 +1,1 @@
+CI: `trivy image` keeps its cache (TRIVY_CACHE_DIR) and its OCI download temp (TMPDIR) on the toolchain container's disk-backed /var/tmp volume, not the 3 GB /tmp tmpfs that the Java DB download filled on main runs 66181 and 68251. A scratch directory the image lacks now fails the stage by name (scripts/in-toolchain-image.sh).

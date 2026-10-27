@@ -97,6 +97,13 @@ fi
 case $cpus in
   "" | 0 | *[!0-9]*) echo "IN_IMAGE_CPUS must be a positive integer: $cpus" >&2; exit 2 ;;
 esac
+# The stage's disk-backed scratch in the container: TMPDIR, GOTMPDIR and
+# TRIVY_CACHE_DIR (below). IN_IMAGE_SCRATCH overrides the default /var/tmp.
+scratch=${IN_IMAGE_SCRATCH:-/var/tmp}
+case $scratch in
+  /*) ;;
+  *) echo "IN_IMAGE_SCRATCH must be an absolute path: $scratch" >&2; exit 2 ;;
+esac
 args=(
   --name "$name"
   --cpus "$cpus"
@@ -110,6 +117,19 @@ args=(
   --ulimit core=1048576:1048576
   --ulimit nofile=65536:65536
   --tmpfs "/tmp:rw,exec,nosuid,nodev,size=3g,mode=1777"
+  # Go's build and link scratch ($WORK, go-link-*) on disk, not the 3 GB
+  # /tmp tmpfs: `make coverage` links cgo test binaries there and filled it
+  # (ENOSPC "final link failed") in 8 Devcontainer jobs on 2026-10-26, on
+  # every Dell runner and omega-b (Company Agent m1417, ruling 219(9);
+  # ruling 108). An anonymous volume on the image's /var/tmp (mode 1777) is
+  # on the daemon's data disk, and cleanup's `docker rm -v` removes it.
+  # trivy's cache (vulnerability and Java DBs) lives there too, not in
+  # $HOME/.cache on the tmpfs; TMPDIR already holds its OCI download, whose
+  # Java DB filled /tmp on main runs 66181 and 68251.
+  -v "$scratch"
+  --env TMPDIR="$scratch"
+  --env GOTMPDIR="$scratch"
+  --env TRIVY_CACHE_DIR="$scratch/trivy"
   --network "$network"
   --user "$uid:$uid"
   --workdir /src
@@ -144,7 +164,11 @@ fi
 cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-docker create "${args[@]}" "$image" sh -c "$*" >/dev/null
+# A scratch directory the image lacks, or the run's user cannot write, fails
+# the stage here by name, not later as a tool's ENOSPC or EACCES.
+# shellcheck disable=SC2016 # expands in the container, not here
+guard='[ -d "$TMPDIR" ] && [ -w "$TMPDIR" ] || { echo "in-toolchain-image: scratch directory $TMPDIR is missing or not writable" >&2; exit 2; }'
+docker create "${args[@]}" "$image" sh -c "$guard; $*" >/dev/null
 tar -C "$PWD" --owner="$uid" --group="$uid" --numeric-owner -cf - . |
   docker cp -a - "$name:/src"
 docker start -a "$name"
