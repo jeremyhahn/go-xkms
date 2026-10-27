@@ -749,6 +749,12 @@ jobs:
       # (devops.md §8): --ignore-unfixed (v1.19) and --skip-dirs /opt/go/mod
       # (v1.20). trivy fs and make security never take --ignore-unfixed.
       # A PR builds no image for a registry, so the scan is full tier (v1.23).
+      # >>> CUSTOMIZE (go-xkms)
+      # This image keeps the module cache at /gomodcache, not /opt/go/mod, so
+      # the template's --skip-dirs matches nothing here. trivy-secret.yaml
+      # exempts /gomodcache from the secret scanner only; its third-party
+      # modules are still scanned for vulnerabilities.
+      # <<< CUSTOMIZE
       - name: trivy image (integration image)
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
         env:
@@ -756,7 +762,7 @@ jobs:
         run: |
           docker save -o it-image.tar "$IT_IMAGE"
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
-            trivy image --input it-image.tar --ignore-unfixed --skip-dirs /opt/go/mod --severity CRITICAL,HIGH --exit-code 1
+            trivy image --input it-image.tar --ignore-unfixed --skip-dirs /opt/go/mod --secret-config trivy-secret.yaml --severity CRITICAL,HIGH --exit-code 1
       # >>> CUSTOMIZE (go-xkms)
       # The CLI image (Dockerfile.cli) ships to users, so it is gated like the
       # integration image. Its build needs the forge credentials as the
