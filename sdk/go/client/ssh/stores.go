@@ -14,11 +14,15 @@
 package ssh
 
 import (
+	"context"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	pkgauthorized "github.com/jeremyhahn/go-xkms/pkg/ssh/authorized"
 	pkgkeys "github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
+	"github.com/jeremyhahn/go-xkms/pkg/ssh/migrate"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // Stores holds the persistent stores an embedded Client works over: SSH
@@ -48,6 +52,35 @@ func NewStores(daos *qrdbsdk.DAOFactory) (*Stores, error) {
 		return nil, err
 	}
 	return &Stores{Keys: keys, KnownHosts: hosts, Authorized: authorized}, nil
+}
+
+// MigrateReport counts what MigrateLegacyStores did: records migrated,
+// records skipped on purpose and records that failed and stayed in place.
+type MigrateReport = migrate.Report
+
+// MigrateRecordError reports one old record that failed to migrate and was
+// left in the old store.
+type MigrateRecordError = migrate.RecordError
+
+// MigrateRecordsFailedError collects every *MigrateRecordError of one
+// MigrateLegacyStores call; errors.As reaches each of them.
+type MigrateRecordsFailedError = migrate.RecordsFailedError
+
+// MigrateLegacyStores moves the SSH records the pre-DAO stores kept in the
+// sealed-KV backend legacy into the DAO catalogs of daos: keys, known_hosts,
+// authorized_keys, sessions and profiles. The consumer calls it at store
+// open, with the backend the old stores used and before NewStores or the
+// session and profile stores serve requests.
+//
+// Each record is imported first and its old key deleted only after the
+// import succeeds. The call is idempotent: once everything has moved, a
+// second call migrates nothing and reports zero. A record that fails stays
+// in legacy and is reported in a *MigrateRecordsFailedError beside the
+// counts, so a later call retries it. Sessions and profiles under a tenant
+// prefix are skipped and left in place, because their catalogs have no
+// tenant partition.
+func MigrateLegacyStores(ctx context.Context, legacy storage.Backend, daos *qrdbsdk.DAOFactory) (MigrateReport, error) {
+	return migrate.Run(ctx, legacy, daos)
 }
 
 // Partition returns the view of s through tenantID's partition ("" is the
