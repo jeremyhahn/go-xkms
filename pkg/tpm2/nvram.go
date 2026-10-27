@@ -1244,7 +1244,16 @@ func (tpm *TPM2) writeCertData(pub *tpm2.TPMSNVPublic, certDER []byte, authorize
 // readCertFromNVRAM reads a DER-encoded certificate from TPM NVRAM.
 // The read is issued in chunks of at most TPM_PT_NV_BUFFER_MAX bytes so
 // that certificates larger than the TPM's NV buffer maximum are handled
-// correctly (TCG Part 3 §31.3.1).
+// correctly (TCG Part 3 §31.13.1).
+//
+// A certificate is public, so the read needs no secret. A certificate index
+// is TPMA_NV_AUTHREAD with an empty authValue (certNVPublic), and the TPM
+// authorizes such a read under the index itself, with authHandle set to the
+// index (TCG Part 3 §31.13.1). Reading it as TPM_RH_OWNER instead checks
+// ownerAuth (TPMA_NV_OWNERREAD), so on an owned TPM an empty password fails
+// with TPM_RC_BAD_AUTH even after the write under the SO PIN succeeded
+// (#1725). nvReadAuthorization picks the index-self path, and the owner with
+// empty auth only for an index without TPMA_NV_AUTHREAD.
 func (tpm *TPM2) readCertFromNVRAM(nvIndex tpm2.TPMHandle) ([]byte, error) {
 	tpm.logger.Debug("reading certificate from NV index",
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)))
@@ -1263,10 +1272,11 @@ func (tpm *TPM2) readCertFromNVRAM(nvIndex tpm2.TPMHandle) ([]byte, error) {
 	}
 
 	bufMax := nvReadChunkSize(tpm.transport)
-	authHandle := tpm2.AuthHandle{
-		Handle: tpm2.TPMRHOwner,
-		Auth:   tpm2.PasswordAuth(nil),
+	authHandle, closeAuth, err := tpm.nvReadAuthorization(nvIndex, nvPubRsp.NVName, pub.Attributes, nil)
+	if err != nil {
+		return nil, err
 	}
+	defer tpm.closeSession(closeAuth, "certificate NV read")
 
 	result := make([]byte, 0, pub.DataSize)
 	offset := uint16(0)
