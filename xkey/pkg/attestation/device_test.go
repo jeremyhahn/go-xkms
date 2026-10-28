@@ -571,7 +571,8 @@ func TestPairingRefusesWhenNoApplicationIsAllowListed(t *testing.T) {
 		&xkms.AndroidDeviceTrust{Roots: ca.Pool(), Revocation: attesttest.NoRevocations()})
 
 	require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
-	require.ErrorIs(t, err, pairing.ErrApplicationPolicyUnconfigured)
+	require.ErrorIs(t, err, xkms.ErrAndroidNilApplicationMatcher,
+		"a trust with no matcher refuses with the library's sentinel, as userverify.Verify does")
 	require.Nil(t, verified)
 }
 
