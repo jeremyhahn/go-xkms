@@ -41,6 +41,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
@@ -464,11 +465,11 @@ type Server struct {
 	// extraModules holds additional qrdb ServiceModules to register on the
 	// embedded node's unified server alongside xkms's own module (the "xkms"
 	// ModuleName in pkg/apimodule). Set via WithExtraModules; consumed by
-	// initEmbeddedQRDBNode, which appends them into the same qrdbsdk.WithModule
+	// initEmbeddedQRDBNode, which appends them into the same qrdbserver.WithModule
 	// option list as xkmsModule. A composing binary (e.g. cmd/xkmsd mounting
 	// the admin surface) supplies its own ServiceModule this way instead of
 	// xkms hosting a second embedded node.
-	extraModules []qrdbsdk.ServiceModule
+	extraModules []qrdbserver.ServiceModule
 
 	// attestedCallerPolicy is the embedder's attested-caller gate policy, set
 	// via WithAttestedCallerPolicy. attestation.peer_gate decides whether a
@@ -577,11 +578,11 @@ func WithAuthenticatorDecorator(fn func(auth.Authenticator) auth.Authenticator) 
 // node's unified server, alongside xkms's own "xkms" module. It is additive:
 // the composing binary supplies modules built against its own resolvers (for
 // example an admin-surface module mounted on the unified mTLS listener), and
-// initEmbeddedQRDBNode appends them into the same qrdbsdk.WithModule option
+// initEmbeddedQRDBNode appends them into the same qrdbserver.WithModule option
 // list it builds for the xkms module. Registering a module under a name that
 // collides with an existing one fails node construction, exactly as
-// qrdbsdk.WithModule does for any other duplicate.
-func WithExtraModules(mods ...qrdbsdk.ServiceModule) Option {
+// qrdbserver.WithModule does for any other duplicate.
+func WithExtraModules(mods ...qrdbserver.ServiceModule) Option {
 	return func(s *Server) { s.extraModules = append(s.extraModules, mods...) }
 }
 

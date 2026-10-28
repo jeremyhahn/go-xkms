@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -42,9 +43,9 @@ type captured struct {
 
 // newCaptureRegistrar builds a real qrdb HTTPRegistrar whose route/public
 // sinks record into the returned slice.
-func newCaptureRegistrar() (*qrdbsdk.ModuleHTTPRegistrar, *[]captured) {
+func newCaptureRegistrar() (*qrdbserver.ModuleHTTPRegistrar, *[]captured) {
 	var recs []captured
-	r := qrdbsdk.NewModuleHTTPRegistrar(chi.NewRouter(),
+	r := qrdbserver.NewModuleHTTPRegistrar(chi.NewRouter(),
 		func(method, pattern string, perm qrdbsdk.Permission, h http.HandlerFunc) {
 			recs = append(recs, captured{method: method, pattern: pattern, perm: perm, handler: h})
 		},

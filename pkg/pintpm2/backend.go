@@ -53,13 +53,13 @@ const minPINLength = 6
 // qrdbsdk.ErrPINNotSet.
 //
 // FIDO2 PIN hash verification is supported by caching SHA-256(PIN)[:16]
-// in a go-enclave MemoryEnclave (mlock'd, guard-paged memory), admitted
+// in a go-enclave ByteAccess enclave (mlock'd, guard-paged memory), admitted
 // through enclave.ProcessAllocator, when the user PIN is set, verified, or
 // changed.
 type TPM2Backend struct {
 	platformStore PlatformAuthProvider
 	userPINSet    atomic.Bool
-	fido2Enclave  atomic.Pointer[enclave.MemoryEnclave]
+	fido2Enclave  atomic.Pointer[enclave.ByteAccess]
 }
 
 // NewTPM2Backend creates a new TPM2Backend that delegates PIN verification
@@ -92,7 +92,7 @@ func (b *TPM2Backend) SetSOPIN(_, _ string) error { return qrdbsdk.ErrPINNotSet 
 // backend does not use SO PINs; the first parameter exists to satisfy
 // the PINBackend interface.
 //
-// On success the FIDO2 hash is cached in a MemoryEnclave. If that cache
+// On success the FIDO2 hash is cached in a ByteAccess enclave. If that cache
 // cannot be allocated the PIN is still recorded as set -- the TPM confirmed
 // it -- and ErrFIDO2HashCacheFailed is returned so the caller learns that
 // FIDO2 hash verification is unavailable.
@@ -174,7 +174,7 @@ func (b *TPM2Backend) VerifyUserPIN(p string) error {
 	// now known so UserPINSet reports the confirmed state rather than a
 	// guess derived from SRK presence.
 	b.userPINSet.Store(true)
-	enc := b.fido2Enclave.Load()
+	enc := b.loadFIDO2Enclave()
 	if enc == nil || !enc.IsAlive() {
 		return b.cacheFIDO2Hash([]byte(p))
 	}
@@ -215,24 +215,28 @@ func (b *TPM2Backend) ResetLockout(lockoutAuth string) error {
 }
 
 // VerifyFIDO2Hash compares the supplied CTAP2 PIN hash against the cached
-// MemoryEnclave using constant-time comparison. It fails closed: a nil or
+// ByteAccess enclave using constant-time comparison. It fails closed: a nil or
 // destroyed enclave (enclave.ErrEnclaveDestroyed) reports false.
 func (b *TPM2Backend) VerifyFIDO2Hash(hash []byte) bool {
 	if len(hash) != qrdbsdk.FIDO2PINHashSize {
 		return false
 	}
-	match, err := b.fido2Enclave.Load().EqualTo(hash)
+	enc := b.loadFIDO2Enclave()
+	if enc == nil {
+		return false
+	}
+	match, err := enc.EqualTo(hash)
 	if err != nil {
 		return false
 	}
 	return match
 }
 
-// Close destroys the MemoryEnclave holding the FIDO2 hash. Safe to call
+// Close destroys the ByteAccess enclave holding the FIDO2 hash. Safe to call
 // multiple times. It returns ErrFIDO2HashDestroyFailed when the enclave
 // cannot be wiped.
 func (b *TPM2Backend) Close() error {
-	if enc := b.fido2Enclave.Load(); enc != nil {
+	if enc := b.loadFIDO2Enclave(); enc != nil {
 		return destroyFIDO2Enclave(enc)
 	}
 	return nil
@@ -240,7 +244,7 @@ func (b *TPM2Backend) Close() error {
 
 // destroyFIDO2Enclave wipes enc, reporting a failure as
 // ErrFIDO2HashDestroyFailed.
-func destroyFIDO2Enclave(enc *enclave.MemoryEnclave) error {
+func destroyFIDO2Enclave(enc enclave.ByteAccess) error {
 	if err := enc.Destroy(); err != nil {
 		return &errs.Joined{Lead: ErrFIDO2HashDestroyFailed, Cause: err}
 	}
@@ -269,7 +273,7 @@ func (b *TPM2Backend) buildAuthFailureError() error {
 }
 
 // cacheFIDO2Hash computes SHA-256(pinBytes)[:16] and stores it in a
-// MemoryEnclave admitted through the process allocator; the prior enclave is
+// ByteAccess enclave admitted through the process allocator; the prior enclave is
 // destroyed. Allocator.New takes ownership of the slice handed to it and
 // wipes it before returning on every path, so the remainder of digest
 // (bytes 16:32, never handed to the enclave) is wiped separately to leave
@@ -291,8 +295,8 @@ func (b *TPM2Backend) cacheFIDO2Hash(pinBytes []byte) error {
 	if err != nil {
 		return b.failFIDO2HashCache(err)
 	}
-	if old := b.fido2Enclave.Swap(enc); old != nil {
-		return destroyFIDO2Enclave(old)
+	if old := b.fido2Enclave.Swap(&enc); old != nil {
+		return destroyFIDO2Enclave(*old)
 	}
 	return nil
 }
@@ -310,7 +314,16 @@ func (b *TPM2Backend) failFIDO2HashCache(cause error) error {
 // reports false until a new hash is cached.
 func (b *TPM2Backend) dropFIDO2Hash() error {
 	if enc := b.fido2Enclave.Swap(nil); enc != nil {
-		return destroyFIDO2Enclave(enc)
+		return destroyFIDO2Enclave(*enc)
+	}
+	return nil
+}
+
+// loadFIDO2Enclave returns the cached FIDO2 PIN-hash enclave, or nil when
+// none is cached.
+func (b *TPM2Backend) loadFIDO2Enclave() enclave.ByteAccess {
+	if enc := b.fido2Enclave.Load(); enc != nil {
+		return *enc
 	}
 	return nil
 }

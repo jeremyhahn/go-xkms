@@ -117,7 +117,7 @@ func unsealAndCompare(
 // claim it still holds.
 func compareInEnclave(
 	ctx context.Context,
-	enc *enclave.MemoryEnclave,
+	enc enclave.ByteAccess,
 	u types.UnsealerInto,
 	sealed *types.SealedData,
 	expected []byte,

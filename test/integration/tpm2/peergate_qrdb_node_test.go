@@ -35,6 +35,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
@@ -160,9 +161,9 @@ func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI) *gateHost {
 	require.NoError(t, err)
 
 	node, err := qrdbnode.NewStandaloneNode(ctx, cfg,
-		[]qrdbsdk.ServerOption{
-			qrdbsdk.WithServerTLS(p.serverTLS(t, tls.VerifyClientCertIfGiven)),
-			qrdbsdk.WithRESTListener(restListener),
+		[]qrdbserver.ServerOption{
+			qrdbserver.WithServerTLS(p.serverTLS(t, tls.VerifyClientCertIfGiven)),
+			qrdbserver.WithRESTListener(restListener),
 		},
 		qrdbnode.WithPeerAttestationGate(gate),
 	)
