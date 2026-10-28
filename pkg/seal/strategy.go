@@ -54,6 +54,18 @@ var NewCredentials = qrdbsdk.NewCredentials
 // credentials supplied") rather than an error.
 var CredentialsFor = qrdbsdk.CredentialsFor
 
+// DestroyCredentials destroys a credential's protected secret once the seal or
+// unseal it was built for has returned. It is nil-safe: the zero Credentials
+// CredentialsFor yields for an empty secret carries no secret, and Secret is a
+// go-enclave Sealed interface, so calling Destroy on it directly would panic.
+// go-qrdb's pkg/seal has the same helper; its SDK does not re-export it.
+func DestroyCredentials(creds Credentials) error {
+	if creds.Secret == nil {
+		return nil
+	}
+	return creds.Secret.Destroy()
+}
+
 // MustCredentials is NewCredentials for fixtures; it panics where
 // NewCredentials would return an error.
 var MustCredentials = qrdbsdk.MustCredentials
