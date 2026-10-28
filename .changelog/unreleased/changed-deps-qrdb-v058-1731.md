@@ -1,0 +1,6 @@
+- **go-qrdb v0.58.0-alpha** (#1731) -- go-qrdb and go-qrdb/sdk/go move from v0.51.0-alpha to v0.58.0-alpha in the root, `sdk/go`, `xkey` and `web/desktop` modules. MVS also lifts the go-enclave v0.8.0-alpha hold to v0.10.0-alpha and takes go-truststrap v0.7.0-alpha, go-objstore v0.7.0-alpha and go-quicraft v0.24.2-alpha. What changes for go-xkms users:
+  - Names go-qrdb moved out of its root package are imported from their new homes: server options, the module registry and the sealed window from `go-qrdb/sdk/go/server`; storage engines from `sdk/go/storage`; `NewLocalBackend` from `sdk/go/backend`; the state machine from `sdk/go/statemachine`; discovery, `Peer` and `BootstrapShard` from `sdk/go/cluster` (the xkms `sdk/go` cluster aliases keep their names).
+  - `sdk/go` re-exports `ShamirProtectedShare` in place of the removed `ShamirShare`.
+  - The embedded node sets qrdb's `Auth.ClusterTrustDomain`, which replaces `Auth.SPIFFETrustDomain`.
+  - Protected memory uses go-enclave v0.10's `ByteAccess` and value-typed `Allocator`.
+  - `pkg/luks`, `sdk/go/luks` and xkey's `pkg/usb`, `pkg/luks`, `pkg/gui`, `cmd/xkey` and `tools/skillgen` need a go-luks2 release built against go-enclave v0.10.0-alpha; v1.0.0-rc.4 still uses the removed `MemoryEnclave`.

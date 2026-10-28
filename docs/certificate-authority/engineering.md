@@ -850,7 +850,7 @@ REST routes for the CA group are gated by the `hasCA` predicate in
   distribution-point CRLs (`crls/distribution/<sha256(url)>.crl`) and
   attestation evidence (`attestation/...`, keyed by AK key attributes and
   blob type): the go-qrdb storage engine in `Params.ObjectStore`
-  (`qrdbsdk.Storage`, `pkg/ca/ca.go:144`), whose backend is chosen by
+  (`qrdbstorage.Storage`, `pkg/ca/ca.go:144`), whose backend is chosen by
   configuration. go-xkms never imports go-objstore. Layout and errors:
   `docs/datastore/engineering.md`, "CA blob storage".
 

@@ -228,7 +228,7 @@ type ResolvedNodeSeal struct {
 }
 
 func ResolveNodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error)
-func NodeSealOptions(res ResolvedNodeSeal) ([]qrdbnode.NodeOption, []qrdbsdk.ServerOption, error)
+func NodeSealOptions(res ResolvedNodeSeal) ([]qrdbnode.NodeOption, []qrdbserver.ServerOption, error)
 const CloudNodeSealSubdir = "node-seal"
 ```
 

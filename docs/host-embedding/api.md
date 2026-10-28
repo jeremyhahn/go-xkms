@@ -32,6 +32,7 @@ Status codes on a self-built module:
 ```go
 import (
     qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+    qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
     xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -44,7 +45,7 @@ module, err := xkmssdk.NewServiceModule(resolveXKMSService,
     xkmssdk.WithServiceModulePlatformSealer("tpm2", tpmSealer),
     xkmssdk.WithServiceModuleVTPM(vtpmConfig),          // *xkmssdk.TPMVTPMConfig; optional
 )
-serverOpts = append(serverOpts, qrdbsdk.WithModule(module))
+serverOpts = append(serverOpts, qrdbserver.WithModule(module))
 ```
 
 The host's request chain around the node uses the same xkms pieces xkmsd
