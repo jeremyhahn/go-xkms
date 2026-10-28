@@ -216,8 +216,8 @@ var grpcAuthzCases = []grpcAuthzCase{
 	{adminv1.AdminService_GetEAB_FullMethodName, auth.ResourceACMEEAB, auth.ActionRead, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 	{adminv1.AdminService_ListEABs_FullMethodName, auth.ResourceACMEEAB, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 
-	{adminv1.AdminService_CreateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-	{adminv1.AdminService_UpdateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{adminv1.AdminService_CreateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_UpdateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameUser},
 	{adminv1.AdminService_DeleteTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionDelete, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
 	{adminv1.AdminService_GetTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionRead, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
 	{adminv1.AdminService_ListTenantRoles_FullMethodName, auth.ResourceRoles, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
