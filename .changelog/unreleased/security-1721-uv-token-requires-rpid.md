@@ -1,0 +1,1 @@
+- **`getPinUvAuthTokenUsingUvWithPermissions` requires an `rpId` for the makeCredential and getAssertion permissions (#1721).** Such a request without one answers CTAP2_ERR_MISSING_PARAMETER (`ErrMissingRPID`) before the user is asked, so a token the user verified for no RP can no longer bind to whichever RP uses it first.

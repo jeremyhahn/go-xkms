@@ -140,6 +140,49 @@ func TestGetPinUvAuthTokenUsingUv_NoRPAsksWithoutOne(t *testing.T) {
 	require.Empty(t, backend.rpID)
 }
 
+// TestGetPinUvAuthTokenUsingUv_RPScopedPermissionNeedsRPID pins that a
+// request for makeCredential or getAssertion without an rpId is refused with
+// CTAP2_ERR_MISSING_PARAMETER before the user is asked: the user would be
+// consenting for no RP, and the token would bind to whichever RP used it
+// first.
+func TestGetPinUvAuthTokenUsingUv_RPScopedPermissionNeedsRPID(t *testing.T) {
+	for _, permissions := range []uint8{
+		PINPermissionMakeCredential,
+		PINPermissionGetAssertion,
+		PINPermissionGetAssertion | PINPermissionCredentialMgmt,
+	} {
+		t.Run(fmt.Sprintf("permissions %#x", permissions), func(t *testing.T) {
+			backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+			auth := newVerifyingAuthenticator(t, backend)
+
+			reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, permissions, "")
+			resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+
+			require.ErrorIs(t, err, ErrMissingRPID)
+			require.Equal(t, []byte{byte(StatusMissingParameter)}, resp)
+			require.Zero(t, backend.calls, "the user is never asked for a token with no RP")
+			require.Nil(t, auth.GetPinUvAuthToken())
+			require.Equal(t, DefaultUVRetries, auth.state.UVRetries())
+		})
+	}
+
+	t.Run("with an rpId", func(t *testing.T) {
+		backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+		auth := newVerifyingAuthenticator(t, backend)
+
+		reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionGetAssertion, "example.com")
+		resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+
+		require.NoError(t, err)
+		require.Equal(t, byte(StatusOK), resp[0])
+		require.Equal(t, "example.com", backend.rpID)
+		auth.mu.RLock()
+		rpID := auth.pinState.protocol.tokenRPID
+		auth.mu.RUnlock()
+		require.Equal(t, "example.com", rpID, "the token is bound to the RP the user was asked for")
+	})
+}
+
 // TestGetPinUvAuthTokenUsingUv_VerifierRefusalBlocksMinting pins that a
 // refused verification mints nothing, answers CTAP2_ERR_UV_INVALID, spends a
 // retry, and leaves an outstanding token as it was.
