@@ -43,6 +43,11 @@ var (
 	// ErrStatusListHTTPStatus is the cause of an unavailable list whose
 	// fetch was answered with a status other than 200 OK.
 	ErrStatusListHTTPStatus = errors.New("android: attestation status list fetch was not 200 OK")
+
+	// ErrStatusListStale is the cause of an unavailable list whose response
+	// was already past its freshness lifetime when it arrived, even after
+	// a request forcing revalidation (RFC 9111 §4.2, §5.2.1.4).
+	ErrStatusListStale = errors.New("android: attestation status list response is stale")
 )
 
 // HTTPStatusListOptions configures an HTTPStatusList. The zero value
@@ -157,7 +162,13 @@ func (h *HTTPStatusList) Current() (*StatusList, error) {
 		return list, nil
 	}
 
-	list, freshUntil, err := h.download()
+	list, freshUntil, err := h.download(false)
+	if errors.Is(err, ErrStatusListStale) {
+		// A cache on the path answered with a list already past its
+		// freshness lifetime (RFC 9111 §4.2). Ask once more with
+		// validation forced (§5.2.1.4); a list still stale is refused.
+		list, freshUntil, err = h.download(true)
+	}
 	if err != nil {
 		return nil, &StatusListUnavailableError{Source: h.url, Cause: err}
 	}
@@ -175,8 +186,11 @@ func (h *HTTPStatusList) fresh() *StatusList {
 }
 
 // download fetches and parses the list, returning when it stops being
-// fresh.
-func (h *HTTPStatusList) download() (_ *StatusList, _ time.Time, err error) {
+// fresh. A response that is stale on arrival fails with ErrStatusListStale.
+// revalidate sends Cache-Control: no-cache, so that no cache on the path
+// answers from a stored response without validating it with the origin
+// (RFC 9111 §5.2.1.4).
+func (h *HTTPStatusList) download(revalidate bool) (_ *StatusList, _ time.Time, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), h.timeout)
 	defer cancel()
 
@@ -185,6 +199,9 @@ func (h *HTTPStatusList) download() (_ *StatusList, _ time.Time, err error) {
 		return nil, time.Time{}, err
 	}
 	req.Header.Set("Accept", "application/json")
+	if revalidate {
+		req.Header.Set("Cache-Control", "no-cache")
+	}
 
 	requested := h.now()
 	resp, err := h.client.Do(req)
@@ -213,18 +230,28 @@ func (h *HTTPStatusList) download() (_ *StatusList, _ time.Time, err error) {
 	}
 
 	received := h.now()
-	return list, freshUntil(resp.Header, requested, received), nil
+	until, stale := freshUntil(resp.Header, requested, received)
+	if stale {
+		return nil, time.Time{}, &errs.Detail{Err: ErrStatusListStale, Detail: fmt.Sprintf("Age %q over its freshness lifetime", resp.Header.Get("Age"))}
+	}
+	return list, until, nil
 }
 
 // freshUntil is the instant a response stops being fresh: the time it was
 // received plus its freshness lifetime less its age at that time (RFC 9111
-// §4.2: response_is_fresh = freshness_lifetime > current_age).
-func freshUntil(header http.Header, requested, received time.Time) time.Time {
+// §4.2: response_is_fresh = freshness_lifetime > current_age). stale
+// reports a response that has a freshness lifetime but arrived already
+// past it, such as one served by a cache with an Age beyond its max-age.
+func freshUntil(header http.Header, requested, received time.Time) (_ time.Time, stale bool) {
 	lifetime := freshnessLifetime(header, received)
 	if lifetime <= 0 {
-		return received
+		return received, false
 	}
-	return received.Add(lifetime - initialAge(header, requested, received))
+	age := initialAge(header, requested, received)
+	if age >= lifetime {
+		return received, true
+	}
+	return received.Add(lifetime - age), false
 }
 
 // freshnessLifetime implements RFC 9111 §4.2.1 for a private cache.
