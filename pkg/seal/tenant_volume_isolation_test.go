@@ -119,3 +119,24 @@ func TestHardwareTenantService_StoreWithoutFencedCreateRefuses(t *testing.T) {
 	_, err = svc.GetTenant(ctx, "t-1")
 	assert.Error(t, err, "nothing was created")
 }
+
+// TestHardwareTenantService_UpdatesTenantThroughGuardedSwap pins that go-qrdb's
+// TenantService, which commits every tenant record update with a guarded
+// swap, can update a tenant over the composed xkms store: the system barrier
+// forwards the swap to the engine-backed memory store, which decides it.
+func TestHardwareTenantService_UpdatesTenantThroughGuardedSwap(t *testing.T) {
+	ctx := t.Context()
+	_, svc := newTenantTestStack(t, permissiveEntitlements())
+	_, err := svc.CreateTenant(ctx, "t-1", "Tenant", qrdbsdk.TenantIsolationPrefix)
+	require.NoError(t, err)
+
+	narrowed := permissiveEntitlements()
+	narrowed.AllowDedicatedRaft = false
+	info, err := svc.UpdateEntitlements(ctx, "t-1", narrowed)
+	require.NoError(t, err)
+	assert.False(t, info.Entitlements.AllowDedicatedRaft)
+
+	got, err := svc.GetTenant(ctx, "t-1")
+	require.NoError(t, err)
+	assert.False(t, got.Entitlements.AllowDedicatedRaft, "the update was committed")
+}
