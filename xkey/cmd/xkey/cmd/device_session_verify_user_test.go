@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/userverify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -108,7 +109,7 @@ func TestPhoneKeyBackendVerifyUser_ThroughAttestedPhone(t *testing.T) {
 		device := attesttest.NewPairedPhone(t, dak, dak.Fingerprint())
 		device.UVK = attesttest.NewUVK(t, rogue, attesttest.UserVerificationKeyClaims())
 
-		require.ErrorIs(t, verifyUserThroughBackend(t, ca, dak, device, "example.com"), attestation.ErrUserVerificationFailed)
+		require.ErrorIs(t, verifyUserThroughBackend(t, ca, dak, device, "example.com"), userverify.ErrVerificationFailed)
 	})
 
 	t.Run("a signature that does not cover this challenge is refused", func(t *testing.T) {
@@ -118,6 +119,6 @@ func TestPhoneKeyBackendVerifyUser_ThroughAttestedPhone(t *testing.T) {
 			r.Signature[len(r.Signature)-1] ^= 0xff
 		}
 
-		require.ErrorIs(t, verifyUserThroughBackend(t, ca, dak, device, "example.com"), attestation.ErrUserVerificationFailed)
+		require.ErrorIs(t, verifyUserThroughBackend(t, ca, dak, device, "example.com"), userverify.ErrVerificationFailed)
 	})
 }
