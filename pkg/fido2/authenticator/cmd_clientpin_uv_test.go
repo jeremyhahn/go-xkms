@@ -237,6 +237,39 @@ func TestGetPinUvAuthTokenUsingUv_CancelSpendsNoRetry(t *testing.T) {
 	require.Nil(t, auth.GetPinUvAuthToken())
 }
 
+// TestGetPinUvAuthTokenUsingUv_UnavailableSpendsNoRetry pins that a verifier
+// which could not reach a decision — the phone dropped, the exchange timed
+// out, the revocation list was unreachable — mints nothing, answers
+// CTAP1_ERR_OTHER, and spends no uvRetries, so an outage cannot block the
+// ceremony. A refusal after it still spends one.
+func TestGetPinUvAuthTokenUsingUv_UnavailableSpendsNoRetry(t *testing.T) {
+	unavailable := &keybackend.SentinelCauseError{
+		Sentinel: keybackend.ErrUserVerificationUnavailable,
+		Cause:    errors.New("test: phone disconnected"),
+	}
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}, err: unavailable}
+	auth := newVerifyingAuthenticator(t, backend)
+	auth.state.SetUVRetries(1)
+
+	for range 3 {
+		reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
+		resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+
+		require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+		require.NotErrorIs(t, err, ErrUVInvalid)
+		require.NotErrorIs(t, err, ErrUVBlocked)
+		require.Equal(t, []byte{byte(StatusOtherError)}, resp)
+		require.Equal(t, 1, auth.state.UVRetries(), "an outage is not a failed verification")
+		require.Nil(t, auth.GetPinUvAuthToken())
+	}
+	require.Equal(t, 3, backend.calls, "the user is still asked once the outage clears")
+
+	backend.err = errUserNotVerified
+	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
+	_, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+	require.ErrorIs(t, err, ErrUVBlocked, "a real refusal still spends the retry")
+}
+
 // TestGetPinUvAuthTokenUsingUv_MalformedRequestNeverPrompts pins that the
 // checks before the ceremony run first: the user is not asked to verify for a
 // request that cannot mint a token.

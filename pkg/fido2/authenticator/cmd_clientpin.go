@@ -32,6 +32,8 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/jeremyhahn/go-enclave"
 	"golang.org/x/crypto/hkdf"
+
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
 )
 
 // CTAP2 ClientPIN request parameter keys (CBOR map indices).
@@ -939,10 +941,19 @@ func (a *Authenticator) prepareUvTokenLocked(req *ClientPINRequest) ([]byte, err
 
 // failUserVerificationLocked records a failed built-in user verification and
 // returns the status for it: CTAP2_ERR_UV_INVALID, or CTAP2_ERR_UV_BLOCKED
-// once the uvRetries counter is spent (CTAP 2.1 §6.5.5.7.3). A platform that
-// cancelled the request did not fail a verification, so it spends no retry.
+// once the uvRetries counter is spent (CTAP 2.1 §6.5.5.7.3). uvRetries counts
+// failed attempts to verify the user, so only those spend one. A platform
+// that cancelled the request did not fail a verification. Nor did a verifier
+// that could not reach a decision (keybackend.ErrUserVerificationUnavailable:
+// the phone disconnected, the exchange timed out, the revocation list could
+// not be read); it answers CTAP1_ERR_OTHER (§8.2), and the retries are left
+// as they were, so an outage cannot block built-in user verification.
 func (a *Authenticator) failUserVerificationLocked(verifyErr error) error {
 	if errors.Is(verifyErr, context.Canceled) {
+		return verifyErr
+	}
+	if errors.Is(verifyErr, keybackend.ErrUserVerificationUnavailable) {
+		slog.Warn("[CTAP2] built-in user verification unavailable", "error", verifyErr)
 		return verifyErr
 	}
 

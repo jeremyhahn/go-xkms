@@ -768,31 +768,58 @@ func (b *PhoneKeyBackend) proveLiveness(ctx context.Context) error {
 // request and bound into the signed transcript (ruling 180). A request
 // with no RP — a permission that is not RP-scoped, such as credential
 // management — names the authenticator itself, VerifyUserAuthenticatorName.
+//
+// A call that reached no decision about the user wraps
+// keybackend.ErrUserVerificationUnavailable, so the authenticator spends no
+// uvRetries on it (CTAP 2.1 §6.5.5.7.3): no verifier, no session, an
+// exchange the phone never answered — a lost connection or a timeout — or a
+// revocation status list that could not be read, so the answer was never
+// judged. A refused answer is returned as the verifier gave it.
 func (b *PhoneKeyBackend) VerifyUser(ctx context.Context, rpName string) error {
 	if b.cfg.VerifyUser == nil {
 		b.log.Error("user verification was requested but no verifier was supplied")
-		return ErrUserVerifierUnavailable
+		return userVerificationUnavailable(ErrUserVerifierUnavailable)
 	}
 	if !b.connected.Load() {
-		return ErrNotConnected
+		return userVerificationUnavailable(ErrNotConnected)
 	}
 
 	// The lease keeps the session alive while its channel binding is read;
 	// the exchange itself goes through SendRequest, which takes its own.
 	_, session, release, ok := b.acquireSession()
 	if !ok {
-		return ErrNotConnected
+		return userVerificationUnavailable(ErrNotConnected)
 	}
 	defer release()
 
 	binding, err := pairingproto.AttestChannelBinding(session)
 	if err != nil {
-		return err
+		return userVerificationUnavailable(err)
 	}
 	if rpName == "" {
 		rpName = VerifyUserAuthenticatorName
 	}
-	return b.cfg.VerifyUser(ctx, b.SendRequest, binding, rpName)
+	err = b.cfg.VerifyUser(ctx, b.verifyUserExchange, binding, rpName)
+	if errors.Is(err, xkms.ErrAndroidStatusListUnavailable) {
+		return userVerificationUnavailable(err)
+	}
+	return err
+}
+
+// verifyUserExchange is SendRequest for the verify-user exchange. A request
+// the phone never answered is marked unavailable: the user was not refused.
+func (b *PhoneKeyBackend) verifyUserExchange(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+	resp, err := b.SendRequest(ctx, req)
+	if err != nil {
+		return nil, userVerificationUnavailable(err)
+	}
+	return resp, nil
+}
+
+// userVerificationUnavailable marks cause as a user verification that
+// reached no decision (keybackend.ErrUserVerificationUnavailable).
+func userVerificationUnavailable(cause error) error {
+	return &keybackend.SentinelCauseError{Sentinel: keybackend.ErrUserVerificationUnavailable, Cause: cause}
 }
 
 // EnableBidirectional starts bidirectional JSON-RPC routing using the

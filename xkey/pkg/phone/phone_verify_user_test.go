@@ -17,11 +17,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/stretchr/testify/require"
 )
 
@@ -115,7 +118,52 @@ func TestVerifyUser_VerifierRefusalIsReturned(t *testing.T) {
 		return errVerifierRefused
 	})
 
-	require.ErrorIs(t, backend.VerifyUser(context.Background(), "example.com"), errVerifierRefused)
+	err := backend.VerifyUser(context.Background(), "example.com")
+	require.ErrorIs(t, err, errVerifierRefused)
+	require.NotErrorIs(t, err, keybackend.ErrUserVerificationUnavailable, "a refusal is a failed verification")
+}
+
+// TestVerifyUser_UnansweredExchangeIsUnavailable proves an exchange the phone
+// never answered — the link dropped or timed out — reaches the verifier, and
+// so the authenticator, as unavailable rather than as a refusal, and spends
+// no uvRetries.
+func TestVerifyUser_UnansweredExchangeIsUnavailable(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	client, _ := establishedNoiseSessionPair(t)
+	backend := &PhoneKeyBackend{
+		cfg: &PhoneKeyBackendConfig{VerifyUser: func(ctx context.Context, exchange pairingproto.RPCExchange, _ []byte, _ string) error {
+			_, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalVerifyUser, nil))
+			return err
+		}},
+		session: client,
+		transport: &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
+			return nil, context.DeadlineExceeded
+		}},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	backend.connected.Store(true)
+
+	err := backend.VerifyUser(context.Background(), "example.com")
+	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// TestVerifyUser_UnreadableStatusListIsUnavailable proves an answer that could
+// not be judged because the revocation status list was unavailable is not a
+// refusal: the user was neither verified nor refused.
+func TestVerifyUser_UnreadableStatusListIsUnavailable(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	backend := connectedVerifyUserBackend(t, func(context.Context, pairingproto.RPCExchange, []byte, string) error {
+		return fmt.Errorf("verify: %w", xkms.ErrAndroidStatusListUnavailable)
+	})
+
+	err := backend.VerifyUser(context.Background(), "example.com")
+	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+	require.ErrorIs(t, err, xkms.ErrAndroidStatusListUnavailable)
 }
 
 // TestVerifyUser_NoVerifierRefuses proves a backend built without a
@@ -127,7 +175,9 @@ func TestVerifyUser_NoVerifierRefuses(t *testing.T) {
 	}
 	backend.connected.Store(true)
 
-	require.ErrorIs(t, backend.VerifyUser(context.Background(), "example.com"), ErrUserVerifierUnavailable)
+	err := backend.VerifyUser(context.Background(), "example.com")
+	require.ErrorIs(t, err, ErrUserVerifierUnavailable)
+	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable, "a missing verifier spends no uvRetries")
 }
 
 // TestVerifyUser_NotConnectedNeverCallsTheVerifier proves no exchange is
@@ -142,6 +192,8 @@ func TestVerifyUser_NotConnectedNeverCallsTheVerifier(t *testing.T) {
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	require.ErrorIs(t, backend.VerifyUser(context.Background(), "example.com"), ErrNotConnected)
+	err := backend.VerifyUser(context.Background(), "example.com")
+	require.ErrorIs(t, err, ErrNotConnected)
+	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable, "no session spends no uvRetries")
 	require.False(t, called)
 }

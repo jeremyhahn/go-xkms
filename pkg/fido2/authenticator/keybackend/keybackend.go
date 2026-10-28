@@ -184,7 +184,10 @@ type FIDO2AttestingKeyBackend interface {
 // backend and mints a pinUvAuthToken only after VerifyUser returns nil.
 type UserVerifier interface {
 	// VerifyUser verifies the user now and returns nil only if the user was
-	// verified for this call. Any error is a failed verification. rpID is
+	// verified for this call. An error that wraps
+	// ErrUserVerificationUnavailable means no decision could be reached,
+	// and the user was neither verified nor refused; any other error is a
+	// failed verification. rpID is
 	// the relying party the gated token is scoped to, so the user is shown
 	// who is asking; it is empty when the requested permissions are not
 	// RP-scoped (CTAP 2.1 §6.5.5.7.3).
