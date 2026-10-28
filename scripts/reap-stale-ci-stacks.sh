@@ -36,6 +36,8 @@
 # `.Created` but re-tags the image, so v2 saw a just-rebuilt image as stale and
 # a parallel job's reaper removed it between its build and its lease
 # (go-quicraft main runs 57389 and 57484).
+# v4 (go-xkms, ruling 169): the registry-named CI images too, and no image an
+# existing container uses, a job's hold included (the block at the end).
 #
 # Stale: exited or dead and finished at least <min-age-seconds> ago, or
 # created and never started at least that long ago. A project with any
@@ -84,6 +86,19 @@ stale() {
   esac
   t=$(date -d "$t" +%s 2>/dev/null) || return 1
   [ $((now - t)) -ge "$min_age" ]
+}
+
+# in_use <image>: 0, with a keep line, when a container (a job's hold or
+# lease included) uses the image, or when the containers cannot be listed;
+# 1 otherwise.
+in_use() {
+  local users
+  if ! users=$(docker ps -aq --filter "ancestor=$1" 2>/dev/null); then
+    echo "keep  image $1 (cannot list the containers that use it)"
+    return 0
+  fi
+  [ -n "$users" ] || return 1
+  echo "keep  image $1 (used by a container)"
 }
 
 reaped=0
@@ -136,9 +151,43 @@ for ref in $(docker images --filter "reference=${prefix}it" --format '{{.Reposit
     echo "keep  image $ref (created or tagged within ${image_min_age}s)"
     continue
   fi
+  in_use "$ref" && continue
   echo "reap  image $ref"
   if run docker image rm "$ref"; then images=$((images + 1)); else echo "warn  image $ref not removed (in use?)"; fi
 done
+
+# v4, CUSTOMIZE (go-xkms, ruling 169; the go-qrdb #1135 pattern): the CI
+# images in the forge's registry are <registry>/<owner>/<prefix>toolchain
+# and <registry>/<owner>/<prefix>it (scripts/ci-registry.sh), named by tag
+# on the release runner that pushed them and by digest alone where a job
+# pulled them. The same age rule applies to each name, and an image a job's
+# hold (a created, never-started container) uses keeps every name: in_use is
+# asked before any of them is removed, because `docker image rm` of one of
+# several names only untags it, in use or not, and the name it drops can be
+# the digest reference the holding job runs. A pull by digest records no tag
+# time, so an unheld pulled image ages from its build; a job holds what it
+# pulls, and its pull retries if a reap wins the race between the two.
+while read -r repo tag digest; do
+  case $repo in */"${prefix}it" | */"${prefix}toolchain") ;; *) continue ;; esac
+  refs=()
+  [ "$tag" = '<none>' ] || refs+=("$repo:$tag")
+  [ "$digest" = '<none>' ] || refs+=("$repo@$digest")
+  [ "${#refs[@]}" -gt 0 ] || continue
+  read -r created tagged < <(docker image inspect -f '{{.Created}} {{.Metadata.LastTagTime.Unix}}' "${refs[0]}" 2>/dev/null) || continue
+  t=$(date -d "$created" +%s 2>/dev/null) || continue
+  case $tagged in ''|*[!0-9]*) ;; *) [ "$tagged" -le "$t" ] || t=$tagged ;; esac
+  if [ $((now - t)) -lt "$image_min_age" ]; then
+    echo "keep  image ${refs[0]} (created or tagged within ${image_min_age}s)"
+    continue
+  fi
+  in_use "${refs[0]}" && continue
+  for ref in "${refs[@]}"; do
+    # Removing the tag can remove the image, and its digest name with it.
+    docker image inspect "$ref" >/dev/null 2>&1 || continue
+    echo "reap  image $ref"
+    if run docker image rm "$ref"; then images=$((images + 1)); else echo "warn  image $ref not removed (in use?)"; fi
+  done
+done < <(docker images --digests --format '{{.Repository}} {{.Tag}} {{.Digest}}')
 
 if [ "${REAP_DRY_RUN:-0}" = 1 ]; then done_as="would be removed"; else done_as=removed; fi
 echo "reaper: $reaped compose project(s) and $images image(s) $done_as for prefix '$prefix'"

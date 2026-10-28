@@ -418,6 +418,18 @@ env:
   # workspace (dependency-resolution.md).
   GOWORK: "off"
   # <<< CUSTOMIZE
+  # >>> CUSTOMIZE (go-xkms, ruling 169)
+  # Whether this run publishes the CI images: a push to main alone. The
+  # ci-images job publishes them from the release runner, and every other
+  # event pulls main's copy by digest or builds its own with no push
+  # (scripts/ci-registry.sh, docs/testing/docker-testing.md "CI images").
+  CI_PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+  # The namespace the CI images live in. On the forge, agent-ci-images: the
+  # release runner's registry user and public, since Gitea 1.27 lets only a
+  # user namespace's owner or an admin write it (ruling 217). Empty on
+  # GitHub, where it is the repository's owner.
+  CI_REGISTRY_OWNER: ${{ github.server_url != 'https://github.com' && 'agent-ci-images' || '' }}
+  # <<< CUSTOMIZE
 
 jobs:
   # v1.24 (CA m749, m751 (a)): a PR whose every changed file matches DOCS_ONLY_PATTERN
@@ -493,11 +505,96 @@ jobs:
   # for the image builds) and CI Gate on ci-gate; on the github.com mirror all
   # are ubuntu-latest, which has Docker (devops.md §1: host-specific choices
   # are guarded on github.server_url).
+  # >>> CUSTOMIZE (go-xkms, ruling 169; the go-qrdb #1135 pattern)
+  # The CI images, once per run. A push to main builds each image whose
+  # content hash main has not published yet and pushes it from the release
+  # runner, the one host holding the registry credential (ruling 173). Every
+  # other event resolves main's copy of the same content to a digest, or to
+  # "" when main has none or the registry cannot be read. The consumers take
+  # the outputs through `scripts/ci-registry.sh use`: a digest is pulled and
+  # held; "" builds the image on the consumer's own runner, with no push.
+  # Main publishes under the forge's public agent-ci-images namespace
+  # (go-xkms #1730), so on the forge the resolve and every pull are
+  # anonymous. On GHCR a package is private when published, so every read
+  # step hands the script the run's token and a GHCR read logs in with it.
+  ci-images:
+    name: CI images [publish on main, resolve on pull requests]
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
+      it_ref: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      # On the forge the push reads the release runner's RELEASE_REGISTRY,
+      # RELEASE_REGISTRY_USER and RELEASE_REGISTRY_TOKEN from the runner's
+      # own environment (ruling 173); no step sets them. On GitHub it pushes
+      # to GHCR with the run's token.
+      - name: Publish the CI images
+        id: publish
+        if: ${{ env.CI_PUBLISH == 'true' }}
+        env:
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ref=$(scripts/ci-registry.sh publish toolchain)
+          echo "toolchain_ref=$ref" >> "$GITHUB_OUTPUT"
+          ref=$(scripts/ci-registry.sh publish it)
+          echo "it_ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve main's CI images
+        id: resolve
+        if: ${{ env.CI_PUBLISH != 'true' }}
+        env:
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ref=$(scripts/ci-registry.sh resolve toolchain)
+          echo "toolchain_ref=$ref" >> "$GITHUB_OUTPUT"
+          ref=$(scripts/ci-registry.sh resolve it)
+          echo "it_ref=$ref" >> "$GITHUB_OUTPUT"
+
+      # A published reference is always a digest; a resolved one is a digest
+      # or "".
+      - name: Validate the image references
+        env:
+          TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
+          IT_REF: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
+        run: |
+          re='^[^@ ]+@sha256:[0-9a-f]{64}$'
+          for v in TOOLCHAIN_REF IT_REF; do
+            ref=${!v}
+            if [ -z "$ref" ] && [ "$CI_PUBLISH" != true ]; then
+              echo "$v is empty: the consumers build the image on their runners"
+              continue
+            fi
+            [[ $ref =~ $re ]] || { echo "::error::$v '$ref' is not a digest reference"; exit 1; }
+            echo "$v=$ref"
+          done
+  # <<< CUSTOMIZE
+
   image:
     name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
-    needs: changes             # v1.24 (CA m749, m751 (a))
+    needs: [changes, ci-images] # v1.24 (CA m749, m751 (a)); CUSTOMIZE (go-xkms, ruling 169): ci-images
     timeout-minutes: 240      # CUSTOMIZE (go-xkms): the Lint (90) and image (150) jobs' bounds, now one job
+    permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
+      contents: read
+      packages: read
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       # v1.22: the cache volumes' trust class. Only a push to main writes the
@@ -525,42 +622,30 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # v1.23 (Company Agent m674 item 3, 2026-10-18): the integration image is named by its content,
-      # <repo>-ci-it:<hash> (`make -s it-image`, ci-standard.md §9), so every
-      # job of every run on this runner names the same image for the same
-      # tree, builds it once and reuses it. No job removes it; the reap step does.
-      - name: Name the integration image
-        run: echo "IT_IMAGE=$(make -s it-image)" >> "$GITHUB_ENV"
-
       # CUSTOMIZE: host tuning a test needs (e.g. QUIC UDP buffers:
       # sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032)
       # goes here; the container shares the runner's kernel.
 
-      - name: Build the devcontainer images
-        run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
-          # >>> CUSTOMIZE (go-xkms)
-          make docker-build MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_IMAGE="$IT_IMAGE"
-          # <<< CUSTOMIZE
-          rm -f "$RUNNER_TEMP/gomodauth.env"
-          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+      # >>> CUSTOMIZE (go-xkms, ruling 169)
+      # The images come from ci-images: main's by digest, pulled and held
+      # until Tear down, or, when main has not published this content, built
+      # on this runner with no push and held by image ID. The integration
+      # image is needed by the full tier's scan alone.
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
-      # v1.23: a lease on the integration image (from a Codex review). A
-      # reused image can be older than REAP_IMAGE_MIN_AGE, so its age alone
-      # does not keep another run's reap step off it while this job needs it.
-      # A created, never-started container that names the image holds it,
-      # because `docker image rm` refuses an image a container uses. Tear down
-      # removes the lease; one a dead job leaves behind is a stale container,
-      # which the reap step removes after the job timeout like any other.
-      - name: Lease the integration image
-        run: |
-          if docker image inspect "$IT_IMAGE" >/dev/null 2>&1; then
-            lease="${CI_STACK_PREFIX}lease-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
-            docker create --name "$lease" "$IT_IMAGE" true >/dev/null && echo "IT_LEASE=$lease" >> "$GITHUB_ENV"
-          fi
+      - name: Take the integration image
+        if: ${{ env.CI_FULL_TIER == 'true' }}
+        env:
+          IT_REF: ${{ needs.ci-images.outputs.it_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use it "$IT_REF" >> "$GITHUB_ENV"
+      # <<< CUSTOMIZE
 
       # v1.22: bound this repo's cache volumes on the host before the stages
       # add to them (ci-standard.md §6). It never fails the job.
@@ -708,8 +793,8 @@ jobs:
       - name: Tear down
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/gomodauth.env" it-image.tar
-          [ -z "${IT_LEASE:-}" ] || docker rm "$IT_LEASE" >/dev/null || true
+          rm -f it-image.tar
+          scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" "${IT_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and
@@ -727,7 +812,11 @@ jobs:
     name: Lint Gates [toolchain image]
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     if: ${{ !github.event.pull_request.draft }}   # v1.26
+    needs: ci-images          # CUSTOMIZE (go-xkms, ruling 169)
     timeout-minutes: 45       # CUSTOMIZE: the repo's lint-gates time, with honest headroom
+    permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
+      contents: read
+      packages: read
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       # v1.22: the cache volumes' trust class (as in the image job).
@@ -762,22 +851,15 @@ jobs:
         if: ${{ steps.probe.outputs.has_target == 'true' }}
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # make docker-build needs the integration image's name (as in the image
-      # job); this job never runs or leases that image.
-      - name: Name the integration image
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in the image job).
+      - name: Take the toolchain image
         if: ${{ steps.probe.outputs.has_target == 'true' }}
-        run: echo "IT_IMAGE=$(make -s it-image)" >> "$GITHUB_ENV"
-
-      - name: Build the devcontainer images
-        if: ${{ steps.probe.outputs.has_target == 'true' }}
-        run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
-          make docker-build MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_IMAGE="$IT_IMAGE"
-          rm -f "$RUNNER_TEMP/gomodauth.env"
-          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # v1.22: bound this repo's cache volumes (as in the image job). It never
       # fails the job and keeps every volume a container mounts.
@@ -794,7 +876,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # Integration tests run in the integration image (ci-standard.md §2), as a
   # compose stack on the runner host started by `make integration-test`. The
@@ -1015,7 +1097,10 @@ jobs:
     timeout-minutes: 120  # #1587: ~2x 58m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     # DS-3164: a docs-only PR compiles nothing, so the sweeps skip at step
     # level and the job still reports success to CI Gate.
-    needs: [changes]
+    needs: [changes, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
+    permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
+      contents: read
+      packages: read
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
@@ -1036,19 +1121,15 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      - name: Write the module credential file
-        run: |
-          umask 077
-          : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
-
-      - name: Build the toolchain image
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in the image job).
+      - name: Take the toolchain image
         if: needs.changes.outputs.docs_only != 'true'
-        run: |
-          make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
-          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Static analysis (toolchain image)
         if: needs.changes.outputs.docs_only != 'true'
@@ -1062,7 +1143,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # build: what `make build` does not compile.
   #
@@ -1085,6 +1166,10 @@ jobs:
     name: Build (all backends, acme-client GUI)
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     if: ${{ !github.event.pull_request.draft }}   # v1.26
+    needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
+    permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
+      contents: read
+      packages: read
     timeout-minutes: 35   # #1587: ~2x 17m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1106,18 +1191,14 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      - name: Write the module credential file
-        run: |
-          umask 077
-          : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
-
-      - name: Build the toolchain image
-        run: |
-          make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
-          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in the image job).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # This job writes the shared cache volumes too, so it bounds them first,
       # as the image job does (ci-standard.md §6). It never fails the job.
@@ -1163,7 +1244,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # nested-module-build: sdk/go, xkey and web/desktop are separate modules
   # that `./...` from the root never enters, so they must still COMPILE on
@@ -1173,6 +1254,10 @@ jobs:
     name: Nested Module Build (sdk/go, xkey, web/desktop)
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     if: ${{ !github.event.pull_request.draft }}   # v1.26
+    needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
+    permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
+      contents: read
+      packages: read
     timeout-minutes: 20   # #1587: ~2x 9.4m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1194,18 +1279,14 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      - name: Write the module credential file
-        run: |
-          umask 077
-          : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
-
-      - name: Build the toolchain image
-        run: |
-          make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
-          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in the image job).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Build sdk/go, web/desktop and xkey (toolchain image)
         run: |
@@ -1218,7 +1299,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # nested-module-test: the nested modules' race suites.
   #
@@ -1239,6 +1320,10 @@ jobs:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
+    needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
+    permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
+      contents: read
+      packages: read
     timeout-minutes: 110  # #1587: ~2x 55m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1260,18 +1345,14 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      - name: Write the module credential file
-        run: |
-          umask 077
-          : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
-
-      - name: Build the toolchain image
-        run: |
-          make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
-          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in the image job).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: sdk/go and web/desktop tests (toolchain image)
         run: |
@@ -1306,7 +1387,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # build-raft: the default build is standalone; `-tags raft` is the
   # clustered configuration, and each leg tests a different half of
@@ -1319,6 +1400,10 @@ jobs:
     # #1587: ~2x 13m, slowest green (forge API, last 60 CI runs, 2026-10-17;
     # run 55255's 169m apt hang excluded).
     timeout-minutes: 30
+    needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
+    permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -1343,18 +1428,14 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      - name: Write the module credential file
-        run: |
-          umask 077
-          : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
-
-      - name: Build the toolchain image
-        run: |
-          make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
-          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in the image job).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Build, vet and test (toolchain image)
         env:
@@ -1369,7 +1450,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # race: the race detector over every backend, FROST included, on SoftHSM
   # with a token at slot 0 and the arduino-generic simulators (sdk/go/agsim;
@@ -1383,6 +1464,10 @@ jobs:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
+    needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
+    permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
+      contents: read
+      packages: read
     timeout-minutes: 145  # #1587: ~2x 71m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1404,18 +1489,14 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      - name: Write the module credential file
-        run: |
-          umask 077
-          : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
-
-      - name: Build the toolchain image
-        run: |
-          make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
-          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in the image job).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # -timeout 75m, not the 10m default (#1587: above this job's slowest
       # green run, 71m, forge API, last 60 CI runs, 2026-10-17, and below its
@@ -1440,7 +1521,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # tpm2-simulator: pkg/tpm2 against the in-process TPM simulator
   # (go-tpm-tools, cgo against libcrypto); pkg/tpm2/vtpm supervises swtpm.
@@ -1449,6 +1530,10 @@ jobs:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
+    needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
+    permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
+      contents: read
+      packages: read
     timeout-minutes: 25   # #1587: ~2x 10.5m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1470,25 +1555,21 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      - name: Write the module credential file
-        run: |
-          umask 077
-          : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
-
-      - name: Build the toolchain image
-        run: |
-          make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
-          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in the image job).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: pkg/tpm2 on the simulator (toolchain image)
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" make test-tpm2-simulator
 
       - name: Tear down
         if: always()
-        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # Job 8 (FIPS 140-3 gate) IS NOT HERE ON PURPOSE. Do not re-add it without
   # reading go-xkms #23 first. The code half landed; the job is withheld until
@@ -1563,7 +1644,7 @@ jobs:
     if: always()
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
-    needs: [changes, image, lint-gates, integration, soak, arch-gates, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator]
+    needs: [changes, image, lint-gates, integration, soak, arch-gates, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
     steps:
       - name: Fail closed on any non-success
         env:
@@ -1613,5 +1694,6 @@ jobs:
           check build-raft         "${{ needs.build-raft.result }}" full
           check race               "${{ needs.race.result }}" full
           check tpm2-simulator     "${{ needs.tpm2-simulator.result }}" full
+          check ci-images          "${{ needs.ci-images.result }}" pr
           # <<< CUSTOMIZE
           exit $BAD

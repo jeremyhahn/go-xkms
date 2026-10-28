@@ -62,5 +62,18 @@ implementation work does not depend on the publisher's site staying up.
   `e5746a0bcda86413310119abb2972e6f78c374fa`. The transparency-log
   checkpoint format and its signature key-type encoding (SPEC row
   `transparency-log`).
+- `oci-distribution-spec-v1.1.1.md` — the Open Container Initiative
+  "Distribution Specification", v1.1.1, copied verbatim from
+  https://github.com/opencontainers/distribution-spec (`spec.md` at tag
+  `v1.1.1`). `scripts/ci-registry.sh` `remote_digest` looks a CI image up
+  under "Pulling manifests" (a `GET` of `/v2/<name>/manifests/<tag>`, its
+  `Accept` list, `404 Not Found` for a manifest the repository lacks) and
+  digests the returned manifest itself, since the `Docker-Content-Digest`
+  header is optional ("Legacy Docker support HTTP headers").
+- `distribution-token-auth.md` — CNCF Distribution "Token Authentication
+  Specification", copied verbatim from https://github.com/distribution/distribution
+  (`docs/content/spec/auth/token.md` at tag `v3.0.0`). The `401` challenge,
+  token request and `Bearer` retry `remote_digest` follows when a registry
+  asks for a token (GHCR, Gitea).
 - `rats/` — the IETF RATS, EAT, CoRIM, CMW, CSR-attestation and ACME
   device-attestation specifications, indexed in [rats/README.md](rats/README.md).
