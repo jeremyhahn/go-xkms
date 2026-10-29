@@ -329,24 +329,22 @@ func TestFreshUntil(t *testing.T) {
 	requested := received.Add(-2 * time.Second)
 	date := func(t time.Time) string { return t.Format(http.TimeFormat) }
 
+	// Every lifetime is less the 2s round trip, the response_delay of RFC
+	// 9111 §4.2.3, with or without an Age field.
 	cases := []struct {
 		name    string
 		headers map[string]string
 		want    time.Duration // after received
 	}{
-		{"max-age", map[string]string{"Cache-Control": "max-age=3600"}, time.Hour},
-		{"quoted max-age", map[string]string{"Cache-Control": `max-age="60"`}, time.Minute},
+		{"max-age", map[string]string{"Cache-Control": "max-age=3600"}, time.Hour - 2*time.Second},
+		{"quoted max-age", map[string]string{"Cache-Control": `max-age="60"`}, time.Minute - 2*time.Second},
 		{"max-age less Age and round trip", map[string]string{"Cache-Control": "max-age=3600", "Age": "100"}, time.Hour - 102*time.Second},
 		{"max-age less apparent age", map[string]string{"Cache-Control": "max-age=3600", "Date": date(received.Add(-10 * time.Minute))}, 50 * time.Minute},
-		{"max-age wins over Expires", map[string]string{"Cache-Control": "max-age=60", "Expires": date(received.Add(time.Hour)), "Date": date(received)}, time.Minute},
+		{"max-age wins over Expires", map[string]string{"Cache-Control": "max-age=60", "Expires": date(received.Add(time.Hour)), "Date": date(received)}, time.Minute - 2*time.Second},
 		{"no-cache", map[string]string{"Cache-Control": "max-age=3600, no-cache"}, 0},
 		{"no-store", map[string]string{"Cache-Control": "no-store"}, 0},
-		{"invalid max-age", map[string]string{"Cache-Control": "max-age=soon"}, 0},
-		{"negative max-age", map[string]string{"Cache-Control": "max-age=-5"}, 0},
-		{"Expires less Date", map[string]string{"Expires": date(received.Add(30 * time.Minute)), "Date": date(received)}, 30 * time.Minute},
-		{"Expires without Date", map[string]string{"Expires": date(received.Add(30 * time.Minute))}, 30 * time.Minute},
-		{"Expires 0", map[string]string{"Expires": "0"}, 0},
-		{"Expires in the past", map[string]string{"Expires": date(received.Add(-time.Hour)), "Date": date(received)}, 0},
+		{"Expires less Date", map[string]string{"Expires": date(received.Add(30 * time.Minute)), "Date": date(received)}, 30*time.Minute - 2*time.Second},
+		{"Expires without Date", map[string]string{"Expires": date(received.Add(30 * time.Minute))}, 30*time.Minute - 2*time.Second},
 		{"no caching headers", nil, 0},
 	}
 	for _, tc := range cases {
@@ -356,14 +354,62 @@ func TestFreshUntil(t *testing.T) {
 				header.Set(k, v)
 			}
 			got, stale := freshUntil(header, requested, received)
-			assert.False(t, stale, "only a response with a lifetime it already outlived is stale")
+			assert.False(t, stale, "only a response with freshness information it already outlived is stale")
 			if tc.want <= 0 {
-				assert.False(t, got.After(received), "a response with no remaining freshness is stale on receipt")
+				assert.False(t, got.After(received), "a response with no freshness lifetime answers this request only")
 				return
 			}
 			assert.Equal(t, received.Add(tc.want), got)
 		})
 	}
+}
+
+// TestFreshUntil_ExplicitExpiryIsStale pins RFC 9111 §4.2 for a response
+// whose own freshness information says it is not fresh: such a response is
+// stale, so the source revalidates it, rather than one accepted once like a
+// response that carries no freshness information.
+func TestFreshUntil_ExplicitExpiryIsStale(t *testing.T) {
+	received := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	date := func(t time.Time) string { return t.Format(http.TimeFormat) }
+
+	cases := []struct {
+		name    string
+		headers map[string]string
+	}{
+		{"max-age=0 with a positive Age", map[string]string{"Cache-Control": "max-age=0", "Age": "5"}},
+		{"max-age=0 (§4.2: 0 > current_age never holds)", map[string]string{"Cache-Control": "max-age=0"}},
+		{"Expires in the past", map[string]string{"Expires": date(received.Add(-time.Hour)), "Date": date(received)}},
+		{"Expires in the past without Date", map[string]string{"Expires": date(received.Add(-time.Hour))}},
+		{"Expires equal to Date", map[string]string{"Expires": date(received), "Date": date(received)}},
+		{"Expires 0 (§5.3: invalid is in the past)", map[string]string{"Expires": "0"}},
+		{"invalid max-age (§4.2.1)", map[string]string{"Cache-Control": "max-age=soon"}},
+		{"negative max-age (§1.2.2)", map[string]string{"Cache-Control": "max-age=-5"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			header := http.Header{}
+			for k, v := range tc.headers {
+				header.Set(k, v)
+			}
+			got, stale := freshUntil(header, received, received)
+			assert.True(t, stale, "RFC 9111 §4.2: fresh only while freshness_lifetime > current_age")
+			assert.False(t, got.After(received))
+		})
+	}
+}
+
+// TestHTTPStatusList_ExplicitlyExpiredResponseIsRefused drives an origin
+// whose every answer is already expired through the source: the stale
+// answer is revalidated once, then refused, and never cached.
+func TestHTTPStatusList_ExplicitlyExpiredResponseIsRefused(t *testing.T) {
+	e := newStatusEndpoint(t, googleExampleList, map[string]string{"Cache-Control": "max-age=0", "Age": "5"})
+	source := newSource(t, e, nil, HTTPStatusListOptions{})
+
+	list, err := source.Current()
+	require.ErrorIs(t, err, ErrStatusListUnavailable)
+	require.ErrorIs(t, err, ErrStatusListStale)
+	assert.Nil(t, list, "an expired list is never used")
+	assert.EqualValues(t, 2, e.requests.Load(), "revalidated once, not more")
 }
 
 func TestParseDeltaSeconds(t *testing.T) {
