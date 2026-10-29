@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/userverify"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
@@ -52,6 +53,16 @@ const (
 // token it gates is not scoped to a relying party: the user is then
 // verifying to the authenticator itself (ruling 180).
 const VerifyUserAuthenticatorName = "xkey"
+
+// verifyUserTimeout bounds one VerifyUser exchange. The authenticator holds
+// its command lock across the exchange, so a phone that never answers would
+// otherwise block every later CTAP command. It is the challenge's own
+// lifetime, userverify.ChallengeLifetime: an answer arriving later is refused
+// as expired anyway.
+//
+// A var rather than a const so tests can exercise the timeout branch without
+// spending the production window on it. Nothing else writes it.
+var verifyUserTimeout = userverify.ChallengeLifetime
 
 // BLE configuration constants.
 const (
@@ -799,6 +810,10 @@ func (b *PhoneKeyBackend) VerifyUser(ctx context.Context, rpName string) error {
 	if rpName == "" {
 		rpName = VerifyUserAuthenticatorName
 	}
+	// Derived from the caller's context, so its cancellation still ends the
+	// exchange early.
+	ctx, cancel := context.WithTimeout(ctx, verifyUserTimeout)
+	defer cancel()
 	err = b.cfg.VerifyUser(ctx, b.verifyUserExchange, binding, rpName)
 	if errors.Is(err, xkms.ErrAndroidStatusListUnavailable) {
 		return userVerificationUnavailable(err)
