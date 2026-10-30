@@ -173,6 +173,14 @@ const (
 	// local xkms scoping declaration (pkg/apimodule/module_scopes.go).
 	ResourceBackup = "backup"
 
+	// ResourceVlog is the CA transparency log's read surface: its signed tree
+	// head (vlog:head), its entries (vlog:get) and its inclusion and
+	// consistency proofs (vlog:proof). Mirrors go-qrdb's verifiable-log
+	// permission family verbatim, whose built-in admin, operator, user and
+	// auditor roles hold all three, so the resource carries no local xkms
+	// scoping declaration.
+	ResourceVlog = "vlog"
+
 	// Key actions.
 	ActionSign    = "sign"
 	ActionVerify  = "verify"
@@ -335,4 +343,11 @@ const (
 	// from backup:create/backup:read. Mirrors go-qrdb permission.BackupRestore
 	// verbatim.
 	ActionRestore = "restore"
+
+	// Transparency log read actions (ResourceVlog). ActionHead reads the
+	// signed tree head; ActionProof reads an inclusion or consistency proof.
+	// Reading an entry is vlog:get (ActionGet). Mirrors go-qrdb's
+	// permission.VlogHead and permission.VlogProof verbatim.
+	ActionHead  = "head"
+	ActionProof = "proof"
 )
