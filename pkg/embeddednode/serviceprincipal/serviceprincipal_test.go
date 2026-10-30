@@ -154,11 +154,11 @@ func TestGrant_IsLeastPrivilegeCopy(t *testing.T) {
 func TestGrant_TransparencyLogActions(t *testing.T) {
 	got := Grant()
 	for _, p := range []qrdbsdk.Permission{
-		"vlog:create", "vlog:append", "vlog:get", "vlog:sign_head", "vlog:proof",
+		"vlog:create", "vlog:append", "vlog:get", "vlog:head", "vlog:sign_head", "vlog:proof",
 	} {
 		assert.Contains(t, got, p, "the CA transparency log calls %s", p)
 	}
-	for _, p := range []qrdbsdk.Permission{"vlog:list", "vlog:head", "vlog:expire"} {
+	for _, p := range []qrdbsdk.Permission{"vlog:list", "vlog:expire"} {
 		assert.NotContains(t, got, p, "the CA transparency log never calls %s", p)
 	}
 }

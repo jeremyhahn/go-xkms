@@ -53,12 +53,13 @@ const Name = "xkms"
 //   - admin:shard_state -- a clustered xkmsd waits for its shard's leader
 //     before serving (Server.waitForClusterLeader); the leader query is a
 //     shard-state read.
-//   - vlog:create, vlog:append, vlog:get, vlog:sign_head, vlog:proof -- the
-//     CA's transparency log (pkg/ca/tlog) creates its verifiable log, appends
-//     and reads back entries, signs tree heads under the CA key and serves
-//     inclusion and consistency proofs. It never lists logs, reads an
-//     unsigned head or expires bodies, so vlog:list, vlog:head and
-//     vlog:expire stay ungranted.
+//   - vlog:create, vlog:append, vlog:get, vlog:head, vlog:sign_head,
+//     vlog:proof -- the CA's transparency log (pkg/ca/tlog) creates its
+//     verifiable log, appends and reads back entries, serves the latest
+//     checkpoint when it still covers the head and has the head signed
+//     under the CA key when it does not, and serves inclusion and
+//     consistency proofs. It never lists logs or expires bodies, so
+//     vlog:list and vlog:expire stay ungranted.
 var grant = []qrdbsdk.Permission{
 	"kv:get",
 	"kv:put",
@@ -77,6 +78,7 @@ var grant = []qrdbsdk.Permission{
 	"vlog:create",
 	"vlog:append",
 	"vlog:get",
+	"vlog:head",
 	"vlog:sign_head",
 	"vlog:proof",
 }

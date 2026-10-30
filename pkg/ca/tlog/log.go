@@ -44,6 +44,12 @@ type Config struct {
 	// Origin is the log's identity, the first line of every checkpoint
 	// (tlog-checkpoint §Note text), e.g. "ca.example.com/tlog".
 	Origin string
+
+	// AllowExpireBodies lets an operator holding go-qrdb's vlog:expire
+	// expire the bodies of old entries. Their leaf hashes stay, so every
+	// head and proof still verifies; Entry answers ErrEntryExpired for them.
+	// It is fixed when the log is created.
+	AllowExpireBodies bool
 }
 
 // TreeHead is a signed tree head: the checkpoint the CA key signed, and the
@@ -71,7 +77,12 @@ func Create(ctx context.Context, client transport.VlogClient, cfg Config, signer
 	if err != nil {
 		return nil, err
 	}
-	req := &vlogwire.CreateRequest{Log: cfg.Name, Origin: cfg.Origin, SigningKeyType: sigType}
+	req := &vlogwire.CreateRequest{
+		Log:               cfg.Name,
+		Origin:            cfg.Origin,
+		AllowExpireBodies: cfg.AllowExpireBodies,
+		SigningKeyType:    sigType,
+	}
 	if _, err := client.VlogCreate(ctx, req); err != nil {
 		return nil, &errs.Joined{Lead: ErrLogRequest, Detail: "create " + cfg.Name, Cause: err}
 	}
@@ -140,22 +151,53 @@ func (l *Log) Entry(ctx context.Context, index uint64) (Entry, []byte, error) {
 	return e, body, nil
 }
 
-// SignedTreeHead signs the log's current head with the CA key and returns
-// it, after verifying the checkpoint go-qrdb rendered under the CA key, its
-// origin, and that it describes the head go-qrdb signed.
+// SignedTreeHead returns the log's current head signed with the CA key: the
+// latest checkpoint when it already covers the head, otherwise one it has
+// go-qrdb sign. Either way it first verifies the checkpoint under the CA
+// key, its origin, and that it describes the current head.
 func (l *Log) SignedTreeHead(ctx context.Context) (*TreeHead, error) {
+	if th, ok, err := l.latestTreeHead(ctx); ok || err != nil {
+		return th, err
+	}
 	res, err := l.client.VlogSignHead(ctx, &vlogwire.LogRequest{Log: l.name})
 	if err != nil {
+		// go-qrdb keeps one checkpoint per tree size, so the request fails
+		// when a concurrent caller signed this size first: the checkpoint
+		// it made is the head.
+		if th, ok, herr := l.latestTreeHead(ctx); ok && herr == nil {
+			return th, nil
+		}
 		return nil, &errs.Joined{Lead: ErrLogRequest, Detail: "sign head", Cause: err}
 	}
-	c, err := l.VerifyCheckpoint(res.Checkpoint)
+	return l.treeHead(res.Checkpoint, res.Head.Size, res.Head.Root)
+}
+
+// latestTreeHead returns the log's latest checkpoint, verified, when it
+// covers the current head; ok is false when there is none yet or the log
+// has grown past it.
+func (l *Log) latestTreeHead(ctx context.Context) (th *TreeHead, ok bool, err error) {
+	h, err := l.client.VlogHead(ctx, &vlogwire.LogRequest{Log: l.name})
+	if err != nil {
+		return nil, false, &errs.Joined{Lead: ErrLogRequest, Detail: "head", Cause: err}
+	}
+	if len(h.Checkpoint) == 0 || h.CheckpointSize != h.Size {
+		return nil, false, nil
+	}
+	th, err = l.treeHead(h.Checkpoint, h.Size, h.Root)
+	return th, err == nil, err
+}
+
+// treeHead verifies note under the CA key, and that it describes the tree
+// of size entries with root.
+func (l *Log) treeHead(note []byte, size uint64, root []byte) (*TreeHead, error) {
+	c, err := l.VerifyCheckpoint(note)
 	if err != nil {
 		return nil, err
 	}
-	if c.Size != res.Head.Size || !bytes.Equal(c.Hash, res.Head.Root) {
+	if c.Size != size || !bytes.Equal(c.Hash, root) {
 		return nil, &errs.Detail{Err: ErrCheckpointMismatch, Detail: "checkpoint describes another tree"}
 	}
-	return &TreeHead{Checkpoint: c, Note: res.Checkpoint}, nil
+	return &TreeHead{Checkpoint: c, Note: note}, nil
 }
 
 // VerifyCheckpoint verifies note, a checkpoint of this log, under the CA key

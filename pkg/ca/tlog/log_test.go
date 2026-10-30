@@ -19,13 +19,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"math/big"
+	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport/vlogwire"
 	"github.com/stretchr/testify/require"
 	"github.com/transparency-dev/merkle/proof"
 	"github.com/transparency-dev/merkle/rfc6962"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca/checkpoint"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 )
 
 func testEntries() []Entry {
@@ -107,4 +111,171 @@ func TestSignedTreeHeadVerifiesUnderCAKey(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = checkpoint.OpenCheckpoint(head.Note, otherVerifier.Verifier())
 	require.Error(t, err)
+}
+
+// TestOpen_ReadsTheCreatedLog opens a second handle on a created log and
+// reads and verifies through it, and refuses a handle without a verifier or
+// with an incomplete configuration.
+func TestOpen_ReadsTheCreatedLog(t *testing.T) {
+	signer := newEd25519(t)
+	l, client, ctx := newLog(t, signer)
+	_, err := l.AppendRevoked(ctx, Revoked{Serial: big.NewInt(9), Reason: 0})
+	require.NoError(t, err)
+
+	v, err := newProvider(t, signer).Verifier(ctx)
+	require.NoError(t, err)
+	opened, err := Open(client, Config{Name: "certs", Origin: testOrigin}, v)
+	require.NoError(t, err)
+	got, _, err := opened.Entry(ctx, 0)
+	require.NoError(t, err)
+	require.Equal(t, Revoked{Serial: big.NewInt(9), Reason: 0}, got)
+	head, err := opened.SignedTreeHead(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), head.Checkpoint.Size)
+
+	_, err = Open(client, Config{Name: "certs", Origin: testOrigin}, nil)
+	require.ErrorIs(t, err, ErrNoVerifier)
+	for _, cfg := range []Config{{Origin: testOrigin}, {Name: "certs"}} {
+		_, err = Open(client, cfg, v)
+		require.ErrorIs(t, err, ErrInvalidConfig)
+	}
+}
+
+// TestSignedTreeHead_CheckpointMismatch refuses a head that does not verify
+// under the handle's CA key, or that names another origin.
+func TestSignedTreeHead_CheckpointMismatch(t *testing.T) {
+	l, client, ctx := newLog(t, newEd25519(t))
+	_, err := l.AppendRevoked(ctx, Revoked{Serial: big.NewInt(9), Reason: 0})
+	require.NoError(t, err)
+
+	other, err := newProvider(t, newEd25519(t)).Verifier(ctx)
+	require.NoError(t, err)
+	wrongKey, err := Open(client, Config{Name: "certs", Origin: testOrigin}, other)
+	require.NoError(t, err)
+	_, err = wrongKey.SignedTreeHead(ctx)
+	require.ErrorIs(t, err, ErrCheckpointMismatch)
+
+	head, err := l.SignedTreeHead(ctx)
+	require.NoError(t, err)
+	wrongOrigin, err := Open(client, Config{Name: "certs", Origin: "other.example.com/tlog"}, l.verifier)
+	require.NoError(t, err)
+	_, err = wrongOrigin.VerifyCheckpoint(head.Note)
+	require.ErrorIs(t, err, ErrCheckpointMismatch)
+	_, err = wrongOrigin.SignedTreeHead(ctx)
+	require.ErrorIs(t, err, ErrCheckpointMismatch)
+}
+
+// TestSignedTreeHead_RepeatedAndConcurrent asks for the head many times at
+// one tree size, in turn and at once: go-qrdb keeps one checkpoint per
+// size, and every caller gets that checkpoint.
+func TestSignedTreeHead_RepeatedAndConcurrent(t *testing.T) {
+	l, _, ctx := newLog(t, newP256(t))
+	_, err := l.AppendRevoked(ctx, Revoked{Serial: big.NewInt(9), Reason: 0})
+	require.NoError(t, err)
+
+	first, err := l.SignedTreeHead(ctx)
+	require.NoError(t, err)
+	again, err := l.SignedTreeHead(ctx)
+	require.NoError(t, err)
+	require.Equal(t, first.Note, again.Note)
+
+	_, err = l.AppendRevoked(ctx, Revoked{Serial: big.NewInt(10), Reason: 0})
+	require.NoError(t, err)
+	const callers = 8
+	notes := make([][]byte, callers)
+	failures := make([]error, callers)
+	var wg sync.WaitGroup
+	for i := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			head, err := l.SignedTreeHead(ctx)
+			failures[i] = err
+			if err == nil {
+				notes[i] = head.Note
+			}
+		}()
+	}
+	wg.Wait()
+	for i := range callers {
+		require.NoError(t, failures[i])
+		require.Equal(t, notes[0], notes[i])
+	}
+	c, err := l.VerifyCheckpoint(notes[0])
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), c.Size)
+}
+
+// TestLog_RequestFailures maps every go-qrdb refusal to ErrLogRequest, and
+// an invalid entry to ErrInvalidEntry before any request.
+func TestLog_RequestFailures(t *testing.T) {
+	signer := newEd25519(t)
+	p := newProvider(t, signer)
+	client, ctx := newVlogClient(t, p)
+	l, err := Create(ctx, client, Config{Name: "certs", Origin: testOrigin}, p)
+	require.NoError(t, err)
+	_, err = l.AppendRevoked(ctx, Revoked{Serial: big.NewInt(9), Reason: 0})
+	require.NoError(t, err)
+
+	_, err = Create(ctx, client, Config{Name: "certs", Origin: testOrigin}, p)
+	require.ErrorIs(t, err, ErrLogRequest, "the log already exists")
+
+	_, err = l.AppendRevoked(ctx, Revoked{Serial: big.NewInt(9), Reason: 7})
+	require.ErrorIs(t, err, ErrInvalidEntry)
+	_, err = l.AppendCertIssued(ctx, CertIssued{})
+	require.ErrorIs(t, err, ErrInvalidEntry)
+	_, err = l.AppendImageSigned(ctx, ImageSigned{})
+	require.ErrorIs(t, err, ErrInvalidEntry)
+
+	_, _, err = l.Entry(ctx, 5)
+	require.ErrorIs(t, err, ErrLogRequest)
+	_, err = l.InclusionProof(ctx, 5, 1)
+	require.ErrorIs(t, err, ErrLogRequest)
+	_, err = l.ConsistencyProof(ctx, 2, 1)
+	require.ErrorIs(t, err, ErrLogRequest)
+
+	missing, err := Open(client, Config{Name: "missing", Origin: testOrigin}, l.verifier)
+	require.NoError(t, err)
+	_, err = missing.AppendImageSigned(ctx, ImageSigned{ImageDigest: "i", EnvelopeDigest: "e", Signer: "s"})
+	require.ErrorIs(t, err, ErrLogRequest)
+	_, _, err = missing.Entry(ctx, 0)
+	require.ErrorIs(t, err, ErrLogRequest)
+	_, err = missing.SignedTreeHead(ctx)
+	require.ErrorIs(t, err, ErrLogRequest)
+}
+
+// TestEntry_Expired reads back an entry whose body an operator expired on a
+// log created with AllowExpireBodies: Entry answers ErrEntryExpired, and
+// the entry's inclusion in a later CA-signed head still verifies.
+func TestEntry_Expired(t *testing.T) {
+	// The xkms service principal never expires bodies, so production does
+	// not grant it vlog:expire (serviceprincipal.Grant). Here the same role
+	// also stands in for the operator who does; the grant exists only in
+	// this test binary.
+	qrdbsdk.RegisterPermissionRoleGrant(serviceprincipal.Name, "vlog:expire")
+
+	l, client, ctx := newLogWith(t, newP256(t), Config{Name: "certs", Origin: testOrigin, AllowExpireBodies: true})
+	want := testEntries()
+	for _, e := range want {
+		_, err := appendEntry(ctx, l, e)
+		require.NoError(t, err)
+	}
+	_, body, err := l.Entry(ctx, 0)
+	require.NoError(t, err)
+
+	_, err = client.VlogExpireBodies(ctx, &vlogwire.ExpireRequest{Log: "certs", Cutoff: 1})
+	require.NoError(t, err)
+
+	_, _, err = l.Entry(ctx, 0)
+	require.ErrorIs(t, err, ErrEntryExpired)
+	got, _, err := l.Entry(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, want[1], got)
+
+	head, err := l.SignedTreeHead(ctx)
+	require.NoError(t, err)
+	hashes, err := l.InclusionProof(ctx, 0, head.Checkpoint.Size)
+	require.NoError(t, err)
+	leaf := rfc6962.DefaultHasher.HashLeaf(body)
+	require.NoError(t, proof.VerifyInclusion(rfc6962.DefaultHasher, 0, head.Checkpoint.Size, leaf, hashes, head.Checkpoint.Hash))
 }
