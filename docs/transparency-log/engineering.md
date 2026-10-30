@@ -243,9 +243,11 @@ node-backed tests in `pkg/ca/tlog` (`node_test.go`, `log_test.go`) and
 The Makefile's `TEST_TAGS` and `BUILD_TAGS` include `qrdb_vlog`, so
 `make test` and the vet and lint gates (which use `TEST_TAGS`) build with
 it. `coverage-ca` adds it to `BUILD_TAGS`. `SERVER_BUILD_TAGS`
-(`Makefile:86`) does not include the tag, so an xkmsd built by `make` has
-the log off unless the configuration sets `transparency_log.enabled`, and
-setting it fails start-up.
+(`Makefile:87`) includes the tag too, so every xkmsd that `make` builds
+(`build-server` and the release cross-builds) has the log on by default.
+An xkmsd built without the tag has it off; setting
+`transparency_log.enabled: true` in such a build fails start-up with
+`server.ErrTransparencyLog` wrapping `server.ErrTransparencyLogUnavailable`.
 
 Specifications, both pinned at C2SP commit `e5746a0b`:
 [c2sp-tlog-checkpoint.md](../references/c2sp-tlog-checkpoint.md) and
