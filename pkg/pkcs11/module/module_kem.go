@@ -230,15 +230,17 @@ func (m *Module) EncapsulateKey(sessionHandle SessionHandle, mechanism *Mechanis
 
 	// Validate CKA_ENCAPSULATE attribute is set on the public key.
 	//
-	// The code is CKR_KEY_TYPE_INCONSISTENT, not
-	// CKR_KEY_FUNCTION_NOT_PERMITTED: C_EncapsulateKey's return table lists the
-	// former and does not list the latter, and PKCS#11 v3.2 §5.1 defines it as
-	// "the specified key is not the correct type of key to use with the
-	// specified mechanism", which is what a key not marked for encapsulation
-	// is.
+	// The code is CKR_KEY_FUNCTION_NOT_PERMITTED, for the reason C_DeriveKey
+	// gives for CKA_DERIVE. PKCS#11 v3.2 §5.1.6 defines it as "an attempt has
+	// been made to use a key for a cryptographic purpose that the key's
+	// attributes are not set to allow it to do", and defines
+	// CKR_KEY_TYPE_INCONSISTENT as "the specified key is not the correct type of
+	// key to use with the specified mechanism" -- a different fault, since an
+	// ML-KEM key under CKM_ML_KEM is the right type. §5.18.8's return list
+	// omits the code, but §5.1.7 lets any applicable code be returned.
 	if !isBoolAttributeTrue(pubKeyObj, CKA_ENCAPSULATE) {
 		return ObjectHandle(InvalidHandle), nil, NewPKCS11ErrorWithMessage(
-			CKR_KEY_TYPE_INCONSISTENT, "public key does not permit encapsulation")
+			CKR_KEY_FUNCTION_NOT_PERMITTED, "public key does not permit encapsulation")
 	}
 
 	// CKA_ALLOWED_MECHANISMS on the public key names the mechanisms that key
@@ -439,15 +441,11 @@ func (m *Module) DecapsulateKey(sessionHandle SessionHandle, mechanism *Mechanis
 
 	// Validate CKA_DECAPSULATE attribute is set on the private key.
 	//
-	// The code is CKR_KEY_TYPE_INCONSISTENT, not
-	// CKR_KEY_FUNCTION_NOT_PERMITTED: C_DecapsulateKey's return table lists the
-	// former and does not list the latter, and PKCS#11 v3.2 §5.1 defines it as
-	// "the specified key is not the correct type of key to use with the
-	// specified mechanism", which is what a key not marked for decapsulation
-	// is.
+	// The code is CKR_KEY_FUNCTION_NOT_PERMITTED, for the reason
+	// C_EncapsulateKey gives for CKA_ENCAPSULATE (§5.1.6, §5.1.7, §5.18.9).
 	if !isBoolAttributeTrue(privKeyObj, CKA_DECAPSULATE) {
 		return ObjectHandle(InvalidHandle), NewPKCS11ErrorWithMessage(
-			CKR_KEY_TYPE_INCONSISTENT, "private key does not permit decapsulation")
+			CKR_KEY_FUNCTION_NOT_PERMITTED, "private key does not permit decapsulation")
 	}
 
 	// CKA_ALLOWED_MECHANISMS on the private key names the mechanisms that key
@@ -800,11 +798,11 @@ func (m *Module) KEMCiphertextSize(sessionHandle SessionHandle, mechanism *Mecha
 	if pubKeyObj.Class != CKO_PUBLIC_KEY {
 		return 0, NewPKCS11ErrorWithMessage(CKR_KEY_HANDLE_INVALID, "key is not a public key")
 	}
-	// CKR_KEY_TYPE_INCONSISTENT rather than CKR_KEY_FUNCTION_NOT_PERMITTED, for
-	// the reason given in EncapsulateKey: the size query must answer with the
-	// same code the encapsulation itself would.
+	// CKR_KEY_FUNCTION_NOT_PERMITTED, for the reason given in EncapsulateKey:
+	// the size query must answer with the same code the encapsulation itself
+	// would.
 	if !isBoolAttributeTrue(pubKeyObj, CKA_ENCAPSULATE) {
-		return 0, NewPKCS11ErrorWithMessage(CKR_KEY_TYPE_INCONSISTENT,
+		return 0, NewPKCS11ErrorWithMessage(CKR_KEY_FUNCTION_NOT_PERMITTED,
 			"public key does not permit encapsulation")
 	}
 

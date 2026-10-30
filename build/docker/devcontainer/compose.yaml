@@ -165,15 +165,19 @@ services:
       # The xkms-server's throwaway test SO PIN, which `xkmsd init` made its
       # barrier passphrase; open-server-barrier.sh unseals with it.
       - XKMS_SERVER_BARRIER_SECRET=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
-      # The same trust anchor again, under the names the PKCS#11 MODULE reads
-      # (pkg/pkcs11/module/config.go). The XKMS_GRPC_TLS_* pair above is read by
-      # the Go test harness, which configures an in-process module; the
-      # pkcs11-tool lanes instead load the module in a separate process that has
-      # only the environment to go on. Enabling TLS here is safe for the unix
-      # lane: the module applies TLS only to gRPC/TCP targets and a unix://
-      # target never reaches createGRPCClient's TLS branch.
+      # The same trust anchor and admin credential again, under the names the
+      # PKCS#11 MODULE reads (pkg/pkcs11/module/config.go). A module the
+      # pkcs11-tool, OpenSSL and C ABI lanes dlopen has only the environment to
+      # go on, and the Go harness reads the same variables for its in-process
+      # module (test/integration/pkcs11/module DefaultTestConfig). The unix
+      # socket is the embedded qrdb node's TLS-only listener: Health answers an
+      # anonymous TLS client, so C_Initialize succeeds without a certificate,
+      # but every key operation is refused as unauthenticated
+      # (CKR_USER_NOT_LOGGED_IN). The client certificate is what lets them run.
       - XKMS_PKCS11_TLS_ENABLED=true
       - XKMS_PKCS11_TLS_CA=/tmp/xkms/ca.crt
+      - XKMS_PKCS11_TLS_CERT=/tmp/xkms/admin-cert.pem
+      - XKMS_PKCS11_TLS_KEY=/tmp/xkms/admin-key.pem
       # Legacy endpoints (KEYSTORE_* prefix)
       - KEYSTORE_UNIX_SOCKET=/var/run/xkms/xkms.sock
       - KEYSTORE_REST_URL=https://xkms-server:8443

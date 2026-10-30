@@ -140,21 +140,28 @@ services:
       - softhsm-tokens:/var/lib/softhsm/tokens
     environment:
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+    # Runs once per dependent service on the same softhsm-tokens volume, so it
+    # initializes test-token only when no token carries that label yet.
+    # --free takes SoftHSM's empty slot: once a token exists, slot 0 is gone.
     command: >
       sh -c "
       mkdir -p /var/lib/softhsm/tokens /etc/softhsm &&
       echo 'directories.tokendir = /var/lib/softhsm/tokens' > /etc/softhsm/softhsm2.conf &&
       echo 'objectstore.backend = file' >> /etc/softhsm/softhsm2.conf &&
       echo 'log.level = INFO' >> /etc/softhsm/softhsm2.conf &&
-      /build/softhsm-install/usr/bin/softhsm2-util --module /build/softhsm-install/usr/lib/softhsm/libsofthsm2.so --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234 &&
-      echo 'SoftHSM initialized successfully'
+      if /build/softhsm-install/usr/bin/softhsm2-util --module /build/softhsm-install/usr/lib/softhsm/libsofthsm2.so --show-slots | grep -q 'Label: *test-token *$$'; then
+      echo 'SoftHSM token test-token already initialized';
+      else
+      /build/softhsm-install/usr/bin/softhsm2-util --module /build/softhsm-install/usr/lib/softhsm/libsofthsm2.so --init-token --free --label test-token --so-pin 1234 --pin 1234 &&
+      echo 'SoftHSM initialized successfully';
+      fi
       "
     networks:
       - storage-test-network
 
   # TPM2 simulator for hardware tests
   tpm-simulator:
-    image: ghcr.io/stefanberger/swtpm:latest
+    image: ghcr.io/stefanberger/swtpm:v0.10.0@sha256:303a1998b9ae7ad500146036bb63e1e0703208f788db8741233f0080c3125a78
     command:
       - socket
       - --tpmstate

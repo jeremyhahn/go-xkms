@@ -426,26 +426,13 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
 	}
 
-	if err := e.backend.p11ctx.FindObjectsInit(session, template); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to init object search", Err: err}
-	}
-
-	handles, _, err := e.backend.p11ctx.FindObjects(session, 1)
+	handle, err := e.backend.findOneObject(session, template)
 	if err != nil {
-		findFinalErr := e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
-		return nil, errors.Join(&errs.Wrapped{Msg: "failed to find objects", Err: err}, findFinalErr)
+		return nil, err
 	}
-
-	// Must finalize BEFORE starting encryption operation
-	if err := e.backend.p11ctx.FindObjectsFinal(session); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to finalize object search", Err: err}
-	}
-
-	if len(handles) == 0 {
+	if handle == 0 {
 		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", e.attrs.CN)}
 	}
-
-	handle := handles[0]
 
 	// Create mechanism with GCM parameters
 	mechanism := []*pkcs11.Mechanism{
@@ -576,26 +563,13 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
 	}
 
-	if err := e.backend.p11ctx.FindObjectsInit(session, template); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to init object search", Err: err}
-	}
-
-	handles, _, err := e.backend.p11ctx.FindObjects(session, 1)
+	handle, err := e.backend.findOneObject(session, template)
 	if err != nil {
-		findFinalErr := e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
-		return nil, errors.Join(&errs.Wrapped{Msg: "failed to find objects", Err: err}, findFinalErr)
+		return nil, err
 	}
-
-	// Must finalize BEFORE starting decryption operation
-	if err := e.backend.p11ctx.FindObjectsFinal(session); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to finalize object search", Err: err}
-	}
-
-	if len(handles) == 0 {
+	if handle == 0 {
 		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", e.attrs.CN)}
 	}
-
-	handle := handles[0]
 
 	// Create mechanism with GCM parameters
 	mechanism := []*pkcs11.Mechanism{
@@ -655,25 +629,15 @@ func (e *pkcs11SymmetricEncrypter) withKeySession(fn func(session pkcs11.Session
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
 	}
 
-	if err := e.backend.p11ctx.FindObjectsInit(session, template); err != nil {
-		return &errs.Wrapped{Msg: "failed to init object search", Err: err}
-	}
-
-	handles, _, err := e.backend.p11ctx.FindObjects(session, 1)
+	handle, err := e.backend.findOneObject(session, template)
 	if err != nil {
-		findFinalErr := e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
-		return errors.Join(&errs.Wrapped{Msg: "failed to find objects", Err: err}, findFinalErr)
+		return err
 	}
-
-	if err := e.backend.p11ctx.FindObjectsFinal(session); err != nil {
-		return &errs.Wrapped{Msg: "failed to finalize object search", Err: err}
-	}
-
-	if len(handles) == 0 {
+	if handle == 0 {
 		return &errs.Message{Msg: fmt.Sprintf("key not found: %s", e.attrs.CN)}
 	}
 
-	return fn(session, handles[0])
+	return fn(session, handle)
 }
 
 // encryptCBC implements types.CipherModeCBC (unpadded, CKM_AES_CBC) and

@@ -558,8 +558,9 @@ func TestIntegration_SealUnseal(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     mustPassword(nil),
-		StoreType:    types.StoreTPM2,
+		// A sealed object needs a policy or a password (ErrSealUnprotected).
+		Password:  mustPassword([]byte("integration-seal-password")),
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},

@@ -51,6 +51,15 @@
 # concurrency follows the container CPU quota, so lint takes N with no flag.
 # A 4-CPU slot on the Dells gives 4; never a hardcoded number.
 #
+# v4 (ruling 108, Company Agent m1311 (1)): CI_WORK_VOLUME=on gives the stage
+# an anonymous volume at /work, on the daemon host's disk, and points TMPDIR
+# and GOTMPDIR at it. `go test` keeps every package's work directory, the
+# coverage-instrumented archives and per-package profiles included, until it
+# exits, and tests write their temp dirs under TMPDIR; on a whole-module race
+# and coverage run that outgrew the 3 GB /tmp tmpfs ("No space left on
+# device"). The volume goes with the container (`docker rm -v`, here on exit
+# and in the reaper for a dead job). Off by default, so a local run keeps /tmp.
+#
 # The container is named <CI_STACK_PREFIX>tc-<pid>-<random>, under the prefix
 # scripts/reap-stale-ci-stacks.sh reaps (default <checkout dir>-ci-, which in CI
 # is <repo>-ci-), and is removed on every exit. IN_IMAGE_UID is the non-root
@@ -84,6 +93,11 @@ class=${CI_CACHE_CLASS:-pr}
 case $class in
   pr | main) ;;
   *) echo "CI_CACHE_CLASS must be pr or main: $class" >&2; exit 2 ;;
+esac
+work=${CI_WORK_VOLUME:-off}
+case $work in
+  on | off) ;;
+  *) echo "CI_WORK_VOLUME must be on or off: $work" >&2; exit 2 ;;
 esac
 cpus=${IN_IMAGE_CPUS:-}
 if [ -z "$cpus" ]; then
@@ -160,6 +174,9 @@ if [ "$network" = bridge ]; then
     if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
   done
 fi
+if [ "$work" = on ]; then
+  args+=(-v /work --env TMPDIR=/work --env GOTMPDIR=/work)
+fi
 
 cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -169,6 +186,12 @@ trap cleanup EXIT
 # shellcheck disable=SC2016 # expands in the container, not here
 guard='[ -d "$TMPDIR" ] && [ -w "$TMPDIR" ] || { echo "in-toolchain-image: scratch directory $TMPDIR is missing or not writable" >&2; exit 2; }'
 docker create "${args[@]}" "$image" sh -c "$guard; $*" >/dev/null
+if [ "$work" = on ]; then
+  # A new anonymous volume's root is root's; give it to the stage's uid.
+  docker run --rm --network none --cap-drop ALL --cap-add CHOWN \
+    --security-opt no-new-privileges:true --user 0:0 --volumes-from "$name" \
+    "$image" chown "$uid:$uid" /work >/dev/null
+fi
 tar -C "$PWD" --owner="$uid" --group="$uid" --numeric-owner -cf - . |
   docker cp -a - "$name:/src"
 docker start -a "$name"
