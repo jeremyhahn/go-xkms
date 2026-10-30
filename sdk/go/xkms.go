@@ -414,6 +414,16 @@ type (
 	IsRevokedRequest          = transport.IsRevokedRequest
 	IsRevokedResponse         = transport.IsRevokedResponse
 
+	// CA Transparency Log Operations
+	GetTransparencyLogHeadRequest              = transport.GetTransparencyLogHeadRequest
+	GetTransparencyLogHeadResponse             = transport.GetTransparencyLogHeadResponse
+	GetTransparencyLogEntryRequest             = transport.GetTransparencyLogEntryRequest
+	GetTransparencyLogEntryResponse            = transport.GetTransparencyLogEntryResponse
+	GetTransparencyLogInclusionProofRequest    = transport.GetTransparencyLogInclusionProofRequest
+	GetTransparencyLogInclusionProofResponse   = transport.GetTransparencyLogInclusionProofResponse
+	GetTransparencyLogConsistencyProofRequest  = transport.GetTransparencyLogConsistencyProofRequest
+	GetTransparencyLogConsistencyProofResponse = transport.GetTransparencyLogConsistencyProofResponse
+
 	// TCG CA Operations
 	IssueEKCertificateRequest   = transport.IssueEKCertificateRequest
 	IssueEKCertificateResponse  = transport.IssueEKCertificateResponse

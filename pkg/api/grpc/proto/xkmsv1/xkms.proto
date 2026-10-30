@@ -502,6 +502,34 @@ service KeystoreService {
     option (qrdb.v1.permission) = "certs:read";
   }
 
+  // ==================== CA Transparency Log Operations ====================
+  // The read verbs over the CA's transparency log (docs/transparency-log).
+  // Permissions are go-qrdb's verifiable-log actions.
+
+  // GetTransparencyLogHead returns the log's current signed tree head.
+  // REST equivalent: GET /api/v1/ca/transparency-log/head
+  rpc GetTransparencyLogHead(GetTransparencyLogHeadRequest) returns (GetTransparencyLogHeadResponse) {
+    option (qrdb.v1.permission) = "vlog:head";
+  }
+
+  // GetTransparencyLogEntry returns one encoded log entry.
+  // REST equivalent: GET /api/v1/ca/transparency-log/entries/{index}
+  rpc GetTransparencyLogEntry(GetTransparencyLogEntryRequest) returns (GetTransparencyLogEntryResponse) {
+    option (qrdb.v1.permission) = "vlog:get";
+  }
+
+  // GetTransparencyLogInclusionProof returns an RFC 9162 §2.1.3 inclusion proof.
+  // REST equivalent: GET /api/v1/ca/transparency-log/proofs/inclusion
+  rpc GetTransparencyLogInclusionProof(GetTransparencyLogInclusionProofRequest) returns (GetTransparencyLogInclusionProofResponse) {
+    option (qrdb.v1.permission) = "vlog:proof";
+  }
+
+  // GetTransparencyLogConsistencyProof returns an RFC 9162 §2.1.4 consistency proof.
+  // REST equivalent: GET /api/v1/ca/transparency-log/proofs/consistency
+  rpc GetTransparencyLogConsistencyProof(GetTransparencyLogConsistencyProofRequest) returns (GetTransparencyLogConsistencyProofResponse) {
+    option (qrdb.v1.permission) = "vlog:proof";
+  }
+
   // ==================== CA Operations ====================
 
   // GetCACertificate retrieves the CA certificate with metadata.
@@ -3252,6 +3280,66 @@ message FrostVerifyRequest {
 message FrostVerifyResponse {
   bool valid = 1;
   string message = 2;
+}
+
+// ==================== CA Transparency Log Messages ====================
+
+// GetTransparencyLogHeadRequest requests the log's current signed tree head.
+message GetTransparencyLogHeadRequest {}
+
+// GetTransparencyLogHeadResponse is the log's signed tree head.
+message GetTransparencyLogHeadResponse {
+  // The tree head as a C2SP signed note (tlog-checkpoint), signed with the CA key.
+  bytes checkpoint = 1;
+  // The checkpoint's origin line.
+  string origin = 2;
+  // The number of entries the tree head covers.
+  uint64 size = 3;
+  // The RFC 9162 Merkle tree root hash at size.
+  bytes root_hash = 4;
+}
+
+// GetTransparencyLogEntryRequest requests one log entry.
+message GetTransparencyLogEntryRequest {
+  // The entry's zero-based index; below the current tree head's size.
+  uint64 index = 1;
+}
+
+// GetTransparencyLogEntryResponse is one encoded log entry.
+message GetTransparencyLogEntryResponse {
+  uint64 index = 1;
+  // The encoded entry: the leaf data whose leaf hash the inclusion proof proves.
+  bytes entry = 2;
+}
+
+// GetTransparencyLogInclusionProofRequest names an entry and a tree size.
+message GetTransparencyLogInclusionProofRequest {
+  // The entry's zero-based index; below tree_size.
+  uint64 index = 1;
+  // The tree size to prove against; 1 to the current tree head's size.
+  uint64 tree_size = 2;
+}
+
+// GetTransparencyLogInclusionProofResponse is an RFC 9162 §2.1.3 inclusion proof.
+message GetTransparencyLogInclusionProofResponse {
+  uint64 index = 1;
+  uint64 tree_size = 2;
+  // The inclusion path, leaf to root.
+  repeated bytes hashes = 3;
+}
+
+// GetTransparencyLogConsistencyProofRequest names two tree sizes,
+// 1 <= first_size <= second_size <= the current tree head's size.
+message GetTransparencyLogConsistencyProofRequest {
+  uint64 first_size = 1;
+  uint64 second_size = 2;
+}
+
+// GetTransparencyLogConsistencyProofResponse is an RFC 9162 §2.1.4 consistency proof.
+message GetTransparencyLogConsistencyProofResponse {
+  uint64 first_size = 1;
+  uint64 second_size = 2;
+  repeated bytes hashes = 3;
 }
 
 // ==================== CA Bundle Messages ====================
