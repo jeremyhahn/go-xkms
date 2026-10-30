@@ -222,6 +222,22 @@ func (m *mockService) GetCABundle(ctx context.Context, req *GetCABundleRequest) 
 	return nil, nil
 }
 
+func (m *mockService) GetTransparencyLogHead(ctx context.Context, req *GetTransparencyLogHeadRequest) (*GetTransparencyLogHeadResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetTransparencyLogEntry(ctx context.Context, req *GetTransparencyLogEntryRequest) (*GetTransparencyLogEntryResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetTransparencyLogInclusionProof(ctx context.Context, req *GetTransparencyLogInclusionProofRequest) (*GetTransparencyLogInclusionProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetTransparencyLogConsistencyProof(ctx context.Context, req *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, nil
+}
+
 func (m *mockService) GetCACertificate(ctx context.Context, req *GetCACertificateRequest) (*GetCACertificateResponse, error) {
 	return nil, nil
 }

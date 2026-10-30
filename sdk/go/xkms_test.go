@@ -990,6 +990,22 @@ func (m *mockXKMSService) GetCABundle(ctx context.Context, req *transport.GetCAB
 	return nil, nil
 }
 
+func (m *mockXKMSService) GetTransparencyLogHead(ctx context.Context, req *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) GetTransparencyLogEntry(ctx context.Context, req *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) GetTransparencyLogInclusionProof(ctx context.Context, req *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) GetTransparencyLogConsistencyProof(ctx context.Context, req *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, nil
+}
+
 func (m *mockXKMSService) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, nil
 }

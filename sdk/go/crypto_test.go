@@ -650,6 +650,18 @@ func (n *noopClient) ActivateInvitePIV(context.Context, *transport.ActivateInvit
 func (n *noopClient) GetCABundle(context.Context, *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) GetTransparencyLogHead(context.Context, *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) GetTransparencyLogEntry(context.Context, *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) GetTransparencyLogInclusionProof(context.Context, *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) GetTransparencyLogConsistencyProof(context.Context, *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) GetCACertificate(context.Context, *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, nil
 }
