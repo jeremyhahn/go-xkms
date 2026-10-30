@@ -54,6 +54,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -302,6 +303,13 @@ type Server struct {
 	// initializeCA once the TrustedCA exists (go-xkms#1381). nil when the
 	// TrustedCA is not the cluster CA (see trustedCAIsClusterCA).
 	clusterCAKeyProvider *clustercapkg.KeyProvider
+
+	// tlogKeys is the TrustedCA's issuing key as the CA transparency log's
+	// head-signing key, bound in initializeCA; tlogSigners is the head
+	// signer the node takes through WithHeadSignerProvider. Both are nil
+	// when the log is off (see transparencyLogNodeOptions).
+	tlogKeys    *clustercapkg.KeyProvider
+	tlogSigners *tlog.HeadSignerProvider
 
 	// tenantService is the node's go-qrdb TenantService, built over the
 	// node's barrier registry with the node seal strategy injected. It owns the
@@ -2194,6 +2202,12 @@ func (s *Server) initializeCA() error {
 		if err := s.clusterCAKeyProvider.Bind(trustedCA); err != nil {
 			return &ErrCAInit{Operation: "bind cluster CA", Err: err}
 		}
+	}
+
+	// The transparency log goes on before the first issuance below, so no
+	// certificate this server issues is missing from it.
+	if err := s.openTransparencyLog(trustedCA); err != nil {
+		return err
 	}
 
 	cn := s.config.CA.Identity[0].Subject.CommonName

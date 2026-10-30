@@ -264,6 +264,14 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	// The TrustedCA as the cluster CA (Key A), bound once initializeCA runs.
 	nodeOpts = append(nodeOpts, s.clusterCAKeyProviderOptions()...)
 
+	// The CA transparency log's head signer, over the TrustedCA's key and
+	// bound once initializeCA runs.
+	tlogOpts, err := s.transparencyLogNodeOptions()
+	if err != nil {
+		return &QRDBNodeError{Stage: "transparency log head signer", Err: err}
+	}
+	nodeOpts = append(nodeOpts, tlogOpts...)
+
 	// newQRDBNode is build-tag specific: the default (!raft) build hosts a
 	// standalone node; the -tags raft build hosts a clustered node when
 	// Cluster.Enabled, falling back to standalone otherwise.
