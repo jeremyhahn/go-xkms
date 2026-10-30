@@ -20,10 +20,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // newTLogCAServer returns a minimal server with a one-identity CA whose keys
@@ -102,6 +104,11 @@ func TestInitializeCA_TransparencyLogOff(t *testing.T) {
 		Subject: ca.Subject{CommonName: "tlog-off"}, Valid: 30, TenantID: "tenant-a"})
 	require.NoError(t, err, "no log, no append")
 	require.NotNil(t, issued.Certificate)
+
+	svc := &xkms.XKMSService{}
+	s.wireTransparencyLog(svc)
+	_, err = svc.GetTransparencyLogHead(context.Background(), &transport.GetTransparencyLogHeadRequest{})
+	require.ErrorIs(t, err, xkms.ErrTransparencyLogNotConfigured, "no log, nothing to read")
 }
 
 // Switched on with no embedded node to open the log on, start-up fails with
