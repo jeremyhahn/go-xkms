@@ -103,6 +103,30 @@ func Open(client transport.VlogClient, cfg Config, verifier *checkpoint.Verifier
 	return &Log{client: client, name: cfg.Name, origin: cfg.Origin, verifier: verifier}, nil
 }
 
+// OpenOrCreate opens the log cfg names and creates it under the CA key when
+// its head cannot be read, the way a server opens its log at start. go-qrdb's
+// embedded transport does not classify a missing log, so a head that fails
+// to read for another reason also leads to Create, which then answers
+// ErrLogRequest for the log that already exists: the caller fails rather
+// than run on a log it could not read.
+func OpenOrCreate(ctx context.Context, client transport.VlogClient, cfg Config, signers *HeadSignerProvider) (*Log, error) {
+	if signers == nil {
+		return nil, ErrNoKeyProvider
+	}
+	verifier, err := signers.Verifier(ctx)
+	if err != nil {
+		return nil, err
+	}
+	l, err := Open(client, cfg, verifier)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := client.VlogHead(ctx, &vlogwire.LogRequest{Log: cfg.Name}); err == nil {
+		return l, nil
+	}
+	return Create(ctx, client, cfg, signers)
+}
+
 // AppendCertIssued appends a cert-issued entry and returns its index.
 func (l *Log) AppendCertIssued(ctx context.Context, e CertIssued) (uint64, error) {
 	return l.append(ctx, e)

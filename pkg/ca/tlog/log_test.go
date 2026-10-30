@@ -141,6 +141,49 @@ func TestOpen_ReadsTheCreatedLog(t *testing.T) {
 	}
 }
 
+func TestOpenOrCreate_CreatesThenOpens(t *testing.T) {
+	signer := newEd25519(t)
+	p := newProvider(t, signer)
+	client, ctx := newVlogClient(t, p)
+	cfg := Config{Name: "certs", Origin: testOrigin}
+
+	created, err := OpenOrCreate(ctx, client, cfg, p)
+	require.NoError(t, err)
+	_, err = created.AppendRevoked(ctx, Revoked{Serial: big.NewInt(3), Reason: 1})
+	require.NoError(t, err)
+
+	opened, err := OpenOrCreate(ctx, client, cfg, p)
+	require.NoError(t, err, "a log that exists is opened, not created again")
+	got, _, err := opened.Entry(ctx, 0)
+	require.NoError(t, err)
+	require.Equal(t, Revoked{Serial: big.NewInt(3), Reason: 1}, got)
+}
+
+func TestOpenOrCreate_Errors(t *testing.T) {
+	signer := newEd25519(t)
+	p := newProvider(t, signer)
+	client, ctx := newVlogClient(t, p)
+
+	_, err := OpenOrCreate(ctx, client, Config{Name: "certs", Origin: testOrigin}, nil)
+	require.ErrorIs(t, err, ErrNoKeyProvider)
+
+	_, err = OpenOrCreate(ctx, nil, Config{Name: "certs", Origin: testOrigin}, p)
+	require.ErrorIs(t, err, ErrNoClient)
+
+	_, err = OpenOrCreate(ctx, client, Config{Name: "certs"}, p)
+	require.ErrorIs(t, err, ErrInvalidConfig)
+
+	unavailable, err := NewHeadSignerProvider(failingCAKeys(nil, &qrdbsdk.CAKeyNotInitializedError{}), testKeyName)
+	require.NoError(t, err)
+	_, err = OpenOrCreate(ctx, client, Config{Name: "certs", Origin: testOrigin}, unavailable)
+	require.ErrorIs(t, err, ErrCAKeyUnavailable)
+
+	// A context without the service principal cannot read the head, and
+	// cannot create the log either: the caller learns at once.
+	_, err = OpenOrCreate(t.Context(), client, Config{Name: "certs", Origin: testOrigin}, p)
+	require.ErrorIs(t, err, ErrLogRequest)
+}
+
 // TestSignedTreeHead_CheckpointMismatch refuses a head that does not verify
 // under the handle's CA key, or that names another origin.
 func TestSignedTreeHead_CheckpointMismatch(t *testing.T) {

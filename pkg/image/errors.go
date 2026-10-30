@@ -229,4 +229,9 @@ var (
 	// ErrUnsupportedAlgorithm indicates a digest or signature algorithm
 	// outside the supported set.
 	ErrUnsupportedAlgorithm = errors.New("image: unsupported algorithm")
+
+	// ErrTransparencyLogAppend is returned when the transparency log did not
+	// record an image signature; the signature is neither pushed nor
+	// returned.
+	ErrTransparencyLogAppend = errors.New("image: transparency log append failed")
 )
