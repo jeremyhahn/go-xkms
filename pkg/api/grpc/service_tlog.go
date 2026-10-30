@@ -32,7 +32,10 @@ import (
 
 // GetTransparencyLogHead returns the log's current signed tree head.
 func (s *Service) GetTransparencyLogHead(ctx context.Context, _ *pb.GetTransparencyLogHeadRequest) (*pb.GetTransparencyLogHeadResponse, error) {
-	if err := s.authorizeTransparencyLog(ctx, auth.ActionHead); err != nil {
+	if err := s.authorize(ctx, auth.ResourceVlog, auth.ActionHead, ""); err != nil {
+		return nil, err
+	}
+	if err := s.requireTransparencyLog(); err != nil {
 		return nil, err
 	}
 	resp, err := s.xkmsService.GetTransparencyLogHead(ctx, &transport.GetTransparencyLogHeadRequest{})
@@ -49,7 +52,10 @@ func (s *Service) GetTransparencyLogHead(ctx context.Context, _ *pb.GetTranspare
 
 // GetTransparencyLogEntry returns one encoded log entry.
 func (s *Service) GetTransparencyLogEntry(ctx context.Context, req *pb.GetTransparencyLogEntryRequest) (*pb.GetTransparencyLogEntryResponse, error) {
-	if err := s.authorizeTransparencyLog(ctx, auth.ActionGet); err != nil {
+	if err := s.authorize(ctx, auth.ResourceVlog, auth.ActionGet, ""); err != nil {
+		return nil, err
+	}
+	if err := s.requireTransparencyLog(); err != nil {
 		return nil, err
 	}
 	resp, err := s.xkmsService.GetTransparencyLogEntry(ctx, &transport.GetTransparencyLogEntryRequest{Index: req.GetIndex()})
@@ -61,7 +67,10 @@ func (s *Service) GetTransparencyLogEntry(ctx context.Context, req *pb.GetTransp
 
 // GetTransparencyLogInclusionProof returns an RFC 9162 §2.1.3 inclusion proof.
 func (s *Service) GetTransparencyLogInclusionProof(ctx context.Context, req *pb.GetTransparencyLogInclusionProofRequest) (*pb.GetTransparencyLogInclusionProofResponse, error) {
-	if err := s.authorizeTransparencyLog(ctx, auth.ActionProof); err != nil {
+	if err := s.authorize(ctx, auth.ResourceVlog, auth.ActionProof, ""); err != nil {
+		return nil, err
+	}
+	if err := s.requireTransparencyLog(); err != nil {
 		return nil, err
 	}
 	resp, err := s.xkmsService.GetTransparencyLogInclusionProof(ctx, &transport.GetTransparencyLogInclusionProofRequest{
@@ -77,7 +86,10 @@ func (s *Service) GetTransparencyLogInclusionProof(ctx context.Context, req *pb.
 // GetTransparencyLogConsistencyProof returns an RFC 9162 §2.1.4 consistency
 // proof.
 func (s *Service) GetTransparencyLogConsistencyProof(ctx context.Context, req *pb.GetTransparencyLogConsistencyProofRequest) (*pb.GetTransparencyLogConsistencyProofResponse, error) {
-	if err := s.authorizeTransparencyLog(ctx, auth.ActionProof); err != nil {
+	if err := s.authorize(ctx, auth.ResourceVlog, auth.ActionProof, ""); err != nil {
+		return nil, err
+	}
+	if err := s.requireTransparencyLog(); err != nil {
 		return nil, err
 	}
 	resp, err := s.xkmsService.GetTransparencyLogConsistencyProof(ctx, &transport.GetTransparencyLogConsistencyProofRequest{
@@ -90,12 +102,9 @@ func (s *Service) GetTransparencyLogConsistencyProof(ctx context.Context, req *p
 	return &pb.GetTransparencyLogConsistencyProofResponse{FirstSize: resp.FirstSize, SecondSize: resp.SecondSize, Hashes: resp.Hashes}, nil
 }
 
-// authorizeTransparencyLog authorizes action on the vlog resource and checks
-// the service is wired.
-func (s *Service) authorizeTransparencyLog(ctx context.Context, action string) error {
-	if err := s.authorize(ctx, auth.ResourceVlog, action, ""); err != nil {
-		return err
-	}
+// requireTransparencyLog reports Unavailable when the xkms service is not
+// wired.
+func (s *Service) requireTransparencyLog() error {
 	if s.xkmsService == nil {
 		return status.Error(codes.Unavailable, "xkms service not initialized")
 	}

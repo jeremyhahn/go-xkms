@@ -208,6 +208,7 @@ func Constants() map[string]string {
 		"ResourceOIDCCredentials": auth.ResourceOIDCCredentials,
 		"ResourceBackup":          auth.ResourceBackup,
 		"ResourceTrustRoots":      auth.ResourceTrustRoots,
+		"ResourceVlog":            auth.ResourceVlog,
 
 		"ResourceAttestationEndorsements":    auth.ResourceAttestationEndorsements,
 		"ResourceAttestationReferenceValues": auth.ResourceAttestationReferenceValues,
@@ -269,6 +270,8 @@ func Constants() map[string]string {
 		"ActionUnlock":             auth.ActionUnlock,
 		"ActionToken":              auth.ActionToken,
 		"ActionRestore":            auth.ActionRestore,
+		"ActionHead":               auth.ActionHead,
+		"ActionProof":              auth.ActionProof,
 	}
 }
 

@@ -201,6 +201,11 @@ var goldenRPCPermissions = map[string]string{
 	"TrustRootImport":     "trust_roots:import",
 	"TrustRootQuarantine": "trust_roots:update",
 	"TrustRootRemove":     "trust_roots:delete",
+	// CA transparency log reads (docs/transparency-log).
+	"GetTransparencyLogHead":             "vlog:head",
+	"GetTransparencyLogEntry":            "vlog:get",
+	"GetTransparencyLogInclusionProof":   "vlog:proof",
+	"GetTransparencyLogConsistencyProof": "vlog:proof",
 	// PKCS#11 remote-state RPCs persist a token's key/object state, so they
 	// gate on the keys resource with the same per-verb CRUD actions REST's
 	// /api/v1/pkcs11state/* routes carry (go-xkms#1249): create for the two
