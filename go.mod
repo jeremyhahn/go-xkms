@@ -54,6 +54,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
+	github.com/transparency-dev/merkle v0.0.2
 	github.com/veraison/corim v1.1.2
 	github.com/veraison/go-cose v1.3.0
 	github.com/veraison/swid v1.1.1-0.20230911094910-8ffdd07a22ca
@@ -229,7 +230,6 @@ require (
 	github.com/tidwall/btree v1.8.2 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
-	github.com/transparency-dev/merkle v0.0.2 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/veraison/eat v0.0.0-20210331113810-3da8a4dd42ff // indirect
