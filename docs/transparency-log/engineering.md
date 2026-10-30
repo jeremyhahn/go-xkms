@@ -1,17 +1,147 @@
 # Transparency Log — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `transparency-log` · Repo: `go-xkms` · Last verified: 2026-10-24
+> **Status: NORMATIVE** · Feature: `transparency-log` · Repo: `go-xkms` · Last verified: 2026-10-30
 
-This page covers the checkpoint format of the `transparency-log` SPEC row
-(owner ruling 122): `pkg/ca/checkpoint`. The log itself, the append verbs and
-the `HeadSignerProvider` wait on go-qrdb's verifiable-log type (go-qrdb #722,
-#912) and are not on main.
+This page covers the `transparency-log` SPEC row in two packages:
+
+- `pkg/ca/tlog`, the CA's transparency log. It runs over go-qrdb's
+  verifiable log (vlog), and the CA key signs its heads.
+- `pkg/ca/checkpoint`, the checkpoint and signed-note format that the log's
+  heads use.
+
+## Log service (`pkg/ca/tlog`)
+
+```go
+type Config struct {
+	Name              string // the log's name in its database
+	Origin            string // first line of every checkpoint
+	AllowExpireBodies bool   // fixed when the log is created
+}
+
+func Create(ctx context.Context, client transport.VlogClient, cfg Config, signers *HeadSignerProvider) (*Log, error)
+func Open(client transport.VlogClient, cfg Config, verifier *checkpoint.Verifier) (*Log, error)
+
+func (l *Log) AppendCertIssued(ctx context.Context, e CertIssued) (uint64, error)
+func (l *Log) AppendImageSigned(ctx context.Context, e ImageSigned) (uint64, error)
+func (l *Log) AppendRevoked(ctx context.Context, e Revoked) (uint64, error)
+func (l *Log) Entry(ctx context.Context, index uint64) (Entry, []byte, error)
+func (l *Log) SignedTreeHead(ctx context.Context) (*TreeHead, error)
+func (l *Log) VerifyCheckpoint(note []byte) (*checkpoint.Checkpoint, error)
+func (l *Log) InclusionProof(ctx context.Context, index, size uint64) ([][]byte, error)
+func (l *Log) ConsistencyProof(ctx context.Context, size1, size2 uint64) ([][]byte, error)
+```
+
+All of these are in `pkg/ca/tlog/log.go`: `Config` at `:40`, `TreeHead` at
+`:57`, `Create` at `:68`, `Open` at `:93`, `AppendCertIssued` at `:107`,
+`Entry` at `:135`, `SignedTreeHead` at `:158`, `VerifyCheckpoint` at `:205`,
+`InclusionProof` at `:218` and `ConsistencyProof` at `:228`.
+
+The log, its Merkle tree and its proofs belong to go-qrdb. `Log` encodes the
+entries and checks every tree head under the CA key before it answers.
+
+- `Create` checks the CA key first, then creates the go-qrdb log with the
+  signing-key type of the CA key. `Open` binds an existing log to a verifier
+  from `HeadSignerProvider.Verifier`, and makes no request.
+- An append returns the entry's leaf index. The leaf is the entry's
+  encoding, hashed as RFC 6962 §2.1 describes, so `InclusionProof` and
+  `ConsistencyProof` verify against a checkpoint root with any RFC 6962
+  verifier.
+- `Entry` returns the decoded entry and its encoded bytes.
+- `SignedTreeHead` is idempotent. go-qrdb keeps one checkpoint per tree
+  size, so the method returns the latest checkpoint when it covers the
+  current head. Otherwise it asks go-qrdb to sign the head. If that fails
+  because a concurrent caller signed the same size first, it returns that
+  caller's checkpoint.
+- Every head is opened under the CA key, and its origin, size and root must
+  match the head go-qrdb reported (`treeHead`, `log.go:192`).
+- `VerifyCheckpoint` opens a note under the CA key and checks its origin.
+
+### Errors
+
+Every refusal is typed, in `pkg/ca/tlog/errors.go`:
+
+| Error | Meaning |
+|-------|---------|
+| `ErrNoClient`, `ErrNoVerifier`, `ErrInvalidConfig` | `Open` or `Create` lacks a client, a verifier, a name or an origin |
+| `ErrLogRequest` | a go-qrdb request failed; the cause is joined |
+| `ErrEntryExpired` | the entry's body was expired; its leaf hash and proofs remain |
+| `ErrCheckpointMismatch` | a note fails under the CA key, or names another origin or tree |
+| `ErrInvalidEntry` | `Marshal` refused an entry |
+| `ErrMalformedEntry`, `ErrUnsupportedVersion`, `ErrUnknownKind` | `Unmarshal` refused bytes |
+| `ErrNoKeyProvider`, `ErrCAKeyUnavailable`, `ErrUnsupportedCAKey` | the CA key is missing, not initialized, or neither Ed25519 nor P-256 |
+| `ErrKeyTypeMismatch`, `ErrKeyRefMismatch` | go-qrdb asked for another key type or key ref |
+
+### Expiring bodies
+
+When `AllowExpireBodies` is set at creation, an operator who holds go-qrdb's
+`vlog:expire` can expire the bodies of old entries. The leaf hashes stay, so
+every head and proof still verifies. The service principal does not hold
+`vlog:expire`.
+
+## Entry encoding, version 1
+
+`Marshal` (`entry.go:171`) and `Unmarshal` (`entry.go:205`) use one
+canonical encoding:
+
+    version (1 byte, = 1) || kind (1 byte) || field...
+    field = uint16 big-endian length || bytes
+
+| Kind | Value | Fields, in order |
+|------|-------|------------------|
+| `KindCertIssued` | 1 | SHA-256 of the certificate DER (32 bytes), serial, profile, tenant |
+| `KindImageSigned` | 2 | image digest, envelope digest, signer |
+| `KindRevoked` | 3 | serial, reason (1 byte) |
+
+Value 4 is reserved for external entries. The rules:
+
+- A serial is its minimal big-endian magnitude, and it must be positive.
+- Strings must be non-empty UTF-8.
+- A reason is an RFC 5280 §5.3.1 CRLReason: at most 10, and never 7.
+- A field holds at most 65535 bytes.
+
+`Unmarshal` refuses trailing bytes, a missing field, a serial with a leading
+zero, and any other non-canonical form, so each entry has exactly one
+encoding.
+
+## Head signer
+
+`HeadSignerProvider` (`headsigner.go:42`) is go-qrdb's head-signer seam over
+the CA key, installed with `WithHeadSignerProvider`. It is built with
+`NewHeadSignerProvider(keys, keyName)` (`:52`).
+
+- `CreateKey` (`:81`) returns the CA key as the log's key. Its ref is the
+  hex SHA-256 of the key's DER SPKI. A request for another signature type
+  fails with `ErrKeyTypeMismatch`.
+- `HeadSigner` (`:98`) refuses any other ref with `ErrKeyRefMismatch`. The
+  signer's key hash is go-qrdb's `HeadKeyHash`, which is the signed-note key
+  ID. `Sign` (`:170`) signs the checkpoint body through `checkpoint.Sign`,
+  verifies the result, and returns the signature without its 4-byte key ID,
+  because go-qrdb writes that ID into the signature line itself.
+- `Verifier` (`:69`) returns the CA key's checkpoint verifier.
+- Only Ed25519 (signed-note type `0x01`) and ECDSA P-256 (type `0x02`) CA
+  keys are supported. Any other key fails with `ErrUnsupportedCAKey`.
+
+## Service-principal grant
+
+The embedded node's service principal gets only the vlog actions the log
+calls: `vlog:create`, `vlog:append`, `vlog:get`, `vlog:head`,
+`vlog:sign_head` and `vlog:proof`. The grant is the `grant` list in
+`pkg/embeddednode/serviceprincipal/serviceprincipal.go:63`. The log never
+lists logs or expires bodies, so `vlog:list` and `vlog:expire` are not
+granted.
+
+## Build tag
+
+go-qrdb serves verifiable logs only when it is built with its `qrdb_vlog`
+tag. Without the tag, every vlog request to an embedded node fails. The
+node-backed tests in `pkg/ca/tlog` carry the tag (`node_test.go`,
+`log_test.go`).
 
 Specifications, both pinned at C2SP commit `e5746a0b`:
 [c2sp-tlog-checkpoint.md](../references/c2sp-tlog-checkpoint.md) and
 [c2sp-signed-note.md](../references/c2sp-signed-note.md).
 
-## Exported surface
+## Checkpoint format (`pkg/ca/checkpoint`)
 
 `sdk/go/checkpoint` re-exports every name below unchanged, with type aliases
 and `var` assignments, so `errors.Is` matches across the boundary.
@@ -199,3 +329,18 @@ The tests check:
 - malformed verifier keys and malformed checkpoints;
 - registry refusals, a concurrent `Register` under `-race`, and a custom
   Ed25519ph algorithm round trip.
+
+`pkg/ca/tlog` has 95.2% statement coverage with the `qrdb_vlog` tag. Its
+node-backed tests run each entry kind against an in-memory go-qrdb node with
+the production service-principal grant. They check:
+
+- the append, the read-back, and the inclusion and consistency proofs;
+- checkpoint verification under Ed25519 and P-256 CA keys;
+- repeated and concurrent `SignedTreeHead` calls;
+- a checkpoint for another origin;
+- failed requests;
+- `ErrEntryExpired` on an expired body whose proof still verifies.
+
+The tests without the tag cover the entry encoding and its refusals, and the
+head signer: its key hash equals `HeadKeyHash`, its signature verifies as the
+signature line go-qrdb renders, and it refuses keys and refs it does not hold.
