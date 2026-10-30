@@ -35,13 +35,14 @@ auth:
   enabled: true
   type: "composite"
 
-# Passphrase auto-unseal — a real deployment provisions this via `xkmsctl
-# init`; this tier only needs the barrier UNSEALED so BarrierView and the
-# key/cert lifecycle work, not to exercise the seal ceremony itself.
+# A passphrase barrier, initialized the way a real deployment is: run-server.sh
+# runs `xkmsd init` with the SO PIN in the environment, then unseals through
+# the sealed window. The config never carries the secret; the loader refuses
+# barrier.passphrase. This tier only needs the barrier UNSEALED so BarrierView
+# and the key/cert lifecycle work, not to exercise the seal ceremony itself.
 barrier:
   enabled: true
   strategy: "passphrase"
-  passphrase: "e2e-web-console-passphrase"
 
 ratelimit:
   enabled: false
@@ -53,9 +54,11 @@ health:
   enabled: true
   path: "/health"
 
+# xkmsd init writes the admin credential and the unified TLS certificate here;
+# open-server-barrier.sh finds the certificate under <state dir>/storage.
 datastore:
   engine: file
-  path: "./.runtime/data"
+  path: "./.runtime/storage"
 
 default_backend: "software"
 

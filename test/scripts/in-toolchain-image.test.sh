@@ -3,8 +3,10 @@
 # Tests for scripts/in-toolchain-image.sh's disk-backed scratch: a stage's
 # TMPDIR, GOTMPDIR and TRIVY_CACHE_DIR live on the scratch volume, not the
 # 3 GB /tmp tmpfs (trivy's Java DB filled /tmp on main runs 66181 and 68251),
-# and a scratch directory the image lacks fails the stage by name. A fake
-# `docker` on PATH runs the container's command here with the --env values
+# and a scratch directory the image lacks fails the stage by name.
+# CI_WORK_VOLUME=on moves TMPDIR and GOTMPDIR to an anonymous /work volume
+# (ruling 108, Company Agent m1311 (1)). A fake `docker` on PATH logs every
+# call and runs the container's command here with the --env values
 # `docker create` was given; a fake `trivy` records what it saw.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -25,10 +27,12 @@ export FAKE_STATE="$WORK/state"
 
 cat >"$WORK/bin/docker" <<'EOF'
 #!/usr/bin/env bash
-# Fake docker: create records its arguments, the --env values and the
-# `sh -c` command; start runs that command with only those values set.
+# Fake docker: every call is logged to calls; create records its arguments,
+# the --env values and the `sh -c` command; start runs that command with only
+# those values set. FAKE_CHOWN_FAIL fails the work volume's chown.
+printf '%s\n' "$*" >>"$FAKE_STATE/calls"
 case $1 in
-  run) exit 0 ;;
+  run) case $* in *" chown "*" /work") [ -z "${FAKE_CHOWN_FAIL:-}" ] || exit 1 ;; esac; exit 0 ;;
   cp) cat >/dev/null; exit 0 ;;
   rm) shift; printf '%s\n' "$@" >"$FAKE_STATE/rm.args"; exit 0 ;;
   create)
@@ -67,6 +71,9 @@ run() {
 	RC=$?
 }
 
+# commands prints the docker subcommands the last run called, in order.
+commands() { cut -d' ' -f1 "$FAKE_STATE/calls" | paste -sd' '; }
+
 # --- default: trivy's temp and cache on the /var/tmp scratch volume ----------
 section "default scratch"
 run
@@ -79,6 +86,7 @@ has "trivy ran with TMPDIR on the scratch volume" "$FAKE_STATE/trivy.out" "TMPDI
 has "trivy ran with its cache on the scratch volume" "$FAKE_STATE/trivy.out" "TRIVY_CACHE_DIR=/var/tmp/trivy"
 has "trivy got the step's arguments unchanged" "$FAKE_STATE/trivy.out" "args=image --input it-image.tar --exit-code 1"
 has "teardown removes the scratch volume (docker rm -v)" "$FAKE_STATE/rm.args" "-v"
+eq "no work volume" "no" "$(grep -qxF /work "$FAKE_STATE/create.args" && echo yes || echo no)"
 
 # --- IN_IMAGE_SCRATCH moves all three to one place ---------------------------
 section "IN_IMAGE_SCRATCH"
@@ -102,6 +110,35 @@ run IN_IMAGE_SCRATCH=var/tmp
 eq "the script exits 2" "2" "$RC"
 eq "the error names the variable" "IN_IMAGE_SCRATCH must be an absolute path: var/tmp" "$OUT"
 eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
+
+# --- CI_WORK_VOLUME=on: TMPDIR and GOTMPDIR on a /work volume ----------------
+# The stage's own exit is not asserted: the guard checks /work on this host.
+section "CI_WORK_VOLUME=on"
+run CI_CACHE=off CI_WORK_VOLUME=on
+NAME=$(sed -n 2p "$FAKE_STATE/create.args")
+has "/work is an anonymous volume" "$FAKE_STATE/create.args" "/work"
+has "TMPDIR is the work volume" "$FAKE_STATE/create.args" "TMPDIR=/work"
+has "GOTMPDIR is the work volume" "$FAKE_STATE/create.args" "GOTMPDIR=/work"
+# docker keeps the last --env of a name, so /work must follow the scratch default.
+eq "TMPDIR=/work overrides the scratch default" "TMPDIR=/work" "$(grep '^TMPDIR=' "$FAKE_STATE/env" | tail -n 1)"
+eq "GOTMPDIR=/work overrides the scratch default" "GOTMPDIR=/work" "$(grep '^GOTMPDIR=' "$FAKE_STATE/env" | tail -n 1)"
+has "gives /work to the stage's uid from the created container" "$FAKE_STATE/calls" \
+	"run --rm --network none --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges:true --user 0:0 --volumes-from $NAME toolchain:test chown 10001:10001 /work"
+eq "chowns /work after create and before start" "create run cp start rm" "$(commands)"
+has "teardown removes the work volume (docker rm -v)" "$FAKE_STATE/rm.args" "-v"
+
+# --- a CI_WORK_VOLUME that is not on or off is refused -----------------------
+section "invalid CI_WORK_VOLUME"
+run CI_WORK_VOLUME=yes
+eq "the script exits 2" "2" "$RC"
+eq "the error names the variable" "CI_WORK_VOLUME must be on or off: yes" "$OUT"
+eq "no docker call" "no" "$([ -e "$FAKE_STATE/calls" ] && echo yes || echo no)"
+
+# --- a failed /work chown stops the stage before it starts -------------------
+section "failed /work chown"
+run CI_CACHE=off CI_WORK_VOLUME=on FAKE_CHOWN_FAIL=1
+eq "the script exits 1" "1" "$RC"
+eq "never starts the stage, still removes the container" "create run rm" "$(commands)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

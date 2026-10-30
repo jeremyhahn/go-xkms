@@ -116,6 +116,13 @@ func DefaultProtocolConfig(protocol ProtocolType) *ProtocolConfig {
 		if !hasPrefix(cfg.Target, "unix://") {
 			cfg.Target = "unix://" + cfg.Target
 		}
+		// The socket is the embedded qrdb node's TLS-only listener: take the
+		// module's own TLS variables, as DefaultTestConfig does.
+		tlsCfg := module.LoadFromEnv().TLS
+		cfg.TLSEnabled = tlsCfg.Enabled
+		cfg.TLSCAFile = tlsCfg.CAFile
+		cfg.TLSCertFile = tlsCfg.CertFile
+		cfg.TLSKeyFile = tlsCfg.KeyFile
 	case ProtocolGRPC:
 		cfg.Target = getEnvOrDefault("XKMS_GRPC_ADDR", "localhost:9443")
 		cfg.TLSEnabled = getEnvBool("XKMS_GRPC_TLS_ENABLED", false)

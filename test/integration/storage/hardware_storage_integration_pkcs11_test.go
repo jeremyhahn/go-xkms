@@ -18,6 +18,7 @@ package storage_test
 import (
 	"crypto/x509"
 	"os"
+	"strings"
 	"testing"
 
 	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
@@ -27,6 +28,30 @@ import (
 
 // tryInitSoftHSM attempts to initialize PKCS#11 storage via SoftHSM.
 // Returns nil if SoftHSM is not available in the test environment.
+// softHSMTokenLabel is the label docker-compose.yml's softhsm-init gives the
+// token it initializes.
+const softHSMTokenLabel = "test-token"
+
+// findSlotByLabel returns the slot whose token carries label. PKCS#11 pads
+// token labels with spaces to 32 characters, so the padding is trimmed before
+// comparing.
+func findSlotByLabel(ctx *pkcs11.Ctx, label string) (uint, bool) {
+	slots, err := ctx.GetSlotList(true)
+	if err != nil {
+		return 0, false
+	}
+	for _, slot := range slots {
+		info, err := ctx.GetTokenInfo(slot)
+		if err != nil {
+			continue
+		}
+		if strings.TrimRight(info.Label, " ") == label {
+			return slot, true
+		}
+	}
+	return 0, false
+}
+
 func tryInitSoftHSM(t *testing.T) hardware.HardwareCertStorage {
 	// Check for SOFTHSM2_CONF environment variable
 	softhsmConf := os.Getenv("SOFTHSM2_CONF")
@@ -61,16 +86,18 @@ func tryInitSoftHSM(t *testing.T) hardware.HardwareCertStorage {
 		return nil
 	}
 
-	// Find slots
-	slots, err := ctx.GetSlotList(true)
-	if err != nil || len(slots) == 0 {
-		t.Logf("No PKCS#11 slots found: %v", err)
+	// Find the slot holding the token softhsm-init created. SoftHSM lists
+	// its empty slot beside the initialized tokens, so the first slot is
+	// not necessarily test-token.
+	slot, found := findSlotByLabel(ctx, softHSMTokenLabel)
+	if !found {
+		t.Logf("No PKCS#11 token labelled %q found", softHSMTokenLabel)
 		ctx.Finalize()
 		return nil
 	}
 
 	// Create a session pool for concurrent access
-	pool, err := pkcs11backend.NewSessionPool(ctx, slots[0], "1234", 8)
+	pool, err := pkcs11backend.NewSessionPool(ctx, slot, "1234", 8)
 	if err != nil {
 		t.Logf("Failed to create session pool: %v", err)
 		ctx.Finalize()
@@ -78,7 +105,7 @@ func tryInitSoftHSM(t *testing.T) hardware.HardwareCertStorage {
 	}
 
 	// Create hardware storage using the pool
-	hwStorage, err := hardware.NewPKCS11CertStorageWithSO(pool, "test-token", "", "", false)
+	hwStorage, err := hardware.NewPKCS11CertStorageWithSO(pool, softHSMTokenLabel, "", "", false)
 	if err != nil {
 		t.Logf("Failed to create PKCS#11 cert storage: %v", err)
 		pool.Close()

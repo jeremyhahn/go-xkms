@@ -286,12 +286,12 @@ Excerpt (`test/integration/awskms/docker-compose.yml`):
 ```yaml
 services:
   floci:
-    image: floci/floci:latest
+    image: floci/floci:2.3.0@sha256:e0b292df4dc9559b7b1bf4f51bdda4bb8e269276236438cd03cae661260ea8a9
     environment:
       - FLOCI_DEFAULT_REGION=us-east-1
       - FLOCI_STORAGE_MODE=memory
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_floci/health"]
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
     ports:
       - "0:4566"
 

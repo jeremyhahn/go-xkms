@@ -289,7 +289,7 @@ RUN . /tmp/tool-pins.sh && \
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS modules
 ARG GO_BUILD_PROXY
-ENV GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOMODCACHE=/gomodcache GOPROXY=${GO_BUILD_PROXY}
+ENV GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOMODCACHE=/opt/go/mod GOPROXY=${GO_BUILD_PROXY}
 WORKDIR /src
 # The root module, sdk/go, xkey and web/desktop replace each other locally,
 # so all four go.mod/go.sum pairs are needed to resolve any one of them.
@@ -468,10 +468,13 @@ RUN printf '%s\n' \
     > /etc/profile.d/10-xkms-toolchain.sh
 
 # The verified module cache, readable by every user, and a warm race-enabled
-# standard library. After this the image builds and tests offline.
-ENV GOTOOLCHAIN=local CGO_ENABLED=1 GOFLAGS=-mod=readonly GOMODCACHE=/gomodcache GOCACHE=/gocache
-COPY --from=modules /gomodcache /gomodcache
-RUN chmod -R a+rX /gomodcache && \
+# standard library. After this the image builds and tests offline. The cache
+# sits at /opt/go/mod, the path ci.yml's `trivy image --skip-dirs` names
+# (handbook devops.md §8): third-party module sources carry example secrets
+# and test keys, and the skip must cover exactly this directory.
+ENV GOTOOLCHAIN=local CGO_ENABLED=1 GOFLAGS=-mod=readonly GOMODCACHE=/opt/go/mod GOCACHE=/gocache
+COPY --from=modules /opt/go/mod /opt/go/mod
+RUN chmod -R a+rX /opt/go/mod && \
     go build -race std && \
     chmod -R a+rwX /gocache
 ENV GOPROXY=off

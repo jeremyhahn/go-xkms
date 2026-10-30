@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"io"
 	"log/slog"
 	"net"
@@ -162,6 +163,77 @@ func TestBuildUnifiedTLSConfig_ExtraSANs(t *testing.T) {
 func TestUpgradeUnifiedTLSCert_NoProviderIsNoop(t *testing.T) {
 	s := newTLSTestServer(t, &config.Config{})
 	assert.NoError(t, s.upgradeUnifiedTLSCert(nil))
+}
+
+// A local operator trusts the listener through the state directory: the
+// bootstrap certificate before the CA composes, and the CA bundle persisted
+// beside it once the CA-issued certificate replaces it in memory (DS-3769).
+func TestUpgradeUnifiedTLSCert_PersistsCABundleThatVerifiesTheSwappedCert(t *testing.T) {
+	cfg := buildRESTConfigTLSTestCfg()
+	cfg.Datastore.Path = t.TempDir()
+	s := newMinimalServer(t, cfg)
+	_, err := s.buildUnifiedTLSConfig()
+	require.NoError(t, err)
+
+	tlsCert, leaf := generateSelfSignedCert(t)
+	bundlePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw})
+	mock := &mockTrustedCA{initialized: true, tlsCert: tlsCert, caBundlePEM: bundlePEM}
+	s.ca = mock
+
+	require.NoError(t, s.upgradeUnifiedTLSCert(mock))
+
+	bundlePath := filepath.Join(cfg.Datastore.Path, unifiedBootstrapCertDir, unifiedCABundleFile)
+	persisted, err := os.ReadFile(bundlePath)
+	require.NoError(t, err, "the CA bundle must be persisted beside the bootstrap certificate")
+	assert.Equal(t, bundlePEM, persisted)
+	info, err := os.Stat(bundlePath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	roots := x509.NewCertPool()
+	require.True(t, roots.AppendCertsFromPEM(persisted))
+	served, err := x509.ParseCertificate(s.unifiedTLS.cert.Load().Certificate[0])
+	require.NoError(t, err)
+	_, err = served.Verify(x509.VerifyOptions{Roots: roots})
+	assert.NoError(t, err, "the persisted bundle must verify the certificate the listener now serves")
+}
+
+func TestUpgradeUnifiedTLSCert_BundleUnavailable_PersistsNoCABundle(t *testing.T) {
+	cfg := buildRESTConfigTLSTestCfg()
+	cfg.Datastore.Path = t.TempDir()
+	s := newMinimalServer(t, cfg)
+	_, err := s.buildUnifiedTLSConfig()
+	require.NoError(t, err)
+
+	var logBuf bytes.Buffer
+	s.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	tlsCert, _ := generateSelfSignedCert(t)
+	mock := &mockTrustedCA{initialized: true, tlsCert: tlsCert, caBundleErr: errBundleUnavailable}
+	s.ca = mock
+
+	require.NoError(t, s.upgradeUnifiedTLSCert(mock),
+		"a CA-bundle failure must not stop the certificate upgrade")
+
+	_, err = os.Stat(filepath.Join(cfg.Datastore.Path, unifiedBootstrapCertDir, unifiedCABundleFile))
+	assert.True(t, os.IsNotExist(err), "no CA bundle may be persisted when the CA cannot supply one")
+	assert.Contains(t, logBuf.String(), "CA bundle not persisted",
+		"the persistence failure must be logged, not silently dropped")
+}
+
+func TestPersistUnifiedCABundle_UnwritableDirectory_ReturnsTypedError(t *testing.T) {
+	cfg := buildRESTConfigTLSTestCfg()
+	cfg.Datastore.Path = filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(cfg.Datastore.Path, nil, 0o600))
+	s := newMinimalServer(t, cfg)
+
+	_, leaf := generateSelfSignedCert(t)
+	bundlePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw})
+
+	err := s.persistUnifiedCABundle(&mockTrustedCA{caBundlePEM: bundlePEM})
+	var opErr *ErrTLSCertOp
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, "create unified TLS directory", opErr.Operation)
 }
 
 // TestUnifiedTLSProvider_RotationServesNewCert proves a stored certificate

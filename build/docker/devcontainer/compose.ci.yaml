@@ -18,9 +18,10 @@
 # `make devcontainer-clean` (`docker compose down -v`) same as the module
 # and build caches. The Makefile's `ci_sync_devcontainer_workspace` (used by
 # `run_in_devcontainer` and `run_with_server`) populates it once per run with
-# `docker compose cp`, which streams the tree over the Docker API connection
-# instead of depending on a shared filesystem, so it lands correctly no
-# matter which host the daemon is actually on.
+# a tar stream over the Docker API connection, unpacked by the devcontainer's
+# own user, instead of depending on a shared filesystem, so it lands
+# correctly no matter which host the daemon is actually on and belongs to
+# the user the targets run as (DS-3754).
 #
 # Applied only when COMPOSE_RUN_ID != local, i.e. only in CI (Makefile:
 # DOCKER_COMPOSE). Local development always uses the base file's bind mount,
