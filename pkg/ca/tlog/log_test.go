@@ -11,6 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+//go:build qrdb_vlog
+
 package tlog
 
 import (
