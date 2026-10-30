@@ -313,6 +313,10 @@ type CA struct {
 	// pkg/ca/audit.go). nil disables audit logging for this CA instance.
 	auditLogger qrdbsdk.NodeAuditLogger
 
+	// transparencyLog is the log issuance and revocation append to (see
+	// SetTransparencyLog in transparency_log.go). nil records nothing.
+	transparencyLog atomic.Pointer[transparencyLogRef]
+
 	// secondaryKeyErr records the error from the most recent
 	// initSecondaryKeys call during Init, or nil if every secondary key
 	// (Keys[1..n] of the identity) generated successfully or the identity
@@ -2116,6 +2120,12 @@ func (ca *CA) issueSignedSpec(
 	// certificate, which shares its serial, is the one stored and recorded.
 	if precertificate {
 		return cert, nil
+	}
+
+	// Every CSR-signed certificate, whichever verb issued it, is recorded
+	// here once, before it is stored or returned (fail closed).
+	if err := ca.appendCertIssued(ctx, cert, spec.Profile, tenantID); err != nil {
+		return nil, err
 	}
 
 	// Store the certificate. The store is keyed by Common Name, so a

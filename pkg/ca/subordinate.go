@@ -225,6 +225,9 @@ func (ca *CA) IssueSubordinateCA(ctx context.Context, req *SubordinateCARequest)
 		return nil, err
 	}
 
+	if err := ca.appendCertIssued(ctx, cert, caProfile, ""); err != nil {
+		return nil, err
+	}
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to store certificate", Err: err}
 	}

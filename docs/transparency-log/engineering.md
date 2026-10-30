@@ -121,6 +121,54 @@ the CA key, installed with `WithHeadSignerProvider`. It is built with
 - Only Ed25519 (signed-note type `0x01`) and ECDSA P-256 (type `0x02`) CA
   keys are supported. Any other key fails with `ErrUnsupportedCAKey`.
 
+## CA wiring
+
+The CA appends to the log through `ca.TransparencyLog`
+(`pkg/ca/transparency_log.go`), an interface holding `AppendCertIssued`
+and `AppendRevoked`. `*tlog.Log` satisfies it. `pkg/ca/tlog` does not import
+`pkg/ca`, so the interface names tlog's entry types and no cycle forms.
+
+- `(*CA).SetTransparencyLog` sets the log; `nil` removes it. It is a setter,
+  not a `Params` field, because the log's heads are signed with the CA's own
+  key, so the CA exists before the log can be opened. The CA holds the log in
+  an `atomic.Pointer`, never a global.
+- With no log set, issuance and revocation behave exactly as before.
+- The context the CA is called with is the context of the append, so it
+  must carry a principal holding `vlog:append`.
+
+### cert-issued: fail closed
+
+Every issued certificate is appended once, after signing and before it is
+stored or returned. There are three issuance funnels, and each appends:
+
+| Funnel | Hook | Verbs |
+|---|---|---|
+| `issueSignedSpec` | `pkg/ca/ca.go:2127` | `IssueCertificate`, `IssueCertificateWithProfile`, `IssueCertificateForKey`, `IssueCertificateRaw`, `SignCSR` and every CSR-signing verb |
+| `issueTCGCertificate` | `pkg/ca/tcg.go:621` | EK, AK, IAK, IDevID and LAK issuance, including `IssueEKCertificateRaw` |
+| `IssueSubordinateCA` | `pkg/ca/subordinate.go:228` | subordinate CAs |
+
+The entry carries the certificate's SHA-256, serial, profile name and
+tenant. A certificate issued in the system scope (no tenant) is logged under
+go-qrdb's `SystemTenantID`. A precertificate (RFC 6962 §3.1) is not
+appended; its final certificate is.
+
+If the append fails, the call returns `ErrTransparencyLogAppend` wrapping the
+cause, and the certificate is neither stored nor returned.
+
+The CA's own root and intermediate certificates, created by `Init`, are not
+appended: they exist before the log does.
+
+### revoked: never undone
+
+`Revoke` and `RevokeCert` share `recordRevocation`, which appends one
+`revoked` entry after the revocation is recorded
+(`pkg/ca/ca_extensions.go:804`). An already-revoked serial appends nothing.
+
+If the append fails, the revocation stands, and the call returns
+`ErrTransparencyLogEntryMissing` wrapping the cause. `RevokeCert` still runs
+its key and certificate cleanup and joins that error with the cleanup's. A
+reason outside 0–255 cannot be encoded and is reported the same way.
+
 ## Service-principal grant
 
 The embedded node's service principal gets only the vlog actions the log
@@ -134,8 +182,12 @@ granted.
 
 go-qrdb serves verifiable logs only when it is built with its `qrdb_vlog`
 tag. Without the tag, every vlog request to an embedded node fails. The
-node-backed tests in `pkg/ca/tlog` carry the tag (`node_test.go`,
-`log_test.go`).
+node-backed tests in `pkg/ca/tlog` (`node_test.go`, `log_test.go`) and
+`pkg/ca/transparency_log_test.go` carry the tag.
+
+The Makefile's `TEST_TAGS` and `SERVER_BUILD_TAGS` include `qrdb_vlog`, so
+`make test`, the vet and lint gates (which use `TEST_TAGS`) and xkmsd's
+embedded node all build with it. `coverage-ca` adds it to `BUILD_TAGS`.
 
 Specifications, both pinned at C2SP commit `e5746a0b`:
 [c2sp-tlog-checkpoint.md](../references/c2sp-tlog-checkpoint.md) and
@@ -340,6 +392,17 @@ the production service-principal grant. They check:
 - a checkpoint for another origin;
 - failed requests;
 - `ErrEntryExpired` on an expired body whose proof still verifies.
+
+`pkg/ca/transparency_log_test.go` runs a real CA against a log on an
+in-memory node, its heads signed with the CA key. It checks:
+
+- each issuance funnel appends exactly one `cert-issued` entry whose
+  inclusion proof verifies;
+- `Revoke` and `RevokeCert` each append one `revoked` entry, and an
+  already-revoked serial appends none;
+- with no log set, nothing is appended;
+- against a log the node never created, issuance fails with no certificate
+  stored, and a revocation stands with `ErrTransparencyLogEntryMissing`.
 
 The tests without the tag cover the entry encoding and its refusals, and the
 head signer: its key hash equals `HeadKeyHash`, its signature verifies as the
