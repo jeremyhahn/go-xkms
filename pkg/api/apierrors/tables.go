@@ -144,6 +144,14 @@ var TrustRootSentinelClasses = []SentinelClass{
 	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }
 
+// TransparencyLogSentinelClasses classifies the errors of the CA
+// transparency log's read verbs, for every transport that serves them.
+var TransparencyLogSentinelClasses = []SentinelClass{
+	{xkms.ErrTransparencyLogNotConfigured, ClassUnavailable},
+	{xkms.ErrTransparencyLogRange, ClassInvalidArgument},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
+}
+
 // PINSentinelClasses classifies the go-qrdb PIN backend domain errors
 // (qrdbsdk.ErrPINNotSet, ErrPINLocked, ...) pkg/xkms's PIN operations
 // (SetSOPIN, SetUserPIN, ChangeSOPIN, ChangeUserPIN, VerifySOPIN,

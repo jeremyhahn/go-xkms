@@ -466,6 +466,13 @@ func Routes() []RouteSpec {
 	permIf("DELETE", "/trust-roots/{fingerprint}", auth.ResourceTrustRoots, auth.ActionDelete, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.RemoveHandler })
 	permIf("POST", "/trust-roots/{fingerprint}/quarantine", auth.ResourceTrustRoots, auth.ActionUpdate, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.QuarantineHandler })
 
+	// CA transparency log reads (docs/transparency-log).
+	hasTransparencyLog := func(s *Server) bool { return s.transparencyLogHandlers != nil }
+	permIf("GET", "/ca/transparency-log/head", auth.ResourceVlog, auth.ActionHead, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.HeadHandler })
+	permIf("GET", "/ca/transparency-log/entries/{index}", auth.ResourceVlog, auth.ActionGet, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.EntryHandler })
+	permIf("GET", "/ca/transparency-log/proofs/inclusion", auth.ResourceVlog, auth.ActionProof, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.InclusionProofHandler })
+	permIf("GET", "/ca/transparency-log/proofs/consistency", auth.ResourceVlog, auth.ActionProof, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.ConsistencyProofHandler })
+
 	// --- Repository signing keys (go-xkms#1697). attestation_signing_keys:*
 	// is an xkms-owned permission family whose tenancy scope
 	// pkg/apimodule/module_scopes.go declares; the service binds each call to
