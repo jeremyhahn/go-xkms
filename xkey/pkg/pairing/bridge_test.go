@@ -349,6 +349,22 @@ func (m *mockTransportClient) GetCABundle(_ context.Context, _ *transport.GetCAB
 	return m.caBundleResp, nil
 }
 
+func (m *mockTransportClient) GetTransparencyLogHead(_ context.Context, _ *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) GetTransparencyLogEntry(_ context.Context, _ *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) GetTransparencyLogInclusionProof(_ context.Context, _ *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (m *mockTransportClient) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	if m.caCertResp == nil {
 		return nil, errNotImplemented
