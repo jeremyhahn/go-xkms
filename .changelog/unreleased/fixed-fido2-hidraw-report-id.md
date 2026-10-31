@@ -1,1 +1,0 @@
-FIDO2 Linux HID transport: every hidraw write now prepends report ID 0x00 before the 64-byte CTAPHID packet, as Linux hidraw requires. Before, the first CID byte was read as the report ID, and a CID starting with 0x00 produced a truncated report (#1788).

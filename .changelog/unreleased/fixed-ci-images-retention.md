@@ -1,1 +1,0 @@
-- ci-images keeps the newest two generations of each CI image on the release runner (`ci-registry.sh retain`), so the runner's disk no longer fills with one IT image per main commit (#1789).
