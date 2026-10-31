@@ -27,7 +27,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -574,158 +573,95 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 	// Concurrent Operations
 	// ========================================
 	t.Run("ConcurrentOperations", func(t *testing.T) {
+		// PKCS11CertStorage serializes its token writes against everything
+		// else it does on the token and finalizes every search it starts, so
+		// every operation below must succeed on a pool of 8 sessions. Under
+		// load, SoftHSM2 otherwise fails some calls CKR_GENERAL_ERROR and
+		// leaves sessions failing CKR_OPERATION_ACTIVE (DS-3754).
 		t.Run("ConcurrentSaves", func(t *testing.T) {
-			// NOTE: SoftHSM may return CKR_GENERAL_ERROR under concurrent write
-			// pressure because token-level locks serialize CreateObject internally.
-			// We verify that the majority succeed and no panics occur.
 			numGoroutines := 10
 			var wg sync.WaitGroup
-			var successCount atomic.Int32
-			wg.Add(numGoroutines)
-
 			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
 				go func(id int) {
 					defer wg.Done()
 					cert := createTestCert(t, fmt.Sprintf("concurrent-save-%d", id))
-					err := hwStorage.SaveCert(fmt.Sprintf("concurrent-cert-%d", id), cert)
-					if err != nil {
-						t.Logf("Goroutine %d: Transient PKCS#11 error (expected under concurrency): %v", id, err)
-					} else {
-						successCount.Add(1)
+					if err := hwStorage.SaveCert(fmt.Sprintf("concurrent-cert-%d", id), cert); err != nil {
+						t.Errorf("Goroutine %d: save failed: %v", id, err)
 					}
 				}(i)
 			}
-
 			wg.Wait()
-			t.Logf("✓ %d/%d concurrent saves succeeded", successCount.Load(), numGoroutines)
 
-			// At least half should succeed with a pool of 8 sessions
-			if successCount.Load() < int32(numGoroutines/2) {
-				t.Errorf("Too few concurrent saves succeeded: %d/%d", successCount.Load(), numGoroutines)
-			}
-
-			// Clean up
 			for i := 0; i < numGoroutines; i++ {
-				hwStorage.DeleteCert(fmt.Sprintf("concurrent-cert-%d", i))
+				if err := hwStorage.DeleteCert(fmt.Sprintf("concurrent-cert-%d", i)); err != nil {
+					t.Errorf("Failed to delete concurrent-cert-%d: %v", i, err)
+				}
 			}
 		})
 
 		t.Run("ConcurrentReads", func(t *testing.T) {
-			// NOTE: PKCS#11 sessions are not thread-safe for concurrent search operations.
-			// CKR_OPERATION_ACTIVE errors are expected behavior. This test verifies
-			// that the mutex protection allows successful operations to complete.
-
-			// Save a certificate first
 			cert := createTestCert(t, "concurrent-read-test")
-			err := hwStorage.SaveCert("concurrent-read-cert", cert)
-			if err != nil {
+			if err := hwStorage.SaveCert("concurrent-read-cert", cert); err != nil {
 				t.Fatalf("Failed to save certificate: %v", err)
 			}
 
 			numGoroutines := 20
 			var wg sync.WaitGroup
-			wg.Add(numGoroutines)
-
-			successCount := int32(0)
-			errorCount := int32(0)
-
 			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
 				go func(id int) {
 					defer wg.Done()
-					_, err := hwStorage.GetCert("concurrent-read-cert")
+					got, err := hwStorage.GetCert("concurrent-read-cert")
 					if err != nil {
-						atomic.AddInt32(&errorCount, 1)
-						// Log but don't fail - CKR_OPERATION_ACTIVE is expected with PKCS#11
-						t.Logf("Goroutine %d: Read error (expected with PKCS#11): %v", id, err)
-					} else {
-						atomic.AddInt32(&successCount, 1)
+						t.Errorf("Goroutine %d: read failed: %v", id, err)
+						return
+					}
+					if !got.Equal(cert) {
+						t.Errorf("Goroutine %d: read a different certificate", id)
 					}
 				}(i)
 			}
-
 			wg.Wait()
-			t.Logf("✓ %d concurrent reads completed (%d successful, %d with expected PKCS#11 errors)",
-				numGoroutines, successCount, errorCount)
 
-			// Clean up
-			hwStorage.DeleteCert("concurrent-read-cert")
+			if err := hwStorage.DeleteCert("concurrent-read-cert"); err != nil {
+				t.Errorf("Failed to delete concurrent-read-cert: %v", err)
+			}
 		})
 
 		t.Run("ConcurrentMixedOps", func(t *testing.T) {
-			// NOTE: PKCS#11 sessions are not thread-safe for concurrent operations.
-			// CKR_OPERATION_ACTIVE and other session errors are expected behavior.
-			// This test verifies that despite session limitations, operations can
-			// complete successfully when they acquire session access.
-
 			numGoroutines := 15
 			var wg sync.WaitGroup
-			wg.Add(numGoroutines)
-
-			saveSuccess := int32(0)
-			saveErrors := int32(0)
-			readSuccess := int32(0)
-			readErrors := int32(0)
-			existsSuccess := int32(0)
-			existsErrors := int32(0)
-			deleteSuccess := int32(0)
-			deleteErrors := int32(0)
-
 			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
 				go func(id int) {
 					defer wg.Done()
-
 					certID := fmt.Sprintf("mixed-ops-cert-%d", id)
 					cert := createTestCert(t, fmt.Sprintf("mixed-ops-%d", id))
 
-					// Save
 					if err := hwStorage.SaveCert(certID, cert); err != nil {
-						atomic.AddInt32(&saveErrors, 1)
-						t.Logf("Goroutine %d: Save error (expected with PKCS#11): %v", id, err)
+						t.Errorf("Goroutine %d: save failed: %v", id, err)
 						return
 					}
-					atomic.AddInt32(&saveSuccess, 1)
-
-					// Read
 					if _, err := hwStorage.GetCert(certID); err != nil {
-						atomic.AddInt32(&readErrors, 1)
-						t.Logf("Goroutine %d: Read error (expected with PKCS#11): %v", id, err)
+						t.Errorf("Goroutine %d: read failed: %v", id, err)
 						return
 					}
-					atomic.AddInt32(&readSuccess, 1)
-
-					// Check existence
-					if exists, err := hwStorage.CertExists(certID); err != nil {
-						atomic.AddInt32(&existsErrors, 1)
-						t.Logf("Goroutine %d: CertExists error (expected with PKCS#11): %v", id, err)
-						return
-					} else if !exists {
-						atomic.AddInt32(&existsErrors, 1)
-						t.Logf("Goroutine %d: CertExists returned false unexpectedly", id)
+					exists, err := hwStorage.CertExists(certID)
+					if err != nil {
+						t.Errorf("Goroutine %d: CertExists failed: %v", id, err)
 						return
 					}
-					atomic.AddInt32(&existsSuccess, 1)
-
-					// Delete
+					if !exists {
+						t.Errorf("Goroutine %d: saved certificate not found", id)
+						return
+					}
 					if err := hwStorage.DeleteCert(certID); err != nil {
-						atomic.AddInt32(&deleteErrors, 1)
-						t.Logf("Goroutine %d: Delete error (expected with PKCS#11): %v", id, err)
-					} else {
-						atomic.AddInt32(&deleteSuccess, 1)
+						t.Errorf("Goroutine %d: delete failed: %v", id, err)
 					}
 				}(i)
 			}
-
 			wg.Wait()
-			t.Logf("✓ %d goroutines completed mixed operations:", numGoroutines)
-			t.Logf("  Save:   %d successful, %d with expected errors", saveSuccess, saveErrors)
-			t.Logf("  Read:   %d successful, %d with expected errors", readSuccess, readErrors)
-			t.Logf("  Exists: %d successful, %d with expected errors", existsSuccess, existsErrors)
-			t.Logf("  Delete: %d successful, %d with expected errors", deleteSuccess, deleteErrors)
-
-			// Verify that at least some operations succeeded (not all failed)
-			if saveSuccess == 0 {
-				t.Error("All save operations failed - expected at least some to succeed")
-			}
 		})
 	})
 

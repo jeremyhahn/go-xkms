@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // TestCryptoMockClient_Decrypt_OAEPRoundTrip verifies that a Decrypt request
@@ -205,6 +207,115 @@ func TestCryptoMockClient_Decrypt_WrongNonceLength(t *testing.T) {
 			}
 			if !errors.Is(err, ErrInvalidNonceSize) {
 				t.Errorf("Decrypt() error = %v, want ErrInvalidNonceSize", err)
+			}
+		})
+	}
+}
+
+// TestCryptoMockClient_WrapKeyByID_AESGCMFrame pins the mock to the key
+// service's AES-GCM wrap frame, mode || nonce || ciphertext || tag, sealed
+// under the caller's IV (pkg/xkms servicer_wrapkey.go). The module strips that
+// frame down to the ciphertext || tag PKCS#11 v3.2 §6.13.3 has C_WrapKey
+// return, so a mock answering in any other layout fails every CKM_AES_GCM wrap.
+func TestCryptoMockClient_WrapKeyByID_AESGCMFrame(t *testing.T) {
+	c := NewCryptoMockClient()
+	ctx := context.Background()
+	targetKey := bytes.Repeat([]byte{0x5a}, 32)
+	c.symmetricKeys["target"] = targetKey
+	iv := []byte("mock-wrap-iv")
+	aad := []byte("wrap aad")
+
+	wrapResp, err := c.WrapKeyByID(ctx, &transport.WrapKeyByIDRequest{
+		WrappingKeyID: "kek",
+		TargetKeyID:   "target",
+		Algorithm:     string(types.WrapAESGCM),
+		IV:            iv,
+		AAD:           aad,
+	})
+	if !aead.ArbitraryIVGCMUsable() {
+		// fips140=only refuses a caller IV, and so does the service.
+		if !errors.Is(err, aead.ErrArbitraryIVGCMUnavailable) {
+			t.Fatalf("WrapKeyByID under fips140=only = %v, want ErrArbitraryIVGCMUnavailable", err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("WrapKeyByID() error = %v", err)
+	}
+	framed := wrapResp.WrappedKey
+	if want := 1 + len(iv) + len(targetKey) + aead.GCMFullTagSize; len(framed) != want {
+		t.Fatalf("wrapped length = %d, want %d", len(framed), want)
+	}
+	if framed[0] != gcmWrapModeExplicit {
+		t.Errorf("mode byte = %#x, want the explicit-nonce mode %#x", framed[0], gcmWrapModeExplicit)
+	}
+	if !bytes.Equal(framed[1:1+len(iv)], iv) {
+		t.Errorf("frame nonce = %x, want the caller's IV %x", framed[1:1+len(iv)], iv)
+	}
+
+	_, err = c.UnwrapKeyByID(ctx, &transport.UnwrapKeyByIDRequest{
+		WrappedKey:      framed,
+		UnwrappingKeyID: "kek",
+		Algorithm:       string(types.WrapAESGCM),
+		AAD:             aad,
+		TargetKeyID:     "unwrapped",
+	})
+	if err != nil {
+		t.Fatalf("UnwrapKeyByID() error = %v", err)
+	}
+	if got := c.symmetricKeys["unwrapped"]; !bytes.Equal(got, targetKey) {
+		t.Errorf("unwrapped key = %x, want %x", got, targetKey)
+	}
+}
+
+// TestCryptoMockClient_UnwrapKeyByID_AESGCMRejectsBadFrame verifies a frame
+// that is too short, carries an unknown mode byte, or was sealed under other
+// AAD is refused rather than stored as a key.
+func TestCryptoMockClient_UnwrapKeyByID_AESGCMRejectsBadFrame(t *testing.T) {
+	c := NewCryptoMockClient()
+	ctx := context.Background()
+	c.symmetricKeys["target"] = bytes.Repeat([]byte{0x5a}, 32)
+
+	// The random-nonce mode needs no caller IV, so this frame is valid in
+	// both fips140 modes.
+	sealed := requireMockEncrypt(t, c, ctx, &transport.EncryptRequest{
+		KeyID:     "kek",
+		Plaintext: c.symmetricKeys["target"],
+	})
+	mode := gcmWrapModeExplicit
+	if sealed.GCMNonceMode == string(types.GCMNonceModeRandom) {
+		mode = gcmWrapModeRandom
+	}
+	valid := append(append(append([]byte{mode}, sealed.Nonce...), sealed.Ciphertext...), sealed.Tag...)
+	unknownMode := append([]byte{0x7f}, valid[1:]...)
+
+	tests := []struct {
+		name    string
+		wrapped []byte
+		aad     []byte
+		wantErr error
+	}{
+		{name: "shorter than mode, nonce and tag", wrapped: valid[:1+gcmWrapNonceSize], wantErr: ErrInvalidCiphertext},
+		{name: "unknown mode byte", wrapped: unknownMode, wantErr: ErrInvalidCiphertext},
+		{name: "different AAD", wrapped: valid, aad: []byte("other aad")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := c.UnwrapKeyByID(ctx, &transport.UnwrapKeyByIDRequest{
+				WrappedKey:      tt.wrapped,
+				UnwrappingKeyID: "kek",
+				Algorithm:       string(types.WrapAESGCM),
+				AAD:             tt.aad,
+				TargetKeyID:     "unwrapped",
+			})
+			if err == nil {
+				t.Fatal("UnwrapKeyByID() accepted a bad frame")
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Errorf("UnwrapKeyByID() error = %v, want %v", err, tt.wantErr)
+			}
+			if _, stored := c.symmetricKeys["unwrapped"]; stored {
+				t.Error("a refused unwrap stored a key")
 			}
 		})
 	}

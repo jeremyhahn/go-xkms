@@ -114,7 +114,7 @@ func TestCreateObjectImportedKEKWrapsAndUnwrapsAgainstTheDaemon(t *testing.T) {
 	t.Cleanup(func() { env.Module.DestroyObject(session, target) })
 
 	// CKM_AES_GCM rather than CKM_AES_KEY_WRAP, because its blob is
-	// nonce||ciphertext||tag and can be opened by crypto/cipher below with no
+	// ciphertext||tag under the caller's IV and can be opened by crypto/cipher below with no
 	// dependence on this repository's own wrapping code.
 	iv := make([]byte, 12)
 	if _, err := rand.Read(iv); err != nil {
@@ -147,10 +147,15 @@ func TestCreateObjectImportedKEKWrapsAndUnwrapsAgainstTheDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("building GCM for the independent check failed: %v", err)
 	}
-	if len(wrapped) < gcm.NonceSize() {
-		t.Fatalf("the wrapped blob is shorter than a GCM nonce: %d bytes", len(wrapped))
+	// PKCS#11 v3.2 §6.13.3: the wrapped key is the ciphertext with the tag
+	// appended; the IV is the one the caller passed in pIv and is not part of
+	// the blob. Both GCM constructions the service may seal with are plain
+	// GCM, so the standard library opens the blob under that IV.
+	if len(wrapped) != len(targetBytes)+gcm.Overhead() {
+		t.Fatalf("the wrapped blob is %d bytes, want ciphertext || tag = %d bytes",
+			len(wrapped), len(targetBytes)+gcm.Overhead())
 	}
-	recovered, err := gcm.Open(nil, wrapped[:gcm.NonceSize()], wrapped[gcm.NonceSize():], nil)
+	recovered, err := gcm.Open(nil, iv, wrapped, nil)
 	if err != nil {
 		t.Fatalf("the wrapped blob did not open under the imported KEK: %v; "+
 			"the service wrapped under a different key than the one C_CreateObject imported", err)
@@ -289,7 +294,7 @@ func TestCreateObjectUnextractableKeyIsNotImportedAgainstTheDaemon(t *testing.T)
 	_ = targetBytes
 
 	wrapped, rv := env.Module.WrapKey(session,
-		module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(nil, 128)),
+		module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(make([]byte, 12), 128)),
 		kek, target)
 	if rv != module.CKR_WRAPPING_KEY_HANDLE_INVALID {
 		t.Errorf("C_WrapKey under a key that was deliberately not imported returned %s, want %s",

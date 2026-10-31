@@ -40,6 +40,7 @@ package module
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -522,6 +523,23 @@ func TestPKCS11ToolMultiProtocol_RandomGeneration(t *testing.T) {
 
 // TestPKCS11ToolMultiProtocol_SignVerify tests sign/verify workflow across all protocols and backends.
 // NOTE: Requires persistent backend - in-memory module doesn't persist keys across pkcs11-tool invocations.
+// pkcs11ToolKeyID returns the hex CKA_ID a test gives a key pair so that
+// pkcs11-tool can find its private key again.
+//
+// pkcs11-tool picks the key for --sign by --id, never by --label: OpenSC 0.26.1
+// sends C_FindObjectsInit with only CKA_CLASS=CKO_PRIVATE_KEY when given
+// --label, and adds CKA_ID only for --id. Selected by --label, the
+// signature came from whichever private key the token listed first, and on a
+// token holding an RSA key that is the RSA key, which C_SignInit refuses for
+// CKM_ECDSA with CKR_KEY_TYPE_INCONSISTENT, as PKCS#11 v3.2 §5.1.6 and
+// §6.3.12 (an ECDSA key is CKK_EC) require. --delete-object does match
+// --label, so cleanup still goes by label. The ID is the label's bytes,
+// unique per protocol and backend, so a key left over from another subtest
+// is never chosen in its place.
+func pkcs11ToolKeyID(label string) string {
+	return hex.EncodeToString([]byte(label))
+}
+
 func TestPKCS11ToolMultiProtocol_SignVerify(t *testing.T) {
 	requireFilePersistence(t)
 	requireTool(t)
@@ -556,12 +574,14 @@ func TestPKCS11ToolMultiProtocol_SignVerify(t *testing.T) {
 						mech := mech
 						t.Run(mech.Name, func(t *testing.T) {
 							label := fmt.Sprintf("%s-%s-%s", mech.KeyLabel, protocol, backend)
+							keyID := pkcs11ToolKeyID(label)
 
 							// Step 1: Generate key pair
 							_, stderr, err := cfg.RunPKCS11ToolWithPIN(t,
 								"--keypairgen",
 								"--key-type", mech.KeyType,
 								"--label", label,
+								"--id", keyID,
 							)
 							if err != nil {
 								t.Fatalf("keypairgen failed: %v\nstderr: %s", err, stderr)
@@ -579,7 +599,7 @@ func TestPKCS11ToolMultiProtocol_SignVerify(t *testing.T) {
 							_, stderr, err = cfg.RunPKCS11ToolWithPIN(t,
 								"--sign",
 								"--mechanism", mech.SignMech,
-								"--label", label,
+								"--id", keyID,
 								"--input-file", dataFile,
 								"--output-file", sigFile,
 							)
@@ -638,6 +658,7 @@ func TestPKCS11ToolMultiProtocol_FullLifecycle(t *testing.T) {
 					cfg.SetProtocolEnv(t)
 
 					label := fmt.Sprintf("lifecycle-%s-%s", protocol, backend)
+					keyID := pkcs11ToolKeyID(label)
 
 					// Step 1: Generate key pair
 					t.Log("Step 1: Generate key pair")
@@ -645,6 +666,7 @@ func TestPKCS11ToolMultiProtocol_FullLifecycle(t *testing.T) {
 						"--keypairgen",
 						"--key-type", "EC:secp256r1",
 						"--label", label,
+						"--id", keyID,
 					)
 					if err != nil {
 						t.Fatalf("keypairgen failed: %v\nstderr: %s", err, stderr)
@@ -671,7 +693,7 @@ func TestPKCS11ToolMultiProtocol_FullLifecycle(t *testing.T) {
 					_, stderr, err = cfg.RunPKCS11ToolWithPIN(t,
 						"--sign",
 						"--mechanism", "ECDSA",
-						"--label", label,
+						"--id", keyID,
 						"--input-file", dataFile,
 						"--output-file", sigFile,
 					)
