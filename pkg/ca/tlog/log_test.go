@@ -37,6 +37,7 @@ func testEntries() []Entry {
 		CertIssued{CertSHA256: sha256.Sum256([]byte("leaf DER")), Serial: big.NewInt(4242), Profile: "tls-server", Tenant: "acme"},
 		ImageSigned{ImageDigest: "sha256:aa11", EnvelopeDigest: "sha256:bb22", Signer: "spiffe://acme/release"},
 		Revoked{Serial: big.NewInt(4242), Reason: 1},
+		External{SPIFFEID: "spiffe://acme/svc/billing", Payload: []byte("invoice 7")},
 	}
 }
 
@@ -48,6 +49,8 @@ func appendEntry(ctx context.Context, l *Log, e Entry) (uint64, error) {
 		return l.AppendImageSigned(ctx, e)
 	case Revoked:
 		return l.AppendRevoked(ctx, e)
+	case External:
+		return l.AppendExternal(ctx, e)
 	}
 	return 0, ErrUnknownKind
 }
@@ -268,6 +271,8 @@ func TestLog_RequestFailures(t *testing.T) {
 	_, err = l.AppendCertIssued(ctx, CertIssued{})
 	require.ErrorIs(t, err, ErrInvalidEntry)
 	_, err = l.AppendImageSigned(ctx, ImageSigned{})
+	require.ErrorIs(t, err, ErrInvalidEntry)
+	_, err = l.AppendExternal(ctx, External{Payload: []byte{1}})
 	require.ErrorIs(t, err, ErrInvalidEntry)
 
 	_, _, err = l.Entry(ctx, 5)
