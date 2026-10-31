@@ -31,5 +31,5 @@ fi
 rm -rf ./.runtime/data
 mkdir -p ./.runtime/data/software
 
-echo "[run-server] launching ${XKMSD_BIN} on http://localhost:18443" >&2
+echo "[run-server] launching ${XKMSD_BIN} on https://localhost:18443" >&2
 exec env XKMS_CONFIG="$(pwd)/config.yaml" "${XKMSD_BIN}"

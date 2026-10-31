@@ -1,6 +1,9 @@
-# REST-only, plain-HTTP xkmsd config for the Chrome virtual-authenticator
-# WebAuthn ceremony test. Plain HTTP on localhost is a WebAuthn secure context,
-# so no TLS is needed. Field names are derived from the proven
+# REST-only xkmsd config for the Chrome virtual-authenticator WebAuthn
+# ceremony test. xkmsd's API transports are TLS-only, so the server runs on
+# https://localhost with no cert_file/key_file: its bootstrap certificate
+# serves, and the test browser accepts it through Playwright's
+# ignoreHTTPSErrors. https://localhost is a WebAuthn secure context, so the
+# ceremony itself is unchanged. Field names are derived from the proven
 # test/integration/api/config.test.yaml.
 #
 # The browser page is served same-origin with this server (via Playwright
@@ -22,7 +25,7 @@ logging:
   format: "json"
 
 tls:
-  enabled: false
+  enabled: true
 
 auth:
   enabled: false
@@ -32,10 +35,10 @@ webauthn:
   rp_id: "localhost"
   rp_origins:
     # Same-origin ceremony (page served from the API origin).
-    - "http://localhost:18443"
+    - "https://localhost:18443"
     # Cross-origin ceremony (page served from a different origin) — exercises
     # the CORS preflight on X-Session-Id and the Expose-Headers read.
-    - "http://localhost:18444"
+    - "https://localhost:18444"
   rp_display_name: "xKMS WebAuthn Browser Test"
   attestation_preference: "none"
   authenticator_attachment: ""
@@ -56,6 +59,7 @@ health:
   path: "/health"
 
 datastore:
+  mode: "standalone"
   engine: file
   path: "./.runtime/data"
 

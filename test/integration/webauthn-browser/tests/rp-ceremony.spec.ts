@@ -32,14 +32,14 @@
 import { test, expect, type CDPSession, type Page } from '@playwright/test';
 
 // The RP API origin.
-const API_BASE = 'http://localhost:18443';
+const API_BASE = 'https://localhost:18443';
 // Page origin for the same-origin ceremony (served from the API origin).
-const SAME_ORIGIN_URL = 'http://localhost:18443/__rp_test';
+const SAME_ORIGIN_URL = 'https://localhost:18443/__rp_test';
 // Page origin for the cross-origin ceremony (a DIFFERENT origin than the API,
 // also listed in the server's rp_origins). Calling the RP from here forces the
 // browser to run a real CORS preflight for the X-Session-Id request header and
 // to honour Access-Control-Expose-Headers when reading it back.
-const CROSS_ORIGIN_URL = 'http://localhost:18444/__rp_test';
+const CROSS_ORIGIN_URL = 'https://localhost:18444/__rp_test';
 
 // Minimal page. All ceremony logic runs via page.evaluate so the
 // non-serializable PublicKeyCredential never crosses the evaluate boundary.
@@ -389,8 +389,8 @@ test.describe('xkms WebAuthn RP — Chrome virtual authenticator (same-origin)',
 });
 
 test.describe('xkms WebAuthn RP — Chrome virtual authenticator (cross-origin)', () => {
-  // The page is served from http://localhost:18444 while the RP API lives at
-  // http://localhost:18443. Every /finish POST carries X-Session-Id, so the
+  // The page is served from https://localhost:18444 while the RP API lives at
+  // https://localhost:18443. Every /finish POST carries X-Session-Id, so the
   // browser runs a real CORS preflight (proves Access-Control-Allow-Headers),
   // and the X-Session-Id returned by /begin is only readable because the server
   // sets Access-Control-Expose-Headers. A regression in the CORS middleware
