@@ -3642,16 +3642,24 @@ IT_IMAGE ?= go-xkms-it:local
 # change to it, which covers the Dockerfile, the pins and the build context.
 # Every job of every run on one runner names the same image for the same
 # tree, builds it once and reuses it; scripts/reap-stale-ci-stacks.sh removes
-# it once it is old and unused.
+# it once it is old and unused. From ci-template v1.29 (ruling 220(5)) it also
+# hashes APK_INDEX_SUM, the Alpine package index checksum CI reads with
+# scripts/apk-index-sum.sh (`none` here: no base image has apk). Unset, as on
+# a local or lane-verify build, the tag is the tree's alone.
+APK_INDEX_SUM ?=
 IT_CI_IMAGE = go-xkms-ci-it:$(shell { git rev-parse 'HEAD^{tree}'; git diff HEAD; \
-	git ls-files -oz --exclude-standard | xargs -0r sha256sum; } 2>/dev/null | sha256sum | cut -c1-16)
+	git ls-files -oz --exclude-standard | xargs -0r sha256sum; \
+	$(if $(APK_INDEX_SUM),printf 'APK_INDEX_SUM=%s\n' '$(APK_INDEX_SUM)';) } 2>/dev/null | sha256sum | cut -c1-16)
 # MODULE_ENV_FILE is the gomodauth secret's source: CI writes its own outside
 # the checkout; locally it is the file stage-gomodauth writes.
 MODULE_ENV_FILE ?= $(GOMODAUTH_FILE)
-# GO_BUILD_PROXY_ARG hands the caller's GOPROXY (CI's fleet proxy first) to the
-# image's go install / go mod download stages; unset, the Dockerfile default
-# applies. The shell expands $$GOPROXY, so make never echoes its value.
-GO_BUILD_PROXY_ARG = $(if $(GOPROXY),--build-arg GO_BUILD_PROXY="$$GOPROXY")
+# GO_BUILD_PROXY is the GOPROXY of the image's go install / go mod download
+# stages. CI sets it to <DEVCACHE_GOPROXY>|https://proxy.golang.org|direct when
+# the runner's Athens answers (ci-template v1.29.4, v1.29.5); empty, the
+# Dockerfile default applies. The build line quotes it, where an unquoted `|`
+# is a shell pipe (handbook devcontainer.md §4).
+GO_BUILD_PROXY ?=
+GO_BUILD_PROXY_ARG = $(if $(GO_BUILD_PROXY),--build-arg "GO_BUILD_PROXY=$(GO_BUILD_PROXY)")
 DEVCONTAINER_BUILD = DOCKER_BUILDKIT=1 docker buildx build --load \
 	--build-arg GO_IMAGE=$(GO_IMAGE) \
 	$(GO_BUILD_PROXY_ARG) \
@@ -3687,7 +3695,7 @@ docker-build-it: stage-gomodauth
 	if [ "$(IT_IMAGE)" = "$(IT_CI_IMAGE)" ] && docker image inspect $(IT_IMAGE) >/dev/null 2>&1; then \
 		echo "$(IT_IMAGE) is present"; \
 	else \
-		$(DEVCONTAINER_BUILD) --target integration -t $(IT_IMAGE) . || \
+		$(DEVCONTAINER_BUILD) --target integration --build-arg APK_INDEX_SUM='$(APK_INDEX_SUM)' -t $(IT_IMAGE) . || \
 			{ [ "$(IT_IMAGE)" = "$(IT_CI_IMAGE)" ] && docker image inspect $(IT_IMAGE) >/dev/null 2>&1; }; \
 	fi
 

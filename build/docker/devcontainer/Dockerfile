@@ -24,7 +24,7 @@
 # - The gate tools: golangci-lint, actionlint, shellcheck, gosec, govulncheck, trivy
 ARG GO_IMAGE
 # GO_BUILD_PROXY is the GOPROXY of the tools and modules stages. The Makefile
-# passes the caller's GOPROXY (CI exports the fleet's module proxy first); this
+# passes its GO_BUILD_PROXY (CI sets Athens first, ci-template v1.29.5); this
 # default applies only when none is set. Checksum verification stays on.
 ARG GO_BUILD_PROXY=https://proxy.golang.org,direct
 
