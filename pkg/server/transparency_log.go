@@ -50,7 +50,7 @@ func (s *Server) transparencyLogNodeOptions() ([]qrdbnode.NodeOption, error) {
 		return nil, nil
 	}
 	keys := clustercapkg.NewKeyProvider("")
-	signers, err := tlog.NewHeadSignerProvider(keys, s.transparencyLogOrigin())
+	signers, err := tlog.NewHeadSignerProvider(keys, s.transparencyLogOrigin(), tlog.ServiceLogScope(caTransparencyLogName))
 	if err != nil {
 		return nil, err
 	}

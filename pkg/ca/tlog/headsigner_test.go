@@ -51,14 +51,14 @@ func failingCAKeys(signer crypto.Signer, err error) qrdbsdk.CAKeyProvider {
 }
 
 func TestNewHeadSignerProvider(t *testing.T) {
-	p, err := NewHeadSignerProvider(newCAKeys(t, newEd25519(t)), testKeyName)
+	p, err := NewHeadSignerProvider(newCAKeys(t, newEd25519(t)), testKeyName, testScope)
 	require.NoError(t, err)
 	assert.Equal(t, testKeyName, p.KeyName())
 
-	_, err = NewHeadSignerProvider(nil, testKeyName)
+	_, err = NewHeadSignerProvider(nil, testKeyName, testScope)
 	assert.ErrorIs(t, err, ErrNoKeyProvider)
 
-	_, err = NewHeadSignerProvider(newCAKeys(t, newEd25519(t)), "")
+	_, err = NewHeadSignerProvider(newCAKeys(t, newEd25519(t)), "", testScope)
 	assert.ErrorIs(t, err, checkpoint.ErrInvalidKeyName)
 }
 
@@ -70,7 +70,7 @@ func TestHeadSignerProvider_SignsUnderTheCAKey(t *testing.T) {
 			p := newProvider(t, key)
 			sigType := caKeySignatureTypes[name]
 
-			created, err := p.CreateKey(ctx, qrdbsdk.HeadSignerCreateKeyRequest{Log: "certs", Type: sigType, Version: 1})
+			created, err := p.CreateKey(ctx, qrdbsdk.HeadSignerCreateKeyRequest{TenantID: testScope.TenantID, Database: testScope.Database, Log: testScope.Log, Type: sigType, Version: 1})
 			require.NoError(t, err)
 			spki, err := x509.MarshalPKIXPublicKey(key.Public())
 			require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestHeadSignerProvider_SignsUnderTheCAKey(t *testing.T) {
 			assert.Equal(t, hex.EncodeToString(sum[:]), created.Ref)
 			assert.Equal(t, key.Public(), created.Public)
 
-			hs, err := p.HeadSigner(ctx, qrdbsdk.HeadSignerRequest{Log: "certs", KeyRef: created.Ref, KeyVersion: 3})
+			hs, err := p.HeadSigner(ctx, qrdbsdk.HeadSignerRequest{TenantID: testScope.TenantID, Database: testScope.Database, Log: testScope.Log, KeyRef: created.Ref, KeyVersion: 3})
 			require.NoError(t, err)
 			wantHash, err := qrdbsdk.HeadKeyHash(testKeyName, key.Public())
 			require.NoError(t, err)
@@ -102,15 +102,15 @@ func TestHeadSignerProvider_Refusals(t *testing.T) {
 	ctx := t.Context()
 	p := newProvider(t, newEd25519(t))
 
-	_, err := p.CreateKey(ctx, qrdbsdk.HeadSignerCreateKeyRequest{Type: qrdbsdk.HeadSignatureECDSAP256SHA256})
+	_, err := p.CreateKey(ctx, qrdbsdk.HeadSignerCreateKeyRequest{TenantID: testScope.TenantID, Database: testScope.Database, Log: testScope.Log, Type: qrdbsdk.HeadSignatureECDSAP256SHA256})
 	assert.ErrorIs(t, err, ErrKeyTypeMismatch)
 
-	_, err = p.HeadSigner(ctx, qrdbsdk.HeadSignerRequest{KeyRef: "another key"})
+	_, err = p.HeadSigner(ctx, qrdbsdk.HeadSignerRequest{TenantID: testScope.TenantID, Database: testScope.Database, Log: testScope.Log, KeyRef: "another key"})
 	assert.ErrorIs(t, err, ErrKeyRefMismatch)
 
-	created, err := p.CreateKey(ctx, qrdbsdk.HeadSignerCreateKeyRequest{Type: qrdbsdk.HeadSignatureEd25519})
+	created, err := p.CreateKey(ctx, qrdbsdk.HeadSignerCreateKeyRequest{TenantID: testScope.TenantID, Database: testScope.Database, Log: testScope.Log, Type: qrdbsdk.HeadSignatureEd25519})
 	require.NoError(t, err)
-	hs, err := p.HeadSigner(ctx, qrdbsdk.HeadSignerRequest{KeyRef: created.Ref})
+	hs, err := p.HeadSigner(ctx, qrdbsdk.HeadSignerRequest{TenantID: testScope.TenantID, Database: testScope.Database, Log: testScope.Log, KeyRef: created.Ref})
 	require.NoError(t, err)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
@@ -118,12 +118,50 @@ func TestHeadSignerProvider_Refusals(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
+func TestNewHeadSignerProvider_IncompleteScope(t *testing.T) {
+	for name, scope := range map[string]LogScope{
+		"no tenant":   {Database: testScope.Database, Log: testScope.Log},
+		"no database": {TenantID: testScope.TenantID, Log: testScope.Log},
+		"no log":      {TenantID: testScope.TenantID, Database: testScope.Database},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewHeadSignerProvider(newCAKeys(t, newEd25519(t)), testKeyName, scope)
+			assert.ErrorIs(t, err, ErrInvalidConfig)
+		})
+	}
+}
+
+// TestHeadSignerProvider_OnlyTheCALog is the node-wide provider refusing a
+// tenant's own log: neither a key nor a signer is answered for another
+// tenant, database or log name, so the CA key never signs its checkpoints.
+func TestHeadSignerProvider_OnlyTheCALog(t *testing.T) {
+	ctx := t.Context()
+	key := newEd25519(t)
+	p := newProvider(t, key)
+	ref, err := keyRef(key.Public())
+	require.NoError(t, err)
+
+	for name, scope := range map[string]LogScope{
+		"another tenant":   {TenantID: "tenant-a", Database: testScope.Database, Log: testScope.Log},
+		"another database": {TenantID: testScope.TenantID, Database: "other", Log: testScope.Log},
+		"another log":      {TenantID: testScope.TenantID, Database: testScope.Database, Log: "attacker"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := p.CreateKey(ctx, qrdbsdk.HeadSignerCreateKeyRequest{TenantID: scope.TenantID, Database: scope.Database, Log: scope.Log, Type: qrdbsdk.HeadSignatureEd25519, Version: 1})
+			assert.ErrorIs(t, err, ErrLogOutOfScope)
+			hs, err := p.HeadSigner(ctx, qrdbsdk.HeadSignerRequest{TenantID: scope.TenantID, Database: scope.Database, Log: scope.Log, KeyRef: ref, KeyVersion: 1})
+			assert.ErrorIs(t, err, ErrLogOutOfScope)
+			assert.Nil(t, hs, "no signer is handed out")
+		})
+	}
+}
+
 func TestHeadSignerProvider_UnsupportedCAKey(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	require.NoError(t, err)
 	p := newProvider(t, key)
 
-	_, err = p.CreateKey(t.Context(), qrdbsdk.HeadSignerCreateKeyRequest{Type: qrdbsdk.HeadSignatureECDSAP256SHA256})
+	_, err = p.CreateKey(t.Context(), qrdbsdk.HeadSignerCreateKeyRequest{TenantID: testScope.TenantID, Database: testScope.Database, Log: testScope.Log, Type: qrdbsdk.HeadSignatureECDSAP256SHA256})
 	assert.ErrorIs(t, err, ErrUnsupportedCAKey)
 	_, err = p.Verifier(t.Context())
 	assert.ErrorIs(t, err, ErrUnsupportedCAKey)
@@ -135,12 +173,12 @@ func TestHeadSignerProvider_CAKeyUnavailable(t *testing.T) {
 		"nil signer":      failingCAKeys(nil, nil),
 	} {
 		t.Run(name, func(t *testing.T) {
-			p, err := NewHeadSignerProvider(keys, testKeyName)
+			p, err := NewHeadSignerProvider(keys, testKeyName, testScope)
 			require.NoError(t, err)
 
-			_, err = p.CreateKey(t.Context(), qrdbsdk.HeadSignerCreateKeyRequest{Type: qrdbsdk.HeadSignatureEd25519})
+			_, err = p.CreateKey(t.Context(), qrdbsdk.HeadSignerCreateKeyRequest{TenantID: testScope.TenantID, Database: testScope.Database, Log: testScope.Log, Type: qrdbsdk.HeadSignatureEd25519})
 			assert.ErrorIs(t, err, ErrCAKeyUnavailable)
-			_, err = p.HeadSigner(t.Context(), qrdbsdk.HeadSignerRequest{})
+			_, err = p.HeadSigner(t.Context(), qrdbsdk.HeadSignerRequest{TenantID: testScope.TenantID, Database: testScope.Database, Log: testScope.Log})
 			assert.ErrorIs(t, err, ErrCAKeyUnavailable)
 			_, err = p.Verifier(t.Context())
 			assert.ErrorIs(t, err, ErrCAKeyUnavailable)
@@ -154,7 +192,7 @@ func TestCreateAndOpen_Refusals(t *testing.T) {
 	_, err := Create(t.Context(), nil, cfg, nil)
 	assert.ErrorIs(t, err, ErrNoKeyProvider)
 
-	p, err := NewHeadSignerProvider(failingCAKeys(nil, &qrdbsdk.CAKeyNotInitializedError{}), testKeyName)
+	p, err := NewHeadSignerProvider(failingCAKeys(nil, &qrdbsdk.CAKeyNotInitializedError{}), testKeyName, testScope)
 	require.NoError(t, err)
 	_, err = Create(t.Context(), nil, cfg, p)
 	assert.ErrorIs(t, err, ErrCAKeyUnavailable, "the CA key is checked before any log request")
