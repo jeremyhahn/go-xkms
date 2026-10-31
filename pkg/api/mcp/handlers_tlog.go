@@ -60,3 +60,9 @@ func (s *Server) handleTransparencyLogInclusionProof(ctx context.Context, req *J
 func (s *Server) handleTransparencyLogConsistencyProof(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	return transparencyLogCall(s, ctx, req, "transparency log consistency proof", s.xkmsService.GetTransparencyLogConsistencyProof)
 }
+
+// handleTransparencyLogAppend appends an external entry under the caller's
+// SPIFFE ID, which the service reads from the TLS state ctx carries.
+func (s *Server) handleTransparencyLogAppend(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	return transparencyLogCall(s, ctx, req, "transparency log append", s.xkmsService.AppendTransparencyLogExternal)
+}

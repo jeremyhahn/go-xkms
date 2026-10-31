@@ -373,6 +373,10 @@ func (b *baseSDKClient) GetTransparencyLogConsistencyProof(ctx context.Context, 
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (b *baseSDKClient) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, errNotImplemented
 }

@@ -530,6 +530,14 @@ service KeystoreService {
     option (qrdb.v1.permission) = "vlog:proof";
   }
 
+  // AppendTransparencyLogExternal appends an external entry under the
+  // caller's SPIFFE ID, read from the caller's verified TLS client
+  // certificate, and returns its leaf index.
+  // REST equivalent: POST /api/v1/ca/transparency-log/entries
+  rpc AppendTransparencyLogExternal(AppendTransparencyLogExternalRequest) returns (AppendTransparencyLogExternalResponse) {
+    option (qrdb.v1.permission) = "vlog:append";
+  }
+
   // ==================== CA Operations ====================
 
   // GetCACertificate retrieves the CA certificate with metadata.
@@ -3340,6 +3348,18 @@ message GetTransparencyLogConsistencyProofResponse {
   uint64 first_size = 1;
   uint64 second_size = 2;
   repeated bytes hashes = 3;
+}
+
+// AppendTransparencyLogExternalRequest carries only the payload: the entry's
+// SPIFFE ID is the authenticated caller's, never a request field.
+message AppendTransparencyLogExternalRequest {
+  // The caller's opaque payload, 1 to 65535 bytes.
+  bytes payload = 1;
+}
+
+// AppendTransparencyLogExternalResponse names the appended entry.
+message AppendTransparencyLogExternalResponse {
+  uint64 index = 1;
 }
 
 // ==================== CA Bundle Messages ====================

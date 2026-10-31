@@ -289,6 +289,9 @@ func (m *mockCAClient) GetTransparencyLogInclusionProof(_ context.Context, _ *tr
 func (m *mockCAClient) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
 	return nil, nil
 }
+func (m *mockCAClient) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, nil
+}
 func (m *mockCAClient) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return m.getCACertificateResp, m.getCACertificateErr
 }

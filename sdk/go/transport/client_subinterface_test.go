@@ -223,6 +223,9 @@ func (s *stubClient) GetTransparencyLogInclusionProof(context.Context, *GetTrans
 func (s *stubClient) GetTransparencyLogConsistencyProof(context.Context, *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error) {
 	panic("stub")
 }
+func (s *stubClient) AppendTransparencyLogExternal(context.Context, *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error) {
+	panic("stub")
+}
 func (s *stubClient) GetCACertificate(context.Context, *GetCACertificateRequest) (*GetCACertificateResponse, error) {
 	panic("stub")
 }

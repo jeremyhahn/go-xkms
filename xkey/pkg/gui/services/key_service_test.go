@@ -297,6 +297,9 @@ func (m *mockClient) GetTransparencyLogInclusionProof(context.Context, *transpor
 func (m *mockClient) GetTransparencyLogConsistencyProof(context.Context, *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
 	panic("not implemented")
 }
+func (m *mockClient) AppendTransparencyLogExternal(context.Context, *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	panic("not implemented")
+}
 func (m *mockClient) GetCACertificate(context.Context, *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	panic("not implemented")
 }

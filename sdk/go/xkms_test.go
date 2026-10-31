@@ -1006,6 +1006,10 @@ func (m *mockXKMSService) GetTransparencyLogConsistencyProof(ctx context.Context
 	return nil, nil
 }
 
+func (m *mockXKMSService) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, nil
+}
+
 func (m *mockXKMSService) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, nil
 }

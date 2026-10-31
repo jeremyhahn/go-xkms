@@ -662,6 +662,9 @@ func (n *noopClient) GetTransparencyLogInclusionProof(context.Context, *transpor
 func (n *noopClient) GetTransparencyLogConsistencyProof(context.Context, *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) AppendTransparencyLogExternal(context.Context, *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) GetCACertificate(context.Context, *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, nil
 }

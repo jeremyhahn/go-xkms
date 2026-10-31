@@ -272,6 +272,7 @@ func Constants() map[string]string {
 		"ActionRestore":            auth.ActionRestore,
 		"ActionHead":               auth.ActionHead,
 		"ActionProof":              auth.ActionProof,
+		"ActionAppend":             auth.ActionAppend,
 	}
 }
 

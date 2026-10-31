@@ -456,6 +456,10 @@ func (m *mockBackendsClient) GetTransparencyLogConsistencyProof(ctx context.Cont
 	return nil, nil
 }
 
+func (m *mockBackendsClient) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, nil
+}
+
 func (m *mockBackendsClient) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, nil
 }

@@ -741,6 +741,7 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.ca.transparency-log.entry":             "vlog:get",
 	"xkms.ca.transparency-log.inclusion-proof":   "vlog:proof",
 	"xkms.ca.transparency-log.consistency-proof": "vlog:proof",
+	"xkms.ca.transparency-log.append":            "vlog:append",
 
 	// Server-side OIDC credentials — pkg/api/grpc's OIDCCredential* RPCs.
 	"oidc.credential.create":       "oidc_credentials:create",

@@ -472,6 +472,7 @@ func Routes() []RouteSpec {
 	permIf("GET", "/ca/transparency-log/entries/{index}", auth.ResourceVlog, auth.ActionGet, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.EntryHandler })
 	permIf("GET", "/ca/transparency-log/proofs/inclusion", auth.ResourceVlog, auth.ActionProof, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.InclusionProofHandler })
 	permIf("GET", "/ca/transparency-log/proofs/consistency", auth.ResourceVlog, auth.ActionProof, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.ConsistencyProofHandler })
+	permIf("POST", "/ca/transparency-log/entries", auth.ResourceVlog, auth.ActionAppend, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.AppendExternalHandler })
 
 	// --- Repository signing keys (go-xkms#1697). attestation_signing_keys:*
 	// is an xkms-owned permission family whose tenancy scope

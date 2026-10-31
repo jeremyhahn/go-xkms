@@ -423,6 +423,8 @@ type (
 	GetTransparencyLogInclusionProofResponse   = transport.GetTransparencyLogInclusionProofResponse
 	GetTransparencyLogConsistencyProofRequest  = transport.GetTransparencyLogConsistencyProofRequest
 	GetTransparencyLogConsistencyProofResponse = transport.GetTransparencyLogConsistencyProofResponse
+	AppendTransparencyLogExternalRequest       = transport.AppendTransparencyLogExternalRequest
+	AppendTransparencyLogExternalResponse      = transport.AppendTransparencyLogExternalResponse
 
 	// TCG CA Operations
 	IssueEKCertificateRequest   = transport.IssueEKCertificateRequest

@@ -92,3 +92,19 @@ func (t *Transport) GetTransparencyLogConsistencyProof(ctx context.Context, req 
 		Hashes:     resp.GetHashes(),
 	}, nil
 }
+
+// AppendTransparencyLogExternal appends an external entry under the caller's
+// SPIFFE ID, which the server reads from this client's certificate.
+func (t *Transport) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	if req == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+	resp, err := t.client.AppendTransparencyLogExternal(ctx, &pb.AppendTransparencyLogExternalRequest{Payload: req.Payload})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "append transparency log external entry failed", Err: err}
+	}
+	return &transport.AppendTransparencyLogExternalResponse{Index: resp.GetIndex()}, nil
+}

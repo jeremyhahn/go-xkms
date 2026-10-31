@@ -114,6 +114,7 @@ const (
 	KeystoreService_GetTransparencyLogEntry_FullMethodName            = "/xkms.v1.KeystoreService/GetTransparencyLogEntry"
 	KeystoreService_GetTransparencyLogInclusionProof_FullMethodName   = "/xkms.v1.KeystoreService/GetTransparencyLogInclusionProof"
 	KeystoreService_GetTransparencyLogConsistencyProof_FullMethodName = "/xkms.v1.KeystoreService/GetTransparencyLogConsistencyProof"
+	KeystoreService_AppendTransparencyLogExternal_FullMethodName      = "/xkms.v1.KeystoreService/AppendTransparencyLogExternal"
 	KeystoreService_GetCACertificate_FullMethodName                   = "/xkms.v1.KeystoreService/GetCACertificate"
 	KeystoreService_SignCSR_FullMethodName                            = "/xkms.v1.KeystoreService/SignCSR"
 	KeystoreService_IssueCertificate_FullMethodName                   = "/xkms.v1.KeystoreService/IssueCertificate"
@@ -485,6 +486,11 @@ type KeystoreServiceClient interface {
 	// GetTransparencyLogConsistencyProof returns an RFC 9162 §2.1.4 consistency proof.
 	// REST equivalent: GET /api/v1/ca/transparency-log/proofs/consistency
 	GetTransparencyLogConsistencyProof(ctx context.Context, in *GetTransparencyLogConsistencyProofRequest, opts ...grpc.CallOption) (*GetTransparencyLogConsistencyProofResponse, error)
+	// AppendTransparencyLogExternal appends an external entry under the
+	// caller's SPIFFE ID, read from the caller's verified TLS client
+	// certificate, and returns its leaf index.
+	// REST equivalent: POST /api/v1/ca/transparency-log/entries
+	AppendTransparencyLogExternal(ctx context.Context, in *AppendTransparencyLogExternalRequest, opts ...grpc.CallOption) (*AppendTransparencyLogExternalResponse, error)
 	// GetCACertificate retrieves the CA certificate with metadata.
 	GetCACertificate(ctx context.Context, in *GetCACertificateRequest, opts ...grpc.CallOption) (*GetCACertificateResponse, error)
 	// SignCSR signs a certificate signing request.
@@ -1683,6 +1689,16 @@ func (c *keystoreServiceClient) GetTransparencyLogConsistencyProof(ctx context.C
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetTransparencyLogConsistencyProofResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_GetTransparencyLogConsistencyProof_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) AppendTransparencyLogExternal(ctx context.Context, in *AppendTransparencyLogExternalRequest, opts ...grpc.CallOption) (*AppendTransparencyLogExternalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AppendTransparencyLogExternalResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_AppendTransparencyLogExternal_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -3228,6 +3244,11 @@ type KeystoreServiceServer interface {
 	// GetTransparencyLogConsistencyProof returns an RFC 9162 §2.1.4 consistency proof.
 	// REST equivalent: GET /api/v1/ca/transparency-log/proofs/consistency
 	GetTransparencyLogConsistencyProof(context.Context, *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error)
+	// AppendTransparencyLogExternal appends an external entry under the
+	// caller's SPIFFE ID, read from the caller's verified TLS client
+	// certificate, and returns its leaf index.
+	// REST equivalent: POST /api/v1/ca/transparency-log/entries
+	AppendTransparencyLogExternal(context.Context, *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error)
 	// GetCACertificate retrieves the CA certificate with metadata.
 	GetCACertificate(context.Context, *GetCACertificateRequest) (*GetCACertificateResponse, error)
 	// SignCSR signs a certificate signing request.
@@ -3794,6 +3815,9 @@ func (UnimplementedKeystoreServiceServer) GetTransparencyLogInclusionProof(conte
 }
 func (UnimplementedKeystoreServiceServer) GetTransparencyLogConsistencyProof(context.Context, *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTransparencyLogConsistencyProof not implemented")
+}
+func (UnimplementedKeystoreServiceServer) AppendTransparencyLogExternal(context.Context, *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AppendTransparencyLogExternal not implemented")
 }
 func (UnimplementedKeystoreServiceServer) GetCACertificate(context.Context, *GetCACertificateRequest) (*GetCACertificateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetCACertificate not implemented")
@@ -5840,6 +5864,24 @@ func _KeystoreService_GetTransparencyLogConsistencyProof_Handler(srv interface{}
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).GetTransparencyLogConsistencyProof(ctx, req.(*GetTransparencyLogConsistencyProofRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_AppendTransparencyLogExternal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppendTransparencyLogExternalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).AppendTransparencyLogExternal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_AppendTransparencyLogExternal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).AppendTransparencyLogExternal(ctx, req.(*AppendTransparencyLogExternalRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -8554,6 +8596,10 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetTransparencyLogConsistencyProof",
 			Handler:    _KeystoreService_GetTransparencyLogConsistencyProof_Handler,
+		},
+		{
+			MethodName: "AppendTransparencyLogExternal",
+			Handler:    _KeystoreService_AppendTransparencyLogExternal_Handler,
 		},
 		{
 			MethodName: "GetCACertificate",

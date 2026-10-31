@@ -206,6 +206,7 @@ var goldenRPCPermissions = map[string]string{
 	"GetTransparencyLogEntry":            "vlog:get",
 	"GetTransparencyLogInclusionProof":   "vlog:proof",
 	"GetTransparencyLogConsistencyProof": "vlog:proof",
+	"AppendTransparencyLogExternal":      "vlog:append",
 	// PKCS#11 remote-state RPCs persist a token's key/object state, so they
 	// gate on the keys resource with the same per-verb CRUD actions REST's
 	// /api/v1/pkcs11state/* routes carry (go-xkms#1249): create for the two

@@ -365,6 +365,10 @@ func (m *mockTransportClient) GetTransparencyLogConsistencyProof(_ context.Conte
 	return nil, errNotImplemented
 }
 
+func (m *mockTransportClient) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (m *mockTransportClient) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	if m.caCertResp == nil {
 		return nil, errNotImplemented

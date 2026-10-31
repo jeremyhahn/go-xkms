@@ -281,6 +281,10 @@ func (m *MockXKMSService) GetTransparencyLogConsistencyProof(ctx context.Context
 	return nil, &mockUnsupportedError{capability: "transparency log consistency proof"}
 }
 
+func (m *MockXKMSService) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log append"}
+}
+
 func (m *MockXKMSService) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, &mockUnsupportedError{capability: "CA certificate"}
 }

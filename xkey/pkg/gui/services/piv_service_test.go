@@ -320,6 +320,9 @@ func (m *mockPIVClient) GetTransparencyLogInclusionProof(_ context.Context, _ *t
 func (m *mockPIVClient) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
 	return nil, errMockNotImplemented
 }
+func (m *mockPIVClient) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, errMockNotImplemented
+}
 func (m *mockPIVClient) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, errMockNotImplemented
 }

@@ -247,6 +247,7 @@ var goldenRESTPermissions = map[string]string{
 	"GET /api/v1/ca/transparency-log/entries/{index}":            "vlog:get",
 	"GET /api/v1/ca/transparency-log/proofs/inclusion":           "vlog:proof",
 	"GET /api/v1/ca/transparency-log/proofs/consistency":         "vlog:proof",
+	"POST /api/v1/ca/transparency-log/entries":                   "vlog:append",
 	"GET /api/v1/tenants/{tenantID}/tpm":                         "tenants:read",
 	"PUT /api/v1/tenants/{tenantID}/tpm":                         "tenants:set_tpm_mode",
 	"GET /api/v1/tenants/{tenantID}/tpm/vtpm":                    "tenants:read",

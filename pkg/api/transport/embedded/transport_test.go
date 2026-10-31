@@ -389,6 +389,13 @@ func (m *mockService) GetTransparencyLogConsistencyProof(_ context.Context, _ *t
 	return &transport.GetTransparencyLogConsistencyProofResponse{}, nil
 }
 
+func (m *mockService) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.AppendTransparencyLogExternalResponse{}, nil
+}
+
 func (m *mockService) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	if m.shouldFail {
 		return nil, errMock
