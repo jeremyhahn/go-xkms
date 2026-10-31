@@ -8,6 +8,10 @@
 type Handler interface {
 	EnrollKey(config *EnrollmentConfig) (*EnrollmentResult, error)
 	UnlockWithKey(config *AuthenticationConfig) ([]byte, error)
+	// DeriveHMACSecret returns the raw hmac-secret output (CTAP 2.1 §12.5),
+	// not a key derived from it: what LUKS slots enrolled with
+	// `fido2-assert -G -h` need.
+	DeriveHMACSecret(config *AuthenticationConfig) (*AuthenticationResult, error)
 	ListDevices() ([]Device, error)
 	WaitForDevice(ctx context.Context) (*Device, error)
 	Close() error

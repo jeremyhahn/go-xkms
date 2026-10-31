@@ -24,8 +24,8 @@ section() { printf '\n%s\n' "$1"; }
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-mapfile -t COMPOSE_FILES < <(grep -rl --include=docker-compose.yml 'GIT_CONFIG_COUNT=' \
-	"$ROOT/.devcontainer" "$ROOT/test/integration" | sort)
+mapfile -t COMPOSE_FILES < <(grep -rl --include=docker-compose.yml --include=compose.yaml 'GIT_CONFIG_COUNT=' \
+	"$ROOT/build/docker/devcontainer" "$ROOT/test/integration" | sort)
 
 # probe.sh prints `<compose file> <VAR>=<interpolated value>` for each
 # GIT_CONFIG_* entry of every compose file, as compose would interpolate it
@@ -70,7 +70,7 @@ VALUE='https://github.com/jeremyhahn/'
 
 section "compose files under test"
 eq "the devcontainer compose file is covered" "yes" \
-	"$(printf '%s\n' "${COMPOSE_FILES[@]}" | grep -qx "$ROOT/.devcontainer/docker-compose.yml" && echo yes)"
+	"$(printf '%s\n' "${COMPOSE_FILES[@]}" | grep -qx "$ROOT/build/docker/devcontainer/compose.yaml" && echo yes)"
 
 section "runner-injected credentials win over GITEA_GO_TOKEN"
 via_make GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$VALUE" \

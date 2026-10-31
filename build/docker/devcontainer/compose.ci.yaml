@@ -1,0 +1,40 @@
+# CI-only overlay for build/docker/devcontainer/compose.yaml (go-xkms #576).
+#
+# The base file bind-mounts `..:/workspace:cached`, which is correct on a
+# developer host where the `docker compose` client and the Docker daemon
+# share a filesystem. In a Gitea Actions job the compose CLI runs INSIDE the
+# job container while the bind mount is resolved by the daemon on the
+# RUNNER HOST -- so `..` there names some other, usually empty, directory
+# and never this job's checkout. Every `run_in_devcontainer` /
+# `run_with_server` target then fails at the first line that reads a repo
+# file:
+#
+#   pattern ./pkg/backend/software/...: directory prefix pkg/backend/software
+#   does not contain main module or its selected dependencies
+#
+# This overlay replaces that one bind mount with a named volume, scoped like
+# every other resource in this stack to the per-run compose project
+# ($(COMPOSE_NS) in the Makefile), so it starts empty and is discarded by
+# `make devcontainer-clean` (`docker compose down -v`) same as the module
+# and build caches. The Makefile's `ci_sync_devcontainer_workspace` (used by
+# `run_in_devcontainer` and `run_with_server`) populates it once per run with
+# a tar stream over the Docker API connection, unpacked by the devcontainer's
+# own user, instead of depending on a shared filesystem, so it lands
+# correctly no matter which host the daemon is actually on and belongs to
+# the user the targets run as (DS-3754).
+#
+# Applied only when COMPOSE_RUN_ID != local, i.e. only in CI (Makefile:
+# DOCKER_COMPOSE). Local development always uses the base file's bind mount,
+# unmodified, and never loads this file.
+#
+# Compose merges `volumes:` entries by their container target path across
+# `-f` files (verified: `docker compose -f base.yml -f this.yml config`
+# shows every other `devcontainer` mount from the base file untouched), so
+# only the one mount that changes needs to be listed here.
+services:
+  devcontainer:
+    volumes:
+      - workspace-src:/workspace
+
+volumes:
+  workspace-src:

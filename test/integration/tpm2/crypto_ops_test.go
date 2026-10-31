@@ -102,9 +102,8 @@ func TestIntegration_RSAEncryptDecrypt(t *testing.T) {
 			keySize := rsaPub.N.BitLen()
 			t.Logf("Created %d-bit RSA key", keySize)
 
-			// Get the key handle and name from attributes
-			keyHandle := keyAttrs.TPMAttributes.Handle
-			keyName := keyAttrs.TPMAttributes.Name
+			// Load the key: CreateRSA flushed its transient handle.
+			keyHandle, keyName := loadKey(t, tpmInstance, keyAttrs)
 
 			// Encrypt the message using TPM
 			plaintext := []byte(tc.message)
@@ -137,8 +136,6 @@ func TestIntegration_RSAEncryptDecrypt(t *testing.T) {
 
 			t.Logf("Successfully encrypted and decrypted %d bytes using %d-bit RSA key",
 				len(plaintext), keySize)
-
-			tpmInstance.Flush(keyHandle)
 		})
 	}
 }
@@ -603,8 +600,8 @@ func TestIntegration_RSAEncryptDecrypt_LargeData(t *testing.T) {
 		t.Fatalf("Failed to create RSA key: %v", err)
 	}
 
-	keyHandle := keyAttrs.TPMAttributes.Handle
-	keyName := keyAttrs.TPMAttributes.Name
+	// Load the key: CreateRSA flushed its transient handle.
+	keyHandle, keyName := loadKey(t, tpmInstance, keyAttrs)
 
 	// Test with data sizes approaching the limit
 	// For RSA-OAEP with SHA-256 on a 2048-bit key:
@@ -654,8 +651,6 @@ func TestIntegration_RSAEncryptDecrypt_LargeData(t *testing.T) {
 			t.Logf("Successfully encrypted/decrypted %d bytes", tc.dataSize)
 		})
 	}
-
-	tpmInstance.Flush(keyHandle)
 }
 
 // TestIntegration_CryptoOperations_Sequential tests sequential crypto operations

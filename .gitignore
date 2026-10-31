@@ -10,8 +10,10 @@
 # Log files
 *.log
 
-# Build artifacts
-/build/
+# Build artifacts. build/docker/ holds the devcontainer (handbook
+# devcontainer.md §1) and is source.
+/build/*
+!/build/docker/
 /dist/
 /bin/
 
@@ -85,6 +87,8 @@ playwright-report/
 /xkmsd
 /xkmsctl
 /truststrap
+# `go build ./examples/certificates/hardware/hybrid` from the root
+/hybrid
 
 # compiled binaries never enter the module tree (module zip size limit)
 /acme-client
@@ -96,6 +100,8 @@ playwright-report/
 /cmd/xkmsd/xkmsd
 /xkey/cmd/e2eprobe/e2eprobe
 /xkey/cmd/xkey/xkey
+# `go build ./tools/skillgen` from xkey/ writes the binary at the module root
+/xkey/skillgen
 /server
 /x25519-ecdh
 /aes
@@ -104,10 +110,16 @@ playwright-report/
 test/integration/acme-client/playwright/trusted-acme-client
 
 # Gitea module-fetch token (dependency-resolution.md §6) — never committed
+build/docker/devcontainer/.env
+build/docker/devcontainer/.env.tmp
+build/docker/devcontainer/gomodauth.env
+# The pre-#1558 location: a checkout upgraded across the move keeps its old
+# .devcontainer/.env, which must stay ignored.
 .devcontainer/.env
+.devcontainer/.env.tmp
 .devcontainer/gomodauth.env
 # The repo root copy too: ci.yml's docker job stages the same credentials as
-# ./gomodauth.env (`make stage-gomodauth` writes only the .devcontainer path),
+# ./gomodauth.env (`make stage-gomodauth` writes only the build/docker/devcontainer path),
 # so reproducing that job locally left a token file untracked but NOT ignored
 # — one `git add -A` from history, which under version-control.md means
 # rotating the token rather than rewriting the commit. .dockerignore already

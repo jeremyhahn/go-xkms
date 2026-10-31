@@ -135,7 +135,8 @@ eq "no list of its own" "[z,q] [ -tags=z,q]" "$(fn T= 'GO_BUILD_TAGS=z q')"
 
 section "ci-template targets read GO_BUILD_TAGS"
 check_target "lint" lint
-check_target "build" build
+check_target "build (toolchain image)" build XKMS_NATIVE_BUILD=1
+check_target "build (builder images)" build XKMS_NATIVE_BUILD=0
 check_target "coverage" coverage
 check_target "security" security
 check_target "integration-test" integration-test

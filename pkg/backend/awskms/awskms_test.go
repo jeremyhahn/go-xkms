@@ -17,6 +17,7 @@ package awskms
 
 import (
 	"context"
+	"crypto/elliptic"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -913,13 +914,16 @@ func TestGetKeySpec(t *testing.T) {
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
 	}
-	b, _ := NewBackendWithClient(config, mockClient)
+	b, err := NewBackendWithClient(config, mockClient)
+	if err != nil {
+		t.Fatalf("NewBackendWithClient() error = %v", err)
+	}
 
 	tests := []struct {
 		name     string
 		attrs    *types.KeyAttributes
 		wantSpec kmstypes.KeySpec
-		wantErr  bool
+		wantErr  error
 	}{
 		{
 			name: "RSA algorithm",
@@ -927,7 +931,30 @@ func TestGetKeySpec(t *testing.T) {
 				KeyAlgorithm: x509.RSA,
 			},
 			wantSpec: kmstypes.KeySpecRsa2048,
-			wantErr:  false,
+		},
+		{
+			name: "RSA 3072",
+			attrs: &types.KeyAttributes{
+				KeyAlgorithm:  x509.RSA,
+				RSAAttributes: &types.RSAAttributes{KeySize: 3072},
+			},
+			wantSpec: kmstypes.KeySpecRsa3072,
+		},
+		{
+			name: "RSA 4096",
+			attrs: &types.KeyAttributes{
+				KeyAlgorithm:  x509.RSA,
+				RSAAttributes: &types.RSAAttributes{KeySize: 4096},
+			},
+			wantSpec: kmstypes.KeySpecRsa4096,
+		},
+		{
+			name: "RSA 1024 is not offered by AWS KMS",
+			attrs: &types.KeyAttributes{
+				KeyAlgorithm:  x509.RSA,
+				RSAAttributes: &types.RSAAttributes{KeySize: 1024},
+			},
+			wantErr: ErrInvalidKeySpec,
 		},
 		{
 			name: "ECDSA algorithm",
@@ -935,26 +962,105 @@ func TestGetKeySpec(t *testing.T) {
 				KeyAlgorithm: x509.ECDSA,
 			},
 			wantSpec: kmstypes.KeySpecEccNistP256,
-			wantErr:  false,
+		},
+		{
+			name: "ECDSA P-384",
+			attrs: &types.KeyAttributes{
+				KeyAlgorithm:  x509.ECDSA,
+				ECCAttributes: &types.ECCAttributes{Curve: elliptic.P384()},
+			},
+			wantSpec: kmstypes.KeySpecEccNistP384,
+		},
+		{
+			name: "ECDSA P-521",
+			attrs: &types.KeyAttributes{
+				KeyAlgorithm:  x509.ECDSA,
+				ECCAttributes: &types.ECCAttributes{Curve: elliptic.P521()},
+			},
+			wantSpec: kmstypes.KeySpecEccNistP521,
+		},
+		{
+			name: "ECDSA P-224 is not offered by AWS KMS",
+			attrs: &types.KeyAttributes{
+				KeyAlgorithm:  x509.ECDSA,
+				ECCAttributes: &types.ECCAttributes{Curve: elliptic.P224()},
+			},
+			wantErr: ErrInvalidKeySpec,
 		},
 		{
 			name: "unsupported algorithm",
 			attrs: &types.KeyAttributes{
 				KeyAlgorithm: x509.Ed25519,
 			},
-			wantErr: true,
+			wantErr: backend.ErrInvalidKeyType,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spec, err := b.getKeySpec(tt.attrs)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("getKeySpec() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("getKeySpec() error = %v, want %v", err, tt.wantErr)
+				}
 				return
 			}
-			if !tt.wantErr && spec != tt.wantSpec {
+			if err != nil {
+				t.Fatalf("getKeySpec() error = %v", err)
+			}
+			if spec != tt.wantSpec {
 				t.Errorf("getKeySpec() = %v, want %v", spec, tt.wantSpec)
+			}
+		})
+	}
+}
+
+// TestCreateKeySendsRequestedCurve checks that CreateKey asks AWS KMS for the
+// curve in ECCAttributes, so an ECDSA_SHA_384 or ECDSA_SHA_512 Sign later
+// matches the key spec instead of being rejected against ECC_NIST_P256.
+func TestCreateKeySendsRequestedCurve(t *testing.T) {
+	tests := []struct {
+		name     string
+		curve    elliptic.Curve
+		wantSpec kmstypes.KeySpec
+	}{
+		{name: "P-256", curve: elliptic.P256(), wantSpec: kmstypes.KeySpecEccNistP256},
+		{name: "P-384", curve: elliptic.P384(), wantSpec: kmstypes.KeySpecEccNistP384},
+		{name: "P-521", curve: elliptic.P521(), wantSpec: kmstypes.KeySpecEccNistP521},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sentSpec kmstypes.KeySpec
+			mockClient := &MockKMSClient{
+				CreateKeyFunc: func(ctx context.Context, params *kms.CreateKeyInput, optFns ...func(*kms.Options)) (*kms.CreateKeyOutput, error) {
+					sentSpec = params.KeySpec
+					return &kms.CreateKeyOutput{KeyMetadata: &kmstypes.KeyMetadata{KeyId: aws.String("key-" + tt.name)}}, nil
+				},
+				CreateAliasFunc: func(ctx context.Context, params *kms.CreateAliasInput, optFns ...func(*kms.Options)) (*kms.CreateAliasOutput, error) {
+					return &kms.CreateAliasOutput{}, nil
+				},
+			}
+			b, err := NewBackendWithClient(&Config{
+				Region:      "us-east-1",
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			}, mockClient)
+			if err != nil {
+				t.Fatalf("NewBackendWithClient() error = %v", err)
+			}
+
+			attrs := &types.KeyAttributes{
+				CN:            "curve-" + tt.name,
+				KeyAlgorithm:  x509.ECDSA,
+				KeyType:       backend.KEY_TYPE_SIGNING,
+				ECCAttributes: &types.ECCAttributes{Curve: tt.curve},
+			}
+			if _, err := b.CreateKey(attrs); err != nil {
+				t.Fatalf("CreateKey() error = %v", err)
+			}
+			if sentSpec != tt.wantSpec {
+				t.Errorf("CreateKey sent KeySpec %q, want %q", sentSpec, tt.wantSpec)
 			}
 		})
 	}

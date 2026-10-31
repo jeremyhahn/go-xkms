@@ -38,7 +38,7 @@ tls:
   # The first-boot admin credential is issued by `xkmsd init`'s one-shot
   # bootstrap CA, not by this server's embedded CA, so "verify" accepts it only
   # with that CA in the client-CA pool. init writes its bundle beside the
-  # credential, before the daemon starts (.devcontainer/docker-compose.yml).
+  # credential, before the daemon starts (build/docker/devcontainer/compose.yaml).
   client_cas:
     - "/data/storage/ca-bundle.pem"
   # The WebAuthn login matrix dials the compose service by its dotted
@@ -109,7 +109,7 @@ barrier:
   strategy: "passphrase"
   # `xkmsd init` initializes the barrier on a fresh volume (the compose
   # service's command); the server then boots sealed and serves the sealed
-  # window on server.host until .devcontainer/scripts/open-server-barrier.sh
+  # window on server.host until build/docker/devcontainer/scripts/open-server-barrier.sh
   # (run by the Makefile's devcontainer-server-wait) unseals it from the
   # devcontainer.
   # server.host must stay 0.0.0.0 -- the suites dial xkms-server:9443 over the
@@ -160,21 +160,30 @@ default_backend: "software"
 # refuses them outright, so nothing tries to use one. Kept in step with
 # scripts/start-test-xkmsd.sh, the fallback that serves the same socket when
 # the compose xkms-server service is not running.
+#
+# allow_legacy_key_wrap re-admits RSA PKCS#1 v1.5 on Decrypt, which the OpenSSL
+# suites drive through CKM_RSA_PKCS (PKCS#11 v3.2 §6.1.6) for "pkeyutl
+# -decrypt". Without it the daemon refuses that padding and the module reports
+# CKR_ARGUMENTS_BAD. The same FIPS ceiling applies (types.SetAllowLegacyKeyWrap).
 crypto:
   allow_weak_hashes: true
+  allow_legacy_key_wrap: true
 
 backends:
   software:
     enabled: true
     path: "/data/keys"
 
-  # SoftHSM2 backend for pkcs11 backend testing
-  # Uses SoftHSM installed in the xkms-server container
-  pkcs11:
-    enabled: true
-    library: "/usr/lib/softhsm/libsofthsm2.so"
-    token: "xkms-test"
-    pin: "1234"
+  # No pkcs11 backend. backends.pkcs11.pin is a protected secret target
+  # (go-xkms#654): server.New refuses a literal PIN there ("protected target
+  # must reference a resolvable secret at Backends.PKCS11.Pin") and the server
+  # never comes up. The only scheme it resolves is credential://<name>, and a
+  # fresh throwaway volume holds no credential before the first boot -- the
+  # manual strategy blocks until one is submitted over the API this server has
+  # not started yet. The suites dial the software backend by default
+  # (test/integration/pkcs11/module/protocol.go getServerAvailableBackends and
+  # the Makefile's XKMS_PKCS11_BACKENDS), the same set the fallback daemon,
+  # scripts/start-test-xkmsd.sh, enables.
 
   # TPM 2.0 backend, served by the swtpm software TPM the compose stack runs
   # alongside xkms-server on the xkms-dev network. No hardware TPM is touched:
@@ -199,7 +208,7 @@ backends:
   # holds the swtpm connection for its whole lifetime and swtpm's mssim command
   # port serves exactly one client: a second connection blocks instead of being
   # refused, so the compose healthcheck ("nc -z localhost 2321",
-  # .devcontainer/docker-compose.yml) stops returning and swtpm is marked
+  # build/docker/devcontainer/compose.yaml) stops returning and swtpm is marked
   # unhealthy for as long as the daemon runs. Every integration target gates on
   # "swtpm: condition: service_healthy", so leaving this on takes out the whole
   # suite, not just the TPM lane — observed here as "dependency failed to start:

@@ -122,9 +122,7 @@ func newConcInstance(t *testing.T, name string) *concInstance {
 	if err := os.MkdirAll(storagePath, 0o700); err != nil {
 		t.Fatalf("creating per-instance storage directory: %v", err)
 	}
-	if err := os.Setenv("XKMS_PKCS11_STORAGE_PATH", storagePath); err != nil {
-		t.Fatalf("setting XKMS_PKCS11_STORAGE_PATH: %v", err)
-	}
+	t.Setenv("XKMS_PKCS11_STORAGE_PATH", storagePath)
 
 	ctx := pkcs11.New(dst)
 	if ctx == nil {
@@ -1210,9 +1208,7 @@ func TestConcurrentCABIFinalizeDuringActiveSessions(t *testing.T) {
 	if err := os.MkdirAll(storagePath, 0o700); err != nil {
 		t.Fatalf("creating per-instance storage directory: %v", err)
 	}
-	if err := os.Setenv("XKMS_PKCS11_STORAGE_PATH", storagePath); err != nil {
-		t.Fatalf("setting XKMS_PKCS11_STORAGE_PATH: %v", err)
-	}
+	t.Setenv("XKMS_PKCS11_STORAGE_PATH", storagePath)
 
 	ctx := pkcs11.New(dst)
 	if ctx == nil {

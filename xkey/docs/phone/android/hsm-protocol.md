@@ -31,6 +31,7 @@ Byte fields (`[]byte` in Go) are base64 strings on the wire (Go's
 | `local.setKeyPolicy` | `LocalSetKeyPolicyParams` | `LocalSetKeyPolicyResult` |
 | `local.attestKey` | `LocalAttestKeyParams` | `LocalAttestKeyResult` |
 | `local.attestDevice` | `LocalAttestDeviceParams` | `LocalAttestDeviceResult` |
+| `local.verifyUser` | `LocalVerifyUserParams` | `LocalVerifyUserResult` |
 | `local.getCapabilities` | (none) | `LocalGetCapabilitiesResult` |
 | `local.listFido2Credentials` | `LocalListFido2CredentialsParams` | `LocalListFido2CredentialsResult` |
 | `local.signFido2Assertion` | `LocalSignFido2AssertionParams` | `LocalSignFido2AssertionResult` |

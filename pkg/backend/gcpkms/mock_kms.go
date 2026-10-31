@@ -38,10 +38,12 @@ type MockKMSClient struct {
 	DecryptFunc                       func(ctx context.Context, req *kmspb.DecryptRequest, opts ...interface{}) (*kmspb.DecryptResponse, error)
 	CreateImportJobFunc               func(ctx context.Context, req *kmspb.CreateImportJobRequest, opts ...interface{}) (*kmspb.ImportJob, error)
 	ImportCryptoKeyVersionFunc        func(ctx context.Context, req *kmspb.ImportCryptoKeyVersionRequest, opts ...interface{}) (*kmspb.CryptoKeyVersion, error)
+	ListCryptoKeyVersionsFunc         func(ctx context.Context, req *kmspb.ListCryptoKeyVersionsRequest, opts ...interface{}) ([]*kmspb.CryptoKeyVersion, error)
 	CloseFunc                         func() error
 
-	// Internal state for tracking created keys
-	keys map[string]*kmspb.CryptoKey
+	// Internal state for tracking created keys and their versions
+	keys     map[string]*kmspb.CryptoKey
+	versions map[string][]*kmspb.CryptoKeyVersion
 }
 
 // CreateCryptoKey mocks creating a crypto key in GCP KMS.
@@ -50,14 +52,22 @@ func (m *MockKMSClient) CreateCryptoKey(ctx context.Context, req *kmspb.CreateCr
 		return m.CreateCryptoKeyFunc(ctx, req, opts...)
 	}
 
+	// Like Cloud KMS, every new key gets version 1, but only an
+	// ENCRYPT_DECRYPT key reports it as its primary; asymmetric keys have no
+	// primary.
+	name := req.Parent + "/cryptoKeys/" + req.CryptoKeyId
+	version := &kmspb.CryptoKeyVersion{
+		Name:      name + "/cryptoKeyVersions/1",
+		State:     kmspb.CryptoKeyVersion_ENABLED,
+		Algorithm: req.CryptoKey.VersionTemplate.Algorithm,
+	}
 	key := &kmspb.CryptoKey{
-		Name:    req.Parent + "/cryptoKeys/" + req.CryptoKeyId,
-		Purpose: req.CryptoKey.Purpose,
-		Primary: &kmspb.CryptoKeyVersion{
-			Name:      req.Parent + "/cryptoKeys/" + req.CryptoKeyId + "/cryptoKeyVersions/1",
-			State:     kmspb.CryptoKeyVersion_ENABLED,
-			Algorithm: req.CryptoKey.VersionTemplate.Algorithm,
-		},
+		Name:            name,
+		Purpose:         req.CryptoKey.Purpose,
+		VersionTemplate: req.CryptoKey.VersionTemplate,
+	}
+	if key.Purpose == kmspb.CryptoKey_ENCRYPT_DECRYPT {
+		key.Primary = version
 	}
 
 	// Store key in internal map for later retrieval
@@ -65,6 +75,10 @@ func (m *MockKMSClient) CreateCryptoKey(ctx context.Context, req *kmspb.CreateCr
 		m.keys = make(map[string]*kmspb.CryptoKey)
 	}
 	m.keys[key.Name] = key
+	if m.versions == nil {
+		m.versions = make(map[string][]*kmspb.CryptoKeyVersion)
+	}
+	m.versions[key.Name] = []*kmspb.CryptoKeyVersion{version}
 
 	return key, nil
 }
@@ -82,16 +96,32 @@ func (m *MockKMSClient) GetCryptoKey(ctx context.Context, req *kmspb.GetCryptoKe
 		}
 	}
 
-	// Default fallback for keys not tracked (backward compatibility)
+	// Default fallback for keys not tracked: an RSA signing key, which, like
+	// every asymmetric Cloud KMS key, has no primary version.
 	return &kmspb.CryptoKey{
 		Name:    req.Name,
 		Purpose: kmspb.CryptoKey_ASYMMETRIC_SIGN,
-		Primary: &kmspb.CryptoKeyVersion{
-			Name:      req.Name + "/cryptoKeyVersions/1",
-			State:     kmspb.CryptoKeyVersion_ENABLED,
+		VersionTemplate: &kmspb.CryptoKeyVersionTemplate{
 			Algorithm: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_2048_SHA256,
 		},
 	}, nil
+}
+
+// ListCryptoKeyVersions mocks listing the versions of a crypto key.
+func (m *MockKMSClient) ListCryptoKeyVersions(ctx context.Context, req *kmspb.ListCryptoKeyVersionsRequest, opts ...interface{}) ([]*kmspb.CryptoKeyVersion, error) {
+	if m.ListCryptoKeyVersionsFunc != nil {
+		return m.ListCryptoKeyVersionsFunc(ctx, req, opts...)
+	}
+	if versions, exists := m.versions[req.Parent]; exists {
+		return versions, nil
+	}
+
+	// Default fallback for keys not tracked: version 1, enabled.
+	return []*kmspb.CryptoKeyVersion{{
+		Name:      req.Parent + "/cryptoKeyVersions/1",
+		State:     kmspb.CryptoKeyVersion_ENABLED,
+		Algorithm: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_2048_SHA256,
+	}}, nil
 }
 
 // GetCryptoKeyVersion mocks retrieving a crypto key version from GCP KMS.

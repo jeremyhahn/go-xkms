@@ -247,7 +247,7 @@ func verifyWithGoWebAuthn(t *testing.T, stmt *FIDO2AttestationStatement, authDat
 		AttStatement: attStmt,
 	}
 
-	err := attObj.VerifyAttestation(clientDataHash, nil)
+	err := attObj.VerifyAttestation(clientDataHash, nil, protocol.AttestationPolicy{}, protocol.SignaturePolicy{})
 	return attObj, err
 }
 

@@ -45,14 +45,13 @@ services:
       secrets:
         - gomodauth
     image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    # config.acme-tpm.yaml, and the fixed EK issuer trust anchor its
+    # ca.tcg-config.trust-anchors points at, are read from the source tree
+    # this image already COPYs into /workspace, not bind-mounted: the Docker
+    # daemon resolves a bind-mount source on its own host, which in CI is not
+    # the job container holding the checkout (DS-4181).
     volumes:
-      - ./config.acme-tpm.yaml:/etc/xkms/xkmsd.yaml
       - acme-data:/data
-      # The fixed EK issuer trust anchor config.acme-tpm.yaml's
-      # ca.tcg-config.trust-anchors points at -- see that file's comment,
-      # and swtpm_helper_test.go's swtpmTestEKIssuer, for why this is a
-      # committed file rather than something generated at runtime.
-      - ./testdata:/testdata:ro
     environment:
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
@@ -64,7 +63,7 @@ services:
       sh -c "
       set -e &&
       go run ./test/integration/acme-tpm/certgen -cn acme-server -cert /data/acme-tls/acme.crt -key /data/acme-tls/acme.key &&
-      exec /app/xkmsd -config /etc/xkms/xkmsd.yaml
+      exec /app/xkmsd -config /workspace/test/integration/acme-tpm/config.acme-tpm.yaml
       "
     healthcheck:
       test: ["CMD", "curl", "-sfk", "https://localhost:8443/acme/health"]
@@ -158,4 +157,4 @@ volumes:
 
 secrets:
   gomodauth:
-    file: ../../../.devcontainer/gomodauth.env
+    file: ../../../build/docker/devcontainer/gomodauth.env

@@ -143,9 +143,13 @@ make test-scripts
 ## `make check-public-literals`
 
 The public-release readiness gate (go-xkms#1030): fails with `file:line`
-output if any file in the tree carries a lab-network address, a fleet host
+output if any tracked file carries a lab-network address, a fleet host
 name, or an owner workstation path — none of which may reach a published
-tree. Runs in CI as part of the `lint` job, and can be run locally:
+tree. It scans tracked files only (`git grep`), so an untracked, gitignored
+file such as the staged `gomodauth.env` credentials is never read, and it
+refuses with exit 2 outside a git work tree. A finding is reported as
+`path:line` with the line's text left out, because CI logs are public.
+Runs in CI as part of the `lint` job, and can be run locally:
 
 ```sh
 make check-public-literals
@@ -153,7 +157,7 @@ make check-public-literals
 
 ```
 check-public-literals.sh: internal literal(s) found (go-xkms#1030):
-docs/example.md:12:reach the CA at <lab-network address>
+docs/example.md:12
 ```
 
 A clean tree prints nothing and exits 0. See

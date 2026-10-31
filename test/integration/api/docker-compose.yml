@@ -27,10 +27,12 @@ services:
       - xkms-data:/data
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs
-      - ./config.test.yaml:/etc/xkms/xkmsd.yaml
-      - ./scripts:/scripts:ro
+    # The config and the cert script are read from the source tree the image
+    # COPYs into /workspace, not bind-mounted: on the CI runner the docker
+    # daemon resolves bind-mount sources on its own host, which lacks the
+    # job's checkout (DS-4181).
     environment:
-      - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
+      - XKMS_CONFIG=/workspace/test/integration/api/config.test.yaml
       # The harness runs barrier/auth disabled by design (tests drive the
       # API surface directly); opt out of the refuse-to-start security gate.
       - KEYSTORE_LOG_LEVEL=debug
@@ -72,7 +74,7 @@ services:
         mkdir -p /etc/xkms/certs /var/run/xkms /data
         # Generate TLS certificates for QUIC
         echo "Generating TLS certificates..."
-        /scripts/generate-test-certs.sh
+        /workspace/test/integration/api/scripts/generate-test-certs.sh
         # Verify certificates were created
         ls -la /etc/xkms/certs/
         # Initialize the in-process SoftHSM2 token (idempotent) — the pkcs11
@@ -138,8 +140,8 @@ services:
     depends_on:
       xkms-server:
         condition: service_healthy
+    # Runs from the source tree baked into the image's /workspace (DS-4181).
     volumes:
-      - ../../..:/workspace
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs:ro
       - cli-build:/app/build
@@ -212,4 +214,4 @@ networks:
 
 secrets:
   gomodauth:
-    file: ../../../.devcontainer/gomodauth.env
+    file: ../../../build/docker/devcontainer/gomodauth.env

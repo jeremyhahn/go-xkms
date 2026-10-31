@@ -6,7 +6,7 @@
 # token, so the image's token-initializing CMD is replaced by the Makefile.
 services:
   tpm-simulator:
-    image: ghcr.io/stefanberger/swtpm:latest
+    image: ghcr.io/stefanberger/swtpm:v0.10.0@sha256:303a1998b9ae7ad500146036bb63e1e0703208f788db8741233f0080c3125a78
     command:
       - socket
       - --tpmstate
@@ -42,9 +42,9 @@ services:
     working_dir: /app
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
-# gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are
+# gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are
 # available, in which case the Dockerfile's optional secret mount falls back
 # to public module resolution.
 secrets:
   gomodauth:
-    file: ../../../../.devcontainer/gomodauth.env
+    file: ../../../../build/docker/devcontainer/gomodauth.env

@@ -22,7 +22,10 @@ services:
     volumes:
       - xkms-data:/data
       - xkms-certs:/etc/xkms/certs
-      - ./scripts:/scripts:ro
+    # Every script and config this stack runs is read from the source tree
+    # the images COPY into /workspace, never bind-mounted: on the CI runner
+    # the docker daemon resolves bind-mount sources on its own host, which
+    # lacks the job's checkout (DS-4181).
     environment:
       # This suite exercises the bootstrap trust protocol (Noise handshake, SPKI
       # pin, admin mTLS) using generated test certs at the transport layer.
@@ -70,11 +73,12 @@ services:
       - |
         mkdir -p /etc/xkms/certs /data
         echo "Generating TLS certificates..."
-        /scripts/generate-test-certs.sh
+        /workspace/test/integration/bootstrap/scripts/generate-test-certs.sh
         echo "Starting xkms server..."
         exec /app/xkmsd
 
-  # One-shot zone generator: reads server cert, computes TLSA, writes zone file
+  # One-shot zone generator: reads server cert, computes TLSA, writes zone file,
+  # and stages the Corefile beside it for CoreDNS, whose image has no shell.
   zone-generator:
     build:
       context: ../../..
@@ -86,7 +90,6 @@ services:
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
       - zone-data:/etc/coredns/zones
-      - ./setup:/setup:ro
     depends_on:
       xkms-server:
         condition: service_healthy
@@ -96,9 +99,11 @@ services:
       - /bin/sh
       - -c
       - |
+        set -e
         echo "Generating TLSA zone file from server certificate..."
-        /setup/generate-zone.sh
-        echo "Zone file generated."
+        /workspace/test/integration/bootstrap/setup/generate-zone.sh
+        cp /workspace/test/integration/bootstrap/coredns/Corefile /etc/coredns/zones/Corefile
+        echo "Zone file and Corefile generated."
 
   # CoreDNS serving TLSA records for bootstrap.test zone.
   # Starts AFTER zone-generator writes the zone file. The CoreDNS container
@@ -106,11 +111,10 @@ services:
   # The zone-generator service_completed_successfully dependency guarantees
   # the zone file exists before CoreDNS starts.
   coredns:
-    image: coredns/coredns:latest
+    image: coredns/coredns:1.15.0@sha256:0a9d8c8ddf34347eb59aad9a8784f0710de88d6d112726d11d271f9bc6daca26
     volumes:
-      - ./coredns/Corefile:/etc/coredns/Corefile:ro
       - zone-data:/etc/coredns/zones:ro
-    command: ["-conf", "/etc/coredns/Corefile"]
+    command: ["-conf", "/etc/coredns/zones/Corefile"]
     depends_on:
       zone-generator:
         condition: service_completed_successfully
@@ -178,7 +182,6 @@ services:
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
       - go-build-cache:/root/.cache/go-build
-      - ./scripts:/scripts:ro
     environment:
       - CGO_ENABLED=1
       - BOOTSTRAP_SERVER_URL=https://xkms-server:8443
@@ -191,7 +194,7 @@ services:
       - bootstrap-net
     profiles:
       - xkey
-    command: ["/scripts/run-xkey-truststrap-tests.sh"]
+    command: ["/workspace/test/integration/bootstrap/scripts/run-xkey-truststrap-tests.sh"]
 
 volumes:
   xkms-data:
@@ -209,4 +212,4 @@ networks:
 
 secrets:
   gomodauth:
-    file: ../../../.devcontainer/gomodauth.env
+    file: ../../../build/docker/devcontainer/gomodauth.env
