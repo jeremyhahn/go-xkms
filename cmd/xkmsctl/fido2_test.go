@@ -493,6 +493,14 @@ func (m *mockFIDO2Handler) UnlockWithKey(config *fido2.AuthenticationConfig) ([]
 	return m.derivedKey, nil
 }
 
+func (m *mockFIDO2Handler) DeriveHMACSecret(config *fido2.AuthenticationConfig) (*fido2.AuthenticationResult, error) {
+	m.lastAuthConfig = config
+	if m.unlockWithKeyErr != nil {
+		return nil, m.unlockWithKeyErr
+	}
+	return &fido2.AuthenticationResult{HMACSecret: m.derivedKey}, nil
+}
+
 func (m *mockFIDO2Handler) Close() error {
 	return nil
 }

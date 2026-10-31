@@ -34,6 +34,12 @@ const userPINEnv = "XKMS_PKCS11_USER_PIN"
 // defaultUserPIN matches the PIN the Makefile provisions the test token with.
 const defaultUserPIN = "87654321"
 
+// soPINEnv names the environment variable holding the Security Officer PIN.
+const soPINEnv = "XKMS_PKCS11_SO_PIN"
+
+// defaultSOPIN matches the SO PIN the Makefile provisions the test token with.
+const defaultSOPIN = "12345678"
+
 var (
 	// sharedOnce guards the one-time dlopen and C_Initialize. A PKCS#11 module
 	// may be initialized once per process (v3.2 section 5.6), and the shared
@@ -149,6 +155,15 @@ func UserPIN() string {
 		return pin
 	}
 	return defaultUserPIN
+}
+
+// SOPIN returns the CKU_SO PIN, for a test that must set an attribute only the
+// Security Officer may set, such as CKA_TRUSTED (v3.2 Table 13 footnote 10).
+func SOPIN() string {
+	if pin := os.Getenv(soPINEnv); pin != "" {
+		return pin
+	}
+	return defaultSOPIN
 }
 
 // Track registers obj for destruction when the test finishes.

@@ -74,6 +74,18 @@ func fakeServiceGCMSeal(key []byte, tagSize int, nonce, plaintext, aad []byte) (
 	}, nil
 }
 
+// fakeServiceGCMWrapFrame lays a seal out the way the service's AES-GCM
+// WrapKey answers: mode(1) || nonce(12) || ciphertext || tag, where the mode
+// byte records whether the nonce was the caller's or generated under
+// fips140=only (pkg/xkms servicer_wrapkey.go).
+func fakeServiceGCMWrapFrame(sealed *transport.EncryptResponse) []byte {
+	mode := gcmWrapModeExplicit
+	if sealed.GCMNonceMode == string(types.GCMNonceModeRandom) {
+		mode = gcmWrapModeRandom
+	}
+	return slices.Concat([]byte{mode}, sealed.Nonce, sealed.Ciphertext, sealed.Tag)
+}
+
 // callerIVSealRefusedUnderFIPS reports whether this process runs
 // fips140=only, where the stdlib refuses arbitrary-IV AES-GCM and the key
 // service with it, and in that case asserts that seal, which seals under a

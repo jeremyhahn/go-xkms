@@ -232,7 +232,18 @@ func TestDeriveKey_ReadOnlySessionIsRefused(t *testing.T) {
 		},
 	}
 
-	_, rv := env.Module.DeriveKey(roSession, mech, baseKey, extractableDerivedTemplate("ro-session", 32))
+	// PKCS#11 v3.2 §5.7.1: "Only session objects can be created during a
+	// read-only session." A CKA_TOKEN=FALSE derived key is therefore legal here,
+	// and only a token key is refused with CKR_SESSION_READ_ONLY (§5.18.5 lists
+	// it among C_DeriveKey's return values). The template asks for a token key.
+	template := extractableDerivedTemplate("ro-session", 32)
+	for i := range template {
+		if template[i].Type == module.CKA_TOKEN {
+			template[i] = module.NewBoolAttribute(module.CKA_TOKEN, true)
+		}
+	}
+
+	_, rv := env.Module.DeriveKey(roSession, mech, baseKey, template)
 	if rv != module.CKR_SESSION_READ_ONLY {
 		t.Errorf("C_DeriveKey on a read-only session returned %s, want CKR_SESSION_READ_ONLY", rv.String())
 	}
@@ -356,20 +367,25 @@ func TestDeriveKey_ECDH1BothPartiesAgree(t *testing.T) {
 func TestDeriveKey_ECDH1RejectsUnsupportedKDF(t *testing.T) {
 	env, session := testutil.SetupAuthenticatedModule(t)
 
-	_, alicePriv := generateECDHKeyPair(t, env, session, "ecdh-null-kdf-alice")
-	bobPub, _ := generateECDHKeyPair(t, env, session, "ecdh-null-kdf-bob")
+	_, alicePriv := generateECDHKeyPair(t, env, session, "ecdh-unsupported-kdf-alice")
+	bobPub, _ := generateECDHKeyPair(t, env, session, "ecdh-unsupported-kdf-bob")
 	bobPoint := rawECPoint(t, env, session, bobPub)
 
+	// CKD_NULL is not the refused case: PKCS#11 v3.2 §6.3 (CK_ECDH1_DERIVE_PARAMS)
+	// defines it as producing "a raw shared secret value without applying any
+	// key derivation function", and this module honors it. CKD_CPDIVERSIFY_KDF
+	// is a defined CK_EC_KDF_TYPE the module cannot honor exactly, and the KDF
+	// is a mechanism parameter, so §5.1.6's CKR_MECHANISM_PARAM_INVALID applies.
 	mech := &module.Mechanism{
 		Type: module.CKM_ECDH1_DERIVE,
 		TypedParameter: &module.ECDHParams{
-			KDF:        module.CKD_NULL,
+			KDF:        module.CKD_CPDIVERSIFY_KDF,
 			PublicData: bobPoint,
 		},
 	}
-	_, rv := env.Module.DeriveKey(session, mech, alicePriv, extractableDerivedTemplate("null-kdf", 32))
+	_, rv := env.Module.DeriveKey(session, mech, alicePriv, extractableDerivedTemplate("unsupported-kdf", 32))
 	if rv != module.CKR_MECHANISM_PARAM_INVALID {
-		t.Errorf("C_DeriveKey CKM_ECDH1_DERIVE with CKD_NULL returned %s, want CKR_MECHANISM_PARAM_INVALID",
+		t.Errorf("C_DeriveKey CKM_ECDH1_DERIVE with CKD_CPDIVERSIFY_KDF returned %s, want CKR_MECHANISM_PARAM_INVALID",
 			rv.String())
 	}
 }

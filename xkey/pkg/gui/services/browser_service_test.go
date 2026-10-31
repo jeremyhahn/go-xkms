@@ -751,23 +751,16 @@ func TestBrowserService_ApplyTrustBundle_SetsSSLCertFile(t *testing.T) {
 
 	svc.SetTrustBundlePath(bundlePath)
 
+	// The parent already exports SSL_CERT_FILE, as the CI toolchain image does.
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
+
 	// Create a command and apply the trust bundle.
 	cmd := exec.CommandContext(context.Background(), "true")
 	svc.applyTrustBundle(cmd)
 
+	// The child sees exactly one SSL_CERT_FILE: the bundle's.
 	require.NotNil(t, cmd.Env, "command environment must be set")
-	assert.Equal(t, []string{"SSL_CERT_FILE=" + bundlePath}, sslCertFileEntries(cmd.Env))
-}
-
-// sslCertFileEntries returns every SSL_CERT_FILE entry in env, in order.
-func sslCertFileEntries(env []string) []string {
-	var entries []string
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "SSL_CERT_FILE=") {
-			entries = append(entries, kv)
-		}
-	}
-	return entries
+	assert.Equal(t, []string{"SSL_CERT_FILE=" + bundlePath}, envEntries(cmd.Env, "SSL_CERT_FILE"))
 }
 
 func TestBrowserService_ApplyTrustBundle_NoBundleKeepsInheritedSSLCertFile(t *testing.T) {
@@ -787,20 +780,11 @@ func TestBrowserService_ApplyTrustBundle_NoBundleKeepsInheritedSSLCertFile(t *te
 	svc.applyTrustBundle(cmd)
 
 	assert.Nil(t, cmd.Env, "the child inherits the parent environment untouched")
-	assert.Equal(t, []string{"SSL_CERT_FILE=/etc/ssl/certs/inherited.crt"}, sslCertFileEntries(cmd.Environ()))
+	assert.Equal(t, []string{"SSL_CERT_FILE=/etc/ssl/certs/inherited.crt"}, envEntries(cmd.Environ(), "SSL_CERT_FILE"))
 }
 
-func TestEnvWith_ReplacesEveryExistingEntry(t *testing.T) {
-	env := []string{"A=1", "SSL_CERT_FILE=/one", "B=2", "SSL_CERT_FILE=/two", "SSL_CERT_FILEX=keep"}
-
-	got := envWith(env, "SSL_CERT_FILE", "/bundle")
-
-	assert.Equal(t, []string{"A=1", "B=2", "SSL_CERT_FILEX=keep", "SSL_CERT_FILE=/bundle"}, got)
-	assert.Equal(t, "SSL_CERT_FILE=/two", env[3], "the input slice is not modified")
-}
-
-func TestEnvWith_EmptyEnv(t *testing.T) {
-	assert.Equal(t, []string{"SSL_CERT_FILE=/bundle"}, envWith(nil, "SSL_CERT_FILE", "/bundle"))
+func TestWithEnv_EmptyEnv(t *testing.T) {
+	assert.Equal(t, []string{"SSL_CERT_FILE=/bundle"}, withEnv(nil, "SSL_CERT_FILE", "/bundle"))
 }
 
 func TestBrowserService_ApplyTrustBundle_NoBundlePath(t *testing.T) {
@@ -963,12 +947,49 @@ func TestApplyTrustBundle_Enabled(t *testing.T) {
 	require.NoError(t, os.WriteFile(bundlePath, []byte("test"), 0o600))
 	svc.SetTrustBundlePath(bundlePath)
 
+	// No inherited SSL_CERT_FILE in the parent environment.
+	t.Setenv("SSL_CERT_FILE", "")
+	require.NoError(t, os.Unsetenv("SSL_CERT_FILE"))
+
 	cmd := exec.CommandContext(context.Background(), "true")
 	svc.applyTrustBundle(cmd)
 
-	// Env should contain SSL_CERT_FILE.
+	// Env should contain exactly one SSL_CERT_FILE, pointing at the bundle.
 	require.NotNil(t, cmd.Env, "Env should be set when IncludeTrustBundle is true")
-	assert.Equal(t, []string{"SSL_CERT_FILE=" + bundlePath}, sslCertFileEntries(cmd.Env))
+	assert.Equal(t, []string{"SSL_CERT_FILE=" + bundlePath}, envEntries(cmd.Env, "SSL_CERT_FILE"))
+}
+
+// envEntries returns every key= entry of env, in order.
+func envEntries(env []string, key string) []string {
+	var entries []string
+	for _, entry := range env {
+		if strings.HasPrefix(entry, key+"=") {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func TestWithEnv_AddsMissingKey(t *testing.T) {
+	env := []string{"HOME=/home/u", "PATH=/bin"}
+
+	got := withEnv(env, "SSL_CERT_FILE", "/tmp/bundle.pem")
+
+	assert.Equal(t, []string{"HOME=/home/u", "PATH=/bin", "SSL_CERT_FILE=/tmp/bundle.pem"}, got)
+	assert.Equal(t, []string{"HOME=/home/u", "PATH=/bin"}, env, "input must not be modified")
+}
+
+func TestWithEnv_ReplacesInheritedKey(t *testing.T) {
+	env := []string{
+		"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
+		"SSL_CERT_FILE_EXTRA=keep",
+		"PATH=/bin",
+		"SSL_CERT_FILE=/second/copy.pem",
+	}
+
+	got := withEnv(env, "SSL_CERT_FILE", "/tmp/bundle.pem")
+
+	assert.Equal(t, []string{"SSL_CERT_FILE_EXTRA=keep", "PATH=/bin", "SSL_CERT_FILE=/tmp/bundle.pem"}, got)
 }
 
 func TestApplyTrustBundle_Enabled_BundleNotExist(t *testing.T) {

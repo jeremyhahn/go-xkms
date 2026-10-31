@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 
@@ -59,6 +60,7 @@ type KMSClient interface {
 	GetCryptoKey(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error)
 	GetCryptoKeyVersion(ctx context.Context, req *kmspb.GetCryptoKeyVersionRequest, opts ...interface{}) (*kmspb.CryptoKeyVersion, error)
 	ListCryptoKeys(ctx context.Context, req *kmspb.ListCryptoKeysRequest, opts ...interface{}) ([]*kmspb.CryptoKey, error)
+	ListCryptoKeyVersions(ctx context.Context, req *kmspb.ListCryptoKeyVersionsRequest, opts ...interface{}) ([]*kmspb.CryptoKeyVersion, error)
 	AsymmetricSign(ctx context.Context, req *kmspb.AsymmetricSignRequest, opts ...interface{}) (*kmspb.AsymmetricSignResponse, error)
 	AsymmetricDecrypt(ctx context.Context, req *kmspb.AsymmetricDecryptRequest, opts ...interface{}) (*kmspb.AsymmetricDecryptResponse, error)
 	GetPublicKey(ctx context.Context, req *kmspb.GetPublicKeyRequest, opts ...interface{}) (*kmspb.PublicKey, error)
@@ -115,6 +117,22 @@ func (r *realKMSClient) ListCryptoKeys(ctx context.Context, req *kmspb.ListCrypt
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+func (r *realKMSClient) ListCryptoKeyVersions(ctx context.Context, req *kmspb.ListCryptoKeyVersionsRequest, opts ...interface{}) ([]*kmspb.CryptoKeyVersion, error) {
+	it := r.KeyManagementClient.ListCryptoKeyVersions(ctx, req)
+	var versions []*kmspb.CryptoKeyVersion
+	for {
+		version, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		versions = append(versions, version)
+	}
+	return versions, nil
 }
 
 func (r *realKMSClient) AsymmetricDecrypt(ctx context.Context, req *kmspb.AsymmetricDecryptRequest, opts ...interface{}) (*kmspb.AsymmetricDecryptResponse, error) {
@@ -418,26 +436,10 @@ func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (
 		return nil, backend.ErrInvalidAttributes
 	}
 
-	// Determine RSA key size (default to 2048 if not specified)
-	keySize := 2048
-	if attrs.KeyAlgorithm == x509.RSA {
-		// Key size would come from RSAAttributes in the full implementation
-		// For now, we'll use a default
-		keySize = 2048
-	}
-
-	// Map key size to GCP KMS algorithm
-	var algorithm kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm
-	switch keySize {
-	case 2048:
-		algorithm = kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_2048_SHA256
-	case 3072:
-		algorithm = kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_3072_SHA256
-	case 4096:
-		algorithm = kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_4096_SHA256
-	default:
+	algorithm, err := rsaSignAlgorithm(attrs)
+	if err != nil {
 		b.mu.Unlock()
-		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("unsupported RSA key size %d", keySize)}
+		return nil, err
 	}
 
 	req := &kmspb.CreateCryptoKeyRequest{
@@ -464,14 +466,11 @@ func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (
 	}
 
 	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state).
-	// A freshly created key's primary version is version 1, reported directly
-	// on the CreateCryptoKey response, so cache it rather than re-deriving a
-	// hardcoded name.
-	if cryptoKey.Primary == nil || cryptoKey.Primary.Name == "" {
+	keyVersionName, err := b.versionNameFor(ctx, cryptoKey, initialVersionStates)
+	if err != nil {
 		b.mu.Unlock()
-		return nil, &errs.Detail{Err: ErrNoPrimaryVersion, Detail: attrs.CN}
+		return nil, err
 	}
-	keyVersionName := cryptoKey.Primary.Name
 	if err := b.waitForKeyEnabled(ctx, keyVersionName, 30*time.Second); err != nil {
 		b.mu.Unlock()
 		return nil, &errs.Wrapped{Msg: "key creation failed", Err: err}
@@ -520,18 +519,11 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 		return nil, backend.ErrInvalidAttributes
 	}
 
-	// Determine elliptic curve (default to P-256)
-	curve := "P-256"
-
-	// Map curve to GCP KMS algorithm
-	var algorithm kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm
-	switch curve {
-	case "P-256":
-		algorithm = kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256
-	case "P-384":
-		algorithm = kmspb.CryptoKeyVersion_EC_SIGN_P384_SHA384
-	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("unsupported curve %s", curve)}
+	curve := ecCurve(attrs)
+	algorithm, err := mapCurveToAlgorithm(curve)
+	if err != nil {
+		b.mu.Unlock()
+		return nil, err
 	}
 
 	req := &kmspb.CreateCryptoKeyRequest{
@@ -558,14 +550,11 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 	}
 
 	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state).
-	// A freshly created key's primary version is version 1, reported directly
-	// on the CreateCryptoKey response, so cache it rather than re-deriving a
-	// hardcoded name.
-	if cryptoKey.Primary == nil || cryptoKey.Primary.Name == "" {
+	keyVersionName, err := b.versionNameFor(ctx, cryptoKey, initialVersionStates)
+	if err != nil {
 		b.mu.Unlock()
-		return nil, &errs.Detail{Err: ErrNoPrimaryVersion, Detail: attrs.CN}
+		return nil, err
 	}
-	keyVersionName := cryptoKey.Primary.Name
 	if err := b.waitForKeyEnabled(ctx, keyVersionName, 30*time.Second); err != nil {
 		b.mu.Unlock()
 		return nil, &errs.Wrapped{Msg: "key creation failed", Err: err}
@@ -581,7 +570,7 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 		"key_type":      attrs.KeyType.String(), // see ListKeys: read back via types.ParseKeyType (go-xkms#705)
 		"key_algorithm": attrs.KeyAlgorithm,
 		"store_type":    backend.STORE_GCPKMS,
-		"curve":         curve,
+		"curve":         curve.Params().Name,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -661,13 +650,10 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state).
-	// A freshly created key's primary version is version 1, reported directly
-	// on the CreateCryptoKey response, so use it rather than re-deriving a
-	// hardcoded name.
-	if cryptoKey.Primary == nil || cryptoKey.Primary.Name == "" {
-		return nil, &errs.Detail{Err: ErrNoPrimaryVersion, Detail: attrs.CN}
+	keyVersionName, err := b.versionNameFor(ctx, cryptoKey, initialVersionStates)
+	if err != nil {
+		return nil, err
 	}
-	keyVersionName := cryptoKey.Primary.Name
 	if err := b.waitForKeyEnabled(ctx, keyVersionName, 30*time.Second); err != nil {
 		return nil, &errs.Wrapped{Msg: "key creation failed", Err: err}
 	}
@@ -1135,9 +1121,10 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			}
 		}
 
-		// If metadata is not available, infer from KMS key properties
-		if attrs.KeyAlgorithm == 0 && key.Primary != nil {
-			switch key.Primary.Algorithm {
+		// If metadata is not available, infer from KMS key properties. The
+		// version template, unlike the primary, is set on asymmetric keys too.
+		if attrs.KeyAlgorithm == 0 && key.VersionTemplate != nil {
+			switch key.VersionTemplate.Algorithm {
 			case kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_2048_SHA256,
 				kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_3072_SHA256,
 				kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_4096_SHA256,
@@ -1352,12 +1339,71 @@ func (b *Backend) resolvePrimaryVersionName(ctx context.Context, keyID string) (
 		return "", &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", keyID, err)}
 	}
 
-	if cryptoKey.Primary == nil || cryptoKey.Primary.Name == "" {
-		return "", &errs.Detail{Err: ErrNoPrimaryVersion, Detail: keyID}
+	versionName, err := b.versionNameFor(ctx, cryptoKey, signingVersionStates)
+	if err != nil {
+		return "", err
 	}
 
-	b.versionCache.Store(keyID, cryptoKey.Primary.Name)
-	return cryptoKey.Primary.Name, nil
+	b.versionCache.Store(keyID, versionName)
+	return versionName, nil
+}
+
+// initialVersionStates are the states a newly created key's first version
+// may be in: Cloud KMS generates it asynchronously, so it can still be
+// PENDING_GENERATION when CreateCryptoKey returns.
+var initialVersionStates = map[kmspb.CryptoKeyVersion_CryptoKeyVersionState]bool{
+	kmspb.CryptoKeyVersion_ENABLED:            true,
+	kmspb.CryptoKeyVersion_PENDING_GENERATION: true,
+}
+
+// signingVersionStates are the states of a version an existing key may sign,
+// decrypt or export its public key with.
+var signingVersionStates = map[kmspb.CryptoKeyVersion_CryptoKeyVersionState]bool{
+	kmspb.CryptoKeyVersion_ENABLED: true,
+}
+
+// versionNameFor returns the CryptoKeyVersion that operations on cryptoKey
+// use. Cloud KMS sets CryptoKey.primary only on ENCRYPT_DECRYPT keys: "Keys
+// with purpose ENCRYPT_DECRYPT may have a primary. For other keys, this field
+// will be omitted" (google.cloud.kms.v1.CryptoKey.primary, kmspb
+// resources.pb.go, cloud.google.com/go/kms v1.35.0). An asymmetric key has no
+// primary, so its version is the newest one, by version ID, whose state is in
+// states; after CreateCryptoKey that is the initial version, 1.
+func (b *Backend) versionNameFor(ctx context.Context, cryptoKey *kmspb.CryptoKey, states map[kmspb.CryptoKeyVersion_CryptoKeyVersionState]bool) (string, error) {
+	if cryptoKey.Primary != nil && cryptoKey.Primary.Name != "" {
+		return cryptoKey.Primary.Name, nil
+	}
+	if cryptoKey.Purpose == kmspb.CryptoKey_ENCRYPT_DECRYPT {
+		return "", &errs.Detail{Err: ErrNoPrimaryVersion, Detail: cryptoKey.Name}
+	}
+
+	versions, err := b.client.ListCryptoKeyVersions(ctx, &kmspb.ListCryptoKeyVersionsRequest{
+		Parent: cryptoKey.Name,
+	})
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", cryptoKey.Name, err)}
+		}
+		return "", &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", cryptoKey.Name, err)}
+	}
+
+	newestName, newestID := "", 0
+	for _, version := range versions {
+		if !states[version.State] {
+			continue
+		}
+		id, err := strconv.Atoi(extractVersionID(version.Name))
+		if err != nil {
+			return "", &errs.Detail{Err: ErrInvalidVersionName, Detail: version.Name}
+		}
+		if id > newestID {
+			newestName, newestID = version.Name, id
+		}
+	}
+	if newestName == "" {
+		return "", &errs.Detail{Err: ErrNoUsableVersion, Detail: cryptoKey.Name}
+	}
+	return newestName, nil
 }
 
 // cryptoKeyName constructs the full resource name for a crypto key.
@@ -1467,14 +1513,56 @@ func (d *kmsDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.De
 
 // mapCurveToAlgorithm maps an elliptic curve to a GCP KMS algorithm.
 func mapCurveToAlgorithm(curve elliptic.Curve) (kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm, error) {
-	switch curve.Params().Name {
-	case "P-256":
-		return kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256, nil
-	case "P-384":
-		return kmspb.CryptoKeyVersion_EC_SIGN_P384_SHA384, nil
-	default:
-		return 0, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("unsupported curve %s", curve.Params().Name)}
+	name := curve.Params().Name
+	algorithm, ok := ecSignAlgorithms[name]
+	if !ok {
+		return 0, &errs.Detail{Err: ErrUnsupportedCurve, Detail: name}
 	}
+	return algorithm, nil
+}
+
+// rsaSignAlgorithms maps an RSA modulus size to its GCP KMS RSA_SIGN_PKCS1
+// algorithm.
+var rsaSignAlgorithms = map[int]kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm{
+	types.RSAKeySize2048: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_2048_SHA256,
+	types.RSAKeySize3072: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_3072_SHA256,
+	types.RSAKeySize4096: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_4096_SHA256,
+}
+
+// ecSignAlgorithms maps a NIST curve name to its GCP KMS EC_SIGN algorithm.
+// The Cloud KMS CryptoKeyVersionAlgorithm enum defines EC_SIGN algorithms on
+// P-256 and P-384 only; there is no P-521 signing algorithm.
+var ecSignAlgorithms = map[string]kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm{
+	"P-256": kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256,
+	"P-384": kmspb.CryptoKeyVersion_EC_SIGN_P384_SHA384,
+}
+
+// rsaKeySize returns the RSA modulus size attrs requests, defaulting to 2048
+// bits.
+func rsaKeySize(attrs *types.KeyAttributes) int {
+	if attrs.RSAAttributes != nil && attrs.RSAAttributes.KeySize != 0 {
+		return attrs.RSAAttributes.KeySize
+	}
+	return types.RSAKeySize2048
+}
+
+// ecCurve returns the elliptic curve attrs requests, defaulting to P-256.
+func ecCurve(attrs *types.KeyAttributes) elliptic.Curve {
+	if attrs.ECCAttributes != nil && attrs.ECCAttributes.Curve != nil {
+		return attrs.ECCAttributes.Curve
+	}
+	return elliptic.P256()
+}
+
+// rsaSignAlgorithm maps the RSA key size attrs requests to a GCP KMS
+// algorithm.
+func rsaSignAlgorithm(attrs *types.KeyAttributes) (kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm, error) {
+	keySize := rsaKeySize(attrs)
+	algorithm, ok := rsaSignAlgorithms[keySize]
+	if !ok {
+		return 0, &errs.Detail{Err: ErrUnsupportedKeySize, Detail: fmt.Sprintf("RSA key size %d", keySize)}
+	}
+	return algorithm, nil
 }
 
 // splitKeyName splits a GCP KMS resource name into its component parts.

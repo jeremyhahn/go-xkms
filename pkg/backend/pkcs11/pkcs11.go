@@ -337,7 +337,7 @@ const findObjectsBatchSize = 256
 // with CKR_OPERATION_ACTIVE.
 func (b *Backend) findAllObjects(session pkcs11.SessionHandle, template []*pkcs11.Attribute) ([]pkcs11.ObjectHandle, error) {
 	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to init find objects", Err: err}
+		return nil, hardware.ClearFailedPKCS11Search(b.p11ctx, session, &errs.Wrapped{Msg: "failed to init find objects", Err: err})
 	}
 
 	var objs []pkcs11.ObjectHandle

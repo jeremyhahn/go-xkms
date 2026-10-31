@@ -263,7 +263,7 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		assert.Nil(t, wrappedKey)
 	})
 
-	t.Run("returns CKR_WRAPPING_KEY_TYPE_INCONSISTENT when CKA_WRAP is false", func(t *testing.T) {
+	t.Run("returns CKR_KEY_FUNCTION_NOT_PERMITTED when CKA_WRAP is false", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
@@ -296,7 +296,7 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, pkcsErr.Code)
+		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, pkcsErr.Code)
 		assert.Nil(t, wrappedKey)
 	})
 
@@ -680,7 +680,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		assert.Equal(t, ObjectHandle(InvalidHandle), handle)
 	})
 
-	t.Run("returns CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT when CKA_UNWRAP is false", func(t *testing.T) {
+	t.Run("returns CKR_KEY_FUNCTION_NOT_PERMITTED when CKA_UNWRAP is false", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
@@ -705,7 +705,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, pkcsErr.Code)
+		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, pkcsErr.Code)
 		assert.Equal(t, ObjectHandle(InvalidHandle), handle)
 	})
 
@@ -1026,7 +1026,7 @@ func TestWrapKeyAuthenticatedSize(t *testing.T) {
 		assert.Equal(t, CKR_KEY_UNEXTRACTABLE, pkcsErr.Code)
 	})
 
-	t.Run("returns CKR_WRAPPING_KEY_TYPE_INCONSISTENT without CKA_WRAP", func(t *testing.T) {
+	t.Run("returns CKR_KEY_FUNCTION_NOT_PERMITTED without CKA_WRAP", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
@@ -1049,7 +1049,7 @@ func TestWrapKeyAuthenticatedSize(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, pkcsErr.Code)
+		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, pkcsErr.Code)
 	})
 
 	t.Run("returns CKR_WRAPPING_KEY_SIZE_RANGE for invalid key size", func(t *testing.T) {
@@ -2109,7 +2109,14 @@ func TestUnwrapKeyAuthenticatedAgreesWithUnwrapKeyOnAlwaysAuthenticate(t *testin
 		// CKR_USER_NOT_LOGGED_IN. The weaker assertion is kept alongside it
 		// because it names the specific regression, and it would still fail if
 		// the gate came back while some unrelated refusal masked the success.
-		_, rv := m.UnwrapKey(session, mechanism, wrappingKey, wrapped, template)
+		//
+		// PKCS#11 v3.2 §6.13.3 gives C_UnwrapKey its CKM_AES_GCM IV in
+		// CK_GCM_PARAMS.pIv and the wrapped key as ciphertext || tag. The
+		// parameterless authenticated wrap above prefixed the IV it generated,
+		// so it moves from the blob into the parameter here.
+		unwrapMech := NewMechanismWithTypedParams(CKM_AES_GCM,
+			NewAESGCMParams(wrapped[:GCMNonceSize], 128))
+		_, rv := m.UnwrapKey(session, unwrapMech, wrappingKey, wrapped[GCMNonceSize:], template)
 		assert.NotEqual(t, CKR_USER_NOT_LOGGED_IN, rv,
 			"C_UnwrapKey and C_UnwrapKeyAuthenticated must answer alike about CKA_ALWAYS_AUTHENTICATE")
 		assert.Equal(t, CKR_OK, rv,

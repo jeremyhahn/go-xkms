@@ -140,17 +140,23 @@ func TestMapCurveToAlgorithm(t *testing.T) {
 	tests := []struct {
 		name    string
 		curve   elliptic.Curve
-		wantErr bool
+		want    kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm
+		wantErr error
 	}{
-		{name: "P-256", curve: elliptic.P256()},
-		{name: "P-384", curve: elliptic.P384()},
-		{name: "unsupported P-521", curve: elliptic.P521(), wantErr: true},
+		{name: "P-256", curve: elliptic.P256(), want: kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256},
+		{name: "P-384", curve: elliptic.P384(), want: kmspb.CryptoKeyVersion_EC_SIGN_P384_SHA384},
+		// GCP KMS defines no EC_SIGN algorithm on P-521.
+		{name: "unsupported P-521", curve: elliptic.P521(), wantErr: ErrUnsupportedCurve},
+		{name: "unsupported P-224", curve: elliptic.P224(), wantErr: ErrUnsupportedCurve},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := mapCurveToAlgorithm(tt.curve)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("mapCurveToAlgorithm() error = %v, wantErr %v", err, tt.wantErr)
+			got, err := mapCurveToAlgorithm(tt.curve)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("mapCurveToAlgorithm() error = %v, want %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("mapCurveToAlgorithm() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -197,21 +203,137 @@ func TestMapKeyAttributesToAlgorithm(t *testing.T) {
 	tests := []struct {
 		name    string
 		attrs   *types.KeyAttributes
-		wantErr bool
+		want    kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm
+		wantErr error
 	}{
-		{name: "symmetric", attrs: &types.KeyAttributes{SymmetricAlgorithm: types.SymmetricAES256GCM}},
-		{name: "RSA", attrs: &types.KeyAttributes{KeyAlgorithm: x509.RSA}},
-		{name: "ECDSA", attrs: &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}},
-		{name: "unsupported", attrs: &types.KeyAttributes{KeyAlgorithm: x509.Ed25519}, wantErr: true},
+		{name: "symmetric", attrs: &types.KeyAttributes{SymmetricAlgorithm: types.SymmetricAES256GCM}, want: kmspb.CryptoKeyVersion_GOOGLE_SYMMETRIC_ENCRYPTION},
+		{name: "RSA default size", attrs: &types.KeyAttributes{KeyAlgorithm: x509.RSA}, want: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_2048_SHA256},
+		{name: "RSA 3072", attrs: rsaAttrs(3072), want: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_3072_SHA256},
+		{name: "RSA 4096", attrs: rsaAttrs(4096), want: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_4096_SHA256},
+		{name: "RSA 1024 unsupported", attrs: rsaAttrs(1024), wantErr: ErrUnsupportedKeySize},
+		{name: "ECDSA default curve", attrs: &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}, want: kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256},
+		{name: "ECDSA P-384", attrs: ecdsaAttrs(elliptic.P384()), want: kmspb.CryptoKeyVersion_EC_SIGN_P384_SHA384},
+		{name: "ECDSA P-521 unsupported", attrs: ecdsaAttrs(elliptic.P521()), wantErr: ErrUnsupportedCurve},
+		{name: "unsupported", attrs: &types.KeyAttributes{KeyAlgorithm: x509.Ed25519}, wantErr: backend.ErrInvalidAlgorithm},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := mapKeyAttributesToAlgorithm(tt.attrs)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("mapKeyAttributesToAlgorithm() error = %v, wantErr %v", err, tt.wantErr)
+			got, err := mapKeyAttributesToAlgorithm(tt.attrs)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("mapKeyAttributesToAlgorithm() error = %v, want %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("mapKeyAttributesToAlgorithm() = %v, want %v", got, tt.want)
 			}
 		})
 	}
+}
+
+// rsaAttrs returns RSA key attributes requesting keySize bits.
+func rsaAttrs(keySize int) *types.KeyAttributes {
+	return &types.KeyAttributes{
+		CN:            "rsa-key",
+		KeyType:       backend.KEY_TYPE_SIGNING,
+		StoreType:     backend.STORE_GCPKMS,
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: keySize},
+	}
+}
+
+// ecdsaAttrs returns ECDSA key attributes requesting curve.
+func ecdsaAttrs(curve elliptic.Curve) *types.KeyAttributes {
+	return &types.KeyAttributes{
+		CN:            "ecdsa-key",
+		KeyType:       backend.KEY_TYPE_SIGNING,
+		StoreType:     backend.STORE_GCPKMS,
+		KeyAlgorithm:  x509.ECDSA,
+		ECCAttributes: &types.ECCAttributes{Curve: curve},
+	}
+}
+
+// errStopAfterCreate ends key generation once the CreateCryptoKey request
+// has been captured.
+var errStopAfterCreate = errors.New("test: stop after CreateCryptoKey")
+
+func TestGenerateKeyRequestsAttributeAlgorithm(t *testing.T) {
+	tests := []struct {
+		name  string
+		attrs *types.KeyAttributes
+		want  kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm
+	}{
+		{name: "RSA 2048", attrs: rsaAttrs(2048), want: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_2048_SHA256},
+		{name: "RSA 3072", attrs: rsaAttrs(3072), want: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_3072_SHA256},
+		{name: "RSA 4096", attrs: rsaAttrs(4096), want: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_4096_SHA256},
+		{name: "ECDSA P-256", attrs: ecdsaAttrs(elliptic.P256()), want: kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256},
+		{name: "ECDSA P-384", attrs: ecdsaAttrs(elliptic.P384()), want: kmspb.CryptoKeyVersion_EC_SIGN_P384_SHA384},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sent kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm
+			mockClient := &MockKMSClient{
+				CreateCryptoKeyFunc: func(ctx context.Context, req *kmspb.CreateCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
+					sent = req.CryptoKey.VersionTemplate.Algorithm
+					return nil, errStopAfterCreate
+				},
+			}
+			b := newAlgorithmTestBackend(t, mockClient)
+
+			_, err := b.GenerateKey(context.Background(), tt.attrs)
+			if !errors.Is(err, errStopAfterCreate) {
+				t.Fatalf("GenerateKey() error = %v, want %v", err, errStopAfterCreate)
+			}
+			if sent != tt.want {
+				t.Errorf("CreateCryptoKey algorithm = %v, want %v", sent, tt.want)
+			}
+		})
+	}
+}
+
+func TestGenerateKeyRejectsUnsupportedSizeAndCurve(t *testing.T) {
+	tests := []struct {
+		name    string
+		attrs   *types.KeyAttributes
+		wantErr error
+	}{
+		{name: "RSA 1024", attrs: rsaAttrs(1024), wantErr: ErrUnsupportedKeySize},
+		{name: "ECDSA P-521", attrs: ecdsaAttrs(elliptic.P521()), wantErr: ErrUnsupportedCurve},
+		{name: "ECDSA P-224", attrs: ecdsaAttrs(elliptic.P224()), wantErr: ErrUnsupportedCurve},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &MockKMSClient{
+				CreateCryptoKeyFunc: func(ctx context.Context, req *kmspb.CreateCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
+					t.Errorf("CreateCryptoKey called with %v for an unsupported request", req.CryptoKey.VersionTemplate.Algorithm)
+					return nil, errStopAfterCreate
+				},
+			}
+			b := newAlgorithmTestBackend(t, mockClient)
+
+			// The second call proves the rejected request released the backend lock.
+			for range 2 {
+				if _, err := b.GenerateKey(context.Background(), tt.attrs); !errors.Is(err, tt.wantErr) {
+					t.Fatalf("GenerateKey() error = %v, want %v", err, tt.wantErr)
+				}
+			}
+		})
+	}
+}
+
+// newAlgorithmTestBackend returns a backend over mockClient.
+func newAlgorithmTestBackend(t *testing.T, mockClient *MockKMSClient) *Backend {
+	t.Helper()
+	config := &Config{
+		ProjectID:   "test-project",
+		LocationID:  "us-central1",
+		KeyRingID:   "test-keyring",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+	b, err := NewBackendWithClient(config, mockClient)
+	if err != nil {
+		t.Fatalf("NewBackendWithClient() error = %v", err)
+	}
+	return b
 }
 
 // TestDetermineKeySpec covers every branch: each symmetric algorithm size
@@ -228,6 +350,8 @@ func TestDetermineKeySpec(t *testing.T) {
 		{name: "AES-128 (default symmetric case)", attrs: &types.KeyAttributes{SymmetricAlgorithm: types.SymmetricAES128GCM}, want: "AES_128"},
 		{name: "RSA", attrs: &types.KeyAttributes{KeyAlgorithm: x509.RSA}, want: "RSA_2048"},
 		{name: "ECDSA", attrs: &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}, want: "EC_P256"},
+		{name: "RSA 4096", attrs: rsaAttrs(4096), want: "RSA_4096"},
+		{name: "ECDSA P-384", attrs: ecdsaAttrs(elliptic.P384()), want: "EC_P384"},
 		{name: "unknown", attrs: &types.KeyAttributes{KeyAlgorithm: x509.Ed25519}, want: "UNKNOWN"},
 	}
 	for _, tt := range tests {

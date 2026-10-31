@@ -403,20 +403,19 @@ func (s *BrowserService) applyTrustBundle(cmd *exec.Cmd) {
 	// SSL_CERT_FILE reaches OpenSSL-based children (curl, native-messaging
 	// helpers, anything linking OpenSSL) — NOT the browser itself. Browser
 	// trust comes from syncBrowserTrust writing into NSS / cert9.db.
-	// The bundle replaces any inherited SSL_CERT_FILE rather than shadowing it.
-	cmd.Env = envWith(os.Environ(), "SSL_CERT_FILE", bundlePath)
+	cmd.Env = withEnv(os.Environ(), "SSL_CERT_FILE", bundlePath)
 	s.logger.Debug("applied trust bundle to child environment (OpenSSL consumers only)",
 		"bundle", bundlePath)
 }
 
-// envWith returns a copy of env with every existing entry for key removed and
-// key=value appended, so a child process sees the key exactly once.
-func envWith(env []string, key, value string) []string {
+// withEnv returns a copy of env in which key appears exactly once, set to
+// value: any inherited key= entries are dropped before the new one is added.
+func withEnv(env []string, key, value string) []string {
 	prefix := key + "="
 	out := make([]string, 0, len(env)+1)
-	for _, kv := range env {
-		if !strings.HasPrefix(kv, prefix) {
-			out = append(out, kv)
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			out = append(out, entry)
 		}
 	}
 	return append(out, prefix+value)
