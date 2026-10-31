@@ -11,14 +11,16 @@
 services:
   # Floci - AWS Emulator (KMS)
   floci:
-    image: floci/floci:latest
+    # Pinned and probed as in test/integration/awskms/docker-compose.yml: the
+    # ubi9-micro image ships no curl, only its own bash healthcheck.sh.
+    image: floci/floci:2.3.0@sha256:e0b292df4dc9559b7b1bf4f51bdda4bb8e269276236438cd03cae661260ea8a9
     ports:
       - "4566:4566"
     environment:
       - FLOCI_DEFAULT_REGION=us-east-1
       - FLOCI_STORAGE_MODE=memory
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_floci/health"]
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -28,14 +30,15 @@ services:
 
   # Floci - GCP Emulator (Cloud KMS)
   floci-gcp:
-    image: floci/floci-gcp:latest
+    # Pinned and probed as in test/integration/gcpkms/docker-compose.yml.
+    image: floci/floci-gcp:0.11.0@sha256:eae9683d806ceb643bcb36aee97cdb8cad13c3e2959cd053bf40e481994fde12
     ports:
       - "4588:4588"
     environment:
       - FLOCI_GCP_DEFAULT_PROJECT_ID=test-project
       - FLOCI_GCP_STORAGE_MODE=memory
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4588/health"]
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -68,7 +71,7 @@ services:
 
   # HashiCorp Vault
   vault:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
     ports:
       - "8200:8200"
     environment:

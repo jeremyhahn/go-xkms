@@ -53,10 +53,12 @@ export default defineConfig({
   },
   webServer: {
     command: 'bash ./run-server.sh',
-    // TCP-only readiness check: an HTTP(S) `url` probe would itself need to
-    // negotiate the self-signed TLS handshake, which is an extra failure mode
-    // this only needs to rule out "is anything listening yet".
-    port: 18463,
+    // The daemon boots sealed, and its sealed window answers on this port
+    // before run-server.sh unseals it, so a bare TCP check would start the
+    // suite too early. /health is served once the daemon has booted;
+    // ignoreHTTPSErrors skips verifying its self-issued certificate.
+    url: 'https://localhost:18463/health',
+    ignoreHTTPSErrors: true,
     reuseExistingServer: false,
     timeout: 180_000,
     stdout: 'pipe',

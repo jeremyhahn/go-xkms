@@ -249,9 +249,10 @@ func TestBackend_Signer_PinnedVersionSurvivesRotation(t *testing.T) {
 	}
 }
 
-// TestBackend_ResolvePrimaryVersionName_NoPrimary verifies that resolving a
-// crypto key with no primary version fails loudly instead of silently
-// falling back to a hardcoded version.
+// TestBackend_ResolvePrimaryVersionName_NoPrimary verifies that resolving an
+// ENCRYPT_DECRYPT crypto key with no primary version fails loudly instead of
+// silently falling back to a hardcoded version. Asymmetric keys never have a
+// primary; TestVersionNameForAsymmetricKey covers them.
 func TestBackend_ResolvePrimaryVersionName_NoPrimary(t *testing.T) {
 	config := &Config{
 		ProjectID:   "test-project",
@@ -263,7 +264,7 @@ func TestBackend_ResolvePrimaryVersionName_NoPrimary(t *testing.T) {
 
 	mockClient := &MockKMSClient{
 		GetCryptoKeyFunc: func(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
-			return &kmspb.CryptoKey{Name: req.Name}, nil
+			return &kmspb.CryptoKey{Name: req.Name, Purpose: kmspb.CryptoKey_ENCRYPT_DECRYPT}, nil
 		},
 	}
 

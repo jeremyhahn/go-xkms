@@ -213,7 +213,7 @@ func (m *PIVSlotModel) enumeratePrivateKeys() (map[pivcert.PIVSlot]keyInfo, erro
 		}
 
 		if err := m.pool.Ctx().FindObjectsInit(session, template); err != nil {
-			return &errs.Wrapped{Msg: "FindObjectsInit(CKO_PRIVATE_KEY)", Err: err}
+			return hardware.ClearFailedPKCS11Search(m.pool.Ctx(), session, &errs.Wrapped{Msg: "FindObjectsInit(CKO_PRIVATE_KEY)", Err: err})
 		}
 		// Deferred so the search is always closed out, on every return path,
 		// not only on success -- a search left open on the session would
@@ -260,7 +260,7 @@ func (m *PIVSlotModel) enumerateCertificates() (map[pivcert.PIVSlot]struct{}, er
 		}
 
 		if err := m.pool.Ctx().FindObjectsInit(session, template); err != nil {
-			return &errs.Wrapped{Msg: "FindObjectsInit(CKO_CERTIFICATE)", Err: err}
+			return hardware.ClearFailedPKCS11Search(m.pool.Ctx(), session, &errs.Wrapped{Msg: "FindObjectsInit(CKO_CERTIFICATE)", Err: err})
 		}
 		// See the identical comment in enumeratePrivateKeys.
 		defer func() {

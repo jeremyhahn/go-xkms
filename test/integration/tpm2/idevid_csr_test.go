@@ -143,10 +143,12 @@ func TestIntegration_CreateTCGCSR_IDevID(t *testing.T) {
 			t.Fatal("CSR is nil")
 		}
 
-		// Check struct version (should be 0x00000100)
+		// TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,
+		// section 13.1: TCG_CSR_IDEVID.structVer is "Version 1.0 = 0x01000100".
 		structVer := binary.BigEndian.Uint32(csr.StructVer[:])
-		if structVer != 0x00000100 {
-			t.Errorf("CSR struct version mismatch: got 0x%08x, want 0x00000100", structVer)
+		if structVer != tpm2lib.TCGCSRIDevIDStructVer {
+			t.Errorf("CSR struct version mismatch: got 0x%08x, want 0x%08x",
+				structVer, tpm2lib.TCGCSRIDevIDStructVer)
 		}
 
 		// Check signature is present
@@ -391,9 +393,11 @@ func TestIntegration_IDevIDCSR_Validation(t *testing.T) {
 			t.Fatalf("Failed to unpack CSR: %v", err)
 		}
 
-		// Verify unpacked structure
-		if unpacked.StructVer != 0x00000100 {
-			t.Errorf("Unpacked struct version mismatch: got 0x%08x, want 0x00000100", unpacked.StructVer)
+		// Verify unpacked structure: the structVer of TCG "TPM 2.0 Keys for
+		// Device Identity and Attestation" v1.00 r12, section 13.1.
+		if unpacked.StructVer != tpm2lib.TCGCSRIDevIDStructVer {
+			t.Errorf("Unpacked struct version mismatch: got 0x%08x, want 0x%08x",
+				unpacked.StructVer, tpm2lib.TCGCSRIDevIDStructVer)
 		}
 
 		if unpacked.SigSz == 0 {

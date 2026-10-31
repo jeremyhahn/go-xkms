@@ -1091,9 +1091,15 @@ test-scripts:
 	@bash test/scripts/release-assets.test.sh
 	@bash test/scripts/changelog-assemble.test.sh
 	@bash test/scripts/retry.test.sh
+	@bash test/scripts/in-toolchain-image.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
 	@bash test/scripts/open-server-barrier.test.sh
+	@bash test/scripts/ensure-server-ca.test.sh
+	@bash test/scripts/socket-probe.test.sh
+	@bash test/scripts/start-test-xkmsd.test.sh
+	@bash test/scripts/xkms-server-diagnostics.test.sh
 	@bash test/scripts/check-public-literals.test.sh
+	@bash test/scripts/build-agsim.test.sh
 	@bash test/scripts/check-test-helpers.test.sh
 	@bash test/scripts/xkey-build-tags.test.sh
 	@bash test/scripts/go-build-tags.test.sh
@@ -1942,8 +1948,6 @@ integration-test-yubikey:
 integration-test-storage-hardware-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 hardware storage tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
-	@cd test/integration/storage && $(call compose,storage) up -d softhsm-init
-	@sleep 2
 	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,storage) run --rm test-hardware-pkcs11
 	@echo "$(GREEN)✓ PKCS#11 hardware storage tests complete$(RESET)"
@@ -2255,7 +2259,11 @@ integration-test-pkcs11-openssl-schemes:
 # The default is software because that is the only backend the daemon serving
 # this socket can satisfy for every operation. Naming another one costs nothing
 # beyond the daemon having it enabled -- the module reads
-# XKMS_PKCS11_DEFAULT_BACKEND at C_Initialize, which this target sets per case:
+# XKMS_PKCS11_DEFAULT_BACKEND at C_Initialize, which this target sets per case.
+# configs/xkmsd-integration.yaml enables only software: its pkcs11 backend needs
+# a credential:// PIN, which a fresh compose volume cannot hold before first
+# boot (the comment there says why), so the pkcs11 case below needs a daemon
+# whose credential service already holds that PIN:
 #
 #   make integration-test-pkcs11-openssl-backends XKMS_PKCS11_BACKENDS=software,pkcs11
 #
@@ -2272,8 +2280,8 @@ integration-test-pkcs11-openssl-schemes:
 # comment that says a lane is meant to fail is how a genuine failure gets waved
 # past, and this one outlived its defect.
 #
-# tpm2 needs one thing more: configs/xkmsd-integration.yaml enables only
-# software and pkcs11, so the daemon must also be given
+# tpm2 likewise: configs/xkmsd-integration.yaml enables only software, so the
+# daemon must also be given
 #   tpm2: {enabled: true, device_path: "tcp://swtpm:2321", use_simulator: true}
 # to match the swtpm service the compose stack already runs and the
 # TPM_DEVICE_PATH the server container already has.
@@ -2648,16 +2656,21 @@ endif
 
 # Populates a CI devcontainer's /workspace (the named volume from
 # build/docker/devcontainer/compose.ci.yaml, not the dev bind mount) from this
-# job's own checkout. `docker compose cp` streams the tree over the Docker
-# API connection rather than depending on a shared filesystem, so it lands
-# correctly no matter which host the daemon runs on (go-xkms #576). A no-op
+# job's own checkout. The tree goes over the Docker API connection as a tar
+# stream on `compose exec -T`'s stdin rather than depending on a shared
+# filesystem, so it lands correctly no matter which host the daemon runs on
+# (go-xkms #576). `tar` unpacks it inside the devcontainer as the container's
+# own user, so the tree belongs to the user every target then runs as. It was
+# `docker compose cp`, which creates every file as root: the first target
+# that wrote into the tree, run_with_server's `mkdir -p build/lib`, failed
+# with "Permission denied" (DS-3754). A no-op
 # off CI (COMPOSE_RUN_ID = local, where the base file's bind mount already
 # works) and a no-op once go.mod is already there, so the many
 # run_in_devcontainer / run_with_server calls in one `make integration-test`
 # cost a single `test -f` each after the first. Defined as one line (no
 # embedded newlines) so it can be spliced into another recipe's
 # backslash-continued shell chain with $(ci_sync_devcontainer_workspace).
-ci_sync_devcontainer_workspace = if [ "$(COMPOSE_RUN_ID)" != "local" ] && ! $(DOCKER_COMPOSE) exec -T devcontainer test -f /workspace/go.mod >/dev/null 2>&1; then echo "$(CYAN)$(BOLD)→ Populating devcontainer /workspace from this job's checkout (CI)...$(RESET)"; $(DOCKER_COMPOSE) cp ./. devcontainer:/workspace; fi
+ci_sync_devcontainer_workspace = if [ "$(COMPOSE_RUN_ID)" != "local" ] && ! $(DOCKER_COMPOSE) exec -T devcontainer test -f /workspace/go.mod >/dev/null 2>&1; then echo "$(CYAN)$(BOLD)→ Populating devcontainer /workspace from this job's checkout (CI)...$(RESET)"; tar -cf - . | $(DOCKER_COMPOSE) exec -T devcontainer tar -xf - --no-same-owner -C /workspace; fi
 
 # Helper to run command in devcontainer (auto-starts if needed)
 define run_in_devcontainer
@@ -2705,13 +2718,25 @@ define compose_up_xkms_server
 	esac
 endef
 
+# Prints, from the host, why xkms-server is not serving the socket: the
+# container's state, the socket from both containers, the suite's user's and
+# root's connect, kernel LSM denials and the server log. It never prints the
+# compose environment, which carries PINs (scripts/xkms-server-diagnostics.sh).
+xkms_server_diagnostics = DOCKER_COMPOSE="$(DOCKER_COMPOSE)" bash scripts/xkms-server-diagnostics.sh $(XKMS_UNIX_SOCKET)
+
 # Helper to run command in devcontainer with xkms-server running
 # Usage: $(call run_with_server,command,description)
 #
 # The socket is served either by the compose `xkms-server` service or, when that
 # service is unavailable, by scripts/start-test-xkmsd.sh inside the devcontainer.
-# That script probes for a live listener before doing anything, so when the
-# compose service IS up it no-ops and leaves it alone.
+# That script probes for a live listener before doing anything, and while the
+# compose service runs it only waits for that service's socket: it never
+# unlinks it or starts a second daemon on the shared path. When no server
+# answers, the script exits non-zero after printing its diagnostics, the host
+# adds the xkms-server side (xkms_server_diagnostics), and the target stops
+# there instead of running the suite against a dead socket. The compose
+# server's CA is then published for the suites (ensure-server-ca.sh); a
+# server whose CA cannot be fetched from it, verified, stops the target too.
 define run_with_server
 	@if [ -z "$$XKMS_DEVCONTAINER" ]; then \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
@@ -2730,14 +2755,16 @@ define run_with_server
 			{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
 		echo "$(GREEN)✓ PKCS#11 module built: build/lib/libxkms_pkcs11.so$(RESET)"; \
 		echo "$(CYAN)$(BOLD)→ Ensuring an xkms server is listening...$(RESET)"; \
-		bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET); \
-		bash build/docker/devcontainer/scripts/ensure-server-ca.sh || true; \
+		bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET) || exit 1; \
+		bash build/docker/devcontainer/scripts/ensure-server-ca.sh || exit 1; \
 		$(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
 		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && \
-			bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET); \
-			bash build/docker/devcontainer/scripts/ensure-server-ca.sh || true; \
+			bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET)" || \
+			{ $(xkms_server_diagnostics); exit 1; }; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && \
+			bash build/docker/devcontainer/scripts/ensure-server-ca.sh && \
 			$(1)"; \
 	fi
 endef
@@ -2841,6 +2868,17 @@ devcontainer-server-up:
 # The server boots with its passphrase barrier sealed and serves no socket
 # until an operator opens it, so before probing, the devcontainer plays that
 # operator through the sealed window (build/docker/devcontainer/scripts/open-server-barrier.sh).
+#
+# ✓ proves what the suites need: the opener returns only once the full,
+# post-unseal server answers /health, and the socket probe then connects as
+# exec's default user, the user run_with_server runs the suites as. The probe
+# is scripts/socket-probe.sh (curl --unix-socket), never nc -U: the runner's
+# AppArmor profile for nc.openbsd attaches to nc inside the devcontainer and
+# refuses the socket on the shared volume, so nc failed for a socket every
+# suite could reach. A failed
+# opener is fatal; it used to be only a warning, so a probe that reached the
+# sealed window's socket on its way out printed ✓ for a server the suite then
+# could not use (DS-3769). Every failure ends with xkms_server_diagnostics.
 devcontainer-server-wait:
 	@echo "$(CYAN)$(BOLD)→ Waiting for xkms-server on $(XKMS_UNIX_SOCKET)...$(RESET)"
 	@if [ -z "$$($(DOCKER_COMPOSE) ps -q devcontainer 2>/dev/null)" ]; then \
@@ -2850,28 +2888,26 @@ devcontainer-server-wait:
 		exit 1; \
 	fi; \
 	cid=$$($(DOCKER_COMPOSE) ps -q xkms-server 2>/dev/null); \
-	if [ -n "$$cid" ] && [ "$$(docker inspect -f '{{.State.Running}}' $$cid 2>/dev/null)" = "true" ]; then \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash $(DEVCONTAINER_REPO)/build/docker/devcontainer/scripts/open-server-barrier.sh || \
-			echo "$(YELLOW)could not open the xkms-server barrier; the socket probe below reports why it is not serving$(RESET)"; \
+	if [ -z "$$cid" ] || [ "$$(docker inspect -f '{{.State.Running}}' $$cid 2>/dev/null)" != "true" ]; then \
+		echo "$(RED)$(BOLD)✗ xkms-server is not running$(RESET)"; \
+		$(xkms_server_diagnostics); \
+		exit 1; \
+	fi; \
+	if ! $(DOCKER_COMPOSE) exec -T devcontainer bash $(DEVCONTAINER_REPO)/build/docker/devcontainer/scripts/open-server-barrier.sh; then \
+		echo "$(RED)$(BOLD)✗ could not open the xkms-server barrier, or the unsealed server never answered /health$(RESET)"; \
+		$(xkms_server_diagnostics); \
+		exit 1; \
 	fi; \
 	probe_err=""; \
 	for i in $$(seq 1 15); do \
-		cid=$$($(DOCKER_COMPOSE) ps -q xkms-server 2>/dev/null); \
-		if [ -z "$$cid" ] || [ "$$(docker inspect -f '{{.State.Running}}' $$cid 2>/dev/null)" != "true" ]; then \
-			echo "$(YELLOW)xkms-server is not running.$(RESET)"; \
-			break; \
-		fi; \
-		if probe_err=$$($(DOCKER_COMPOSE) exec -T devcontainer nc -U -z $(XKMS_UNIX_SOCKET) 2>&1); then \
+		if probe_err=$$($(DOCKER_COMPOSE) exec -T devcontainer sh $(DEVCONTAINER_REPO)/scripts/socket-probe.sh $(XKMS_UNIX_SOCKET) 2>&1); then \
 			echo "$(GREEN)✓ xkms-server is serving $(XKMS_UNIX_SOCKET)$(RESET)"; exit 0; \
 		fi; \
 		sleep 2; \
 	done; \
-	echo "$(YELLOW)xkms-server is not serving $(XKMS_UNIX_SOCKET).$(RESET)"; \
-	if [ -n "$$probe_err" ]; then \
-		echo "$(YELLOW)last probe error: $$probe_err$(RESET)"; \
-	fi; \
-	echo "$(YELLOW)last log lines:$(RESET)"; \
-	$(DOCKER_COMPOSE) logs --tail 15 xkms-server 2>&1 | sed 's/^/    /'; \
+	echo "$(RED)$(BOLD)✗ xkms-server answers /health, but the suite's user cannot connect to $(XKMS_UNIX_SOCKET)$(RESET)"; \
+	echo "$(YELLOW)last probe error: $${probe_err:-none}$(RESET)"; \
+	$(xkms_server_diagnostics); \
 	exit 1
 
 .PHONY: integration-test-fido2

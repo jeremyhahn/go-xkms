@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport/rest"
 )
 
 const (
@@ -95,6 +96,33 @@ func fetchBootstrapKeys(t *testing.T) (*transport.BootstrapListenerKeysResponse,
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+// newSDKTransport creates a connected REST transport pointing at the
+// integration-test xkms-server. It is closed by t.Cleanup.
+func newSDKTransport(t *testing.T) *rest.Transport {
+	t.Helper()
+
+	serverURL := requiredEnv(t, EnvServerURL)
+	caFile := requiredEnv(t, EnvTLSCA)
+
+	tr, err := rest.New(
+		transport.WithAddress(serverURL),
+		transport.WithTLS(caFile),
+	)
+	if err != nil {
+		t.Fatalf("create REST transport: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := tr.Connect(ctx); err != nil {
+		t.Fatalf("connect to server: %v", err)
+	}
+
+	t.Cleanup(func() { tr.Close() })
+	return tr
 }
 
 // requiredEnv reads a harness-supplied environment variable.

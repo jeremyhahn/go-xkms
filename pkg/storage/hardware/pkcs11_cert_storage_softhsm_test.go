@@ -317,3 +317,37 @@ func TestPKCS11CertStorage_NewWithNilPool_RealErrorType(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNilContext)
 }
+
+// TestPKCS11CertStorage_DoSearchFallback_ClearsSearchLeftByFailedInit leaves
+// a search active on the provider's session, as a C_FindObjectsInit that
+// fails part way through does, and proves doSearch's non-pooled path reports
+// the failure once and finalizes it, so the next read succeeds.
+func TestPKCS11CertStorage_DoSearchFallback_ClearsSearchLeftByFailedInit(t *testing.T) {
+	s, provider := newSoftHSMCertStorage(t, "rand-stale-search")
+
+	cert, err := generateTestCertificate("stale")
+	require.NoError(t, err)
+	require.NoError(t, s.SaveCert("stale", cert))
+
+	require.NoError(t, provider.ctx.FindObjectsInit(provider.session, nil))
+
+	_, err = s.GetCert("stale")
+	require.ErrorIs(t, err, pkcs11.Error(pkcs11.CKR_OPERATION_ACTIVE))
+
+	got, err := s.GetCert("stale")
+	require.NoError(t, err, "the failed read must not leave the session searching")
+	assert.Equal(t, cert.Raw, got.Raw)
+}
+
+// TestPKCS11CertStorage_DoSearchFallback_DeadSession verifies a search on a
+// closed session reports the token's CKR_SESSION_HANDLE_INVALID: the Final
+// that follows the failed Init fails the same way and is joined, not
+// substituted.
+func TestPKCS11CertStorage_DoSearchFallback_DeadSession(t *testing.T) {
+	s, provider := newSoftHSMCertStorage(t, "rand-dead-session")
+	require.NoError(t, provider.ctx.CloseSession(provider.session))
+
+	_, err := s.GetCert("anything")
+	require.ErrorIs(t, err, pkcs11.Error(pkcs11.CKR_SESSION_HANDLE_INVALID))
+	assert.NotErrorIs(t, err, storage.ErrNotFound)
+}

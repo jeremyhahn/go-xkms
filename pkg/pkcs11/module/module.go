@@ -7225,13 +7225,19 @@ func (m *Module) WrapKey(sessionHandle SessionHandle, mechanism *Mechanism, wrap
 	// CKA_WRAP MUST be CK_TRUE on the wrapping key (v3.2 §5.18.3). An absent
 	// attribute is not permission.
 	//
-	// The code is CKR_WRAPPING_KEY_TYPE_INCONSISTENT, not
-	// CKR_KEY_FUNCTION_NOT_PERMITTED: C_WrapKey's return table lists the former
-	// and does not list the latter, and §5.1 defines it as "the type of the
-	// wrapping key does not match the type required by the mechanism", which is
-	// what a key not marked for wrapping is.
+	// The code is CKR_KEY_FUNCTION_NOT_PERMITTED, for the reason C_DeriveKey
+	// gives for CKA_DERIVE. §5.1.6 defines it as "an attempt has been made to
+	// use a key for a cryptographic purpose that the key's attributes are not
+	// set to allow it to do", which is this condition exactly, and defines
+	// CKR_WRAPPING_KEY_TYPE_INCONSISTENT as "the type of the key specified to
+	// wrap another key is not consistent with the mechanism specified for
+	// wrapping", which is a different fault: an AES key under CKM_AES_KEY_WRAP
+	// is the right type and only its attribute is wrong. §5.18.3's return list
+	// omits the code, but §5.1.7 lets any applicable code be returned, and the
+	// list cannot make a code apply whose own definition excludes the
+	// condition. SoftHSM2 answers this case with CKR_KEY_FUNCTION_NOT_PERMITTED.
 	if !boolAttributeIsTrue(wrapKeyObj.GetAttribute(CKA_WRAP)) {
-		return nil, CKR_WRAPPING_KEY_TYPE_INCONSISTENT
+		return nil, CKR_KEY_FUNCTION_NOT_PERMITTED
 	}
 
 	// Get the key to be wrapped
@@ -7310,10 +7316,11 @@ func (m *Module) WrapKey(sessionHandle SessionHandle, mechanism *Mechanism, wrap
 	//
 	// Both forms are wrapped by the same service-side implementation, which is
 	// what makes C_WrapKey and C_UnwrapKey agree on framing for every
-	// mechanism. Encrypting the local value here instead did not: the AES-GCM
-	// nonce the token generated stayed on the discarded EncryptOperation and
-	// the blob was emitted as ciphertext||tag, where C_UnwrapKey parses
-	// nonce||ciphertext||tag; AES-CBC emitted no IV where C_UnwrapKey expects
+	// mechanism. For AES-GCM the CryptoManager hands back ciphertext||tag
+	// and rebuilds the service's frame from pIv on unwrap (PKCS#11 v3.2
+	// §6.13.3). Encrypting the local value here instead did not agree: the
+	// AES-GCM nonce the token generated stayed on the discarded
+	// EncryptOperation, out of the caller's reach; AES-CBC emitted no IV where C_UnwrapKey expects
 	// one; and the AES key-wrap mechanisms could not be reached at all,
 	// because C_EncryptInit rejects a mechanism that does not carry
 	// CKF_ENCRYPT. Every one of those wraps returned CKR_OK and a blob nothing
@@ -7372,13 +7379,13 @@ func (m *Module) UnwrapKey(sessionHandle SessionHandle, mechanism *Mechanism, un
 	// absent attribute is not permission: it means the key was never marked
 	// usable for unwrapping.
 	//
-	// The code is CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, not
-	// CKR_KEY_FUNCTION_NOT_PERMITTED: C_UnwrapKey's return table lists the
-	// former and does not list the latter, and §5.1 defines it as "the type of
-	// the unwrapping key does not match the type required by the mechanism",
-	// which is what a key not marked for unwrapping is.
+	// The code is CKR_KEY_FUNCTION_NOT_PERMITTED, as for CKA_WRAP in C_WrapKey:
+	// §5.1.6 defines CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT as the key's type not
+	// being "consistent with the mechanism specified for unwrapping", and the
+	// type is right here; only the attribute that §5.1.6's
+	// CKR_KEY_FUNCTION_NOT_PERMITTED describes is wrong (§5.1.7, §5.18.4).
 	if !boolAttributeIsTrue(unwrapKeyObj.GetAttribute(CKA_UNWRAP)) {
-		return ObjectHandle(InvalidHandle), CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT
+		return ObjectHandle(InvalidHandle), CKR_KEY_FUNCTION_NOT_PERMITTED
 	}
 
 	// CKA_ALWAYS_AUTHENTICATE deliberately does not gate this call; see

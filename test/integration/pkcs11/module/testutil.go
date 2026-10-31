@@ -77,9 +77,14 @@ func DefaultTestConfig() *module.Config {
 		target = "unix:///var/run/xkms/xkms.sock"
 	}
 
+	// xkmsd's socket is the embedded qrdb node's TLS-only listener, and every
+	// RPC past Health needs the caller's client certificate. The TLS settings
+	// come from the variables the module itself reads (module.EnvTLS*), so this
+	// in-process module presents the same credential a dlopen'd one does.
 	cfg := &module.Config{
 		Target:  target,
 		Timeout: 30 * time.Second,
+		TLS:     module.LoadFromEnv().TLS,
 	}
 
 	// Read storage configuration from environment
@@ -140,7 +145,12 @@ func isolateTokenStorage(t *testing.T) {
 		base = filepath.Join(os.TempDir(), "xkms-pkcs11-tests")
 	}
 
-	path := filepath.Join(base, "by-test", root)
+	// The per-test stores sit beside the base store, never inside it: the
+	// file engine opens a directory that already holds entries only when its
+	// format marker is there, so a by-test/ tree inside the base would make
+	// every module that opens the base itself (setupTestModule, a config
+	// built before this runs, the global module) fail C_Initialize.
+	path := filepath.Join(filepath.Clean(base)+".by-test", root)
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		t.Fatalf("creating an isolated token storage directory failed: %v", err)
 	}
@@ -694,6 +704,7 @@ func setupTestModule(t *testing.T) (*module.Module, func()) {
 	module.ResetGlobalModule()
 
 	// Get configuration from environment (same as SetupTestEnvironment)
+	isolateTokenStorage(t)
 	cfg := DefaultTestConfig()
 
 	m, err := module.New(module.WithConfig(cfg))

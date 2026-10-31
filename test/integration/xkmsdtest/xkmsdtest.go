@@ -15,8 +15,9 @@
 // the binaries from this checkout, runs `xkmsd init` over a throwaway data
 // directory with a passphrase barrier as an operator does on a fresh
 // deployment, starts xkmsd and unseals that barrier through the pre-boot
-// sealed-window listener, trusts the server's CA the way a first-contact
-// client does, and hands the suite the admin mTLS credential init issued.
+// sealed-window listener, trusts the CA bundle the server publishes, fetched
+// from the server the TLS anchors it persisted verify, and hands the suite the
+// admin mTLS credential init issued.
 //
 // The server serves REST over TLS on a kernel-assigned loopback port, with
 // client certificates verified against its own CA and init's, and the
@@ -32,7 +33,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -41,10 +41,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
-
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // RelyingParty is the WebAuthn relying party ID the server is configured
@@ -383,7 +379,7 @@ func (s *Server) unsealBarrier(data string) error {
 		case <-ctx.Done():
 		}
 	}()
-	client, err := SealedWindowClient(ctx, filepath.Join(data, "unified-tls", "cert.pem"))
+	client, err := SealedWindowClient(ctx, bootstrapCertPath(data))
 	if err == nil {
 		err = OpenBarrier(ctx, client, s.URL, []byte(barrierPassphrase))
 	}
@@ -423,24 +419,21 @@ func (s *Server) waitServing(l listeners) error {
 	return nil
 }
 
-// trustCA fetches the server's CA bundle trust-on-first-use over the public
-// GET /v1/ca/bootstrap, retrying until the embedded CA has composed.
+// trustCA fetches the server's CA bundle over the public GET
+// /v1/ca/bootstrap from the server the anchors it persisted verify, retrying
+// until the embedded CA has composed.
 func (s *Server) trustCA() error {
 	deadline := time.Now().Add(startTimeout)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	client, err := SealedWindowClient(ctx, bootstrapCertPath(s.Data))
+	if err != nil {
+		return err
+	}
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		bundle, err := bootstrap.Fetch(ctx, bootstrap.Config{
-			Mode:      bootstrap.ModeTOFU,
-			ServerURL: s.URL,
-			Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-			TOFU: &bootstrap.TOFUConfig{
-				PinStore:    truststrap.NewMemoryPinStore(),
-				ConfirmFunc: func(context.Context, *truststrap.Pin) error { return nil },
-			},
-		})
-		cancel()
+		bundle, err := fetchCABundle(ctx, client, s.URL)
 		if err == nil {
-			return os.WriteFile(s.CAFile, bundle.PEM, 0o600)
+			return os.WriteFile(s.CAFile, bundle, 0o600)
 		}
 		if waitErr := s.wait(deadline); waitErr != nil {
 			return errors.Join(waitErr, err)
@@ -448,17 +441,102 @@ func (s *Server) trustCA() error {
 	}
 }
 
+// fetchCABundle makes one fetch of the CA bundle the server at url publishes
+// on GET /v1/ca/bootstrap, through client, which verifies the server against
+// the anchors it persisted (SealedWindowClient), and returns the bundle's PEM.
+// A request no verified server answers fails with an *UnansweredError.
+func fetchCABundle(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	route := url + "/v1/ca/bootstrap"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, route, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, &UnansweredError{URL: route, Err: err}
+	}
+	bundle, err := io.ReadAll(resp.Body)
+	if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &StatusError{URL: route, Code: resp.StatusCode, Body: string(bundle)}
+	}
+	if !x509.NewCertPool().AppendCertsFromPEM(bundle) {
+		return nil, &StatusError{URL: route, Code: resp.StatusCode, Body: "no certificate in the CA bundle"}
+	}
+	return bundle, nil
+}
+
 // findAdminCredential locates the admin credential `xkmsd init` wrote into
 // the data directory.
 func (s *Server) findAdminCredential(data string) error {
-	cert, key := filepath.Join(data, "admin-cert.pem"), filepath.Join(data, "admin-key.pem")
-	for _, p := range []string{cert, key} {
-		if _, err := os.Stat(p); err != nil {
-			return errors.Join(ErrNoAdminCredential, err)
-		}
+	cert, key, err := adminCredential(data)
+	if err != nil {
+		return err
 	}
 	s.AdminCert, s.AdminKey = cert, key
 	return nil
+}
+
+// adminCredential returns the paths of the first-boot admin's certificate
+// and key under data, or ErrNoAdminCredential while either is missing.
+func adminCredential(data string) (cert, key string, err error) {
+	cert, key = filepath.Join(data, "admin-cert.pem"), filepath.Join(data, "admin-key.pem")
+	for _, p := range []string{cert, key} {
+		if _, err := os.Stat(p); err != nil {
+			return "", "", errors.Join(ErrNoAdminCredential, err)
+		}
+	}
+	return cert, key, nil
+}
+
+// AdminClient returns the client an unsealed xkmsd at url answers: it
+// presents the first-boot admin credential xkmsd writes under data, and
+// trusts the CA bundle the server publishes, fetched only from a server the
+// anchors it persisted under data verify. Once the barrier is unsealed every
+// route, barrier status included, requires an authenticated caller, and the
+// server presents its CA-issued certificate instead of the configured one.
+// AdminClient waits, until ctx ends, for first boot to write the credential
+// and for a verified server to serve the bundle.
+func AdminClient(ctx context.Context, url, data string) (*http.Client, error) {
+	cert, key, err := adminCredential(data)
+	for err != nil {
+		if waitErr := pause(ctx); waitErr != nil {
+			return nil, errors.Join(waitErr, err)
+		}
+		cert, key, err = adminCredential(data)
+	}
+	anchored, err := SealedWindowClient(ctx, bootstrapCertPath(data))
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := fetchCABundle(ctx, anchored, url)
+	for err != nil {
+		if waitErr := pause(ctx); waitErr != nil {
+			return nil, errors.Join(waitErr, err)
+		}
+		bundle, err = fetchCABundle(ctx, anchored, url)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(bundle) {
+		return nil, &StatusError{URL: url, Body: "no certificate in the CA bundle"}
+	}
+	pair, err := tls.LoadX509KeyPair(cert, key)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			RootCAs:      roots,
+			Certificates: []tls.Certificate{pair},
+			MinVersion:   tls.VersionTLS13,
+		}},
+	}, nil
 }
 
 // drain consumes and closes resp, refusing any status but want.

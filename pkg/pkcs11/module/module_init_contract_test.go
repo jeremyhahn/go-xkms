@@ -808,11 +808,12 @@ func createUnwrapKeyFixture(t *testing.T) (*Module, SessionHandle, ObjectHandle)
 // TestWrapUnwrapKeyUsageCodes pins the codes C_WrapKey and C_UnwrapKey produce
 // when the key they were given is not marked for the job.
 //
-// Neither return table lists CKR_KEY_FUNCTION_NOT_PERMITTED, which is what the
-// module used to return. §5.18.3 and §5.18.4 list
-// CKR_WRAPPING_KEY_TYPE_INCONSISTENT and CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT,
-// defined in §5.1 as the key's type not matching what the mechanism requires —
-// which is what a key never marked for wrapping or unwrapping is.
+// The code is CKR_KEY_FUNCTION_NOT_PERMITTED, which v3.2 §5.1.6 defines as a
+// key used for a purpose its attributes do not allow. The
+// CKR_(UN)WRAPPING_KEY_TYPE_INCONSISTENT codes §5.1.6 reserves for a key type
+// inconsistent with the mechanism, and an AES key under CKM_AES_KEY_WRAP is
+// not; §5.1.7 lets any applicable code be returned even where the return
+// tables of §5.18.3 and §5.18.4 omit it.
 func TestWrapUnwrapKeyUsageCodes(t *testing.T) {
 	t.Run("C_WrapKey without CKA_WRAP", func(t *testing.T) {
 		m := initializeTestModule(t)
@@ -841,7 +842,7 @@ func TestWrapUnwrapKeyUsageCodes(t *testing.T) {
 		require.Equal(t, CKR_OK, rv)
 
 		_, rv = m.WrapKey(sessionHandle, &Mechanism{Type: CKM_AES_KEY_WRAP}, wrappingKey, targetKey)
-		assert.Equal(t, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, rv)
+		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv)
 	})
 
 	t.Run("C_WrapKey with CKA_WRAP gets past the usage gate", func(t *testing.T) {
@@ -849,7 +850,7 @@ func TestWrapUnwrapKeyUsageCodes(t *testing.T) {
 		defer m.Finalize()
 
 		_, rv := m.WrapKey(sessionHandle, &Mechanism{Type: CKM_AES_KEY_WRAP}, wrappingKey, targetKey)
-		assert.NotEqual(t, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, rv)
+		assert.NotEqual(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv)
 	})
 
 	t.Run("C_UnwrapKey without CKA_UNWRAP", func(t *testing.T) {
@@ -870,7 +871,7 @@ func TestWrapUnwrapKeyUsageCodes(t *testing.T) {
 
 		_, rv = m.UnwrapKey(sessionHandle, &Mechanism{Type: CKM_AES_KEY_WRAP},
 			unwrappingKey, []byte("wrapped"), nil)
-		assert.Equal(t, CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, rv)
+		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv)
 	})
 
 	t.Run("C_UnwrapKey with CKA_UNWRAP gets past the usage gate", func(t *testing.T) {
@@ -879,7 +880,7 @@ func TestWrapUnwrapKeyUsageCodes(t *testing.T) {
 
 		_, rv := m.UnwrapKey(sessionHandle, &Mechanism{Type: CKM_AES_KEY_WRAP},
 			unwrappingKey, []byte("wrapped"), nil)
-		assert.NotEqual(t, CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, rv)
+		assert.NotEqual(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv)
 	})
 }
 

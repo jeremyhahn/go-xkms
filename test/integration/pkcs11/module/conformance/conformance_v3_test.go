@@ -478,6 +478,14 @@ func TestV3MessageVerification(t *testing.T) {
 		rv = env.Module.VerifyMessageNext(session, data, signature, true)
 		testutil.RequireOK(t, rv, "VerifyMessageNext failed")
 
+		// PKCS#11 v3.2 §5.16.4: the last C_VerifyMessageNext ends the message,
+		// not the message-based verification process; §5.16.5
+		// C_MessageVerifyFinal finishes it. Left active, the next
+		// C_MessageVerifyInit on this session is refused with
+		// CKR_OPERATION_ACTIVE.
+		rv = env.Module.MessageVerifyFinal(session)
+		testutil.RequireOK(t, rv, "MessageVerifyFinal failed")
+
 		t.Logf("Multi-part verification successful")
 	})
 
@@ -488,23 +496,27 @@ func TestV3MessageVerification(t *testing.T) {
 		rv := env.Module.MessageVerifyInit(session, &module.Mechanism{Type: module.CKM_SHA256_RSA_PKCS}, pubHandle)
 		testutil.RequireOK(t, rv, "MessageVerifyInit failed")
 
+		// PKCS#11 v3.2 §5.16.2: a bad signature is CKR_SIGNATURE_INVALID, or
+		// CKR_SIGNATURE_LEN_RANGE when its length alone shows it invalid. The
+		// call terminates only this message's operation, so the process is
+		// still active and C_MessageVerifyFinal succeeds.
 		rv = env.Module.VerifyMessage(session, data, invalidSig)
-		if rv == module.CKR_OK {
-			t.Error("Expected verification to fail with invalid signature")
+		if rv != module.CKR_SIGNATURE_INVALID && rv != module.CKR_SIGNATURE_LEN_RANGE {
+			t.Errorf("VerifyMessage with an invalid signature: expected CKR_SIGNATURE_INVALID or CKR_SIGNATURE_LEN_RANGE, got %s", rv.String())
 		}
-		t.Logf("VerifyMessage with invalid signature returned: 0x%08x", rv)
 
-		// Finalize to clean up operation state
-		env.Module.MessageVerifyFinal(session)
+		rv = env.Module.MessageVerifyFinal(session)
+		testutil.RequireOK(t, rv, "MessageVerifyFinal failed")
 	})
 
 	t.Run("MessageVerifyWithoutInit", func(t *testing.T) {
-		// Try to verify without calling MessageVerifyInit first
+		// PKCS#11 v3.2 §5.16.2: the message-based verification process MUST
+		// have been initialized with C_MessageVerifyInit; without it the call
+		// is CKR_OPERATION_NOT_INITIALIZED.
 		rv := env.Module.VerifyMessage(session, []byte("test"), []byte("sig"))
-		if rv == module.CKR_OK {
-			t.Error("Expected error when verifying without init")
+		if rv != module.CKR_OPERATION_NOT_INITIALIZED {
+			t.Errorf("VerifyMessage without init: expected CKR_OPERATION_NOT_INITIALIZED, got %s", rv.String())
 		}
-		t.Logf("VerifyMessage without init returned: 0x%08x", rv)
 	})
 }
 
