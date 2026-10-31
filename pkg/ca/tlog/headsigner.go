@@ -39,24 +39,62 @@ import (
 // go-qrdb records a head-signing key by its type, which RFC 9162 §2.1.4
 // limits to Ed25519 and ECDSA P-256 with SHA-256, so a CA whose key is of
 // another type is refused with ErrUnsupportedCAKey.
+//
+// The provider is node-wide: go-qrdb asks it for every log any tenant
+// creates or signs. It serves only the one log it is bound to, so a tenant
+// holding vlog:create and vlog:sign_head cannot obtain CA-signed
+// checkpoints over a log of its own; any other log is refused with
+// ErrLogOutOfScope before the CA key is reached.
 type HeadSignerProvider struct {
 	keys    qrdbsdk.CAKeyProvider
 	keyName string
+	scope   LogScope
 }
 
 var _ qrdbsdk.HeadSignerProvider = (*HeadSignerProvider)(nil)
 
+// LogScope is the full identity of the one log a HeadSignerProvider signs
+// for, as go-qrdb's key and signer requests name it.
+type LogScope struct {
+	TenantID string
+	Database string
+	Log      string
+}
+
+// ServiceLogScope is the scope of the log named name as the xkms service
+// principal creates it through the node's embedded client: the reserved
+// system tenant's own database, which go-qrdb names after the tenant.
+func ServiceLogScope(name string) LogScope {
+	return LogScope{TenantID: qrdbsdk.SystemTenantID, Database: qrdbsdk.SystemTenantID, Log: name}
+}
+
+// String renders the scope as tenant/database/log.
+func (s LogScope) String() string {
+	return s.TenantID + "/" + s.Database + "/" + s.Log
+}
+
 // NewHeadSignerProvider returns the provider signing through keys under
 // keyName, the key name every checkpoint's signature line carries
-// (signed-note §Signatures).
-func NewHeadSignerProvider(keys qrdbsdk.CAKeyProvider, keyName string) (*HeadSignerProvider, error) {
+// (signed-note §Signatures), for the log scope names and no other.
+func NewHeadSignerProvider(keys qrdbsdk.CAKeyProvider, keyName string, scope LogScope) (*HeadSignerProvider, error) {
 	if keys == nil {
 		return nil, ErrNoKeyProvider
 	}
 	if keyName == "" {
 		return nil, &errs.Detail{Err: checkpoint.ErrInvalidKeyName, Detail: "empty key name"}
 	}
-	return &HeadSignerProvider{keys: keys, keyName: keyName}, nil
+	if scope.TenantID == "" || scope.Database == "" || scope.Log == "" {
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: "log scope needs a tenant, database and log name: " + scope.String()}
+	}
+	return &HeadSignerProvider{keys: keys, keyName: keyName, scope: scope}, nil
+}
+
+// checkScope refuses a request for any log but the provider's own.
+func (p *HeadSignerProvider) checkScope(requested LogScope) error {
+	if requested != p.scope {
+		return &errs.Detail{Err: ErrLogOutOfScope, Detail: requested.String()}
+	}
+	return nil
 }
 
 // KeyName returns the key name the provider signs under.
@@ -79,6 +117,9 @@ func (p *HeadSignerProvider) Verifier(ctx context.Context) (*checkpoint.Verifier
 // SubjectPublicKeyInfo, and no key record is returned, so go-qrdb stores
 // nothing but the public half.
 func (p *HeadSignerProvider) CreateKey(ctx context.Context, req qrdbsdk.HeadSignerCreateKeyRequest) (qrdbsdk.HeadSignerCreatedKey, error) {
+	if err := p.checkScope(LogScope{TenantID: req.TenantID, Database: req.Database, Log: req.Log}); err != nil {
+		return qrdbsdk.HeadSignerCreatedKey{}, err
+	}
 	signer, sigType, err := p.caSigner(ctx)
 	if err != nil {
 		return qrdbsdk.HeadSignerCreatedKey{}, err
@@ -96,6 +137,9 @@ func (p *HeadSignerProvider) CreateKey(ctx context.Context, req qrdbsdk.HeadSign
 // HeadSigner returns the signer over the CA key, refusing with
 // ErrKeyRefMismatch when the CA key is no longer the key req names.
 func (p *HeadSignerProvider) HeadSigner(ctx context.Context, req qrdbsdk.HeadSignerRequest) (qrdbsdk.HeadSigner, error) {
+	if err := p.checkScope(LogScope{TenantID: req.TenantID, Database: req.Database, Log: req.Log}); err != nil {
+		return nil, err
+	}
 	cp, sigType, err := p.checkpointSigner(ctx)
 	if err != nil {
 		return nil, err

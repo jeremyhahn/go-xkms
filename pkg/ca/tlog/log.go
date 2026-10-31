@@ -121,10 +121,34 @@ func OpenOrCreate(ctx context.Context, client transport.VlogClient, cfg Config, 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := client.VlogHead(ctx, &vlogwire.LogRequest{Log: cfg.Name}); err == nil {
-		return l, nil
+	head, err := client.VlogHead(ctx, &vlogwire.LogRequest{Log: cfg.Name})
+	if err != nil {
+		return Create(ctx, client, cfg, signers)
 	}
-	return Create(ctx, client, cfg, signers)
+	if err := l.checkExisting(ctx, head.Checkpoint); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+// checkExisting refuses a log that already exists but whose checkpoints do
+// not verify under the configured origin and CA key: go-qrdb signs the
+// origin persisted at create with the key it recorded, so a changed
+// transparency_log.origin or CA key would otherwise surface only when a
+// signed head is first read. note is the log's latest checkpoint; a log
+// never signed yet signs its head now (an empty log included), so the
+// check runs on every reopen.
+func (l *Log) checkExisting(ctx context.Context, note []byte) error {
+	if len(note) > 0 {
+		if _, err := l.VerifyCheckpoint(note); err != nil {
+			return &errs.Joined{Lead: ErrExistingLogMismatch, Detail: l.name, Cause: err}
+		}
+		return nil
+	}
+	if _, err := l.SignedTreeHead(ctx); err != nil {
+		return &errs.Joined{Lead: ErrExistingLogMismatch, Detail: l.name, Cause: err}
+	}
+	return nil
 }
 
 // AppendCertIssued appends a cert-issued entry and returns its index.
