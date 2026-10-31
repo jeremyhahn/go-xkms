@@ -1,0 +1,1 @@
+- The WebAuthn browser suite's xkmsd passes the compliance gate: its config enables the passphrase barrier, composite auth and a root CA, and `run-server.sh` runs `xkmsd init` and opens the barrier.

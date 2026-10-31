@@ -27,9 +27,27 @@ if [[ -z "${XKMSD_BIN}" ]]; then
   fi
 fi
 
-# Clean keystore state for a deterministic run.
-rm -rf ./.runtime/data
-mkdir -p ./.runtime/data/software
+# Clean keystore/CA state for a deterministic run.
+rm -rf ./.runtime/data ./.runtime/storage ./.runtime/ca
+mkdir -p ./.runtime/data/software ./.runtime/ca
+
+# xkmsd refuses an insecure configuration (cmd/xkmsd: cfg.ComplianceGaps), so
+# the RP runs the way test/integration/web does: initialize the barrier as an
+# operator does before a first boot (the SO PIN becomes its passphrase and
+# travels in the environment, never in the config); init also writes the
+# daemon's TLS certificate for localhost, which serves the RP over HTTPS.
+SO_PIN="${XKMS_TEST_SO_PIN:-e2e-webauthn-browser-so-pin}"
+XKMS_SO_PIN="${SO_PIN}" "${XKMSD_BIN}" init --config "$(pwd)/config.yaml" \
+  --data-dir "$(pwd)/.runtime/storage" --hostname localhost --admin-factor mtls >&2
 
 echo "[run-server] launching ${XKMSD_BIN} on https://localhost:18443" >&2
-exec env XKMS_CONFIG="$(pwd)/config.yaml" "${XKMSD_BIN}"
+env -u XKMS_SO_PIN XKMS_CONFIG="$(pwd)/config.yaml" "${XKMSD_BIN}" &
+server=$!
+trap 'kill "${server}" 2>/dev/null || true' EXIT INT TERM
+
+# The daemon boots sealed; open its barrier through the sealed window.
+XKMS_SERVER_WINDOW_URL="https://localhost:18443" \
+  XKMS_SERVER_STATE_DIR="$(pwd)/.runtime" \
+  XKMS_SERVER_BARRIER_SECRET="${SO_PIN}" \
+  bash "../../../build/docker/devcontainer/scripts/open-server-barrier.sh" >&2
+wait "${server}"
