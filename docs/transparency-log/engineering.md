@@ -80,7 +80,7 @@ every head and proof still verifies. The service principal does not hold
 
 ## Entry encoding, version 1
 
-`Marshal` (`entry.go:171`) and `Unmarshal` (`entry.go:205`) use one
+`Marshal` (`entry.go:201`) and `Unmarshal` (`entry.go:236`) use one
 canonical encoding:
 
     version (1 byte, = 1) || kind (1 byte) || field...
@@ -91,8 +91,9 @@ canonical encoding:
 | `KindCertIssued` | 1 | SHA-256 of the certificate DER (32 bytes), serial, profile, tenant |
 | `KindImageSigned` | 2 | image digest, envelope digest, signer |
 | `KindRevoked` | 3 | serial, reason (1 byte) |
+| `KindExternal` | 4 | the appending caller's SPIFFE ID, payload (1 to 65535 bytes) |
 
-Value 4 is reserved for external entries. The rules:
+The rules:
 
 - A serial is its minimal big-endian magnitude, and it must be positive.
 - Strings must be non-empty UTF-8.
@@ -179,6 +180,36 @@ digest, signer) before it is pushed. If the append fails, the signer pushes
 nothing and returns `ErrTransparencyLogAppend`, so it fails closed.
 `tlog.OpenOrCreate` opens the log, creating it on first use. xkmsd composes
 no image signer, so an SDK caller (`xkms.ImageSignerConfig`) sets the log.
+
+### external: under the caller's SPIFFE ID
+
+A caller appends its own opaque payload as an `external` entry.
+`XKMSService.AppendTransparencyLogExternal` (`pkg/xkms/servicer_tlog.go:211`)
+names the entry by the caller, never by anything the request carries:
+`callerSPIFFEID` (`:238`) takes the one SPIFFE ID among the URI SANs of the
+leaf of the connection's verified client certificate chain. No verified
+client certificate, a certificate with no SPIFFE ID, or one with two, is
+refused with `ErrTransparencyLogNoCallerSPIFFEID`. So the embedded and unix
+transports, which carry no TLS, are refused, and a request one node forwards
+to another is checked against the forwarding node's certificate, the TLS
+state of the connection the request arrived on.
+
+| Transport | Verb | Success |
+|---|---|---|
+| gRPC | rpc `AppendTransparencyLogExternal` (`pkg/api/grpc/service_tlog.go:108`) | the leaf index |
+| REST | `POST /api/v1/ca/transparency-log/entries`, body `{"payload": <base64>}` (`pkg/api/rest/handlers_tlog.go:101`) | 201, `{"index": n}` |
+| MCP | `xkms.ca.transparency-log.append`, params `{"payload": <base64>}` (`pkg/api/mcp/server.go:388`) | `{"index": n}` |
+
+The permission is `vlog:append`. go-qrdb's seeded roles place it on Admin,
+Operator and User; Auditor does not hold it. The errors, shared by every
+transport through `apierrors.TransparencyLogSentinelClasses`:
+
+| Cause | gRPC | REST | MCP |
+|---|---|---|---|
+| no log configured | `Unavailable` | 503 | `ServiceUnavailable` |
+| no caller SPIFFE ID | `Unauthenticated` | 401 | `InvalidParams` (JSON-RPC has no unauthenticated member) |
+| empty or oversized payload, malformed body | `InvalidArgument` | 400 | `InvalidParams` |
+| caller without `vlog:append` | `PermissionDenied` | 403 | `Forbidden` |
 
 ## xkmsd wiring
 
