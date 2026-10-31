@@ -28,7 +28,9 @@ func TestSupportedAlgorithms_AWSKMSListsOnlyAES256GCM(t *testing.T) {
 	algorithms := supportedAlgorithms((&awskms.Backend{}).Capabilities().KeyAlgorithms, false)
 
 	assert.ElementsMatch(t, []transport.KeyAlgorithm{
-		transport.KeyAlgorithmRSA2048, transport.KeyAlgorithmECDSAP256, transport.KeyAlgorithmAES256GCM,
+		transport.KeyAlgorithmRSA2048, transport.KeyAlgorithmRSA3072, transport.KeyAlgorithmRSA4096,
+		transport.KeyAlgorithmECDSAP256, transport.KeyAlgorithmECDSAP384, transport.KeyAlgorithmECDSAP521,
+		transport.KeyAlgorithmAES256GCM,
 	}, algorithms)
 	assert.NotContains(t, algorithms, transport.KeyAlgorithmAES128GCM)
 	assert.NotContains(t, algorithms, transport.KeyAlgorithmAES192GCM)

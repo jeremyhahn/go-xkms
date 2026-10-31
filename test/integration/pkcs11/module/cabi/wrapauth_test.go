@@ -18,9 +18,7 @@ package cabi
 import (
 	"bytes"
 	"crypto/rand"
-	"sync"
 	"testing"
-	"time"
 )
 
 // gcmNonceSize and gcmTagSize are the AES-GCM framing the module's
@@ -38,9 +36,7 @@ const (
 // The keys are created with C_CreateObject rather than generated, because the
 // wrapped output length is a function of the target's CKA_VALUE and the tests
 // below assert on that length exactly. Both are session objects, and the target
-// is deliberately non-sensitive: CKA_VALUE is not a read-only attribute, so an
-// application may change a secret key's material through C_SetAttributeValue,
-// and the race test depends on being able to.
+// is non-sensitive and extractable so the wrap is permitted.
 func authWrapKeys(t *testing.T, f *Fixture, targetValue []byte) (uint, uint) {
 	t.Helper()
 
@@ -128,144 +124,58 @@ func TestWrapKeyAuthenticatedTwoCall(t *testing.T) {
 	}
 }
 
-// TestWrapKeyAuthenticatedNeverWritesPastTheDeclaredLength drives the race
-// between C_WrapKeyAuthenticated's internal size query and the wrap itself.
+// TestWrapKeyAuthenticatedKeyValueIsReadOnly proves the size C_WrapKeyAuthenticated
+// predicts cannot be changed under it through the C ABI.
 //
 // The cgo entry point sizes the output by calling WrapKeyAuthenticatedSize and
-// then calls WrapKeyAuthenticated. Each takes the module lock separately, and
-// both read the target key's CKA_VALUE, which is not a read-only attribute. A
-// C_SetAttributeValue that lengthens that value lands between the two, so the
-// wrap returns more bytes than the size query predicted. Copying the predicted
-// length into the caller's buffer is a heap overflow in the application's
-// address space, not a wrong return code, which is why this test asserts on
-// memory rather than on a CK_RV: the buffer carries a red zone past the length
-// declared to the module, and no byte of it may ever change.
-//
-// The declared length is fixed at the 16-byte key's output size, so the
-// overflow window is exactly the interleaving where the size query observes 16
-// bytes of key material and the wrap observes 32.
-//
-// Driving the module from several goroutines at once is legitimate even though
-// the harness passes NULL_PTR to C_Initialize: this module declares itself
-// natively thread-safe and serializes internally regardless of pInitArgs
-// (cmd/pkcs11-module/exports.go, C_Initialize), so the locking permission
-// PKCS#11 v3.2 section 5.6.1 negotiates has no bearing on whether the calls
-// below are safe to make. What is under test is the buffer arithmetic at the
-// cgo boundary, which those internal locks do not cover: the size query and
-// the wrap take them separately.
-func TestWrapKeyAuthenticatedNeverWritesPastTheDeclaredLength(t *testing.T) {
-	const (
-		shortValueLen = 16
-		longValueLen  = 32
-		redZoneLen    = 128
-		iterations    = 4000
-	)
-	declared := uint(gcmNonceSize + shortValueLen + gcmTagSize)
+// then calls WrapKeyAuthenticated, each under its own module lock, and both
+// read the target key's CKA_VALUE. An application that could lengthen that
+// value between the two would make the wrap produce more bytes than the
+// caller's buffer holds. PKCS#11 v3.2 closes that window at the source: an AES
+// key's CKA_VALUE carries footnotes 1,4,6,7 of Table 13 in Table 105, and not
+// footnote 8, so it may not be modified after creation, and C_SetAttributeValue
+// may only set attributes "of the object that can be modified" (§5.7.6),
+// refusing the rest with CKR_ATTRIBUTE_READ_ONLY (§5.1.6). The test asserts
+// that refusal, then that the wrap still fits the predicted length exactly,
+// with a red zone past the declared buffer that no byte may change.
+func TestWrapKeyAuthenticatedKeyValueIsReadOnly(t *testing.T) {
+	const redZoneLen = 128
 
-	short := make([]byte, shortValueLen)
-	long := make([]byte, longValueLen)
+	long := make([]byte, 32)
 	for i := range long {
 		long[i] = byte(i + 1)
 	}
-	for i := range short {
-		short[i] = byte(i + 1)
-	}
+	short := long[:16]
+	declared := uint(gcmNonceSize + len(short) + gcmTagSize)
 
 	f := NewFixture(t)
 	wrappingKey, targetKey := authWrapKeys(t, f, short)
 
-	// Confirm the premise before racing on it: if the token refuses to change
-	// CKA_VALUE at all, this test would pass without ever opening the window.
-	if err := f.Session.SetAttributeValue(targetKey, []Attr{AttrBytes(CKA_VALUE, long)}); err != nil {
-		t.Fatalf("C_SetAttributeValue on CKA_VALUE: %v; the race this test drives depends on the attribute being modifiable", err)
+	err := f.Session.SetAttributeValue(targetKey, []Attr{AttrBytes(CKA_VALUE, long)})
+	if got := RV(err); got != CKR_ATTRIBUTE_READ_ONLY {
+		t.Fatalf("C_SetAttributeValue on an AES key's CKA_VALUE returned %s (0x%08X), want CKR_ATTRIBUTE_READ_ONLY: "+
+			"v3.2 Table 105 gives CKA_VALUE footnotes 1,4,6,7 and not footnote 8, so the key material is not modifiable (§5.7.6)",
+			rvName(got), got)
 	}
-	grown, err := f.Session.WrapKeyAuthenticatedProbe(wrappingKey, targetKey, nil)
+
+	required, err := f.Session.WrapKeyAuthenticatedProbe(wrappingKey, targetKey, nil)
 	if err != nil {
-		t.Fatalf("the size query after growing CKA_VALUE: %v", err)
+		t.Fatalf("the size query after the refused update: %v", err)
 	}
-	if grown <= declared {
-		t.Fatalf("growing CKA_VALUE from %d to %d bytes did not grow the wrap output past %d bytes (got %d); the overflow window does not exist and this test proves nothing",
-			shortValueLen, longValueLen, declared, grown)
-	}
-	if err := f.Session.SetAttributeValue(targetKey, []Attr{AttrBytes(CKA_VALUE, short)}); err != nil {
-		t.Fatalf("C_SetAttributeValue restoring the short CKA_VALUE: %v", err)
+	if required != declared {
+		t.Fatalf("the size query reported %d bytes after a refused CKA_VALUE update, want the original key's %d", required, declared)
 	}
 
-	stop := make(chan struct{})
-	var mutators sync.WaitGroup
-	var mutateErr error
-	var mutateOnce sync.Once
-
-	for i := 0; i < 2; i++ {
-		mutators.Add(1)
-		go func() {
-			defer mutators.Done()
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				for _, value := range [][]byte{long, short} {
-					if err := f.Session.SetAttributeValue(targetKey, []Attr{AttrBytes(CKA_VALUE, value)}); err != nil {
-						mutateOnce.Do(func() { mutateErr = err })
-						return
-					}
-				}
-			}
-		}()
+	result := f.Session.WrapKeyAuthenticatedGuarded(wrappingKey, targetKey, nil, declared, redZoneLen)
+	if result.RV != CKR_OK {
+		t.Fatalf("C_WrapKeyAuthenticated into the %d-byte buffer the size query predicted returned %s (0x%08X)",
+			declared, rvName(result.RV), result.RV)
 	}
-
-	var sawShortBuffer, sawSuccess int
-	deadline := time.Now().Add(30 * time.Second)
-	for i := 0; i < iterations && time.Now().Before(deadline); i++ {
-		result := f.Session.WrapKeyAuthenticatedGuarded(wrappingKey, targetKey, nil, declared, redZoneLen)
-
-		if at := result.RedZoneClobbered(); at >= 0 {
-			close(stop)
-			mutators.Wait()
-			t.Fatalf("iteration %d: C_WrapKeyAuthenticated returned %s (0x%08X) reporting %d bytes, and overwrote the red zone %d bytes past the end of the %d-byte buffer it was given. "+
-				"The size query and the wrap read CKA_VALUE under separate locks, so the memcpy must be guarded by the length actually produced, not the length predicted",
-				i, rvName(result.RV), result.RV, result.Reported, at, declared)
-		}
-
-		switch result.RV {
-		case CKR_OK:
-			if result.Reported > declared {
-				close(stop)
-				mutators.Wait()
-				t.Fatalf("iteration %d: C_WrapKeyAuthenticated returned CKR_OK reporting %d bytes written into a %d-byte buffer",
-					i, result.Reported, declared)
-			}
-			sawSuccess++
-		case CKR_BUFFER_TOO_SMALL:
-			if result.Reported <= declared {
-				close(stop)
-				mutators.Wait()
-				t.Fatalf("iteration %d: CKR_BUFFER_TOO_SMALL reported %d bytes, which fits in the %d-byte buffer", i, result.Reported, declared)
-			}
-			sawShortBuffer++
-		default:
-			close(stop)
-			mutators.Wait()
-			t.Fatalf("iteration %d: C_WrapKeyAuthenticated returned %s (0x%08X), want CKR_OK or CKR_BUFFER_TOO_SMALL",
-				i, rvName(result.RV), result.RV)
-		}
+	if uint(len(result.Output)) != declared {
+		t.Fatalf("the wrap wrote %d bytes, want %d", len(result.Output), declared)
 	}
-
-	close(stop)
-	mutators.Wait()
-
-	if mutateErr != nil {
-		t.Fatalf("the CKA_VALUE mutator failed: %v", mutateErr)
-	}
-	if sawShortBuffer == 0 {
-		t.Fatalf("no iteration observed the grown key (%d successes, 0 CKR_BUFFER_TOO_SMALL); the race never interleaved and the guard was never exercised",
-			sawSuccess)
-	}
-	if sawSuccess == 0 {
-		t.Fatalf("no iteration observed the short key (0 successes, %d CKR_BUFFER_TOO_SMALL); the mutator starved the wrap and the test proves nothing",
-			sawShortBuffer)
+	if at := result.RedZoneClobbered(); at >= 0 {
+		t.Fatalf("the wrap overwrote the red zone %d bytes past the end of the %d-byte buffer", at, declared)
 	}
 }
 
@@ -319,6 +229,53 @@ func authWrapKeysWith(t *testing.T, f *Fixture, targetValue []byte, wrapExtra, t
 	return f.Track(wrappingKey), f.Track(targetKey)
 }
 
+// trustedWrappingKey creates a public AES wrapping key with CKA_TRUSTED set.
+//
+// Only the Security Officer may set CKA_TRUSTED to CK_TRUE (PKCS#11 v3.2
+// Table 13 footnote 10), and a normal user's template claiming it is refused
+// with CKR_ATTRIBUTE_READ_ONLY (§5.1.6). The user and the SO cannot be logged
+// in at once (§5.6.8), so the fixture's user logs out, the SO creates the key,
+// and the user logs back in. The key is public because the SO may create only
+// public objects (§5.7.1), and a public session object outlives the SO's
+// logout (§5.6.10).
+func trustedWrappingKey(t *testing.T, f *Fixture) uint {
+	t.Helper()
+
+	if err := f.Session.Logout(); err != nil {
+		t.Fatalf("C_Logout of the user before the SO logs in: %v", err)
+	}
+	defer func() {
+		if err := f.Session.Login(CKU_USER, UserPIN()); err != nil {
+			t.Errorf("C_Login restoring the user session: %v", err)
+		}
+	}()
+	if err := f.Session.Login(CKU_SO, SOPIN()); err != nil {
+		t.Fatalf("C_Login as CKU_SO: %v", err)
+	}
+
+	value := make([]byte, 32)
+	for i := range value {
+		value[i] = byte(0x60 + i)
+	}
+	key, err := f.Session.CreateObject([]Attr{
+		AttrULong(CKA_CLASS, CKO_SECRET_KEY),
+		AttrULong(CKA_KEY_TYPE, CKK_AES),
+		AttrBool(CKA_TOKEN, false),
+		AttrBool(CKA_PRIVATE, false),
+		AttrBool(CKA_WRAP, true),
+		AttrBool(CKA_TRUSTED, true),
+		AttrBytes(CKA_VALUE, value),
+		AttrString(CKA_LABEL, UniqueLabel(t, "cabi-authwrap-trusted-wk")),
+	})
+	if lerr := f.Session.Logout(); lerr != nil {
+		t.Fatalf("C_Logout of the SO: %v", lerr)
+	}
+	if err != nil {
+		t.Fatalf("C_CreateObject for the CKA_TRUSTED wrapping key as the SO: %v", err)
+	}
+	return f.Track(key)
+}
+
 // TestWrapKeyAuthenticatedHonoursWrapWithTrusted proves CKA_WRAP_WITH_TRUSTED
 // is enforced by the exported C_WrapKeyAuthenticated, not merely by some
 // internal path.
@@ -365,8 +322,8 @@ func TestWrapKeyAuthenticatedHonoursWrapWithTrusted(t *testing.T) {
 
 	t.Run("accepts a CKA_TRUSTED wrapping key", func(t *testing.T) {
 		f := NewFixture(t)
-		wrappingKey, targetKey := authWrapKeysWith(t, f, targetValue,
-			[]Attr{AttrBool(CKA_TRUSTED, true)}, []Attr{AttrBool(CKA_WRAP_WITH_TRUSTED, true)})
+		wrappingKey := trustedWrappingKey(t, f)
+		_, targetKey := authWrapKeysWith(t, f, targetValue, nil, []Attr{AttrBool(CKA_WRAP_WITH_TRUSTED, true)})
 
 		required, err := f.Session.WrapKeyAuthenticatedProbe(wrappingKey, targetKey, nil)
 		if err != nil {

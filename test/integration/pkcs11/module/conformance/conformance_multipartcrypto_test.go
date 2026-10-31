@@ -408,8 +408,14 @@ func TestGenerateKey_ProtectionAttributesGovernRevelation(t *testing.T) {
 			t.Fatalf("C_GetAttributeValue(CKA_VALUE) returned %s; footnote 7 permits "+
 				"this key's value to be revealed", rv.String())
 		}
-		if len(attrs) == 0 || len(attrs[0].Value) != 32 {
-			t.Errorf("expected a 32-byte key value, got %d bytes", len(attrs[0].Value))
+		if len(attrs) != 1 || attrs[0].Unavailable {
+			t.Fatalf("C_GetAttributeValue(CKA_VALUE) returned CKR_OK without the value (%d attributes)", len(attrs))
+		}
+		// A backend-held key's value comes back sealed in Attribute.Secret,
+		// not Attribute.Value; the holder owns it and releases it once read.
+		defer attrs[0].Release()
+		if got := attrs[0].ValueLen(); got != 32 {
+			t.Errorf("expected a 32-byte key value, got %d bytes", got)
 		}
 	})
 
