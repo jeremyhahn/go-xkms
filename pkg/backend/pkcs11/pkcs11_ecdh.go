@@ -26,6 +26,7 @@ import (
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -286,7 +287,7 @@ func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *type
 	}
 
 	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-		return 0, &errs.Wrapped{Msg: "failed to init find objects", Err: err}
+		return 0, hardware.ClearFailedPKCS11Search(b.p11ctx, session, &errs.Wrapped{Msg: "failed to init find objects", Err: err})
 	}
 	defer func() {
 		if finalErr := b.p11ctx.FindObjectsFinal(session); finalErr != nil {

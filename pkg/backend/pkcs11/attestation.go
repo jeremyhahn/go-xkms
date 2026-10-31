@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	"github.com/miekg/pkcs11"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
@@ -1093,7 +1094,7 @@ func (b *Backend) allCertificateValues(session pkcs11.SessionHandle) ([][]byte, 
 	if err := b.p11ctx.FindObjectsInit(session, []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE),
 	}); err != nil {
-		return nil, &errs.Wrapped{Msg: "pkcs11: init certificate search", Err: err}
+		return nil, hardware.ClearFailedPKCS11Search(b.p11ctx, session, &errs.Wrapped{Msg: "pkcs11: init certificate search", Err: err})
 	}
 
 	handles, _, findErr := b.p11ctx.FindObjects(session, maxTokenCertificates)

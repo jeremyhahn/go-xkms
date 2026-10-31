@@ -33,8 +33,9 @@ func TestTPMSessionEncryption(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     mustPassword(nil),
-		StoreType:    types.StoreTPM2,
+		// A sealed object needs a policy or a password (ErrSealUnprotected).
+		Password:  mustPassword([]byte("capture-seal-password")),
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: 0x40000001, // TPM_RH_OWNER
 		},
@@ -99,8 +100,9 @@ func TestTPMMultipleOperationsEncryption(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     mustPassword(nil),
-		StoreType:    types.StoreTPM2,
+		// A sealed object needs a policy or a password (ErrSealUnprotected).
+		Password:  mustPassword([]byte("capture-seal-password")),
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: 0x40000001,
 		},

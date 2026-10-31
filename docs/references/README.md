@@ -25,6 +25,11 @@ implementation work does not depend on the publisher's site staying up.
   — NIST SP 800-73, "Interfaces for Personal Identity Verification", parts
   1-3, the PIV card application and data model `pkg/factor/piv` and
   `pkg/pivcert` target.
+- `rfc-5869.txt` — IETF RFC 5869, "HMAC-based Extract-and-Expand Key
+  Derivation Function (HKDF)", copied verbatim from
+  https://www.rfc-editor.org/rfc/rfc5869.txt. §2.2–§2.3 derive the OP-TEE TA's
+  sealing key from its hardware unique key
+  (see [../optee-sealed-blob/README.md](../optee-sealed-blob/README.md)).
 - `rfc-8555.txt` — IETF RFC 8555, "Automatic Certificate Management
   Environment (ACME)", the protocol `pkg/acme/server` implements.
   [RFC_8555_COMPLIANCE.md](RFC_8555_COMPLIANCE.md) maps each section to its
@@ -34,6 +39,11 @@ implementation work does not depend on the publisher's site staying up.
   of `pkg/ssh/console` is served over it; §4.2.2's SHA-1
   `Sec-WebSocket-Accept` is why `upgradeWS` refuses the handshake under
   `GODEBUG=fips140=only` (see [../fips/README.md](../fips/README.md)).
+- `rfc-9052.txt` — IETF RFC 9052, "CBOR Object Signing and Encryption (COSE):
+  Structures and Process", copied verbatim from
+  https://www.rfc-editor.org/rfc/rfc9052.txt. The OP-TEE TA sealed blob is a
+  tagged COSE_Encrypt0 (§5.2) whose AEAD input is the §5.3 `Enc_structure`
+  (see [../optee-sealed-blob/README.md](../optee-sealed-blob/README.md)).
 - `rfc-9053.txt` — IETF RFC 9053, "CBOR Object Signing and Encryption (COSE):
   Initial Algorithms", copied verbatim from
   https://www.rfc-editor.org/rfc/rfc9053.txt. §2.1 fixes the ECDSA signature

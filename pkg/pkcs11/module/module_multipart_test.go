@@ -853,9 +853,9 @@ func TestModule_WrapKey_Success(t *testing.T) {
 	require.NotEmpty(t, wrappedKey, "wrapped key should not be empty")
 	assert.NotEqual(t, value, wrappedKey, "the wrapped key must not be the plaintext")
 
-	handle, rv := m.UnwrapKey(sessionHandle,
-		NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)),
-		wrapKeyHandle, wrappedKey, unwrapTemplate())
+	// The IV is not in the blob (PKCS#11 v3.2 §6.13.3), so the unwrap repeats
+	// the one the wrap was given.
+	handle, rv := m.UnwrapKey(sessionHandle, mechanism, wrapKeyHandle, wrappedKey, unwrapTemplate())
 	require.Equal(t, CKR_OK, rv, "the blob C_WrapKey produced must be one C_UnwrapKey can consume")
 	require.NotEqual(t, ObjectHandle(InvalidHandle), handle)
 
@@ -945,7 +945,9 @@ func TestModule_UnwrapKey_Success(t *testing.T) {
 	unwrapKeyObj.BackendName = "default"
 
 	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
-	wrappedKey := []byte("wrapped-key-data")
+	// ciphertext || tag (PKCS#11 v3.2 §6.13.3): a blob no longer than the
+	// tag carries no key.
+	wrappedKey := []byte("wrapped-key-data" + "gcm-tag-16-bytes")
 
 	newKeyTemplate := []Attribute{
 		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
@@ -1499,11 +1501,11 @@ func TestModule_WrapKey_WrapNotPermitted(t *testing.T) {
 
 	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
-	// CKR_WRAPPING_KEY_TYPE_INCONSISTENT, not CKR_KEY_FUNCTION_NOT_PERMITTED:
-	// the latter is absent from C_WrapKey's return table (v3.2 §5.18.3), so a
-	// conforming application never learns to expect it here.
+	// CKR_KEY_FUNCTION_NOT_PERMITTED, not CKR_WRAPPING_KEY_TYPE_INCONSISTENT:
+	// the key's type suits the mechanism and only CKA_WRAP is wrong, which is
+	// the condition v3.2 §5.1.6 defines the former for.
 	_, rv = m.WrapKey(sessionHandle, mechanism, wrapKeyHandle, targetKeyHandle)
-	assert.Equal(t, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, rv, "WrapKey should fail when wrap not permitted")
+	assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv, "WrapKey should fail when wrap not permitted")
 }
 
 func TestModule_UnwrapKey_UnwrapNotPermitted(t *testing.T) {
@@ -1531,11 +1533,11 @@ func TestModule_UnwrapKey_UnwrapNotPermitted(t *testing.T) {
 
 	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
-	// CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, not CKR_KEY_FUNCTION_NOT_PERMITTED:
-	// the latter is absent from C_UnwrapKey's return table (v3.2 §5.18.4), so a
-	// conforming application never learns to expect it here.
+	// CKR_KEY_FUNCTION_NOT_PERMITTED, not CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT:
+	// the key's type suits the mechanism and only CKA_UNWRAP is wrong, which is
+	// the condition v3.2 §5.1.6 defines the former for.
 	_, rv = m.UnwrapKey(sessionHandle, mechanism, unwrapKeyHandle, []byte("wrapped-data"), nil)
-	assert.Equal(t, CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, rv, "UnwrapKey should fail when unwrap not permitted")
+	assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv, "UnwrapKey should fail when unwrap not permitted")
 }
 
 // ----------------------------------------------------------------------------

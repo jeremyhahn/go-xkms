@@ -403,9 +403,22 @@ func (s *BrowserService) applyTrustBundle(cmd *exec.Cmd) {
 	// SSL_CERT_FILE reaches OpenSSL-based children (curl, native-messaging
 	// helpers, anything linking OpenSSL) — NOT the browser itself. Browser
 	// trust comes from syncBrowserTrust writing into NSS / cert9.db.
-	cmd.Env = append(os.Environ(), "SSL_CERT_FILE="+bundlePath)
+	cmd.Env = withEnv(os.Environ(), "SSL_CERT_FILE", bundlePath)
 	s.logger.Debug("applied trust bundle to child environment (OpenSSL consumers only)",
 		"bundle", bundlePath)
+}
+
+// withEnv returns a copy of env in which key appears exactly once, set to
+// value: any inherited key= entries are dropped before the new one is added.
+func withEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			out = append(out, entry)
+		}
+	}
+	return append(out, prefix+value)
 }
 
 // loadConfig reads the JSON configuration file from disk.

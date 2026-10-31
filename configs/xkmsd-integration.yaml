@@ -160,21 +160,30 @@ default_backend: "software"
 # refuses them outright, so nothing tries to use one. Kept in step with
 # scripts/start-test-xkmsd.sh, the fallback that serves the same socket when
 # the compose xkms-server service is not running.
+#
+# allow_legacy_key_wrap re-admits RSA PKCS#1 v1.5 on Decrypt, which the OpenSSL
+# suites drive through CKM_RSA_PKCS (PKCS#11 v3.2 §6.1.6) for "pkeyutl
+# -decrypt". Without it the daemon refuses that padding and the module reports
+# CKR_ARGUMENTS_BAD. The same FIPS ceiling applies (types.SetAllowLegacyKeyWrap).
 crypto:
   allow_weak_hashes: true
+  allow_legacy_key_wrap: true
 
 backends:
   software:
     enabled: true
     path: "/data/keys"
 
-  # SoftHSM2 backend for pkcs11 backend testing
-  # Uses SoftHSM installed in the xkms-server container
-  pkcs11:
-    enabled: true
-    library: "/usr/lib/softhsm/libsofthsm2.so"
-    token: "xkms-test"
-    pin: "1234"
+  # No pkcs11 backend. backends.pkcs11.pin is a protected secret target
+  # (go-xkms#654): server.New refuses a literal PIN there ("protected target
+  # must reference a resolvable secret at Backends.PKCS11.Pin") and the server
+  # never comes up. The only scheme it resolves is credential://<name>, and a
+  # fresh throwaway volume holds no credential before the first boot -- the
+  # manual strategy blocks until one is submitted over the API this server has
+  # not started yet. The suites dial the software backend by default
+  # (test/integration/pkcs11/module/protocol.go getServerAvailableBackends and
+  # the Makefile's XKMS_PKCS11_BACKENDS), the same set the fallback daemon,
+  # scripts/start-test-xkmsd.sh, enables.
 
   # TPM 2.0 backend, served by the swtpm software TPM the compose stack runs
   # alongside xkms-server on the xkms-dev network. No hardware TPM is touched:
