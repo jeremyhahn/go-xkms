@@ -1,0 +1,1 @@
+Vault integration test: the AES-256-GCM-WithAAD tamper check now flips a bit of the decoded Transit ciphertext instead of a base64 text byte, which could land in the unused padding bits and leave the authenticated bytes unchanged, failing main intermittently (run 73500).
