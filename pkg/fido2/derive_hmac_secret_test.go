@@ -59,6 +59,45 @@ func TestDeriveHMACSecret_ReturnsTheRawOutput(t *testing.T) {
 	assert.Equal(t, expectedUnlockKey(t, sim, salt), key)
 }
 
+// TestHandler_DeriveHMACSecret covers DeriveHMACSecret through the Handler
+// interface: it returns the raw 32-byte CTAP 2.1 §12.5 hmac-secret output,
+// which is not the key UnlockWithKey derives from it, and it refuses a nil
+// config and a salt that is not 32 bytes.
+func TestHandler_DeriveHMACSecret(t *testing.T) {
+	salt := bytes.Repeat([]byte{0x5a}, 32)
+
+	t.Run("raw output", func(t *testing.T) {
+		concrete, sim := simulatedHandler(t, "")
+		var handler Handler = concrete
+		config := &AuthenticationConfig{RelyingPartyID: "kms.example.com", CredentialID: sim.credentialID, Salt: salt}
+
+		result, err := handler.DeriveHMACSecret(config)
+		require.NoError(t, err)
+		require.Len(t, result.HMACSecret, 32)
+		assert.Equal(t, sim.hmacOutput(salt), result.HMACSecret)
+
+		key, err := handler.UnlockWithKey(config)
+		require.NoError(t, err)
+		assert.NotEqual(t, result.HMACSecret, key)
+	})
+
+	t.Run("nil config", func(t *testing.T) {
+		concrete, _ := simulatedHandler(t, "")
+		var handler Handler = concrete
+		_, err := handler.DeriveHMACSecret(nil)
+		assert.ErrorIs(t, err, ErrAuthenticationConfigNil)
+	})
+
+	t.Run("bad salt length", func(t *testing.T) {
+		concrete, sim := simulatedHandler(t, "")
+		var handler Handler = concrete
+		_, err := handler.DeriveHMACSecret(&AuthenticationConfig{
+			RelyingPartyID: "kms.example.com", CredentialID: sim.credentialID, Salt: salt[:16],
+		})
+		assert.ErrorIs(t, err, ErrInvalidSalt)
+	})
+}
+
 // TestDeriveHMACSecret_WithPIN covers a PIN-protected authenticator: the
 // right PIN evaluates, a missing PIN and a wrong PIN are refused with the
 // typed errors, and a wrong PIN reports the attempts left.
