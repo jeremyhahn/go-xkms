@@ -43,7 +43,20 @@ func dialDaemon(t *testing.T) transport.Client {
 		socketPath = "/var/run/xkms/xkms.sock"
 	}
 
-	client, err := unix.New(transport.WithAddress(socketPath))
+	// The socket is the embedded qrdb node's TLS-only listener and every RPC
+	// past Health needs the admin client certificate, so this client presents
+	// the credential the module under test reads (module.EnvTLS*), chosen the
+	// way the module's own buildTransportOptions chooses it.
+	opts := []transport.Option{transport.WithAddress(socketPath)}
+	if tlsCfg := module.LoadFromEnv().TLS; tlsCfg.Enabled {
+		if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
+			opts = append(opts, transport.WithMTLS(tlsCfg.CertFile, tlsCfg.KeyFile, tlsCfg.CAFile))
+		} else {
+			opts = append(opts, transport.WithTLS(tlsCfg.CAFile))
+		}
+	}
+
+	client, err := unix.New(opts...)
 	if err != nil {
 		t.Fatalf("could not create a transport client for %s: %v", socketPath, err)
 	}

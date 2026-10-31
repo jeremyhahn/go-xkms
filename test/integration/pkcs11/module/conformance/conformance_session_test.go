@@ -240,8 +240,10 @@ func TestSessionState_SOLoginTransitions(t *testing.T) {
 		}
 	})
 
-	// SO login to RO session should fail
-	// Reference: OASIS PKCS#11 v3.0, Section 5.6.6
+	// SO login while a R/O session is open fails. PKCS#11 v3.2 §5.6.8 C_Login:
+	// "If the application calling C_Login has a R/O session open with the
+	// token, then it will be unable to log the SO into a session ... An attempt
+	// to do this will result in the error code CKR_SESSION_READ_ONLY_EXISTS."
 	t.Run("ROSession_SOLogin_Fails", func(t *testing.T) {
 		session, rv := env.Module.OpenSession(0, module.CKF_SERIAL_SESSION)
 		if rv != module.CKR_OK {
@@ -250,8 +252,8 @@ func TestSessionState_SOLoginTransitions(t *testing.T) {
 		defer env.Module.CloseSession(session)
 
 		rv = env.Module.Login(session, module.CKU_SO, testutil.TestPINs.SO)
-		if rv != module.CKR_SESSION_READ_ONLY {
-			t.Errorf("SO login to RO session: expected CKR_SESSION_READ_ONLY, got %s", rv.String())
+		if rv != module.CKR_SESSION_READ_ONLY_EXISTS {
+			t.Errorf("SO login to RO session: expected CKR_SESSION_READ_ONLY_EXISTS, got %s", rv.String())
 		}
 	})
 }

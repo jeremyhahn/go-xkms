@@ -14,8 +14,11 @@
 package module
 
 import (
+	"bytes"
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -253,6 +256,174 @@ func TestSignRawMechanisms_DeclareTheirInputPreHashed(t *testing.T) {
 				t.Errorf("SignRequest.DataIsDigest = false, want true for %s", tc.name)
 			}
 		})
+	}
+}
+
+// TestECDSAInputToDigest checks that CKM_ECDSA input of any length (v3.2
+// §6.3.12, Table 70) reaches the service as a SHA-2 length digest holding the
+// same integer: truncated to the field width, then left-padded with zeros.
+func TestECDSAInputToDigest(t *testing.T) {
+	long := []byte(strings.Repeat("abcdefgh", 9)) // 72 bytes
+	tests := []struct {
+		name     string
+		data     []byte
+		fieldLen int
+		want     []byte
+	}{
+		{"short input on P-256 is left-padded to 32", long[:19], 32, append(make([]byte, 13), long[:19]...)},
+		{"long input on P-256 keeps its leftmost 32 bytes", long[:41], 32, long[:32]},
+		{"SHA-256 digest on P-384 passes unchanged", long[:32], 48, long[:32]},
+		{"SHA-512 digest on P-256 passes unchanged", long[:64], 32, long[:64]},
+		{"short input on P-384 is left-padded to 48", long[:41], 48, append(make([]byte, 7), long[:41]...)},
+		{"short input on P-521 is left-padded to 64", long[:19], 66, append(make([]byte, 45), long[:19]...)},
+		{"input for an unknown curve passes unchanged", long[:19], 0, long[:19]},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ecdsaInputToDigest(tc.data, tc.fieldLen)
+			if err != nil {
+				t.Fatalf("ecdsaInputToDigest: %v", err)
+			}
+			if !bytes.Equal(got, tc.want) {
+				t.Errorf("ecdsaInputToDigest = %x, want %x", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestECDSAInputToDigest_Unrepresentable checks that input no SHA-2 length the
+// curve holds can carry is refused with CKR_DATA_LEN_RANGE, not sent on.
+func TestECDSAInputToDigest_Unrepresentable(t *testing.T) {
+	tests := []struct {
+		name     string
+		dataLen  int
+		fieldLen int
+	}{
+		{"P-521 input wider than SHA-512", 65, 66},
+		{"P-192 input of no SHA-2 length", 20, 24},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ecdsaInputToDigest(make([]byte, tc.dataLen), tc.fieldLen)
+			if rv := FromError(err); rv != CKR_DATA_LEN_RANGE {
+				t.Errorf("ecdsaInputToDigest error = %v (rv %#x), want CKR_DATA_LEN_RANGE", err, rv)
+			}
+		})
+	}
+}
+
+// TestSignECDSA_SendsRawInputAsDigest drives the 41-byte input pkcs11-tool
+// --sign -m ECDSA sends through C_Sign and C_Verify on a P-256 key: the
+// service must receive its leftmost 32 bytes, which it signs, and not the raw
+// 41 bytes, which it refuses.
+func TestSignECDSA_SendsRawInputAsDigest(t *testing.T) {
+	data := []byte("Test data for multi-protocol sign/verify\n")
+	cm, client := newTestCryptoManager()
+
+	signOp, err := cm.SignInit(&Mechanism{Type: CKM_ECDSA}, 1, "key-1", "test-backend")
+	if err != nil {
+		t.Fatalf("SignInit: %v", err)
+	}
+	signOp.SetECFieldLen(32)
+	if _, err := cm.Sign(context.Background(), signOp, data); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if got := client.lastSignReq.Data; !bytes.Equal(got, data[:32]) {
+		t.Errorf("SignRequest.Data = %x, want %x", got, data[:32])
+	}
+
+	verifyOp, err := cm.VerifyInit(&Mechanism{Type: CKM_ECDSA}, 1, "key-1", "test-backend")
+	if err != nil {
+		t.Fatalf("VerifyInit: %v", err)
+	}
+	verifyOp.SetECFieldLen(32)
+	rawSignature := bytes.Repeat([]byte{0x01}, 64) // r || s on P-256
+	if err := cm.Verify(context.Background(), verifyOp, data, rawSignature); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// Verification sends the raw input; the verifier truncates it itself.
+	if got := client.lastVerifyReq.Data; !bytes.Equal(got, data) {
+		t.Errorf("VerifyRequest.Data = %x, want the raw input %x", got, data)
+	}
+}
+
+// TestSignECDSA_UnrepresentableInputNeverReachesService checks that C_Sign
+// refuses CKM_ECDSA input the service cannot sign before calling it.
+func TestSignECDSA_UnrepresentableInputNeverReachesService(t *testing.T) {
+	cm, client := newTestCryptoManager()
+	op, err := cm.SignInit(&Mechanism{Type: CKM_ECDSA}, 1, "key-1", "test-backend")
+	if err != nil {
+		t.Fatalf("SignInit: %v", err)
+	}
+	op.SetECFieldLen(66)
+
+	_, err = cm.Sign(context.Background(), op, make([]byte, 65))
+	if rv := FromError(err); rv != CKR_DATA_LEN_RANGE {
+		t.Errorf("Sign error = %v (rv %#x), want CKR_DATA_LEN_RANGE", err, rv)
+	}
+	if client.lastSignReq != nil {
+		t.Error("Sign reached the service with input it cannot sign")
+	}
+}
+
+// newP521ECDSAVerifyCase signs a 66-byte raw digest with a P-521 key outside
+// the module, the way an application holding the public key elsewhere would,
+// and registers the key with a real-crypto transport. The digest is longer
+// than every SHA-2 output, so only a verifier that truncates it per SEC 1 v2
+// §4.1.4 step 3 accepts the signature.
+func newP521ECDSAVerifyCase(t *testing.T) (cm *CryptoManager, client *mockClient, digest, rawSignature []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate P-521 key: %v", err)
+	}
+	cm, client, engine := newRealCryptoCryptoManager()
+	engine.signers["p521-key"] = key
+
+	digest = make([]byte, 66)
+	if _, err := rand.Read(digest); err != nil {
+		t.Fatalf("read digest: %v", err)
+	}
+	r, s, err := ecdsa.Sign(rand.Reader, key, digest)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	rawSignature = make([]byte, 2*66) // r || s, PKCS#11 v3.2 §6.3.1
+	r.FillBytes(rawSignature[:66])
+	s.FillBytes(rawSignature[66:])
+	return cm, client, digest, rawSignature
+}
+
+func TestVerifyECDSA_P521AcceptsRawDigestLongerThanSHA2(t *testing.T) {
+	cm, client, digest, rawSignature := newP521ECDSAVerifyCase(t)
+
+	op, err := cm.VerifyInit(&Mechanism{Type: CKM_ECDSA}, 1, "p521-key", "test-backend")
+	if err != nil {
+		t.Fatalf("VerifyInit: %v", err)
+	}
+	op.SetECFieldLen(66)
+	if err := cm.Verify(context.Background(), op, digest, rawSignature); err != nil {
+		t.Fatalf("Verify of a valid P-521 signature over a 66-byte digest: %v", err)
+	}
+	if got := client.lastVerifyReq.Data; !bytes.Equal(got, digest) {
+		t.Errorf("VerifyRequest.Data = %x, want the raw input %x", got, digest)
+	}
+}
+
+func TestVerifyECDSA_P521RejectsAlteredRawDigest(t *testing.T) {
+	cm, _, digest, rawSignature := newP521ECDSAVerifyCase(t)
+	digest[0] ^= 0x80 // inside the 521 bits the verifier keeps
+
+	op, err := cm.VerifyInit(&Mechanism{Type: CKM_ECDSA}, 1, "p521-key", "test-backend")
+	if err != nil {
+		t.Fatalf("VerifyInit: %v", err)
+	}
+	op.SetECFieldLen(66)
+	err = cm.Verify(context.Background(), op, digest, rawSignature)
+	if rv := FromError(err); rv != CKR_SIGNATURE_INVALID {
+		t.Errorf("Verify error = %v (rv %#x), want CKR_SIGNATURE_INVALID", err, rv)
 	}
 }
 

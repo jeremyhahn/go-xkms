@@ -417,6 +417,11 @@ env:
   # Cross-repo dependencies resolve as tagged modules, never through a
   # workspace (dependency-resolution.md).
   GOWORK: "off"
+  # Ruling 108, Company Agent m1311 (1): every toolchain-image stage keeps
+  # TMPDIR and GOTMPDIR on an anonymous volume at /work, not the container's
+  # 3 GB /tmp tmpfs, which the coverage and race runs' `go test` work
+  # directories filled (in-toolchain-image.sh v4; removed with the container).
+  CI_WORK_VOLUME: "on"
   # <<< CUSTOMIZE
   # >>> CUSTOMIZE (go-xkms, ruling 169)
   # Whether this run publishes the CI images: a push to main alone. The
@@ -1505,7 +1510,15 @@ jobs:
       # enables the soft-token suite, each login paying an Argon2id
       # derivation at 64 MiB. The bound keeps a real hang bounded with ample
       # headroom over the healthy cost.
+      #
+      # bridge, as make coverage has, for make agsim (DS-3754): the
+      # arduino-generic root module it builds is not in go.sum, so a stage
+      # resolves it only with GOPRIVATE covering it, which in-toolchain-image.sh
+      # passes to a bridge stage alone. On a no-network stage Go asks the
+      # checksum database instead and `go mod download` fails (run 66181).
       - name: Race detector, all backends including FROST (toolchain image)
+        env:
+          IN_IMAGE_NETWORK: bridge
         run: |
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e

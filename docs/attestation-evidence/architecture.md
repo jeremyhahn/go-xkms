@@ -102,3 +102,71 @@ inputs are the anchors, keys and expected values the caller supplies.
 Comparisons of secrets-derived values (digests, qualifying data) are
 constant-time. Parsing is bounded: at most 1 MiB of data per event, 65536
 events, 16 algorithms.
+
+## Device security-event record
+
+SPEC row `device-security-event-evidence` (planned, #1765). An HSM device's
+tamper-response record (trusted-firmware#50, A6) is RFC 9334 Evidence about
+its Attesting Environment (§8.1). go-xkms owns the format and its check.
+
+**Encoding.** The record is one CBOR Claims-Set and is carried as an EAT
+submodule (RFC 9711 §4.2.18). EAT registers no claim for it, so its claim key
+is go-xkms's own until one is registered. The adapter reads entries one index
+at a time with `HSM_RECORD_READ` (0x7C), and every reply repeats the header:
+
+| Reply bytes | Claims-Set member | Meaning |
+|---|---|---|
+| `count:1` | entry count | entries held, `0..count-1` |
+| `dropped:2 LE` | dropped | entries lost after the log filled, u16, saturating |
+| `at:4 LE` | entry `at` | the engine's clock, u32. It is not a time, so it is never `iat` |
+| `kind:1` | entry `kind` | signal, decision or action |
+| `what:1` | entry `what` | what was signalled, decided or done |
+| `result:1` | entry `result` | its outcome |
+
+A CMW (RFC 9999 §3.1 record, §3.3 collection) could label the record next to
+the DICE evidence. It protects nothing by itself (§8.1), so it does not
+answer the binding question.
+
+**Binding options, and what the Verifier may conclude.**
+
+- **(a) Channel only.** The record arrives unsigned, as a UCCS. RFC 9781 §4
+  accepts that only when the receiver authenticated the sender and the
+  channel provides integrity. Out of the channel the record is unprotected,
+  and once forwarded it counts as originating at the forwarder (§4). go-xkms
+  receives it from the adapter, not from the device, so the Verifier may
+  conclude only that the adapter reported it. It may not conclude that the
+  device's Attesting Environment produced it, or that nothing was left out.
+- **(b) Detached digest in signed evidence.** The device signs evidence that
+  carries a Detached Submodule Digest of the record (RFC 9711 §4.2.18.2) and
+  the Verifier's `eat_nonce` (RFC 9711 §4.1). The alias certificate is
+  issued at boot, before the record is written, so it cannot carry the
+  digest; the evidence must be signed after the record's last entry. The
+  Verifier may then conclude that the device's key vouched for this exact
+  record, and that the record is fresh (RFC 9334 §10). This needs a
+  trusted-firmware change.
+- **(c) Inline submodule in signed evidence.** The same, with the record
+  inside the signed token as a Claims-Set submodule (RFC 9711 §4.2.18.1).
+
+Which of these is required is open for the owner to rule on.
+
+**Hook: none yet.** A backend registered with `RegisterExternalBackend`
+(`pkg/xkms/registry_external.go:54`, SPEC backend-registry) has no call that
+hands go-xkms device evidence. The backend contract's only attestation
+capability, `types.AttestingKeyProvider.AttestKey`
+(`pkg/types/types.go:1936`), attests one key. The device's DICE claims
+arrive in `dice.Evidence` (`pkg/attestation/dice/verify.go:114`), which has no
+submodule field: its `Claims.Other` (`:125`) only holds the claims go-xkms
+does not model.
+
+The planned row adds one optional capability interface to the backend
+contract, in the `AttestingKeyProvider` pattern. It embeds `KeyProvider` and
+adds one method, `AttestSecurityEvents(ctx, nonce)`, which returns the
+record's Claims-Set, or `ErrNotSupported` when the backend keeps no record.
+The nonce is the Verifier's `eat_nonce` under (b) and (c), and is unused
+under (a). Which of these applies is still the owner's ruling.
+
+**Recommendation (not a decision): (b).** A tamper record is worth having
+only if a compromised host cannot hide or rewrite it. Under (a) the record
+is the adapter's word (RFC 9781 §4). (b) binds it to the device's key and
+the Verifier's nonce, and adds only a digest to the signed evidence. (c)
+puts the whole log inside the signed token.

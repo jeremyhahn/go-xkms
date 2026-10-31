@@ -39,6 +39,7 @@ var (
 	ErrPKCS11Login              = errors.New("pkcs11: login failed")
 	ErrPKCS11NoCertFound        = errors.New("pkcs11: no certificate found")
 	ErrPKCS11NoKeyFound         = errors.New("pkcs11: no private key found matching certificate")
+	ErrPKCS11FindObjectsFinal   = errors.New("pkcs11: FindObjectsFinal failed")
 	ErrPKCS11CertParse          = errors.New("pkcs11: failed to parse certificate")
 	ErrPKCS11SignInit           = errors.New("pkcs11: SignInit failed")
 	ErrPKCS11Sign               = errors.New("pkcs11: Sign failed")
@@ -397,28 +398,11 @@ func findCertificate(mod *pkcs11module.Module, session pkcs11module.SessionHandl
 			pkcs11module.NewStringAttribute(pkcs11module.CKA_LABEL, certLabel))
 	}
 
-	rv := mod.FindObjectsInit(session, template)
-	if rv != pkcs11module.CKR_OK {
-		return nil, nil, &PKCS11TLSError{
-			Op:   "FindObjectsInit(cert)",
-			Code: rv,
-			Err:  ErrPKCS11NoCertFound,
-		}
+	certHandle, found, err := findFirstObject(mod, session, template, "cert", ErrPKCS11NoCertFound)
+	if err != nil {
+		return nil, nil, err
 	}
-
-	handles, rv := mod.FindObjects(session, 1)
-	if rv != pkcs11module.CKR_OK {
-		mod.FindObjectsFinal(session)
-		return nil, nil, &PKCS11TLSError{
-			Op:   "FindObjects(cert)",
-			Code: rv,
-			Err:  ErrPKCS11NoCertFound,
-		}
-	}
-
-	mod.FindObjectsFinal(session)
-
-	if len(handles) == 0 {
+	if !found {
 		return nil, nil, ErrPKCS11NoCertFound
 	}
 
@@ -428,7 +412,7 @@ func findCertificate(mod *pkcs11module.Module, session pkcs11module.SessionHandl
 		{Type: pkcs11module.CKA_ID},
 	}
 
-	attrs, rv := mod.GetAttributeValue(session, handles[0], attrTemplate)
+	attrs, rv := mod.GetAttributeValue(session, certHandle, attrTemplate)
 	if rv != pkcs11module.CKR_OK {
 		return nil, nil, &PKCS11TLSError{
 			Op:   "GetAttributeValue(cert)",
@@ -467,32 +451,55 @@ func findPrivateKey(mod *pkcs11module.Module, session pkcs11module.SessionHandle
 		template = append(template, pkcs11module.NewAttribute(pkcs11module.CKA_ID, certID))
 	}
 
-	rv := mod.FindObjectsInit(session, template)
-	if rv != pkcs11module.CKR_OK {
-		return pkcs11module.ObjectHandle(pkcs11module.InvalidHandle), &PKCS11TLSError{
-			Op:   "FindObjectsInit(key)",
-			Code: rv,
-			Err:  ErrPKCS11NoKeyFound,
-		}
+	keyHandle, found, err := findFirstObject(mod, session, template, "key", ErrPKCS11NoKeyFound)
+	if err != nil {
+		return pkcs11module.ObjectHandle(pkcs11module.InvalidHandle), err
+	}
+	if !found {
+		return pkcs11module.ObjectHandle(pkcs11module.InvalidHandle), ErrPKCS11NoKeyFound
+	}
+	return keyHandle, nil
+}
+
+// findFirstObject runs one C_FindObjectsInit / C_FindObjects /
+// C_FindObjectsFinal cycle on session and returns the first object matching
+// template, with found false when none does. A failed call is reported as a
+// PKCS11TLSError whose Op names the call and what, wrapping notFound.
+//
+// The search is finalized on every path, a failed C_FindObjectsInit included:
+// a token may leave the session searching when Init fails, and every later
+// search on it would then fail CKR_OPERATION_ACTIVE. This is the rule
+// hardware.ClearFailedPKCS11Search applies to miekg/pkcs11 contexts.
+func findFirstObject(mod *pkcs11module.Module, session pkcs11module.SessionHandle, template []pkcs11module.Attribute, what string, notFound error) (pkcs11module.ObjectHandle, bool, error) {
+	invalid := pkcs11module.ObjectHandle(pkcs11module.InvalidHandle)
+	if rv := mod.FindObjectsInit(session, template); rv != pkcs11module.CKR_OK {
+		initErr := &PKCS11TLSError{Op: "FindObjectsInit(" + what + ")", Code: rv, Err: notFound}
+		return invalid, false, endSearch(mod, session, initErr)
 	}
 
 	handles, rv := mod.FindObjects(session, 1)
+	var findErr error
 	if rv != pkcs11module.CKR_OK {
-		mod.FindObjectsFinal(session)
-		return pkcs11module.ObjectHandle(pkcs11module.InvalidHandle), &PKCS11TLSError{
-			Op:   "FindObjects(key)",
-			Code: rv,
-			Err:  ErrPKCS11NoKeyFound,
-		}
+		findErr = &PKCS11TLSError{Op: "FindObjects(" + what + ")", Code: rv, Err: notFound}
 	}
-
-	mod.FindObjectsFinal(session)
-
+	if err := endSearch(mod, session, findErr); err != nil {
+		return invalid, false, err
+	}
 	if len(handles) == 0 {
-		return pkcs11module.ObjectHandle(pkcs11module.InvalidHandle), ErrPKCS11NoKeyFound
+		return invalid, false, nil
 	}
+	return handles[0], true, nil
+}
 
-	return handles[0], nil
+// endSearch finalizes the object search on session and returns err joined
+// with the C_FindObjectsFinal failure, if any. CKR_OPERATION_NOT_INITIALIZED
+// means no search was open, which is not a failure.
+func endSearch(mod *pkcs11module.Module, session pkcs11module.SessionHandle, err error) error {
+	rv := mod.FindObjectsFinal(session)
+	if rv == pkcs11module.CKR_OK || rv == pkcs11module.CKR_OPERATION_NOT_INITIALIZED {
+		return err
+	}
+	return errors.Join(err, &PKCS11TLSError{Op: "FindObjectsFinal", Code: rv, Err: ErrPKCS11FindObjectsFinal})
 }
 
 // SelectMechanism is exported for testing purposes. It maps a public key
