@@ -374,16 +374,25 @@ func TestErrors_CKR_SESSION(t *testing.T) {
 		testutil.RequireOK(t, env.Module.Logout(rwSession), "Logout")
 		testutil.RequireOK(t, env.Module.CloseSession(rwSession), "CloseSession")
 
-		// Try to login as SO on RO session
-		roSession, rv := env.Module.OpenSession(0, module.CKF_SERIAL_SESSION)
-		if rv != module.CKR_OK {
-			t.Fatalf("open RO session: expected CKR_OK, got %s", rv.String())
-		}
+		// PKCS#11 v3.2 §5.7.1 C_CreateObject: "Only session objects can be
+		// created during a read-only session", and §5.1.6 defines
+		// CKR_SESSION_READ_ONLY as the session being "unable to accomplish the
+		// desired action because it is a read-only session". A token object
+		// created through a R/O session is that action. An SO login on a R/O
+		// session is not: §5.6.8 assigns it CKR_SESSION_READ_ONLY_EXISTS.
+		roSession := env.MustOpenROSession(t)
 		defer env.Module.CloseSession(roSession)
+		env.MustLoginUser(t, roSession, testutil.TestPINs.User)
+		defer env.Module.Logout(roSession)
 
-		rv = env.Module.Login(roSession, module.CKU_SO, testutil.TestPINs.SO)
+		_, rv := env.Module.CreateObject(roSession, []module.Attribute{
+			module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_DATA)),
+			module.NewBoolAttribute(module.CKA_TOKEN, true),
+			module.NewStringAttribute(module.CKA_LABEL, "ro-session-token-object"),
+			module.NewAttribute(module.CKA_VALUE, []byte("data")),
+		})
 		if rv != module.CKR_SESSION_READ_ONLY {
-			t.Errorf("SO login on RO session: expected CKR_SESSION_READ_ONLY, got %s", rv.String())
+			t.Errorf("token object created in a RO session: expected CKR_SESSION_READ_ONLY, got %s", rv.String())
 		}
 	})
 }
