@@ -51,3 +51,12 @@ func (t *Transport) GetTransparencyLogConsistencyProof(ctx context.Context, req 
 	}
 	return t.service.GetTransparencyLogConsistencyProof(ctx, req)
 }
+
+// AppendTransparencyLogExternal appends an external entry under the caller's
+// SPIFFE ID.
+func (t *Transport) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.AppendTransparencyLogExternal(ctx, req)
+}

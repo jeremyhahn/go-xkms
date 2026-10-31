@@ -19,9 +19,11 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 )
 
 // TransparencyLogReader is the read side of the CA's transparency log: its
@@ -42,19 +44,33 @@ type TransparencyLogReader interface {
 	ConsistencyProof(ctx context.Context, size1, size2 uint64) ([][]byte, error)
 }
 
-var _ TransparencyLogReader = (*tlog.Log)(nil)
+// TransparencyLogExternalAppender is the one write the layers above make to
+// the CA's transparency log: an external entry. *tlog.Log satisfies it.
+type TransparencyLogExternalAppender interface {
+	// AppendExternal appends an external entry and returns its index.
+	AppendExternal(ctx context.Context, e tlog.External) (uint64, error)
+}
 
-// SetTransparencyLog sets the log the transparency-log verbs read; nil
+// TransparencyLog is the CA's transparency log as the XKMSService serves it:
+// its reads and the external append.
+type TransparencyLog interface {
+	TransparencyLogReader
+	TransparencyLogExternalAppender
+}
+
+var _ TransparencyLog = (*tlog.Log)(nil)
+
+// SetTransparencyLog sets the log the transparency-log verbs serve; nil
 // removes it, and the verbs then return ErrTransparencyLogNotConfigured.
 //
 // Thread-safe: Yes (atomic store)
-func (s *XKMSService) SetTransparencyLog(l TransparencyLogReader) {
+func (s *XKMSService) SetTransparencyLog(l TransparencyLog) {
 	s.transparencyLog.store(l)
 }
 
 // getTransparencyLog returns the configured log, or
 // ErrTransparencyLogNotConfigured when none is.
-func (s *XKMSService) getTransparencyLog() (TransparencyLogReader, error) {
+func (s *XKMSService) getTransparencyLog() (TransparencyLog, error) {
 	l := s.transparencyLog.load()
 	if l == nil {
 		return nil, ErrTransparencyLogNotConfigured
@@ -185,4 +201,57 @@ func (s *XKMSService) GetTransparencyLogConsistencyProof(ctx context.Context, re
 		return nil, err
 	}
 	return &transport.GetTransparencyLogConsistencyProofResponse{FirstSize: req.FirstSize, SecondSize: req.SecondSize, Hashes: hashes}, nil
+}
+
+// AppendTransparencyLogExternal appends an external entry holding
+// req.Payload under the caller's SPIFFE ID and returns its leaf index. The
+// SPIFFE ID is never a request field: it is the one the caller's verified
+// mTLS client certificate names (callerSPIFFEID), so an entry always names
+// the caller that appended it.
+func (s *XKMSService) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (resp *transport.AppendTransparencyLogExternalResponse, err error) {
+	start := time.Now()
+	defer func() { recordServiceOp(metrics.OpStore, caMetricsBackend, start, err) }()
+
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	l, err := s.getTransparencyLog()
+	if err != nil {
+		return nil, err
+	}
+	id, err := callerSPIFFEID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	index, err := l.AppendExternal(ctx, tlog.External{SPIFFEID: id, Payload: req.Payload})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.AppendTransparencyLogExternalResponse{Index: index}, nil
+}
+
+// callerSPIFFEID returns the SPIFFE ID of the request's caller: the one URI
+// SAN pkg/spiffe accepts on the leaf of the connection's verified client
+// certificate chain. Only a certificate the handshake verified counts, the
+// rule peergate applies; a certificate naming no SPIFFE ID, or two, names no
+// caller.
+func callerSPIFFEID(ctx context.Context) (string, error) {
+	state := auth.TLSStateFromContext(ctx)
+	if state == nil || len(state.VerifiedChains) == 0 || len(state.VerifiedChains[0]) == 0 {
+		return "", &errs.Detail{Err: ErrTransparencyLogNoCallerSPIFFEID, Detail: "no verified client certificate"}
+	}
+	var found []spiffe.ID
+	for _, u := range state.VerifiedChains[0][0].URIs {
+		id, ok, err := spiffe.ParseID(u)
+		if err != nil {
+			return "", &errs.Joined{Lead: ErrTransparencyLogNoCallerSPIFFEID, Detail: "client certificate URI SAN", Cause: err}
+		}
+		if ok {
+			found = append(found, id)
+		}
+	}
+	if len(found) != 1 {
+		return "", &errs.Detail{Err: ErrTransparencyLogNoCallerSPIFFEID, Detail: strconv.Itoa(len(found)) + " SPIFFE IDs in the client certificate"}
+	}
+	return found[0].String(), nil
 }

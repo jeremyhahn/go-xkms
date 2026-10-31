@@ -99,8 +99,8 @@ func (s *Server) openTransparencyLog(trustedCA ca.TrustedCA) error {
 	return nil
 }
 
-// serviceTransparencyLog runs every append the CA makes, and every read the
-// XKMSService serves, as the embedded node's service principal. Both run on
+// serviceTransparencyLog runs every append the CA makes, and every read and
+// external append the XKMSService serves, as the embedded node's service principal. Both run on
 // the context of the request they serve, which carries the caller's identity
 // or none; the log is xkms's own record, the transport already authorized the
 // read against the vlog resource, and the node's authentication chain refuses
@@ -111,8 +111,8 @@ type serviceTransparencyLog struct {
 }
 
 var (
-	_ ca.TransparencyLog         = (*serviceTransparencyLog)(nil)
-	_ xkms.TransparencyLogReader = (*serviceTransparencyLog)(nil)
+	_ ca.TransparencyLog   = (*serviceTransparencyLog)(nil)
+	_ xkms.TransparencyLog = (*serviceTransparencyLog)(nil)
 )
 
 // wireTransparencyLog gives svc the CA log to serve the transparency-log read
@@ -178,4 +178,12 @@ func (l *serviceTransparencyLog) AppendRevoked(ctx context.Context, e tlog.Revok
 		return 0, err
 	}
 	return l.log.AppendRevoked(ctx, e)
+}
+
+func (l *serviceTransparencyLog) AppendExternal(ctx context.Context, e tlog.External) (uint64, error) {
+	ctx, err := l.callContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return l.log.AppendExternal(ctx, e)
 }

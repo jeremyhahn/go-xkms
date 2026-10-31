@@ -373,6 +373,10 @@ type TransparencyLogService interface {
 	// GetTransparencyLogConsistencyProof returns the consistency proof
 	// between two tree sizes.
 	GetTransparencyLogConsistencyProof(ctx context.Context, req *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error)
+
+	// AppendTransparencyLogExternal appends an external entry under the
+	// caller's SPIFFE ID and returns its leaf index.
+	AppendTransparencyLogExternal(ctx context.Context, req *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error)
 }
 
 // CAService handles Certificate Authority operations.

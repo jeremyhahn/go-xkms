@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
@@ -145,10 +146,12 @@ var TrustRootSentinelClasses = []SentinelClass{
 }
 
 // TransparencyLogSentinelClasses classifies the errors of the CA
-// transparency log's read verbs, for every transport that serves them.
+// transparency log's verbs, for every transport that serves them.
 var TransparencyLogSentinelClasses = []SentinelClass{
 	{xkms.ErrTransparencyLogNotConfigured, ClassUnavailable},
 	{xkms.ErrTransparencyLogRange, ClassInvalidArgument},
+	{xkms.ErrTransparencyLogNoCallerSPIFFEID, ClassUnauthenticated},
+	{tlog.ErrInvalidEntry, ClassInvalidArgument},
 	{xkms.ErrNilRequest, ClassInvalidArgument},
 }
 

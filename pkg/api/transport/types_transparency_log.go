@@ -99,3 +99,17 @@ type GetTransparencyLogConsistencyProofResponse struct {
 	// Hashes is the consistency path.
 	Hashes [][]byte `json:"hashes"`
 }
+
+// AppendTransparencyLogExternalRequest appends an external entry. It carries
+// only the payload: the entry's SPIFFE ID is the authenticated caller's,
+// never a request field.
+type AppendTransparencyLogExternalRequest struct {
+	// Payload is the caller's opaque payload, 1 to 65535 bytes.
+	Payload []byte `json:"payload"`
+}
+
+// AppendTransparencyLogExternalResponse names the appended entry.
+type AppendTransparencyLogExternalResponse struct {
+	// Index is the appended entry's leaf index.
+	Index uint64 `json:"index"`
+}
