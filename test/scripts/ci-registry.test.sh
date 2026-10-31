@@ -65,8 +65,21 @@ case "$1" in
           short) echo "${5%:*}@sha256:abc" ;;
         esac
         ;;
+      *Created*)
+        case " ${FAKE_INSPECT_FAIL:-} " in *" $5 "*) echo "Error: No such image: $5" >&2; exit 1 ;; esac
+        printf '%s\n' "${FAKE_IMAGES:-}" | while read -r _ _ i c; do
+          [ "$i" != "$5" ] || { echo "$c"; break; }
+        done
+        ;;
       *) echo "$FAKE_IMAGE_ID" ;;
     esac
+    ;;
+  # FAKE_IMAGES: one "<repository> <tag> <id> <created>" line per name.
+  images) printf '%s\n' "${FAKE_IMAGES:-}" | cut -d' ' -f1-3 ;;
+  ps) case " ${FAKE_IN_USE:-} " in *" ${4#ancestor=} "*) echo c0ffee000000 ;; esac ;;
+  rmi)
+    case " ${FAKE_RMI_FAIL:-} " in *" $2 "*) echo "Error response from daemon: conflict: unable to remove $2" >&2; exit 1 ;; esac
+    echo "Untagged: $2"
     ;;
   pull) exit "${FAKE_PULL_RC:-0}" ;;
   create) exit "${FAKE_CREATE_RC:-0}" ;;
@@ -797,6 +810,74 @@ if [ "$(grep -c '^docker rm' "$CALL_LOG")" -eq 1 ]; then
 else
   fail "$(grep -c '^docker rm' "$CALL_LOG") removals, want 1"
 fi
+
+# --------------------------------------------------------------------------
+# retain (#1789): four IT generations, each under its local and registry
+# names, one older toolchain generation and an unrelated image.
+gen_id() { printf 'sha256:%064d' "$1"; }
+IT_REPO="$FORGE/agent-ci-images/go-xkms-ci-it"
+RETAIN_IMAGES=""
+for g in 1 2 3 4; do
+  RETAIN_IMAGES+="go-xkms-ci-it ${g}${g}${g}${g}000000000000 $(gen_id "$g") 2026-10-2${g}T10:00:00.5Z"$'\n'
+  RETAIN_IMAGES+="$IT_REPO ${g}${g}${g}${g}000000000000-main $(gen_id "$g") 2026-10-2${g}T10:00:00.5Z"$'\n'
+done
+RETAIN_IMAGES+="go-xkms-toolchain 0123456789abcdef $(gen_id 5) 2026-01-01T00:00:00Z"$'\n'
+RETAIN_IMAGES+="$FORGE/agent-ci-images/go-xkms-ci-toolchain 0123456789abcdef-main $(gen_id 5) 2026-01-01T00:00:00Z"$'\n'
+RETAIN_IMAGES+="postgres 16 $(gen_id 6) 2025-01-01T00:00:00Z"
+
+start_case "retain: removes all but the newest two generations, by every name"
+run_script 0 retain it -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES"
+for g in 1 2; do
+  called "docker rmi go-xkms-ci-it:${g}${g}${g}${g}000000000000"
+  called "docker rmi $IT_REPO:${g}${g}${g}${g}000000000000-main"
+done
+for g in 3 4; do
+  not_called "docker rmi go-xkms-ci-it:${g}${g}${g}${g}"
+  not_called "docker rmi $IT_REPO:${g}${g}${g}${g}"
+done
+not_called "docker rmi -f"
+not_called "docker rmi sha256:"
+not_called "docker rmi go-xkms-toolchain"
+not_called "docker rmi $FORGE/agent-ci-images/go-xkms-ci-toolchain"
+not_called "docker rmi postgres"
+not_called "docker login"
+stdout_is ""
+warnings_are 0
+
+start_case "retain: keeps an old generation a container uses"
+run_script 0 retain it -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES" FAKE_IN_USE="$(gen_id 1)"
+called "docker ps -aq --filter ancestor=$(gen_id 1)"
+not_called "docker rmi go-xkms-ci-it:1111"
+not_called "docker rmi $IT_REPO:1111"
+called "docker rmi go-xkms-ci-it:2222000000000000"
+stderr_has "($(gen_id 1)) is used by a container; it is kept"
+
+start_case "retain: a failed removal warns and retain goes on"
+run_script 0 retain it -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES" FAKE_RMI_FAIL="go-xkms-ci-it:1111000000000000"
+stderr_has "cannot remove go-xkms-ci-it:1111000000000000"
+called "docker rmi $IT_REPO:1111000000000000-main"
+called "docker rmi go-xkms-ci-it:2222000000000000"
+warnings_are 1
+
+start_case "retain: an image it cannot inspect is kept"
+run_script 0 retain it -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES" FAKE_INSPECT_FAIL="$(gen_id 1)"
+not_called "docker rmi go-xkms-ci-it:1111"
+called "docker rmi go-xkms-ci-it:2222000000000000"
+warnings_are 1
+
+start_case "retain: the other family's generations are its own"
+run_script 0 retain toolchain -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES"
+not_called "docker rmi"
+
+start_case "retain: refuses unless CI_PUBLISH is true"
+run_script 1 retain it -- FAKE_IMAGES="$RETAIN_IMAGES"
+stderr_has "CI_PUBLISH is not true"
+not_called "docker"
+
+start_case "retain: an unknown family"
+run_script 1 retain bogus -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES"
+stderr_has "family 'bogus' is neither toolchain nor it"
+not_called "docker"
 
 start_case "an unknown command"
 run_script 1 push toolchain
