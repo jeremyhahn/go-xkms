@@ -127,27 +127,37 @@ A CMW (RFC 9999 §3.1 record, §3.3 collection) could label the record next to
 the DICE evidence. It protects nothing by itself (§8.1), so it does not
 answer the binding question.
 
-**Binding options, and what the Verifier may conclude.**
+**Binding: detached digest in signed evidence** (owner ruling 7dbbb72 item
+181, #1765). The device signs EAT evidence that carries a Detached Submodule
+Digest of the record (RFC 9711 §4.2.18.2) and the Verifier's `eat_nonce`
+(RFC 9711 §4.1). The record travels beside the envelope. The alias
+certificate is issued at boot, before the record is written, so it cannot
+carry the digest; the evidence must be signed after the record's last entry.
+The Verifier recomputes the record's digest, compares it with the Detached
+Submodule Digest in the signed evidence, checks the signature through the
+DICE chain and checks the `eat_nonce`. It may then conclude that the
+device's key vouched for this exact record, and that the record is fresh
+(RFC 9334 §10).
+
+The seam has two sides. go-xkms's side is the capability interface below and
+that appraisal. trusted-firmware's side (trusted-firmware#283, theirs) is the
+adapter and firmware change that produces the signed evidence after the
+record's last entry, with the digest and the nonce, and hands the record
+beside it.
+
+Rejected:
 
 - **(a) Channel only.** The record arrives unsigned, as a UCCS. RFC 9781 §4
   accepts that only when the receiver authenticated the sender and the
   channel provides integrity. Out of the channel the record is unprotected,
   and once forwarded it counts as originating at the forwarder (§4). go-xkms
   receives it from the adapter, not from the device, so the Verifier may
-  conclude only that the adapter reported it. It may not conclude that the
-  device's Attesting Environment produced it, or that nothing was left out.
-- **(b) Detached digest in signed evidence.** The device signs evidence that
-  carries a Detached Submodule Digest of the record (RFC 9711 §4.2.18.2) and
-  the Verifier's `eat_nonce` (RFC 9711 §4.1). The alias certificate is
-  issued at boot, before the record is written, so it cannot carry the
-  digest; the evidence must be signed after the record's last entry. The
-  Verifier may then conclude that the device's key vouched for this exact
-  record, and that the record is fresh (RFC 9334 §10). This needs a
-  trusted-firmware change.
-- **(c) Inline submodule in signed evidence.** The same, with the record
-  inside the signed token as a Claims-Set submodule (RFC 9711 §4.2.18.1).
-
-Which of these is required is open for the owner to rule on.
+  conclude only that the adapter reported it, not that the device's
+  Attesting Environment produced it or that nothing was left out.
+- **(c) Inline submodule in signed evidence.** The record inside the signed
+  token as a Claims-Set submodule (RFC 9711 §4.2.18.1). The ruling chose the
+  detached form, so the record travels beside the envelope and the signed
+  evidence carries only its digest.
 
 **Hook: none yet.** A backend registered with `RegisterExternalBackend`
 (`pkg/xkms/registry_external.go:54`, SPEC backend-registry) has no call that
@@ -161,12 +171,6 @@ does not model.
 The planned row adds one optional capability interface to the backend
 contract, in the `AttestingKeyProvider` pattern. It embeds `KeyProvider` and
 adds one method, `AttestSecurityEvents(ctx, nonce)`, which returns the
-record's Claims-Set, or `ErrNotSupported` when the backend keeps no record.
-The nonce is the Verifier's `eat_nonce` under (b) and (c), and is unused
-under (a). Which of these applies is still the owner's ruling.
-
-**Recommendation (not a decision): (b).** A tamper record is worth having
-only if a compromised host cannot hide or rewrite it. Under (a) the record
-is the adapter's word (RFC 9781 §4). (b) binds it to the device's key and
-the Verifier's nonce, and adds only a digest to the signed evidence. (c)
-puts the whole log inside the signed token.
+device-signed evidence and the record's Claims-Set beside it, or
+`ErrNotSupported` when the backend keeps no record. The nonce is the
+Verifier's `eat_nonce`.
