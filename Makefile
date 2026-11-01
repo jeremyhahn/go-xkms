@@ -3995,8 +3995,9 @@ compose-ps:
 # namespaced per run, so removing them touches nothing outside this run --
 # but the IMAGE TAGS (go-xkms-swtpm:latest, go-xkms-test:latest, ...) are
 # shared by every run on the host by design, and deleting them forces a full
-# rebuild on any job that was about to use them. Disk is reclaimed by pruning
-# dangling images and build cache instead (test/scripts/clean-test-containers.sh).
+# rebuild on any job that was about to use them. Nothing here prunes either:
+# a prune is daemon-wide and breaks a concurrent job's build (#1870, see
+# test/scripts/clean-test-containers.sh).
 compose-clean:
 	@echo "$(CYAN)→ Cleaning docker-compose resources...$(RESET)"
 	@$(call compose,root) down -v --remove-orphans

@@ -74,14 +74,14 @@ for compose_file in "${REPO_ROOT}"/xkey/test/integration/*/docker-compose.yml; d
     down_lane "${compose_file}" "${lane}"
 done
 
-# Dangling images and build cache are unowned by definition -- removing them
-# cannot orphan another job's running stack, and CI runners need the disk.
-# `docker image prune -a` and `--volumes` are deliberately NOT used: both
-# reach past this run into images and volumes other jobs are still using.
-if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-    echo "CI detected - reclaiming dangling images and build cache..."
-    docker image prune -f >/dev/null 2>&1 || true
-    docker builder prune -f >/dev/null 2>&1 || true
-fi
+# No prune of any kind (#1870). `docker image prune` and `docker builder
+# prune` act on the whole daemon, and "dangling" or "unused" is not the same
+# as "unowned": an image a concurrent build has created but not yet tagged is
+# dangling, and the cache records it is about to hit are unused. The CI
+# integration job is six parallel shards on one runner host, each running
+# this script at its start and at its teardown, so a prune here broke another
+# shard's `compose build` mid-bake (run 76161: shards 2 and 5 within two
+# seconds of each other). The build cache is bounded by the daemon's own
+# BuildKit garbage collector, which never removes a record a build holds.
 
 echo "Cleanup complete!"
