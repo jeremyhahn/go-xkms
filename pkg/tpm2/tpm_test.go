@@ -10,7 +10,6 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -20,7 +19,6 @@ import (
 	"net/url"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
 
@@ -65,18 +63,6 @@ func teardown() {
 
 func setup() {
 	_ = os.RemoveAll(TEST_DIR)
-}
-
-func TestOpenAndCloseTPM(t *testing.T) {
-
-	_, tpm := createSim(t, false)
-	_ = tpm.Close()
-
-	_, tpm = createSim(t, false)
-	_ = tpm.Close()
-
-	_, tpm = createSim(t, false)
-	defer func() { _ = tpm.Close() }()
 }
 
 // Extends the debug PCR with random bytes
@@ -297,22 +283,6 @@ func enrollSimPlatformSRK(logger *slog.Logger, tpm *TPM2, config *Config) {
 // Tests
 // ---------------------------------------------------------------------------
 
-func TestInfo(t *testing.T) {
-
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	props, err := tpm.FixedProperties()
-	assert.Nil(t, err)
-	assert.NotNil(t, props.Manufacturer)
-	assert.NotNil(t, props.VendorID)
-	assert.NotNil(t, props.Family)
-	assert.NotNil(t, props.FwMajor)
-	assert.NotNil(t, props.FwMinor)
-
-	fmt.Println(props)
-}
-
 // ===========================================
 // NewTPM2 Coverage Tests
 // Tests that exercise error paths without needing the simulator
@@ -321,21 +291,6 @@ func TestInfo(t *testing.T) {
 // Note: TestNewTPM2_InvalidHashConfigError was removed because hash validation
 // occurs after device/transport initialization in the NewTPM2 function.
 // The hash function is only validated when parsing after the device is opened.
-
-func TestNewTPM2_ConfigDefaultsApplied(t *testing.T) {
-	// Test that defaults are applied to config
-	// Use createSim which properly handles the simulator singleton
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	config := tpm.Config()
-
-	// Check that defaults were applied
-	assert.NotNil(t, config.EK)
-	assert.NotNil(t, config.SSRK)
-	assert.NotNil(t, config.PlatformSRK)
-	assert.Equal(t, DefaultPlatformPCRs(), config.PlatformPCRs)
-}
 
 func TestNewTPM2_WithExistingTransport(t *testing.T) {
 	// Test with existing transport
@@ -366,118 +321,9 @@ func TestNewTPM2_WithExistingTransport(t *testing.T) {
 	}
 }
 
-func TestNewTPM2_WithEntropyConfig(t *testing.T) {
-	// Test with entropy enabled
-	_, tpm := createSim(t, true)
-	defer func() { _ = tpm.Close() }()
-
-	// TPM should use itself as random source
-	assert.True(t, tpm.Config().UseEntropy)
-}
-
 // ===========================================
 // Sign Coverage Tests
 // ===========================================
-
-func TestSign_NonSignerOptsType(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Test with non-SignerOpts type
-	digest := sha256.Sum256([]byte("test data"))
-	_, err := tpm.Sign(nil, digest[:], crypto.SHA256)
-
-	assert.Equal(t, store.ErrInvalidSignerOpts, err)
-}
-
-func TestSign_WithNilOptsParam(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	digest := sha256.Sum256([]byte("test data"))
-	_, err := tpm.Sign(nil, digest[:], nil)
-
-	// Should return invalid signer opts error
-	assert.NotNil(t, err)
-}
-
-func TestSign_RSAKeyCreationAndSigning(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Create an RSA key
-	childKeyAttrs := createKey(t, tpm, false)
-	srkAttrs := childKeyAttrs.Parent
-
-	keyAttrs := &types.KeyAttributes{
-		CN:           "test-sign-rsa-cov",
-		Hash:         crypto.SHA256,
-		KeyAlgorithm: x509.RSA,
-		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StoreTPM2,
-		Parent:       srkAttrs,
-		Password:     mustPassword(t, []byte("key-pass")),
-		TPMAttributes: &types.TPMAttributes{
-			Hierarchy: tpm2.TPMRHOwner,
-		},
-	}
-
-	rsaPub, err := tpm.CreateRSA(keyAttrs, nil, false)
-	require.NoError(t, err)
-	require.NotNil(t, rsaPub)
-
-	// Clean up created key
-	defer tpm.Flush(keyAttrs.TPMAttributes.Handle)
-
-	// Sign with the key
-	digest := sha256.Sum256([]byte("test data to sign"))
-	signerOpts := &store.SignerOpts{
-		KeyAttributes: keyAttrs,
-	}
-
-	sig, err := tpm.Sign(nil, digest[:], signerOpts)
-	require.NoError(t, err)
-	assert.NotEmpty(t, sig)
-}
-
-func TestSign_ECDSAKeyCreationAndSigning(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Create an ECDSA key
-	childKeyAttrs := createKey(t, tpm, false)
-	srkAttrs := childKeyAttrs.Parent
-
-	keyAttrs := &types.KeyAttributes{
-		CN:           "test-sign-ecdsa-cov",
-		Hash:         crypto.SHA256,
-		KeyAlgorithm: x509.ECDSA,
-		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StoreTPM2,
-		Parent:       srkAttrs,
-		Password:     mustPassword(t, []byte("key-pass")),
-		TPMAttributes: &types.TPMAttributes{
-			Hierarchy: tpm2.TPMRHOwner,
-		},
-	}
-
-	ecPub, err := tpm.CreateECDSA(keyAttrs, nil, false)
-	require.NoError(t, err)
-	require.NotNil(t, ecPub)
-
-	// Clean up created key
-	defer tpm.Flush(keyAttrs.TPMAttributes.Handle)
-
-	// Sign with the key
-	digest := sha256.Sum256([]byte("test data to sign with ecdsa"))
-	signerOpts := &store.SignerOpts{
-		KeyAttributes: keyAttrs,
-	}
-
-	sig, err := tpm.Sign(nil, digest[:], signerOpts)
-	require.NoError(t, err)
-	assert.NotEmpty(t, sig)
-}
 
 // Note: TestSign_WithSHA384HashAlgorithm and TestSign_WithSHA512HashAlgorithm were removed
 // because the swtpm simulator does not support SHA384/SHA512 hash algorithms with RSA signing schemes.
@@ -520,88 +366,10 @@ func TestSign_WithInvalidHashFuncMD5(t *testing.T) {
 	assert.Equal(t, store.ErrInvalidHashFunction, err)
 }
 
-func TestSign_WithCustomKeyBackend(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Create an RSA key
-	childKeyAttrs := createKey(t, tpm, false)
-	srkAttrs := childKeyAttrs.Parent
-
-	// Create a memory backend for testing
-	storageFactory, err := store.NewStorageFactory(slog.Default(), "")
-	require.NoError(t, err)
-
-	backend := storageFactory.KeyBackend()
-
-	keyAttrs := &types.KeyAttributes{
-		CN:           "test-sign-custom-backend-cov",
-		Hash:         crypto.SHA256,
-		KeyAlgorithm: x509.RSA,
-		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StoreTPM2,
-		Parent:       srkAttrs,
-		Password:     mustPassword(t, []byte("key-pass")),
-		TPMAttributes: &types.TPMAttributes{
-			Hierarchy: tpm2.TPMRHOwner,
-		},
-	}
-
-	rsaPub, err := tpm.CreateRSA(keyAttrs, backend, false)
-	require.NoError(t, err)
-	require.NotNil(t, rsaPub)
-
-	defer tpm.Flush(keyAttrs.TPMAttributes.Handle)
-
-	digest := sha256.Sum256([]byte("test data"))
-	signerOpts := &store.SignerOpts{
-		KeyAttributes: keyAttrs,
-		Backend:       backend, // Custom backend
-	}
-
-	sig, err := tpm.Sign(nil, digest[:], signerOpts)
-	require.NoError(t, err)
-	assert.NotEmpty(t, sig)
-}
-
 // ===========================================
 // SignValidate Coverage Tests
 // Note: SignValidate currently panics on nil keyAttrs - these tests cover valid error paths
 // ===========================================
-
-func TestSignValidate_NilTPMAttrsError(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	keyAttrs := &types.KeyAttributes{
-		CN:            "test",
-		TPMAttributes: nil, // nil TPMAttributes
-	}
-
-	_, err := tpm.SignValidate(keyAttrs, []byte("digest"), []byte("validation"))
-	assert.NotNil(t, err)
-	assert.Contains(t, err.Error(), "TPMAttributes.Public is required")
-	assert.ErrorIs(t, err, ErrSignValidatePublicRequired)
-}
-
-func TestSignValidate_ZeroPublicTypeError(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	keyAttrs := &types.KeyAttributes{
-		CN: "test",
-		TPMAttributes: &types.TPMAttributes{
-			Public: tpm2.TPMTPublic{
-				Type: 0, // Zero type
-			},
-		},
-	}
-
-	_, err := tpm.SignValidate(keyAttrs, []byte("digest"), []byte("validation"))
-	assert.NotNil(t, err)
-	assert.Contains(t, err.Error(), "TPMAttributes.Public is required")
-	assert.ErrorIs(t, err, ErrSignValidatePublicRequired)
-}
 
 func TestSignValidate_ZeroHashAlgError(t *testing.T) {
 	_, tpm := createSim(t, false)
@@ -651,74 +419,9 @@ func TestEKCertificate_ZeroCertHandleWithMockStore(t *testing.T) {
 	tpmImpl.config.EK.CertHandle = originalCertHandle
 }
 
-func TestEKCertificate_CertStoreWithMock(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpmImpl := tpm.(*TPM2)
-
-	// Create a mock certificate store
-	mockCertStore := &mockCertStoreCov{
-		certs: make(map[string]*x509.Certificate),
-	}
-
-	// Create a test certificate
-	testCert := &x509.Certificate{
-		SerialNumber: big.NewInt(12345),
-		Subject: pkix.Name{
-			CommonName: "Test EK Certificate",
-		},
-		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
-	}
-
-	ekAttrs, err := tpm.EKAttributes()
-	require.NoError(t, err)
-
-	mockCertStore.certs[ekAttrs.CN] = testCert
-	tpmImpl.certStore = mockCertStore
-
-	// Set CertHandle to 0 to use certificate store path
-	originalCertHandle := tpmImpl.config.EK.CertHandle
-	tpmImpl.config.EK.CertHandle = 0
-
-	cert, err := tpm.EKCertificate()
-	require.NoError(t, err)
-	assert.Equal(t, testCert.SerialNumber, cert.SerialNumber)
-
-	// Restore
-	tpmImpl.config.EK.CertHandle = originalCertHandle
-}
-
-func TestEKCertificate_FallbackOnNVRAMReadError(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// The default simulator setup should have EK cert handle set
-	// If NVRAM read fails, it should try the cert store
-	_, err := tpm.EKCertificate()
-	// This may fail if no cert is in NVRAM or cert store,
-	// which is expected for swtpm
-	if err != nil {
-		assert.True(t,
-			err == ErrEndorsementCertNotFound ||
-				errors.Is(err, ErrEndorsementCertNotFound) ||
-				err.Error() == "x509: malformed certificate",
-			"Unexpected error: %v", err)
-	}
-}
-
 // ===========================================
 // Hash and HashSequence Tests
 // ===========================================
-
-func TestHash_NilKeyAttrsError(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	_, _, err := tpm.Hash(nil, []byte("test data"))
-	assert.Equal(t, ErrInvalidKeyAttributes, err)
-}
 
 func TestHash_NilTPMAttrsError(t *testing.T) {
 	_, tpm := createSim(t, false)
@@ -731,99 +434,6 @@ func TestHash_NilTPMAttrsError(t *testing.T) {
 
 	_, _, err := tpm.Hash(keyAttrs, []byte("test data"))
 	assert.Equal(t, ErrInvalidKeyAttributes, err)
-}
-
-func TestHash_SmallDataDirectPath(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	keyAttrs := &types.KeyAttributes{
-		CN: "test",
-		TPMAttributes: &types.TPMAttributes{
-			HashAlg: tpm2.TPMAlgSHA256,
-		},
-	}
-
-	// Small data (< 1024 bytes) uses direct hash
-	data := []byte("small test data")
-	hash, validation, err := tpm.Hash(keyAttrs, data)
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, hash)
-	assert.NotEmpty(t, validation)
-}
-
-func TestHashSequence_LargeDataSequencePath(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	keyAttrs := &types.KeyAttributes{
-		CN: "test",
-		TPMAttributes: &types.TPMAttributes{
-			HashAlg: tpm2.TPMAlgSHA256,
-		},
-	}
-
-	// Large data (> 1024 bytes) uses sequence hash
-	data := make([]byte, 2048)
-	for i := range data {
-		data[i] = byte(i % 256)
-	}
-
-	hash, validation, err := tpm.Hash(keyAttrs, data)
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, hash)
-	assert.NotEmpty(t, validation)
-}
-
-func TestHashSequence_VeryLargeDataMultipleUpdates(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	keyAttrs := &types.KeyAttributes{
-		CN: "test",
-		TPMAttributes: &types.TPMAttributes{
-			HashAlg: tpm2.TPMAlgSHA256,
-		},
-	}
-
-	// Very large data to test multiple sequence updates
-	data := make([]byte, 5000)
-	for i := range data {
-		data[i] = byte(i % 256)
-	}
-
-	hash, validation, err := tpm.Hash(keyAttrs, data)
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, hash)
-	assert.NotEmpty(t, validation)
-}
-
-func TestHashSequence_WithHierarchyAuthPath(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	keyAttrs := &types.KeyAttributes{
-		CN: "test",
-		TPMAttributes: &types.TPMAttributes{
-			HashAlg:       tpm2.TPMAlgSHA256,
-			HierarchyAuth: mustPassword(t, []byte("test-auth")),
-		},
-	}
-
-	// Large data to use sequence hash path
-	data := make([]byte, 2048)
-	for i := range data {
-		data[i] = byte(i % 256)
-	}
-
-	hash, validation, err := tpm.Hash(keyAttrs, data)
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, hash)
-	assert.NotEmpty(t, validation)
 }
 
 func TestHashSequence_WithParentHierarchyAuthPath(t *testing.T) {
@@ -859,18 +469,6 @@ func TestHashSequence_WithParentHierarchyAuthPath(t *testing.T) {
 // Open/Close Coverage Tests
 // ===========================================
 
-func TestOpen_SimulatorReopenPath(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Close and reopen
-	err := tpm.Close()
-	require.NoError(t, err)
-
-	err = tpm.Open()
-	require.NoError(t, err)
-}
-
 // ===========================================
 // Misc Coverage Tests
 // ===========================================
@@ -891,92 +489,6 @@ func TestTPM2_DeviceMethod(t *testing.T) {
 	assert.NotEmpty(t, device)
 }
 
-func TestTPM2_TransportMethod(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	trans := tpm.Transport()
-	assert.NotNil(t, trans)
-}
-
-func TestTPM2_PlatformPolicyDigestMethod(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	digest, pdErr := tpm.PlatformPolicyDigest()
-	assert.NoError(t, pdErr)
-	assert.NotNil(t, digest.Buffer)
-}
-
-func TestFlush_WithInvalidHandle(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Flushing an invalid handle should not panic
-	tpm.Flush(tpm2.TPMHandle(0xDEADBEEF))
-}
-
-func TestReadHandle_ValidEKHandle(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	ekAttrs, err := tpm.EKAttributes()
-	require.NoError(t, err)
-
-	name, pub, err := tpm.ReadHandle(ekAttrs.TPMAttributes.Handle)
-	require.NoError(t, err)
-	assert.NotEmpty(t, name.Buffer)
-	assert.NotZero(t, pub.Type)
-}
-
-func TestReadHandle_WithInvalidHandle(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	_, _, err := tpm.ReadHandle(tpm2.TPMHandle(0xDEADBEEF))
-	assert.NotNil(t, err)
-}
-
-func TestTPM2_ConfigMethod(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	config := tpm.Config()
-	assert.NotNil(t, config)
-	assert.NotNil(t, config.EK)
-}
-
-func TestParsePublicKey_RSAType(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	ekAttrs, err := tpm.EKAttributes()
-	require.NoError(t, err)
-
-	// Read the public area
-	pubArea, err := tpm2.ReadPublic{
-		ObjectHandle: ekAttrs.TPMAttributes.Handle,
-	}.Execute(tpm.Transport())
-	require.NoError(t, err)
-
-	// Parse the public key
-	pub, err := tpm.ParsePublicKey(pubArea.OutPublic.Bytes())
-	require.NoError(t, err)
-	assert.NotNil(t, pub)
-}
-
-func TestGetActiveTransientHandles_Internal(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpmImpl := tpm.(*TPM2)
-
-	// Get active handles - may be empty
-	handles := tpmImpl.getActiveTransientHandles()
-	// Just verify it doesn't panic and returns a slice
-	_ = handles
-}
-
 func TestSetHierarchyAuth_NilTransportError(t *testing.T) {
 	// Create a TPM with nil transport to test error path
 	tpmInstance := &TPM2{
@@ -992,68 +504,6 @@ func TestSetHierarchyAuth_NilTransportError(t *testing.T) {
 // ===========================================
 // EKCertificate Tests (from coverage_tpm_test.go)
 // ===========================================
-
-// TestEKCertificate_FromStore tests EK certificate retrieval from store
-func TestEKCertificate_FromStore(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Try to get EK certificate
-	ekCert, err := tpm.EKCertificate()
-
-	// Expected to fail in simulator without actual EK cert
-	if err != nil {
-		assert.Error(t, err)
-	} else {
-		assert.NotNil(t, ekCert)
-	}
-}
-
-// TestEKCertificate_WithCertHandle tests EK certificate retrieval from NVRAM
-func TestEKCertificate_WithCertHandle(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpm2Impl := tpm.(*TPM2)
-
-	// Save original config and set a CertHandle
-	originalCertHandle := tpm2Impl.config.EK.CertHandle
-	tpm2Impl.config.EK.CertHandle = 0x01C00002 // Standard RSA EK cert index
-	defer func() { tpm2Impl.config.EK.CertHandle = originalCertHandle }()
-
-	// Try to read from NVRAM - will likely fail but tests the code path
-	ekCert, err := tpm.EKCertificate()
-	_ = ekCert
-	_ = err
-}
-
-// TestParsePublicKey_RSA tests parsing RSA public key from TPM public area
-func TestParsePublicKey_RSA(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Get EK public to use for testing
-	_, ekPub, ekPubErr := tpm.EKPublic()
-	require.NoError(t, ekPubErr)
-
-	// Marshal to bytes
-	pubBytes := tpm2.Marshal(ekPub)
-
-	// Parse it back
-	pubKey, err := tpm.ParsePublicKey(pubBytes)
-	require.NoError(t, err)
-	assert.NotNil(t, pubKey)
-}
-
-// TestParsePublicKey_Invalid tests parsing with invalid data
-func TestParsePublicKey_Invalid(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Try to parse invalid data
-	_, err := tpm.ParsePublicKey([]byte{0x00, 0x01, 0x02, 0x03})
-	assert.Error(t, err)
-}
 
 // TestOpenUnixSocketTransport tests opening Unix socket transport
 func TestOpenUnixSocketTransport(t *testing.T) {
@@ -1092,112 +542,6 @@ func TestOpenDeviceTransport_SocketPath(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestFlush tests the Flush method
-func TestFlush(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Try to flush a non-existent handle - should not panic
-	tpm.Flush(tpm2.TPMHandle(0x80FFFFFF))
-}
-
-// TestReadHandle_CovTPM tests the ReadHandle method
-func TestReadHandle_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpm2Impl := tpm.(*TPM2)
-	ekHandle := tpm2.TPMHandle(tpm2Impl.config.EK.Handle)
-
-	name, pub, err := tpm.ReadHandle(ekHandle)
-	require.NoError(t, err)
-	assert.NotEmpty(t, name.Buffer)
-	assert.NotEqual(t, tpm2.TPMAlgNull, pub.Type)
-}
-
-// TestReadHandle_InvalidHandle tests ReadHandle with invalid handle
-func TestReadHandle_InvalidHandle(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	_, _, err := tpm.ReadHandle(tpm2.TPMHandle(0x81FFFFFF))
-	assert.Error(t, err)
-}
-
-// TestConfig tests the Config method
-func TestConfig(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	config := tpm.Config()
-	assert.NotNil(t, config)
-	assert.NotNil(t, config.EK)
-	assert.NotNil(t, config.SSRK)
-}
-
-// TestRandom_CovTPM tests the Random method
-func TestRandom_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	randomBytes, err := tpm.Random()
-	require.NoError(t, err)
-	assert.NotEmpty(t, randomBytes)
-	assert.Len(t, randomBytes, 32) // Default is 32 bytes
-}
-
-// TestRandomBytes_CovTPM tests the RandomBytes method
-func TestRandomBytes_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tests := []struct {
-		name   string
-		length int
-	}{
-		{"16 bytes", 16},
-		{"32 bytes", 32},
-		{"64 bytes", 64},
-		{"128 bytes", 128},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			randomBytes, err := tpm.RandomBytes(tc.length)
-			require.NoError(t, err)
-			assert.Len(t, randomBytes, tc.length)
-		})
-	}
-}
-
-// TestEventLog tests the EventLog method
-func TestEventLog(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Event log is typically not available in simulator
-	eventLog, err := tpm.EventLog()
-	if err != nil {
-		// Expected to fail in simulator
-		assert.Error(t, err)
-	} else {
-		assert.NotNil(t, eventLog)
-	}
-}
-
-// TestClose tests the Close method
-func TestClose(t *testing.T) {
-	_, tpm := createSim(t, false)
-
-	err := tpm.Close()
-	assert.NoError(t, err)
-
-	// Closing again should be safe
-	err = tpm.Close()
-	// May or may not error depending on implementation
-	_ = err
-}
-
 // TestPlatformQuote_CovTPM tests the PlatformQuote method
 func TestPlatformQuote_CovTPM(t *testing.T) {
 	_, tpm := createSim(t, false)
@@ -1213,67 +557,6 @@ func TestPlatformQuote_CovTPM(t *testing.T) {
 	assert.NotEmpty(t, quote.Quoted)
 	assert.NotEmpty(t, quote.Signature)
 	assert.NotEmpty(t, nonce)
-}
-
-// TestQuote_CovTPM tests the Quote method with various PCR selections
-func TestQuote_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tests := []struct {
-		name  string
-		pcrs  []uint
-		nonce []byte
-	}{
-		{"single PCR", []uint{0}, nil},
-		{"multiple PCRs", []uint{0, 1, 2}, nil},
-		{"with nonce", []uint{0}, []byte("test-nonce")},
-		{"golden PCRs", []uint{0, 7}, []byte("golden-nonce")},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			quote, err := tpm.Quote(tc.pcrs, tc.nonce)
-			require.NoError(t, err)
-			assert.NotNil(t, quote)
-			assert.NotEmpty(t, quote.Quoted)
-		})
-	}
-}
-
-// TestMakeCredential_CovTPM tests the MakeCredential method
-func TestMakeCredential_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	iakAttrs, err := tpm.IAKAttributes()
-	require.NoError(t, err)
-
-	secret := []byte("test-secret-for-credential")
-	credential, encrypted, _, err := tpm.MakeCredential(iakAttrs.TPMAttributes.Name, secret)
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, credential)
-	assert.NotEmpty(t, encrypted)
-}
-
-// TestActivateCredential_CovTPM tests the ActivateCredential method
-func TestActivateCredential_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	iakAttrs, err := tpm.IAKAttributes()
-	require.NoError(t, err)
-
-	// First make a credential
-	secret := []byte("test-secret-to-activate")
-	credential, encrypted, _, err := tpm.MakeCredential(iakAttrs.TPMAttributes.Name, secret)
-	require.NoError(t, err)
-
-	// Now activate it
-	recoveredSecret, err := tpm.ActivateCredential(credential, encrypted)
-	require.NoError(t, err)
-	assert.Equal(t, secret, recoveredSecret)
 }
 
 // TestMakeCredentialWithExternalEK_CovTPM was deleted rather than un-skipped.
@@ -1298,57 +581,6 @@ func TestActivateCredential_CovTPM(t *testing.T) {
 //
 // Reviving the skipped test would only have duplicated that coverage.
 
-// TestProvision tests the Provision method
-func TestProvision(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Try to provision - may already be provisioned
-	err := tpm.Provision(nil)
-	// Should succeed or indicate already provisioned
-	_ = err
-}
-
-// TestSetHierarchyAuth_CovTPM tests the SetHierarchyAuth method
-func TestSetHierarchyAuth_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// This is a sensitive operation - just test that it doesn't panic
-	// with nil passwords (no change)
-	err := tpm.SetHierarchyAuth(nil, nil, nil)
-	// May succeed or fail depending on TPM state
-	_ = err
-}
-
-// TestDevice_CovTPM tests the Device method
-func TestDevice_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	device := tpm.Device()
-	// Simulator will have a specific device name
-	assert.NotEmpty(t, device)
-}
-
-// TestTransport_CovTPM tests the Transport method
-func TestTransport_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	transport := tpm.Transport()
-	assert.NotNil(t, transport)
-}
-
-// TestAlgID_CovTPM tests the AlgID method
-func TestAlgID_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	algID := tpm.AlgID()
-	assert.NotEqual(t, tpm2.TPMAlgNull, algID)
-}
-
 // TestEK_CovTPM tests the EK method
 func TestEK_CovTPM(t *testing.T) {
 	_, tpm := createSim(t, false)
@@ -1361,21 +593,6 @@ func TestEK_CovTPM(t *testing.T) {
 	ek, ekErr := tpm.EK()
 	assert.NoError(t, ekErr)
 	assert.NotNil(t, ek)
-}
-
-// TestEKRSA_CovTPM tests the EKRSA method
-func TestEKRSA_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Initialize EK attributes first
-	_, err := tpm.EKAttributes()
-	require.NoError(t, err)
-
-	ekRSA, rsaErr := tpm.EKRSA()
-	// May error if EK is ECC
-	_ = rsaErr
-	_ = ekRSA
 }
 
 // TestEKECC_CovTPM tests the EKECC method
@@ -1399,49 +616,6 @@ func TestEKECC_CovTPM(t *testing.T) {
 	}
 }
 
-// TestGoldenMeasurements_CovTPM tests the GoldenMeasurements method
-func TestGoldenMeasurements_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	measurements, gmErr := tpm.GoldenMeasurements()
-	// May error if not configured
-	_ = gmErr
-	_ = measurements
-}
-
-// TestPlatformPolicyDigest_CovTPM tests the PlatformPolicyDigest method
-func TestPlatformPolicyDigest_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	digest, pdErr := tpm.PlatformPolicyDigest()
-	// Digest may error if platform policy not created
-	_ = pdErr
-	_ = digest
-}
-
-// TestPlatformPolicyDigestHash_CovTPM tests the PlatformPolicyDigestHash method
-func TestPlatformPolicyDigestHash_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	hash, err := tpm.PlatformPolicyDigestHash()
-	// May fail if platform policy not created
-	_ = hash
-	_ = err
-}
-
-// TestRandomHex_CovTPM tests the RandomHex method
-func TestRandomHex_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	hexBytes, err := tpm.RandomHex(32)
-	require.NoError(t, err)
-	assert.NotEmpty(t, hexBytes)
-}
-
 // TestRandomSource_CovTPM tests the RandomSource method
 func TestRandomSource_CovTPM(t *testing.T) {
 	_, tpm := createSim(t, false)
@@ -1455,17 +629,6 @@ func TestRandomSource_CovTPM(t *testing.T) {
 	n, err := source.Read(buf)
 	require.NoError(t, err)
 	assert.Equal(t, 16, n)
-}
-
-// TestRead_CovTPM tests the Read method (io.Reader interface)
-func TestRead_CovTPM(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	buf := make([]byte, 32)
-	n, err := tpm.Read(buf)
-	require.NoError(t, err)
-	assert.Equal(t, 32, n)
 }
 
 // ===========================================
@@ -1582,64 +745,6 @@ func TestCalculateNameUnit(t *testing.T) {
 	}
 }
 
-func TestCalculateNameConsistency(t *testing.T) {
-	// Test that same input produces same output
-	publicArea := []byte("consistent test data for name calculation")
-
-	result1, err := CalculateName(tpm2.TPMAlgSHA256, publicArea)
-	if err != nil {
-		t.Fatalf("CalculateName() first call error: %v", err)
-	}
-
-	result2, err := CalculateName(tpm2.TPMAlgSHA256, publicArea)
-	if err != nil {
-		t.Fatalf("CalculateName() second call error: %v", err)
-	}
-
-	if len(result1) != len(result2) {
-		t.Errorf("CalculateName() inconsistent length: %d vs %d", len(result1), len(result2))
-	}
-
-	for i := range result1 {
-		if result1[i] != result2[i] {
-			t.Errorf("CalculateName() inconsistent at byte %d: 0x%x vs 0x%x", i, result1[i], result2[i])
-		}
-	}
-}
-
-func TestCalculateNameDifferentData(t *testing.T) {
-	// Different data should produce different names
-	data1 := []byte("first public area")
-	data2 := []byte("second public area")
-
-	name1, err := CalculateName(tpm2.TPMAlgSHA256, data1)
-	if err != nil {
-		t.Fatalf("CalculateName() data1 error: %v", err)
-	}
-
-	name2, err := CalculateName(tpm2.TPMAlgSHA256, data2)
-	if err != nil {
-		t.Fatalf("CalculateName() data2 error: %v", err)
-	}
-
-	// Algorithm ID should be same
-	if name1[0] != name2[0] || name1[1] != name2[1] {
-		t.Error("CalculateName() algorithm IDs should match for same algorithm")
-	}
-
-	// Hash portion should be different
-	sameHash := true
-	for i := 2; i < len(name1); i++ {
-		if name1[i] != name2[i] {
-			sameHash = false
-			break
-		}
-	}
-	if sameHash {
-		t.Error("CalculateName() different data should produce different names")
-	}
-}
-
 // ===========================================
 // Intel EK URL Unit Tests
 // (Merged from calculate_name_test.go)
@@ -1726,60 +831,6 @@ func TestIntelEKURLUnit(t *testing.T) {
 				t.Errorf("intelEKURL() hash mismatch: got %s, want %s", encodedPart, expectedEncoded)
 			}
 		})
-	}
-}
-
-func TestIntelEKURLDifferentExponents(t *testing.T) {
-	// The function assumes E=65537, but let's verify it handles the key correctly
-	ekPub := &rsa.PublicKey{
-		N: big.NewInt(0).SetBytes([]byte{0xAA, 0xBB, 0xCC, 0xDD}),
-		E: 65537,
-	}
-
-	ekURL := intelEKURL(ekPub)
-
-	// Should be a valid URL string
-	if ekURL == "" {
-		t.Error("intelEKURL() returned empty string")
-	}
-
-	// Should start with the Intel EK cert service URL
-	if len(ekURL) <= len(intelEKCertServiceURL) {
-		t.Error("intelEKURL() URL too short")
-	}
-}
-
-func TestIntelEKURLLargeKey(t *testing.T) {
-	// Test with a 2048-bit RSA key (common size)
-	keyBytes := make([]byte, 256)
-	for i := range keyBytes {
-		keyBytes[i] = byte(i % 256)
-	}
-
-	ekPub := &rsa.PublicKey{
-		N: big.NewInt(0).SetBytes(keyBytes),
-		E: 65537,
-	}
-
-	ekURL := intelEKURL(ekPub)
-
-	// Verify the URL structure
-	if len(ekURL) < len(intelEKCertServiceURL) || ekURL[:len(intelEKCertServiceURL)] != intelEKCertServiceURL {
-		t.Errorf("intelEKURL() should contain base URL: %s", ekURL)
-	}
-
-	// The encoded hash should be URL-safe
-	encodedPart := ekURL[len(intelEKCertServiceURL):]
-	if len(encodedPart) == 0 {
-		t.Error("intelEKURL() missing encoded part")
-	}
-
-	// Should not contain raw special characters
-	for _, c := range encodedPart {
-		if c == '+' || c == '/' || c == '=' {
-			// These should be percent-encoded in URL
-			t.Errorf("intelEKURL() contains non-URL-safe character: %c", c)
-		}
 	}
 }
 

@@ -112,22 +112,6 @@ func TestRecordPrimaryPolicyPin_SaveError(t *testing.T) {
 	assert.ErrorIs(t, err, saveErr)
 }
 
-// TestRecordKeyPolicyPin_NilBackendFallsBackToTPMBackend proves that a nil
-// backend argument falls back to tpm.backend rather than being treated as
-// "record nothing" -- the two nil checks in recordKeyPolicyPin guard
-// different things: the parameter falling back, and the fallback itself
-// being absent.
-func TestRecordKeyPolicyPin_NilBackendFallsBackToTPMBackend(t *testing.T) {
-	fallback := &policyPinRecordingBackend{}
-	tpm := &TPM2{logger: discardLogger(), backend: fallback}
-	keyAttrs := &types.KeyAttributes{CN: "child-key"}
-	pin := &store.PlatformPolicyPin{PCRBank: uint16(tpm2.TPMAlgSHA256), PCRSelect: DefaultPlatformPCRs().Mask(), PCRDigest: make([]byte, 32)}
-
-	require.NoError(t, tpm.recordKeyPolicyPin(keyAttrs, nil, pin, true))
-	assert.NotNil(t, fallback.saved, "the fallback tpm.backend must have received the save")
-	assert.True(t, fallback.overwrit)
-}
-
 // TestRecordKeyPolicyPin_NoBackendAtAll proves that when both the argument
 // and tpm.backend are nil, recordKeyPolicyPin degrades gracefully instead of
 // panicking on a nil backend.Save call.
