@@ -427,8 +427,10 @@ func TestCIImageDigest_EveryConsumerTakesTheProducersImage(t *testing.T) {
 	}
 }
 
-// TestCIImageDigest_RevertedConsumerFails reverts the image job to the
-// inspect-or-rebuild step the handoff replaced and requires the gate to fail.
+// TestCIImageDigest_RevertedConsumerFails reverts each Devcontainer stage job
+// (the dc-* jobs the image job was split into, #1871), one at a time, to the
+// inspect-or-rebuild step the handoff replaced, and requires the gate to fail
+// on that job.
 func TestCIImageDigest_RevertedConsumerFails(t *testing.T) {
 	data, err := os.ReadFile(ciWorkflow)
 	if err != nil {
@@ -437,15 +439,43 @@ func TestCIImageDigest_RevertedConsumerFails(t *testing.T) {
 	take := `run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"`
 	revert := `run: docker image inspect "$TOOLCHAIN_REF" >/dev/null 2>&1 || make docker-build-toolchain TOOLCHAIN_IMAGE="$TOOLCHAIN_REF"`
 	src := string(data)
-	if !strings.Contains(src, take) {
-		t.Fatalf("%s has no %q to revert", ciWorkflow, take)
-	}
-	src = strings.Replace(src, take, revert, 1)
-	problems := digestProblems(parseDigestWorkflow(t, []byte(src)), consumerFloor)
-	for _, want := range []string{"image: runs a toolchain stage without", "image: rebuilds or probes"} {
-		if !slices.ContainsFunc(problems, func(p string) bool { return strings.HasPrefix(p, want) }) {
-			t.Errorf("reverted image job: want a problem %q, got %q", want, problems)
+
+	var stages []string
+	for name := range parseDigestWorkflow(t, data).Jobs {
+		if strings.HasPrefix(name, "dc-") {
+			stages = append(stages, name)
 		}
+	}
+	sort.Strings(stages)
+	if len(stages) == 0 {
+		t.Fatalf("%s has no dc-* job to revert", ciWorkflow)
+	}
+
+	// A job's text runs from its two-space-indented key to the next one.
+	jobKey := regexp.MustCompile(`(?m)^  ([A-Za-z0-9_-]+):[ \t]*$`)
+	keys := jobKey.FindAllStringSubmatchIndex(src, -1)
+	for _, name := range stages {
+		t.Run(name, func(t *testing.T) {
+			i := slices.IndexFunc(keys, func(k []int) bool { return src[k[2]:k[3]] == name })
+			if i < 0 {
+				t.Fatalf("%s has no %q job key", ciWorkflow, name)
+			}
+			start, end := keys[i][1], len(src)
+			if i+1 < len(keys) {
+				end = keys[i+1][0]
+			}
+			body := src[start:end]
+			if !strings.Contains(body, take) {
+				t.Fatalf("%s has no %q to revert", name, take)
+			}
+			reverted := src[:start] + strings.Replace(body, take, revert, 1) + src[end:]
+			problems := digestProblems(parseDigestWorkflow(t, []byte(reverted)), consumerFloor)
+			for _, want := range []string{name + ": runs a toolchain stage without", name + ": rebuilds or probes"} {
+				if !slices.ContainsFunc(problems, func(p string) bool { return strings.HasPrefix(p, want) }) {
+					t.Errorf("reverted %s: want a problem %q, got %q", name, want, problems)
+				}
+			}
+		})
 	}
 }
 

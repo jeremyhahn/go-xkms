@@ -1206,12 +1206,12 @@ jobs:
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # Both scans are full tier, so the job is too: a PR without ci:full skips
-  # it and pulls no image.
+  # it and pulls no image. v1.26: never on a draft PR, ci:full or not.
   dc-trivy:
     name: 'Devcontainer: trivy image'
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: [changes, schedule-guard, ci-images] # as dc-lint
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
+    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
     timeout-minutes: 60       # CUSTOMIZE (go-xkms, #1871)
     permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
       contents: read
