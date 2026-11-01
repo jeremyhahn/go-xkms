@@ -4322,21 +4322,77 @@ secure-analyzer-selftest:
 #   G505: crypto/sha1 import - required for PKCS standards, cert thumbprints, WebAuthn
 GOSEC_EXCLUDE := G103,G104,G115,G117,G204,G302,G304,G306,G401,G402,G407,G501,G505,G703,G704,G705
 
+# gosec scans these groups of package directories one group after another,
+# so the step's peak memory is one group's, not the whole module's (#1871:
+# a single ./... pass was OOM-killed in the CI image, main runs 75748 and
+# 75835). gosec-groups fails the target when a package from go list ./...,
+# outside GOSEC_EXCLUDE_DIRS, is in no group or in two, or when a group
+# directory holds no package: a new top-level directory is never silently
+# left unscanned. A pkg/ directory no other group names is in group pkg.
+GOSEC_EXCLUDE_DIRS   := test testdata vendor xkey
+GOSEC_GROUP_api      := pkg/api
+GOSEC_GROUP_ca       := pkg/acme pkg/ca pkg/oidc pkg/trust
+GOSEC_GROUP_hardware := pkg/attestation pkg/pkcs11 pkg/tpm2
+GOSEC_GROUP_keys     := pkg/backend pkg/fido2 pkg/webauthn pkg/xkms
+GOSEC_GROUP_pkg      := $(filter-out $(GOSEC_GROUP_api) $(GOSEC_GROUP_ca) $(GOSEC_GROUP_hardware) $(GOSEC_GROUP_keys),$(patsubst %/,%,$(wildcard pkg/*/)))
+GOSEC_GROUP_top      := api cmd examples internal scripts web
+GOSEC_GROUPS         := api ca hardware keys pkg top
+GOSEC_GROUP_DIRS     := $(foreach g,$(GOSEC_GROUPS),$(GOSEC_GROUP_$(g)))
+
+# gosec_group_paths: the gosec package patterns of group $(1).
+gosec_group_paths = $(patsubst %,./%/...,$(GOSEC_GROUP_$(1)))
+
+.PHONY: gosec-groups
+## gosec-groups: Fail unless the gosec groups cover go list ./... exactly once
+gosec-groups:
+	@pkgs=$$(go list$(call go_tags_flag,) -f '{{.Dir}}' ./...) || exit 1; \
+	bad=0; \
+	for dir in $$pkgs; do \
+		rel=$${dir#$(CURDIR)/}; \
+		skip=; \
+		for x in $(GOSEC_EXCLUDE_DIRS); do \
+			case /$$rel/ in */$$x/*) skip=1 ;; esac; \
+		done; \
+		[ -z "$$skip" ] || continue; \
+		n=0; \
+		for root in $(GOSEC_GROUP_DIRS); do \
+			case $$rel/ in $$root/*) n=$$((n + 1)) ;; esac; \
+		done; \
+		if [ $$n -ne 1 ]; then \
+			echo "$(RED)✗ $$rel is in $$n gosec groups: name it in exactly one GOSEC_GROUP_*$(RESET)"; \
+			bad=1; \
+		fi; \
+	done; \
+	for root in $(GOSEC_GROUP_DIRS); do \
+		found=; \
+		for dir in $$pkgs; do \
+			case $${dir#$(CURDIR)/}/ in $$root/*) found=1; break ;; esac; \
+		done; \
+		if [ -z "$$found" ]; then \
+			echo "$(RED)✗ gosec group directory $$root holds no package of go list ./...$(RESET)"; \
+			bad=1; \
+		fi; \
+	done; \
+	exit $$bad
+
 .PHONY: gosec
 ## gosec: Run gosec security scanner (fails on HIGH/MEDIUM severity issues)
-gosec:
+gosec: gosec-groups
 	@echo "$(CYAN)$(BOLD)→ Running security analysis with gosec...$(RESET)"
 	@mkdir -p $(BUILD_DIR)
 	@GOSEC_BIN=$$(command -v gosec 2>/dev/null || echo "$$HOME/go/bin/gosec"); \
 	if [ -x "$$GOSEC_BIN" ]; then \
+		: > $(BUILD_DIR)/gosec-report.txt; \
+		$(foreach g,$(GOSEC_GROUPS),echo "$(CYAN)  gosec group $(g)$(RESET)"; \
 		$$GOSEC_BIN$(call go_tags_flag,) -exclude=$(GOSEC_EXCLUDE) -severity medium -confidence medium \
-			-exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor \
-			-exclude-dir=xkey \
+			$(addprefix -exclude-dir=,$(GOSEC_EXCLUDE_DIRS)) \
 			-exclude-generated \
 			-no-fail \
-			-fmt=text -out=$(BUILD_DIR)/gosec-report.txt ./... ; \
-		ISSUE_COUNT=$$(grep -c '^  Issues' $(BUILD_DIR)/gosec-report.txt 2>/dev/null || echo 0); \
-		REAL_ISSUES=$$(grep '^  Issues' $(BUILD_DIR)/gosec-report.txt | awk '{print $$3}' 2>/dev/null || echo 0); \
+			-fmt=text -out=$(BUILD_DIR)/gosec-report-$(g).txt $(call gosec_group_paths,$(g)) \
+			|| { echo "$(RED)✗ gosec exited $$? on group $(g), without a report$(RESET)"; exit 1; }; \
+		cat $(BUILD_DIR)/gosec-report-$(g).txt >> $(BUILD_DIR)/gosec-report.txt; \
+		rm -f $(BUILD_DIR)/gosec-report-$(g).txt; ) \
+		REAL_ISSUES=$$(awk '/^  Issues/ {n += $$3} END {print n + 0}' $(BUILD_DIR)/gosec-report.txt); \
 		if [ "$$REAL_ISSUES" = "0" ]; then \
 			echo "$(GREEN)✓ Security scan complete - no issues found$(RESET)"; \
 			echo "$(CYAN)Report saved to: $(BUILD_DIR)/gosec-report.txt$(RESET)"; \
