@@ -1851,8 +1851,39 @@ coverage-xkmsctl:
 # integration-test-cluster stays out of the default run: its three Raft nodes
 # cannot initialize their barriers until each node can be initialized without
 # running its own first boot, against a shared bootstrap CA. Run it on its own.
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
+#
+# CI runs the suites as IT_SHARDS parallel jobs (#1870), one compose project
+# each; integration-test is their union, so a suite is in the default run
+# exactly when it is in a shard. A shard is weighed by what its suites start
+# (a compose build, swtpm, xkmsd, a browser) and keeps the suites in the order
+# the serial run had:
+#   1  the PKCS#11 module lane, the heaviest single suite
+#   2  the API protocol suites and the stacks that follow them
+#   3  the swtpm suites
+#   4  the browser, CLI and SDK suites
+#   5  the backend and cloud-emulator stacks
+#   6  the light devcontainer suites
+IT_SHARDS := 1 2 3 4 5 6
+IT_SHARD_1 := integration-test-pkcs11-module-all
+IT_SHARD_2 := integration-test-api-all integration-test-sshagent integration-test-bootstrap
+IT_SHARD_3 := integration-test-pkcs11-barrier integration-test-tpm2 integration-test-storage integration-test-initceremony
+IT_SHARD_4 := integration-test-webauthn integration-test-cli integration-test-sdk-go
+IT_SHARD_5 := integration-test-pkcs8 integration-test-pkcs11 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault
+IT_SHARD_6 := integration-test-software integration-test-utils integration-test-quantum integration-test-frost integration-test-fido2
+IT_SUITES := $(foreach n,$(IT_SHARDS),$(IT_SHARD_$(n)))
+
+integration-test: clean-test-containers $(IT_SUITES)
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
+
+.PHONY: integration-test-shard
+## integration-test-shard: Run one CI shard of integration-test (IT_SHARD=1..6, see IT_SHARDS)
+ifneq ($(filter integration-test-shard,$(MAKECMDGOALS)),)
+ifeq ($(strip $(IT_SHARD_$(strip $(IT_SHARD)))),)
+$(error IT_SHARD must be one of: $(IT_SHARDS), not '$(IT_SHARD)')
+endif
+endif
+integration-test-shard: clean-test-containers $(IT_SHARD_$(strip $(IT_SHARD)))
+	@echo "$(GREEN)$(BOLD)✓ Integration shard $(IT_SHARD) complete!$(RESET)"
 
 .PHONY: clean-run-images
 ## clean-run-images: Remove the images this CI run tagged (no-op for local builds)
@@ -3964,8 +3995,9 @@ compose-ps:
 # namespaced per run, so removing them touches nothing outside this run --
 # but the IMAGE TAGS (go-xkms-swtpm:latest, go-xkms-test:latest, ...) are
 # shared by every run on the host by design, and deleting them forces a full
-# rebuild on any job that was about to use them. Disk is reclaimed by pruning
-# dangling images and build cache instead (test/scripts/clean-test-containers.sh).
+# rebuild on any job that was about to use them. Nothing here prunes either:
+# a prune is daemon-wide and breaks a concurrent job's build (#1870, see
+# test/scripts/clean-test-containers.sh).
 compose-clean:
 	@echo "$(CYAN)→ Cleaning docker-compose resources...$(RESET)"
 	@$(call compose,root) down -v --remove-orphans
