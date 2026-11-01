@@ -68,6 +68,9 @@ var grant = []qrdbsdk.Permission{
 	"index:create",
 	"index:query",
 	"admin:shard_state",
+	"users:read",
+	"users:create",
+	"users:update",
 }
 
 var registerOnce sync.Once

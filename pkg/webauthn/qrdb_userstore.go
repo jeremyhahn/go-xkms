@@ -40,6 +40,13 @@ type QRDBUserStoreOptions struct {
 	// the system tenant ("system") for daemon-internal use, or a
 	// per-tenant id for multi-tenant deployments. Required.
 	TenantID string
+
+	// CallContext derives the context every user-client call runs on from
+	// the caller's. The ceremony endpoints are public, so a request carries
+	// no identity go-qrdb's authorization accepts: an embedded node passes
+	// its service principal (node.ServiceContext) here, as the datastore
+	// does. Nil runs the calls on the caller's context.
+	CallContext func(ctx context.Context) (context.Context, error)
 }
 
 // qrdbUserStore implements xkms's UserStore over qrdb's user records. A
@@ -49,6 +56,7 @@ type qrdbUserStore struct {
 	users    qrdbtransport.UserClient
 	creds    CredentialStore
 	tenantID string
+	bind     func(ctx context.Context) (context.Context, error)
 }
 
 // NewQRDBUserStoreAdapter constructs the (UserStore, CredentialStore) pair
@@ -70,7 +78,7 @@ func NewQRDBUserStoreAdapter(opts QRDBUserStoreOptions) (UserStore, CredentialSt
 	if err != nil {
 		return nil, nil, WrapError("build credential store", err)
 	}
-	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID}
+	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID, bind: opts.CallContext}
 	return users, creds, nil
 }
 
@@ -111,6 +119,10 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
+	ctx, err = s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	u, err := s.users.GetUser(ctx, id)
 	if err != nil {
 		return nil, mapNotFound(err)
@@ -129,6 +141,10 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 	if email == "" {
 		return nil, ErrUserNotFound
 	}
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	u, err := s.users.GetUserByEmail(ctx, s.tenantID, email)
 	if err != nil {
 		return nil, mapNotFound(err)
@@ -145,6 +161,10 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (User, error) {
 	if email == "" {
 		return nil, &QRDBAdapterConfigError{Field: "email"}
+	}
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
 	}
 	u, err := s.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: email,
@@ -174,6 +194,10 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 	if err != nil {
 		return err
 	}
+	ctx, err = s.callContext(ctx)
+	if err != nil {
+		return err
+	}
 	if _, uErr := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{
 		ID:   id,
 		Name: dn,
@@ -192,6 +216,10 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	if err != nil {
 		return err
 	}
+	ctx, err = s.callContext(ctx)
+	if err != nil {
+		return err
+	}
 	if dErr := s.users.DeleteUser(ctx, id); dErr != nil {
 		if isUserNotFound(dErr) {
 			return ErrUserNotFound
@@ -203,6 +231,33 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	}
 	return nil
 }
+
+// callContext returns the context a user-client call runs on: the caller's,
+// bound by the CallContext option when one is set.
+func (s *qrdbUserStore) callContext(ctx context.Context) (context.Context, error) {
+	if s.bind == nil {
+		return ctx, nil
+	}
+	bound, err := s.bind(ctx)
+	if err != nil {
+		return nil, &QRDBCallContextError{Err: err}
+	}
+	return bound, nil
+}
+
+// QRDBCallContextError reports that the CallContext option could not derive
+// the context a qrdb user-client call runs on, e.g. an embedded node with no
+// service principal. The call is refused before it reaches go-qrdb.
+type QRDBCallContextError struct {
+	Err error
+}
+
+func (e *QRDBCallContextError) Error() string {
+	return "webauthn: derive qrdb call context: " + e.Err.Error()
+}
+
+// Unwrap exposes the binder's error for errors.Is/errors.As.
+func (e *QRDBCallContextError) Unwrap() error { return e.Err }
 
 // materialize hydrates a qrdb User into the xkms DefaultUser shape, with
 // its credentials read from the credential store.
