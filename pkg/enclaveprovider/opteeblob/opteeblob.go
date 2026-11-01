@@ -17,8 +17,10 @@
 //
 // The blob is a tagged COSE_Encrypt0 (RFC 9052 §5.2) under A256GCM
 // (RFC 9053 §4.1), with the TA's identity as the external AAD (RFC 9052
-// §5.3). The key is derived from the TA's hardware unique key (HUK) with
-// HKDF-SHA-256 (RFC 5869 §2). docs/optee-sealed-blob/README.md is the
+// §5.3). The key is derived with HKDF-SHA-256 (RFC 5869 §2) from the TA
+// unique key that OP-TEE's system PTA command PTA_SYSTEM_DERIVE_TA_UNIQUE_KEY
+// returns to the TA, never from the raw hardware unique key (README §1).
+// docs/optee-sealed-blob/README.md is the
 // normative description of every byte.
 package opteeblob
 
@@ -51,9 +53,10 @@ const (
 	// (RFC 9053 §4.1).
 	TagSize = 16
 
-	// MinHUKSize is the shortest hardware unique key DeriveKey accepts: the
-	// 128-bit HUK of OP-TEE's HW_UNIQUE_KEY_LENGTH.
-	MinHUKSize = 16
+	// TAUniqueKeySize is the length of the TA unique key DeriveKey accepts:
+	// the key size the TA requests from PTA_SYSTEM_DERIVE_TA_UNIQUE_KEY
+	// (README §1).
+	TAUniqueKeySize = 32
 
 	// UUIDSize is the length of a TA UUID in its RFC 9562 §4 octet form.
 	UUIDSize = 16
@@ -118,14 +121,16 @@ func mustDecMode() cbor.DecMode {
 	return mode
 }
 
-// DeriveKey derives the TA's sealing key from its hardware unique key:
-// HKDF-SHA-256 (RFC 5869 §2) with no salt, the info kdfLabel, one zero byte
-// and the TA UUID, and an output of KeySize bytes.
-func DeriveKey(huk []byte, ta TAUUID) ([]byte, error) {
-	if len(huk) < MinHUKSize {
-		return nil, ErrHUKLength
+// DeriveKey derives the TA's sealing key from its TA unique key, the
+// TAUniqueKeySize-byte output of PTA_SYSTEM_DERIVE_TA_UNIQUE_KEY requested
+// with the extra_data kdfLabel (README §1): HKDF-SHA-256 (RFC 5869 §2) with
+// no salt, the info kdfLabel, one zero byte and the TA UUID, and an output of
+// KeySize bytes.
+func DeriveKey(taKey []byte, ta TAUUID) ([]byte, error) {
+	if len(taKey) != TAUniqueKeySize {
+		return nil, ErrTAUniqueKeyLength
 	}
-	key, err := hkdf.Key(sha256.New, huk, nil, kdfInfo(ta), KeySize)
+	key, err := hkdf.Key(sha256.New, taKey, nil, kdfInfo(ta), KeySize)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrDeriveFailed, Cause: err}
 	}
