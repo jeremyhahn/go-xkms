@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -658,6 +659,46 @@ func TestResolveBackupSources_UnopenableStore(t *testing.T) {
 	assert.Contains(t, err.Error(), backup.ItemTrustStore)
 }
 
+// TestResolveBackupSources_UnopenableStoreNonStrict covers a restore-style
+// (non-strict) resolution: the presence check passes for every explicit
+// path, so the store's own open is what fails, and the error names the one
+// store that could not be opened.
+func TestResolveBackupSources_UnopenableStoreNonStrict(t *testing.T) {
+	cases := []struct {
+		name string
+		item string
+		set  func(paths *backupStorePaths, blocked string)
+	}{
+		{"trust", backup.ItemTrustStore, func(p *backupStorePaths, b string) { p.trust = b }},
+		{"oath", backup.ItemOATH, func(p *backupStorePaths, b string) { p.oath = b }},
+		{"passwords", backup.ItemPasswords, func(p *backupStorePaths, b string) { p.passwords = b }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolatedBackupHome(t)
+			dir := t.TempDir()
+
+			// A regular file where a store's parent directory belongs.
+			blocker := filepath.Join(dir, "blocker")
+			require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+
+			paths := backupStorePaths{
+				trust:     filepath.Join(dir, "trust"),
+				oath:      filepath.Join(dir, "oath.json"),
+				passwords: filepath.Join(dir, "passwords"),
+			}
+			tc.set(&paths, filepath.Join(blocker, tc.name))
+
+			sources, err := resolveBackupSources(backupRestoreCmd, paths, false)
+			require.Error(t, err)
+			assert.Nil(t, sources)
+			assert.ErrorIs(t, err, ErrBackupStoreUnavailable)
+			assert.Contains(t, err.Error(), tc.item)
+			assert.Contains(t, err.Error(), filepath.Join(blocker, tc.name))
+		})
+	}
+}
+
 func TestBackupSources_CloseIsNilSafe(t *testing.T) {
 	var sources *backupSources
 	assert.NotPanics(t, func() { sources.Close() })
@@ -1155,6 +1196,48 @@ func TestBackupRestore_WrongPasswordFails(t *testing.T) {
 	assert.NotContains(t, restoreOut.String(), "Restore completed")
 }
 
+// TestBackupRestore_UnopenableTargetStoreRefused covers a restore whose
+// archive decrypts but whose target store cannot be opened: the restore
+// stops before writing anything and names the store it could not open.
+func TestBackupRestore_UnopenableTargetStoreRefused(t *testing.T) {
+	home := isolatedBackupHome(t)
+	seedBackupStores(t, home)
+
+	output := filepath.Join(home, "unopenable-target.xkb")
+	setBackupFlags(t, backupCreateCmd, map[string]string{"output": output, "password": "pw"})
+	backupCreateCmd.SetOut(&bytes.Buffer{})
+	require.NoError(t, runBackupCreate(backupCreateCmd, nil))
+
+	blocker := filepath.Join(home, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+	target := filepath.Join(blocker, "trust")
+	setBackupFlags(t, backupRestoreCmd, map[string]string{"password": "pw", "key": "", "trust-store": target})
+	var restoreOut bytes.Buffer
+	backupRestoreCmd.SetOut(&restoreOut)
+
+	err := runBackupRestore(backupRestoreCmd, []string{output})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBackupStoreUnavailable)
+	assert.Contains(t, err.Error(), backup.ItemTrustStore)
+	assert.Contains(t, err.Error(), target)
+	assert.NotContains(t, restoreOut.String(), "Restoring from", "nothing is restored once a store fails to open")
+}
+
+func TestWriteSkippedSources_ListsEachSkippedStore(t *testing.T) {
+	var out bytes.Buffer
+	writeSkippedSources(&out, []backupSkippedSource{
+		{Item: backup.ItemCAData, Reason: backupCASkipReason},
+		{Item: backup.ItemOATH, Reason: "no store found at /x"},
+	})
+	assert.Equal(t, "Not included:\n  "+backup.ItemCAData+": "+backupCASkipReason+"\n  "+backup.ItemOATH+": no store found at /x\n", out.String())
+}
+
+func TestWriteSkippedSources_NothingSkippedWritesNothing(t *testing.T) {
+	var out bytes.Buffer
+	writeSkippedSources(&out, nil)
+	assert.Empty(t, out.String())
+}
+
 func TestBackupContents_WrongPasswordFails(t *testing.T) {
 	home := isolatedBackupHome(t)
 	seedBackupStores(t, home)
@@ -1209,6 +1292,91 @@ func TestBackupCreate_NoDataRefused(t *testing.T) {
 
 	_, statErr := os.Stat(output)
 	assert.True(t, os.IsNotExist(statErr), "no file may be left behind")
+}
+
+// TestBackupCreate_RefusesWithoutWriting covers each refusal runBackupCreate
+// makes before (or instead of) writing the archive: the typed error names
+// the cause and no backup file is left at the output path.
+func TestBackupCreate_RefusesWithoutWriting(t *testing.T) {
+	cases := []struct {
+		name   string
+		seed   bool
+		flags  func(home string) map[string]string
+		output func(home string) string
+		stdin  bool
+		want   error
+		detail string
+	}{
+		{
+			name: "output directory uncreatable",
+			output: func(home string) string {
+				blocker := filepath.Join(home, "blocker")
+				require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+				return filepath.Join(blocker, "sub", "out.xkb")
+			},
+			flags:  func(string) map[string]string { return map[string]string{"password": "pw"} },
+			want:   ErrBackupCreateFailed,
+			detail: "cannot create backup directory",
+		},
+		{
+			name:   "empty password on stdin",
+			output: func(home string) string { return filepath.Join(home, "out.xkb") },
+			flags:  func(string) map[string]string { return map[string]string{"password-stdin": "true"} },
+			stdin:  true,
+			want:   ErrBackupPasswordStdinEmpty,
+		},
+		{
+			name:   "explicit trust store missing",
+			output: func(home string) string { return filepath.Join(home, "out.xkb") },
+			flags: func(home string) map[string]string {
+				return map[string]string{"password": "pw", "trust-store": filepath.Join(home, "never-created")}
+			},
+			want:   ErrBackupSourceMissing,
+			detail: backup.ItemTrustStore,
+		},
+		{
+			name: "output path is a directory",
+			seed: true,
+			output: func(home string) string {
+				dir := filepath.Join(home, "taken.xkb")
+				require.NoError(t, os.Mkdir(dir, 0700))
+				return dir
+			},
+			flags: func(string) map[string]string { return map[string]string{"password": "pw"} },
+			want:  ErrBackupCreateFailed,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := isolatedBackupHome(t)
+			if tc.seed {
+				seedBackupStores(t, home)
+			}
+			output := tc.output(home)
+			flags := tc.flags(home)
+			flags["output"] = output
+			setBackupFlags(t, backupCreateCmd, flags)
+			backupCreateCmd.SetOut(&bytes.Buffer{})
+			if tc.stdin {
+				backupCreateCmd.SetIn(strings.NewReader(""))
+				t.Cleanup(func() { backupCreateCmd.SetIn(nil) })
+			}
+
+			err := runBackupCreate(backupCreateCmd, nil)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tc.want)
+			if tc.detail != "" {
+				assert.Contains(t, err.Error(), tc.detail)
+			}
+
+			info, statErr := os.Stat(output)
+			if statErr == nil {
+				assert.True(t, info.IsDir(), "no backup file may replace the output path")
+			} else {
+				assert.True(t, os.IsNotExist(statErr) || errors.Is(statErr, syscall.ENOTDIR), statErr)
+			}
+		})
+	}
 }
 
 func TestBackupList_ReportsListFailure(t *testing.T) {
