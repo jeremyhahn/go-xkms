@@ -1,0 +1,1 @@
+- The WebAuthn browser suite runs its test xkmsd with a secure configuration (TLS, passphrase barrier, authentication, CA), initialized and unsealed by `run-server.sh` the way the web-console suite does, so the daemon passes its TLS-only and compliance gates; Playwright drives `https://localhost:18443` and waits for `/health/ready` (#1720).

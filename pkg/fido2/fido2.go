@@ -32,6 +32,13 @@ type Handler interface {
 	// UnlockWithKey authenticates using FIDO2 and returns the derived key
 	UnlockWithKey(config *AuthenticationConfig) ([]byte, error)
 
+	// DeriveHMACSecret authenticates using FIDO2 and returns the raw
+	// hmac-secret output, HMAC-SHA-256(CredRandom, salt) of CTAP 2.1 §12.5,
+	// in AuthenticationResult.HMACSecret. Unlike UnlockWithKey, which derives
+	// a key from that output, it returns the output itself, as
+	// `fido2-assert -G -h` does when enrolling a LUKS slot.
+	DeriveHMACSecret(config *AuthenticationConfig) (*AuthenticationResult, error)
+
 	// ListDevices returns available FIDO2 devices
 	ListDevices() ([]Device, error)
 
@@ -171,6 +178,8 @@ func (h *FIDO2Handler) EnrollKey(config *EnrollmentConfig) (*EnrollmentResult, e
 	result.Created = time.Now()
 	return result, nil
 }
+
+var _ Handler = (*FIDO2Handler)(nil)
 
 // DeriveHMACSecret evaluates the credential's hmac-secret over config.Salt
 // (and Salt2) and returns the raw outputs: AuthenticationResult.HMACSecret

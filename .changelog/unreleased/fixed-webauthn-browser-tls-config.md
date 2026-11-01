@@ -1,0 +1,1 @@
+- The WebAuthn browser suite's xkmsd runs on TLS (bootstrap certificate) and a standalone datastore, so its config passes validation again (main run 73740).

@@ -1083,6 +1083,38 @@ func TestSessionPool_WithSearch_InitError(t *testing.T) {
 	}))
 }
 
+// TestSessionPool_WithSearch_InitErrorClearsStaleSearch leaves a search active
+// on the pool's only session, as a C_FindObjectsInit that fails part way
+// through does (SoftHSM2 under concurrent writes), and proves WithSearch
+// reports that failure once and finalizes it, so the session's next search
+// succeeds instead of failing CKR_OPERATION_ACTIVE for every later borrower.
+func TestSessionPool_WithSearch_InitErrorClearsStaleSearch(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-search-stale")
+	pool := newTestPool(t, b, 1)
+
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		return b.p11ctx.FindObjectsInit(session, nil)
+	}))
+
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		called := false
+		err := pool.WithSearch(session, nil, func() error {
+			called = true
+			return nil
+		})
+		require.ErrorIs(t, err, pkcs11.Error(pkcs11.CKR_OPERATION_ACTIVE))
+		require.False(t, called, "find must not run when FindObjectsInit fails")
+
+		require.NoError(t, pool.WithSearch(session, nil, func() error {
+			called = true
+			_, _, findErr := b.p11ctx.FindObjects(session, 1)
+			return findErr
+		}), "the failed search must not leave the session searching")
+		require.True(t, called)
+		return nil
+	}))
+}
+
 // TestSessionPool_WithSearch_FinalErrorJoinsFindError verifies that a
 // C_FindObjectsFinal failure is joined onto find's own error via errors.Is
 // rather than discarded. Before #701, WithSearch's deferred Final call threw

@@ -623,13 +623,17 @@ func recipientFlags(t *testing.T, participantDirs ...string) []string {
 	return flags
 }
 
+// cliBuildTags is the xkmsctl build tag set (the Makefile's CLI_BUILD_TAGS
+// with frost): the DAO codecs the FROST backend's key store needs.
+const cliBuildTags = "frost codec_cbor codec_json codec_msgpack gms_pure_go"
+
 // runCLI executes the xkms CLI with given arguments
 func runCLI(args ...string) (string, error) {
 	// Try to find the CLI binary
 	cliPath := findCLI()
 	if cliPath == "" {
 		// Fall back to go run
-		allArgs := append([]string{"run", "-tags=frost", "./cmd/xkmsctl"}, args...)
+		allArgs := append([]string{"run", "-tags=" + cliBuildTags, "./cmd/xkmsctl"}, args...)
 		cmd := exec.Command("go", allArgs...)
 		cmd.Dir = getProjectRoot()
 		var stdout, stderr bytes.Buffer
