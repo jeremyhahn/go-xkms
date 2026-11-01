@@ -431,8 +431,8 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      p.QRDBClient.Users(),
-		DAOFactory: p.DAOFactory,
+		Users:       p.QRDBClient.Users(),
+		DAOFactory:  p.DAOFactory,
 		TenantID:    tenantID,
 		CallContext: p.CallContext,
 	})
