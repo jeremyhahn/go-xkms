@@ -845,6 +845,10 @@ var (
 	// image".
 	ErrSignOTAImageFailed = errors.New("failed to sign the OTA image")
 
+	// ErrExportOTAImageKeyFailed is the sentinel error "failed to export the
+	// OTA image key".
+	ErrExportOTAImageKeyFailed = errors.New("failed to export the OTA image key")
+
 	// ErrChangeKeyVersionFailed is the sentinel error "failed to change the
 	// key version".
 	ErrChangeKeyVersionFailed = errors.New("failed to change the key version")

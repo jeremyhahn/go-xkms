@@ -205,6 +205,10 @@ func (b *baseSDKClient) SignOTAImage(ctx context.Context, req *transport.OTAImag
 	return nil, nil
 }
 
+func (b *baseSDKClient) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
+
 func (b *baseSDKClient) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, errNotImplemented
 }

@@ -364,6 +364,10 @@ type (
 	UnsealResponse         = transport.UnsealResponse
 	CanSealResponse        = transport.CanSealResponse
 
+	// ExportOTAImageKeyResponse is a board's OTA verification public key:
+	// X || Y and its COSE_Key (RFC 9052 §7, RFC 9053 §7.1.1).
+	ExportOTAImageKeyResponse = transport.ExportOTAImageKeyResponse
+
 	GetImportParametersRequest   = transport.GetImportParametersRequest
 	GetImportParametersResponse  = transport.GetImportParametersResponse
 	WrapKeyRequest               = transport.WrapKeyRequest

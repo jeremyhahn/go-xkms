@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -98,6 +99,25 @@ Example:
 	},
 }
 
+var keyOTAImageExportCmd = &cobra.Command{
+	Use:   "export <board-id>",
+	Short: "Export a board's OTA verification public key",
+	Long: `Export the public half of the current version of a board's OTA
+image-signing key: the raw X || Y, 64 bytes in hex, and the COSE_Key
+(RFC 9052 §7, RFC 9053 §7.1.1) in base64. The private key never leaves
+xkmsd. With --output json the bytes are base64 in the JSON fields.
+
+Example:
+  xkmsctl key ota-image export cm4 --backend software`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		runOTAImageKeyCall(cmd, args[0], "Exporting the OTA image key of board "+args[0], ErrExportOTAImageKeyFailed,
+			func(ctx context.Context, cl client.Client, req *client.OTAImageKeyRequest) (any, error) {
+				return cl.ExportOTAImageKey(ctx, req)
+			}, printOTAImageKeyExported)
+	},
+}
+
 // runOTAImageKeyCall sends a create or rotate request for boardID, with the
 // --algorithm flag, through runClientCall.
 func runOTAImageKeyCall(cmd *cobra.Command, boardID, verbose string, failure error,
@@ -146,11 +166,28 @@ func printOTAImageSignature(p *Printer, result any) {
 	}
 }
 
+func printOTAImageKeyExported(p *Printer, result any) {
+	resp, ok := result.(*client.ExportOTAImageKeyResponse)
+	if !ok || printJSONResult(p, result) {
+		return
+	}
+	printCallSuccess(p, fmt.Sprintf("OTA image key of board %s: %s (version %d, %s)", resp.BoardID, resp.KeyID, resp.KeyVersion, resp.Algorithm))
+	for _, line := range []string{
+		"Public key (X || Y, hex): " + hex.EncodeToString(resp.PublicKey),
+		"COSE_Key (base64): " + base64.StdEncoding.EncodeToString(resp.COSEKey),
+	} {
+		if err := p.PrintMessage(line); err != nil {
+			handleError(err)
+			return
+		}
+	}
+}
+
 func init() {
 	keyCmd.AddCommand(keyOTAImageCmd)
-	keyOTAImageCmd.AddCommand(keyOTAImageCreateCmd, keyOTAImageRotateCmd, keyOTAImageSignCmd)
+	keyOTAImageCmd.AddCommand(keyOTAImageCreateCmd, keyOTAImageRotateCmd, keyOTAImageSignCmd, keyOTAImageExportCmd)
 
-	for _, cmd := range []*cobra.Command{keyOTAImageCreateCmd, keyOTAImageRotateCmd} {
+	for _, cmd := range []*cobra.Command{keyOTAImageCreateCmd, keyOTAImageRotateCmd, keyOTAImageExportCmd} {
 		cmd.Flags().String("algorithm", "ES256", "Key algorithm (ES256 is the only one accepted)")
 	}
 	keyOTAImageSignCmd.Flags().Bool("digest", false, "The file holds the image's SHA-256 digest, not the image")

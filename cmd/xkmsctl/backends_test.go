@@ -335,6 +335,10 @@ func (m *mockBackendsClient) SignOTAImage(ctx context.Context, req *client.OTAIm
 	return nil, nil
 }
 
+func (m *mockBackendsClient) ExportOTAImageKey(ctx context.Context, req *client.OTAImageKeyRequest) (*client.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockBackendsClient) GetImportParameters(ctx context.Context, req *client.GetImportParametersRequest) (*client.GetImportParametersResponse, error) {
 	return nil, nil
 }

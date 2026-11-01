@@ -51,6 +51,13 @@ func (s *otaImageService) SignOTAImage(ctx context.Context, req *transport.OTAIm
 	return s.mockService.SignOTAImage(ctx, req)
 }
 
+func (s *otaImageService) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	if _, err := xkms.OTAImageKeyID(req.BoardID); err != nil {
+		return nil, err
+	}
+	return s.mockService.ExportOTAImageKey(ctx, req)
+}
+
 func newOTAImageTransport(t *testing.T) *Transport {
 	t.Helper()
 	tr, err := New(&otaImageService{})
@@ -76,6 +83,12 @@ func TestOTAImageKey_Embedded(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("sig"), signed.Signature)
 	assert.Equal(t, uint32(2), signed.KeyVersion)
+
+	exported, err := tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
+	require.NoError(t, err)
+	assert.Equal(t, "ota-image-cm4", exported.KeyID)
+	assert.Equal(t, uint32(2), exported.KeyVersion)
+	assert.Len(t, exported.PublicKey, 64)
 }
 
 func TestOTAImageKey_Embedded_InvalidBoard(t *testing.T) {
@@ -88,6 +101,8 @@ func TestOTAImageKey_Embedded_InvalidBoard(t *testing.T) {
 	_, err = tr.RotateOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: badBoard})
 	assert.ErrorIs(t, err, xkms.ErrInvalidBoardID)
 	_, err = tr.SignOTAImage(ctx, &transport.OTAImageSignRequest{Backend: "software", BoardID: badBoard, Data: []byte("image")})
+	assert.ErrorIs(t, err, xkms.ErrInvalidBoardID)
+	_, err = tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: badBoard})
 	assert.ErrorIs(t, err, xkms.ErrInvalidBoardID)
 }
 
@@ -102,5 +117,7 @@ func TestOTAImageKey_Embedded_NotConnected(t *testing.T) {
 	_, err = tr.RotateOTAImageKey(ctx, &transport.OTAImageKeyRequest{BoardID: "cm4"})
 	assert.ErrorIs(t, err, ErrNotConnected)
 	_, err = tr.SignOTAImage(ctx, &transport.OTAImageSignRequest{BoardID: "cm4"})
+	assert.ErrorIs(t, err, ErrNotConnected)
+	_, err = tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{BoardID: "cm4"})
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
