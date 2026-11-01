@@ -734,6 +734,56 @@ func TestRotateKey_RemovesAnInterruptedRotation(t *testing.T) {
 	assert.NotEqual(t, orphanPEM, got.PublicKeyPEM, "version 2 is a new key, not the orphan")
 }
 
+// rotatingListBackend runs afterList once, after the first listing it
+// returns, so a rotation can land between a reader's listing and its record
+// load. Later listings fail with relistErr when it is set.
+type rotatingListBackend struct {
+	Backend
+	afterList func()
+	listed    bool
+	relistErr error
+}
+
+func (b *rotatingListBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
+	if b.listed && b.relistErr != nil {
+		return nil, b.relistErr
+	}
+	keys, err := b.Backend.ListKeys(ctx)
+	if !b.listed {
+		b.listed = true
+		b.afterList()
+	}
+	return keys, err
+}
+
+func TestResolveKey_SeesAVersionRotatedAfterTheListing(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := context.Background()
+	genKey(t, svc, "", "k", "aes-256-gcm", 0)
+	inner, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+	b := &rotatingListBackend{Backend: inner, afterList: func() { rotate(t, svc, "", "k") }}
+
+	k, err := svc.resolveKey(ctx, b, "software", "k")
+	require.NoError(t, err)
+	cur, err := k.current()
+	require.NoError(t, err, "the version recorded by the rotation has its backend key")
+	assert.Equal(t, uint32(2), cur.number)
+	assert.Equal(t, "k--v2", cur.attrs.CN)
+}
+
+func TestResolveKey_RelistingFails(t *testing.T) {
+	svc := setupDeriveService(t)
+	genKey(t, svc, "", "k", "aes-256-gcm", 0)
+	inner, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+	errList := errors.New("listing failed")
+	b := &rotatingListBackend{Backend: inner, afterList: func() { rotate(t, svc, "", "k") }, relistErr: errList}
+
+	_, err = svc.resolveKey(context.Background(), b, "software", "k")
+	assert.ErrorIs(t, err, errList)
+}
+
 // TestFindKeyAttributes proves a key is found through any of its versions
 // and a version's own name is refused.
 func TestFindKeyAttributes(t *testing.T) {

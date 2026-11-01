@@ -43,6 +43,7 @@ import (
 	"hash"
 	"io"
 	"math/big"
+	"slices"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -549,6 +550,11 @@ func (cm *CryptoManager) Sign(ctx context.Context, op *SignOperation, data []byt
 
 	padding, saltLen := rsaPaddingForMechanism(op.mechanism)
 
+	data, err := signatureInput(op.mechanism.Type, data, op.ecFieldLen)
+	if err != nil {
+		return nil, err
+	}
+
 	req := &transport.SignRequest{
 		Backend:    op.backend,
 		KeyID:      op.keyID,
@@ -734,6 +740,13 @@ func (cm *CryptoManager) Verify(ctx context.Context, op *VerifyOperation, data, 
 	// or a valid PSS signature is rejected as an invalid v1.5 one.
 	padding, saltLen := rsaPaddingForMechanism(op.mechanism)
 
+	// CKM_ECDSA verification takes the raw input of any length (PKCS#11 v3.2
+	// §6.3.12, Table 70 footnote 3) and is sent unchanged: the service
+	// verifies it with crypto/ecdsa, which truncates it to the bit length of
+	// the curve order as SEC 1 v2 §4.1.4 step 3 requires. signatureInput's
+	// fit to a SHA-2 length serves only the signing path, whose crypto.Signer
+	// must be named a hash; applied here it refused valid signatures over a
+	// longer digest, such as a 66-byte one on P-521.
 	req := &transport.VerifyRequest{
 		Backend:    op.backend,
 		KeyID:      op.keyID,
@@ -1086,6 +1099,56 @@ func normalizeECDSASignatureToDER(sig []byte, keyFieldLen int) ([]byte, error) {
 		return nil, NewPKCS11ErrorFull(CKR_SIGNATURE_INVALID, "failed to encode DER ECDSA signature", err)
 	}
 	return der, nil
+}
+
+// ecdsaDigestLengths are the digest lengths the service signs under the
+// "NONE" hash CKM_ECDSA sends, longest first: the outputs of SHA-512, SHA-384,
+// SHA-256 and SHA-224. The service names the hash from the length, because a
+// crypto.Signer has to be told one.
+var ecdsaDigestLengths = []int{64, 48, 32, 28}
+
+// signatureInput returns the data a C_Sign sends to the service for mechType.
+// Only CKM_ECDSA is changed; see ecdsaInputToDigest. C_Verify sends its input
+// unchanged (see CryptoManager.Verify).
+func signatureInput(mechType MechanismType, data []byte, fieldLen int) ([]byte, error) {
+	if mechType != CKM_ECDSA {
+		return data, nil
+	}
+	return ecdsaInputToDigest(data, fieldLen)
+}
+
+// ecdsaInputToDigest fits CKM_ECDSA input to a digest length the service signs.
+//
+// PKCS#11 v3.2 §6.3.12 (Table 70, footnote 3) takes input of any length, "the
+// entire raw digest", which the token truncates to the bit length of the curve
+// order (SEC 1 v2 §4.1.3 step 5). The service signs only a SHA-2 output length,
+// so input of such a length passes unchanged. Other input is truncated to the
+// field width and left-padded with zeros to the longest SHA-2 length the field
+// holds. Neither step changes the integer ECDSA signs, so the signature is the
+// one the token owes for the raw input.
+//
+// fieldLen is the byte width of the key's field elements, or 0 when the curve
+// is unknown, in which case the input passes unchanged for the service to judge.
+func ecdsaInputToDigest(data []byte, fieldLen int) ([]byte, error) {
+	if fieldLen == 0 || slices.Contains(ecdsaDigestLengths, len(data)) {
+		return data, nil
+	}
+	if len(data) > fieldLen {
+		data = data[:fieldLen]
+	}
+	for _, n := range ecdsaDigestLengths {
+		if n > fieldLen {
+			continue
+		}
+		if len(data) > n {
+			break
+		}
+		digest := make([]byte, n)
+		copy(digest[n-len(data):], data)
+		return digest, nil
+	}
+	return nil, NewPKCS11ErrorWithMessage(CKR_DATA_LEN_RANGE,
+		"CKM_ECDSA input does not fit a SHA-2 digest length the curve holds")
 }
 
 // ----------------------------------------------------------------
@@ -3039,8 +3102,8 @@ type WrapKeyByIDRequest struct {
 // reported success, and a round trip through this module still passed because
 // C_UnwrapKey dropped the label too.
 type WrapMechanismParams struct {
-	// IV is CK_GCM_PARAMS.pIv, or the 16-byte CK_AES_CBC_PARAMS IV. Empty asks
-	// the token to generate one, which the wrapped blob then carries.
+	// IV is the 12-byte CK_GCM_PARAMS.pIv, or the 16-byte CK_AES_CBC_PARAMS
+	// IV. Both mechanisms require it, on C_WrapKey and on C_UnwrapKey.
 	IV []byte
 
 	// AAD is CK_GCM_PARAMS.pAAD. It is authenticated but not encrypted, so it
@@ -3104,11 +3167,15 @@ func (cm *CryptoManager) WrapKeyByID(ctx context.Context, req *WrapKeyByIDReques
 	// retry -- with the same IV it had prepared -- refused as a reuse of a wrap
 	// that never happened.
 	//
-	// An empty IV asks the service to generate the nonce and is deliberately
-	// not claimed here: the module never sees that value, and the service
-	// claims what it generated against this same process-wide guard before it
-	// returns the blob.
-	if algorithm == string(types.WrapAESGCM) && len(req.Params.IV) > 0 {
+	// The IV is required. PKCS#11 v3.2 §6.13.3 returns only the wrapped key
+	// and its tag from C_WrapKey, so the IV is the caller's to keep, and
+	// CK_GCM_PARAMS.pIv is input only: an IV the service generated could
+	// never reach the caller, and the blob could never be unwrapped.
+	if algorithm == string(types.WrapAESGCM) {
+		if len(req.Params.IV) != GCMNonceSize {
+			return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_PARAM_INVALID,
+				"CKM_AES_GCM wrapping needs the 12-byte IV in CK_GCM_PARAMS.pIv")
+		}
 		if err := cm.checkGCMNonce(wrappingBackend, req.WrappingKeyID, req.Params.IV); err != nil {
 			return nil, err
 		}
@@ -3133,6 +3200,9 @@ func (cm *CryptoManager) WrapKeyByID(ctx context.Context, req *WrapKeyByIDReques
 			"key wrapping failed", err)
 	}
 
+	if algorithm == string(types.WrapAESGCM) {
+		return unframeGCMWrap(resp.WrappedKey, req.Params.IV, wrapGCMTagSize(req.Params.TagBits))
+	}
 	return resp.WrappedKey, nil
 }
 
@@ -3198,8 +3268,17 @@ func (cm *CryptoManager) UnwrapKeyByID(ctx context.Context, req *UnwrapKeyByIDRe
 		targetBackend = cm.config.DefaultBackend
 	}
 
+	wrappedKey := req.WrappedKey
+	if req.Algorithm == string(types.WrapAESGCM) {
+		framed, err := frameGCMWrap(req.WrappedKey, req.Params.IV, wrapGCMTagSize(req.Params.TagBits))
+		if err != nil {
+			return "", err
+		}
+		wrappedKey = framed
+	}
+
 	sdkReq := &transport.UnwrapKeyByIDRequest{
-		WrappedKey:           req.WrappedKey,
+		WrappedKey:           wrappedKey,
 		UnwrappingKeyID:      req.UnwrappingKeyID,
 		UnwrappingKeyBackend: unwrappingBackend,
 		Algorithm:            req.Algorithm,
@@ -3226,6 +3305,76 @@ func (cm *CryptoManager) UnwrapKeyByID(ctx context.Context, req *UnwrapKeyByIDRe
 	}
 
 	return resp.KeyID, nil
+}
+
+// The key service frames an AES-GCM wrap as mode || nonce || ciphertext ||
+// tag, where mode is one byte naming the GCM construction that sealed it
+// (pkg/xkms servicer_wrapkey.go). PKCS#11 v3.2 §6.13.3 instead has C_WrapKey
+// return the wrapped key with the tag appended, and C_UnwrapKey take the IV
+// from CK_GCM_PARAMS.pIv. unframeGCMWrap and frameGCMWrap translate between
+// the two at the transport boundary.
+const (
+	gcmWrapModeExplicit byte = 0x00
+	gcmWrapModeRandom   byte = 0x01
+)
+
+// wrapGCMTagSize returns the tag length in bytes that CK_GCM_PARAMS.ulTagBits
+// names, with zero selecting the full tag.
+func wrapGCMTagSize(tagBits int) int {
+	if tagBits == 0 {
+		return GCMTagSize
+	}
+	return tagBits / 8
+}
+
+// unframeGCMWrap returns the ciphertext || tag that C_WrapKey hands the
+// caller, from the service's framed blob. The frame's nonce must be the
+// caller's IV: a blob sealed under any other nonce could never be unwrapped
+// by a caller who holds only the IV it supplied.
+func unframeGCMWrap(framed, iv []byte, tagSize int) ([]byte, error) {
+	if len(iv) != GCMNonceSize {
+		return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_PARAM_INVALID,
+			"CKM_AES_GCM wrapping needs the 12-byte IV in CK_GCM_PARAMS.pIv")
+	}
+	header := 1 + GCMNonceSize
+	if len(framed) <= header+tagSize {
+		return nil, NewPKCS11ErrorWithMessage(CKR_FUNCTION_FAILED,
+			"the key service returned an AES-GCM wrap too short to frame")
+	}
+	if mode := framed[0]; mode != gcmWrapModeExplicit && mode != gcmWrapModeRandom {
+		return nil, NewPKCS11ErrorWithMessage(CKR_FUNCTION_FAILED,
+			"the key service returned an AES-GCM wrap with an unknown nonce mode")
+	}
+	if !bytes.Equal(framed[1:header], iv) {
+		return nil, NewPKCS11ErrorWithMessage(CKR_FUNCTION_FAILED,
+			"the key service sealed the AES-GCM wrap under a nonce other than the IV supplied")
+	}
+	return append([]byte(nil), framed[header:]...), nil
+}
+
+// frameGCMWrap rebuilds the service's frame from the ciphertext || tag the
+// caller passes to C_UnwrapKey and the IV in CK_GCM_PARAMS.pIv. The mode byte
+// follows the rule C_Decrypt applies (see the decrypt request's
+// GCMNonceMode): a 12-byte IV under the full tag opens through the
+// random-nonce construction, which opens exactly what the explicit one does
+// and is the one a FIPS 140-only service can build.
+func frameGCMWrap(wrapped, iv []byte, tagSize int) ([]byte, error) {
+	if len(iv) != GCMNonceSize {
+		return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_PARAM_INVALID,
+			"CKM_AES_GCM unwrapping needs the 12-byte IV in CK_GCM_PARAMS.pIv")
+	}
+	if len(wrapped) <= tagSize {
+		return nil, NewPKCS11ErrorWithMessage(CKR_WRAPPED_KEY_LEN_RANGE,
+			"the AES-GCM wrapped key is no longer than its tag")
+	}
+	mode := gcmWrapModeExplicit
+	if len(iv) == aead.GCMRandomNonceSize && tagSize == aead.GCMFullTagSize {
+		mode = gcmWrapModeRandom
+	}
+	framed := make([]byte, 0, 1+len(iv)+len(wrapped))
+	framed = append(framed, mode)
+	framed = append(framed, iv...)
+	return append(framed, wrapped...), nil
 }
 
 // ----------------------------------------------------------------

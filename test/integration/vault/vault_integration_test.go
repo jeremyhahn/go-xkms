@@ -741,8 +741,7 @@ func TestVaultIntegration(t *testing.T) {
 			require.ErrorIs(t, err, types.ErrSealedDataAuthentication, "a wrong AAD is sealed-data authentication")
 
 			flipped := *sealed
-			flipped.Ciphertext = append([]byte(nil), sealed.Ciphertext...)
-			flipped.Ciphertext[len(flipped.Ciphertext)-2] ^= 0x01
+			flipped.Ciphertext = tamperTransitCiphertext(t, sealed.Ciphertext)
 			_, err = b.Unseal(context.Background(), &flipped, &types.UnsealOptions{KeyAttributes: attrs, AAD: aad})
 			require.ErrorIs(t, err, types.ErrSealedDataAuthentication, "a modified ciphertext is sealed-data authentication")
 

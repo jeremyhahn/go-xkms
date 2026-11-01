@@ -65,6 +65,13 @@ func (p *unifiedTLSProvider) getCertificate(*tls.ClientHelloInfo) (*tls.Certific
 // certificate, not a new random identity every boot).
 const unifiedBootstrapCertDir = "unified-tls"
 
+// unifiedCABundleFile names the CA bundle persisted beside the bootstrap
+// certificate when the CA-issued certificate replaces it. The bootstrap
+// certificate verifies the listener only until that swap, which happens in
+// memory, so a local operator holding the state directory needs this bundle
+// to keep verifying the listener after it (DS-3769).
+const unifiedCABundleFile = "ca-bundle.pem"
+
 // buildUnifiedTLSConfig assembles the TLS configuration handed to the
 // embedded qrdb node's server (qrdb transports are TLS-only). Certificate
 // preference order: operator-supplied cert_file/key_file, else a persisted
@@ -182,10 +189,36 @@ func (s *Server) upgradeUnifiedTLSCert(bundle caBundleSource) error {
 			s.logger.Warn("unified API server: client-CA pool not upgraded",
 				slog.Any("error", poolErr))
 		}
+		// Persisted before the swap, so a client that sees the CA-issued
+		// certificate already finds the bundle that verifies it.
+		if s.config.Datastore.Path != "" {
+			if persistErr := s.persistUnifiedCABundle(bundle); persistErr != nil {
+				s.logger.Warn("unified API server: CA bundle not persisted beside the bootstrap TLS certificate",
+					slog.Any("error", persistErr))
+			}
+		}
 	}
 	provider.cert.Store(&cfg.Certificates[0])
 	s.logger.Info("unified API server: CA-issued TLS certificate installed",
 		"cn", s.config.TLS.ServerCN)
+	return nil
+}
+
+// persistUnifiedCABundle writes the CA bundle that verifies the CA-issued
+// serving certificate to unifiedCABundleFile, beside the persisted bootstrap
+// certificate and with the same owner-only permissions.
+func (s *Server) persistUnifiedCABundle(bundle caBundleSource) error {
+	bundlePEM, err := bundle.CABundle()
+	if err != nil {
+		return &ErrTLSCertOp{Operation: "load CA bundle to persist", Err: err}
+	}
+	dir := filepath.Join(s.config.Datastore.Path, unifiedBootstrapCertDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return &ErrTLSCertOp{Operation: "create unified TLS directory", Err: err}
+	}
+	if err := fsutil.WriteFileAtomic(filepath.Join(dir, unifiedCABundleFile), bundlePEM, 0o600); err != nil {
+		return &ErrTLSCertOp{Operation: "persist unified CA bundle", Err: err}
+	}
 	return nil
 }
 

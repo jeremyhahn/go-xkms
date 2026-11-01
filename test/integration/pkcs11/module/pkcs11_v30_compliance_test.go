@@ -1650,14 +1650,8 @@ func TestV30_WrapKey(t *testing.T) {
 		}
 
 		// The wrapped blob must not be the plaintext key material.
-		plainAttrs, rv := env.Module.GetAttributeValue(session, targetKeyHandle, []module.Attribute{
-			{Type: module.CKA_VALUE},
-		})
-		RequireOK(t, rv, "C_GetAttributeValue CKA_VALUE of the target key")
-		if len(plainAttrs) == 0 || len(plainAttrs[0].Value) == 0 {
-			t.Fatal("target key is CKA_EXTRACTABLE and not CKA_SENSITIVE, so CKA_VALUE must be readable")
-		}
-		if bytes.Equal(wrappedKey, plainAttrs[0].Value) {
+		plain := readableKeyValue(t, env, session, targetKeyHandle, "target key")
+		if bytes.Equal(wrappedKey, plain) {
 			t.Error("C_WrapKey returned the plaintext key material; the key was not wrapped")
 		}
 
@@ -1706,13 +1700,7 @@ func TestV30_UnwrapKey(t *testing.T) {
 		RequireOK(t, rv, "C_WrapKey")
 
 		// Capture the original key material so the roundtrip can be proved.
-		originalAttrs, rv := env.Module.GetAttributeValue(session, targetKeyHandle, []module.Attribute{
-			{Type: module.CKA_VALUE},
-		})
-		RequireOK(t, rv, "C_GetAttributeValue CKA_VALUE of the original key")
-		if len(originalAttrs) == 0 || len(originalAttrs[0].Value) == 0 {
-			t.Fatal("original key is CKA_EXTRACTABLE and not CKA_SENSITIVE, so CKA_VALUE must be readable")
-		}
+		original := readableKeyValue(t, env, session, targetKeyHandle, "original key")
 
 		// Unwrap. PKCS#11 v3.2 5.18.4 (C_UnwrapKey) states this unconditionally,
 		// not as a token-specific default: "The new key will have the
@@ -1743,19 +1731,40 @@ func TestV30_UnwrapKey(t *testing.T) {
 		// The whole point of the roundtrip: the unwrapped key must carry exactly
 		// the original key material. Asserting only that a handle came back
 		// would pass even if C_UnwrapKey produced unrelated bytes.
-		unwrappedAttrs, rv := env.Module.GetAttributeValue(session, unwrappedHandle, []module.Attribute{
-			{Type: module.CKA_VALUE},
-		})
-		RequireOK(t, rv, "C_GetAttributeValue CKA_VALUE of the unwrapped key")
-		if len(unwrappedAttrs) == 0 {
-			t.Fatal("C_GetAttributeValue returned no attributes for the unwrapped key")
-		}
-		if !bytes.Equal(originalAttrs[0].Value, unwrappedAttrs[0].Value) {
+		unwrapped := readableKeyValue(t, env, session, unwrappedHandle, "unwrapped key")
+		if !bytes.Equal(original, unwrapped) {
 			t.Errorf("wrap/unwrap roundtrip did not preserve the key material: "+
-				"original %d bytes, unwrapped %d bytes",
-				len(originalAttrs[0].Value), len(unwrappedAttrs[0].Value))
+				"original %d bytes, unwrapped %d bytes", len(original), len(unwrapped))
 		}
 	})
+}
+
+// readableKeyValue returns a copy of the CKA_VALUE of a CKA_EXTRACTABLE,
+// non-CKA_SENSITIVE secret key, failing the test when the token withholds it
+// (PKCS#11 v3.2 §4.11, CKA_VALUE footnote 7). The module returns the value
+// sealed in Attribute.Secret, not in Attribute.Value, so it is read through
+// WithValue and the sealed copy is released before returning.
+func readableKeyValue(t *testing.T, env *TestEnvironment, session module.SessionHandle,
+	handle module.ObjectHandle, what string) []byte {
+	t.Helper()
+
+	attrs, rv := env.Module.GetAttributeValue(session, handle, []module.Attribute{
+		{Type: module.CKA_VALUE},
+	})
+	RequireOK(t, rv, "C_GetAttributeValue CKA_VALUE of the "+what)
+	defer module.ReleaseAttributes(attrs)
+	if len(attrs) != 1 || attrs[0].Unavailable || attrs[0].ValueLen() == 0 {
+		t.Fatalf("the %s is CKA_EXTRACTABLE and not CKA_SENSITIVE, so CKA_VALUE must be readable", what)
+	}
+
+	var value []byte
+	if err := attrs[0].WithValue(func(v []byte) error {
+		value = bytes.Clone(v)
+		return nil
+	}); err != nil {
+		t.Fatalf("reading the CKA_VALUE of the %s: %v", what, err)
+	}
+	return value
 }
 
 // TestV30_DeriveKey tests C_DeriveKey per PKCS#11 v3.0 Section 5.14.5

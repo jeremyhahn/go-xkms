@@ -824,6 +824,66 @@ func TestFindPrivateKey_NoMatchingID(t *testing.T) {
 	}
 }
 
+// TestFindObject_FailedSearchInitLeavesSessionUsable leaves a search active on
+// the session, as a C_FindObjectsInit that fails part way through does on some
+// tokens, and proves the certificate and key lookups report that failure and
+// finalize the stale search, so the next lookup on the session succeeds
+// instead of failing CKR_OPERATION_ACTIVE forever.
+func TestFindObject_FailedSearchInitLeavesSessionUsable(t *testing.T) {
+	mod, session, cleanup := setupPKCS11Module(t)
+	defer cleanup()
+
+	certDER, privKey, certID := createSelfSignedCert(t)
+	importCertAndKey(t, mod, session, certDER, privKey, certID)
+
+	searches := map[string]func() error{
+		"certificate": func() error {
+			_, _, err := findCertificate(mod, session, "")
+			return err
+		},
+		"private key": func() error {
+			_, err := findPrivateKey(mod, session, certID)
+			return err
+		},
+	}
+
+	for name, search := range searches {
+		t.Run(name, func(t *testing.T) {
+			if rv := mod.FindObjectsInit(session, nil); rv != pkcs11module.CKR_OK {
+				t.Fatalf("leave a stale search on the session: rv = %v", rv)
+			}
+
+			var tlsErr *PKCS11TLSError
+			if err := search(); !errors.As(err, &tlsErr) || tlsErr.Code != pkcs11module.CKR_OPERATION_ACTIVE {
+				t.Fatalf("lookup error = %v, want the failed Init's CKR_OPERATION_ACTIVE", err)
+			}
+
+			if err := search(); err != nil {
+				t.Fatalf("the failed search must not leave the session searching: %v", err)
+			}
+		})
+	}
+}
+
+// TestFindObject_FinalFailureIsJoined proves a C_FindObjectsFinal failure is
+// reported alongside the lookup's own failure rather than discarded.
+func TestFindObject_FinalFailureIsJoined(t *testing.T) {
+	mod, _, cleanup := setupPKCS11Module(t)
+	defer cleanup()
+
+	invalid := pkcs11module.SessionHandle(0xdead)
+
+	_, _, err := findCertificate(mod, invalid, "")
+	if !errors.Is(err, ErrPKCS11NoCertFound) || !errors.Is(err, ErrPKCS11FindObjectsFinal) {
+		t.Fatalf("findCertificate() error = %v, want both the Init and the Final failure", err)
+	}
+
+	_, err = findPrivateKey(mod, invalid, nil)
+	if !errors.Is(err, ErrPKCS11NoKeyFound) || !errors.Is(err, ErrPKCS11FindObjectsFinal) {
+		t.Fatalf("findPrivateKey() error = %v, want both the Init and the Final failure", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // pkcs11Signer.Sign() integration tests
 // ---------------------------------------------------------------------------

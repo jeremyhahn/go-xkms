@@ -1,6 +1,8 @@
 services:
+  # Pinned by tag and digest (DS-4181) so a new upstream release cannot change
+  # the probe under CI; the healthcheck uses the vault CLI the image ships.
   vault:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
     cap_add:
       - IPC_LOCK
     environment:

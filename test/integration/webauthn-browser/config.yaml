@@ -1,11 +1,17 @@
-# REST-only, plain-HTTP xkmsd config for the Chrome virtual-authenticator
-# WebAuthn ceremony test. Plain HTTP on localhost is a WebAuthn secure context,
-# so no TLS is needed. Field names are derived from the proven
-# test/integration/api/config.test.yaml.
+# REST-only xkmsd config for the Chrome virtual-authenticator WebAuthn
+# ceremony test. This is a SECURE config (TLS + barrier + auth + CA all on):
+# the daemon's secure-by-default gate (cmd/xkmsd: cfg.ComplianceGaps) refuses
+# to start otherwise, and every served protocol is TLS-only. It is modeled on
+# test/integration/web/config.yaml; run-server.sh initializes and unseals the
+# barrier the same way. The RP serves HTTPS with the certificate `xkmsd init`
+# issues for localhost; Playwright accepts it with ignoreHTTPSErrors.
 #
-# The browser page is served same-origin with this server (via Playwright
-# request fulfillment), so clientData.origin == one of rp_origins and there is
-# no CORS preflight on the X-Session-Id header.
+# Most tests serve the browser page same-origin with this server (via
+# Playwright request fulfillment), so clientData.origin == one of rp_origins
+# and there is no CORS preflight on the X-Session-Id header. The cross-origin
+# test serves it from https://localhost:18444, which cors.allowed_origins
+# lists: cross-origin access is opt-in, and without it the browser blocks
+# every call the page makes to this server.
 server:
   host: "127.0.0.1"
   rest_port: 18443
@@ -22,20 +28,35 @@ logging:
   format: "json"
 
 tls:
-  enabled: false
+  enabled: true
+  server_cn: "localhost"
 
+# Adaptive: anonymous while zero users exist; the WebAuthn ceremony endpoints
+# stay public so the suite's open sign-up and login work throughout.
 auth:
-  enabled: false
+  enabled: true
+  type: "composite"
+  # The suite runs every ceremony from one address in seconds; the login
+  # limiter's production default (10/min per client) would throttle it, as
+  # in test/integration/xkmsdtest. The limiter stays on.
+  session:
+    login_rate_per_min: 6000
+
+# A passphrase barrier, initialized and unsealed by run-server.sh. The config
+# never carries the secret; the loader refuses barrier.passphrase.
+barrier:
+  enabled: true
+  strategy: "passphrase"
 
 webauthn:
   enabled: true
   rp_id: "localhost"
   rp_origins:
     # Same-origin ceremony (page served from the API origin).
-    - "http://localhost:18443"
+    - "https://localhost:18443"
     # Cross-origin ceremony (page served from a different origin) — exercises
     # the CORS preflight on X-Session-Id and the Expose-Headers read.
-    - "http://localhost:18444"
+    - "https://localhost:18444"
   rp_display_name: "xKMS WebAuthn Browser Test"
   attestation_preference: "none"
   authenticator_attachment: ""
@@ -44,6 +65,13 @@ webauthn:
   # Registration is closed by default (go-xkms#184); the suite creates its
   # users through open sign-up, so opt in explicitly.
   allow_public_registration: true
+
+# The cross-origin ceremony's page origin. Playwright fulfils that page, so
+# nothing listens on 18444; only the RP on 18443 must allow it.
+cors:
+  enabled: true
+  allowed_origins:
+    - "https://localhost:18444"
 
 ratelimit:
   enabled: false
@@ -55,9 +83,11 @@ health:
   enabled: true
   path: "/health"
 
+# xkmsd init writes the admin credential and the unified TLS certificate here;
+# open-server-barrier.sh finds the certificate under <state dir>/storage.
 datastore:
   engine: file
-  path: "./.runtime/data"
+  path: "./.runtime/storage"
 
 default_backend: "software"
 
@@ -65,3 +95,27 @@ backends:
   software:
     enabled: true
     path: "./.runtime/data/software"
+
+# Auto-initialized self-signed root CA on first start (ECDSA P-256, software).
+ca:
+  identity:
+    - subject:
+        cn: "xkms WebAuthn Browser Root CA"
+        organization: "go-xkms WebAuthn Browser"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: "./.runtime/ca"
