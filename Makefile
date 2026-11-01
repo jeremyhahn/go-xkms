@@ -4339,6 +4339,17 @@ GOSEC_GROUP_top      := api cmd examples internal scripts web
 GOSEC_GROUPS         := api ca hardware keys pkg top
 GOSEC_GROUP_DIRS     := $(foreach g,$(GOSEC_GROUPS),$(GOSEC_GROUP_$(g)))
 
+# gosec loads this many packages at once, each through a go list -export that
+# compiles the package's uncached dependencies; cold, the concurrent loads
+# compile the same dependencies side by side. gosec's default is the host's
+# CPU count, not the container's quota: the CI image sets GOMAXPROCS to the
+# quota (scripts/in-toolchain-image.sh), and the bound follows it. The
+# target first compiles that export data once, in one go list under the -p
+# bound, so the loads read it from the build cache: a cold cache otherwise
+# peaked at 8.7 GiB at a bound of 6, against 2 GiB warm. The go list takes no
+# -tags, because gosec loads each package's files without them.
+GOSEC_CONCURRENCY ?= $(or $(GOMAXPROCS),$(shell nproc))
+
 # gosec_group_paths: the gosec package patterns of group $(1).
 gosec_group_paths = $(patsubst %,./%/...,$(GOSEC_GROUP_$(1)))
 
@@ -4382,9 +4393,12 @@ gosec: gosec-groups
 	@mkdir -p $(BUILD_DIR)
 	@GOSEC_BIN=$$(command -v gosec 2>/dev/null || echo "$$HOME/go/bin/gosec"); \
 	if [ -x "$$GOSEC_BIN" ]; then \
+		echo "$(CYAN)  compiling the export data gosec loads$(RESET)"; \
+		go list -export -deps ./... > /dev/null || exit 1; \
 		: > $(BUILD_DIR)/gosec-report.txt; \
 		$(foreach g,$(GOSEC_GROUPS),echo "$(CYAN)  gosec group $(g)$(RESET)"; \
 		$$GOSEC_BIN$(call go_tags_flag,) -exclude=$(GOSEC_EXCLUDE) -severity medium -confidence medium \
+			-concurrency=$(GOSEC_CONCURRENCY) \
 			$(addprefix -exclude-dir=,$(GOSEC_EXCLUDE_DIRS)) \
 			-exclude-generated \
 			-no-fail \
