@@ -1,0 +1,1 @@
+Tests: the ACME server handler suite drops 461 coverage-padding tests (three padding files deleted whole, 12,354 lines) that repeated paths the remaining tests already cover or asserted only on values they built; handler coverage holds at 90.6% (#1794).
