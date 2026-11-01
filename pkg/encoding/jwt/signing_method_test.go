@@ -799,3 +799,57 @@ func TestSignWithSignerAndKID_InvalidKeyAttrs(t *testing.T) {
 	_, err = s.SignWithSignerAndKID(key, claims, keyAttrs, "kid")
 	assert.Error(t, err)
 }
+
+func TestSignWithSignerKIDAndType(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	keyAttrs := &types.KeyAttributes{
+		SignatureAlgorithm: x509.ECDSAWithSHA256,
+		KeyAlgorithm:       x509.ECDSA,
+		Hash:               crypto.SHA256,
+	}
+
+	tests := []struct {
+		name    string
+		kid     string
+		typ     string
+		wantKID interface{}
+		wantTyp string
+	}{
+		{"kid and RFC 9068 typ", "kid-1", "at+jwt", "kid-1", "at+jwt"},
+		{"kid with default typ", "kid-1", "", "kid-1", "JWT"},
+		{"typ without kid", "", "at+jwt", nil, "at+jwt"},
+		{"neither", "", "", nil, "JWT"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Signer{}
+			signed, err := s.SignWithSignerKIDAndType(key, jwt.MapClaims{"sub": "alice"}, keyAttrs, tc.kid, tc.typ)
+			require.NoError(t, err)
+
+			parts := strings.Split(signed, ".")
+			require.Len(t, parts, 3)
+			headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
+			require.NoError(t, err)
+			var header map[string]interface{}
+			require.NoError(t, json.Unmarshal(headerJSON, &header))
+			assert.Equal(t, tc.wantKID, header["kid"])
+			assert.Equal(t, tc.wantTyp, header["typ"])
+			assert.Equal(t, "ES256", header["alg"])
+
+			// The header parameters are covered by the signature.
+			parsed, err := NewVerifier().Verify(signed, &key.PublicKey)
+			require.NoError(t, err)
+			assert.True(t, parsed.Valid)
+		})
+	}
+}
+
+func TestSignWithSignerKIDAndType_InvalidKeyAttrs(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	s := &Signer{}
+	_, err = s.SignWithSignerKIDAndType(key, jwt.MapClaims{"sub": "alice"},
+		&types.KeyAttributes{SignatureAlgorithm: x509.DSAWithSHA256}, "kid", "at+jwt")
+	assert.ErrorIs(t, err, ErrInvalidSignatureAlgorithm)
+}
