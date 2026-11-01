@@ -76,25 +76,33 @@ func TestRegisterHTTP_FullSurface(t *testing.T) {
 	reg, recs := newCaptureRegistrar()
 	m.RegisterHTTP(reg)
 
-	// Expected: one registration per distinct method+pattern in the table.
+	// Expected: one registration per distinct method+pattern in the table,
+	// plus one public CORS preflight per distinct pattern.
 	type key struct{ m, p string }
 	want := map[key]rest.RouteSpec{}
+	patterns := map[string]bool{}
 	var wantOrder int
 	for _, spec := range rest.Routes() {
 		if rest.IsHostRoute(spec) {
 			continue
 		}
+		patterns[spec.Pattern] = true
 		k := key{spec.Method, spec.Pattern}
 		if _, dup := want[k]; !dup {
 			want[k] = spec
 			wantOrder++
 		}
 	}
-	require.Len(t, *recs, wantOrder, "one registration per distinct route")
+	require.Len(t, *recs, wantOrder+len(patterns), "one registration per distinct route and one preflight per pattern")
 
 	got := map[key]captured{}
 	for _, rec := range *recs {
 		got[key{rec.method, rec.pattern}] = rec
+	}
+	for p := range patterns {
+		rec, ok := got[key{http.MethodOptions, p}]
+		require.True(t, ok, "preflight for %s not registered", p)
+		assert.True(t, rec.public, "preflight for %s must register public", p)
 	}
 	for k, spec := range want {
 		rec, ok := got[k]

@@ -61,6 +61,7 @@ func (s *Server) initializeTokenIssuer() error {
 		AccessTTL:    accessTTL,
 		RefreshTTL:   refreshTTL,
 		QRDBClient:   s.qrdbClient,
+		CallContext:  s.publicCallContext(),
 		Logger:       s.logger,
 		Retry:        retryNotLeader,
 	})

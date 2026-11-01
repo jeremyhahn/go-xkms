@@ -65,10 +65,29 @@ func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 		}
 	}
 
-	// Outermost on the route chain: binds the request to the ResponseWriter
-	// so writeError can log an internal error it withholds from the client
-	// (go-xkms#1118), matching setupRouter on the legacy router.
-	return s.errorLogMiddleware()(h)
+	// Binds the request to the ResponseWriter so writeError can log an
+	// internal error it withholds from the client (go-xkms#1118), matching
+	// setupRouter on the legacy router.
+	h = s.errorLogMiddleware()(h)
+
+	// Outermost: the configured CORS policy, as on the legacy router, so a
+	// response to an allow-listed browser origin carries its
+	// Access-Control-* headers. The preflight is BindPreflight's.
+	return NewCORSMiddleware(s.cors)(h)
+}
+
+// BindPreflight returns the handler for a CORS preflight (OPTIONS) on a
+// route BindRoute serves. The module mounts it public: a browser sends the
+// preflight without credentials (Fetch standard, CORS-preflight fetch), so
+// go-qrdb's authentication would refuse it before the policy runs. An
+// allow-listed origin is answered 204 with the policy's headers
+// (NewCORSMiddleware); any other preflight, or every preflight when no CORS
+// policy is configured, is refused with ErrCORSPreflightRefused.
+func (s *Server) BindPreflight() http.Handler {
+	refuse := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, ErrCORSPreflightRefused, http.StatusForbidden)
+	})
+	return NewCORSMiddleware(s.cors)(refuse)
 }
 
 // AuthenticateHTTP authenticates a request with xkms's configured

@@ -92,6 +92,8 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 		variants[key] = append(variants[key], spec)
 	}
 
+	preflight := m.lazyPreflightHandler()
+	preflighted := map[string]bool{}
 	for _, key := range order {
 		specs := variants[key]
 		lead := specs[0]
@@ -104,6 +106,14 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 		default:
 			r.Handle(lead.Method, lead.Pattern,
 				qrdbsdk.Permission(lead.Resource+":"+lead.Action), h)
+		}
+
+		// A browser sends the CORS preflight without credentials, so it is
+		// public on every pattern; the CORS policy decides it
+		// (rest.Server.BindPreflight).
+		if !preflighted[lead.Pattern] {
+			preflighted[lead.Pattern] = true
+			r.HandlePublic(http.MethodOptions, lead.Pattern, preflight)
 		}
 	}
 
@@ -147,6 +157,35 @@ func (m *Module) lazyUIHandler() http.HandlerFunc {
 			http.NotFound(w, req)
 			return
 		}
+		if !bound.CompareAndSwap(nil, &h) {
+			h = *bound.Load()
+		}
+		h.ServeHTTP(w, req)
+	}
+}
+
+// lazyPreflightHandler returns the CORS preflight handler every REST route
+// pattern is mounted with (rest.Server.BindPreflight), binding it on first
+// use. It is the same handler for every pattern: the configured CORS policy
+// covers the whole REST surface, as on the legacy router.
+func (m *Module) lazyPreflightHandler() http.HandlerFunc {
+	var bound atomic.Pointer[http.Handler]
+	return func(w http.ResponseWriter, req *http.Request) {
+		if h := bound.Load(); h != nil {
+			(*h).ServeHTTP(w, req)
+			return
+		}
+		srv, err := m.restServer()
+		if err != nil {
+			http.Error(w, "xkms rest surface: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if srv == nil {
+			http.Error(w, "xkms rest surface is not yet available (server still composing)",
+				http.StatusServiceUnavailable)
+			return
+		}
+		h := srv.BindPreflight()
 		if !bound.CompareAndSwap(nil, &h) {
 			h = *bound.Load()
 		}

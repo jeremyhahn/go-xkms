@@ -65,12 +65,17 @@ func newCeremonySurface(t *testing.T) *ceremonySurface {
 		rpOrigin      = "https://localhost"
 	)
 
+	// The ceremonies enroll a passkey for an email the relying party has never
+	// seen, which is open self-service sign-up: the RP refuses it unless the
+	// operator opens it (Config.AllowPublicRegistration, default closed).
+	allowPublicRegistration := true
 	stores := webauthntest.NewStores(t)
 	webauthnSvc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
-			RPID:          rpID,
-			RPDisplayName: rpDisplayName,
-			RPOrigins:     []string{rpOrigin},
+			RPID:                    rpID,
+			RPDisplayName:           rpDisplayName,
+			RPOrigins:               []string{rpOrigin},
+			AllowPublicRegistration: &allowPublicRegistration,
 		},
 		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),

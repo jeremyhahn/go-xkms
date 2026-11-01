@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -94,6 +95,13 @@ type TokenIssuerParams struct {
 	// when set; nil falls back to an in-memory store (sessions then end on
 	// restart).
 	QRDBClient *qrdbsdk.Client
+
+	// CallContext derives the context the refresh store's and the user
+	// resolver's qrdb calls run on. Minting and refresh serve unauthenticated
+	// requests (a ceremony's completion, a refresh-token exchange), so an
+	// embedded node passes its service principal (node.ServiceContext). Nil
+	// runs them on the caller's context.
+	CallContext func(ctx context.Context) (context.Context, error)
 
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
@@ -208,12 +216,12 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		userResolver token.UserResolver
 	)
 	if p.QRDBClient != nil {
-		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV())
+		qs, storeErr := token.NewQRDBRefreshStore(datastore.BindKV(p.QRDBClient.KV(), p.CallContext))
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
 		refreshStore = qs
-		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
+		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users(), auth.WithResolverCallContext(p.CallContext))
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
@@ -356,6 +364,14 @@ type WebAuthnServiceParams struct {
 	// Defaults to DefaultWebAuthnTenant.
 	TenantID string
 
+	// CallContext derives the context the relying party's qrdb user-client
+	// calls run on (webauthn.QRDBUserStoreOptions.CallContext). An embedded
+	// node passes its service principal (node.ServiceContext) for every
+	// ceremony: a public ceremony's request carries no identity go-qrdb's
+	// authorization accepts, and an added passkey's session identity holds
+	// no grant over user records. Nil runs them on the caller's context.
+	CallContext func(ctx context.Context) (context.Context, error)
+
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
@@ -416,9 +432,10 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      p.QRDBClient.Users(),
-		DAOFactory: p.DAOFactory,
-		TenantID:   tenantID,
+		Users:       p.QRDBClient.Users(),
+		DAOFactory:  p.DAOFactory,
+		TenantID:    tenantID,
+		CallContext: p.CallContext,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}

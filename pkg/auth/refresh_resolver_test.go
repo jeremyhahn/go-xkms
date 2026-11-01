@@ -271,6 +271,72 @@ func TestQRDBUserResolver_LookupOutageFailsClosed(t *testing.T) {
 	assert.False(t, errors.Is(err, ErrUserDisabled), "an outage must never read as a resolved, disabled account")
 }
 
+// resolverBoundKey marks a context the resolver's call-context binder
+// derived, standing in for the identity node.ServiceContext attaches.
+type resolverBoundKey struct{}
+
+// errResolverUnbound is what boundResolverUserClient answers a lookup that
+// carries no bound identity, as go-qrdb's authorization does.
+var errResolverUnbound = errors.New("qrdb/auth: unauthenticated: no valid credentials provided")
+
+// boundResolverUserClient refuses a username lookup made on a context the
+// binder did not derive.
+type boundResolverUserClient struct {
+	qrdbtransport.UserClient
+}
+
+func (b *boundResolverUserClient) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error) {
+	if ctx.Value(resolverBoundKey{}) == nil {
+		return nil, errResolverUnbound
+	}
+	return b.UserClient.GetUserByUsername(ctx, tenantID, username)
+}
+
+// TestQRDBUserResolver_CallContextBindsTheLookup pins the refresh-time
+// re-check of main run 74687: the lookup runs on the context the binder
+// derives, and without the binder it is refused.
+func TestQRDBUserResolver_CallContextBindsTheLookup(t *testing.T) {
+	fake := testutil.NewQRDBFakeTransport()
+	_, err := fake.CreateUser(context.Background(), &qrdbtransport.CreateUserRequest{
+		Username: "alice",
+		Email:    "alice@example.com",
+		RoleIDs:  []string{"role-operator"},
+	})
+	require.NoError(t, err)
+	users := &boundResolverUserClient{UserClient: fake}
+	stale := &Identity{
+		Subject:  "alice",
+		Metadata: map[string]string{SubjectKindMetadataKey: SubjectKindUsername},
+	}
+
+	_, err = NewQRDBUserResolver(users).ResolveUser(context.Background(), stale)
+	require.ErrorIs(t, err, errResolverUnbound)
+
+	bound := NewQRDBUserResolver(users, WithResolverCallContext(func(ctx context.Context) (context.Context, error) {
+		return context.WithValue(ctx, resolverBoundKey{}, true), nil
+	}))
+	fresh, err := bound.ResolveUser(context.Background(), stale)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"role-operator"}, fresh.Roles)
+}
+
+// TestQRDBUserResolver_CallContextErrorFailsClosed checks a binder failure
+// refuses the refresh as a lookup error, never as a resolved account.
+func TestQRDBUserResolver_CallContextErrorFailsClosed(t *testing.T) {
+	cause := errors.New("service principal unavailable")
+	resolver := NewQRDBUserResolver(testutil.NewQRDBFakeTransport(),
+		WithResolverCallContext(func(context.Context) (context.Context, error) { return nil, cause }))
+
+	_, err := resolver.ResolveUser(context.Background(), &Identity{
+		Subject:  "alice",
+		Metadata: map[string]string{SubjectKindMetadataKey: SubjectKindUsername},
+	})
+	var lookupErr *RefreshUserLookupError
+	require.ErrorAs(t, err, &lookupErr)
+	assert.ErrorIs(t, err, cause)
+	assert.False(t, errors.Is(err, ErrUserDisabled))
+}
+
 // TestQRDBUserResolver_EnabledAfterDisableIsAcceptedAgain proves the check
 // is a live re-read on every call, not a cached verdict: an account
 // disabled and then re-enabled resolves again.

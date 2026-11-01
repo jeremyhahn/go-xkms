@@ -123,3 +123,12 @@ backends:
 barrier:
   enabled: true
   strategy: "passphrase"
+  # The barrier boots sealed and the node serves its sealed window on
+  # server.host, which must stay 0.0.0.0 so the integration-tests container
+  # can dial xkms-server over the compose network; the node refuses that bind
+  # and xkmsd exits at startup unless this is set. Acceptable only because
+  # this is a throwaway per-run test server on the run's private compose
+  # network, guarding a disposable data volume. Same precedent as
+  # configs/xkmsd-integration.yaml; a deployment binds the window to loopback
+  # or a trusted management interface.
+  sealed_window_allow_remote: true
