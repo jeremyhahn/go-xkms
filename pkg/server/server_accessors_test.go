@@ -53,8 +53,7 @@ func TestSetUIAssets(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
-	require.NoError(t, err)
+	s := newServerForTest(t, cfg)
 
 	require.Nil(t, s.uiAssets)
 	assets := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}}
@@ -69,8 +68,7 @@ func TestSetRESTListener(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
-	require.NoError(t, err)
+	s := newServerForTest(t, cfg)
 	require.Nil(t, s.restListener)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -92,8 +90,7 @@ func TestSetMetricsListener(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
-	require.NoError(t, err)
+	s := newServerForTest(t, cfg)
 	require.Nil(t, s.metricsListener)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -115,8 +112,7 @@ func TestWithAuthenticatorDecorator(t *testing.T) {
 	marker := &namedAuthenticator{name: "decorator-marker"}
 	decorator := func(auth.Authenticator) auth.Authenticator { return marker }
 
-	s, err := New(cfg, WithAuthenticatorDecorator(decorator))
-	require.NoError(t, err)
+	s := newServerForTest(t, cfg, WithAuthenticatorDecorator(decorator))
 	require.Equal(t, "decorator-marker", s.authenticator.Name())
 }
 
@@ -131,8 +127,7 @@ func TestWithExtraModules(t *testing.T) {
 	mod1 := &fakeServiceModule{name: "mod1"}
 	mod2 := &fakeServiceModule{name: "mod2"}
 
-	s, err := New(cfg, WithExtraModules(mod1, mod2))
-	require.NoError(t, err)
+	s := newServerForTest(t, cfg, WithExtraModules(mod1, mod2))
 	require.Len(t, s.extraModules, 2)
 	require.Equal(t, "mod1", s.extraModules[0].Name())
 	require.Equal(t, "mod2", s.extraModules[1].Name())
@@ -154,8 +149,7 @@ func TestEscrowRegistry_NilByDefault(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
-	require.NoError(t, err)
+	s := newServerForTest(t, cfg)
 	require.Nil(t, s.EscrowRegistry())
 }
 
@@ -197,7 +191,6 @@ func TestTenantService_NilWithoutNodeFlip(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
-	require.NoError(t, err)
+	s := newServerForTest(t, cfg)
 	require.Nil(t, s.TenantService())
 }

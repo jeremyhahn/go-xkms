@@ -538,16 +538,25 @@ func (s *Server) SetMetricsListener(l net.Listener) {
 // namespace, and the private key never leaves the device. Returns nil when
 // the XKMSService is unavailable (SSH routes are then not mounted).
 func (s *Server) ensureSSHClient() sdkssh.Client {
+	return s.composeSSHClient(s.xkmsService)
+}
+
+// composeSSHClient builds the SSH client over svc exactly once. New calls it
+// before publishing the XKMSService, so the "ssh" database is created during
+// composition and never on a request path: the first module RPC used to pay
+// for it (go-xkms DS-4012). A nil svc returns nil without consuming the
+// sync.Once, so a call made before composition cannot latch a nil client.
+func (s *Server) composeSSHClient(svc *xkms.XKMSService) sdkssh.Client {
+	if svc == nil {
+		return nil
+	}
 	s.sshOnce.Do(func() {
-		if s.xkmsService == nil {
-			return
-		}
 		daos, err := s.daoFactory(sshrecords.DatabaseName)
 		if err != nil {
 			s.logger.Error("Failed to open the SSH database", slog.Any("error", err))
 			return
 		}
-		client, err := compose.BuildSSHClient(daos, s.xkmsService.LookupBackend, s.xkmsService)
+		client, err := compose.BuildSSHClient(daos, svc.LookupBackend, svc)
 		if err != nil {
 			s.logger.Error("Failed to build SSH client", slog.Any("error", err))
 			return
@@ -908,13 +917,6 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// s.passwordManager) never observes it half-composed.
 		stores := s.composedStores()
 
-		// Published under the lock: with the unified API server enabled the
-		// embedded node serves module RPCs concurrently with this
-		// composition, and the module resolver reads the reference through
-		// XKMSService.
-		s.mu.Lock()
-		s.xkmsService = svc
-		s.mu.Unlock()
 		// The service shares the transports' Authorizer for the decisions
 		// made below the route gate (XKMSService.AuthorizeCaller).
 		// A nil Authorizer means RBAC is disabled, as it does there.
@@ -988,6 +990,21 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 			s.logger.Info("Hardware attestation trust anchors wired",
 				"formats", svc.AttestationFormats())
 		}
+
+		// Compose the SSH subsystem before the service is published: it
+		// creates the "ssh" database, which on a loaded host takes seconds,
+		// and must not run inside the first RPC's deadline.
+		s.composeSSHClient(svc)
+
+		// Published last, under the lock: with the unified API server enabled
+		// the embedded node serves module RPCs concurrently with this
+		// composition, and the module resolver reads the reference through
+		// XKMSService. Until it is set, every module RPC fails fast with
+		// Unavailable ("server still composing") instead of reaching a
+		// service whose authorizer, stores or SSH client are not yet wired.
+		s.mu.Lock()
+		s.xkmsService = svc
+		s.mu.Unlock()
 	}
 
 	return s, nil
