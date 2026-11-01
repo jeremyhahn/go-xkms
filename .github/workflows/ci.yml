@@ -1704,14 +1704,20 @@ jobs:
             (cd web/desktop && go test -race -timeout 60m -v ./...)
           '
 
+      # Every xkey go test below writes a coverage profile, one per tag set
+      # (a file behind a build tag is only measured by the run that compiles
+      # it), and the last command merges them and fails the job below xkey's
+      # Makefile COVERAGE_THRESHOLD (SPEC row xkey-ci-coverage).
       - name: xkey tests (toolchain image)
         run: |
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
             cd xkey
-            go test -race -timeout 60m -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
-            go test -race -timeout 60m -v -tags codec_json ./pkg/oath/...
+            mkdir -p build/coverage
+            go test -race -timeout 60m -v -tags "codec_json tpm_simulator" -covermode=atomic -coverprofile=build/coverage/lifecycle.out ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
+            go test -race -timeout 60m -v -tags codec_json -covermode=atomic -coverprofile=build/coverage/oath.out ./pkg/oath/...
             go test -race -timeout 60m -tags "codec_json tpm_simulator" -count=1 \
+              -covermode=atomic -coverprofile=build/coverage/unit.out \
               ./cmd/e2eprobe ./cmd/xkey ./cmd/xkey/cmd \
               ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
               ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
@@ -1721,10 +1727,14 @@ jobs:
               ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
               ./pkg/serverregistry ./pkg/shellquote ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
               ./pkg/tokenstore ./pkg/usb ./pkg/xhome
-            go test -race -timeout 60m -tags "ble codec_json tpm_simulator" -count=1 ./cmd/xkey/cmd ./pkg/gui/services
+            go test -race -timeout 60m -tags "ble codec_json tpm_simulator" -count=1 \
+              -covermode=atomic -coverprofile=build/coverage/unit-ble.out ./cmd/xkey/cmd ./pkg/gui/services
             go vet -tags ble ./...
-            go test -race -timeout 60m -tags ble ./pkg/phone/ -count=1
-            go test -timeout 60m ./pkg/attestation/... -count=1
+            go test -race -timeout 60m -tags ble -covermode=atomic -coverprofile=build/coverage/phone-ble.out ./pkg/phone/ -count=1
+            go test -timeout 60m -covermode=atomic -coverprofile=build/coverage/attestation.out ./pkg/attestation/... -count=1
+            make coverage-check COVERAGE_PROFILES="build/coverage/lifecycle.out build/coverage/oath.out \
+              build/coverage/unit.out build/coverage/unit-ble.out build/coverage/phone-ble.out \
+              build/coverage/attestation.out"
           '
 
       - name: Tear down

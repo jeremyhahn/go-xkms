@@ -531,6 +531,36 @@ func TestCreateNotifier_CommandWithPlaceholder_Refused(t *testing.T) {
 	}
 }
 
+// TestCreateNotifier_DesktopTypesFallBackWithoutSessionBus verifies that the
+// dialog and passive notify types, outside sudo and with no reachable D-Bus
+// session bus, still start with the log notifier and say why desktop
+// notifications are missing, rather than failing FIDO2 startup.
+func TestCreateNotifier_DesktopTypesFallBackWithoutSessionBus(t *testing.T) {
+	t.Setenv("SUDO_USER", "")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+filepath.Join(t.TempDir(), "no-bus"))
+
+	for _, notifyType := range []string{"dialog", "passive"} {
+		t.Run(notifyType, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+			notifier, err := createNotifier(&FIDO2Config{NotifyType: notifyType}, logger)
+			if err != nil {
+				t.Fatalf("createNotifier(%q): %v", notifyType, err)
+			}
+			if _, ok := notifier.(*notify.MultiNotifier); !ok {
+				t.Fatalf("createNotifier(%q) returned %T, want *notify.MultiNotifier", notifyType, notifier)
+			}
+			if !strings.Contains(logs.String(), "D-Bus unavailable, falling back to log-only") {
+				t.Errorf("createNotifier(%q) logged %q, want the D-Bus fallback warning", notifyType, logs.String())
+			}
+			if err := notifier.Close(); err != nil {
+				t.Errorf("Close() = %v", err)
+			}
+		})
+	}
+}
+
 // withPTYStdin points os.Stdin at a freshly allocated pseudo-terminal for the
 // duration of the test and restores the original stdin afterwards. This lets
 // terminal-gated code paths run in-process on a headless machine without
