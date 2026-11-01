@@ -5,7 +5,8 @@
 #   - the integration and soak jobs run no make docker-build (they take IT_IMAGE by name), so they have no Athens step;
 #   - ci-images takes the schedule guard as the image job does; the CUSTOMIZE jobs that need ci-images skip with it on a busy schedule run;
 #   - CUSTOMIZE jobs static-analysis, build, nested-module-build, nested-module-test, build-raft, race and tpm2-simulator, each in CI Gate's needs and results;
-#   - the image job folds Lint into its stages (timeout 240), and the integration (180) and soak (210) jobs keep longer bounds;
+#   - the image job folds Lint into its stages (timeout 240), and the integration (90 per shard) and soak (210) jobs keep longer bounds;
+#   - the integration job is a fail-fast-off matrix over the Makefile's IT_SHARDS (#1870), each shard its own IT_PROJECT running make integration-test-shard;
 #   - scripts/in-toolchain-image.sh v4 already held the /var/tmp scratch volume (#1733) and keeps its CUSTOMIZE blocks.
 # v1.29.5 (Company Agent ruling 262(a), 2026-10-30): one change, the
 # GO_BUILD_PROXY separator. Each `make docker-build` passes
@@ -1170,10 +1171,21 @@ jobs:
     needs: schedule-guard
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
-    timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
+    # >>> CUSTOMIZE (go-xkms, #1870)
+    # The suite runs as the Makefile's IT_SHARDS, one job each, so a slow
+    # shard bounds the job instead of the sum of every suite. Each shard has
+    # its own IT_PROJECT, so two shards on one runner host never share a
+    # compose stack, an image tag or a teardown. CI Gate's `needs.integration`
+    # is the result of the whole matrix: one red shard fails it.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    # <<< CUSTOMIZE
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
       # >>> CUSTOMIZE (go-xkms)
       # The suite also runs against a live xkmsd in compose.
       XKMS_COMPOSE_SERVER: "1"
@@ -1234,8 +1246,8 @@ jobs:
             if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
           done
 
-      - name: make integration-test (integration image)
-        run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
+      - name: make integration-test-shard (integration image)
+        run: make integration-test-shard IT_SHARD="${{ matrix.shard }}" MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
         if: always()
