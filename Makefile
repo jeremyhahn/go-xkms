@@ -4345,8 +4345,9 @@ GOSEC_GROUP_DIRS     := $(foreach g,$(GOSEC_GROUPS),$(GOSEC_GROUP_$(g)))
 # CPU count, not the container's quota: the CI image sets GOMAXPROCS to the
 # quota (scripts/in-toolchain-image.sh), and the bound follows it. The
 # target first compiles that export data once, in one go list under the -p
-# bound, so the loads read it from the build cache: a cold cache otherwise
-# peaked at 8.7 GiB at a bound of 6, against 2 GiB warm. The go list takes no
+# bound, so the loads read it from the build cache. Cold, at GOMAXPROCS=6
+# and -p=6, the whole make tree then peaks at 1.6 GiB (during the go list)
+# where the loads alone peaked at 8.7 GiB; warm, 2 GiB. The go list takes no
 # -tags, because gosec loads each package's files without them.
 GOSEC_CONCURRENCY ?= $(or $(GOMAXPROCS),$(shell nproc))
 
