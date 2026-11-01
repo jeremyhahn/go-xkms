@@ -15,6 +15,7 @@ package webauthn
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"strconv"
@@ -158,6 +159,10 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 // kept beside it — the display name in an xkms-owned KV blob, because qrdb had
 // no Name field — which made this store a second source of truth for an
 // identity qrdb already owned. Both now live in the record itself.
+//
+// The record's Username is its decimal qrdb user ID. A failure to assign it
+// is a *QRDBUsernameAssignError, after which the half-created record has been
+// deleted unless its RollbackErr says otherwise.
 func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (User, error) {
 	if email == "" {
 		return nil, &QRDBAdapterConfigError{Field: "email"}
@@ -166,8 +171,13 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 	if err != nil {
 		return nil, err
 	}
+	// qrdb's Username is the certificate CN, so it carries the qrdb user ID,
+	// never the email (owner ruling 166, go-xkms#1468): the email stays in
+	// Email, the tenant-unique login key. qrdb assigns the ID at create and
+	// refuses an empty Username, so the record is created under a random,
+	// PII-free placeholder and then renamed to its ID.
 	u, err := s.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
-		Username: email,
+		Username: pendingUsernamePrefix + rand.Text(),
 		Email:    email,
 		Name:     displayName,
 		TenantID: s.tenantID,
@@ -175,7 +185,20 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 	if err != nil {
 		return nil, WrapError("qrdb create user", err)
 	}
-	return s.materialize(ctx, u)
+	renamed, err := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{
+		ID:       u.ID,
+		Username: strconv.FormatUint(u.ID, 10),
+	})
+	if err != nil {
+		// A record left under its placeholder would hold the email as a
+		// login key with no usable Username, so it is removed.
+		return nil, &QRDBUsernameAssignError{
+			UserID:      u.ID,
+			Err:         err,
+			RollbackErr: s.users.DeleteUser(ctx, u.ID),
+		}
+	}
+	return s.materialize(ctx, renamed)
 }
 
 // Save stores per-user state. xkms's User abstraction carries in-memory
@@ -380,6 +403,40 @@ func (e *InvalidUserHandleError) Error() string {
 		return "webauthn: invalid user handle"
 	}
 	return "webauthn: invalid user handle: expected 8 bytes, got " + strconv.Itoa(e.Length)
+}
+
+// pendingUsernamePrefix marks the placeholder Username a WebAuthn user is
+// created under before Create renames it to its qrdb user ID.
+const pendingUsernamePrefix = "webauthn-pending-"
+
+// QRDBUsernameAssignError is returned by the qrdb user store's Create when
+// the new record could not be renamed to its qrdb user ID. The record is
+// deleted on that failure; RollbackErr is the deletion's error, nil when the
+// record is gone.
+type QRDBUsernameAssignError struct {
+	// UserID is the qrdb user ID of the record that was created.
+	UserID uint64
+	// Err is the qrdb error from the rename.
+	Err error
+	// RollbackErr is the qrdb error from deleting the record, or nil.
+	RollbackErr error
+}
+
+// Error implements error.
+func (e *QRDBUsernameAssignError) Error() string {
+	msg := "webauthn: qrdb adapter: assign username to user " + strconv.FormatUint(e.UserID, 10) + ": " + e.Err.Error()
+	if e.RollbackErr != nil {
+		msg += "; delete of the created user failed: " + e.RollbackErr.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the rename error and, when set, the rollback error.
+func (e *QRDBUsernameAssignError) Unwrap() []error {
+	if e.RollbackErr == nil {
+		return []error{e.Err}
+	}
+	return []error{e.Err, e.RollbackErr}
 }
 
 // Compile-time interface assertion.

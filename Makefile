@@ -469,17 +469,23 @@ TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost
 # `make coverage` (#1587): above that job's slowest green run, 70m, and below
 # its 140m timeout-minutes, so a hung test fails with a goroutine dump first.
 UNIT_TEST_TIMEOUT ?= 75m
-TEST_FLAGS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS))"
+# Unit-test builds carry no DWARF (m1261): the race detector, coverage and
+# panic traces all read the runtime's pclntab, never DWARF, and dropping it cuts
+# the race build cache and every linked test binary by about a fifth (measured
+# on pkg/server's graph: 1.6 -> 1.3 GB of GOCACHE, 156 -> 130 MB per binary).
+# That build cache is most of what the Unit Tests job writes to disk.
+TEST_BUILD_FLAGS := -gcflags=all=-dwarf=false -ldflags=-w
+TEST_FLAGS := -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -tags="$(call go_tags,$(TEST_TAGS))"
 # FIPS variant. The `fips` tag has to join the SAME -tags list rather than
 # arrive as a second flag: go test keeps only the last -tags it is given, so
 # appending a flag would silently drop the codec tags above.
-TEST_FLAGS_FIPS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS) fips)"
+TEST_FLAGS_FIPS := -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -tags="$(call go_tags,$(TEST_TAGS) fips)"
 # !frost stub variant: TEST_TAGS minus frost, so the *_frost_stub_test.go
 # files (pkg/api/rest, pkg/api/mcp, pkg/api/grpc, pkg/server) build and run
 # under the "FROST not compiled in" configuration instead of being silently
 # excluded by every other test lane, which always carries frost (go-xkms#1249).
 TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
-TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
+TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 # Where `make agsim` puts the arduino-generic host simulators. Exported so every
 # go test the Makefile runs finds them (sdk/go/agsim reads AGSIM_DIR).
@@ -721,6 +727,11 @@ build-desktop: build-web
 ## test-web: Type-check and unit-test the SDK, svelte-auth, and SPA
 ## Runs under coverage so the 90% thresholds in each vitest config gate the
 ## build — a plain `vitest run` reports no coverage and enforces nothing.
+## The four node_modules trees (575 MB together) are removed once every project
+## passes (m1261): `npm ci` deletes and reinstalls them on every run anyway, so
+## keeping them only adds to the disk footprint of the targets that follow.
+## They go together because svelte-auth and web/app link the SDK with file:
+## dependencies that resolve through its node_modules.
 test-web:
 ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping test-web$(RESET)"
@@ -733,6 +744,7 @@ else
 	@cd $(WEB_APP_DIR) && npm ci --silent && npm run check && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing the xKey GUI frontend...$(RESET)"
 	@cd $(XKEY_FRONTEND_DIR) && npm ci --silent && npm run check -- --fail-on-warnings && npm test
+	@rm -rf $(SDK_TS_DIR)/node_modules $(SVELTE_AUTH_DIR)/node_modules $(WEB_APP_DIR)/node_modules $(XKEY_FRONTEND_DIR)/node_modules
 	@echo "$(GREEN)✓ web UI tests passed$(RESET)"
 endif
 
@@ -1092,6 +1104,7 @@ test-scripts:
 	@bash test/scripts/changelog-assemble.test.sh
 	@bash test/scripts/retry.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
+	@bash test/scripts/go-test-each.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
 	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/ensure-server-ca.test.sh
@@ -1134,6 +1147,12 @@ test-buildgates:
 #   yubikey, smartcardhsm   - tests that need physical hardware to exercise
 UNIT_TEST_SCOPE := ./pkg/... ./cmd/... ./sdk/...
 UNIT_TEST_EXCLUDE := (pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)
+# test-go runs one `go test` per package through scripts/go-test-each.sh, so
+# each package's WORK directory is removed when it finishes instead of holding
+# every compiled archive until the whole run ends (3.5 GB on a cold cache,
+# m1261). UNIT_TEST_JOBS packages run at once with one build action each (-p=1),
+# the same two concurrent actions CI's GOFLAGS=-p=2 allowed the single run.
+UNIT_TEST_JOBS ?= 2
 
 ## unit-test-pkgs: Print test-go's package list (batch.yml's race scope)
 unit-test-pkgs:
@@ -1143,7 +1162,8 @@ test-go: check-insecure-tls agsim
 	@echo "$(CYAN)$(BOLD)→ Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
-	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
+	GO=$(GO) scripts/go-test-each.sh --jobs $(UNIT_TEST_JOBS) --coverprofile $(COVERAGE_FILE) \
+		$(TEST_FLAGS) -p=1 -covermode=atomic -- \
 		$$(go list -e $(UNIT_TEST_SCOPE) 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
@@ -1162,7 +1182,7 @@ test-go: check-insecure-tls agsim
 ## pkcs11 (CGO), so without this lane those tests never run.
 test-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 vault key-factor tests...$(RESET)"
-	@$(GOTEST) -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS) pkcs11)" ./pkg/vaulttoken/...
+	@$(GOTEST) -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -tags="$(call go_tags,$(TEST_TAGS) pkcs11)" ./pkg/vaulttoken/...
 	@echo "$(GREEN)✓ PKCS#11 vault key-factor tests passed$(RESET)"
 
 .PHONY: test-nofrost
