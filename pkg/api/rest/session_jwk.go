@@ -86,9 +86,11 @@ func (e *SessionSigningKeyTypeError) Error() string {
 // the backend.
 //
 // opts must be the SessionOptions the surface was built with (nil selects
-// the defaults): the JWK's "kid" (RFC 7517 §4.5) is the signing CN they
-// resolve to, which is the kid BuildTokenIssuer stamps on every token's JWS
-// header. The key is read, never generated: before the surface has
+// the defaults), so the key read is the one under the signing CN they
+// resolve to. The JWK's "kid" (RFC 7517 §4.5) is jwk.SPKIKeyID of that key,
+// the kid BuildTokenIssuer stamps on every token's JWS header (RFC 7515
+// §4.1.4): the identifier a JWKS publishes the key under (go-xkms#1724
+// c181516). The key is read, never generated: before the surface has
 // provisioned it the call fails with *SessionSigningKeyMissingError.
 func SessionSigningJWK(ctx context.Context, svc *xkms.XKMSService, opts *SessionOptions) (*jwk.JWK, error) {
 	if svc == nil {
@@ -131,8 +133,15 @@ func SessionSigningJWK(ctx context.Context, svc *xkms.XKMSService, opts *Session
 	if err != nil {
 		return nil, &SessionSigningKeyTypeError{CN: cn, KeyType: "an invalid ECDSA P-256 point"}
 	}
+	// RFC 7517 §4.5: the kid BuildTokenIssuer stamps (RFC 7515 §4.1.4),
+	// derived from the same public key, so the token's kid header selects
+	// this key in a JWKS (go-xkms#1724 c181516).
+	kid, err := jwk.SPKIKeyID(ecPub)
+	if err != nil {
+		return nil, &SessionSigningKeyExportError{CN: cn, Backend: backendName, Err: err}
+	}
 	key.Use = "sig"                // RFC 7517 §4.2
 	key.Alg = sessionSigningJWKAlg // RFC 7517 §4.4, RFC 7518 §3.4
-	key.Kid = cn                   // RFC 7517 §4.5: the kid BuildTokenIssuer stamps
+	key.Kid = kid
 	return key, nil
 }

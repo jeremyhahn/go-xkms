@@ -20,6 +20,9 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"io"
 	"math/big"
@@ -30,6 +33,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -73,12 +78,17 @@ func backendWithSigner(pub crypto.PublicKey) *xkmsmocks.MockKeyStore {
 
 func TestSessionSigningJWK_VerifiesTheHostSurfaceTokens(t *testing.T) {
 	cases := []struct {
-		name    string
-		opts    *SessionOptions
-		wantKid string
+		name          string
+		opts          *SessionOptions
+		wantAccessTyp string
 	}{
-		{name: "default signing CN", opts: nil, wantKid: DefaultJWTSigningKeyCN},
-		{name: "custom signing CN", opts: &SessionOptions{SigningKeyCN: "composer-session-key"}, wantKid: "composer-session-key"},
+		{name: "default signing CN", opts: nil, wantAccessTyp: "JWT"},
+		{name: "custom signing CN", opts: &SessionOptions{SigningKeyCN: "composer-session-key"}, wantAccessTyp: "JWT"},
+		{
+			name:          "RFC 9068 access tokens",
+			opts:          &SessionOptions{SigningKeyCN: "composer-session-key", AccessTokenType: token.ATJWTType},
+			wantAccessTyp: "at+jwt",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,7 +103,6 @@ func TestSessionSigningJWK_VerifiesTheHostSurfaceTokens(t *testing.T) {
 
 			key, err := SessionSigningJWK(ctx, svc, tc.opts)
 			require.NoError(t, err)
-			assert.Equal(t, tc.wantKid, key.Kid)
 			assert.Equal(t, "EC", key.Kty)
 			assert.Equal(t, "P-256", key.Crv)
 			assert.Equal(t, "ES256", key.Alg)
@@ -102,12 +111,32 @@ func TestSessionSigningJWK_VerifiesTheHostSurfaceTokens(t *testing.T) {
 
 			pub, err := key.ToPublicKey()
 			require.NoError(t, err)
-			parsed, err := jwt.Parse(pair.AccessToken, func(tok *jwt.Token) (any, error) {
-				assert.Equal(t, key.Kid, tok.Header["kid"], "the JWK kid must select the token's key")
+
+			// c181516: the kid is base64url(SHA-256(SPKI DER)) of the
+			// published key, the identifier a JWKS publishes it under.
+			spki, err := x509.MarshalPKIXPublicKey(pub)
+			require.NoError(t, err)
+			sum := sha256.Sum256(spki)
+			assert.Equal(t, base64.RawURLEncoding.EncodeToString(sum[:]), key.Kid)
+
+			parsed, err := jwt.Parse(pair.AccessToken, func(*jwt.Token) (any, error) {
 				return pub, nil
 			}, jwt.WithValidMethods([]string{"ES256"}))
 			require.NoError(t, err)
 			assert.True(t, parsed.Valid)
+			assert.Equal(t, key.Kid, parsed.Header["kid"], "the JWK kid must select the token's key")
+			assert.Equal(t, tc.wantAccessTyp, parsed.Header["typ"])
+
+			// The refresh token keeps the default header either way.
+			refresh, err := jwt.Parse(pair.RefreshToken, func(*jwt.Token) (any, error) {
+				return pub, nil
+			}, jwt.WithValidMethods([]string{"ES256"}))
+			require.NoError(t, err)
+			assert.Equal(t, key.Kid, refresh.Header["kid"])
+			assert.Equal(t, "JWT", refresh.Header["typ"])
+			claims, ok := refresh.Claims.(jwt.MapClaims)
+			require.True(t, ok)
+			assert.Equal(t, auth.RefreshTokenType, claims["typ"])
 
 			other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			require.NoError(t, err)
@@ -166,6 +195,32 @@ func TestSessionSigningJWK_SignerWithoutPublicKey(t *testing.T) {
 	var target *SessionSigningKeyExportError
 	require.ErrorAs(t, err, &target)
 	assert.ErrorIs(t, err, ErrSessionSigningKeyNoPublicKey)
+}
+
+// TestBuildTokenIssuer_KeyIDUnderivable pins that the issuer refuses a
+// signing key whose kid cannot be derived, rather than stamping no kid or
+// one that matches no published key.
+func TestBuildTokenIssuer_KeyIDUnderivable(t *testing.T) {
+	cases := []struct {
+		name string
+		pub  crypto.PublicKey
+	}{
+		{name: "no public key", pub: nil},
+		{name: "unsupported public key type", pub: struct{}{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
+				Backend:     backendWithSigner(tc.pub),
+				BackendName: "test",
+			})
+			assert.Nil(t, issuer)
+			var backendErr *TokenIssuerBackendError
+			require.ErrorAs(t, err, &backendErr)
+			var kidErr *jwk.KeyIDError
+			assert.ErrorAs(t, err, &kidErr)
+		})
+	}
 }
 
 func TestSessionSigningJWK_UnsupportedKeyType(t *testing.T) {
