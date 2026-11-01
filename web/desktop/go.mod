@@ -240,7 +240,7 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	github.com/zmap/zcrypto v0.0.0-20260906180147-3ed30b1e9340 // indirect
-	github.com/zmap/zlint/v3 v3.7.2 // indirect
+	github.com/zmap/zlint/v3 v3.7.3 // indirect
 	gitlab.com/yawning/secp256k1-voi v0.0.0-20230925100816-f2616030848b // indirect
 	go.etcd.io/etcd/api/v3 v3.7.2 // indirect
 	go.mongodb.org/mongo-driver v1.17.10 // indirect
