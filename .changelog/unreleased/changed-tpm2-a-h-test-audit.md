@@ -1,0 +1,1 @@
+Tests: the `pkg/tpm2` unit tests in files `a*` to `h*` lose 240 tests (3 files deleted whole) that covered no statement the kept tests miss or repeated a kept test's path; every TPM policy, PCR, attestation, EK/IDevID, tamper and replay assertion with no other test stays (#1794).
