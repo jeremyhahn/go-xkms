@@ -173,3 +173,24 @@ func TestProductionConfigsKeepSealedWindowLocal(t *testing.T) {
 		})
 	}
 }
+
+// TestWebAuthnBrowserConfigValidates loads the WebAuthn browser suite's xkmsd
+// config through the loader xkmsd uses: Playwright's webServer cannot start
+// xkmsd when it fails validation (main run 73740: TLS disabled on a serving
+// node, config.go Validate).
+func TestWebAuthnBrowserConfigValidates(t *testing.T) {
+	path := filepath.Join("..", "..", "test", "integration", "webauthn-browser", "config.yaml")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(%s) failed, so xkmsd could not start with it: %v", path, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+	if !cfg.TLS.Enabled {
+		t.Fatal("tls.enabled = false; the REST transport is TLS-only")
+	}
+	if gaps := cfg.ComplianceGaps(); len(gaps) > 0 {
+		t.Fatalf("ComplianceGaps() = %q, want none; xkmsd refuses to start with an insecure configuration", gaps)
+	}
+}

@@ -789,6 +789,9 @@ jobs:
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # The release runner keeps the newest two generations of each image (#1789).
+          scripts/ci-registry.sh retain toolchain
+          scripts/ci-registry.sh retain it
           ref=$(scripts/ci-registry.sh publish toolchain)
           echo "toolchain_ref=$ref" >> "$GITHUB_OUTPUT"
           ref=$(scripts/ci-registry.sh publish it)
