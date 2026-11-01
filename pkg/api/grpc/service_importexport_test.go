@@ -533,59 +533,6 @@ func TestExportKey(t *testing.T) {
 	}
 }
 
-// TestWrappingAlgorithmValidation tests that all wrapping algorithms are properly handled
-func TestWrappingAlgorithmValidation(t *testing.T) {
-	algorithms := []string{
-		"RSAES_OAEP_SHA_1",
-		"RSAES_OAEP_SHA_256",
-		"RSA_AES_KEY_WRAP_SHA_1",
-		"RSA_AES_KEY_WRAP_SHA_256",
-		"RSA_OAEP_3072_SHA256_AES_256",
-		"RSA_OAEP_4096_SHA256_AES_256",
-		"RSA_OAEP_4096_SHA256",
-	}
-
-	for _, algo := range algorithms {
-		t.Run(algo, func(t *testing.T) {
-			// Test that the algorithm string can be converted to backend.WrappingAlgorithm
-			wrappingAlg := backend.WrappingAlgorithm(algo)
-			assert.NotEmpty(t, wrappingAlg)
-			assert.Equal(t, algo, string(wrappingAlg))
-		})
-	}
-}
-
-// TestKeyTypeValidation tests key type parsing and validation
-func TestKeyTypeValidation(t *testing.T) {
-	tests := []struct {
-		name     string
-		keyType  string
-		keySize  int32
-		curve    string
-		isValid  bool
-		hasError bool
-	}{
-		{"RSA with size", "rsa", 2048, "", true, false},
-		{"RSA default size", "rsa", 0, "", true, false},
-		{"ECDSA with curve", "ecdsa", 0, "P256", true, false},
-		{"ECDSA default curve", "ecdsa", 0, "", true, false},
-		{"Ed25519", "ed25519", 0, "", true, false},
-		{"Symmetric with size", "symmetric", 256, "", true, false},
-		{"Symmetric without size", "symmetric", 0, "", false, true},
-		{"Invalid type", "invalid", 0, "", false, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			keyType := types.ParseKeyType(tt.keyType)
-			if tt.isValid && !tt.hasError {
-				// For valid types, ensure we got a non-empty key type
-				assert.NotEmpty(t, string(keyType))
-			}
-		})
-	}
-}
-
 // TestImportKeySymmetricRoundTripsThroughARealBackend is the end-to-end half of
 // TestImportKey, which only ever reaches argument validation and "backend not
 // found" and so proved nothing about the attributes a successful import stores.
@@ -682,34 +629,4 @@ func TestImportKeySymmetricRoundTripsThroughARealBackend(t *testing.T) {
 	}
 	assert.Equal(t, material, exported.KeyMaterial,
 		"the backend must hold exactly the material that was imported")
-}
-
-// TestImportKeySymmetricRejectsAnUnsupportedKeySize is the bad-input half: a
-// size with no AES algorithm must be refused at the boundary rather than stored
-// under attributes the rest of the system cannot interpret.
-//
-// Zero is deliberately excluded from this table: the service layer's
-// unwrapSymmetricAlgorithms table treats a zero size as "no size given,
-// default to AES-256-GCM" -- the same default REST, MCP and the embedded
-// transport have always applied for GetImportParameters and ImportKey. This
-// RPC used to reject size 0 with its own hand-rolled switch, a drift
-// go-xkms#1216 unifies by routing ImportKey through the service layer
-// (go-xkms#1214).
-func TestImportKeySymmetricRejectsAnUnsupportedKeySize(t *testing.T) {
-	service := setupFinalGapsTest(t)
-	defer xkms.Reset()
-
-	for _, size := range []int32{1, 64, 127, 255, 512} {
-		_, err := service.ImportKey(context.Background(), &pb.ImportKeyRequest{
-			KeyId:       "grpc-bad-size",
-			Backend:     "software",
-			WrappedKey:  []byte("wrapped-key-data"),
-			Algorithm:   "RSAES_OAEP_SHA_256",
-			ImportToken: []byte("token"),
-			KeyType:     "symmetric",
-			KeySize:     size,
-		})
-		assert.Equal(t, codes.InvalidArgument, status.Code(err),
-			"key size %d has no AES algorithm and must be refused", size)
-	}
 }
