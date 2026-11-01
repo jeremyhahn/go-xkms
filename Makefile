@@ -3119,7 +3119,7 @@ integration-test-cli:
 	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
 	@cd $(API_TEST_DIR) && $(call compose,api) down -v >/dev/null 2>&1 || true
 	@cd $(API_TEST_DIR) && $(call compose,api) build
-	@cd $(API_TEST_DIR) && trap '$(call compose,api) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd $(API_TEST_DIR) && trap 'rc=$$?; [ $$rc -eq 0 ] || $(call compose,api) logs --no-color xkms-server; $(call compose,api) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,api) run --rm integration-tests
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
