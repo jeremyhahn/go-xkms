@@ -1,0 +1,1 @@
+- The WebAuthn browser suite's xkmsd raises the per-client login rate (`auth.session.login_rate_per_min: 6000`), as `test/integration/xkmsdtest` does: the suite runs every ceremony from one address within seconds, and the production default of 10 per minute answered most of its registrations `429 Rate limit exceeded`. The limiter stays on (#1720).
