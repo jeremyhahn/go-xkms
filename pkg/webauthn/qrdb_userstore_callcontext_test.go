@@ -188,3 +188,45 @@ func TestQRDBUserStore_CallContextErrorIsTyped(t *testing.T) {
 		}
 	}
 }
+
+// TestPublicRegistrationDisabled_BoundStoreRefusesUnknownUser pins the
+// security scope of the main run 74687 fix: binding the user calls to the
+// service principal lets the ceremony read and write user records, but it
+// never opens sign-up. With allow_public_registration false, an unknown
+// email's registration begin is still refused, and no account is created.
+func TestPublicRegistrationDisabled_BoundStoreRefusesUnknownUser(t *testing.T) {
+	ctx := context.Background()
+	closed := false
+	cfg := validTestConfig()
+	cfg.AllowPublicRegistration = &closed
+
+	users, creds, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
+		Users:       &boundUserClient{fakeUserClient: newFakeUserClient()},
+		DAOFactory:  newTestDAOFactory(),
+		TenantID:    "system",
+		CallContext: bindForTest,
+	})
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	svc, err := NewService(ServiceParams{
+		Config:          cfg,
+		UserStore:       users,
+		SessionStore:    NewMemorySessionStore(),
+		CredentialStore: creds,
+	})
+	if err != nil {
+		t.Fatalf("service: %v", err)
+	}
+
+	options, sessionID, err := svc.BeginRegistration(ctx, "stranger@example.com", "Stranger")
+	if !errors.Is(err, ErrRegistrationRefused) {
+		t.Fatalf("closed registration over a bound store: want ErrRegistrationRefused, got %v", err)
+	}
+	if options != nil || sessionID != "" {
+		t.Fatalf("a refused begin must return no options and no session, got %v %q", options, sessionID)
+	}
+	if _, err := users.GetByEmail(ctx, "stranger@example.com"); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("a refused registration must not leave an account behind, got %v", err)
+	}
+}
