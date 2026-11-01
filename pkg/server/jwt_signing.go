@@ -53,17 +53,18 @@ func (s *Server) initializeTokenIssuer() error {
 	accessTTL, refreshTTL := s.sessionTTLs()
 
 	issuer, err := rest.BuildTokenIssuer(s.ctx, rest.TokenIssuerParams{
-		Backend:      backend,
-		BackendName:  s.defaultBackendName,
-		SigningKeyCN: cn,
-		IssuerName:   issuerName,
-		Audience:     audience,
-		AccessTTL:    accessTTL,
-		RefreshTTL:   refreshTTL,
-		QRDBClient:   s.qrdbClient,
-		CallContext:  s.publicCallContext(),
-		Logger:       s.logger,
-		Retry:        retryNotLeader,
+		Backend:         backend,
+		BackendName:     s.defaultBackendName,
+		SigningKeyCN:    cn,
+		IssuerName:      issuerName,
+		Audience:        audience,
+		AccessTTL:       accessTTL,
+		RefreshTTL:      refreshTTL,
+		AccessTokenType: s.accessTokenType(),
+		QRDBClient:      s.qrdbClient,
+		CallContext:     s.publicCallContext(),
+		Logger:          s.logger,
+		Retry:           retryNotLeader,
 	})
 	if err != nil {
 		// A signing-key backend failure (provisioning or signer
@@ -115,4 +116,14 @@ func (s *Server) sessionTTLs() (access, refresh time.Duration) {
 		}
 	}
 	return access, refresh
+}
+
+// accessTokenType returns the configured access token typ header
+// (auth.session.access_token_type, validated as "" or "at+jwt"); empty keeps
+// the issuer's "JWT" default.
+func (s *Server) accessTokenType() string {
+	if s.config.Auth.Session == nil {
+		return ""
+	}
+	return s.config.Auth.Session.AccessTokenType
 }

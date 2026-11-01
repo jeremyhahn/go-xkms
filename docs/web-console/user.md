@@ -69,13 +69,22 @@ auth:
     access_token_ttl: "15m"
     refresh_token_ttl: "8h"
     login_rate_per_min: 10   # 0 selects 10
+    access_token_type: ""    # "at+jwt" (RFC 9068 §2.1) or empty for "JWT"
 ```
 
-Source: `UIConfig` (`pkg/config/config.go:612`), `CORSConfig`
-(`pkg/config/config.go:594`), `PIVLoginConfig` (`pkg/config/config.go:451`),
-`SessionConfig` (`pkg/config/config.go:479`). Startup refuses
+Source: `UIConfig` (`pkg/config/config.go:624`), `CORSConfig`
+(`pkg/config/config.go:606`), `PIVLoginConfig` (`pkg/config/config.go:444`),
+`SessionConfig` (`pkg/config/config.go:473`). Startup refuses
 `attestation_roots` together with `allow_unattested`
-(`pkg/config/config.go:1651`).
+(`pkg/config/config.go:1671`).
+
+`access_token_type` sets the `typ` header (RFC 7515 §4.1.9) of the access
+tokens the console's login mints. `at+jwt` marks them as OAuth 2.0 JWT access
+tokens (RFC 9068 §2.1), which a resource server that follows RFC 9068 §4
+requires. Empty keeps `JWT`. Refresh tokens keep `JWT` either way. Any other
+value stops startup with `*config.SessionConfigError`
+(`pkg/config/config.go:1689`). Every token's `kid` header is the SPKI key ID
+of the signing key ([WebAuthn API](../webauthn/api.md#publishing-the-session-signing-key-jwks)).
 
 ## If the daemon refuses to start
 

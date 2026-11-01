@@ -36,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -90,6 +91,11 @@ type TokenIssuerParams struct {
 	// RefreshTTL is the refresh token lifetime. Zero selects
 	// token.DefaultRefreshTTL.
 	RefreshTTL time.Duration
+
+	// AccessTokenType is the access token's typ header (RFC 7515 §4.1.9).
+	// token.ATJWTType selects RFC 9068 §2.1 access tokens; empty keeps
+	// "JWT". Refresh tokens are unaffected.
+	AccessTokenType string
 
 	// QRDBClient persists refresh-token records on the qrdb identity plane
 	// when set; nil falls back to an in-memory store (sessions then end on
@@ -161,21 +167,8 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		return nil, &TokenIssuerBackendError{Backend: p.BackendName, Err: ErrTokenIssuerBackendRequired}
 	}
 
-	cn := p.SigningKeyCN
-	if cn == "" {
-		cn = DefaultJWTSigningKeyCN
-	}
-
-	attrs := &types.KeyAttributes{
-		CN:                 cn,
-		Backend:            p.BackendName,
-		StoreType:          p.Backend.Type(),
-		KeyType:            types.KeyTypeSigning,
-		KeyAlgorithm:       x509.ECDSA,
-		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		Hash:               stdcrypto.SHA256,
-		ECCAttributes:      &types.ECCAttributes{Curve: elliptic.P256()},
-	}
+	cn := sessionSigningKeyCN(p.SigningKeyCN)
+	attrs := sessionSigningKeyAttributes(cn, p.BackendName, p.Backend.Type())
 
 	// Reuse the key across restarts; generate it on first boot.
 	provision := func() error {
@@ -235,21 +228,58 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		refreshTTL = token.DefaultRefreshTTL
 	}
 
+	// The kid is derived from the Signer's public key exactly as
+	// SessionSigningJWK derives the published JWK's kid, so a verifier
+	// selects the published key by the token's kid header (RFC 7515
+	// §4.1.4, RFC 7517 §4.5; go-xkms#1724 c181516).
+	kid, err := jwk.SPKIKeyID(signer.Public())
+	if err != nil {
+		return nil, &TokenIssuerBackendError{Backend: p.BackendName, Err: err}
+	}
+
 	issuer, err := token.NewIssuer(&token.Config{
-		Signer:        signer,
-		KeyAttributes: attrs,
-		KeyID:         cn,
-		Issuer:        p.IssuerName,
-		Audience:      p.Audience,
-		AccessTTL:     accessTTL,
-		RefreshTTL:    refreshTTL,
-		RefreshStore:  refreshStore,
-		UserResolver:  userResolver,
+		Signer:          signer,
+		KeyAttributes:   attrs,
+		KeyID:           kid,
+		AccessTokenType: p.AccessTokenType,
+		Issuer:          p.IssuerName,
+		Audience:        p.Audience,
+		AccessTTL:       accessTTL,
+		RefreshTTL:      refreshTTL,
+		RefreshStore:    refreshStore,
+		UserResolver:    userResolver,
 	})
 	if err != nil {
 		return nil, &TokenIssuerConfigError{Err: err}
 	}
 	return issuer, nil
+}
+
+// sessionSigningKeyCN resolves the session signing key's CN, which is also
+// the kid the issuer stamps on every token: empty selects
+// DefaultJWTSigningKeyCN.
+func sessionSigningKeyCN(cn string) string {
+	if cn == "" {
+		return DefaultJWTSigningKeyCN
+	}
+	return cn
+}
+
+// sessionSigningKeyAttributes describes the ES256 (ECDSA P-256, SHA-256)
+// session signing key under cn on the named backend. BuildTokenIssuer signs
+// with the key these attributes select and SessionSigningJWK publishes its
+// public half, so both always address the same key.
+func sessionSigningKeyAttributes(cn, backendName string, storeType types.StoreType) *types.KeyAttributes {
+	return &types.KeyAttributes{
+		CN:                 cn,
+		Backend:            backendName,
+		StoreType:          storeType,
+		KeyType:            types.KeyTypeSigning,
+		KeyAlgorithm:       x509.ECDSA,
+		SignatureAlgorithm: x509.ECDSAWithSHA256,
+		Hash:               stdcrypto.SHA256,
+		ECCAttributes:      &types.ECCAttributes{Curve: elliptic.P256()},
+	}
 }
 
 // Compile-time check: pkg/auth's QRDBUserResolver cannot declare this
@@ -624,6 +654,11 @@ type SessionOptions struct {
 	// token.DefaultRefreshTTL.
 	RefreshTTL time.Duration
 
+	// AccessTokenType is the access token's typ header (RFC 7515 §4.1.9).
+	// token.ATJWTType selects RFC 9068 §2.1 access tokens; empty keeps
+	// "JWT". Refresh tokens are unaffected.
+	AccessTokenType string
+
 	// LoginRatePerMin caps per-client login/refresh attempts per minute.
 	// Zero uses the default (10), matching xkmsd.
 	LoginRatePerMin int
@@ -762,15 +797,16 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 	// own lenient "issuer stays nil" behavior.
 	if backend, err := hc.XKMSService.LookupDefaultBackend(); err == nil {
 		issuer, tiErr := BuildTokenIssuer(ctx, TokenIssuerParams{
-			Backend:      backend,
-			BackendName:  hc.XKMSService.DefaultBackendName(),
-			SigningKeyCN: session.SigningKeyCN,
-			IssuerName:   session.Issuer,
-			Audience:     session.Audience,
-			AccessTTL:    session.AccessTTL,
-			RefreshTTL:   session.RefreshTTL,
-			QRDBClient:   hc.QRDBClient,
-			Logger:       logger,
+			Backend:         backend,
+			BackendName:     hc.XKMSService.DefaultBackendName(),
+			SigningKeyCN:    session.SigningKeyCN,
+			IssuerName:      session.Issuer,
+			Audience:        session.Audience,
+			AccessTTL:       session.AccessTTL,
+			RefreshTTL:      session.RefreshTTL,
+			AccessTokenType: session.AccessTokenType,
+			QRDBClient:      hc.QRDBClient,
+			Logger:          logger,
 		})
 		if tiErr != nil {
 			logger.Error("host REST surface: token issuer construction failed; "+

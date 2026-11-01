@@ -74,6 +74,11 @@ var (
 	// TokenIssuerParams carries a nil signing Backend.
 	ErrTokenIssuerBackendRequired = errors.New("rest: token issuer requires a non-nil signing backend")
 
+	// ErrSessionSigningKeyNoPublicKey is wrapped in a
+	// SessionSigningKeyExportError when the backend's Signer for the session
+	// signing key reports no public key.
+	ErrSessionSigningKeyNoPublicKey = errors.New("rest: session signing key signer has no public key")
+
 	// ErrWebAuthnConfigRequired is returned by BuildWebAuthnService when
 	// WebAuthnServiceParams carries a nil Config.
 	ErrWebAuthnConfigRequired = errors.New("rest: webauthn service requires a non-nil config")
