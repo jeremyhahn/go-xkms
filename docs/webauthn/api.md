@@ -154,11 +154,25 @@ RFC 7518 §3.4), with `x` and `y` at the full 32 octets (RFC 7518 §6.2.1.2,
 key stays in the backend.
 
 **The `kid` rule.** Pass the same `opts` the module was built with
-(`WithServiceModuleSession`; nil selects the defaults). The JWK's `kid` (§4.5)
-is the signing CN they resolve to, `sessionSigningKeyCN`
-(`pkg/api/rest/host.go:237`). `BuildTokenIssuer` uses the same function to set
-the `kid` in every token's JWS header, so the two always match. That CN is
-`SigningKeyCN`, or `xkms-jwt-signing` when it is empty.
+(`WithServiceModuleSession`; nil selects the defaults), so the accessor reads
+the key under the same signing CN: `SigningKeyCN`, or `xkms-jwt-signing` when
+it is empty (`sessionSigningKeyCN`, `pkg/api/rest/host.go:252`). RFC 7517 §4.5
+leaves the `kid` value to the application. Here it is `jwk.SPKIKeyID`
+(`pkg/encoding/jwk/kid.go:46`, re-exported as `JWKSPKIKeyID`): the unpadded
+base64url (RFC 7515 §2) of SHA-256 over the key's DER SubjectPublicKeyInfo
+(RFC 5280 §4.1.2.7). That is the identifier go-quicbaas publishes each JWKS key
+under (#1724, comment c181516). `BuildTokenIssuer` (`pkg/api/rest/host.go:226`)
+derives the `kid` in every token's JWS header (RFC 7515 §4.1.4) from the same
+public key, so a token's `kid` always selects this JWK. The CN only names the
+key in the backend; it is not the `kid`.
+
+**The `typ` option.** `AccessTokenType` on `ServiceModuleSessionOptions`
+(`rest.SessionOptions`) sets the access token's `typ` header (RFC 7515 §4.1.9).
+`"at+jwt"` (`token.ATJWTType`) marks it as an OAuth 2.0 JWT access token, as
+RFC 9068 §2.1 requires; empty keeps `JWT`. Refresh tokens always keep `JWT`, so
+a verifier that demands `at+jwt` never accepts a refresh token as an access
+token. xkmsd reads the same option from `auth.session.access_token_type`
+([web console guide](../web-console/user.md)).
 
 The call reads the key and never creates it. The module creates the key when
 it builds its REST surface, on the first request it serves. Call the accessor
