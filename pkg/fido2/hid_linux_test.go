@@ -16,10 +16,13 @@
 package fido2
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -529,22 +532,97 @@ func TestLinuxHIDDevice_CloseWithFile(t *testing.T) {
 
 // TestLinuxHIDDevice_WriteWithFile tests Write with a real file.
 func TestLinuxHIDDevice_WriteWithFile(t *testing.T) {
-	// Create a temporary file to simulate a device file
-	tmpFile, err := os.CreateTemp("", "hidraw_test_*")
-	require.NoError(t, err)
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
-
-	device := &LinuxHIDDevice{
-		path: tmpFile.Name(),
-		file: tmpFile,
+	initPacket := func(cid uint32) []byte {
+		packet := make([]byte, HIDPacketSize)
+		binary.BigEndian.PutUint32(packet[0:4], cid)
+		packet[4] = CTAPHID_INIT
+		binary.BigEndian.PutUint16(packet[5:7], 8)
+		copy(packet[7:], []byte{1, 2, 3, 4, 5, 6, 7, 8})
+		return packet
 	}
-	defer func() { _ = device.Close() }()
+	continuation := make([]byte, HIDPacketSize)
+	binary.BigEndian.PutUint32(continuation[0:4], 0x01020304)
+	continuation[4] = 0x00 // sequence number
+	for i := 5; i < HIDPacketSize; i++ {
+		continuation[i] = byte(i)
+	}
 
-	// Write should succeed to a regular file
-	data := []byte{0x00, 0x01, 0x02, 0x03}
-	n, err := device.Write(data)
-	assert.NoError(t, err)
-	assert.Equal(t, len(data), n)
+	tests := []struct {
+		name   string
+		packet []byte
+	}{
+		{name: "init packet with zero first CID byte", packet: initPacket(0x00112233)},
+		{name: "init packet on broadcast CID", packet: initPacket(0xFFFFFFFF)},
+		{name: "continuation packet", packet: continuation},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "hidraw")
+			file, err := os.Create(path)
+			require.NoError(t, err)
+
+			device := &LinuxHIDDevice{path: path, file: file}
+			n, err := device.Write(tt.packet)
+			require.NoError(t, err)
+			assert.Equal(t, HIDPacketSize, n, "Write must report the caller's byte count")
+			require.NoError(t, device.Close())
+
+			written, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Len(t, written, HIDPacketSize+1)
+			assert.Equal(t, byte(hidrawUnnumberedReportID), written[0])
+			assert.Equal(t, tt.packet, written[1:])
+		})
+	}
+}
+
+func TestLinuxHIDDevice_WriteReadOnlyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hidraw")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+
+	device := &LinuxHIDDevice{path: path, file: file}
+	defer func() { require.NoError(t, device.Close()) }()
+
+	n, err := device.Write(make([]byte, HIDPacketSize))
+	assert.Equal(t, 0, n)
+	var wrapped *errs.Wrapped
+	require.ErrorAs(t, err, &wrapped)
+	assert.Error(t, wrapped.Err)
+}
+
+func TestLinuxHIDDevice_SendCommandPrefixesEveryPacket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hidraw")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+
+	device, err := NewLinuxHIDDeviceEnumerator().Open(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, device.Close()) }()
+	ctaphid := &CTAPHIDDevice{device: device}
+
+	// 100 bytes span an init packet and one continuation packet.
+	payload := make([]byte, 100)
+	for i := range payload {
+		payload[i] = byte(i + 1)
+	}
+	const cid = 0x00112233
+
+	// The temp file holds no response, so the read fails once the packets are written.
+	_, err = ctaphid.sendCommand(cid, CTAPHID_CBOR, payload, time.Second)
+	require.Error(t, err)
+
+	written, err := os.ReadFile(path)
+	require.NoError(t, err)
+	packets := ctaphid.createPackets(cid, CTAPHID_CBOR, payload)
+	require.Len(t, packets, 2)
+	require.Len(t, written, len(packets)*(HIDPacketSize+1))
+	for i, packet := range packets {
+		report := written[i*(HIDPacketSize+1) : (i+1)*(HIDPacketSize+1)]
+		assert.Equal(t, byte(hidrawUnnumberedReportID), report[0], "report %d", i)
+		assert.Equal(t, packet, report[1:], "report %d", i)
+	}
 }
 
 // TestLinuxHIDDevice_ReadWithFile tests Read with a real file.

@@ -141,12 +141,32 @@ func (e *LinuxHIDDeviceEnumerator) Open(path string) (HIDDevice, error) {
 	}, nil
 }
 
-// Write sends data to the HID device
+// hidrawUnnumberedReportID is the report number a hidraw write carries for a
+// device without numbered reports, as every FIDO authenticator is. Linux
+// Documentation/hid/hidraw.rst, "write()": the first byte of the buffer is the
+// report number, 0 when the device uses none, and the report data follows.
+const hidrawUnnumberedReportID byte = 0x00
+
+// Write sends one output report to the HID device. It prepends
+// hidrawUnnumberedReportID to data, as hidraw requires, and writes the report
+// in a single call. The returned count is the number of the caller's bytes
+// written, len(data) on success, and excludes the report ID.
 func (d *LinuxHIDDevice) Write(data []byte) (int, error) {
 	if d.file == nil {
 		return 0, &errs.Message{Msg: "device not open"}
 	}
-	return d.file.Write(data)
+	report := make([]byte, len(data)+1)
+	report[0] = hidrawUnnumberedReportID
+	copy(report[1:], data)
+
+	n, err := d.file.Write(report)
+	if err != nil {
+		return 0, &errs.Wrapped{Msg: "failed to write HID report", Err: err}
+	}
+	if n != len(report) {
+		return 0, &errs.Message{Msg: fmt.Sprintf("short HID report write: %d of %d bytes", n, len(report))}
+	}
+	return len(data), nil
 }
 
 // Read reads data from the HID device

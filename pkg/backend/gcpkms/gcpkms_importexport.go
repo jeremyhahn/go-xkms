@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -323,13 +324,10 @@ func mapKeyAttributesToAlgorithm(attrs *types.KeyAttributes) (kmspb.CryptoKeyVer
 	// Handle asymmetric keys
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		// Default to RSA 2048 PKCS1 if no specific size is given
-		// This could be enhanced to check attrs for specific RSA parameters
-		return kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_2048_SHA256, nil
+		return rsaSignAlgorithm(attrs)
 
 	case x509.ECDSA:
-		// Default to P-256 if no specific curve is given
-		return kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256, nil
+		return mapCurveToAlgorithm(ecCurve(attrs))
 
 	default:
 		return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported key algorithm %s", attrs.KeyAlgorithm)}
@@ -353,9 +351,9 @@ func determineKeySpec(attrs *types.KeyAttributes) string {
 	// Handle asymmetric keys
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		return "RSA_2048" // Default, could be enhanced
+		return fmt.Sprintf("RSA_%d", rsaKeySize(attrs))
 	case x509.ECDSA:
-		return "EC_P256" // Default, could be enhanced
+		return "EC_" + strings.ReplaceAll(ecCurve(attrs).Params().Name, "-", "")
 	default:
 		return "UNKNOWN"
 	}

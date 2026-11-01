@@ -27,18 +27,11 @@ package barrier
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -96,13 +89,13 @@ func TestPKCS11BarrierPINSurvivesRestartAndFailsClosedOnPCRChange(t *testing.T) 
 	// Provision sets SOFTHSM2_CONF for this process; every xkmsd started
 	// below inherits it and so sees the same token.
 	token := softhsmtest.Provision(t, tokenLabel)
-	cfgPath, url, certPath := writeConfig(t, dir, tpmHost, tpmPort, token)
+	cfgPath, url, data := writeConfig(t, dir, tpmHost, tpmPort, token)
 
 	sealPIN(t, bin, cfgPath, token.UserPIN)
 
 	for boot := 1; boot <= 2; boot++ {
 		srv := startXkmsd(t, bin, cfgPath, filepath.Join(dir, fmt.Sprintf("boot-%d.log", boot)))
-		requireUnsealed(t, srv, url, certPath)
+		requireUnsealed(t, srv, url, data)
 		require.NoError(t, srv.stop(), "boot %d: stopping xkmsd\n%s", boot, srv.logTail())
 	}
 
@@ -135,14 +128,18 @@ func TestPKCS11BarrierPINSurvivesRestartAndFailsClosedOnPCRChange(t *testing.T) 
 // backend, and no PIN appears anywhere in it: the node seal reads the TPM
 // connection from backends.tpm2 and the token from backends.pkcs11 and
 // takes the PIN from the preseal store. It returns the configuration path,
-// the REST URL and the server certificate to trust.
-func writeConfig(t *testing.T, dir, tpmHost string, tpmPort int, token softhsmtest.Token) (cfgPath, url, certPath string) {
+// the REST URL and the data directory, where first boot writes the admin
+// credential.
+func writeConfig(t *testing.T, dir, tpmHost string, tpmPort int, token softhsmtest.Token) (cfgPath, url, data string) {
 	t.Helper()
 	port := freePort(t)
-	data := filepath.Join(dir, "data")
+	data = filepath.Join(dir, "data")
 	require.NoError(t, os.MkdirAll(data, 0o700))
-	certPath, keyPath := writeServerCertificate(t, dir)
 
+	// No tls.cert_file: xkmsd persists its own bootstrap certificate under
+	// <data>/unified-tls, the only anchor xkmsdtest.AdminClient trusts
+	// (pkg/server buildUnifiedTLSConfig skips ensureBootstrapCert for an
+	// operator-supplied certificate).
 	cfg := fmt.Sprintf(`server:
   host: "localhost"
   rest_port: %[1]d
@@ -154,8 +151,6 @@ protocols:
   mcp: false
 tls:
   enabled: true
-  cert_file: %[3]s
-  key_file: %[4]s
   server_cn: localhost
   min_version: TLS1.3
   client_auth: verify
@@ -194,52 +189,22 @@ backends:
   tpm2:
     enabled: false
     use_simulator: true
-    simulator_host: %[5]q
-    simulator_port: %[6]d
-    platform-pcrs: [%[9]d]
-    platform-pcr-bank: %[10]q
+    simulator_host: %[3]q
+    simulator_port: %[4]d
+    platform-pcrs: [%[7]d]
+    platform-pcr-bank: %[8]q
   pkcs11:
     enabled: false
-    library: %[7]s
-    token: %[8]q
+    library: %[5]s
+    token: %[6]q
 barrier:
   enabled: true
   strategy: pkcs11
-`, port, data, certPath, keyPath, tpmHost, tpmPort, token.Library, token.Label, platformPCR, platformPCRBank)
+`, port, data, tpmHost, tpmPort, token.Library, token.Label, platformPCR, platformPCRBank)
 
 	cfgPath = filepath.Join(dir, "xkmsd.yaml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o600))
-	return cfgPath, fmt.Sprintf("https://localhost:%d", port), certPath
-}
-
-// writeServerCertificate writes a self-signed operator TLS certificate for
-// localhost, so the test can trust the server before the barrier unseals.
-func writeServerCertificate(t *testing.T, dir string) (certPath, keyPath string) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	template := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "localhost"},
-		DNSNames:              []string{"localhost"},
-		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1)},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	require.NoError(t, err)
-
-	certPath = filepath.Join(dir, "server.pem")
-	keyPath = filepath.Join(dir, "server-key.pem")
-	require.NoError(t, os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
-	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600))
-	return certPath, keyPath
+	return cfgPath, fmt.Sprintf("https://localhost:%d", port), data
 }
 
 // sealPIN runs the operator step: `xkmsd seal-pkcs11-pin` with the PIN on
@@ -253,8 +218,10 @@ func sealPIN(t *testing.T, bin, cfgPath, pin string) {
 }
 
 // requireUnsealed waits for the server to answer and requires its barrier
-// to be initialized and unsealed with no operator input.
-func requireUnsealed(t *testing.T, srv *xkmsd, url, certPath string) {
+// to be initialized and unsealed with no operator input. The node unseals
+// before it serves, so there is no sealed window: the barrier status comes
+// from the unsealed node, which answers only the first-boot administrator.
+func requireUnsealed(t *testing.T, srv *xkmsd, url, data string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), bootTimeout)
 	defer cancel()
@@ -265,8 +232,8 @@ func requireUnsealed(t *testing.T, srv *xkmsd, url, certPath string) {
 		case <-ctx.Done():
 		}
 	}()
-	client, err := xkmsdtest.SealedWindowClient(ctx, certPath)
-	require.NoError(t, err)
+	client, err := xkmsdtest.AdminClient(ctx, url, data)
+	require.NoError(t, err, "building the admin client\n%s", srv.logTail())
 	state, err := xkmsdtest.ReadBarrierState(ctx, client, url)
 	require.NoError(t, err, "reading the barrier state\n%s", srv.logTail())
 	require.True(t, state.Initialized(), "the PKCS#11 node seal initializes the barrier on first boot")

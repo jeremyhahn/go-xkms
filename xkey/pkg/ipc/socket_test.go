@@ -80,7 +80,7 @@ func TestDefaultSocketPath_EnvSocketOverridesEverything(t *testing.T) {
 
 func TestDefaultSocketPath_WithXKEYHomeDerivesInstanceSocket(t *testing.T) {
 	clearInstanceEnv(t)
-	home := t.TempDir()
+	home := shortTempDir(t)
 	t.Setenv(xhome.EnvHome, home)
 	// XDG_RUNTIME_DIR must be ignored once XKEY_HOME is the authority.
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())

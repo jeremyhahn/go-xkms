@@ -82,8 +82,16 @@ var (
 	// ErrInvalidDigest is returned when the digest is invalid or has an incorrect length.
 	ErrInvalidDigest = errors.New("gcpkms: invalid digest")
 
-	// ErrNoPrimaryVersion is returned when a crypto key has no primary
-	// version, so no key version can be resolved for signing, decryption,
-	// or public key retrieval.
+	// ErrNoPrimaryVersion is returned when an ENCRYPT_DECRYPT crypto key has
+	// no primary version, so no key version can be resolved for encryption.
 	ErrNoPrimaryVersion = errors.New("gcpkms: crypto key has no primary version")
+
+	// ErrNoUsableVersion is returned when an asymmetric crypto key has no
+	// enabled or pending version, so no key version can be resolved for
+	// signing, decryption, or public key retrieval.
+	ErrNoUsableVersion = errors.New("gcpkms: crypto key has no enabled version")
+
+	// ErrInvalidVersionName is returned when Cloud KMS reports a crypto key
+	// version whose name does not end in a numeric version ID.
+	ErrInvalidVersionName = errors.New("gcpkms: invalid crypto key version name")
 )

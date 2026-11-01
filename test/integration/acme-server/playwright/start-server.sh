@@ -21,8 +21,10 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 SERVER_BIN="${SCRIPT_DIR}/xkmsd"
 SERVER_PORT="${E2E_SERVER_PORT:-9443}"
 WORK_DIR=$(mktemp -d)
+SERVER_PID=""
 
 cleanup() {
+    [ -z "$SERVER_PID" ] || kill "$SERVER_PID" 2>/dev/null || true
     rm -rf "$WORK_DIR" "$SERVER_BIN" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -69,14 +71,14 @@ auth:
 barrier:
   enabled: true
   strategy: "passphrase"
-  passphrase: "e2e-test-barrier"
 
 ratelimit:
   enabled: false
 
-storage:
-  backend: "qrdb"
-  path: "$WORK_DIR/data"
+# xkmsd init writes the admin credential and the unified TLS certificate here;
+# open-server-barrier.sh finds the certificate under <state dir>/storage.
+datastore:
+  path: "$WORK_DIR/storage"
 
 default_backend: "software"
 
@@ -129,7 +131,21 @@ cd "$PROJECT_DIR"
 go build -tags "local,iam,raft,timeseries,grpc,codec_json,codec_msgpack,codec_cbor,codec_yaml" \
     -o "$SERVER_BIN" ./cmd/xkmsd
 
+# Initialize the barrier as an operator does before a first boot: the SO PIN
+# becomes its passphrase and travels in the environment, never in the config.
+SO_PIN="${E2E_SO_PIN:-e2e-test-so-pin}"
+XKMS_SO_PIN="$SO_PIN" "$SERVER_BIN" init --config "$CONFIG_FILE" \
+    --data-dir "$WORK_DIR/storage" --hostname localhost --admin-factor mtls >&2
+
 echo "Starting xkmsd (ACME listener on :${SERVER_PORT})..." >&2
 
-# Run the server (Playwright manages process lifecycle)
-exec "$SERVER_BIN" --config "$CONFIG_FILE"
+# Run the server (Playwright manages process lifecycle). It boots sealed, so
+# open its barrier through the sealed window with the helper that unseals the
+# compose xkms-server; the ACME listener Playwright waits for comes up after.
+env -u XKMS_SO_PIN "$SERVER_BIN" --config "$CONFIG_FILE" &
+SERVER_PID=$!
+XKMS_SERVER_WINDOW_URL="https://localhost:18443" \
+    XKMS_SERVER_STATE_DIR="$WORK_DIR" \
+    XKMS_SERVER_BARRIER_SECRET="$SO_PIN" \
+    bash "$PROJECT_DIR/build/docker/devcontainer/scripts/open-server-barrier.sh" >&2
+wait "$SERVER_PID"

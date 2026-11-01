@@ -110,6 +110,21 @@ func (f *fakeKMSServer) GetCryptoKeyVersion(_ context.Context, req *kmspb.GetCry
 	return &kmspb.CryptoKeyVersion{Name: req.Name, State: kmspb.CryptoKeyVersion_ENABLED}, nil
 }
 
+// ListCryptoKeyVersions returns two versions of the key, as Cloud KMS lists
+// an asymmetric key after one rotation.
+func (f *fakeKMSServer) ListCryptoKeyVersions(_ context.Context, req *kmspb.ListCryptoKeyVersionsRequest) (*kmspb.ListCryptoKeyVersionsResponse, error) {
+	if err := f.record("ListCryptoKeyVersions", req); err != nil {
+		return nil, err
+	}
+	return &kmspb.ListCryptoKeyVersionsResponse{
+		CryptoKeyVersions: []*kmspb.CryptoKeyVersion{
+			{Name: req.Parent + "/cryptoKeyVersions/1", State: kmspb.CryptoKeyVersion_ENABLED},
+			{Name: req.Parent + "/cryptoKeyVersions/2", State: kmspb.CryptoKeyVersion_ENABLED},
+		},
+		TotalSize: 2,
+	}, nil
+}
+
 func (f *fakeKMSServer) AsymmetricSign(_ context.Context, req *kmspb.AsymmetricSignRequest) (*kmspb.AsymmetricSignResponse, error) {
 	if err := f.record("AsymmetricSign", req); err != nil {
 		return nil, err
@@ -410,6 +425,32 @@ func TestRealKMSClient_ListCryptoKeys_ServerError(t *testing.T) {
 
 	fake.setErr("ListCryptoKeys", status.Error(codes.PermissionDenied, "caller lacks cloudkms.cryptoKeys.list"))
 	_, err := b.client.ListCryptoKeys(ctx, &kmspb.ListCryptoKeysRequest{Parent: "projects/test-project/locations/us-central1/keyRings/test-ring"})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// TestRealKMSClient_ListCryptoKeyVersions proves the adapter returns every
+// version the server lists for a crypto key.
+func TestRealKMSClient_ListCryptoKeyVersions(t *testing.T) {
+	b, _ := newFakeKMSBackend(t)
+	key := "projects/test-project/locations/us-central1/keyRings/test-ring/cryptoKeys/k"
+
+	versions, err := b.client.ListCryptoKeyVersions(context.Background(), &kmspb.ListCryptoKeyVersionsRequest{Parent: key})
+	require.NoError(t, err)
+	require.Len(t, versions, 2)
+	assert.Equal(t, key+"/cryptoKeyVersions/1", versions[0].Name)
+	assert.Equal(t, key+"/cryptoKeyVersions/2", versions[1].Name)
+}
+
+// TestRealKMSClient_ListCryptoKeyVersions_ServerError proves a listing error
+// is returned, not swallowed into an empty list.
+func TestRealKMSClient_ListCryptoKeyVersions_ServerError(t *testing.T) {
+	b, fake := newFakeKMSBackend(t)
+
+	fake.setErr("ListCryptoKeyVersions", status.Error(codes.PermissionDenied, "caller lacks cloudkms.cryptoKeyVersions.list"))
+	_, err := b.client.ListCryptoKeyVersions(context.Background(), &kmspb.ListCryptoKeyVersionsRequest{
+		Parent: "projects/test-project/locations/us-central1/keyRings/test-ring/cryptoKeys/k",
+	})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
