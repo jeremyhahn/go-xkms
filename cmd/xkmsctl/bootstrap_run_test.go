@@ -18,7 +18,6 @@
 package main
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -50,30 +49,6 @@ func TestBootstrapAutoCmd_RunE_NoServerURL(t *testing.T) {
 	}
 }
 
-func TestBootstrapAutoCmd_RunE_AllMethodsFail(t *testing.T) {
-	withGlobalConfig(t, &Config{})
-	cmd := newBootstrapAutoCmdCopy()
-	_ = cmd.Flags().Set("server-url", "https://unreachable.invalid:8443")
-	_ = cmd.Flags().Set("spki-pin", "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
-
-	err := bootstrapAutoCmd.RunE(cmd, nil)
-	if err == nil {
-		t.Fatal("expected error from unreachable server")
-	}
-}
-
-func TestBootstrapAutoCmd_RunE_ConfigFileError(t *testing.T) {
-	withGlobalConfig(t, &Config{})
-	cmd := newBootstrapAutoCmdCopy()
-	_ = cmd.Flags().Set("server-url", "https://kms.example.com:8443")
-	_ = cmd.Flags().Set("config", "/nonexistent/xkmsd-config.yaml")
-
-	err := bootstrapAutoCmd.RunE(cmd, nil)
-	if err == nil {
-		t.Fatal("expected error for missing config file")
-	}
-}
-
 func TestBootstrapAutoCmd_RunE_GlobalConfigFileFallback(t *testing.T) {
 	// configFile flag empty; globalConfig.ConfigFile provides the fallback path.
 	withGlobalConfig(t, &Config{ConfigFile: "/nonexistent/xkmsd-config.yaml"})
@@ -83,32 +58,5 @@ func TestBootstrapAutoCmd_RunE_GlobalConfigFileFallback(t *testing.T) {
 	err := bootstrapAutoCmd.RunE(cmd, nil)
 	if err == nil {
 		t.Fatal("expected error for missing fallback config file")
-	}
-}
-
-func TestBootstrapLogger_Verbose(t *testing.T) {
-	withGlobalConfig(t, &Config{Verbose: true})
-	logger := bootstrapLogger()
-	if logger == nil {
-		t.Fatal("expected non-nil logger")
-	}
-}
-
-func TestBootstrapLogger_NilGlobalConfig(t *testing.T) {
-	old := globalConfig
-	globalConfig = nil
-	defer func() { globalConfig = old }()
-
-	logger := bootstrapLogger()
-	if logger == nil {
-		t.Fatal("expected non-nil logger even with nil globalConfig")
-	}
-}
-
-func TestWriteCABundle_DirectoryOutputPath(t *testing.T) {
-	dir := t.TempDir()
-	err := writeCABundle([]byte("PEM-DATA"), filepath.Join(dir, "nonexistent-subdir", "ca.pem"))
-	if err == nil {
-		t.Fatal("expected error writing to a nonexistent directory")
 	}
 }

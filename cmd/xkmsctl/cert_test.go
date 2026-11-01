@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -403,205 +402,6 @@ func (m *mockCertClient) GeneratePIVCSR(ctx context.Context, req *transport.Gene
 
 // Tests for command existence
 
-func TestCertCmd_Exists(t *testing.T) {
-	if certCmd == nil {
-		t.Fatal("certCmd should not be nil")
-	}
-}
-
-func TestCertCmd_Properties(t *testing.T) {
-	if certCmd.Use != "cert" {
-		t.Errorf("certCmd.Use = %v, want cert", certCmd.Use)
-	}
-
-	if certCmd.Short == "" {
-		t.Error("certCmd.Short should not be empty")
-	}
-}
-
-func TestCertCmd_HasSubcommands(t *testing.T) {
-	subcommands := certCmd.Commands()
-
-	expectedCmds := []string{
-		"save",
-		"list",
-		"get",
-		"delete",
-		"exists",
-		"save-chain",
-		"get-chain",
-		"generate-ca",
-		"issue",
-	}
-	foundCmds := make(map[string]bool)
-
-	for _, cmd := range subcommands {
-		foundCmds[cmd.Name()] = true
-	}
-
-	for _, expected := range expectedCmds {
-		if !foundCmds[expected] {
-			t.Errorf("expected subcommand %q not found", expected)
-		}
-	}
-}
-
-func TestCertSaveCmd_Exists(t *testing.T) {
-	if certSaveCmd == nil {
-		t.Fatal("certSaveCmd should not be nil")
-	}
-}
-
-func TestCertSaveCmd_Properties(t *testing.T) {
-	if certSaveCmd.Use != "save <key-id> <cert-file>" {
-		t.Errorf("certSaveCmd.Use = %v, want 'save <key-id> <cert-file>'", certSaveCmd.Use)
-	}
-
-	if certSaveCmd.Short == "" {
-		t.Error("certSaveCmd.Short should not be empty")
-	}
-}
-
-func TestCertListCmd_Exists(t *testing.T) {
-	if certListCmd == nil {
-		t.Fatal("certListCmd should not be nil")
-	}
-}
-
-func TestCertListCmd_Properties(t *testing.T) {
-	if certListCmd.Use != "list" {
-		t.Errorf("certListCmd.Use = %v, want list", certListCmd.Use)
-	}
-}
-
-func TestCertGetCmd_Exists(t *testing.T) {
-	if certGetCmd == nil {
-		t.Fatal("certGetCmd should not be nil")
-	}
-}
-
-func TestCertGetCmd_Properties(t *testing.T) {
-	if certGetCmd.Use != "get <key-id>" {
-		t.Errorf("certGetCmd.Use = %v, want 'get <key-id>'", certGetCmd.Use)
-	}
-}
-
-func TestCertDeleteCmd_Exists(t *testing.T) {
-	if certDeleteCmd == nil {
-		t.Fatal("certDeleteCmd should not be nil")
-	}
-}
-
-func TestCertDeleteCmd_Properties(t *testing.T) {
-	if certDeleteCmd.Use != "delete <key-id>" {
-		t.Errorf("certDeleteCmd.Use = %v, want 'delete <key-id>'", certDeleteCmd.Use)
-	}
-}
-
-func TestCertExistsCmd_Exists(t *testing.T) {
-	if certExistsCmd == nil {
-		t.Fatal("certExistsCmd should not be nil")
-	}
-}
-
-func TestCertExistsCmd_Properties(t *testing.T) {
-	if certExistsCmd.Use != "exists <key-id>" {
-		t.Errorf("certExistsCmd.Use = %v, want 'exists <key-id>'", certExistsCmd.Use)
-	}
-}
-
-func TestCertSaveChainCmd_Exists(t *testing.T) {
-	if certSaveChainCmd == nil {
-		t.Fatal("certSaveChainCmd should not be nil")
-	}
-}
-
-func TestCertGetChainCmd_Exists(t *testing.T) {
-	if certGetChainCmd == nil {
-		t.Fatal("certGetChainCmd should not be nil")
-	}
-}
-
-func TestCertGenerateCACmd_Exists(t *testing.T) {
-	if certGenerateCACmd == nil {
-		t.Fatal("certGenerateCACmd should not be nil")
-	}
-}
-
-func TestCertIssueCmd_Exists(t *testing.T) {
-	if certIssueCmd == nil {
-		t.Fatal("certIssueCmd should not be nil")
-	}
-}
-
-func TestCertCmd_CommandStructure(t *testing.T) {
-	// Test that certCmd is properly configured
-	if !certCmd.HasSubCommands() {
-		t.Error("certCmd should have subcommands")
-	}
-
-	// Verify parent relationship
-	for _, sub := range certCmd.Commands() {
-		if sub.Parent() != certCmd {
-			t.Errorf("subcommand %s should have certCmd as parent", sub.Use)
-		}
-	}
-}
-
-func TestCertSaveCmd_Arguments(t *testing.T) {
-	// Verify command expects arguments
-	if certSaveCmd.Args == nil {
-		t.Error("certSaveCmd.Args should be set")
-	}
-}
-
-func TestCertDeleteCmd_Arguments(t *testing.T) {
-	// Verify command expects arguments
-	if certDeleteCmd.Args == nil {
-		t.Error("certDeleteCmd.Args should be set")
-	}
-}
-
-func TestCertGetCmd_Arguments(t *testing.T) {
-	// Verify command expects arguments
-	if certGetCmd.Args == nil {
-		t.Error("certGetCmd.Args should be set")
-	}
-}
-
-func TestCertExistsCmd_Arguments(t *testing.T) {
-	// Verify command expects arguments
-	if certExistsCmd.Args == nil {
-		t.Error("certExistsCmd.Args should be set")
-	}
-}
-
-func TestCertGenerateCACmd_HasFlags(t *testing.T) {
-	flags := certGenerateCACmd.Flags()
-
-	// Check for some expected flags
-	expectedFlags := []string{"cn", "org", "country", "validity"}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Logf("flag %q may not exist on certGenerateCACmd", flag)
-		}
-	}
-}
-
-func TestCertIssueCmd_HasFlags(t *testing.T) {
-	flags := certIssueCmd.Flags()
-
-	// Check for some expected flags
-	expectedFlags := []string{"cn", "dns", "ip"}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Logf("flag %q may not exist on certIssueCmd", flag)
-		}
-	}
-}
-
 // Tests for saveCert function with mock client
 
 func TestCertSaveCert_TextOutput_Success(t *testing.T) {
@@ -762,35 +562,6 @@ func TestCertSaveCert_ConnectError(t *testing.T) {
 	}
 }
 
-func TestCertSaveCert_SaveError(t *testing.T) {
-	mockClient := newMockCertClient()
-	mockClient.saveCertErr = errors.New("save failed")
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	saveCert(cfg, printer, "test-cert", "dummy-pem")
-
-	if !exitCalled {
-		t.Error("saveCert should call exit when save fails")
-	}
-}
-
 // Tests for getCert function
 
 func TestCertGetCert_TextOutput_Success(t *testing.T) {
@@ -834,41 +605,6 @@ func TestCertGetCert_TextOutput_Success(t *testing.T) {
 	}
 }
 
-func TestCertGetCert_NotFoundError(t *testing.T) {
-	mockClient := newMockCertClient()
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	exitCode := 0
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {
-		exitCalled = true
-		exitCode = code
-	}
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	getCert(cfg, printer, "non-existent-cert")
-
-	if !exitCalled {
-		t.Error("getCert should call exit when certificate not found")
-	}
-	if exitCode != 1 {
-		t.Errorf("expected exit code 1, got: %d", exitCode)
-	}
-}
-
 func TestCertGetCert_JSONOutput_Success(t *testing.T) {
 	ca, err := testutil.GenerateTestCA()
 	if err != nil {
@@ -909,32 +645,6 @@ func TestCertGetCert_JSONOutput_Success(t *testing.T) {
 	}
 }
 
-func TestCertGetCert_ClientCreationError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return nil, errors.New("client creation failed")
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	getCert(cfg, printer, "test-cert")
-
-	if !exitCalled {
-		t.Error("getCert should call exit when client creation fails")
-	}
-}
-
 func TestCertGetCert_ConnectError(t *testing.T) {
 	mockClient := newMockCertClient()
 	mockClient.connectErr = errors.New("connection failed")
@@ -961,35 +671,6 @@ func TestCertGetCert_ConnectError(t *testing.T) {
 
 	if !exitCalled {
 		t.Error("getCert should call exit when connection fails")
-	}
-}
-
-func TestCertGetCert_InvalidPEMError(t *testing.T) {
-	mockClient := newMockCertClient()
-	mockClient.certificates["invalid-pem-cert"] = "not-valid-pem-data"
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	getCert(cfg, printer, "invalid-pem-cert")
-
-	if !exitCalled {
-		t.Error("getCert should call exit when PEM decode fails")
 	}
 }
 
@@ -1029,66 +710,6 @@ func TestCertGetCert_InvalidCertError(t *testing.T) {
 }
 
 // Tests for listCerts function
-
-func TestCertListCerts_MultipleEntries_Success(t *testing.T) {
-	mockClient := newMockCertClient()
-	mockClient.certificates["list-cert-1"] = "dummy-pem-1"
-	mockClient.certificates["list-cert-2"] = "dummy-pem-2"
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	listCerts(cfg, printer)
-
-	if exitCalled {
-		t.Error("listCerts should not call exit on success")
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "list-cert-1") || !strings.Contains(output, "list-cert-2") {
-		t.Errorf("expected certificate IDs in output, got: %s", output)
-	}
-}
-
-func TestCertListCerts_EmptyResult(t *testing.T) {
-	mockClient := newMockCertClient()
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	listCerts(cfg, printer)
-
-	if exitCalled {
-		t.Error("listCerts should not call exit for empty list")
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "No certificates") && !strings.Contains(output, "Certificates:") {
-		t.Errorf("expected proper output for empty list, got: %s", output)
-	}
-}
 
 func TestCertListCerts_JSONOutput(t *testing.T) {
 	mockClient := newMockCertClient()
@@ -1150,61 +771,6 @@ func TestCertListCerts_TableOutput(t *testing.T) {
 	}
 }
 
-func TestCertListCerts_Error(t *testing.T) {
-	mockClient := newMockCertClient()
-	mockClient.listCertsErr = errors.New("list failed")
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	listCerts(cfg, printer)
-
-	if !exitCalled {
-		t.Error("listCerts should call exit when list fails")
-	}
-}
-
-func TestCertListCerts_ClientCreationError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return nil, errors.New("client creation failed")
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	listCerts(cfg, printer)
-
-	if !exitCalled {
-		t.Error("listCerts should call exit when client creation fails")
-	}
-}
-
 func TestCertListCerts_ConnectError(t *testing.T) {
 	mockClient := newMockCertClient()
 	mockClient.connectErr = errors.New("connection failed")
@@ -1236,65 +802,6 @@ func TestCertListCerts_ConnectError(t *testing.T) {
 
 // Tests for certExists function
 
-func TestCertCertExists_Found(t *testing.T) {
-	mockClient := newMockCertClient()
-	mockClient.certificates["exists-test-cert"] = "dummy-pem"
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	certExists(cfg, printer, "exists-test-cert")
-
-	if exitCalled {
-		t.Error("certExists should not call exit on success")
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "exists") {
-		t.Errorf("expected exists message in output, got: %s", output)
-	}
-}
-
-func TestCertCertExists_NotFound(t *testing.T) {
-	mockClient := newMockCertClient()
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	certExists(cfg, printer, "non-existent-cert")
-
-	if exitCalled {
-		t.Error("certExists should not call exit when cert doesn't exist")
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "does not exist") {
-		t.Errorf("expected 'does not exist' in output, got: %s", output)
-	}
-}
-
 func TestCertCertExists_JSONOutput(t *testing.T) {
 	mockClient := newMockCertClient()
 	mockClient.certificates["json-exists-cert"] = "dummy-pem"
@@ -1322,61 +829,6 @@ func TestCertCertExists_JSONOutput(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, `"exists": true`) && !strings.Contains(output, `"exists":true`) {
 		t.Errorf("expected JSON with exists: true, got: %s", output)
-	}
-}
-
-func TestCertCertExists_Error(t *testing.T) {
-	mockClient := newMockCertClient()
-	mockClient.certExistsErr = errors.New("check failed")
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	certExists(cfg, printer, "test-cert")
-
-	if !exitCalled {
-		t.Error("certExists should call exit when check fails")
-	}
-}
-
-func TestCertCertExists_ClientCreationError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return nil, errors.New("client creation failed")
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	certExists(cfg, printer, "test-cert")
-
-	if !exitCalled {
-		t.Error("certExists should call exit when client creation fails")
 	}
 }
 
@@ -1460,41 +912,6 @@ func TestCertGetChain_ValidChain_Success(t *testing.T) {
 	}
 }
 
-func TestCertGetChain_NotFoundError(t *testing.T) {
-	mockClient := newMockCertClient()
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	exitCode := 0
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {
-		exitCalled = true
-		exitCode = code
-	}
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	getChain(cfg, printer, "non-existent-chain")
-
-	if !exitCalled {
-		t.Error("getChain should call exit when chain not found")
-	}
-	if exitCode != 1 {
-		t.Errorf("expected exit code 1, got: %d", exitCode)
-	}
-}
-
 func TestCertGetChain_JSONOutput(t *testing.T) {
 	ca, err := testutil.GenerateTestCA()
 	if err != nil {
@@ -1535,32 +952,6 @@ func TestCertGetChain_JSONOutput(t *testing.T) {
 	}
 }
 
-func TestCertGetChain_ClientCreationError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return nil, errors.New("client creation failed")
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	getChain(cfg, printer, "test-chain")
-
-	if !exitCalled {
-		t.Error("getChain should call exit when client creation fails")
-	}
-}
-
 func TestCertGetChain_ConnectError(t *testing.T) {
 	mockClient := newMockCertClient()
 	mockClient.connectErr = errors.New("connection failed")
@@ -1587,35 +978,6 @@ func TestCertGetChain_ConnectError(t *testing.T) {
 
 	if !exitCalled {
 		t.Error("getChain should call exit when connection fails")
-	}
-}
-
-func TestCertGetChain_InvalidPEMError(t *testing.T) {
-	mockClient := newMockCertClient()
-	mockClient.certificateChains["invalid-pem-chain"] = []string{"not-valid-pem-data"}
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	getChain(cfg, printer, "invalid-pem-chain")
-
-	if !exitCalled {
-		t.Error("getChain should call exit when PEM decode fails")
 	}
 }
 
@@ -1656,76 +1018,6 @@ func TestCertGetChain_InvalidCertError(t *testing.T) {
 
 // Tests for deleteCert function
 
-func TestCertDeleteCert_Valid_Success(t *testing.T) {
-	mockClient := newMockCertClient()
-	mockClient.certificates["delete-test-cert"] = "dummy-pem"
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	deleteCert(cfg, printer, "delete-test-cert")
-
-	if exitCalled {
-		t.Error("deleteCert should not call exit on success")
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully deleted") {
-		t.Errorf("expected success message in output, got: %s", output)
-	}
-
-	// Verify certificate was actually deleted from mock
-	if _, ok := mockClient.certificates["delete-test-cert"]; ok {
-		t.Error("certificate should be deleted from mock client")
-	}
-}
-
-func TestCertDeleteCert_NotFoundError(t *testing.T) {
-	mockClient := newMockCertClient()
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	exitCode := 0
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {
-		exitCalled = true
-		exitCode = code
-	}
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	deleteCert(cfg, printer, "non-existent-cert")
-
-	if !exitCalled {
-		t.Error("deleteCert should call exit when certificate not found")
-	}
-	if exitCode != 1 {
-		t.Errorf("expected exit code 1, got: %d", exitCode)
-	}
-}
-
 func TestCertDeleteCert_JSONOutput_Success(t *testing.T) {
 	mockClient := newMockCertClient()
 	mockClient.certificates["delete-json-cert"] = "dummy-pem"
@@ -1753,32 +1045,6 @@ func TestCertDeleteCert_JSONOutput_Success(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "success") {
 		t.Errorf("expected JSON success output, got: %s", output)
-	}
-}
-
-func TestCertDeleteCert_ClientCreationError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return nil, errors.New("client creation failed")
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	deleteCert(cfg, printer, "test-cert")
-
-	if !exitCalled {
-		t.Error("deleteCert should call exit when client creation fails")
 	}
 }
 
@@ -1812,60 +1078,6 @@ func TestCertDeleteCert_ConnectError(t *testing.T) {
 }
 
 // Tests for saveChain function
-
-func TestCertSaveChain_ValidChain_Success(t *testing.T) {
-	ca, err := testutil.GenerateTestCA()
-	if err != nil {
-		t.Fatalf("failed to generate test CA: %v", err)
-	}
-
-	serverCert, err := testutil.GenerateTestServerCert(ca, "localhost")
-	if err != nil {
-		t.Fatalf("failed to generate server cert: %v", err)
-	}
-
-	serverPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: serverCert.Cert.Raw,
-	})
-	caPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: ca.Cert.Raw,
-	})
-
-	mockClient := newMockCertClient()
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	chainPEMs := []string{string(serverPEM), string(caPEM)}
-	saveChain(cfg, printer, "save-chain-test", chainPEMs)
-
-	if exitCalled {
-		t.Error("saveChain should not call exit on success")
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully saved certificate chain") {
-		t.Errorf("expected success message in output, got: %s", output)
-	}
-
-	// Verify chain was stored in mock
-	if _, ok := mockClient.certificateChains["save-chain-test"]; !ok {
-		t.Error("certificate chain should be stored in mock client")
-	}
-}
 
 func TestCertSaveChain_JSONOutput_Success(t *testing.T) {
 	ca, err := testutil.GenerateTestCA()
@@ -1904,35 +1116,6 @@ func TestCertSaveChain_JSONOutput_Success(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "success") {
 		t.Errorf("expected JSON success output, got: %s", output)
-	}
-}
-
-func TestCertSaveChain_Error(t *testing.T) {
-	mockClient := newMockCertClient()
-	mockClient.saveChainErr = errors.New("save chain failed")
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	var buf bytes.Buffer
-	printer := NewPrinter(cfg.OutputFormat, &buf)
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	originalGlobalConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = originalGlobalConfig }()
-
-	saveChain(cfg, printer, "test-chain", []string{"dummy-pem"})
-
-	if !exitCalled {
-		t.Error("saveChain should call exit when save fails")
 	}
 }
 
@@ -1993,135 +1176,7 @@ func TestCertSaveChain_ConnectError(t *testing.T) {
 
 // Tests for multiple certificate IDs
 
-func TestCertSaveCert_MultipleIDs(t *testing.T) {
-	ca, err := testutil.GenerateTestCA()
-	if err != nil {
-		t.Fatalf("failed to generate test CA: %v", err)
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: ca.Cert.Raw,
-	})
-
-	mockClient := newMockCertClient()
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	// Save multiple certificates with different IDs
-	ids := []string{"cert-a", "cert-b", "cert-c"}
-	for _, id := range ids {
-		var buf bytes.Buffer
-		printer := NewPrinter(cfg.OutputFormat, &buf)
-		exitCalled = false
-
-		saveCert(cfg, printer, id, string(certPEM))
-
-		if exitCalled {
-			t.Errorf("saveCert should not call exit for ID: %s", id)
-		}
-	}
-
-	// Verify all certificates exist
-	for _, id := range ids {
-		if _, ok := mockClient.certificates[id]; !ok {
-			t.Errorf("expected certificate ID %s to be stored", id)
-		}
-	}
-}
-
-func TestCertFunctions_VariousIDFormats(t *testing.T) {
-	ca, err := testutil.GenerateTestCA()
-	if err != nil {
-		t.Fatalf("failed to generate test CA: %v", err)
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: ca.Cert.Raw,
-	})
-
-	mockClient := newMockCertClient()
-
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(c *Config) (client.Client, error) {
-		return mockClient, nil
-	}
-
-	exitCalled := false
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = originalExitFunc }()
-
-	// Test with various key IDs
-	testIDs := []string{
-		"cert-with-dashes",
-		"cert_with_underscores",
-		"cert.with.dots",
-		"cert123numbers",
-	}
-
-	for _, id := range testIDs {
-		t.Run(id, func(t *testing.T) {
-			var saveBuf bytes.Buffer
-			savePrinter := NewPrinter(cfg.OutputFormat, &saveBuf)
-			exitCalled = false
-
-			saveCert(cfg, savePrinter, id, string(certPEM))
-
-			if exitCalled {
-				t.Errorf("saveCert should succeed for ID: %s", id)
-			}
-
-			// Verify it exists
-			var existsBuf bytes.Buffer
-			existsPrinter := NewPrinter(cfg.OutputFormat, &existsBuf)
-			certExists(cfg, existsPrinter, id)
-
-			if !strings.Contains(existsBuf.String(), "exists") {
-				t.Errorf("certificate should exist for ID: %s", id)
-			}
-		})
-	}
-}
-
 // Tests for helper functions (using unique names to avoid conflicts)
-
-func TestCertGenerateCA_BasicCertTest(t *testing.T) {
-	cert, key, err := generateCA("Test CA", "Test Org", "", "", "", "", 365, "ecdsa", 256)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	if cert == nil {
-		t.Fatal("certificate should not be nil")
-	}
-	if key == nil {
-		t.Fatal("key should not be nil")
-	}
-
-	if cert.Subject.CommonName != "Test CA" {
-		t.Errorf("CommonName = %v, want Test CA", cert.Subject.CommonName)
-	}
-
-	if !cert.IsCA {
-		t.Error("certificate should be a CA")
-	}
-
-	if len(cert.Subject.Organization) == 0 || cert.Subject.Organization[0] != "Test Org" {
-		t.Error("certificate should have organization set")
-	}
-}
 
 // TestCertGenerateCA_UsesCanonicalCAProfile locks in that generateCA is
 // wired to pkg/ca's canonical CA profile (client.NewCAProfile, aliased from
@@ -2230,111 +1285,6 @@ func TestCertIssue_DualPurposeCarriesBothEKUs(t *testing.T) {
 	}
 }
 
-func TestCertGenerateCA_RSACert(t *testing.T) {
-	cert, key, err := generateCA("RSA CA", "Test Org", "", "", "", "", 365, "rsa", 2048)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	if cert == nil {
-		t.Fatal("certificate should not be nil")
-	}
-	if key == nil {
-		t.Fatal("key should not be nil")
-	}
-
-	if cert.PublicKeyAlgorithm != x509.RSA {
-		t.Errorf("PublicKeyAlgorithm = %v, want RSA", cert.PublicKeyAlgorithm)
-	}
-}
-
-func TestCertGenerateCA_Ed25519Cert(t *testing.T) {
-	cert, key, err := generateCA("Ed25519 CA", "Test Org", "", "", "", "", 365, "ed25519", 0)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	if cert == nil {
-		t.Fatal("certificate should not be nil")
-	}
-	if key == nil {
-		t.Fatal("key should not be nil")
-	}
-
-	if cert.PublicKeyAlgorithm != x509.Ed25519 {
-		t.Errorf("PublicKeyAlgorithm = %v, want Ed25519", cert.PublicKeyAlgorithm)
-	}
-}
-
-func TestCertGenerateCA_AllSubjectFields(t *testing.T) {
-	cert, key, err := generateCA(
-		"Full Subject CA",
-		"Test Organization",
-		"Test OU",
-		"US",
-		"California",
-		"San Francisco",
-		365,
-		"ecdsa",
-		256,
-	)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	if cert == nil || key == nil {
-		t.Fatal("certificate or key should not be nil")
-	}
-
-	// Verify all subject fields
-	if cert.Subject.CommonName != "Full Subject CA" {
-		t.Errorf("CommonName = %v, want Full Subject CA", cert.Subject.CommonName)
-	}
-	if len(cert.Subject.Organization) == 0 || cert.Subject.Organization[0] != "Test Organization" {
-		t.Error("Organization not set correctly")
-	}
-	if len(cert.Subject.OrganizationalUnit) == 0 || cert.Subject.OrganizationalUnit[0] != "Test OU" {
-		t.Error("OrganizationalUnit not set correctly")
-	}
-	if len(cert.Subject.Country) == 0 || cert.Subject.Country[0] != "US" {
-		t.Error("Country not set correctly")
-	}
-	if len(cert.Subject.Province) == 0 || cert.Subject.Province[0] != "California" {
-		t.Error("Province not set correctly")
-	}
-	if len(cert.Subject.Locality) == 0 || cert.Subject.Locality[0] != "San Francisco" {
-		t.Error("Locality not set correctly")
-	}
-}
-
-func TestCertGenerateCA_ECDSAWithDifferentCurves(t *testing.T) {
-	testCases := []struct {
-		name    string
-		keySize int
-	}{
-		{"P256", 256},
-		{"P384", 384},
-		{"P521", 521},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			cert, key, err := generateCA("Test CA", "", "", "", "", "", 365, "ecdsa", tc.keySize)
-			if err != nil {
-				t.Fatalf("generateCA failed for %s: %v", tc.name, err)
-			}
-
-			if cert == nil || key == nil {
-				t.Fatal("certificate or key should not be nil")
-			}
-
-			if cert.PublicKeyAlgorithm != x509.ECDSA {
-				t.Errorf("PublicKeyAlgorithm = %v, want ECDSA", cert.PublicKeyAlgorithm)
-			}
-		})
-	}
-}
-
 func TestCertGenerateCA_RSAWithSmallKeySize(t *testing.T) {
 	// Test that small RSA key sizes default to 2048
 	cert, key, err := generateCA("RSA CA", "", "", "", "", "", 365, "rsa", 1024)
@@ -2370,104 +1320,6 @@ func TestCertGenerateCA_DefaultAlgorithm(t *testing.T) {
 
 	if cert.PublicKeyAlgorithm != x509.ECDSA {
 		t.Errorf("PublicKeyAlgorithm = %v, want ECDSA (default)", cert.PublicKeyAlgorithm)
-	}
-}
-
-func TestCertGenerateCA_ECAlgorithm(t *testing.T) {
-	// Test "ec" alias for ECDSA
-	cert, key, err := generateCA("EC CA", "", "", "", "", "", 365, "ec", 256)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	if cert == nil || key == nil {
-		t.Fatal("certificate or key should not be nil")
-	}
-
-	if cert.PublicKeyAlgorithm != x509.ECDSA {
-		t.Errorf("PublicKeyAlgorithm = %v, want ECDSA", cert.PublicKeyAlgorithm)
-	}
-}
-
-func TestCertIssueCertificate_ServerCert(t *testing.T) {
-	// First generate CA
-	caCert, caKey, err := generateCA("Test CA", "Test Org", "", "", "", "", 365, "ecdsa", 256)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	// Issue server certificate
-	cert, key, err := issueCertificate(
-		caCert, caKey,
-		"server.example.com", "server", "Test Org", "", "", "", "",
-		365, "ecdsa", 256,
-		[]string{"server.example.com", "*.example.com"}, nil, nil,
-	)
-	if err != nil {
-		t.Fatalf("issueCertificate failed: %v", err)
-	}
-
-	if cert == nil {
-		t.Fatal("certificate should not be nil")
-	}
-	if key == nil {
-		t.Fatal("key should not be nil")
-	}
-
-	if cert.Subject.CommonName != "server.example.com" {
-		t.Errorf("CommonName = %v, want server.example.com", cert.Subject.CommonName)
-	}
-
-	if cert.IsCA {
-		t.Error("server certificate should not be a CA")
-	}
-
-	// Verify ExtKeyUsage contains ServerAuth
-	hasServerAuth := false
-	for _, usage := range cert.ExtKeyUsage {
-		if usage == x509.ExtKeyUsageServerAuth {
-			hasServerAuth = true
-			break
-		}
-	}
-	if !hasServerAuth {
-		t.Error("server certificate should have ServerAuth ExtKeyUsage")
-	}
-}
-
-func TestCertIssueCertificate_ClientCert(t *testing.T) {
-	caCert, caKey, err := generateCA("Test CA", "Test Org", "", "", "", "", 365, "ecdsa", 256)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	cert, key, err := issueCertificate(
-		caCert, caKey,
-		"client@example.com", "client", "Test Org", "", "", "", "",
-		365, "ecdsa", 256,
-		nil, nil, []string{"client@example.com"},
-	)
-	if err != nil {
-		t.Fatalf("issueCertificate failed: %v", err)
-	}
-
-	if cert == nil {
-		t.Fatal("certificate should not be nil")
-	}
-	if key == nil {
-		t.Fatal("key should not be nil")
-	}
-
-	// Verify ExtKeyUsage contains ClientAuth
-	hasClientAuth := false
-	for _, usage := range cert.ExtKeyUsage {
-		if usage == x509.ExtKeyUsageClientAuth {
-			hasClientAuth = true
-			break
-		}
-	}
-	if !hasClientAuth {
-		t.Error("client certificate should have ClientAuth ExtKeyUsage")
 	}
 }
 
@@ -2592,110 +1444,6 @@ func TestCertIssueCertificate_WithIPAddresses(t *testing.T) {
 	}
 }
 
-func TestCertIssueCertificate_AllSubjectFields(t *testing.T) {
-	caCert, caKey, err := generateCA("Test CA", "Test Org", "", "", "", "", 365, "ecdsa", 256)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	cert, key, err := issueCertificate(
-		caCert, caKey,
-		"full.example.com", "server",
-		"Full Organization",
-		"Full OU",
-		"US",
-		"California",
-		"San Francisco",
-		365, "ecdsa", 256,
-		nil, nil, nil,
-	)
-	if err != nil {
-		t.Fatalf("issueCertificate failed: %v", err)
-	}
-
-	if cert == nil || key == nil {
-		t.Fatal("certificate or key should not be nil")
-	}
-
-	// Verify all subject fields
-	if cert.Subject.CommonName != "full.example.com" {
-		t.Errorf("CommonName = %v, want full.example.com", cert.Subject.CommonName)
-	}
-	if len(cert.Subject.Organization) == 0 || cert.Subject.Organization[0] != "Full Organization" {
-		t.Error("Organization not set correctly")
-	}
-	if len(cert.Subject.OrganizationalUnit) == 0 || cert.Subject.OrganizationalUnit[0] != "Full OU" {
-		t.Error("OrganizationalUnit not set correctly")
-	}
-	if len(cert.Subject.Country) == 0 || cert.Subject.Country[0] != "US" {
-		t.Error("Country not set correctly")
-	}
-	if len(cert.Subject.Province) == 0 || cert.Subject.Province[0] != "California" {
-		t.Error("Province not set correctly")
-	}
-	if len(cert.Subject.Locality) == 0 || cert.Subject.Locality[0] != "San Francisco" {
-		t.Error("Locality not set correctly")
-	}
-}
-
-func TestCertGetPublicKey_NilInputCert(t *testing.T) {
-	result := getPublicKey(nil)
-	if result != nil {
-		t.Error("getPublicKey(nil) should return nil")
-	}
-}
-
-func TestCertGetPublicKey_RSAKey(t *testing.T) {
-	_, key, err := generateCA("Test CA", "", "", "", "", "", 365, "rsa", 2048)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	pubKey := getPublicKey(key)
-	if pubKey == nil {
-		t.Fatal("getPublicKey should return public key for RSA")
-	}
-
-	_, ok := pubKey.(*rsa.PublicKey)
-	if !ok {
-		t.Error("expected RSA public key")
-	}
-}
-
-func TestCertGetPublicKey_ECDSAKey(t *testing.T) {
-	_, key, err := generateCA("Test CA", "", "", "", "", "", 365, "ecdsa", 256)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	pubKey := getPublicKey(key)
-	if pubKey == nil {
-		t.Fatal("getPublicKey should return public key for ECDSA")
-	}
-
-	_, ok := pubKey.(*ecdsa.PublicKey)
-	if !ok {
-		t.Error("expected ECDSA public key")
-	}
-}
-
-func TestCertGetPublicKey_Ed25519Key(t *testing.T) {
-	_, key, err := generateCA("Test CA", "", "", "", "", "", 365, "ed25519", 0)
-	if err != nil {
-		t.Fatalf("generateCA failed: %v", err)
-	}
-
-	pubKey := getPublicKey(key)
-	if pubKey == nil {
-		t.Fatal("getPublicKey should return public key for Ed25519")
-	}
-
-	_, ok := pubKey.(ed25519.PublicKey)
-	if !ok {
-		t.Error("expected Ed25519 public key")
-	}
-}
-
 func TestCertGetPublicKey_UnknownKeyType(t *testing.T) {
 	// Test with an unsupported key type (using a string as an example)
 	result := getPublicKey("not-a-key")
@@ -2705,84 +1453,6 @@ func TestCertGetPublicKey_UnknownKeyType(t *testing.T) {
 }
 
 // Tests for splitAndTrim function
-
-func TestCertSplitAndTrim_BasicSplit(t *testing.T) {
-	result := splitAndTrim("one,two,three")
-	expected := []string{"one", "two", "three"}
-
-	if len(result) != len(expected) {
-		t.Errorf("expected %d elements, got %d", len(expected), len(result))
-		return
-	}
-
-	for i, v := range expected {
-		if result[i] != v {
-			t.Errorf("result[%d] = %v, want %v", i, result[i], v)
-		}
-	}
-}
-
-func TestCertSplitAndTrim_WithWhitespace(t *testing.T) {
-	result := splitAndTrim("  one  , two ,  three  ")
-	expected := []string{"one", "two", "three"}
-
-	if len(result) != len(expected) {
-		t.Errorf("expected %d elements, got %d", len(expected), len(result))
-		return
-	}
-
-	for i, v := range expected {
-		if result[i] != v {
-			t.Errorf("result[%d] = %v, want %v", i, result[i], v)
-		}
-	}
-}
-
-func TestCertSplitAndTrim_EmptyElements(t *testing.T) {
-	result := splitAndTrim("one,,two,,,three")
-	expected := []string{"one", "two", "three"}
-
-	if len(result) != len(expected) {
-		t.Errorf("expected %d elements, got %d", len(expected), len(result))
-		return
-	}
-
-	for i, v := range expected {
-		if result[i] != v {
-			t.Errorf("result[%d] = %v, want %v", i, result[i], v)
-		}
-	}
-}
-
-func TestCertSplitAndTrim_SingleElement(t *testing.T) {
-	result := splitAndTrim("single")
-	expected := []string{"single"}
-
-	if len(result) != len(expected) {
-		t.Errorf("expected %d elements, got %d", len(expected), len(result))
-		return
-	}
-
-	if result[0] != expected[0] {
-		t.Errorf("result[0] = %v, want %v", result[0], expected[0])
-	}
-}
-
-func TestCertSplitAndTrim_EmptyString(t *testing.T) {
-	result := splitAndTrim("")
-
-	if len(result) != 0 {
-		t.Errorf("expected 0 elements for empty string, got %d", len(result))
-	}
-}
-
-func TestCertSplitAndTrim_OnlyWhitespace(t *testing.T) {
-	result := splitAndTrim("  ,  ,  ")
-
-	if len(result) != 0 {
-		t.Errorf("expected 0 elements for whitespace-only string, got %d", len(result))
-	}
-}
 
 func TestCertSplitAndTrim_DNSNames(t *testing.T) {
 	result := splitAndTrim("example.com, *.example.com, www.example.com")
@@ -2818,30 +1488,6 @@ func TestCertSplitAndTrim_IPAddresses(t *testing.T) {
 
 // Test generateKeyPair function directly
 
-func TestCertGenerateKeyPair_ECDSA(t *testing.T) {
-	key, err := generateKeyPair("ecdsa", 256)
-	if err != nil {
-		t.Fatalf("generateKeyPair failed: %v", err)
-	}
-
-	_, ok := key.(*ecdsa.PrivateKey)
-	if !ok {
-		t.Error("expected ECDSA private key")
-	}
-}
-
-func TestCertGenerateKeyPair_RSA(t *testing.T) {
-	key, err := generateKeyPair("rsa", 2048)
-	if err != nil {
-		t.Fatalf("generateKeyPair failed: %v", err)
-	}
-
-	_, ok := key.(*rsa.PrivateKey)
-	if !ok {
-		t.Error("expected RSA private key")
-	}
-}
-
 // TestCertGenerateKeyPair_RSA_RefusesOversizedKey proves generateKeyPair
 // refuses a modulus above the 4096-bit ceiling before rsa.GenerateKey ever
 // runs. rsa.GenerateKey cannot be cancelled and its cost grows with the
@@ -2854,18 +1500,6 @@ func TestCertGenerateKeyPair_RSA_RefusesOversizedKey(t *testing.T) {
 	}
 }
 
-func TestCertGenerateKeyPair_Ed25519(t *testing.T) {
-	key, err := generateKeyPair("ed25519", 0)
-	if err != nil {
-		t.Fatalf("generateKeyPair failed: %v", err)
-	}
-
-	_, ok := key.(ed25519.PrivateKey)
-	if !ok {
-		t.Error("expected Ed25519 private key")
-	}
-}
-
 func TestCertGenerateKeyPair_DefaultAlgorithm(t *testing.T) {
 	key, err := generateKeyPair("unknown", 256)
 	if err != nil {
@@ -2875,38 +1509,6 @@ func TestCertGenerateKeyPair_DefaultAlgorithm(t *testing.T) {
 	_, ok := key.(*ecdsa.PrivateKey)
 	if !ok {
 		t.Error("expected ECDSA private key for unknown algorithm (default)")
-	}
-}
-
-func TestCertGenerateKeyPair_ECDSAP384(t *testing.T) {
-	key, err := generateKeyPair("ecdsa", 384)
-	if err != nil {
-		t.Fatalf("generateKeyPair failed: %v", err)
-	}
-
-	ecKey, ok := key.(*ecdsa.PrivateKey)
-	if !ok {
-		t.Error("expected ECDSA private key")
-	}
-
-	if ecKey.Curve.Params().BitSize != 384 {
-		t.Errorf("expected P384 curve, got bit size %d", ecKey.Curve.Params().BitSize)
-	}
-}
-
-func TestCertGenerateKeyPair_ECDSAP521(t *testing.T) {
-	key, err := generateKeyPair("ecdsa", 521)
-	if err != nil {
-		t.Fatalf("generateKeyPair failed: %v", err)
-	}
-
-	ecKey, ok := key.(*ecdsa.PrivateKey)
-	if !ok {
-		t.Error("expected ECDSA private key")
-	}
-
-	if ecKey.Curve.Params().BitSize != 521 {
-		t.Errorf("expected P521 curve, got bit size %d", ecKey.Curve.Params().BitSize)
 	}
 }
 

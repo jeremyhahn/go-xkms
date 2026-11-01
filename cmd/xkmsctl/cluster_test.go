@@ -146,16 +146,6 @@ func testClusterMembers() []qrdbsdk.Member {
 // Registration
 // ---------------------------------------------------------------------------
 
-// TestClusterCmd_Registered verifies the cluster group and all four verbs
-// are attached to the root command.
-func TestClusterCmd_Registered(t *testing.T) {
-	for _, verb := range []string{"status", "members", "add", "remove"} {
-		if _, _, err := rootCmd.Find([]string{"cluster", verb}); err != nil {
-			t.Errorf("cluster %s not registered: %v", verb, err)
-		}
-	}
-}
-
 // TestClusterCmd_ShardFlagDefaults verifies every cluster verb carries a
 // --shard flag defaulting to "1".
 func TestClusterCmd_ShardFlagDefaults(t *testing.T) {

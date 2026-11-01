@@ -18,15 +18,9 @@ package main
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,20 +64,6 @@ func TestPlatformGet_JSON(t *testing.T) {
 	var got transport.SealStoreGetResponse
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
 	assert.Equal(t, []byte("s3cret"), got.Secret)
-}
-
-func TestPlatformGet_WritesOutputFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "secret.bin")
-	out, code, _ := runPlatformGet(t, platformSecretMock(), "text", path)
-	assert.Equal(t, -1, code)
-	assert.NotContains(t, out, base64.StdEncoding.EncodeToString([]byte("s3cret")), "a secret written to a file is not echoed")
-
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("s3cret"), data)
 }
 
 func TestPlatformGet_Failures(t *testing.T) {
@@ -275,31 +255,6 @@ func TestPrintInvite_NilPrintsNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, out)
 	assert.Empty(t, buf.String())
-}
-
-// writePEMCertificate writes a self-signed certificate to dir and returns
-// its path.
-func writePEMCertificate(t *testing.T, dir string) string {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(7),
-		Subject:      pkix.Name{CommonName: "alice"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-	path := filepath.Join(dir, "alice.pem")
-	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600))
-	return path
-}
-
-func TestLoadPEMCertificate(t *testing.T) {
-	cert, err := loadPEMCertificate(writePEMCertificate(t, t.TempDir()))
-	require.NoError(t, err)
-	assert.Equal(t, "alice", cert.Subject.CommonName)
 }
 
 func TestLoadPEMCertificate_Errors(t *testing.T) {

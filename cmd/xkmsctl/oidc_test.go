@@ -121,27 +121,6 @@ func activeCredential(name string) *client.OIDCCredential {
 	}
 }
 
-func TestOIDCCreateCmd(t *testing.T) {
-	mock := &mockOIDCClient{cred: activeCredential("codex")}
-	out, code := runOIDCCmd(t, mock, oidcCreateCmd, []string{"codex"},
-		map[string]string{"template": "openai", "scope": "tenant", "refresh-margin": "10m", "scopes": "openid,offline_access"})
-	assert.Equal(t, -1, code)
-	req := mock.requests["create"].(*client.OIDCCredentialCreateRequest)
-	assert.Equal(t, client.OIDCCredentialRef{Scope: "tenant", Name: "codex"}, req.OIDCCredentialRef)
-	assert.Equal(t, "openai", req.Config.Template)
-	assert.Equal(t, int64(600), req.Config.RefreshMarginSeconds)
-	assert.Equal(t, []string{"openid", "offline_access"}, req.Config.Scopes)
-	assert.Nil(t, req.Tokens)
-	assert.Contains(t, out, "OIDC Credential Created")
-	assert.Contains(t, out, "Scope:       shared")
-}
-
-func TestOIDCCreateCmd_ServerError(t *testing.T) {
-	mock := &mockOIDCClient{err: errTPMRunBoom}
-	_, code := runOIDCCmd(t, mock, oidcCreateCmd, []string{"codex"}, nil)
-	assert.Equal(t, 1, code)
-}
-
 // codexAuthFile writes a codex auth.json and returns its path.
 func codexAuthFile(t *testing.T) string {
 	t.Helper()

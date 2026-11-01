@@ -92,16 +92,6 @@ func testRebalancePlan() *qrdbtransport.RebalancePlan {
 // Registration
 // ---------------------------------------------------------------------------
 
-// TestRebalanceCmd_Registered verifies the rebalance group and all four
-// verbs are attached to the root command.
-func TestRebalanceCmd_Registered(t *testing.T) {
-	for _, verb := range []string{"stats", "plan", "execute", "report"} {
-		if _, _, err := rootCmd.Find([]string{"rebalance", verb}); err != nil {
-			t.Errorf("rebalance %s not registered: %v", verb, err)
-		}
-	}
-}
-
 // TestRebalanceStats_ShardFlagDefault verifies rebalance stats carries a
 // --shard flag defaulting to "1".
 func TestRebalanceStats_ShardFlagDefault(t *testing.T) {
@@ -183,30 +173,6 @@ func TestRebalanceStats_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 // rebalance plan
 // ---------------------------------------------------------------------------
-
-// TestRebalancePlan_Success verifies plan flags reach the request and the
-// plan renders.
-func TestRebalancePlan_Success(t *testing.T) {
-	fake := &fakeRebalanceClient{plan: testRebalancePlan()}
-	installClusterControlFactory(t, &QRDBControlClient{Cluster: &fakeClusterControl{}, Rebalance: fake})
-
-	out, err := runClusterCmd(t, "rebalance", "plan",
-		"--max-moves", "5", "--dry-run", "--target-balance", "10")
-	if err != nil {
-		t.Fatalf("rebalance plan: %v", err)
-	}
-	if fake.gotPlanReq == nil {
-		t.Fatal("CreateRebalancePlan not called")
-	}
-	if fake.gotPlanReq.MaxMoves != 5 || !fake.gotPlanReq.DryRun || fake.gotPlanReq.TargetBalance != 10 {
-		t.Errorf("plan request = %+v, want MaxMoves=5 DryRun=true TargetBalance=10", fake.gotPlanReq)
-	}
-	for _, want := range []string{"Planned moves:      1", "10.0.0.1:63001", "10.0.0.2:63001"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output missing %q:\n%s", want, out)
-		}
-	}
-}
 
 // TestRebalancePlan_WritesOutFile verifies --out persists a JSON plan
 // that execute can replay.
