@@ -49,6 +49,18 @@ func (l *dirLock) tryLock() (bool, error) {
 	return err == nil, err
 }
 
+// lock blocks until it takes the exclusive lock on the directory. A wait cut
+// short by a signal is resumed, not reported: EINTR says nothing about the
+// lock.
+func (l *dirLock) lock() error {
+	for {
+		err := unix.Flock(int(l.dir.Fd()), unix.LOCK_EX)
+		if err != unix.EINTR {
+			return err
+		}
+	}
+}
+
 func (l *dirLock) unlock() error {
 	return unix.Flock(int(l.dir.Fd()), unix.LOCK_UN)
 }
