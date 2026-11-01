@@ -194,7 +194,7 @@ func TestReclaimSocket_RefusesNonSocket(t *testing.T) {
 }
 
 func TestReclaimSocket_RefusesInsecureDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortTempDir(t)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	sockPath := filepath.Join(dir, "xkey.sock")
 	staleSocket(t, sockPath)

@@ -100,6 +100,8 @@ playwright-report/
 /cmd/xkmsd/xkmsd
 /xkey/cmd/e2eprobe/e2eprobe
 /xkey/cmd/xkey/xkey
+# `go build ./tools/skillgen` from xkey/ writes the binary at the module root
+/xkey/skillgen
 /server
 /x25519-ecdh
 /aes

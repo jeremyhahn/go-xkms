@@ -72,7 +72,12 @@ hands them to every job that runs a stage, through `scripts/ci-registry.sh`
 
 - **Push to `main`** (`CI_PUBLISH=true`): `ci-images` runs on the `release`
   runner. It pushes each image whose hash main has not published yet, as
-  `<registry>/<owner>/go-xkms-ci-{toolchain,it}:<hash>-main`. It outputs
+  `<registry>/agent-ci-images/go-xkms-ci-{toolchain,it}:<hash>-main`, a
+  public namespace: only its owner or an admin can write a user namespace,
+  so main's images do not live under the repository's owner (go-xkms #1730).
+  The namespace is `CI_REGISTRY_OWNER` in `ci.yml`'s workflow env, which
+  names `agent-ci-images` on the forge and is empty on GitHub (ruling 217).
+  On GHCR, where the run's token pushes, the namespace is the owner. It outputs
   `toolchain_ref` and `it_ref` as `@sha256:` digest references and validates
   each one. The forge push logs in with the runner's own `RELEASE_REGISTRY`,
   `RELEASE_REGISTRY_USER` and `RELEASE_REGISTRY_TOKEN` (ruling 173); no
@@ -81,13 +86,55 @@ hands them to every job that runs a stage, through `scripts/ci-registry.sh`
   - If main published the same content, the consumers pull it.
   - If not, or if the registry cannot be read, the output is empty and each
     consumer builds the image on its own runner, with no push.
-  - The read uses the run's token under `packages: read`. When the registry
-    refuses it, the read falls back to anonymous; when both fail, the step
-    warns that the pull credential is the gap.
+  - The lookup speaks the registry API with curl, not the Docker daemon. The
+    scheme is `github.server_url`'s, so a forge served over plain HTTP is read
+    over HTTP. Any other registry is read over HTTPS, with certificates
+    verified.
+  - On the forge the read is anonymous, since the namespace is public
+    (ruling 217), and the run's token is never sent (Gitea refuses an
+    Actions token at `/v2/token`). On GHCR a package is private when
+    published, so every read step hands the script the run's token
+    (`CI_REGISTRY_USER`, `CI_REGISTRY_TOKEN`, under `packages: read`) and a
+    GHCR read uses it. A step with no token reads GHCR anonymously; a step
+    with only one of the two fails, naming the missing one.
+  - On the forge, it asks `<forge>/v2/token` for a pull token with no
+    credential, for service `container_registry` and scope
+    `repository:<name>:pull` (Distribution token specification, "Requesting
+    a Token"). It then sends a `HEAD` of `/v2/<name>/manifests/<tag>` with
+    that token as `Authorization: Bearer` ("Using the Bearer token"; OCI
+    Distribution Spec v1.1.1, "Checking if content exists in the registry")
+    and takes the digest from `Docker-Content-Digest`. A reply without a
+    `sha256` digest is unexpected. The token reaches curl as a config on a
+    pipe (`-K -`), never in its arguments, and is never logged.
+  - On GHCR, it sends a `GET` of the manifest ("Pulling manifests") and
+    digests the body. It answers a `401` challenge as the Distribution token
+    specification describes ("How to authenticate"): a `Bearer` challenge is
+    exchanged at its realm for a token, with the run's token as the `Basic`
+    credential, and a `Basic` challenge is answered with the run's token.
+    With no run token, a `Basic` challenge ends the read. So does an HTTPS
+    registry whose realm is plain HTTP.
+  - An empty output always comes with one `::warning::ci-registry: resolve:`
+    line naming the case: main has not published the tag (not found), the
+    registry refused the read (401/403), the registry did not
+    answer, or an unexpected reply (quoted).
+- **The publish log** shows each step: the login (`==> logged in to ... with
+  the release runner's credential`), the lookup (`published already as
+  <digest>`, or `has not published ... building and pushing it`), and
+  `==> pushed <ref>:<hash>-main as <digest>`. A lookup that fails other than
+  not-found is a warning, and the push goes on. A login that fails names its
+  case and fails the job. When `RELEASE_REGISTRY` is not the forge's registry
+  host, publish warns: pull requests resolve against the forge's host and
+  would not find the image.
 - **Consumers** (`image`, `lint-gates`, `static-analysis`, `build`,
   `nested-module-build`, `nested-module-test`, `build-raft`, `race`,
   `tpm2-simulator`) run `scripts/ci-registry.sh use` before their first
-  stage. It pulls the digest (3 attempts) and holds it with a never-started
+  stage. It runs `docker pull <registry>/agent-ci-images/<image>@sha256:...`
+  through the runner's daemon, never with `buildx imagetools` (3 attempts).
+  On the forge it pulls with no login. On GHCR it first logs in with the
+  run's token in a private `DOCKER_CONFIG`; a refused login is a warning and
+  the pull goes on anonymously. It refuses a reference outside that
+  namespace, and holds the
+  image with a never-started
   container until the job's `if: always()` teardown releases it. A consumer
   on a push to `main` never rebuilds an image `ci-images` published.
 
@@ -96,7 +143,16 @@ forge, the same host as its web UI), so no address is written in the tree.
 `scripts/reap-stale-ci-stacks.sh` also removes stale registry-named CI images
 and keeps any image a container uses, a hold included. The gate
 `internal/buildgates/ci_image_digest_test.go` fails the build when a consumer
-stops taking its image from `ci-images`.
+stops taking its image from `ci-images`. It also fails when an output of
+`ci-images` stops naming both the `publish` step (main) and the `resolve` step
+(pull requests), when either step stops writing that output, or when the
+Validate step stops checking it. It fails when `ci.yml`'s `CI_REGISTRY_OWNER`
+stops naming `agent-ci-images` on the forge, when `scripts/ci-registry.sh`
+writes that name itself or a read leaves `CI_REGISTRY_OWNER`'s namespace,
+when a read step stops handing the script the run's token, when the script
+logs in or takes the token outside its login functions, sends it to the
+forge, or stops using it for a GHCR resolve or pull, or when `imagetools`
+returns.
 `test/scripts/ci-registry.test.sh` covers the script.
 
 ### Run Individual Backend Tests
@@ -230,12 +286,12 @@ Excerpt (`test/integration/awskms/docker-compose.yml`):
 ```yaml
 services:
   floci:
-    image: floci/floci:latest
+    image: floci/floci:2.3.0@sha256:e0b292df4dc9559b7b1bf4f51bdda4bb8e269276236438cd03cae661260ea8a9
     environment:
       - FLOCI_DEFAULT_REGION=us-east-1
       - FLOCI_STORAGE_MODE=memory
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_floci/health"]
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
     ports:
       - "0:4566"
 

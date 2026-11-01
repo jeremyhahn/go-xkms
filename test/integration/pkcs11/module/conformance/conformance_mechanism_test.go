@@ -146,7 +146,7 @@ func TestMechanism_GetMechanismInfo(t *testing.T) {
 			}
 
 			// Verify CK_MECHANISM_INFO structure
-			// Reference: OASIS PKCS#11 v3.0, Section 5.5.5
+			// Reference: OASIS PKCS#11 v3.2, Section 3.5
 
 			// MinKeySize should be <= MaxKeySize
 			if info.MinKeySize > info.MaxKeySize {
@@ -154,11 +154,19 @@ func TestMechanism_GetMechanismInfo(t *testing.T) {
 					mech.String(), info.MinKeySize, info.MaxKeySize)
 			}
 
-			// At least one operation flag should be set
+			// At least one operation flag should be set. The set is every
+			// CK_MECHANISM_INFO flag PKCS#11 v3.2 §3.5 defines as "can be used
+			// with" a function, including the message-based (v3.0) and
+			// KEM (v3.2) ones: CKM_ML_KEM carries only CKF_ENCAPSULATE and
+			// CKF_DECAPSULATE.
 			opFlags := module.CKF_ENCRYPT | module.CKF_DECRYPT |
 				module.CKF_DIGEST | module.CKF_SIGN | module.CKF_VERIFY |
+				module.CKF_SIGN_RECOVER | module.CKF_VERIFY_RECOVER |
 				module.CKF_GENERATE | module.CKF_GENERATE_KEY_PAIR |
-				module.CKF_WRAP | module.CKF_UNWRAP | module.CKF_DERIVE
+				module.CKF_WRAP | module.CKF_UNWRAP | module.CKF_DERIVE |
+				module.CKF_MESSAGE_ENCRYPT | module.CKF_MESSAGE_DECRYPT |
+				module.CKF_MESSAGE_SIGN | module.CKF_MESSAGE_VERIFY |
+				module.CKF_ENCAPSULATE | module.CKF_DECAPSULATE
 
 			if info.Flags&opFlags == 0 {
 				t.Errorf("%s: no operation flags set", mech.String())

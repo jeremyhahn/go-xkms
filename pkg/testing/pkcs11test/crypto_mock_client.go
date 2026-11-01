@@ -567,6 +567,14 @@ func (c *CryptoMockClient) WrapKeyByID(ctx context.Context, req *transport.WrapK
 		return nil, err
 	}
 
+	if req.Algorithm == string(types.WrapAESGCM) {
+		wrapped, err := c.wrapAESGCM(ctx, req, targetKey)
+		if err != nil {
+			return nil, err
+		}
+		return &transport.WrapKeyByIDResponse{WrappedKey: wrapped, Algorithm: req.Algorithm}, nil
+	}
+
 	// Encrypt the target key with the wrapping key using AES-GCM
 	block, err := aes.NewCipher(wrappingKey)
 	if err != nil {
@@ -588,13 +596,90 @@ func (c *CryptoMockClient) WrapKeyByID(ctx context.Context, req *transport.WrapK
 	}, nil
 }
 
-// UnwrapKeyByID unwraps key material and stores it as a new key.
-func (c *CryptoMockClient) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error) {
+// The key service frames an AES-GCM wrap as mode(1) || nonce(12) ||
+// ciphertext || tag, the mode byte naming the GCM construction that sealed it
+// (pkg/xkms servicer_wrapkey.go wrapAESGCM). The module turns that frame into
+// the ciphertext || tag PKCS#11 v3.2 §6.13.3 has C_WrapKey return, so the mock
+// must answer in the service's frame.
+const (
+	gcmWrapModeExplicit byte = 0x00
+	gcmWrapModeRandom   byte = 0x01
+
+	// gcmWrapNonceSize is the 96-bit IV the service requires of a wrap.
+	gcmWrapNonceSize = 12
+)
+
+// wrapAESGCM seals targetKey under the caller's IV, AAD and tag length
+// through Encrypt, as the service seals through the wrapping key's
+// encrypter, and frames the result the way the service does.
+func (c *CryptoMockClient) wrapAESGCM(ctx context.Context, req *transport.WrapKeyByIDRequest, targetKey []byte) ([]byte, error) {
+	sealed, err := c.Encrypt(ctx, &transport.EncryptRequest{
+		KeyID:          req.WrappingKeyID,
+		Plaintext:      targetKey,
+		AdditionalData: req.AAD,
+		Nonce:          req.IV,
+		TagSize:        req.TagBits / 8,
+	})
+	if err != nil {
+		return nil, err
+	}
+	mode := gcmWrapModeExplicit
+	if sealed.GCMNonceMode == string(types.GCMNonceModeRandom) {
+		mode = gcmWrapModeRandom
+	}
+	framed := make([]byte, 0, 1+len(sealed.Nonce)+len(sealed.Ciphertext)+len(sealed.Tag))
+	framed = append(framed, mode)
+	framed = append(framed, sealed.Nonce...)
+	framed = append(framed, sealed.Ciphertext...)
+	return append(framed, sealed.Tag...), nil
+}
+
+// unwrapAESGCM opens a frame wrapAESGCM produced, or the module rebuilt from
+// CK_GCM_PARAMS.pIv, through Decrypt, as the service's unwrapAESGCM does.
+func (c *CryptoMockClient) unwrapAESGCM(ctx context.Context, req *transport.UnwrapKeyByIDRequest) ([]byte, error) {
+	tagSize, err := gcmTagSize(req.TagBits / 8)
+	if err != nil {
+		return nil, err
+	}
+	if len(req.WrappedKey) < 1+gcmWrapNonceSize+tagSize {
+		return nil, ErrInvalidCiphertext
+	}
+	var nonceMode types.GCMNonceMode
+	switch req.WrappedKey[0] {
+	case gcmWrapModeExplicit:
+		nonceMode = types.GCMNonceModeExplicit
+	case gcmWrapModeRandom:
+		nonceMode = types.GCMNonceModeRandom
+	default:
+		return nil, ErrInvalidCiphertext
+	}
+	body := req.WrappedKey[1:]
+	opened, err := c.Decrypt(ctx, &transport.DecryptRequest{
+		KeyID:          req.UnwrappingKeyID,
+		Nonce:          body[:gcmWrapNonceSize],
+		Ciphertext:     body[gcmWrapNonceSize : len(body)-tagSize],
+		Tag:            body[len(body)-tagSize:],
+		AdditionalData: req.AAD,
+		GCMNonceMode:   string(nonceMode),
+		TagSize:        req.TagBits / 8,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return opened.Plaintext, nil
+}
+
+// unwrapKeyMaterial opens the wrapped key WrapKeyByID produced for
+// req.Algorithm.
+func (c *CryptoMockClient) unwrapKeyMaterial(ctx context.Context, req *transport.UnwrapKeyByIDRequest) ([]byte, error) {
+	if req.Algorithm == string(types.WrapAESGCM) {
+		return c.unwrapAESGCM(ctx, req)
+	}
+
 	unwrappingKey, err := c.getOrCreateSymKey(req.UnwrappingKeyID)
 	if err != nil {
 		return nil, err
 	}
-
 	block, err := aes.NewCipher(unwrappingKey)
 	if err != nil {
 		return nil, err
@@ -609,8 +694,12 @@ func (c *CryptoMockClient) UnwrapKeyByID(ctx context.Context, req *transport.Unw
 	if len(req.WrappedKey) < gcm.Overhead() {
 		return nil, ErrInvalidCiphertext
 	}
+	return gcm.Open(nil, nil, req.WrappedKey, nil)
+}
 
-	keyMaterial, err := gcm.Open(nil, nil, req.WrappedKey, nil)
+// UnwrapKeyByID unwraps key material and stores it as a new key.
+func (c *CryptoMockClient) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error) {
+	keyMaterial, err := c.unwrapKeyMaterial(ctx, req)
 	if err != nil {
 		return nil, err
 	}

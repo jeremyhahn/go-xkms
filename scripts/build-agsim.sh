@@ -35,7 +35,10 @@ dir=$1
 module=github.com/jeremyhahn/arduino-generic
 binaries=(agsim agsim-atecc608a)
 
-version=$(go list -m -f '{{.Version}}' "${module}/sdk/go")
+if ! version=$(go list -m -f '{{.Version}}' "${module}/sdk/go"); then
+	echo "build-agsim.sh: go list -m ${module}/sdk/go failed: cannot read the version go.mod pins (go's error is above)" >&2
+	exit 1
+fi
 stamp="${dir}/.version"
 
 built=1
@@ -53,13 +56,27 @@ if [ -z "${want}" ]; then
 	echo "build-agsim.sh: ${module} ${version} has no hash in ${pins}; add it (see that file)" >&2
 	exit 1
 fi
-got=$(go mod download -json "${module}@${version}" | sed -n 's/^[[:space:]]*"Sum": "\(.*\)",\{0,1\}$/\1/p')
+# `go mod download -json` reports a failure in the JSON's Error field on
+# stdout, not on stderr, so the result is kept and the error reported here.
+# Offline (GOPROXY=off) this module resolves only from the module cache and
+# only with GOPRIVATE covering it: it is not in go.sum, so without GOPRIVATE
+# Go asks the checksum database, which cannot vouch for a first-party module.
+if ! download=$(go mod download -json "${module}@${version}"); then
+	reason=$(printf '%s\n' "${download}" | sed -n 's/^[[:space:]]*"Error": "\(.*\)",\{0,1\}$/\1/p')
+	echo "build-agsim.sh: go mod download ${module}@${version} failed: ${reason:-no error reported}" >&2
+	echo "build-agsim.sh: offline, it needs the module in the module cache and GOPRIVATE covering ${module}" >&2
+	exit 1
+fi
+got=$(printf '%s\n' "${download}" | sed -n 's/^[[:space:]]*"Sum": "\(.*\)",\{0,1\}$/\1/p')
 if [ "${got}" != "${want}" ]; then
 	echo "build-agsim.sh: ${module} ${version} hashes to '${got}', ${pins} pins '${want}'" >&2
 	exit 1
 fi
 
-src=$(go list -m -f '{{.Dir}}' "${module}@${version}")
+if ! src=$(go list -m -f '{{.Dir}}' "${module}@${version}"); then
+	echo "build-agsim.sh: go list -m ${module}@${version} failed: cannot locate its source in the module cache (go's error is above)" >&2
+	exit 1
+fi
 work=$(mktemp -d)
 trap 'rm -rf "${work}"' EXIT
 cp -r "${src}/." "${work}/"

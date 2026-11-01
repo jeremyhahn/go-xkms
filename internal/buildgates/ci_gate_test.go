@@ -44,6 +44,18 @@ const gateDraft = "${{ github.event.pull_request.draft == true }}"
 // workflow_dispatch only (ci-template v1.24).
 const nightlyIf = "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
 
+// scheduleGuardJob is the ci-template v1.29.3 job whose verdict holds a
+// schedule run's bigdisk jobs off while a main push run is in flight.
+const scheduleGuardJob = "schedule-guard"
+
+// scheduleRun is the v1.29.3 clause a bigdisk job adds to its if:, so that on
+// a schedule run it runs only on the schedule guard's `run`. A job may carry
+// it only when it needs the schedule guard.
+const scheduleRun = "github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run'"
+
+// guardedNightlyIf is nightlyIf under the schedule guard (v1.29.3).
+const guardedNightlyIf = "(github.event_name == 'schedule' && needs.schedule-guard.outputs.verdict == 'run') || github.event_name == 'workflow_dispatch'"
+
 // gateLine matches one `check <job> "${{ needs.<job>.result }}" <tier>` line
 // of CI Gate's script.
 var gateLine = regexp.MustCompile(
@@ -197,20 +209,22 @@ func tierProblems(wf workflow) []string {
 			continue
 		}
 		cond := condition(j.If)
+		guarded := slices.Contains(j.Needs, scheduleGuardJob)
 		switch tier {
 		case "full":
-			if cond != fullTierJobIf {
+			if cond != fullTierJobIf && (!guarded || cond != fullTierJobIf+" && ("+scheduleRun+")") {
 				problems = append(problems, fmt.Sprintf("%s is tagged full but its if: is %q, want %q", name, cond, fullTierJobIf))
 			}
 		case "nightly":
-			if cond != nightlyIf {
+			if cond != nightlyIf && (!guarded || cond != guardedNightlyIf) {
 				problems = append(problems, fmt.Sprintf("%s is tagged nightly but its if: is %q, want %q", name, cond, nightlyIf))
 			}
 		case "pr":
+			guardedPR := guarded && (cond == scheduleRun || cond == draftIf+" && ("+scheduleRun+")")
 			switch {
 			case cond == "" && len(j.Needs) == 0:
 				problems = append(problems, fmt.Sprintf("%s is tagged pr but has no if: %q and needs no job, so it runs on a draft", name, draftIf))
-			case cond != "" && cond != draftIf:
+			case cond != "" && cond != draftIf && !guardedPR:
 				problems = append(problems, fmt.Sprintf("%s is tagged pr but its if: is %q, want %q or none", name, cond, draftIf))
 			}
 			for _, need := range j.Needs {
@@ -237,11 +251,13 @@ func tierProblems(wf workflow) []string {
 // untimedJobs are the ci-template's own jobs that carry no timeout-minutes in
 // the canonical go-quicraft ci.yml, which go-xkms's matches outside its
 // CUSTOMIZE blocks (#1558). Each runs only short shell steps (a diff, greps,
-// the gate's result check) and builds or tests nothing.
+// the gate's result check) and builds or tests nothing. The v1.29.3 schedule
+// guard is one: two curl calls, each bounded by --max-time.
 var untimedJobs = map[string]bool{
-	"changes":    true,
-	"arch-gates": true,
-	gateJob:      true,
+	"changes":        true,
+	"arch-gates":     true,
+	scheduleGuardJob: true,
+	gateJob:          true,
 }
 
 // releasabilityRef is how the ci-template's docs-only releasability step
@@ -332,11 +348,14 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     timeout-minutes: 30
   soak:
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    needs: [schedule-guard]
+    if: ${{ (github.event_name == 'schedule' && needs.schedule-guard.outputs.verdict == 'run') || github.event_name == 'workflow_dispatch' }}
     timeout-minutes: 60
+  schedule-guard:
+    if: ${{ !github.event.pull_request.draft }}
   ci-gate:
     if: always()
-    needs: [lint, build, race, soak]
+    needs: [lint, build, race, soak, schedule-guard]
     timeout-minutes: 5
     steps:
       - env:
@@ -348,6 +367,7 @@ jobs:
           check build "${{ needs.build.result }}" pr
           check race  "${{ needs.race.result }}" full
           check soak  "${{ needs.soak.result }}" nightly
+          check schedule-guard "${{ needs.schedule-guard.result }}" pr
 `
 
 func TestCIGateTiersCatchEachMismatch(t *testing.T) {
@@ -362,7 +382,7 @@ func TestCIGateTiersCatchEachMismatch(t *testing.T) {
 		{"pr job tagged full", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}" full`, "build is tagged full but its if:"},
 		{"pr job with an if", "needs: [lint]\n", "needs: [lint]\n    if: github.event_name == 'push'\n", "build is tagged pr but its if:"},
 		{"job missing from the gate", "          check race  \"${{ needs.race.result }}\" full\n", "", "race has no check line in CI Gate"},
-		{"job missing from gate needs", "needs: [lint, build, race, soak]", "needs: [lint, build, soak]", "race is not in ci-gate needs"},
+		{"job missing from gate needs", "needs: [lint, build, race, soak, schedule-guard]", "needs: [lint, build, soak, schedule-guard]", "race is not in ci-gate needs"},
 		{"unknown tier", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}" fast`, `tags build "fast"`},
 		{"tier missing", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}"`, "is malformed"},
 		{"line reads another job", `build "${{ needs.build.result }}"`, `build "${{ needs.race.result }}"`, "reads needs.race.result"},
@@ -373,7 +393,11 @@ func TestCIGateTiersCatchEachMismatch(t *testing.T) {
 		{"full job without the draft guard", ")) && !github.event.pull_request.draft }}", ")) }}", "race is tagged full but its if:"},
 		{"pr job without the draft guard or a need", "    if: ${{ !github.event.pull_request.draft }}\n", "", "lint is tagged pr but has no if:"},
 		{"CI Gate without DRAFT", "          DRAFT: ${{ github.event.pull_request.draft == true }}\n", "", "CI Gate DRAFT is"},
-		{"nightly job with another if", "if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}", "if: ${{ github.event_name == 'schedule' }}", "soak is tagged nightly but its if:"},
+		{"nightly job with another if", "if: ${{ (github.event_name == 'schedule' && needs.schedule-guard.outputs.verdict == 'run') || github.event_name == 'workflow_dispatch' }}", "if: ${{ github.event_name == 'schedule' }}", "soak is tagged nightly but its if:"},
+		{"nightly job under the guard without needing it", "    needs: [schedule-guard]\n", "", "soak is tagged nightly but its if:"},
+		{"full job under the guard without needing it", ")) && !github.event.pull_request.draft }}", ")) && !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}", "race is tagged full but its if:"},
+		{"pr job under the schedule guard", "needs: [lint]\n", "needs: [lint, schedule-guard]\n    if: ${{ !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}\n", ""},
+		{"pr job with a guard clause but no draft guard", "needs: [lint]\n", "needs: [lint, schedule-guard]\n    if: ${{ github.event_name != 'schedule' }}\n", "build is tagged pr but its if:"},
 		{"FULL_TIER not read from CI_FULL_TIER", "FULL_TIER: ${{ env.CI_FULL_TIER }}", "FULL_TIER: ${{ github.event_name != 'pull_request' }}", "CI Gate FULL_TIER is"},
 		{"CI_FULL_TIER drifts from the full if", "CI_FULL_TIER: ${{ github.event_name != 'pull_request' ||", "CI_FULL_TIER: ${{ github.event_name == 'push' ||", "env.CI_FULL_TIER is"},
 		{"NIGHTLY drifts from the nightly if", "NIGHTLY: ${{ github.event_name == 'schedule' || ", "NIGHTLY: ${{ ", "CI Gate NIGHTLY is"},

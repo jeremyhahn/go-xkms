@@ -68,9 +68,12 @@ const (
 	CKR_TEMPLATE_INCONSISTENT        = uint(C.CKR_TEMPLATE_INCONSISTENT)
 	CKR_SESSION_READ_ONLY            = uint(C.CKR_SESSION_READ_ONLY)
 	CKR_KEY_NOT_WRAPPABLE            = uint(C.CKR_KEY_NOT_WRAPPABLE)
+	CKR_ATTRIBUTE_READ_ONLY          = uint(C.CKR_ATTRIBUTE_READ_ONLY)
+	CKR_OPERATION_ACTIVE             = uint(C.CKR_OPERATION_ACTIVE)
 
-	// CKR_WRAPPING_KEY_TYPE_INCONSISTENT is what C_WrapKeyAuthenticated
-	// returns for a wrapping key that is not marked CKA_WRAP.
+	// CKR_WRAPPING_KEY_TYPE_INCONSISTENT is what a wrapping function returns
+	// for a wrapping key whose type is inconsistent with the mechanism
+	// (PKCS#11 v3.2 §5.1.6).
 	CKR_WRAPPING_KEY_TYPE_INCONSISTENT = uint(C.CKR_WRAPPING_KEY_TYPE_INCONSISTENT)
 
 	// CKR_USER_NOT_LOGGED_IN is what every key-bearing function returns on a
@@ -292,6 +295,8 @@ var rvNames = map[uint]string{
 	CKR_ATTRIBUTE_VALUE_INVALID:        "CKR_ATTRIBUTE_VALUE_INVALID",
 	CKR_TEMPLATE_INCONSISTENT:          "CKR_TEMPLATE_INCONSISTENT",
 	CKR_USER_NOT_LOGGED_IN:             "CKR_USER_NOT_LOGGED_IN",
+	CKR_ATTRIBUTE_READ_ONLY:            "CKR_ATTRIBUTE_READ_ONLY",
+	CKR_OPERATION_ACTIVE:               "CKR_OPERATION_ACTIVE",
 }
 
 // rvName returns the spec name for rv, or a placeholder when it is one this

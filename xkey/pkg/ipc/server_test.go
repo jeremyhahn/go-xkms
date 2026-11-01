@@ -80,8 +80,22 @@ func testSocketPath(t *testing.T) string {
 // directly in a temp directory tighten it first.
 func privateDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := shortTempDir(t)
 	require.NoError(t, os.Chmod(dir, socketDirMode))
+	return dir
+}
+
+// shortTempDir returns a temporary directory created directly under
+// os.TempDir. t.TempDir nests the test name in its path, so under a long
+// TMPDIR (CI's /var/tmp) a socket path beneath it can exceed
+// maxUnixSocketPathLen or the kernel's sun_path limit.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "xk")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(dir))
+	})
 	return dir
 }
 
@@ -131,7 +145,7 @@ func TestNewServer_SocketFilePermissions(t *testing.T) {
 }
 
 func TestNewServer_CreatesSocketDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortTempDir(t)
 	sockPath := filepath.Join(dir, "nested", "subdir", "test.sock")
 	handler := &mockHandler{
 		statusResp: OKResponse(ActionDaemonReady),

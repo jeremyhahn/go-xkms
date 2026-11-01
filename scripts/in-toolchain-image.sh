@@ -4,7 +4,7 @@
 #   usage: scripts/in-toolchain-image.sh <image> <command...>
 #   e.g.   scripts/in-toolchain-image.sh go-enclave-toolchain:abc make build
 #
-# in-toolchain-template: v3 (ci-template v1.22.2). Ships beside ci.yml; copy it to
+# in-toolchain-template: v4 (ci-template v1.29.4). Ships beside ci.yml; copy it to
 # scripts/ with the workflow. From go-quicraft's scripts/in-toolchain-image.sh
 # (a141c3c), with the container prefix and uid taken from the environment.
 #
@@ -50,6 +50,28 @@
 # --cpus N with GOMAXPROCS=N and GOFLAGS=-p=N. golangci-lint's default
 # concurrency follows the container CPU quota, so lint takes N with no flag.
 # A 4-CPU slot on the Dells gives 4; never a hardcoded number.
+#
+# v4 (ci-template v1.29.4, Company Agent ruling 261(c); claude-agents #379
+# comment 157032):
+# - The sibling holds the job slot's memory bound the same way (go-qrdb, from
+#   dept-infra #1337; go-trusted-platform #1182). The job container's cgroup
+#   memory.max (8g when the job has no limit; IN_IMAGE_MEMORY, a size such as
+#   12g, overrides) becomes --memory, and --memory-swap is set to the same
+#   size, so the stage gets no swap: a stage that outgrows it is OOM-killed and
+#   fails, instead of swapping the shared runner host. A 16g job slot gives 16g.
+# - Go's build and link scratch is on disk, not the 3 GB /tmp tmpfs (go-xkms
+#   #1733, 6d40166): `make coverage` links cgo test binaries in $WORK and filled
+#   /tmp (ENOSPC "final link failed") in 8 go-xkms Devcontainer jobs on
+#   2026-10-26. An anonymous volume on the image's /var/tmp (IN_IMAGE_SCRATCH
+#   overrides the path) is TMPDIR and GOTMPDIR; it is on the daemon's data disk,
+#   and cleanup's `docker rm -v` removes it. A scratch directory the image
+#   lacks, or the run's user cannot write, fails the stage by name. go-xkms's
+#   copy held this before v4, and its TRIVY_CACHE_DIR is on the same volume.
+# - A bridge stage's GOPROXY puts DEVCACHE_GOPROXY (Athens, devops.md §2a)
+#   first when the runner sets it: <DEVCACHE_GOPROXY>|https://proxy.golang.org|direct,
+#   so a miss or an unreachable cache falls through to the public proxy.
+#   GOPRIVATE travels with it, so a private path never reaches either proxy.
+#   Unset, the chain is https://proxy.golang.org|direct.
 #
 # The container is named <CI_STACK_PREFIX>tc-<pid>-<random>, under the prefix
 # scripts/reap-stale-ci-stacks.sh reaps (default <checkout dir>-ci-, which in CI
@@ -97,6 +119,26 @@ fi
 case $cpus in
   "" | 0 | *[!0-9]*) echo "IN_IMAGE_CPUS must be a positive integer: $cpus" >&2; exit 2 ;;
 esac
+memory=${IN_IMAGE_MEMORY:-}
+if [ -z "$memory" ]; then
+  limit=max
+  if [ -r /sys/fs/cgroup/memory.max ]; then read -r limit < /sys/fs/cgroup/memory.max; fi
+  case $limit in
+    max | "" | *[!0-9]*) memory=8g ;;
+    *) memory=$limit ;;
+  esac
+fi
+if ! [[ $memory =~ ^[1-9][0-9]*[mg]?$ ]]; then
+  echo "IN_IMAGE_MEMORY must be a size in bytes, m or g, e.g. 16g: $memory" >&2
+  exit 2
+fi
+# The stage's disk-backed scratch in the container: TMPDIR, GOTMPDIR and
+# TRIVY_CACHE_DIR (below). IN_IMAGE_SCRATCH overrides the default /var/tmp.
+scratch=${IN_IMAGE_SCRATCH:-/var/tmp}
+case $scratch in
+  /*) ;;
+  *) echo "IN_IMAGE_SCRATCH must be an absolute path: $scratch" >&2; exit 2 ;;
+esac
 args=(
   --name "$name"
   --cpus "$cpus"
@@ -106,10 +148,25 @@ args=(
   --cap-drop ALL
   --security-opt no-new-privileges:true
   --pids-limit 4096
+  --memory "$memory"
+  --memory-swap "$memory"
   --ulimit memlock=67108864:67108864
   --ulimit core=1048576:1048576
   --ulimit nofile=65536:65536
   --tmpfs "/tmp:rw,exec,nosuid,nodev,size=3g,mode=1777"
+  # Go's build and link scratch ($WORK, go-link-*) on disk, not the 3 GB
+  # /tmp tmpfs: `make coverage` links cgo test binaries there and filled it
+  # (ENOSPC "final link failed") in 8 Devcontainer jobs on 2026-10-26, on
+  # every Dell runner and omega-b (Company Agent m1417, ruling 219(9);
+  # ruling 108). An anonymous volume on the image's /var/tmp (mode 1777) is
+  # on the daemon's data disk, and cleanup's `docker rm -v` removes it.
+  # trivy's cache (vulnerability and Java DBs) lives there too, not in
+  # $HOME/.cache on the tmpfs; TMPDIR already holds its OCI download, whose
+  # Java DB filled /tmp on main runs 66181 and 68251.
+  -v "$scratch"
+  --env TMPDIR="$scratch"
+  --env GOTMPDIR="$scratch"
+  --env TRIVY_CACHE_DIR="$scratch/trivy"
   --network "$network"
   --user "$uid:$uid"
   --workdir /src
@@ -135,7 +192,8 @@ fi
 if [ "$network" = bridge ]; then
   # The baked module cache is read-only to the run's user and holds only the
   # root module's build list; the nested modules deps-check walks fetch more.
-  args+=(--env "GOPROXY=https://proxy.golang.org,direct" --env "GOMODCACHE=$modcache")
+  # Athens first when the runner sets DEVCACHE_GOPROXY (v4, above).
+  args+=(--env "GOPROXY=${DEVCACHE_GOPROXY:+$DEVCACHE_GOPROXY|}https://proxy.golang.org|direct" --env "GOMODCACHE=$modcache")
   for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
     if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
   done
@@ -144,7 +202,11 @@ fi
 cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-docker create "${args[@]}" "$image" sh -c "$*" >/dev/null
+# A scratch directory the image lacks, or the run's user cannot write, fails
+# the stage here by name, not later as a tool's ENOSPC or EACCES.
+# shellcheck disable=SC2016 # expands in the container, not here
+guard='[ -d "$TMPDIR" ] && [ -w "$TMPDIR" ] || { echo "in-toolchain-image: scratch directory $TMPDIR is missing or not writable" >&2; exit 2; }'
+docker create "${args[@]}" "$image" sh -c "$guard; $*" >/dev/null
 tar -C "$PWD" --owner="$uid" --group="$uid" --numeric-owner -cf - . |
   docker cp -a - "$name:/src"
 docker start -a "$name"

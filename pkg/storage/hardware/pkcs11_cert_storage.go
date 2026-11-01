@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -71,6 +72,21 @@ type PKCS11CertStorage struct {
 	userPin    string
 	requireSO  bool
 	closed     bool
+
+	// searchLocks serializes doSearch per session handle when pool does not
+	// implement PKCS11SearchProvider, as SessionPool.WithSearch does when it
+	// does. Entries are never removed; see SessionPool.searchLocks.
+	searchLocks sync.Map // pkcs11.SessionHandle -> *sync.Mutex
+
+	// tokenMu orders this store's token writes against everything else it
+	// does on the token: runWrite holds it exclusively, runRead shared. A
+	// token is entitled to handle concurrent sessions itself under
+	// CKF_OS_LOCKING_OK, but SoftHSM2 does not: a C_CreateObject racing a
+	// search or another write fails CKR_GENERAL_ERROR and can persist an
+	// object whose attributes no later search can read, after which every
+	// search on the token fails. Certificate writes are rare and reads still
+	// run in parallel, so this costs a pooled store nothing it relies on.
+	tokenMu sync.RWMutex
 }
 
 // NewPKCS11CertStorageWithSO creates a PKCS#11 certificate storage instance
@@ -108,6 +124,9 @@ func NewPKCS11CertStorageWithSO(
 //
 // When requireSO is false the normal user session is used.
 func (p *PKCS11CertStorage) runWrite(fn func(session pkcs11.SessionHandle) error) error {
+	p.tokenMu.Lock()
+	defer p.tokenMu.Unlock()
+
 	if p.requireSO {
 		if p.soPin == "" {
 			return ErrSOSessionRequired
@@ -121,14 +140,29 @@ func (p *PKCS11CertStorage) runWrite(fn func(session pkcs11.SessionHandle) error
 	return p.pool.WithSession(fn)
 }
 
+// runRead executes a read-only operation on a pooled session. Reads share
+// tokenMu, so they run concurrently with each other but never alongside a
+// write (see tokenMu).
+func (p *PKCS11CertStorage) runRead(fn func(session pkcs11.SessionHandle) error) error {
+	p.tokenMu.RLock()
+	defer p.tokenMu.RUnlock()
+	return p.pool.WithSession(fn)
+}
+
 // doSearch runs a FindObjectsInit(template) / find / FindObjectsFinal
 // sequence on session as one critical section. When the pool implements
 // PKCS11SearchProvider (the backend/pkcs11 SessionPool always does), the
 // section is serialized against every other search on the same session
 // handle, closing the window that let a search opened by one borrower still
-// be active when the same handle reached the next one (#24). Providers that
-// don't implement it fall back to calling Init/Final directly -- there is no
-// pool of concurrent borrowers to race in that case.
+// be active when the same handle reached the next one (#24). For any other
+// provider the store serializes its own searches per session handle the same
+// way.
+//
+// Either way a C_FindObjectsInit that fails is followed by a
+// C_FindObjectsFinal: a token may mark the session as searching before the
+// rest of the Init fails (SoftHSM2 does under concurrent writes), and an
+// unfinalized search fails every later Init on the session with
+// CKR_OPERATION_ACTIVE.
 //
 // find must not call FindObjectsInit or FindObjectsFinal itself.
 func (p *PKCS11CertStorage) doSearch(session pkcs11.SessionHandle, template []*pkcs11.Attribute, find func() error) (err error) {
@@ -136,15 +170,18 @@ func (p *PKCS11CertStorage) doSearch(session pkcs11.SessionHandle, template []*p
 		return sp.WithSearch(session, template, find)
 	}
 
-	if err := p.pool.Ctx().FindObjectsInit(session, template); err != nil {
-		return err
+	lock, _ := p.searchLocks.LoadOrStore(session, &sync.Mutex{})
+	lock.(*sync.Mutex).Lock()
+	defer lock.(*sync.Mutex).Unlock()
+
+	ctx := p.pool.Ctx()
+	if err := ctx.FindObjectsInit(session, template); err != nil {
+		return ClearFailedPKCS11Search(ctx, session, err)
 	}
 	defer func() {
 		// Joined onto find's error rather than discarded, matching
-		// SessionPool.WithSearch (the path taken when the pool implements
-		// PKCS11SearchProvider, above) so this fallback reports failures the
-		// same way.
-		if finalErr := p.pool.Ctx().FindObjectsFinal(session); finalErr != nil {
+		// SessionPool.WithSearch so this path reports failures the same way.
+		if finalErr := ctx.FindObjectsFinal(session); finalErr != nil {
 			err = errors.Join(err, finalErr)
 		}
 	}()
@@ -223,7 +260,7 @@ func (p *PKCS11CertStorage) GetCert(id string) (*x509.Certificate, error) {
 	}
 
 	var cert *x509.Certificate
-	err := p.pool.WithSession(func(session pkcs11.SessionHandle) error {
+	err := p.runRead(func(session pkcs11.SessionHandle) error {
 		handle, err := p.findCertificateHandle(session, id)
 		if err != nil {
 			return err
@@ -440,7 +477,7 @@ func (p *PKCS11CertStorage) GetCertChain(id string) ([]*x509.Certificate, error)
 	}
 
 	var chain []*x509.Certificate
-	err := p.pool.WithSession(func(session pkcs11.SessionHandle) error {
+	err := p.runRead(func(session pkcs11.SessionHandle) error {
 		handles, err := p.findChainMemberHandles(session, id)
 		if err != nil {
 			return err
@@ -484,7 +521,7 @@ func (p *PKCS11CertStorage) ListCerts() ([]string, error) {
 	}
 
 	var result []string
-	err := p.pool.WithSession(func(session pkcs11.SessionHandle) error {
+	err := p.runRead(func(session pkcs11.SessionHandle) error {
 		template := []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE),
 		}
@@ -552,7 +589,7 @@ func (p *PKCS11CertStorage) CertExists(id string) (bool, error) {
 	}
 
 	var exists bool
-	err := p.pool.WithSession(func(session pkcs11.SessionHandle) error {
+	err := p.runRead(func(session pkcs11.SessionHandle) error {
 		handle, err := p.findCertificateHandle(session, id)
 		if err != nil {
 			// A search that failed did not establish absence. Callers such
