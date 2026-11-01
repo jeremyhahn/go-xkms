@@ -53,6 +53,32 @@ func (e *UnsupportedAlgorithmError) Error() string {
 	return "ssh/keys: unsupported algorithm: " + e.Algorithm
 }
 
+// SignatureAlgorithmError is returned by SignWithAlgorithm when the
+// requested signature algorithm is not one the signing key's type allows:
+// ssh-rsa, rsa-sha2-256 or rsa-sha2-512 for RSA (RFC 8332 §3), and the key's
+// own type for every other key.
+type SignatureAlgorithmError struct {
+	Algorithm string
+	KeyType   string
+}
+
+// Error implements the error interface.
+func (e *SignatureAlgorithmError) Error() string {
+	return "ssh/keys: signature algorithm " + e.Algorithm + " not allowed for key type " + e.KeyType
+}
+
+// AlgorithmSignerError is returned by SignWithAlgorithm when a signature
+// algorithm is requested but the key's signer cannot select one (it is not
+// an ssh.AlgorithmSigner).
+type AlgorithmSignerError struct {
+	KeyType string
+}
+
+// Error implements the error interface.
+func (e *AlgorithmSignerError) Error() string {
+	return "ssh/keys: signer for key type " + e.KeyType + " cannot select a signature algorithm"
+}
+
 // InvalidKeySizeError is returned when a key-generation request
 // specifies a size that is not valid for the chosen algorithm (e.g.,
 // RSA outside [types.RSAKeySize2048, types.RSAKeySize4096]).

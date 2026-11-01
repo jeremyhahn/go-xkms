@@ -22,6 +22,9 @@ type SSHSignParams struct {
 	Owner  string `json:"owner"`
 	Name   string `json:"name"`
 	Digest []byte `json:"digest"`
+	// Algorithm is the SSH signature algorithm (RFC 8332 §3); empty keeps
+	// the key's default.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 // SSHSignResult carries the signature returned by ssh.keys.sign.
