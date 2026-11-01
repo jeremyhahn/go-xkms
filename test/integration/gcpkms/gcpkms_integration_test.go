@@ -343,15 +343,11 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
-			// Note: GCP KMS does not support P-521 (but mock may succeed)
+			// Cloud KMS defines no EC_SIGN algorithm on P-521, so the backend
+			// rejects the curve before it reaches the service.
 			_, err := b.GenerateECDSA(context.Background(), attrs)
-			if useMock && err == nil {
-				t.Log("⚠ Mock client doesn't validate P-521 support (expected mock limitation)")
-			} else if err != nil {
-				t.Logf("✓ P-521 correctly not supported by GCP KMS: %v", err)
-			} else {
-				t.Log("⚠ P-521 unexpectedly succeeded")
-			}
+			require.ErrorIs(t, err, gcpkms.ErrUnsupportedCurve, "GCP KMS should not support P-521")
+			t.Logf("✓ P-521 correctly not supported by GCP KMS: %v", err)
 		})
 
 		t.Run("Ed25519", func(t *testing.T) {
@@ -1545,29 +1541,11 @@ func TestGCPKMSMock(t *testing.T) {
 				},
 			}
 
+			// Cloud KMS defines no EC_SIGN algorithm on P-521, so there is no
+			// key to sign with.
 			_, err := b.GenerateECDSA(context.Background(), attrs)
-			// GCP KMS may not support P-521
-			if err != nil {
-				t.Logf("✓ ECDSA P-521 correctly not supported by GCP KMS: %v", err)
-				return
-			}
-
-			// Sign and verify with SHA512
-			digest := crypto.SHA512.New()
-			digest.Write([]byte("test message"))
-			digestBytes := digest.Sum(nil)
-
-			signature, err := b.Sign(attrs, digestBytes, crypto.SHA512)
-			require.NoError(t, err, "Failed to sign message")
-
-			err = b.Verify(attrs, digestBytes, signature)
-			require.NoError(t, err, "Failed to verify signature")
-
-			t.Logf("✓ ECDSA P-521 SHA512 sign and verify works correctly")
-
-			// Cleanup
-			err = b.Delete(attrs)
-			require.NoError(t, err, "Failed to delete key")
+			require.ErrorIs(t, err, gcpkms.ErrUnsupportedCurve, "GCP KMS should not support P-521")
+			t.Logf("✓ ECDSA P-521 correctly not supported by GCP KMS: %v", err)
 		})
 
 		t.Run("Ed25519", func(t *testing.T) {

@@ -1,6 +1,7 @@
 #!/bin/bash
-# ensure-server-ca.sh — publish the compose xkms-server's root CA where the
-# PKCS#11 integration suites expect to find it.
+# ensure-server-ca.sh — publish the xkms server's root CA and admin credential
+# where the PKCS#11 integration suites expect to find them: the compose
+# xkms-server's, or without it the one scripts/start-test-xkmsd.sh started.
 #
 # The gRPC-over-TCP lane of test/integration/pkcs11/module dials
 # xkms-server:9443, which serves TLS with a certificate the daemon issues from
@@ -28,12 +29,19 @@
 # Environment:
 #   XKMS_SERVER_STATE_DIR   read-only xkms-server state mount (default /xkms-data)
 #   XKMS_GRPC_TLS_CA        destination PEM file      (default /tmp/xkms/ca.crt)
+#   XKMS_COMPOSE_SERVER_HOST  compose server service name (default xkms-server)
+#   XKMS_SERVER_BOOTSTRAP_URL trust-bootstrap endpoint
+#                             (default https://<compose server>:8443/v1/ca/bootstrap)
+#   XKMS_TEST_DATA_DIR      start-test-xkmsd.sh data directory, read when the
+#                           compose server is not running (default /tmp/xkmsd-test)
+#   XKMS_TEST_REST_PORT     its loopback REST port (default 18443)
 
 set -euo pipefail
 
 STATE_DIR="${XKMS_SERVER_STATE_DIR:-/xkms-data}"
 DEST="${XKMS_GRPC_TLS_CA:-/tmp/xkms/ca.crt}"
 CERT_DIR="${STATE_DIR}/storage/ca/certs"
+COMPOSE_SERVER_HOST="${XKMS_COMPOSE_SERVER_HOST:-xkms-server}"
 
 # publish_admin_credential copies the first-boot administrator credential
 # alongside the CA. First boot (qrdb pkg/firstboot) binds the admin's SPKI
@@ -61,20 +69,60 @@ fi
 # With the qrdb storage backend the CA's certificates live inside the
 # qrdb-backed store, not as files, so the file harvest below finds nothing.
 # The canonical first-contact source is the public trust-bootstrap endpoint
-# the daemon serves for exactly this purpose. Container-local fetch without
-# verification is the TOFU ceremony for a throwaway test deployment.
+# the daemon serves for exactly this purpose. It is fetched from a server
+# verified against the anchors it persisted in its state volume, as
+# open-server-barrier.sh verifies it: the bootstrap certificate, and the CA
+# bundle the server writes beside it when it swaps that certificate for one
+# its CA issued after the unseal (pkg/server/unified_tls.go
+# persistUnifiedCABundle). Nothing is fetched unverified (DS-3769).
+#
+# Without the compose server the suites talk to the server
+# start-test-xkmsd.sh started in this container, so its CA and admin
+# credential are published instead, from its data directory and its loopback
+# REST port. Docker's embedded DNS answers for the service only while its
+# container runs.
+if [ ! -d "$CERT_DIR" ] && ! getent hosts "$COMPOSE_SERVER_HOST" >/dev/null 2>&1; then
+	echo "ensure-server-ca: ${COMPOSE_SERVER_HOST} is not running; publishing the CA of the server start-test-xkmsd.sh started"
+	STATE_DIR="${XKMS_TEST_DATA_DIR:-/tmp/xkmsd-test}"
+	CERT_DIR="${STATE_DIR}/storage/ca/certs"
+	XKMS_SERVER_BOOTSTRAP_URL="https://localhost:${XKMS_TEST_REST_PORT:-18443}/v1/ca/bootstrap"
+fi
+
 if [ ! -d "$CERT_DIR" ]; then
-	BOOTSTRAP_URL="${XKMS_SERVER_BOOTSTRAP_URL:-https://xkms-server:8443/v1/ca/bootstrap}"
-	mkdir -p "$(dirname "$DEST")"
+	BOOTSTRAP_URL="${XKMS_SERVER_BOOTSTRAP_URL:-https://${COMPOSE_SERVER_HOST}:8443/v1/ca/bootstrap}"
+	BOOTSTRAP_CERT="${STATE_DIR}/storage/unified-tls/cert.pem"
+	SERVER_CA_BUNDLE="${STATE_DIR}/storage/unified-tls/ca-bundle.pem"
+	anchors=$(mktemp)
+	fetched=$(mktemp)
+	trap 'rm -f "$anchors" "$fetched"' EXIT
+
+	# trust -- write the anchors the server is verified against to $anchors,
+	# read afresh for every attempt. Fails while the bootstrap certificate is
+	# not readable.
+	trust() {
+		[ -r "$BOOTSTRAP_CERT" ] || return 1
+		cat "$BOOTSTRAP_CERT" >"$anchors"
+		if [ -r "$SERVER_CA_BUNDLE" ]; then
+			cat "$SERVER_CA_BUNDLE" >>"$anchors"
+		fi
+	}
+
 	for _ in $(seq 1 30); do
-		if curl -skf "$BOOTSTRAP_URL" -o "$DEST" && grep -q -- "-----BEGIN CERTIFICATE-----" "$DEST"; then
+		if trust && curl -sf --cacert "$anchors" "$BOOTSTRAP_URL" -o "$fetched" &&
+			grep -q -- "-----BEGIN CERTIFICATE-----" "$fetched"; then
+			mkdir -p "$(dirname "$DEST")"
+			cp "$fetched" "$DEST"
 			echo "ensure-server-ca: fetched CA bundle from ${BOOTSTRAP_URL} to ${DEST}"
 			publish_admin_credential
 			exit 0
 		fi
 		sleep 2
 	done
-	echo "ensure-server-ca: ${CERT_DIR} does not exist and ${BOOTSTRAP_URL} did not serve a bundle" >&2
+	if [ ! -r "$BOOTSTRAP_CERT" ]; then
+		echo "ensure-server-ca: cannot read the server's bootstrap certificate ${BOOTSTRAP_CERT}; the CA is fetched only from a server it verifies" >&2
+	else
+		echo "ensure-server-ca: ${BOOTSTRAP_URL} served no CA bundle from a server the persisted anchors verify" >&2
+	fi
 	exit 1
 fi
 

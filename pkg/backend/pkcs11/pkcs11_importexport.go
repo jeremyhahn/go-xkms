@@ -27,6 +27,7 @@ import (
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
@@ -969,7 +970,7 @@ func (b *Backend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, d
 // CKR_OPERATION_ACTIVE.
 func (b *Backend) findOneObject(session pkcs11.SessionHandle, template []*pkcs11.Attribute) (pkcs11.ObjectHandle, error) {
 	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-		return 0, &errs.Wrapped{Msg: "failed to init object search", Err: err}
+		return 0, hardware.ClearFailedPKCS11Search(b.p11ctx, session, &errs.Wrapped{Msg: "failed to init object search", Err: err})
 	}
 
 	handles, _, findErr := b.p11ctx.FindObjects(session, 1)

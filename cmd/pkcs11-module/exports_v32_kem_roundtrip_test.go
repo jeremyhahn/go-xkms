@@ -318,9 +318,9 @@ func TestCEncapsulateKey_WrongMechanismIsRefused(t *testing.T) {
 }
 
 // TestCEncapsulateKey_WrongKeyTypeIsRefused proves a public key created
-// without CKA_ENCAPSULATE is refused with CKR_KEY_TYPE_INCONSISTENT, the code
-// C_EncapsulateKey's return table lists for "not the correct type of key to
-// use with the specified mechanism" (v3.2 §5.1).
+// without CKA_ENCAPSULATE is refused with CKR_KEY_FUNCTION_NOT_PERMITTED, which
+// v3.2 §5.1.6 defines as a key used for a purpose its attributes do not allow
+// (§5.1.7 permits it although the §5.18.8 return table omits it).
 func TestCEncapsulateKey_WrongKeyTypeIsRefused(t *testing.T) {
 	f := newTestFixture(t)
 
@@ -380,8 +380,8 @@ func TestCEncapsulateKey_WrongKeyTypeIsRefused(t *testing.T) {
 		allocOf(eft, 7),
 	})
 
-	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_KEY_TYPE_INCONSISTENT {
-		t.Fatalf("C_EncapsulateKey(no CKA_ENCAPSULATE) = %s, want CKR_KEY_TYPE_INCONSISTENT", rv)
+	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_KEY_FUNCTION_NOT_PERMITTED {
+		t.Fatalf("C_EncapsulateKey(no CKA_ENCAPSULATE) = %s, want CKR_KEY_FUNCTION_NOT_PERMITTED", rv)
 	}
 }
 
@@ -420,7 +420,7 @@ func TestCEncapsulateKey_NotLoggedInIsRefused(t *testing.T) {
 // TestCDecapsulateKey_WrongKeyTypeIsRefused mirrors
 // TestCEncapsulateKey_WrongKeyTypeIsRefused for the private-key half: a
 // private key created without CKA_DECAPSULATE is refused with
-// CKR_KEY_TYPE_INCONSISTENT.
+// CKR_KEY_FUNCTION_NOT_PERMITTED (v3.2 §5.1.6, §5.1.7, §5.18.9).
 func TestCDecapsulateKey_WrongKeyTypeIsRefused(t *testing.T) {
 	f := newTestFixture(t)
 	pub, priv := generateMLKEMKeyPairViaC(t, f.session, module.CKP_ML_KEM_768)
@@ -444,8 +444,8 @@ func TestCDecapsulateKey_WrongKeyTypeIsRefused(t *testing.T) {
 	}
 
 	_, rv = decapsulateKeyViaC(t, f.session, priv, mechBuf, ciphertext)
-	if rv != module.CKR_KEY_TYPE_INCONSISTENT {
-		t.Fatalf("C_DecapsulateKey(CKA_DECAPSULATE=false) = %s, want CKR_KEY_TYPE_INCONSISTENT", rv)
+	if rv != module.CKR_KEY_FUNCTION_NOT_PERMITTED {
+		t.Fatalf("C_DecapsulateKey(CKA_DECAPSULATE=false) = %s, want CKR_KEY_FUNCTION_NOT_PERMITTED", rv)
 	}
 }
 
