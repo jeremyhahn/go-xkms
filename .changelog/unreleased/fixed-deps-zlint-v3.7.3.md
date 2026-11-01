@@ -1,0 +1,1 @@
+Dependencies: `github.com/zmap/zlint/v3` v3.7.2 -> v3.7.3 in the root module, the ACME certificate linter's (`pkg/acme/linter`) lint library. v3.7.3 crossed the 7-day line, so `make deps-check` failed the `Devcontainer: security` job (PR runs 76117 and 76213). `go mod tidy` also drops go.sum's unused `kin-openapi v0.151.0` hashes; go.mod still requires v0.152.0.

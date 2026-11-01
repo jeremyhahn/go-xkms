@@ -62,7 +62,7 @@ require (
 	github.com/weppos/publicsuffix-go v0.50.4-0.20260821095816-b0fdb5c2d345
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	github.com/zmap/zcrypto v0.0.0-20260906180147-3ed30b1e9340
-	github.com/zmap/zlint/v3 v3.7.2
+	github.com/zmap/zlint/v3 v3.7.3
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.61.0
 	golang.org/x/oauth2 v0.37.0
