@@ -3,6 +3,8 @@
 # tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
 # be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
 FROM golang:1.27.3-bookworm AS softhsm
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake libtool libssl-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -10,8 +12,10 @@ COPY scripts/build-softhsm.sh /build/build-softhsm.sh
 RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 FROM golang:1.27.3-bookworm
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*

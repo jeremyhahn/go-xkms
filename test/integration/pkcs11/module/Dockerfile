@@ -10,6 +10,8 @@
 
 # Stage 1: Builder - compile the PKCS#11 module
 FROM golang:1.27.3-bookworm AS builder
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -49,6 +51,8 @@ RUN mkdir -p /build/lib && \
 # tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
 # be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
 FROM golang:1.27.3-bookworm AS softhsm
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake libtool libssl-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -57,6 +61,8 @@ RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 # Stage 2: Test runtime environment
 FROM golang:1.27.3-bookworm
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
 LABEL maintainer="go-xkms"
 LABEL description="PKCS#11 module integration test environment"
