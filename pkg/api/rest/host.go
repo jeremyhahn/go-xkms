@@ -366,9 +366,10 @@ type WebAuthnServiceParams struct {
 
 	// CallContext derives the context the relying party's qrdb user-client
 	// calls run on (webauthn.QRDBUserStoreOptions.CallContext). An embedded
-	// node passes its service principal (node.ServiceContext): the ceremony
-	// endpoints are public, so the request context carries no identity
-	// go-qrdb's authorization accepts. Nil runs them on the caller's context.
+	// node passes its service principal (node.ServiceContext) for every
+	// ceremony: a public ceremony's request carries no identity go-qrdb's
+	// authorization accepts, and an added passkey's session identity holds
+	// no grant over user records. Nil runs them on the caller's context.
 	CallContext func(ctx context.Context) (context.Context, error)
 
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
