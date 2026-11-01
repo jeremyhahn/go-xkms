@@ -5,7 +5,8 @@
 #   - the integration and soak jobs run no make docker-build (they take IT_IMAGE by name), so they have no Athens step;
 #   - ci-images takes the schedule guard as the image job does; the CUSTOMIZE jobs that need ci-images skip with it on a busy schedule run;
 #   - CUSTOMIZE jobs static-analysis, build, nested-module-build, nested-module-test, build-raft, race and tpm2-simulator, each in CI Gate's needs and results;
-#   - the image job folds Lint into its stages (timeout 240), and the integration (180) and soak (210) jobs keep longer bounds;
+#   - the image job folds Lint into its stages, and the integration (180) and soak (210) jobs keep longer bounds;
+#   - the image job's stages run as six parallel Devcontainer jobs, dc-lint, dc-checks, dc-build, dc-coverage (timeout 120), dc-security and dc-trivy (full tier), each timeout 60 unless named, each in CI Gate's needs and results (#1871);
 #   - scripts/in-toolchain-image.sh v4 already held the /var/tmp scratch volume (#1733) and keeps its CUSTOMIZE blocks.
 # v1.29.5 (Company Agent ruling 262(a), 2026-10-30): one change, the
 # GO_BUILD_PROXY separator. Each `make docker-build` passes
@@ -828,13 +829,22 @@ jobs:
           done
   # <<< CUSTOMIZE
 
-  image:
-    name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
+  # >>> CUSTOMIZE (go-xkms, #1871)
+  # The Devcontainer stages run as six parallel jobs (dc-lint, dc-checks,
+  # dc-build, dc-coverage, dc-security, dc-trivy), not as the serial steps of
+  # one image job, so the wall time is the longest stage (make coverage), not
+  # their sum. Each takes the CI images from ci-images by digest, as the image
+  # job did, so none rebuilds one. Every stage's scripts/in-toolchain-image.sh
+  # mounts this repo's named Go build, golangci-lint and module cache volumes,
+  # keyed by CI_STACK_PREFIX and CI_CACHE_CLASS, so each job starts warm;
+  # dc-lint alone trims them. Each step's `if:` and `run:` are the image job's.
+  dc-lint:
+    name: 'Devcontainer: lint'
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: [changes, schedule-guard, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
-    timeout-minutes: 240      # CUSTOMIZE (go-xkms): the Lint (90) and image (150) jobs' bounds, now one job
+    timeout-minutes: 60       # CUSTOMIZE (go-xkms, #1871)
     permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
       contents: read
       packages: read
@@ -882,11 +892,10 @@ jobs:
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
           fi
 
-      # >>> CUSTOMIZE (go-xkms, ruling 169)
-      # The images come from ci-images: main's by digest, pulled and held
-      # until Tear down, or, when main has not published this content, built
-      # on this runner with no push and held by image ID. The integration
-      # image is needed by the full tier's scan alone.
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image comes from
+      # ci-images: main's by digest, pulled and held until Tear down, or, when
+      # main has not published this content, built on this runner with no push
+      # and held by image ID.
       - name: Take the toolchain image
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
@@ -894,27 +903,9 @@ jobs:
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
-      # v1.29: the Alpine package index checksum, which a locally built
-      # integration image's tag hashes (as in ci-images).
-      - name: Read the Alpine package index
-        if: ${{ env.CI_FULL_TIER == 'true' }}
-        run: |
-          APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")
-          export APK_BASE_IMAGES
-          sum=$(scripts/apk-index-sum.sh)
-          echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
-
-      - name: Take the integration image
-        if: ${{ env.CI_FULL_TIER == 'true' }}
-        env:
-          IT_REF: ${{ needs.ci-images.outputs.it_ref }}
-          CI_REGISTRY_USER: ${{ github.actor }}
-          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use it "$IT_REF" >> "$GITHUB_ENV"
-      # <<< CUSTOMIZE
-
       # v1.22: bound this repo's cache volumes on the host before the stages
-      # add to them (ci-standard.md §6). It never fails the job.
+      # add to them (ci-standard.md §6). It never fails the job, and keeps
+      # every volume a container mounts, so the other dc-* jobs' are safe.
       - name: Trim the CI caches
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
         run: scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"
@@ -927,6 +918,56 @@ jobs:
       - name: make lint
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make lint GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+
+      - name: Tear down
+        if: always()
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+  dc-checks:
+    name: 'Devcontainer: checks'
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [changes, schedule-guard, ci-images] # as dc-lint
+    if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
+    timeout-minutes: 60       # CUSTOMIZE (go-xkms, #1871)
+    permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
+      contents: read
+      packages: read
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # v1.22: the cache volumes' trust class (as in dc-lint).
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.21.1: mask the forge credentials before any other step (as in dc-lint).
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # v1.29.4, v1.29.5: Athens first, as in dc-lint.
+      - name: Route the image build through Athens
+        run: |
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
+          fi
+
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in dc-lint).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+
       # >>> CUSTOMIZE (go-xkms)
       # The checks go-xkms's Lint job ran beside make lint.
       # make-gates-test.sh proves the Makefile gates fail closed (go-xkms#1434);
@@ -966,6 +1007,55 @@ jobs:
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.GO_BUILD_TAGS != '' && needs.changes.outputs.docs_only != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "GO_BUILD_TAGS='$GO_BUILD_TAGS' sh scripts/assert-build-tags.sh"
 
+      - name: Tear down
+        if: always()
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+  dc-build:
+    name: 'Devcontainer: build'
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [changes, schedule-guard, ci-images] # as dc-lint
+    if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
+    timeout-minutes: 60       # CUSTOMIZE (go-xkms, #1871)
+    permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
+      contents: read
+      packages: read
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # v1.22: the cache volumes' trust class (as in dc-lint).
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.21.1: mask the forge credentials before any other step (as in dc-lint).
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # v1.29.4, v1.29.5: Athens first, as in dc-lint.
+      - name: Route the image build through Athens
+        run: |
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
+          fi
+
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in dc-lint).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+
       # CUSTOMIZE: nested modules (sdk/go, xkey) and variants (FIPS) are built
       # by `make build` itself, never by an extra step here.
       - name: make build
@@ -976,6 +1066,55 @@ jobs:
           IN_IMAGE_NETWORK: bridge
         # <<< CUSTOMIZE
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make build GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+
+      - name: Tear down
+        if: always()
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+  dc-coverage:
+    name: 'Devcontainer: coverage'
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [changes, schedule-guard, ci-images] # as dc-lint
+    if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
+    timeout-minutes: 120      # CUSTOMIZE (go-xkms, #1871): make coverage took 74-82 minutes
+    permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
+      contents: read
+      packages: read
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # v1.22: the cache volumes' trust class (as in dc-lint).
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.21.1: mask the forge credentials before any other step (as in dc-lint).
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # v1.29.4, v1.29.5: Athens first, as in dc-lint.
+      - name: Route the image build through Athens
+        run: |
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
+          fi
+
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in dc-lint).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # The test stage (m601 (c)): make coverage runs the whole unit suite with
       # -race (make test's flags), the PR tier's unit test and race checks in
@@ -991,6 +1130,55 @@ jobs:
           IN_IMAGE_NETWORK: bridge
         # <<< CUSTOMIZE
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      - name: Tear down
+        if: always()
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+  dc-security:
+    name: 'Devcontainer: security'
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [changes, schedule-guard, ci-images] # as dc-lint
+    if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
+    timeout-minutes: 60       # CUSTOMIZE (go-xkms, #1871)
+    permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
+      contents: read
+      packages: read
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # v1.22: the cache volumes' trust class (as in dc-lint).
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.21.1: mask the forge credentials before any other step (as in dc-lint).
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # v1.29.4, v1.29.5: Athens first, as in dc-lint.
+      - name: Route the image build through Athens
+        run: |
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
+          fi
+
+      # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
+      # (as in dc-lint).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # make security: gosec, govulncheck, go mod verify (devops.md §8), with
       # trivy fs per the phase (§8a). The target owns gosec's flags and its
@@ -1012,6 +1200,78 @@ jobs:
         env:
           IN_IMAGE_NETWORK: bridge
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" make deps-check
+
+      - name: Tear down
+        if: always()
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+  # Both scans are full tier, so the job is too: a PR without ci:full skips
+  # it and pulls no image.
+  dc-trivy:
+    name: 'Devcontainer: trivy image'
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [changes, schedule-guard, ci-images] # as dc-lint
+    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
+    timeout-minutes: 60       # CUSTOMIZE (go-xkms, #1871)
+    permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
+      contents: read
+      packages: read
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # v1.22: the cache volumes' trust class (as in dc-lint).
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.21.1: mask the forge credentials before any other step (as in dc-lint).
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # v1.29.4, v1.29.5: Athens first, as in dc-lint.
+      - name: Route the image build through Athens
+        run: |
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
+          fi
+
+      # >>> CUSTOMIZE (go-xkms, ruling 169)
+      # The images come from ci-images (as in dc-lint). The integration image
+      # is needed by the integration image's scan alone, so only this job
+      # takes it.
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+
+      # v1.29: the Alpine package index checksum, which a locally built
+      # integration image's tag hashes (as in ci-images).
+      - name: Read the Alpine package index
+        if: ${{ env.CI_FULL_TIER == 'true' }}
+        run: |
+          APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")
+          export APK_BASE_IMAGES
+          sum=$(scripts/apk-index-sum.sh)
+          echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
+
+      - name: Take the integration image
+        if: ${{ env.CI_FULL_TIER == 'true' }}
+        env:
+          IT_REF: ${{ needs.ci-images.outputs.it_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use it "$IT_REF" >> "$GITHUB_ENV"
+      # <<< CUSTOMIZE
 
       # The integration image is gated before any push to either registry
       # (devops.md §8): --ignore-unfixed (v1.19) and --skip-dirs /opt/go/mod
@@ -1063,10 +1323,11 @@ jobs:
         run: |
           rm -f it-image.tar
           scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" "${IT_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+  # <<< CUSTOMIZE (go-xkms, #1871)
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and
-  # module checks) runs in this job, in parallel with the image job's
+  # module checks) runs in this job, in parallel with dc-lint's
   # `make lint`, not in series after it, so Lint's wall time is the longer of
   # the two and not their sum. It runs only when the Makefile (or a tracked
   # *.mk) defines a lint-gates target; a repository without one gets an OK and
@@ -2019,7 +2280,7 @@ jobs:
     if: ${{ always() && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict != 'busy') }}
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
-    needs: [changes, schedule-guard, image, lint-gates, integration, soak, arch-gates, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
+    needs: [changes, schedule-guard, dc-lint, dc-checks, dc-build, dc-coverage, dc-security, dc-trivy, lint-gates, integration, soak, arch-gates, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
     steps:
       - name: Fail closed on any non-success
         env:
@@ -2066,7 +2327,14 @@ jobs:
           # workflow_dispatch is nightly; every other job is pr.
           check changes     "${{ needs.changes.result }}" pr
           check schedule-guard "${{ needs.schedule-guard.result }}" pr
-          check image       "${{ needs.image.result }}" pr
+          # >>> CUSTOMIZE (go-xkms, #1871): the image job's stages
+          check dc-lint     "${{ needs.dc-lint.result }}" pr
+          check dc-checks   "${{ needs.dc-checks.result }}" pr
+          check dc-build    "${{ needs.dc-build.result }}" pr
+          check dc-coverage "${{ needs.dc-coverage.result }}" pr
+          check dc-security "${{ needs.dc-security.result }}" pr
+          check dc-trivy    "${{ needs.dc-trivy.result }}" full
+          # <<< CUSTOMIZE
           check lint-gates  "${{ needs.lint-gates.result }}" pr
           check integration "${{ needs.integration.result }}" full
           check soak        "${{ needs.soak.result }}" nightly
