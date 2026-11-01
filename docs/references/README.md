@@ -56,7 +56,13 @@ implementation work does not depend on the publisher's site staying up.
   https://www.rfc-editor.org/rfc/rfc7518.txt. `rest.SessionSigningJWK`
   (`pkg/api/rest/session_jwk.go`) publishes the session-token signing key as an
   RFC 7517 §4 JWK whose EC members follow RFC 7518 §6.2.1 and whose `alg` is
-  RFC 7518 §3.4 `ES256`.
+  RFC 7518 §3.4 `ES256`. Its `kid` (§4.5) is `jwk.SPKIKeyID`, the value every
+  session token's `kid` header carries.
+- `rfc-9068.txt` — IETF RFC 9068, "JSON Web Token (JWT) Profile for OAuth 2.0
+  Access Tokens", copied verbatim from
+  https://www.rfc-editor.org/rfc/rfc9068.txt. §2.1 defines the `at+jwt` `typ`
+  header that `token.Config.AccessTokenType` (`auth.session.access_token_type`
+  in xkmsd) selects for access tokens; refresh tokens keep `JWT`.
 - `NIST.SP.800-76-2.pdf` — NIST SP 800-76-2, "Biometric Specifications for
   Personal Identity Verification".
 - `NIST.SP.800-78-5.pdf` — NIST SP 800-78-5, "Cryptographic Algorithms and Key
