@@ -106,6 +106,26 @@ func TestExampleConfigs_ProduceValidAuthenticator(t *testing.T) {
 	}
 }
 
+// TestExampleConfigs_SecretsResolve runs every shipped config through the
+// server's own config secret resolution (resolveConfigSecrets, the step
+// server.New takes before it starts the backends). A literal in a protected
+// target such as backends.pkcs11.pin is refused there by design (go-xkms#654),
+// so a shipped config carrying one can load and validate and still never
+// start a daemon: that is how the compose xkms-server the PKCS#11 module suites
+// dial stopped coming up (DS-3769).
+func TestExampleConfigs_SecretsResolve(t *testing.T) {
+	for _, rel := range exampleServerConfigs {
+		t.Run(rel, func(t *testing.T) {
+			cfg, err := config.Load(repoPath(rel))
+			require.NoError(t, err, "example configuration must load and validate")
+
+			s := &Server{ctx: t.Context(), config: cfg}
+			require.NoError(t, s.resolveConfigSecrets(),
+				"every secret-bearing field must be unset or a resolvable reference")
+		})
+	}
+}
+
 // TestExampleConfigs_AuthCompanionConfigPresent asserts the companion
 // configuration each auth type requires is actually present in the example
 // files, independent of the substitution the test above performs. This is what

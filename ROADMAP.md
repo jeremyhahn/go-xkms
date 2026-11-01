@@ -129,6 +129,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **enrollment-ek-required** — the inherited go-qrdb setting that enroll-01 and endorse-01 require a TPM EK — [SPEC](docs/SPEC.md#features) — open
 - **continuous-attestation** — scheduled and on-demand re-attestation of enrolled devices with a published verdict — [SPEC](docs/SPEC.md#features) — open
 - **device-registry** — paired-device registry, tenant-scoped with go-xkms the verifier in backend mode — [SPEC](docs/SPEC.md#features) — open
+- **device-security-event-evidence** — a device's tamper-response record reaches go-xkms as RFC 9334 Evidence — [#1765](../../issues/1765) — blocked: owner ruling on the binding
 - **device-share-policy** — device sharing under the `device:*` permissions of tenant Admin and Owner — [SPEC](docs/SPEC.md#features) — blocked: go-qrdb gap
 - **device-policy-source** — xkey applies the stricter of its SO-sealed and the go-xkms device policy — [SPEC](docs/SPEC.md#features) — open
 - **verifier-appraisal-seam** — the go-quicbaas appraisal code and reference-values store moved into go-xkms `pkg/attestation` with history, re-exported by go-quicbaas — [SPEC](docs/SPEC.md#features) — open

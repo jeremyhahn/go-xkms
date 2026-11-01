@@ -28,9 +28,11 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -42,6 +44,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	xkmsserver "github.com/jeremyhahn/go-xkms/pkg/server"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
@@ -130,7 +133,7 @@ type gateHost struct {
 	collect   string // the collector's base URL
 }
 
-func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI) *gateHost {
+func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI, peerCert *x509.Certificate) *gateHost {
 	t.Helper()
 	ctx := context.Background()
 
@@ -149,7 +152,12 @@ func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI) *gateHost {
 	cfg := qrdbsdk.DefaultDaemonConfig()
 	cfg.Raft.DataDir = t.TempDir()
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
-	cfg.Seal.Enabled = false
+	// The node seal is on, under the "none" strategy xkmsd composes for an
+	// insecure barrier (embeddednode.EmbeddedNodeStorageConfig): qrdb builds
+	// its certificate provider, and with it the certificate target guard
+	// users:add_cert_binding is held to, only on a node with a barrier.
+	cfg.Seal.Enabled = true
+	cfg.Seal.Strategy = string(qrdbsdk.StrategyNone)
 	cfg.Server.Host = "127.0.0.1"
 	cfg.Protocols.REST = true
 	cfg.Protocols.GRPC = false
@@ -169,22 +177,60 @@ func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI) *gateHost {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, node.Close()) })
 
+	// First boot seeds the system tenant, its built-in roles and the
+	// bootstrap admin, as xkmsd init does. The node enforces the "required"
+	// mTLS binding policy, so the admin presents a certificate from the
+	// fixture's PKI (qrdb's Path C) and first boot binds it.
+	adminKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	adminCert := p.issue(t, &x509.Certificate{
+		Subject: pkix.Name{
+			CommonName:         "admin",
+			OrganizationalUnit: []string{qrdbsdk.SystemTenantID},
+		},
+		URIs:        []*url.URL{{Scheme: "spiffe", Host: qrdbsdk.SystemTenantID, Path: "/user/admin"}},
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}, &adminKey.PublicKey)
+	deps, err := xkmsserver.BuildFirstBootDependencies(node, xkmsserver.FirstBootParams{Logger: slog.Default()})
+	require.NoError(t, err)
+	deps.AdminCertPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: adminCert.Raw})
+	deps.AdminCertPool = p.pool
+	booted, err := node.FirstBoot(ctx, deps)
+	require.NoError(t, err)
+	require.True(t, booted.AdminCreated)
+
 	// The peer is an ordinary system-tenant account whose role grants
 	// admin:status. RBAC admits it; only the gate stands between it and the
 	// route.
+	// The node's client authorizes every call as the identity on its
+	// context, so the fixtures' role creation runs as the system tenant's
+	// Admin and Security Officer (the SO holds roles:create).
 	client := node.Client()
+	ctx = qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(ctx, &qrdbsdk.Identity{
+		Subject:  "test-security-officer",
+		TenantID: qrdbsdk.SystemTenantID,
+		Roles: []string{
+			qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin),
+			qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameSO),
+		},
+	}), qrdbsdk.SystemTenantID)
 	role, err := client.Roles().CreateRole(ctx, &qrdbtransport.CreateRoleRequest{
 		Name:        "attested-status-reader",
 		TenantID:    qrdbsdk.SystemTenantID,
 		Permissions: []string{qrdbsdk.PermissionAdminStatus.String()},
 	})
 	require.NoError(t, err)
-	// Assigning a role at user creation needs roles:assign in the tenant; the
-	// test provisions as a system identity that holds exactly that.
+	// Creating a user with a role needs users:create and roles:assign in the
+	// tenant; the test provisions as a system identity that holds exactly those.
 	provisioner, err := client.Roles().CreateRole(ctx, &qrdbtransport.CreateRoleRequest{
-		Name:        "test-provisioner",
-		TenantID:    qrdbsdk.SystemTenantID,
-		Permissions: []string{"roles:assign"},
+		Name:     "test-provisioner",
+		TenantID: qrdbsdk.SystemTenantID,
+		Permissions: []string{
+			qrdbsdk.PermissionUsersCreate.String(),
+			qrdbsdk.PermissionRolesAssign.String(),
+			qrdbsdk.PermissionUsersAddCertBinding.String(),
+		},
 	})
 	require.NoError(t, err)
 	provisioning := qrdbsdk.WithIdentity(ctx, &qrdbsdk.Identity{
@@ -192,12 +238,18 @@ func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI) *gateHost {
 		TenantID: qrdbsdk.SystemTenantID,
 		Roles:    []string{provisioner.ID},
 	})
-	_, err = client.Users().CreateUser(provisioning, &qrdbtransport.CreateUserRequest{
+	peerUser, err := client.Users().CreateUser(provisioning, &qrdbtransport.CreateUserRequest{
 		Username:             "attested-peer",
 		TenantID:             qrdbsdk.SystemTenantID,
 		RoleIDs:              []string{role.ID},
 		WithoutEmailLoginKey: true,
 	})
+	require.NoError(t, err)
+	// The node enforces the "required" mTLS binding policy, which refuses a
+	// certificate login whose account has no binding. The peer's certificate
+	// is bound by its SPKI thumbprint, so binding never refuses it and only the
+	// gate decides whether it reaches the route.
+	_, err = client.Users().AddCertBinding(provisioning, peerUser.ID, qrdbsdk.ComputeSPKIThumbprint(peerCert), 0)
 	require.NoError(t, err)
 
 	host := &gateHost{pki: p, node: node, store: store, verifier: verifier, collector: collector}
@@ -378,14 +430,17 @@ func TestIntegration_PeerGate_QRDBNodeAdmitsOnlyAnAttestedPeer(t *testing.T) {
 
 	a := &attestedPeer{
 		cert: p.tlsCert(t, &x509.Certificate{
-			Subject:     pkix.Name{CommonName: "attested-peer", OrganizationalUnit: []string{qrdbsdk.SystemTenantID}},
+			Subject: pkix.Name{CommonName: "attested-peer", OrganizationalUnit: []string{qrdbsdk.SystemTenantID}},
+			// qrdb names a certificate's tenant only by its Subject OU and
+			// its SPIFFE ID SAN together (auth.TenantFromClientCert).
+			URIs:        []*url.URL{{Scheme: "spiffe", Host: qrdbsdk.SystemTenantID, Path: "/user/attested-peer"}},
 			KeyUsage:    x509.KeyUsageDigitalSignature,
 			ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		}),
 		tpm:   tpm,
 		akPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: akCert.Raw}),
 	}
-	host := newGateHost(t, peer.Policy{Anchors: p.pool, Baseline: baselineOf(t, tpm)}, p)
+	host := newGateHost(t, peer.Policy{Anchors: p.pool, Baseline: baselineOf(t, tpm)}, p, a.cert.Leaf)
 
 	// attest runs one honest round on a fresh connection: challenge, quote
 	// bound to the connection, submit.

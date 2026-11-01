@@ -50,14 +50,16 @@ func TestSignMessageRejectsUnsupportedParameter(t *testing.T) {
 			rvName(got), got)
 	}
 
-	// The parameterless form is the supported case and must not be refused for
-	// the same reason.
-	if err := f.Session.MessageSignInit(CKM_RSA_PKCS, nil, priv); err != nil {
-		t.Fatalf("C_MessageSignInit (second): %v", err)
+	// A failed C_SignMessage ends only that message's signing operation; the
+	// message-based signing process stays active until C_MessageSignFinal
+	// (PKCS#11 v3.2 §5.14.2). Re-initializing it is therefore refused, and the
+	// parameterless form must succeed on the process that is still active.
+	err = f.Session.MessageSignInit(CKM_RSA_PKCS, nil, priv)
+	if got := RV(err); got != CKR_OPERATION_ACTIVE {
+		t.Fatalf("C_MessageSignInit while the message-based signing process is active returned %s (0x%08X), want CKR_OPERATION_ACTIVE (v3.2 §5.14.1, §5.14.2)",
+			rvName(got), got)
 	}
 	if err := f.Session.SignMessageProbe(nil, data); err != nil {
-		if got := RV(err); got == CKR_MECHANISM_PARAM_INVALID {
-			t.Fatalf("C_SignMessage refused the parameterless form with CKR_MECHANISM_PARAM_INVALID; only a non-NULL parameter should be refused")
-		}
+		t.Fatalf("C_SignMessage without a parameter on the still-active process: %v; a refused message must not end the message-based signing process (v3.2 §5.14.2)", err)
 	}
 }

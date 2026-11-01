@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"hash"
 	"math/big"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -242,8 +243,13 @@ func (m *mockClient) DeriveKey(ctx context.Context, req *transport.DeriveKeyRequ
 	}, nil
 }
 func (m *mockClient) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDRequest) (*transport.WrapKeyByIDResponse, error) {
+	wrapped := []byte("mock-wrapped-key")
+	if req.Algorithm == string(types.WrapAESGCM) {
+		// The service's AES-GCM frame: mode || nonce || ciphertext || tag.
+		wrapped = slices.Concat([]byte{gcmWrapModeExplicit}, req.IV, wrapped, make([]byte, GCMTagSize))
+	}
 	return &transport.WrapKeyByIDResponse{
-		WrappedKey: []byte("mock-wrapped-key"),
+		WrappedKey: wrapped,
 		Algorithm:  req.Algorithm,
 	}, nil
 }
