@@ -123,8 +123,9 @@ var WithServiceModulePasswordVaultRelyingParty = apimodule.WithPasswordVaultRely
 var WithServiceModuleWebAuthnCredentialStoreDecorator = apimodule.WithWebAuthnCredentialStoreDecorator
 
 // ServiceModuleSessionOptions tunes the module's self-built JWT signing
-// key, token claims/TTLs, and login rate limiting. The zero value uses the
-// same defaults xkmsd itself derives.
+// key, token claims/TTLs, the access token typ header (AccessTokenType:
+// empty keeps "JWT", "at+jwt" per RFC 9068 §2.1), and login rate limiting.
+// The zero value uses the same defaults xkmsd itself derives.
 type ServiceModuleSessionOptions = rest.SessionOptions
 
 // WithServiceModuleSession configures the module's self-built session/JWT

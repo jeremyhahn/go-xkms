@@ -54,13 +54,25 @@ func TestServiceModuleSessionSigningJWK_ComposerFlow(t *testing.T) {
 	var key *JWK
 	key, err = ServiceModuleSessionSigningJWK(ctx, svc, session)
 	require.NoError(t, err)
-	assert.Equal(t, "composer-session-key", key.Kid)
 	assert.Equal(t, "ES256", key.Alg)
 	pub, err := key.ToPublicKey()
 	require.NoError(t, err)
 	ecPub, ok := pub.(*ecdsa.PublicKey)
 	require.True(t, ok)
 	assert.Equal(t, elliptic.P256(), ecPub.Curve)
+
+	// The kid is the SPKI key ID the session tokens carry (go-xkms#1724),
+	// not the key's CN.
+	wantKid, err := JWKSPKIKeyID(ecPub)
+	require.NoError(t, err)
+	assert.Equal(t, wantKid, key.Kid)
+}
+
+func TestJWKSPKIKeyID_RefusesAKeyWithoutSPKI(t *testing.T) {
+	kid, err := JWKSPKIKeyID(struct{}{})
+	var kidErr *JWKKeyIDError
+	require.ErrorAs(t, err, &kidErr)
+	assert.Empty(t, kid)
 }
 
 func TestServiceModuleSessionSigningJWK_NilService(t *testing.T) {

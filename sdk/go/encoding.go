@@ -100,10 +100,18 @@ var (
 	// public key, base64url-encoded: the conventional "kid" naming the
 	// recipient key of a JWE.
 	JWKThumbprintSHA256 = jwk.ThumbprintSHA256
+
+	// JWKSPKIKeyID derives the kid xkms publishes for a public key and sets
+	// on the session tokens it signs: unpadded base64url of SHA-256 over the
+	// key's DER SubjectPublicKeyInfo (go-xkms#1724, RFC 7517 §4.5).
+	JWKSPKIKeyID = jwk.SPKIKeyID
 )
 
 // JWK is an RFC 7517 JSON Web Key, re-exported from pkg/encoding/jwk.
 type JWK = jwk.JWK
+
+// JWKKeyIDError reports a public key JWKSPKIKeyID cannot derive a kid from.
+type JWKKeyIDError = jwk.KeyIDError
 
 // JWT types re-exported from pkg/encoding/jwt.
 // These allow SDK consumers to sign and verify JWTs without importing
