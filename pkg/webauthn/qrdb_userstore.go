@@ -18,8 +18,10 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -48,6 +50,19 @@ type QRDBUserStoreOptions struct {
 	// its service principal (node.ServiceContext) here, as the datastore
 	// does. Nil runs the calls on the caller's context.
 	CallContext func(ctx context.Context) (context.Context, error)
+
+	// KV is the qrdb KV client the pending-enrolment claims live in. It must
+	// implement transport.GuardedKVClient: a claim is taken with PutIfAbsent,
+	// an expired one taken over with CompareAndSwap and a claim consumed with
+	// CompareAndDelete, so concurrent registrations of one email elect
+	// exactly one winner. Required.
+	KV qrdbtransport.KVClient
+
+	// EnrolmentClaimTTL bounds how long a claim holds an email's pending
+	// record before another registration may take it over. It must not
+	// outlive the registration session, so a taken-over claim's session
+	// is already expired. Zero means DefaultEnrolmentClaimTTL.
+	EnrolmentClaimTTL time.Duration
 }
 
 // qrdbUserStore implements xkms's UserStore over qrdb's user records. A
@@ -56,6 +71,8 @@ type QRDBUserStoreOptions struct {
 type qrdbUserStore struct {
 	users    qrdbtransport.UserClient
 	creds    CredentialStore
+	kv       qrdbtransport.GuardedKVClient
+	claimTTL time.Duration
 	tenantID string
 	bind     func(ctx context.Context) (context.Context, error)
 }
@@ -75,11 +92,29 @@ func NewQRDBUserStoreAdapter(opts QRDBUserStoreOptions) (UserStore, CredentialSt
 	if opts.TenantID == "" {
 		return nil, nil, &QRDBAdapterConfigError{Field: "TenantID"}
 	}
+	if opts.KV == nil {
+		return nil, nil, &QRDBAdapterConfigError{Field: "KV"}
+	}
+	kv, ok := opts.KV.(qrdbtransport.GuardedKVClient)
+	if !ok {
+		return nil, nil, &QRDBGuardedKVUnsupportedError{ClientType: fmt.Sprintf("%T", opts.KV)}
+	}
+	claimTTL := opts.EnrolmentClaimTTL
+	if claimTTL <= 0 {
+		claimTTL = DefaultEnrolmentClaimTTL
+	}
 	creds, err := newCredentialStore(opts.DAOFactory)
 	if err != nil {
 		return nil, nil, WrapError("build credential store", err)
 	}
-	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID, bind: opts.CallContext}
+	users := &qrdbUserStore{
+		users:    opts.Users,
+		creds:    creds,
+		kv:       kv,
+		claimTTL: claimTTL,
+		tenantID: opts.TenantID,
+		bind:     opts.CallContext,
+	}
 	return users, creds, nil
 }
 
@@ -185,9 +220,9 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 	}
 	existing, err := s.users.GetUserByEmail(ctx, s.tenantID, email)
 	switch {
-	case err == nil && isPendingUsername(existing.Username):
-		return s.resumePending(ctx, existing)
-	case err != nil && !isUserNotFound(err):
+	case err == nil:
+		return s.claimExisting(ctx, existing)
+	case !isUserNotFound(err):
 		return nil, WrapError("qrdb user lookup", err)
 	}
 	// qrdb's Username is the certificate CN, so it carries the qrdb user ID,
@@ -203,22 +238,199 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 		TenantID: s.tenantID,
 	})
 	if err != nil {
+		// A concurrent registration may have created the record first; it
+		// is then contended through its claim like any existing record.
+		if existing, lookupErr := s.users.GetUserByEmail(ctx, s.tenantID, email); lookupErr == nil {
+			return s.claimExisting(ctx, existing)
+		}
 		return nil, WrapError("qrdb create user", err)
 	}
-	return s.assignUsername(ctx, u.ID)
+	claim, err := s.acquireClaim(ctx, u.ID, true)
+	if err != nil {
+		return nil, err
+	}
+	return s.claimedUser(ctx, u.ID, claim)
 }
 
-// resumePending finishes the rename of a placeholder record an earlier
-// Create left behind, unless the record already holds a credential.
-func (s *qrdbUserStore) resumePending(ctx context.Context, u *qrdbtransport.User) (User, error) {
+// claimExisting contends for the enrolment of a record that already exists
+// for the email. A credential-free placeholder is open to a claim. A renamed,
+// credential-free record is mid-enrolment, and only an expired claim on it can
+// be taken over. A record that holds a credential is never handed out.
+func (s *qrdbUserStore) claimExisting(ctx context.Context, u *qrdbtransport.User) (User, error) {
+	pending := isPendingUsername(u.Username)
 	creds, err := s.creds.GetByUserID(ctx, HandleFromUserID(u.ID))
 	if err != nil {
 		return nil, err
 	}
 	if len(creds) > 0 {
-		return nil, &QRDBPendingUserClaimedError{UserID: u.ID}
+		if pending {
+			return nil, &QRDBPendingUserClaimedError{UserID: u.ID}
+		}
+		return nil, ErrRegistrationRefused
 	}
-	return s.assignUsername(ctx, u.ID)
+	claim, err := s.acquireClaim(ctx, u.ID, pending)
+	if err != nil {
+		return nil, err
+	}
+	if pending {
+		return s.claimedUser(ctx, u.ID, claim)
+	}
+	user, err := s.materialize(ctx, u)
+	if err != nil {
+		return nil, errors.Join(err, s.releaseClaim(ctx, claim))
+	}
+	return &claimedUser{User: user, claim: claim.token}, nil
+}
+
+// claimedUser renames the claimed placeholder to its ID and returns it
+// carrying the claim. A failed rename releases the claim, so the placeholder
+// stays recoverable by the next registration.
+func (s *qrdbUserStore) claimedUser(ctx context.Context, id uint64, claim *enrolmentClaim) (User, error) {
+	user, err := s.assignUsername(ctx, id)
+	if err != nil {
+		return nil, errors.Join(err, s.releaseClaim(ctx, claim))
+	}
+	return &claimedUser{User: user, claim: claim.token}, nil
+}
+
+// acquireClaim takes the enrolment claim on record id. When allowAbsent is
+// set, an absent claim is taken with PutIfAbsent. A live claim refuses with
+// EnrolmentInProgressError. An expired or unreadable one is taken over with
+// a CompareAndSwap on its exact value, which only one contender can win.
+func (s *qrdbUserStore) acquireClaim(ctx context.Context, id uint64, allowAbsent bool) (*enrolmentClaim, error) {
+	claim := &enrolmentClaim{key: s.claimKey(id), token: rand.Text()}
+	claim.value = encodeEnrolmentClaim(claim.token, time.Now().Add(s.claimTTL))
+	if allowAbsent {
+		stored, err := s.kv.PutIfAbsent(ctx, claim.key, claim.value)
+		if err != nil {
+			return nil, WrapError("put enrolment claim", err)
+		}
+		if stored {
+			return claim, nil
+		}
+	}
+	current, err := s.kv.Get(ctx, claim.key)
+	var notFound *qrdbtransport.KeyNotFoundError
+	switch {
+	case errors.As(err, &notFound) && allowAbsent:
+		// The claim was released after the PutIfAbsent lost to it: its
+		// holder has just finished or failed, and this registration lost.
+		return nil, &EnrolmentInProgressError{UserID: id}
+	case errors.As(err, &notFound):
+		// A renamed record that nobody is enrolling is an existing account.
+		return nil, ErrRegistrationRefused
+	case err != nil:
+		return nil, WrapError("get enrolment claim", err)
+	}
+	if _, expires, ok := decodeEnrolmentClaim(current); ok && time.Now().Before(expires) {
+		return nil, &EnrolmentInProgressError{UserID: id}
+	}
+	swapped, err := s.kv.CompareAndSwap(ctx, claim.key, current, claim.value)
+	if err != nil {
+		return nil, WrapError("take over enrolment claim", err)
+	}
+	if !swapped {
+		return nil, &EnrolmentInProgressError{UserID: id}
+	}
+	return claim, nil
+}
+
+// releaseClaim drops a claim this store took, only if it still holds it.
+func (s *qrdbUserStore) releaseClaim(ctx context.Context, claim *enrolmentClaim) error {
+	if _, err := s.kv.CompareAndDelete(ctx, claim.key, claim.value); err != nil {
+		return WrapError("release enrolment claim", err)
+	}
+	return nil
+}
+
+// consumeEnrolmentClaim ends the claim a finishing enrolment holds, with a
+// CompareAndDelete on the exact claim it read. A claim that is absent,
+// expired or another registration's fails with EnrolmentClaimLostError, and
+// the enrolment must then add nothing.
+func (s *qrdbUserStore) consumeEnrolmentClaim(ctx context.Context, user User, token string) error {
+	id, err := UserIDFromHandle(user.WebAuthnID())
+	if err != nil {
+		return err
+	}
+	ctx, err = s.callContext(ctx)
+	if err != nil {
+		return err
+	}
+	key := s.claimKey(id)
+	current, err := s.kv.Get(ctx, key)
+	var notFound *qrdbtransport.KeyNotFoundError
+	if errors.As(err, &notFound) {
+		return &EnrolmentClaimLostError{UserID: id}
+	}
+	if err != nil {
+		return WrapError("get enrolment claim", err)
+	}
+	held, expires, ok := decodeEnrolmentClaim(current)
+	if !ok || held != token || !time.Now().Before(expires) {
+		return &EnrolmentClaimLostError{UserID: id}
+	}
+	deleted, err := s.kv.CompareAndDelete(ctx, key, current)
+	if err != nil {
+		return WrapError("consume enrolment claim", err)
+	}
+	if !deleted {
+		return &EnrolmentClaimLostError{UserID: id}
+	}
+	return nil
+}
+
+// claimKey is the KV key of the enrolment claim on record id.
+func (s *qrdbUserStore) claimKey(id uint64) string {
+	return enrolmentClaimPrefix + s.tenantID + "/" + strconv.FormatUint(id, 10)
+}
+
+// enrolmentClaim is a claim this store took: its key, the exact value it
+// wrote, and the token the registration session carries.
+type enrolmentClaim struct {
+	key   string
+	value []byte
+	token string
+}
+
+// encodeEnrolmentClaim lays a claim out as its expiry in Unix nanoseconds,
+// big-endian, followed by its token.
+func encodeEnrolmentClaim(token string, expires time.Time) []byte {
+	value := binary.BigEndian.AppendUint64(make([]byte, 0, 8+len(token)), uint64(expires.UnixNano()))
+	return append(value, token...)
+}
+
+// decodeEnrolmentClaim reverses encodeEnrolmentClaim; ok is false for a
+// value too short to hold a token.
+func decodeEnrolmentClaim(value []byte) (token string, expires time.Time, ok bool) {
+	if len(value) <= 8 {
+		return "", time.Time{}, false
+	}
+	return string(value[8:]), time.Unix(0, int64(binary.BigEndian.Uint64(value))), true
+}
+
+// enrolmentClaimant is a user handed to exactly one registration under an
+// enrolment claim. Its registration session carries the claim's token, and
+// finishing that registration consumes the claim.
+type enrolmentClaimant interface {
+	EnrolmentClaim() string
+}
+
+// enrolmentClaimConsumer is a user store whose Create hands out claimed
+// users; a finishing enrolment consumes its claim through it.
+type enrolmentClaimConsumer interface {
+	consumeEnrolmentClaim(ctx context.Context, user User, token string) error
+}
+
+// claimedUser is the user Create returns: the record and the claim it was
+// won under.
+type claimedUser struct {
+	User
+	claim string
+}
+
+// EnrolmentClaim implements enrolmentClaimant.
+func (u *claimedUser) EnrolmentClaim() string {
+	return u.claim
 }
 
 // assignUsername renames the record to its decimal qrdb user ID.
@@ -441,6 +653,15 @@ func (e *InvalidUserHandleError) Error() string {
 // created under before Create renames it to its qrdb user ID.
 const pendingUsernamePrefix = "webauthn-pending-"
 
+// enrolmentClaimPrefix is the KV prefix of the enrolment claims, keyed
+// <prefix><tenant>/<qrdb user ID>.
+const enrolmentClaimPrefix = "webauthn/enrolment-claims/"
+
+// DefaultEnrolmentClaimTTL is the enrolment claim lifetime when
+// QRDBUserStoreOptions.EnrolmentClaimTTL is zero: Config's default
+// ceremony Timeout.
+const DefaultEnrolmentClaimTTL = 60 * time.Second
+
 // isPendingUsername reports whether username is a Create placeholder.
 func isPendingUsername(username string) bool {
 	return strings.HasPrefix(username, pendingUsernamePrefix)
@@ -477,6 +698,48 @@ type QRDBPendingUserClaimedError struct {
 // Error implements error.
 func (e *QRDBPendingUserClaimedError) Error() string {
 	return "webauthn: qrdb adapter: placeholder user " + strconv.FormatUint(e.UserID, 10) + " already holds a credential"
+}
+
+// QRDBGuardedKVUnsupportedError is returned by NewQRDBUserStoreAdapter when
+// the KV client lacks the conditional-write verbs
+// (transport.GuardedKVClient). An enrolment claim is decided by them, so the
+// store fails to build rather than run a check-then-write that two
+// registrations can interleave inside.
+type QRDBGuardedKVUnsupportedError struct {
+	// ClientType is the Go type of the KV client supplied.
+	ClientType string
+}
+
+// Error implements error.
+func (e *QRDBGuardedKVUnsupportedError) Error() string {
+	return "webauthn: qrdb adapter: kv client " + e.ClientType +
+		" does not implement transport.GuardedKVClient; enrolment claims are unavailable on this transport"
+}
+
+// EnrolmentInProgressError is returned by the qrdb user store's Create when
+// another registration holds the live enrolment claim on the email's
+// record. No registration session is issued.
+type EnrolmentInProgressError struct {
+	// UserID is the qrdb user ID of the record being enrolled.
+	UserID uint64
+}
+
+// Error implements error.
+func (e *EnrolmentInProgressError) Error() string {
+	return "webauthn: qrdb adapter: an enrolment of user " + strconv.FormatUint(e.UserID, 10) + " is already in progress"
+}
+
+// EnrolmentClaimLostError is returned when a finishing enrolment no longer
+// holds its claim: the claim expired, was taken over or was already
+// consumed. No credential is added.
+type EnrolmentClaimLostError struct {
+	// UserID is the qrdb user ID of the record being enrolled.
+	UserID uint64
+}
+
+// Error implements error.
+func (e *EnrolmentClaimLostError) Error() string {
+	return "webauthn: qrdb adapter: the enrolment claim on user " + strconv.FormatUint(e.UserID, 10) + " is no longer held"
 }
 
 // Compile-time interface assertion.
