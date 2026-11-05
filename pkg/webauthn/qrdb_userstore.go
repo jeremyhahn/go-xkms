@@ -189,7 +189,14 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 	if err != nil {
 		return nil, err
 	}
-	if isPendingUsername(u.Username) && len(user.Credentials()) == 0 {
+	if len(user.Credentials()) > 0 {
+		return user, nil
+	}
+	placeholder, err := s.isPlaceholder(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	if placeholder {
 		// A Create whose rename failed left this record. It is no account
 		// yet, and the next Create for the email finishes it.
 		return nil, ErrUserNotFound
@@ -231,8 +238,21 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 	// refuses an empty Username, so the record is created under a random,
 	// PII-free placeholder and then renamed to its ID. An existing account
 	// for the email is refused here by qrdb.
+	//
+	// The placeholder's provenance record is written first: it is the only
+	// evidence that public sign-up created the record, since any account
+	// can carry a placeholder-shaped Username. If CreateUser then fails, the
+	// record is an orphan no account carries.
+	placeholder := pendingUsernamePrefix + rand.Text()
+	stored, err := s.kv.PutIfAbsent(ctx, s.placeholderKey(placeholder), []byte(placeholder))
+	if err != nil {
+		return nil, WrapError("put enrolment placeholder", err)
+	}
+	if !stored {
+		return nil, &QRDBPlaceholderTakenError{Username: placeholder}
+	}
 	u, err := s.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
-		Username: pendingUsernamePrefix + rand.Text(),
+		Username: placeholder,
 		Email:    email,
 		Name:     displayName,
 		TenantID: s.tenantID,
@@ -257,7 +277,10 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 // credential-free record is mid-enrolment, and only an expired claim on it can
 // be taken over. A record that holds a credential is never handed out.
 func (s *qrdbUserStore) claimExisting(ctx context.Context, u *qrdbtransport.User) (User, error) {
-	pending := isPendingUsername(u.Username)
+	pending, err := s.isPlaceholder(ctx, u)
+	if err != nil {
+		return nil, err
+	}
 	creds, err := s.creds.GetByUserID(ctx, HandleFromUserID(u.ID))
 	if err != nil {
 		return nil, err
@@ -519,6 +542,24 @@ func (s *qrdbUserStore) claimKey(id uint64) string {
 // enrolment wins before it writes the account's credential.
 func (s *qrdbUserStore) credentialMarkerKey(id uint64) string {
 	return enrolmentCredentialPrefix + s.tenantID + "/" + strconv.FormatUint(id, 10)
+}
+
+// placeholderKey is the KV key of the provenance record of a placeholder
+// Username.
+func (s *qrdbUserStore) placeholderKey(username string) string {
+	return enrolmentPlaceholderPrefix + s.tenantID + "/" + username
+}
+
+// isPlaceholder reports whether u is a record public sign-up created and has
+// not yet renamed: its Username has the placeholder shape and Create's
+// provenance record for that Username exists. The Username alone never
+// decides it.
+func (s *qrdbUserStore) isPlaceholder(ctx context.Context, u *qrdbtransport.User) (bool, error) {
+	if !isPendingUsername(u.Username) {
+		return false, nil
+	}
+	_, found, err := s.readClaim(ctx, s.placeholderKey(u.Username))
+	return found, err
 }
 
 // enrolmentClaim is a claim this store took: its key, the exact value it
@@ -823,9 +864,31 @@ const enrolmentCredentialPrefix = "webauthn/enrolment-credential/"
 // ceremony Timeout.
 const DefaultEnrolmentClaimTTL = 60 * time.Second
 
-// isPendingUsername reports whether username is a Create placeholder.
+// enrolmentPlaceholderPrefix is the KV prefix of the placeholder provenance
+// records, keyed <prefix><tenant>/<placeholder Username>. Create writes one
+// before it creates a record under that placeholder; no caller of the public
+// ceremony can write one, so an account that merely carries a
+// placeholder-shaped Username has none. The record is kept after the rename:
+// no account carries its placeholder again.
+const enrolmentPlaceholderPrefix = "webauthn/enrolment-placeholder/"
+
+// isPendingUsername reports whether username has the shape of a Create
+// placeholder. The shape alone is no evidence; see isPlaceholder.
 func isPendingUsername(username string) bool {
 	return strings.HasPrefix(username, pendingUsernamePrefix)
+}
+
+// QRDBPlaceholderTakenError is returned by the qrdb user store's Create when
+// the random placeholder it drew already has a provenance record. No record
+// is created; the registration may be retried.
+type QRDBPlaceholderTakenError struct {
+	// Username is the placeholder drawn.
+	Username string
+}
+
+// Error implements error.
+func (e *QRDBPlaceholderTakenError) Error() string {
+	return "webauthn: qrdb adapter: placeholder " + e.Username + " is already recorded"
 }
 
 // QRDBUsernameAssignError is returned by the qrdb user store's Create when
