@@ -353,6 +353,13 @@ func (s *qrdbUserStore) releaseClaim(ctx context.Context, claim *enrolmentClaim)
 // A claim that is absent, expired, already consumed or another
 // registration's fails with EnrolmentClaimLostError, and the enrolment must
 // then add nothing.
+//
+// The consumed claim still expires, and a save can outlast it. So the
+// consume also wins the account's enrolment credential marker with
+// PutIfAbsent: a marker with no expiry that no path takes over. A marker
+// already held fails with EnrolmentCredentialMarkedError, and the claim is
+// released. This is what keeps the unauthenticated path to at most one
+// credential per account, whatever the timing.
 func (s *qrdbUserStore) consumeEnrolmentClaim(ctx context.Context, user User, token string) error {
 	ctx, claim, err := s.liveClaim(ctx, user, token)
 	if err != nil {
@@ -366,15 +373,44 @@ func (s *qrdbUserStore) consumeEnrolmentClaim(ctx context.Context, user User, to
 	if !swapped {
 		return &EnrolmentClaimLostError{UserID: claim.userID}
 	}
+	// The claim expires; the credential marker never does. Winning it is
+	// what lets this finish write the account's one public-enrolment
+	// credential, however long the save then takes.
+	stored, err := s.kv.PutIfAbsent(ctx, s.credentialMarkerKey(claim.userID), []byte(token))
+	if err != nil {
+		return errors.Join(WrapError("put enrolment credential marker", err), s.releaseConsumed(ctx, claim, consumed))
+	}
+	if !stored {
+		return errors.Join(&EnrolmentCredentialMarkedError{UserID: claim.userID}, s.releaseConsumed(ctx, claim, consumed))
+	}
 	return nil
+}
+
+// releaseConsumed hands back a claim this finish consumed but will not use.
+func (s *qrdbUserStore) releaseConsumed(ctx context.Context, claim *enrolmentClaim, consumed []byte) error {
+	claim.value = consumed
+	return s.releaseClaim(ctx, claim)
 }
 
 // settleEnrolmentClaim ends a consumed claim once the credential save has
 // run. A saved credential deletes the claim: the account now holds a
-// credential and is never taken again. A failed save releases it, so a
-// retry or a new registration of the email can recover the account.
+// credential and is never taken again; a claim that expired during the save
+// is not an error, since the credential marker holds the account. A failed
+// save deletes the credential marker and releases the claim, so a retry or a
+// new registration of the email can recover the account.
 func (s *qrdbUserStore) settleEnrolmentClaim(ctx context.Context, user User, token string, saved bool) error {
+	if !saved {
+		if err := s.dropCredentialMarker(ctx, user, token); err != nil {
+			return err
+		}
+	}
 	ctx, claim, err := s.liveClaim(ctx, user, consumedClaimPrefix+token)
+	var lost *EnrolmentClaimLostError
+	if saved && errors.As(err, &lost) {
+		// The claim expired while the credential was saving. The credential
+		// marker, not the claim, holds the account: nothing is left to settle.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -388,9 +424,28 @@ func (s *qrdbUserStore) settleEnrolmentClaim(ctx context.Context, user User, tok
 	return nil
 }
 
+// dropCredentialMarker removes the credential marker this finish won with
+// token, once its credential save has failed: no credential was written, so
+// the account may enrol again. A marker another finish holds is left alone.
+func (s *qrdbUserStore) dropCredentialMarker(ctx context.Context, user User, token string) error {
+	id, err := UserIDFromHandle(user.WebAuthnID())
+	if err != nil {
+		return err
+	}
+	ctx, err = s.callContext(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := s.kv.CompareAndDelete(ctx, s.credentialMarkerKey(id), []byte(token)); err != nil {
+		return WrapError("delete enrolment credential marker", err)
+	}
+	return nil
+}
+
 // enrolmentRecoverable reports whether user's record carries a released or
 // expired enrolment claim: a public enrolment that never saved its
-// credential, which the next Create for the email may take over.
+// credential, which the next Create for the email may take over. An account
+// whose enrolment credential marker is held is never recoverable.
 func (s *qrdbUserStore) enrolmentRecoverable(ctx context.Context, user User) (bool, error) {
 	id, err := UserIDFromHandle(user.WebAuthnID())
 	if err != nil {
@@ -398,6 +453,10 @@ func (s *qrdbUserStore) enrolmentRecoverable(ctx context.Context, user User) (bo
 	}
 	ctx, err = s.callContext(ctx)
 	if err != nil {
+		return false, err
+	}
+	_, marked, err := s.readClaim(ctx, s.credentialMarkerKey(id))
+	if err != nil || marked {
 		return false, err
 	}
 	current, found, err := s.readClaim(ctx, s.claimKey(id))
@@ -449,6 +508,12 @@ func (s *qrdbUserStore) readClaim(ctx context.Context, key string) (value []byte
 // claimKey is the KV key of the enrolment claim on record id.
 func (s *qrdbUserStore) claimKey(id uint64) string {
 	return enrolmentClaimPrefix + s.tenantID + "/" + strconv.FormatUint(id, 10)
+}
+
+// credentialMarkerKey is the KV key of the marker a finishing public
+// enrolment wins before it writes the account's credential.
+func (s *qrdbUserStore) credentialMarkerKey(id uint64) string {
+	return enrolmentCredentialPrefix + s.tenantID + "/" + strconv.FormatUint(id, 10)
 }
 
 // enrolmentClaim is a claim this store took: its key, the exact value it
@@ -567,6 +632,12 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	}
 	if dErr := s.creds.DeleteByUserID(ctx, userID); dErr != nil {
 		return WrapError("delete user credentials", dErr)
+	}
+	// Deleting the account is the administrator's way to clear a credential
+	// marker whose finish died before its save: the email enrols afresh.
+	var notFound *qrdbtransport.KeyNotFoundError
+	if dErr := s.kv.Delete(ctx, s.credentialMarkerKey(id)); dErr != nil && !errors.As(dErr, &notFound) {
+		return WrapError("delete enrolment credential marker", dErr)
 	}
 	return nil
 }
@@ -733,6 +804,12 @@ const enrolmentClaimPrefix = "webauthn/enrolment-claims/"
 // its credential; no session carries a token with this prefix.
 const consumedClaimPrefix = "consumed:"
 
+// enrolmentCredentialPrefix is the KV prefix of the enrolment credential
+// markers, keyed <prefix><tenant>/<qrdb user ID>. A marker has no expiry:
+// once a public enrolment has won it and saved its credential, no other
+// unauthenticated enrolment can write a credential for that account.
+const enrolmentCredentialPrefix = "webauthn/enrolment-credential/"
+
 // DefaultEnrolmentClaimTTL is the enrolment claim lifetime when
 // QRDBUserStoreOptions.EnrolmentClaimTTL is zero: Config's default
 // ceremony Timeout.
@@ -816,6 +893,20 @@ type EnrolmentClaimLostError struct {
 // Error implements error.
 func (e *EnrolmentClaimLostError) Error() string {
 	return "webauthn: qrdb adapter: the enrolment claim on user " + strconv.FormatUint(e.UserID, 10) + " is no longer held"
+}
+
+// EnrolmentCredentialMarkedError is returned when a finishing public
+// enrolment finds the account's enrolment credential marker already held:
+// another enrolment has written, or is writing, the account's credential.
+// No credential is added.
+type EnrolmentCredentialMarkedError struct {
+	// UserID is the qrdb user ID of the record being enrolled.
+	UserID uint64
+}
+
+// Error implements error.
+func (e *EnrolmentCredentialMarkedError) Error() string {
+	return "webauthn: qrdb adapter: user " + strconv.FormatUint(e.UserID, 10) + " already has a public-enrolment credential"
 }
 
 // Compile-time interface assertion.
