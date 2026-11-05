@@ -455,7 +455,7 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
 	saveErr := s.creds.Save(ctx, cred)
 	if enrolling {
-		if err := enrolment.settleEnrolmentClaim(ctx, user, token, saveErr == nil); err != nil {
+		if err := enrolment.settleEnrolmentClaim(ctx, user, token, outcomeOfCredentialSave(saveErr)); err != nil {
 			return nil, errors.Join(saveErr, err)
 		}
 	}

@@ -395,18 +395,22 @@ func (s *qrdbUserStore) releaseConsumed(ctx context.Context, claim *enrolmentCla
 // settleEnrolmentClaim ends a consumed claim once the credential save has
 // run. A saved credential deletes the claim: the account now holds a
 // credential and is never taken again; a claim that expired during the save
-// is not an error, since the credential marker holds the account. A failed
-// save deletes the credential marker and releases the claim, so a retry or a
-// new registration of the email can recover the account.
-func (s *qrdbUserStore) settleEnrolmentClaim(ctx context.Context, user User, token string, saved bool) error {
-	if !saved {
+// is not an error, since the credential marker holds the account. A save
+// proven not to have written (credentialNotSaved) deletes the credential
+// marker and releases the claim, so a retry or a new registration of the
+// email can recover the account. A save whose outcome is unknown may still
+// commit: it releases the claim but keeps the marker, so every later
+// registration of the email is refused until an administrator deletes the
+// account, which clears the marker.
+func (s *qrdbUserStore) settleEnrolmentClaim(ctx context.Context, user User, token string, outcome credentialSaveOutcome) error {
+	if outcome == credentialNotSaved {
 		if err := s.dropCredentialMarker(ctx, user, token); err != nil {
 			return err
 		}
 	}
 	ctx, claim, err := s.liveClaim(ctx, user, consumedClaimPrefix+token)
 	var lost *EnrolmentClaimLostError
-	if saved && errors.As(err, &lost) {
+	if outcome != credentialNotSaved && errors.As(err, &lost) {
 		// The claim expired while the credential was saving. The credential
 		// marker, not the claim, holds the account: nothing is left to settle.
 		return nil
@@ -414,7 +418,7 @@ func (s *qrdbUserStore) settleEnrolmentClaim(ctx context.Context, user User, tok
 	if err != nil {
 		return err
 	}
-	if !saved {
+	if outcome != credentialSaved {
 		claim.token = token
 		return s.releaseClaim(ctx, claim)
 	}
@@ -425,8 +429,9 @@ func (s *qrdbUserStore) settleEnrolmentClaim(ctx context.Context, user User, tok
 }
 
 // dropCredentialMarker removes the credential marker this finish won with
-// token, once its credential save has failed: no credential was written, so
-// the account may enrol again. A marker another finish holds is left alone.
+// token, once its credential save is proven not to have written: no
+// credential exists, so the account may enrol again. A save whose outcome is
+// unknown never drops it. A marker another finish holds is left alone.
 func (s *qrdbUserStore) dropCredentialMarker(ctx context.Context, user User, token string) error {
 	id, err := UserIDFromHandle(user.WebAuthnID())
 	if err != nil {
@@ -555,7 +560,7 @@ type enrolmentClaimant interface {
 type enrolmentClaimConsumer interface {
 	enrolmentRecoverable(ctx context.Context, user User) (bool, error)
 	consumeEnrolmentClaim(ctx context.Context, user User, token string) error
-	settleEnrolmentClaim(ctx context.Context, user User, token string, saved bool) error
+	settleEnrolmentClaim(ctx context.Context, user User, token string, outcome credentialSaveOutcome) error
 }
 
 // claimedUser is the user Create returns: the record and the claim it was
@@ -807,7 +812,9 @@ const consumedClaimPrefix = "consumed:"
 // enrolmentCredentialPrefix is the KV prefix of the enrolment credential
 // markers, keyed <prefix><tenant>/<qrdb user ID>. A marker has no expiry:
 // once a public enrolment has won it and saved its credential, no other
-// unauthenticated enrolment can write a credential for that account.
+// unauthenticated enrolment can write a credential for that account. A
+// failed save removes it only when the failure proves no write happened; an
+// unknown outcome keeps it, and deleting the account is what clears it.
 const enrolmentCredentialPrefix = "webauthn/enrolment-credential/"
 
 // DefaultEnrolmentClaimTTL is the enrolment claim lifetime when
