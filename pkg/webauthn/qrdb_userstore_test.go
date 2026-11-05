@@ -607,6 +607,77 @@ func TestFinishRegistration_SaveInFlightRefusesSecondEnrolment(t *testing.T) {
 	}
 }
 
+// TestFinishRegistration_SaveStalledPastClaimTTLEnrolsOnePasskey stalls the
+// first finish's credential save until its consumed claim has expired, lets
+// a second public registration of the same email run to completion, then
+// releases the first save: the account must still hold one credential.
+func TestFinishRegistration_SaveStalledPastClaimTTLEnrolsOnePasskey(t *testing.T) {
+	f := newEnrollFixture(t, true)
+	ctx := context.Background()
+	const email = "stalled@example.com"
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	// Only the first save takes the stall token; every later save runs.
+	stall := make(chan struct{}, 1)
+	stall <- struct{}{}
+	f.svc.creds = &saveGatedCredStore{CredentialStore: f.creds, gate: func() error {
+		select {
+		case <-stall:
+			close(entered)
+			<-release
+		default:
+		}
+		return nil
+	}}
+
+	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Stalled")
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	finished := make(chan error, 1)
+	go func() {
+		_, err := f.attest(t, options, sessionID, newEC2Credential(t))
+		finished <- err
+	}()
+	<-entered
+
+	// The first save outlives its consumed claim.
+	user, err := f.users.GetByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	store, key := claimKeyOf(t, f.users, user)
+	current, found, err := store.readClaim(ctx, key)
+	if err != nil || !found {
+		t.Fatalf("read the consumed claim: found=%v err=%v", found, err)
+	}
+	held, _, _ := decodeEnrolmentClaim(current)
+	if err := store.kv.Put(ctx, key, encodeEnrolmentClaim(held, time.Unix(0, 0))); err != nil {
+		t.Fatalf("expire the consumed claim: %v", err)
+	}
+
+	secondErr := func() error {
+		options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Second")
+		if err != nil {
+			return err
+		}
+		_, err = f.attest(t, options, sessionID, newEC2Credential(t))
+		return err
+	}()
+	close(release)
+	firstErr := <-finished
+
+	if n := credentialCount(t, f, email); n != 1 {
+		t.Fatalf("expected one credential, got %d", n)
+	}
+	if secondErr == nil {
+		t.Fatal("a second passkey enrolled while the first save was stalled past the claim TTL")
+	}
+	if firstErr != nil {
+		t.Fatalf("the stalled finish: %v", firstErr)
+	}
+}
+
 func TestFinishRegistration_EnrolmentRefusedForUserWithCredential(t *testing.T) {
 	f := newEnrollFixture(t, true)
 	ctx := context.Background()
