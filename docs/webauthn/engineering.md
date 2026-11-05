@@ -258,13 +258,13 @@ so it carries no PII; the email stays in `Email`, qrdb's tenant-unique login
 key, and in the rfc822Name SAN. qrdb assigns the ID at create and refuses an
 empty `Username`, so `Create` (`qrdb_userstore.go:212`) creates the record under
 a random `webauthn-pending-` placeholder and then renames it with `UpdateUser`
-to the decimal ID (`qrdb_userstore.go:508`), which qrdb re-validates for
+to the decimal ID (`assignUsername`, `qrdb_userstore.go:508`), which qrdb re-validates for
 uniqueness and re-indexes atomically. A failed rename returns
 `*QRDBUsernameAssignError` (`qrdb_userstore.go:749`) and leaves the record
 under its placeholder: the embedded node's service principal holds no
 `users:delete`, so there is no rollback. `GetByEmail` reports such a record,
 while it has no credential, as not found, and the next `Create` for the email
-finishes the rename and returns that user (`qrdb_userstore.go:258`). A
+finishes the rename and returns that user (`claimExisting`, `qrdb_userstore.go:258`). A
 placeholder that already holds a credential is never taken over: `Create`
 returns `*QRDBPendingUserClaimedError` (`qrdb_userstore.go:768`). Nothing in the WebAuthn path reads
 `Username`: login resolves by email (`GetUserByEmail`), and a WebAuthn token's
@@ -283,12 +283,12 @@ the winner renames the record and gets a session.
   (`qrdb_userstore.go:84`) type-asserts it and otherwise fails with
   `*QRDBGuardedKVUnsupportedError` (`qrdb_userstore.go:783`).
 - **Key and value.** The key is `webauthn/enrolment-claims/<tenantID>/<userID>`
-  (`qrdb_userstore.go:729`). The value is an 8-byte big-endian expiry in Unix
+  (`enrolmentClaimPrefix`, `qrdb_userstore.go:729`). The value is an 8-byte big-endian expiry in Unix
   nanoseconds followed by the token, a `crypto/rand` string
-  (`qrdb_userstore.go:464`).
+  (`encodeEnrolmentClaim`, `qrdb_userstore.go:464`).
 - **TTL.** `EnrolmentClaimTTL`, `DefaultEnrolmentClaimTTL` (60 s) when zero
-  (`qrdb_userstore.go:738`). The REST host sets it to the WebAuthn
-  `Config.Timeout` (`pkg/api/rest/host.go:471`). It must be at least the
+  (`DefaultEnrolmentClaimTTL`, `qrdb_userstore.go:738`). The REST host sets it to the WebAuthn
+  `Config.Timeout` (`BuildWebAuthnService`, `pkg/api/rest/host.go:471`). It must be at least the
   ceremony timeout, or a slow but honest finish loses its claim to a
   recovering registration.
 - **Acquire** (`acquireClaim`, `qrdb_userstore.go:299`). `Create` takes the
