@@ -55,6 +55,7 @@ func TestWebAuthnBegin_RegisteredUserListsCredentialInExcludeCredentials(t *test
 		Users:       node.Client().Users(),
 		DAOFactory:  ds.DAOFactory(),
 		TenantID:    webAuthnSystemTenant,
+		KV:          node.Client().KV(),
 		CallContext: node.ServiceContext,
 	})
 	require.NoError(t, err)

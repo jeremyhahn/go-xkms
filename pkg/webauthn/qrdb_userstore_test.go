@@ -19,9 +19,12 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // errFakeUserNotFound is what the fake user client answers for a missing
@@ -268,7 +271,7 @@ func newTestAdapterWith(t testing.TB, factory *qrdbsdk.DAOFactory) (UserStore, C
 	t.Helper()
 	u := newFakeUserClient()
 	us, cs, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
-		Users: u, DAOFactory: factory, TenantID: "system",
+		Users: u, DAOFactory: factory, TenantID: "system", KV: testutil.NewQRDBFakeTransport(),
 	})
 	if err != nil {
 		t.Fatalf("adapter: %v", err)
@@ -277,10 +280,12 @@ func newTestAdapterWith(t testing.TB, factory *qrdbsdk.DAOFactory) (UserStore, C
 }
 
 func TestQRDBAdapter_NewMissingFields(t *testing.T) {
+	kv := testutil.NewQRDBFakeTransport()
 	cases := []QRDBUserStoreOptions{
-		{DAOFactory: newTestDAOFactory(), TenantID: "system"},
-		{Users: newFakeUserClient(), TenantID: "system"},
-		{Users: newFakeUserClient(), DAOFactory: newTestDAOFactory()},
+		{DAOFactory: newTestDAOFactory(), TenantID: "system", KV: kv},
+		{Users: newFakeUserClient(), TenantID: "system", KV: kv},
+		{Users: newFakeUserClient(), DAOFactory: newTestDAOFactory(), KV: kv},
+		{Users: newFakeUserClient(), DAOFactory: newTestDAOFactory(), TenantID: "system"},
 	}
 	for i, c := range cases {
 		_, _, err := NewQRDBUserStoreAdapter(c)
@@ -291,6 +296,226 @@ func TestQRDBAdapter_NewMissingFields(t *testing.T) {
 		if !errors.As(err, &qae) {
 			t.Fatalf("case %d: expected *QRDBAdapterConfigError, got %T (%v)", i, err, err)
 		}
+	}
+}
+
+// plainKVClient carries only the KVClient verbs: embedding the interface hides the
+// fake's guarded verbs, as a transport without conditional writes would.
+type plainKVClient struct{ qrdbtransport.KVClient }
+
+func TestQRDBAdapter_NewRejectsKVWithoutGuardedVerbs(t *testing.T) {
+	_, _, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
+		Users: newFakeUserClient(), DAOFactory: newTestDAOFactory(), TenantID: "system",
+		KV: plainKVClient{testutil.NewQRDBFakeTransport()},
+	})
+	var unsupported *QRDBGuardedKVUnsupportedError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("expected *QRDBGuardedKVUnsupportedError, got %T (%v)", err, err)
+	}
+}
+
+// raceCreate runs n Creates of one email from a common start and returns the
+// users the winners got and the errors the losers got.
+func raceCreate(t *testing.T, us UserStore, email string, n int) ([]User, []error) {
+	t.Helper()
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		start = make(chan struct{})
+		won   []User
+		lost  []error
+	)
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			u, err := us.Create(context.Background(), email, "Racer")
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				lost = append(lost, err)
+				return
+			}
+			won = append(won, u)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return won, lost
+}
+
+// requireOneEnrolment asserts exactly one caller won the enrolment, holding a
+// claim, and every other caller was told an enrolment is in progress.
+func requireOneEnrolment(t *testing.T, won []User, lost []error) string {
+	t.Helper()
+	if len(won) != 1 {
+		t.Fatalf("expected exactly one enrolment, got %d (losers: %v)", len(won), lost)
+	}
+	claimant, ok := won[0].(enrolmentClaimant)
+	if !ok || claimant.EnrolmentClaim() == "" {
+		t.Fatalf("the winner carries no enrolment claim: %T", won[0])
+	}
+	for _, err := range lost {
+		var inProgress *EnrolmentInProgressError
+		if !errors.As(err, &inProgress) {
+			t.Fatalf("loser: expected *EnrolmentInProgressError, got %T (%v)", err, err)
+		}
+	}
+	return claimant.EnrolmentClaim()
+}
+
+// claimKeyOf returns the store and the enrolment claim key for user.
+func claimKeyOf(t *testing.T, us UserStore, user User) (*qrdbUserStore, string) {
+	t.Helper()
+	id, err := UserIDFromHandle(user.WebAuthnID())
+	if err != nil {
+		t.Fatalf("user id: %v", err)
+	}
+	store := us.(*qrdbUserStore)
+	return store, store.claimKey(id)
+}
+
+func TestQRDBAdapter_Create_ConcurrentRegistrationsOneWinner(t *testing.T) {
+	us, _ := newTestStores(t)
+	won, lost := raceCreate(t, us, "race@example.com", 16)
+	requireOneEnrolment(t, won, lost)
+}
+
+func TestQRDBAdapter_Create_LiveClaimRefusesRecovery(t *testing.T) {
+	us, _ := newTestStores(t)
+	ctx := context.Background()
+	if _, err := us.Create(ctx, "live@example.com", "Live"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	_, err := us.Create(ctx, "live@example.com", "Live")
+	var inProgress *EnrolmentInProgressError
+	if !errors.As(err, &inProgress) {
+		t.Fatalf("expected *EnrolmentInProgressError, got %T (%v)", err, err)
+	}
+}
+
+func TestQRDBAdapter_Create_ExpiredClaimTakenOverByOne(t *testing.T) {
+	us, _ := newTestStores(t)
+	ctx := context.Background()
+	first, err := us.Create(ctx, "stale@example.com", "Stale")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	store, key := claimKeyOf(t, us, first)
+	if err := store.kv.Put(ctx, key, encodeEnrolmentClaim("abandoned", time.Now().Add(-time.Second))); err != nil {
+		t.Fatalf("seed expired claim: %v", err)
+	}
+	won, lost := raceCreate(t, us, "stale@example.com", 16)
+	if token := requireOneEnrolment(t, won, lost); token == "abandoned" {
+		t.Fatal("the takeover kept the expired claim's token")
+	}
+}
+
+func TestQRDBAdapter_ConsumeEnrolmentClaim(t *testing.T) {
+	us, _ := newTestStores(t)
+	ctx := context.Background()
+	user, err := us.Create(ctx, "consume@example.com", "Consume")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	store, _ := claimKeyOf(t, us, user)
+	var lostErr *EnrolmentClaimLostError
+	if err := store.consumeEnrolmentClaim(ctx, user, "not-the-claim"); !errors.As(err, &lostErr) {
+		t.Fatalf("foreign token: expected *EnrolmentClaimLostError, got %T (%v)", err, err)
+	}
+	token := user.(enrolmentClaimant).EnrolmentClaim()
+	if err := store.consumeEnrolmentClaim(ctx, user, token); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	if err := store.consumeEnrolmentClaim(ctx, user, token); !errors.As(err, &lostErr) {
+		t.Fatalf("second consume: expected *EnrolmentClaimLostError, got %T (%v)", err, err)
+	}
+}
+
+func TestQRDBAdapter_ConsumeEnrolmentClaim_Expired(t *testing.T) {
+	us, _ := newTestStores(t)
+	ctx := context.Background()
+	user, err := us.Create(ctx, "expired@example.com", "Expired")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	store, key := claimKeyOf(t, us, user)
+	token := user.(enrolmentClaimant).EnrolmentClaim()
+	if err := store.kv.Put(ctx, key, encodeEnrolmentClaim(token, time.Now().Add(-time.Second))); err != nil {
+		t.Fatalf("expire claim: %v", err)
+	}
+	var lostErr *EnrolmentClaimLostError
+	if err := store.consumeEnrolmentClaim(ctx, user, token); !errors.As(err, &lostErr) {
+		t.Fatalf("expected *EnrolmentClaimLostError, got %T (%v)", err, err)
+	}
+}
+
+func TestFinishRegistration_ConsumesEnrolmentClaim(t *testing.T) {
+	f := newEnrollFixture(t, true)
+	user, _ := f.enroll(t, "won@example.com")
+	store, key := claimKeyOf(t, f.users, user)
+	_, err := store.kv.Get(context.Background(), key)
+	var notFound *qrdbtransport.KeyNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected the claim consumed, got %v", err)
+	}
+}
+
+func TestFinishRegistration_LostClaimAddsNoCredential(t *testing.T) {
+	f := newEnrollFixture(t, true)
+	ctx := context.Background()
+	options, sessionID, err := f.svc.BeginRegistration(ctx, "lost@example.com", "Lost")
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	user, err := f.users.GetByEmail(ctx, "lost@example.com")
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	store, key := claimKeyOf(t, f.users, user)
+	if err := store.kv.Put(ctx, key, encodeEnrolmentClaim("taken-over", time.Now().Add(time.Minute))); err != nil {
+		t.Fatalf("take the claim over: %v", err)
+	}
+	_, err = f.attest(t, options, sessionID, newEC2Credential(t))
+	var lostErr *EnrolmentClaimLostError
+	if !errors.As(err, &lostErr) {
+		t.Fatalf("expected *EnrolmentClaimLostError, got %T (%v)", err, err)
+	}
+	creds, err := f.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		t.Fatalf("get credentials: %v", err)
+	}
+	if len(creds) != 0 {
+		t.Fatalf("a lost claim added %d credential(s)", len(creds))
+	}
+}
+
+func TestFinishRegistration_EnrolmentRefusedForUserWithCredential(t *testing.T) {
+	f := newEnrollFixture(t, true)
+	ctx := context.Background()
+	options, sessionID, err := f.svc.BeginRegistration(ctx, "held@example.com", "Held")
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	user, err := f.users.GetByEmail(ctx, "held@example.com")
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	held := &Credential{ID: []byte("pre-existing-credential"), UserID: user.WebAuthnID(), PublicKey: []byte{1}}
+	if err := f.creds.Save(ctx, held); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+	_, err = f.attest(t, options, sessionID, newEC2Credential(t))
+	if !errors.Is(err, ErrRegistrationRefused) {
+		t.Fatalf("expected ErrRegistrationRefused, got %v", err)
+	}
+	creds, err := f.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		t.Fatalf("get credentials: %v", err)
+	}
+	if len(creds) != 1 {
+		t.Fatalf("expected only the held credential, got %d", len(creds))
 	}
 }
 

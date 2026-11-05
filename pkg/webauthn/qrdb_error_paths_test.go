@@ -23,6 +23,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // errKVFault is a non-not-found storage fault. It must NOT be mapped to the
@@ -185,7 +187,7 @@ func (f *faultyUserClient) AddCertBinding(ctx context.Context, userID uint64, th
 func newFaultyAdapter(t *testing.T, uc qrdbtransport.UserClient, factory *qrdbsdk.DAOFactory) (UserStore, CredentialStore) {
 	t.Helper()
 	us, cs, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
-		Users: uc, DAOFactory: factory, TenantID: "system",
+		Users: uc, DAOFactory: factory, TenantID: "system", KV: testutil.NewQRDBFakeTransport(),
 	})
 	if err != nil {
 		t.Fatalf("adapter: %v", err)
