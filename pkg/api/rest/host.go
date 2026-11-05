@@ -467,6 +467,9 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		TenantID:    tenantID,
 		CallContext: p.CallContext,
 		KV:          p.QRDBClient.KV(),
+		// A claim must outlive the ceremony it guards, or a slow but
+		// honest finish loses it to a recovering registration.
+		EnrolmentClaimTTL: p.Config.Timeout,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
