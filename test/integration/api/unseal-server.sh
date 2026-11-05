@@ -12,8 +12,16 @@ url="${XKMS_SERVER_WINDOW_URL:-https://xkms-server:8443}"
 ca="${KEYSTORE_TLS_CA:-/etc/xkms/certs/ca.crt}"
 secret="${XKMS_SERVER_BARRIER_SECRET:?XKMS_SERVER_BARRIER_SECRET is required}"
 
+# An unsealed server answers /health, and the sealed window refuses it with
+# 503. The full server answers /v1/barrier/status only to an authenticated
+# caller, so /health is what tells this script a server is already open: every
+# integration-tests run after the first finds it so.
 status=""
 for _ in $(seq 1 60); do
+	if curl -fsS -o /dev/null --cacert "$ca" "$url/health" 2>/dev/null; then
+		echo "unseal-server: server is already unsealed"
+		exit 0
+	fi
 	if status=$(curl -fsS --cacert "$ca" "$url/v1/barrier/status" 2>/dev/null); then
 		break
 	fi

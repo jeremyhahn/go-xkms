@@ -188,13 +188,14 @@ services:
     working_dir: /workspace
     networks:
       - xkms-integration
+    # The entrypoint unseals the server before any command, so a Makefile
+    # runner's own command tests an unsealed server too.
+    entrypoint: ["sh", "./test/integration/api/entrypoint.sh"]
     command: >
       sh -c "
       echo 'Configuring UDP buffers for QUIC...' &&
       echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo 'Warning: Could not set rmem_max' &&
       echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo 'Warning: Could not set wmem_max' &&
-      echo 'Unsealing the server...' &&
-      sh ./test/integration/api/unseal-server.sh &&
       echo 'Checking Unix socket...' &&
       ls -la /var/run/xkms/ || true &&
       echo 'Checking TLS certificates...' &&
