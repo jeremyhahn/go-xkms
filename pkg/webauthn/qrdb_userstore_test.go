@@ -533,38 +533,49 @@ func credentialCount(t *testing.T, f *enrollFixture, email string) int {
 }
 
 func TestFinishRegistration_FailedSaveLeavesEmailRegistrable(t *testing.T) {
-	f := newEnrollFixture(t, true)
-	ctx := context.Background()
-	const email = "retry@example.com"
-	failing := true
-	f.svc.creds = &saveGatedCredStore{CredentialStore: f.creds, gate: func() error {
-		if failing {
-			return errCredentialSaveFailed
-		}
-		return nil
-	}}
+	// Each refusal proves no credential was written, so the marker goes.
+	refusals := map[string]error{
+		"invalid credential":   ErrInvalidCredential,
+		"credential exists":    WrapError("save credential", ErrCredentialAlreadyExists),
+		"atomic unsupported":   WrapError("persist credential", &qrdbsdk.DAOAtomicWriteUnsupportedError{}),
+		"serialization failed": WrapError("persist credential", qrdbsdk.DAOSerializationFailedError{EntityType: "credential", Cause: errCredentialSaveFailed}),
+	}
+	for name, refusal := range refusals {
+		t.Run(name, func(t *testing.T) {
+			f := newEnrollFixture(t, true)
+			ctx := context.Background()
+			const email = "retry@example.com"
+			failing := true
+			f.svc.creds = &saveGatedCredStore{CredentialStore: f.creds, gate: func() error {
+				if failing {
+					return refusal
+				}
+				return nil
+			}}
 
-	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Retry")
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); !errors.Is(err, errCredentialSaveFailed) {
-		t.Fatalf("expected the injected save failure, got %v", err)
-	}
-	if n := credentialCount(t, f, email); n != 0 {
-		t.Fatalf("a failed save left %d credential(s)", n)
-	}
+			options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Retry")
+			if err != nil {
+				t.Fatalf("begin: %v", err)
+			}
+			if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); !errors.Is(err, refusal) {
+				t.Fatalf("expected the injected refusal, got %v", err)
+			}
+			if n := credentialCount(t, f, email); n != 0 {
+				t.Fatalf("a refused save left %d credential(s)", n)
+			}
 
-	failing = false
-	options, sessionID, err = f.svc.BeginRegistration(ctx, email, "Retry")
-	if err != nil {
-		t.Fatalf("a registration after a failed save was refused: %v", err)
-	}
-	if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); err != nil {
-		t.Fatalf("finish after a failed save: %v", err)
-	}
-	if n := credentialCount(t, f, email); n != 1 {
-		t.Fatalf("expected one credential, got %d", n)
+			failing = false
+			options, sessionID, err = f.svc.BeginRegistration(ctx, email, "Retry")
+			if err != nil {
+				t.Fatalf("a registration after a refused save was refused: %v", err)
+			}
+			if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); err != nil {
+				t.Fatalf("finish after a refused save: %v", err)
+			}
+			if n := credentialCount(t, f, email); n != 1 {
+				t.Fatalf("expected one credential, got %d", n)
+			}
+		})
 	}
 }
 
@@ -675,6 +686,89 @@ func TestFinishRegistration_SaveStalledPastClaimTTLEnrolsOnePasskey(t *testing.T
 	}
 	if firstErr != nil {
 		t.Fatalf("the stalled finish: %v", firstErr)
+	}
+}
+
+// lateCommitCredStore fails its first save with errCredentialSaveFailed and
+// holds that write back until commit runs: a proposal that commits after its
+// caller saw the error, the outcome SaveIfAbsent's contract calls unknown.
+// afterCheck runs after every GetByUserID, so a test can land the late
+// write once a competing finish has passed its credential precheck.
+type lateCommitCredStore struct {
+	CredentialStore
+	commit     func() error
+	afterCheck func()
+}
+
+func (s *lateCommitCredStore) Save(ctx context.Context, cred *Credential) error {
+	if s.commit == nil {
+		s.commit = func() error { return s.CredentialStore.Save(context.Background(), cred) }
+		return errCredentialSaveFailed
+	}
+	return s.CredentialStore.Save(ctx, cred)
+}
+
+func (s *lateCommitCredStore) GetByUserID(ctx context.Context, userID []byte) ([]*Credential, error) {
+	creds, err := s.CredentialStore.GetByUserID(ctx, userID)
+	s.afterCheck()
+	return creds, err
+}
+
+func TestFinishRegistration_UnknownSaveOutcomeKeepsMarker(t *testing.T) {
+	f := newEnrollFixture(t, true)
+	ctx := context.Background()
+	const email = "unknown-outcome@example.com"
+	// The competing ceremony's credential checks each take one token: the
+	// first is BeginRegistration's, the second the finish's precheck, after
+	// which the first save's write lands.
+	checks := make(chan bool, 2)
+	var commitErr error
+	creds := &lateCommitCredStore{CredentialStore: f.creds}
+	creds.afterCheck = func() {
+		select {
+		case land := <-checks:
+			if land {
+				commitErr = creds.commit()
+			}
+		default:
+		}
+	}
+	f.svc.creds = creds
+
+	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "First")
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); !errors.Is(err, errCredentialSaveFailed) {
+		t.Fatalf("the first finish: expected the injected save failure, got %v", err)
+	}
+
+	checks <- false
+	checks <- true
+	secondErr := func() error {
+		options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Second")
+		if err != nil {
+			return err
+		}
+		_, err = f.attest(t, options, sessionID, newEC2Credential(t))
+		return err
+	}()
+	// A competing registration refused before its precheck: the late write
+	// lands now.
+	for len(checks) > 0 {
+		if land := <-checks; land {
+			commitErr = creds.commit()
+		}
+	}
+	if commitErr != nil {
+		t.Fatalf("land the first save's write: %v", commitErr)
+	}
+
+	if n := credentialCount(t, f, email); n != 1 {
+		t.Fatalf("expected only the first save's credential, got %d", n)
+	}
+	if !errors.Is(secondErr, ErrRegistrationRefused) {
+		t.Fatalf("the competing registration: expected ErrRegistrationRefused, got %v", secondErr)
 	}
 }
 
