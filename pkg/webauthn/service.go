@@ -179,10 +179,17 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 		return nil, "", ErrNotConfigured
 	}
 
-	if _, err := s.users.GetByEmail(ctx, email); err == nil {
+	if existing, err := s.users.GetByEmail(ctx, email); err == nil {
 		// The account already exists: whatever its credential count, this
-		// unauthenticated entry point never enrolls its first credential.
-		return nil, "", ErrRegistrationRefused
+		// unauthenticated entry point never enrolls its first credential,
+		// unless the record is a public enrolment that never saved one.
+		recoverable, err := s.enrolmentRecoverable(ctx, existing)
+		if err != nil {
+			return nil, "", err
+		}
+		if !recoverable {
+			return nil, "", ErrRegistrationRefused
+		}
 	} else if !IsUserNotFound(err) {
 		return nil, "", WrapError("get user by email", err)
 	}
@@ -436,16 +443,24 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 		return nil, verificationError("create credential", err)
 	}
 
-	if token, ok := enrolmentClaimToken(session); ok {
-		if err := s.consumeEnrolment(ctx, user, token); err != nil {
+	var enrolment enrolmentClaimConsumer
+	token, enrolling := enrolmentClaimToken(session)
+	if enrolling {
+		if enrolment, err = s.consumeEnrolment(ctx, user, token); err != nil {
 			return nil, err
 		}
 	}
 
 	// Convert and store credential
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
-	if err := s.creds.Save(ctx, cred); err != nil {
-		return nil, WrapError("save credential", err)
+	saveErr := s.creds.Save(ctx, cred)
+	if enrolling {
+		if err := enrolment.settleEnrolmentClaim(ctx, user, token, saveErr == nil); err != nil {
+			return nil, errors.Join(saveErr, err)
+		}
+	}
+	if saveErr != nil {
+		return nil, WrapError("save credential", saveErr)
 	}
 
 	// Add credential to user
@@ -482,22 +497,36 @@ func enrolmentClaimToken(session *webauthn.SessionData) (string, bool) {
 	return strings.CutPrefix(string(challenge), enrolmentChallengePrefix)
 }
 
-// consumeEnrolment ends a public enrolment's claim before its credential is
-// added. The unauthenticated path never adds a credential to a user that
-// already holds one, whatever the claim says.
-func (s *Service) consumeEnrolment(ctx context.Context, user User, token string) error {
+// enrolmentRecoverable reports whether user is a public enrolment whose
+// claim was released or expired before a credential was saved.
+func (s *Service) enrolmentRecoverable(ctx context.Context, user User) (bool, error) {
+	consumer, ok := s.users.(enrolmentClaimConsumer)
+	if !ok {
+		return false, nil
+	}
+	return consumer.enrolmentRecoverable(ctx, user)
+}
+
+// consumeEnrolment consumes a public enrolment's claim before its credential
+// is added, and returns the store that settles it once the save has run. The
+// unauthenticated path never adds a credential to a user that already holds
+// one, whatever the claim says.
+func (s *Service) consumeEnrolment(ctx context.Context, user User, token string) (enrolmentClaimConsumer, error) {
 	existing, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
 	if err != nil {
-		return WrapError("get credentials", err)
+		return nil, WrapError("get credentials", err)
 	}
 	if len(existing) > 0 {
-		return ErrRegistrationRefused
+		return nil, ErrRegistrationRefused
 	}
 	consumer, ok := s.users.(enrolmentClaimConsumer)
 	if !ok {
-		return ErrRegistrationRefused
+		return nil, ErrRegistrationRefused
 	}
-	return consumer.consumeEnrolmentClaim(ctx, user, token)
+	if err := consumer.consumeEnrolmentClaim(ctx, user, token); err != nil {
+		return nil, err
+	}
+	return consumer, nil
 }
 
 // BeginLogin starts the WebAuthn authentication ceremony.
