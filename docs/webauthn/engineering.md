@@ -258,15 +258,15 @@ so it carries no PII; the email stays in `Email`, qrdb's tenant-unique login
 key, and in the rfc822Name SAN. qrdb assigns the ID at create and refuses an
 empty `Username`, so `Create` (`qrdb_userstore.go:212`) creates the record under
 a random `webauthn-pending-` placeholder and then renames it with `UpdateUser`
-to the decimal ID (`qrdb_userstore.go:503`), which qrdb re-validates for
+to the decimal ID (`qrdb_userstore.go:508`), which qrdb re-validates for
 uniqueness and re-indexes atomically. A failed rename returns
-`*QRDBUsernameAssignError` (`qrdb_userstore.go:744`) and leaves the record
+`*QRDBUsernameAssignError` (`qrdb_userstore.go:749`) and leaves the record
 under its placeholder: the embedded node's service principal holds no
 `users:delete`, so there is no rollback. `GetByEmail` reports such a record,
 while it has no credential, as not found, and the next `Create` for the email
 finishes the rename and returns that user (`qrdb_userstore.go:258`). A
 placeholder that already holds a credential is never taken over: `Create`
-returns `*QRDBPendingUserClaimedError` (`qrdb_userstore.go:763`). Nothing in the WebAuthn path reads
+returns `*QRDBPendingUserClaimedError` (`qrdb_userstore.go:768`). Nothing in the WebAuthn path reads
 `Username`: login resolves by email (`GetUserByEmail`), and a WebAuthn token's
 subject is the user handle (`SubjectKindUserHandle`), so records created
 before the change, with the email as `Username`, still log in unchanged.
@@ -281,13 +281,13 @@ the winner renames the record and gets a session.
   `GuardedKVClient`, which adds `PutIfAbsent`, `CompareAndSwap` and
   `CompareAndDelete` to `KVClient`. `NewQRDBUserStoreAdapter`
   (`qrdb_userstore.go:84`) type-asserts it and otherwise fails with
-  `*QRDBGuardedKVUnsupportedError` (`qrdb_userstore.go:778`).
+  `*QRDBGuardedKVUnsupportedError` (`qrdb_userstore.go:783`).
 - **Key and value.** The key is `webauthn/enrolment-claims/<tenantID>/<userID>`
-  (`qrdb_userstore.go:724`). The value is an 8-byte big-endian expiry in Unix
+  (`qrdb_userstore.go:729`). The value is an 8-byte big-endian expiry in Unix
   nanoseconds followed by the token, a `crypto/rand` string
-  (`qrdb_userstore.go:459`).
+  (`qrdb_userstore.go:464`).
 - **TTL.** `EnrolmentClaimTTL`, `DefaultEnrolmentClaimTTL` (60 s) when zero
-  (`qrdb_userstore.go:733`). The REST host sets it to the WebAuthn
+  (`qrdb_userstore.go:738`). The REST host sets it to the WebAuthn
   `Config.Timeout` (`pkg/api/rest/host.go:471`). It must be at least the
   ceremony timeout, or a slow but honest finish loses its claim to a
   recovering registration.
@@ -303,26 +303,26 @@ the winner renames the record and gets a session.
   `qrdb_userstore.go:258`). The winner's session carries the token in its
   challenge (`withEnrolmentChallenge`, `service.go:482`). Sessions are
   server-side, so a client cannot forge the token.
-- **Consume** (`consumeEnrolmentClaim`, `qrdb_userstore.go:356`). Finish
+- **Consume** (`consumeEnrolmentClaim`, `qrdb_userstore.go:355`). Finish
   refuses a user that already holds a credential (`consumeEnrolment`,
   `service.go:513`). It then swaps the live claim for a consumed claim
   (token `consumed:<token>`, a fresh expiry) with `CompareAndSwap`. The
   consumed claim stays held while the credential is saved, so a concurrent
   registration of the email is refused. An absent, expired, foreign or
   already-consumed claim is `*EnrolmentClaimLostError`
-  (`qrdb_userstore.go:805`), and nothing is saved.
-- **Settle** (`settleEnrolmentClaim`, `qrdb_userstore.go:376`, called from
+  (`qrdb_userstore.go:810`), and nothing is saved.
+- **Settle** (`settleEnrolmentClaim`, `qrdb_userstore.go:375`, called from
   `runFinishRegistration`, `service.go:416`).
   - **Saved credential:** the claim is removed with `CompareAndDelete`. The
     account now holds a credential and is never claimed again.
   - **Failed save:** the claim is released.
-- **Release** (`releaseClaim`, `qrdb_userstore.go:341`). `CompareAndSwap`
+- **Release** (`releaseClaim`, `qrdb_userstore.go:340`). `CompareAndSwap`
   replaces the claim this store still holds with an expired one; release
   never deletes. It runs when a rename, materialization or credential save
   fails.
 - **Recovery.** Public `BeginRegistration` (`service.go:176`) refuses an
   email whose account exists, unless that record carries a released or
-  expired claim (`enrolmentRecoverable`, `qrdb_userstore.go:394`): a public
+  expired claim (`enrolmentRecoverable`, `qrdb_userstore.go:393`): a public
   enrolment that never saved its credential. That record goes to `Create`,
   which takes the claim over. A record with no claim on file, a live claim or
   a credential is refused.

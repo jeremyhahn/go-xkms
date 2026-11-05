@@ -309,18 +309,17 @@ func (s *qrdbUserStore) acquireClaim(ctx context.Context, id uint64, allowAbsent
 			return claim, nil
 		}
 	}
-	current, err := s.kv.Get(ctx, claim.key)
-	var notFound *qrdbtransport.KeyNotFoundError
+	current, found, err := s.readClaim(ctx, claim.key)
 	switch {
-	case errors.As(err, &notFound) && allowAbsent:
+	case err != nil:
+		return nil, err
+	case !found && allowAbsent:
 		// The claim was settled after the PutIfAbsent lost to it: its
 		// holder has just saved a credential, and this registration lost.
 		return nil, &EnrolmentInProgressError{UserID: id}
-	case errors.As(err, &notFound):
+	case !found:
 		// A renamed record that nobody is enrolling is an existing account.
 		return nil, ErrRegistrationRefused
-	case err != nil:
-		return nil, WrapError("get enrolment claim", err)
 	}
 	if _, expires, ok := decodeEnrolmentClaim(current); ok && time.Now().Before(expires) {
 		return nil, &EnrolmentInProgressError{UserID: id}
@@ -401,13 +400,9 @@ func (s *qrdbUserStore) enrolmentRecoverable(ctx context.Context, user User) (bo
 	if err != nil {
 		return false, err
 	}
-	current, err := s.kv.Get(ctx, s.claimKey(id))
-	var notFound *qrdbtransport.KeyNotFoundError
-	switch {
-	case errors.As(err, &notFound):
-		return false, nil
-	case err != nil:
-		return false, WrapError("get enrolment claim", err)
+	current, found, err := s.readClaim(ctx, s.claimKey(id))
+	if err != nil || !found {
+		return false, err
 	}
 	_, expires, ok := decodeEnrolmentClaim(current)
 	return !ok || !time.Now().Before(expires), nil
@@ -426,19 +421,29 @@ func (s *qrdbUserStore) liveClaim(ctx context.Context, user User, token string) 
 		return nil, nil, err
 	}
 	key := s.claimKey(id)
-	current, err := s.kv.Get(ctx, key)
-	var notFound *qrdbtransport.KeyNotFoundError
-	if errors.As(err, &notFound) {
-		return nil, nil, &EnrolmentClaimLostError{UserID: id}
-	}
+	current, found, err := s.readClaim(ctx, key)
 	if err != nil {
-		return nil, nil, WrapError("get enrolment claim", err)
+		return nil, nil, err
 	}
 	held, expires, ok := decodeEnrolmentClaim(current)
-	if !ok || held != token || !time.Now().Before(expires) {
+	if !found || !ok || held != token || !time.Now().Before(expires) {
 		return nil, nil, &EnrolmentClaimLostError{UserID: id}
 	}
 	return ctx, &enrolmentClaim{userID: id, key: key, value: current, token: token}, nil
+}
+
+// readClaim returns the enrolment claim stored under key; found is false
+// when there is none.
+func (s *qrdbUserStore) readClaim(ctx context.Context, key string) (value []byte, found bool, err error) {
+	value, err = s.kv.Get(ctx, key)
+	var notFound *qrdbtransport.KeyNotFoundError
+	if errors.As(err, &notFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, WrapError("get enrolment claim", err)
+	}
+	return value, true, nil
 }
 
 // claimKey is the KV key of the enrolment claim on record id.
