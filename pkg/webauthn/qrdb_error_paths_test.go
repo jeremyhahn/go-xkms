@@ -306,6 +306,43 @@ func TestQRDBAdapter_Create_PendingUserWithCredentialIsNotTakenOver(t *testing.T
 	}
 }
 
+// TestQRDBAdapter_Create_PendingPrefixedAccountIsNotTakenOver pins that the
+// placeholder prefix is no evidence of an abandoned public sign-up: an
+// account that public sign-up never created keeps its name and stays out
+// of reach of an unauthenticated Create, whatever its username says.
+func TestQRDBAdapter_Create_PendingPrefixedAccountIsNotTakenOver(t *testing.T) {
+	ctx := context.Background()
+	uc := newFakeUserClient()
+	us, _ := newFaultyAdapter(t, uc, newTestDAOFactory())
+	rec, err := uc.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+		Username: pendingUsernamePrefix + "alice",
+		Email:    "alice@example.com",
+		Name:     "Alice",
+		TenantID: "system",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	if _, err := us.GetByEmail(ctx, "alice@example.com"); err != nil {
+		t.Fatalf("GetByEmail hid the existing account: %v", err)
+	}
+	if _, err := us.Create(ctx, "alice@example.com", "Mallory"); !errors.Is(err, ErrRegistrationRefused) {
+		t.Fatalf("expected ErrRegistrationRefused, got %T: %v", err, err)
+	}
+	after, err := uc.GetUser(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if after.Username != rec.Username {
+		t.Fatalf("the account was renamed to %q", after.Username)
+	}
+	store := us.(*qrdbUserStore)
+	if _, claimed, err := store.readClaim(ctx, store.claimKey(rec.ID)); err != nil || claimed {
+		t.Fatalf("an enrolment claim exists for the account (claimed=%v, err=%v)", claimed, err)
+	}
+}
+
 // The display name is a field of the qrdb record (#185), not a write to a
 // side key: Create succeeds with every datastore write failing, and the name
 // round-trips on the record.
