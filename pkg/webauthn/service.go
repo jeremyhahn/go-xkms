@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -311,9 +312,11 @@ func (s *Service) runBeginRegistration(ctx context.Context, user User, existingC
 		}
 	}
 
-	options, session, err := s.webauthn.BeginRegistration(user,
-		webauthn.WithExclusions(excludeList),
-	)
+	opts := []webauthn.RegistrationOption{webauthn.WithExclusions(excludeList)}
+	if claimant, ok := user.(enrolmentClaimant); ok {
+		opts = append(opts, withEnrolmentChallenge(claimant.EnrolmentClaim()))
+	}
+	options, session, err := s.webauthn.BeginRegistration(user, opts...)
 	if err != nil {
 		return nil, "", WrapError("begin registration", err)
 	}
@@ -433,6 +436,12 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 		return nil, verificationError("create credential", err)
 	}
 
+	if token, ok := enrolmentClaimToken(session); ok {
+		if err := s.consumeEnrolment(ctx, user, token); err != nil {
+			return nil, err
+		}
+	}
+
 	// Convert and store credential
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
 	if err := s.creds.Save(ctx, cred); err != nil {
@@ -446,6 +455,49 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 	}
 
 	return user, nil
+}
+
+// enrolmentChallengePrefix marks the challenge of a session a public
+// enrolment began under a claim; the claim's token follows it. The session
+// is server-side, so a client cannot forge the marker.
+const enrolmentChallengePrefix = "xkms-enrolment-claim:"
+
+// withEnrolmentChallenge sets the registration challenge to the enrolment
+// marker and the claim's token, so the session carries the claim to finish.
+// The token is crypto/rand, so the challenge stays unpredictable.
+func withEnrolmentChallenge(token string) webauthn.RegistrationOption {
+	return func(cco *protocol.PublicKeyCredentialCreationOptions) error {
+		cco.Challenge = protocol.URLEncodedBase64(enrolmentChallengePrefix + token)
+		return nil
+	}
+}
+
+// enrolmentClaimToken returns the claim token a public-enrolment session
+// carries in its challenge.
+func enrolmentClaimToken(session *webauthn.SessionData) (string, bool) {
+	challenge, err := base64.RawURLEncoding.DecodeString(session.Challenge)
+	if err != nil {
+		return "", false
+	}
+	return strings.CutPrefix(string(challenge), enrolmentChallengePrefix)
+}
+
+// consumeEnrolment ends a public enrolment's claim before its credential is
+// added. The unauthenticated path never adds a credential to a user that
+// already holds one, whatever the claim says.
+func (s *Service) consumeEnrolment(ctx context.Context, user User, token string) error {
+	existing, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		return WrapError("get credentials", err)
+	}
+	if len(existing) > 0 {
+		return ErrRegistrationRefused
+	}
+	consumer, ok := s.users.(enrolmentClaimConsumer)
+	if !ok {
+		return ErrRegistrationRefused
+	}
+	return consumer.consumeEnrolmentClaim(ctx, user, token)
 }
 
 // BeginLogin starts the WebAuthn authentication ceremony.

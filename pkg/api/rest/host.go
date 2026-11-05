@@ -466,6 +466,7 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		DAOFactory:  p.DAOFactory,
 		TenantID:    tenantID,
 		CallContext: p.CallContext,
+		KV:          p.QRDBClient.KV(),
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
