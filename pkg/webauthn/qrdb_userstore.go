@@ -671,11 +671,22 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	if err != nil {
 		return err
 	}
-	if dErr := s.users.DeleteUser(ctx, id); dErr != nil {
-		if isUserNotFound(dErr) {
+	// DeleteUser runs first: it is the authorization check, so a caller
+	// without users:delete is refused before anything is removed.
+	dErr := s.users.DeleteUser(ctx, id)
+	if dErr != nil && !isUserNotFound(dErr) {
+		return WrapError("qrdb delete user", dErr)
+	}
+	// The cleanup is idempotent and also runs for an account already
+	// removed, so a retry finishes a delete whose cleanup failed.
+	if dErr != nil {
+		residue, rErr := s.hasDeleteResidue(ctx, id)
+		if rErr != nil {
+			return rErr
+		}
+		if !residue {
 			return ErrUserNotFound
 		}
-		return WrapError("qrdb delete user", dErr)
 	}
 	if dErr := s.creds.DeleteByUserID(ctx, userID); dErr != nil {
 		return WrapError("delete user credentials", dErr)
@@ -687,6 +698,20 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 		return WrapError("delete enrolment credential marker", dErr)
 	}
 	return nil
+}
+
+// hasDeleteResidue reports whether a removed account id still has the
+// credentials or the enrolment credential marker a failed Delete left.
+func (s *qrdbUserStore) hasDeleteResidue(ctx context.Context, id uint64) (bool, error) {
+	creds, err := s.creds.GetByUserID(ctx, HandleFromUserID(id))
+	if err != nil {
+		return false, WrapError("get user credentials", err)
+	}
+	if len(creds) > 0 {
+		return true, nil
+	}
+	_, marked, err := s.readClaim(ctx, s.credentialMarkerKey(id))
+	return marked, err
 }
 
 // callContext returns the context a user-client call runs on: the caller's,
