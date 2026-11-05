@@ -61,6 +61,7 @@ func (s *Server) initializeTokenIssuer() error {
 		AccessTTL:       accessTTL,
 		RefreshTTL:      refreshTTL,
 		AccessTokenType: s.accessTokenType(),
+		ClientID:        s.accessTokenClientID(),
 		QRDBClient:      s.qrdbClient,
 		CallContext:     s.publicCallContext(),
 		Logger:          s.logger,
@@ -126,4 +127,14 @@ func (s *Server) accessTokenType() string {
 		return ""
 	}
 	return s.config.Auth.Session.AccessTokenType
+}
+
+// accessTokenClientID returns the configured client_id claim of at+jwt
+// access tokens (auth.session.client_id, RFC 9068 §2.2; validated as set
+// when access_token_type is "at+jwt").
+func (s *Server) accessTokenClientID() string {
+	if s.config.Auth.Session == nil {
+		return ""
+	}
+	return s.config.Auth.Session.ClientID
 }

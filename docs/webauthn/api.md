@@ -171,7 +171,12 @@ key in the backend; it is not the `kid`.
 `"at+jwt"` (`token.ATJWTType`) marks it as an OAuth 2.0 JWT access token, as
 RFC 9068 §2.1 requires; empty keeps `JWT`. Refresh tokens always keep `JWT`, so
 a verifier that demands `at+jwt` never accepts a refresh token as an access
-token. xkmsd reads the same option from `auth.session.access_token_type`
+token. An `at+jwt` access token also carries the rest of the RFC 9068 §2.2
+claim set: `client_id` from the `ClientID` option (RFC 8693 §4.3) and a fresh
+`jti`. `at+jwt` without a `ClientID` fails with
+`token.ATJWTClientIDRequiredError`. xkmsd reads the same options from
+`auth.session.access_token_type` and `auth.session.client_id`, and refuses
+`at+jwt` without a `client_id` with `*config.SessionConfigError`
 ([web console guide](../web-console/user.md)).
 
 The call reads the key and never creates it. The module creates the key when

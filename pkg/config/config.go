@@ -483,6 +483,11 @@ type SessionConfig struct {
 	// JWT access tokens (RFC 9068 §2.1). Refresh tokens are unaffected.
 	AccessTokenType string `yaml:"access_token_type"`
 
+	// ClientID is the client_id claim (RFC 9068 §2.2) of "at+jwt" access
+	// tokens: the OAuth client they are issued to. Required when
+	// AccessTokenType is "at+jwt"; ignored otherwise.
+	ClientID string `yaml:"client_id"`
+
 	// LoginRatePerMin caps per-client login and refresh attempts per minute.
 	// Zero uses the default (10).
 	LoginRatePerMin int `yaml:"login_rate_per_min"`
@@ -1689,6 +1694,10 @@ func (c *Config) Validate() error {
 		}
 		if v := c.Auth.Session.AccessTokenType; v != "" && v != token.ATJWTType {
 			return &SessionConfigError{Field: "access_token_type", Value: v}
+		}
+		// RFC 9068 §2.2: an at+jwt access token REQUIRES client_id.
+		if c.Auth.Session.AccessTokenType == token.ATJWTType && c.Auth.Session.ClientID == "" {
+			return &SessionConfigError{Field: "client_id", Value: ""}
 		}
 	}
 
