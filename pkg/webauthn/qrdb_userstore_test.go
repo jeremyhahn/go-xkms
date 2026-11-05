@@ -500,6 +500,113 @@ func TestFinishRegistration_LostClaimAddsNoCredential(t *testing.T) {
 	}
 }
 
+// errCredentialSaveFailed is the fault saveGatedCredStore injects.
+var errCredentialSaveFailed = errors.New("credential save failed")
+
+// saveGatedCredStore runs gate before every Save; a gate error fails the
+// save without storing the credential.
+type saveGatedCredStore struct {
+	CredentialStore
+	gate func() error
+}
+
+func (s *saveGatedCredStore) Save(ctx context.Context, cred *Credential) error {
+	if err := s.gate(); err != nil {
+		return err
+	}
+	return s.CredentialStore.Save(ctx, cred)
+}
+
+// credentialCount returns how many credentials the account for email holds.
+func credentialCount(t *testing.T, f *enrollFixture, email string) int {
+	t.Helper()
+	ctx := context.Background()
+	user, err := f.users.GetByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	creds, err := f.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		t.Fatalf("get credentials: %v", err)
+	}
+	return len(creds)
+}
+
+func TestFinishRegistration_FailedSaveLeavesEmailRegistrable(t *testing.T) {
+	f := newEnrollFixture(t, true)
+	ctx := context.Background()
+	const email = "retry@example.com"
+	failing := true
+	f.svc.creds = &saveGatedCredStore{CredentialStore: f.creds, gate: func() error {
+		if failing {
+			return errCredentialSaveFailed
+		}
+		return nil
+	}}
+
+	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Retry")
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); !errors.Is(err, errCredentialSaveFailed) {
+		t.Fatalf("expected the injected save failure, got %v", err)
+	}
+	if n := credentialCount(t, f, email); n != 0 {
+		t.Fatalf("a failed save left %d credential(s)", n)
+	}
+
+	failing = false
+	options, sessionID, err = f.svc.BeginRegistration(ctx, email, "Retry")
+	if err != nil {
+		t.Fatalf("a registration after a failed save was refused: %v", err)
+	}
+	if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); err != nil {
+		t.Fatalf("finish after a failed save: %v", err)
+	}
+	if n := credentialCount(t, f, email); n != 1 {
+		t.Fatalf("expected one credential, got %d", n)
+	}
+}
+
+func TestFinishRegistration_SaveInFlightRefusesSecondEnrolment(t *testing.T) {
+	f := newEnrollFixture(t, true)
+	ctx := context.Background()
+	const email = "inflight@example.com"
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	f.svc.creds = &saveGatedCredStore{CredentialStore: f.creds, gate: func() error {
+		close(entered)
+		<-release
+		return nil
+	}}
+
+	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "In Flight")
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	finished := make(chan error, 1)
+	go func() {
+		_, err := f.attest(t, options, sessionID, newEC2Credential(t))
+		finished <- err
+	}()
+	<-entered
+
+	// The first finish has consumed its claim and is saving its credential.
+	if _, _, err := f.svc.BeginRegistration(ctx, email, "Second"); err == nil {
+		t.Fatal("a second registration began while the first was saving its credential")
+	}
+	close(release)
+	if err := <-finished; err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if _, _, err := f.svc.BeginRegistration(ctx, email, "Third"); err == nil {
+		t.Fatal("a registration began for an account that holds a credential")
+	}
+	if n := credentialCount(t, f, email); n != 1 {
+		t.Fatalf("expected one credential, got %d", n)
+	}
+}
+
 func TestFinishRegistration_EnrolmentRefusedForUserWithCredential(t *testing.T) {
 	f := newEnrollFixture(t, true)
 	ctx := context.Background()
