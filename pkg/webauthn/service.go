@@ -884,19 +884,20 @@ func (s *Service) DeleteCredential(ctx context.Context, credID []byte) error {
 	return s.creds.Delete(ctx, credID)
 }
 
-// DeleteUser removes a user and all their credentials.
+// DeleteUser removes a user and all their credentials, on the caller's
+// context. The user goes first: a refused or failed user delete returns
+// with the credentials untouched, so the account can still sign in.
 func (s *Service) DeleteUser(ctx context.Context, userID []byte) error {
 	if !s.configured {
 		return ErrNotConfigured
 	}
-
-	// Delete all credentials first
+	if err := s.users.Delete(ctx, userID); err != nil {
+		return err
+	}
 	if err := s.creds.DeleteByUserID(ctx, userID); err != nil {
 		return WrapError("delete user credentials", err)
 	}
-
-	// Delete user
-	return s.users.Delete(ctx, userID)
+	return nil
 }
 
 // Config returns the service configuration.

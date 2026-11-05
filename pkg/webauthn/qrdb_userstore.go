@@ -620,12 +620,13 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 // is gone first; a failure deleting the credentials still reaches the
 // caller, since an orphaned credential would go on referencing a user that
 // no longer exists.
+//
+// Delete runs on the caller's context, never CallContext's: deleting an
+// account is an administrator's act, authorized by the administrator's own
+// grant. The service principal holds no users:delete, so binding its
+// identity here would refuse every administrator.
 func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	id, err := UserIDFromHandle(userID)
-	if err != nil {
-		return err
-	}
-	ctx, err = s.callContext(ctx)
 	if err != nil {
 		return err
 	}
