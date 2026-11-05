@@ -103,6 +103,22 @@ eq "the script exits 2" "2" "$RC"
 eq "the error names the variable" "IN_IMAGE_SCRATCH must be an absolute path: var/tmp" "$OUT"
 eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
 
+# --- CI_CGROUP_PARENT charges the stage to the runner's slice (#1877) --------
+section "CI_CGROUP_PARENT"
+run CI_CGROUP_PARENT=ci-runner.slice
+eq "the stage exits 0" "0" "$RC"
+has "--cgroup-parent is passed" "$FAKE_STATE/create.args" "--cgroup-parent"
+has "the cgroup parent is the runner's slice" "$FAKE_STATE/create.args" "ci-runner.slice"
+run CI_CGROUP_PARENT=
+eq "an empty value exits 0" "0" "$RC"
+eq "an empty value passes no --cgroup-parent" "no" \
+	"$(grep -qxF -- --cgroup-parent "$FAKE_STATE/create.args" && echo yes || echo no)"
+run CI_CGROUP_PARENT='../escape slice'
+eq "a value that is not a cgroup path exits 2" "2" "$RC"
+eq "the error names the variable" \
+	"CI_CGROUP_PARENT must be a cgroup path, e.g. runner.slice: ../escape slice" "$OUT"
+eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
 exit $?

@@ -59,6 +59,9 @@
 #   12g, overrides) becomes --memory, and --memory-swap is set to the same
 #   size, so the stage gets no swap: a stage that outgrows it is OOM-killed and
 #   fails, instead of swapping the shared runner host. A 16g job slot gives 16g.
+#   CI_CGROUP_PARENT, a cgroup path the runner's environment sets (go-xkms
+#   #1877, ruling 289 (e)), becomes --cgroup-parent, so the sibling is charged
+#   to the runner's slice instead of the Docker daemon's root. Unset, no flag.
 # - Go's build and link scratch is on disk, not the 3 GB /tmp tmpfs (go-xkms
 #   #1733, 6d40166): `make coverage` links cgo test binaries in $WORK and filled
 #   /tmp (ENOSPC "final link failed") in 8 go-xkms Devcontainer jobs on
@@ -173,6 +176,14 @@ args=(
   --env HOME=/tmp
   --env CI="${CI:-}"
 )
+cgroup_parent=${CI_CGROUP_PARENT:-}
+if [ -n "$cgroup_parent" ]; then
+  if ! [[ $cgroup_parent =~ ^/?[A-Za-z0-9_.@:-]+(/[A-Za-z0-9_.@:-]+)*$ ]] || [[ $cgroup_parent == *..* ]]; then
+    echo "CI_CGROUP_PARENT must be a cgroup path, e.g. runner.slice: $cgroup_parent" >&2
+    exit 2
+  fi
+  args+=(--cgroup-parent "$cgroup_parent")
+fi
 modcache=/tmp/gomodcache
 if [ "$cache" = on ]; then
   vols="${prefix}cache-${class}"

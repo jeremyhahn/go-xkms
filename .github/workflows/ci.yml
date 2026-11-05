@@ -869,6 +869,13 @@ jobs:
       # sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032)
       # goes here; the container shares the runner's kernel.
 
+      # CUSTOMIZE (go-xkms, #1877, ruling 289 (e)): the toolchain stage's
+      # container is capped at 8g on gpu-host; every other runner keeps the
+      # script's default, the job slot's memory.max (8g with none).
+      - name: Cap the toolchain stage's memory on gpu-host
+        if: ${{ runner.name == 'gpu-host-d01' }}
+        run: echo "IN_IMAGE_MEMORY=8g" >> "$GITHUB_ENV"
+
       # v1.29.4: the build's module fetches go through Athens first when
       # the runner sets DEVCACHE_GOPROXY and the cache answers, with the
       # proxy.golang.org fallback. v1.29.5: the separator is `|`, so any
@@ -1123,6 +1130,13 @@ jobs:
       - name: Reap stale CI stacks
         if: ${{ steps.probe.outputs.has_target == 'true' }}
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # CUSTOMIZE (go-xkms, #1877, ruling 289 (e)): the toolchain stage's
+      # container is capped at 8g on gpu-host; every other runner keeps the
+      # script's default, the job slot's memory.max (8g with none).
+      - name: Cap the toolchain stage's memory on gpu-host
+        if: ${{ runner.name == 'gpu-host-d01' }}
+        run: echo "IN_IMAGE_MEMORY=8g" >> "$GITHUB_ENV"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
@@ -1435,6 +1449,13 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
+      # CUSTOMIZE (go-xkms, #1877, ruling 289 (e)): the toolchain stage's
+      # container is capped at 8g on gpu-host; every other runner keeps the
+      # script's default, the job slot's memory.max (8g with none).
+      - name: Cap the toolchain stage's memory on gpu-host
+        if: ${{ runner.name == 'gpu-host-d01' }}
+        run: echo "IN_IMAGE_MEMORY=8g" >> "$GITHUB_ENV"
+
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
         run: |
@@ -1511,6 +1532,13 @@ jobs:
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # CUSTOMIZE (go-xkms, #1877, ruling 289 (e)): the toolchain stage's
+      # container is capped at 8g on gpu-host; every other runner keeps the
+      # script's default, the job slot's memory.max (8g with none).
+      - name: Cap the toolchain stage's memory on gpu-host
+        if: ${{ runner.name == 'gpu-host-d01' }}
+        run: echo "IN_IMAGE_MEMORY=8g" >> "$GITHUB_ENV"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
@@ -1607,6 +1635,13 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
+      # CUSTOMIZE (go-xkms, #1877, ruling 289 (e)): the toolchain stage's
+      # container is capped at 8g on gpu-host; every other runner keeps the
+      # script's default, the job slot's memory.max (8g with none).
+      - name: Cap the toolchain stage's memory on gpu-host
+        if: ${{ runner.name == 'gpu-host-d01' }}
+        run: echo "IN_IMAGE_MEMORY=8g" >> "$GITHUB_ENV"
+
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
         run: |
@@ -1679,6 +1714,13 @@ jobs:
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # CUSTOMIZE (go-xkms, #1877, ruling 289 (e)): the toolchain stage's
+      # container is capped at 8g on gpu-host; every other runner keeps the
+      # script's default, the job slot's memory.max (8g with none).
+      - name: Cap the toolchain stage's memory on gpu-host
+        if: ${{ runner.name == 'gpu-host-d01' }}
+        run: echo "IN_IMAGE_MEMORY=8g" >> "$GITHUB_ENV"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
@@ -1770,6 +1812,13 @@ jobs:
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
+      # CUSTOMIZE (go-xkms, #1877, ruling 289 (e)): the toolchain stage's
+      # container is capped at 8g on gpu-host; every other runner keeps the
+      # script's default, the job slot's memory.max (8g with none).
+      - name: Cap the toolchain stage's memory on gpu-host
+        if: ${{ runner.name == 'gpu-host-d01' }}
+        run: echo "IN_IMAGE_MEMORY=8g" >> "$GITHUB_ENV"
+
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
         run: |
@@ -1837,6 +1886,13 @@ jobs:
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # CUSTOMIZE (go-xkms, #1877, ruling 289 (e)): the toolchain stage's
+      # container is capped at 8g on gpu-host; every other runner keeps the
+      # script's default, the job slot's memory.max (8g with none).
+      - name: Cap the toolchain stage's memory on gpu-host
+        if: ${{ runner.name == 'gpu-host-d01' }}
+        run: echo "IN_IMAGE_MEMORY=8g" >> "$GITHUB_ENV"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
@@ -1918,6 +1974,13 @@ jobs:
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # CUSTOMIZE (go-xkms, #1877, ruling 289 (e)): the toolchain stage's
+      # container is capped at 8g on gpu-host; every other runner keeps the
+      # script's default, the job slot's memory.max (8g with none).
+      - name: Cap the toolchain stage's memory on gpu-host
+        if: ${{ runner.name == 'gpu-host-d01' }}
+        run: echo "IN_IMAGE_MEMORY=8g" >> "$GITHUB_ENV"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
