@@ -8,11 +8,11 @@ The format is [README.md](README.md). This is the contract of its codec, `pkg/en
 
 | Name | File | What it does |
 |---|---|---|
-| `DeriveKey(huk []byte, ta TAUUID) ([]byte, error)` | `opteeblob.go` | README §1: HKDF-SHA-256 of the HUK, 32 bytes out |
+| `DeriveKey(taKey []byte, ta TAUUID) ([]byte, error)` | `opteeblob.go` | README §1: HKDF-SHA-256 of the 32-byte `PTA_SYSTEM_DERIVE_TA_UNIQUE_KEY` output, 32 bytes out |
 | `Seal(key []byte, ta TAUUID, plaintext []byte) ([]byte, error)` | `opteeblob.go` | README §2–§4, with a fresh random nonce |
 | `Unseal(key []byte, ta TAUUID, blob []byte) ([]byte, error)` | `opteeblob.go` | README §5's checks, then AES-GCM open |
 | `TAUUID` | `opteeblob.go` | `[16]byte`, the TA UUID in RFC 9562 octet order |
-| `Version`, `KeySize`, `NonceSize`, `TagSize`, `MinHUKSize`, `UUIDSize` | `opteeblob.go` | the format's constants |
+| `Version`, `KeySize`, `NonceSize`, `TagSize`, `TAUniqueKeySize`, `UUIDSize` | `opteeblob.go` | the format's constants |
 
 The codec is its own package because the blob is a wire format shared with the TA, not part of the `KeyProtector` envelope beside it in `pkg/enclaveprovider`: it has its own error set and no go-enclave dependency, and its names read without a prefix (`opteeblob.Seal`).
 
@@ -34,6 +34,6 @@ All are sentinels in `errors.go`, matched with `errors.Is`; a wrapped cause stay
 - `TestVectors` recomputes every field of `testdata/vectors.json` (info, key, AAD, blob) and unseals each blob, and checks the key against an HMAC-only RFC 5869 §2.2–§2.3 implementation independent of `crypto/hkdf`.
 - `TestFixedEncodings` checks the hand-written protected header and `Enc_structure` bytes against the CBOR library's deterministic encoding.
 - `TestUnsealErrors` has a case for every error of README §5, including a single flipped byte in the tag, the ciphertext, the nonce and the external AAD.
-- `TestSealRoundTrip`, `TestKeyLengthErrors` and `TestDeriveKeyBindsTheTA` cover the random nonce, the key and HUK lengths, and per-TA keys.
+- `TestSealRoundTrip`, `TestKeyLengthErrors` and `TestDeriveKeyBindsTheTA` cover the random nonce, the key and TA unique key lengths, and per-TA keys.
 
 Run: `GOWORK=off go test -race -tags 'codec_cbor codec_json codec_msgpack' ./pkg/enclaveprovider/...`.
