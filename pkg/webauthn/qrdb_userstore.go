@@ -298,7 +298,7 @@ func (s *qrdbUserStore) claimedUser(ctx context.Context, id uint64, claim *enrol
 // EnrolmentInProgressError. An expired or unreadable one is taken over with
 // a CompareAndSwap on its exact value, which only one contender can win.
 func (s *qrdbUserStore) acquireClaim(ctx context.Context, id uint64, allowAbsent bool) (*enrolmentClaim, error) {
-	claim := &enrolmentClaim{key: s.claimKey(id), token: rand.Text()}
+	claim := &enrolmentClaim{userID: id, key: s.claimKey(id), token: rand.Text()}
 	claim.value = encodeEnrolmentClaim(claim.token, time.Now().Add(s.claimTTL))
 	if allowAbsent {
 		stored, err := s.kv.PutIfAbsent(ctx, claim.key, claim.value)
@@ -313,8 +313,8 @@ func (s *qrdbUserStore) acquireClaim(ctx context.Context, id uint64, allowAbsent
 	var notFound *qrdbtransport.KeyNotFoundError
 	switch {
 	case errors.As(err, &notFound) && allowAbsent:
-		// The claim was released after the PutIfAbsent lost to it: its
-		// holder has just finished or failed, and this registration lost.
+		// The claim was settled after the PutIfAbsent lost to it: its
+		// holder has just saved a credential, and this registration lost.
 		return nil, &EnrolmentInProgressError{UserID: id}
 	case errors.As(err, &notFound):
 		// A renamed record that nobody is enrolling is an existing account.
@@ -335,48 +335,110 @@ func (s *qrdbUserStore) acquireClaim(ctx context.Context, id uint64, allowAbsent
 	return claim, nil
 }
 
-// releaseClaim drops a claim this store took, only if it still holds it.
+// releaseClaim gives up a claim this store holds, only if it still holds
+// it. The claim is left expired rather than deleted: an expired claim marks
+// a credential-free account a later registration may recover, while an
+// absent claim on a renamed account means an account nobody is enrolling.
 func (s *qrdbUserStore) releaseClaim(ctx context.Context, claim *enrolmentClaim) error {
-	if _, err := s.kv.CompareAndDelete(ctx, claim.key, claim.value); err != nil {
+	expired := encodeEnrolmentClaim(claim.token, time.Unix(0, 0))
+	if _, err := s.kv.CompareAndSwap(ctx, claim.key, claim.value, expired); err != nil {
 		return WrapError("release enrolment claim", err)
 	}
 	return nil
 }
 
-// consumeEnrolmentClaim ends the claim a finishing enrolment holds, with a
-// CompareAndDelete on the exact claim it read. A claim that is absent,
-// expired or another registration's fails with EnrolmentClaimLostError, and
-// the enrolment must then add nothing.
+// consumeEnrolmentClaim marks the claim a finishing enrolment holds as
+// consumed, with a CompareAndSwap on the exact claim it read. The consumed
+// claim carries a fresh expiry and stays held until settleEnrolmentClaim, so
+// no other registration can take the account while the credential is saved.
+// A claim that is absent, expired, already consumed or another
+// registration's fails with EnrolmentClaimLostError, and the enrolment must
+// then add nothing.
 func (s *qrdbUserStore) consumeEnrolmentClaim(ctx context.Context, user User, token string) error {
-	id, err := UserIDFromHandle(user.WebAuthnID())
+	ctx, claim, err := s.liveClaim(ctx, user, token)
 	if err != nil {
 		return err
 	}
-	ctx, err = s.callContext(ctx)
+	consumed := encodeEnrolmentClaim(consumedClaimPrefix+token, time.Now().Add(s.claimTTL))
+	swapped, err := s.kv.CompareAndSwap(ctx, claim.key, claim.value, consumed)
+	if err != nil {
+		return WrapError("consume enrolment claim", err)
+	}
+	if !swapped {
+		return &EnrolmentClaimLostError{UserID: claim.userID}
+	}
+	return nil
+}
+
+// settleEnrolmentClaim ends a consumed claim once the credential save has
+// run. A saved credential deletes the claim: the account now holds a
+// credential and is never taken again. A failed save releases it, so a
+// retry or a new registration of the email can recover the account.
+func (s *qrdbUserStore) settleEnrolmentClaim(ctx context.Context, user User, token string, saved bool) error {
+	ctx, claim, err := s.liveClaim(ctx, user, consumedClaimPrefix+token)
 	if err != nil {
 		return err
+	}
+	if !saved {
+		claim.token = token
+		return s.releaseClaim(ctx, claim)
+	}
+	if _, err := s.kv.CompareAndDelete(ctx, claim.key, claim.value); err != nil {
+		return WrapError("settle enrolment claim", err)
+	}
+	return nil
+}
+
+// enrolmentRecoverable reports whether user's record carries a released or
+// expired enrolment claim: a public enrolment that never saved its
+// credential, which the next Create for the email may take over.
+func (s *qrdbUserStore) enrolmentRecoverable(ctx context.Context, user User) (bool, error) {
+	id, err := UserIDFromHandle(user.WebAuthnID())
+	if err != nil {
+		return false, err
+	}
+	ctx, err = s.callContext(ctx)
+	if err != nil {
+		return false, err
+	}
+	current, err := s.kv.Get(ctx, s.claimKey(id))
+	var notFound *qrdbtransport.KeyNotFoundError
+	switch {
+	case errors.As(err, &notFound):
+		return false, nil
+	case err != nil:
+		return false, WrapError("get enrolment claim", err)
+	}
+	_, expires, ok := decodeEnrolmentClaim(current)
+	return !ok || !time.Now().Before(expires), nil
+}
+
+// liveClaim binds the call context and reads the claim on user's record. It
+// fails with EnrolmentClaimLostError unless the claim is unexpired and
+// carries token.
+func (s *qrdbUserStore) liveClaim(ctx context.Context, user User, token string) (context.Context, *enrolmentClaim, error) {
+	id, err := UserIDFromHandle(user.WebAuthnID())
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, err = s.callContext(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	key := s.claimKey(id)
 	current, err := s.kv.Get(ctx, key)
 	var notFound *qrdbtransport.KeyNotFoundError
 	if errors.As(err, &notFound) {
-		return &EnrolmentClaimLostError{UserID: id}
+		return nil, nil, &EnrolmentClaimLostError{UserID: id}
 	}
 	if err != nil {
-		return WrapError("get enrolment claim", err)
+		return nil, nil, WrapError("get enrolment claim", err)
 	}
 	held, expires, ok := decodeEnrolmentClaim(current)
 	if !ok || held != token || !time.Now().Before(expires) {
-		return &EnrolmentClaimLostError{UserID: id}
+		return nil, nil, &EnrolmentClaimLostError{UserID: id}
 	}
-	deleted, err := s.kv.CompareAndDelete(ctx, key, current)
-	if err != nil {
-		return WrapError("consume enrolment claim", err)
-	}
-	if !deleted {
-		return &EnrolmentClaimLostError{UserID: id}
-	}
-	return nil
+	return ctx, &enrolmentClaim{userID: id, key: key, value: current, token: token}, nil
 }
 
 // claimKey is the KV key of the enrolment claim on record id.
@@ -387,9 +449,10 @@ func (s *qrdbUserStore) claimKey(id uint64) string {
 // enrolmentClaim is a claim this store took: its key, the exact value it
 // wrote, and the token the registration session carries.
 type enrolmentClaim struct {
-	key   string
-	value []byte
-	token string
+	userID uint64
+	key    string
+	value  []byte
+	token  string
 }
 
 // encodeEnrolmentClaim lays a claim out as its expiry in Unix nanoseconds,
@@ -416,9 +479,13 @@ type enrolmentClaimant interface {
 }
 
 // enrolmentClaimConsumer is a user store whose Create hands out claimed
-// users; a finishing enrolment consumes its claim through it.
+// users; a finishing enrolment consumes its claim through it before the
+// credential save and settles it after, and a new registration asks it
+// whether an existing record is an enrolment it may recover.
 type enrolmentClaimConsumer interface {
+	enrolmentRecoverable(ctx context.Context, user User) (bool, error)
 	consumeEnrolmentClaim(ctx context.Context, user User, token string) error
+	settleEnrolmentClaim(ctx context.Context, user User, token string, saved bool) error
 }
 
 // claimedUser is the user Create returns: the record and the claim it was
@@ -656,6 +723,10 @@ const pendingUsernamePrefix = "webauthn-pending-"
 // enrolmentClaimPrefix is the KV prefix of the enrolment claims, keyed
 // <prefix><tenant>/<qrdb user ID>.
 const enrolmentClaimPrefix = "webauthn/enrolment-claims/"
+
+// consumedClaimPrefix marks the token of a claim whose enrolment is saving
+// its credential; no session carries a token with this prefix.
+const consumedClaimPrefix = "consumed:"
 
 // DefaultEnrolmentClaimTTL is the enrolment claim lifetime when
 // QRDBUserStoreOptions.EnrolmentClaimTTL is zero: Config's default
