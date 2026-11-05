@@ -256,12 +256,17 @@ qrdb's identity.
 (owner ruling 166, go-xkms#1468).** qrdb uses `Username` as the certificate CN,
 so it carries no PII; the email stays in `Email`, qrdb's tenant-unique login
 key, and in the rfc822Name SAN. qrdb assigns the ID at create and refuses an
-empty `Username`, so `Create` (`qrdb_userstore.go:150`) creates the record under
+empty `Username`, so `Create` (`qrdb_userstore.go:178`) creates the record under
 a random `webauthn-pending-` placeholder and then renames it with `UpdateUser`
-to the decimal ID (`qrdb_userstore.go:170`), which qrdb re-validates for
-uniqueness and re-indexes atomically. A failed rename deletes the record and
-returns `*QRDBUsernameAssignError` (`qrdb_userstore.go:361`), whose
-`RollbackErr` reports a failed delete. Nothing in the WebAuthn path reads
+to the decimal ID (`qrdb_userstore.go:225`), which qrdb re-validates for
+uniqueness and re-indexes atomically. A failed rename returns
+`*QRDBUsernameAssignError` (`qrdb_userstore.go:453`) and leaves the record
+under its placeholder: the embedded node's service principal holds no
+`users:delete`, so there is no rollback. `GetByEmail` reports such a record,
+while it has no credential, as not found, and the next `Create` for the email
+finishes the rename and returns that user (`qrdb_userstore.go:213`). A
+placeholder that already holds a credential is never taken over: `Create`
+returns `*QRDBPendingUserClaimedError` (`qrdb_userstore.go:472`). Nothing in the WebAuthn path reads
 `Username`: login resolves by email (`GetUserByEmail`), and a WebAuthn token's
 subject is the user handle (`SubjectKindUserHandle`), so records created
 before the change, with the email as `Username`, still log in unchanged.

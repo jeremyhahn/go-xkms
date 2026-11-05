@@ -150,7 +150,16 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
-	return s.materialize(ctx, u)
+	user, err := s.materialize(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	if isPendingUsername(u.Username) && len(user.Credentials()) == 0 {
+		// A Create whose rename failed left this record. It is no account
+		// yet, and the next Create for the email finishes it.
+		return nil, ErrUserNotFound
+	}
+	return user, nil
 }
 
 // Create creates a new user in the configured tenant.
@@ -161,8 +170,11 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 // identity qrdb already owned. Both now live in the record itself.
 //
 // The record's Username is its decimal qrdb user ID. A failure to assign it
-// is a *QRDBUsernameAssignError, after which the half-created record has been
-// deleted unless its RollbackErr says otherwise.
+// is a *QRDBUsernameAssignError. The record is left under its placeholder,
+// since the service principal holds no users:delete, and the next Create for
+// the same email and tenant finishes the rename. A placeholder that already
+// holds a credential is never taken over: that Create is a
+// *QRDBPendingUserClaimedError.
 func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (User, error) {
 	if email == "" {
 		return nil, &QRDBAdapterConfigError{Field: "email"}
@@ -171,11 +183,19 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 	if err != nil {
 		return nil, err
 	}
+	existing, err := s.users.GetUserByEmail(ctx, s.tenantID, email)
+	switch {
+	case err == nil && isPendingUsername(existing.Username):
+		return s.resumePending(ctx, existing)
+	case err != nil && !isUserNotFound(err):
+		return nil, WrapError("qrdb user lookup", err)
+	}
 	// qrdb's Username is the certificate CN, so it carries the qrdb user ID,
 	// never the email (owner ruling 166, go-xkms#1468): the email stays in
 	// Email, the tenant-unique login key. qrdb assigns the ID at create and
 	// refuses an empty Username, so the record is created under a random,
-	// PII-free placeholder and then renamed to its ID.
+	// PII-free placeholder and then renamed to its ID. An existing account
+	// for the email is refused here by qrdb.
 	u, err := s.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: pendingUsernamePrefix + rand.Text(),
 		Email:    email,
@@ -185,18 +205,30 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 	if err != nil {
 		return nil, WrapError("qrdb create user", err)
 	}
+	return s.assignUsername(ctx, u.ID)
+}
+
+// resumePending finishes the rename of a placeholder record an earlier
+// Create left behind, unless the record already holds a credential.
+func (s *qrdbUserStore) resumePending(ctx context.Context, u *qrdbtransport.User) (User, error) {
+	creds, err := s.creds.GetByUserID(ctx, HandleFromUserID(u.ID))
+	if err != nil {
+		return nil, err
+	}
+	if len(creds) > 0 {
+		return nil, &QRDBPendingUserClaimedError{UserID: u.ID}
+	}
+	return s.assignUsername(ctx, u.ID)
+}
+
+// assignUsername renames the record to its decimal qrdb user ID.
+func (s *qrdbUserStore) assignUsername(ctx context.Context, id uint64) (User, error) {
 	renamed, err := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{
-		ID:       u.ID,
-		Username: strconv.FormatUint(u.ID, 10),
+		ID:       id,
+		Username: strconv.FormatUint(id, 10),
 	})
 	if err != nil {
-		// A record left under its placeholder would hold the email as a
-		// login key with no usable Username, so it is removed.
-		return nil, &QRDBUsernameAssignError{
-			UserID:      u.ID,
-			Err:         err,
-			RollbackErr: s.users.DeleteUser(ctx, u.ID),
-		}
+		return nil, &QRDBUsernameAssignError{UserID: id, Err: err}
 	}
 	return s.materialize(ctx, renamed)
 }
@@ -409,34 +441,42 @@ func (e *InvalidUserHandleError) Error() string {
 // created under before Create renames it to its qrdb user ID.
 const pendingUsernamePrefix = "webauthn-pending-"
 
+// isPendingUsername reports whether username is a Create placeholder.
+func isPendingUsername(username string) bool {
+	return strings.HasPrefix(username, pendingUsernamePrefix)
+}
+
 // QRDBUsernameAssignError is returned by the qrdb user store's Create when
-// the new record could not be renamed to its qrdb user ID. The record is
-// deleted on that failure; RollbackErr is the deletion's error, nil when the
-// record is gone.
+// the record could not be renamed to its qrdb user ID. The record stays
+// under its placeholder; the next Create for the same email and tenant
+// finishes the rename.
 type QRDBUsernameAssignError struct {
-	// UserID is the qrdb user ID of the record that was created.
+	// UserID is the qrdb user ID of the record left under its placeholder.
 	UserID uint64
 	// Err is the qrdb error from the rename.
 	Err error
-	// RollbackErr is the qrdb error from deleting the record, or nil.
-	RollbackErr error
 }
 
 // Error implements error.
 func (e *QRDBUsernameAssignError) Error() string {
-	msg := "webauthn: qrdb adapter: assign username to user " + strconv.FormatUint(e.UserID, 10) + ": " + e.Err.Error()
-	if e.RollbackErr != nil {
-		msg += "; delete of the created user failed: " + e.RollbackErr.Error()
-	}
-	return msg
+	return "webauthn: qrdb adapter: assign username to user " + strconv.FormatUint(e.UserID, 10) + ": " + e.Err.Error()
 }
 
-// Unwrap returns the rename error and, when set, the rollback error.
-func (e *QRDBUsernameAssignError) Unwrap() []error {
-	if e.RollbackErr == nil {
-		return []error{e.Err}
-	}
-	return []error{e.Err, e.RollbackErr}
+// Unwrap returns the rename error.
+func (e *QRDBUsernameAssignError) Unwrap() error { return e.Err }
+
+// QRDBPendingUserClaimedError is returned by the qrdb user store's Create
+// when the email's record is still under its placeholder but already holds
+// a credential. Such a record is never renamed and handed to a new
+// registration.
+type QRDBPendingUserClaimedError struct {
+	// UserID is the qrdb user ID of the placeholder record.
+	UserID uint64
+}
+
+// Error implements error.
+func (e *QRDBPendingUserClaimedError) Error() string {
+	return "webauthn: qrdb adapter: placeholder user " + strconv.FormatUint(e.UserID, 10) + " already holds a credential"
 }
 
 // Compile-time interface assertion.
