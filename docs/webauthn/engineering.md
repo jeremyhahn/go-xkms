@@ -281,13 +281,13 @@ the winner renames the record and gets a session.
   `GuardedKVClient`, which adds `PutIfAbsent`, `CompareAndSwap` and
   `CompareAndDelete` to `KVClient`. `NewQRDBUserStoreAdapter`
   (`qrdb_userstore.go:84`) type-asserts it and otherwise fails with
-  `*QRDBGuardedKVUnsupportedError` (`qrdb_userstore.go:783`).
+  `*QRDBGuardedKVUnsupportedError` (`qrdb_userstore.go:860`).
 - **Key and value.** The key is `webauthn/enrolment-claims/<tenantID>/<userID>`
-  (`enrolmentClaimPrefix`, `qrdb_userstore.go:729`). The value is an 8-byte big-endian expiry in Unix
+  (`enrolmentClaimPrefix`, `qrdb_userstore.go:800`). The value is an 8-byte big-endian expiry in Unix
   nanoseconds followed by the token, a `crypto/rand` string
-  (`encodeEnrolmentClaim`, `qrdb_userstore.go:464`).
+  (`encodeEnrolmentClaim`, `qrdb_userstore.go:529`).
 - **TTL.** `EnrolmentClaimTTL`, `DefaultEnrolmentClaimTTL` (60 s) when zero
-  (`DefaultEnrolmentClaimTTL`, `qrdb_userstore.go:738`). The REST host sets it to the WebAuthn
+  (`DefaultEnrolmentClaimTTL`, `qrdb_userstore.go:815`). The REST host sets it to the WebAuthn
   `Config.Timeout` (`BuildWebAuthnService`, `pkg/api/rest/host.go:471`). It must be at least the
   ceremony timeout, or a slow but honest finish loses its claim to a
   recovering registration.
@@ -303,29 +303,48 @@ the winner renames the record and gets a session.
   `qrdb_userstore.go:258`). The winner's session carries the token in its
   challenge (`withEnrolmentChallenge`, `service.go:482`). Sessions are
   server-side, so a client cannot forge the token.
-- **Consume** (`consumeEnrolmentClaim`, `qrdb_userstore.go:355`). Finish
+- **Consume** (`consumeEnrolmentClaim`, `qrdb_userstore.go:362`). Finish
   refuses a user that already holds a credential (`consumeEnrolment`,
   `service.go:513`). It then swaps the live claim for a consumed claim
   (token `consumed:<token>`, a fresh expiry) with `CompareAndSwap`. The
   consumed claim stays held while the credential is saved, so a concurrent
   registration of the email is refused. An absent, expired, foreign or
   already-consumed claim is `*EnrolmentClaimLostError`
-  (`qrdb_userstore.go:810`), and nothing is saved.
-- **Settle** (`settleEnrolmentClaim`, `qrdb_userstore.go:375`, called from
+  (`qrdb_userstore.go:887`), and nothing is saved.
+- **Credential marker** (`enrolmentCredentialPrefix`, `qrdb_userstore.go:810`).
+  The consumed claim expires, and a credential save can outlast it; a
+  registration that then took the claim over would write a second passkey.
+  So the consume also wins `webauthn/enrolment-credential/<tenantID>/<userID>`
+  (`credentialMarkerKey`, `qrdb_userstore.go:514`) with `PutIfAbsent`, value
+  the claim token. The marker has no expiry and no path takes it over. A
+  marker already held is `*EnrolmentCredentialMarkedError`
+  (`qrdb_userstore.go:901`): the claim is released and nothing is saved.
+  This is the invariant: the unauthenticated path writes at most one
+  credential per account, whatever the timing. qrdb's `TransactionClient`
+  could not fence the save itself: the credential store writes through the
+  DAO, whose keys are internal to it.
+- **Settle** (`settleEnrolmentClaim`, `qrdb_userstore.go:400`, called from
   `runFinishRegistration`, `service.go:416`).
-  - **Saved credential:** the claim is removed with `CompareAndDelete`. The
-    account now holds a credential and is never claimed again.
-  - **Failed save:** the claim is released.
+  - **Saved credential:** the claim is removed with `CompareAndDelete`, and
+    the marker stays for good. A claim that expired during the save is not an
+    error: the marker holds the account.
+  - **Failed save:** the marker is removed with `CompareAndDelete` against
+    this finish's token (`dropCredentialMarker`, `qrdb_userstore.go:429`),
+    and the claim is released.
+  - **Process death between marker and save** leaves a marker and no
+    credential. Public sign-up then refuses the account: it fails closed,
+    never open. The administrator clears it by deleting the account
+    (`Delete`, which also deletes the marker); the email then enrols afresh.
 - **Release** (`releaseClaim`, `qrdb_userstore.go:340`). `CompareAndSwap`
   replaces the claim this store still holds with an expired one; release
   never deletes. It runs when a rename, materialization or credential save
   fails.
 - **Recovery.** Public `BeginRegistration` (`service.go:176`) refuses an
   email whose account exists, unless that record carries a released or
-  expired claim (`enrolmentRecoverable`, `qrdb_userstore.go:393`): a public
+  expired claim (`enrolmentRecoverable`, `qrdb_userstore.go:448`): a public
   enrolment that never saved its credential. That record goes to `Create`,
-  which takes the claim over. A record with no claim on file, a live claim or
-  a credential is refused.
+  which takes the claim over. A record with no claim on file, a live claim, a
+  held credential marker or a credential is refused.
 
 ### Credential-store decoration — the composed-host seam
 
