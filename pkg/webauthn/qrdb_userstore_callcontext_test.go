@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // boundKey marks a context the store's CallContext derived, standing in
@@ -95,6 +97,7 @@ func newBoundUserStoreOn(t *testing.T, users *boundUserClient, bind func(context
 	us, _, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
 		Users:       users,
 		DAOFactory:  newTestDAOFactory(),
+		KV:          testutil.NewQRDBFakeTransport(),
 		TenantID:    "system",
 		CallContext: bind,
 	})
@@ -203,6 +206,7 @@ func TestPublicRegistrationDisabled_BoundStoreRefusesUnknownUser(t *testing.T) {
 	users, creds, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
 		Users:       &boundUserClient{fakeUserClient: newFakeUserClient()},
 		DAOFactory:  newTestDAOFactory(),
+		KV:          testutil.NewQRDBFakeTransport(),
 		TenantID:    "system",
 		CallContext: bindForTest,
 	})
