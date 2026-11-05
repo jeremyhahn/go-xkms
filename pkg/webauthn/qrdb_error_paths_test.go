@@ -461,6 +461,54 @@ func TestQRDBAdapter_UserDelete_CredentialDeleteErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestQRDBAdapter_UserDelete_RetryCompletesCleanup pins that a delete whose
+// credential cleanup failed after the account was removed is finished by
+// the next delete, and that an ID that never existed is still not found.
+func TestQRDBAdapter_UserDelete_RetryCompletesCleanup(t *testing.T) {
+	ctx := context.Background()
+	store, factory := newFaultyStore()
+	us, cs := newFaultyAdapter(t, newFakeUserClient(), factory)
+	user, err := us.Create(ctx, "userdel3@example.com", "User Del3")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	handle := user.WebAuthnID()
+	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: handle}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	id, err := UserIDFromHandle(handle)
+	if err != nil {
+		t.Fatalf("UserIDFromHandle: %v", err)
+	}
+	qs := us.(*qrdbUserStore)
+	if _, err := qs.kv.PutIfAbsent(ctx, qs.credentialMarkerKey(id), []byte("marker")); err != nil {
+		t.Fatalf("put marker: %v", err)
+	}
+
+	store.deleteErr = errKVFault
+	if err := us.Delete(ctx, handle); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected credential delete error, got %v", err)
+	}
+	store.deleteErr = nil
+	if err := us.Delete(ctx, handle); err != nil {
+		t.Fatalf("retried delete: %v", err)
+	}
+	creds, err := cs.GetByUserID(ctx, handle)
+	if err != nil {
+		t.Fatalf("GetByUserID: %v", err)
+	}
+	if len(creds) != 0 {
+		t.Fatalf("credentials left after the retried delete: %d", len(creds))
+	}
+	if _, marked, err := qs.readClaim(ctx, qs.credentialMarkerKey(id)); err != nil || marked {
+		t.Fatalf("marker left after the retried delete (marked=%v, err=%v)", marked, err)
+	}
+
+	if err := us.Delete(ctx, HandleFromUserID(id+1000)); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("delete of an unknown ID: expected ErrUserNotFound, got %v", err)
+	}
+}
+
 // ----- materialize -----
 
 // A credential read failure while materializing a user is returned through
