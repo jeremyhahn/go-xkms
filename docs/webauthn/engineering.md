@@ -256,7 +256,7 @@ qrdb's identity.
 (owner ruling 166, go-xkms#1468).** qrdb uses `Username` as the certificate CN,
 so it carries no PII; the email stays in `Email`, qrdb's tenant-unique login
 key, and in the rfc822Name SAN. qrdb assigns the ID at create and refuses an
-empty `Username`, so `Create` (`qrdb_userstore.go:212`) creates the record under
+empty `Username`, so `Create` (`qrdb_userstore.go:220`) creates the record under
 a random `webauthn-pending-` placeholder and then renames it with `UpdateUser`
 to the decimal ID (`assignUsername`, `qrdb_userstore.go:508`), which qrdb re-validates for
 uniqueness and re-indexes atomically. A failed rename returns
@@ -264,7 +264,23 @@ uniqueness and re-indexes atomically. A failed rename returns
 under its placeholder: the embedded node's service principal holds no
 `users:delete`, so there is no rollback. `GetByEmail` reports such a record,
 while it has no credential, as not found, and the next `Create` for the email
-finishes the rename and returns that user (`claimExisting`, `qrdb_userstore.go:258`). A
+finishes the rename and returns that user (`claimExisting`, `qrdb_userstore.go:279`).
+
+The `Username` is never evidence that public sign-up created a record: qrdb
+accepts any account name, so an account activated another way (a PIV
+invitation, an administrator) can carry a `webauthn-pending-` name. Before its
+`CreateUser`, `Create` writes the placeholder's provenance record,
+`webauthn/enrolment-placeholder/<tenantID>/<placeholder>`
+(`enrolmentPlaceholderPrefix`, `qrdb_userstore.go:898`), with `PutIfAbsent`;
+only this store writes that prefix. A record is a recoverable placeholder only
+when its name has the placeholder shape **and** that record exists
+(`isPlaceholder`, `qrdb_userstore.go:557`). A placeholder-named account without
+one is an ordinary account: `GetByEmail` returns it and `Create` refuses it
+with `ErrRegistrationRefused`, taking no claim and renaming nothing. A
+`CreateUser` that fails, or a process that dies, after the provenance write
+leaves an orphan no account carries. The record is kept after the rename, since
+no account carries its placeholder again. A drawn placeholder whose record
+already exists is `*QRDBPlaceholderTakenError` (`qrdb_userstore.go:909`). A
 placeholder that already holds a credential is never taken over: `Create`
 returns `*QRDBPendingUserClaimedError` (`qrdb_userstore.go:769`). Nothing in the WebAuthn path reads
 `Username`: login resolves by email (`GetUserByEmail`), and a WebAuthn token's
@@ -349,11 +365,15 @@ the winner renames the record and gets a session.
     never open. The administrator clears it by deleting the account
     (`Delete`, which also deletes the marker); the email then enrols afresh.
 - **Account delete** (`Service.DeleteUser`, `service.go:889`; `Delete`,
-  `qrdb_userstore.go:627`). Both run on the caller's context, never
+  `qrdb_userstore.go:669`). Both run on the caller's context, never
   `CallContext`'s: the service principal holds no `users:delete`, so the
   administrator's own grant authorizes the delete. The account goes first,
   then its credentials, then its marker. A refused or failed account delete
-  returns with the credentials untouched.
+  returns with the credentials untouched. The cleanup is resumable: when the
+  account is already gone, `Delete` still removes credentials and marker left
+  by an earlier delete whose cleanup failed, and returns nil; with nothing
+  left (`hasDeleteResidue`, `qrdb_userstore.go:705`) it returns
+  `ErrUserNotFound`.
 - **Release** (`releaseClaim`, `qrdb_userstore.go:340`). `CompareAndSwap`
   replaces the claim this store still holds with an expired one; release
   never deletes. It runs when a rename, materialization or credential save
