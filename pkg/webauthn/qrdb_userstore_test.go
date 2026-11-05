@@ -16,6 +16,7 @@ package webauthn
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -95,7 +96,15 @@ func (f *fakeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 	if email != "" {
 		f.byEmail[ek] = u
 	}
-	return u, nil
+	return copyUser(u), nil
+}
+
+// copyUser returns a copy of a stored record, as qrdb's transport decodes a
+// fresh User per call; callers never share the fake's state.
+func copyUser(u *qrdbtransport.User) *qrdbtransport.User {
+	c := *u
+	c.AuthMethods = slices.Clone(u.AuthMethods)
+	return &c
 }
 
 func (f *fakeUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
@@ -105,7 +114,7 @@ func (f *fakeUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return u, nil
+	return copyUser(u), nil
 }
 
 func (f *fakeUserClient) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error) {
@@ -115,7 +124,7 @@ func (f *fakeUserClient) GetUserByUsername(ctx context.Context, tenantID, userna
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return u, nil
+	return copyUser(u), nil
 }
 
 func (f *fakeUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
@@ -128,7 +137,7 @@ func (f *fakeUserClient) GetUserByEmail(ctx context.Context, tenantID, email str
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return u, nil
+	return copyUser(u), nil
 }
 
 // setStanding rewrites the record's lifecycle and auth-method policy, the way
@@ -186,7 +195,7 @@ func (f *fakeUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.Upda
 		u.Email = newEmail
 		f.byEmail[nk] = u
 	}
-	return u, nil
+	return copyUser(u), nil
 }
 
 func (f *fakeUserClient) DeleteUser(ctx context.Context, id uint64) error {
@@ -231,7 +240,7 @@ func (f *fakeUserClient) RemoveCertBinding(ctx context.Context, userID uint64, t
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return u, nil
+	return copyUser(u), nil
 }
 
 func (f *fakeUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
@@ -241,7 +250,7 @@ func (f *fakeUserClient) AddCertBinding(ctx context.Context, userID uint64, thum
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return u, nil
+	return copyUser(u), nil
 }
 
 // ----- adapter tests -----

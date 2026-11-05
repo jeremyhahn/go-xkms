@@ -131,8 +131,7 @@ func TestQRDBAdapter_MaterializeCarriesStanding(t *testing.T) {
 	require.NoError(t, err)
 	record, err := client.GetUser(ctx, id)
 	require.NoError(t, err)
-	record.Lifecycle = string(qrdbsdk.LifecycleSuspended)
-	record.AuthMethods = []string{"mtls"}
+	client.setStanding(t, record.TenantID, record.Email, qrdbsdk.LifecycleSuspended, []string{"mtls"})
 
 	byID, err := users.GetByID(ctx, created.WebAuthnID())
 	require.NoError(t, err)
