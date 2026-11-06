@@ -77,6 +77,11 @@ type qrdbUserStore struct {
 	bind     func(ctx context.Context) (context.Context, error)
 }
 
+// TenantID returns the tenant the store serves.
+func (s *qrdbUserStore) TenantID() string {
+	return s.tenantID
+}
+
 // NewQRDBUserStoreAdapter constructs the (UserStore, CredentialStore) pair
 // xkms's WebAuthn relying party runs on: users are go-qrdb's user records,
 // and credentials are go-qrdb DAO entities built from the injected factory.

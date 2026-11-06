@@ -267,6 +267,14 @@ func (s *Service) BeginAddCredential(ctx context.Context, acct SessionAccount) (
 	if len(acct.UserID) == 0 || acct.Email == "" {
 		return nil, "", ErrSessionAccountMismatch
 	}
+	// The session must come from the tenant this store serves, checked
+	// before any lookup: the lookup may run with elevated rights, so a
+	// session from another tenant never reaches it. An empty tenant
+	// matches nothing, and a store that declares no tenant refuses all.
+	store, ok := s.users.(tenantScoped)
+	if !ok || acct.TenantID == "" || acct.TenantID != store.TenantID() {
+		return nil, "", ErrSessionAccountMismatch
+	}
 
 	user, err := s.users.GetByID(ctx, acct.UserID)
 	if err != nil {
