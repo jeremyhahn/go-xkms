@@ -678,9 +678,10 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	if err != nil {
 		return err
 	}
-	// The deletion record and the liveness check belong to the store's
-	// tenant, whatever tenant the caller is in.
-	svcCtx, err := s.callContext(qrdbsdk.ContextWithTenant(ctx, s.tenantID))
+	// The deletion record, the liveness check and every removal belong to
+	// the store's tenant, whatever tenant the caller is in.
+	authCtx := qrdbsdk.ContextWithTenant(ctx, s.tenantID)
+	svcCtx, err := s.callContext(authCtx)
 	if err != nil {
 		return err
 	}
@@ -690,7 +691,7 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 		if !isUserNotFound(err) {
 			return WrapError("qrdb get user", err)
 		}
-		return s.resumeDelete(ctx, svcCtx, id, userID)
+		return s.resumeDelete(authCtx, svcCtx, id, userID)
 	}
 	// The deletion record is written before the account goes, so a
 	// cleanup that fails after DeleteUser can be resumed by a retry.
@@ -702,17 +703,19 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	// is removed.
 	if err := s.users.DeleteUser(ctx, id); err != nil {
 		if isUserNotFound(err) {
-			return s.resumeDelete(ctx, svcCtx, id, userID)
+			return s.resumeDelete(authCtx, svcCtx, id, userID)
 		}
 		return errors.Join(WrapError("qrdb delete user", err), s.dropDeletionRecord(svcCtx, id))
 	}
-	return s.finishDelete(ctx, svcCtx, id, userID)
+	return s.finishDelete(authCtx, svcCtx, id, userID)
 }
 
 // resumeDelete finishes the cleanup of an account the caller cannot see. It
 // runs only on this tenant's deletion record for an account no longer live,
 // so an account hidden in another tenant, or one whose delete is still in
-// flight, is never touched: both are ErrUserNotFound.
+// flight, is never touched: both are ErrUserNotFound. ctx is the caller's
+// context pinned to the store's tenant, and the caller must hold users:delete
+// there before anything is removed.
 func (s *qrdbUserStore) resumeDelete(ctx, svcCtx context.Context, id uint64, userID []byte) error {
 	recorded, err := s.kv.Exists(svcCtx, s.deletionKey(id))
 	if err != nil {
@@ -728,11 +731,18 @@ func (s *qrdbUserStore) resumeDelete(ctx, svcCtx context.Context, id uint64, use
 	if !isUserNotFound(err) {
 		return WrapError("qrdb get user", err)
 	}
+	// The resumed cleanup needs the same authority as a fresh delete:
+	// users:delete in the store's tenant, which another tenant's caller
+	// lacks. The account is already gone, so not-found is the pass.
+	if err := s.users.DeleteUser(ctx, id); err != nil && !isUserNotFound(err) {
+		return WrapError("qrdb delete user", err)
+	}
 	return s.finishDelete(ctx, svcCtx, id, userID)
 }
 
 // finishDelete removes a deleted account's passkeys and enrolment credential
-// marker on the caller's context, which needs only kv:delete, then its
+// marker on the caller's context pinned to the store's tenant, which needs
+// only kv:delete, then its
 // deletion record. Every step is idempotent, so a retry repeats it safely.
 func (s *qrdbUserStore) finishDelete(ctx, svcCtx context.Context, id uint64, userID []byte) error {
 	if err := s.creds.DeleteByUserID(ctx, userID); err != nil {
