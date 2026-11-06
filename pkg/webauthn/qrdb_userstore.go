@@ -705,7 +705,12 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 		if isUserNotFound(err) {
 			return s.resumeDelete(authCtx, svcCtx, id, userID)
 		}
-		return errors.Join(WrapError("qrdb delete user", err), s.dropDeletionRecord(svcCtx, id))
+		// Only a refusal proves nothing was removed. Any other error may
+		// come after the account went, so the record stays for the retry.
+		if isRefusal(err) {
+			return errors.Join(WrapError("qrdb delete user", err), s.dropDeletionRecord(svcCtx, id))
+		}
+		return WrapError("qrdb delete user", err)
 	}
 	return s.finishDelete(authCtx, svcCtx, id, userID)
 }
@@ -865,6 +870,21 @@ func isUserNotFound(err error) bool {
 		return isCanonicalUserNotFoundMessage(request.Err.Error())
 	}
 	return false
+}
+
+// isRefusal reports whether err is one of qrdb's authorization refusals,
+// which are decided before anything is written: the caller lacks the
+// permission, or names a tenant other than its own.
+func isRefusal(err error) bool {
+	var denied *qrdbsdk.PermissionDeniedError
+	if errors.As(err, &denied) {
+		return true
+	}
+	var crossTenant *qrdbsdk.CrossTenantDeniedError
+	if errors.As(err, &crossTenant) {
+		return true
+	}
+	return qrdbsdk.IsCrossTenantAccess(err)
 }
 
 // userNotFoundCanonicalPrefixes are the message forms qrdb's user service
