@@ -413,9 +413,14 @@ func TestQRDBAdapter_UserSave_StoreFaultDoesNotAffectIt(t *testing.T) {
 // ----- user Delete -----
 
 func TestQRDBAdapter_UserDelete_ClientError(t *testing.T) {
-	uc := &faultyUserClient{inner: newFakeUserClient(), deleteErr: errKVFault}
+	uc := &faultyUserClient{inner: newFakeUserClient()}
 	us, _ := newFaultyAdapter(t, uc, newTestDAOFactory())
-	if err := us.Delete(context.Background(), HandleFromUserID(1)); !errors.Is(err, errKVFault) {
+	user, err := us.Create(context.Background(), "userdel1@example.com", "User Del1")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	uc.deleteErr = errKVFault
+	if err := us.Delete(context.Background(), user.WebAuthnID()); !errors.Is(err, errKVFault) {
 		t.Fatalf("expected delete error, got %v", err)
 	}
 }
