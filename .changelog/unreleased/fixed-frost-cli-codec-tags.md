@@ -1,1 +1,0 @@
-- The FROST CLI integration suite builds xkmsctl with the codec tags (`codec_cbor codec_json codec_msgpack gms_pure_go`), so the FROST key store's JSON codec is compiled in.

@@ -1,1 +1,0 @@
-FIDO2: `DeriveHMACSecret` is on the `fido2.Handler` interface, so consumers of the interface (the go-trusted-platform initrd) get the raw 32-byte CTAP 2.1 §12.5 hmac-secret output that `fido2-assert -G -h` enrols LUKS slots with, not only the key `UnlockWithKey` derives from it (#1769).

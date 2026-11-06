@@ -1,1 +1,0 @@
-Azure Key Vault: `CreateKey` now creates the requested RSA size (2048, 3072 or 4096 bits) and EC curve (P-256, P-384 or P-521) instead of always creating RSA-2048 and P-256 keys. An unsupported size or curve is refused with `ErrInvalidKeySize` or `ErrInvalidCurve` before any key is created, and `Capabilities()` advertises exactly the sizes and curves the backend creates (#1757).
