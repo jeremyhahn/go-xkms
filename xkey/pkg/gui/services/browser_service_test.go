@@ -729,6 +729,10 @@ func TestBrowserService_SetTrustBundlePath(t *testing.T) {
 }
 
 func TestBrowserService_ApplyTrustBundle_SetsSSLCertFile(t *testing.T) {
+	// An SSL_CERT_FILE already in the environment (the devcontainer sets one)
+	// must be replaced by the bundle, not shadowed by a second entry.
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/certs/inherited.crt")
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "browser.json")
 
@@ -757,6 +761,30 @@ func TestBrowserService_ApplyTrustBundle_SetsSSLCertFile(t *testing.T) {
 	// The child sees exactly one SSL_CERT_FILE: the bundle's.
 	require.NotNil(t, cmd.Env, "command environment must be set")
 	assert.Equal(t, []string{"SSL_CERT_FILE=" + bundlePath}, envEntries(cmd.Env, "SSL_CERT_FILE"))
+}
+
+func TestBrowserService_ApplyTrustBundle_NoBundleKeepsInheritedSSLCertFile(t *testing.T) {
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/certs/inherited.crt")
+
+	dir := t.TempDir()
+	svc, err := NewBrowserService(filepath.Join(dir, "browser.json"), testLogger())
+	require.NoError(t, err)
+	require.NoError(t, svc.SetConfig(BrowserConfig{
+		DefaultBrowser:     BrowserSystem,
+		IncludeTrustBundle: true,
+	}))
+	// A configured bundle path that does not exist is the same as none.
+	svc.SetTrustBundlePath(filepath.Join(dir, "missing.pem"))
+
+	cmd := exec.CommandContext(context.Background(), "true")
+	svc.applyTrustBundle(cmd)
+
+	assert.Nil(t, cmd.Env, "the child inherits the parent environment untouched")
+	assert.Equal(t, []string{"SSL_CERT_FILE=/etc/ssl/certs/inherited.crt"}, envEntries(cmd.Environ(), "SSL_CERT_FILE"))
+}
+
+func TestWithEnv_EmptyEnv(t *testing.T) {
+	assert.Equal(t, []string{"SSL_CERT_FILE=/bundle"}, withEnv(nil, "SSL_CERT_FILE", "/bundle"))
 }
 
 func TestBrowserService_ApplyTrustBundle_NoBundlePath(t *testing.T) {
@@ -902,6 +930,7 @@ func TestApplyTrustBundle_Disabled(t *testing.T) {
 }
 
 func TestApplyTrustBundle_Enabled(t *testing.T) {
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "browser.json")
 	svc, err := NewBrowserService(configPath, testLogger())
