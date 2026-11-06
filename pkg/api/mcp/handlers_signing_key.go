@@ -18,6 +18,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // The attestation.signing_key.* handlers are the MCP server side of the
@@ -70,4 +71,36 @@ func (s *Server) handleSigningKeyDelete(ctx context.Context, req *JSONRPCRequest
 // handleSigningKeyResolve handles attestation.signing_key.resolve.
 func (s *Server) handleSigningKeyResolve(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	return signingKeyCall(s, ctx, req, "signing key resolve", s.xkmsService.ResolveSigningKey)
+}
+
+// handleSigningKeySignCoRIM handles attestation.signing_key.sign_corim: it
+// signs a repository's CoRIM with the key the repository resolves to,
+// draft-ietf-rats-corim-11 §4.2.
+func (s *Server) handleSigningKeySignCoRIM(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	return signingKeyCall(s, ctx, req, "signing key sign corim", s.xkmsService.SignCoRIM)
+}
+
+// handleSigningKeySignImage handles attestation.signing_key.sign_image: it
+// signs an image with the key ResolveSigningKey names for the image's
+// repository. Unlike the other signing-key handlers it decodes the params
+// itself, so the registry password is wiped even when decoding fails.
+func (s *Server) handleSigningKeySignImage(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	const op = "signing key sign image"
+	if s.xkmsService == nil {
+		return nil, mapSigningKeyError(xkms.ErrNotConfigured, op)
+	}
+	var params transport.SignImageRequest
+	defer func() {
+		if params.Registry != nil {
+			params.Registry.Password.Wipe()
+		}
+	}()
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
+	}
+	resp, err := s.xkmsService.SignImage(ctx, &params)
+	if err != nil {
+		return nil, mapSigningKeyError(err, op)
+	}
+	return resp, nil
 }

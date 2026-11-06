@@ -104,6 +104,21 @@ func WithJWTToken(token string) Option {
 	return pkgtransport.WithJWTToken(token)
 }
 
+// WithAllowInsecureTransport opts a gRPC or REST client out of the
+// mandatory-TLS guard for non-unix endpoints. Loopback tests and dev setups
+// only, never production.
+func WithAllowInsecureTransport(allow bool) Option {
+	return pkgtransport.WithAllowInsecureTransport(allow)
+}
+
+// EnvAllowInsecureTransport is the environment variable that sets the
+// AllowInsecureTransport opt-out.
+const EnvAllowInsecureTransport = pkgtransport.EnvAllowInsecureTransport
+
+// ErrInsecureTransport is returned when a gRPC or REST client would reach a
+// non-unix endpoint with TLS disabled and without the opt-out.
+var ErrInsecureTransport = pkgtransport.ErrInsecureTransport
+
 // ApplyOptions applies the given options to the config.
 func ApplyOptions(cfg *Config, opts ...Option) error {
 	return pkgtransport.ApplyOptions(cfg, opts...)

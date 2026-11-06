@@ -1024,6 +1024,19 @@ service KeystoreService {
     option (qrdb.v1.permission) = "attestation_signing_keys:get";
   }
 
+  // SignCoRIM signs a repository's CoRIM with the key ResolveSigningKey
+  // returns, as a draft-ietf-rats-corim-11 §4.2 signed CoRIM.
+  rpc SignCoRIM(SignCoRIMRequest) returns (SignedCoRIM) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:sign";
+  }
+
+  // SignImage signs an image with the key ResolveSigningKey returns for the
+  // image's repository and pushes the DSSE attestation to the registry as an
+  // OCI 1.1 referrer and to the image's cosign ".att" tag.
+  rpc SignImage(SignImageRequest) returns (SignedImage) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:sign";
+  }
+
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
@@ -4609,6 +4622,63 @@ message SigningKeyResolution {
   // default is true when no binding names the repository, so the key is
   // the tenant's release key.
   bool default = 4;
+}
+
+// SignCoRIMRequest is a repository's unsigned CoRIM and the corim-meta of
+// its signature, draft-ietf-rats-corim-11 §4.2.3.
+message SignCoRIMRequest {
+  string repository = 1;
+  // corim is the CBOR unsigned-corim-map, tagged #6.501 or not (§4.1).
+  bytes corim = 2;
+  string signer_name = 3;
+  string signer_uri = 4;
+  // not_before and not_after bound the signature validity (§7.3); an
+  // unset not_after omits it.
+  google.protobuf.Timestamp not_before = 5;
+  google.protobuf.Timestamp not_after = 6;
+}
+
+// SignedCoRIM is the signed CoRIM and the key that signed it.
+message SignedCoRIM {
+  SigningKeyResolution key = 1;
+  // corim is the COSE_Sign1 signed-corim (§4.2).
+  bytes corim = 2;
+}
+
+// SignImageRequest names the image to sign and the registry credentials to
+// push its attestation with; the credentials serve this call only.
+message SignImageRequest {
+  // reference is the image reference, name[:tag][@digest]; its repository
+  // selects the signing key.
+  string reference = 1;
+  // predicate_type is the in-toto predicate type; cosign's when empty.
+  string predicate_type = 2;
+  // predicate is the JSON predicate; empty only for cosign's type.
+  bytes predicate = 3;
+  ImageRegistryCredentials registry = 4;
+}
+
+// ImageRegistryCredentials are the registry's basic credentials.
+message ImageRegistryCredentials {
+  string username = 1;
+  bytes password = 2;
+}
+
+// SignedImage is the signed image's attestation and where it was pushed.
+message SignedImage {
+  SigningKeyResolution key = 1;
+  // digest is the signed manifest digest.
+  string digest = 2;
+  // envelope is the DSSE envelope JSON.
+  bytes envelope = 3;
+  // certificate is the PEM code-signing certificate the service CA issued.
+  bytes certificate = 4;
+  // referrer is the digest of the OCI 1.1 referrer manifest.
+  string referrer = 5;
+  // referrer_indexed reports whether the registry indexed the referrer.
+  bool referrer_indexed = 6;
+  // attestation_tag is the cosign ".att" tag the attestation was added to.
+  string attestation_tag = 7;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================

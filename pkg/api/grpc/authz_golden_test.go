@@ -184,6 +184,8 @@ var goldenRPCPermissions = map[string]string{
 	"ListSigningKeyBindings":   "attestation_signing_keys:list",
 	"DeleteSigningKeyBinding":  "attestation_signing_keys:bind",
 	"ResolveSigningKey":        "attestation_signing_keys:get",
+	"SignCoRIM":                "attestation_signing_keys:sign",
+	"SignImage":                "attestation_signing_keys:sign",
 	"PeerAttestationChallenge": "peer_attestation:challenge",
 	"SubmitPeerAttestation":    "peer_attestation:submit",
 	// A tenant's TPM mode and vTPM (system scope only; tenants:set_tpm_mode

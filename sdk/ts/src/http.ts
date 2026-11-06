@@ -18,7 +18,7 @@
  */
 
 import type { TokenProvider, XkmsClientConfig } from './config.js';
-import { XkmsNetworkError, parseErrorEnvelope } from './errors.js';
+import { XkmsInsecureTransportError, XkmsNetworkError, parseErrorEnvelope } from './errors.js';
 
 /** Query values; undefined / null / '' members are omitted from the URL. */
 export type QueryParams = Record<string, string | number | boolean | undefined | null>;
@@ -42,6 +42,13 @@ export interface RequestOptions {
   parse?: 'json' | 'text' | 'void';
   /** Non-2xx statuses that resolve instead of throwing (e.g. HEAD 404 existence probes). */
   okOn?: number[];
+  /**
+   * The body carries a credential that must not cross the network in the
+   * clear (ruling 152): a URL that is not https:// is refused before the
+   * request is sent, and a redirect fails the request rather than replay the
+   * body elsewhere. allowInsecureTransport lifts both.
+   */
+  secureChannel?: boolean;
 }
 
 /** A decoded response paired with the raw Response (for header access). */
@@ -79,10 +86,14 @@ export class HttpCore {
   readonly baseURL: string;
   private readonly token: TokenProvider | undefined;
   private readonly fetchImpl: typeof fetch;
+  private readonly allowInsecureTransport: boolean;
 
-  constructor(config: Pick<XkmsClientConfig, 'baseURL' | 'token' | 'fetch'>) {
+  constructor(
+    config: Pick<XkmsClientConfig, 'baseURL' | 'token' | 'fetch' | 'allowInsecureTransport'>,
+  ) {
     this.baseURL = config.baseURL;
     this.token = config.token;
+    this.allowInsecureTransport = config.allowInsecureTransport ?? false;
     // Bind to globalThis so browser fetch keeps its receiver.
     this.fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
   }
@@ -100,6 +111,10 @@ export class HttpCore {
     opts: RequestOptions = {},
   ): Promise<HttpResult<T>> {
     const url = buildURL(this.baseURL, path, opts.query);
+    const secure = opts.secureChannel === true && !this.allowInsecureTransport;
+    if (secure && !url.startsWith('https://')) {
+      throw new XkmsInsecureTransportError(url);
+    }
     const headers: Record<string, string> = { ...(opts.headers ?? {}) };
 
     const useAuth = opts.auth !== false;
@@ -117,6 +132,11 @@ export class HttpCore {
     }
     if (opts.credentials !== undefined) {
       init.credentials = opts.credentials;
+    }
+    if (secure) {
+      // fetch exposes no per-hop redirect check, so the call refuses every
+      // redirect: none can replay the credential onto plaintext.
+      init.redirect = 'error';
     }
 
     let response: Response;
