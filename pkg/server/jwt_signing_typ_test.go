@@ -58,7 +58,7 @@ func TestInitializeTokenIssuer_AccessTokenTypeReachesTheHeader(t *testing.T) {
 		wantAccessTyp string
 	}{
 		{"default", nil, "JWT"},
-		{"at+jwt", &config.SessionConfig{AccessTokenType: token.ATJWTType}, "at+jwt"},
+		{"at+jwt", &config.SessionConfig{AccessTokenType: token.ATJWTType, ClientID: "client-1"}, "at+jwt"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,6 +85,45 @@ func TestInitializeTokenIssuer_AccessTokenTypeReachesTheHeader(t *testing.T) {
 			assert.Equal(t, wantKid, refresh["kid"])
 		})
 	}
+}
+
+// TestInitializeTokenIssuer_ClientIDReachesTheAccessToken proves
+// auth.session.client_id becomes the client_id claim of at+jwt access
+// tokens (RFC 9068 §2.2).
+func TestInitializeTokenIssuer_ClientIDReachesTheAccessToken(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	s := newTokenIssuerServer(t, &signingKeyBackend{signer: key}, &config.Config{
+		Auth: config.AuthConfig{Session: &config.SessionConfig{
+			AccessTokenType: token.ATJWTType,
+			ClientID:        "client-1",
+		}},
+	})
+	require.NoError(t, s.initializeTokenIssuer())
+
+	pair, err := s.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "user-1"})
+	require.NoError(t, err)
+
+	claims := jwt.MapClaims{}
+	_, err = jwt.ParseWithClaims(pair.AccessToken, claims, func(*jwt.Token) (interface{}, error) {
+		return &key.PublicKey, nil
+	}, jwt.WithValidMethods([]string{"ES256"}))
+	require.NoError(t, err)
+	assert.Equal(t, "client-1", claims["client_id"])
+}
+
+// TestInitializeTokenIssuer_ATJWTWithoutClientIDFails proves an at+jwt
+// session without a client ID fails issuer construction rather than
+// minting tokens that lack the claim.
+func TestInitializeTokenIssuer_ATJWTWithoutClientIDFails(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	s := newTokenIssuerServer(t, &signingKeyBackend{signer: key}, &config.Config{
+		Auth: config.AuthConfig{Session: &config.SessionConfig{AccessTokenType: token.ATJWTType}},
+	})
+
+	var want *token.ATJWTClientIDRequiredError
+	require.ErrorAs(t, s.initializeTokenIssuer(), &want)
 }
 
 // verifiedHeader verifies tokenString against key and returns its header.
