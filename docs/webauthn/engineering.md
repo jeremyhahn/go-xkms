@@ -30,9 +30,21 @@ account that already holds a credential, and (public registration off) an
 unknown email, both with `ErrRegistrationRefused`. `BeginAddCredential` adds a
 passkey to the account a `SessionAccount` names; `SessionAccountFromIdentity`
 (`session_account.go`) builds one from an authenticated `auth.Identity` (base64url
-handle in `Subject`, `email` metadata, the inverse of `WebAuthnTokenAdapter`),
-and the service checks both name the same existing account
-(`ErrSessionAccountMismatch` otherwise). `BeginLoginForEmail` and
+handle in `Subject`, `email` metadata and `TenantID`, the inverse of
+`WebAuthnTokenAdapter`), and the service checks both name the same existing
+account (`ErrSessionAccountMismatch` otherwise).
+
+**Which sessions may add a passkey (Codex 9037).** Only a WebAuthn session:
+`SessionAccountFromIdentity` refuses an identity whose
+`auth.SubjectKindMetadataKey` is not `auth.SubjectKindUserHandle`. A username
+subject (mTLS, PIV, certificate login) is refused even when it decodes as
+base64url, since its owner chose it and could choose another account's
+handle. `BeginAddCredential` then refuses, before any user lookup, a session
+whose `TenantID` is not exactly the tenant the user store serves
+(`qrdbUserStore.TenantID`); an empty tenant matches nothing, and a store that
+declares no tenant refuses every session. The lookup runs on the store's
+`CallContext`, which may be the service principal, so a session from another
+tenant never reaches it (`TestWebAuthnBeginAddCredential_CertificateLoginCannotTakeOver`). `BeginLoginForEmail` and
 `BeginLoginForHandle` answer an unknown account, or one without credentials,
 with a decoy ceremony (`decoy.go`) instead of an error; `BeginLogin` keeps
 returning `ErrUserNotFound` / `ErrNoCredentials` for in-process callers such as
