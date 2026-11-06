@@ -228,3 +228,38 @@ func TestWebAuthnDeleteUser_MarkerDeleteFailureRetries(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, marked, "the account's enrolment credential marker must be deleted")
 }
+
+func TestWebAuthnDeleteUser_OtherTenantCannotFinishInterruptedDelete(t *testing.T) {
+	node := newNode(t, Option())
+	guarded, ok := node.Client().KV().(qrdbtransport.GuardedKVClient)
+	require.True(t, ok, "the node's KV client must be guarded")
+	account := newWebAuthnAccountOver(t, node, &failingMarkerDeleteKV{GuardedKVClient: guarded})
+	_, err := node.Services().Tenant.CreateTenant(context.Background(), "tenant-b", "Tenant B",
+		qrdbsdk.TenantIsolationPrefix)
+	require.NoError(t, err)
+	ctx := adminContext(t, node)
+	otherCtx := tenantAdminContext(t, node, "tenant-b")
+	// The deletion record key is the store's account deletion record key
+	// (webauthn enrolmentDeletionPrefix + tenant + "/" + qrdb user ID).
+	recordKey := "webauthn/account-deletion/" + qrdbsdk.SystemTenantID + "/" + strconv.FormatUint(account.userID, 10)
+	svcCtx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+
+	require.ErrorAs(t, account.svc.DeleteUser(ctx, account.handle), &markerDeleteFaultError{})
+	require.Error(t, account.svc.DeleteUser(otherCtx, account.handle),
+		"another tenant's administrator must not finish this tenant's delete")
+	marked, err := node.Client().KV().Exists(svcCtx, account.markerKey)
+	require.NoError(t, err)
+	require.True(t, marked, "the marker must survive another tenant's delete")
+	recorded, err := node.Client().KV().Exists(svcCtx, recordKey)
+	require.NoError(t, err)
+	require.True(t, recorded, "the deletion record must survive another tenant's delete")
+
+	require.NoError(t, account.svc.DeleteUser(ctx, account.handle), "the retry must finish the delete")
+	marked, err = node.Client().KV().Exists(svcCtx, account.markerKey)
+	require.NoError(t, err)
+	require.False(t, marked, "the retry must delete the marker")
+	recorded, err = node.Client().KV().Exists(svcCtx, recordKey)
+	require.NoError(t, err)
+	require.False(t, recorded, "the retry must drop the deletion record")
+}
