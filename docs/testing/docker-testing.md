@@ -394,6 +394,32 @@ The nightly workflow runs the full suite: `XKMS_COMPOSE_SERVER=1 make
 integration-test` (`.github/workflows/nightly.yml:239`). Per-PR CI does not
 run the Docker integration suites.
 
+### apt in the CI images
+
+The images CI builds install Debian packages from the public archive whenever
+a layer is rebuilt: the images under `build/docker/`, `Dockerfile.cli` (the
+image job, on every pull request), and the root `Dockerfile` and the backend
+test images under `test/integration/` (the full-tier integration job's
+`make integration-test`). An archive outage must not redden that build
+(go-xkms#342), so every stage that runs `apt-get` first copies the shared
+`build/docker/devcontainer/apt-retries.conf` to
+`/etc/apt/apt.conf.d/80-retries`. It retries each failed fetch ten times with
+exponential backoff capped at 60 s (about five minutes in all), and bounds each
+connect and stalled transfer at 30 s. Each apt layer also runs `apt-get update`
+and the install in one `RUN`, so a cached update layer is never reused stale.
+There is no mirror fallback: no build argument names a mirror, and none is
+hard-coded.
+
+`make test-buildgates` checks every `build/docker/**/Dockerfile*` and the
+CI-built files listed in `ciBuiltDockerfiles` (`internal/buildgates/apt_test.go`).
+It fails an apt layer that runs before its stage (or the stage it is built
+`FROM`) installs the shared file, sets `Acquire::` options inline, or splits
+the update from the install, and one that installs recommends in a Dockerfile
+that otherwise uses `--no-install-recommends`. It also fails the shared file if
+a retry or timeout setting is missing or disabled. A new image CI builds joins
+that list. The file is a
+`TOOLCHAIN_INPUTS` entry, so changing it rebuilds the toolchain image.
+
 ## Best Practices
 
 1. **Use make targets**: they namespace the Compose project and always clean up

@@ -3631,7 +3631,7 @@ gitea-host:
 DEVCONTAINER_DIR := build/docker/devcontainer
 DEVCONTAINER_COMPOSE := $(DEVCONTAINER_DIR)/compose.yaml
 TOOLCHAIN_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile $(DEVCONTAINER_DIR)/openssl-pkcs11.cnf \
-	$(TOOL_PINS) scripts/build-softhsm.sh \
+	$(DEVCONTAINER_DIR)/apt-retries.conf $(TOOL_PINS) scripts/build-softhsm.sh \
 	go.mod go.sum sdk/go/go.mod sdk/go/go.sum xkey/go.mod xkey/go.sum \
 	web/desktop/go.mod web/desktop/go.sum
 TOOLCHAIN_TAG = $(shell cat $(TOOLCHAIN_INPUTS) | sha256sum | cut -c1-16)
