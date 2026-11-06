@@ -4881,6 +4881,10 @@ message SSHPublicKeyResponse {
 message SSHSignRequest {
   SSHKeyRef key = 1;
   bytes digest = 2;
+  // algorithm is the SSH signature algorithm to sign with (RFC 8332 §3:
+  // ssh-rsa, rsa-sha2-256 or rsa-sha2-512 for an RSA key; the key's own
+  // type otherwise). Empty keeps the key's default.
+  string algorithm = 3;
 }
 
 message SSHSignResponse {
