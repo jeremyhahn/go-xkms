@@ -253,6 +253,13 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 		identity.TenantID = tenantID
 	}
 
+	// Extract the subject kind the issuing login declared, so a consumer can
+	// tell a WebAuthn handle subject from a username one. A token without the
+	// claim declares no kind, and the metadata key stays absent.
+	if kind, ok := claims[SubjectKindMetadataKey].(string); ok && kind != "" {
+		identity.Metadata[SubjectKindMetadataKey] = kind
+	}
+
 	// Extract the attestation level the PIV login recorded, so a handler or
 	// authorizer behind bearer auth can tell a login that proved a smartcard
 	// from one the deployment accepted without proof. A token minted by any
