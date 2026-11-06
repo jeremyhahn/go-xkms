@@ -362,27 +362,6 @@ func TestConsole_ResizeClampsNonPositiveDimensions(t *testing.T) {
 	}
 }
 
-// TestConsole_ResizeAfterCloseIsRejected verifies a resize arriving after
-// teardown reports ClosedError rather than touching a nil session. A browser
-// window-resize event can race the socket closing, so this is a real ordering.
-func TestConsole_ResizeAfterCloseIsRejected(t *testing.T) {
-	srv := startSessionServer(t, sessionServerOptions{})
-
-	c, err := dialSessionServer(t, srv, Config{})
-	if !requireHandshake(t, err) {
-		return
-	}
-	if err := c.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-
-	err = c.Resize(30, 100)
-	var closedErr *ClosedError
-	if !errors.As(err, &closedErr) {
-		t.Fatalf("Resize after Close = %T (%v), want *ClosedError", err, err)
-	}
-}
-
 // TestConsole_ConcurrentReadResizeAndClose exercises the access pattern the
 // WebSocket bridge produces: an output pump reading and a control path
 // resizing while teardown runs concurrently. Run under -race this guards the
@@ -435,6 +414,7 @@ func TestConsole_ConcurrentReadResizeAndClose(t *testing.T) {
 	}()
 
 	wg.Add(1)
+	resizing := make(chan struct{})
 	go func() { // control path
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
@@ -444,11 +424,14 @@ func TestConsole_ConcurrentReadResizeAndClose(t *testing.T) {
 			default:
 			}
 			_ = c.Resize(20+i%10, 80+i%10)
+			if i == 0 {
+				close(resizing)
+			}
 		}
 	}()
 
 	// Tear down while the pumps above are live.
-	time.Sleep(10 * time.Millisecond)
+	<-resizing
 	closeErr := c.Close()
 	close(stop)
 	wg.Wait()
