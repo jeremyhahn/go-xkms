@@ -314,3 +314,58 @@ func TestWebAuthnDeleteUser_OtherTenantCannotFinishInterruptedDelete(t *testing.
 	require.NoError(t, err)
 	require.False(t, recorded, "the retry must drop the deletion record")
 }
+
+// interleavedUsers runs interleave once, at the first DeleteUser, before the
+// account is removed: a second Delete that has passed its own GetUser and
+// written the shared deletion record runs to completion in between. Every
+// other call passes through.
+type interleavedUsers struct {
+	qrdbtransport.UserClient
+	interleave func()
+	ran        atomic.Bool
+}
+
+func (u *interleavedUsers) DeleteUser(ctx context.Context, id uint64) error {
+	if u.ran.CompareAndSwap(false, true) {
+		u.interleave()
+	}
+	return u.UserClient.DeleteUser(ctx, id)
+}
+
+// TestWebAuthnDeleteUser_RefusedConcurrentDeleteKeepsRecord proves a
+// refused Delete running beside an administrator's never erases the
+// deletion record both wrote (Codex 9035). The administrator's cleanup fails
+// after the account is gone, and the retry must still find the record and
+// finish.
+func TestWebAuthnDeleteUser_RefusedConcurrentDeleteKeepsRecord(t *testing.T) {
+	node := newNode(t, Option())
+	guarded, ok := node.Client().KV().(qrdbtransport.GuardedKVClient)
+	require.True(t, ok, "the node's KV client must be guarded")
+	users := &interleavedUsers{UserClient: node.Client().Users()}
+	account := newWebAuthnAccountOver(t, node, users, &failingMarkerDeleteKV{GuardedKVClient: guarded})
+	ctx := adminContext(t, node)
+	svcCtx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	recordKey := "webauthn/account-deletion/" + qrdbsdk.SystemTenantID + "/" + strconv.FormatUint(account.userID, 10)
+	users.interleave = func() {
+		var denied *qrdbsdk.PermissionDeniedError
+		require.ErrorAs(t, account.svc.DeleteUser(svcCtx, account.handle), &denied,
+			"a caller without users:delete must be refused")
+	}
+
+	require.ErrorAs(t, account.svc.DeleteUser(ctx, account.handle), &markerDeleteFaultError{})
+	recorded, err := node.Client().KV().Exists(svcCtx, recordKey)
+	require.NoError(t, err)
+	require.True(t, recorded, "a refused concurrent delete must keep the administrator's deletion record")
+
+	require.NoError(t, account.svc.DeleteUser(ctx, account.handle), "the retry must finish the delete")
+	remaining, err := account.creds.GetByUserID(context.Background(), account.handle)
+	require.NoError(t, err)
+	require.Empty(t, remaining, "the account's passkeys must be deleted")
+	marked, err := node.Client().KV().Exists(svcCtx, account.markerKey)
+	require.NoError(t, err)
+	require.False(t, marked, "the account's enrolment credential marker must be deleted")
+	recorded, err = node.Client().KV().Exists(svcCtx, recordKey)
+	require.NoError(t, err)
+	require.False(t, recorded, "the finished delete must drop its deletion record")
+}
