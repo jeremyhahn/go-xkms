@@ -42,6 +42,10 @@ func TestServer_Reload_LogsWhenListenersRunning(t *testing.T) {
 	dataDir := t.TempDir()
 	node := newSealedTestNode(t, dataDir, "correct-horse-battery-staple", "correct-horse-battery-staple")
 	defer func() { _ = node.Close() }()
+	// Restore the server's own node before Shutdown (defers run in reverse)
+	// so it is stopped rather than left running for the package's tests.
+	ownNode := server.qrdbNode
+	defer func() { server.qrdbNode = ownNode }()
 	server.qrdbNode = node
 
 	var logBuf bytes.Buffer
