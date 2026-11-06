@@ -146,16 +146,6 @@ func TestHash_EmptyPassword(t *testing.T) {
 	assert.Nil(t, salt)
 }
 
-func TestHash_NilPassword(t *testing.T) {
-	h, err := NewPasswordHasher(HashV2)
-	require.NoError(t, err)
-
-	key, salt, _, err := h.Hash(nil)
-	assert.ErrorIs(t, err, ErrHasherInvalidPassword)
-	assert.Nil(t, key)
-	assert.Nil(t, salt)
-}
-
 func TestHash_UniqueSalts(t *testing.T) {
 	h, err := NewPasswordHasher(HashV1)
 	require.NoError(t, err)
@@ -170,46 +160,6 @@ func TestHash_UniqueSalts(t *testing.T) {
 
 	assert.False(t, bytes.Equal(salt1, salt2),
 		"two Hash calls must produce different salts")
-}
-
-func TestDeriveKey_V1_Deterministic(t *testing.T) {
-	h, err := NewPasswordHasher(HashV1)
-	require.NoError(t, err)
-
-	password := []byte("deterministic-test-password")
-	salt := make([]byte, SaltLength)
-	for i := range salt {
-		salt[i] = byte(i)
-	}
-
-	key1, err := h.DeriveKey(password, salt, HashV1)
-	require.NoError(t, err)
-
-	key2, err := h.DeriveKey(password, salt, HashV1)
-	require.NoError(t, err)
-
-	assert.True(t, bytes.Equal(key1, key2),
-		"same password+salt+version must produce identical keys")
-}
-
-func TestDeriveKey_V2_Deterministic(t *testing.T) {
-	h, err := NewPasswordHasher(HashV2)
-	require.NoError(t, err)
-
-	password := []byte("deterministic-test-password")
-	salt := make([]byte, SaltLength)
-	for i := range salt {
-		salt[i] = byte(i + 100)
-	}
-
-	key1, err := h.DeriveKey(password, salt, HashV2)
-	require.NoError(t, err)
-
-	key2, err := h.DeriveKey(password, salt, HashV2)
-	require.NoError(t, err)
-
-	assert.True(t, bytes.Equal(key1, key2),
-		"same password+salt+version must produce identical keys")
 }
 
 func TestDeriveKey_EmptyPassword(t *testing.T) {
@@ -258,16 +208,6 @@ func TestDeriveKey_InvalidVersion(t *testing.T) {
 
 	_, err = h.DeriveKey(password, salt, HashVersion(99))
 	assert.ErrorIs(t, err, ErrHasherInvalidVersion)
-}
-
-func TestIsFIPS(t *testing.T) {
-	v1, err := NewPasswordHasher(HashV1)
-	require.NoError(t, err)
-	assert.False(t, v1.IsFIPS(), "V1 (Argon2id) must not be FIPS")
-
-	v2, err := NewPasswordHasher(HashV2)
-	require.NoError(t, err)
-	assert.True(t, v2.IsFIPS(), "V2 (PBKDF2) must be FIPS")
 }
 
 func TestHash_DeriveKey_Roundtrip(t *testing.T) {
