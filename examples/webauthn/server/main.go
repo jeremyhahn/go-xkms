@@ -108,11 +108,7 @@ func main() {
 			log.Printf("Failed to remove qrdb data directory: %v", err)
 		}
 	}()
-	ds, err := datastore.New(node.Client(), config.DatastoreConfig{})
-	if err != nil {
-		log.Fatalf("Failed to open datastore: %v", err)
-	}
-	users, credentials, err := newStores(node, ds)
+	users, credentials, err := newStores(node)
 	if err != nil {
 		log.Fatalf("Failed to build WebAuthn stores: %v", err)
 	}
@@ -317,8 +313,12 @@ func startQRDBNode(ctx context.Context) (*qrdbnode.Node, string, error) {
 
 // newStores builds the WebAuthn user and credential stores on the node's
 // system tenant: users are qrdb user records and credentials are DAO
-// entities on the datastore.
-func newStores(node *qrdbnode.Node, ds *datastore.Datastore) (webauthn.UserStore, webauthn.CredentialStore, error) {
+// entities on the node's datastore.
+func newStores(node *qrdbnode.Node) (webauthn.UserStore, webauthn.CredentialStore, error) {
+	ds, err := datastore.New(node.Client(), config.DatastoreConfig{})
+	if err != nil {
+		return nil, nil, err
+	}
 	return webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
 		Users:      node.Client().Users(),
 		DAOFactory: ds.DAOFactory(),

@@ -4,9 +4,6 @@ import (
 	"context"
 	"os"
 	"testing"
-
-	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 )
 
 // TestNewStores builds the example's WebAuthn stores on the same in-memory
@@ -27,12 +24,8 @@ func TestNewStores(t *testing.T) {
 			t.Errorf("remove data dir: %v", err)
 		}
 	})
-	ds, err := datastore.New(node.Client(), config.DatastoreConfig{})
-	if err != nil {
-		t.Fatalf("datastore.New: %v", err)
-	}
 
-	users, credentials, err := newStores(node, ds)
+	users, credentials, err := newStores(node)
 	if err != nil {
 		t.Fatalf("newStores: %v", err)
 	}
