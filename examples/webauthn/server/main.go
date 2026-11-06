@@ -112,11 +112,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open datastore: %v", err)
 	}
-	users, credentials, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      node.Client().Users(),
-		DAOFactory: ds.DAOFactory(),
-		TenantID:   "system",
-	})
+	users, credentials, err := newStores(node, ds)
 	if err != nil {
 		log.Fatalf("Failed to build WebAuthn stores: %v", err)
 	}
@@ -317,6 +313,17 @@ func startQRDBNode(ctx context.Context) (*qrdbnode.Node, string, error) {
 		return nil, "", err
 	}
 	return node, dataDir, nil
+}
+
+// newStores builds the WebAuthn user and credential stores on the node's
+// system tenant: users are qrdb user records and credentials are DAO
+// entities on the datastore.
+func newStores(node *qrdbnode.Node, ds *datastore.Datastore) (webauthn.UserStore, webauthn.CredentialStore, error) {
+	return webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
+		Users:      node.Client().Users(),
+		DAOFactory: ds.DAOFactory(),
+		TenantID:   "system",
+	})
 }
 
 func getEnv(key, defaultValue string) string {
