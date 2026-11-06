@@ -16,10 +16,13 @@ package serviceprincipal
 import (
 	"context"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -40,12 +43,19 @@ type webAuthnAccount struct {
 // bound to the service principal, and seeds one account through them.
 func newWebAuthnAccount(t *testing.T, node *qrdbnode.Node) webAuthnAccount {
 	t.Helper()
+	return newWebAuthnAccountOver(t, node, node.Client().KV())
+}
+
+// newWebAuthnAccountOver is newWebAuthnAccount with the store's
+// bookkeeping on storeKV.
+func newWebAuthnAccountOver(t *testing.T, node *qrdbnode.Node, storeKV qrdbtransport.KVClient) webAuthnAccount {
+	t.Helper()
 	kv := qrdbsdk.NewMemoryKVStore()
 	users, creds, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
 		Users:       node.Client().Users(),
 		DAOFactory:  qrdbsdk.NewDAOFactory(func(uint64) qrdbsdk.KVStore { return kv }),
 		TenantID:    qrdbsdk.SystemTenantID,
-		KV:          node.Client().KV(),
+		KV:          storeKV,
 		CallContext: node.ServiceContext,
 	})
 	require.NoError(t, err)
@@ -88,15 +98,21 @@ func newWebAuthnAccount(t *testing.T, node *qrdbnode.Node) webAuthnAccount {
 // the user delete and read, and the marker's KV delete.
 func adminContext(t *testing.T, node *qrdbnode.Node) context.Context {
 	t.Helper()
-	ctx := qrdbsdk.ContextWithTenant(context.Background(), qrdbsdk.SystemTenantID)
+	return tenantAdminContext(t, node, qrdbsdk.SystemTenantID)
+}
+
+// tenantAdminContext is adminContext for an administrator of tenant.
+func tenantAdminContext(t *testing.T, node *qrdbnode.Node, tenant string) context.Context {
+	t.Helper()
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), tenant)
 	role, err := node.Services().Role.CreateRole(ctx, &qrdbsdk.CreateRoleRequest{
 		Name:        "webauthn-account-admin",
-		TenantID:    qrdbsdk.SystemTenantID,
+		TenantID:    tenant,
 		Permissions: []qrdbsdk.Permission{"users:delete", "users:read", "kv:delete"},
 	})
 	require.NoError(t, err)
-	admin := &qrdbsdk.Identity{Subject: "admin", TenantID: qrdbsdk.SystemTenantID, Roles: []string{role.ID}}
-	return qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(context.Background(), admin), qrdbsdk.SystemTenantID)
+	admin := &qrdbsdk.Identity{Subject: "admin", TenantID: tenant, Roles: []string{role.ID}}
+	return qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(context.Background(), admin), tenant)
 }
 
 // TestWebAuthnDeleteUser_AdministratorDeletesAccount proves an
@@ -141,4 +157,74 @@ func TestWebAuthnDeleteUser_ServicePrincipalIsRefused(t *testing.T) {
 	remaining, err := account.creds.GetByUserID(context.Background(), account.handle)
 	require.NoError(t, err)
 	require.Len(t, remaining, 1, "a refused delete must leave the account's passkeys")
+}
+
+// TestWebAuthnDeleteUser_OtherTenantAdministratorIsRefused proves an
+// administrator of another tenant, to whom the account is invisible, removes
+// nothing: the account, its passkey and its marker all survive.
+func TestWebAuthnDeleteUser_OtherTenantAdministratorIsRefused(t *testing.T) {
+	node := newNode(t, Option())
+	account := newWebAuthnAccount(t, node)
+	_, err := node.Services().Tenant.CreateTenant(context.Background(), "tenant-b", "Tenant B",
+		qrdbsdk.TenantIsolationPrefix)
+	require.NoError(t, err)
+	ctx := tenantAdminContext(t, node, "tenant-b")
+
+	err = account.svc.DeleteUser(ctx, account.handle)
+	require.ErrorIs(t, err, webauthn.ErrUserNotFound)
+
+	svcCtx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	_, err = node.Client().Users().GetUser(svcCtx, account.userID)
+	require.NoError(t, err, "the account must survive another tenant's delete")
+	remaining, err := account.creds.GetByUserID(context.Background(), account.handle)
+	require.NoError(t, err)
+	require.Len(t, remaining, 1, "the account's passkey must survive another tenant's delete")
+	marked, err := node.Client().KV().Exists(svcCtx, account.markerKey)
+	require.NoError(t, err)
+	require.True(t, marked, "the account's marker must survive another tenant's delete")
+}
+
+// markerDeleteFaultError is the fault failingMarkerDeleteKV injects.
+type markerDeleteFaultError struct{}
+
+func (markerDeleteFaultError) Error() string { return "test: marker delete fault" }
+
+// failingMarkerDeleteKV fails the first Delete of an enrolment credential
+// marker and passes every other call to the node's KV client.
+type failingMarkerDeleteKV struct {
+	qrdbtransport.GuardedKVClient
+	failed atomic.Bool
+}
+
+func (k *failingMarkerDeleteKV) Delete(ctx context.Context, key string, opts ...qrdbtransport.WriteOption) error {
+	if strings.HasPrefix(key, "webauthn/enrolment-credential/") && k.failed.CompareAndSwap(false, true) {
+		return markerDeleteFaultError{}
+	}
+	return k.GuardedKVClient.Delete(ctx, key, opts...)
+}
+
+// TestWebAuthnDeleteUser_MarkerDeleteFailureRetries proves a delete whose
+// marker removal fails is finished by a retry under the same administrator
+// grant (users:delete, users:read, kv:delete).
+func TestWebAuthnDeleteUser_MarkerDeleteFailureRetries(t *testing.T) {
+	node := newNode(t, Option())
+	guarded, ok := node.Client().KV().(qrdbtransport.GuardedKVClient)
+	require.True(t, ok, "the node's KV client must be guarded")
+	account := newWebAuthnAccountOver(t, node, &failingMarkerDeleteKV{GuardedKVClient: guarded})
+	ctx := adminContext(t, node)
+
+	require.ErrorAs(t, account.svc.DeleteUser(ctx, account.handle), &markerDeleteFaultError{})
+	require.NoError(t, account.svc.DeleteUser(ctx, account.handle), "the retry must finish the delete")
+
+	svcCtx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	_, err = node.Client().Users().GetUser(svcCtx, account.userID)
+	require.Error(t, err, "the deleted account must not be readable")
+	remaining, err := account.creds.GetByUserID(context.Background(), account.handle)
+	require.NoError(t, err)
+	require.Empty(t, remaining, "the account's passkeys must be deleted")
+	marked, err := node.Client().KV().Exists(svcCtx, account.markerKey)
+	require.NoError(t, err)
+	require.False(t, marked, "the account's enrolment credential marker must be deleted")
 }
