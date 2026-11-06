@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -178,10 +179,17 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 		return nil, "", ErrNotConfigured
 	}
 
-	if _, err := s.users.GetByEmail(ctx, email); err == nil {
+	if existing, err := s.users.GetByEmail(ctx, email); err == nil {
 		// The account already exists: whatever its credential count, this
-		// unauthenticated entry point never enrolls its first credential.
-		return nil, "", ErrRegistrationRefused
+		// unauthenticated entry point never enrolls its first credential,
+		// unless the record is a public enrolment that never saved one.
+		recoverable, err := s.enrolmentRecoverable(ctx, existing)
+		if err != nil {
+			return nil, "", err
+		}
+		if !recoverable {
+			return nil, "", ErrRegistrationRefused
+		}
 	} else if !IsUserNotFound(err) {
 		return nil, "", WrapError("get user by email", err)
 	}
@@ -311,9 +319,11 @@ func (s *Service) runBeginRegistration(ctx context.Context, user User, existingC
 		}
 	}
 
-	options, session, err := s.webauthn.BeginRegistration(user,
-		webauthn.WithExclusions(excludeList),
-	)
+	opts := []webauthn.RegistrationOption{webauthn.WithExclusions(excludeList)}
+	if claimant, ok := user.(enrolmentClaimant); ok {
+		opts = append(opts, withEnrolmentChallenge(claimant.EnrolmentClaim()))
+	}
+	options, session, err := s.webauthn.BeginRegistration(user, opts...)
 	if err != nil {
 		return nil, "", WrapError("begin registration", err)
 	}
@@ -433,10 +443,24 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 		return nil, verificationError("create credential", err)
 	}
 
+	var enrolment enrolmentClaimConsumer
+	token, enrolling := enrolmentClaimToken(session)
+	if enrolling {
+		if enrolment, err = s.consumeEnrolment(ctx, user, token); err != nil {
+			return nil, err
+		}
+	}
+
 	// Convert and store credential
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
-	if err := s.creds.Save(ctx, cred); err != nil {
-		return nil, WrapError("save credential", err)
+	saveErr := s.creds.Save(ctx, cred)
+	if enrolling {
+		if err := enrolment.settleEnrolmentClaim(ctx, user, token, outcomeOfCredentialSave(saveErr)); err != nil {
+			return nil, errors.Join(saveErr, err)
+		}
+	}
+	if saveErr != nil {
+		return nil, WrapError("save credential", saveErr)
 	}
 
 	// Add credential to user
@@ -446,6 +470,63 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 	}
 
 	return user, nil
+}
+
+// enrolmentChallengePrefix marks the challenge of a session a public
+// enrolment began under a claim; the claim's token follows it. The session
+// is server-side, so a client cannot forge the marker.
+const enrolmentChallengePrefix = "xkms-enrolment-claim:"
+
+// withEnrolmentChallenge sets the registration challenge to the enrolment
+// marker and the claim's token, so the session carries the claim to finish.
+// The token is crypto/rand, so the challenge stays unpredictable.
+func withEnrolmentChallenge(token string) webauthn.RegistrationOption {
+	return func(cco *protocol.PublicKeyCredentialCreationOptions) error {
+		cco.Challenge = protocol.URLEncodedBase64(enrolmentChallengePrefix + token)
+		return nil
+	}
+}
+
+// enrolmentClaimToken returns the claim token a public-enrolment session
+// carries in its challenge.
+func enrolmentClaimToken(session *webauthn.SessionData) (string, bool) {
+	challenge, err := base64.RawURLEncoding.DecodeString(session.Challenge)
+	if err != nil {
+		return "", false
+	}
+	return strings.CutPrefix(string(challenge), enrolmentChallengePrefix)
+}
+
+// enrolmentRecoverable reports whether user is a public enrolment whose
+// claim was released or expired before a credential was saved.
+func (s *Service) enrolmentRecoverable(ctx context.Context, user User) (bool, error) {
+	consumer, ok := s.users.(enrolmentClaimConsumer)
+	if !ok {
+		return false, nil
+	}
+	return consumer.enrolmentRecoverable(ctx, user)
+}
+
+// consumeEnrolment consumes a public enrolment's claim before its credential
+// is added, and returns the store that settles it once the save has run. The
+// unauthenticated path never adds a credential to a user that already holds
+// one, whatever the claim says.
+func (s *Service) consumeEnrolment(ctx context.Context, user User, token string) (enrolmentClaimConsumer, error) {
+	existing, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		return nil, WrapError("get credentials", err)
+	}
+	if len(existing) > 0 {
+		return nil, ErrRegistrationRefused
+	}
+	consumer, ok := s.users.(enrolmentClaimConsumer)
+	if !ok {
+		return nil, ErrRegistrationRefused
+	}
+	if err := consumer.consumeEnrolmentClaim(ctx, user, token); err != nil {
+		return nil, err
+	}
+	return consumer, nil
 }
 
 // BeginLogin starts the WebAuthn authentication ceremony.
@@ -803,19 +884,20 @@ func (s *Service) DeleteCredential(ctx context.Context, credID []byte) error {
 	return s.creds.Delete(ctx, credID)
 }
 
-// DeleteUser removes a user and all their credentials.
+// DeleteUser removes a user and all their credentials, on the caller's
+// context. The user goes first: a refused or failed user delete returns
+// with the credentials untouched, so the account can still sign in.
 func (s *Service) DeleteUser(ctx context.Context, userID []byte) error {
 	if !s.configured {
 		return ErrNotConfigured
 	}
-
-	// Delete all credentials first
+	if err := s.users.Delete(ctx, userID); err != nil {
+		return err
+	}
 	if err := s.creds.DeleteByUserID(ctx, userID); err != nil {
 		return WrapError("delete user credentials", err)
 	}
-
-	// Delete user
-	return s.users.Delete(ctx, userID)
+	return nil
 }
 
 // Config returns the service configuration.

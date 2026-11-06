@@ -361,8 +361,12 @@ func TestService_DeleteUser_DeleteCredentialsError(t *testing.T) {
 	users, creds := newTestStores(t)
 	cs := &faultyCredStore{inner: creds, deleteByUserErr: errBoom}
 	svc := newServiceWith(t, users, NewMemorySessionStore(), cs)
+	user, err := users.Create(context.Background(), "alice@example.com", "Alice")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
 
-	err := svc.DeleteUser(context.Background(), []byte("1"))
+	err = svc.DeleteUser(context.Background(), user.WebAuthnID())
 	if !errors.Is(err, errBoom) {
 		t.Fatalf("expected delete-credentials error, got %v", err)
 	}
