@@ -365,15 +365,29 @@ the winner renames the record and gets a session.
     never open. The administrator clears it by deleting the account
     (`Delete`, which also deletes the marker); the email then enrols afresh.
 - **Account delete** (`Service.DeleteUser`, `service.go:889`; `Delete`,
-  `qrdb_userstore.go:669`). Both run on the caller's context, never
-  `CallContext`'s: the service principal holds no `users:delete`, so the
-  administrator's own grant authorizes the delete. The account goes first,
-  then its credentials, then its marker. A refused or failed account delete
-  returns with the credentials untouched. The cleanup is resumable: when the
-  account is already gone, `Delete` still removes credentials and marker left
-  by an earlier delete whose cleanup failed, and returns nil; with nothing
-  left (`hasDeleteResidue`, `qrdb_userstore.go:705`) it returns
-  `ErrUserNotFound`.
+  `qrdb_userstore.go:676`). The caller's own grant authorizes it: the lookup,
+  the account delete and the cleanup run on the caller's context, never
+  `CallContext`'s, and need only `users:read`, `users:delete` and
+  `kv:delete`. The service principal holds no `users:delete`.
+  - **Deletion record.** `webauthn/account-deletion/<tenantID>/<userID>`
+    (`enrolmentDeletionPrefix`, `qrdb_userstore.go:948`; `deletionKey`,
+    `qrdb_userstore.go:548`) is the evidence that this tenant's delete of the
+    account was authorized. It is written, read and dropped on `CallContext`'s
+    context pinned to the store's tenant, never the caller's.
+  - **Fresh delete.** Only an account the caller can read in its tenant is
+    deleted afresh. `Delete` writes the record, then deletes the account. A
+    refused delete drops the record and returns the refusal, with the
+    credentials untouched. Then it removes the credentials, then the marker
+    (`finishDelete`, `qrdb_userstore.go:737`), then the record.
+  - **Resumed delete** (`resumeDelete`, `qrdb_userstore.go:716`). An account
+    the caller cannot see is cleaned only when this tenant's record exists
+    and the account is no longer live in the store's tenant. A retry then
+    finishes a cleanup that failed, including a failed marker delete, under
+    the same grant, and returns nil. Otherwise it is `ErrUserNotFound` with
+    nothing removed. So another tenant's administrator, to whom qrdb answers
+    not-found, never deletes this tenant's passkeys. The liveness check also
+    covers a delete still in flight: until its account delete lands, the
+    account is live and no other caller resumes it.
 - **Release** (`releaseClaim`, `qrdb_userstore.go:340`). `CompareAndSwap`
   replaces the claim this store still holds with an expired one; release
   never deletes. It runs when a rename, materialization or credential save
