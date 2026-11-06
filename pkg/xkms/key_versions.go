@@ -249,6 +249,15 @@ func (s *XKMSService) resolveKeyOf(ctx context.Context, b Backend, backendName, 
 			return nil, err
 		}
 		k.record, k.stored = rec, found
+		// A rotation creates its backend key before it records the version
+		// (rotateKey), so a record naming a version the listing lacks was
+		// written after the listing was taken: listing again finds the key.
+		if _, listed := present[rec.Current]; !listed {
+			if keys, err = b.ListKeys(ctx); err != nil {
+				return nil, err
+			}
+			_, k.present = versionsIn(keys, keyID, &tenant)
+		}
 	}
 	// A rotation creates the new version's backend key before it records the
 	// version (see rotateKey), so a record loaded after the listing can name
