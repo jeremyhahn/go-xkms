@@ -19,8 +19,6 @@ import (
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-
-	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // boundKey marks a context the store's CallContext derived, standing in
@@ -97,7 +95,6 @@ func newBoundUserStoreOn(t *testing.T, users *boundUserClient, bind func(context
 	us, _, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
 		Users:       users,
 		DAOFactory:  newTestDAOFactory(),
-		KV:          testutil.NewQRDBFakeTransport(),
 		TenantID:    "system",
 		CallContext: bind,
 	})
@@ -130,10 +127,8 @@ func TestQRDBUserStore_CallContextBindsEveryUserCall(t *testing.T) {
 	if err := us.Save(ctx, user); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	// Delete is an administrator's act: it runs on the caller's context,
-	// so the unbound caller here is refused rather than bound.
-	if err := us.Delete(ctx, user.WebAuthnID()); !errors.Is(err, errUnboundCall) {
-		t.Fatalf("Delete on an unbound caller: want the unauthenticated refusal, got %v", err)
+	if err := us.Delete(ctx, user.WebAuthnID()); err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
 }
 
@@ -153,8 +148,7 @@ func TestQRDBUserStore_NoCallContextIsRefused(t *testing.T) {
 }
 
 // TestQRDBUserStore_CallContextErrorIsTyped checks a binder failure stops
-// every bound call before the user client and surfaces as
-// QRDBCallContextError. Delete binds nothing, so it is not among them.
+// every call before the user client and surfaces as QRDBCallContextError.
 func TestQRDBUserStore_CallContextErrorIsTyped(t *testing.T) {
 	users := &boundUserClient{fakeUserClient: newFakeUserClient()}
 	ctx := context.Background()
@@ -180,7 +174,8 @@ func TestQRDBUserStore_CallContextErrorIsTyped(t *testing.T) {
 			_, err := us.Create(ctx, "new@example.com", "New")
 			return err
 		},
-		"Save": func() error { return us.Save(ctx, user) },
+		"Save":   func() error { return us.Save(ctx, user) },
+		"Delete": func() error { return us.Delete(ctx, id) },
 	}
 	for name, call := range calls {
 		err := call()
@@ -208,7 +203,6 @@ func TestPublicRegistrationDisabled_BoundStoreRefusesUnknownUser(t *testing.T) {
 	users, creds, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
 		Users:       &boundUserClient{fakeUserClient: newFakeUserClient()},
 		DAOFactory:  newTestDAOFactory(),
-		KV:          testutil.NewQRDBFakeTransport(),
 		TenantID:    "system",
 		CallContext: bindForTest,
 	})

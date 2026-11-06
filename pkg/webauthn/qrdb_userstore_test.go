@@ -16,16 +16,12 @@ package webauthn
 import (
 	"context"
 	"errors"
-	"slices"
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-
-	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // errFakeUserNotFound is what the fake user client answers for a missing
@@ -96,15 +92,7 @@ func (f *fakeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 	if email != "" {
 		f.byEmail[ek] = u
 	}
-	return copyUser(u), nil
-}
-
-// copyUser returns a copy of a stored record, as qrdb's transport decodes a
-// fresh User per call; callers never share the fake's state.
-func copyUser(u *qrdbtransport.User) *qrdbtransport.User {
-	c := *u
-	c.AuthMethods = slices.Clone(u.AuthMethods)
-	return &c
+	return u, nil
 }
 
 func (f *fakeUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
@@ -114,7 +102,7 @@ func (f *fakeUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return copyUser(u), nil
+	return u, nil
 }
 
 func (f *fakeUserClient) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error) {
@@ -124,7 +112,7 @@ func (f *fakeUserClient) GetUserByUsername(ctx context.Context, tenantID, userna
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return copyUser(u), nil
+	return u, nil
 }
 
 func (f *fakeUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
@@ -137,7 +125,7 @@ func (f *fakeUserClient) GetUserByEmail(ctx context.Context, tenantID, email str
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return copyUser(u), nil
+	return u, nil
 }
 
 // setStanding rewrites the record's lifecycle and auth-method policy, the way
@@ -195,7 +183,7 @@ func (f *fakeUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.Upda
 		u.Email = newEmail
 		f.byEmail[nk] = u
 	}
-	return copyUser(u), nil
+	return u, nil
 }
 
 func (f *fakeUserClient) DeleteUser(ctx context.Context, id uint64) error {
@@ -240,7 +228,7 @@ func (f *fakeUserClient) RemoveCertBinding(ctx context.Context, userID uint64, t
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return copyUser(u), nil
+	return u, nil
 }
 
 func (f *fakeUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
@@ -250,7 +238,7 @@ func (f *fakeUserClient) AddCertBinding(ctx context.Context, userID uint64, thum
 	if !ok {
 		return nil, errFakeUserNotFound
 	}
-	return copyUser(u), nil
+	return u, nil
 }
 
 // ----- adapter tests -----
@@ -280,7 +268,7 @@ func newTestAdapterWith(t testing.TB, factory *qrdbsdk.DAOFactory) (UserStore, C
 	t.Helper()
 	u := newFakeUserClient()
 	us, cs, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
-		Users: u, DAOFactory: factory, TenantID: "system", KV: testutil.NewQRDBFakeTransport(),
+		Users: u, DAOFactory: factory, TenantID: "system",
 	})
 	if err != nil {
 		t.Fatalf("adapter: %v", err)
@@ -289,12 +277,10 @@ func newTestAdapterWith(t testing.TB, factory *qrdbsdk.DAOFactory) (UserStore, C
 }
 
 func TestQRDBAdapter_NewMissingFields(t *testing.T) {
-	kv := testutil.NewQRDBFakeTransport()
 	cases := []QRDBUserStoreOptions{
-		{DAOFactory: newTestDAOFactory(), TenantID: "system", KV: kv},
-		{Users: newFakeUserClient(), TenantID: "system", KV: kv},
-		{Users: newFakeUserClient(), DAOFactory: newTestDAOFactory(), KV: kv},
-		{Users: newFakeUserClient(), DAOFactory: newTestDAOFactory(), TenantID: "system"},
+		{DAOFactory: newTestDAOFactory(), TenantID: "system"},
+		{Users: newFakeUserClient(), TenantID: "system"},
+		{Users: newFakeUserClient(), DAOFactory: newTestDAOFactory()},
 	}
 	for i, c := range cases {
 		_, _, err := NewQRDBUserStoreAdapter(c)
@@ -305,498 +291,6 @@ func TestQRDBAdapter_NewMissingFields(t *testing.T) {
 		if !errors.As(err, &qae) {
 			t.Fatalf("case %d: expected *QRDBAdapterConfigError, got %T (%v)", i, err, err)
 		}
-	}
-}
-
-// plainKVClient carries only the KVClient verbs: embedding the interface hides the
-// fake's guarded verbs, as a transport without conditional writes would.
-type plainKVClient struct{ qrdbtransport.KVClient }
-
-func TestQRDBAdapter_NewRejectsKVWithoutGuardedVerbs(t *testing.T) {
-	_, _, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
-		Users: newFakeUserClient(), DAOFactory: newTestDAOFactory(), TenantID: "system",
-		KV: plainKVClient{testutil.NewQRDBFakeTransport()},
-	})
-	var unsupported *QRDBGuardedKVUnsupportedError
-	if !errors.As(err, &unsupported) {
-		t.Fatalf("expected *QRDBGuardedKVUnsupportedError, got %T (%v)", err, err)
-	}
-}
-
-// raceCreate runs n Creates of one email from a common start and returns the
-// users the winners got and the errors the losers got.
-func raceCreate(t *testing.T, us UserStore, email string, n int) ([]User, []error) {
-	t.Helper()
-	var (
-		wg    sync.WaitGroup
-		mu    sync.Mutex
-		start = make(chan struct{})
-		won   []User
-		lost  []error
-	)
-	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			u, err := us.Create(context.Background(), email, "Racer")
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				lost = append(lost, err)
-				return
-			}
-			won = append(won, u)
-		}()
-	}
-	close(start)
-	wg.Wait()
-	return won, lost
-}
-
-// requireOneEnrolment asserts exactly one caller won the enrolment, holding a
-// claim, and every other caller was told an enrolment is in progress.
-func requireOneEnrolment(t *testing.T, won []User, lost []error) string {
-	t.Helper()
-	if len(won) != 1 {
-		t.Fatalf("expected exactly one enrolment, got %d (losers: %v)", len(won), lost)
-	}
-	claimant, ok := won[0].(enrolmentClaimant)
-	if !ok || claimant.EnrolmentClaim() == "" {
-		t.Fatalf("the winner carries no enrolment claim: %T", won[0])
-	}
-	for _, err := range lost {
-		var inProgress *EnrolmentInProgressError
-		if !errors.As(err, &inProgress) {
-			t.Fatalf("loser: expected *EnrolmentInProgressError, got %T (%v)", err, err)
-		}
-	}
-	return claimant.EnrolmentClaim()
-}
-
-// claimKeyOf returns the store and the enrolment claim key for user.
-func claimKeyOf(t *testing.T, us UserStore, user User) (*qrdbUserStore, string) {
-	t.Helper()
-	id, err := UserIDFromHandle(user.WebAuthnID())
-	if err != nil {
-		t.Fatalf("user id: %v", err)
-	}
-	store := us.(*qrdbUserStore)
-	return store, store.claimKey(id)
-}
-
-func TestQRDBAdapter_Create_ConcurrentRegistrationsOneWinner(t *testing.T) {
-	us, _ := newTestStores(t)
-	won, lost := raceCreate(t, us, "race@example.com", 16)
-	requireOneEnrolment(t, won, lost)
-}
-
-func TestQRDBAdapter_Create_LiveClaimRefusesRecovery(t *testing.T) {
-	us, _ := newTestStores(t)
-	ctx := context.Background()
-	if _, err := us.Create(ctx, "live@example.com", "Live"); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	_, err := us.Create(ctx, "live@example.com", "Live")
-	var inProgress *EnrolmentInProgressError
-	if !errors.As(err, &inProgress) {
-		t.Fatalf("expected *EnrolmentInProgressError, got %T (%v)", err, err)
-	}
-}
-
-func TestQRDBAdapter_Create_ExpiredClaimTakenOverByOne(t *testing.T) {
-	us, _ := newTestStores(t)
-	ctx := context.Background()
-	first, err := us.Create(ctx, "stale@example.com", "Stale")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	store, key := claimKeyOf(t, us, first)
-	if err := store.kv.Put(ctx, key, encodeEnrolmentClaim("abandoned", time.Now().Add(-time.Second))); err != nil {
-		t.Fatalf("seed expired claim: %v", err)
-	}
-	won, lost := raceCreate(t, us, "stale@example.com", 16)
-	if token := requireOneEnrolment(t, won, lost); token == "abandoned" {
-		t.Fatal("the takeover kept the expired claim's token")
-	}
-}
-
-func TestQRDBAdapter_ConsumeEnrolmentClaim(t *testing.T) {
-	us, _ := newTestStores(t)
-	ctx := context.Background()
-	user, err := us.Create(ctx, "consume@example.com", "Consume")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	store, _ := claimKeyOf(t, us, user)
-	var lostErr *EnrolmentClaimLostError
-	if err := store.consumeEnrolmentClaim(ctx, user, "not-the-claim"); !errors.As(err, &lostErr) {
-		t.Fatalf("foreign token: expected *EnrolmentClaimLostError, got %T (%v)", err, err)
-	}
-	token := user.(enrolmentClaimant).EnrolmentClaim()
-	if err := store.consumeEnrolmentClaim(ctx, user, token); err != nil {
-		t.Fatalf("consume: %v", err)
-	}
-	if err := store.consumeEnrolmentClaim(ctx, user, token); !errors.As(err, &lostErr) {
-		t.Fatalf("second consume: expected *EnrolmentClaimLostError, got %T (%v)", err, err)
-	}
-}
-
-func TestQRDBAdapter_ConsumeEnrolmentClaim_Expired(t *testing.T) {
-	us, _ := newTestStores(t)
-	ctx := context.Background()
-	user, err := us.Create(ctx, "expired@example.com", "Expired")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	store, key := claimKeyOf(t, us, user)
-	token := user.(enrolmentClaimant).EnrolmentClaim()
-	if err := store.kv.Put(ctx, key, encodeEnrolmentClaim(token, time.Now().Add(-time.Second))); err != nil {
-		t.Fatalf("expire claim: %v", err)
-	}
-	var lostErr *EnrolmentClaimLostError
-	if err := store.consumeEnrolmentClaim(ctx, user, token); !errors.As(err, &lostErr) {
-		t.Fatalf("expected *EnrolmentClaimLostError, got %T (%v)", err, err)
-	}
-}
-
-func TestFinishRegistration_ConsumesEnrolmentClaim(t *testing.T) {
-	f := newEnrollFixture(t, true)
-	user, _ := f.enroll(t, "won@example.com")
-	store, key := claimKeyOf(t, f.users, user)
-	_, err := store.kv.Get(context.Background(), key)
-	var notFound *qrdbtransport.KeyNotFoundError
-	if !errors.As(err, &notFound) {
-		t.Fatalf("expected the claim consumed, got %v", err)
-	}
-}
-
-func TestFinishRegistration_LostClaimAddsNoCredential(t *testing.T) {
-	f := newEnrollFixture(t, true)
-	ctx := context.Background()
-	options, sessionID, err := f.svc.BeginRegistration(ctx, "lost@example.com", "Lost")
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	user, err := f.users.GetByEmail(ctx, "lost@example.com")
-	if err != nil {
-		t.Fatalf("get user: %v", err)
-	}
-	store, key := claimKeyOf(t, f.users, user)
-	if err := store.kv.Put(ctx, key, encodeEnrolmentClaim("taken-over", time.Now().Add(time.Minute))); err != nil {
-		t.Fatalf("take the claim over: %v", err)
-	}
-	_, err = f.attest(t, options, sessionID, newEC2Credential(t))
-	var lostErr *EnrolmentClaimLostError
-	if !errors.As(err, &lostErr) {
-		t.Fatalf("expected *EnrolmentClaimLostError, got %T (%v)", err, err)
-	}
-	creds, err := f.creds.GetByUserID(ctx, user.WebAuthnID())
-	if err != nil {
-		t.Fatalf("get credentials: %v", err)
-	}
-	if len(creds) != 0 {
-		t.Fatalf("a lost claim added %d credential(s)", len(creds))
-	}
-}
-
-// errCredentialSaveFailed is the fault saveGatedCredStore injects.
-var errCredentialSaveFailed = errors.New("credential save failed")
-
-// saveGatedCredStore runs gate before every Save; a gate error fails the
-// save without storing the credential.
-type saveGatedCredStore struct {
-	CredentialStore
-	gate func() error
-}
-
-func (s *saveGatedCredStore) Save(ctx context.Context, cred *Credential) error {
-	if err := s.gate(); err != nil {
-		return err
-	}
-	return s.CredentialStore.Save(ctx, cred)
-}
-
-// credentialCount returns how many credentials the account for email holds.
-func credentialCount(t *testing.T, f *enrollFixture, email string) int {
-	t.Helper()
-	ctx := context.Background()
-	user, err := f.users.GetByEmail(ctx, email)
-	if err != nil {
-		t.Fatalf("get user: %v", err)
-	}
-	creds, err := f.creds.GetByUserID(ctx, user.WebAuthnID())
-	if err != nil {
-		t.Fatalf("get credentials: %v", err)
-	}
-	return len(creds)
-}
-
-func TestFinishRegistration_FailedSaveLeavesEmailRegistrable(t *testing.T) {
-	// Each refusal proves no credential was written, so the marker goes.
-	refusals := map[string]error{
-		"invalid credential":   ErrInvalidCredential,
-		"credential exists":    WrapError("save credential", ErrCredentialAlreadyExists),
-		"atomic unsupported":   WrapError("persist credential", &qrdbsdk.DAOAtomicWriteUnsupportedError{}),
-		"serialization failed": WrapError("persist credential", qrdbsdk.DAOSerializationFailedError{EntityType: "credential", Cause: errCredentialSaveFailed}),
-	}
-	for name, refusal := range refusals {
-		t.Run(name, func(t *testing.T) {
-			f := newEnrollFixture(t, true)
-			ctx := context.Background()
-			const email = "retry@example.com"
-			failing := true
-			f.svc.creds = &saveGatedCredStore{CredentialStore: f.creds, gate: func() error {
-				if failing {
-					return refusal
-				}
-				return nil
-			}}
-
-			options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Retry")
-			if err != nil {
-				t.Fatalf("begin: %v", err)
-			}
-			if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); !errors.Is(err, refusal) {
-				t.Fatalf("expected the injected refusal, got %v", err)
-			}
-			if n := credentialCount(t, f, email); n != 0 {
-				t.Fatalf("a refused save left %d credential(s)", n)
-			}
-
-			failing = false
-			options, sessionID, err = f.svc.BeginRegistration(ctx, email, "Retry")
-			if err != nil {
-				t.Fatalf("a registration after a refused save was refused: %v", err)
-			}
-			if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); err != nil {
-				t.Fatalf("finish after a refused save: %v", err)
-			}
-			if n := credentialCount(t, f, email); n != 1 {
-				t.Fatalf("expected one credential, got %d", n)
-			}
-		})
-	}
-}
-
-func TestFinishRegistration_SaveInFlightRefusesSecondEnrolment(t *testing.T) {
-	f := newEnrollFixture(t, true)
-	ctx := context.Background()
-	const email = "inflight@example.com"
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	f.svc.creds = &saveGatedCredStore{CredentialStore: f.creds, gate: func() error {
-		close(entered)
-		<-release
-		return nil
-	}}
-
-	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "In Flight")
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	finished := make(chan error, 1)
-	go func() {
-		_, err := f.attest(t, options, sessionID, newEC2Credential(t))
-		finished <- err
-	}()
-	<-entered
-
-	// The first finish has consumed its claim and is saving its credential.
-	if _, _, err := f.svc.BeginRegistration(ctx, email, "Second"); err == nil {
-		t.Fatal("a second registration began while the first was saving its credential")
-	}
-	close(release)
-	if err := <-finished; err != nil {
-		t.Fatalf("finish: %v", err)
-	}
-	if _, _, err := f.svc.BeginRegistration(ctx, email, "Third"); err == nil {
-		t.Fatal("a registration began for an account that holds a credential")
-	}
-	if n := credentialCount(t, f, email); n != 1 {
-		t.Fatalf("expected one credential, got %d", n)
-	}
-}
-
-// TestFinishRegistration_SaveStalledPastClaimTTLEnrolsOnePasskey stalls the
-// first finish's credential save until its consumed claim has expired, lets
-// a second public registration of the same email run to completion, then
-// releases the first save: the account must still hold one credential.
-func TestFinishRegistration_SaveStalledPastClaimTTLEnrolsOnePasskey(t *testing.T) {
-	f := newEnrollFixture(t, true)
-	ctx := context.Background()
-	const email = "stalled@example.com"
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	// Only the first save takes the stall token; every later save runs.
-	stall := make(chan struct{}, 1)
-	stall <- struct{}{}
-	f.svc.creds = &saveGatedCredStore{CredentialStore: f.creds, gate: func() error {
-		select {
-		case <-stall:
-			close(entered)
-			<-release
-		default:
-		}
-		return nil
-	}}
-
-	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Stalled")
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	finished := make(chan error, 1)
-	go func() {
-		_, err := f.attest(t, options, sessionID, newEC2Credential(t))
-		finished <- err
-	}()
-	<-entered
-
-	// The first save outlives its consumed claim.
-	user, err := f.users.GetByEmail(ctx, email)
-	if err != nil {
-		t.Fatalf("get user: %v", err)
-	}
-	store, key := claimKeyOf(t, f.users, user)
-	current, found, err := store.readClaim(ctx, key)
-	if err != nil || !found {
-		t.Fatalf("read the consumed claim: found=%v err=%v", found, err)
-	}
-	held, _, _ := decodeEnrolmentClaim(current)
-	if err := store.kv.Put(ctx, key, encodeEnrolmentClaim(held, time.Unix(0, 0))); err != nil {
-		t.Fatalf("expire the consumed claim: %v", err)
-	}
-
-	secondErr := func() error {
-		options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Second")
-		if err != nil {
-			return err
-		}
-		_, err = f.attest(t, options, sessionID, newEC2Credential(t))
-		return err
-	}()
-	close(release)
-	firstErr := <-finished
-
-	if n := credentialCount(t, f, email); n != 1 {
-		t.Fatalf("expected one credential, got %d", n)
-	}
-	if secondErr == nil {
-		t.Fatal("a second passkey enrolled while the first save was stalled past the claim TTL")
-	}
-	if firstErr != nil {
-		t.Fatalf("the stalled finish: %v", firstErr)
-	}
-}
-
-// lateCommitCredStore fails its first save with errCredentialSaveFailed and
-// holds that write back until commit runs: a proposal that commits after its
-// caller saw the error, the outcome SaveIfAbsent's contract calls unknown.
-// afterCheck runs after every GetByUserID, so a test can land the late
-// write once a competing finish has passed its credential precheck.
-type lateCommitCredStore struct {
-	CredentialStore
-	commit     func() error
-	afterCheck func()
-}
-
-func (s *lateCommitCredStore) Save(ctx context.Context, cred *Credential) error {
-	if s.commit == nil {
-		s.commit = func() error { return s.CredentialStore.Save(context.Background(), cred) }
-		return errCredentialSaveFailed
-	}
-	return s.CredentialStore.Save(ctx, cred)
-}
-
-func (s *lateCommitCredStore) GetByUserID(ctx context.Context, userID []byte) ([]*Credential, error) {
-	creds, err := s.CredentialStore.GetByUserID(ctx, userID)
-	s.afterCheck()
-	return creds, err
-}
-
-func TestFinishRegistration_UnknownSaveOutcomeKeepsMarker(t *testing.T) {
-	f := newEnrollFixture(t, true)
-	ctx := context.Background()
-	const email = "unknown-outcome@example.com"
-	// The competing ceremony's credential checks each take one token: the
-	// first is BeginRegistration's, the second the finish's precheck, after
-	// which the first save's write lands.
-	checks := make(chan bool, 2)
-	var commitErr error
-	creds := &lateCommitCredStore{CredentialStore: f.creds}
-	creds.afterCheck = func() {
-		select {
-		case land := <-checks:
-			if land {
-				commitErr = creds.commit()
-			}
-		default:
-		}
-	}
-	f.svc.creds = creds
-
-	options, sessionID, err := f.svc.BeginRegistration(ctx, email, "First")
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	if _, err := f.attest(t, options, sessionID, newEC2Credential(t)); !errors.Is(err, errCredentialSaveFailed) {
-		t.Fatalf("the first finish: expected the injected save failure, got %v", err)
-	}
-
-	checks <- false
-	checks <- true
-	secondErr := func() error {
-		options, sessionID, err := f.svc.BeginRegistration(ctx, email, "Second")
-		if err != nil {
-			return err
-		}
-		_, err = f.attest(t, options, sessionID, newEC2Credential(t))
-		return err
-	}()
-	// A competing registration refused before its precheck: the late write
-	// lands now.
-	for len(checks) > 0 {
-		if land := <-checks; land {
-			commitErr = creds.commit()
-		}
-	}
-	if commitErr != nil {
-		t.Fatalf("land the first save's write: %v", commitErr)
-	}
-
-	if n := credentialCount(t, f, email); n != 1 {
-		t.Fatalf("expected only the first save's credential, got %d", n)
-	}
-	if !errors.Is(secondErr, ErrRegistrationRefused) {
-		t.Fatalf("the competing registration: expected ErrRegistrationRefused, got %v", secondErr)
-	}
-}
-
-func TestFinishRegistration_EnrolmentRefusedForUserWithCredential(t *testing.T) {
-	f := newEnrollFixture(t, true)
-	ctx := context.Background()
-	options, sessionID, err := f.svc.BeginRegistration(ctx, "held@example.com", "Held")
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	user, err := f.users.GetByEmail(ctx, "held@example.com")
-	if err != nil {
-		t.Fatalf("get user: %v", err)
-	}
-	held := &Credential{ID: []byte("pre-existing-credential"), UserID: user.WebAuthnID(), PublicKey: []byte{1}}
-	if err := f.creds.Save(ctx, held); err != nil {
-		t.Fatalf("seed credential: %v", err)
-	}
-	_, err = f.attest(t, options, sessionID, newEC2Credential(t))
-	if !errors.Is(err, ErrRegistrationRefused) {
-		t.Fatalf("expected ErrRegistrationRefused, got %v", err)
-	}
-	creds, err := f.creds.GetByUserID(ctx, user.WebAuthnID())
-	if err != nil {
-		t.Fatalf("get credentials: %v", err)
-	}
-	if len(creds) != 1 {
-		t.Fatalf("expected only the held credential, got %d", len(creds))
 	}
 }
 

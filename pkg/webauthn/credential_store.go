@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -192,39 +191,4 @@ func newCredentialEntity(cred *Credential) *credentialEntity {
 		UserID:       encodeID(cred.UserID),
 		Credential:   cred,
 	}
-}
-
-// credentialSaveOutcome is what a credential save's result proves about
-// its write. The zero value is the unknown outcome, so an unclassified
-// result fails closed.
-type credentialSaveOutcome int
-
-const (
-	// credentialSaveUnknown: the save failed and its write may still
-	// commit. The pinned qrdb GenericDAO.SaveIfAbsent contract says a
-	// non-nil error means the outcome is unknown.
-	credentialSaveUnknown credentialSaveOutcome = iota
-	// credentialSaved: the credential was written.
-	credentialSaved
-	// credentialNotSaved: the save was refused before any write was sent,
-	// or found the credential ID already stored.
-	credentialNotSaved
-)
-
-// outcomeOfCredentialSave classifies Save's error. Only a refusal raised
-// before any write, or SaveIfAbsent's (false, nil), proves no credential
-// was written; a transport, timeout or commit error does not, nor does
-// reading the credential back, since a pending proposal can commit after
-// the read.
-func outcomeOfCredentialSave(err error) credentialSaveOutcome {
-	if err == nil {
-		return credentialSaved
-	}
-	var unsupported *qrdbsdk.DAOAtomicWriteUnsupportedError
-	var unencodable qrdbsdk.DAOSerializationFailedError
-	if errors.Is(err, ErrInvalidCredential) || errors.Is(err, ErrCredentialAlreadyExists) ||
-		errors.As(err, &unsupported) || errors.As(err, &unencodable) {
-		return credentialNotSaved
-	}
-	return credentialSaveUnknown
 }

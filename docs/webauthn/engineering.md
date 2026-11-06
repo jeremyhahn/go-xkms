@@ -256,155 +256,20 @@ qrdb's identity.
 (owner ruling 166, go-xkms#1468).** qrdb uses `Username` as the certificate CN,
 so it carries no PII; the email stays in `Email`, qrdb's tenant-unique login
 key, and in the rfc822Name SAN. qrdb assigns the ID at create and refuses an
-empty `Username`, so `Create` (`qrdb_userstore.go:220`) creates the record under
+empty `Username`, so `Create` (`qrdb_userstore.go:178`) creates the record under
 a random `webauthn-pending-` placeholder and then renames it with `UpdateUser`
-to the decimal ID (`assignUsername`, `qrdb_userstore.go:508`), which qrdb re-validates for
+to the decimal ID (`qrdb_userstore.go:225`), which qrdb re-validates for
 uniqueness and re-indexes atomically. A failed rename returns
-`*QRDBUsernameAssignError` (`qrdb_userstore.go:750`) and leaves the record
+`*QRDBUsernameAssignError` (`qrdb_userstore.go:453`) and leaves the record
 under its placeholder: the embedded node's service principal holds no
 `users:delete`, so there is no rollback. `GetByEmail` reports such a record,
 while it has no credential, as not found, and the next `Create` for the email
-finishes the rename and returns that user (`claimExisting`, `qrdb_userstore.go:279`).
-
-The `Username` is never evidence that public sign-up created a record: qrdb
-accepts any account name, so an account activated another way (a PIV
-invitation, an administrator) can carry a `webauthn-pending-` name. Before its
-`CreateUser`, `Create` writes the placeholder's provenance record,
-`webauthn/enrolment-placeholder/<tenantID>/<placeholder>`
-(`enrolmentPlaceholderPrefix`, `qrdb_userstore.go:898`), with `PutIfAbsent`;
-only this store writes that prefix. A record is a recoverable placeholder only
-when its name has the placeholder shape **and** that record exists
-(`isPlaceholder`, `qrdb_userstore.go:557`). A placeholder-named account without
-one is an ordinary account: `GetByEmail` returns it and `Create` refuses it
-with `ErrRegistrationRefused`, taking no claim and renaming nothing. A
-`CreateUser` that fails, or a process that dies, after the provenance write
-leaves an orphan no account carries. The record is kept after the rename, since
-no account carries its placeholder again. A drawn placeholder whose record
-already exists is `*QRDBPlaceholderTakenError` (`qrdb_userstore.go:909`). A
+finishes the rename and returns that user (`qrdb_userstore.go:213`). A
 placeholder that already holds a credential is never taken over: `Create`
-returns `*QRDBPendingUserClaimedError` (`qrdb_userstore.go:769`). Nothing in the WebAuthn path reads
+returns `*QRDBPendingUserClaimedError` (`qrdb_userstore.go:472`). Nothing in the WebAuthn path reads
 `Username`: login resolves by email (`GetUserByEmail`), and a WebAuthn token's
 subject is the user handle (`SubjectKindUserHandle`), so records created
 before the change, with the email as `Username`, still log in unchanged.
-
-### Enrolment claims — one winner per email
-
-Concurrent public registrations of one email race to rename the same
-credential-free record. A durable claim in qrdb's KV picks one winner; only
-the winner renames the record and gets a session.
-
-- **Requirement.** `QRDBUserStoreOptions.KV` must be a qrdb
-  `GuardedKVClient`, which adds `PutIfAbsent`, `CompareAndSwap` and
-  `CompareAndDelete` to `KVClient`. `NewQRDBUserStoreAdapter`
-  (`qrdb_userstore.go:84`) type-asserts it and otherwise fails with
-  `*QRDBGuardedKVUnsupportedError` (`qrdb_userstore.go:868`).
-- **Key and value.** The key is `webauthn/enrolment-claims/<tenantID>/<userID>`
-  (`enrolmentClaimPrefix`, `qrdb_userstore.go:806`). The value is an 8-byte big-endian expiry in Unix
-  nanoseconds followed by the token, a `crypto/rand` string
-  (`encodeEnrolmentClaim`, `qrdb_userstore.go:534`).
-- **TTL.** `EnrolmentClaimTTL`, `DefaultEnrolmentClaimTTL` (60 s) when zero
-  (`DefaultEnrolmentClaimTTL`, `qrdb_userstore.go:823`). The REST host sets it to the WebAuthn
-  `Config.Timeout` (`BuildWebAuthnService`, `pkg/api/rest/host.go:471`). It must be at least the
-  ceremony timeout, or a slow but honest finish loses its claim to a
-  recovering registration.
-- **Acquire** (`acquireClaim`, `qrdb_userstore.go:299`). `Create` takes the
-  claim on a new record with `PutIfAbsent`. On an existing record:
-  - an absent claim is taken on a placeholder and refused on a renamed
-    record (`ErrRegistrationRefused`);
-  - a live claim is `*EnrolmentInProgressError`;
-  - an expired or undecodable claim is taken over with `CompareAndSwap`
-    against the value read, and a lost swap is `*EnrolmentInProgressError`.
-
-  A record that holds a credential is never claimed (`claimExisting`,
-  `qrdb_userstore.go:258`). The winner's session carries the token in its
-  challenge (`withEnrolmentChallenge`, `service.go:482`). Sessions are
-  server-side, so a client cannot forge the token.
-- **Consume** (`consumeEnrolmentClaim`, `qrdb_userstore.go:362`). Finish
-  refuses a user that already holds a credential (`consumeEnrolment`,
-  `service.go:513`). It then swaps the live claim for a consumed claim
-  (token `consumed:<token>`, a fresh expiry) with `CompareAndSwap`. The
-  consumed claim stays held while the credential is saved, so a concurrent
-  registration of the email is refused. An absent, expired, foreign or
-  already-consumed claim is `*EnrolmentClaimLostError`
-  (`qrdb_userstore.go:895`), and nothing is saved.
-- **Credential marker** (`enrolmentCredentialPrefix`, `qrdb_userstore.go:818`).
-  The consumed claim expires, and a credential save can outlast it; a
-  registration that then took the claim over would write a second passkey.
-  So the consume also wins `webauthn/enrolment-credential/<tenantID>/<userID>`
-  (`credentialMarkerKey`, `qrdb_userstore.go:519`) with `PutIfAbsent`, value
-  the claim token. The marker has no expiry and no path takes it over. A
-  marker already held is `*EnrolmentCredentialMarkedError`
-  (`qrdb_userstore.go:909`): the claim is released and nothing is saved.
-  This is the invariant: the unauthenticated path writes at most one
-  credential per account, whatever the timing. qrdb's `TransactionClient`
-  could not fence the save itself: the credential store writes through the
-  DAO, whose keys are internal to it.
-- **Settle** (`settleEnrolmentClaim`, `qrdb_userstore.go:404`, called from
-  `runFinishRegistration`, `service.go:416`).
-  - **Saved credential:** the claim is removed with `CompareAndDelete`, and
-    the marker stays for good. A claim that expired during the save is not an
-    error: the marker holds the account.
-  - **Save proven not written:** the marker is removed with
-    `CompareAndDelete` against this finish's token (`dropCredentialMarker`,
-    `qrdb_userstore.go:434`), and the claim is released. Only a result that
-    proves no write happened counts (`outcomeOfCredentialSave`,
-    `credential_store.go:218`): `ErrInvalidCredential` and the DAO's
-    `DAOAtomicWriteUnsupportedError` and `DAOSerializationFailedError`, all
-    raised before any write is sent, and `ErrCredentialAlreadyExists`,
-    `SaveIfAbsent`'s `(false, nil)`.
-  - **Unknown outcome:** any other save error. The pinned qrdb
-    `GenericDAO.SaveIfAbsent` contract says a non-nil error leaves the
-    outcome unknown: a transport, timeout or commit error can still commit,
-    and reading the credential back proves nothing, since a pending proposal
-    can commit after the read. The marker stays and the claim is released, so
-    a later registration of the email is refused (`ErrRegistrationRefused` at
-    begin, `*EnrolmentCredentialMarkedError` at finish) until the
-    administrator deletes the account. The save error reaches the caller.
-  - **Process death between marker and save** leaves a marker and no
-    credential. Public sign-up then refuses the account: it fails closed,
-    never open. The administrator clears it by deleting the account
-    (`Delete`, which also deletes the marker); the email then enrols afresh.
-- **Account delete** (`Service.DeleteUser`, `service.go:889`; `Delete`,
-  `qrdb_userstore.go:676`). The caller's own grant authorizes it: the lookup,
-  the account delete and the cleanup run on the caller's context, never
-  `CallContext`'s, and need only `users:read`, `users:delete` and
-  `kv:delete`. The service principal holds no `users:delete`. The account
-  delete and the cleanup run on the caller's context pinned to the store's
-  tenant, so the marker delete always targets this tenant's key.
-  - **Deletion record.** `webauthn/account-deletion/<tenantID>/<userID>`
-    (`enrolmentDeletionPrefix`, `qrdb_userstore.go:957`; `deletionKey`,
-    `qrdb_userstore.go:548`) is the evidence that this tenant's delete of the
-    account was authorized. It is written, read and dropped on `CallContext`'s
-    context pinned to the store's tenant, never the caller's.
-  - **Fresh delete.** Only an account the caller can read in its tenant is
-    deleted afresh. `Delete` writes the record, then deletes the account. A
-    refused delete drops the record and returns the refusal, with the
-    credentials untouched. Then it removes the credentials, then the marker
-    (`finishDelete`, `qrdb_userstore.go:747`), then the record.
-  - **Resumed delete** (`resumeDelete`, `qrdb_userstore.go:719`). An account
-    the caller cannot see is cleaned only when this tenant's record exists
-    and the account is no longer live in the store's tenant. Before anything
-    is removed, the caller must still hold `users:delete` in the store's
-    tenant: the resume repeats the account delete on the pinned context, and
-    only not-found lets it go on. Any other answer, including qrdb's refusal
-    of an identity not in the target tenant, is returned with nothing
-    removed and the record kept. A retry by this tenant's administrator then
-    finishes a cleanup that failed, including a failed marker delete, and
-    returns nil. Otherwise it is `ErrUserNotFound` with nothing removed. So
-    another tenant's administrator can neither delete this tenant's passkeys
-    nor finish or end its interrupted delete. The liveness check also
-    covers a delete still in flight: until its account delete lands, the
-    account is live and no other caller resumes it.
-- **Release** (`releaseClaim`, `qrdb_userstore.go:340`). `CompareAndSwap`
-  replaces the claim this store still holds with an expired one; release
-  never deletes. It runs when a rename, materialization or credential save
-  fails.
-- **Recovery.** Public `BeginRegistration` (`service.go:176`) refuses an
-  email whose account exists, unless that record carries a released or
-  expired claim (`enrolmentRecoverable`, `qrdb_userstore.go:453`): a public
-  enrolment that never saved its credential. That record goes to `Create`,
-  which takes the claim over. A record with no claim on file, a live claim, a
-  held credential marker or a credential is refused.
 
 ### Credential-store decoration — the composed-host seam
 

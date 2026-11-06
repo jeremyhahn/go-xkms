@@ -22,8 +22,6 @@ import (
 	"github.com/descope/virtualwebauthn"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-
-	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // TestQRDBAdapter_RegisterThenLogin_SameProcess reproduces the production
@@ -58,7 +56,6 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 	userStore, credStore, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
 		Users:      users,
 		DAOFactory: newTestDAOFactory(),
-		KV:         testutil.NewQRDBFakeTransport(),
 		TenantID:   "system",
 	})
 	if err != nil {

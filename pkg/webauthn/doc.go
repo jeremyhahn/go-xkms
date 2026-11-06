@@ -38,7 +38,6 @@
 //	    Users:      qrdbClient.Users(),
 //	    DAOFactory: daoFactory,
 //	    TenantID:   "system",
-//	    KV:         qrdbClient.KV(), // a GuardedKVClient; holds enrolment claims
 //	})
 //
 //	svc, err := webauthn.NewService(webauthn.ServiceParams{
