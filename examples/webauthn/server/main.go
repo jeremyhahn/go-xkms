@@ -52,6 +52,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
@@ -303,7 +304,7 @@ func startQRDBNode(ctx context.Context) (*qrdbnode.Node, string, error) {
 	cfg.Protocols.Unix = false
 	cfg.Protocols.MCP = false
 	cfg.Seal.Enabled = false
-	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
+	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil, serviceprincipal.Option())
 	if err != nil {
 		_ = os.RemoveAll(dataDir)
 		return nil, "", err
@@ -313,16 +314,20 @@ func startQRDBNode(ctx context.Context) (*qrdbnode.Node, string, error) {
 
 // newStores builds the WebAuthn user and credential stores on the node's
 // system tenant: users are qrdb user records and credentials are DAO
-// entities on the node's datastore.
+// entities on the node's datastore. The ceremony endpoints are public, so
+// every qrdb call runs as the node's service principal, as in xkmsd, and the
+// pending-enrolment claims live in the node's KV store.
 func newStores(node *qrdbnode.Node) (webauthn.UserStore, webauthn.CredentialStore, error) {
-	ds, err := datastore.New(node.Client(), config.DatastoreConfig{})
+	ds, err := datastore.New(node.Client(), config.DatastoreConfig{}, datastore.WithCallContext(node.ServiceContext))
 	if err != nil {
 		return nil, nil, err
 	}
 	return webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      node.Client().Users(),
-		DAOFactory: ds.DAOFactory(),
-		TenantID:   "system",
+		Users:       node.Client().Users(),
+		DAOFactory:  ds.DAOFactory(),
+		TenantID:    "system",
+		CallContext: node.ServiceContext,
+		KV:          node.Client().KV(),
 	})
 }
 
