@@ -1,0 +1,1 @@
+Make: PKCS11_TEST_TIMEOUT defaults to 20m, not 10m. The pkcs11/module integration package took 485s at normal load and exceeded 600s on a loaded bigdisk runner (loadavg 498 on 80 CPUs), timing out mid-fsync rather than hanging (#1763).
