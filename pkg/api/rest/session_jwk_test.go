@@ -86,7 +86,7 @@ func TestSessionSigningJWK_VerifiesTheHostSurfaceTokens(t *testing.T) {
 		{name: "custom signing CN", opts: &SessionOptions{SigningKeyCN: "composer-session-key"}, wantAccessTyp: "JWT"},
 		{
 			name:          "RFC 9068 access tokens",
-			opts:          &SessionOptions{SigningKeyCN: "composer-session-key", AccessTokenType: token.ATJWTType, ClientID: "client-1"},
+			opts:          &SessionOptions{SigningKeyCN: "composer-session-key", AccessTokenType: token.ATJWTType},
 			wantAccessTyp: "at+jwt",
 		},
 	}

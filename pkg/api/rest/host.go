@@ -97,10 +97,6 @@ type TokenIssuerParams struct {
 	// "JWT". Refresh tokens are unaffected.
 	AccessTokenType string
 
-	// ClientID is the client_id claim of at+jwt access tokens (RFC 9068
-	// §2.2). Required when AccessTokenType is token.ATJWTType.
-	ClientID string
-
 	// QRDBClient persists refresh-token records on the qrdb identity plane
 	// when set; nil falls back to an in-memory store (sessions then end on
 	// restart).
@@ -246,7 +242,6 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		KeyAttributes:   attrs,
 		KeyID:           kid,
 		AccessTokenType: p.AccessTokenType,
-		ClientID:        p.ClientID,
 		Issuer:          p.IssuerName,
 		Audience:        p.Audience,
 		AccessTTL:       accessTTL,
@@ -664,10 +659,6 @@ type SessionOptions struct {
 	// "JWT". Refresh tokens are unaffected.
 	AccessTokenType string
 
-	// ClientID is the client_id claim of at+jwt access tokens (RFC 9068
-	// §2.2). Required when AccessTokenType is token.ATJWTType.
-	ClientID string
-
 	// LoginRatePerMin caps per-client login/refresh attempts per minute.
 	// Zero uses the default (10), matching xkmsd.
 	LoginRatePerMin int
@@ -814,7 +805,6 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			AccessTTL:       session.AccessTTL,
 			RefreshTTL:      session.RefreshTTL,
 			AccessTokenType: session.AccessTokenType,
-			ClientID:        session.ClientID,
 			QRDBClient:      hc.QRDBClient,
 			Logger:          logger,
 		})

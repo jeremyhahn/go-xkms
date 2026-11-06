@@ -38,8 +38,7 @@ func TestValidate_SessionAccessTokenType(t *testing.T) {
 	}{
 		{"no session block", nil},
 		{"empty keeps JWT", &SessionConfig{}},
-		{"at+jwt", &SessionConfig{AccessTokenType: "at+jwt", ClientID: "client-1"}},
-		{"client_id without at+jwt", &SessionConfig{ClientID: "client-1"}},
+		{"at+jwt", &SessionConfig{AccessTokenType: "at+jwt"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,19 +46,6 @@ func TestValidate_SessionAccessTokenType(t *testing.T) {
 				t.Fatalf("Validate() = %v, want nil", err)
 			}
 		})
-	}
-}
-
-// TestValidate_SessionATJWTRequiresClientID pins RFC 9068 §2.2: an at+jwt
-// access token REQUIRES client_id, so the config refuses at+jwt without one.
-func TestValidate_SessionATJWTRequiresClientID(t *testing.T) {
-	err := sessionConfig(&SessionConfig{AccessTokenType: "at+jwt"}).Validate()
-	var sessionErr *SessionConfigError
-	if !errors.As(err, &sessionErr) {
-		t.Fatalf("Validate() = %v, want *SessionConfigError", err)
-	}
-	if sessionErr.Field != "client_id" || sessionErr.Value != "" {
-		t.Fatalf("SessionConfigError = %+v, want field client_id", sessionErr)
 	}
 }
 

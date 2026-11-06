@@ -124,8 +124,7 @@ var WithServiceModuleWebAuthnCredentialStoreDecorator = apimodule.WithWebAuthnCr
 
 // ServiceModuleSessionOptions tunes the module's self-built JWT signing
 // key, token claims/TTLs, the access token typ header (AccessTokenType:
-// empty keeps "JWT", "at+jwt" per RFC 9068 §2.1; at+jwt also requires
-// ClientID, the RFC 9068 §2.2 client_id claim), and login rate limiting.
+// empty keeps "JWT", "at+jwt" per RFC 9068 §2.1), and login rate limiting.
 // The zero value uses the same defaults xkmsd itself derives.
 type ServiceModuleSessionOptions = rest.SessionOptions
 

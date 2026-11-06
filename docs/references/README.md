@@ -62,9 +62,7 @@ implementation work does not depend on the publisher's site staying up.
   Access Tokens", copied verbatim from
   https://www.rfc-editor.org/rfc/rfc9068.txt. §2.1 defines the `at+jwt` `typ`
   header that `token.Config.AccessTokenType` (`auth.session.access_token_type`
-  in xkmsd) selects for access tokens; refresh tokens keep `JWT`. §2.2 is the
-  claim set an `at+jwt` access token carries: `client_id` from
-  `token.Config.ClientID` (`auth.session.client_id`) and a fresh `jti`.
+  in xkmsd) selects for access tokens; refresh tokens keep `JWT`.
 - `NIST.SP.800-76-2.pdf` — NIST SP 800-76-2, "Biometric Specifications for
   Personal Identity Verification".
 - `NIST.SP.800-78-5.pdf` — NIST SP 800-78-5, "Cryptographic Algorithms and Key

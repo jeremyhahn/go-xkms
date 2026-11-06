@@ -131,16 +131,6 @@ func (e *GuardedKVUnsupportedError) Error() string {
 		" does not implement transport.GuardedKVClient; atomic refresh-token rotation is unavailable on this transport"
 }
 
-// ATJWTClientIDRequiredError is returned when Config selects at+jwt access
-// tokens without a ClientID: RFC 9068 §2.2 makes client_id REQUIRED in every
-// token that header declares.
-type ATJWTClientIDRequiredError struct{}
-
-// Error implements the error interface.
-func (e *ATJWTClientIDRequiredError) Error() string {
-	return "auth/token: at+jwt access tokens require a client ID (RFC 9068 §2.2)"
-}
-
 // RefreshTTLTooLongError is returned when a configured refresh lifetime
 // outlives the family revocation tombstone that has to guard it. Allowing it
 // would let a token outlive the record of its own family's revocation.

@@ -84,11 +84,6 @@ type Config struct {
 	// keep the default header and their own typ claim.
 	AccessTokenType string
 
-	// ClientID is the client_id claim (RFC 9068 §2.2, RFC 8693 §4.3) of
-	// at+jwt access tokens: the OAuth client the tokens are issued to.
-	// Required when AccessTokenType is ATJWTType; ignored otherwise.
-	ClientID string
-
 	// Issuer is the iss claim. Defaults to "go-xkms".
 	Issuer string
 
@@ -120,7 +115,6 @@ type Issuer struct {
 	keyAttrs   *types.KeyAttributes
 	keyID      string
 	accessTyp  string
-	clientID   string
 	issuer     string
 	audience   []string
 	accessTTL  time.Duration
@@ -143,11 +137,6 @@ func NewIssuer(cfg *Config) (*Issuer, error) {
 	}
 	if cfg.RefreshStore == nil {
 		return nil, &NilInputError{Field: "refresh store"}
-	}
-	// RFC 9068 §2.1: the at+jwt header declares the §2.2 claim set, whose
-	// client_id is REQUIRED.
-	if cfg.AccessTokenType == ATJWTType && cfg.ClientID == "" {
-		return nil, &ATJWTClientIDRequiredError{}
 	}
 
 	issuer := cfg.Issuer
@@ -178,7 +167,6 @@ func NewIssuer(cfg *Config) (*Issuer, error) {
 		keyAttrs:   cfg.KeyAttributes,
 		keyID:      cfg.KeyID,
 		accessTyp:  cfg.AccessTokenType,
-		clientID:   cfg.ClientID,
 		issuer:     issuer,
 		audience:   audience,
 		accessTTL:  accessTTL,
@@ -322,15 +310,6 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 		"exp": now.Add(i.accessTTL).Unix(),
 	}
 	addIdentityClaims(accessClaims, id)
-	if i.accessTyp == ATJWTType {
-		// RFC 9068 §2.2 also requires client_id and jti.
-		accessJTI, err := randomID()
-		if err != nil {
-			return nil, &SigningError{Err: err}
-		}
-		accessClaims["client_id"] = i.clientID
-		accessClaims["jti"] = accessJTI
-	}
 
 	accessToken, err := i.sign(accessClaims, i.accessTyp)
 	if err != nil {
