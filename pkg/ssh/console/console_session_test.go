@@ -383,30 +383,6 @@ func TestConsole_ResizeAfterCloseIsRejected(t *testing.T) {
 	}
 }
 
-// TestConsole_CloseIsIdempotent verifies repeated Close calls stay safe and
-// quiet. The handler closes via defer while the read pump may also be tearing
-// down, so a second Close must not error or double-close the client.
-func TestConsole_CloseIsIdempotent(t *testing.T) {
-	srv := startSessionServer(t, sessionServerOptions{})
-
-	c, err := dialSessionServer(t, srv, Config{})
-	if !requireHandshake(t, err) {
-		return
-	}
-
-	if err := c.Close(); err != nil {
-		t.Fatalf("first Close: %v", err)
-	}
-	if err := c.Close(); err != nil {
-		t.Fatalf("second Close: %v, want nil", err)
-	}
-
-	// Writes after close must fail rather than silently succeed.
-	if _, err := c.Write([]byte("x")); err == nil {
-		t.Error("Write after Close must fail")
-	}
-}
-
 // TestConsole_ConcurrentReadResizeAndClose exercises the access pattern the
 // WebSocket bridge produces: an output pump reading and a control path
 // resizing while teardown runs concurrently. Run under -race this guards the

@@ -341,6 +341,11 @@ func TestConsole_CloseIsIdempotentAndTearsDownSession(t *testing.T) {
 		}
 	}
 
+	// Writes after close must fail rather than silently succeed.
+	if _, err := c.Write([]byte("x")); err == nil {
+		t.Error("Write after Close must fail")
+	}
+
 	select {
 	case <-srv.channelClosed:
 	case <-time.After(5 * time.Second):
