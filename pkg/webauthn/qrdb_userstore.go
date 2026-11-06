@@ -544,6 +544,11 @@ func (s *qrdbUserStore) credentialMarkerKey(id uint64) string {
 	return enrolmentCredentialPrefix + s.tenantID + "/" + strconv.FormatUint(id, 10)
 }
 
+// deletionKey is the KV key of the account deletion record for qrdb user id.
+func (s *qrdbUserStore) deletionKey(id uint64) string {
+	return enrolmentDeletionPrefix + s.tenantID + "/" + strconv.FormatUint(id, 10)
+}
+
 // placeholderKey is the KV key of the provenance record of a placeholder
 // Username.
 func (s *qrdbUserStore) placeholderKey(username string) string {
@@ -662,56 +667,94 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 // caller, since an orphaned credential would go on referencing a user that
 // no longer exists.
 //
-// Delete runs on the caller's context, never CallContext's: deleting an
-// account is an administrator's act, authorized by the administrator's own
-// grant. The service principal holds no users:delete, so binding its
-// identity here would refuse every administrator.
+// Delete's lookup, DeleteUser and cleanup run on the caller's context, never
+// CallContext's: deleting an account is an administrator's act, authorized
+// by the administrator's own grant (users:read, users:delete, kv:delete).
+// The service principal holds no users:delete, so binding its identity there
+// would refuse every administrator. Only the account deletion record, which
+// lets a retry finish a failed cleanup, is kept on CallContext's context.
 func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	id, err := UserIDFromHandle(userID)
 	if err != nil {
 		return err
 	}
-	// DeleteUser runs first: it is the authorization check, so a caller
-	// without users:delete is refused before anything is removed.
-	dErr := s.users.DeleteUser(ctx, id)
-	if dErr != nil && !isUserNotFound(dErr) {
-		return WrapError("qrdb delete user", dErr)
+	// The deletion record and the liveness check belong to the store's
+	// tenant, whatever tenant the caller is in.
+	svcCtx, err := s.callContext(qrdbsdk.ContextWithTenant(ctx, s.tenantID))
+	if err != nil {
+		return err
 	}
-	// The cleanup is idempotent and also runs for an account already
-	// removed, so a retry finishes a delete whose cleanup failed.
-	if dErr != nil {
-		residue, rErr := s.hasDeleteResidue(ctx, id)
-		if rErr != nil {
-			return rErr
+	// Only an account the caller can see in its own tenant is deleted
+	// afresh; any other is at most the retry of a delete already done.
+	if _, err := s.users.GetUser(ctx, id); err != nil {
+		if !isUserNotFound(err) {
+			return WrapError("qrdb get user", err)
 		}
-		if !residue {
-			return ErrUserNotFound
-		}
+		return s.resumeDelete(ctx, svcCtx, id, userID)
 	}
-	if dErr := s.creds.DeleteByUserID(ctx, userID); dErr != nil {
-		return WrapError("delete user credentials", dErr)
+	// The deletion record is written before the account goes, so a
+	// cleanup that fails after DeleteUser can be resumed by a retry.
+	if err := s.kv.Put(svcCtx, s.deletionKey(id), []byte{1}); err != nil {
+		return WrapError("put account deletion record", err)
+	}
+	// DeleteUser is the authorization check and runs on the caller's
+	// context: a caller without users:delete is refused before anything
+	// is removed.
+	if err := s.users.DeleteUser(ctx, id); err != nil {
+		if isUserNotFound(err) {
+			return s.resumeDelete(ctx, svcCtx, id, userID)
+		}
+		return errors.Join(WrapError("qrdb delete user", err), s.dropDeletionRecord(svcCtx, id))
+	}
+	return s.finishDelete(ctx, svcCtx, id, userID)
+}
+
+// resumeDelete finishes the cleanup of an account the caller cannot see. It
+// runs only on this tenant's deletion record for an account no longer live,
+// so an account hidden in another tenant, or one whose delete is still in
+// flight, is never touched: both are ErrUserNotFound.
+func (s *qrdbUserStore) resumeDelete(ctx, svcCtx context.Context, id uint64, userID []byte) error {
+	recorded, err := s.kv.Exists(svcCtx, s.deletionKey(id))
+	if err != nil {
+		return WrapError("get account deletion record", err)
+	}
+	if !recorded {
+		return ErrUserNotFound
+	}
+	_, err = s.users.GetUser(svcCtx, id)
+	if err == nil {
+		return ErrUserNotFound
+	}
+	if !isUserNotFound(err) {
+		return WrapError("qrdb get user", err)
+	}
+	return s.finishDelete(ctx, svcCtx, id, userID)
+}
+
+// finishDelete removes a deleted account's passkeys and enrolment credential
+// marker on the caller's context, which needs only kv:delete, then its
+// deletion record. Every step is idempotent, so a retry repeats it safely.
+func (s *qrdbUserStore) finishDelete(ctx, svcCtx context.Context, id uint64, userID []byte) error {
+	if err := s.creds.DeleteByUserID(ctx, userID); err != nil {
+		return WrapError("delete user credentials", err)
 	}
 	// Deleting the account is the administrator's way to clear a credential
 	// marker whose finish died before its save: the email enrols afresh.
 	var notFound *qrdbtransport.KeyNotFoundError
-	if dErr := s.kv.Delete(ctx, s.credentialMarkerKey(id)); dErr != nil && !errors.As(dErr, &notFound) {
-		return WrapError("delete enrolment credential marker", dErr)
+	if err := s.kv.Delete(ctx, s.credentialMarkerKey(id)); err != nil && !errors.As(err, &notFound) {
+		return WrapError("delete enrolment credential marker", err)
 	}
-	return nil
+	return s.dropDeletionRecord(svcCtx, id)
 }
 
-// hasDeleteResidue reports whether a removed account id still has the
-// credentials or the enrolment credential marker a failed Delete left.
-func (s *qrdbUserStore) hasDeleteResidue(ctx context.Context, id uint64) (bool, error) {
-	creds, err := s.creds.GetByUserID(ctx, HandleFromUserID(id))
-	if err != nil {
-		return false, WrapError("get user credentials", err)
+// dropDeletionRecord removes the account's deletion record; an absent one
+// is already dropped.
+func (s *qrdbUserStore) dropDeletionRecord(svcCtx context.Context, id uint64) error {
+	var notFound *qrdbtransport.KeyNotFoundError
+	if err := s.kv.Delete(svcCtx, s.deletionKey(id)); err != nil && !errors.As(err, &notFound) {
+		return WrapError("delete account deletion record", err)
 	}
-	if len(creds) > 0 {
-		return true, nil
-	}
-	_, marked, err := s.readClaim(ctx, s.credentialMarkerKey(id))
-	return marked, err
+	return nil
 }
 
 // callContext returns the context a user-client call runs on: the caller's,
@@ -896,6 +939,13 @@ const DefaultEnrolmentClaimTTL = 60 * time.Second
 // placeholder-shaped Username has none. The record is kept after the rename:
 // no account carries its placeholder again.
 const enrolmentPlaceholderPrefix = "webauthn/enrolment-placeholder/"
+
+// enrolmentDeletionPrefix is the KV prefix of the account deletion records,
+// keyed <prefix><tenant>/<qrdb user ID>. Delete writes one on the service
+// principal's context before the account goes and drops it once the
+// account's passkeys and marker are gone; a retry resumes a cleanup only on
+// its tenant's record, so it never touches another tenant's account.
+const enrolmentDeletionPrefix = "webauthn/account-deletion/"
 
 // isPendingUsername reports whether username has the shape of a Create
 // placeholder. The shape alone is no evidence; see isPlaceholder.
