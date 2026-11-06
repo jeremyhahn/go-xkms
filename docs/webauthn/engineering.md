@@ -39,7 +39,9 @@ account (`ErrSessionAccountMismatch` otherwise).
 `auth.SubjectKindMetadataKey` is not `auth.SubjectKindUserHandle`. A username
 subject (mTLS, PIV, certificate login) is refused even when it decodes as
 base64url, since its owner chose it and could choose another account's
-handle. `BeginAddCredential` then refuses, before any user lookup, a session
+handle. A bearer session keeps the kind because the access token carries
+the `sub_kind` claim and `auth.JWTAuthenticator` restores it.
+`BeginAddCredential` then refuses, before any user lookup, a session
 whose `TenantID` is not exactly the tenant the user store serves
 (`qrdbUserStore.TenantID`); an empty tenant matches nothing, and a store that
 declares no tenant refuses every session. The lookup runs on the store's
