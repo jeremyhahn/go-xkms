@@ -43,16 +43,16 @@ type webAuthnAccount struct {
 // bound to the service principal, and seeds one account through them.
 func newWebAuthnAccount(t *testing.T, node *qrdbnode.Node) webAuthnAccount {
 	t.Helper()
-	return newWebAuthnAccountOver(t, node, node.Client().KV())
+	return newWebAuthnAccountOver(t, node, node.Client().Users(), node.Client().KV())
 }
 
-// newWebAuthnAccountOver is newWebAuthnAccount with the store's
-// bookkeeping on storeKV.
-func newWebAuthnAccountOver(t *testing.T, node *qrdbnode.Node, storeKV qrdbtransport.KVClient) webAuthnAccount {
+// newWebAuthnAccountOver is newWebAuthnAccount with the store's user
+// calls on userClient and its bookkeeping on storeKV.
+func newWebAuthnAccountOver(t *testing.T, node *qrdbnode.Node, userClient qrdbtransport.UserClient, storeKV qrdbtransport.KVClient) webAuthnAccount {
 	t.Helper()
 	kv := qrdbsdk.NewMemoryKVStore()
 	users, creds, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:       node.Client().Users(),
+		Users:       userClient,
 		DAOFactory:  qrdbsdk.NewDAOFactory(func(uint64) qrdbsdk.KVStore { return kv }),
 		TenantID:    qrdbsdk.SystemTenantID,
 		KV:          storeKV,
@@ -211,7 +211,7 @@ func TestWebAuthnDeleteUser_MarkerDeleteFailureRetries(t *testing.T) {
 	node := newNode(t, Option())
 	guarded, ok := node.Client().KV().(qrdbtransport.GuardedKVClient)
 	require.True(t, ok, "the node's KV client must be guarded")
-	account := newWebAuthnAccountOver(t, node, &failingMarkerDeleteKV{GuardedKVClient: guarded})
+	account := newWebAuthnAccountOver(t, node, node.Client().Users(), &failingMarkerDeleteKV{GuardedKVClient: guarded})
 	ctx := adminContext(t, node)
 
 	require.ErrorAs(t, account.svc.DeleteUser(ctx, account.handle), &markerDeleteFaultError{})
@@ -229,11 +229,62 @@ func TestWebAuthnDeleteUser_MarkerDeleteFailureRetries(t *testing.T) {
 	require.False(t, marked, "the account's enrolment credential marker must be deleted")
 }
 
+type userDeleteFaultError struct{}
+
+func (userDeleteFaultError) Error() string { return "test: user delete fault" }
+
+// deletedThenFailingUsers removes the account on its first DeleteUser and
+// then reports an error, as qrdb's DeleteUser does when the identity index
+// fails after the primary record is gone. Every other call passes through.
+type deletedThenFailingUsers struct {
+	qrdbtransport.UserClient
+	failed atomic.Bool
+}
+
+func (u *deletedThenFailingUsers) DeleteUser(ctx context.Context, id uint64) error {
+	if err := u.UserClient.DeleteUser(ctx, id); err != nil {
+		return err
+	}
+	if u.failed.CompareAndSwap(false, true) {
+		return userDeleteFaultError{}
+	}
+	return nil
+}
+
+// TestWebAuthnDeleteUser_UserDeleteErrorAfterRemovalKeepsRecord proves a
+// DeleteUser error that is not a refusal keeps the deletion record: the
+// account may already be gone, and the record is what lets the same
+// administrator's retry finish the cleanup.
+func TestWebAuthnDeleteUser_UserDeleteErrorAfterRemovalKeepsRecord(t *testing.T) {
+	node := newNode(t, Option())
+	account := newWebAuthnAccountOver(t, node, &deletedThenFailingUsers{UserClient: node.Client().Users()}, node.Client().KV())
+	ctx := adminContext(t, node)
+	svcCtx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	deletionKey := "webauthn/account-deletion/" + qrdbsdk.SystemTenantID + "/" + strconv.FormatUint(account.userID, 10)
+
+	require.ErrorAs(t, account.svc.DeleteUser(ctx, account.handle), &userDeleteFaultError{})
+	recorded, err := node.Client().KV().Exists(svcCtx, deletionKey)
+	require.NoError(t, err)
+	require.True(t, recorded, "an error after the account went must keep the deletion record")
+
+	require.NoError(t, account.svc.DeleteUser(ctx, account.handle), "the retry must finish the delete")
+	remaining, err := account.creds.GetByUserID(context.Background(), account.handle)
+	require.NoError(t, err)
+	require.Empty(t, remaining, "the account's passkeys must be deleted")
+	marked, err := node.Client().KV().Exists(svcCtx, account.markerKey)
+	require.NoError(t, err)
+	require.False(t, marked, "the account's enrolment credential marker must be deleted")
+	recorded, err = node.Client().KV().Exists(svcCtx, deletionKey)
+	require.NoError(t, err)
+	require.False(t, recorded, "the finished delete must drop its deletion record")
+}
+
 func TestWebAuthnDeleteUser_OtherTenantCannotFinishInterruptedDelete(t *testing.T) {
 	node := newNode(t, Option())
 	guarded, ok := node.Client().KV().(qrdbtransport.GuardedKVClient)
 	require.True(t, ok, "the node's KV client must be guarded")
-	account := newWebAuthnAccountOver(t, node, &failingMarkerDeleteKV{GuardedKVClient: guarded})
+	account := newWebAuthnAccountOver(t, node, node.Client().Users(), &failingMarkerDeleteKV{GuardedKVClient: guarded})
 	_, err := node.Services().Tenant.CreateTenant(context.Background(), "tenant-b", "Tenant B",
 		qrdbsdk.TenantIsolationPrefix)
 	require.NoError(t, err)
