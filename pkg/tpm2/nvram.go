@@ -2,12 +2,14 @@ package tpm2
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -1013,7 +1015,20 @@ func hashAlgDigestSize(hashAlg tpm2.TPMIAlgHash) (uint16, error) {
 // correctly (TCG Part 3 §31.4.1).  The whole certificate must still fit in
 // one index, which TPM_PT_NV_INDEX_MAX bounds; that is checked up front so
 // the caller gets ErrNVCertTooLarge instead of a bare TPM_RC_SIZE.
-func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error {
+//
+// The index is defined, written and undefined under the Owner hierarchy,
+// authorized by hierarchyAuth: the Owner hierarchy authorization (the SO PIN)
+// the caller supplies, empty when none is set. TPM2_NV_DefineSpace and
+// TPM2_NV_UndefineSpace take TPM_RH_OWNER as authHandle (TCG Part 3 §31.3.1,
+// §31.4.1), and so does TPM2_NV_Write of a TPMA_NV_OWNERWRITE index (§31.7.1).
+// A wrong hierarchyAuth is ErrNVCertHierarchyAuth.
+//
+// An index already defined at nvIndex is reused only when it is a
+// certificate index: the TPMS_NV_PUBLIC this function defines, apart from
+// TPMA_NV_WRITTEN and DataSize. One of the same size is written in place;
+// one of another size is undefined and defined again at the new size. Any
+// other index is ErrNVCertIndexMismatch and is left as it is.
+func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, hierarchyAuth, certDER []byte) error {
 	tpm.logger.Debug("writing certificate to NV index",
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)),
 		slog.Int("size_bytes", len(certDER)))
@@ -1021,21 +1036,97 @@ func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error 
 	if err := tpm.checkCertFitsNV(certDER); err != nil {
 		return err
 	}
-	return tpm.defineAndWriteCert(nvIndex, certDER, ownerPasswordAuth)
+	authorize := tpm.hierarchyAuthorizer(tpm2.TPMRHOwner, hierarchyAuth)
+	return nvCertAuthError(tpm.defineOrReuseCertIndex(nvIndex, certDER, authorize))
+}
+
+// defineOrReuseCertIndex writes certDER to nvIndex, defining the index when
+// it is absent and reusing it when it is a certificate index (see
+// writeCertToNVRAM).
+func (tpm *TPM2) defineOrReuseCertIndex(nvIndex tpm2.TPMHandle, certDER []byte, authorize nvAuthorizer) error {
+	rsp, err := tpm2.NVReadPublic{NVIndex: nvIndex}.Execute(tpm.transport)
+	if errors.Is(err, tpmRCHandle) {
+		return tpm.defineAndWriteCert(nvIndex, certDER, authorize)
+	}
+	if err != nil {
+		tpm.logger.Error("failed to read NV public area", slog.String("error", err.Error()))
+		return err
+	}
+	stored, err := rsp.NVPublic.Contents()
+	if err != nil {
+		return err
+	}
+
+	want := tpm.certNVPublic(nvIndex, len(certDER))
+	if !isCertNVIndex(stored, &want) {
+		tpm.logger.Error("certificate NV index exists with different attributes",
+			slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)))
+		return ErrNVCertIndexMismatch
+	}
+	if stored.DataSize == want.DataSize {
+		return tpm.writeCertData(stored, certDER, authorize)
+	}
+
+	err = authorize(encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.NVUndefineSpace{
+			AuthHandle: authHandle,
+			NVIndex:    tpm2.NamedHandle{Handle: nvIndex, Name: rsp.NVName},
+		}.Execute(tpm.transport)
+		return err
+	})
+	if err != nil {
+		tpm.logger.Error("failed to undefine NV space", slog.String("error", err.Error()))
+		return err
+	}
+	return tpm.defineAndWriteCert(nvIndex, certDER, authorize)
+}
+
+// certNVPublic returns the public area a certificate index of size octets
+// is defined with.
+func (tpm *TPM2) certNVPublic(nvIndex tpm2.TPMHandle, size int) tpm2.TPMSNVPublic {
+	return tpm2.TPMSNVPublic{
+		NVIndex: nvIndex,
+		NameAlg: tpm.algID,
+		Attributes: tpm2.TPMANV{
+			OwnerWrite: true,
+			AuthWrite:  true,
+			OwnerRead:  true,
+			AuthRead:   true,
+			NoDA:       true,
+			// TPM_NT_ORDINARY: opaque data written by TPM2_NV_Write.
+			// A counter, bits or PIN index is fixed at 8 octets and
+			// cannot hold a certificate (TCG Part 2 §13.4).
+			NT: tpm2.TPMNTOrdinary,
+		},
+		DataSize: uint16(size), // #nosec G115 -- bounded by indexMax (uint16) in checkCertFitsNV
+	}
+}
+
+// isCertNVIndex reports whether stored is a certificate index as want
+// defines one, whatever its size and whether it has been written
+// (TPMA_NV_WRITTEN, TCG Part 2 §13.4).
+func isCertNVIndex(stored, want *tpm2.TPMSNVPublic) bool {
+	attrs := stored.Attributes
+	attrs.Written = false
+	return stored.NVIndex == want.NVIndex &&
+		stored.NameAlg == want.NameAlg &&
+		attrs == want.Attributes &&
+		len(stored.AuthPolicy.Buffer) == 0
+}
+
+// nvCertAuthError reports a TPM authorization failure of a certificate NV
+// command as ErrNVCertHierarchyAuth, keeping the TPM response as its cause.
+func nvCertAuthError(err error) error {
+	if err != nil && isTPMAuthError(err) {
+		return &errs.Joined{Lead: ErrNVCertHierarchyAuth, Cause: err}
+	}
+	return err
 }
 
 // nvAuthorizer runs execute under the authorization an NV certificate
 // index's define, write and undefine commands need. dir selects the
 // parameter encryption of the command execute issues.
 type nvAuthorizer func(dir paramEncryption, execute func(tpm2.AuthHandle) error) error
-
-// ownerPasswordAuth authorizes with the owner hierarchy's empty password.
-func ownerPasswordAuth(_ paramEncryption, execute func(tpm2.AuthHandle) error) error {
-	return execute(tpm2.AuthHandle{
-		Handle: tpm2.TPMRHOwner,
-		Auth:   tpm2.PasswordAuth(nil),
-	})
-}
 
 // hierarchyAuthorizer authorizes with hierarchy and its authorization value.
 func (tpm *TPM2) hierarchyAuthorizer(hierarchy tpm2.TPMHandle, auth []byte) nvAuthorizer {
@@ -1072,23 +1163,7 @@ func (tpm *TPM2) checkCertFitsNV(certDER []byte) error {
 // fits. The caller checks certDER with checkCertFitsNV first.
 func (tpm *TPM2) defineAndWriteCert(nvIndex tpm2.TPMHandle, certDER []byte, authorize nvAuthorizer) error {
 	defs := tpm2.NVDefineSpace{
-		PublicInfo: tpm2.New2B(
-			tpm2.TPMSNVPublic{
-				NVIndex: nvIndex,
-				NameAlg: tpm.algID,
-				Attributes: tpm2.TPMANV{
-					OwnerWrite: true,
-					AuthWrite:  true,
-					OwnerRead:  true,
-					AuthRead:   true,
-					NoDA:       true,
-					// TPM_NT_ORDINARY: opaque data written by TPM2_NV_Write.
-					// A counter, bits or PIN index is fixed at 8 octets and
-					// cannot hold a certificate (TCG Part 2 §13.4).
-					NT: tpm2.TPMNTOrdinary,
-				},
-				DataSize: uint16(len(certDER)), // #nosec G115 -- bounded by indexMax (uint16) in checkCertFitsNV
-			}),
+		PublicInfo: tpm2.New2B(tpm.certNVPublic(nvIndex, len(certDER))),
 	}
 	err := authorize(encryptIn, func(authHandle tpm2.AuthHandle) error {
 		defs.AuthHandle = authHandle
@@ -1105,7 +1180,12 @@ func (tpm *TPM2) defineAndWriteCert(nvIndex tpm2.TPMHandle, certDER []byte, auth
 		tpm.logger.Error("failed to get NV public info", slog.String("error", err.Error()))
 		return err
 	}
+	return tpm.writeCertData(pub, certDER, authorize)
+}
 
+// writeCertData writes certDER to the defined index pub describes, in chunks
+// of at most TPM_PT_NV_BUFFER_MAX bytes (TCG Part 3 §31.7.1).
+func (tpm *TPM2) writeCertData(pub *tpm2.TPMSNVPublic, certDER []byte, authorize nvAuthorizer) error {
 	nvName, err := tpm2.NVName(pub)
 	if err != nil {
 		tpm.logger.Error("failed to compute NV name", slog.String("error", err.Error()))
@@ -1164,7 +1244,16 @@ func (tpm *TPM2) defineAndWriteCert(nvIndex tpm2.TPMHandle, certDER []byte, auth
 // readCertFromNVRAM reads a DER-encoded certificate from TPM NVRAM.
 // The read is issued in chunks of at most TPM_PT_NV_BUFFER_MAX bytes so
 // that certificates larger than the TPM's NV buffer maximum are handled
-// correctly (TCG Part 3 §31.3.1).
+// correctly (TCG Part 3 §31.13.1).
+//
+// A certificate is public, so the read needs no secret. A certificate index
+// is TPMA_NV_AUTHREAD with an empty authValue (certNVPublic), and the TPM
+// authorizes such a read under the index itself, with authHandle set to the
+// index (TCG Part 3 §31.13.1). Reading it as TPM_RH_OWNER instead checks
+// ownerAuth (TPMA_NV_OWNERREAD), so on an owned TPM an empty password fails
+// with TPM_RC_BAD_AUTH even after the write under the SO PIN succeeded
+// (#1725). nvReadAuthorization picks the index-self path, and the owner with
+// empty auth only for an index without TPMA_NV_AUTHREAD.
 func (tpm *TPM2) readCertFromNVRAM(nvIndex tpm2.TPMHandle) ([]byte, error) {
 	tpm.logger.Debug("reading certificate from NV index",
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)))
@@ -1183,10 +1272,11 @@ func (tpm *TPM2) readCertFromNVRAM(nvIndex tpm2.TPMHandle) ([]byte, error) {
 	}
 
 	bufMax := nvReadChunkSize(tpm.transport)
-	authHandle := tpm2.AuthHandle{
-		Handle: tpm2.TPMRHOwner,
-		Auth:   tpm2.PasswordAuth(nil),
+	authHandle, closeAuth, err := tpm.nvReadAuthorization(nvIndex, nvPubRsp.NVName, pub.Attributes, nil)
+	if err != nil {
+		return nil, err
 	}
+	defer tpm.closeSession(closeAuth, "certificate NV read")
 
 	result := make([]byte, 0, pub.DataSize)
 	offset := uint16(0)
@@ -1226,7 +1316,13 @@ func (tpm *TPM2) readCertFromNVRAM(nvIndex tpm2.TPMHandle) ([]byte, error) {
 // client with "missing Name for 'NVIndex' parameter" before any command
 // reaches the TPM, which is indistinguishable from a genuinely undefined
 // index unless the caller inspects the message.
-func (tpm *TPM2) deleteCertFromNVRAM(nvIndex tpm2.TPMHandle) error {
+//
+// TPM2_NV_UndefineSpace takes TPM_RH_OWNER as authHandle for an index the
+// owner defined (TCG Part 3 §31.4.1), so hierarchyAuth is the owner auth: the
+// SO PIN on an owned TPM, empty on an unowned one. It is supplied by the
+// caller at use time and never stored. A wrong value returns
+// ErrNVCertHierarchyAuth.
+func (tpm *TPM2) deleteCertFromNVRAM(nvIndex tpm2.TPMHandle, hierarchyAuth []byte) error {
 	tpm.logger.Debug("deleting certificate from NV index",
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)))
 
@@ -1238,19 +1334,20 @@ func (tpm *TPM2) deleteCertFromNVRAM(nvIndex tpm2.TPMHandle) error {
 		return err
 	}
 
-	_, err = tpm2.NVUndefineSpace{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		NVIndex: tpm2.NamedHandle{
-			Handle: nvIndex,
-			Name:   nvPubRsp.NVName,
-		},
-	}.Execute(tpm.transport)
+	authorize := tpm.hierarchyAuthorizer(tpm2.TPMRHOwner, hierarchyAuth)
+	err = authorize(encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.NVUndefineSpace{
+			AuthHandle: authHandle,
+			NVIndex: tpm2.NamedHandle{
+				Handle: nvIndex,
+				Name:   nvPubRsp.NVName,
+			},
+		}.Execute(tpm.transport)
+		return err
+	})
 	if err != nil {
 		tpm.logger.Error("failed to undefine NV space", slog.String("error", err.Error()))
 	}
 
-	return err
+	return nvCertAuthError(err)
 }
