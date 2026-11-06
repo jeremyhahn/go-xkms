@@ -27,6 +27,15 @@ type SessionAccount struct {
 
 	// Email is the account's email login key.
 	Email string
+
+	// TenantID is the tenant the session was minted in. It must be the
+	// tenant the user store serves.
+	TenantID string
+}
+
+// tenantScoped is implemented by a UserStore that serves exactly one tenant.
+type tenantScoped interface {
+	TenantID() string
 }
 
 // SessionAccountFromIdentity maps an authenticated identity onto the WebAuthn
@@ -40,6 +49,12 @@ func SessionAccountFromIdentity(id *auth.Identity) (SessionAccount, error) {
 	if id == nil || id.Subject == "" {
 		return SessionAccount{}, ErrSessionAccountMismatch
 	}
+	// The subject kind is declared, never guessed: only a WebAuthn login
+	// mints a subject that is a user handle. A username subject (mTLS, PIV,
+	// certificate login) can be chosen to decode to another account's handle.
+	if id.Metadata[auth.SubjectKindMetadataKey] != auth.SubjectKindUserHandle {
+		return SessionAccount{}, ErrSessionAccountMismatch
+	}
 	handle, err := base64.RawURLEncoding.DecodeString(id.Subject)
 	if err != nil || len(handle) == 0 {
 		return SessionAccount{}, ErrSessionAccountMismatch
@@ -48,5 +63,5 @@ func SessionAccountFromIdentity(id *auth.Identity) (SessionAccount, error) {
 	if email == "" {
 		return SessionAccount{}, ErrSessionAccountMismatch
 	}
-	return SessionAccount{UserID: handle, Email: email}, nil
+	return SessionAccount{UserID: handle, Email: email, TenantID: id.TenantID}, nil
 }

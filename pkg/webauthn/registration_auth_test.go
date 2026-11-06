@@ -106,7 +106,7 @@ func (f *enrollFixture) enroll(t *testing.T, email string) (User, virtualwebauth
 
 // sessionFor is the session account a WebAuthn-minted token carries for user.
 func sessionFor(user User) SessionAccount {
-	return SessionAccount{UserID: user.WebAuthnID(), Email: user.Email()}
+	return SessionAccount{UserID: user.WebAuthnID(), Email: user.Email(), TenantID: "system"}
 }
 
 // TestBeginRegistration_RefusesAccountWithCredentials is go-xkms#1294: the
@@ -179,7 +179,7 @@ func TestBeginAddCredential_OtherSessionCannotAdd(t *testing.T) {
 	assert.Len(t, victimCreds, 1, "another session must not add to the victim's account")
 
 	// A session naming the victim's handle with another email is refused.
-	_, _, err = f.svc.BeginAddCredential(ctx, SessionAccount{UserID: victim.WebAuthnID(), Email: attacker.Email()})
+	_, _, err = f.svc.BeginAddCredential(ctx, SessionAccount{UserID: victim.WebAuthnID(), Email: attacker.Email(), TenantID: "system"})
 	require.ErrorIs(t, err, ErrSessionAccountMismatch)
 }
 
@@ -194,7 +194,9 @@ func TestBeginAddCredential_RefusesUnresolvableSession(t *testing.T) {
 		"empty":          {},
 		"no email":       {UserID: user.WebAuthnID()},
 		"no handle":      {Email: user.Email()},
-		"unknown handle": {UserID: []byte("12345678"), Email: user.Email()},
+		"unknown handle": {UserID: []byte("12345678"), Email: user.Email(), TenantID: "system"},
+		"no tenant":      {UserID: user.WebAuthnID(), Email: user.Email()},
+		"other tenant":   {UserID: user.WebAuthnID(), Email: user.Email(), TenantID: "tenant-b"},
 	}
 	for name, acct := range cases {
 		_, sessionID, err := f.svc.BeginAddCredential(ctx, acct)
@@ -270,22 +272,36 @@ func TestSessionAccountFromIdentity(t *testing.T) {
 	handle := []byte{0, 0, 0, 0, 0, 0, 0, 42}
 	id := &auth.Identity{
 		Subject:  base64.RawURLEncoding.EncodeToString(handle),
-		Metadata: map[string]string{"email": "a@example.com"},
+		TenantID: "tenant-a",
+		Metadata: map[string]string{
+			"email":                     "a@example.com",
+			auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle,
+		},
 	}
 	acct, err := SessionAccountFromIdentity(id)
 	require.NoError(t, err)
 	assert.Equal(t, handle, acct.UserID)
 	assert.Equal(t, "a@example.com", acct.Email)
+	assert.Equal(t, "tenant-a", acct.TenantID)
 }
 
-// TestSessionAccountFromIdentity_Rejects covers identities that name no
-// WebAuthn account.
+// TestSessionAccountFromIdentity_Rejects proves only a WebAuthn-handle
+// identity becomes a session account. A username subject that happens to be
+// a valid base64url handle is refused (Codex 9037): certificate login lets
+// the caller choose that username.
 func TestSessionAccountFromIdentity_Rejects(t *testing.T) {
+	handle := base64.RawURLEncoding.EncodeToString([]byte("12345678"))
+	withKind := func(kind string) map[string]string {
+		return map[string]string{"email": "a@example.com", auth.SubjectKindMetadataKey: kind}
+	}
 	cases := map[string]*auth.Identity{
 		"nil":           nil,
-		"empty subject": {Metadata: map[string]string{"email": "a@example.com"}},
-		"not base64url": {Subject: "not base64!", Metadata: map[string]string{"email": "a@example.com"}},
-		"no email":      {Subject: base64.RawURLEncoding.EncodeToString([]byte("12345678"))},
+		"empty subject": {Metadata: withKind(auth.SubjectKindUserHandle)},
+		"not base64url": {Subject: "not base64!", Metadata: withKind(auth.SubjectKindUserHandle)},
+		"no email":      {Subject: handle, Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle}},
+		"username kind": {Subject: handle, TenantID: "tenant-a", Metadata: withKind(auth.SubjectKindUsername)},
+		"missing kind":  {Subject: handle, TenantID: "tenant-a", Metadata: map[string]string{"email": "a@example.com"}},
+		"unknown kind":  {Subject: handle, TenantID: "tenant-a", Metadata: withKind("service")},
 	}
 	for name, id := range cases {
 		_, err := SessionAccountFromIdentity(id)

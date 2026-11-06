@@ -882,6 +882,48 @@ func TestJWTAuthenticator_EmailClaimAbsentOrEmpty(t *testing.T) {
 	}
 }
 
+// TestJWTAuthenticator_SubjectKindClaim proves an access token's sub_kind
+// claim reaches the identity, so a WebAuthn-login bearer is still recognised
+// as a handle subject; a token without one declares no kind.
+func TestJWTAuthenticator_SubjectKindClaim(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair(t)
+
+	auth, err := NewJWTAuthenticator(&JWTConfig{PublicKey: publicKey})
+	require.NoError(t, err)
+
+	cases := map[string]struct {
+		claims  jwt.MapClaims
+		kind    string
+		present bool
+	}{
+		"user handle": {
+			claims:  jwt.MapClaims{"sub": "aGFuZGxl", SubjectKindMetadataKey: SubjectKindUserHandle, "exp": time.Now().Add(time.Hour).Unix()},
+			kind:    SubjectKindUserHandle,
+			present: true,
+		},
+		"absent": {
+			claims: jwt.MapClaims{"sub": "alice", "exp": time.Now().Add(time.Hour).Unix()},
+		},
+		"non-string": {
+			claims: jwt.MapClaims{"sub": "alice", SubjectKindMetadataKey: 7, "exp": time.Now().Add(time.Hour).Unix()},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			token := createTestToken(t, privateKey, tc.claims)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+
+			identity, err := auth.AuthenticateHTTP(req)
+			require.NoError(t, err)
+			kind, present := identity.Metadata[SubjectKindMetadataKey]
+			assert.Equal(t, tc.present, present)
+			assert.Equal(t, tc.kind, kind)
+		})
+	}
+}
+
 // TestJWTAuthenticator_AttestLevelClaim proves the attestation level the PIV
 // login minted reaches the identity a handler sees behind bearer auth, and
 // that a token without the claim leaves the key absent.

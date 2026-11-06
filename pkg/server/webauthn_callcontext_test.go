@@ -72,8 +72,9 @@ func TestWebAuthnBegin_RegisteredUserListsCredentialInExcludeCredentials(t *test
 	session := &auth.Identity{Subject: base64.RawURLEncoding.EncodeToString(user.WebAuthnID())}
 	ctx := auth.WithIdentity(context.Background(), session)
 	options, sessionID, err := s.webauthnService.BeginAddCredential(ctx, webauthn.SessionAccount{
-		UserID: user.WebAuthnID(),
-		Email:  email,
+		UserID:   user.WebAuthnID(),
+		Email:    email,
+		TenantID: "system",
 	})
 	require.NoError(t, err, "a session without a users grant must still begin its own added passkey")
 	require.NotEmpty(t, sessionID)
