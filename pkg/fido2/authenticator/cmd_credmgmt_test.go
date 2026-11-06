@@ -566,6 +566,96 @@ func TestCredMgmtUpdateUserInformation(t *testing.T) {
 	require.Equal(t, "Alice Johnson", updatedCred.UserDisplayName)
 }
 
+// TestCredMgmtRPScopedTokenActsOnItsRPOnly pins CTAP 2.1 §6.8.3-§6.8.6: a
+// credentialMgmt token minted with a permissions RP ID manages that RP's
+// credentials and no other RP's, and never lists every RP.
+func TestCredMgmtRPScopedTokenActsOnItsRPOnly(t *testing.T) {
+	credID := func(cred *StoredCredential) map[string]interface{} {
+		return map[string]interface{}{"type": "public-key", "id": cred.CredentialID}
+	}
+	otherRPIDHash := sha256.Sum256([]byte("other.com"))
+	ownRPIDHash := sha256.Sum256([]byte("example.com"))
+
+	tests := []struct {
+		name       string
+		subCommand uint8
+		params     func(own, other *StoredCredential) map[int]interface{}
+		wantStatus byte
+	}{
+		{
+			name:       "delete another RP's credential",
+			subCommand: CredMgmtDeleteCredential,
+			params: func(_, other *StoredCredential) map[int]interface{} {
+				return map[int]interface{}{credMgmtParamCredentialID: credID(other)}
+			},
+			wantStatus: StatusPINAuthInvalid,
+		},
+		{
+			name:       "update another RP's credential",
+			subCommand: CredMgmtUpdateUserInformation,
+			params: func(_, other *StoredCredential) map[int]interface{} {
+				return map[int]interface{}{
+					credMgmtParamCredentialID: credID(other),
+					credMgmtParamUser:         map[string]interface{}{"name": "mallory"},
+				}
+			},
+			wantStatus: StatusPINAuthInvalid,
+		},
+		{
+			name:       "enumerate another RP's credentials",
+			subCommand: CredMgmtEnumerateCredentialsBegin,
+			params: func(_, _ *StoredCredential) map[int]interface{} {
+				return map[int]interface{}{credMgmtParamRPIDHash: otherRPIDHash[:]}
+			},
+			wantStatus: StatusPINAuthInvalid,
+		},
+		{
+			name:       "enumerate every RP",
+			subCommand: CredMgmtEnumerateRPsBegin,
+			params:     func(_, _ *StoredCredential) map[int]interface{} { return nil },
+			wantStatus: StatusPINAuthInvalid,
+		},
+		{
+			name:       "enumerate its own RP's credentials",
+			subCommand: CredMgmtEnumerateCredentialsBegin,
+			params: func(_, _ *StoredCredential) map[int]interface{} {
+				return map[int]interface{}{credMgmtParamRPIDHash: ownRPIDHash[:]}
+			},
+			wantStatus: StatusOK,
+		},
+		{
+			name:       "delete its own RP's credential",
+			subCommand: CredMgmtDeleteCredential,
+			params: func(own, _ *StoredCredential) map[int]interface{} {
+				return map[int]interface{}{credMgmtParamCredentialID: credID(own)}
+			},
+			wantStatus: StatusOK,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auth := createCredMgmtTestAuthenticator(t)
+			defer func() { _ = auth.Close() }()
+
+			own := createCredMgmtTestCredential(t, "example.com", "Example", "user1", "alice", "Alice", true)
+			other := createCredMgmtTestCredential(t, "other.com", "Other", "user2", "bob", "Bob", true)
+			require.NoError(t, auth.storage.Store(own))
+			require.NoError(t, auth.storage.Store(other))
+
+			pinToken := setupPINTokenForCredMgmt(t, auth)
+			auth.pinState.protocol.tokenRPID = "example.com"
+
+			data := buildCredMgmtRequest(t, pinToken, tt.subCommand, tt.params(own, other))
+			resp, _ := auth.ProcessCBOR(CmdCredentialManagement, data)
+			require.Equal(t, tt.wantStatus, resp[0])
+
+			stored, err := auth.storage.Load(other.CredentialID)
+			require.NoError(t, err, "another RP's credential survives")
+			require.Equal(t, "bob", stored.UserName)
+		})
+	}
+}
+
 func TestCredMgmtUpdateUserInformationPartial(t *testing.T) {
 	auth := createCredMgmtTestAuthenticator(t)
 	defer func() { _ = auth.Close() }()

@@ -145,6 +145,90 @@ func TestRequireAttestedKeyOrigin_Refuses(t *testing.T) {
 	}
 }
 
+func TestRequireAttestedPerUseUserVerification_Succeeds(t *testing.T) {
+	for name, authType := range map[string]int{
+		"device credential (1)":           UserAuthTypePassword,
+		"biometric (2)":                   UserAuthTypeFingerprint,
+		"biometric or the credential (3)": UserAuthTypePassword | UserAuthTypeFingerprint,
+	} {
+		t.Run(name, func(t *testing.T) {
+			desc := &KeyDescription{TeeEnforced: AuthorizationList{UserAuthType: authType}}
+			require.NoError(t, RequireAttestedPerUseUserVerification(desc))
+		})
+	}
+}
+
+func TestRequireAttestedPerUseUserVerification_Refuses(t *testing.T) {
+	biometric := AuthorizationList{UserAuthType: UserAuthTypeFingerprint}
+	with := func(edit func(*AuthorizationList)) AuthorizationList {
+		list := biometric
+		edit(&list)
+		return list
+	}
+
+	for _, tc := range []struct {
+		name string
+		desc *KeyDescription
+		want error
+	}{
+		{
+			name: "noAuthRequired in teeEnforced",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.NoAuthRequired = true })},
+			want: ErrKeyNoAuthRequired,
+		},
+		{
+			name: "noAuthRequired in softwareEnforced",
+			desc: &KeyDescription{TeeEnforced: biometric, SoftwareEnforced: AuthorizationList{NoAuthRequired: true}},
+			want: ErrKeyNoAuthRequired,
+		},
+		{
+			name: "no userAuthType claim",
+			desc: &KeyDescription{TeeEnforced: AuthorizationList{}},
+			want: ErrKeyUserAuthTypeNotUserVerification,
+		},
+		{
+			name: "a bit beyond the credential and the biometric",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.UserAuthType = 4 })},
+			want: ErrKeyUserAuthTypeNotUserVerification,
+		},
+		{
+			name: "the biometric with an unknown bit",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.UserAuthType = UserAuthTypeFingerprint | 4 })},
+			want: ErrKeyUserAuthTypeNotUserVerification,
+		},
+		{
+			name: "any authenticator type (0xFFFFFFFF)",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.UserAuthType = 0xFFFFFFFF })},
+			want: ErrKeyUserAuthTypeNotUserVerification,
+		},
+		{
+			name: "biometric claimed only in softwareEnforced",
+			desc: &KeyDescription{SoftwareEnforced: biometric},
+			want: ErrKeyUserAuthTypeNotUserVerification,
+		},
+		{
+			name: "nonzero authTimeout",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.HasAuthTimeout, l.AuthTimeout = true, 30 })},
+			want: ErrKeyAuthTimeout,
+		},
+		{
+			name: "authTimeout present as zero",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.HasAuthTimeout = true })},
+			want: ErrKeyAuthTimeout,
+		},
+		{
+			name: "allowWhileOnBody",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.AllowWhileOnBody = true })},
+			want: ErrKeyAllowWhileOnBody,
+		},
+		{name: "nil description", desc: nil, want: ErrNilKeyDescription},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.ErrorIs(t, RequireAttestedPerUseUserVerification(tc.desc), tc.want)
+		})
+	}
+}
+
 func TestRequireAttestedApplication_Succeeds(t *testing.T) {
 	desc := &KeyDescription{}
 	desc.SoftwareEnforced.AttestationApplicationID = &AttestationApplicationID{

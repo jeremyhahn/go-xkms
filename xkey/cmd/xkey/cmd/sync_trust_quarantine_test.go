@@ -29,6 +29,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 )
@@ -141,7 +142,7 @@ func TestSyncTrustStore_ForgedGoogleRootAnchorsNothing(t *testing.T) {
 		assert.Equal(t, truststore.PurposeSynced, meta.Purpose, "%s", ca.cert.Subject)
 	}
 
-	trust, err := attestation.LoadTrust(store, quarantineTestApplications())
+	trust, err := attestation.LoadTrust(store, quarantineTestApplications(), attesttest.NoRevocations())
 	require.NoError(t, err)
 	_, err = forged.issueLeaf(t, "attested.example.com").Verify(x509.VerifyOptions{
 		Roots:     trust.Roots,

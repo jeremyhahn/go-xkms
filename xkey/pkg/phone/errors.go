@@ -43,6 +43,12 @@ const DefaultLiveAttestTimeout = 120 * time.Second
 // than the policy it implements.
 var ErrLiveAttestationUnavailable = errors.New("phone: this device requires a live attestation proof but no verifier was configured")
 
+// ErrUserVerifierUnavailable indicates VerifyUser was called on a backend
+// built without a VerifyUser function (ruling 167). Like
+// ErrLiveAttestationUnavailable it is a refusal: a missing verifier must
+// never read as a verified user.
+var ErrUserVerifierUnavailable = errors.New("phone: user verification was requested but no verifier was configured")
+
 // Errors delegated to pairing package. These are returned by pairing code
 // and must be the same values so errors.Is() works correctly.
 var (
