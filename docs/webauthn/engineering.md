@@ -372,27 +372,29 @@ the winner renames the record and gets a session.
   delete and the cleanup run on the caller's context pinned to the store's
   tenant, so the marker delete always targets this tenant's key.
   - **Deletion record.** `webauthn/account-deletion/<tenantID>/<userID>`
-    (`enrolmentDeletionPrefix`, `qrdb_userstore.go:978`; `deletionKey`,
+    (`enrolmentDeletionPrefix`, `qrdb_userstore.go:964`; `deletionKey`,
     `qrdb_userstore.go:548`) is the evidence that this tenant's delete of the
     account was authorized. It is written, read and dropped on `CallContext`'s
     context pinned to the store's tenant, never the caller's.
   - **Fresh delete.** Only an account the caller can read in its tenant is
-    deleted afresh. `Delete` writes the record, then deletes the account. A
-    refused delete drops the record and returns the refusal, with the
-    credentials untouched. Then it removes the credentials, then the marker
-    (`finishDelete`, `qrdb_userstore.go:752`), then the record.
-  - **Interrupted delete.** Only a proven refusal drops the record: one of
-    the qrdb SDK's authorization refusals, decided before anything is
-    written (`isRefusal`, `qrdb_userstore.go:878`: `PermissionDeniedError`,
-    `CrossTenantDeniedError`, `IsCrossTenantAccess`). Any other account
-    delete error is returned with the record kept, because qrdb can remove
-    the account and then fail: an identity-index error after the primary
-    record went, or `CommitOutcomeUnknownError`. The administrator's retry
-    then finds no account and resumes the cleanup on the kept record. A
-    record kept on an account that is still live does no harm: the resume
-    answers `ErrUserNotFound` while the account is live, and a fresh delete
-    writes the record again.
-  - **Resumed delete** (`resumeDelete`, `qrdb_userstore.go:724`). An account
+    deleted afresh. `Delete` writes the record, then deletes the account,
+    then removes the credentials, then the marker (`finishDelete`,
+    `qrdb_userstore.go:753`), then the record.
+  - **Interrupted delete.** An account delete error is returned with the
+    record kept, whatever the error. qrdb can remove the account and then
+    fail (an identity-index error after the primary record went, or
+    `CommitOutcomeUnknownError`), and the administrator's retry then finds
+    no account and resumes the cleanup on the kept record.
+  - **Concurrent deletes.** Two `Delete` calls that both read the live
+    account write the same record. A refusal (the caller lacks
+    `users:delete`) proves only that this call removed nothing, so it never
+    drops the record: a concurrent administrator whose cleanup failed after
+    the account went still needs it to finish (Codex 9035;
+    `TestWebAuthnDeleteUser_RefusedConcurrentDeleteKeepsRecord`). A record
+    kept on an account that is still live removes nothing: the resume
+    answers `ErrUserNotFound` while the account is live and still needs
+    `users:delete`, and a fresh delete writes the record again.
+  - **Resumed delete** (`resumeDelete`, `qrdb_userstore.go:725`). An account
     the caller cannot see is cleaned only when this tenant's record exists
     and the account is no longer live in the store's tenant. Before anything
     is removed, the caller must still hold `users:delete` in the store's
