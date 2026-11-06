@@ -109,6 +109,7 @@ type faultyUserClient struct {
 	inner *fakeUserClient
 
 	createErr error
+	updateErr error
 	deleteErr error
 }
 
@@ -136,6 +137,9 @@ func (f *faultyUserClient) GetUserByCertThumbprint(ctx context.Context, thumbpri
 }
 
 func (f *faultyUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
 	return f.inner.UpdateUser(ctx, req)
 }
 
@@ -204,6 +208,50 @@ func TestQRDBAdapter_Create_UserClientError(t *testing.T) {
 	_, err := us.Create(context.Background(), "a@example.com", "A")
 	if !errors.Is(err, errKVFault) {
 		t.Fatalf("expected wrapped create error, got %v", err)
+	}
+}
+
+// TestQRDBAdapter_Create_UsernameAssignError_DeletesRecord checks a failed
+// rename to the user ID is a *QRDBUsernameAssignError and removes the record
+// created under the placeholder, so the email is free to register again.
+func TestQRDBAdapter_Create_UsernameAssignError_DeletesRecord(t *testing.T) {
+	inner := newFakeUserClient()
+	uc := &faultyUserClient{inner: inner, updateErr: errKVFault}
+	us, _ := newFaultyAdapter(t, uc, newTestDAOFactory())
+	ctx := context.Background()
+
+	_, err := us.Create(ctx, "a@example.com", "A")
+	var assignErr *QRDBUsernameAssignError
+	if !errors.As(err, &assignErr) {
+		t.Fatalf("expected *QRDBUsernameAssignError, got %T: %v", err, err)
+	}
+	if !errors.Is(err, errKVFault) || assignErr.RollbackErr != nil {
+		t.Fatalf("unexpected error chain: %v", err)
+	}
+	if n := len(inner.byID); n != 0 {
+		t.Fatalf("records after a failed rename = %d, want 0", n)
+	}
+
+	uc.updateErr = nil
+	if _, err := us.Create(ctx, "a@example.com", "A"); err != nil {
+		t.Fatalf("Create after rollback: %v", err)
+	}
+}
+
+// TestQRDBAdapter_Create_UsernameAssignError_RollbackFails checks a failed
+// delete of the half-created record is reported alongside the rename error.
+func TestQRDBAdapter_Create_UsernameAssignError_RollbackFails(t *testing.T) {
+	errDelete := errors.New("delete fault")
+	uc := &faultyUserClient{inner: newFakeUserClient(), updateErr: errKVFault, deleteErr: errDelete}
+	us, _ := newFaultyAdapter(t, uc, newTestDAOFactory())
+
+	_, err := us.Create(context.Background(), "a@example.com", "A")
+	var assignErr *QRDBUsernameAssignError
+	if !errors.As(err, &assignErr) {
+		t.Fatalf("expected *QRDBUsernameAssignError, got %T: %v", err, err)
+	}
+	if !errors.Is(err, errKVFault) || !errors.Is(err, errDelete) {
+		t.Fatalf("error chain must carry both faults: %v", err)
 	}
 }
 
