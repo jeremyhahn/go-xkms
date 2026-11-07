@@ -175,6 +175,15 @@ func TestTypeStrings(t *testing.T) {
 	assert.Equal(t, "MLKEM1024", kemAlgo.String())
 }
 
+// Once the sealed seed is destroyed the key material cannot be exported,
+// even though the decapsulation key is still referenced.
+func TestExportSecretKey_DestroyedSeed(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+	k.seed.Destroy()
+	assert.Nil(t, k.ExportSecretKey())
+}
+
 func TestExportSecretKey_ReturnsCopy(t *testing.T) {
 	k, err := New()
 	require.NoError(t, err)
