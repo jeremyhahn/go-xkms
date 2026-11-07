@@ -15,7 +15,7 @@ package avr
 
 // The alias certificate a real device emits, frozen.
 //
-// Mirrored from arduino-generic's testdata/uccs_vectors.h, where it is a
+// Mirrored from trusted-firmware's testdata/uccs_vectors.h, where it is a
 // LITERAL and not a value computed from the firmware that produces it. It was
 // made once by an independent encoder, checked against OpenSSL and Python
 // `cryptography`, and pinned: the signature is a real ECDSA signature that
