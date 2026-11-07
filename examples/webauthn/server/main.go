@@ -52,6 +52,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
@@ -108,15 +109,7 @@ func main() {
 			log.Printf("Failed to remove qrdb data directory: %v", err)
 		}
 	}()
-	ds, err := datastore.New(node.Client(), config.DatastoreConfig{})
-	if err != nil {
-		log.Fatalf("Failed to open datastore: %v", err)
-	}
-	users, credentials, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      node.Client().Users(),
-		DAOFactory: ds.DAOFactory(),
-		TenantID:   "system",
-	})
+	users, credentials, err := newStores(node)
 	if err != nil {
 		log.Fatalf("Failed to build WebAuthn stores: %v", err)
 	}
@@ -311,12 +304,31 @@ func startQRDBNode(ctx context.Context) (*qrdbnode.Node, string, error) {
 	cfg.Protocols.Unix = false
 	cfg.Protocols.MCP = false
 	cfg.Seal.Enabled = false
-	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
+	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil, serviceprincipal.Option())
 	if err != nil {
 		_ = os.RemoveAll(dataDir)
 		return nil, "", err
 	}
 	return node, dataDir, nil
+}
+
+// newStores builds the WebAuthn user and credential stores on the node's
+// system tenant: users are qrdb user records and credentials are DAO
+// entities on the node's datastore. The ceremony endpoints are public, so
+// every qrdb call runs as the node's service principal, as in xkmsd, and the
+// pending-enrolment claims live in the node's KV store.
+func newStores(node *qrdbnode.Node) (webauthn.UserStore, webauthn.CredentialStore, error) {
+	ds, err := datastore.New(node.Client(), config.DatastoreConfig{}, datastore.WithCallContext(node.ServiceContext))
+	if err != nil {
+		return nil, nil, err
+	}
+	return webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
+		Users:       node.Client().Users(),
+		DAOFactory:  ds.DAOFactory(),
+		TenantID:    "system",
+		CallContext: node.ServiceContext,
+		KV:          node.Client().KV(),
+	})
 }
 
 func getEnv(key, defaultValue string) string {

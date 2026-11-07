@@ -715,8 +715,9 @@ func TestMockAuthenticator_MultipleCredentials(t *testing.T) {
 	// Register with second authenticator, through a session authenticated
 	// as the account (go-xkms#1294).
 	regOptions2, regSessionID2, err := svc.BeginAddCredential(ctx, SessionAccount{
-		UserID: user.WebAuthnID(),
-		Email:  email,
+		UserID:   user.WebAuthnID(),
+		Email:    email,
+		TenantID: "system",
 	})
 	if err != nil {
 		t.Fatalf("BeginAddCredential failed: %v", err)

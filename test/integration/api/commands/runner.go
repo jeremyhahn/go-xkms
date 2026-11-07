@@ -77,6 +77,62 @@ type TestRunner struct {
 	Timeout        time.Duration
 	Verbose        bool
 	TLSCACert      string
+	// TLSClientCert and TLSClientKey are the admin mTLS credential that
+	// `xkmsd init --admin-factor mtls` issues on the suite's first boot.
+	// Composite auth admits no anonymous caller, so every TLS transport
+	// presents it.
+	TLSClientCert string
+	TLSClientKey  string
+}
+
+// TLSArgs returns the xkmsctl TLS flags for protocol: the CA that signs the
+// server's certificate and the admin client credential. Unix, gRPC, QUIC, MCP
+// (mcps://) and REST over https run TLS; REST over http and embedded do not.
+func (r *TestRunner) TLSArgs(t *testing.T, protocol ProtocolType) []string {
+	t.Helper()
+
+	usesTLS := protocol == ProtocolUnix ||
+		protocol == ProtocolGRPC ||
+		protocol == ProtocolQUIC ||
+		protocol == ProtocolMCP ||
+		protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://")
+	if !usesTLS {
+		return nil
+	}
+	return r.tlsFlags(t)
+}
+
+// tlsURLSchemes are the --server URL schemes whose transport runs TLS.
+var tlsURLSchemes = []string{"unix://", "https://", "grpc://", "grpcs://", "quic://", "mcps://"}
+
+// TLSArgsForURL is TLSArgs for the transport a --server URL selects.
+func (r *TestRunner) TLSArgsForURL(t *testing.T, serverURL string) []string {
+	t.Helper()
+
+	for _, scheme := range tlsURLSchemes {
+		if strings.HasPrefix(serverURL, scheme) {
+			return r.tlsFlags(t)
+		}
+	}
+	return nil
+}
+
+// tlsFlags returns the --tls-ca, --tls-cert and --tls-key flags. It fails t
+// when the admin credential is missing: composite auth admits no anonymous
+// caller, so a command without it could only fail later and less clearly.
+func (r *TestRunner) tlsFlags(t *testing.T) []string {
+	t.Helper()
+
+	for _, path := range []string{r.TLSClientCert, r.TLSClientKey} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("admin mTLS credential %q is unavailable (written by `xkmsd init --admin-factor mtls`): %v", path, err)
+		}
+	}
+	var args []string
+	if r.TLSCACert != "" {
+		args = append(args, "--tls-ca", r.TLSCACert)
+	}
+	return append(args, "--tls-cert", r.TLSClientCert, "--tls-key", r.TLSClientKey)
 }
 
 // NewTestRunner creates a new test runner with default configuration
@@ -96,6 +152,8 @@ func NewTestRunner() *TestRunner {
 		Timeout:        30 * time.Second,
 		Verbose:        getEnv("VERBOSE", "") != "",
 		TLSCACert:      getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
+		TLSClientCert:  getEnv("KEYSTORE_TLS_CERT", "/data/xkms/admin-cert.pem"),
+		TLSClientKey:   getEnv("KEYSTORE_TLS_KEY", "/data/xkms/admin-key.pem"),
 	}
 }
 
@@ -130,7 +188,8 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(r.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
-		return "mcp://" + r.MCPAddr
+		// xkmsd serves MCP over TLS only; mcp:// is plaintext.
+		return "mcps://" + r.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""
@@ -196,7 +255,15 @@ func (r *TestRunner) RunCommand(t *testing.T, args ...string) (string, string, e
 func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType, args ...string) (string, string, error) {
 	t.Helper()
 
-	// Build prefix args with server URL and TLS options
+	return r.RunCommand(t, r.protocolArgs(t, protocol, args)...)
+}
+
+// protocolArgs returns args preceded by the server URL and TLS options the
+// protocol needs: the full argument list RunCommandWithProtocol passes to
+// the CLI.
+func (r *TestRunner) protocolArgs(t *testing.T, protocol ProtocolType, args []string) []string {
+	t.Helper()
+
 	prefixArgs := []string{}
 
 	// For embedded protocol, use --transport embedded instead of server URL
@@ -208,19 +275,10 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 			prefixArgs = append(prefixArgs, "--server", serverURL)
 		}
 
-		// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-		// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
-		needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
-			protocol == ProtocolGRPC ||
-			protocol == ProtocolQUIC
-
-		if needsTLS && r.TLSCACert != "" {
-			prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
-		}
+		prefixArgs = append(prefixArgs, r.TLSArgs(t, protocol)...)
 	}
 
-	args = append(prefixArgs, args...)
-	return r.RunCommand(t, args...)
+	return append(prefixArgs, args...)
 }
 
 // BuildCommandArgs builds the full argument list for a command definition
@@ -337,7 +395,11 @@ func (r *TestRunner) RunCommandTest(t *testing.T, protocol ProtocolType, cmd Com
 	}
 
 	if err != nil {
-		result.Message = fmt.Sprintf("Command failed: %v", err)
+		// The message carries the cause: the CLI's full argument list and
+		// everything it wrote.
+		args := r.protocolArgs(t, protocol, r.BuildCommandArgs(cmd, overrides))
+		result.Message = fmt.Sprintf("Command failed: %v\nargs: %s\nstdout: %s\nstderr: %s",
+			err, strings.Join(args, " "), stdout, stderr)
 	} else {
 		// Check expected output
 		for _, expected := range cmd.ExpectedOutputContains {

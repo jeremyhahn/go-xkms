@@ -65,9 +65,19 @@ var (
 	// closed: creating, reading and deleting tenants is never open.
 	ErrTenantAuthorizerUnavailable = errors.New("rest: tenant routes need a qrdb-backed authorizer")
 
+	// ErrCORSPreflightRefused is answered (403) on a CORS preflight whose
+	// origin the configured CORS policy does not allow, or on every
+	// preflight when no policy is configured (Server.BindPreflight).
+	ErrCORSPreflightRefused = errors.New("rest: cross-origin preflight refused")
+
 	// ErrTokenIssuerBackendRequired is returned by BuildTokenIssuer when
 	// TokenIssuerParams carries a nil signing Backend.
 	ErrTokenIssuerBackendRequired = errors.New("rest: token issuer requires a non-nil signing backend")
+
+	// ErrSessionSigningKeyNoPublicKey is wrapped in a
+	// SessionSigningKeyExportError when the backend's Signer for the session
+	// signing key reports no public key.
+	ErrSessionSigningKeyNoPublicKey = errors.New("rest: session signing key signer has no public key")
 
 	// ErrWebAuthnConfigRequired is returned by BuildWebAuthnService when
 	// WebAuthnServiceParams carries a nil Config.

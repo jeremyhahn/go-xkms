@@ -111,3 +111,49 @@ func TestCreateSealVolume_FallsBackToXKeyHome(t *testing.T) {
 func TestCreateSealVolume_UnresolvableHomeIsError(t *testing.T) {
 	assertVolumeReportsUnresolvableHome(t, createSealVolume)
 }
+
+func TestVerifyDirCopy_ReportsDirectoryMismatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		dst     func(t *testing.T, dst string)
+		path    string
+		message string
+	}{
+		{
+			name:    "missing directory",
+			dst:     func(*testing.T, string) {},
+			path:    "keys",
+			message: "missing directory in destination",
+		},
+		{
+			name: "directory replaced by a file",
+			dst: func(t *testing.T, dst string) {
+				writeTestFile(t, filepath.Join(dst, "keys"), "not a directory")
+			},
+			path:    "keys",
+			message: "expected a directory in destination",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src, dst := t.TempDir(), t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(src, "keys"), 0o700))
+			writeTestFile(t, filepath.Join(src, "keys", "a.key"), "key material")
+			tt.dst(t, dst)
+
+			var verr *DataVerificationError
+			require.ErrorAs(t, verifyDirCopy(src, dst), &verr)
+			assert.Equal(t, tt.path, verr.Path)
+			assert.Equal(t, tt.message, verr.Message)
+		})
+	}
+}
+
+func TestVerifyDirCopy_MissingSourceIsWalkError(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "gone")
+
+	var verr *DataVerificationError
+	require.ErrorAs(t, verifyDirCopy(missing, t.TempDir()), &verr)
+	assert.Equal(t, "failed to walk source", verr.Message)
+	assert.ErrorIs(t, verr, os.ErrNotExist)
+}

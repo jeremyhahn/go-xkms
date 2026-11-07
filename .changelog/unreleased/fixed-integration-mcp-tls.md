@@ -1,0 +1,1 @@
+- The API suite reaches xkmsd's MCP listener over `mcps://` with the admin credential on every CLI path, not only the xkey SSH parity tests: xkmsd serves MCP over TLS only, and answered the plaintext `mcp://` initialize with a 4xx (run 77537).

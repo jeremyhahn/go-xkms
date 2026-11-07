@@ -586,6 +586,7 @@ func TestCLIComprehensiveKeyOperationsAllAlgorithms(t *testing.T) {
 							}
 							stdout, stderr, err := suite.runCLI(serverURL,
 								"key", "decrypt", keyID, ciphertext,
+								"--hash", "sha256",
 							)
 							if err != nil {
 								t.Fatalf("decrypt failed: %v\nstderr: %s", err, stderr)
@@ -691,9 +692,6 @@ func TestCLIComprehensiveKeyCopyOperation(t *testing.T) {
 				stdout, stderr, err := suite.runCLI(serverURL,
 					"key", "copy", sourceKeyID, destKeyID,
 					"--dest-backend", "software",
-					"--key-type", "signing",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
 					"--algorithm", "RSAES_OAEP_SHA_256",
 				)
 				if err != nil {

@@ -89,9 +89,9 @@ var mcpAuthzCases = []mcpAuthzCase{
 	{"admin.deleteEAB", auth.ResourceACMEEAB, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
 	{"admin.listEABs", auth.ResourceACMEEAB, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 
-	{"admin.createRole", auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{"admin.createRole", auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameUser},
 	{"admin.getRole", auth.ResourceRoles, auth.ActionRead, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
-	{"admin.updateRole", auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{"admin.updateRole", auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameUser},
 	{"admin.deleteRole", auth.ResourceRoles, auth.ActionDelete, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
 	{"admin.listRoles", auth.ResourceRoles, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
 
@@ -217,9 +217,9 @@ func TestAuthorizeMCPMethod_NilGateDenies(t *testing.T) {
 // regression on the MCP transport: qrdb's canonical admin role reaches the ACME
 // admin MCP methods an Admin should reach, and revoking it removes access.
 func TestAuthorizeMCPMethod_QRDBAdminReachesMCPSurface(t *testing.T) {
-	soOnly := map[string]bool{
-		"admin.createRole": true, "admin.updateRole": true, "admin.deleteRole": true,
-	}
+	// Since go-qrdb v0.58 Admin creates and updates roles; deleting one stays
+	// with the Security Officer.
+	soOnly := map[string]bool{"admin.deleteRole": true}
 
 	server, _ := newAuthzTestServer(t)
 	for method := range server.MCPToolPermissions() {

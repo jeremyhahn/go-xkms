@@ -1,0 +1,1 @@
+- The MCP integration suites call xkmsd's tools through the `mcps://` Streamable HTTP client with the admin credential: their test client dialled raw TCP and wrote newline-delimited JSON-RPC, which xkmsd does not serve (run 77537).

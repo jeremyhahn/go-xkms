@@ -236,6 +236,33 @@ func TestVerifyAndDecryptCmds_SendKeyVersion(t *testing.T) {
 	assert.Zero(t, mock.requests["decrypt"].(*client.DecryptRequest).KeyVersion)
 }
 
+// TestKeyDecryptCmd_HashSelectsOAEP pins that --hash decrypts RSA-OAEP with
+// that digest, matching what encrypt-asym produced, instead of the PKCS#1
+// v1.5 fallback the server refuses by policy.
+func TestKeyDecryptCmd_HashSelectsOAEP(t *testing.T) {
+	mock := &mockKeyVersionClient{}
+	ct := base64.StdEncoding.EncodeToString([]byte("ct"))
+
+	_, code := runKeyVersionCmd(t, mock, "text", keyDecryptCmd, []string{"k", ct}, map[string]string{"hash": "sha384"})
+	assert.Equal(t, -1, code)
+	req := mock.requests["decrypt"].(*client.DecryptRequest)
+	assert.Equal(t, "oaep", req.Padding)
+	assert.Equal(t, "sha384", req.Hash)
+}
+
+// TestKeyDecryptCmd_NoHashLeavesPaddingUnset pins that a decrypt without
+// --hash names no RSA padding, so symmetric decryption is unchanged.
+func TestKeyDecryptCmd_NoHashLeavesPaddingUnset(t *testing.T) {
+	mock := &mockKeyVersionClient{}
+	ct := base64.StdEncoding.EncodeToString([]byte("ct"))
+
+	_, code := runKeyVersionCmd(t, mock, "text", keyDecryptCmd, []string{"k", ct}, nil)
+	assert.Equal(t, -1, code)
+	req := mock.requests["decrypt"].(*client.DecryptRequest)
+	assert.Empty(t, req.Padding)
+	assert.Empty(t, req.Hash)
+}
+
 // TestPrinters_KeyVersion prints the key version in JSON beside a signature
 // and ciphertext, keeps the text signature bare, and adds a line to the text
 // encryption.

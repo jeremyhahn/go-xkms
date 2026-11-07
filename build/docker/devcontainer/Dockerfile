@@ -35,9 +35,10 @@ FROM ${GO_IMAGE} AS tools
 ARG GO_BUILD_PROXY
 ARG TARGETARCH
 ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=${GO_BUILD_PROXY} GOBIN=/out
-# apt retries transient fetch errors: one "Network is unreachable" reaching
-# deb.debian.org reddened CI (run 58741). Repeated per FROM ${GO_IMAGE} stage.
-RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
+# apt retries transient fetch errors with backoff: one "Network is unreachable"
+# reaching deb.debian.org reddened CI (run 58741, go-xkms#342). Every stage
+# that runs apt-get copies the shared config first (apt-retries.conf).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 RUN apt-get update && apt-get install -y --no-install-recommends xz-utils && \
     rm -rf /var/lib/apt/lists/*
 COPY scripts/tool-pins.sh /tmp/tool-pins.sh
@@ -103,7 +104,7 @@ RUN . /tmp/tool-pins.sh && \
 FROM ${GO_IMAGE} AS native
 ENV GOTOOLCHAIN=local DEBIAN_FRONTEND=noninteractive
 # apt retries transient fetch errors (see the tools stage).
-RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core build tools
     build-essential \
@@ -324,7 +325,7 @@ FROM ${GO_IMAGE} AS base
 ENV DEBIAN_FRONTEND=noninteractive
 # apt retries transient fetch errors (see the tools stage); toolchain and
 # devcontainer, built FROM base, inherit the setting.
-RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 # The upgrade takes the Debian security updates the pinned Go image predates
 # (linux-libc-dev among them): the integration image built on this stage is
 # gated by `trivy image --ignore-unfixed` (ci.yml).

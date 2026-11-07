@@ -100,9 +100,9 @@ func TestInitPKCS11Backend_EmptyPinMeansNotConfigured(t *testing.T) {
 		Token:   "test-token",
 	})
 
-	// The library is a placeholder file, not a loadable PKCS#11 module, so
-	// construction still fails once it tries to load the module -- but NOT
-	// on secret resolution, which is what this test isolates.
+	// With no PIN configured the backend looks for one in the pre-barrier
+	// store, which this server cannot open, so construction still fails --
+	// but NOT on secret resolution, which is what this test isolates.
 	err := srv.initPKCS11Backend()
 	require.Error(t, err)
 

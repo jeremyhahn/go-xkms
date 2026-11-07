@@ -127,30 +127,37 @@ func TestIntegrationConfigsAllowLegacyKeyWrap(t *testing.T) {
 }
 
 // TestIntegrationConfigSealedWindow pins the sealed-window posture of the
-// compose xkms-server's config.
+// compose xkms-server configs: the devcontainer's and the API suite's
+// (make integration-test-cli).
 //
-// Its passphrase barrier boots sealed, and the sealed-window listener binds
+// Their passphrase barrier boots sealed, and the sealed-window listener binds
 // server.host, which must stay a wildcard so the suites can dial the server
 // over the compose network once it is unsealed. pkg/server refuses that bind
 // unless barrier.sealed_window_allow_remote is set, and the daemon exits at
-// startup: the nightly's devcontainer-server-wait then times out with nothing
-// pointing at the config.
+// startup: the compose stack then fails with nothing pointing at the config.
 func TestIntegrationConfigSealedWindow(t *testing.T) {
-	path := filepath.Join("..", "..", "configs", "xkmsd-integration.yaml")
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	paths := []string{
+		filepath.Join("..", "..", "configs", "xkmsd-integration.yaml"),
+		filepath.Join("..", "..", "test", "integration", "api", "config.test.yaml"),
 	}
-	if !cfg.Barrier.Enabled || cfg.Barrier.SealStrategy() != "passphrase" {
-		t.Fatalf("barrier = enabled %v strategy %q; open-server-barrier.sh drives a passphrase barrier",
-			cfg.Barrier.Enabled, cfg.Barrier.SealStrategy())
-	}
-	if cfg.Server.Host != "0.0.0.0" {
-		t.Errorf("server.host = %q; the suites dial xkms-server over the compose network", cfg.Server.Host)
-	}
-	if !cfg.Barrier.SealedWindowAllowRemote {
-		t.Error("barrier.sealed_window_allow_remote is not set, so the sealed window refuses " +
-			"to bind server.host and the compose xkms-server exits at startup")
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if !cfg.Barrier.Enabled || cfg.Barrier.SealStrategy() != "passphrase" {
+				t.Fatalf("barrier = enabled %v strategy %q; the suites drive a passphrase barrier",
+					cfg.Barrier.Enabled, cfg.Barrier.SealStrategy())
+			}
+			if cfg.Server.Host != "0.0.0.0" {
+				t.Errorf("server.host = %q; the suites dial xkms-server over the compose network", cfg.Server.Host)
+			}
+			if !cfg.Barrier.SealedWindowAllowRemote {
+				t.Error("barrier.sealed_window_allow_remote is not set, so the sealed window refuses " +
+					"to bind server.host and the compose xkms-server exits at startup")
+			}
+		})
 	}
 }
 

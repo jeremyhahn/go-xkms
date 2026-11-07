@@ -1,0 +1,1 @@
+The xkey SSH integration suite authenticates its remote `xkey ssh` calls to xkmsd with the admin mTLS credential, through the `XKMSD_TLS_CERT`/`XKMSD_TLS_KEY` client credential xkey already reads, and verifies the unix socket's TLS listener against the test CA.

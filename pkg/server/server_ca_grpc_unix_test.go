@@ -35,6 +35,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -100,9 +101,6 @@ func generateServerTestCACert(t *testing.T) *x509.Certificate {
 	return cert
 }
 
-// dialServerUnixGRPC opens a client connection to a Unix-socket gRPC
-// listener started by the real composition root, waiting for the socket
-// file to appear first.
 // newUnixCATestServer composes a server whose only listener is the node's TLS
 // Unix socket. A CA is configured so first boot issues and binds the
 // administrator's certificate: a node without that binding answers every
@@ -126,23 +124,29 @@ func newUnixCATestServer(t *testing.T) *Server {
 		},
 	}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	return server
+	return newServerForTest(t, cfg)
 }
 
+// The connect and RPC limits are separate so a slow handshake on a loaded
+// runner is reported as such, not as the RPC's DeadlineExceeded.
+const (
+	unixConnectTimeout = 10 * time.Second
+	unixRPCTimeout     = 5 * time.Second
+)
+
+// dialServerUnixGRPC opens a client connection to the Unix-socket gRPC
+// listener started by the real composition root and waits until it is
+// Ready, failing the test if the socket is missing or the connection does
+// not become ready within unixConnectTimeout.
 func dialServerUnixGRPC(t *testing.T, s *Server) *grpc.ClientConn {
 	t.Helper()
 
+	// New returns with the embedded node's listeners bound, so the socket
+	// must already exist; a missing one is a failure, not something to wait
+	// out.
 	socketPath := s.config.Unix.SocketPath
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			time.Sleep(100 * time.Millisecond)
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	_, err := os.Stat(socketPath)
+	require.NoError(t, err, "the unix socket must exist once New returns")
 
 	// The socket serves the node's bootstrap certificate; createMinimalConfig
 	// has it name localhost, the authority gRPC uses for a unix target.
@@ -157,6 +161,16 @@ func dialServerUnixGRPC(t *testing.T, s *Server) *grpc.ClientConn {
 		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})),
 	)
 	require.NoError(t, err)
+
+	// Connect under its own limit, so the RPC's deadline covers only the
+	// call itself.
+	ctx, cancel := context.WithTimeout(context.Background(), unixConnectTimeout)
+	defer cancel()
+	conn.Connect()
+	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
+		require.Truef(t, conn.WaitForStateChange(ctx, state),
+			"unix gRPC connection not ready within %s (last state %s)", unixConnectTimeout, state)
+	}
 	return conn
 }
 
@@ -175,13 +189,12 @@ func TestServer_UnixGRPC_GetCACertificate_NoCA(t *testing.T) {
 	server.xkmsService.SetCA(nil)
 
 	require.NoError(t, server.Start())
-	defer func() { _ = server.Shutdown() }()
 
 	conn := dialServerUnixGRPC(t, server)
 	defer func() { _ = conn.Close() }()
 	client := pb.NewKeystoreServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), unixRPCTimeout)
 	defer cancel()
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+mintTestSessionJWT(t))
 
@@ -214,13 +227,12 @@ func TestServer_UnixGRPC_GetCACertificate_WithCA(t *testing.T) {
 	server.xkmsService.SetCA(&mockProviderCA{cert: cert})
 
 	require.NoError(t, server.Start())
-	defer func() { _ = server.Shutdown() }()
 
 	conn := dialServerUnixGRPC(t, server)
 	defer func() { _ = conn.Close() }()
 	client := pb.NewKeystoreServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), unixRPCTimeout)
 	defer cancel()
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+mintTestSessionJWT(t))
 

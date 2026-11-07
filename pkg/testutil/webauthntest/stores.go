@@ -84,6 +84,7 @@ func NewStoresFor(t testing.TB, users qrdbtransport.UserClient) *Stores {
 		Users:      users,
 		DAOFactory: testutil.NewMemoryDAOFactory(),
 		TenantID:   TenantID,
+		KV:         testutil.NewQRDBFakeTransport(),
 	})
 	if err != nil {
 		t.Fatalf("webauthntest: store adapter: %v", err)

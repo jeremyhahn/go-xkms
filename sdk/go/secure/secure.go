@@ -23,8 +23,10 @@ package secure
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
+	"github.com/jeremyhahn/go-enclave"
 	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 )
 
@@ -118,15 +120,42 @@ const (
 // honours it logs a warning; FIPS 140-3 mode refuses it.
 const AllowProcessInspectionEnv = qrdbsecure.AllowProcessInspectionEnv
 
+// CoreDumpHardeningError is returned by HardenProcess when go-enclave cannot
+// disable core dumps. The process is NOT hardened.
+type CoreDumpHardeningError struct {
+	// Err is go-enclave's HardenProcess error.
+	Err error
+}
+
+// Error describes the failure.
+func (e *CoreDumpHardeningError) Error() string {
+	return "secure: disable core dumps: " + e.Err.Error()
+}
+
+// Unwrap returns go-enclave's error.
+func (e *CoreDumpHardeningError) Unwrap() error {
+	return e.Err
+}
+
 // HardenProcess stops other processes from reading this one's memory: on
 // Linux prctl(PR_SET_DUMPABLE, 0), on macOS ptrace(PT_DENY_ATTACH), elsewhere
 // a logged no-op. It then refuses to continue if a tracer is already
-// attached. It belongs to the binary that owns the process: call it once,
-// first thing in main, before anything constructs a Buffer or Secret.
-// Every error means the process is NOT hardened. A nil logger uses
-// slog.Default.
+// attached. Unless the process opted out (ProcessInspectionAllowed), it also
+// disables core dumps through go-enclave's HardenProcess, which since
+// go-enclave v0.11 no longer happens on import: RLIMIT_CORE drops to zero, so
+// a crash cannot write unsealed secrets to a core file. It belongs to the
+// binary that owns the process: call it once, first thing in main, before
+// anything constructs a Buffer or Secret. Every error means the process is
+// NOT hardened. A nil logger uses slog.Default.
 func HardenProcess(logger *slog.Logger) (ProcessHardening, error) {
-	return qrdbsecure.HardenProcess(logger)
+	outcome, err := qrdbsecure.HardenProcess(logger)
+	if err != nil || outcome == ProcessInspectionAllowed {
+		return outcome, err
+	}
+	if _, err := enclave.HardenProcess(); err != nil && !errors.Is(err, enclave.ErrProcessHardeningUnsupported) {
+		return outcome, &CoreDumpHardeningError{Err: err}
+	}
+	return outcome, nil
 }
 
 // NewSecret seals src into a new Secret. On return, src is wiped — the

@@ -456,8 +456,12 @@ XKMS_GRPC_TLS_INSECURE ?= true
 GOFIPS140 ?= off
 GOFIPS140_FIPS ?= latest
 
-# Test timeout
-PKCS11_TEST_TIMEOUT ?= 10m
+# Test timeout for the pkcs11 integration targets. The pkcs11/module package
+# took 485s at normal load (run 72047 attempt 1) and more than 600s at
+# loadavg 498 on 80 CPUs (attempt 2, fsync-bound in ModuleStorage.SaveObject).
+# 20m is about 2.5x the normal-load time, which covers the loaded-runner
+# slowdown (go-xkms#1763).
+PKCS11_TEST_TIMEOUT ?= 20m
 # Backends the OpenSSL matrix exercises. Naming a backend asserts it is
 # compiled in; the matrix fails rather than skips if it is not.
 XKMS_PKCS11_BACKENDS ?= software
@@ -469,17 +473,23 @@ TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost
 # `make coverage` (#1587): above that job's slowest green run, 70m, and below
 # its 140m timeout-minutes, so a hung test fails with a goroutine dump first.
 UNIT_TEST_TIMEOUT ?= 75m
-TEST_FLAGS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS))"
+# Unit-test builds carry no DWARF (m1261): the race detector, coverage and
+# panic traces all read the runtime's pclntab, never DWARF, and dropping it cuts
+# the race build cache and every linked test binary by about a fifth (measured
+# on pkg/server's graph: 1.6 -> 1.3 GB of GOCACHE, 156 -> 130 MB per binary).
+# That build cache is most of what the Unit Tests job writes to disk.
+TEST_BUILD_FLAGS := -gcflags=all=-dwarf=false -ldflags=-w
+TEST_FLAGS := -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -tags="$(call go_tags,$(TEST_TAGS))"
 # FIPS variant. The `fips` tag has to join the SAME -tags list rather than
 # arrive as a second flag: go test keeps only the last -tags it is given, so
 # appending a flag would silently drop the codec tags above.
-TEST_FLAGS_FIPS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS) fips)"
+TEST_FLAGS_FIPS := -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -tags="$(call go_tags,$(TEST_TAGS) fips)"
 # !frost stub variant: TEST_TAGS minus frost, so the *_frost_stub_test.go
 # files (pkg/api/rest, pkg/api/mcp, pkg/api/grpc, pkg/server) build and run
 # under the "FROST not compiled in" configuration instead of being silently
 # excluded by every other test lane, which always carries frost (go-xkms#1249).
 TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
-TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
+TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 # Where `make agsim` puts the trusted-firmware host simulators. Exported so every
 # go test the Makefile runs finds them (sdk/go/tfwsim reads TFWSIM_DIR).
@@ -721,6 +731,11 @@ build-desktop: build-web
 ## test-web: Type-check and unit-test the SDK, svelte-auth, and SPA
 ## Runs under coverage so the 90% thresholds in each vitest config gate the
 ## build — a plain `vitest run` reports no coverage and enforces nothing.
+## The four node_modules trees (575 MB together) are removed once every project
+## passes (m1261): `npm ci` deletes and reinstalls them on every run anyway, so
+## keeping them only adds to the disk footprint of the targets that follow.
+## They go together because svelte-auth and web/app link the SDK with file:
+## dependencies that resolve through its node_modules.
 test-web:
 ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping test-web$(RESET)"
@@ -733,6 +748,7 @@ else
 	@cd $(WEB_APP_DIR) && npm ci --silent && npm run check && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing the xKey GUI frontend...$(RESET)"
 	@cd $(XKEY_FRONTEND_DIR) && npm ci --silent && npm run check -- --fail-on-warnings && npm test
+	@rm -rf $(SDK_TS_DIR)/node_modules $(SVELTE_AUTH_DIR)/node_modules $(WEB_APP_DIR)/node_modules $(XKEY_FRONTEND_DIR)/node_modules
 	@echo "$(GREEN)✓ web UI tests passed$(RESET)"
 endif
 
@@ -1092,6 +1108,7 @@ test-scripts:
 	@bash test/scripts/changelog-assemble.test.sh
 	@bash test/scripts/retry.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
+	@bash test/scripts/go-test-each.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
 	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/ensure-server-ca.test.sh
@@ -1134,6 +1151,12 @@ test-buildgates:
 #   yubikey, smartcardhsm   - tests that need physical hardware to exercise
 UNIT_TEST_SCOPE := ./pkg/... ./cmd/... ./sdk/...
 UNIT_TEST_EXCLUDE := (pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)
+# test-go runs one `go test` per package through scripts/go-test-each.sh, so
+# each package's WORK directory is removed when it finishes instead of holding
+# every compiled archive until the whole run ends (3.5 GB on a cold cache,
+# m1261). UNIT_TEST_JOBS packages run at once with one build action each (-p=1),
+# the same two concurrent actions CI's GOFLAGS=-p=2 allowed the single run.
+UNIT_TEST_JOBS ?= 2
 
 ## unit-test-pkgs: Print test-go's package list (batch.yml's race scope)
 unit-test-pkgs:
@@ -1143,7 +1166,8 @@ test-go: check-insecure-tls agsim
 	@echo "$(CYAN)$(BOLD)→ Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
-	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
+	GO=$(GO) scripts/go-test-each.sh --jobs $(UNIT_TEST_JOBS) --coverprofile $(COVERAGE_FILE) \
+		$(TEST_FLAGS) -p=1 -covermode=atomic -- \
 		$$(go list -e $(UNIT_TEST_SCOPE) 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
@@ -1162,7 +1186,7 @@ test-go: check-insecure-tls agsim
 ## pkcs11 (CGO), so without this lane those tests never run.
 test-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 vault key-factor tests...$(RESET)"
-	@$(GOTEST) -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS) pkcs11)" ./pkg/vaulttoken/...
+	@$(GOTEST) -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -tags="$(call go_tags,$(TEST_TAGS) pkcs11)" ./pkg/vaulttoken/...
 	@echo "$(GREEN)✓ PKCS#11 vault key-factor tests passed$(RESET)"
 
 .PHONY: test-nofrost
@@ -1851,8 +1875,39 @@ coverage-xkmsctl:
 # integration-test-cluster stays out of the default run: its three Raft nodes
 # cannot initialize their barriers until each node can be initialized without
 # running its own first boot, against a shared bootstrap CA. Run it on its own.
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
+#
+# CI runs the suites as IT_SHARDS parallel jobs (#1870), one compose project
+# each; integration-test is their union, so a suite is in the default run
+# exactly when it is in a shard. A shard is weighed by what its suites start
+# (a compose build, swtpm, xkmsd, a browser) and keeps the suites in the order
+# the serial run had:
+#   1  the PKCS#11 module lane, the heaviest single suite
+#   2  the API protocol suites and the stacks that follow them
+#   3  the swtpm suites
+#   4  the browser, CLI and SDK suites
+#   5  the backend and cloud-emulator stacks
+#   6  the light devcontainer suites
+IT_SHARDS := 1 2 3 4 5 6
+IT_SHARD_1 := integration-test-pkcs11-module-all
+IT_SHARD_2 := integration-test-api-all integration-test-sshagent integration-test-bootstrap
+IT_SHARD_3 := integration-test-pkcs11-barrier integration-test-tpm2 integration-test-storage integration-test-initceremony
+IT_SHARD_4 := integration-test-webauthn integration-test-cli integration-test-sdk-go
+IT_SHARD_5 := integration-test-pkcs8 integration-test-pkcs11 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault
+IT_SHARD_6 := integration-test-software integration-test-utils integration-test-quantum integration-test-frost integration-test-fido2
+IT_SUITES := $(foreach n,$(IT_SHARDS),$(IT_SHARD_$(n)))
+
+integration-test: clean-test-containers $(IT_SUITES)
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
+
+.PHONY: integration-test-shard
+## integration-test-shard: Run one CI shard of integration-test (IT_SHARD=1..6, see IT_SHARDS)
+ifneq ($(filter integration-test-shard,$(MAKECMDGOALS)),)
+ifeq ($(strip $(IT_SHARD_$(strip $(IT_SHARD)))),)
+$(error IT_SHARD must be one of: $(IT_SHARDS), not '$(IT_SHARD)')
+endif
+endif
+integration-test-shard: clean-test-containers $(IT_SHARD_$(strip $(IT_SHARD)))
+	@echo "$(GREEN)$(BOLD)✓ Integration shard $(IT_SHARD) complete!$(RESET)"
 
 .PHONY: clean-run-images
 ## clean-run-images: Remove the images this CI run tagged (no-op for local builds)
@@ -2087,7 +2142,7 @@ integration-test-symmetric:
 
 .PHONY: integration-test-pkcs8
 ## integration-test-pkcs8: Run PKCS8 asymmetric backend integration tests
-integration-test-pkcs8:
+integration-test-pkcs8: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running PKCS8 integration tests...$(RESET)"
 	@cd test/integration/pkcs8 && $(call compose,pkcs8) down -v >/dev/null 2>&1 || true
 	@cd test/integration/pkcs8 && trap '$(call compose,pkcs8) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
@@ -2917,29 +2972,29 @@ devcontainer-server-wait:
 # seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
 # binary (make build / make release-*) never carries those tags. See #807.
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
 
 .PHONY: integration-test-fido2-hardware
 ## integration-test-fido2-hardware: Run FIDO2 ceremonies against a REAL attached authenticator (requires a physical YubiKey/CTAP2 key and a human to touch it)
 integration-test-fido2-hardware:
 	@echo "$(YELLOW)This lane needs a physical CTAP2 authenticator attached; touch it when prompted.$(RESET)"
-	CGO_ENABLED=1 $(GO) test -v -count=1 -tags='$(call go_tags,integration fido2 yubikey_hardware)' \
+	CGO_ENABLED=1 $(GO) test -v -count=1 -tags='$(call go_tags,integration fido2 yubikey_hardware codec_cbor codec_json codec_msgpack)' \
 		./test/integration/fido2/... -run 'HardwareYubiKey' -timeout 10m
 
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
 integration-test-fido2-webauthn:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)webauthn)' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)webauthn$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
 integration-test-fido2-multiprotocol:
-	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration$(comma)fido2)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
+	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration$(comma)fido2)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
 
 .PHONY: integration-test-uhid
 ## integration-test-uhid: Run UHID package integration tests (runs in devcontainer with /dev/uhid access)
@@ -3119,7 +3174,7 @@ integration-test-cli:
 	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
 	@cd $(API_TEST_DIR) && $(call compose,api) down -v >/dev/null 2>&1 || true
 	@cd $(API_TEST_DIR) && $(call compose,api) build
-	@cd $(API_TEST_DIR) && trap '$(call compose,api) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd $(API_TEST_DIR) && trap 'rc=$$?; [ $$rc -eq 0 ] || $(call compose,api) logs --no-color xkms-server; $(call compose,api) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,api) run --rm integration-tests
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
@@ -3631,7 +3686,7 @@ gitea-host:
 DEVCONTAINER_DIR := build/docker/devcontainer
 DEVCONTAINER_COMPOSE := $(DEVCONTAINER_DIR)/compose.yaml
 TOOLCHAIN_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile $(DEVCONTAINER_DIR)/openssl-pkcs11.cnf \
-	$(TOOL_PINS) scripts/build-softhsm.sh \
+	$(DEVCONTAINER_DIR)/apt-retries.conf $(TOOL_PINS) scripts/build-softhsm.sh \
 	go.mod go.sum sdk/go/go.mod sdk/go/go.sum xkey/go.mod xkey/go.sum \
 	web/desktop/go.mod web/desktop/go.sum
 TOOLCHAIN_TAG = $(shell cat $(TOOLCHAIN_INPUTS) | sha256sum | cut -c1-16)
@@ -3964,8 +4019,9 @@ compose-ps:
 # namespaced per run, so removing them touches nothing outside this run --
 # but the IMAGE TAGS (go-xkms-swtpm:latest, go-xkms-test:latest, ...) are
 # shared by every run on the host by design, and deleting them forces a full
-# rebuild on any job that was about to use them. Disk is reclaimed by pruning
-# dangling images and build cache instead (test/scripts/clean-test-containers.sh).
+# rebuild on any job that was about to use them. Nothing here prunes either:
+# a prune is daemon-wide and breaks a concurrent job's build (#1870, see
+# test/scripts/clean-test-containers.sh).
 compose-clean:
 	@echo "$(CYAN)→ Cleaning docker-compose resources...$(RESET)"
 	@$(call compose,root) down -v --remove-orphans
@@ -4322,21 +4378,92 @@ secure-analyzer-selftest:
 #   G505: crypto/sha1 import - required for PKCS standards, cert thumbprints, WebAuthn
 GOSEC_EXCLUDE := G103,G104,G115,G117,G204,G302,G304,G306,G401,G402,G407,G501,G505,G703,G704,G705
 
+# gosec scans these groups of package directories one group after another,
+# so the step's peak memory is one group's, not the whole module's (#1871:
+# a single ./... pass was OOM-killed in the CI image, main runs 75748 and
+# 75835). gosec-groups fails the target when a package from go list ./...,
+# outside GOSEC_EXCLUDE_DIRS, is in no group or in two, or when a group
+# directory holds no package: a new top-level directory is never silently
+# left unscanned. A pkg/ directory no other group names is in group pkg.
+GOSEC_EXCLUDE_DIRS   := test testdata vendor xkey
+GOSEC_GROUP_api      := pkg/api
+GOSEC_GROUP_ca       := pkg/acme pkg/ca pkg/oidc pkg/trust
+GOSEC_GROUP_hardware := pkg/attestation pkg/pkcs11 pkg/tpm2
+GOSEC_GROUP_keys     := pkg/backend pkg/fido2 pkg/webauthn pkg/xkms
+GOSEC_GROUP_pkg      := $(filter-out $(GOSEC_GROUP_api) $(GOSEC_GROUP_ca) $(GOSEC_GROUP_hardware) $(GOSEC_GROUP_keys),$(patsubst %/,%,$(wildcard pkg/*/)))
+GOSEC_GROUP_top      := api cmd examples internal scripts web
+GOSEC_GROUPS         := api ca hardware keys pkg top
+GOSEC_GROUP_DIRS     := $(foreach g,$(GOSEC_GROUPS),$(GOSEC_GROUP_$(g)))
+
+# gosec loads this many packages at once, each through a go list -export that
+# compiles the package's uncached dependencies; cold, the concurrent loads
+# compile the same dependencies side by side. gosec's default is the host's
+# CPU count, not the container's quota: the CI image sets GOMAXPROCS to the
+# quota (scripts/in-toolchain-image.sh), and the bound follows it. The
+# target first compiles that export data once, in one go list under the -p
+# bound, so the loads read it from the build cache. Cold, at GOMAXPROCS=6
+# and -p=6, the whole make tree then peaks at 1.6 GiB (during the go list)
+# where the loads alone peaked at 8.7 GiB; warm, 2 GiB. The go list takes no
+# -tags, because gosec loads each package's files without them.
+GOSEC_CONCURRENCY ?= $(or $(GOMAXPROCS),$(shell nproc))
+
+# gosec_group_paths: the gosec package patterns of group $(1).
+gosec_group_paths = $(patsubst %,./%/...,$(GOSEC_GROUP_$(1)))
+
+.PHONY: gosec-groups
+## gosec-groups: Fail unless the gosec groups cover go list ./... exactly once
+gosec-groups:
+	@pkgs=$$(go list$(call go_tags_flag,) -f '{{.Dir}}' ./...) || exit 1; \
+	bad=0; \
+	for dir in $$pkgs; do \
+		rel=$${dir#$(CURDIR)/}; \
+		skip=; \
+		for x in $(GOSEC_EXCLUDE_DIRS); do \
+			case /$$rel/ in */$$x/*) skip=1 ;; esac; \
+		done; \
+		[ -z "$$skip" ] || continue; \
+		n=0; \
+		for root in $(GOSEC_GROUP_DIRS); do \
+			case $$rel/ in $$root/*) n=$$((n + 1)) ;; esac; \
+		done; \
+		if [ $$n -ne 1 ]; then \
+			echo "$(RED)✗ $$rel is in $$n gosec groups: name it in exactly one GOSEC_GROUP_*$(RESET)"; \
+			bad=1; \
+		fi; \
+	done; \
+	for root in $(GOSEC_GROUP_DIRS); do \
+		found=; \
+		for dir in $$pkgs; do \
+			case $${dir#$(CURDIR)/}/ in $$root/*) found=1; break ;; esac; \
+		done; \
+		if [ -z "$$found" ]; then \
+			echo "$(RED)✗ gosec group directory $$root holds no package of go list ./...$(RESET)"; \
+			bad=1; \
+		fi; \
+	done; \
+	exit $$bad
+
 .PHONY: gosec
 ## gosec: Run gosec security scanner (fails on HIGH/MEDIUM severity issues)
-gosec:
+gosec: gosec-groups
 	@echo "$(CYAN)$(BOLD)→ Running security analysis with gosec...$(RESET)"
 	@mkdir -p $(BUILD_DIR)
 	@GOSEC_BIN=$$(command -v gosec 2>/dev/null || echo "$$HOME/go/bin/gosec"); \
 	if [ -x "$$GOSEC_BIN" ]; then \
+		echo "$(CYAN)  compiling the export data gosec loads$(RESET)"; \
+		go list -export -deps ./... > /dev/null || exit 1; \
+		: > $(BUILD_DIR)/gosec-report.txt; \
+		$(foreach g,$(GOSEC_GROUPS),echo "$(CYAN)  gosec group $(g)$(RESET)"; \
 		$$GOSEC_BIN$(call go_tags_flag,) -exclude=$(GOSEC_EXCLUDE) -severity medium -confidence medium \
-			-exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor \
-			-exclude-dir=xkey \
+			-concurrency=$(GOSEC_CONCURRENCY) \
+			$(addprefix -exclude-dir=,$(GOSEC_EXCLUDE_DIRS)) \
 			-exclude-generated \
 			-no-fail \
-			-fmt=text -out=$(BUILD_DIR)/gosec-report.txt ./... ; \
-		ISSUE_COUNT=$$(grep -c '^  Issues' $(BUILD_DIR)/gosec-report.txt 2>/dev/null || echo 0); \
-		REAL_ISSUES=$$(grep '^  Issues' $(BUILD_DIR)/gosec-report.txt | awk '{print $$3}' 2>/dev/null || echo 0); \
+			-fmt=text -out=$(BUILD_DIR)/gosec-report-$(g).txt $(call gosec_group_paths,$(g)) \
+			|| { echo "$(RED)✗ gosec exited $$? on group $(g), without a report$(RESET)"; exit 1; }; \
+		cat $(BUILD_DIR)/gosec-report-$(g).txt >> $(BUILD_DIR)/gosec-report.txt; \
+		rm -f $(BUILD_DIR)/gosec-report-$(g).txt; ) \
+		REAL_ISSUES=$$(awk '/^  Issues/ {n += $$3} END {print n + 0}' $(BUILD_DIR)/gosec-report.txt); \
 		if [ "$$REAL_ISSUES" = "0" ]; then \
 			echo "$(GREEN)✓ Security scan complete - no issues found$(RESET)"; \
 			echo "$(CYAN)Report saved to: $(BUILD_DIR)/gosec-report.txt$(RESET)"; \
@@ -4802,7 +4929,7 @@ integration-test-api-all: integration-test-api-kill integration-test-api-unix in
 
 .PHONY: integration-test-api-unix
 ## integration-test-api-unix: Run Unix socket protocol integration tests
-integration-test-api-unix:
+integration-test-api-unix: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running Unix socket protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build

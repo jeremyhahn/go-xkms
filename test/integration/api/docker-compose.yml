@@ -33,8 +33,12 @@ services:
     # job's checkout (DS-4181).
     environment:
       - XKMS_CONFIG=/workspace/test/integration/api/config.test.yaml
-      # The harness runs barrier/auth disabled by design (tests drive the
-      # API surface directly); opt out of the refuse-to-start security gate.
+      # The config enables the passphrase barrier, so the server boots sealed
+      # and serves only its sealed window. The SO PIN is the barrier
+      # passphrase: `xkmsd init` (entrypoint) consumes it, and the
+      # integration-tests service unseals with the same value. The daemon
+      # itself is started without it, as in the devcontainer stack.
+      - XKMS_SO_PIN=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
       # TPM configuration
@@ -51,8 +55,12 @@ services:
         condition: service_healthy
       softhsm:
         condition: service_healthy
+    # Ready means "up and serving its sealed window", not unsealed: /health
+    # answers 503 until the barrier is opened, so the healthcheck follows the
+    # devcontainer stack and checks for the unix socket the sealed window
+    # binds. integration-tests then unseals and waits for /health itself.
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
+      test: ["CMD", "test", "-S", "/var/run/xkms/xkms.sock"]
       interval: 5s
       timeout: 5s
       retries: 15
@@ -82,8 +90,20 @@ services:
         mkdir -p /var/lib/softhsm/tokens
         softhsm2-util --show-slots | grep -q "test-token" || \
           softhsm2-util --init-token --free --label test-token --so-pin 123456 --pin 123456
+        # Initialize the barrier and the admin mTLS credential once; the
+        # sealed window refuses barrier initialization.
+        if [ -f /data/xkms/admin-cert.pem ] && [ -f /data/xkms/admin-key.pem ]; then
+          echo "Barrier already initialized; reusing the admin credential"
+        else
+          /app/xkmsd init --config /workspace/test/integration/api/config.test.yaml --hostname xkms-server --admin-factor mtls
+        fi
+        # Seal the token's user PIN into the TPM-backed pre-barrier store the
+        # pkcs11 backend releases it from (config.test.yaml sets no pin). The
+        # PIN goes on stdin, never argv; the verb opens and closes swtpm
+        # before the server does.
+        printf '%s' 123456 | /app/xkmsd seal-pkcs11-pin --config /workspace/test/integration/api/config.test.yaml
         echo "Starting xkms server..."
-        exec /app/xkmsd
+        exec env -u XKMS_SO_PIN /app/xkmsd
 
   # SWTPM TPM 2.0 Simulator
   swtpm:
@@ -144,6 +164,9 @@ services:
     volumes:
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs:ro
+      # Composite auth admits no anonymous caller, so the suite authenticates
+      # with the admin mTLS credential `xkmsd init` writes to /data/xkms.
+      - xkms-data:/data:ro
       - cli-build:/app/build
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
@@ -163,6 +186,9 @@ services:
       - KEYSTORE_CLI_BIN=/app/build/bin/xkmsctl
       # TLS configuration - use CA certificate for proper verification
       - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
+      - KEYSTORE_TLS_CERT=/data/xkms/admin-cert.pem
+      - KEYSTORE_TLS_KEY=/data/xkms/admin-key.pem
+      - XKMS_SERVER_BARRIER_SECRET=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
       # Test configuration
       - INTEGRATION_TIMEOUT=60s
       - GO_TEST_FLAGS=-v -tags=integration,frost
@@ -172,20 +198,21 @@ services:
     working_dir: /workspace
     networks:
       - xkms-integration
+    # The entrypoint unseals the server before any command, so a Makefile
+    # runner's own command tests an unsealed server too.
+    entrypoint: ["sh", "./test/integration/api/entrypoint.sh"]
     command: >
       sh -c "
       echo 'Configuring UDP buffers for QUIC...' &&
       echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo 'Warning: Could not set rmem_max' &&
       echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo 'Warning: Could not set wmem_max' &&
-      echo 'Waiting for server to be ready...' &&
-      sleep 5 &&
       echo 'Checking Unix socket...' &&
       ls -la /var/run/xkms/ || true &&
       echo 'Checking TLS certificates...' &&
       ls -la /etc/xkms/certs/ || true &&
       echo 'Building CLI binary...' &&
       mkdir -p /app/build/bin &&
-      CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
+      CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go codec_json' -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
       echo 'Running integration tests...' &&
       go test -v -tags=integration,frost,codec_cbor,codec_json,codec_msgpack ./test/integration/api/... -timeout 15m
       "

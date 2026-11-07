@@ -665,10 +665,13 @@ func TestInitializeAuthorization_RBACEnabledNoClient(t *testing.T) {
 // ============================================================================
 
 func TestInitializeAuditLogger_NilClient_NoOp(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
+	// The chained file sink lands in Datastore.Path; an empty path would
+	// root it in the package directory and leave it behind after the run.
+	s := newMinimalServer(t, &config.Config{Datastore: config.DatastoreConfig{Path: t.TempDir()}})
 	err := s.initializeAuditLogger()
 	require.NoError(t, err)
 	assert.NotNil(t, s.auditLogger)
+	require.NoError(t, s.ownedAuditLogger.Close())
 }
 
 // ============================================================================

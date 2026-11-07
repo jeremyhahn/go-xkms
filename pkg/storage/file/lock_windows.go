@@ -60,6 +60,13 @@ func (l *dirLock) tryLock() (bool, error) {
 	return err == nil, err
 }
 
+// lock blocks until it takes the exclusive lock on the sibling lock file's
+// first byte.
+func (l *dirLock) lock() error {
+	return windows.LockFileEx(windows.Handle(l.file.Fd()),
+		windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, new(windows.Overlapped))
+}
+
 func (l *dirLock) unlock() error {
 	return windows.UnlockFileEx(windows.Handle(l.file.Fd()), 0, 1, 0, new(windows.Overlapped))
 }

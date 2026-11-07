@@ -57,3 +57,37 @@ func TestTenantMetadataStore_PassesThroughValueAndOtherErrors(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 	assert.NotErrorIs(t, err, qrdbsdk.ErrSecretNotFound)
 }
+
+// go-qrdb's UpdateTenant commits through a compare-and-swap and refuses a
+// metadata store that hides one, so the adapter must forward the barrier's.
+func TestTenantMetadataStore_ForwardsCompareAndSwap(t *testing.T) {
+	ctx := context.Background()
+	barrier, err := NewBarrier(testLogger(), storage.NewMemory(), BarrierConfig{
+		RootKeyPath: "test/root-key",
+	}, NewSoftwareStrategy())
+	require.NoError(t, err)
+	creds, err := CredentialsFor(t.Context(), []byte("test-password"))
+	require.NoError(t, err)
+	defer DestroyCredentials(creds)
+	initAndUnsealBarrier(t, barrier, creds)
+	require.NoError(t, barrier.Put(ctx, "tenant/acme", []byte("v1")))
+	store := tenantMetadataStore{barrier}
+
+	swapped, err := store.CompareAndSwap(ctx, "tenant/acme", []byte("stale"), []byte("v2"))
+	require.NoError(t, err)
+	assert.False(t, swapped, "a stale expectation must not swap")
+
+	swapped, err = store.CompareAndSwap(ctx, "tenant/acme", []byte("v1"), []byte("v2"))
+	require.NoError(t, err)
+	assert.True(t, swapped)
+	v, err := store.Get(ctx, "tenant/acme")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v2"), v)
+}
+
+func TestTenantMetadataStore_CompareAndSwapUnsupported(t *testing.T) {
+	store := tenantMetadataStore{fakeBackendGet{}}
+	swapped, err := store.CompareAndSwap(context.Background(), "k", []byte("a"), []byte("b"))
+	assert.ErrorIs(t, err, storage.ErrCompareAndSwapUnsupported)
+	assert.False(t, swapped)
+}

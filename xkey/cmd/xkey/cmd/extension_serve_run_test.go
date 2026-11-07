@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
@@ -267,6 +269,68 @@ func TestExtensionServe_RefusesAnUnusablePINStateDirectory(t *testing.T) {
 	err := cmd.Execute()
 	require.ErrorIs(t, err, ErrServePINManagerInitFailed)
 	assert.NoFileExists(t, socketPath)
+}
+
+func TestExtensionServe_RefusesAnUnusableSocketPath(t *testing.T) {
+	isolateServeHome(t)
+	blocker := filepath.Join(privateTempDir(t), "a-file")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+	socketPath := filepath.Join(blocker, "serve.sock")
+
+	cmd := serveRunCmd(t, socketPath, true)
+	require.NoError(t, cmd.Flags().Set("no-auth", "true"))
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, ErrServeIPCStartFailed)
+	assert.NoFileExists(t, socketPath)
+}
+
+func TestExtensionServe_RefusesAnUnopenablePlainPasswordStore(t *testing.T) {
+	dataDir := isolateServeHome(t)
+	// A regular file where the no-barrier password store directory belongs.
+	require.NoError(t, os.MkdirAll(dataDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, passwordStoreFeature), nil, 0o600))
+	socketPath := filepath.Join(privateTempDir(t), "serve.sock")
+
+	err := serveRunCmd(t, socketPath, true).Execute()
+	require.ErrorIs(t, err, ErrServeStoreInitFailed)
+	assert.NoFileExists(t, socketPath)
+}
+
+// TestExtensionServe_FirstRunWithoutABarrierPasswordRefuses covers the first
+// start against an uninitialized barrier: with no password from a flag, a
+// file, the environment or a terminal, the daemon refuses rather than
+// initializing a barrier nobody can unseal.
+func TestExtensionServe_FirstRunWithoutABarrierPasswordRefuses(t *testing.T) {
+	dataDir := isolateServeHome(t)
+	t.Setenv(barrierPasswordSource.envVar, "")
+	socketPath := filepath.Join(privateTempDir(t), "serve.sock")
+
+	err := serveRunCmd(t, socketPath, false).Execute()
+	require.ErrorIs(t, err, ErrServeBarrierPasswordRequired)
+	assert.False(t, barrierRootKeyExists(dataDir), "no barrier may be initialized without a password")
+	assert.NoFileExists(t, socketPath)
+}
+
+func TestExtensionServe_BarrierPasswordFileUnreadableRefuses(t *testing.T) {
+	isolateServeHome(t)
+	socketPath := filepath.Join(privateTempDir(t), "serve.sock")
+
+	cmd := serveRunCmd(t, socketPath, false)
+	require.NoError(t, cmd.Flags().Set("barrier-password-file", filepath.Join(t.TempDir(), "absent")))
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, ErrServeBarrierPasswordRequired)
+	assert.NoFileExists(t, socketPath)
+}
+
+func TestInitBarrierStores_SealedBarrierRefused(t *testing.T) {
+	barrierSvc := services.NewBarrierService(t.TempDir(), slog.New(slog.DiscardHandler))
+	passwordSvc := services.NewStaticPasswordService(nil)
+	oathSvc := services.NewOATHService(nil)
+
+	err := initBarrierStores(barrierSvc, passwordSvc, oathSvc)
+	require.ErrorIs(t, err, ErrServeStoreInitFailed)
 }
 
 // sealEnterprisePolicy seals cfg's policy under testSOPIN in the isolated

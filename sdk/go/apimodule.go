@@ -22,7 +22,7 @@ import (
 
 // go-xkms's qrdb ServiceModule surface, re-exported so downstream hosts
 // (go-quicbaas, go-trusted-platform) that embed a qrdb node can register the
-// xkms hardware crypto + identity plane via qrdbsdk.WithModule without
+// xkms hardware crypto + identity plane via qrdbserver.WithModule without
 // importing go-xkms/pkg. The stack-wide convention is one module per provider
 // project, named after the project; xkms's registers as ModuleName ("xkms").
 
@@ -123,13 +123,43 @@ var WithServiceModulePasswordVaultRelyingParty = apimodule.WithPasswordVaultRely
 var WithServiceModuleWebAuthnCredentialStoreDecorator = apimodule.WithWebAuthnCredentialStoreDecorator
 
 // ServiceModuleSessionOptions tunes the module's self-built JWT signing
-// key, token claims/TTLs, and login rate limiting. The zero value uses the
-// same defaults xkmsd itself derives.
+// key, token claims/TTLs, the access token typ header (AccessTokenType:
+// empty keeps "JWT", "at+jwt" per RFC 9068 §2.1; at+jwt also requires
+// ClientID, the RFC 9068 §2.2 client_id claim), and login rate limiting.
+// The zero value uses the same defaults xkmsd itself derives.
 type ServiceModuleSessionOptions = rest.SessionOptions
 
 // WithServiceModuleSession configures the module's self-built session/JWT
 // plane.
 var WithServiceModuleSession = apimodule.WithSessionOptions
+
+// ServiceModuleSessionSigningJWK returns the public JWK (RFC 7517) of the
+// ES256 key that signs the module's session tokens, given the XKMSService
+// the ServiceModuleResolver returns and the ServiceModuleSessionOptions
+// passed to WithServiceModuleSession (nil for the defaults). Its Kid is the
+// kid every session token's header carries, so a composer publishes it in
+// its own JWKS to verify go-xkms logins; the private key stays in the
+// backend. The key is read, never generated: call it once the module's REST
+// surface is up.
+var ServiceModuleSessionSigningJWK = rest.SessionSigningJWK
+
+// ServiceModuleSessionSigningKeyMissingError reports that the session
+// signing key is not on the default backend (or there is no default
+// backend).
+type ServiceModuleSessionSigningKeyMissingError = rest.SessionSigningKeyMissingError
+
+// ServiceModuleSessionSigningKeyExportError reports that the backend cannot
+// export the session signing key's public half.
+type ServiceModuleSessionSigningKeyExportError = rest.SessionSigningKeyExportError
+
+// ServiceModuleSessionSigningKeyTypeError reports that the session signing
+// key is not the ECDSA P-256 key an ES256 JWK describes.
+type ServiceModuleSessionSigningKeyTypeError = rest.SessionSigningKeyTypeError
+
+// ErrServiceModuleSessionSigningKeyNoPublicKey is wrapped in a
+// ServiceModuleSessionSigningKeyExportError when the backend's signer
+// reports no public key.
+var ErrServiceModuleSessionSigningKeyNoPublicKey = rest.ErrSessionSigningKeyNoPublicKey
 
 // ServiceModulePIVLoginOptions configures the module's self-built
 // TLS-client-certificate login exchange at POST /api/v1/auth/login/piv.

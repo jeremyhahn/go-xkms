@@ -131,32 +131,19 @@ else
 fi
 
 # --------------------------------------------------------------------------
-start_case "prunes stay within what is provably unowned"
-# Dangling images and build cache cannot orphan a running stack. `image prune
-# -a` and `--volumes` can, and reach into other jobs.
-if grep -qE "^image prune( -f)?$" "$CALL_LOG"; then
-    pass "image prune is dangling-only"
-else
-    fail "expected a dangling-only 'image prune -f' under CI"
-fi
-if grep -qE "^image prune.*(-a|--all)" "$CALL_LOG"; then
-    fail "image prune -a removes images other jobs are about to run"
-else
-    pass "never runs 'image prune -a'"
-fi
-if grep -q -- "--volumes" "$CALL_LOG"; then
-    fail "a prune reached volumes, which other jobs may still hold"
-else
-    pass "never prunes volumes"
-fi
-
-start_case "prunes do not run off CI"
-run_script 0 COMPOSE_RUN_ID=run42
-if grep -q "^image prune" "$CALL_LOG" || grep -q "^builder prune" "$CALL_LOG"; then
-    fail "pruned a developer's daemon, which this script does not own"
-else
-    pass "no prune outside CI"
-fi
+start_case "never prunes, on CI or off it"
+# A prune acts on the whole daemon. An image a concurrent build has created
+# but not yet tagged is dangling and its cache records are unused, so on a
+# host running several integration shards at once a prune here breaks another
+# shard's compose build (#1870, run 76161 shards 2 and 5).
+for env_ci in CI=true GITHUB_ACTIONS=true CI=false; do
+    run_script 0 COMPOSE_RUN_ID=run42 "$env_ci"
+    if grep -qE "(^| )prune( |$)" "$CALL_LOG"; then
+        fail "ran a daemon-wide prune with $env_ci"
+    else
+        pass "no prune with $env_ci"
+    fi
+done
 
 # --------------------------------------------------------------------------
 start_case "the three deliberately-untouched projects stay untouched"

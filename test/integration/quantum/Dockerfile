@@ -2,6 +2,8 @@
 # Pure-Go implementations: circl (ML-DSA) and crypto/mlkem (ML-KEM)
 # No CGO or external libraries required.
 FROM golang:1.27.3-bookworm
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
 ENV GOTOOLCHAIN=auto
 ENV GOWORK=off

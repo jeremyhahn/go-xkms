@@ -15,6 +15,7 @@ package serviceprincipal
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,6 +150,46 @@ func TestGrant_IsLeastPrivilegeCopy(t *testing.T) {
 
 	got[0] = "admin:*"
 	assert.NotEqual(t, got[0], Grant()[0], "Grant returns a copy")
+}
+
+// TestGrant_UsersIsReadCreateUpdateOnly pins the principal's authority on
+// user records to what the WebAuthn ceremonies and the refresh re-check
+// exercise: it never deletes or administers a user.
+func TestGrant_UsersIsReadCreateUpdateOnly(t *testing.T) {
+	var users []qrdbsdk.Permission
+	for _, p := range Grant() {
+		if strings.HasPrefix(string(p), "users:") {
+			users = append(users, p)
+		}
+		assert.False(t, strings.HasPrefix(string(p), "admin:") && p != "admin:shard_state",
+			"the only admin permission is the shard-state read, got %s", p)
+	}
+	assert.ElementsMatch(t, []qrdbsdk.Permission{"users:read", "users:create", "users:update"}, users)
+}
+
+// TestOption_PrincipalCannotDeleteUsers proves the users grant on a real
+// node: the principal creates, reads and updates a user record, and its
+// delete is refused.
+func TestOption_PrincipalCannotDeleteUsers(t *testing.T) {
+	node := newNode(t, Option())
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	users := node.Client().Users()
+
+	created, err := users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+		Username: "webauthn-user",
+		Email:    "webauthn-user@example.com",
+		Name:     "WebAuthn User",
+	})
+	require.NoError(t, err)
+	_, err = users.GetUser(ctx, created.ID)
+	require.NoError(t, err)
+	_, err = users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: created.ID, Name: "Renamed"})
+	require.NoError(t, err)
+
+	err = users.DeleteUser(ctx, created.ID)
+	var denied *qrdbsdk.PermissionDeniedError
+	require.ErrorAs(t, err, &denied)
 }
 
 // TestRegisterCeremonyGrant_AuthorizesAdminLookup proves the ceremony grant

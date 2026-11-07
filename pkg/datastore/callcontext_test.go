@@ -121,6 +121,44 @@ func TestWithCallContext_BindErrorFailsTheCall(t *testing.T) {
 	assert.ErrorIs(t, err, cause)
 }
 
+// TestBindKV_RunsAsServicePrincipal pins the token issuer's refresh store
+// seam (main run 74687): an unbound call on the node's KV client is
+// unauthenticated, and BindKV runs it as the service principal, keeping
+// the guarded verbs the refresh store needs.
+func TestBindKV_RunsAsServicePrincipal(t *testing.T) {
+	ctx := t.Context()
+	node := newPrincipalNode(t)
+
+	require.ErrorIs(t, node.Client().KV().Put(ctx, "xkms/test/a", []byte("v")), qrdbsdk.ErrUnauthenticated)
+
+	kv := BindKV(node.Client().KV(), node.ServiceContext)
+	require.NoError(t, kv.Put(ctx, "xkms/test/a", []byte("v")))
+	got, err := kv.Get(ctx, "xkms/test/a")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v"), got)
+
+	guarded, ok := kv.(transport.GuardedKVClient)
+	require.True(t, ok, "the bound client keeps the guarded verbs")
+	swapped, err := guarded.CompareAndSwap(ctx, "xkms/test/a", []byte("v"), []byte("w"))
+	require.NoError(t, err)
+	assert.True(t, swapped)
+}
+
+// TestBindKV_NilBindAndBindError checks a nil binder returns the client
+// unchanged and a failing binder stops the call with ErrCallContext.
+func TestBindKV_NilBindAndBindError(t *testing.T) {
+	node := newPrincipalNode(t)
+	inner := node.Client().KV()
+	assert.Same(t, inner, BindKV(inner, nil))
+
+	cause := errors.New("no service principal")
+	kv := BindKV(inner, func(context.Context) (context.Context, error) { return nil, cause })
+	_, err := kv.Get(t.Context(), "xkms/test/a")
+	var bindErr *ErrCallContext
+	require.ErrorAs(t, err, &bindErr)
+	assert.ErrorIs(t, err, cause)
+}
+
 // TestBoundKV_RefusesVerbsTheInnerClientLacks proves the bound client
 // refuses the guarded and transaction verbs as the SDK's adapter does when
 // the client it wraps does not carry them, rather than claiming them.

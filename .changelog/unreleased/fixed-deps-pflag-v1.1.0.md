@@ -1,0 +1,1 @@
+- **spf13/pflag v1.1.0** -- the root module and `xkey` require `github.com/spf13/pflag` v1.1.0, and `sdk/go` and `web/desktop` follow it indirectly. v1.1.0 passed `make deps-check`'s 7-day line on 2026-11-05, so v1.0.10 failed the check.
