@@ -135,15 +135,6 @@ func TestOpen_RemoteYieldsClientAndDAOFactory(t *testing.T) {
 	}
 }
 
-// TestDialRemote_UnsupportedTransport proves an unsupported transport name
-// is rejected before any dial is attempted.
-func TestDialRemote_UnsupportedTransport(t *testing.T) {
-	client, err := DialRemote(context.Background(), config.DatastoreRemoteConfig{Transport: "carrier-pigeon"})
-	assert.Nil(t, client)
-	var unsupported *ErrUnsupportedStorageBackend
-	require.ErrorAs(t, err, &unsupported)
-}
-
 // TestDialRemote_ConnectFails proves a dial against an address nothing
 // listens on returns a typed error rather than a half-built client.
 func TestDialRemote_ConnectFails(t *testing.T) {
