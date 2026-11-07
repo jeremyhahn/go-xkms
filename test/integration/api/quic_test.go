@@ -17,7 +17,6 @@ package integration
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,15 +38,13 @@ type QUICTestClient struct {
 }
 
 // newQUICClient creates a new QUIC/HTTP3 test client with proper CA certificate verification
-func newQUICClient(baseURL string) *QUICTestClient {
+func newQUICClient(tb testing.TB, baseURL string) *QUICTestClient {
 	return &QUICTestClient{
 		baseURL:  baseURL,
 		jwtToken: "test-jwt-token",
 		client: &http.Client{
 			Transport: &http3.Transport{
-				TLSClientConfig: &tls.Config{
-					RootCAs: loadCACertPool(),
-				},
+				TLSClientConfig: clientTLSConfig(tb),
 			},
 			Timeout: 10 * time.Second,
 		},
@@ -93,7 +90,7 @@ func (c *QUICTestClient) Close() error {
 func isQUICServerAvailable(t *testing.T, cfg *TestConfig) bool {
 	t.Helper()
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	resp, err := client.doRequest("GET", "/health", nil)
@@ -112,7 +109,7 @@ func TestQUIC_HealthEndpoint(t *testing.T) {
 		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	resp, err := client.doRequest("GET", "/health", nil)
@@ -150,7 +147,7 @@ func TestQUIC_ListBackends(t *testing.T) {
 		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	resp, err := client.doRequest("GET", "/api/v1/backends", nil)
@@ -182,7 +179,7 @@ func TestQUIC_GenerateKey(t *testing.T) {
 		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	keyID := generateUniqueID("quic-key")
@@ -277,7 +274,7 @@ func TestQUIC_ListKeys(t *testing.T) {
 		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	keyID := generateUniqueID("quic-list-key")
@@ -345,7 +342,7 @@ func TestQUIC_GetKey(t *testing.T) {
 		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	keyID := generateUniqueID("quic-get-key")
@@ -398,7 +395,7 @@ func TestQUIC_SignAndVerify(t *testing.T) {
 		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	keyID := generateUniqueID("quic-sign-key")
@@ -486,7 +483,7 @@ func TestQUIC_DeleteKey(t *testing.T) {
 		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	keyID := generateUniqueID("quic-delete-key")
@@ -544,7 +541,7 @@ func TestQUIC_ErrorHandling(t *testing.T) {
 		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	tests := []struct {
@@ -606,7 +603,7 @@ func TestQUIC_ConcurrentRequests(t *testing.T) {
 		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := newQUICClient(cfg.QUICBaseURL)
+	client := newQUICClient(t, cfg.QUICBaseURL)
 	defer client.Close()
 
 	const numRequests = 5

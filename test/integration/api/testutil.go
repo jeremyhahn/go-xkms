@@ -102,6 +102,33 @@ func loadCACertPool() *x509.CertPool {
 	return pool
 }
 
+// clientTLSConfig returns the TLS configuration of every test client that
+// calls the server as the admin: the test CA, plus the admin mTLS credential
+// `xkmsd init --admin-factor mtls` writes to /data/xkms. Composite auth
+// requires a client certificate on every transport, so a client without it
+// is refused with 401.
+func clientTLSConfig(tb testing.TB) *tls.Config {
+	tb.Helper()
+
+	certFile := getEnv("KEYSTORE_TLS_CERT", "/data/xkms/admin-cert.pem")
+	keyFile := getEnv("KEYSTORE_TLS_KEY", "/data/xkms/admin-key.pem")
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		tb.Fatalf("load the admin mTLS credential (cert %s, key %s) that `xkmsd init --admin-factor mtls` writes: %v", certFile, keyFile, err)
+	}
+	return &tls.Config{
+		RootCAs:      loadCACertPool(),
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+}
+
+// anonymousTLSConfig returns the TLS configuration of a client that presents
+// no credential, for the tests that pin how the server refuses one.
+func anonymousTLSConfig() *tls.Config {
+	return &tls.Config{RootCAs: loadCACertPool(), MinVersion: tls.VersionTLS12}
+}
+
 // isCLIAvailable checks if the CLI binary is available
 func isCLIAvailable(t *testing.T, cfg *TestConfig) bool {
 	t.Helper()
@@ -137,7 +164,7 @@ func isServerAvailable(t *testing.T, cfg *TestConfig) bool {
 	client := &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
+			TLSClientConfig: clientTLSConfig(t),
 		},
 	}
 	resp, err := client.Get(cfg.RESTBaseURL + "/health")
@@ -378,7 +405,7 @@ func (cfg *TestConfig) IsProtocolAvailable(t *testing.T, protocol ProtocolType) 
 		client := &http.Client{
 			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
+				TLSClientConfig: clientTLSConfig(t),
 			},
 		}
 		// Check REST health endpoint to verify server is up (QUIC shares same server)

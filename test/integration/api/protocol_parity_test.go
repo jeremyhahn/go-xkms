@@ -19,8 +19,6 @@
 package integration
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
@@ -281,7 +279,7 @@ func isProtocolAvailable(t *testing.T, runner *commands.TestRunner, protocol com
 	case commands.ProtocolUnix:
 		return checkUnixSocketExists(runner.UnixSocketPath)
 	case commands.ProtocolREST:
-		return checkHTTPEndpoint(runner.RESTBaseURL + "/health")
+		return checkHTTPEndpoint(t, runner.RESTBaseURL+"/health")
 	case commands.ProtocolGRPC:
 		return checkTCPEndpoint(runner.GRPCAddr)
 	case commands.ProtocolQUIC:
@@ -300,21 +298,11 @@ func checkUnixSocketExists(socketPath string) bool {
 	return true
 }
 
-func checkHTTPEndpoint(url string) bool {
-	caFile := os.Getenv("KEYSTORE_TLS_CA")
-	if caFile == "" {
-		caFile = "/etc/xkms/certs/ca.crt"
-	}
-	pool := x509.NewCertPool()
-	if caPEM, err := os.ReadFile(caFile); err == nil {
-		pool.AppendCertsFromPEM(caPEM)
-	}
+func checkHTTPEndpoint(tb testing.TB, url string) bool {
 	client := &http.Client{
 		Timeout: 3 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs: pool,
-			},
+			TLSClientConfig: clientTLSConfig(tb),
 		},
 	}
 	resp, err := client.Get(url) //nolint:noctx // simple health check

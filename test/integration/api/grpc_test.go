@@ -26,7 +26,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 )
 
@@ -36,10 +36,10 @@ type GRPCClient struct {
 	client pb.KeystoreServiceClient
 }
 
-// NewGRPCClient creates a new gRPC client
-func NewGRPCClient(addr string) (*GRPCClient, error) {
+// NewGRPCClient creates a new gRPC client that calls the server as the admin.
+func NewGRPCClient(tb testing.TB, addr string) (*GRPCClient, error) {
 	conn, err := grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(credentials.NewTLS(clientTLSConfig(tb))),
 	)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to connect", Err: err}
@@ -63,7 +63,7 @@ func TestGRPCHealth(t *testing.T) {
 		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewGRPCClient(cfg.GRPCAddr)
+	client, err := NewGRPCClient(t, cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer client.Close()
 
@@ -89,7 +89,7 @@ func TestGRPCListBackends(t *testing.T) {
 		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewGRPCClient(cfg.GRPCAddr)
+	client, err := NewGRPCClient(t, cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer client.Close()
 
@@ -123,7 +123,7 @@ func TestGRPCGetBackendInfo(t *testing.T) {
 		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewGRPCClient(cfg.GRPCAddr)
+	client, err := NewGRPCClient(t, cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer client.Close()
 
@@ -152,7 +152,7 @@ func TestGRPCGenerateKey(t *testing.T) {
 		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewGRPCClient(cfg.GRPCAddr)
+	client, err := NewGRPCClient(t, cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer client.Close()
 
@@ -232,7 +232,7 @@ func TestGRPCListKeys(t *testing.T) {
 		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewGRPCClient(cfg.GRPCAddr)
+	client, err := NewGRPCClient(t, cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer client.Close()
 
@@ -296,7 +296,7 @@ func TestGRPCGetKey(t *testing.T) {
 		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewGRPCClient(cfg.GRPCAddr)
+	client, err := NewGRPCClient(t, cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer client.Close()
 
@@ -348,7 +348,7 @@ func TestGRPCSignVerify(t *testing.T) {
 		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewGRPCClient(cfg.GRPCAddr)
+	client, err := NewGRPCClient(t, cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer client.Close()
 
@@ -433,7 +433,7 @@ func TestGRPCDeleteKey(t *testing.T) {
 		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewGRPCClient(cfg.GRPCAddr)
+	client, err := NewGRPCClient(t, cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer client.Close()
 
@@ -494,7 +494,7 @@ func TestGRPCErrorHandling(t *testing.T) {
 		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewGRPCClient(cfg.GRPCAddr)
+	client, err := NewGRPCClient(t, cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer client.Close()
 

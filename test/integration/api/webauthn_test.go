@@ -32,10 +32,11 @@ type WebAuthnClient struct {
 	*RESTClient
 }
 
-// NewWebAuthnClient creates a new WebAuthn API client
-func NewWebAuthnClient(baseURL string) *WebAuthnClient {
+// NewWebAuthnClient creates a new WebAuthn API client that connects with
+// tlsConfig.
+func NewWebAuthnClient(baseURL string, tlsConfig *tls.Config) *WebAuthnClient {
 	return &WebAuthnClient{
-		RESTClient: NewRESTClient(baseURL),
+		RESTClient: NewRESTClient(baseURL, tlsConfig),
 	}
 }
 
@@ -91,7 +92,7 @@ func (c *WebAuthnClient) doWebAuthnRequestWithSession(method, path string, body 
 func requireWebAuthnEnabled(t *testing.T, cfg *TestConfig) {
 	t.Helper()
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(cfg.RESTBaseURL, clientTLSConfig(t))
 	resp, err := client.doRequest("POST", "/api/v1/webauthn/login/begin", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("WebAuthn login begin endpoint unreachable at %s: %v", cfg.RESTBaseURL, err)
@@ -115,7 +116,7 @@ func TestWebAuthnRegistrationStatusRemoved(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(cfg.RESTBaseURL, clientTLSConfig(t))
 	resp, err := client.doRequest("GET", "/api/v1/webauthn/registration/status?email=unknown@example.com", nil)
 	assertNoError(t, err, "Registration status request failed")
 	defer resp.Body.Close()
@@ -135,7 +136,7 @@ func TestWebAuthnAddCredentialRequiresSession(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(cfg.RESTBaseURL, anonymousTLSConfig())
 	resp, err := client.doRequest("POST", "/api/v1/webauthn/credentials/begin", map[string]interface{}{})
 	assertNoError(t, err, "Add-credential request failed")
 	defer resp.Body.Close()
@@ -152,7 +153,7 @@ func TestWebAuthnBeginRegistration(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(cfg.RESTBaseURL, clientTLSConfig(t))
 	testEmail := fmt.Sprintf("test-%s@example.com", generateUniqueID("webauthn"))
 
 	t.Run("Begin registration with valid email", func(t *testing.T) {
@@ -220,7 +221,7 @@ func TestWebAuthnBeginRegistration(t *testing.T) {
 			io.NopCloser(ioReader("{invalid json}")))
 		req.Header.Set("Content-Type", "application/json")
 
-		httpClient := createTLSClient()
+		httpClient := createTLSClient(t)
 		resp, err := httpClient.Do(req)
 		assertNoError(t, err, "Request failed")
 		defer resp.Body.Close()
@@ -240,7 +241,7 @@ func TestWebAuthnBeginLogin(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(cfg.RESTBaseURL, clientTLSConfig(t))
 
 	t.Run("Begin login with discoverable credentials", func(t *testing.T) {
 		// Empty body for discoverable credentials flow
@@ -305,7 +306,7 @@ func TestWebAuthnFinishRegistration(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(cfg.RESTBaseURL, clientTLSConfig(t))
 
 	t.Run("Finish registration missing session ID", func(t *testing.T) {
 		resp, err := client.doRequest("POST", "/api/v1/webauthn/registration/finish", map[string]interface{}{})
@@ -323,7 +324,7 @@ func TestWebAuthnFinishRegistration(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Session-Id", "invalid-session-id")
 
-		httpClient := createTLSClient()
+		httpClient := createTLSClient(t)
 		resp, err := httpClient.Do(req)
 		assertNoError(t, err, "Request failed")
 		defer resp.Body.Close()
@@ -343,7 +344,7 @@ func TestWebAuthnFinishLogin(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(cfg.RESTBaseURL, clientTLSConfig(t))
 
 	t.Run("Finish login missing session ID", func(t *testing.T) {
 		resp, err := client.doRequest("POST", "/api/v1/webauthn/login/finish", map[string]interface{}{})
@@ -361,7 +362,7 @@ func TestWebAuthnFinishLogin(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Session-Id", "invalid-session-id")
 
-		httpClient := createTLSClient()
+		httpClient := createTLSClient(t)
 		resp, err := httpClient.Do(req)
 		assertNoError(t, err, "Request failed")
 		defer resp.Body.Close()
@@ -381,7 +382,7 @@ func TestWebAuthnMethodNotAllowed(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(cfg.RESTBaseURL, clientTLSConfig(t))
 
 	tests := []struct {
 		name   string
@@ -418,7 +419,7 @@ func TestWebAuthnRoutesMounted(t *testing.T) {
 	// Skip if WebAuthn is not enabled on the server
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(cfg.RESTBaseURL, clientTLSConfig(t))
 
 	// Test that routes exist (even if they return errors, they shouldn't return 404)
 	routes := []struct {
@@ -472,12 +473,12 @@ func (s stringReader) Read(p []byte) (n int, err error) {
 	return n, io.EOF
 }
 
-// createTLSClient creates an HTTP client with proper CA certificate verification
-func createTLSClient() *http.Client {
+// createTLSClient creates an HTTP client that calls the server as the admin.
+func createTLSClient(tb testing.TB) *http.Client {
 	return &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
+			TLSClientConfig: clientTLSConfig(tb),
 		},
 	}
 }
