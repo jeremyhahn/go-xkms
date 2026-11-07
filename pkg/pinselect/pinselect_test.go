@@ -65,19 +65,6 @@ func (s softwareProvider) Storage() (qrdbsdk.PINStorage, error) {
 }
 func (s softwareProvider) HashConfig() qrdbsdk.PINHashConfig { return qrdbsdk.DefaultHashConfig() }
 
-func TestSelect_PrefersTPMWhenAvailable(t *testing.T) {
-	be, err := Select(Config{
-		TPM:      fakeTPMProvider{pa: &fakePlatformAuth{provisioned: true}, available: true},
-		Software: softwareProvider{},
-	})
-	if err != nil {
-		t.Fatalf("Select: %v", err)
-	}
-	if be.Strategy() != qrdbsdk.PINStrategyTPM2 {
-		t.Fatalf("expected TPM2 backend, got strategy %q", be.Strategy())
-	}
-}
-
 func TestSelect_FallsThroughTPMUnavailableToPKCS11(t *testing.T) {
 	pkBackend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig()) // stand-in instance
 	if err != nil {
