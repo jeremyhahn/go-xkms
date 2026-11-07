@@ -37,3 +37,15 @@ func TestNewAgent_XKMSTypeBuildsFederationAgent(t *testing.T) {
 	assert.Equal(t, "https://dr-xkms.company.com:8443", federation.endpoint)
 	assert.Equal(t, 5*time.Second, federation.client.Timeout)
 }
+
+// A config the federation agent rejects surfaces its error through the
+// factory with no agent: a nil interface, not one holding a nil pointer.
+func TestNewAgent_XKMSTypeRejectsUnreadableCA(t *testing.T) {
+	agent, err := escrow.NewAgent(&escrow.AgentConfig{
+		Type:     escrow.AgentTypeXKMS,
+		Endpoint: "https://dr-xkms.company.com:8443",
+		CACert:   "/nonexistent/ca.pem",
+	})
+	require.ErrorIs(t, err, escrow.ErrAuthenticationFailed)
+	assert.True(t, agent == nil, "the factory must return a nil EscrowAgent, got %#v", agent)
+}
