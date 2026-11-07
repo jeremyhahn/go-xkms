@@ -37,7 +37,7 @@ type QUICTestClient struct {
 	jwtToken string
 }
 
-// newQUICClient creates a new QUIC/HTTP3 test client with proper CA certificate verification
+// newQUICClient creates a new QUIC/HTTP3 test client that calls the server as the admin.
 func newQUICClient(tb testing.TB, baseURL string) *QUICTestClient {
 	return &QUICTestClient{
 		baseURL:  baseURL,
