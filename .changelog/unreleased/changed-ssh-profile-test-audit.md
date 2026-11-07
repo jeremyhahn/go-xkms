@@ -1,0 +1,1 @@
+ssh/profile: the store tests test each behaviour once. The folder lifecycle, move, direct-listing, whitespace search, rename and not-found tests are folded into `TestStore_Folders`, `TestStore_Search` and `TestStore_CRUD`, which now also assert the derived ancestor folder, the marker rename and delete, and the same-folder and missing-entry refusals (#1794).
