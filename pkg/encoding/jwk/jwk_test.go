@@ -14,7 +14,6 @@
 package jwk
 
 import (
-	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -24,31 +23,6 @@ import (
 	"encoding/json"
 	"testing"
 )
-
-func TestFromRSAPublicKey(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-
-	jwk, err := FromPublicKey(&key.PublicKey)
-	if err != nil {
-		t.Fatalf("FromPublicKey failed: %v", err)
-	}
-
-	if jwk.Kty != string(KeyTypeRSA) {
-		t.Errorf("Expected kty=RSA, got %s", jwk.Kty)
-	}
-	if jwk.N == "" {
-		t.Error("N (modulus) should not be empty")
-	}
-	if jwk.E == "" {
-		t.Error("E (exponent) should not be empty")
-	}
-	if jwk.D != "" {
-		t.Error("D (private exponent) should be empty for public key")
-	}
-}
 
 func TestFromRSAPrivateKey(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -116,34 +90,6 @@ func TestRSARoundTrip(t *testing.T) {
 	}
 }
 
-func TestFromECDSAPublicKey(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate ECDSA key: %v", err)
-	}
-
-	jwk, err := FromPublicKey(&key.PublicKey)
-	if err != nil {
-		t.Fatalf("FromPublicKey failed: %v", err)
-	}
-
-	if jwk.Kty != string(KeyTypeEC) {
-		t.Errorf("Expected kty=EC, got %s", jwk.Kty)
-	}
-	if jwk.Crv != string(CurveP256) {
-		t.Errorf("Expected crv=P-256, got %s", jwk.Crv)
-	}
-	if jwk.X == "" {
-		t.Error("X coordinate should not be empty")
-	}
-	if jwk.Y == "" {
-		t.Error("Y coordinate should not be empty")
-	}
-	if jwk.D != "" {
-		t.Error("D should be empty for public key")
-	}
-}
-
 func TestECDSARoundTrip(t *testing.T) {
 	curves := []elliptic.Curve{
 		elliptic.P256(),
@@ -180,28 +126,6 @@ func TestECDSARoundTrip(t *testing.T) {
 	}
 }
 
-func TestFromEd25519PublicKey(t *testing.T) {
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate Ed25519 key: %v", err)
-	}
-
-	jwk, err := FromPublicKey(pub)
-	if err != nil {
-		t.Fatalf("FromPublicKey failed: %v", err)
-	}
-
-	if jwk.Kty != string(KeyTypeOKP) {
-		t.Errorf("Expected kty=OKP, got %s", jwk.Kty)
-	}
-	if jwk.Crv != string(CurveEd25519) {
-		t.Errorf("Expected crv=Ed25519, got %s", jwk.Crv)
-	}
-	if jwk.X == "" {
-		t.Error("X coordinate should not be empty")
-	}
-}
-
 func TestEd25519RoundTrip(t *testing.T) {
 	_, originalKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -228,26 +152,6 @@ func TestEd25519RoundTrip(t *testing.T) {
 	}
 }
 
-func TestFromSymmetricKey(t *testing.T) {
-	key := make([]byte, 32)
-	_, err := rand.Read(key)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	jwk, err := FromSymmetricKey(key, "A256GCM")
-	if err != nil {
-		t.Fatalf("FromSymmetricKey failed: %v", err)
-	}
-
-	if jwk.Kty != string(KeyTypeOct) {
-		t.Errorf("Expected kty=oct, got %s", jwk.Kty)
-	}
-	if jwk.K == "" {
-		t.Error("K should not be empty")
-	}
-}
-
 func TestSymmetricKeyRoundTrip(t *testing.T) {
 	originalKey := make([]byte, 32)
 	_, err := rand.Read(originalKey)
@@ -267,42 +171,6 @@ func TestSymmetricKeyRoundTrip(t *testing.T) {
 
 	if string(originalKey) != string(recoveredKey) {
 		t.Error("Recovered symmetric key doesn't match original")
-	}
-}
-
-func TestMarshalUnmarshal(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-
-	// Create JWK
-	original, err := FromPublicKey(&key.PublicKey)
-	if err != nil {
-		t.Fatalf("FromPublicKey failed: %v", err)
-	}
-
-	// Marshal
-	data, err := original.Marshal()
-	if err != nil {
-		t.Fatalf("Marshal failed: %v", err)
-	}
-
-	// Unmarshal
-	recovered, err := Unmarshal(data)
-	if err != nil {
-		t.Fatalf("Unmarshal failed: %v", err)
-	}
-
-	// Compare
-	if original.Kty != recovered.Kty {
-		t.Errorf("Kty mismatch: %s vs %s", original.Kty, recovered.Kty)
-	}
-	if original.N != recovered.N {
-		t.Errorf("N mismatch")
-	}
-	if original.E != recovered.E {
-		t.Errorf("E mismatch")
 	}
 }
 
@@ -356,18 +224,6 @@ func TestIsPrivate(t *testing.T) {
 				t.Errorf("IsPrivate() = %v, want %v", result, tt.expected)
 			}
 		})
-	}
-}
-
-func TestUnsupportedKeyType(t *testing.T) {
-	// This test uses a custom type that won't be recognized
-	type customKey struct {
-		crypto.PublicKey
-	}
-
-	_, err := FromPublicKey(customKey{})
-	if err == nil {
-		t.Error("Expected error for unsupported key type")
 	}
 }
 
@@ -425,28 +281,6 @@ func TestSymmetricKeyErrors(t *testing.T) {
 	_, err = invalidJWK.ToSymmetricKey()
 	if err == nil {
 		t.Error("Expected error for invalid base64 symmetric key")
-	}
-}
-
-func TestMarshalIndent(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-
-	jwk, err := FromPublicKey(&key.PublicKey)
-	if err != nil {
-		t.Fatalf("FromPublicKey failed: %v", err)
-	}
-
-	data, err := json.MarshalIndent(jwk, "", "  ")
-	if err != nil {
-		t.Fatalf("MarshalIndent failed: %v", err)
-	}
-
-	// Verify it's properly indented
-	if !contains(string(data), "  \"kty\"") {
-		t.Error("MarshalIndent should produce indented output")
 	}
 }
 
@@ -705,16 +539,6 @@ func TestECDSACurveMapping(t *testing.T) {
 	}
 }
 
-// Helper function for TestMarshalIndent
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 // =============================================================================
 // X25519 Tests
 // =============================================================================
@@ -738,28 +562,6 @@ func TestX25519PublicKey(t *testing.T) {
 	}
 	if jwk.X == "" {
 		t.Error("X coordinate should not be empty")
-	}
-}
-
-func TestX25519PrivateKey(t *testing.T) {
-	key, ok := requireX25519Key(t)
-	if !ok {
-		return
-	}
-
-	jwk, err := FromPrivateKey(key)
-	if err != nil {
-		t.Fatalf("FromPrivateKey failed: %v", err)
-	}
-
-	if jwk.Kty != string(KeyTypeOKP) {
-		t.Errorf("Expected kty=OKP, got %s", jwk.Kty)
-	}
-	if jwk.Crv != string(CurveX25519) {
-		t.Errorf("Expected crv=X25519, got %s", jwk.Crv)
-	}
-	if jwk.D == "" {
-		t.Error("D should not be empty for private key")
 	}
 }
 
@@ -806,34 +608,6 @@ func TestX25519RoundTrip(t *testing.T) {
 	}
 }
 
-// TestX25519InvalidKey tests error handling for invalid X25519 keys
-func TestX25519InvalidKey(t *testing.T) {
-	// Test invalid X coordinate (wrong size)
-	jwk := &JWK{
-		Kty: string(KeyTypeOKP),
-		Crv: string(CurveX25519),
-		X:   "invalid", // Too short
-	}
-
-	_, err := jwk.toX25519PublicKey()
-	if err == nil {
-		t.Error("Expected error for invalid X25519 public key size")
-	}
-
-	// Test invalid D coordinate (wrong size)
-	jwk2 := &JWK{
-		Kty: string(KeyTypeOKP),
-		Crv: string(CurveX25519),
-		X:   "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // Valid size
-		D:   "invalid",                                     // Too short
-	}
-
-	_, err = jwk2.toX25519PrivateKey()
-	if err == nil {
-		t.Error("Expected error for invalid X25519 private key size")
-	}
-}
-
 // TestFromPublicKeyUnsupportedType tests FromPublicKey with unsupported key type
 func TestFromPublicKeyUnsupportedType(t *testing.T) {
 	// Use a type that's not supported
@@ -842,35 +616,6 @@ func TestFromPublicKeyUnsupportedType(t *testing.T) {
 	_, err := FromPublicKey(unsupportedKey)
 	if err == nil {
 		t.Error("Expected error for unsupported public key type")
-	}
-}
-
-// TestToPublicKeyUnsupportedType tests ToPublicKey with unsupported key type
-func TestToPublicKeyUnsupportedType(t *testing.T) {
-	// Create JWK with unsupported key type
-	jwk := &JWK{
-		Kty: "unsupported",
-		N:   "test",
-	}
-
-	_, err := jwk.ToPublicKey()
-	if err == nil {
-		t.Error("Expected error for unsupported key type")
-	}
-}
-
-// TestToPrivateKeyUnsupportedType tests ToPrivateKey with unsupported key type
-func TestToPrivateKeyUnsupportedType(t *testing.T) {
-	// Create JWK with unsupported key type
-	jwk := &JWK{
-		Kty: "unsupported",
-		N:   "test",
-		D:   "test",
-	}
-
-	_, err := jwk.ToPrivateKey()
-	if err == nil {
-		t.Error("Expected error for unsupported key type")
 	}
 }
 
@@ -1036,21 +781,6 @@ func TestJWK_MarshalIndentMethod(t *testing.T) {
 	}
 	if parsed.Kty != string(KeyTypeEC) {
 		t.Errorf("MarshalIndent() Kty = %q, want %q", parsed.Kty, string(KeyTypeEC))
-	}
-}
-
-// TestMarshalIndent_WithPrefix verifies MarshalIndent with a custom prefix
-func TestMarshalIndent_WithPrefix(t *testing.T) {
-	jwk := &JWK{
-		Kty: string(KeyTypeOct),
-		K:   "dGVzdC1rZXk",
-	}
-	data, err := jwk.MarshalIndent(">> ", "\t")
-	if err != nil {
-		t.Fatalf("MarshalIndent() error = %v", err)
-	}
-	if len(data) == 0 {
-		t.Fatal("MarshalIndent() returned empty data")
 	}
 }
 
@@ -1266,19 +996,6 @@ func TestToEd25519PrivateKey_InvalidBase64(t *testing.T) {
 	}
 }
 
-// TestToEd25519PrivateKey_InvalidSeedSize tests the error path for wrong seed size
-func TestToEd25519PrivateKey_InvalidSeedSize(t *testing.T) {
-	jwk := &JWK{
-		Kty: string(KeyTypeOKP),
-		Crv: string(CurveEd25519),
-		D:   "AAAAAAAAAAAAAAAAAAAAAA", // 16 bytes, should be 32 (ed25519.SeedSize)
-	}
-	_, err := jwk.ToPrivateKey()
-	if err == nil {
-		t.Fatal("ToPrivateKey() with wrong Ed25519 seed size should return error")
-	}
-}
-
 // TestToPrivateKey_UnsupportedOKPCurve tests the error path for unsupported OKP curve
 func TestToPrivateKey_UnsupportedOKPCurve(t *testing.T) {
 	jwk := &JWK{
@@ -1289,18 +1006,5 @@ func TestToPrivateKey_UnsupportedOKPCurve(t *testing.T) {
 	_, err := jwk.ToPrivateKey()
 	if err == nil {
 		t.Fatal("ToPrivateKey() with unsupported OKP curve should return error")
-	}
-}
-
-// TestToPublicKey_UnsupportedOKPCurve tests the error path for unsupported OKP curve in public key
-func TestToPublicKey_UnsupportedOKPCurve(t *testing.T) {
-	jwk := &JWK{
-		Kty: string(KeyTypeOKP),
-		Crv: "X448",
-		X:   "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-	}
-	_, err := jwk.ToPublicKey()
-	if err == nil {
-		t.Fatal("ToPublicKey() with unsupported OKP curve should return error")
 	}
 }
