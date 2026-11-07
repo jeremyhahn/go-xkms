@@ -22,6 +22,8 @@ import (
 	"math/big"
 	"regexp"
 
+	"github.com/veraison/go-cose"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
@@ -85,7 +87,7 @@ func (s *XKMSService) RotateOTAImageKey(ctx context.Context, req *transport.OTAI
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.requireES256Key(ctx, req.Backend, req.TenantID, keyID); err != nil {
+	if _, _, err := s.requireES256Key(ctx, req.Backend, req.TenantID, keyID); err != nil {
 		return nil, err
 	}
 	return s.RotateKey(ctx, &transport.RotateKeyRequest{
@@ -107,7 +109,7 @@ func (s *XKMSService) SignOTAImage(ctx context.Context, req *transport.OTAImageS
 	if err != nil {
 		return nil, err
 	}
-	pub, err := s.requireES256Key(ctx, req.Backend, req.TenantID, keyID)
+	pub, _, err := s.requireES256Key(ctx, req.Backend, req.TenantID, keyID)
 	if err != nil {
 		return nil, err
 	}
@@ -129,29 +131,86 @@ func (s *XKMSService) SignOTAImage(ctx context.Context, req *transport.OTAImageS
 	return resp, nil
 }
 
-// requireES256Key refuses a board key whose current version is not an ECDSA
-// P-256 key, so a key created under the board's key ID by another path never
-// signs an image or is rotated as one. It returns the current version's
-// public key.
-func (s *XKMSService) requireES256Key(ctx context.Context, backendName, tenantID, keyID string) (*ecdsa.PublicKey, error) {
-	k, err := s.resolveKeyIn(ctx, backendName, tenantID, keyID)
+// ExportOTAImageKey returns the public half of the current version of req's
+// board key, never its private key, with the record that binds the key ID to
+// the board id (SPEC ota-image-keys). KeyVersion names the exported version,
+// the one SignOTAImage signs with and reports in SignResponse.KeyVersion;
+// after a rotation the export moves to the new version.
+func (s *XKMSService) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	keyID, err := otaImageKeyID(req)
 	if err != nil {
 		return nil, err
 	}
-	cur, err := k.current()
+	pub, version, err := s.requireES256Key(ctx, req.Backend, req.TenantID, keyID)
 	if err != nil {
 		return nil, err
+	}
+	point, coseKey, err := otaImagePublicKeyEncodings(keyID, pub)
+	if err != nil {
+		return nil, &ErrKeyOperation{Operation: "encode OTA image key", KeyID: keyID, Err: err}
+	}
+	return &transport.ExportOTAImageKeyResponse{
+		BoardID:    req.BoardID,
+		KeyID:      keyID,
+		KeyVersion: version,
+		Algorithm:  OTAImageAlgorithmES256,
+		PublicKey:  point,
+		COSEKey:    coseKey,
+	}, nil
+}
+
+// otaImagePublicKeyEncodings encodes a board's P-256 public key two ways:
+//
+//   - point is the raw 64-byte X || Y, each coordinate 32 bytes big-endian
+//     with its leading zero octets preserved (RFC 9053 §7.1.1): the
+//     uncompressed point without its 0x04 prefix.
+//   - coseKey is the COSE_Key of RFC 9052 §7 with the EC2 parameters of
+//     RFC 9053 §7.1.1: kty (1) EC2 (2), kid (2) the key ID, alg (3) ES256
+//     (-7), crv (-1) P-256 (1), x (-2) and y (-3). go-cose encodes it in
+//     RFC 8949 §4.2.1 core deterministic CBOR: definite lengths and map keys
+//     in bytewise order.
+func otaImagePublicKeyEncodings(keyID string, pub *ecdsa.PublicKey) (point, coseKey []byte, err error) {
+	ecdhPub, err := pub.ECDH()
+	if err != nil {
+		return nil, nil, err
+	}
+	point = ecdhPub.Bytes()[1:]
+	half := len(point) / 2
+	key, err := cose.NewKeyEC2(cose.AlgorithmES256, point[:half], point[half:], nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	key.ID = []byte(keyID)
+	coseKey, err = key.MarshalCBOR()
+	if err != nil {
+		return nil, nil, err
+	}
+	return point, coseKey, nil
+}
+
+// requireES256Key refuses a board key whose current version is not an ECDSA
+// P-256 key, so a key created under the board's key ID by another path never
+// signs an image, is rotated or is exported as one. It returns the current
+// version's public key and number.
+func (s *XKMSService) requireES256Key(ctx context.Context, backendName, tenantID, keyID string) (*ecdsa.PublicKey, uint32, error) {
+	k, err := s.resolveKeyIn(ctx, backendName, tenantID, keyID)
+	if err != nil {
+		return nil, 0, err
+	}
+	cur, err := k.current()
+	if err != nil {
+		return nil, 0, err
 	}
 	// The public key comes from the backend's signer: the cloud KMS backends
 	// return no private key from GetKey for a non-extractable key.
 	signer, err := k.backend.Signer(ctx, cur.attrs)
 	if err != nil {
-		return nil, &ErrKeyOperation{Operation: "read OTA image key", KeyID: keyID, Err: err}
+		return nil, 0, &ErrKeyOperation{Operation: "read OTA image key", KeyID: keyID, Err: err}
 	}
 	if pub, ok := signer.Public().(*ecdsa.PublicKey); ok && pub.Curve == elliptic.P256() {
-		return pub, nil
+		return pub, cur.number, nil
 	}
-	return nil, &ErrValidation{Sentinel: ErrOTAImageAlgorithm, Detail: "the board key is not an ECDSA P-256 key"}
+	return nil, 0, &ErrValidation{Sentinel: ErrOTAImageAlgorithm, Detail: "the board key is not an ECDSA P-256 key"}
 }
 
 // fixedWidthECDSASignature converts an ASN.1 DER ECDSA-Sig-Value to the

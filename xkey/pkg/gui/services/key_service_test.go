@@ -159,6 +159,9 @@ func (m *mockClient) RotateOTAImageKey(ctx context.Context, req *transport.OTAIm
 func (m *mockClient) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }
+func (m *mockClient) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
 func (m *mockClient) AttestKey(ctx context.Context, req *transport.AttestKeyRequest) (*transport.AttestKeyResponse, error) {
 	return m.attestKeyFn(ctx, req)
 }

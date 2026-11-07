@@ -116,6 +116,13 @@ func (m *mockService) SignOTAImage(_ context.Context, _ *transport.OTAImageSignR
 	return &transport.SignResponse{Signature: []byte("sig"), KeyVersion: 2}, nil
 }
 
+func (m *mockService) ExportOTAImageKey(_ context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.ExportOTAImageKeyResponse{BoardID: req.BoardID, KeyID: "ota-image-" + req.BoardID, KeyVersion: 2, PublicKey: make([]byte, 64)}, nil
+}
+
 func (m *mockService) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

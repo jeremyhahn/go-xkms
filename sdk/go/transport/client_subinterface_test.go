@@ -73,6 +73,9 @@ func (s *stubClient) RotateOTAImageKey(context.Context, *OTAImageKeyRequest) (*R
 func (s *stubClient) SignOTAImage(context.Context, *OTAImageSignRequest) (*SignResponse, error) {
 	panic("stub")
 }
+func (s *stubClient) ExportOTAImageKey(context.Context, *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error) {
+	panic("stub")
+}
 func (s *stubClient) GetImportParameters(context.Context, *GetImportParametersRequest) (*GetImportParametersResponse, error) {
 	panic("stub")
 }

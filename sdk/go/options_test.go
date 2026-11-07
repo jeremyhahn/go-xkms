@@ -116,6 +116,10 @@ func (m *mockService) SignOTAImage(ctx context.Context, req *OTAImageSignRequest
 	return nil, nil
 }
 
+func (m *mockService) ExportOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockService) GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error) {
 	return nil, nil
 }

@@ -80,6 +80,17 @@ func (m *mockOTAImageClient) SignOTAImage(_ context.Context, req *client.OTAImag
 	return &client.SignResponse{Signature: []byte("sig"), KeyVersion: 2}, nil
 }
 
+func (m *mockOTAImageClient) ExportOTAImageKey(_ context.Context, req *client.OTAImageKeyRequest) (*client.ExportOTAImageKeyResponse, error) {
+	m.keyReq = req
+	if err := m.validate(req.BoardID, req.Algorithm); err != nil {
+		return nil, err
+	}
+	return &client.ExportOTAImageKeyResponse{
+		BoardID: req.BoardID, KeyID: "ota-image-" + req.BoardID, KeyVersion: 2, Algorithm: "ES256",
+		PublicKey: []byte{0x00, 0xab}, COSEKey: []byte("cose"),
+	}, nil
+}
+
 // runOTAImageCmd runs cmd against mock and returns its stdout, stderr and
 // exit code (-1 when it did not exit).
 func runOTAImageCmd(t *testing.T, mock client.Client, cmd *cobra.Command, args []string, flags map[string]string) (string, string, int) {
@@ -115,7 +126,7 @@ func TestKeyOTAImageCmds_RegisteredUnderKey(t *testing.T) {
 	found, _, err := keyCmd.Find([]string{"ota-image"})
 	require.NoError(t, err)
 	assert.Same(t, keyOTAImageCmd, found)
-	for _, name := range []string{"create", "rotate", "sign"} {
+	for _, name := range []string{"create", "rotate", "sign", "export"} {
 		sub, _, err := keyOTAImageCmd.Find([]string{name})
 		require.NoError(t, err, name)
 		assert.Equal(t, name, sub.Name())
@@ -167,6 +178,16 @@ func TestKeyOTAImageSignCmd_MissingImageFile(t *testing.T) {
 	assert.Nil(t, mock.signReq, "nothing is sent when the image cannot be read")
 }
 
+func TestKeyOTAImageExportCmd(t *testing.T) {
+	mock := &mockOTAImageClient{}
+	out, _, code := runOTAImageCmd(t, mock, keyOTAImageExportCmd, []string{"cm4"}, nil)
+	assert.Equal(t, -1, code)
+	assert.Contains(t, out, "ota-image-cm4 (version 2, ES256)")
+	assert.Contains(t, out, "Public key (X || Y, hex): 00ab", "the leading zero octet is kept")
+	assert.Contains(t, out, "COSE_Key (base64): "+base64.StdEncoding.EncodeToString([]byte("cose")))
+	assert.Equal(t, &client.OTAImageKeyRequest{Backend: "software", BoardID: "cm4", Algorithm: "ES256"}, mock.keyReq)
+}
+
 func TestKeyOTAImageCmds_InvalidBoard(t *testing.T) {
 	image := writeOTAImage(t, "image")
 	cases := map[string]struct {
@@ -177,6 +198,7 @@ func TestKeyOTAImageCmds_InvalidBoard(t *testing.T) {
 		"create": {keyOTAImageCreateCmd, []string{otaBadBoard}, ErrCreateOTAImageKeyFailed},
 		"rotate": {keyOTAImageRotateCmd, []string{otaBadBoard}, ErrRotateOTAImageKeyFailed},
 		"sign":   {keyOTAImageSignCmd, []string{otaBadBoard, image}, ErrSignOTAImageFailed},
+		"export": {keyOTAImageExportCmd, []string{otaBadBoard}, ErrExportOTAImageKeyFailed},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -196,6 +218,7 @@ func TestKeyOTAImageCmds_NonES256Algorithm(t *testing.T) {
 	}{
 		"create": {keyOTAImageCreateCmd, ErrCreateOTAImageKeyFailed},
 		"rotate": {keyOTAImageRotateCmd, ErrRotateOTAImageKeyFailed},
+		"export": {keyOTAImageExportCmd, ErrExportOTAImageKeyFailed},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
