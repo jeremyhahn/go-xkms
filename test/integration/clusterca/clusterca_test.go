@@ -50,7 +50,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/stretchr/testify/assert"
