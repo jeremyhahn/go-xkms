@@ -62,20 +62,25 @@ func TestEveryIndexMethodRefusesWithTheCapabilitySentinel(t *testing.T) {
 	a := &KVStoreAdapter{}
 	ctx := context.Background()
 
-	_, queryErr := a.QueryIndex(ctx, "by_name", []byte("x"))
-	_, scanErr := a.ScanIndex(ctx, "by_name", []byte("a"), []byte("z"))
-	_, compoundErr := a.QueryCompoundIndex(ctx, "by_tenant_name", [][]byte{[]byte("t")})
-	_, scanCompoundErr := a.ScanCompoundIndex(ctx, "by_tenant_name", [][]byte{[]byte("t")}, []byte("a"), []byte("z"))
+	queryResults, queryErr := a.QueryIndex(ctx, "by_name", []byte("x"))
+	scanResults, scanErr := a.ScanIndex(ctx, "by_name", []byte("a"), []byte("z"))
+	compoundResults, compoundErr := a.QueryCompoundIndex(ctx, "by_tenant_name", [][]byte{[]byte("t")})
+	scanCompoundResults, scanCompoundErr := a.ScanCompoundIndex(ctx, "by_tenant_name", [][]byte{[]byte("t")}, []byte("a"), []byte("z"))
+
+	if queryResults != nil || scanResults != nil || compoundResults != nil || scanCompoundResults != nil {
+		t.Errorf("an index refusal returned results; want nil alongside the error")
+	}
 
 	for _, tc := range []struct {
 		method string
+		name   string
 		err    error
 	}{
-		{"RegisterEntityIndexes", a.RegisterEntityIndexes("teams", nil)},
-		{"QueryIndex", queryErr},
-		{"ScanIndex", scanErr},
-		{"QueryCompoundIndex", compoundErr},
-		{"ScanCompoundIndex", scanCompoundErr},
+		{"RegisterEntityIndexes", "teams", a.RegisterEntityIndexes("teams", nil)},
+		{"QueryIndex", "by_name", queryErr},
+		{"ScanIndex", "by_name", scanErr},
+		{"QueryCompoundIndex", "by_tenant_name", compoundErr},
+		{"ScanCompoundIndex", "by_tenant_name", scanCompoundErr},
 	} {
 		if tc.err == nil {
 			t.Errorf("%s returned nil; want a refusal — silently succeeding would let a "+
@@ -85,6 +90,15 @@ func TestEveryIndexMethodRefusesWithTheCapabilitySentinel(t *testing.T) {
 		if !errors.Is(tc.err, qrdbsdk.ErrKVIndexUnsupported) {
 			t.Errorf("%s error does not match qrdbsdk.ErrKVIndexUnsupported; "+
 				"go-qrdb would treat this capability gap as a hard failure. err=%v", tc.method, tc.err)
+		}
+		var typed *IndexingNotSupportedError
+		if !errors.As(tc.err, &typed) {
+			t.Errorf("%s error is not an *IndexingNotSupportedError. err=%v", tc.method, tc.err)
+			continue
+		}
+		if typed.Op != tc.method || typed.Name != tc.name {
+			t.Errorf("%s refusal names Op=%q Name=%q; want Op=%q Name=%q",
+				tc.method, typed.Op, typed.Name, tc.method, tc.name)
 		}
 	}
 }
