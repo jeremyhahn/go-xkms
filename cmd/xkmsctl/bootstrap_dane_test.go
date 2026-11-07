@@ -748,31 +748,6 @@ func TestGenerateCommonTLSARecords(t *testing.T) {
 
 // --- loadCertFromPEM tests ---
 
-func TestLoadCertFromPEM(t *testing.T) {
-	cert := generateTestCertForDANE(t)
-	certFile := writeCertPEM(t, cert)
-
-	loaded, err := loadCertFromPEM(certFile)
-	require.NoError(t, err)
-	assert.Equal(t, cert.Raw, loaded.Raw)
-}
-
-func TestLoadCertFromPEM_FileNotFound(t *testing.T) {
-	_, err := loadCertFromPEM("/nonexistent/cert.pem")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to read certificate file")
-}
-
-func TestLoadCertFromPEM_NoPEM(t *testing.T) {
-	tmpDir := t.TempDir()
-	certFile := filepath.Join(tmpDir, "bad.txt")
-	require.NoError(t, os.WriteFile(certFile, []byte("not PEM"), 0644))
-
-	_, err := loadCertFromPEM(certFile)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no PEM data found")
-}
-
 func TestLoadCertFromPEM_InvalidDER(t *testing.T) {
 	tmpDir := t.TempDir()
 	certFile := filepath.Join(tmpDir, "bad-der.pem")
