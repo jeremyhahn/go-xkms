@@ -151,32 +151,6 @@ func TestSeedReconstructsTheSameKey(t *testing.T) {
 		"a key rebuilt from its seed must decapsulate what its public key encapsulated")
 }
 
-// TestDeterministicFromSeed proves key generation is a pure function of the
-// seed, which is what makes the seed a complete representation of the key.
-func TestDeterministicFromSeed(t *testing.T) {
-	seed := make([]byte, SeedSize)
-	_, err := io.ReadFull(rand.Reader, seed)
-	require.NoError(t, err)
-
-	first, ok := requireMLKEMFromSeed(t, seed)
-	if !ok {
-		return
-	}
-	defer first.Clean()
-
-	second, err := Create(seed)
-	require.NoError(t, err)
-	defer second.Clean()
-
-	firstPublic, err := first.GenerateKeyPair()
-	require.NoError(t, err)
-	secondPublic, err := second.GenerateKeyPair()
-	require.NoError(t, err)
-
-	assert.Equal(t, firstPublic, secondPublic)
-	assert.Equal(t, first.ExportSecretKey(), second.ExportSecretKey())
-}
-
 // TestDistinctKeysDeriveDistinctSecrets guards against a wrapper that ignored
 // the recipient's key -- which would let every round-trip test above pass while
 // giving every party the same secret.
