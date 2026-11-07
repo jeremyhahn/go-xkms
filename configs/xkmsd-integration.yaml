@@ -174,13 +174,11 @@ backends:
     enabled: true
     path: "/data/keys"
 
-  # No pkcs11 backend. backends.pkcs11.pin is a protected secret target
-  # (go-xkms#654): server.New refuses a literal PIN there ("protected target
-  # must reference a resolvable secret at Backends.PKCS11.Pin") and the server
-  # never comes up. The only scheme it resolves is credential://<name>, and a
-  # fresh throwaway volume holds no credential before the first boot -- the
-  # manual strategy blocks until one is submitted over the API this server has
-  # not started yet. The suites dial the software backend by default
+  # No pkcs11 backend in this config. When backends.pkcs11.pin is not set, the
+  # pkcs11 key backend logs in with the PIN `xkmsd seal-pkcs11-pin` sealed
+  # (docs/sealing-and-barrier/cli.md), whatever the barrier.strategy; the
+  # pkcs11 integration stack runs that verb before the server's first start
+  # (test/integration/api/docker-compose.yml). The suites dial the software backend by default
   # (test/integration/pkcs11/module/protocol.go getServerAvailableBackends and
   # the Makefile's XKMS_PKCS11_BACKENDS), the same set the fallback daemon,
   # scripts/start-test-xkmsd.sh, enables.
