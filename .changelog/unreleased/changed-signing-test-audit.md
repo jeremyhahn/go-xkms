@@ -1,0 +1,1 @@
+signing: the `pkg/signing` tests test each behaviour by one path (#1794): eight tests that repeated another test's path are removed, and the empty-blob digest case joins the `GetDigest` table; coverage stays at 94.1%.
