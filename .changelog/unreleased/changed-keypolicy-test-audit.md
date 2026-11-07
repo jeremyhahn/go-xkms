@@ -1,0 +1,1 @@
+keypolicy: the test audit (#1794) removes `TestCheckImplicitRecord`, whose path the remaining tests cover; its two assertions no other test made (an implicit record is enabled and tracks no usage) move into `TestCheckStatus` and `TestUse`.

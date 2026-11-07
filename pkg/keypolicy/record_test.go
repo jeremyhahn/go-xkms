@@ -23,16 +23,6 @@ import (
 
 var now = time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 
-// TestCheckImplicitRecord proves a key with no record is refused nothing:
-// it falls back to RBAC alone.
-func TestCheckImplicitRecord(t *testing.T) {
-	rec := Implicit("k", "software")
-	assert.Equal(t, StatusEnabled, rec.EffectiveStatus())
-	assert.False(t, rec.Tracks())
-	assert.True(t, rec.Empty())
-	assert.NoError(t, rec.Check("alice", OpEncrypt, 1<<20, now))
-}
-
 // TestCheckStatus proves a disabled or revoked key is refused every
 // operation with the typed error naming its status.
 func TestCheckStatus(t *testing.T) {
@@ -44,6 +34,7 @@ func TestCheckStatus(t *testing.T) {
 		assert.Contains(t, unavailable.Error(), string(status))
 	}
 	assert.NoError(t, (&Record{KeyID: "k", Status: StatusEnabled}).Check("alice", OpSign, 0, now))
+	assert.Equal(t, StatusEnabled, Implicit("k", "software").EffectiveStatus())
 }
 
 // TestCheckPolicy proves each policy condition refuses on its own and
@@ -129,6 +120,7 @@ func TestUse(t *testing.T) {
 	counted := &Record{Policy: &Policy{MaxUsageCount: 1}}
 	assert.True(t, counted.Tracks())
 	assert.False(t, (&Record{Policy: &Policy{}}).Tracks())
+	assert.False(t, Implicit("k", "software").Tracks())
 }
 
 // TestLevel proves the usage percentage takes the tightest limit and maps
