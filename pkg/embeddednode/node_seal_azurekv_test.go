@@ -50,3 +50,27 @@ func TestBuildAzureKVNodeSealBackend_RequiresBackendsAzureKV(t *testing.T) {
 	require.ErrorAs(t, err, &nodeErr)
 	require.Nil(t, provider)
 }
+
+// TestBuildAzureKVNodeSealBackend_RefusesAnInvalidBackendsAzureKV proves a
+// backends.azurekv section the Azure Key Vault backend cannot be built from
+// refuses the node seal with the backend's typed error and no provider.
+func TestBuildAzureKVNodeSealBackend_RefusesAnInvalidBackendsAzureKV(t *testing.T) {
+	tests := []struct {
+		name     string
+		azureCfg *config.AzureKVConfig
+		want     error
+	}{
+		{name: "missing vault URL", azureCfg: &config.AzureKVConfig{}, want: azurekv.ErrInvalidConfig},
+		{name: "malformed vault URL", azureCfg: &config.AzureKVConfig{VaultURL: "not a url"}, want: azurekv.ErrInvalidVaultURL},
+		{name: "local vault URL without opt-in", azureCfg: &config.AzureKVConfig{VaultURL: "https://localhost:8443"}, want: azurekv.ErrLocalVaultURLNotAllowed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Backends: config.BackendsConfig{AzureKV: tt.azureCfg}}
+
+			provider, err := buildAzureKVNodeSealBackend(context.Background(), cfg, storage.NewMemory(), testLogger())
+			require.ErrorIs(t, err, tt.want)
+			require.Nil(t, provider)
+		})
+	}
+}

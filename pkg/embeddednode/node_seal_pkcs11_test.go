@@ -40,12 +40,6 @@ func TestResolvePresealDir_DerivesFromTheDatastorePath(t *testing.T) {
 	require.Equal(t, filepath.Join("/var/lib/xkms", PresealSubdir), dir)
 }
 
-func TestResolvePresealDir_RequiresTheDatastorePath(t *testing.T) {
-	_, err := ResolvePresealDir(&config.Config{})
-	var pathErr *ErrDatastorePathRequired
-	require.ErrorAs(t, err, &pathErr)
-}
-
 func TestOpenPreseal_RequiresTheDatastorePath(t *testing.T) {
 	cfg := pkcs11NodeSealConfig(t)
 	cfg.Datastore.Path = ""
