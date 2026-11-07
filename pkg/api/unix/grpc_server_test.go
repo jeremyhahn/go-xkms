@@ -249,31 +249,6 @@ func TestGRPCServer_StartExistingSocket(t *testing.T) {
 	}
 }
 
-func TestGRPCServer_StopWithoutStart(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	cfg := &GRPCConfig{
-		SocketPath: filepath.Join(tmpDir, "test-grpc.sock"),
-	}
-
-	server, err := NewGRPCServer(cfg)
-	if err != nil {
-		t.Fatalf("NewGRPCServer() error = %v", err)
-	}
-
-	// Stop server without starting - should not error
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := server.Stop(ctx); err != nil {
-		t.Errorf("Stop() error = %v", err)
-	}
-}
-
 // TestGRPCServer_StopBeforeStart verifies the Stop/Start race guard: when
 // Stop runs before Start has created the underlying gRPC server, a
 // subsequent Start must return promptly instead of serving a listener that
