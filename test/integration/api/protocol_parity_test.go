@@ -334,12 +334,9 @@ func checkQUICEndpoint(baseURL string) bool {
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {
 		return false
 	}
-	caFile := os.Getenv("KEYSTORE_TLS_CA")
-	if caFile == "" {
-		caFile = "/etc/xkms/certs/ca.crt"
-	}
 	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
-	cmd := exec.Command(binPath, "--server", "quic://"+host, "--tls-ca", caFile, "backends", "list")
+	args := append([]string{"--server", "quic://" + host}, runner.TLSArgs(commands.ProtocolQUIC)...)
+	cmd := exec.Command(binPath, append(args, "backends", "list")...)
 	return cmd.Run() == nil
 }
 

@@ -77,6 +77,51 @@ type TestRunner struct {
 	Timeout        time.Duration
 	Verbose        bool
 	TLSCACert      string
+	// TLSClientCert and TLSClientKey are the admin mTLS credential that
+	// `xkmsd init --admin-factor mtls` issues on the suite's first boot.
+	// Composite auth admits no anonymous caller, so every TLS transport
+	// presents it.
+	TLSClientCert string
+	TLSClientKey  string
+}
+
+// TLSArgs returns the xkmsctl TLS flags for protocol: the CA that signs the
+// server's certificate and the admin client credential. Unix, gRPC, QUIC and
+// REST over https run TLS; MCP (mcp://), REST over http and embedded do not.
+func (r *TestRunner) TLSArgs(protocol ProtocolType) []string {
+	usesTLS := protocol == ProtocolUnix ||
+		protocol == ProtocolGRPC ||
+		protocol == ProtocolQUIC ||
+		protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://")
+	if !usesTLS {
+		return nil
+	}
+	return r.tlsFlags()
+}
+
+// tlsURLSchemes are the --server URL schemes whose transport runs TLS.
+var tlsURLSchemes = []string{"unix://", "https://", "grpc://", "grpcs://", "quic://"}
+
+// TLSArgsForURL is TLSArgs for the transport a --server URL selects.
+func (r *TestRunner) TLSArgsForURL(serverURL string) []string {
+	for _, scheme := range tlsURLSchemes {
+		if strings.HasPrefix(serverURL, scheme) {
+			return r.tlsFlags()
+		}
+	}
+	return nil
+}
+
+// tlsFlags returns the --tls-ca, --tls-cert and --tls-key flags that are set.
+func (r *TestRunner) tlsFlags() []string {
+	var args []string
+	if r.TLSCACert != "" {
+		args = append(args, "--tls-ca", r.TLSCACert)
+	}
+	if r.TLSClientCert != "" && r.TLSClientKey != "" {
+		args = append(args, "--tls-cert", r.TLSClientCert, "--tls-key", r.TLSClientKey)
+	}
+	return args
 }
 
 // NewTestRunner creates a new test runner with default configuration
@@ -96,6 +141,8 @@ func NewTestRunner() *TestRunner {
 		Timeout:        30 * time.Second,
 		Verbose:        getEnv("VERBOSE", "") != "",
 		TLSCACert:      getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
+		TLSClientCert:  getEnv("KEYSTORE_TLS_CERT", "/data/xkms/admin-cert.pem"),
+		TLSClientKey:   getEnv("KEYSTORE_TLS_KEY", "/data/xkms/admin-key.pem"),
 	}
 }
 
@@ -208,15 +255,7 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 			prefixArgs = append(prefixArgs, "--server", serverURL)
 		}
 
-		// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-		// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
-		needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
-			protocol == ProtocolGRPC ||
-			protocol == ProtocolQUIC
-
-		if needsTLS && r.TLSCACert != "" {
-			prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
-		}
+		prefixArgs = append(prefixArgs, r.TLSArgs(protocol)...)
 	}
 
 	args = append(prefixArgs, args...)

@@ -22,6 +22,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/test/integration/api/commands"
 )
 
 // execCLI executes the CLI binary with given arguments, using the configured Unix socket
@@ -29,7 +31,9 @@ func execCLI(t *testing.T, cfg *TestConfig, args ...string) (string, string, err
 	t.Helper()
 
 	// Prepend --server flag to use the configured Unix socket path
-	allArgs := append([]string{"--server", "unix://" + cfg.UnixSocketPath}, args...)
+	serverURL := "unix://" + cfg.UnixSocketPath
+	allArgs := append([]string{"--server", serverURL}, commands.NewTestRunner().TLSArgsForURL(serverURL)...)
+	allArgs = append(allArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, allArgs...)
 
 	var stdout, stderr bytes.Buffer

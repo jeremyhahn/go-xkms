@@ -159,6 +159,9 @@ services:
     volumes:
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs:ro
+      # Composite auth admits no anonymous caller, so the suite authenticates
+      # with the admin mTLS credential `xkmsd init` writes to /data/xkms.
+      - xkms-data:/data:ro
       - cli-build:/app/build
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
@@ -178,6 +181,8 @@ services:
       - KEYSTORE_CLI_BIN=/app/build/bin/xkmsctl
       # TLS configuration - use CA certificate for proper verification
       - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
+      - KEYSTORE_TLS_CERT=/data/xkms/admin-cert.pem
+      - KEYSTORE_TLS_KEY=/data/xkms/admin-key.pem
       - XKMS_SERVER_BARRIER_SECRET=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
       # Test configuration
       - INTEGRATION_TIMEOUT=60s

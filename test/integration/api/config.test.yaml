@@ -34,10 +34,10 @@ tls:
   # No client auth for integration tests
   client_auth: none
 
-# Adaptive authentication: anonymous until the first user is provisioned, then
-# enforced. This keeps the integration suites able to exercise the API without
-# pre-seeding credentials while still satisfying the secure-by-default gate
-# (the daemon has no insecure override).
+# Composite authentication admits no anonymous caller (the adaptive mode was
+# removed). The suite authenticates with the admin mTLS credential that
+# `xkmsd init --admin-factor mtls` writes to /data/xkms; tls.client_auth stays
+# none because the auth chain, not the handshake, checks the certificate.
 auth:
   enabled: true
   type: "composite"

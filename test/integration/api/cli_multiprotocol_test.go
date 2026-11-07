@@ -22,6 +22,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/test/integration/api/commands"
 )
 
 // execCLIWithServer executes the CLI binary with the --server flag for a specific protocol
@@ -35,17 +37,8 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
-	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-	// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
-	needsTLS := strings.HasPrefix(serverURL, "https://") ||
-		strings.HasPrefix(serverURL, "grpc://") ||
-		strings.HasPrefix(serverURL, "grpcs://") ||
-		strings.HasPrefix(serverURL, "quic://")
-
-	if needsTLS {
-		caFile := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
-		prefixArgs = append(prefixArgs, "--tls-ca", caFile)
-	}
+	// TLS transports present the server's CA and the admin client credential.
+	prefixArgs = append(prefixArgs, commands.NewTestRunner().TLSArgsForURL(serverURL)...)
 
 	args = append(prefixArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, args...)
