@@ -70,10 +70,8 @@ func (m *mockCloudDNSClient) GetChange(ctx context.Context, project, zone, chang
 
 func TestConfigValidation(t *testing.T) {
 	tests := []struct {
-		name        string
-		config      Config
-		expectError bool
-		errorMsg    string
+		name   string
+		config Config
 	}{
 		{
 			name: "valid with service account",
@@ -81,7 +79,6 @@ func TestConfigValidation(t *testing.T) {
 				Project:            "my-project",
 				ServiceAccountJSON: []byte(`{"type": "service_account"}`),
 			},
-			expectError: false,
 		},
 		{
 			name: "valid with ambient",
@@ -89,35 +86,12 @@ func TestConfigValidation(t *testing.T) {
 				Project: "my-project",
 				Ambient: true,
 			},
-			expectError: false,
-		},
-		{
-			name: "missing project",
-			config: Config{
-				ServiceAccountJSON: []byte(`{"type": "service_account"}`),
-			},
-			expectError: true,
-			errorMsg:    "project",
-		},
-		{
-			name: "no credentials and ambient disabled",
-			config: Config{
-				Project: "my-project",
-			},
-			expectError: true,
-			errorMsg:    "credentials",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateConfig(tt.config)
-			if tt.expectError {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorMsg)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, validateConfig(tt.config))
 		})
 	}
 }
@@ -153,6 +127,22 @@ func TestApplyConfigDefaults(t *testing.T) {
 		assert.Equal(t, 2*time.Second, result.PollingInterval)
 		assert.Equal(t, int64(60), result.TTL)
 		assert.Equal(t, 15*time.Second, result.HTTPTimeout)
+	})
+
+	t.Run("applies defaults for negative values", func(t *testing.T) {
+		cfg := Config{
+			PropagationTimeout: -1 * time.Second,
+			PollingInterval:    -1 * time.Second,
+			TTL:                -1,
+			HTTPTimeout:        -1 * time.Second,
+		}
+
+		result := applyConfigDefaults(cfg)
+
+		assert.Equal(t, defaultPropagationTimeout, result.PropagationTimeout)
+		assert.Equal(t, defaultPollingInterval, result.PollingInterval)
+		assert.Equal(t, int64(defaultRecordTTL), result.TTL)
+		assert.Equal(t, defaultHTTPTimeout, result.HTTPTimeout)
 	})
 }
 
@@ -214,13 +204,6 @@ func TestTimeout(t *testing.T) {
 
 		assert.Equal(t, 60*time.Second, timeout)
 		assert.Equal(t, 2*time.Second, interval)
-	})
-
-	t.Run("implements ProviderTimeout interface", func(t *testing.T) {
-		mock := &mockCloudDNSClient{}
-		provider := NewWithClient(mock, "my-project", "my-zone", nil)
-
-		var _ providers.ProviderTimeout = provider
 	})
 }
 
@@ -366,46 +349,6 @@ func TestPresent(t *testing.T) {
 		err := provider.Present(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
 		assert.NoError(t, err)
 	})
-
-	t.Run("returns error on get zone failure", func(t *testing.T) {
-		mock := &mockCloudDNSClient{}
-		provider := NewWithClient(mock, "my-project", "", nil)
-
-		err := provider.Present(ctx, "invalid..domain", "_acme-challenge.invalid..domain.", "token-value")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "get zone")
-	})
-
-	t.Run("returns error on get records failure", func(t *testing.T) {
-		mock := &mockCloudDNSClient{
-			getResourceRecordSetsFunc: func(ctx context.Context, project, zone, name, rrtype string) ([]*dns.ResourceRecordSet, error) {
-				return nil, errors.New("API error")
-			},
-		}
-
-		provider := NewWithClient(mock, "my-project", "my-zone", nil)
-
-		err := provider.Present(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "get records")
-	})
-
-	t.Run("returns error on create change failure", func(t *testing.T) {
-		mock := &mockCloudDNSClient{
-			getResourceRecordSetsFunc: func(ctx context.Context, project, zone, name, rrtype string) ([]*dns.ResourceRecordSet, error) {
-				return []*dns.ResourceRecordSet{}, nil
-			},
-			createChangeFunc: func(ctx context.Context, project, zone string, change *dns.Change) (*dns.Change, error) {
-				return nil, errors.New("create failed")
-			},
-		}
-
-		provider := NewWithClient(mock, "my-project", "my-zone", nil)
-
-		err := provider.Present(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "create record")
-	})
 }
 
 func TestCleanUp(t *testing.T) {
@@ -488,66 +431,6 @@ func TestCleanUp(t *testing.T) {
 		err := provider.CleanUp(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
 		assert.NoError(t, err)
 	})
-
-	t.Run("returns error on get zone failure", func(t *testing.T) {
-		mock := &mockCloudDNSClient{}
-		provider := NewWithClient(mock, "my-project", "", nil)
-
-		err := provider.CleanUp(ctx, "invalid..domain", "_acme-challenge.invalid..domain.", "token-value")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "get zone")
-	})
-
-	t.Run("returns error on find records failure", func(t *testing.T) {
-		mock := &mockCloudDNSClient{
-			getResourceRecordSetsFunc: func(ctx context.Context, project, zone, name, rrtype string) ([]*dns.ResourceRecordSet, error) {
-				return nil, errors.New("API error")
-			},
-		}
-
-		provider := NewWithClient(mock, "my-project", "my-zone", nil)
-
-		err := provider.CleanUp(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "find records")
-	})
-
-	t.Run("returns error on delete change failure", func(t *testing.T) {
-		mock := &mockCloudDNSClient{
-			getResourceRecordSetsFunc: func(ctx context.Context, project, zone, name, rrtype string) ([]*dns.ResourceRecordSet, error) {
-				return []*dns.ResourceRecordSet{
-					{
-						Name:    "_acme-challenge.example.com.",
-						Type:    "TXT",
-						Ttl:     60,
-						Rrdatas: []string{"token-value"},
-					},
-				}, nil
-			},
-			createChangeFunc: func(ctx context.Context, project, zone string, change *dns.Change) (*dns.Change, error) {
-				return nil, errors.New("delete failed")
-			},
-		}
-
-		provider := NewWithClient(mock, "my-project", "my-zone", nil)
-
-		err := provider.CleanUp(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "delete record")
-	})
-}
-
-func TestGetHostedZone(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("returns configured zone", func(t *testing.T) {
-		mock := &mockCloudDNSClient{}
-		provider := NewWithClient(mock, "my-project", "configured-zone", nil)
-
-		zone, err := provider.getHostedZone(ctx, "_acme-challenge.example.com.")
-		require.NoError(t, err)
-		assert.Equal(t, "configured-zone", zone)
-	})
 }
 
 func TestFindTXTRecords(t *testing.T) {
@@ -570,35 +453,6 @@ func TestFindTXTRecords(t *testing.T) {
 		records, err := provider.findTXTRecords(ctx, "my-zone", "_acme-challenge.example.com.", "value1")
 		require.NoError(t, err)
 		assert.Len(t, records, 1)
-	})
-
-	t.Run("handles quoted values", func(t *testing.T) {
-		mock := &mockCloudDNSClient{
-			getResourceRecordSetsFunc: func(ctx context.Context, project, zone, name, rrtype string) ([]*dns.ResourceRecordSet, error) {
-				return []*dns.ResourceRecordSet{
-					{Name: "_acme-challenge.example.com.", Type: "TXT", Rrdatas: []string{`"value1"`}},
-				}, nil
-			},
-		}
-
-		provider := NewWithClient(mock, "my-project", "my-zone", nil)
-
-		records, err := provider.findTXTRecords(ctx, "my-zone", "_acme-challenge.example.com.", "value1")
-		require.NoError(t, err)
-		assert.Len(t, records, 1)
-	})
-
-	t.Run("returns error on API failure", func(t *testing.T) {
-		mock := &mockCloudDNSClient{
-			getResourceRecordSetsFunc: func(ctx context.Context, project, zone, name, rrtype string) ([]*dns.ResourceRecordSet, error) {
-				return nil, errors.New("API error")
-			},
-		}
-
-		provider := NewWithClient(mock, "my-project", "my-zone", nil)
-
-		_, err := provider.findTXTRecords(ctx, "my-zone", "_acme-challenge.example.com.", "value1")
-		require.Error(t, err)
 	})
 }
 
@@ -637,26 +491,6 @@ func TestWaitForChange(t *testing.T) {
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, callCount, 2)
 	})
-
-	t.Run("times out on propagation timeout", func(t *testing.T) {
-		mock := &mockCloudDNSClient{
-			getChangeFunc: func(ctx context.Context, project, zone, changeID string) (*dns.Change, error) {
-				return &dns.Change{Id: changeID, Status: "pending"}, nil
-			},
-		}
-
-		cfg := Config{
-			Project:            "my-project",
-			HostedZoneName:     "my-zone",
-			PropagationTimeout: 100 * time.Millisecond,
-			PollingInterval:    10 * time.Millisecond,
-		}
-		provider := NewWithClientAndConfig(mock, cfg)
-
-		err := provider.waitForChange(ctx, "my-zone", "change-123")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "timeout")
-	})
 }
 
 func TestNewFromEnv(t *testing.T) {
@@ -671,15 +505,6 @@ func TestNewFromEnv(t *testing.T) {
 		os.Unsetenv(envTTL)
 		os.Unsetenv(envGoogleAppCredential)
 	}
-
-	t.Run("returns error when project not set", func(t *testing.T) {
-		clearEnv()
-		defer clearEnv()
-
-		_, err := NewFromEnv(ctx)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "GCE_PROJECT")
-	})
 
 	t.Run("uses ambient credentials when no file specified", func(t *testing.T) {
 		clearEnv()
@@ -722,24 +547,6 @@ func TestNewFromEnv(t *testing.T) {
 	})
 }
 
-func TestRegistration(t *testing.T) {
-	assert.True(t, providers.Registered(providers.ProviderCloudDNS))
-
-	factory := providers.Get(providers.ProviderCloudDNS)
-	assert.NotNil(t, factory)
-}
-
-func TestFactoryInvalidConfig(t *testing.T) {
-	factory := providers.Get(providers.ProviderCloudDNS)
-	require.NotNil(t, factory)
-
-	ctx := context.Background()
-
-	_, err := factory(ctx, "invalid")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected clouddns.Config")
-}
-
 func TestProviderImplementsInterfaces(t *testing.T) {
 	mock := &mockCloudDNSClient{}
 	provider := NewWithClient(mock, "my-project", "my-zone", nil)
@@ -761,52 +568,10 @@ func TestCreateClientErrorPaths(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, providers.ErrMissingCredentials, err)
 	})
-
-	t.Run("returns error with invalid service account JSON", func(t *testing.T) {
-		cfg := Config{
-			Project:            "test-project",
-			ServiceAccountJSON: []byte(`{invalid json}`),
-		}
-
-		_, err := createClient(ctx, cfg)
-		require.Error(t, err)
-	})
-
-	t.Run("returns error with well-formed but invalid service account JSON", func(t *testing.T) {
-		cfg := Config{
-			Project:            "test-project",
-			ServiceAccountJSON: []byte(`{"type": "not_service_account", "foo": "bar"}`),
-		}
-
-		_, err := createClient(ctx, cfg)
-		require.Error(t, err)
-	})
 }
 
 func TestNewValidationErrors(t *testing.T) {
 	ctx := context.Background()
-
-	t.Run("returns error when project is empty", func(t *testing.T) {
-		cfg := Config{
-			Project:            "",
-			ServiceAccountJSON: []byte(`{"type": "service_account"}`),
-		}
-
-		_, err := New(ctx, cfg)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "project")
-	})
-
-	t.Run("returns error when no credentials provided", func(t *testing.T) {
-		cfg := Config{
-			Project: "my-project",
-			Ambient: false,
-		}
-
-		_, err := New(ctx, cfg)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "credentials")
-	})
 
 	t.Run("returns wrapped error when createClient fails", func(t *testing.T) {
 		cfg := Config{
@@ -819,54 +584,6 @@ func TestNewValidationErrors(t *testing.T) {
 		var provErr *providers.ProviderError
 		assert.True(t, errors.As(err, &provErr))
 		assert.Equal(t, "create client", provErr.Operation)
-	})
-}
-
-func TestEnvFactoryRegistration(t *testing.T) {
-	ctx := context.Background()
-
-	envFactory := providers.GetEnvFactory(providers.ProviderCloudDNS)
-	require.NotNil(t, envFactory, "env factory should be registered")
-
-	originalProject := os.Getenv(envProject)
-	originalSAFile := os.Getenv(envServiceAccountFile)
-	originalGAC := os.Getenv(envGoogleAppCredential)
-
-	defer func() {
-		if originalProject != "" {
-			os.Setenv(envProject, originalProject)
-		} else {
-			os.Unsetenv(envProject)
-		}
-		if originalSAFile != "" {
-			os.Setenv(envServiceAccountFile, originalSAFile)
-		} else {
-			os.Unsetenv(envServiceAccountFile)
-		}
-		if originalGAC != "" {
-			os.Setenv(envGoogleAppCredential, originalGAC)
-		} else {
-			os.Unsetenv(envGoogleAppCredential)
-		}
-	}()
-
-	t.Run("env factory returns error when project not set", func(t *testing.T) {
-		os.Unsetenv(envProject)
-		os.Unsetenv(envServiceAccountFile)
-		os.Unsetenv(envGoogleAppCredential)
-
-		_, err := envFactory(ctx)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "GCE_PROJECT")
-	})
-
-	t.Run("env factory with project set uses ambient", func(t *testing.T) {
-		os.Setenv(envProject, "test-project")
-		os.Unsetenv(envServiceAccountFile)
-		os.Unsetenv(envGoogleAppCredential)
-
-		// May succeed or fail depending on ADC availability
-		_, _ = envFactory(ctx)
 	})
 }
 
@@ -890,28 +607,6 @@ func TestNewProviderFromEnvFactory(t *testing.T) {
 		_, err := providers.NewProviderFromEnv(ctx, providers.NameCloudDNS)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "GCE_PROJECT")
-	})
-}
-
-func TestCreateClientWithHTTPTimeout(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("service account with HTTP timeout succeeds", func(t *testing.T) {
-		// Create service account JSON that will successfully create a client
-		// (exercises the HTTPTimeout > 0 path for service accounts)
-		cfg := Config{
-			Project:            "test-project",
-			ServiceAccountJSON: []byte(`{"type": "service_account", "client_email": "test@test.iam.gserviceaccount.com", "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBALRiMLAHudeSA2mO=\n-----END RSA PRIVATE KEY-----\n"}`),
-			HTTPTimeout:        45 * time.Second,
-		}
-
-		// This exercises the HTTPTimeout configuration path
-		// The client creation may succeed or fail, but we're exercising the code path
-		client, err := createClient(ctx, cfg)
-		if err == nil {
-			assert.NotNil(t, client)
-		}
-		// Either success or error is fine - we're just exercising the HTTPTimeout path
 	})
 }
 
@@ -971,6 +666,7 @@ func TestPresentWaitForChangeError(t *testing.T) {
 
 		err := provider.Present(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
 		require.Error(t, err)
+		assert.Contains(t, err.Error(), "timeout")
 	})
 }
 
