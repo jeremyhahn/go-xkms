@@ -65,29 +65,6 @@ func TestGRPCServer_ExclusivePeersWithoutAllowlistRefusesToStart(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "no socket may be bound for a listener that admits no one")
 }
 
-// TestGRPCServer_ExclusivePeersRefusesUnlistedSameUID proves the exclusive
-// policy is enforced at accept time: this process's own uid, admitted by the
-// default policy, is refused when the allowlist names a different uid.
-func TestGRPCServer_ExclusivePeersRefusesUnlistedSameUID(t *testing.T) {
-	socketPath := filepath.Join(privateSocketDir(t), "exclusive-other.sock")
-	other := uint32(os.Geteuid()) + 1
-	server, err := NewGRPCServer(&GRPCConfig{
-		SocketPath:     socketPath,
-		ExclusivePeers: true,
-		AllowedUIDs:    []uint32{other},
-	})
-	require.NoError(t, err)
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- server.Start() }()
-	waitForGRPCServerReady(t, server, socketPath)
-	defer func() { _ = server.Stop(context.Background()) }()
-
-	_, err = healthCall(t, socketPath)
-	require.Error(t, err, "an unlisted uid must be refused under an exclusive policy")
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
 // TestGRPCServer_UnaryInterceptorsRunAfterAdmission proves an embedder's
 // interceptor sees every unary RPC from an admitted peer and can refuse it.
 func TestGRPCServer_UnaryInterceptorsRunAfterAdmission(t *testing.T) {

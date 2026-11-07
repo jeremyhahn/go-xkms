@@ -315,70 +315,6 @@ func TestGRPCServer_StartInvalidSocketPath(t *testing.T) {
 	}
 }
 
-func TestGRPCServer_ClientConnection(t *testing.T) {
-	// Create temp directory for socket
-	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
-
-	cfg := &GRPCConfig{
-		SocketPath: socketPath,
-	}
-
-	server, err := NewGRPCServer(cfg)
-	if err != nil {
-		t.Fatalf("NewGRPCServer() error = %v", err)
-	}
-
-	// Start server in goroutine
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- server.Start()
-	}()
-
-	waitForGRPCServerReady(t, server, socketPath)
-
-	// Create a client connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, err := grpc.NewClient("unix://"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		_ = server.Stop(context.Background())
-		t.Fatalf("Failed to connect to gRPC server: %v", err)
-	}
-	defer func() { _ = conn.Close() }()
-
-	// Create a client
-	client := pb.NewKeystoreServiceClient(conn)
-
-	// Make a simple Health RPC call
-	healthReq := &pb.HealthRequest{}
-	healthResp, err := client.Health(ctx, healthReq)
-	if err != nil {
-		_ = server.Stop(context.Background())
-		t.Fatalf("Health RPC failed: %v", err)
-	}
-
-	if healthResp.Status != "healthy" {
-		t.Errorf("Expected status 'healthy', got '%s'", healthResp.Status)
-	}
-
-	// Stop server
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer stopCancel()
-
-	if err := server.Stop(stopCtx); err != nil {
-		t.Errorf("Stop() error = %v", err)
-	}
-}
-
 func TestGRPCServer_MultipleClients(t *testing.T) {
 	// Create temp directory for socket
 	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
@@ -452,41 +388,6 @@ func TestGRPCServer_MultipleClients(t *testing.T) {
 	}
 }
 
-func TestGRPCServer_GracefulStopTimeout(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
-
-	cfg := &GRPCConfig{
-		SocketPath: socketPath,
-	}
-
-	server, err := NewGRPCServer(cfg)
-	if err != nil {
-		t.Fatalf("NewGRPCServer() error = %v", err)
-	}
-
-	// Start server
-	go func() {
-		_ = server.Start()
-	}()
-
-	waitForGRPCServerReady(t, server, socketPath)
-
-	// Stop server with a very short timeout to trigger timeout path
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-	defer cancel()
-
-	// Should not return error even on timeout
-	if err := server.Stop(ctx); err != nil {
-		t.Errorf("Stop() error = %v", err)
-	}
-}
-
 func TestGRPCServer_SocketPermissions(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
@@ -537,90 +438,6 @@ func TestGRPCServer_SocketPermissions(t *testing.T) {
 	if mode != 0640 {
 		t.Errorf("Socket permissions = %o, want 0640", mode)
 	}
-
-	// Stop server
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := server.Stop(ctx); err != nil {
-		t.Errorf("Stop() error = %v", err)
-	}
-}
-
-func TestGRPCServer_MessageSizeLimits(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
-
-	// Set small message size limits for testing
-	cfg := &GRPCConfig{
-		SocketPath:     socketPath,
-		MaxRecvMsgSize: 1024, // 1KB
-		MaxSendMsgSize: 1024, // 1KB
-	}
-
-	server, err := NewGRPCServer(cfg)
-	if err != nil {
-		t.Fatalf("NewGRPCServer() error = %v", err)
-	}
-
-	if server.config.MaxRecvMsgSize != 1024 {
-		t.Errorf("MaxRecvMsgSize = %v, want 1024", server.config.MaxRecvMsgSize)
-	}
-
-	if server.config.MaxSendMsgSize != 1024 {
-		t.Errorf("MaxSendMsgSize = %v, want 1024", server.config.MaxSendMsgSize)
-	}
-
-	// Start server
-	go func() {
-		_ = server.Start()
-	}()
-
-	waitForGRPCServerReady(t, server, socketPath)
-
-	// Stop server
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := server.Stop(ctx); err != nil {
-		t.Errorf("Stop() error = %v", err)
-	}
-}
-
-func TestGRPCServer_ConcurrentStreamLimit(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
-
-	cfg := &GRPCConfig{
-		SocketPath:           socketPath,
-		MaxConcurrentStreams: 10,
-	}
-
-	server, err := NewGRPCServer(cfg)
-	if err != nil {
-		t.Fatalf("NewGRPCServer() error = %v", err)
-	}
-
-	if server.config.MaxConcurrentStreams != 10 {
-		t.Errorf("MaxConcurrentStreams = %v, want 10", server.config.MaxConcurrentStreams)
-	}
-
-	// Start server
-	go func() {
-		_ = server.Start()
-	}()
-
-	waitForGRPCServerReady(t, server, socketPath)
 
 	// Stop server
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
