@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -351,10 +352,15 @@ type TPM2 struct {
 	// the hot session path reads it without a lock.
 	policyResolver atomic.Pointer[PolicyBindingResolver]
 	random         io.Reader
-	simulator      SimulatorInterface
-	ssrkAttrs      *types.KeyAttributes
-	tracker        types.AEADSafetyTracker
-	transport      transport.TPM
+	// sealMu serialises Seal and Unseal. Each is a sequence of commands over
+	// sessions and transient objects the TPM holds between them; one TPM is
+	// one command queue, so two sequences interleaved on it exhaust its
+	// object slots or authorize one session with another's nonce.
+	sealMu    sync.Mutex
+	simulator SimulatorInterface
+	ssrkAttrs *types.KeyAttributes
+	tracker   types.AEADSafetyTracker
+	transport transport.TPM
 	TrustedPlatformModule
 }
 

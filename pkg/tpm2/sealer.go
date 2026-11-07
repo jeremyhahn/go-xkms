@@ -94,6 +94,9 @@ func (tpm *TPM2) defaultUnsealKeyAttributes(keyID string) (*types.KeyAttributes,
 //
 // Returns SealedData containing the TPM public/private areas, or error.
 func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
+
 	if opts == nil {
 		opts = &types.SealOptions{}
 	}
@@ -285,6 +288,9 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	if (len(sealed.TPMPublic) > 0) != (len(sealed.TPMPrivate) > 0) {
 		return nil, types.SealedDataAuthenticationError("", ErrSealedObjectIncomplete)
 	}
+
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
 
 	if opts == nil {
 		opts = &types.UnsealOptions{}
