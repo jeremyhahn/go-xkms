@@ -21,8 +21,8 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// TestIndexRefusalMatchesQRDBCapabilitySentinel pins the contract that lets a
-// go-qrdb DAO be built over this adapter at all.
+// TestEveryIndexMethodRefusesWithTheCapabilitySentinel pins the contract that
+// lets a go-qrdb DAO be built over this adapter at all.
 //
 // Since go-qrdb v0.8.0-alpha, pkg/dao calls RegisterEntityIndexes at
 // construction and branches on the reply: an error matching
@@ -39,22 +39,8 @@ import (
 // Both sentinels are asserted deliberately: dropping the local one breaks
 // in-repo callers that test for it, and dropping the go-qrdb one breaks DAO
 // construction. Neither may be removed without replacing this test.
-func TestIndexRefusalMatchesQRDBCapabilitySentinel(t *testing.T) {
-	err := &IndexingNotSupportedError{Op: "RegisterEntityIndexes", Name: "teams"}
-
-	if !errors.Is(err, ErrIndexingNotSupported) {
-		t.Errorf("errors.Is(err, ErrIndexingNotSupported) = false; want true — "+
-			"in-repo callers detect the local sentinel to fall back to Scan/List. err=%v", err)
-	}
-	if !errors.Is(err, qrdbsdk.ErrKVIndexUnsupported) {
-		t.Errorf("errors.Is(err, qrdbsdk.ErrKVIndexUnsupported) = false; want true — "+
-			"go-qrdb pkg/dao reads this sentinel as the index-capability signal; without it "+
-			"every DAO built over this adapter fails to construct. err=%v", err)
-	}
-}
-
-// TestEveryIndexMethodRefusesWithTheCapabilitySentinel checks the whole index
-// surface, not just registration. pkg/dao consults the sentinel on query paths
+//
+// The whole index surface is checked, not just registration. pkg/dao consults the sentinel on query paths
 // as well (it decides there whether to fall back to a full scan), so a method
 // that refused with an unmatched error would turn a planned scan into a hard
 // query failure.
@@ -86,6 +72,10 @@ func TestEveryIndexMethodRefusesWithTheCapabilitySentinel(t *testing.T) {
 			t.Errorf("%s returned nil; want a refusal — silently succeeding would let a "+
 				"caller believe this store maintains indexes", tc.method)
 			continue
+		}
+		if !errors.Is(tc.err, ErrIndexingNotSupported) {
+			t.Errorf("%s error does not match ErrIndexingNotSupported; in-repo callers "+
+				"detect the local sentinel to fall back to Scan/List. err=%v", tc.method, tc.err)
 		}
 		if !errors.Is(tc.err, qrdbsdk.ErrKVIndexUnsupported) {
 			t.Errorf("%s error does not match qrdbsdk.ErrKVIndexUnsupported; "+

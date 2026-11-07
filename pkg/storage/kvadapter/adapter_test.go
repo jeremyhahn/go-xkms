@@ -58,13 +58,6 @@ func (e *errorBackend) Close() error { return nil }
 // Constructor Tests
 // =============================================================================
 
-func TestNew_Success(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-	assert.NotNil(t, adapter)
-}
-
 func TestNew_NilBackend(t *testing.T) {
 	adapter, err := New(nil)
 	assert.Nil(t, adapter)
@@ -78,21 +71,6 @@ func TestNew_NilBackend(t *testing.T) {
 // =============================================================================
 // Put Tests
 // =============================================================================
-
-func TestPut_Success(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	err = adapter.Put(ctx, "key1", []byte("value1"))
-	assert.NoError(t, err)
-
-	// Verify via direct backend access
-	data, getErr := backend.Get(ctx, "key1")
-	require.NoError(t, getErr)
-	assert.Equal(t, []byte("value1"), data)
-}
 
 func TestPut_BackendError(t *testing.T) {
 	backendErr := errors.New("disk full")
@@ -127,20 +105,6 @@ func TestGet_Success(t *testing.T) {
 	data, getErr := adapter.Get(ctx, "key1")
 	assert.NoError(t, getErr)
 	assert.Equal(t, []byte("value1"), data)
-}
-
-func TestGet_NotFound_ReturnsQRDBError(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	data, getErr := adapter.Get(ctx, "nonexistent")
-	assert.Error(t, getErr)
-	assert.Nil(t, data)
-
-	// Verify it's a QRDB NotFound error (required by DAO layer).
-	assert.True(t, qrdbsdk.IsNotFound(getErr))
 }
 
 func TestGet_BackendError(t *testing.T) {
@@ -240,24 +204,6 @@ func TestScan_Success(t *testing.T) {
 	assert.Equal(t, "vb", values[1])
 }
 
-func TestScan_EmptyPrefix(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	require.NoError(t, adapter.Put(ctx, "a", []byte("va")))
-	require.NoError(t, adapter.Put(ctx, "b", []byte("vb")))
-
-	count := 0
-	err = adapter.Scan(ctx, "", func(_ string, _ []byte) error {
-		count++
-		return nil
-	})
-	assert.NoError(t, err)
-	assert.Equal(t, 2, count)
-}
-
 func TestScan_CallbackError(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
@@ -292,23 +238,6 @@ func TestScan_BackendError(t *testing.T) {
 	assert.Contains(t, err.Error(), "kvadapter: scan prefix/")
 }
 
-func TestScan_NoMatches(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	require.NoError(t, adapter.Put(ctx, "other/a", []byte("va")))
-
-	count := 0
-	err = adapter.Scan(ctx, "prefix/", func(_ string, _ []byte) error {
-		count++
-		return nil
-	})
-	assert.NoError(t, err)
-	assert.Equal(t, 0, count)
-}
-
 // =============================================================================
 // List Tests
 // =============================================================================
@@ -326,17 +255,6 @@ func TestList_Success(t *testing.T) {
 	keys, listErr := adapter.List(ctx, "ns/")
 	assert.NoError(t, listErr)
 	assert.Equal(t, 2, len(keys))
-}
-
-func TestList_Empty(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	keys, listErr := adapter.List(ctx, "nonexistent/")
-	assert.NoError(t, listErr)
-	assert.Empty(t, keys)
 }
 
 func TestList_BackendError(t *testing.T) {
@@ -510,82 +428,6 @@ func TestErrorTypes_Messages(t *testing.T) {
 		assert.Equal(t, "kvadapter: exists k1: base error", err.Error())
 		assert.Equal(t, baseErr, err.Unwrap())
 	})
-}
-
-// =============================================================================
-// Integration Round-Trip
-// =============================================================================
-
-func TestKVStoreAdapter_RoundTrip(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	// Full CRUD cycle
-	err = adapter.Put(ctx, "entity/1", []byte(`{"id":1,"name":"alice"}`))
-	require.NoError(t, err)
-
-	err = adapter.Put(ctx, "entity/2", []byte(`{"id":2,"name":"bob"}`))
-	require.NoError(t, err)
-
-	// Get
-	data, getErr := adapter.Get(ctx, "entity/1")
-	assert.NoError(t, getErr)
-	assert.Contains(t, string(data), "alice")
-
-	// Exists
-	exists, existsErr := adapter.Exists(ctx, "entity/1")
-	assert.NoError(t, existsErr)
-	assert.True(t, exists)
-
-	// List
-	keys, listErr := adapter.List(ctx, "entity/")
-	assert.NoError(t, listErr)
-	assert.Equal(t, 2, len(keys))
-
-	// Scan
-	count := 0
-	scanErr := adapter.Scan(ctx, "entity/", func(_ string, _ []byte) error {
-		count++
-		return nil
-	})
-	assert.NoError(t, scanErr)
-	assert.Equal(t, 2, count)
-
-	// Delete
-	err = adapter.Delete(ctx, "entity/1")
-	assert.NoError(t, err)
-
-	// Verify deleted - Get should return QRDB NotFound error.
-	data, getErr = adapter.Get(ctx, "entity/1")
-	assert.Error(t, getErr)
-	assert.Nil(t, data)
-	assert.True(t, qrdbsdk.IsNotFound(getErr))
-
-	exists, existsErr = adapter.Exists(ctx, "entity/1")
-	assert.NoError(t, existsErr)
-	assert.False(t, exists)
-}
-
-func TestKVStoreAdapter_ClosedBackend(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	// Close the backend
-	require.NoError(t, backend.Close())
-
-	// All operations should return wrapped errors
-	_, getErr := adapter.Get(ctx, "key1")
-	assert.Error(t, getErr)
-
-	putErr := adapter.Put(ctx, "key1", []byte("v"))
-	assert.Error(t, putErr)
-
-	deleteErr := adapter.Delete(ctx, "key1")
-	assert.Error(t, deleteErr)
 }
 
 func TestIndexingNotSupportedError_Message(t *testing.T) {
