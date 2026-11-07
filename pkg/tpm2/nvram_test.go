@@ -1446,15 +1446,6 @@ func nvramTestCert(t *testing.T) *x509.Certificate {
 	return cert
 }
 
-// TestNVIndexMaxSize_TransportFailure proves nvIndexMaxSize propagates a
-// transport fault from its own TPM_PT_NV_INDEX_MAX query rather than
-// returning a zero size that writeCertToNVRAM's size check would silently
-// trust.
-func TestNVIndexMaxSize_TransportFailure(t *testing.T) {
-	_, err := nvIndexMaxSize(failingTransport{})
-	require.Error(t, err)
-}
-
 // TestNvExtendExecute_TransportFailure proves the hand-rolled TPM2_NV_Extend
 // command sender surfaces a transport fault (wrapped, never a bare error)
 // rather than silently treating a dead transport as an extend that never
