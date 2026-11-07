@@ -207,7 +207,7 @@ services:
       ls -la /etc/xkms/certs/ || true &&
       echo 'Building CLI binary...' &&
       mkdir -p /app/build/bin &&
-      CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
+      CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go codec_json' -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
       echo 'Running integration tests...' &&
       go test -v -tags=integration,frost,codec_cbor,codec_json,codec_msgpack ./test/integration/api/... -timeout 15m
       "

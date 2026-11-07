@@ -2142,7 +2142,7 @@ integration-test-symmetric:
 
 .PHONY: integration-test-pkcs8
 ## integration-test-pkcs8: Run PKCS8 asymmetric backend integration tests
-integration-test-pkcs8:
+integration-test-pkcs8: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running PKCS8 integration tests...$(RESET)"
 	@cd test/integration/pkcs8 && $(call compose,pkcs8) down -v >/dev/null 2>&1 || true
 	@cd test/integration/pkcs8 && trap '$(call compose,pkcs8) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
@@ -4929,7 +4929,7 @@ integration-test-api-all: integration-test-api-kill integration-test-api-unix in
 
 .PHONY: integration-test-api-unix
 ## integration-test-api-unix: Run Unix socket protocol integration tests
-integration-test-api-unix:
+integration-test-api-unix: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running Unix socket protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
