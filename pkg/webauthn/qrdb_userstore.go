@@ -48,7 +48,12 @@ type QRDBUserStoreOptions struct {
 	// the caller's. The ceremony endpoints are public, so a request carries
 	// no identity go-qrdb's authorization accepts: an embedded node passes
 	// its service principal (node.ServiceContext) here, as the datastore
-	// does. Nil runs the calls on the caller's context.
+	// does. The service principal lives in the system tenant, so a store for
+	// another tenant binds an identity of that tenant instead, such as the
+	// one node.DelegatedContext derives from the tenant's delegation to the
+	// principal. The store scopes the bound context to TenantID; the bound
+	// identity's grants decide what it may do there. Nil runs the calls on
+	// the caller's context.
 	CallContext func(ctx context.Context) (context.Context, error)
 
 	// KV is the qrdb KV client the pending-enrolment claims live in. It must
@@ -789,7 +794,9 @@ func (s *qrdbUserStore) dropDeletionRecord(svcCtx context.Context, id uint64) er
 }
 
 // callContext returns the context a user-client call runs on: the caller's,
-// bound by the CallContext option when one is set.
+// bound by the CallContext option when one is set. A bound context is scoped
+// to the store's tenant: the bound identity adds no tenant, and go-qrdb
+// refuses a call on a tenant other than the context's (Codex 9054).
 func (s *qrdbUserStore) callContext(ctx context.Context) (context.Context, error) {
 	if s.bind == nil {
 		return ctx, nil
@@ -798,7 +805,7 @@ func (s *qrdbUserStore) callContext(ctx context.Context) (context.Context, error
 	if err != nil {
 		return nil, &QRDBCallContextError{Err: err}
 	}
-	return bound, nil
+	return qrdbsdk.ContextWithTenant(bound, s.tenantID), nil
 }
 
 // QRDBCallContextError reports that the CallContext option could not derive
