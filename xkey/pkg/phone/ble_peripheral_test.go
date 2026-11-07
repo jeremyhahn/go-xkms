@@ -128,6 +128,20 @@ func establishSession(t *testing.T, p *BLEPeripheral) *bootstrap.NoiseSession {
 	return initiator
 }
 
+// waitForCompleteMessage blocks until a whole message has been captured or ctx
+// is done, in which case the test fails rather than reassembling a partial
+// message.
+func (w *captureWriter) waitForCompleteMessage(ctx context.Context, t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-w.complete:
+	case <-ctx.Done():
+		t.Fatalf("no complete message was notified: %v (captured %d fragment(s))",
+			ctx.Err(), w.count())
+	}
+}
+
 func TestBLEPeripheral_ProcessRequestNotifiesResponse(t *testing.T) {
 	writer := newCaptureWriter()
 	p := newTestPeripheral(t, &echoHandler{}, writer)
