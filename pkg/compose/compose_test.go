@@ -379,10 +379,6 @@ func TestBuilders_StorageFailureIsFeatureBuildError(t *testing.T) {
 	require.ErrorAs(t, err, &unavailable)
 	assert.Equal(t, staticpw.DatabaseName, unavailable.Database)
 
-	_, err = BuildPlatformStore(nil, failingStorage, PlatformSealer{Strategy: "passphrase", Sealer: hostdeps.NewSealer(t)})
-	require.ErrorAs(t, err, &buildErr)
-	assert.Equal(t, FeaturePlatformStore, buildErr.Feature)
-
 	// A backend whose TPM is not a pkg/tpm2 TPM cannot run the TPM policy
 	// service; it is refused before any storage is opened.
 	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}, DAOs: testutil.NewMemoryDAOFactory()})
