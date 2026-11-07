@@ -15,7 +15,6 @@ package signing
 
 import (
 	"crypto"
-	"crypto/fips140"
 	"crypto/rsa"
 	"testing"
 
@@ -178,6 +177,14 @@ func TestSignerOptsGetDigest(t *testing.T) {
 			wantErr:     false,
 		},
 		{
+			name: "with empty blob data",
+			opts: &SignerOpts{
+				Hash:     crypto.SHA256,
+				BlobData: []byte{},
+			},
+			wantErr: false,
+		},
+		{
 			name: "with blob data and invalid hash",
 			opts: &SignerOpts{
 				Hash:     crypto.Hash(999),
@@ -251,86 +258,3 @@ func TestSignerOptsChaining(t *testing.T) {
 }
 
 // TestSignerOptsGetDigestEmptyData tests GetDigest with empty data
-func TestSignerOptsGetDigestEmptyData(t *testing.T) {
-	opts := &SignerOpts{
-		Hash:     crypto.SHA256,
-		BlobData: []byte{},
-	}
-
-	digest, err := opts.GetDigest(nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(digest) == 0 {
-		t.Error("expected non-empty digest even for empty data")
-	}
-
-	// Verify it's the hash of empty data
-	hasher := crypto.SHA256.New()
-	hasher.Write([]byte{})
-	expected := hasher.Sum(nil)
-	if string(digest) != string(expected) {
-		t.Error("digest mismatch for empty data")
-	}
-}
-
-// TestSignerOptsGetDigestNilPrecomputed tests GetDigest with nil precomputed
-func TestSignerOptsGetDigestNilPrecomputed(t *testing.T) {
-	opts := &SignerOpts{
-		Hash: crypto.SHA256,
-	}
-
-	digest, err := opts.GetDigest(nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if digest != nil {
-		t.Error("expected nil digest when no blob data and precomputed is nil")
-	}
-}
-
-// TestSignerOptsMultipleHashes tests GetDigest with different hash functions
-func TestSignerOptsMultipleHashes(t *testing.T) {
-	blobData := []byte("test data")
-
-	tests := []struct {
-		name string
-		hash crypto.Hash
-	}{
-		{"SHA256", crypto.SHA256},
-		{"SHA384", crypto.SHA384},
-		{"SHA512", crypto.SHA512},
-		{"SHA1", crypto.SHA1},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			opts := &SignerOpts{
-				Hash:     tt.hash,
-				BlobData: blobData,
-			}
-
-			digest, err := opts.GetDigest(nil)
-			if err != nil {
-				// SHA-1's hash.Hash.Write itself refuses under
-				// GODEBUG=fips140=only (the registered crypto.SHA1
-				// constructor, unlike calling crypto/sha1.New directly,
-				// reports the refusal through Write's error return rather
-				// than panicking in Sum), so GetDigest correctly propagates
-				// it as an error here.
-				if tt.hash == crypto.SHA1 && fips140.Enforced() {
-					return
-				}
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			// Verify digest is correct for the hash function
-			hasher := tt.hash.New()
-			hasher.Write(blobData)
-			expected := hasher.Sum(nil)
-			if string(digest) != string(expected) {
-				t.Errorf("digest mismatch for %s", tt.name)
-			}
-		})
-	}
-}

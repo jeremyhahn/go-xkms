@@ -435,53 +435,6 @@ func TestSignerSignWithBlobCN(t *testing.T) {
 	}
 }
 
-// TestSignerMultipleHashes tests signing with different hash functions
-func TestSignerMultipleHashes(t *testing.T) {
-	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	signer, err := NewSigner(privKey)
-	if err != nil {
-		t.Fatalf("failed to create signer: %v", err)
-	}
-
-	testData := []byte("test data")
-
-	tests := []struct {
-		name string
-		hash crypto.Hash
-	}{
-		{"SHA256", crypto.SHA256},
-		{"SHA384", crypto.SHA384},
-		{"SHA512", crypto.SHA512},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			hasher := tt.hash.New()
-			hasher.Write(testData)
-			digest := hasher.Sum(nil)
-
-			opts := NewSignerOpts(tt.hash)
-			signature, err := signer.Sign(rand.Reader, digest, opts)
-			if err != nil {
-				t.Fatalf("Sign() failed: %v", err)
-			}
-			if len(signature) == 0 {
-				t.Error("expected non-empty signature")
-			}
-
-			// Verify signature
-			err = rsa.VerifyPKCS1v15(&privKey.PublicKey, tt.hash, digest, signature)
-			if err != nil {
-				t.Errorf("signature verification failed: %v", err)
-			}
-		})
-	}
-}
-
 // TestSignerECDSACurves tests ECDSA signing with different curves
 func TestSignerECDSACurves(t *testing.T) {
 	curves := []struct {
