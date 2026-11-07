@@ -1,0 +1,1 @@
+acme: the `pkg/acme/challenges/dns-01` tests that repeated another test's path are removed (#1794), and `TestSetup_Success` now also pins that a subdomain's challenge record goes into its registered domain's zone; coverage stays at 100%.
