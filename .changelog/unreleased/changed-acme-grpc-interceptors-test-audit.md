@@ -1,0 +1,1 @@
+- **Tests: `pkg/acme/grpc/interceptors` audit** — each behaviour is tested by one path (#1794, ruling 273(12)): duplicate no-deadline, nil-cause and default-config checks are folded into the tests that keep them, and the expired-deadline test uses a past deadline instead of a sleep.
