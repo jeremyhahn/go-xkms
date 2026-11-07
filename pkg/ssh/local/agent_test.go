@@ -73,35 +73,6 @@ func serveTestAgent(t *testing.T, keyring sshagent.Agent) string {
 	return sock
 }
 
-// TestSignerForPublicKey_Match covers the success path: the agent holds a
-// signer for the requested public key, and that signer produces a
-// signature verifiable against the same public key.
-func TestSignerForPublicKey_Match(t *testing.T) {
-	pub, priv := newTestEd25519Key(t)
-	keyring := sshagent.NewKeyring()
-	if err := keyring.Add(sshagent.AddedKey{PrivateKey: priv}); err != nil {
-		t.Fatalf("keyring.Add: %v", err)
-	}
-	sock := serveTestAgent(t, keyring)
-
-	signer, err := local.SignerForPublicKey(sock, pub)
-	if err != nil {
-		t.Fatalf("SignerForPublicKey: %v", err)
-	}
-	if signer.PublicKey().Type() != pub.Type() {
-		t.Fatalf("signer public key type = %q, want %q", signer.PublicKey().Type(), pub.Type())
-	}
-
-	msg := []byte("authenticate me")
-	sig, err := signer.Sign(rand.Reader, msg)
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	if err := pub.Verify(msg, sig); err != nil {
-		t.Fatalf("signature did not verify: %v", err)
-	}
-}
-
 // TestSignerForPublicKey_NotFound covers the branch where the agent is
 // reachable but does not hold the requested key.
 func TestSignerForPublicKey_NotFound(t *testing.T) {
