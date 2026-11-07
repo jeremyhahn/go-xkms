@@ -102,6 +102,33 @@ last-used time take: it requires the credential to exist
 checked, so a credential deleted or replaced meanwhile is never resurrected
 (`ErrCredentialUpdateConflict`).
 
+**Legacy credentials move into the tenant store (go-xkms#1749).** Before
+go-qrdb v0.46 (go-xkms#1428) credentials lived in one shared qrdb KV keyspace
+with no tenant segment: `__xkms:webauthn/credentials/<base64url ID>` holds the
+JSON `Credential` and `__xkms:webauthn/users/<qrdb user ID>/credentials` the
+user's credential-ID index. The records are plain JSON, protected at rest only
+by the qrdb barrier. `MigrateLegacyCredentials` (`legacy_migration.go:108`),
+called by the consumer at each tenant store open, scans that prefix in key
+order and for each record:
+
+1. decodes it and checks that its ID is the one its key names, else
+   `*LegacyCredentialCorruptError`;
+2. resolves the tenant from the owner: `UserIDFromHandle`, then
+   `UserClient.GetUser`, then `User.TenantID`, else
+   `*CredentialOwnerUnresolvedError` (`ErrCredentialOwnerHasNoTenant` for a
+   user without a tenant);
+3. skips a credential of another tenant, leaving it for that tenant's open;
+4. saves it with `CredentialStore.Save`. `ErrCredentialAlreadyExists` for the
+   same user is an earlier run interrupted between save and delete, and counts
+   as saved; for another user it fails with `ErrCredentialOwnerMismatch`;
+5. deletes the legacy key only after the save succeeded.
+
+Once every record is processed, a user's index is deleted when none of that
+user's legacy credentials remain. A failed step leaves the record in place and
+adds a typed error to the report; the run then returns
+`*CredentialMigrationIncompleteError`, and the next run retries it. The context
+is checked before each record.
+
 **`SessionStore` contract change:** The interface now defines an atomic `Take`
 method that claims a session in one indivisible operation:
 
