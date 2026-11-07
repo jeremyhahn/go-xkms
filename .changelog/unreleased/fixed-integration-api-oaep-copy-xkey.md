@@ -1,0 +1,1 @@
+- `xkmsctl key decrypt --hash` decrypts RSA-OAEP with that digest, so a ciphertext from `key encrypt-asym` decrypts without the PKCS#1 v1.5 fallback the server refuses by policy; the API suite's asymmetric decrypt and key copy steps now pass only flags the commands define (run 77491).
