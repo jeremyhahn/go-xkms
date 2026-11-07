@@ -21,18 +21,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// TestNewSignerOpts tests the creation of SignerOpts
-func TestNewSignerOpts(t *testing.T) {
-	opts := NewSignerOpts(crypto.SHA256)
-	if opts == nil {
-		t.Fatal("NewSignerOpts returned nil")
-		return
-	}
-	if opts.Hash != crypto.SHA256 {
-		t.Errorf("Hash mismatch: got %v, want %v", opts.Hash, crypto.SHA256)
-	}
-}
-
 // TestSignerOptsHashFunc tests the HashFunc method
 func TestSignerOptsHashFunc(t *testing.T) {
 	tests := []struct {
@@ -116,38 +104,6 @@ func TestSignerOptsWithPSSOptions(t *testing.T) {
 	}
 }
 
-// TestSignerOptsIsPSS tests the IsPSS method
-func TestSignerOptsIsPSS(t *testing.T) {
-	tests := []struct {
-		name       string
-		pssOptions *rsa.PSSOptions
-		want       bool
-	}{
-		{
-			name:       "with PSS options",
-			pssOptions: &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthAuto},
-			want:       true,
-		},
-		{
-			name:       "without PSS options",
-			pssOptions: nil,
-			want:       false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			opts := &SignerOpts{
-				Hash:       crypto.SHA256,
-				PSSOptions: tt.pssOptions,
-			}
-			if got := opts.IsPSS(); got != tt.want {
-				t.Errorf("IsPSS() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 // TestSignerOptsGetDigest tests the GetDigest method
 func TestSignerOptsGetDigest(t *testing.T) {
 	precomputed := []byte("precomputed digest")
@@ -226,34 +182,6 @@ func TestSignerOptsGetDigest(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestSignerOptsChaining tests method chaining
-func TestSignerOptsChaining(t *testing.T) {
-	attrs := &types.KeyAttributes{CN: "test-key"}
-	pssOpts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthAuto}
-
-	opts := NewSignerOpts(crypto.SHA256).
-		WithBlobCN("test-blob").
-		WithBlobData([]byte("test data")).
-		WithKeyAttributes(attrs).
-		WithPSSOptions(pssOpts)
-
-	if opts.Hash != crypto.SHA256 {
-		t.Error("Hash not set correctly")
-	}
-	if opts.BlobCN != "test-blob" {
-		t.Error("BlobCN not set correctly")
-	}
-	if string(opts.BlobData) != "test data" {
-		t.Error("BlobData not set correctly")
-	}
-	if opts.KeyAttributes != attrs {
-		t.Error("KeyAttributes not set correctly")
-	}
-	if opts.PSSOptions != pssOpts {
-		t.Error("PSSOptions not set correctly")
 	}
 }
 

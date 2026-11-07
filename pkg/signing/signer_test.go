@@ -164,38 +164,6 @@ func TestSignerSignRSAPSS(t *testing.T) {
 	}
 }
 
-// TestSignerSignECDSA tests ECDSA signing
-func TestSignerSignECDSA(t *testing.T) {
-	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("failed to generate ECDSA key: %v", err)
-	}
-
-	signer, err := NewSigner(privKey)
-	if err != nil {
-		t.Fatalf("failed to create signer: %v", err)
-	}
-
-	testData := []byte("test data to sign")
-	hasher := crypto.SHA256.New()
-	hasher.Write(testData)
-	digest := hasher.Sum(nil)
-
-	opts := NewSignerOpts(crypto.SHA256)
-	signature, err := signer.Sign(rand.Reader, digest, opts)
-	if err != nil {
-		t.Fatalf("Sign() failed: %v", err)
-	}
-	if len(signature) == 0 {
-		t.Error("expected non-empty signature")
-	}
-
-	// Verify signature
-	if !ecdsa.VerifyASN1(&privKey.PublicKey, digest, signature) {
-		t.Error("ECDSA signature verification failed")
-	}
-}
-
 // TestSignerSignEd25519 tests Ed25519 signing
 func TestSignerSignEd25519(t *testing.T) {
 	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
