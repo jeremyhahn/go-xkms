@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 #
-# build-agsim.sh -- build the arduino-generic host simulators (agsim and
-# agsim-atecc608a) at the version go.mod pins, into DIR.
+# build-agsim.sh -- build the trusted-firmware host simulators (tfwsim and
+# tfwsim-atecc608a) at the version go.mod pins, into DIR.
 #
 # Usage:
 #	scripts/build-agsim.sh DIR
 #
 # Why this exists (go-xkms#737). The device-attest-01 DICE end-to-end test
-# (pkg/acme/client) enrolls the REAL arduino-generic firmware, compiled for the
+# (pkg/acme/client) enrolls the REAL trusted-firmware firmware, compiled for the
 # host, through the ACME server. The simulators are C programs, so the Go
-# module cache holds their source but not a binary; the sdk/go/agsim launcher
-# finds them in $AGSIM_DIR, and a missing binary FAILS the test rather than
+# module cache holds their source but not a binary; the sdk/go/tfwsim launcher
+# finds them in $TFWSIM_DIR, and a missing binary FAILS the test rather than
 # skipping it.
 #
-# The source is the arduino-generic module at the same version as the
+# The source is the trusted-firmware module at the same version as the
 # sdk/go dependency, fetched through the Go module machinery (so it uses the
 # same private-module credentials `go mod download` does) and copied out of the
 # read-only module cache before it is built. The version is read from go.mod, so
 # bumping the dependency is the only step that changes what is simulated.
 #
 # The source is compiled and executed, so it is pinned: its module hash must
-# match scripts/agsim.sum (the root arduino-generic module is not in go.mod, so
+# match scripts/agsim.sum (the root trusted-firmware module is not in go.mod, so
 # go.sum does not cover it, and first-party modules skip the checksum database).
 # A moved tag or a changed upstream fails here, before anything is built.
 #
@@ -32,8 +32,8 @@ if [ "$#" -ne 1 ]; then
 	exit 2
 fi
 dir=$1
-module=github.com/jeremyhahn/arduino-generic
-binaries=(agsim agsim-atecc608a)
+module=github.com/jeremyhahn/trusted-firmware
+binaries=(tfwsim tfwsim-atecc608a)
 
 if ! version=$(go list -m -f '{{.Version}}' "${module}/sdk/go"); then
 	echo "build-agsim.sh: go list -m ${module}/sdk/go failed: cannot read the version go.mod pins (go's error is above)" >&2
@@ -46,7 +46,7 @@ for binary in "${binaries[@]}"; do
 	[ -x "${dir}/${binary}" ] || built=0
 done
 if [ "${built}" -eq 1 ] && [ "$(cat "${stamp}" 2>/dev/null)" = "${version}" ]; then
-	echo "agsim ${version} already built in ${dir}"
+	echo "tfwsim ${version} already built in ${dir}"
 	exit 0
 fi
 
@@ -89,4 +89,4 @@ for binary in "${binaries[@]}"; do
 	install -m 0755 "${work}/build/host/${binary}" "${dir}/${binary}"
 done
 echo "${version}" >"${stamp}"
-echo "agsim ${version} built in ${dir}"
+echo "tfwsim ${version} built in ${dir}"

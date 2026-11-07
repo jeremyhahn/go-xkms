@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Tests for scripts/build-agsim.sh: fake `go` and `make` commands on PATH stand
-# in for the module machinery and the arduino-generic build, so the suite
+# in for the module machinery and the trusted-firmware build, so the suite
 # checks the script's pinning and error reporting without a network or a C
 # toolchain. The script reads its pins from agsim.sum beside it, so a copy of
 # it runs from a work directory holding a test pin (DS-3754).
@@ -19,7 +19,7 @@ section() { printf '\n%s\n' "$1"; }
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-MODULE=github.com/jeremyhahn/arduino-generic
+MODULE=github.com/jeremyhahn/trusted-firmware
 VERSION=v0.0.1-test
 SUM='h1:pinnedpinnedpinnedpinnedpinnedpinnedpinnedpin='
 
@@ -74,9 +74,9 @@ run() {
 section "builds the pinned version"
 OUT=$(run "$WORK/out1"); RC=$?
 eq "exits 0" "0" "$RC"
-has "reports the build" "agsim $VERSION built in $WORK/out1" "$OUT"
-eq "installs agsim" "yes" "$([ -x "$WORK/out1/agsim" ] && echo yes)"
-eq "installs agsim-atecc608a" "yes" "$([ -x "$WORK/out1/agsim-atecc608a" ] && echo yes)"
+has "reports the build" "tfwsim $VERSION built in $WORK/out1" "$OUT"
+eq "installs tfwsim" "yes" "$([ -x "$WORK/out1/tfwsim" ] && echo yes)"
+eq "installs tfwsim-atecc608a" "yes" "$([ -x "$WORK/out1/tfwsim-atecc608a" ] && echo yes)"
 eq "stamps the version" "$VERSION" "$(cat "$WORK/out1/.version")"
 OUT=$(run "$WORK/out1" FAKE_GO_DOWNLOAD=error); RC=$?
 eq "a built DIR is left alone, with no download" "0" "$RC"
