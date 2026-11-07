@@ -132,8 +132,14 @@ func needsTLSScheme(u string) bool {
 }
 
 // sshServerURL maps a protocol to the xkey --server URL. For gRPC the harness
-// default is grpcs://; the unix socket and MCP map to their schemes.
+// default is grpcs://, the unix socket maps to unix://, and MCP to mcps://.
 func sshServerURL(cfg *TestConfig, proto ProtocolType) string {
+	if proto == ProtocolMCP {
+		// xkmsd serves MCP over TLS. xkey reads mcp:// as plaintext, which
+		// the TLS listener answers with a 400 and which presents no client
+		// certificate; mcps:// carries TLS and the admin credential.
+		return "mcps://" + cfg.MCPAddr
+	}
 	return cfg.GetServerURL(proto)
 }
 
