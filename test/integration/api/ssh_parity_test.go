@@ -101,14 +101,19 @@ func (e *xkeyBuildError) Error() string {
 func runXkeySSH(t *testing.T, bin, serverURL, tlsCA, home string, args ...string) (string, string, error) {
 	t.Helper()
 	full := append([]string{"ssh"}, args...)
+	env := append(os.Environ(), "XKEY_HOME="+home, "USER=ittest", "LOGNAME=ittest")
 	if serverURL != "" {
 		full = append(full, "--server", serverURL)
 		if tlsCA != "" && needsTLSScheme(serverURL) {
 			full = append(full, "--tls-ca", tlsCA)
 		}
+		// xkey reads its xkmsd client credential from XKMSD_TLS_CERT and
+		// XKMSD_TLS_KEY; composite auth refuses a caller without it.
+		certFile, keyFile, _ := loadAdminCredential(t)
+		env = append(env, "XKMSD_TLS_CERT="+certFile, "XKMSD_TLS_KEY="+keyFile)
 	}
 	cmd := exec.Command(bin, full...)
-	cmd.Env = append(os.Environ(), "XKEY_HOME="+home, "USER=ittest", "LOGNAME=ittest")
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -118,7 +123,8 @@ func runXkeySSH(t *testing.T, bin, serverURL, tlsCA, home string, args ...string
 
 // needsTLSScheme reports whether the server URL uses a TLS-bearing scheme.
 func needsTLSScheme(u string) bool {
-	return strings.HasPrefix(u, "https://") ||
+	return strings.HasPrefix(u, "unix://") ||
+		strings.HasPrefix(u, "https://") ||
 		strings.HasPrefix(u, "grpcs://") ||
 		strings.HasPrefix(u, "quic://") ||
 		strings.HasPrefix(u, "mcps://")

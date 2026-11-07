@@ -110,17 +110,27 @@ func loadCACertPool() *x509.CertPool {
 func clientTLSConfig(tb testing.TB) *tls.Config {
 	tb.Helper()
 
-	certFile := getEnv("KEYSTORE_TLS_CERT", "/data/xkms/admin-cert.pem")
-	keyFile := getEnv("KEYSTORE_TLS_KEY", "/data/xkms/admin-key.pem")
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		tb.Fatalf("load the admin mTLS credential (cert %s, key %s) that `xkmsd init --admin-factor mtls` writes: %v", certFile, keyFile, err)
-	}
+	_, _, cert := loadAdminCredential(tb)
 	return &tls.Config{
 		RootCAs:      loadCACertPool(),
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
 	}
+}
+
+// loadAdminCredential returns the paths of the admin mTLS credential
+// `xkmsd init --admin-factor mtls` writes to /data/xkms, and the loaded key
+// pair. It fails the test when the credential is missing or does not load.
+func loadAdminCredential(tb testing.TB) (certFile, keyFile string, cert tls.Certificate) {
+	tb.Helper()
+
+	certFile = getEnv("KEYSTORE_TLS_CERT", "/data/xkms/admin-cert.pem")
+	keyFile = getEnv("KEYSTORE_TLS_KEY", "/data/xkms/admin-key.pem")
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		tb.Fatalf("load the admin mTLS credential (cert %s, key %s) that `xkmsd init --admin-factor mtls` writes: %v", certFile, keyFile, err)
+	}
+	return certFile, keyFile, cert
 }
 
 // anonymousTLSConfig returns the TLS configuration of a client that presents
