@@ -318,12 +318,30 @@ func TestTPMPolicyClient_ServerErrorsPassThrough(t *testing.T) {
 	c := TPMPolicyClient{Client: dialKeystore(t, &pb.UnimplementedKeystoreServiceServer{})}
 	ctx := context.Background()
 
-	_, err := c.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{Name: "boot"})
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-	_, err = c.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{})
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-	_, err = c.TenantVTPMStatus(ctx, "acme")
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-	_, err = c.GetTenantTPMMode(ctx, "acme")
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"TPMPolicyGet", func() error {
+			_, err := c.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{Name: "boot"})
+			return err
+		}},
+		{"TPMPolicyList", func() error {
+			_, err := c.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{})
+			return err
+		}},
+		{"TenantVTPMStatus", func() error {
+			_, err := c.TenantVTPMStatus(ctx, "acme")
+			return err
+		}},
+		{"GetTenantTPMMode", func() error {
+			_, err := c.GetTenantTPMMode(ctx, "acme")
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, codes.Unimplemented, status.Code(tt.call()))
+		})
+	}
 }
