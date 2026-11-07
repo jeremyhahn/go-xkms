@@ -1,7 +1,7 @@
-# Integrity pin for the arduino-generic source scripts/build-agsim.sh compiles and
+# Integrity pin for the trusted-firmware source scripts/build-agsim.sh compiles and
 # runs. The root module is not in go.mod, so go.sum does not cover it, and
 # first-party modules bypass the checksum database; this file is its go.sum.
 # Format: <module> <version> <h1 hash of the module zip>. Bumping the
-# arduino-generic/sdk/go dependency means adding the new version's line here:
-#   go mod download -json github.com/jeremyhahn/arduino-generic@<version>   (the "Sum" field)
-github.com/jeremyhahn/arduino-generic v0.7.0-alpha h1:DGXSpl8PvhKiIGXMyH2/ct4bx/JPAWrXHMtSa0qmGic=
+# trusted-firmware/sdk/go dependency means adding the new version's line here:
+#   go mod download -json github.com/jeremyhahn/trusted-firmware@<version>   (the "Sum" field)
+github.com/jeremyhahn/trusted-firmware v0.4.2-alpha h1:grU5O32H5kJGxK4qZy7D8akly0zaFs8S5xQyQYhH+2w=

@@ -36,7 +36,7 @@
 #     (libicu-dev, libusb-1.0-0-dev), as ci.yml's jobs do;
 #   - race-full takes its package list from `make unit-test-pkgs`, test-go's
 #     scope with its exclusions (pkg/tpm2's -lcrypto simulator suite, test
-#     doubles, yubikey/smartcardhsm hardware), and builds the arduino-generic
+#     doubles, yubikey/smartcardhsm hardware), and builds the trusted-firmware
 #     simulators and installs swtpm the way ci.yml's Unit Tests job does;
 #   - bench passes BENCH_TAGS: the DAO-backed benchmarks need a codec tag.
 # Private modules: no token setup. As in ci.yml, the runners inject
@@ -228,21 +228,21 @@ jobs:
             echo "batch: sysctl not permitted; UDP buffers left at the defaults"
 
       # swtpm: pkg/tpm2/vtpm supervises a real swtpm process per tenant.
-      # build-essential: `make agsim` below compiles the arduino-generic
+      # build-essential: `make agsim` below compiles the trusted-firmware
       # firmware for the host.
       - name: Install cgo and test dependencies
         run: sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev swtpm build-essential
 
       # pkg/acme/client's device-attest-01 DICE tests enroll the real
-      # arduino-generic firmware; a missing simulator binary fails them.
-      - name: Build the arduino-generic simulators
+      # trusted-firmware firmware; a missing simulator binary fails them.
+      - name: Build the trusted-firmware simulators
         run: make agsim
 
       # The tests run outside make, so point them at the simulators
-      # `make agsim` built, as the Makefile's AGSIM_DIR export does.
+      # `make agsim` built, as the Makefile's TFWSIM_DIR export does.
       - name: go test -race -count=3
         env:
-          AGSIM_DIR: ${{ github.workspace }}/build/agsim
+          TFWSIM_DIR: ${{ github.workspace }}/build/agsim
         run: |
           set -o pipefail
           rc=0
