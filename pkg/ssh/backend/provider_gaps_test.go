@@ -201,21 +201,32 @@ func TestProvider_SSHSignVerifyAllAlgorithms(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
+	// For RSA, rsaSHA2 names the RFC 8332 rsa-sha2-256/512 scheme requested
+	// through ssh.AlgorithmSigner (modern servers reject the legacy SHA-1
+	// ssh-rsa), proving the backend's crypto.Signer honors the hashed-digest
+	// scheme.
 	cases := []struct {
 		algo      keys.Algorithm
+		rsaSHA2   string
 		wantWire  string
 		wantSigFm string
 	}{
-		{keys.AlgorithmEd25519, ssh.KeyAlgoED25519, ssh.KeyAlgoED25519},
-		{keys.AlgorithmECDSAP256, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA256},
-		{keys.AlgorithmECDSAP384, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA384},
-		{keys.AlgorithmECDSAP521, ssh.KeyAlgoECDSA521, ssh.KeyAlgoECDSA521},
-		{keys.AlgorithmRSA, ssh.KeyAlgoRSA, ssh.KeyAlgoRSA},
+		{keys.AlgorithmEd25519, "", ssh.KeyAlgoED25519, ssh.KeyAlgoED25519},
+		{keys.AlgorithmECDSAP256, "", ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA256},
+		{keys.AlgorithmECDSAP384, "", ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA384},
+		{keys.AlgorithmECDSAP521, "", ssh.KeyAlgoECDSA521, ssh.KeyAlgoECDSA521},
+		{keys.AlgorithmRSA, "", ssh.KeyAlgoRSA, ssh.KeyAlgoRSA},
+		{keys.AlgorithmRSA, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSA, ssh.KeyAlgoRSASHA256},
+		{keys.AlgorithmRSA, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSA, ssh.KeyAlgoRSASHA512},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.algo.String(), func(t *testing.T) {
-			keyID := "ssh-user-wire-" + tc.algo.String()
+		name := tc.algo.String()
+		if tc.rsaSHA2 != "" {
+			name += "-" + tc.rsaSHA2
+		}
+		t.Run(name, func(t *testing.T) {
+			keyID := "ssh-user-wire-" + name
 			signer, err := p.GenerateKey(ctx, "software", keyID, tc.algo, 2048)
 			if err != nil {
 				t.Fatalf("GenerateKey: %v", err)
@@ -238,19 +249,34 @@ func TestProvider_SSHSignVerifyAllAlgorithms(t *testing.T) {
 				t.Fatalf("reparsed key type %q != %q", reparsed.Type(), sshPub.Type())
 			}
 
-			sshSigner, err := ssh.NewSignerFromSigner(signer)
+			// Resolve the signer again (simulating a later Sign) and sign
+			// with it.
+			again, err := p.Signer(ctx, "software", keyID, tc.algo)
+			if err != nil {
+				t.Fatalf("Signer: %v", err)
+			}
+			sshSigner, err := ssh.NewSignerFromSigner(again)
 			if err != nil {
 				t.Fatalf("ssh.NewSignerFromSigner: %v", err)
 			}
 			msg := []byte("ssh session identifier payload")
-			sig, err := sshSigner.Sign(rand.Reader, msg)
+			var sig *ssh.Signature
+			if tc.rsaSHA2 != "" {
+				as, ok := sshSigner.(ssh.AlgorithmSigner)
+				if !ok {
+					t.Fatalf("%s signer is not an ssh.AlgorithmSigner", tc.algo)
+				}
+				sig, err = as.SignWithAlgorithm(rand.Reader, msg, tc.rsaSHA2)
+			} else {
+				sig, err = sshSigner.Sign(rand.Reader, msg)
+			}
 			if err != nil {
 				// "ssh-rsa" is RFC 4253's original RSA signature format,
 				// which signs with SHA-1; x/crypto/ssh's default Sign (as
 				// opposed to SignWithAlgorithm requesting rsa-sha2-256/512)
 				// refuses it outright under GODEBUG=fips140=only with its
 				// own typed error, not a panic.
-				if tc.algo == keys.AlgorithmRSA && fips140.Enforced() {
+				if tc.algo == keys.AlgorithmRSA && tc.rsaSHA2 == "" && fips140.Enforced() {
 					return
 				}
 				t.Fatalf("Sign: %v", err)
