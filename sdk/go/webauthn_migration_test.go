@@ -24,6 +24,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -107,6 +108,7 @@ func TestMigrateWebAuthnLegacyCredentials_MovesTheTenantsCredentials(t *testing.
 	_, store, err := xkms.NewWebAuthnQRDBUserStoreAdapter(xkms.WebAuthnQRDBUserStoreOptions{
 		Users:      users,
 		DAOFactory: qrdbsdk.NewDAOFactory(func(uint64) qrdbsdk.KVStore { return memory }),
+		KV:         testutil.NewQRDBFakeTransport(),
 		TenantID:   "tenant-a",
 	})
 	require.NoError(t, err)
@@ -136,6 +138,7 @@ func TestMigrateWebAuthnLegacyCredentials_ReportsUnresolvedOwner(t *testing.T) {
 	_, store, err := xkms.NewWebAuthnQRDBUserStoreAdapter(xkms.WebAuthnQRDBUserStoreOptions{
 		Users:      users,
 		DAOFactory: qrdbsdk.NewDAOFactory(func(uint64) qrdbsdk.KVStore { return memory }),
+		KV:         testutil.NewQRDBFakeTransport(),
 		TenantID:   "tenant-a",
 	})
 	require.NoError(t, err)

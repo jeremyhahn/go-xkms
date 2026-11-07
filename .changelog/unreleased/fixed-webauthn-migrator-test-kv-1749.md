@@ -1,0 +1,1 @@
+- **WebAuthn migrator SDK tests pass the guarded KV client (go-xkms#1749)** — `sdk/go/webauthn_migration_test.go` now builds the tenant credential store with `KV: testutil.NewQRDBFakeTransport()`. The qrdb v0.58 seam requires a `GuardedKVClient` for enrolment claims, and without it the adapter failed with `missing or invalid field: KV` before the migration ran.
