@@ -1887,7 +1887,7 @@ jobs:
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # race: the race detector over every backend, FROST included, on SoftHSM
-  # with a token at slot 0 and the arduino-generic simulators (sdk/go/agsim;
+  # with a token at slot 0 and the trusted-firmware simulators (sdk/go/tfwsim;
   # a missing binary FAILS that test). -p 2 because under -race the
   # password-vault packages (pkg/api/mcp, pkg/api/rest) each peak near 7 GB,
   # and eight in parallel OOM-killed the job (#1389). The PR tier's race
@@ -1948,7 +1948,7 @@ jobs:
       # headroom over the healthy cost.
       #
       # bridge, as make coverage has, for make agsim (DS-3754): the
-      # arduino-generic root module it builds is not in go.sum, so a stage
+      # trusted-firmware root module it builds is not in go.sum, so a stage
       # resolves it only with GOPRIVATE covering it, which in-toolchain-image.sh
       # passes to a bridge stage alone. On a no-network stage Go asks the
       # checksum database instead and `go mod download` fails (run 66181).
@@ -1962,7 +1962,7 @@ jobs:
             printf "directories.tokendir = /tmp/softhsm2/tokens\nobjectstore.backend = file\nlog.level = INFO\n" > /tmp/softhsm2.conf
             export SOFTHSM2_CONF=/tmp/softhsm2.conf
             softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234
-            export AGSIM_DIR=/src/build/agsim
+            export TFWSIM_DIR=/src/build/agsim
             make agsim
             GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
               -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...

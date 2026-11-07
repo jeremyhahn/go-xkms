@@ -300,7 +300,7 @@ COPY web/desktop/go.mod web/desktop/go.sum ./web/desktop/
 # In-house modules resolve from forge tags with the read-only fetch token in
 # the gomodauth BuildKit secret (dependency-resolution.md §6); without it
 # everything resolves through GO_BUILD_PROXY. Besides each build list this fetches the
-# arduino-generic source scripts/build-agsim.sh compiles and the wails CLI
+# trusted-firmware source scripts/build-agsim.sh compiles and the wails CLI
 # `make check-wailsjs` runs, so the test stage needs no network for either.
 RUN --mount=type=secret,id=gomodauth \
     if [ -s /run/secrets/gomodauth ]; then \
@@ -310,8 +310,8 @@ RUN --mount=type=secret,id=gomodauth \
         echo "modules: no gomodauth secret; resolving through GO_BUILD_PROXY"; \
     fi && \
     for m in . sdk/go xkey web/desktop; do (cd "$m" && go mod download) || exit 1; done && \
-    agsim_version=$(go list -m -f '{{.Version}}' github.com/jeremyhahn/arduino-generic/sdk/go) && \
-    go mod download "github.com/jeremyhahn/arduino-generic@${agsim_version}" && \
+    tfwsim_version=$(go list -m -f '{{.Version}}' github.com/jeremyhahn/trusted-firmware/sdk/go) && \
+    go mod download "github.com/jeremyhahn/trusted-firmware@${tfwsim_version}" && \
     wails_version=$(cd xkey && go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2) && \
     GOBIN=/tmp/wails go install "github.com/wailsapp/wails/v2/cmd/wails@${wails_version}" && \
     rm -rf /tmp/wails
