@@ -58,6 +58,22 @@ func (s tenantMetadataStore) PutIfAllAbsent(ctx context.Context, key string, val
 	return fc.PutIfAllAbsent(ctx, key, value, fences...)
 }
 
+// CompareAndSwap forwards the guarded swap go-qrdb's TenantService commits a
+// tenant update with: the record replaces the one read only while it is still
+// that record, so an update built on a stale read cannot undo a status change
+// committed in between. go-qrdb refuses an update through a store without it
+// (ErrTenantUpdateNotAtomic). The system barrier's own CompareAndSwap hands
+// the decision to its base, as guardedStorageBackend.CompareAndSwap describes.
+func (s tenantMetadataStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	cas, ok := s.StorageBackend.(interface {
+		CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
+	})
+	if !ok {
+		return false, storage.ErrCompareAndSwapUnsupported
+	}
+	return cas.CompareAndSwap(ctx, key, expected, next)
+}
+
 // guardedStorageBackend adapts an xkms storage.Backend to go-qrdb's
 // StorageBackend, whose contract (go-quicraft's seal.StorageBackend) requires
 // CompareAndDelete as a MANDATORY method.

@@ -122,6 +122,12 @@ func compareInEnclave(
 	sealed *types.SealedData,
 	expected []byte,
 ) (bool, error) {
+	// enclave.ByteAccess is an interface, so a nil handle has no methods to
+	// refuse with; it is reported as the unreadable enclave it stands for.
+	if enc == nil {
+		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: enclave.ErrEnclaveDestroyed}
+	}
+
 	matched := false
 
 	// Captured separately so the two failure classes stay distinguishable after
