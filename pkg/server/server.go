@@ -1182,12 +1182,16 @@ func (s *Server) initializeBackends() error {
 	// Each backend has separate files with build tags that automatically
 	// compile the real implementation or a stub based on build flags
 
-	if err := s.initTPM2Backend(); err != nil {
-		return &ErrBackendInit{Backend: "TPM2", Err: err}
-	}
-
+	// PKCS#11 before TPM2: with no configured PIN the token PIN is released
+	// from the TPM-sealed pre-barrier store, and that release must open (and
+	// close) the TPM before the tpm2 backend holds its own connection -- a
+	// second open hangs the simulator and a real swtpm.
 	if err := s.initPKCS11Backend(); err != nil {
 		return &ErrBackendInit{Backend: "PKCS#11", Err: err}
+	}
+
+	if err := s.initTPM2Backend(); err != nil {
+		return &ErrBackendInit{Backend: "TPM2", Err: err}
 	}
 
 	if err := s.initAWSKMSBackend(); err != nil {

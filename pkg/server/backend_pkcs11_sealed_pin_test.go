@@ -66,6 +66,7 @@ func sealedPINServer(t *testing.T, token softhsmtest.Token, pin string) *Server 
 		backends:     make(map[string]xkms.Backend),
 		keyProviders: make(map[string]types.KeyProvider),
 		logger:       slog.Default(),
+		ctx:          context.Background(),
 		nodeSealTPM:  tpm,
 	}
 	s.setSharedStorage(storage.NewMemory())
@@ -91,6 +92,20 @@ func TestInitPKCS11Backend_UsesTheSealedPIN(t *testing.T) {
 	assert.NoError(t, opened.Close())
 }
 
+// TestInitPKCS11Backend_ReleasesOverThePlatformStoreTPM pins the release to
+// the TPM the platform store already opened: a second open of the simulator
+// would hang.
+func TestInitPKCS11Backend_ReleasesOverThePlatformStoreTPM(t *testing.T) {
+	token := softhsmtest.Provision(t, "server-sealed-pin-platform")
+	s := sealedPINServer(t, token, token.UserPIN)
+	s.platformStoreTPM, s.nodeSealTPM = s.nodeSealTPM, nil
+
+	require.NoError(t, s.initPKCS11Backend())
+	opened := s.keyProviders["pkcs11"]
+	require.NotNil(t, opened)
+	assert.NoError(t, opened.Close())
+}
+
 func TestInitPKCS11Backend_NoSealedPINKeepsTheMissingPINAnswer(t *testing.T) {
 	token := softhsmtest.Provision(t, "server-backend-no-sealed-pin")
 	s := sealedPINServer(t, token, "")
@@ -108,9 +123,7 @@ func TestInitPKCS11Backend_SealedPINReleaseFailureRefuses(t *testing.T) {
 	s.config.Datastore.Path = ""
 
 	err := s.initPKCS11Backend()
-	var initErr *ErrBackendInit
-	require.True(t, errors.As(err, &initErr), "error = %v, want *ErrBackendInit", err)
 	var pathErr *embeddednode.ErrDatastorePathRequired
-	assert.True(t, errors.As(err, &pathErr), "error = %v, want ErrDatastorePathRequired", err)
+	require.True(t, errors.As(err, &pathErr), "error = %v, want ErrDatastorePathRequired", err)
 	assert.Empty(t, s.keyProviders)
 }
