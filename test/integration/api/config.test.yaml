@@ -107,13 +107,14 @@ backends:
     simulator_host: "swtpm"
     simulator_port: 2321
 
-  pkcs11:
-    # PKCS#11 loads in-process: the server container's own SoftHSM2 install
-    # is used (Debian path); the token is initialized by the entrypoint.
-    enabled: true
-    library: "/usr/lib/softhsm/libsofthsm2.so"
-    token: "test-token"
-    pin: "123456"
+  # No pkcs11 backend. backends.pkcs11.pin is a protected secret target
+  # (go-xkms#654): server.New refuses a literal PIN there ("protected target
+  # must reference a resolvable secret at Backends.PKCS11.Pin") and the server
+  # never comes up. The only scheme it resolves is credential://<name>, and
+  # this suite's fresh volume holds no credential before the first boot:
+  # unseal-server.sh submits secrets over the API of a server that must
+  # already be serving. No test in this suite dials a pkcs11 backend; the
+  # same refusal is recorded in configs/xkmsd-integration.yaml.
 
 # Encryption-at-rest. Required by the secure-by-default gate (the daemon has
 # no insecure override). There is no config-sourced boot-time secret any more
