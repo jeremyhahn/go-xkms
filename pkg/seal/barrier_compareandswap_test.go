@@ -94,3 +94,9 @@ func TestBarrierBackend_CompareAndSwapSurfacesRealFailures(t *testing.T) {
 	assert.False(t, swapped)
 	assert.Nil(t, current)
 }
+
+// A nil barrier yields no backend, so a caller cannot hold a BarrierBackend
+// whose every call would dereference nil.
+func TestNewBarrierBackend_NilBarrier(t *testing.T) {
+	assert.Nil(t, NewBarrierBackend(nil))
+}
