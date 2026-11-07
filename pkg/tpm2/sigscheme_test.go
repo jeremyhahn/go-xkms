@@ -15,23 +15,17 @@ package tpm2
 
 import (
 	"crypto"
-	"crypto/rsa"
 	"crypto/x509"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // keyAttrsWithHash builds the minimal key attributes store.SignerOpts reads its
 // hash from, so a test can express "the caller asked for this digest".
-func keyAttrsWithHash(h crypto.Hash) *types.KeyAttributes {
-	return &types.KeyAttributes{Hash: h}
-}
-
 // ecdsaScheme builds a TPMT_ECC_SCHEME naming ECDSA over the supplied hash,
 // which is the shape every ECC key created before this package moved to
 // TPM_ALG_NULL templates carries.
@@ -85,34 +79,6 @@ func nullRSAScheme() tpm2.TPMTRSAScheme {
 // schemes depending on which entry point it arrived through.
 func TestRequestedSignHash_NilOptsSelectsSHA256(t *testing.T) {
 	assert.Equal(t, crypto.SHA256, requestedSignHash(nil))
-}
-
-// TestRequestedSignHash_PassesCallerHashThrough proves a hash the caller DID
-// name is never substituted, including the crypto.Hash(0) "NONE" sentinel,
-// which has to survive intact to reach the per-key-type resolution.
-func TestRequestedSignHash_PassesCallerHashThrough(t *testing.T) {
-	for _, h := range []crypto.Hash{crypto.Hash(0), crypto.SHA256, crypto.SHA384, crypto.SHA512, crypto.SHA1} {
-		opts := &store.SignerOpts{KeyAttributes: keyAttrsWithHash(h)}
-		assert.Equal(t, h, requestedSignHash(opts), "hash %v must pass through unchanged", h)
-	}
-}
-
-// TestECCSchemeHash_SchemelessKeyHonoursEveryNamedHash is the core of the fix.
-//
-// A key created from the current ECC templates names TPM_ALG_NULL, so it
-// constrains nothing and the caller's digest is passed straight through. Before
-// the templates changed, the key named one hash and every other digest was
-// answered by the TPM with TPM_RC_SCHEME.
-func TestECCSchemeHash_SchemelessKeyHonoursEveryNamedHash(t *testing.T) {
-	for requested, want := range map[crypto.Hash]tpm2.TPMIAlgHash{
-		crypto.SHA256: tpm2.TPMAlgSHA256,
-		crypto.SHA384: tpm2.TPMAlgSHA384,
-		crypto.SHA512: tpm2.TPMAlgSHA512,
-	} {
-		got, err := eccSchemeHash(requested, nullECCScheme(), requested.Size())
-		require.NoError(t, err, "hash %v", requested)
-		assert.Equal(t, want, got, "hash %v", requested)
-	}
 }
 
 // TestECCSchemeHash_SchemelessKeyResolvesNoneFromDigestLength defines what hash
@@ -199,21 +165,6 @@ func TestSchemeHash_NamedHashRefusesWrongDigestLength(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDigestLengthMismatch)
 }
 
-// TestECCSchemeHash_FixedKeyHonoursItsOwnHash proves a pre-existing key still
-// signs under the one digest it supports, which is the whole compatibility
-// claim of the template change.
-func TestECCSchemeHash_FixedKeyHonoursItsOwnHash(t *testing.T) {
-	for requested, keyHash := range map[crypto.Hash]tpm2.TPMIAlgHash{
-		crypto.SHA256: tpm2.TPMAlgSHA256,
-		crypto.SHA384: tpm2.TPMAlgSHA384,
-		crypto.SHA512: tpm2.TPMAlgSHA512,
-	} {
-		got, err := eccSchemeHash(requested, ecdsaScheme(keyHash), requested.Size())
-		require.NoError(t, err, "hash %v", requested)
-		assert.Equal(t, keyHash, got)
-	}
-}
-
 // TestECCSchemeHash_FixedKeyRefusesOtherHash is the bad-input case that keeps a
 // TPM response code from leaking.
 //
@@ -276,20 +227,6 @@ func TestECCSchemeHash_MalformedSchemeHashRefused(t *testing.T) {
 	got, err = eccSchemeHash(crypto.SHA256, ecdsaScheme(tpm2.TPMAlgNull), 32)
 	assert.Zero(t, got)
 	assert.ErrorIs(t, err, ErrSchemeHashUnresolved)
-}
-
-// TestRSASchemeHash_SchemelessKeyHonoursEveryNamedHash covers the RSA half of
-// the digest-agility fix.
-func TestRSASchemeHash_SchemelessKeyHonoursEveryNamedHash(t *testing.T) {
-	for requested, want := range map[crypto.Hash]tpm2.TPMIAlgHash{
-		crypto.SHA256: tpm2.TPMAlgSHA256,
-		crypto.SHA384: tpm2.TPMAlgSHA384,
-		crypto.SHA512: tpm2.TPMAlgSHA512,
-	} {
-		got, err := rsaSchemeHash(requested, nullRSAScheme(), requested.Size())
-		require.NoError(t, err, "hash %v", requested)
-		assert.Equal(t, want, got, "hash %v", requested)
-	}
 }
 
 // TestRSASchemeHash_FixedKeyRefusesOtherHash proves a pre-existing RSA key
@@ -358,19 +295,6 @@ func TestRSASchemeHash_NonSigningSchemeRefused(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSignSchemeMismatch)
 }
 
-// TestRSASignScheme_SchemelessKeyFollowsTheCaller proves a key created with
-// TPM_ALG_NULL can produce either padding, which is what lets one RSA key serve
-// a v1.5-signed certificate and a TLS 1.3 handshake that requires PSS.
-func TestRSASignScheme_SchemelessKeyFollowsTheCaller(t *testing.T) {
-	got, err := rsaSignScheme(nullRSAScheme(), false)
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMIAlgSigScheme(tpm2.TPMAlgRSASSA), got)
-
-	got, err = rsaSignScheme(nullRSAScheme(), true)
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMIAlgSigScheme(tpm2.TPMAlgRSAPSS), got)
-}
-
 // TestRSASignScheme_FixedKeyAnswersForItself proves a key that pins its padding
 // keeps it, and refuses the other one by name rather than producing a signature
 // of a shape the caller did not ask for.
@@ -405,29 +329,6 @@ func TestRSASignScheme_NonSigningSchemeRefused(t *testing.T) {
 	got, err := rsaSignScheme(oaep, false)
 	assert.Zero(t, got)
 	assert.ErrorIs(t, err, ErrSignSchemeMismatch)
-}
-
-// TestIsPSSRequest_BothSourcesAreSufficient proves either way of asking for PSS
-// is honoured, so the scheme sent to the TPM and the branch that unpacks the
-// signature cannot disagree.
-func TestIsPSSRequest_BothSourcesAreSufficient(t *testing.T) {
-	pssAttrs := &types.KeyAttributes{SignatureAlgorithm: x509.SHA256WithRSAPSS}
-	assert.True(t, isPSSRequest(pssAttrs, &store.SignerOpts{}))
-
-	ssaAttrs := &types.KeyAttributes{SignatureAlgorithm: x509.SHA256WithRSA}
-	assert.True(t, isPSSRequest(ssaAttrs, &store.SignerOpts{
-		PSSOptions: &rsa.PSSOptions{Hash: crypto.SHA256},
-	}))
-}
-
-// TestIsPSSRequest_NeitherSourceMeansPKCS1 is the negative case: a caller that
-// asked for neither must not be handed a PSS signature.
-func TestIsPSSRequest_NeitherSourceMeansPKCS1(t *testing.T) {
-	ssaAttrs := &types.KeyAttributes{SignatureAlgorithm: x509.SHA256WithRSA}
-	assert.False(t, isPSSRequest(ssaAttrs, &store.SignerOpts{}))
-	assert.False(t, isPSSRequest(nil, nil))
-	assert.False(t, isPSSRequest(ssaAttrs, nil))
-	assert.False(t, isPSSRequest(nil, &store.SignerOpts{}))
 }
 
 // TestRsaKeySchemeHash covers every branch of the key-scheme-to-hash

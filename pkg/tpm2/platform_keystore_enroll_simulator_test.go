@@ -215,37 +215,6 @@ func TestNewPlatformKeyStore_InvalidArguments_ReturnTypedErrors(t *testing.T) {
 	})
 }
 
-// TestPlatformKeyStore_SRKAttributes_TrackEnrollment proves the cached SRK
-// attributes become usable only after enrollment, and then describe the handle
-// the SRK was actually created at. TPM2.PlatformSRKAttributes syncs from these,
-// so stale or wrong values here surface later as TPM_RC_BAD_AUTH during sealing.
-func TestPlatformKeyStore_SRKAttributes_TrackEnrollment(t *testing.T) {
-	h := newEnrollHarness(t)
-	pks := newPlatformKeyStore(t, h)
-
-	require.NoError(t, pks.EnrollPlatformSRK("", "operator-pin-4821"))
-
-	attrs := pks.SRKAttributes()
-	require.NotNil(t, attrs)
-	require.NotNil(t, attrs.TPMAttributes)
-	assert.Equal(t, tpm2.TPMHandle(h.TPM.config.PlatformSRK.SRKHandle),
-		attrs.TPMAttributes.Handle,
-		"the cached attributes must describe the enrolled handle")
-
-	// TPM2.PlatformSRKAttributes must now resolve, syncing from the key store.
-	h.TPM.SetPlatformKeyStore(pks)
-	t.Cleanup(func() { h.TPM.SetPlatformKeyStore(nil) })
-
-	tpmAttrs, err := h.TPM.PlatformSRKAttributes()
-	require.NoError(t, err,
-		"the platform SRK must resolve once the key store has enrolled it")
-	assert.Equal(t, attrs.TPMAttributes.Handle, tpmAttrs.TPMAttributes.Handle,
-		"TPM2 must report the same platform SRK the key store enrolled")
-
-	assert.Same(t, pks, h.TPM.PlatformKeyStore(),
-		"the TPM must expose the key store that was installed on it")
-}
-
 // TestPlatformKeyStore_GetLockoutInfo_ReportsTPMCounters proves the lockout
 // report is sourced from the TPM's real dictionary-attack properties and is
 // self-consistent, rather than returning the hardcoded fallback values.

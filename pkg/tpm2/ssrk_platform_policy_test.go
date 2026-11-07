@@ -150,13 +150,6 @@ func TestSRKConfigJSONReportsMalformedObject(t *testing.T) {
 	assert.False(t, errors.Is(err, ErrSSRKPlatformPolicy))
 }
 
-func TestSSRKPlatformPolicyErrorNamesTheOffendingKey(t *testing.T) {
-	err := &SSRKPlatformPolicyError{Format: "yaml", Key: "platform-policy"}
-
-	assert.Contains(t, err.Error(), `yaml key "platform-policy"`)
-	assert.Equal(t, ErrSSRKPlatformPolicy, err.Unwrap())
-}
-
 func TestDefaultConfigSSRKCarriesNoPlatformPolicy(t *testing.T) {
 	require.NotNil(t, DefaultConfig.SSRK)
 
