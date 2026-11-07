@@ -31,13 +31,16 @@ tls:
   key_file: /etc/xkms/certs/server.key
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
-  # No client auth for integration tests
-  client_auth: none
+  # "request" asks every client for its certificate without chain-verifying
+  # it in the handshake: "none" sends no CertificateRequest, so the client
+  # never presents one (RFC 8446 §4.4.2) and every call is anonymous.
+  client_auth: request
 
 # Composite authentication admits no anonymous caller (the adaptive mode was
 # removed). The suite authenticates with the admin mTLS credential that
-# `xkmsd init --admin-factor mtls` writes to /data/xkms; tls.client_auth stays
-# none because the auth chain, not the handshake, checks the certificate.
+# `xkmsd init --admin-factor mtls` writes to /data/xkms; the auth chain, not
+# the handshake, checks that certificate (the SPKI thumbprint bound to the
+# admin user), as test/integration/initceremony does.
 auth:
   enabled: true
   type: "composite"

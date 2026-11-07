@@ -82,7 +82,7 @@ func (s *CLITestSuite) runCLI(serverURL string, args ...string) (string, string,
 	}
 
 	// TLS transports present the server's CA and the admin client credential.
-	prefixArgs = append(prefixArgs, s.tls.TLSArgsForURL(serverURL)...)
+	prefixArgs = append(prefixArgs, s.tls.TLSArgsForURL(s.t, serverURL)...)
 
 	args = append(prefixArgs, args...)
 	cmd := exec.Command(s.cfg.CLIBinPath, args...)

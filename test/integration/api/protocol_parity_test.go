@@ -283,7 +283,7 @@ func isProtocolAvailable(t *testing.T, runner *commands.TestRunner, protocol com
 	case commands.ProtocolGRPC:
 		return checkTCPEndpoint(runner.GRPCAddr)
 	case commands.ProtocolQUIC:
-		return checkQUICEndpoint(runner.QUICBaseURL)
+		return checkQUICEndpoint(t, runner.QUICBaseURL)
 	case commands.ProtocolMCP:
 		return checkTCPEndpoint(runner.MCPAddr)
 	default:
@@ -313,7 +313,7 @@ func checkHTTPEndpoint(tb testing.TB, url string) bool {
 	return resp.StatusCode < 500
 }
 
-func checkQUICEndpoint(baseURL string) bool {
+func checkQUICEndpoint(t *testing.T, baseURL string) bool {
 	// QUIC uses HTTP/3 over UDP — standard HTTP/TCP clients can't reach it.
 	// Probe the server via the CLI with a lightweight backends list command that
 	// requires an actual server round-trip.
@@ -323,7 +323,7 @@ func checkQUICEndpoint(baseURL string) bool {
 		return false
 	}
 	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
-	args := append([]string{"--server", "quic://" + host}, runner.TLSArgs(commands.ProtocolQUIC)...)
+	args := append([]string{"--server", "quic://" + host}, runner.TLSArgs(t, commands.ProtocolQUIC)...)
 	cmd := exec.Command(binPath, append(args, "backends", "list")...)
 	return cmd.Run() == nil
 }

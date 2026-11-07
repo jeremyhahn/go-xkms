@@ -88,7 +88,9 @@ type TestRunner struct {
 // TLSArgs returns the xkmsctl TLS flags for protocol: the CA that signs the
 // server's certificate and the admin client credential. Unix, gRPC, QUIC and
 // REST over https run TLS; MCP (mcp://), REST over http and embedded do not.
-func (r *TestRunner) TLSArgs(protocol ProtocolType) []string {
+func (r *TestRunner) TLSArgs(t *testing.T, protocol ProtocolType) []string {
+	t.Helper()
+
 	usesTLS := protocol == ProtocolUnix ||
 		protocol == ProtocolGRPC ||
 		protocol == ProtocolQUIC ||
@@ -96,32 +98,40 @@ func (r *TestRunner) TLSArgs(protocol ProtocolType) []string {
 	if !usesTLS {
 		return nil
 	}
-	return r.tlsFlags()
+	return r.tlsFlags(t)
 }
 
 // tlsURLSchemes are the --server URL schemes whose transport runs TLS.
 var tlsURLSchemes = []string{"unix://", "https://", "grpc://", "grpcs://", "quic://"}
 
 // TLSArgsForURL is TLSArgs for the transport a --server URL selects.
-func (r *TestRunner) TLSArgsForURL(serverURL string) []string {
+func (r *TestRunner) TLSArgsForURL(t *testing.T, serverURL string) []string {
+	t.Helper()
+
 	for _, scheme := range tlsURLSchemes {
 		if strings.HasPrefix(serverURL, scheme) {
-			return r.tlsFlags()
+			return r.tlsFlags(t)
 		}
 	}
 	return nil
 }
 
-// tlsFlags returns the --tls-ca, --tls-cert and --tls-key flags that are set.
-func (r *TestRunner) tlsFlags() []string {
+// tlsFlags returns the --tls-ca, --tls-cert and --tls-key flags. It fails t
+// when the admin credential is missing: composite auth admits no anonymous
+// caller, so a command without it could only fail later and less clearly.
+func (r *TestRunner) tlsFlags(t *testing.T) []string {
+	t.Helper()
+
+	for _, path := range []string{r.TLSClientCert, r.TLSClientKey} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("admin mTLS credential %q is unavailable (written by `xkmsd init --admin-factor mtls`): %v", path, err)
+		}
+	}
 	var args []string
 	if r.TLSCACert != "" {
 		args = append(args, "--tls-ca", r.TLSCACert)
 	}
-	if r.TLSClientCert != "" && r.TLSClientKey != "" {
-		args = append(args, "--tls-cert", r.TLSClientCert, "--tls-key", r.TLSClientKey)
-	}
-	return args
+	return append(args, "--tls-cert", r.TLSClientCert, "--tls-key", r.TLSClientKey)
 }
 
 // NewTestRunner creates a new test runner with default configuration
@@ -255,7 +265,7 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 			prefixArgs = append(prefixArgs, "--server", serverURL)
 		}
 
-		prefixArgs = append(prefixArgs, r.TLSArgs(protocol)...)
+		prefixArgs = append(prefixArgs, r.TLSArgs(t, protocol)...)
 	}
 
 	args = append(prefixArgs, args...)

@@ -38,7 +38,7 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 	}
 
 	// TLS transports present the server's CA and the admin client credential.
-	prefixArgs = append(prefixArgs, commands.NewTestRunner().TLSArgsForURL(serverURL)...)
+	prefixArgs = append(prefixArgs, commands.NewTestRunner().TLSArgsForURL(t, serverURL)...)
 
 	args = append(prefixArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, args...)

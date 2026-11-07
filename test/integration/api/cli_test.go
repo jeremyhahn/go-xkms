@@ -32,7 +32,7 @@ func execCLI(t *testing.T, cfg *TestConfig, args ...string) (string, string, err
 
 	// Prepend --server flag to use the configured Unix socket path
 	serverURL := "unix://" + cfg.UnixSocketPath
-	allArgs := append([]string{"--server", serverURL}, commands.NewTestRunner().TLSArgsForURL(serverURL)...)
+	allArgs := append([]string{"--server", serverURL}, commands.NewTestRunner().TLSArgsForURL(t, serverURL)...)
 	allArgs = append(allArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, allArgs...)
 
