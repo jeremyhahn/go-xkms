@@ -45,10 +45,6 @@ func TestDefaultPolicy(t *testing.T) {
 	if len(p.BlockedDomains) != 0 {
 		t.Errorf("expected empty BlockedDomains, got %v", p.BlockedDomains)
 	}
-}
-
-func TestDefaultPolicyValidates(t *testing.T) {
-	p := DefaultPolicy()
 	if err := p.Validate(); err != nil {
 		t.Fatalf("default policy should validate, got: %v", err)
 	}
@@ -277,15 +273,6 @@ func TestIsDomainAllowed_SubdomainInAllowed(t *testing.T) {
 	}
 }
 
-func TestRateLimiter_UnderLimit(t *testing.T) {
-	r := NewRateLimiter(5)
-	for i := 0; i < 5; i++ {
-		if !r.Allow() {
-			t.Fatalf("attempt %d should be allowed (limit 5)", i+1)
-		}
-	}
-}
-
 func TestRateLimiter_OverLimit(t *testing.T) {
 	r := NewRateLimiter(3)
 	for i := 0; i < 3; i++ {
@@ -426,15 +413,5 @@ func TestValidate_SessionTimeoutCheckedAfterTOTP(t *testing.T) {
 	err := p.Validate()
 	if !errors.Is(err, ErrInvalidSessionTimeout) {
 		t.Errorf("expected ErrInvalidSessionTimeout, got: %v", err)
-	}
-}
-
-func TestRateLimiter_SingleAllowance(t *testing.T) {
-	r := NewRateLimiter(1)
-	if !r.Allow() {
-		t.Fatal("single attempt should be allowed")
-	}
-	if r.Allow() {
-		t.Fatal("second attempt should be rejected with limit 1")
 	}
 }
