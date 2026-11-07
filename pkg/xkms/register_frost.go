@@ -103,5 +103,5 @@ func newFROSTKeyProvider(config map[string]interface{}) (types.KeyProvider, erro
 		frostConfig.ParticipantID = uint32(pid)
 	}
 
-	return frost.NewBackend(frostConfig)
+	return keyProvider(frost.NewBackend(frostConfig))
 }
