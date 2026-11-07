@@ -790,9 +790,6 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				args := []string{
 					"key", "copy", sourceKeyID, destKeyID,
 					"--backend", "software",
-					"--key-type", "signing",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
 					"--dest-backend", "software",
 					"--dest-keydir", destKeyDir,
