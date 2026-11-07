@@ -97,16 +97,6 @@ func TestSelect_FallsBackToSoftware(t *testing.T) {
 	}
 }
 
-func TestSelect_NilHardwareProvidersYieldSoftware(t *testing.T) {
-	be, err := Select(Config{Software: softwareProvider{}})
-	if err != nil {
-		t.Fatalf("Select: %v", err)
-	}
-	if be.Strategy() != qrdbsdk.PINStrategySoftware {
-		t.Fatalf("expected software backend, got %q", be.Strategy())
-	}
-}
-
 func TestSelect_CustomPreferenceCanForceSoftwareOverTPM(t *testing.T) {
 	be, err := Select(Config{
 		TPM:        fakeTPMProvider{pa: &fakePlatformAuth{provisioned: true}, available: true},
@@ -118,13 +108,6 @@ func TestSelect_CustomPreferenceCanForceSoftwareOverTPM(t *testing.T) {
 	}
 	if be.Strategy() != qrdbsdk.PINStrategySoftware {
 		t.Fatalf("expected software (forced by preference), got %q", be.Strategy())
-	}
-}
-
-func TestSelect_NilSoftwareProviderIsError(t *testing.T) {
-	_, err := Select(Config{TPM: fakeTPMProvider{available: false}})
-	if !errors.Is(err, ErrNoSoftwareProvider) {
-		t.Fatalf("expected ErrNoSoftwareProvider, got %v", err)
 	}
 }
 

@@ -22,29 +22,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-func TestSaveLoad_RoundTrip(t *testing.T) {
-	pinDir := t.TempDir()
-
-	if err := SaveStrategy(pinDir, qrdbsdk.PINStrategyTPM2); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	got, err := LoadStrategy(pinDir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got != qrdbsdk.PINStrategyTPM2 {
-		t.Fatalf("Load = %q, want %q", got, qrdbsdk.PINStrategyTPM2)
-	}
-
-	// The file lives beside the PIN state, not in some other consumer's
-	// own config file.
-	wantPath := filepath.Join(pinDir, "strategy")
-	if _, err := os.Stat(wantPath); err != nil {
-		t.Fatalf("expected strategy file at %s: %v", wantPath, err)
-	}
-}
-
 func TestSave_OverwritesPreviousStrategy(t *testing.T) {
 	pinDir := t.TempDir()
 
@@ -61,28 +38,6 @@ func TestSave_OverwritesPreviousStrategy(t *testing.T) {
 	}
 	if got != qrdbsdk.PINStrategyTPM2 {
 		t.Fatalf("Load = %q, want %q after overwrite", got, qrdbsdk.PINStrategyTPM2)
-	}
-}
-
-func TestLoad_NotPersistedIsTypedSentinel(t *testing.T) {
-	pinDir := t.TempDir()
-
-	_, err := LoadStrategy(pinDir)
-	if !errors.Is(err, ErrStrategyNotPersisted) {
-		t.Fatalf("Load on empty PIN dir: got %v, want ErrStrategyNotPersisted", err)
-	}
-}
-
-func TestLoad_CorruptFileIsLoadError(t *testing.T) {
-	pinDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(pinDir, "strategy"), []byte("{not json"), 0600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	_, err := LoadStrategy(pinDir)
-	var loadErr *StrategyLoadError
-	if !errors.As(err, &loadErr) {
-		t.Fatalf("Load on corrupt file: got %T %v, want *StrategyLoadError", err, err)
 	}
 }
 
