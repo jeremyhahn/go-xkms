@@ -168,6 +168,12 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
+	// The service binding reads users in every tenant, so a handle from
+	// another tenant resolves here too. It gets the answer an unknown
+	// handle gets, so a probe learns nothing.
+	if u.TenantID != s.tenantID {
+		return nil, ErrUserNotFound
+	}
 	return s.materialize(ctx, u)
 }
 
@@ -692,10 +698,14 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	}
 	// Only an account the caller can see in its own tenant is deleted
 	// afresh; any other is at most the retry of a delete already done.
-	if _, err := s.users.GetUser(ctx, id); err != nil {
+	u, err := s.users.GetUser(ctx, id)
+	if err != nil {
 		if !isUserNotFound(err) {
 			return WrapError("qrdb get user", err)
 		}
+		return s.resumeDelete(authCtx, svcCtx, id, userID)
+	}
+	if u.TenantID != s.tenantID {
 		return s.resumeDelete(authCtx, svcCtx, id, userID)
 	}
 	// The deletion record is written before the account goes, so a
