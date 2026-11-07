@@ -89,8 +89,6 @@ func TestValidateSocketDir_RefusesSymlink(t *testing.T) {
 	assert.Equal(t, `insecure socket directory "`+link+`": is a symlink`, err.Error())
 }
 
-// TestGRPCServer_ExtraServicesServed proves a composition-root service
-// registration is served on the same socket as the keystore service.
 // TestGRPCServer_Start_ListenFailure proves Start reports a socket path the
 // kernel cannot bind instead of serving nothing.
 func TestGRPCServer_Start_ListenFailure(t *testing.T) {
