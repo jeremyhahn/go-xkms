@@ -58,7 +58,9 @@ anything behind it, is open: `pkcs11` logs in to its token with the user PIN,
 and `vault` authenticates to Transit with a token. Each verb seals its secret
 into the pre-barrier store, so that `xkmsd run` with the matching
 `barrier.strategy` unseals the node with no operator present. Run it once,
-and again whenever the secret or the platform PCRs change.
+and again whenever the secret or the platform PCRs change. The `pkcs11` key
+backend also logs in with the PIN `seal-pkcs11-pin` sealed whenever
+`backends.pkcs11.pin` is not set, whatever the `barrier.strategy`.
 
 | Verb | Secret | Store key | Released by |
 |---|---|---|---|

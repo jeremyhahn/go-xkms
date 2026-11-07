@@ -97,6 +97,11 @@ services:
         else
           /app/xkmsd init --config /workspace/test/integration/api/config.test.yaml --hostname xkms-server --admin-factor mtls
         fi
+        # Seal the token's user PIN into the TPM-backed pre-barrier store the
+        # pkcs11 backend releases it from (config.test.yaml sets no pin). The
+        # PIN goes on stdin, never argv; the verb opens and closes swtpm
+        # before the server does.
+        printf '%s' 123456 | /app/xkmsd seal-pkcs11-pin --config /workspace/test/integration/api/config.test.yaml
         echo "Starting xkms server..."
         exec env -u XKMS_SO_PIN /app/xkmsd
 
