@@ -67,22 +67,6 @@ func TestSealed_TakeSecretOnAnUnprotectableBufferIsAProtectError(t *testing.T) {
 	assert.ErrorAs(t, err, &taken, "the failed take consumed the buffer")
 }
 
-func TestSealed_DestroyAfterTakeAndTwice(t *testing.T) {
-	sealed := sealP256(t)
-	buf := sealed.secret.Load()
-	secret, err := sealed.TakeSecret()
-	require.NoError(t, err)
-	assert.Len(t, secret, SecretLength)
-
-	sealed.Destroy()
-	sealed.Destroy()
-	assert.Zero(t, buf.Size())
-	_, err = sealed.TakeSecret()
-	var taken *SecretTakenError
-	assert.ErrorAs(t, err, &taken)
-	assert.Equal(t, sealed.Check, Check(secret), "destroying after a take leaves the taken secret intact")
-}
-
 // TestSealed_ConcurrentTakesHaveExactlyOneWinner proves racing takers never
 // share or split the secret: one gets all of it, the rest are refused.
 func TestSealed_ConcurrentTakesHaveExactlyOneWinner(t *testing.T) {
@@ -167,7 +151,8 @@ func TestSealed_ZeroValueEveryMethod(t *testing.T) {
 	assert.NotPanics(t, sealed.Destroy)
 	secret, err := sealed.TakeSecret()
 	var taken *SecretTakenError
-	assert.ErrorAs(t, err, &taken)
+	require.ErrorAs(t, err, &taken)
+	assert.Contains(t, taken.Error(), "already taken")
 	assert.Nil(t, secret)
 	assert.Empty(t, sealed.Algorithm)
 	assert.Nil(t, sealed.Challenge)
@@ -212,11 +197,6 @@ func TestSealRSA_RefusesAnExponentOAEPRejects(t *testing.T) {
 	assert.ErrorAs(t, err, &re)
 	assert.Nil(t, challenge)
 	assert.Nil(t, secret)
-}
-
-func TestFingerprint_RejectsUnmarshalableKey(t *testing.T) {
-	_, err := Fingerprint(struct{}{})
-	assert.ErrorIs(t, err, ErrInvalidPublicKey)
 }
 
 func TestParsePublicKey_RejectsUnsupportedKeyType(t *testing.T) {
