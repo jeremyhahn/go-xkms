@@ -53,16 +53,27 @@ func (s *failingQueryStore) CertificatesByPurpose(truststore.CertPurpose) ([]*x5
 
 func TestLoadTrust_CarriesTheApplicationPolicy(t *testing.T) {
 	apps := attesttest.Applications()
+	revocation := attesttest.NoRevocations()
 
-	trust, err := attestation.LoadTrust(newFileStore(t), apps)
+	trust, err := attestation.LoadTrust(newFileStore(t), apps, revocation)
 
 	require.NoError(t, err)
 	assert.NotNil(t, trust.Roots)
 	assert.Equal(t, apps, trust.Applications)
+	assert.Same(t, revocation, trust.Revocation)
+}
+
+func TestLoadTrust_NoRevocationSourceRefuses(t *testing.T) {
+	trust, err := attestation.LoadTrust(newFileStore(t), attesttest.Applications(), nil)
+
+	require.Error(t, err)
+	assert.Nil(t, trust)
+	assert.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
+	assert.ErrorIs(t, err, xkms.ErrNoAndroidRevocationSource)
 }
 
 func TestLoadTrust_NilStoreRefuses(t *testing.T) {
-	trust, err := attestation.LoadTrust(nil, attesttest.Applications())
+	trust, err := attestation.LoadTrust(nil, attesttest.Applications(), attesttest.NoRevocations())
 
 	require.Error(t, err)
 	assert.Nil(t, trust)
@@ -74,7 +85,7 @@ func TestLoadTrust_StoreQueryFailureRefuses(t *testing.T) {
 	queryErr := errors.New("trust store unreadable")
 	store := &failingQueryStore{FileStore: newFileStore(t), err: queryErr}
 
-	trust, err := attestation.LoadTrust(store, attesttest.Applications())
+	trust, err := attestation.LoadTrust(store, attesttest.Applications(), attesttest.NoRevocations())
 
 	require.Error(t, err)
 	assert.Nil(t, trust)
@@ -84,7 +95,7 @@ func TestLoadTrust_StoreQueryFailureRefuses(t *testing.T) {
 }
 
 func TestLoadTrust_UnconfiguredApplicationsRefuses(t *testing.T) {
-	trust, err := attestation.LoadTrust(newFileStore(t), pairing.ApplicationPolicy{})
+	trust, err := attestation.LoadTrust(newFileStore(t), pairing.ApplicationPolicy{}, attesttest.NoRevocations())
 
 	require.Error(t, err)
 	assert.Nil(t, trust)
@@ -113,7 +124,7 @@ func TestLoadTrust_ExcludesSyncedForgedGoogleRoot(t *testing.T) {
 			require.NoError(t, store.AddCertificateWithOptions(forged.Cert,
 				&truststore.AddCertificateOptions{Purpose: tt.purpose}))
 
-			trust, err := attestation.LoadTrust(store, attesttest.Applications())
+			trust, err := attestation.LoadTrust(store, attesttest.Applications(), attesttest.NoRevocations())
 			require.NoError(t, err)
 
 			_, err = forged.Cert.Verify(x509.VerifyOptions{
