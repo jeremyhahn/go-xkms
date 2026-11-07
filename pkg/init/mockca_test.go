@@ -341,22 +341,12 @@ func (m *mockCA) XSignedRootCertificate(_ string, _ *x509.Certificate) (*x509.Ce
 }
 
 // ---------------------------------------------------------------------------
-// errorCA wraps mockCA but returns errors for selected operations.
+// errorCA wraps mockCA but fails CABundle with caBundleErr when it is set.
 // ---------------------------------------------------------------------------
 
 type errorCA struct {
 	*mockCA
-	caCertErr    error
-	caBundleErr  error
-	signCSRErr   error
-	issueCertErr error
-}
-
-func (e *errorCA) CACertificate() (*x509.Certificate, error) {
-	if e.caCertErr != nil {
-		return nil, e.caCertErr
-	}
-	return e.mockCA.CACertificate()
+	caBundleErr error
 }
 
 func (e *errorCA) CABundle() ([]byte, error) {
@@ -364,34 +354,6 @@ func (e *errorCA) CABundle() ([]byte, error) {
 		return nil, e.caBundleErr
 	}
 	return e.mockCA.CABundle()
-}
-
-func (e *errorCA) SignCSR(ctx context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
-	if e.signCSRErr != nil {
-		return nil, e.signCSRErr
-	}
-	return e.mockCA.SignCSR(ctx, csrPEM, opts)
-}
-
-func (e *errorCA) IssueCertificate(ctx context.Context, req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
-	if e.issueCertErr != nil {
-		return nil, e.issueCertErr
-	}
-	return e.mockCA.IssueCertificate(ctx, req)
-}
-
-func (e *errorCA) IssueCertificateForKey(ctx context.Context, req *ca.CertificateRequest, publicKey crypto.PublicKey) (*ca.IssuedCertificate, error) {
-	if e.issueCertErr != nil {
-		return nil, e.issueCertErr
-	}
-	return e.mockCA.IssueCertificateForKey(ctx, req, publicKey)
-}
-
-func (e *errorCA) IssueCertificateWithProfile(ctx context.Context, req *ca.CertificateRequest, profile string) (*ca.IssuedCertificate, error) {
-	if e.issueCertErr != nil {
-		return nil, e.issueCertErr
-	}
-	return e.mockCA.IssueCertificateWithProfile(ctx, req, profile)
 }
 
 // ---------------------------------------------------------------------------
@@ -410,90 +372,6 @@ func generateTestCSR(t *testing.T, cn string) ([]byte, *ecdsa.PrivateKey) {
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 	return csrPEM, key
 }
-
-// ---------------------------------------------------------------------------
-// Constructor tests
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Initialize - single admin
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Initialize - M-of-N
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Initialize - error paths with failing CA
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// SPKIPin - CA certificate error after initialization
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// CompleteClaimCert - CA bundle error during completion
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Adapter - ClaimCertComplete with valid base64 but inner error
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// BeginClaimCert
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// CompleteClaimCert
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Officer share claim (BeginClaimShare / CompleteClaimShare)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// State and utility tests
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// CompleteClaimCert - not in enrolling state
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// allClaimsComplete - partial claims don't transition
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Edge case: M-of-N with threshold equal to officers count
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Edge case: threshold of exactly 2
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Edge case: threshold < 2 treated as single admin
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// SignCSRInit - success cases
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// SignCSRInit - error cases
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// CeremonyAdapter tests
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Initialize - M-of-N with RSA CSR (covers RSA branch in initializeMofN)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Initialize - M-of-N with Ed25519 CSR
-// ---------------------------------------------------------------------------
 
 func (m *mockCA) VerifyTCG_CSR_IDevIDBytes(_ []byte, _ x509.SignatureAlgorithm) ([]byte, []byte, []byte, error) {
 	return nil, nil, nil, nil
