@@ -102,7 +102,11 @@ func init() {
 		return New(ctx, c)
 	})
 	providers.RegisterEnvFactory(providers.ProviderCloudflare, func(ctx context.Context) (providers.Provider, error) {
-		return NewFromEnv(ctx)
+		provider, err := NewFromEnv(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return provider, nil
 	})
 }
 
