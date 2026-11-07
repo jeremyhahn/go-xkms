@@ -126,6 +126,69 @@ func TestVerifyUser_VerifierRefusalIsReturned(t *testing.T) {
 	require.NotErrorIs(t, err, keybackend.ErrUserVerificationUnavailable, "a refusal is a failed verification")
 }
 
+// TestVerifyUser_PhoneRefusalIsTyped guards #1712: each refusal the phone
+// answers local.verifyUser with reaches the caller as its own typed error.
+func TestVerifyUser_PhoneRefusalIsTyped(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	refusals := []struct {
+		name string
+		code int
+		want error
+	}{
+		{"user cancelled", pairingproto.ErrorCodeUserCancelled, ErrUserCancelled},
+		{"no biometric enrolled", pairingproto.ErrorCodeVerifyUserNotEnrolled, ErrUserVerificationNotEnrolled},
+		{"lockout", pairingproto.ErrorCodeVerifyUserLockout, ErrUserVerificationLockout},
+		{"not paired", pairingproto.ErrorCodeNotPaired, ErrNotPaired},
+	}
+	for _, tt := range refusals {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := refusingPhone(t, func(ctx context.Context, exchange pairingproto.RPCExchange, _ []byte, _ string) error {
+				resp, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalVerifyUser, nil))
+				if err != nil {
+					return err
+				}
+				// As attestation.NewUserVerifier reports a phone's RPC error.
+				return fmt.Errorf("%w: %w", errVerifierRefused, resp.Error)
+			}, tt.code)
+
+			err := backend.VerifyUser(context.Background(), "example.com")
+			require.ErrorIs(t, err, tt.want)
+			require.ErrorIs(t, err, errVerifierRefused, "the verifier's own error is kept")
+		})
+	}
+}
+
+// refusingPhone is a connected backend whose phone answers every request with
+// an RPC error carrying code.
+func refusingPhone(t *testing.T, verify pairingproto.VerifyUserFunc, code int) *PhoneKeyBackend {
+	t.Helper()
+	client, server := establishedNoiseSessionPair(t)
+	backend := &PhoneKeyBackend{
+		cfg:     &PhoneKeyBackendConfig{VerifyUser: verify},
+		session: client,
+		transport: &scriptedTransport{respond: func(_ context.Context, sent []byte) ([]byte, error) {
+			plaintext, err := server.Decrypt(sent)
+			if err != nil {
+				return nil, err
+			}
+			req, err := pairingproto.DecodeRequest(plaintext)
+			if err != nil {
+				return nil, err
+			}
+			respBytes, err := pairingproto.EncodeErrorResponse(req.ID, req.Generation, code, "refused", nil)
+			if err != nil {
+				return nil, err
+			}
+			return server.Encrypt(respBytes)
+		}},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	backend.connected.Store(true)
+	return backend
+}
+
 // TestVerifyUser_UnansweredExchangeIsUnavailable proves an exchange the phone
 // never answered — the link dropped or timed out — reaches the verifier, and
 // so the authenticator, as unavailable rather than as a refusal, and spends
