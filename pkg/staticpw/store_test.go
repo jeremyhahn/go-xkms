@@ -1073,6 +1073,19 @@ func TestDAOStore_SetAlias_EmptyFolderRemovesAlias(t *testing.T) {
 	assert.False(t, found)
 }
 
+func TestDAOStore_SetAlias_OverwriteReplacesFolder(t *testing.T) {
+	s := newTestStore(t)
+	defer func() { _ = s.Close() }()
+
+	require.NoError(t, s.SetAlias("custom", "Work"))
+	require.NoError(t, s.SetAlias("custom", "Personal/Email"))
+
+	folder, found, err := s.GetAlias("custom")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "Personal/Email", folder)
+}
+
 func TestDAOStore_GetAlias_Unset(t *testing.T) {
 	s := newTestStore(t)
 	defer func() { _ = s.Close() }()
