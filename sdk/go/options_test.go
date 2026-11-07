@@ -19,10 +19,16 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 )
 
 // mockService implements XKMSServicer for testing.
-type mockService struct{}
+type mockService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+}
 
 func (m *mockService) Health(ctx context.Context) (string, string, error) {
 	return "healthy", "1.0.0", nil

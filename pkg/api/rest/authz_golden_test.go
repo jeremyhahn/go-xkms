@@ -265,8 +265,17 @@ var goldenRESTPermissions = map[string]string{
 	"GET /api/v1/attestation/signing-keys/binding":    "attestation_signing_keys:get",
 	"DELETE /api/v1/attestation/signing-keys/binding": "attestation_signing_keys:bind",
 	"GET /api/v1/attestation/signing-keys/resolve":    "attestation_signing_keys:get",
-	"POST /api/v1/peer-attestation/challenge":         "peer_attestation:challenge",
-	"POST /api/v1/peer-attestation/evidence":          "peer_attestation:submit",
+	// Attestation Verifier (go-xkms#1608).
+	"PUT /api/v1/attestation/endorsements":               "attestation_endorsements:create",
+	"GET /api/v1/attestation/endorsements":               "attestation_endorsements:list",
+	"DELETE /api/v1/attestation/endorsements/{name}":     "attestation_endorsements:delete",
+	"PUT /api/v1/attestation/reference-values":           "attestation_reference_values:create",
+	"GET /api/v1/attestation/reference-values":           "attestation_reference_values:list",
+	"GET /api/v1/attestation/reference-values/{name}":    "attestation_reference_values:get",
+	"DELETE /api/v1/attestation/reference-values/{name}": "attestation_reference_values:delete",
+	"POST /api/v1/attestation/appraise":                  "attestation_verifier:verify",
+	"POST /api/v1/peer-attestation/challenge":            "peer_attestation:challenge",
+	"POST /api/v1/peer-attestation/evidence":             "peer_attestation:submit",
 }
 
 // TestRESTPermissions_MatchWireContract pins the resource:action pair of

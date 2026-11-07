@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,6 +23,10 @@ var errMock = errors.New("mock error")
 // embedded transport delegation pattern. Every method returns a
 // deterministic response or errMock based on the shouldFail field.
 type mockService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	shouldFail bool
 }
 

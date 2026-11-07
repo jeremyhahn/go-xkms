@@ -54,6 +54,10 @@ type mockCAClient struct {
 	// it.
 	transport.SigningKeyService
 
+	// AttestationAppraisalService completes transport.Client; these tests
+	// never call it.
+	transport.AttestationAppraisalService
+
 	getCACertificateResp  *transport.GetCACertificateResponse
 	getCACertificateErr   error
 	issueCertificateResp  *transport.IssueCertificateResponse
