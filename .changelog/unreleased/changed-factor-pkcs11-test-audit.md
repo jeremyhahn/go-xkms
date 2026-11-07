@@ -1,0 +1,1 @@
+Tests: the `pkg/factor/pkcs11` suite keeps one test per behaviour (#1794): seven tests that repeated another test's path are removed, and the assertions only they made (the other-nonce refusal, the typed error of a non-ASN.1 signature, `Name()`) move into the tests that keep those paths. Coverage is unchanged at 97.0%.
