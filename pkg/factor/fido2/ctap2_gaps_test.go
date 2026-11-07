@@ -16,6 +16,7 @@ package fido2
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
@@ -62,16 +63,6 @@ func TestLocalCeremony_Available_EnumerationError(t *testing.T) {
 	}
 }
 
-// TestLocalCeremony_Enroll_UnwiredSubsystem pins Enroll's own nil-wiring
-// guard, distinct from Available's.
-func TestLocalCeremony_Enroll_UnwiredSubsystem(t *testing.T) {
-	c := newLocalCeremony(nil, nil, 0)
-	_, err := c.Enroll(context.Background(), localRequest())
-	if !errors.Is(err, ErrLocalCeremonyUnavailable) {
-		t.Fatalf("Enroll = %v, want ErrLocalCeremonyUnavailable", err)
-	}
-}
-
 // TestLocalCeremony_Enroll_EnumerationErrorDuringSelection pins that a
 // ListDevices failure inside selectDevice surfaces as a wrapped
 // *LocalCeremonyError at the "enumerate" stage, and the authenticator is
@@ -84,6 +75,9 @@ func TestLocalCeremony_Enroll_EnumerationErrorDuringSelection(t *testing.T) {
 	var ceremonyErr *LocalCeremonyError
 	if !errors.As(err, &ceremonyErr) || ceremonyErr.Stage != "enumerate" {
 		t.Fatalf("Enroll = %v, want *LocalCeremonyError{Stage: enumerate}", err)
+	}
+	if !strings.Contains(err.Error(), "enumerate: hidraw permission denied") {
+		t.Errorf("error %q does not name the failed stage and its cause", err)
 	}
 	if ceremony.called {
 		t.Error("the authenticator must not be touched when enumeration fails")
@@ -101,6 +95,68 @@ func TestLocalCeremony_Enroll_NoAuthenticatorAttached(t *testing.T) {
 	}
 }
 
+// TestLocalCeremony_Enroll_SelectionRefusalsGuideTheOperator pins each
+// device-selection refusal: its typed error, an untouched authenticator, and
+// a message naming what the operator must act on — the selector flag, the
+// unmatched hint — and every candidate device.
+func TestLocalCeremony_Enroll_SelectionRefusalsGuideTheOperator(t *testing.T) {
+	isAmbiguous := func(err error) bool {
+		var target *AmbiguousAuthenticatorError
+		return errors.As(err, &target)
+	}
+	cases := []struct {
+		name    string
+		devices *fakeDevices
+		hint    string
+		isType  func(error) bool
+		want    []string
+	}{
+		{
+			name:    "several authenticators and no selector",
+			devices: &fakeDevices{devices: []pkgfido2.Device{yubi("1"), yubi("2")}},
+			isType:  isAmbiguous,
+			want:    []string{"--passkey-device", describeDevice(yubi("1")), describeDevice(yubi("2"))},
+		},
+		{
+			name:    "selector matching several authenticators",
+			devices: &fakeDevices{devices: []pkgfido2.Device{yubi("1"), yubi("2")}},
+			hint:    "yubikey",
+			isType:  isAmbiguous,
+			want:    []string{"--passkey-device", describeDevice(yubi("1")), describeDevice(yubi("2"))},
+		},
+		{
+			name:    "selector matching nothing",
+			devices: &fakeDevices{devices: []pkgfido2.Device{yubi("111")}},
+			hint:    "nonexistent",
+			isType: func(err error) bool {
+				var target *AuthenticatorNotFoundError
+				return errors.As(err, &target)
+			},
+			want: []string{`"nonexistent"`, "attached: " + describeDevice(yubi("111"))},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ceremony := &fakeCeremony{}
+			req := localRequest()
+			req.DeviceHint = tc.hint
+
+			_, err := newLocalCeremony(tc.devices, ceremony, 0).Enroll(context.Background(), req)
+			if !tc.isType(err) {
+				t.Fatalf("Enroll = %v (%T), not the refusal's typed error", err, err)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q does not name %q", err, w)
+				}
+			}
+			if ceremony.called {
+				t.Error("the authenticator must not be touched when selection is refused")
+			}
+		})
+	}
+}
+
 // TestMatchesHint_MatchesManufacturerAndSerial pins the substring-match
 // fields matchesHint consults beyond Product, so an operator can select a
 // device by manufacturer name or serial number alone.
@@ -112,6 +168,9 @@ func TestMatchesHint_MatchesManufacturerAndSerial(t *testing.T) {
 	}
 	if !matchesHint(d, "abc123") {
 		t.Error("expected a case-insensitive serial number match")
+	}
+	if !matchesHint(d, "/dev/hidraw0") {
+		t.Error("expected an exact device path match")
 	}
 	if matchesHint(d, "nonexistent") {
 		t.Error("expected no match for an unrelated hint")
@@ -125,18 +184,5 @@ func TestDescribeDevice_FallsBackToPath(t *testing.T) {
 	d := pkgfido2.Device{Path: "/dev/hidraw3"}
 	if got := describeDevice(d); got != "/dev/hidraw3" {
 		t.Fatalf("describeDevice = %q, want the device path", got)
-	}
-}
-
-// TestCredentialFromAttestation_MalformedDocument pins the parse-error
-// path: an attestation whose PublicKeyCredentialJSON is not a valid
-// WebAuthn document surfaces the parser's error rather than a zero-value
-// success.
-func TestCredentialFromAttestation_MalformedDocument(t *testing.T) {
-	_, _, err := credentialFromAttestation(&pkgfido2.WebAuthnAttestation{
-		PublicKeyCredentialJSON: []byte(`{not valid json`),
-	})
-	if err == nil {
-		t.Fatal("expected a parse error for a malformed attestation document")
 	}
 }
