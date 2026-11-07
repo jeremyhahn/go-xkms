@@ -91,10 +91,14 @@ xkmsctl key decrypt vault-dek "$CT" --nonce "$NONCE" --tag "$TAG" --aad tenant=a
 
 ### `key encrypt-asym <key-id> <plaintext>`
 
-RSA-OAEP. `--hash` (default `sha256`).
+RSA-OAEP. `--hash` (default `sha256`). Decrypt the result with
+`key decrypt --hash` naming the same digest, which selects RSA-OAEP
+(`cmd/xkmsctl/key.go`, `decrypt`); without `--hash` the server would take
+PKCS#1 v1.5, which it refuses unless `crypto.allow_legacy_key_wrap` is set.
 
 ```
-xkmsctl key encrypt-asym rsa-transport "hello" --hash sha256
+CT=$(xkmsctl key encrypt-asym rsa-transport "hello" --hash sha256)
+xkmsctl key decrypt rsa-transport "$CT" --hash sha256
 ```
 
 ### `key rotate <key-id>`

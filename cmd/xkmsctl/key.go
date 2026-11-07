@@ -534,6 +534,7 @@ var keyDecryptCmd = &cobra.Command{
 		aad := fr.String("aad")
 		nonce := fr.String("nonce")
 		tag := fr.String("tag")
+		hashAlg := fr.String("hash")
 		keyVersion := fr.Uint32("key-version")
 		if err := fr.Err(); err != nil {
 			handleError(err)
@@ -542,14 +543,14 @@ var keyDecryptCmd = &cobra.Command{
 
 		printVerbose("Decrypting data with key: %s", keyID)
 
-		decrypt(cfg, printer, keyID, ciphertext, aad, nonce, tag, keyVersion)
+		decrypt(cfg, printer, keyID, ciphertext, aad, nonce, tag, hashAlg, keyVersion)
 	},
 }
 
 // decrypt decrypts data using the SDK client. A zero keyVersion lets the
 // server choose: every enabled version for AEAD and RSA-OAEP ciphertext, the
 // one enabled version otherwise.
-func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag string, keyVersion uint32) {
+func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag, hashAlg string, keyVersion uint32) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -576,6 +577,13 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 		KeyID:      keyID,
 		Ciphertext: ciphertextBytes,
 		KeyVersion: keyVersion,
+	}
+
+	// An RSA ciphertext from encrypt-asym is OAEP under its --hash; without
+	// a hash the server would fall back to PKCS#1 v1.5, which it refuses.
+	if hashAlg != "" {
+		req.Padding = "oaep"
+		req.Hash = hashAlg
 	}
 
 	if aad != "" {
@@ -1941,6 +1949,7 @@ func init() {
 	keyDecryptCmd.Flags().String("aad", "", "Additional authenticated data (for symmetric decryption)")
 	keyDecryptCmd.Flags().String("nonce", "", "Nonce/IV (base64, required for symmetric decryption)")
 	keyDecryptCmd.Flags().String("tag", "", "Authentication tag (base64, required for symmetric decryption)")
+	keyDecryptCmd.Flags().String("hash", "", "OAEP hash for RSA decryption (sha256, sha384, sha512); must match the --hash encrypt-asym used")
 	keyDecryptCmd.Flags().Uint32("key-version", 0, "Key version the encrypt reported (default: chosen by the server; required for AES-CBC and RSA PKCS#1 v1.5 once a key has several enabled versions)")
 
 	// Flags for import command. --key-type names the ALGORITHM of the material

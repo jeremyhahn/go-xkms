@@ -321,6 +321,7 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 					"key", "decrypt", keyID, ciphertext,
 					"--backend", "software",
 					"--key-dir", suite.keyDir,
+					"--hash", "sha256",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
