@@ -1,0 +1,1 @@
+Tests: `pkg/storage/pinadapter`'s suite is audited (#1794): the `GetError`, `PutError` and `DeleteError` message formats are asserted in each verb's wrapped-backend-error test, and the duplicate constructor and put tests fold into the put/get round trip; coverage stays at 100%.
