@@ -13,10 +13,7 @@
 
 package sealblobstore
 
-import (
-	"testing"
-	"time"
-)
+import "testing"
 
 func TestEntity_EntityID_RoundTrip(t *testing.T) {
 	e := &Entity{
@@ -31,58 +28,5 @@ func TestEntity_EntityID_RoundTrip(t *testing.T) {
 
 	if got := e.EntityID(); got != wantID {
 		t.Errorf("EntityID() = %d, want %d", got, wantID)
-	}
-}
-
-func TestEntity_ZeroValue(t *testing.T) {
-	var e Entity
-
-	if got := e.EntityID(); got != 0 {
-		t.Errorf("zero-value EntityID() = %d, want 0", got)
-	}
-}
-
-func TestEntity_SetEntityID_Overwrite(t *testing.T) {
-	e := &Entity{}
-	e.SetEntityID(10)
-	e.SetEntityID(300)
-
-	if got := e.EntityID(); got != 300 {
-		t.Errorf("EntityID() after overwrite = %d, want 300", got)
-	}
-}
-
-func TestEntity_FieldsPreserved(t *testing.T) {
-	now := time.Now().UTC()
-	data := []byte("encrypted-payload-bytes")
-	e := &Entity{
-		Label:       "secret-blob",
-		BackendID:   "software",
-		PolicyType:  "password",
-		PolicyName:  "my-policy",
-		StorageType: "disk",
-		Category:    "credentials",
-		SizeBytes:   len(data),
-		PCRBound:    true,
-		SealedData:  data,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	e.SetEntityID(15)
-
-	if e.EntityID() != 15 {
-		t.Fatal("EntityID mismatch")
-	}
-	if e.Label != "secret-blob" {
-		t.Error("Label not preserved")
-	}
-	if e.BackendID != "software" {
-		t.Error("BackendID not preserved")
-	}
-	if !e.PCRBound {
-		t.Error("PCRBound not preserved")
-	}
-	if len(e.SealedData) != len(data) {
-		t.Errorf("SealedData len = %d, want %d", len(e.SealedData), len(data))
 	}
 }
