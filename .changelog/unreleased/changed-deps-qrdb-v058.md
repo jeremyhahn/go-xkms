@@ -1,0 +1,4 @@
+- **go-qrdb v0.58.0-alpha and go-enclave v0.10.0-alpha** -- the root module, `sdk/go`, `xkey` and `web/desktop` move to go-qrdb and go-qrdb/sdk/go v0.58.0-alpha, go-luks2 v1.0.1-alpha and go-truststrap v0.7.0-alpha, as `make deps-check` requires. go-qrdb v0.58 needs go-enclave v0.10.0-alpha, so the go-enclave v0.8.0-alpha hold and its `replace` are lifted. What changes for go-xkms users:
+  - `sdk/go`'s `ShamirShare` is replaced by `ShamirProtectedShare`, following go-quicraft's removal of `shamir.Share`.
+  - Protected memory is held as go-enclave's `enclave.ByteAccess` interface, was `*enclave.MemoryEnclave`; the USB image passphrase is frozen through the `Freezer` capability and is refused with `*enclave.CapabilityError` by a backend that cannot freeze it.
+  - The embedded qrdb node pins go-xkms's SPIFFE trust domain as qrdb's `auth.cluster_trust_domain`, which replaces `auth.spiffe_trust_domain`.

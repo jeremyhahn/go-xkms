@@ -21,6 +21,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
@@ -182,7 +183,7 @@ func (d *Daemon) resolveUnlockPrompt(info *PromptInfo) *dbus.Error {
 	}
 
 	unsealErr := d.barrier.Unseal(d.ctx, creds)
-	if destroyErr := creds.Secret.Destroy(); destroyErr != nil {
+	if destroyErr := xkms.DestroyCredentials(creds); destroyErr != nil {
 		d.logger.Warn("failed to wipe unlock credentials", slog.String("error", destroyErr.Error()))
 	}
 	if unsealErr != nil {

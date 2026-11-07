@@ -21,6 +21,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
@@ -163,12 +164,12 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	// subsystem, and the factor registry so the node's AuthFactorService can
 	// handle custodian enrollment, challenge, and verify operations for
 	// PIV, PKCS#11, and FIDO2 factors.
-	serverOpts := []qrdbsdk.ServerOption{
-		qrdbsdk.WithAuditLogger(sink),
-		qrdbsdk.WithFactorRegistry(s.factorRegistry),
+	serverOpts := []qrdbserver.ServerOption{
+		qrdbserver.WithAuditLogger(sink),
+		qrdbserver.WithFactorRegistry(s.factorRegistry),
 		// qrdb serves GET /v1/ca/bootstrap, first-contact trust, from xkmsd's
 		// CA bundle; the xkms module leaves the route to it.
-		qrdbsdk.WithBootstrapCABundle(s.bootstrapCABundle),
+		qrdbserver.WithBootstrapCABundle(s.bootstrapCABundle),
 	}
 
 	// Unified API server: qrdb's transports are TLS-only and take their
@@ -185,7 +186,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		if err != nil {
 			return &QRDBNodeError{Stage: "build unified server TLS config", Err: err}
 		}
-		serverOpts = append(serverOpts, qrdbsdk.WithServerTLS(tlsCfg))
+		serverOpts = append(serverOpts, qrdbserver.WithServerTLS(tlsCfg))
 		s.sealedWindowTLS = tlsCfg
 	}
 
@@ -230,14 +231,14 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	if err != nil {
 		return &QRDBNodeError{Stage: "new xkms module", Err: err}
 	}
-	serverOpts = append(serverOpts, qrdbsdk.WithModule(xkmsModule))
+	serverOpts = append(serverOpts, qrdbserver.WithModule(xkmsModule))
 
 	// Additional ServiceModules supplied by the composing binary via
 	// WithExtraModules (e.g. cmd/xkmsd's admin-surface module). Registered on
 	// the same unified server as the xkms module, never on a second embedded
 	// node.
 	for _, mod := range s.extraModules {
-		serverOpts = append(serverOpts, qrdbsdk.WithModule(mod))
+		serverOpts = append(serverOpts, qrdbserver.WithModule(mod))
 	}
 
 	// The node's barrier is the one barrier: inject the resolved seal so the

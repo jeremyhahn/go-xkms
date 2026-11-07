@@ -58,6 +58,16 @@ var CredentialsFor = qrdbsdk.CredentialsFor
 // NewCredentials would return an error.
 var MustCredentials = qrdbsdk.MustCredentials
 
+// DestroyCredentials releases the secret of caller-owned credentials and
+// returns the release error. The zero Credentials that CredentialsFor yields
+// for an empty secret holds no secret, so it is a no-op.
+func DestroyCredentials(creds Credentials) error {
+	if creds.Secret == nil {
+		return nil
+	}
+	return creds.Secret.Destroy()
+}
+
 // SealedRootKey is the persisted form of an encrypted root key.
 type SealedRootKey = qrdbsdk.SealedRootKey
 
