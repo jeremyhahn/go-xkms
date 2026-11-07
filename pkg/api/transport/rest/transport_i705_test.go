@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // This file covers pkg/api/transport/rest client methods (go-xkms #705,
@@ -295,4 +296,62 @@ func TestPKCS11StateList_NotConnected(t *testing.T) {
 	tr := &Transport{config: transport.DefaultConfig()}
 	_, err := tr.PKCS11StateList(context.Background(), &transport.PKCS11StateListRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+// pkcs11StateCalls returns every PKCS#11 state verb of tr except CAD, which
+// transport_pkcs11state_cad_test.go covers.
+func pkcs11StateCalls(ctx context.Context, tr *Transport) map[string]func() (any, error) {
+	return map[string]func() (any, error){
+		"Put": func() (any, error) {
+			return tr.PKCS11StatePut(ctx, &transport.PKCS11StatePutRequest{Token: "tok0", Key: "k", Value: []byte("v")})
+		},
+		"PutIfAbsent": func() (any, error) {
+			return tr.PKCS11StatePutIfAbsent(ctx, &transport.PKCS11StatePutIfAbsentRequest{Token: "tok0", Key: "k", Value: []byte("v")})
+		},
+		"CAS": func() (any, error) {
+			return tr.PKCS11StateCAS(ctx, &transport.PKCS11StateCASRequest{Token: "tok0", Key: "k", Expected: []byte("a"), New: []byte("b")})
+		},
+		"Get": func() (any, error) {
+			return tr.PKCS11StateGet(ctx, &transport.PKCS11StateGetRequest{Token: "tok0", Key: "k"})
+		},
+		"Delete": func() (any, error) {
+			return tr.PKCS11StateDelete(ctx, &transport.PKCS11StateDeleteRequest{Token: "tok0", Key: "k"})
+		},
+		"List": func() (any, error) {
+			return tr.PKCS11StateList(ctx, &transport.PKCS11StateListRequest{Token: "tok0", Prefix: "obj/"})
+		},
+	}
+}
+
+// TestPKCS11State_SurfacesServerRefusals proves every PKCS#11 state verb
+// returns the server's refusal and no result, so the module never mistakes
+// a refused write or read for a successful one.
+func TestPKCS11State_SurfacesServerRefusals(t *testing.T) {
+	refusing := newRouteRecorder(t, http.StatusServiceUnavailable, `{"error":"barrier sealed"}`).connect(t)
+	for name, call := range pkcs11StateCalls(context.Background(), refusing) {
+		t.Run(name, func(t *testing.T) {
+			resp, err := call()
+			var msg *errs.Message
+			require.ErrorAs(t, err, &msg)
+			assert.Equal(t, "server error: barrier sealed", msg.Msg)
+			assert.Nil(t, resp)
+		})
+	}
+}
+
+// TestPKCS11State_RejectsUnreadableReplies proves every PKCS#11 state verb
+// that decodes an answer fails on a reply that is not JSON instead of
+// returning a zero value; Put and Delete decode no answer.
+func TestPKCS11State_RejectsUnreadableReplies(t *testing.T) {
+	garbled := newRouteRecorder(t, http.StatusOK, `not json`).connect(t)
+	calls := pkcs11StateCalls(context.Background(), garbled)
+	for _, name := range []string{"PutIfAbsent", "CAS", "Get", "List"} {
+		t.Run(name, func(t *testing.T) {
+			resp, err := calls[name]()
+			var wrapped *errs.Wrapped
+			require.ErrorAs(t, err, &wrapped)
+			assert.Contains(t, wrapped.Msg, "failed to parse pkcs11 state")
+			assert.Nil(t, resp)
+		})
+	}
 }
