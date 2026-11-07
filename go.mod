@@ -35,7 +35,7 @@ require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha
 	github.com/jeremyhahn/go-codec v1.4.0
-	github.com/jeremyhahn/go-enclave v0.10.0-alpha
+	github.com/jeremyhahn/go-enclave v0.11.0-alpha
 	github.com/jeremyhahn/go-frost v0.3.0-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.1-alpha
 	github.com/jeremyhahn/go-qrdb v0.58.0-alpha

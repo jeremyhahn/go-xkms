@@ -313,8 +313,8 @@ github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha h1:L2pCL9+3uzcYT3EjXZk
 github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha/go.mod h1:VLTlzXNHnxl+ra+yahvWOkKElRTRWsM1vrNOX7cHPcw=
 github.com/jeremyhahn/go-codec v1.4.0 h1:ORbXlqpzg5RDlYGKyqKmbVNdF7TFjabO/7lVgpJ96W8=
 github.com/jeremyhahn/go-codec v1.4.0/go.mod h1:WsKvb0GxD0jRyLQRCpNCb5RsXBg4GY1LfwqK3kbIqF4=
-github.com/jeremyhahn/go-enclave v0.10.0-alpha h1:noyd3smiheGl2kOYL8Fuskg3AXBH4gfVX2kbGAMeuDA=
-github.com/jeremyhahn/go-enclave v0.10.0-alpha/go.mod h1:VtR8yhyPZPlHwYLx/ge2w07WwmlrLe8AUDDv3XemlKI=
+github.com/jeremyhahn/go-enclave v0.11.0-alpha h1:sfPn1zdaVdwA7XDPYi7G0pnGprt65L92nuw/CX31lxQ=
+github.com/jeremyhahn/go-enclave v0.11.0-alpha/go.mod h1:VtR8yhyPZPlHwYLx/ge2w07WwmlrLe8AUDDv3XemlKI=
 github.com/jeremyhahn/go-frost v0.3.0-alpha h1:fS/7aRh6igwYfhEkpY6UsMF0qg0xbqeARG4HZTpLb20=
 github.com/jeremyhahn/go-frost v0.3.0-alpha/go.mod h1:Dzz/o3XUPo+jruOoojc9SG3zFpF2v46kSLLz1vq/90U=
 github.com/jeremyhahn/go-luks2 v1.0.1-alpha h1:0oRr/1K57p20vbv7f8x2Pl2EenjhexC7kKk6oyeYQPs=

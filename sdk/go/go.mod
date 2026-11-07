@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/go-tpm v0.9.8
-	github.com/jeremyhahn/go-enclave v0.10.0-alpha
+	github.com/jeremyhahn/go-enclave v0.11.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.58.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.7.0-alpha
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
