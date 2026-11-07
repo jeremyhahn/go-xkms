@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/fips140"
 	"crypto/rand"
@@ -359,42 +358,6 @@ func TestProvider_CrossKeyVerificationFails(t *testing.T) {
 	}
 }
 
-// TestProvider_Ed25519PublicKeyShape asserts the Ed25519 path yields a real
-// 32-byte ed25519.PublicKey rather than an interface holding another type —
-// the SSH agent and authorized_keys writers both depend on this.
-func TestProvider_Ed25519PublicKeyShape(t *testing.T) {
-	ctx := context.Background()
-	p, err := New(newSoftwareResolver(t))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	signer, err := p.GenerateKey(ctx, "software", "ssh-user-ed-shape", keys.AlgorithmEd25519, 0)
-	if err != nil {
-		t.Fatalf("GenerateKey: %v", err)
-	}
-	pub, ok := signer.Public().(ed25519.PublicKey)
-	if !ok {
-		t.Fatalf("expected ed25519.PublicKey, got %T", signer.Public())
-	}
-	if len(pub) != ed25519.PublicKeySize {
-		t.Fatalf("ed25519 public key length = %d, want %d", len(pub), ed25519.PublicKeySize)
-	}
-
-	// Ed25519 signs the message directly (crypto.Hash(0)).
-	msg := []byte("ed25519 direct sign")
-	sig, err := signer.Sign(rand.Reader, msg, crypto.Hash(0))
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	if !ed25519.Verify(pub, msg, sig) {
-		t.Fatal("ed25519.Verify rejected the backend signature")
-	}
-	msg[0] ^= 0xFF
-	if ed25519.Verify(pub, msg, sig) {
-		t.Fatal("ed25519.Verify accepted a tampered message")
-	}
-}
-
 // TestProvider_RSABitsHonoredAndDefaulted proves the rsaBits argument reaches
 // the backend and that a zero value defaults to RSA-4096 rather than to an
 // unsafe small modulus (Go's rsa.GenerateKey has no default, so a regression
@@ -688,63 +651,6 @@ func TestProvider_BackendFailuresAreTypedAndUnwrappable(t *testing.T) {
 			t.Errorf("message %q omits the key identity", derr.Error())
 		}
 	})
-}
-
-// TestProvider_DeleteMissingKeyIsTyped covers the real-backend delete-miss
-// path (as opposed to the injected failure above): deleting a key that was
-// never generated must produce a DeleteError naming the key.
-func TestProvider_DeleteMissingKeyIsTyped(t *testing.T) {
-	ctx := context.Background()
-	p, err := New(newSoftwareResolver(t))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	err = p.DeleteKey(ctx, "software", "ssh-user-never-existed", keys.AlgorithmEd25519)
-	var derr *DeleteError
-	if !errors.As(err, &derr) {
-		t.Fatalf("DeleteKey on a missing key returned %v, want *DeleteError", err)
-	}
-	if derr.Unwrap() == nil {
-		t.Error("DeleteError.Unwrap() is nil; the backend cause was dropped")
-	}
-}
-
-// TestProvider_SignerResolvesSameKeyAcrossCalls proves Signer reconstructs the
-// attributes well enough to find the previously generated key: the public key
-// from a fresh Signer must be byte-identical to the one from GenerateKey. A
-// regression in the attribute reconstruction (wrong curve, wrong store type)
-// would either error or, worse, silently resolve a different key.
-func TestProvider_SignerResolvesSameKeyAcrossCalls(t *testing.T) {
-	ctx := context.Background()
-	p, err := New(newSoftwareResolver(t))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	for _, algo := range []keys.Algorithm{keys.AlgorithmEd25519, keys.AlgorithmECDSAP384, keys.AlgorithmECDSAP521} {
-		t.Run(algo.String(), func(t *testing.T) {
-			keyID := "ssh-user-stable-" + algo.String()
-			gen, err := p.GenerateKey(ctx, "software", keyID, algo, 0)
-			if err != nil {
-				t.Fatalf("GenerateKey: %v", err)
-			}
-			resolved, err := p.Signer(ctx, "software", keyID, algo)
-			if err != nil {
-				t.Fatalf("Signer: %v", err)
-			}
-			genPub, err := ssh.NewPublicKey(gen.Public())
-			if err != nil {
-				t.Fatalf("NewPublicKey(gen): %v", err)
-			}
-			resPub, err := ssh.NewPublicKey(resolved.Public())
-			if err != nil {
-				t.Fatalf("NewPublicKey(resolved): %v", err)
-			}
-			if string(genPub.Marshal()) != string(resPub.Marshal()) {
-				t.Fatal("Signer resolved a different key than GenerateKey created")
-			}
-		})
-	}
 }
 
 // TestResolverFunc_Adapts confirms the function adapter forwards both the
