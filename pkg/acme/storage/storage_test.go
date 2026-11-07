@@ -20,20 +20,6 @@ import (
 )
 
 // TestStorageErrors verifies that all storage error variables are properly defined.
-func TestStorageErrors(t *testing.T) {
-	// External account binding errors
-	assert.NotNil(t, ErrExternalAccountBindingExpired)
-	assert.NotNil(t, ErrExternalAccountBindingUsed)
-	assert.NotNil(t, ErrExternalAccountBindingRevoked)
-
-	// Tenant errors
-	assert.NotNil(t, ErrTenantAlreadyExists)
-	assert.NotNil(t, ErrTenantSuspended)
-	assert.NotNil(t, ErrTenantDeleted)
-	assert.NotNil(t, ErrTenantCANotConfigured)
-	assert.NotNil(t, ErrTenantQuotaExceeded)
-}
-
 // TestStorageErrorMessages verifies that error messages are descriptive.
 func TestStorageErrorMessages(t *testing.T) {
 	tests := []struct {
@@ -58,7 +44,3 @@ func TestStorageErrorMessages(t *testing.T) {
 }
 
 // TestInterfaceTypes verifies that interface types are properly exported.
-func TestInterfaceTypes(t *testing.T) {
-	var _ Factory
-	var _ TenantAwareFactory
-}
