@@ -1,0 +1,1 @@
+- The API suite's xkey SSH parity tests generate, list, export and delete keys under the admin identity's own owner (its certificate's Common Name), which a user-scope key requires, and reach MCP over `mcps://`, the TLS transport xkmsd serves it on (run 77491).
