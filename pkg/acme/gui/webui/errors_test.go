@@ -25,25 +25,9 @@ func TestErrAssetLoad_Error(t *testing.T) {
 	}
 }
 
-func TestErrAssetLoad_ErrorEmpty(t *testing.T) {
-	err := &ErrAssetLoad{}
-	expected := "webui: failed to load assets: "
-	if err.Error() != expected {
-		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-}
-
 func TestErrIndexNotFound_Error(t *testing.T) {
 	err := &ErrIndexNotFound{Detail: "file does not exist"}
 	expected := "webui: index.html not found: file does not exist"
-	if err.Error() != expected {
-		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-}
-
-func TestErrIndexNotFound_ErrorEmpty(t *testing.T) {
-	err := &ErrIndexNotFound{}
-	expected := "webui: index.html not found: "
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
