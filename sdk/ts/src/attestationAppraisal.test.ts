@@ -21,6 +21,8 @@ import { describe, it, expect } from 'vitest';
 import { createClient } from './client.js';
 import { newFakeFetch } from './testutil.js';
 import { XkmsApiError } from './errors.js';
+import { encodePathSegment } from './http.js';
+import { AttestationNameError } from './clients/attestationAppraisal.js';
 import type { AppraiseAttestationQuoteRequest, AttestationEndorsement } from './types/attestationAppraisal.js';
 
 const BASE = 'https://xkms.example.com';
@@ -93,6 +95,28 @@ describe('AttestationAppraisalClient (wire contract)', () => {
     await c.attestation.deleteReferenceValues('golden');
     expect(fake.calls[3]?.method).toBe('DELETE');
     expect(fake.calls[3]?.url).toBe(`${REFERENCE_VALUES}/golden`);
+  });
+
+  it('refuses the names "." and ".." before any fetch', async () => {
+    // Request normalizes dot segments, so an encoded ".." would leave the
+    // record collection and address /api/v1/attestation/ instead.
+    expect(new Request(`${ENDORSEMENTS}/${encodePathSegment('..')}`).url).toBe(`${BASE}/api/v1/attestation/`);
+    expect(new Request(`${REFERENCE_VALUES}/${encodePathSegment('.')}`).url).toBe(`${REFERENCE_VALUES}/`);
+
+    const fake = newFakeFetch({ status: 204 });
+    const c = make(fake);
+    for (const name of ['.', '..']) {
+      for (const call of [
+        () => c.attestation.deleteEndorsement(name),
+        () => c.attestation.getReferenceValues(name),
+        () => c.attestation.deleteReferenceValues(name),
+      ]) {
+        const err = await call().catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(AttestationNameError);
+        expect((err as AttestationNameError).recordName).toBe(name);
+      }
+    }
+    expect(fake.calls).toHaveLength(0);
   });
 
   it('appraises a quote with a POST of the evidence', async () => {
