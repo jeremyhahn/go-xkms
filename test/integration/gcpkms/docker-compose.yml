@@ -1,19 +1,23 @@
 services:
+  # Pinned by tag and digest (DS-4181): floci-gcp 0.11.0 is built on
+  # ubi9-micro, which ships no curl, so a curl probe never passes. The image's
+  # own bash probe polls GET /_floci-gcp/health on 4588.
   floci-gcp:
-    image: floci/floci-gcp:latest
+    image: floci/floci-gcp:0.11.0@sha256:eae9683d806ceb643bcb36aee97cdb8cad13c3e2959cd053bf40e481994fde12
     environment:
       - GOWORK=off
       - GOPRIVATE=github.com/jeremyhahn/*
       - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
-      - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${GITEA_GO_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
+      - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${FORGE_MODULE_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
       - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}
       - FLOCI_GCP_DEFAULT_PROJECT_ID=test-project
       - FLOCI_GCP_STORAGE_MODE=memory
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4588/health"]
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 5s
       timeout: 3s
       retries: 10
+      start_period: 10s
     ports:
       - "0:4588"
 

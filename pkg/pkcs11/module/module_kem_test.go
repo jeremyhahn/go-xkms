@@ -231,7 +231,7 @@ func TestEncapsulateKey(t *testing.T) {
 		assert.Nil(t, ciphertext)
 	})
 
-	t.Run("returns CKR_KEY_TYPE_INCONSISTENT without CKA_ENCAPSULATE", func(t *testing.T) {
+	t.Run("returns CKR_KEY_FUNCTION_NOT_PERMITTED without CKA_ENCAPSULATE", func(t *testing.T) {
 		m, sessionHandle, keyHandle := createTestModuleWithKey(t)
 		defer m.Finalize()
 
@@ -240,7 +240,7 @@ func TestEncapsulateKey(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_KEY_TYPE_INCONSISTENT, pkcsErr.Code)
+		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, pkcsErr.Code)
 		assert.Equal(t, ObjectHandle(InvalidHandle), handle)
 		assert.Nil(t, ciphertext)
 	})
@@ -463,7 +463,7 @@ func TestDecapsulateKey(t *testing.T) {
 		assert.Equal(t, ObjectHandle(InvalidHandle), handle)
 	})
 
-	t.Run("returns CKR_KEY_TYPE_INCONSISTENT without CKA_DECAPSULATE", func(t *testing.T) {
+	t.Run("returns CKR_KEY_FUNCTION_NOT_PERMITTED without CKA_DECAPSULATE", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
@@ -486,7 +486,7 @@ func TestDecapsulateKey(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_KEY_TYPE_INCONSISTENT, pkcsErr.Code)
+		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, pkcsErr.Code)
 		assert.Equal(t, ObjectHandle(InvalidHandle), handle)
 	})
 
@@ -904,7 +904,7 @@ func TestKEMCiphertextSize(t *testing.T) {
 		assert.Equal(t, CKR_KEY_HANDLE_INVALID, pkcsErr.Code)
 	})
 
-	t.Run("returns CKR_KEY_TYPE_INCONSISTENT without CKA_ENCAPSULATE", func(t *testing.T) {
+	t.Run("returns CKR_KEY_FUNCTION_NOT_PERMITTED without CKA_ENCAPSULATE", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
@@ -927,7 +927,7 @@ func TestKEMCiphertextSize(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_KEY_TYPE_INCONSISTENT, pkcsErr.Code)
+		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, pkcsErr.Code)
 	})
 }
 

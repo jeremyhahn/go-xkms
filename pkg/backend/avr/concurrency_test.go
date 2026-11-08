@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -35,7 +35,7 @@ import (
 // TestConcurrentCallsDoNotConsumeEachOthersReplies drives every command the
 // backend issues from several goroutines at once.
 //
-// aggeneric.Device is a strict request/response client: Do takes the next
+// tfw.Device is a strict request/response client: Do takes the next
 // sequence number, writes, and reads until a frame with that sequence arrives,
 // dropping replies to other sequences on the way. Two goroutines inside Do at
 // once therefore eat each other's answers, and AttestCert -- several Do calls
@@ -47,14 +47,14 @@ import (
 // list directly.
 func TestConcurrentCallsDoNotConsumeEachOthersReplies(t *testing.T) {
 	device := newAliasDevice(t)
-	nonce := bytes.Repeat([]byte{0x5A}, aggeneric.AliasNonceLen)
+	nonce := bytes.Repeat([]byte{0x5A}, tfw.AliasNonceLen)
 	certificate := device.mint(t, nonce)
 
 	point, _ := testPoint(t)
 	link := secureElementLink().
-		answer(aggeneric.CmdSysInfo, sysInfoPayload(90*time.Second, 512, aggeneric.ResetPowerOn)).
-		answer(aggeneric.CmdProvInfo, provInfoPayload(bytes.Repeat([]byte{0x11}, 9), true, true)).
-		answer(aggeneric.CmdProvPubKey, point).
+		answer(tfw.CmdSysInfo, sysInfoPayload(90*time.Second, 512, tfw.ResetPowerOn)).
+		answer(tfw.CmdProvInfo, provInfoPayload(bytes.Repeat([]byte{0x11}, 9), true, true)).
+		answer(tfw.CmdProvPubKey, point).
 		answerAttestCertRepeating(certificate)
 
 	b := newTestBackend(t, link)
@@ -142,14 +142,14 @@ func TestRequestTimeoutExcludesQueueing(t *testing.T) {
 
 	link := &delayedLink{
 		fakeLink: secureElementLink().
-			answer(aggeneric.CmdSysInfo, sysInfoPayload(90*time.Second, 512, aggeneric.ResetPowerOn)),
+			answer(tfw.CmdSysInfo, sysInfoPayload(90*time.Second, 512, tfw.ResetPowerOn)),
 		delay: perCall,
 	}
 
 	config := testConfig()
 	config.RequestTimeout = requestTimeout
 
-	b, err := NewBackend(context.Background(), config, aggeneric.New(link))
+	b, err := NewBackend(context.Background(), config, tfw.New(link))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 
@@ -189,9 +189,9 @@ func (e *testMismatch) Error() string {
 // which is what this measures.
 func TestRequestTimeoutBoundsTheDeviceRead(t *testing.T) {
 	link := newStallingLink(capsPayload(
-		aggeneric.CryptoSecureElement,
-		aggeneric.FeatureGPIO|aggeneric.FeatureAttest,
-		aggeneric.AlgECDSAP256SHA256,
+		tfw.CryptoSecureElement,
+		tfw.FeatureGPIO|tfw.FeatureAttest,
+		tfw.AlgECDSAP256SHA256,
 	))
 
 	// Built the way a caller who knows nothing of this backend's configuration
@@ -199,7 +199,7 @@ func TestRequestTimeoutBoundsTheDeviceRead(t *testing.T) {
 	config := testConfig()
 	config.RequestTimeout = 100 * time.Millisecond
 
-	b, err := NewBackend(context.Background(), config, aggeneric.New(link))
+	b, err := NewBackend(context.Background(), config, tfw.New(link))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 
@@ -243,11 +243,11 @@ func (l *stallingLink) Write(p []byte) (int, error) {
 	if l.quiet {
 		return len(p), nil
 	}
-	frame, _, err := aggeneric.Decode(p)
+	frame, _, err := tfw.Decode(p)
 	if err != nil {
 		return 0, err
 	}
-	response, err := aggeneric.EncodeResponse(frame.Seq, frame.Cmd(), 0, l.caps)
+	response, err := tfw.EncodeResponse(frame.Seq, frame.Cmd(), 0, l.caps)
 	if err != nil {
 		return 0, err
 	}

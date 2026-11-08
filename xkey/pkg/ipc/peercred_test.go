@@ -133,7 +133,7 @@ func countingListener(t *testing.T, sockPath string) *atomic.Int32 {
 }
 
 func TestClient_RefusesWideSocketDirectoryBeforeSendingPIN(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortTempDir(t)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	sockPath := filepath.Join(dir, "xkey.sock")
 	accepted := countingListener(t, sockPath)

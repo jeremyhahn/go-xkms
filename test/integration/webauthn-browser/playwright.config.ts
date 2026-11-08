@@ -15,7 +15,8 @@ import { defineConfig } from '@playwright/test';
 
 // Drives Chrome's CDP virtual authenticator against a REAL running xkmsd
 // server's WebAuthn Relying Party (/api/v1/webauthn/*). The webServer hook
-// boots xkmsd on http://localhost:18443 and waits for /health.
+// boots xkmsd on https://localhost:18443 (with the certificate `xkmsd init`
+// issues for localhost; run-server.sh unseals its barrier) and waits for /health/ready.
 export default defineConfig({
   testDir: './tests',
   timeout: 60_000,
@@ -29,7 +30,9 @@ export default defineConfig({
   use: {
     browserName: 'chromium',
     headless: true,
-    baseURL: 'http://localhost:18443',
+    baseURL: 'https://localhost:18443',
+    // The RP's certificate is issued by the daemon's own CA, which the browser does not trust.
+    ignoreHTTPSErrors: true,
     screenshot: 'only-on-failure',
     trace: 'on-first-retry',
     // --no-sandbox: required for the CDP virtual authenticator in CI containers.
@@ -49,7 +52,10 @@ export default defineConfig({
   },
   webServer: {
     command: 'bash ./run-server.sh',
-    url: 'http://localhost:18443/health',
+    // /health answers once the daemon boots, before run-server.sh unseals
+    // its barrier; /health/ready answers 503 until the REST surface is up.
+    url: 'https://localhost:18443/health/ready',
+    ignoreHTTPSErrors: true,
     reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'pipe',

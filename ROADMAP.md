@@ -106,7 +106,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **tpm-policies** — unattended unlock across updates, steps 1 and 2 — [#1443](../../issues/1443) — open
 - **attestation-verifier** — event-log replay against signed CoRIM reference values — [#1443](../../issues/1443) — open
 - **acme-issuance** — `sdk/go` `AssemblePossessionCSR` for device-attest-01 finalize — [trusted-firmware #28](../../../trusted-firmware/issues/28), [SPEC](docs/SPEC.md#features) — open; the server refusing any measurements (273) shape but the ruled one is done, matching its 32 bytes against the registered reference is open
-- **dice-device-identity** — alias claims in the ruled measurements (273) shape, the CoSWID's tag-id, software-name and entity the producer's (CA m463; arduino-generic's are accepted), open until the server matches the 32 bytes against the registered reference; the root type (hardware or software UDS, from DiceTcbInfo) is in the evidence, the attestation `Result` and device-attest-01, and `dice-idevid` shipped in [#658](../../issues/658), [#1510](../../issues/1510) — [SPEC](docs/SPEC.md#features) — open
+- **dice-device-identity** — alias claims in the ruled measurements (273) shape, the CoSWID's tag-id, software-name and entity the producer's (CA m463; trusted-firmware's are accepted), open until the server matches the 32 bytes against the registered reference; the root type (hardware or software UDS, from DiceTcbInfo) is in the evidence, the attestation `Result` and device-attest-01, and `dice-idevid` shipped in [#658](../../issues/658), [#1510](../../issues/1510) — [SPEC](docs/SPEC.md#features) — open
 
 ## Next
 
@@ -129,6 +129,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **enrollment-ek-required** — the inherited go-qrdb setting that enroll-01 and endorse-01 require a TPM EK — [SPEC](docs/SPEC.md#features) — open
 - **continuous-attestation** — scheduled and on-demand re-attestation of enrolled devices with a published verdict — [SPEC](docs/SPEC.md#features) — open
 - **device-registry** — paired-device registry, tenant-scoped with go-xkms the verifier in backend mode — [SPEC](docs/SPEC.md#features) — open
+- **device-security-event-evidence** — a device's tamper-response record reaches go-xkms as RFC 9334 Evidence — [#1765](../../issues/1765) — blocked: owner ruling on the binding
 - **device-share-policy** — device sharing under the `device:*` permissions of tenant Admin and Owner — [SPEC](docs/SPEC.md#features) — blocked: go-qrdb gap
 - **device-policy-source** — xkey applies the stricter of its SO-sealed and the go-xkms device policy — [SPEC](docs/SPEC.md#features) — open
 - **verifier-appraisal-seam** — the go-quicbaas appraisal code and reference-values store moved into go-xkms `pkg/attestation` with history, re-exported by go-quicbaas — [SPEC](docs/SPEC.md#features) — open

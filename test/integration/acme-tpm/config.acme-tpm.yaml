@@ -126,12 +126,13 @@ ca:
   # committed key/cert at testdata/swtpm-test-ek-root.{crt,key} -- fixed
   # rather than generated per test-binary run, specifically so this server
   # process (a different container, started before the test binary even
-  # runs) can be told about it in advance, via this same file bind-mounted
-  # read-only by docker-compose.yml.
+  # runs) can be told about it in advance, read from the source tree the
+  # image COPYs into /workspace (docker-compose.yml explains why it is not
+  # bind-mounted).
   tcg-config:
     trust-anchors:
       external_root_paths:
-        - "/testdata/swtpm-test-ek-root.crt"
+        - "/workspace/test/integration/acme-tpm/testdata/swtpm-test-ek-root.crt"
 
 # ACME (RFC 8555) server. The TLS cert/key are generated at container start by
 # `go run ./test/integration/acme-tpm/certgen` (see docker-compose.yml) since

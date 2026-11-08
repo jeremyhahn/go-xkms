@@ -24,7 +24,7 @@
 # - The gate tools: golangci-lint, actionlint, shellcheck, gosec, govulncheck, trivy
 ARG GO_IMAGE
 # GO_BUILD_PROXY is the GOPROXY of the tools and modules stages. The Makefile
-# passes the caller's GOPROXY (CI exports the fleet's module proxy first); this
+# passes its GO_BUILD_PROXY (CI sets Athens first, ci-template v1.29.5); this
 # default applies only when none is set. Checksum verification stays on.
 ARG GO_BUILD_PROXY=https://proxy.golang.org,direct
 
@@ -289,7 +289,7 @@ RUN . /tmp/tool-pins.sh && \
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS modules
 ARG GO_BUILD_PROXY
-ENV GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOMODCACHE=/gomodcache GOPROXY=${GO_BUILD_PROXY}
+ENV GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOMODCACHE=/opt/go/mod GOPROXY=${GO_BUILD_PROXY}
 WORKDIR /src
 # The root module, sdk/go, xkey and web/desktop replace each other locally,
 # so all four go.mod/go.sum pairs are needed to resolve any one of them.
@@ -297,11 +297,17 @@ COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 COPY xkey/go.mod xkey/go.sum ./xkey/
 COPY web/desktop/go.mod web/desktop/go.sum ./web/desktop/
+COPY scripts/agsim.sum ./scripts/
 # In-house modules resolve from forge tags with the read-only fetch token in
 # the gomodauth BuildKit secret (dependency-resolution.md §6); without it
 # everything resolves through GO_BUILD_PROXY. Besides each build list this fetches the
-# arduino-generic source scripts/build-agsim.sh compiles and the wails CLI
+# trusted-firmware source scripts/build-agsim.sh compiles and the wails CLI
 # `make check-wailsjs` runs, so the test stage needs no network for either.
+# The trusted-firmware source comes from git at the commit scripts/agsim.sum
+# pins, not from `go mod download`: the repository root has no go.mod, so the
+# Go proxy serves no version of it (only sdk/go). It lands in
+# /opt/agsim-src/<version>, where build-agsim.sh fetches it from and checks the
+# commit and tree again.
 RUN --mount=type=secret,id=gomodauth \
     if [ -s /run/secrets/gomodauth ]; then \
         set -a; . /run/secrets/gomodauth; set +a; \
@@ -310,8 +316,14 @@ RUN --mount=type=secret,id=gomodauth \
         echo "modules: no gomodauth secret; resolving through GO_BUILD_PROXY"; \
     fi && \
     for m in . sdk/go xkey web/desktop; do (cd "$m" && go mod download) || exit 1; done && \
-    agsim_version=$(go list -m -f '{{.Version}}' github.com/jeremyhahn/arduino-generic/sdk/go) && \
-    go mod download "github.com/jeremyhahn/arduino-generic@${agsim_version}" && \
+    tfwsim_version=$(go list -m -f '{{.Version}}' github.com/jeremyhahn/trusted-firmware/sdk/go) && \
+    tfwsim_pin=$(awk -v v="${tfwsim_version}" '$1 !~ /^#/ && $2 == v' scripts/agsim.sum) && \
+    set -- ${tfwsim_pin} && \
+    tfwsim_src="/opt/agsim-src/${tfwsim_version}" && \
+    git init -q "${tfwsim_src}" && \
+    git -C "${tfwsim_src}" fetch -q --depth 1 "$1" "$3" && \
+    git -C "${tfwsim_src}" -c advice.detachedHead=false checkout -q FETCH_HEAD && \
+    test "$(git -C "${tfwsim_src}" rev-parse 'HEAD^{commit}') $(git -C "${tfwsim_src}" rev-parse 'HEAD^{tree}')" = "$3 $4" && \
     wails_version=$(cd xkey && go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2) && \
     GOBIN=/tmp/wails go install "github.com/wailsapp/wails/v2/cmd/wails@${wails_version}" && \
     rm -rf /tmp/wails
@@ -468,10 +480,14 @@ RUN printf '%s\n' \
     > /etc/profile.d/10-xkms-toolchain.sh
 
 # The verified module cache, readable by every user, and a warm race-enabled
-# standard library. After this the image builds and tests offline.
-ENV GOTOOLCHAIN=local CGO_ENABLED=1 GOFLAGS=-mod=readonly GOMODCACHE=/gomodcache GOCACHE=/gocache
-COPY --from=modules /gomodcache /gomodcache
-RUN chmod -R a+rX /gomodcache && \
+# standard library. After this the image builds and tests offline. The cache
+# sits at /opt/go/mod, the path ci.yml's `trivy image --skip-dirs` names
+# (handbook devops.md §8): third-party module sources carry example secrets
+# and test keys, and the skip must cover exactly this directory.
+ENV GOTOOLCHAIN=local CGO_ENABLED=1 GOFLAGS=-mod=readonly GOMODCACHE=/opt/go/mod GOCACHE=/gocache
+COPY --from=modules /opt/go/mod /opt/go/mod
+COPY --from=modules /opt/agsim-src /opt/agsim-src
+RUN chmod -R a+rX /opt/go/mod /opt/agsim-src && \
     go build -race std && \
     chmod -R a+rwX /gocache
 ENV GOPROXY=off

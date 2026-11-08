@@ -20,7 +20,7 @@ require (
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/flynn/noise v1.1.0
 	github.com/fxamacker/cbor/v2 v2.9.6
-	github.com/getkin/kin-openapi v0.151.0
+	github.com/getkin/kin-openapi v0.152.0
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-viper/mapstructure/v2 v2.5.0
@@ -33,7 +33,6 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/vault/api v1.23.0
-	github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-frost v0.3.0-alpha
@@ -42,6 +41,7 @@ require (
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
+	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/mark3labs/mcp-go v1.3.0
 	github.com/miekg/dns v1.1.73
@@ -286,7 +286,7 @@ replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
 
 replace github.com/jeremyhahn/go-xkms/sdk/go => ./sdk/go
 
-replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.9.9-0.20261015005355-56ec25c36102
+replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.0.0-20261108040111-edb18e51d83f
 
 // held: go-enclave v0.9.0-alpha removes MemoryEnclave, which go-qrdb v0.50.0-alpha's
 // graph (go-quicraft v0.22.0-alpha, go-truststrap v0.6.0-alpha, go-objstore v0.4.0-alpha,

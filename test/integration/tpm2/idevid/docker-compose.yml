@@ -1,6 +1,6 @@
 services:
   tpm-simulator:
-    image: ghcr.io/stefanberger/swtpm:latest
+    image: ghcr.io/stefanberger/swtpm:v0.10.0@sha256:303a1998b9ae7ad500146036bb63e1e0703208f788db8741233f0080c3125a78
     command:
       - socket
       - --tpmstate

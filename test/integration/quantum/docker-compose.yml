@@ -3,16 +3,15 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/quantum/Dockerfile
+      secrets:
+        - gomodauth
     environment:
       - GOWORK=off
       - GOPRIVATE=github.com/jeremyhahn/*
       - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
-      - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${GITEA_GO_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
+      - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${FORGE_MODULE_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
       - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}
       - GO111MODULE=on
-    volumes:
-      - ../../../:/workspace
-      - go-modules:/go/pkg/mod
     working_dir: /workspace
     command: >
       go test -v -tags="integration codec_cbor codec_json codec_msgpack"
@@ -25,5 +24,10 @@ networks:
   quantum-test-network:
     driver: bridge
 
-volumes:
-  go-modules:
+# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
+# gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are
+# available, in which case the Dockerfile's optional secret mount falls back
+# to public module resolution.
+secrets:
+  gomodauth:
+    file: ../../../build/docker/devcontainer/gomodauth.env

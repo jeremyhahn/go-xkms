@@ -309,8 +309,8 @@ changelog_entries_pending() {
 # git remote URL it is pushed through. Both halves come from the one URL, so
 # the pull request lands on the server the branch was pushed to:
 #
-#	ssh://[user@]host[:sshport]/owner/repo   -> http://host:3001/owner/repo
-#	[user@]host:owner/repo                   -> http://host:3001/owner/repo
+#	ssh://[user@]host[:sshport]/owner/repo   -> http://host:$GITEA_HTTP_PORT/owner/repo
+#	[user@]host:owner/repo                   -> http://host:$GITEA_HTTP_PORT/owner/repo
 #	http[s]://[user[:pass]@]host[:port]/owner/repo -> as written, minus userinfo
 #
 # An SSH remote names the SSH port, not the web one, so it maps to

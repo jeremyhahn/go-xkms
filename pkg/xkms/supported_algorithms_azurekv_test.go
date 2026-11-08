@@ -28,7 +28,8 @@ func TestSupportedAlgorithms_AzureKeyVaultAdvertisesNoEd25519(t *testing.T) {
 	algorithms := supportedAlgorithms((&azurekv.Backend{}).Capabilities().KeyAlgorithms, false)
 
 	assert.ElementsMatch(t, []transport.KeyAlgorithm{
-		transport.KeyAlgorithmRSA2048, transport.KeyAlgorithmECDSAP256,
+		transport.KeyAlgorithmRSA2048, transport.KeyAlgorithmRSA3072, transport.KeyAlgorithmRSA4096,
+		transport.KeyAlgorithmECDSAP256, transport.KeyAlgorithmECDSAP384, transport.KeyAlgorithmECDSAP521,
 		transport.KeyAlgorithmAES128GCM, transport.KeyAlgorithmAES192GCM, transport.KeyAlgorithmAES256GCM,
 	}, algorithms)
 	assert.NotContains(t, algorithms, transport.KeyAlgorithmEd25519,

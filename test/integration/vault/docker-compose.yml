@@ -1,13 +1,15 @@
 services:
+  # Pinned by tag and digest (DS-4181) so a new upstream release cannot change
+  # the probe under CI; the healthcheck uses the vault CLI the image ships.
   vault:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
     cap_add:
       - IPC_LOCK
     environment:
       - GOWORK=off
       - GOPRIVATE=github.com/jeremyhahn/*
       - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
-      - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${GITEA_GO_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
+      - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${FORGE_MODULE_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
       - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}
       - VAULT_DEV_ROOT_TOKEN_ID=root
       - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
