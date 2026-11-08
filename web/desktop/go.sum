@@ -365,8 +365,8 @@ github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha h1:/ga4ic42OGujWx4fO1w/Bb1Umz
 github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha/go.mod h1:9oNYswBFdjQke8bza1147yuRTEnqzEe1lz4tzs0i2DA=
 github.com/jeremyhahn/go-quicraft v0.22.0-alpha h1:9DCWfLLnH/Cnda3eKlpfVGlLFRFFEQ/Ow4WmSGfPLtc=
 github.com/jeremyhahn/go-quicraft v0.22.0-alpha/go.mod h1:8JiGuTzyg0LMAM/CebTbnlqmHftPwdPndamtNwMvz5o=
-github.com/jeremyhahn/go-tpm v0.9.9-0.20261015005355-56ec25c36102 h1:7PYoMBPrkvRqmUKYLbZfdajjALjILUEiqjUM1vM+doA=
-github.com/jeremyhahn/go-tpm v0.9.9-0.20261015005355-56ec25c36102/go.mod h1:9tkuoXrRnWRb2b6ce36+5HFVBI8MoVLpWAqx5AcR6y0=
+github.com/jeremyhahn/go-tpm v0.0.0-20261108040111-edb18e51d83f h1:WurSKYWHVDIHPHv7NcvVCo9o6JoQRmBBlsYtOYAqaZg=
+github.com/jeremyhahn/go-tpm v0.0.0-20261108040111-edb18e51d83f/go.mod h1:9tkuoXrRnWRb2b6ce36+5HFVBI8MoVLpWAqx5AcR6y0=
 github.com/jeremyhahn/go-truststrap v0.6.0-alpha h1:5HMHZXUS0Tot3fdWsMwTOY6hd8U0aDbrWa5Fq4NlHsI=
 github.com/jeremyhahn/go-truststrap v0.6.0-alpha/go.mod h1:ag7JwSjxVh1qxykYBHJ3eaLPM925tRSOPCf0PflS8Qk=
 github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha h1:7XiHnVp19x6EIwFE6rIvOtPfA2sZe12i7TXNKMi07uk=
