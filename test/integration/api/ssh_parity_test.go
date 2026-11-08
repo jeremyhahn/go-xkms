@@ -17,7 +17,6 @@ package integration
 
 import (
 	"bytes"
-	"crypto/x509"
 	"fmt"
 	"os"
 	"os/exec"
@@ -177,7 +176,7 @@ func TestXkeySSHMultiProtocol(t *testing.T) {
 	tlsCA := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
 
 	// Remote protocols require a running server; embedded runs in-process.
-	owner := adminSubject(t)
+	owner := adminSubject
 	for _, proto := range RemoteProtocols() {
 		proto := proto
 		t.Run(string(proto), func(t *testing.T) {
@@ -241,19 +240,13 @@ func sshKeyLifecycle(t *testing.T, bin, serverURL, tlsCA, home, owner, keyName s
 	}
 }
 
-// adminSubject returns the subject the server authenticates the admin
-// credential as. A user-scope key's owner must equal that subject
-// (pkg/scope/principal.go), and the admin's username, which the server takes
-// as the subject, is the certificate's Common Name.
-func adminSubject(t *testing.T) string {
-	t.Helper()
-	_, _, cred := loadAdminCredential(t)
-	cert, err := x509.ParseCertificate(cred.Certificate[0])
-	if err != nil {
-		t.Fatalf("parse the admin mTLS certificate: %v", err)
-	}
-	return cert.Subject.CommonName
-}
+// adminSubject is the subject the server authenticates the admin credential
+// as. A user-scope key's owner must equal that subject
+// (pkg/scope/principal.go). With a user store the mTLS subject is the bound
+// user's username (pkg/auth/mtls.go userIdentity), not the certificate's
+// Common Name, and `xkmsd init` binds the admin credential to the username
+// "administrator" (cmd/xkmsd/init_ceremony.go adminUsername).
+const adminSubject = "administrator"
 
 // TestXkeySSHBackendSelection verifies that, over a remote protocol, the xkey
 // CLI can mint SSH keys on specific server-side crypto backends via --backend,
@@ -281,7 +274,7 @@ func TestXkeySSHBackendSelection(t *testing.T) {
 		t.Fatalf("no remote protocol available for backend-selection test")
 	}
 	serverURL := sshServerURL(cfg, proto)
-	owner := adminSubject(t)
+	owner := adminSubject
 
 	for _, raw := range backends {
 		backend := strings.TrimSpace(raw)
