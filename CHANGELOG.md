@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.64.2-alpha] - 2026-11-08
+
+### Changed
+
+- **The AVR backend's wire SDK is `github.com/jeremyhahn/trusted-firmware/sdk/go` v0.4.2-alpha, not `github.com/jeremyhahn/arduino-generic/sdk/go` v0.7.0-alpha.** arduino-generic was renamed trusted-firmware, and its old module path is private and no longer resolves, so v0.64.0-alpha and v0.64.1-alpha cannot be built from the module proxy. The import paths change in `pkg/backend/avr`, `sdk/go` and the device-attest-01 tests. The `sdk/go` and `xkey` submodules are tagged `sdk/go/v0.64.2-alpha` and `xkey/v0.64.2-alpha`: their `go.mod` files require go-xkms v0.64.2-alpha and each other at v0.64.2-alpha, so a module that requires any of the three resolves the trusted-firmware SDK and no arduino-generic module. `go.sum` records the checksums the proxy now serves for the jeremyhahn modules whose tags moved when their repositories were rewritten. The `github.com/google/go-tpm` replace, which applies only inside this repository, points at the fork revision `v0.0.0-20261108040111-edb18e51d83f` that the proxy serves. No other change from v0.64.1-alpha.
+
 ## [0.64.0-alpha] - 2026-10-25
 
 ### Security

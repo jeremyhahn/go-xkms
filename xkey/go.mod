@@ -31,8 +31,8 @@ require (
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
-	github.com/jeremyhahn/go-xkms v0.64.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
+	github.com/jeremyhahn/go-xkms v0.64.2-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.64.2-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/mdp/qrterminal/v3 v3.2.1
@@ -170,13 +170,13 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
-	github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.22.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // indirect
+	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.20.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
@@ -304,4 +304,4 @@ require (
 	software.sslmate.com/src/go-pkcs12 v0.7.4 // indirect
 )
 
-replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.9.9-0.20261015005355-56ec25c36102
+replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.0.0-20261108040111-edb18e51d83f

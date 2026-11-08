@@ -980,7 +980,7 @@ the RFC 4043 `permanentIdentifier` otherName from the evidence's leaf
 certificate — `x5c[0]` for `tpm`, the alias certificate for `dice` (read as
 the hex-encoded UEID instead, since a DICE leaf carries no otherName; read by
 `dice.DeviceUeid` from the `tcg-dice-Ueid` extension or, as the
-arduino-generic AVR profile states it, from CWT claim 256 of the
+trusted-firmware AVR profile states it, from CWT claim 256 of the
 `tcg-dice-UCCS-evidence` extension, type byte included, and refused as
 `ErrUeidConflict` if a leaf states both and they differ) — the same convention
 `pkg/acme/server/handlers.matchesPermanentIdentifierOrder` already reads from
