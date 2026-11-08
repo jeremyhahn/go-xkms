@@ -14,14 +14,13 @@
 # assertions, and the tag creation, signing and atomic push.
 #
 # Tags are real annotated, SSH-signed objects here -- signed with this
-# repository's own agent key
-# (~/.agent-identity/keys/agent-go-xkms.key), never the
+# repository's own agent key (the checkout's user.signingkey), never the
 # owner's hardware key, and only ever inside a throwaway fixture removed at
 # the end of the run.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-AGENT_KEY="${RELEASE_TAG_TEST_SIGNING_KEY:-$HOME/.agent-identity/keys/agent-go-xkms.key}"
+AGENT_KEY="${RELEASE_TAG_TEST_SIGNING_KEY:-$(git -C "$ROOT" config --get user.signingkey || true)}"
 
 PASS=0
 FAIL=0
@@ -48,7 +47,8 @@ true_() { # true_ <name> <command...>
 
 section() { printf '\n%s\n' "$1"; }
 
-if [ ! -f "$AGENT_KEY" ]; then
+# A key:: value is a literal public key whose private half is in ssh-agent.
+if [ ! -f "$AGENT_KEY" ] && [[ $AGENT_KEY != key::* ]]; then
 	printf 'release-tag.test: no signing key at %s -- skipping (set RELEASE_TAG_TEST_SIGNING_KEY)\n' "$AGENT_KEY" >&2
 	printf '\n0 passed, 0 failed\n'
 	exit 0
