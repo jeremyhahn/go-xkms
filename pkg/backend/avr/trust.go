@@ -14,7 +14,7 @@
 package avr
 
 import (
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -37,11 +37,11 @@ type tierTrust struct {
 // verify. A backend that inferred hardware backing from anything other than
 // what the device said about its own root of trust would be guessing at the
 // one fact a verifier is relying on it for.
-var tierTrusts = map[aggeneric.CryptoTier]tierTrust{
+var tierTrusts = map[tfw.CryptoTier]tierTrust{
 	// No crypto provider at all. Nothing established anything, which is what
 	// unattested means — not a claim that the key is software, because there
 	// is no key.
-	aggeneric.CryptoNone: {
+	tfw.CryptoNone: {
 		level:    types.AttestLevelUnattested,
 		security: types.SecurityLevelLow,
 	},
@@ -50,14 +50,14 @@ var tierTrusts = map[aggeneric.CryptoTier]tierTrust{
 	// symmetric path a verifier that holds the key could forge any response
 	// it could check. Software is the positive claim that the key is not
 	// hardware-resident, which is exactly what this tier reports about itself.
-	aggeneric.CryptoSoftware: {
+	tfw.CryptoSoftware: {
 		level:    types.AttestLevelSoftware,
 		security: types.SecurityLevelLow,
 	},
 
 	// A secure element on the device's I2C bus, with the private half of the
 	// identity generated inside it and no command anywhere that exports it.
-	aggeneric.CryptoSecureElement: {
+	tfw.CryptoSecureElement: {
 		level:    types.AttestLevelHardware,
 		security: types.SecurityLevelHigh,
 		hardware: true,
@@ -65,7 +65,7 @@ var tierTrusts = map[aggeneric.CryptoTier]tierTrust{
 
 	// A discrete TPM 2.0. Hardware-bound and non-exportable, the same
 	// classification xkms gives a TPM reached any other way.
-	aggeneric.CryptoTPM2: {
+	tfw.CryptoTPM2: {
 		level:    types.AttestLevelHardware,
 		security: types.SecurityLevelVeryHigh,
 		hardware: true,
@@ -82,7 +82,7 @@ var tierTrusts = map[aggeneric.CryptoTier]tierTrust{
 // trust the standing reserved for a secure element. The bool lets a caller
 // that needs to distinguish "the device has nothing" from "this host cannot
 // read what the device has" do so; AttestLevel turns it into an error.
-func trustFor(tier aggeneric.CryptoTier) (tierTrust, bool) {
+func trustFor(tier tfw.CryptoTier) (tierTrust, bool) {
 	t, ok := tierTrusts[tier]
 	if !ok {
 		// Spelled out rather than left to the zero value. tierTrust's zero
