@@ -496,7 +496,7 @@ change) and the separate `xkey` module (#23):
 | Package | Failing before | After | Disposition |
 |---|---|---|---|
 | `pkg/testing/pkcs11test` | 2 (`TestCryptoMockClient_EncryptDecrypt`, `TestCryptoMockClient_Decrypt_WrongNonceLength`) | 0 | Decrypt opens the construction the request's `GCMNonceMode` names, so the random-nonce round trip passes in both modes; an explicit-IV request is refused with the typed `aead.ErrArbitraryIVGCMUnavailable` after the nonce length check |
-| `pkg/acme/client` | 5 (`TestDeviceAttestDICE*`) | 5 | Need the agsim simulator, which runs only in CI; not a FIPS failure |
+| `pkg/acme/client` | 5 (`TestDeviceAttestDICE*`) | 5 | Need the tfwsim simulator, which runs only in CI; not a FIPS failure |
 
 Every other root package passes under `fips140=only`.
 

@@ -72,11 +72,12 @@ hands them to every job that runs a stage, through `scripts/ci-registry.sh`
 
 - **Push to `main`** (`CI_PUBLISH=true`): `ci-images` runs on the `release`
   runner. It pushes each image whose hash main has not published yet, as
-  `<registry>/agent-ci-images/go-xkms-ci-{toolchain,it}:<hash>-main`, a
+  `<registry>/<namespace>/go-xkms-ci-{toolchain,it}:<hash>-main`, a
   public namespace: only its owner or an admin can write a user namespace,
   so main's images do not live under the repository's owner (go-xkms #1730).
   The namespace is `CI_REGISTRY_OWNER` in `ci.yml`'s workflow env, which
-  names `agent-ci-images` on the forge and is empty on GitHub (ruling 217).
+  takes the repository variable of the same name on the forge and is empty
+  on GitHub (ruling 217).
   On GHCR, where the run's token pushes, the namespace is the owner. It outputs
   `toolchain_ref` and `it_ref` as `@sha256:` digest references and validates
   each one. The forge push logs in with the runner's own `RELEASE_REGISTRY`,
@@ -128,7 +129,7 @@ hands them to every job that runs a stage, through `scripts/ci-registry.sh`
 - **Consumers** (`image`, `lint-gates`, `static-analysis`, `build`,
   `nested-module-build`, `nested-module-test`, `build-raft`, `race`,
   `tpm2-simulator`) run `scripts/ci-registry.sh use` before their first
-  stage. It runs `docker pull <registry>/agent-ci-images/<image>@sha256:...`
+  stage. It runs `docker pull <registry>/<namespace>/<image>@sha256:...`
   through the runner's daemon, never with `buildx imagetools` (3 attempts).
   On the forge it pulls with no login. On GHCR it first logs in with the
   run's token in a private `DOCKER_CONFIG`; a refused login is a warning and
@@ -147,8 +148,8 @@ stops taking its image from `ci-images`. It also fails when an output of
 `ci-images` stops naming both the `publish` step (main) and the `resolve` step
 (pull requests), when either step stops writing that output, or when the
 Validate step stops checking it. It fails when `ci.yml`'s `CI_REGISTRY_OWNER`
-stops naming `agent-ci-images` on the forge, when `scripts/ci-registry.sh`
-writes that name itself or a read leaves `CI_REGISTRY_OWNER`'s namespace,
+stops taking the repository variable on the forge, when `scripts/ci-registry.sh`
+writes a namespace itself or a read leaves `CI_REGISTRY_OWNER`'s namespace,
 when a read step stops handing the script the run's token, when the script
 logs in or takes the token outside its login functions, sends it to the
 forge, or stops using it for a GHCR resolve or pull, or when `imagetools`
