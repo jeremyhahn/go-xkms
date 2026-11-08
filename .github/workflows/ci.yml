@@ -353,7 +353,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build Docker image for scanning (amd64 only)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.cli
@@ -401,7 +401,7 @@ jobs:
 
       - name: Push Docker image
         if: false  # Disabled - Docker publishing is handled by release workflow only
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.cli
