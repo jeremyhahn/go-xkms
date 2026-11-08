@@ -31,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
@@ -104,13 +104,13 @@ func TestRealDeviceCertificateBindsOnlyItsOwnKeyAndNamesItsDevice(t *testing.T) 
 
 // The one test that proves this package verifies the firmware rather than its
 // own idea of the firmware: the certificate is the frozen vector
-// arduino-generic pins its own C implementation against.
+// trusted-firmware pins its own C implementation against.
 func TestAttestKeyVerifiesTheCertificateARealDeviceEmits(t *testing.T) {
 	der, err := hex.DecodeString(vecAliasCertHex)
 	require.NoError(t, err)
 	nonce, err := hex.DecodeString(vecAliasCertNonceHex)
 	require.NoError(t, err)
-	require.Len(t, nonce, aggeneric.AliasNonceLen)
+	require.Len(t, nonce, tfw.AliasNonceLen)
 
 	link := secureElementLink().answerAttestCert(der)
 	b := newTestBackend(t, link)
@@ -124,7 +124,7 @@ func TestAttestKeyVerifiesTheCertificateARealDeviceEmits(t *testing.T) {
 	assert.Equal(t, der, att.CertificateDER, "a gateway forwards the device's bytes verbatim")
 	assert.Equal(t, nonce, att.Claims.Nonce)
 	assert.Equal(t, types.AttestLevelHardware, att.AttestLevel)
-	assert.Equal(t, aggeneric.CryptoSecureElement, att.CryptoTier)
+	assert.Equal(t, tfw.CryptoSecureElement, att.CryptoTier)
 	assert.False(t, att.Anchored, "no roots were configured")
 	assert.Equal(t, dice.RootTypeUnreported, att.RootType, "the device's alias certificate carries no DiceTcbInfo")
 	assert.Equal(t, "ag Alias", att.Certificate.Subject.CommonName)
@@ -166,7 +166,7 @@ func TestCheckAliasCertificate_UnknownCryptoTierFailsSafeAndLogs(t *testing.T) {
 	var buf bytes.Buffer
 	b := &Backend{
 		logger: slog.New(slog.NewTextHandler(&buf, nil)),
-		caps:   aggeneric.Caps{CryptoTier: aggeneric.CryptoTier(9)},
+		caps:   tfw.Caps{CryptoTier: tfw.CryptoTier(9)},
 	}
 
 	att, err := b.checkAliasCertificate(der, nonce)
@@ -194,7 +194,7 @@ func TestAttestKeyReassemblesAPagedCertificate(t *testing.T) {
 	assert.Len(t, result.(*Attestation).CertificateDER, 471)
 	attestRequests := 0
 	for _, req := range link.requests {
-		if req.Cmd() == aggeneric.CmdAttestCert {
+		if req.Cmd() == tfw.CmdAttestCert {
 			attestRequests++
 		}
 	}
@@ -210,7 +210,7 @@ func TestAttestKeyReassemblesAPagedCertificate(t *testing.T) {
 func TestAttestKeyTakesTheNonceItIsGivenAndDoesNotHashIt(t *testing.T) {
 	const keyAuth = "sometoken.YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU2Nzg5"
 	nonce := deviceattest01.DICENonce(keyAuth)
-	require.Len(t, nonce, aggeneric.AliasNonceLen)
+	require.Len(t, nonce, tfw.AliasNonceLen)
 
 	device := newAliasDevice(t)
 	link := secureElementLink().answerAttestCert(device.mint(t, nonce))
@@ -223,7 +223,7 @@ func TestAttestKeyTakesTheNonceItIsGivenAndDoesNotHashIt(t *testing.T) {
 	// backend that hashed again would have sent SHA-256 of the digest.
 	var sent []byte
 	for _, req := range link.requests {
-		if req.Cmd() == aggeneric.CmdAttestCert && len(req.Payload) == aggeneric.AliasNonceLen {
+		if req.Cmd() == tfw.CmdAttestCert && len(req.Payload) == tfw.AliasNonceLen {
 			sent = req.Payload
 		}
 	}
@@ -239,7 +239,7 @@ func TestAttestKeyRefusesTheEvidenceFrameNonceWidth(t *testing.T) {
 	b := newTestBackend(t, link)
 	before := len(link.requests)
 
-	for _, n := range []int{0, aggeneric.AttestNonceLen, 31, 33, 64} {
+	for _, n := range []int{0, tfw.AttestNonceLen, 31, 33, 64} {
 		_, err := b.AttestKey(context.Background(),
 			&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, n))
 
@@ -255,9 +255,9 @@ func TestAttestKeyRefusesTheEvidenceFrameNonceWidth(t *testing.T) {
 // different challenge is refused, however well formed it is.
 func TestAttestKeyRefusesAReplayedCertificate(t *testing.T) {
 	device := newAliasDevice(t)
-	yesterday := make([]byte, aggeneric.AliasNonceLen)
+	yesterday := make([]byte, tfw.AliasNonceLen)
 	yesterday[0] = 0xAA
-	today := make([]byte, aggeneric.AliasNonceLen)
+	today := make([]byte, tfw.AliasNonceLen)
 	today[0] = 0xBB
 
 	link := secureElementLink().answerAttestCert(device.mint(t, yesterday))
@@ -273,7 +273,7 @@ func TestAttestKeyRefusesAReplayedCertificate(t *testing.T) {
 // to another field.
 func TestAttestKeyRefusesACertificateWithNoEvidenceExtension(t *testing.T) {
 	device := newAliasDevice(t)
-	nonce := make([]byte, aggeneric.AliasNonceLen)
+	nonce := make([]byte, tfw.AliasNonceLen)
 
 	link := secureElementLink().answerAttestCert(device.mintWithout(t))
 	b := newTestBackend(t, link)
@@ -295,7 +295,7 @@ func TestAttestKeyRefusesBytesThatAreNotACertificate(t *testing.T) {
 	b := newTestBackend(t, link)
 
 	_, err := b.AttestKey(context.Background(),
-		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, aggeneric.AliasNonceLen))
+		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, tfw.AliasNonceLen))
 
 	assert.ErrorIs(t, err, ErrMalformedCertificate)
 }
@@ -304,7 +304,7 @@ func TestAttestKeyRefusesBytesThatAreNotACertificate(t *testing.T) {
 
 func TestAttestKeyAnchorsAgainstConfiguredRoots(t *testing.T) {
 	device := newAliasDevice(t)
-	nonce := make([]byte, aggeneric.AliasNonceLen)
+	nonce := make([]byte, tfw.AliasNonceLen)
 	nonce[0] = 0x7F
 
 	link := secureElementLink().answerAttestCert(device.mint(t, nonce))
@@ -318,7 +318,7 @@ func TestAttestKeyAnchorsAgainstConfiguredRoots(t *testing.T) {
 
 func TestAttestKeyReportsTheRootTypeTheChainDeclares(t *testing.T) {
 	device := newAliasDevice(t)
-	nonce := make([]byte, aggeneric.AliasNonceLen)
+	nonce := make([]byte, tfw.AliasNonceLen)
 	nonce[0] = 0x24
 
 	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{Nonce: nonce})
@@ -361,7 +361,7 @@ func TestAttestKeyReportsTheRootTypeTheChainDeclares(t *testing.T) {
 func TestAttestKeyRefusesACertificateFromAnUnknownIssuer(t *testing.T) {
 	stranger := newAliasDevice(t)
 	ours := newAliasDevice(t)
-	nonce := make([]byte, aggeneric.AliasNonceLen)
+	nonce := make([]byte, tfw.AliasNonceLen)
 
 	link := secureElementLink().answerAttestCert(stranger.mint(t, nonce))
 	b := newAnchoredBackend(t, link, ours)
@@ -401,13 +401,13 @@ func TestInitAttestationRefusesAnUnparseableIntermediate(t *testing.T) {
 // from "unknown command", and the difference tells an operator whether to
 // change the build or change the part.
 func TestAttestKeySurfacesASoftwareTierDeviceAsUnsupported(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps,
-		capsPayload(aggeneric.CryptoSoftware, aggeneric.FeatureAttest, aggeneric.AlgECDSAP256SHA256))
-	link.refuse(aggeneric.CmdAttestCert, aggeneric.StatusErrUnsupported)
+	link := newFakeLink().answer(tfw.CmdCaps,
+		capsPayload(tfw.CryptoSoftware, tfw.FeatureAttest, tfw.AlgECDSAP256SHA256))
+	link.refuse(tfw.CmdAttestCert, tfw.StatusErrUnsupported)
 	b := newTestBackend(t, link)
 
 	_, err := b.AttestKey(context.Background(),
-		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, aggeneric.AliasNonceLen))
+		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, tfw.AliasNonceLen))
 
 	require.ErrorIs(t, err, ErrUnsupportedByDevice)
 	assert.NotErrorIs(t, err, ErrCommandUnavailable)
@@ -418,17 +418,17 @@ func TestAttestKeyReportsAFirmwareWithoutTheCommand(t *testing.T) {
 	b := newTestBackend(t, link)
 
 	_, err := b.AttestKey(context.Background(),
-		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, aggeneric.AliasNonceLen))
+		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, tfw.AliasNonceLen))
 
 	assert.ErrorIs(t, err, ErrCommandUnavailable)
 }
 
 func TestAttestKeyReportsAnUnprovisionedDevice(t *testing.T) {
-	link := secureElementLink().refuse(aggeneric.CmdAttestCert, aggeneric.StatusErrNotProvisioned)
+	link := secureElementLink().refuse(tfw.CmdAttestCert, tfw.StatusErrNotProvisioned)
 	b := newTestBackend(t, link)
 
 	_, err := b.AttestKey(context.Background(),
-		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, aggeneric.AliasNonceLen))
+		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, tfw.AliasNonceLen))
 
 	assert.ErrorIs(t, err, ErrNotProvisioned)
 }
@@ -439,7 +439,7 @@ func TestAttestKeyRefusesTheCallsItCannotAnswer(t *testing.T) {
 	link := secureElementLink()
 	b := newTestBackend(t, link)
 	ctx := context.Background()
-	nonce := make([]byte, aggeneric.AliasNonceLen)
+	nonce := make([]byte, tfw.AliasNonceLen)
 	before := len(link.requests)
 
 	_, err := b.AttestKey(ctx, nil, nonce)
@@ -458,12 +458,12 @@ func TestAttestKeyRefusesTheCallsItCannotAnswer(t *testing.T) {
 // A device with no crypto provider has no identity to attest to, so nothing is
 // asked of it.
 func TestAttestKeyRefusesWhenTheDeviceHasNoProvider(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayload(aggeneric.CryptoNone, 0, 0))
+	link := newFakeLink().answer(tfw.CmdCaps, capsPayload(tfw.CryptoNone, 0, 0))
 	b := newTestBackend(t, link)
 	before := len(link.requests)
 
 	_, err := b.AttestKey(context.Background(),
-		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, aggeneric.AliasNonceLen))
+		&types.KeyAttributes{CN: DefaultKeyCN}, make([]byte, tfw.AliasNonceLen))
 
 	assert.ErrorIs(t, err, ErrNoDeviceKey)
 	assert.Len(t, link.requests, before)
@@ -635,7 +635,7 @@ func newAnchoredBackend(t *testing.T, link *fakeLink, device *aliasDevice) *Back
 // the wrong curve must still be refused.
 func TestAttestKeyRefusesANonP256CertificateEndToEnd(t *testing.T) {
 	device := newAliasDevice(t)
-	nonce := make([]byte, aggeneric.AliasNonceLen)
+	nonce := make([]byte, tfw.AliasNonceLen)
 
 	// Signed by the P-256 DeviceID key, so the signature algorithm is the one
 	// the element makes and only the SUBJECT key is wrong. Otherwise the
@@ -663,7 +663,7 @@ func TestInitAttestationLoadsIntermediatesWithoutATrustStore(t *testing.T) {
 
 	// No roots, so nothing anchors -- and Anchored says so rather than the
 	// intermediates standing in for an anchor.
-	nonce := make([]byte, aggeneric.AliasNonceLen)
+	nonce := make([]byte, tfw.AliasNonceLen)
 	link := secureElementLink().answerAttestCert(device.mint(t, nonce))
 	b2, err := NewBackend(context.Background(), cfg, newTestDevice(link))
 	require.NoError(t, err)
@@ -715,7 +715,7 @@ func TestDiceVerifyAcceptsTheProfileTheDeviceEmits(t *testing.T) {
 // backend whose documentation promises the one algorithm the part emits.
 func TestAttestKeyRefusesAnAliasThatIsNotECDSASHA256Signed(t *testing.T) {
 	device := newAliasDevice(t)
-	nonce := bytes.Repeat([]byte{0x31}, aggeneric.AliasNonceLen)
+	nonce := bytes.Repeat([]byte{0x31}, tfw.AliasNonceLen)
 	der := device.mintSignedWith(t, nonce, x509.ECDSAWithSHA384)
 
 	// Both shapes, because each reaches dice.Verify with a different chain and
