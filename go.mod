@@ -50,7 +50,7 @@ require github.com/open-quantum-safe/liboqs-go v0.0.0-20250119172907-28b5301df43
 require github.com/jeremyhahn/go-frost v0.1.4-alpha
 
 // Virtual FIDO2/U2F authenticator (for testing without hardware)
-require github.com/bulwarkid/virtual-fido v0.0.0-20240623215839-512d8a3fef0e
+require github.com/bulwarkid/virtual-fido v0.2.1-beta.2
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
