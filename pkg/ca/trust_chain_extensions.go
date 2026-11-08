@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -267,20 +268,51 @@ func (ca *CA) RootCertificate(childCert *x509.Certificate) (*x509.Certificate, e
 //
 // Returns nil when cert has no AIA extension (not an error).
 //
+// ImportIssuingCAs writes into the CA's shared certificate and key stores,
+// which every tenant shares and which are keyed by common name. It is for
+// system-scope callers only; a tenant-triggered import uses
+// ImportIssuingCAsInto with the tenant's own store.
+//
 // Thread-safe: Yes (stateless once initialised)
 func (ca *CA) ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) error {
-	if cert == nil {
-		return ErrInvalidCertificate
+	return ca.startIssuerWalk(ctx, cert, issuerSink{
+		lookup: ca.certStore.GetCertificate,
+		store:  ca.ImportCertificate,
+	})
+}
+
+// ImportIssuingCAsInto walks the certificate's AIA chain exactly as
+// ImportIssuingCAs does, under the same fetch limits and refusals, but looks
+// for and stores each issuer only in store. It never reads or writes the
+// CA's shared certificate or key stores.
+//
+// The target store is the caller's because it is the tenant isolation
+// boundary (go-quicbaas#1993): the shared stores are keyed by common name,
+// so an import into them would let one tenant claim a common name and stop
+// another tenant's legitimate issuer of that name from being imported.
+// System-scope callers keep using ImportIssuingCAs.
+//
+// Returns ErrTargetCertStoreRequired when store is nil, and
+// ErrInvalidCertificate when cert is nil.
+//
+// Thread-safe: Yes, as far as store is.
+func (ca *CA) ImportIssuingCAsInto(ctx context.Context, cert *x509.Certificate, store certstore.CertStore) error {
+	if store == nil {
+		return ErrTargetCertStoreRequired
 	}
-	seen := map[[sha256.Size]byte]bool{sha256.Sum256(cert.Raw): true}
-	return ca.importIssuingCAs(ctx, cert, seen, 0)
+	return ca.startIssuerWalk(ctx, cert, issuerSink{
+		lookup: store.GetCertificate,
+		store: func(_ context.Context, issuer *x509.Certificate) error {
+			return store.StoreCertificate(issuer)
+		},
+	})
 }
 
 // importIssuingCAs imports the issuers named by child's AIA extension and
 // recurses into each. depth is the number of issuers already fetched above
 // the starting certificate; seen holds the fingerprints of every
 // certificate visited so far.
-func (ca *CA) importIssuingCAs(ctx context.Context, child *x509.Certificate, seen map[[sha256.Size]byte]bool, depth int) error {
+func (ca *CA) importIssuingCAs(ctx context.Context, child *x509.Certificate, sink issuerSink, seen map[[sha256.Size]byte]bool, depth int) error {
 	if len(child.IssuingCertificateURL) == 0 || isSelfSigned(child) {
 		return nil
 	}
@@ -308,17 +340,38 @@ func (ca *CA) importIssuingCAs(ctx context.Context, child *x509.Certificate, see
 			return &errs.Detail{Err: ErrAIAIssuerSignatureInvalid, Detail: fmt.Sprintf("%s returned %q: %v", issuerURL, issuerCert.Subject.CommonName, err)}
 		}
 
-		if existing, err := ca.certStore.GetCertificate(issuerCert.Subject.CommonName); err != nil || existing == nil {
-			if err := ca.ImportCertificate(ctx, issuerCert); err != nil {
+		if existing, err := sink.lookup(issuerCert.Subject.CommonName); err != nil || existing == nil {
+			if err := sink.store(ctx, issuerCert); err != nil {
 				return err
 			}
 		}
 
-		if err := ca.importIssuingCAs(ctx, issuerCert, seen, depth+1); err != nil {
+		if err := ca.importIssuingCAs(ctx, issuerCert, sink, seen, depth+1); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// issuerSink is where an AIA walk looks for, and stores, the issuers it
+// fetches: the CA's shared stores for ImportIssuingCAs, a caller-owned
+// certificate store for ImportIssuingCAsInto.
+type issuerSink struct {
+	// lookup returns the certificate stored under a common name.
+	lookup func(cn string) (*x509.Certificate, error)
+
+	// store records an issuer the lookup did not find.
+	store func(ctx context.Context, cert *x509.Certificate) error
+}
+
+// startIssuerWalk validates the starting certificate and walks its AIA
+// chain into sink.
+func (ca *CA) startIssuerWalk(ctx context.Context, cert *x509.Certificate, sink issuerSink) error {
+	if cert == nil {
+		return ErrInvalidCertificate
+	}
+	seen := map[[sha256.Size]byte]bool{sha256.Sum256(cert.Raw): true}
+	return ca.importIssuingCAs(ctx, cert, sink, seen, 0)
 }
 
 // parseAIACertificate parses a certificate downloaded from an AIA URL.
