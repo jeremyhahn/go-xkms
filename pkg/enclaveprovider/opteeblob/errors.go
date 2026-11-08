@@ -21,9 +21,9 @@ var (
 	// not KeySize bytes long.
 	ErrKeyLength = errors.New("opteeblob: sealing key must be 32 bytes")
 
-	// ErrHUKLength is returned by DeriveKey for a hardware unique key
-	// shorter than MinHUKSize bytes.
-	ErrHUKLength = errors.New("opteeblob: hardware unique key must be at least 16 bytes")
+	// ErrTAUniqueKeyLength is returned by DeriveKey for a TA unique key that
+	// is not exactly TAUniqueKeySize bytes.
+	ErrTAUniqueKeyLength = errors.New("opteeblob: TA unique key must be 32 bytes")
 
 	// ErrSealFailed is returned by Seal when the blob could not be produced.
 	ErrSealFailed = errors.New("opteeblob: could not seal")

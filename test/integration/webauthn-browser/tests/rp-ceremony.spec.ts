@@ -21,7 +21,7 @@
 //   - forged-signature rejection (401, not 500)
 //   - excludeCredentials prevents re-registering the same authenticator
 //   - usernameless / discoverable resident-key login
-//   - login for an unregistered user is a clean 404
+//   - login for an unregistered user answers a decoy that cannot complete
 //   - a finish bound to an unknown session is rejected (400)
 //
 // The page is served SAME-ORIGIN with the API for most tests (Playwright
@@ -185,6 +185,40 @@ async function runRegistration(page: Page, opts: RegOpts): Promise<CeremonyResul
     }
     return { status: finishResp.status, ok: finishResp.ok, body, credentialId: cred.id };
   }, opts);
+}
+
+interface BeginResult {
+  status: number;
+  sessionId: string;
+  body: any;
+}
+
+// beginLogin calls /login/begin for email and returns the options the RP
+// issued, without running the ceremony.
+async function beginLogin(page: Page, email: string): Promise<BeginResult> {
+  return page.evaluate(async (email) => {
+    const resp = await fetch('/api/v1/webauthn/login/begin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const text = await resp.text();
+    let body: any;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = text;
+    }
+    return { status: resp.status, sessionId: resp.headers.get('X-Session-Id') ?? '', body };
+  }, email);
+}
+
+// withoutPerCeremonyFields drops the fields that legitimately differ between
+// two login options -- the challenge and the account's allowCredentials --
+// leaving the shape a decoy must share with a real ceremony.
+function withoutPerCeremonyFields(options: any): any {
+  const { challenge, allowCredentials, ...rest } = options.publicKey;
+  return { ...options, publicKey: rest };
 }
 
 // runAuthentication performs the full authentication ceremony. discoverable
@@ -358,15 +392,40 @@ test.describe('xkms WebAuthn RP — Chrome virtual authenticator (same-origin)',
     expect(auth.body).toHaveProperty('token');
   });
 
-  test('login for an unregistered user is a clean 404', async ({ page }) => {
+  test('login for an unregistered user answers an indistinguishable decoy that cannot complete', async ({ page }) => {
+    const email = `decoyreal-${Date.now()}@example.com`;
+    const nobody = `nobody-${Date.now()}@example.com`;
     await prepare(page, SAME_ORIGIN_URL);
 
-    const auth = await runAuthentication(page, {
-      apiBase: '',
-      email: `nobody-${Date.now()}@example.com`,
-    });
-    expect(auth.ok).toBeFalsy();
-    expect(auth.status).toBe(404);
+    const reg = await runRegistration(page, { apiBase: '', email, displayName: 'Decoy Control' });
+    expect(reg.ok, `registration failed: ${JSON.stringify(reg.body ?? reg.clientError)}`).toBeTruthy();
+
+    // Begin does not reveal whether an account exists (go-xkms#1296): an
+    // unknown email gets a 200 decoy ceremony shaped exactly like a real one
+    // once the per-ceremony challenge and the per-account allowCredentials
+    // are set aside.
+    const genuine = await beginLogin(page, email);
+    const decoy = await beginLogin(page, nobody);
+    expect(genuine.status).toBe(200);
+    expect(decoy.status).toBe(200);
+    expect(decoy.sessionId.length).toBeGreaterThan(0);
+    expect(withoutPerCeremonyFields(decoy.body)).toEqual(withoutPerCeremonyFields(genuine.body));
+
+    // The decoy is stable per email, as a real account's credentials are,
+    // while every ceremony draws a fresh challenge and session.
+    const again = await beginLogin(page, nobody);
+    expect(again.status).toBe(200);
+    expect(decoy.body.publicKey.allowCredentials.length).toBeGreaterThan(0);
+    expect(again.body.publicKey.allowCredentials).toEqual(decoy.body.publicKey.allowCredentials);
+    expect(again.body.publicKey.challenge).not.toEqual(decoy.body.publicKey.challenge);
+    expect(again.sessionId).not.toEqual(decoy.sessionId);
+
+    // A decoy session can never complete: a genuine assertion finished
+    // against it fails verification like a wrong assertion, with no token.
+    const auth = await runAuthentication(page, { apiBase: '', email, sessionOverride: decoy.sessionId });
+    expect(auth.ok, 'RP completed a login on a decoy session').toBeFalsy();
+    expect(auth.status).toBe(401);
+    expect(auth.body == null || typeof auth.body.token === 'undefined').toBeTruthy();
   });
 
   test('rejects a finish bound to an unknown session', async ({ page }) => {

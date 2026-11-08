@@ -190,4 +190,7 @@ func TestWebAuthnBrowserConfigValidates(t *testing.T) {
 	if !cfg.TLS.Enabled {
 		t.Fatal("tls.enabled = false; the REST transport is TLS-only")
 	}
+	if gaps := cfg.ComplianceGaps(); len(gaps) > 0 {
+		t.Fatalf("ComplianceGaps() = %q, want none; xkmsd refuses to start with an insecure configuration", gaps)
+	}
 }

@@ -3,8 +3,8 @@
 # Tests for the Makefile's module-fetch credential resolution (GOMODAUTH_*):
 # every compose file's GIT_CONFIG_* environment and the stage-gomodauth secret
 # must carry the CI runner's injected rewrite when one is present, otherwise
-# the GITEA_GO_TOKEN/GITEA_HOST rewrite, otherwise nothing. The nightly
-# devcontainer once built its rewrite from GITEA_GO_TOKEN alone, which a CI
+# the FORGE_MODULE_TOKEN/GITEA_HOST rewrite, otherwise nothing. The nightly
+# devcontainer once built its rewrite from FORGE_MODULE_TOKEN alone, which a CI
 # checkout does not have, and failed every private module fetch.
 #
 # No Docker and no network: the compose `${A:-${B}}` interpolation is the same
@@ -72,9 +72,9 @@ section "compose files under test"
 eq "the devcontainer compose file is covered" "yes" \
 	"$(printf '%s\n' "${COMPOSE_FILES[@]}" | grep -qx "$ROOT/build/docker/devcontainer/compose.yaml" && echo yes)"
 
-section "runner-injected credentials win over GITEA_GO_TOKEN"
+section "runner-injected credentials win over FORGE_MODULE_TOKEN"
 via_make GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$VALUE" \
-	GITEA_GO_TOKEN=local-token GITEA_HOST=gitea.example.com
+	FORGE_MODULE_TOKEN=local-token GITEA_HOST=gitea.example.com
 eq "make succeeds" "0" "$?"
 expect_all GIT_CONFIG_COUNT 1 runner
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" runner
@@ -83,9 +83,9 @@ eq "runner: gomodauth secret" \
 	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
-section "runner credentials with no GITEA_GO_TOKEN (the CI checkout)"
+section "runner credentials with no FORGE_MODULE_TOKEN (the CI checkout)"
 via_make GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$VALUE" \
-	GITEA_GO_TOKEN= GITEA_HOST=gitea.example.com
+	FORGE_MODULE_TOKEN= GITEA_HOST=gitea.example.com
 eq "make succeeds" "0" "$?"
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" ci
 
@@ -99,8 +99,8 @@ eq "count2: gomodauth secret" \
 	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
-section "GITEA_GO_TOKEN and GITEA_HOST compose the rewrite"
-via_make GITEA_GO_TOKEN=local-token GITEA_HOST=gitea.example.com
+section "FORGE_MODULE_TOKEN and GITEA_HOST compose the rewrite"
+via_make FORGE_MODULE_TOKEN=local-token GITEA_HOST=gitea.example.com
 eq "make succeeds" "0" "$?"
 expect_all GIT_CONFIG_COUNT 1 token
 expect_all GIT_CONFIG_KEY_0 "$TOKEN_KEY" token
@@ -110,13 +110,13 @@ eq "token: gomodauth secret" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "no credentials resolve publicly"
-via_make GITEA_GO_TOKEN= GITEA_HOST=
+via_make FORGE_MODULE_TOKEN= GITEA_HOST=
 eq "make succeeds" "0" "$?"
 expect_all GIT_CONFIG_COUNT 0 none
 eq "none: gomodauth secret is empty" "" "$(cat "$WORK/gomodauth.env")"
 
 section "compose loaded directly (devcontainer.json, no make)"
-env -i GITEA_GO_TOKEN=local-token GITEA_HOST=gitea.example.com \
+env -i FORGE_MODULE_TOKEN=local-token GITEA_HOST=gitea.example.com \
 	bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
 expect_all GIT_CONFIG_COUNT 1 direct
 expect_all GIT_CONFIG_KEY_0 "$TOKEN_KEY" direct
