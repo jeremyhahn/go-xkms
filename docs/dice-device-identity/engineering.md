@@ -261,8 +261,8 @@ go test -tags "codec_cbor codec_json codec_msgpack tpm_simulator frost" \
 
 ### End to end against the real firmware
 
-`pkg/acme/client/device_attest_dice_e2e_test.go` enrolls arduino-generic's
-element-tier simulator (`agsim.StartElement`: the real firmware compiled for the
+`pkg/acme/client/device_attest_dice_e2e_test.go` enrolls trusted-firmware's
+element-tier simulator (`tfwsim.StartElement`: the real firmware compiled for the
 host, with a model of the ATECC608A that does real P-256) through
 `Client.DeviceAttest`, the real ACME handlers and the production
 `deviceattest01.TrustAnchorVerifier`. Its device registry is an in-memory
@@ -271,14 +271,17 @@ raw-key path, as a provisioning record would state it. The alias certificate is
 signed by that key.
 
 ```
-make agsim                                 # build the simulators into $AGSIM_DIR
+make agsim                                 # build the simulators into $TFWSIM_DIR
 go test -tags "codec_json" -run TestDeviceAttestDICE ./pkg/acme/client/
 ```
 
-`make agsim` builds from the arduino-generic module at the version `go.mod`
-pins (`scripts/build-agsim.sh`), after checking the module hash against
-`scripts/agsim.sum` (the root arduino-generic module is not in `go.mod`, so
-`go.sum` does not cover it; bumping the dependency adds a line there); `make test`, `make race` and
+`make agsim` builds `tfwsim` from the trusted-firmware repository at the version `go.mod`
+pins for `trusted-firmware/sdk/go` (`scripts/build-agsim.sh`). The source is fetched
+with git at the commit `scripts/agsim.sum` pins, and its commit and tree are
+checked against that pin before the build: the repository root has no `go.mod`,
+so proxy.golang.org serves no version of it and `go.sum` cannot cover it. Bumping
+the dependency adds a pin line there; the devcontainer image pre-fetches the
+pinned commit into `/opt/agsim-src`, so its test stage needs no network; `make test`, `make race` and
 `make coverage-full` run it first. A missing binary fails the test and prints the
 command; it never skips.
 

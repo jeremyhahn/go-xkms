@@ -21,7 +21,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -86,7 +86,7 @@ func BenchmarkNewDeviceKey(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := newDeviceKey(point, aggeneric.SlotDeviceID, DefaultKeyCN); err != nil {
+		if _, err := newDeviceKey(point, tfw.SlotDeviceID, DefaultKeyCN); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -96,7 +96,7 @@ func BenchmarkDeviceError(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := deviceError(aggeneric.StatusErrNotProvisioned); err == nil {
+		if err := deviceError(tfw.StatusErrNotProvisioned); err == nil {
 			b.Fatal("expected an error")
 		}
 	}
@@ -104,10 +104,10 @@ func BenchmarkDeviceError(b *testing.B) {
 
 func benchBackend(b *testing.B) *Backend {
 	b.Helper()
-	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayload(
-		aggeneric.CryptoSecureElement,
-		aggeneric.FeatureAttest,
-		aggeneric.AlgECDSAP256SHA256|aggeneric.AlgHMACSHA256,
+	link := newFakeLink().answer(tfw.CmdCaps, capsPayload(
+		tfw.CryptoSecureElement,
+		tfw.FeatureAttest,
+		tfw.AlgECDSAP256SHA256|tfw.AlgHMACSHA256,
 	))
 	backend, err := NewBackend(context.Background(), testConfig(), newTestDevice(link))
 	if err != nil {
