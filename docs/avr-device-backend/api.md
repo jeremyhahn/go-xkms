@@ -24,8 +24,8 @@ whether one process may hold two devices. None of those are coding questions.
 
 ```go
 import (
-    aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
-    "github.com/jeremyhahn/arduino-generic/sdk/go/serialport"
+    tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
+    "github.com/jeremyhahn/trusted-firmware/sdk/go/serialport"
     "github.com/jeremyhahn/go-xkms/pkg/backend/avr"
     "github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -36,7 +36,7 @@ if err != nil {
 }
 defer port.Close()
 
-backend, err := avr.NewBackend(ctx, avr.DefaultConfig(), aggeneric.New(port))
+backend, err := avr.NewBackend(ctx, avr.DefaultConfig(), tfw.New(port))
 if err != nil {
     return err
 }
@@ -105,7 +105,7 @@ Finalization needs a CSR signed by the device identity key, and
 `backend.Signer` returns `ErrSigningUnsupported` (`pkg/backend/avr/backend.go:436-441`):
 the wire has no command that signs a host-supplied digest. A physical AVR can
 therefore answer the challenge but cannot finish enrolment. The flow is proven
-end to end only against the `agsim` simulator, whose published test seed lets
+end to end only against the `tfwsim` simulator, whose published test seed lets
 the test sign the CSR (`pkg/acme/client/device_attest_dice_e2e_test.go`).
 
 ### From the SDK
@@ -115,18 +115,18 @@ through `sdk/go`, which aliases these declarations rather than copying them:
 
 ```go
 import (
-    aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
-    "github.com/jeremyhahn/arduino-generic/sdk/go/serialport"
+    tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
+    "github.com/jeremyhahn/trusted-firmware/sdk/go/serialport"
     xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-backend, err := xkms.NewAVRBackend(ctx, xkms.DefaultAVRConfig(), aggeneric.New(port))
+backend, err := xkms.NewAVRBackend(ctx, xkms.DefaultAVRConfig(), tfw.New(port))
 if errors.Is(err, xkms.ErrAVRNoDeviceKey) {
     // a part with no crypto provider to hold an identity
 }
 ```
 
-The device comes from `arduino-generic/sdk/go` directly. That module is another
+The device comes from `trusted-firmware/sdk/go` directly. That module is another
 project's Layer 0 SDK; re-exporting its types from here would be this
 repository speaking for an API it does not own.
 
