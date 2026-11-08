@@ -18,7 +18,7 @@ import (
 	"crypto/x509"
 	"strconv"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
@@ -92,7 +92,7 @@ type Attestation struct {
 
 	// CryptoTier is the tier verbatim, for a caller recording what the device
 	// said rather than this host's classification of it.
-	CryptoTier aggeneric.CryptoTier
+	CryptoTier tfw.CryptoTier
 
 	// RootType is where the device keeps its Unique Device Secret, as the
 	// certificate's DiceTcbInfo declares it (dice.RootType). An alias
@@ -147,10 +147,10 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 	if attrs.CN != b.config.KeyCN {
 		return nil, &errs.Detail{Err: ErrUnknownKey, Detail: attrs.CN}
 	}
-	if len(nonce) != aggeneric.AliasNonceLen {
+	if len(nonce) != tfw.AliasNonceLen {
 		return nil, &errs.Detail{
 			Err: ErrInvalidNonce,
-			Detail: "expected " + strconv.Itoa(aggeneric.AliasNonceLen) +
+			Detail: "expected " + strconv.Itoa(tfw.AliasNonceLen) +
 				" bytes from deviceattest01.DICENonce, got " + strconv.Itoa(len(nonce)),
 		}
 	}
