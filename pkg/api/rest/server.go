@@ -507,6 +507,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r := chi.NewRouter()
 
 	// Apply global middleware
+	r.Use(decodedPathMiddleware)
 	r.Use(s.RecoveryMiddleware())
 	r.Use(correlation.Middleware()) // Add correlation ID before logging
 	r.Use(s.LoggingMiddleware())
@@ -558,6 +559,21 @@ func (s *Server) setupRouter() *chi.Mux {
 	}
 
 	return r
+}
+
+// decodedPathMiddleware routes the request on its decoded path, as the qrdb
+// host of the unified API server does. chi routes on URL.RawPath when it is
+// set, so without this a {name} parameter sent as "ak%3Aroot" would reach the
+// handler escaped and address the record literally named "ak%3Aroot"
+// instead of "ak:root".
+func decodedPathMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawPath != "" {
+			r = r.Clone(r.Context())
+			r.URL.RawPath = ""
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // registerRoutes registers the full table-driven route surface onto r,
