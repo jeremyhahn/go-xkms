@@ -481,10 +481,10 @@ TEST_FLAGS_FIPS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,
 TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
 TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
-# Where `make agsim` puts the arduino-generic host simulators. Exported so every
-# go test the Makefile runs finds them (sdk/go/agsim reads AGSIM_DIR).
-AGSIM_DIR ?= $(CURDIR)/build/agsim
-export AGSIM_DIR
+# Where `make agsim` puts the trusted-firmware host simulators. Exported so every
+# go test the Makefile runs finds them (sdk/go/tfwsim reads TFWSIM_DIR).
+TFWSIM_DIR ?= $(CURDIR)/build/agsim
+export TFWSIM_DIR
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 COVERAGE_THRESHOLD := 80
 # Integration test tags include both backend tags and integration tag
@@ -4000,13 +4000,13 @@ fmt-check:
 	@echo "$(GREEN)✓ Code is properly formatted$(RESET)"
 
 .PHONY: agsim
-## agsim: Build the arduino-generic host simulators the DICE end-to-end test enrolls (go-xkms#737)
+## agsim: Build the trusted-firmware host simulators the DICE end-to-end test enrolls (go-xkms#737)
 ## The pkg/acme/client device-attest-01 test runs the real firmware, compiled for
-## the host, through the ACME server. The source is the arduino-generic module at
-## the version go.mod pins; the binaries land in AGSIM_DIR, which the test's
-## launcher (sdk/go/agsim) reads. A missing binary FAILS that test, never skips.
+## the host, through the ACME server. The source is the trusted-firmware module at
+## the version go.mod pins; the binaries land in TFWSIM_DIR, which the test's
+## launcher (sdk/go/tfwsim) reads. A missing binary FAILS that test, never skips.
 agsim:
-	@bash scripts/build-agsim.sh "$(AGSIM_DIR)"
+	@bash scripts/build-agsim.sh "$(TFWSIM_DIR)"
 
 .PHONY: check-insecure-tls
 ## check-insecure-tls: Enforce insecure-TLS/transport allowlist (fails on unapproved use)
@@ -5375,7 +5375,7 @@ test_dir = $(or $(wildcard ./pkg/$(1)),$(wildcard ./cmd/$(1)),$(error neither ./
 # integration_dir does the same for integration-test-%: test/integration/$*.
 integration_dir = $(or $(wildcard ./test/integration/$(1)),$(error ./test/integration/$(1) does not exist))
 
-# pkg/acme/client's device-attest-01 DICE tests enroll the agsim-atecc608a
+# pkg/acme/client's device-attest-01 DICE tests enroll the tfwsim-atecc608a
 # simulator and fail without it, so the per-package targets that reach them
 # build it first, as test-go, race and coverage-full do.
 test-acme coverage-acme: agsim
