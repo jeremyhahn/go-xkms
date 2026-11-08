@@ -30,8 +30,8 @@ import (
 	"testing"
 	"time"
 
-	ag "github.com/jeremyhahn/arduino-generic/sdk/go"
-	"github.com/jeremyhahn/arduino-generic/sdk/go/agsim"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
+	"github.com/jeremyhahn/trusted-firmware/sdk/go/tfwsim"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -40,8 +40,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
-// These tests enroll the REAL arduino-generic firmware, compiled for the host
-// and started by agsim.StartElement, through go-xkms's ACME client and the real
+// These tests enroll the REAL trusted-firmware firmware, compiled for the host
+// and started by tfwsim.StartElement, through go-xkms's ACME client and the real
 // ACME server handlers with device-attest-01 offered:
 //
 //   - the device mints a DICE alias certificate over the nonce derived from the
@@ -51,32 +51,32 @@ import (
 //   - the order's identifier is the device's ueid, read from the evidence;
 //   - finalization binds the CSR's key to the alias certificate's key.
 //
-// The simulator binaries are built by `make agsim`. A missing binary FAILS
-// these tests (agsim reports the command); they never skip.
+// The simulator binaries are built by `make agsim` (into $TFWSIM_DIR). A missing binary FAILS
+// these tests (tfwsim reports the command); they never skip.
 
 // testDeviceIDSeed is the published string whose SHA-256 is the private half
-// of the simulator's TEST DeviceID key (arduino-generic test/model/atecc608a.c).
+// of the simulator's TEST DeviceID key (trusted-firmware test/model/atecc608a.c).
 // It is public on purpose: the identity is a test identity and nothing outside
 // a test may trust it. The private half is needed here only to sign the CSR,
 // because the firmware has no command that signs one; see diceElement.
-const testDeviceIDSeed = "agsim-atecc608a TEST DeviceID key v1"
+const testDeviceIDSeed = "tfwsim-atecc608a TEST DeviceID key v1"
 
 // diceDeviceIDKey returns the simulator's DeviceID private key and proves it is
-// the key the firmware signs with by comparing it to agsim's public point.
+// the key the firmware signs with by comparing it to tfwsim's public point.
 func diceDeviceIDKey(t *testing.T) *ecdsa.PrivateKey {
 	t.Helper()
 	scalar := sha256.Sum256([]byte(testDeviceIDSeed))
 	key, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), scalar[:])
 	require.NoError(t, err)
-	require.True(t, key.PublicKey.Equal(agsim.TestDeviceIDPublicKey()),
-		"the published seed no longer derives agsim.TestDeviceIDPublicKey: the simulator's identity changed")
+	require.True(t, key.PublicKey.Equal(tfwsim.TestDeviceIDPublicKey()),
+		"the published seed no longer derives tfwsim.TestDeviceIDPublicKey: the simulator's identity changed")
 	return key
 }
 
 // simulatorUeid is the lowercase hex of the simulator's UEID, type byte
 // included: the key its provisioning record is filed under.
 func simulatorUeid() string {
-	return hex.EncodeToString(append([]byte{0x01}, agsim.TestSerial[:]...))
+	return hex.EncodeToString(append([]byte{0x01}, tfwsim.TestSerial[:]...))
 }
 
 // diceRegistry is the device registry a provisioning step fills: the DeviceID
@@ -102,12 +102,12 @@ func (r diceRegistry) ResolveDevice(_ context.Context, ueid string) (*deviceatte
 //
 // The device is the real firmware. Its alias key is its DeviceID key, so the
 // CSR for "the attested key" is signed by that key. The firmware has no
-// command that signs a CSR (arduino-generic has ATTEST, ATTEST_CERT, AUTH and
+// command that signs a CSR (trusted-firmware has ATTEST, ATTEST_CERT, AUTH and
 // PROV_* only), which is why signer holds the public test key's private half.
 type diceElement struct {
 	TPMModule
 
-	device   *ag.Device
+	device   *tfw.Device
 	identity string
 	signer   crypto.Signer
 
@@ -119,7 +119,7 @@ type diceElement struct {
 func newDiceElement(t *testing.T) *diceElement {
 	t.Helper()
 	element := &diceElement{
-		device:   agsim.StartElement(t),
+		device:   tfwsim.StartElement(t),
 		signer:   diceDeviceIDKey(t),
 		nonceFor: deviceattest01.DICENonce,
 	}
@@ -267,12 +267,12 @@ func permanentIdentifier(t *testing.T, cert *x509.Certificate) string {
 	return ""
 }
 
-// A real arduino-generic device enrolls: the order is for its ueid, its DICE
+// A real trusted-firmware device enrolls: the order is for its ueid, its DICE
 // evidence answers the challenge's nonce, and the certificate that is issued
 // is for the DeviceID key it attested and bound to the ueid.
 func TestDeviceAttestDICEEnrollsTheRealFirmware(t *testing.T) {
 	element := newDiceElement(t)
-	enrollment := newDiceEnrollment(t, agsim.TestDeviceIDPublicKey())
+	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey())
 
 	assert.Equal(t, simulatorUeid(), element.identity,
 		"the identity is the hex of the ueid, type byte included")
@@ -281,7 +281,7 @@ func TestDeviceAttestDICEEnrollsTheRealFirmware(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, enrollment.verifier.Refusal())
 
-	assert.True(t, cert.PublicKey.(*ecdsa.PublicKey).Equal(agsim.TestDeviceIDPublicKey()),
+	assert.True(t, cert.PublicKey.(*ecdsa.PublicKey).Equal(tfwsim.TestDeviceIDPublicKey()),
 		"the certificate must be for the key the device attested")
 	assert.Equal(t, element.identity, permanentIdentifier(t, cert),
 		"the certificate must be bound to the device's ueid")
@@ -297,7 +297,7 @@ func TestDeviceAttestDICEEnrollsTheRealFirmware(t *testing.T) {
 // evidence is genuine, but it is not that device's.
 func TestDeviceAttestDICERefusesAnotherUeid(t *testing.T) {
 	element := newDiceElement(t)
-	enrollment := newDiceEnrollment(t, agsim.TestDeviceIDPublicKey())
+	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey())
 	element.identity = hex.EncodeToString(append([]byte{0x01}, []byte("another-device-1")...))
 
 	cert, err := enrollment.enroll(element)
@@ -311,7 +311,7 @@ func TestDeviceAttestDICERefusesAnotherUeid(t *testing.T) {
 // refused, whatever else about it is genuine.
 func TestDeviceAttestDICERefusesTheWrongNonce(t *testing.T) {
 	element := newDiceElement(t)
-	enrollment := newDiceEnrollment(t, agsim.TestDeviceIDPublicKey())
+	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey())
 	element.nonceFor = func(string) []byte { return deviceattest01.DICENonce("another-token.another-thumbprint") }
 
 	cert, err := enrollment.enroll(element)
@@ -327,7 +327,7 @@ func TestDeviceAttestDICERefusesTheWrongNonce(t *testing.T) {
 // though the device's evidence verified.
 func TestDeviceAttestDICERefusesACSRForAnotherKey(t *testing.T) {
 	element := newDiceElement(t)
-	enrollment := newDiceEnrollment(t, agsim.TestDeviceIDPublicKey())
+	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey())
 	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	element.signer = other

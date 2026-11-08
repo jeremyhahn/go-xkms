@@ -128,7 +128,7 @@ var DICEUeidFromCertificate = dice.UeidFromCertificate
 // DICEDeviceUeid returns a leaf's device identifier from either place a DICE
 // device states it: the tcg-dice-Ueid extension or the ueid claim of the
 // UCCS evidence. Prefer it to DICEUeidFromCertificate, which reads only the
-// extension and so finds nothing on a device, like the arduino-generic AVR
+// extension and so finds nothing on a device, like the trusted-firmware AVR
 // profile, that uses the claim.
 var DICEDeviceUeid = dice.DeviceUeid
 

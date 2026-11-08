@@ -37,10 +37,9 @@ fleet_a="dell"
 fleet_a+="emc"
 fleet_b="omega"
 fleet_b+="-docker"
-owner_home="/home/"
-owner_home+="jhahn"
-owner_tilde="~"
-owner_tilde+="jhahn"
+# A workstation path is the private Releasability gate's class, not this
+# gate's: a generic one must pass here.
+owner_home="/home/someone"
 
 # --- a clean tree passes ------------------------------------------------------
 section "a clean tree"
@@ -63,15 +62,13 @@ echo "lab subnet: ${lab_subnet}.42" > "$DIRTY/a.txt"
 echo "fleet host: ${fleet_a}-03" > "$DIRTY/b.txt"
 echo "fleet host: ${fleet_b}" > "$DIRTY/c.txt"
 echo "owner path: ${owner_home}/notes" > "$DIRTY/d.txt"
-echo "owner path: ${owner_tilde}/notes" > "$DIRTY/e.txt"
 track "$DIRTY"
 OUT=$("$SCRIPT" "$DIRTY" 2>&1); RC=$?
 eq "exits 1 when any internal literal is present" "1" "$RC"
 eq "reports the lab-subnet file with file:line" "1" "$(grep -cx 'a.txt:1' <<<"$OUT")"
 eq "reports the first fleet-host file" "1" "$(grep -cx 'b.txt:1' <<<"$OUT")"
 eq "reports the second fleet-host file" "1" "$(grep -cx 'c.txt:1' <<<"$OUT")"
-eq "reports the owner-home-path file" "1" "$(grep -cx 'd.txt:1' <<<"$OUT")"
-eq "reports the owner-tilde-path file" "1" "$(grep -cx 'e.txt:1' <<<"$OUT")"
+eq "does not report a workstation path" "0" "$(grep -c 'd\.txt' <<<"$OUT")"
 eq "never prints a matched line's text" "0" "$(grep -c 'fleet host\|owner path\|lab subnet' <<<"$OUT")"
 
 # --- untracked files are never read -------------------------------------------
@@ -82,7 +79,7 @@ UNTRACKED="$WORK/untracked"
 mkdir -p "$UNTRACKED"
 echo "tracked and clean" > "$UNTRACKED/clean.txt"
 track "$UNTRACKED"
-echo "secret beside ${owner_home}/notes" > "$UNTRACKED/gomodauth.env"
+echo "secret beside ${lab_subnet}.42" > "$UNTRACKED/gomodauth.env"
 OUT=$("$SCRIPT" "$UNTRACKED" 2>&1); RC=$?
 eq "an untracked literal does not fail the gate" "0" "$RC"
 eq "an untracked literal is not reported" "0" "$(grep -c 'gomodauth.env\|secret' <<<"$OUT")"
@@ -91,7 +88,7 @@ eq "an untracked literal is not reported" "0" "$(grep -c 'gomodauth.env\|secret'
 section "a tracked literal is reported as path:line only"
 TRACKED="$WORK/tracked"
 mkdir -p "$TRACKED/sub"
-printf 'first line\nsecret-value %s/x\n' "$owner_home" > "$TRACKED/sub/conf.txt"
+printf 'first line\nsecret-value %s.42\n' "$lab_subnet" > "$TRACKED/sub/conf.txt"
 track "$TRACKED"
 OUT=$("$SCRIPT" "$TRACKED" 2>&1); RC=$?
 eq "a tracked literal fails the gate" "1" "$RC"
@@ -102,7 +99,7 @@ eq "the finding omits the matched text" "0" "$(grep -c 'secret-value' <<<"$OUT")
 section "a ROOT outside git fails closed"
 NOGIT="$WORK/nogit"
 mkdir -p "$NOGIT"
-echo "secret beside ${owner_home}/notes" > "$NOGIT/h.txt"
+echo "secret beside ${lab_subnet}.42" > "$NOGIT/h.txt"
 OUT=$(GIT_CEILING_DIRECTORIES="$WORK" "$SCRIPT" "$NOGIT" 2>&1); RC=$?
 eq "exits 2 when ROOT is not a git work tree" "2" "$RC"
 eq "says why it refused" "1" "$(grep -c 'not a git work tree' <<<"$OUT")"
