@@ -315,7 +315,7 @@ const (
 	StoreFrost    StoreType = "frost"
 	StorePhone    StoreType = "phone"
 	// StoreAVR labels a key that lives in the secure element of an AVR
-	// device reached over the arduino-generic wire protocol. The private
+	// device reached over the trusted-firmware wire protocol. The private
 	// half never leaves the element; what xkms holds is the public point
 	// and the device's attestation evidence.
 	StoreAVR     StoreType = "avr"
@@ -401,7 +401,7 @@ const (
 	BackendTypeSmartCardHSM BackendType = "smartcardhsm" // SmartCard-HSM (Nitrokey HSM, CardContact)
 	BackendTypeYubiKey      BackendType = "yubikey"      // YubiKey PIV
 	BackendTypeSoftHSM      BackendType = "softhsm"      // SoftHSM2 (development/testing)
-	BackendTypeAVR          BackendType = "avr"          // AVR device with a DICE-rooted identity, over the arduino-generic wire protocol
+	BackendTypeAVR          BackendType = "avr"          // AVR device with a DICE-rooted identity, over the trusted-firmware wire protocol
 )
 
 // =============================================================================

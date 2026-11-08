@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,19 +34,19 @@ func TestDeviceErrorIsNilForSuccess(t *testing.T) {
 // act on. These are the ones this package names.
 func TestDeviceErrorMapsEveryNamedStatus(t *testing.T) {
 	tests := []struct {
-		status   aggeneric.Status
+		status   tfw.Status
 		sentinel error
 	}{
-		{aggeneric.StatusErrUnknownCmd, ErrCommandUnavailable},
-		{aggeneric.StatusErrNotProvisioned, ErrNotProvisioned},
-		{aggeneric.StatusErrCrypto, ErrDeviceCrypto},
-		{aggeneric.StatusErrAuthRequired, ErrAuthRequired},
-		{aggeneric.StatusErrBusy, ErrDeviceBusy},
-		{aggeneric.StatusErrProtectedRegion, ErrProtectedRegion},
-		{aggeneric.StatusErrInternal, ErrDeviceInternal},
-		{aggeneric.StatusErrTimeout, ErrDeviceUnreachable},
-		{aggeneric.StatusErrCRC, ErrDeviceProtocol},
-		{aggeneric.StatusErrFraming, ErrDeviceProtocol},
+		{tfw.StatusErrUnknownCmd, ErrCommandUnavailable},
+		{tfw.StatusErrNotProvisioned, ErrNotProvisioned},
+		{tfw.StatusErrCrypto, ErrDeviceCrypto},
+		{tfw.StatusErrAuthRequired, ErrAuthRequired},
+		{tfw.StatusErrBusy, ErrDeviceBusy},
+		{tfw.StatusErrProtectedRegion, ErrProtectedRegion},
+		{tfw.StatusErrInternal, ErrDeviceInternal},
+		{tfw.StatusErrTimeout, ErrDeviceUnreachable},
+		{tfw.StatusErrCRC, ErrDeviceProtocol},
+		{tfw.StatusErrFraming, ErrDeviceProtocol},
 	}
 
 	for _, tt := range tests {
@@ -64,7 +64,7 @@ func TestDeviceErrorMapsEveryNamedStatus(t *testing.T) {
 // nearest known one would turn a version skew into a specific, wrong
 // diagnosis.
 func TestDeviceErrorDegradesAnUnknownStatusToARefusal(t *testing.T) {
-	err := deviceError(aggeneric.Status(200))
+	err := deviceError(tfw.Status(200))
 
 	assert.ErrorIs(t, err, ErrDeviceRefused)
 	assert.NotErrorIs(t, err, ErrCommandUnavailable)
@@ -77,13 +77,13 @@ func TestDeviceErrorClassifiesTransportAndFramingFailures(t *testing.T) {
 		err      error
 		sentinel error
 	}{
-		{"link closed", &aggeneric.LinkError{Op: "read", Err: io.EOF}, ErrDeviceUnreachable},
-		{"no answer", &aggeneric.TimeoutError{Cmd: aggeneric.CmdCaps, Elapsed: time.Second}, ErrDeviceUnreachable},
-		{"short reply", &aggeneric.ShortReplyError{Cmd: aggeneric.CmdCaps, Got: 9, Need: 14}, ErrDeviceProtocol},
-		{"bad checksum", &aggeneric.CRCError{Computed: 1, Claimed: 2}, ErrDeviceProtocol},
-		{"not a frame", &aggeneric.FrameError{Reason: "does not begin with the start byte"}, ErrDeviceProtocol},
-		{"oversized payload", &aggeneric.PayloadSizeError{Size: 100, Limit: 64}, ErrDeviceProtocol},
-		{"protocol major", &aggeneric.ProtocolVersionError{DeviceMajor: 2, HostMajor: 1}, ErrProtocolVersion},
+		{"link closed", &tfw.LinkError{Op: "read", Err: io.EOF}, ErrDeviceUnreachable},
+		{"no answer", &tfw.TimeoutError{Cmd: tfw.CmdCaps, Elapsed: time.Second}, ErrDeviceUnreachable},
+		{"short reply", &tfw.ShortReplyError{Cmd: tfw.CmdCaps, Got: 9, Need: 14}, ErrDeviceProtocol},
+		{"bad checksum", &tfw.CRCError{Computed: 1, Claimed: 2}, ErrDeviceProtocol},
+		{"not a frame", &tfw.FrameError{Reason: "does not begin with the start byte"}, ErrDeviceProtocol},
+		{"oversized payload", &tfw.PayloadSizeError{Size: 100, Limit: 64}, ErrDeviceProtocol},
+		{"protocol major", &tfw.ProtocolVersionError{DeviceMajor: 3, HostMajor: 2}, ErrProtocolVersion},
 	}
 
 	for _, tt := range tests {
@@ -97,7 +97,7 @@ func TestDeviceErrorClassifiesTransportAndFramingFailures(t *testing.T) {
 // how a caller tells a port that went away, which needs a reconnect, from a
 // device that simply refused.
 func TestDeviceErrorKeepsTheTransportCauseReachable(t *testing.T) {
-	err := deviceError(&aggeneric.LinkError{Op: "read", Err: io.EOF})
+	err := deviceError(&tfw.LinkError{Op: "read", Err: io.EOF})
 
 	assert.ErrorIs(t, err, ErrDeviceUnreachable)
 	assert.ErrorIs(t, err, io.EOF)
@@ -126,9 +126,9 @@ func TestDeviceErrorNeverSwallowsAnUnclassifiedFailure(t *testing.T) {
 // suspect: one that is stable across retries points at a sender writing the
 // wrong bytes, one that differs every time points at the line.
 func TestDeviceErrorKeepsTheSDKErrorReachable(t *testing.T) {
-	err := deviceError(&aggeneric.CRCError{Computed: 0x1234, Claimed: 0x5678})
+	err := deviceError(&tfw.CRCError{Computed: 0x1234, Claimed: 0x5678})
 
-	var crc *aggeneric.CRCError
+	var crc *tfw.CRCError
 	require.ErrorAs(t, err, &crc)
 	assert.Equal(t, uint16(0x1234), crc.Computed)
 	assert.Equal(t, uint16(0x5678), crc.Claimed)
@@ -140,8 +140,8 @@ func TestDeviceErrorKeepsTheSDKErrorReachable(t *testing.T) {
 // answer. That would send a caller to look at the cable for a fault in its own
 // call.
 func TestDeviceErrorClassifiesAnArgumentItNeverSent(t *testing.T) {
-	err := deviceError(&aggeneric.ArgRangeError{
-		Cmd: aggeneric.CmdAttestCert, Arg: "nonce", Value: 16,
+	err := deviceError(&tfw.ArgRangeError{
+		Cmd: tfw.CmdAttestCert, Arg: "nonce", Value: 16,
 		Min: 32, Max: 32, Unit: "bytes",
 	})
 
