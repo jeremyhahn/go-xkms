@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -204,6 +206,26 @@ func TestVerifyUser_UnreadableStatusListIsUnavailable(t *testing.T) {
 	err := backend.VerifyUser(context.Background(), "example.com")
 	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
 	require.ErrorIs(t, err, xkms.ErrAndroidStatusListUnavailable)
+}
+
+// TestVerifyUser_MalformedStatusListFileIsUnavailable pins that a local
+// status-list file that does not parse is an outage of the list, not a
+// failed verification: VerifyUser answers ErrUserVerificationUnavailable, on
+// which the authenticator spends no uvRetries (CTAP 2.1 §6.5.5.7.3).
+func TestVerifyUser_MalformedStatusListFileIsUnavailable(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	path := filepath.Join(t.TempDir(), "status.json")
+	require.NoError(t, os.WriteFile(path, []byte("not a status list"), 0o600))
+	backend := connectedVerifyUserBackend(t, func(context.Context, pairingproto.RPCExchange, []byte, string) error {
+		_, err := xkms.LoadAndroidStatusListFile(path)
+		return err
+	})
+
+	err := backend.VerifyUser(context.Background(), "example.com")
+	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+	require.ErrorIs(t, err, xkms.ErrAndroidStatusListMalformed)
 }
 
 // TestVerifyUser_NoVerifierRefuses proves a backend built without a

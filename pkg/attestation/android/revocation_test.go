@@ -302,6 +302,7 @@ func TestLoadStatusListFile(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte(`{"entries":{"AB":{"status":"REVOKED"}}}`), 0o600))
 		_, err := LoadStatusListFile(path)
 		require.ErrorIs(t, err, ErrStatusListMalformed)
+		require.ErrorIs(t, err, ErrStatusListUnavailable, "a file that does not parse is an outage of the source")
 	})
 
 	t.Run("over-size file", func(t *testing.T) {

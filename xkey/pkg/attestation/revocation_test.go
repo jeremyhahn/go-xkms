@@ -48,10 +48,12 @@ func TestRevocationSource_FileErrors(t *testing.T) {
 
 	cases := map[string]struct {
 		path string
-		want error
+		want []error
 	}{
-		"missing":   {filepath.Join(dir, "absent.json"), xkms.ErrAndroidStatusListUnavailable},
-		"malformed": {malformed, xkms.ErrAndroidStatusListMalformed},
+		"missing": {filepath.Join(dir, "absent.json"), []error{xkms.ErrAndroidStatusListUnavailable}},
+		// A file that does not parse is an outage of the list, like a
+		// missing one, so verify-user spends no uvRetries on it.
+		"malformed": {malformed, []error{xkms.ErrAndroidStatusListMalformed, xkms.ErrAndroidStatusListUnavailable}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -59,7 +61,9 @@ func TestRevocationSource_FileErrors(t *testing.T) {
 
 			assert.Nil(t, source)
 			require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
-			require.ErrorIs(t, err, tc.want)
+			for _, want := range tc.want {
+				require.ErrorIs(t, err, want)
+			}
 		})
 	}
 }
