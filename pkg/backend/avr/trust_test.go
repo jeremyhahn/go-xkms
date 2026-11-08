@@ -16,7 +16,7 @@ package avr
 import (
 	"testing"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 
@@ -29,15 +29,15 @@ import (
 func TestTrustForClassifiesEveryKnownTier(t *testing.T) {
 	tests := []struct {
 		name     string
-		tier     aggeneric.CryptoTier
+		tier     tfw.CryptoTier
 		level    types.AttestLevel
 		security types.SecurityLevel
 		hardware bool
 	}{
-		{"no provider", aggeneric.CryptoNone, types.AttestLevelUnattested, types.SecurityLevelLow, false},
-		{"software", aggeneric.CryptoSoftware, types.AttestLevelSoftware, types.SecurityLevelLow, false},
-		{"secure element", aggeneric.CryptoSecureElement, types.AttestLevelHardware, types.SecurityLevelHigh, true},
-		{"discrete tpm2", aggeneric.CryptoTPM2, types.AttestLevelHardware, types.SecurityLevelVeryHigh, true},
+		{"no provider", tfw.CryptoNone, types.AttestLevelUnattested, types.SecurityLevelLow, false},
+		{"software", tfw.CryptoSoftware, types.AttestLevelSoftware, types.SecurityLevelLow, false},
+		{"secure element", tfw.CryptoSecureElement, types.AttestLevelHardware, types.SecurityLevelHigh, true},
+		{"discrete tpm2", tfw.CryptoTPM2, types.AttestLevelHardware, types.SecurityLevelVeryHigh, true},
 	}
 
 	for _, tt := range tests {
@@ -56,7 +56,7 @@ func TestTrustForClassifiesEveryKnownTier(t *testing.T) {
 // stronger root of trust, and assuming it did would grant an unknown provider
 // the standing reserved for a secure element.
 func TestTrustForRefusesToGuessAtAnUnknownTier(t *testing.T) {
-	for _, tier := range []aggeneric.CryptoTier{4, 7, 255} {
+	for _, tier := range []tfw.CryptoTier{4, 7, 255} {
 		got, known := trustFor(tier)
 
 		assert.False(t, known, "tier %d", tier)
@@ -71,8 +71,8 @@ func TestTrustForRefusesToGuessAtAnUnknownTier(t *testing.T) {
 // unattested would lose the difference between a device that answered and a
 // device that could not.
 func TestSoftwareTierIsNotTheSameAsNoProvider(t *testing.T) {
-	software, _ := trustFor(aggeneric.CryptoSoftware)
-	none, _ := trustFor(aggeneric.CryptoNone)
+	software, _ := trustFor(tfw.CryptoSoftware)
+	none, _ := trustFor(tfw.CryptoNone)
 
 	assert.NotEqual(t, none.level, software.level)
 	assert.Equal(t, types.AttestLevelSoftware, software.level)
