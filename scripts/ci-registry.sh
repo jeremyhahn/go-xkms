@@ -26,7 +26,8 @@
 # The registry is the forge the run belongs to, derived from GITHUB_SERVER_URL:
 # ghcr.io on GitHub, the forge's own host[:port] on Gitea; no address is
 # written here or in ci.yml. The namespace is CI_REGISTRY_OWNER, which
-# ci.yml's workflow env sets on the forge to agent-ci-images, the release
+# ci.yml's workflow env sets on the forge from the repository variable of the
+# same name: the release
 # runner's public user: Gitea 1.27 lets only a user namespace's owner or an
 # admin write it (go-xkms #1730, ruling 217). On GHCR, where the run's token
 # pushes, it is GITHUB_REPOSITORY_OWNER. A lookup speaks the registry API
@@ -140,8 +141,8 @@ registry_name() {
 }
 
 # registry_owner prints the namespace main's images live under:
-# CI_REGISTRY_OWNER when the workflow sets it (agent-ci-images on the
-# forge), else GITHUB_REPOSITORY_OWNER.
+# CI_REGISTRY_OWNER when the workflow sets it (the forge's CI images
+# namespace), else GITHUB_REPOSITORY_OWNER.
 registry_owner() {
   local var=GITHUB_REPOSITORY_OWNER owner
   [ -z "${CI_REGISTRY_OWNER:-}" ] || var=CI_REGISTRY_OWNER

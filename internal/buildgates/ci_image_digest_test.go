@@ -22,7 +22,7 @@ import (
 // writes to the registry, only under the push-to-main condition, and no env
 // sets the release runner's own credential names (ruling 173). Every read
 // step hands the script the run's token: a read of the forge's public
-// agent-ci-images namespace is anonymous (go-xkms #1730), and a read of GHCR,
+// CI images namespace is anonymous (go-xkms #1730), and a read of GHCR,
 // where a package is private when published, logs in with the token. No read
 // uses buildx imagetools.
 
@@ -43,15 +43,16 @@ const (
 	// consumerFloor is the number of jobs in ci.yml that run a stage in the
 	// toolchain image; a parse that finds fewer has stopped seeing them.
 	consumerFloor = 9
-	// registryScript hands the images over; forgeNamespace is the forge's
-	// public namespace main publishes them under (go-xkms #1730), which
-	// ci.yml alone names, as CI_REGISTRY_OWNER (ownerCond; ruling 217).
+	// registryScript hands the images over; forgeNamespace stands for the
+	// forge's public namespace main publishes them under (go-xkms #1730),
+	// which only the repository variable CI_REGISTRY_OWNER names (ownerCond;
+	// ruling 217): a namespace written into the script is a finding.
 	registryScript = "../../scripts/ci-registry.sh"
-	forgeNamespace = "agent-ci-images"
+	forgeNamespace = "example-ci-images"
 	// forgeAnonymous is read_credential's guard that reads any registry but
 	// GHCR, the forge's public namespace, with no credential (ruling 217).
 	forgeAnonymous = `[ "$host" = ghcr.io ] || return 0`
-	ownerCond      = "${{ github.server_url != 'https://github.com' && '" + forgeNamespace + "' || '' }}"
+	ownerCond      = "${{ github.server_url != 'https://github.com' && vars.CI_REGISTRY_OWNER || '' }}"
 )
 
 var (
@@ -237,8 +238,8 @@ func readProblems(where string, step digestStep) []string {
 }
 
 // registryScriptProblems reports a ci-registry.sh whose reads leave main's
-// forge namespace or log in: forgeNamespace is not written, since ci.yml's
-// CI_REGISTRY_OWNER names it; every repository and every pull is under
+// forge namespace or log in: no namespace is written, since the repository
+// variable CI_REGISTRY_OWNER names it; every repository and every pull is under
 // registry_owner, which takes CI_REGISTRY_OWNER; docker
 // login lives in push_login and read_login alone, and the run's token in
 // push_login and read_credential alone; read_credential reads the forge
@@ -280,7 +281,7 @@ func registryScriptProblems(src string) []string {
 		}
 	}
 	if written != 0 {
-		add("%s is written %d times, want none: ci.yml names it, as CI_REGISTRY_OWNER", forgeNamespace, written)
+		add("%s is written %d times, want none: the repository variable CI_REGISTRY_OWNER names it", forgeNamespace, written)
 	}
 	if !strings.Contains(funcs["registry_owner"], "var=CI_REGISTRY_OWNER") {
 		add("registry_owner does not take CI_REGISTRY_OWNER")
@@ -483,7 +484,7 @@ func TestCIImageDigest_RevertedConsumerFails(t *testing.T) {
 const digestFixture = `
 env:
   CI_PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-  CI_REGISTRY_OWNER: ${{ github.server_url != 'https://github.com' && 'agent-ci-images' || '' }}
+  CI_REGISTRY_OWNER: ${{ github.server_url != 'https://github.com' && vars.CI_REGISTRY_OWNER || '' }}
 jobs:
   ci-images:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
@@ -654,7 +655,7 @@ func TestCIImageDigest_RegistryScriptCanFail(t *testing.T) {
 		new  string
 		want string
 	}{
-		{"namespace written in the script", `printf '%s/%s/go-xkms-ci-%s\n' "$2" "$namespace" "$1"`, `printf '%s/agent-ci-images/go-xkms-ci-%s\n' "$2" "$1"`, "agent-ci-images is written 1 times"},
+		{"namespace written in the script", `printf '%s/%s/go-xkms-ci-%s\n' "$2" "$namespace" "$1"`, `printf '%s/` + forgeNamespace + `/go-xkms-ci-%s\n' "$2" "$1"`, forgeNamespace + " is written 1 times"},
 		{"owner override ignored", `[ -z "${CI_REGISTRY_OWNER:-}" ] || var=CI_REGISTRY_OWNER` + "\n", "", "registry_owner does not take CI_REGISTRY_OWNER"},
 		{"repository outside the owner", `namespace=$(registry_owner) || exit 1`, `namespace=$GITHUB_REPOSITORY_OWNER`, "main_repo does not name its repository under registry_owner"},
 		{"pull outside the namespace", `repos=$host/$(registry_owner)/`, `repos=$host/`, "pull_ref pulls a reference outside registry_owner"},

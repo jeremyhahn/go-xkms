@@ -239,10 +239,10 @@ endif
 # build refetched the graph, and a checkout with no build/docker/devcontainer/.env failed
 # on the first private module ("Failed to authenticate user") even with a
 # fully warm host cache.
-GITEA_GO_TOKEN ?= $(shell sed -n 's/^GITEA_GO_TOKEN=//p' build/docker/devcontainer/.env 2>/dev/null)
-# Exported so docker compose invocations interpolate ${GITEA_GO_TOKEN} in
+FORGE_MODULE_TOKEN ?= $(shell sed -n 's/^FORGE_MODULE_TOKEN=//p' build/docker/devcontainer/.env 2>/dev/null)
+# Exported so docker compose invocations interpolate ${FORGE_MODULE_TOKEN} in
 # their environment blocks regardless of which directory compose runs from.
-export GITEA_GO_TOKEN
+export FORGE_MODULE_TOKEN
 # The Gitea server itself (host:port of its HTTP API) is never written into
 # this tree: scripts/gitea-host.sh derives it from the environment, from
 # build/docker/devcontainer/.env, or from this checkout's own origin remote (an SSH origin
@@ -253,7 +253,7 @@ export GITEA_GO_TOKEN
 GITEA_HOST ?= $(shell scripts/gitea-host.sh 2>/dev/null)
 export GITEA_HOST
 # The insteadOf rewrite that resolves github.com/jeremyhahn/* against Gitea.
-GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.insteadOf
+GITEA_INSTEADOF_KEY = url.http://x:$(FORGE_MODULE_TOKEN)@$(GITEA_HOST)/jeremyhahn/.insteadOf
 
 # The module-fetch credentials every container gets, resolved ONCE here for
 # all consumers: the gomodauth BuildKit secret (stage-gomodauth), the builder
@@ -262,13 +262,13 @@ GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.i
 #   1. GIT_CONFIG_KEY_0 already in the environment -- this is how Gitea Actions
 #      supplies them (runner.envs injects the composed insteadOf rewrite into
 #      every job's process env; dependency-resolution.md §6). There is no
-#      GITEA_GO_TOKEN on that runner and no build/docker/devcontainer/.env in its checkout,
+#      FORGE_MODULE_TOKEN on that runner and no build/docker/devcontainer/.env in its checkout,
 #      so this must be checked first or the job gets an empty-token rewrite
 #      ("Failed to authenticate user"). Only entry 0 is forwarded (the
 #      rewrite), so the count is always 1: git aborts with "missing config
 #      key GIT_CONFIG_KEY_1" when the caller's count of N > 1 crosses over
 #      without entries 1..N-1, which fails every module fetch.
-#   2. GITEA_GO_TOKEN and GITEA_HOST, composed into GITEA_INSTEADOF_KEY -- the
+#   2. FORGE_MODULE_TOKEN and GITEA_HOST, composed into GITEA_INSTEADOF_KEY -- the
 #      devcontainer/host path, sourced from the gitignored build/docker/devcontainer/.env.
 # Otherwise the count is 0: git reads exactly GIT_CONFIG_COUNT entries, so
 # KEY_0/VALUE_0 stay inert and every module resolves publicly.
@@ -288,7 +288,7 @@ GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
-else ifneq ($(and $(GITEA_GO_TOKEN),$(GITEA_HOST)),)
+else ifneq ($(and $(FORGE_MODULE_TOKEN),$(GITEA_HOST)),)
 GOMODAUTH_GOPRIVATE := github.com/jeremyhahn/*
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GITEA_INSTEADOF_KEY)
@@ -491,10 +491,10 @@ TEST_FLAGS_FIPS := -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -t
 TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
 TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) $(TEST_BUILD_FLAGS) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
-# Where `make agsim` puts the arduino-generic host simulators. Exported so every
-# go test the Makefile runs finds them (sdk/go/agsim reads AGSIM_DIR).
-AGSIM_DIR ?= $(CURDIR)/build/agsim
-export AGSIM_DIR
+# Where `make agsim` puts the trusted-firmware host simulators. Exported so every
+# go test the Makefile runs finds them (sdk/go/tfwsim reads TFWSIM_DIR).
+TFWSIM_DIR ?= $(CURDIR)/build/agsim
+export TFWSIM_DIR
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 COVERAGE_THRESHOLD := 80
 # Integration test tags include both backend tags and integration tag
@@ -4051,13 +4051,13 @@ fmt-check:
 	@echo "$(GREEN)✓ Code is properly formatted$(RESET)"
 
 .PHONY: agsim
-## agsim: Build the arduino-generic host simulators the DICE end-to-end test enrolls (go-xkms#737)
+## agsim: Build the trusted-firmware host simulators the DICE end-to-end test enrolls (go-xkms#737)
 ## The pkg/acme/client device-attest-01 test runs the real firmware, compiled for
-## the host, through the ACME server. The source is the arduino-generic module at
-## the version go.mod pins; the binaries land in AGSIM_DIR, which the test's
-## launcher (sdk/go/agsim) reads. A missing binary FAILS that test, never skips.
+## the host, through the ACME server. The source is the trusted-firmware module at
+## the version go.mod pins; the binaries land in TFWSIM_DIR, which the test's
+## launcher (sdk/go/tfwsim) reads. A missing binary FAILS that test, never skips.
 agsim:
-	@bash scripts/build-agsim.sh "$(AGSIM_DIR)"
+	@bash scripts/build-agsim.sh "$(TFWSIM_DIR)"
 
 .PHONY: check-insecure-tls
 ## check-insecure-tls: Enforce insecure-TLS/transport allowlist (fails on unapproved use)
@@ -5497,7 +5497,7 @@ test_dir = $(or $(wildcard ./pkg/$(1)),$(wildcard ./cmd/$(1)),$(error neither ./
 # integration_dir does the same for integration-test-%: test/integration/$*.
 integration_dir = $(or $(wildcard ./test/integration/$(1)),$(error ./test/integration/$(1) does not exist))
 
-# pkg/acme/client's device-attest-01 DICE tests enroll the agsim-atecc608a
+# pkg/acme/client's device-attest-01 DICE tests enroll the tfwsim-atecc608a
 # simulator and fail without it, so the per-package targets that reach them
 # build it first, as test-go, race and coverage-full do.
 test-acme coverage-acme: agsim

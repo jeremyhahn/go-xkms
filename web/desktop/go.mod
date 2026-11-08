@@ -134,7 +134,6 @@ require (
 	github.com/hashicorp/vault/api v1.23.0 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
-	github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-enclave v0.11.0-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
@@ -144,6 +143,7 @@ require (
 	github.com/jeremyhahn/go-quicraft v0.24.2-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.7.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha // indirect
+	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.20.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
