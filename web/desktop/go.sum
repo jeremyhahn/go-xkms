@@ -363,7 +363,7 @@ github.com/jeremyhahn/go-qrdb v0.51.0-alpha h1:xzBsjde29eGltGMDoDpvLVvQ54Uiy9Adg
 github.com/jeremyhahn/go-qrdb v0.51.0-alpha/go.mod h1:jQ1zmeoP3mAtaP0cp7COVcT+Lgfvoo5cMpQAiDxPDs4=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha h1:/ga4ic42OGujWx4fO1w/Bb1UmzYX6hoAzoocuP3OGQg=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha/go.mod h1:9oNYswBFdjQke8bza1147yuRTEnqzEe1lz4tzs0i2DA=
-github.com/jeremyhahn/go-quicraft v0.22.0-alpha h1:peYwiACqAJ5V2Gsad9z86+1k95UOwRnrVRhtfBXRC0Y=
+github.com/jeremyhahn/go-quicraft v0.22.0-alpha h1:9DCWfLLnH/Cnda3eKlpfVGlLFRFFEQ/Ow4WmSGfPLtc=
 github.com/jeremyhahn/go-quicraft v0.22.0-alpha/go.mod h1:8JiGuTzyg0LMAM/CebTbnlqmHftPwdPndamtNwMvz5o=
 github.com/jeremyhahn/go-tpm v0.0.0-20261108040111-edb18e51d83f h1:WurSKYWHVDIHPHv7NcvVCo9o6JoQRmBBlsYtOYAqaZg=
 github.com/jeremyhahn/go-tpm v0.0.0-20261108040111-edb18e51d83f/go.mod h1:9tkuoXrRnWRb2b6ce36+5HFVBI8MoVLpWAqx5AcR6y0=
