@@ -239,10 +239,10 @@ endif
 # build refetched the graph, and a checkout with no build/docker/devcontainer/.env failed
 # on the first private module ("Failed to authenticate user") even with a
 # fully warm host cache.
-GITEA_GO_TOKEN ?= $(shell sed -n 's/^GITEA_GO_TOKEN=//p' build/docker/devcontainer/.env 2>/dev/null)
-# Exported so docker compose invocations interpolate ${GITEA_GO_TOKEN} in
+FORGE_MODULE_TOKEN ?= $(shell sed -n 's/^FORGE_MODULE_TOKEN=//p' build/docker/devcontainer/.env 2>/dev/null)
+# Exported so docker compose invocations interpolate ${FORGE_MODULE_TOKEN} in
 # their environment blocks regardless of which directory compose runs from.
-export GITEA_GO_TOKEN
+export FORGE_MODULE_TOKEN
 # The Gitea server itself (host:port of its HTTP API) is never written into
 # this tree: scripts/gitea-host.sh derives it from the environment, from
 # build/docker/devcontainer/.env, or from this checkout's own origin remote (an SSH origin
@@ -253,7 +253,7 @@ export GITEA_GO_TOKEN
 GITEA_HOST ?= $(shell scripts/gitea-host.sh 2>/dev/null)
 export GITEA_HOST
 # The insteadOf rewrite that resolves github.com/jeremyhahn/* against Gitea.
-GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.insteadOf
+GITEA_INSTEADOF_KEY = url.http://x:$(FORGE_MODULE_TOKEN)@$(GITEA_HOST)/jeremyhahn/.insteadOf
 
 # The module-fetch credentials every container gets, resolved ONCE here for
 # all consumers: the gomodauth BuildKit secret (stage-gomodauth), the builder
@@ -262,13 +262,13 @@ GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.i
 #   1. GIT_CONFIG_KEY_0 already in the environment -- this is how Gitea Actions
 #      supplies them (runner.envs injects the composed insteadOf rewrite into
 #      every job's process env; dependency-resolution.md §6). There is no
-#      GITEA_GO_TOKEN on that runner and no build/docker/devcontainer/.env in its checkout,
+#      FORGE_MODULE_TOKEN on that runner and no build/docker/devcontainer/.env in its checkout,
 #      so this must be checked first or the job gets an empty-token rewrite
 #      ("Failed to authenticate user"). Only entry 0 is forwarded (the
 #      rewrite), so the count is always 1: git aborts with "missing config
 #      key GIT_CONFIG_KEY_1" when the caller's count of N > 1 crosses over
 #      without entries 1..N-1, which fails every module fetch.
-#   2. GITEA_GO_TOKEN and GITEA_HOST, composed into GITEA_INSTEADOF_KEY -- the
+#   2. FORGE_MODULE_TOKEN and GITEA_HOST, composed into GITEA_INSTEADOF_KEY -- the
 #      devcontainer/host path, sourced from the gitignored build/docker/devcontainer/.env.
 # Otherwise the count is 0: git reads exactly GIT_CONFIG_COUNT entries, so
 # KEY_0/VALUE_0 stay inert and every module resolves publicly.
@@ -288,7 +288,7 @@ GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
-else ifneq ($(and $(GITEA_GO_TOKEN),$(GITEA_HOST)),)
+else ifneq ($(and $(FORGE_MODULE_TOKEN),$(GITEA_HOST)),)
 GOMODAUTH_GOPRIVATE := github.com/jeremyhahn/*
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GITEA_INSTEADOF_KEY)
