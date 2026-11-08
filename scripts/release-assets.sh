@@ -11,7 +11,7 @@
 #	scripts/release-assets.sh upload          FILE...
 #
 # Environment (all required except DRY_RUN):
-#	RELEASE_API   Gitea API root, e.g. http://host:3001/api/v1 (github.api_url)
+#	RELEASE_API   Gitea API root, e.g. http://forge.example.invalid/api/v1 (github.api_url)
 #	RELEASE_REPO  owner/repo (github.repository)
 #	RELEASE_TAG   the tag whose release is addressed, e.g. v0.11.0-alpha
 #	RELEASE_TOKEN a token allowed to read and write that release's assets
