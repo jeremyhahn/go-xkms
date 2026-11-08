@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/stretchr/testify/require"
 )
@@ -34,8 +34,8 @@ import (
 //
 // Every byte a test sends is framed by the SDK's own EncodeResponse and every
 // byte the backend sends is parsed by the SDK's own Decode, so what is under
-// test is this package against the protocol as arduino-generic implements it.
-// Mocking *aggeneric.Device instead would replace the one thing worth
+// test is this package against the protocol as trusted-firmware implements it.
+// Mocking *tfw.Device instead would replace the one thing worth
 // exercising — a reply's layout, a status code's meaning, the length a command
 // needs — with this package's own opinion of it, and the tests would pass for a
 // device that does not exist.
@@ -47,7 +47,7 @@ const linkTimeout = 50 * time.Millisecond
 
 // reply is one canned response.
 type reply struct {
-	status  aggeneric.Status
+	status  tfw.Status
 	payload []byte
 }
 
@@ -58,12 +58,12 @@ type reply struct {
 // a firmware built without that feature actually does — the absence of a reply
 // in the table models the absence of a handler in the image.
 type fakeLink struct {
-	replies map[aggeneric.Cmd]reply
+	replies map[tfw.Cmd]reply
 
 	// pagedReplies answers successive requests for one command with successive
 	// entries, which is how a paged command reads on the wire.
-	pagedReplies map[aggeneric.Cmd][][]byte
-	pageCursor   map[aggeneric.Cmd]int
+	pagedReplies map[tfw.Cmd][][]byte
+	pageCursor   map[tfw.Cmd]int
 
 	// repeatPages starts the page sequence over instead of answering a range
 	// error past the end, which is a device that can be attested more than
@@ -73,7 +73,7 @@ type fakeLink struct {
 
 	// requests records what the backend asked for, so a test can assert that a
 	// refusal cost no round trip.
-	requests []aggeneric.Frame
+	requests []tfw.Frame
 
 	// writeErr, when set, fails the write. readEOF closes the link on the next
 	// read, which is how a device that went away is modelled.
@@ -88,18 +88,18 @@ type fakeLink struct {
 
 func newFakeLink() *fakeLink {
 	return &fakeLink{
-		replies:      map[aggeneric.Cmd]reply{},
-		pagedReplies: map[aggeneric.Cmd][][]byte{},
-		pageCursor:   map[aggeneric.Cmd]int{},
+		replies:      map[tfw.Cmd]reply{},
+		pagedReplies: map[tfw.Cmd][][]byte{},
+		pageCursor:   map[tfw.Cmd]int{},
 	}
 }
 
-func (l *fakeLink) answer(cmd aggeneric.Cmd, payload []byte) *fakeLink {
+func (l *fakeLink) answer(cmd tfw.Cmd, payload []byte) *fakeLink {
 	l.replies[cmd] = reply{payload: payload}
 	return l
 }
 
-func (l *fakeLink) refuse(cmd aggeneric.Cmd, status aggeneric.Status) *fakeLink {
+func (l *fakeLink) refuse(cmd tfw.Cmd, status tfw.Status) *fakeLink {
 	l.replies[cmd] = reply{status: status}
 	return l
 }
@@ -108,7 +108,7 @@ func (l *fakeLink) Write(p []byte) (int, error) {
 	if l.writeErr != nil {
 		return 0, l.writeErr
 	}
-	f, _, err := aggeneric.Decode(p)
+	f, _, err := tfw.Decode(p)
 	if err != nil {
 		return 0, err
 	}
@@ -124,16 +124,16 @@ func (l *fakeLink) Write(p []byte) (int, error) {
 			if at >= len(pages) {
 				// Past the end the device answers a range error rather than an
 				// empty success, so a host cannot loop forever on it.
-				r = reply{status: aggeneric.StatusErrRange}
+				r = reply{status: tfw.StatusErrRange}
 			} else {
 				r = reply{payload: pages[at]}
 				l.pageCursor[f.Cmd()] = at + 1
 			}
 		} else {
-			r = reply{status: aggeneric.StatusErrUnknownCmd}
+			r = reply{status: tfw.StatusErrUnknownCmd}
 		}
 	}
-	resp, err := aggeneric.EncodeResponse(f.Seq, f.Cmd(), r.status, r.payload)
+	resp, err := tfw.EncodeResponse(f.Seq, f.Cmd(), r.status, r.payload)
 	if err != nil {
 		return 0, err
 	}
@@ -159,16 +159,16 @@ func (l *fakeLink) Read(p []byte) (int, error) {
 }
 
 // capsPayload builds the board header a current firmware sends, mirroring the
-// layout in include/ag/protocol.h: the fourteen-byte header every version has,
+// layout in include/tfw/protocol.h: the fourteen-byte header every version has,
 // then the algorithm bitmap appended after it.
-func capsPayload(tier aggeneric.CryptoTier, features uint32, algorithms aggeneric.AlgorithmSet) []byte {
+func capsPayload(tier tfw.CryptoTier, features uint32, algorithms tfw.AlgorithmSet) []byte {
 	p := make([]byte, 16)
-	p[0], p[1] = 1, 0 // protocol 1.0
+	p[0], p[1] = 2, 0 // protocol 2.0
 	p[2], p[3], p[4] = 0, 2, 0
 	p[5] = 0x01 // board id
 	p[6] = 22   // pin count
 	p[7] = 8    // scheduler slots
-	p[8] = aggeneric.MaxPayload
+	p[8] = tfw.MaxPayload
 	p[9] = byte(tier)
 	binary.LittleEndian.PutUint32(p[10:14], features)
 	binary.LittleEndian.PutUint16(p[14:16], uint16(algorithms))
@@ -177,13 +177,13 @@ func capsPayload(tier aggeneric.CryptoTier, features uint32, algorithms aggeneri
 
 // legacyCapsPayload is what firmware built before the algorithm bitmap existed
 // sends: the header and nothing after it.
-func legacyCapsPayload(tier aggeneric.CryptoTier) []byte {
+func legacyCapsPayload(tier tfw.CryptoTier) []byte {
 	return capsPayload(tier, 0x0F, 0)[:14]
 }
 
 // capsPayloadWithProtocol builds a header claiming a specific protocol version.
 func capsPayloadWithProtocol(major, minor uint8) []byte {
-	p := capsPayload(aggeneric.CryptoSecureElement, 0x0F, aggeneric.AlgECDSAP256SHA256)
+	p := capsPayload(tfw.CryptoSecureElement, 0x0F, tfw.AlgECDSAP256SHA256)
 	p[0], p[1] = major, minor
 	return p
 }
@@ -216,7 +216,7 @@ func provInfoPayload(serial []byte, configLocked, dataLocked bool) []byte {
 }
 
 // sysInfoPayload builds a SYS_INFO reply.
-func sysInfoPayload(uptime time.Duration, freeRAM uint16, cause aggeneric.ResetCause) []byte {
+func sysInfoPayload(uptime time.Duration, freeRAM uint16, cause tfw.ResetCause) []byte {
 	p := make([]byte, 7)
 	binary.LittleEndian.PutUint32(p[0:4], uint32(uptime.Milliseconds()))
 	binary.LittleEndian.PutUint16(p[4:6], freeRAM)
@@ -259,7 +259,7 @@ func (l *fakeLink) answerAttestCert(der []byte) *fakeLink {
 		}
 		pages = append(pages, attestCertReply(byte(off/page), len(der), der[off:end]))
 	}
-	l.pagedReplies[aggeneric.CmdAttestCert] = pages
+	l.pagedReplies[tfw.CmdAttestCert] = pages
 	return l
 }
 
@@ -272,15 +272,15 @@ func (l *fakeLink) answerAttestCertRepeating(der []byte) *fakeLink {
 
 // newTestDevice wraps a link in an SDK Device with a deadline short enough for
 // a unit test.
-func newTestDevice(link io.ReadWriter) *aggeneric.Device {
-	return aggeneric.New(link, aggeneric.WithTimeout(linkTimeout))
+func newTestDevice(link io.ReadWriter) *tfw.Device {
+	return tfw.New(link, tfw.WithTimeout(linkTimeout))
 }
 
 // testConfig is a valid configuration with a logger that discards.
 func testConfig() *Config {
 	return &Config{
 		KeyCN:          DefaultKeyCN,
-		Slot:           aggeneric.SlotDeviceID,
+		Slot:           tfw.SlotDeviceID,
 		RequestTimeout: linkTimeout,
 		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -300,10 +300,10 @@ func newTestBackend(t *testing.T, link *fakeLink) *Backend {
 // secure element, attestation compiled in, ECDSA P-256 and HMAC-SHA256 and --
 // as the ATECC608A really is -- NO Ed25519.
 func secureElementLink() *fakeLink {
-	return newFakeLink().answer(aggeneric.CmdCaps, capsPayload(
-		aggeneric.CryptoSecureElement,
-		aggeneric.FeatureGPIO|aggeneric.FeatureAttest,
-		aggeneric.AlgECDSAP256SHA256|aggeneric.AlgHMACSHA256,
+	return newFakeLink().answer(tfw.CmdCaps, capsPayload(
+		tfw.CryptoSecureElement,
+		tfw.FeatureGPIO|tfw.FeatureAttest,
+		tfw.AlgECDSAP256SHA256|tfw.AlgHMACSHA256,
 	))
 }
 

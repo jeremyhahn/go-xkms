@@ -3,13 +3,14 @@
 # check-public-literals.sh — public-release readiness gate (go-xkms#1030).
 #
 # Fails with file:line output if any file in the tree contains an internal
-# literal: a lab-network address, a fleet host name, or an owner workstation
-# path. None of these may reach a published tree. The placeholders that
+# literal: a lab-network address or a fleet host name. None of these may
+# reach a published tree. Owner workstation paths are not matched here: the
+# Releasability (private patterns) step in ci.yml's lint-gates job owns that
+# class, so its value is not written into this public tree. The placeholders that
 # replace them are documented in CLAUDE.md's feature-docs convention and in
 # the release-engineering docs:
 #   - lab subnet 198.51.100.0/24        -> 192.0.2.x (RFC 5737 TEST-NET-1)
 #   - fleet host names (dellemc-*, ...)   -> kms.example.com / ca.example.com
-#   - owner workstation paths            -> $HOME/... or $XDG_CONFIG_HOME/...
 #
 # Generic private-range examples used as test data (192.168.1.1, 10.0.0.1,
 # etc.) are NOT internal and must not be flagged -- only the lab's own
@@ -41,7 +42,7 @@ set -uo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT="${1:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
-PATTERN='192\.168\.101\.[0-9]{1,3}|dellemc-?[0-9]*|omega-docker|/home/jhahn|~jhahn'
+PATTERN='192\.168\.101\.[0-9]{1,3}|dellemc-?[0-9]*|omega-docker'
 
 # --- the allowlist ---------------------------------------------------------
 # Agent-instruction files are excluded on purpose, not left over from an
