@@ -275,10 +275,13 @@ make agsim                                 # build the simulators into $TFWSIM_D
 go test -tags "codec_json" -run TestDeviceAttestDICE ./pkg/acme/client/
 ```
 
-`make agsim` builds `tfwsim` from the trusted-firmware module at the version `go.mod`
-pins (`scripts/build-agsim.sh`), after checking the module hash against
-`scripts/agsim.sum` (the root trusted-firmware module is not in `go.mod`, so
-`go.sum` does not cover it; bumping the dependency adds a line there); `make test`, `make race` and
+`make agsim` builds `tfwsim` from the trusted-firmware repository at the version `go.mod`
+pins for `trusted-firmware/sdk/go` (`scripts/build-agsim.sh`). The source is fetched
+with git at the commit `scripts/agsim.sum` pins, and its commit and tree are
+checked against that pin before the build: the repository root has no `go.mod`,
+so proxy.golang.org serves no version of it and `go.sum` cannot cover it. Bumping
+the dependency adds a pin line there; the devcontainer image pre-fetches the
+pinned commit into `/opt/agsim-src`, so its test stage needs no network; `make test`, `make race` and
 `make coverage-full` run it first. A missing binary fails the test and prints the
 command; it never skips.
 
