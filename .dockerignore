@@ -54,7 +54,7 @@ build/docker/devcontainer/.env
 build/docker/devcontainer/.env.tmp
 build/docker/devcontainer/gomodauth.env
 # The pre-#1558 location: a checkout upgraded across the move keeps its old,
-# untracked .devcontainer/.env (GITEA_GO_TOKEN), which `COPY . .` would bake
+# untracked .devcontainer/.env (FORGE_MODULE_TOKEN), which `COPY . .` would bake
 # into an image layer.
 .devcontainer/.env
 .devcontainer/.env.tmp

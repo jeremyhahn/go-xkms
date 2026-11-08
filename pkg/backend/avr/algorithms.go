@@ -14,7 +14,7 @@
 package avr
 
 import (
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 )
 
 // Algorithm names one signature algorithm an AVR crypto provider may be able
@@ -47,18 +47,18 @@ const (
 // capability bit to a name: nothing else in this package may conclude that a
 // device can perform an algorithm.
 var algorithmBits = []struct {
-	bit  aggeneric.AlgorithmSet
+	bit  tfw.AlgorithmSet
 	name Algorithm
 }{
-	{aggeneric.AlgECDSAP256SHA256, AlgorithmECDSAP256SHA256},
-	{aggeneric.AlgEd25519, AlgorithmEd25519},
-	{aggeneric.AlgHMACSHA256, AlgorithmHMACSHA256},
+	{tfw.AlgECDSAP256SHA256, AlgorithmECDSAP256SHA256},
+	{tfw.AlgEd25519, AlgorithmEd25519},
+	{tfw.AlgHMACSHA256, AlgorithmHMACSHA256},
 }
 
 // algorithmSets is the reverse lookup, built once from the same table so the
 // two cannot disagree.
-var algorithmSets = func() map[Algorithm]aggeneric.AlgorithmSet {
-	m := make(map[Algorithm]aggeneric.AlgorithmSet, len(algorithmBits))
+var algorithmSets = func() map[Algorithm]tfw.AlgorithmSet {
+	m := make(map[Algorithm]tfw.AlgorithmSet, len(algorithmBits))
 	for _, a := range algorithmBits {
 		m[a.name] = a.bit
 	}
@@ -66,8 +66,8 @@ var algorithmSets = func() map[Algorithm]aggeneric.AlgorithmSet {
 }()
 
 // knownAlgorithms is every bit this host has a name for.
-var knownAlgorithms = func() aggeneric.AlgorithmSet {
-	var s aggeneric.AlgorithmSet
+var knownAlgorithms = func() tfw.AlgorithmSet {
+	var s tfw.AlgorithmSet
 	for _, a := range algorithmBits {
 		s |= a.bit
 	}
@@ -84,7 +84,7 @@ var knownAlgorithms = func() aggeneric.AlgorithmSet {
 // device is the only authority on what it can do, and the bitmap is how it
 // says so.
 type Algorithms struct {
-	set aggeneric.AlgorithmSet
+	set tfw.AlgorithmSet
 }
 
 // Can reports whether the device can perform alg.
@@ -117,7 +117,7 @@ func (a Algorithms) Named() []Algorithm {
 // Reported rather than dropped. A device offering something newer than the
 // host is the ordinary state of a fleet mid-upgrade, and a capability report
 // that silently showed fewer algorithms than were offered would hide it.
-func (a Algorithms) Unnamed() aggeneric.AlgorithmSet {
+func (a Algorithms) Unnamed() tfw.AlgorithmSet {
 	return a.set &^ knownAlgorithms
 }
 
@@ -131,7 +131,7 @@ func (a Algorithms) Empty() bool { return a.set == 0 }
 
 // Set returns the raw bitmap, for a caller that needs to record exactly what
 // the device reported.
-func (a Algorithms) Set() aggeneric.AlgorithmSet { return a.set }
+func (a Algorithms) Set() tfw.AlgorithmSet { return a.set }
 
 // String renders the set the way the SDK renders it, including the hex form of
 // any bit this host cannot name.
