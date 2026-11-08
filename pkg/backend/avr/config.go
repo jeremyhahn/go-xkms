@@ -18,7 +18,7 @@ import (
 	"os"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 )
 
 const (
@@ -43,7 +43,7 @@ type Config struct {
 	KeyCN string `yaml:"key_cn" json:"key_cn"`
 
 	// Slot is the element slot holding the identity keypair. It defaults to
-	// aggeneric.SlotDeviceID and there is no reason to set it otherwise: the
+	// tfw.SlotDeviceID and there is no reason to set it otherwise: the
 	// assignment is compiled into the firmware and into the element's locked
 	// configuration zone, so a host that disagrees is simply wrong about a
 	// part it cannot correct.
@@ -67,7 +67,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		KeyCN:          DefaultKeyCN,
-		Slot:           aggeneric.SlotDeviceID,
+		Slot:           tfw.SlotDeviceID,
 		RequestTimeout: DefaultRequestTimeout,
 		Logger:         slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
@@ -83,7 +83,7 @@ func (c *Config) Validate() error {
 	if c.KeyCN == "" {
 		return ErrMissingKeyCN
 	}
-	if c.Slot != aggeneric.SlotDeviceID {
+	if c.Slot != tfw.SlotDeviceID {
 		return ErrInvalidSlot
 	}
 	if c.RequestTimeout <= 0 {
