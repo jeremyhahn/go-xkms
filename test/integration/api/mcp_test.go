@@ -17,84 +17,69 @@ package integration
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
 )
 
-// MCPClient wraps TCP connection for MCP JSON-RPC testing
+// mcpCallTimeout bounds the connect handshake and each tool call.
+const mcpCallTimeout = 10 * time.Second
+
+// MCPClient wraps the mcps:// Streamable HTTP client for MCP integration
+// testing, authenticated with the admin mTLS credential.
 type MCPClient struct {
-	addr string
-	conn net.Conn
+	client *mcptool.Client
 }
 
-// NewMCPClient creates a new MCP client
-func NewMCPClient(addr string) (*MCPClient, error) {
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	if err != nil {
+// NewMCPClient connects to the xkmsd MCP endpoint at addr over mTLS.
+func NewMCPClient(tb testing.TB, addr string) (*MCPClient, error) {
+	tb.Helper()
+	client := mcptool.NewClient(&transport.Config{
+		Address:    addr,
+		TLSEnabled: true,
+		TLSConfig:  clientTLSConfig(tb),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), mcpCallTimeout)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to connect", Err: err}
 	}
-
-	return &MCPClient{
-		addr: addr,
-		conn: conn,
-	}, nil
+	return &MCPClient{client: client}, nil
 }
 
-// Close closes the MCP connection
+// Close closes the MCP session.
 func (c *MCPClient) Close() error {
-	if c.conn != nil {
-		return c.conn.Close()
-	}
-	return nil
+	return c.client.Close()
 }
 
-// Call sends a JSON-RPC request and returns the response
+// Call invokes method as its MCP tool and returns the decoded tool result
+// under the "result" key, the shape the JSON-RPC responses carried.
 func (c *MCPClient) Call(method string, params interface{}) (map[string]interface{}, error) {
-	request := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"params":  params,
-		"id":      1,
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), mcpCallTimeout)
+	defer cancel()
 
-	requestBytes, err := json.Marshal(request)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
+	var result interface{}
+	if err := c.client.Call(ctx, method, params, &result); err != nil {
+		return nil, err
 	}
+	return map[string]interface{}{"result": result}, nil
+}
 
-	// Send request with newline delimiter
-	_, err = c.conn.Write(append(requestBytes, '\n'))
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to send request", Err: err}
-	}
-
-	// Read response (use large buffer for responses with PEM data)
-	buf := make([]byte, 256*1024)
-	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	n, err := c.conn.Read(buf)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to read response", Err: err}
-	}
-
-	// Parse response
-	var response map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(buf[:n]))
-	if err := decoder.Decode(&response); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decode response", Err: err}
-	}
-
-	// Check for error in response
-	if errObj, ok := response["error"]; ok {
-		return nil, &errs.Message{Msg: fmt.Sprintf("JSON-RPC error: %v", errObj)}
-	}
-
-	return response, nil
+// dialMCPRaw opens a raw mTLS connection to the MCP endpoint for the tests
+// that exercise wire forms outside the tool-call surface.
+func dialMCPRaw(tb testing.TB, addr string) (*tls.Conn, error) {
+	tb.Helper()
+	dialer := &net.Dialer{Timeout: mcpCallTimeout}
+	return tls.DialWithDialer(dialer, "tcp", addr, clientTLSConfig(tb))
 }
 
 // TestMCPHealth tests the MCP health check (placeholder)
@@ -106,7 +91,7 @@ func TestMCPHealth(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
@@ -139,7 +124,7 @@ func TestMCPListBackends(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
@@ -172,7 +157,7 @@ func TestMCPGenerateKey(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
@@ -216,7 +201,7 @@ func TestMCPListKeys(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
@@ -284,7 +269,7 @@ func TestMCPSignVerify(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
@@ -363,9 +348,9 @@ func TestMCPBatchRequests(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
-	assertNoError(t, err, "Failed to create MCP client")
-	defer client.Close()
+	conn, err := dialMCPRaw(t, cfg.MCPAddr)
+	assertNoError(t, err, "Failed to connect to MCP server")
+	defer conn.Close()
 
 	// Send batch request
 	batchRequest := []map[string]interface{}{
@@ -384,13 +369,13 @@ func TestMCPBatchRequests(t *testing.T) {
 	requestBytes, err := json.Marshal(batchRequest)
 	assertNoError(t, err, "Failed to marshal batch request")
 
-	_, err = client.conn.Write(append(requestBytes, '\n'))
+	_, err = conn.Write(append(requestBytes, '\n'))
 	assertNoError(t, err, "Failed to send batch request")
 
 	// Read response
 	buf := make([]byte, 8192)
-	client.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	n, err := client.conn.Read(buf)
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	n, err := conn.Read(buf)
 	assertNoError(t, err, "Failed to read batch response")
 
 	// Parse batch response
@@ -418,7 +403,7 @@ func TestMCPStreamingNotifications(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
@@ -447,9 +432,13 @@ func TestMCPStreamingNotifications(t *testing.T) {
 	// Try to read notification with a short timeout.
 	// This is best-effort since notifications are asynchronous and may have
 	// already been consumed or not yet sent.
+	conn, err := dialMCPRaw(t, cfg.MCPAddr)
+	assertNoError(t, err, "Failed to connect to MCP server")
+	defer conn.Close()
+
 	buf := make([]byte, 8192)
-	client.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-	n, err := client.conn.Read(buf)
+	conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	n, err := conn.Read(buf)
 	if err != nil {
 		// Timeout or other read error is acceptable for async notifications
 		t.Logf("Notification not received (expected for async events): %v", err)
@@ -482,7 +471,7 @@ func TestMCPErrorHandling(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 

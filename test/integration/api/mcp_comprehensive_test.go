@@ -692,7 +692,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 				t.Fatal(op.SkipReason)
 			}
 
-			client, err := NewMCPClient(cfg.MCPAddr)
+			client, err := NewMCPClient(t, cfg.MCPAddr)
 			if err != nil {
 				t.Fatalf("Failed to create MCP client: %v", err)
 			}
@@ -778,7 +778,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 
 	for _, kt := range keyTypes {
 		t.Run(kt.name, func(t *testing.T) {
-			client, err := NewMCPClient(cfg.MCPAddr)
+			client, err := NewMCPClient(t, cfg.MCPAddr)
 			if err != nil {
 				t.Fatalf("Failed to create MCP client: %v", err)
 			}
@@ -937,7 +937,7 @@ func TestMCPErrorScenarios(t *testing.T) {
 
 	for _, tc := range errorCases {
 		t.Run(tc.name, func(t *testing.T) {
-			client, err := NewMCPClient(cfg.MCPAddr)
+			client, err := NewMCPClient(t, cfg.MCPAddr)
 			if err != nil {
 				t.Fatalf("Failed to create MCP client: %v", err)
 			}
