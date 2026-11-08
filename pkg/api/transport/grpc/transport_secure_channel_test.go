@@ -193,6 +193,20 @@ func TestSignImage_GuardChecksTheEstablishedChannelNotTheConfig(t *testing.T) {
 	assert.Zero(t, rec.calls.Load(), "the registry credential is never sent")
 }
 
+func TestSignImage_GuardChecksTheDialedTargetNotTheConfigAddress(t *testing.T) {
+	guardOn(t)
+	tr, rec := connectPlaintextThenFlip(t)
+	tr.config.TLSEnabled = false
+	tr.config.Address = "unix:///run/xkms.sock"
+
+	_, err := tr.SignImage(context.Background(), &transport.SignImageRequest{
+		Reference: "registry.example/app:1",
+		Registry:  &transport.ImageRegistryCredentials{Username: "ci", Password: types.SecretBytes("hunter2")},
+	})
+	require.ErrorIs(t, err, transport.ErrInsecureTransport, "the channel is plaintext TCP whatever address the Config now names")
+	assert.Zero(t, rec.calls.Load(), "the registry credential is never sent")
+}
+
 func TestRequireSecureTarget_LeaderChecksTheEstablishedChannelNotTheConfig(t *testing.T) {
 	guardOn(t)
 	tr, _ := connectPlaintextThenFlip(t)
