@@ -1889,8 +1889,17 @@ jobs:
   # race: the race detector over every backend, FROST included, on SoftHSM
   # with a token at slot 0 and the trusted-firmware simulators (sdk/go/tfwsim;
   # a missing binary FAILS that test). -p 2 because under -race the
-  # password-vault packages (pkg/api/mcp, pkg/api/rest) each peak near 7 GB,
-  # and eight in parallel OOM-killed the job (#1389). The PR tier's race
+  # password-vault packages (pkg/api/mcp, pkg/api/rest) once peaked near 7 GB
+  # each, and eight in parallel OOM-killed the job (#1389). GOMEMLIMIT=3GiB
+  # because on a hosted runner scripts/in-toolchain-image.sh caps the
+  # container at 8g, swap off: two test processes at 3GiB each fit with room
+  # for the race detector's shadow memory, which is outside the limit, and the
+  # build. 10GiB, above the container, never made the GC work before the OOM
+  # killer took pkg/fido2/authenticator (DS-7814). Measured under this job's
+  # tags in a 4-CPU, 8g, swap-off cgroup (2026-11-08), peak RSS per test
+  # binary: pkg/fido2/authenticator 2.77 GiB, pkg/api/rest 1.65, pkg/api/mcp
+  # 1.37; -p 2 over ./pkg/fido2/... ./pkg/api/... passed with no OOM kill.
+  # The PR tier's race
   # check is make coverage (make test runs -race); this job adds the backend
   # tag set and stays full tier.
   race:
@@ -1964,7 +1973,7 @@ jobs:
             softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234
             export TFWSIM_DIR=/src/build/agsim
             make agsim
-            GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
+            GOMEMLIMIT=3GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
               -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
           '
 
