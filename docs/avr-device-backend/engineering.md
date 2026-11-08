@@ -5,7 +5,7 @@
 Package: `pkg/backend/avr` · Import path
 `github.com/jeremyhahn/go-xkms/pkg/backend/avr`
 
-Upstream: `github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha` (`go.mod`), a Layer 0
+Upstream: `github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha` (`go.mod`), a Layer 0
 module whose only dependencies are `go.bug.st/serial` and `testify`. Importing
 it from Layer 3 is permitted and is what it exists for.
 
@@ -13,10 +13,10 @@ it from Layer 3 is permitted and is what it exists for.
 
 | Symbol | What it is |
 |---|---|
-| `NewBackend(ctx, *Config, *aggeneric.Device) (*Backend, error)` | Reads `CAPS` and caches it. Fails when the device is absent, silent, or speaks a protocol major this host does not. |
+| `NewBackend(ctx, *Config, *tfw.Device) (*Backend, error)` | Reads `CAPS` and caches it. Fails when the device is absent, silent, or speaks a protocol major this host does not. |
 | `Backend.Type() types.BackendType` | `types.BackendTypeAVR` (`"avr"`). |
 | `Backend.Capabilities() types.Capabilities` | Answers from the cached `CAPS`. No I/O, no allocation. |
-| `Backend.Caps() aggeneric.Caps` | The device's `CAPS` reply verbatim. |
+| `Backend.Caps() tfw.Caps` | The device's `CAPS` reply verbatim. |
 | `Backend.AttestLevel() (types.AttestLevel, error)` | Derived from `Caps.CryptoTier` and nothing else. |
 | `Backend.Algorithms() Algorithms` | Derived from `Caps.Algorithms` and nothing else. |
 | `Backend.AttestKey(ctx, attrs, nonce) (interface{}, error)` | `*Attestation`. The nonce is 32 bytes from `deviceattest01.DICENonce`. |
@@ -37,7 +37,7 @@ prefix — `AVRBackend`, `AVRConfig`, `NewAVRBackend`, `ErrAVR<Name>` — as typ
 aliases to these declarations rather than copies. A consumer subject to a layer
 guard that refuses `go-xkms/pkg/...` reaches the backend there; `BackendTypeAVR`
 on its own named a capability it could not construct. The device itself comes
-from `arduino-generic/sdk/go`, which a consumer imports directly: it is another
+from `trusted-firmware/sdk/go`, which a consumer imports directly: it is another
 project's Layer 0 SDK, and re-exporting it here would be this repository
 speaking for an API it does not own.
 
@@ -83,12 +83,12 @@ device-attest-01 finalization needs; see architecture.md §Enrolment.
 - **One device, one conversation.** Every command is issued under the backend's
   `wire` mutex, and `AttestKey` holds it across the whole of `AttestCert` —
   several `Do` calls that must stay contiguous, because the device regenerates
-  its certificate pages for each nonce and keeps no copy. `aggeneric.Device` is
+  its certificate pages for each nonce and keeps no copy. `tfw.Device` is
   a strict request/response client with no locking of its own (its
   documentation says so), and `types.KeyProvider` requires implementations to
   be thread-safe: two goroutines in `Do` at once consume each other's replies.
 - **`Config.RequestTimeout` reaches the device.** `NewBackend` applies it to the
-  attached device with `aggeneric.WithTimeout` as well as to each call's
+  attached device with `tfw.WithTimeout` as well as to each call's
   context. `Device.Do` computes its read deadline from the device's own timeout
   and notices a context only between reads, so without this a configured 30s
   still gave up at the SDK's 10s default on a blocking read. The device is the
@@ -133,8 +133,8 @@ to change.
 
 Device failures are returned as `errs.Joined`, so both sides stay reachable:
 `errors.Is` against a sentinel above says what to do, and `errors.As` against
-the SDK's own type — `*aggeneric.CRCError`, `*aggeneric.ShortReplyError`,
-`*aggeneric.TimeoutError` — reaches the values that say why. `io.EOF` stays
+the SDK's own type — `*tfw.CRCError`, `*tfw.ShortReplyError`,
+`*tfw.TimeoutError` — reaches the values that say why. `io.EOF` stays
 reachable underneath a link failure, which is how a closed port is told from a
 stalled one.
 
@@ -150,21 +150,21 @@ context.Canceled)` still works across this layer.
 | Field | Default | Notes |
 |---|---|---|
 | `KeyCN` | `"avr-device-id"` | Refused when empty rather than defaulted: an empty name would match every `KeyAttributes` that forgot to set one. |
-| `Slot` | `aggeneric.SlotDeviceID` (0) | Any other value is refused. Slot 1 is the UDS; reading it as a public key would hand out a derivation secret's slot as an identity. |
+| `Slot` | `tfw.SlotDeviceID` (0) | Any other value is refused. Slot 1 is the UDS; reading it as a public key would hand out a derivation secret's slot as an identity. |
 | `RequestTimeout` | 30s | Generous on purpose — a device deriving a key in software spends seconds inside one command on a 16 MHz part. Applied to the attached device as well as to each call's context, so it is the deadline the read actually gets. |
 | `Attestation` | nil | `TrustStore` and `Intermediates`. Nil is the unanchored profile: every check but anchoring still runs. |
 | `Logger` | stderr text handler | |
 
 ## Tests
 
-`make test-avr`, `make bench-avr`, `make coverage-avr` (`Makefile:1379-1391`).
+`make test-avr`, `make bench-avr`, `make coverage-avr` (`Makefile:1490-1502`).
 
-The device-attest-01 enrolment of an arduino-generic device is proven end to end
+The device-attest-01 enrolment of a trusted-firmware device is proven end to end
 in `pkg/acme/client/device_attest_dice_e2e_test.go`
 (`TestDeviceAttestDICEEnrollsTheRealFirmware` and the four
 `TestDeviceAttestDICERefuses*` cases) against the real firmware run by the
-`agsim` simulator. `make agsim` builds it into `$AGSIM_DIR` (`Makefile:423`,
-`:3727`); `test-go` and `race` depend on it (`Makefile:1050`, `:1094`). The CSR there is signed with the
+`tfwsim` simulator. `make agsim` builds it into `$TFWSIM_DIR` (`Makefile:486`,
+`:4003`); `test-go` and `race` depend on it (`Makefile:1142`, `:1186`). The CSR there is signed with the
 simulator's published test DeviceID key, which no real part offers — see
 architecture.md §Limitation.
 
@@ -172,7 +172,7 @@ There is no hardware and CI has none, so the tests drive a **fake link and the
 real codec**: every byte a test sends is framed by the SDK's own
 `EncodeResponse` and every byte the backend sends is parsed by the SDK's own
 `Decode`. What is under test is this package against the protocol as
-arduino-generic implements it. Mocking `*aggeneric.Device` would replace the one
+trusted-firmware implements it. Mocking `*tfw.Device` would replace the one
 thing worth exercising — a reply's layout, a status code's meaning, a command's
 length — with this package's own opinion of it.
 
@@ -193,9 +193,11 @@ until the read deadline, as a serial port does, and measures the wait: a
 
 ## Test vectors
 
-`vectors_test.go` mirrors `arduino-generic`'s `testdata/uccs_vectors.h`: the
+`vectors_test.go` mirrors `trusted-firmware`'s `testdata/uccs_vectors.h`: the
 471-byte alias certificate a real device emits, frozen as a literal, with a real
-ECDSA signature over its own TBS and a real point on P-256.
+ECDSA signature over its own TBS and a real point on P-256. The literal predates
+trusted-firmware's rename of its CoSWID names and certificate subjects to
+`"tfw"`, so its bytes still say `"ag"` (`vectors_test.go:18-19`).
 `TestAttestKeyVerifiesTheCertificateARealDeviceEmits` drives it through the
 whole path.
 
