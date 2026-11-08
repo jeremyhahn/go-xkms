@@ -264,15 +264,22 @@ func TestLoadPEMCertificate_Errors(t *testing.T) {
 	badDER := filepath.Join(dir, "bad.pem")
 	require.NoError(t, os.WriteFile(badDER, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("junk")}), 0600))
 
-	_, err := loadPEMCertificate(filepath.Join(dir, "absent.pem"))
+	// Each refusal names the file and keeps its cause reachable.
+	absent := filepath.Join(dir, "absent.pem")
+	_, err := loadPEMCertificate(absent)
 	var readErr *CertFileReadError
 	assert.ErrorAs(t, err, &readErr)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	assert.Contains(t, err.Error(), absent)
 
 	_, err = loadPEMCertificate(notPEM)
 	var decodeErr *PEMBlockDecodeError
 	assert.ErrorAs(t, err, &decodeErr)
+	assert.Contains(t, err.Error(), notPEM)
 
 	_, err = loadPEMCertificate(badDER)
 	var parseErr *CertFileParseError
 	assert.ErrorAs(t, err, &parseErr)
+	assert.Contains(t, err.Error(), badDER)
+	assert.NotNil(t, parseErr.Unwrap())
 }

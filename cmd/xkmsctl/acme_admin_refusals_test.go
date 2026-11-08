@@ -61,6 +61,8 @@ func TestACMEAdminVerbs_ClientFailures(t *testing.T) {
 		"eab get":         func() { acmeEABGet(cfg, "kid-1") },
 		"eab delete":      func() { acmeEABDelete(cfg, "kid-1") },
 		"eab list":        func() { acmeEABList(cfg) },
+		"status":          func() { acmeStatus(cfg) },
+		"stats":           func() { acmeStats(cfg) },
 	}
 	factories := []struct {
 		name    string

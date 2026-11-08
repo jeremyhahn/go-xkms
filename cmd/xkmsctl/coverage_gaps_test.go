@@ -765,9 +765,17 @@ func TestTrustConfigFromFile_EmptyPath(t *testing.T) {
 
 // TestTrustConfigFromFile_MissingFile exercises the load-error path.
 func TestTrustConfigFromFile_MissingFile(t *testing.T) {
-	_, err := trustConfigFromFile("/nonexistent/config.yaml")
-	if err == nil {
-		t.Fatal("expected error for missing file")
+	const path = "/nonexistent/config.yaml"
+	_, err := trustConfigFromFile(path)
+	var loadErr *ConfigLoadError
+	if !errors.As(err, &loadErr) {
+		t.Fatalf("err = %v, want *ConfigLoadError", err)
+	}
+	if loadErr.Unwrap() == nil {
+		t.Error("ConfigLoadError dropped the loader's cause")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error %q does not name the config file", err)
 	}
 }
 
