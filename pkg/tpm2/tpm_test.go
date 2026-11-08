@@ -466,10 +466,6 @@ func TestHashSequence_WithParentHierarchyAuthPath(t *testing.T) {
 }
 
 // ===========================================
-// Open/Close Coverage Tests
-// ===========================================
-
-// ===========================================
 // Misc Coverage Tests
 // ===========================================
 

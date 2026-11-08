@@ -172,10 +172,6 @@ func TestProvisionedKeyOperations(t *testing.T) {
 }
 
 // =====================================================
-// Clear Function Coverage Tests
-// =====================================================
-
-// =====================================================
 // ProvisionEKCert Function Coverage Tests
 // =====================================================
 
@@ -344,22 +340,6 @@ func TestParseEKCertificateInvalidCoverage(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse EK certificate")
 }
-
-// =====================================================
-// PlatformPolicyDigestHash Function Coverage Tests
-// =====================================================
-
-// =====================================================
-// CreatePlatformPolicy Function Coverage Tests
-// =====================================================
-
-// =====================================================
-// SetHierarchyAuth Function Coverage Tests
-// =====================================================
-
-// =====================================================
-// GoldenMeasurements Function Coverage Tests
-// =====================================================
 
 // =====================================================
 // FactoryReset Function Coverage Tests
