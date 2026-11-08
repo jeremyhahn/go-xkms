@@ -1,0 +1,1 @@
+- **avr-device-backend:** the AVR backend's upstream is `github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha`, re-pointed from `arduino-generic/sdk/go`; the host simulators the DICE end-to-end test enrolls are `tfwsim` (formerly `agsim`), still built by `make agsim` into `$TFWSIM_DIR` (DS-7409).

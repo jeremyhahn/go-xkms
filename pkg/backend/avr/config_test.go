@@ -16,7 +16,7 @@ package avr
 import (
 	"testing"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +27,7 @@ func TestDefaultConfigIsValid(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 
 	assert.Equal(t, DefaultKeyCN, cfg.KeyCN)
-	assert.Equal(t, aggeneric.SlotDeviceID, cfg.Slot)
+	assert.Equal(t, tfw.SlotDeviceID, cfg.Slot)
 	assert.Equal(t, DefaultRequestTimeout, cfg.RequestTimeout)
 	assert.NotNil(t, cfg.Logger)
 }
@@ -56,7 +56,7 @@ func TestValidateRefusesAnEmptyKeyName(t *testing.T) {
 // secret's slot as an identity, so a configuration naming it is refused before
 // any command goes on the wire.
 func TestValidateRefusesASlotThatIsNotTheIdentity(t *testing.T) {
-	for _, slot := range []uint8{aggeneric.SlotUDS, 2, 15} {
+	for _, slot := range []uint8{tfw.SlotUDS, 2, 15} {
 		cfg := DefaultConfig()
 		cfg.Slot = slot
 		assert.ErrorIs(t, cfg.Validate(), ErrInvalidSlot, "slot %d", slot)

@@ -135,7 +135,7 @@ func TestDeviceIdentityFromCertificate(t *testing.T) {
 	ueid, err := dice.CreateUeidExtension([]byte{0x01, 0xAB})
 	require.NoError(t, err)
 
-	// The arduino-generic profile: no tcg-dice-Ueid extension, the ueid is
+	// The trusted-firmware profile: no tcg-dice-Ueid extension, the ueid is
 	// CWT claim 256 (a byte string, type byte first) in the UCCS evidence.
 	claimOnly, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{
 		Nonce: bytes.Repeat([]byte{0x11}, 32),

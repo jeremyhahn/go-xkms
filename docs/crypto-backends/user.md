@@ -58,7 +58,7 @@ The capabilities you will care about most:
   [`engineering.md`](engineering.md#per-backend-configuration). Read its
   **defect** note before enabling a cloud backend.
 - **phone** — a paired xkey-android device.
-- **avr** — a device running arduino-generic firmware, on a serial link the
+- **avr** — a device running trusted-firmware firmware, on a serial link the
   caller opens. There is no credential: the link is the access.
 
 ## "That backend is not compiled in"
