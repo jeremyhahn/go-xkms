@@ -255,7 +255,15 @@ func (r *TestRunner) RunCommand(t *testing.T, args ...string) (string, string, e
 func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType, args ...string) (string, string, error) {
 	t.Helper()
 
-	// Build prefix args with server URL and TLS options
+	return r.RunCommand(t, r.protocolArgs(t, protocol, args)...)
+}
+
+// protocolArgs returns args preceded by the server URL and TLS options the
+// protocol needs: the full argument list RunCommandWithProtocol passes to
+// the CLI.
+func (r *TestRunner) protocolArgs(t *testing.T, protocol ProtocolType, args []string) []string {
+	t.Helper()
+
 	prefixArgs := []string{}
 
 	// For embedded protocol, use --transport embedded instead of server URL
@@ -270,8 +278,7 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 		prefixArgs = append(prefixArgs, r.TLSArgs(t, protocol)...)
 	}
 
-	args = append(prefixArgs, args...)
-	return r.RunCommand(t, args...)
+	return append(prefixArgs, args...)
 }
 
 // BuildCommandArgs builds the full argument list for a command definition
@@ -388,7 +395,11 @@ func (r *TestRunner) RunCommandTest(t *testing.T, protocol ProtocolType, cmd Com
 	}
 
 	if err != nil {
-		result.Message = fmt.Sprintf("Command failed: %v", err)
+		// The message carries the cause: the CLI's full argument list and
+		// everything it wrote.
+		args := r.protocolArgs(t, protocol, r.BuildCommandArgs(cmd, overrides))
+		result.Message = fmt.Sprintf("Command failed: %v\nargs: %s\nstdout: %s\nstderr: %s",
+			err, strings.Join(args, " "), stdout, stderr)
 	} else {
 		// Check expected output
 		for _, expected := range cmd.ExpectedOutputContains {
