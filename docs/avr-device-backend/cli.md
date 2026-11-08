@@ -11,5 +11,5 @@ backend is not registered by `pkg/server`'s `initializeBackends`, because there
 is no daemon configuration yet that says which port a device is on. That
 decision is open; see `api.md`.
 
-The device's own vendor CLI, `agctl`, ships with `arduino-generic` and is the
+The device's own vendor CLI, `tfwctl`, ships with `trusted-firmware` and is the
 tool for talking to a part directly.
