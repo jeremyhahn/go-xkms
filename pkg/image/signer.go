@@ -97,11 +97,13 @@ type SignResult struct {
 // service can sign images with pkg/image.
 const ProfileCodeSigning = "code-signing"
 
-// CertificateIssuer issues certificates from CSRs. TrustedCA (*ca.CA) and
-// the service's CA provider (provider.CA) satisfy it. A zero validityDays
-// takes the profile's default lifetime.
+// CertificateIssuer issues certificates from CSRs without storing them.
+// TrustedCA (*ca.CA) satisfies it. The certificate is named after a
+// caller-chosen repository and travels with the signature, so it is never
+// stored where it could replace another certificate of that name. A zero
+// validityDays takes the profile's default lifetime.
 type CertificateIssuer interface {
-	SignCSRRaw(ctx context.Context, csrPEM []byte, profile string, validityDays int, tenantID string) (*x509.Certificate, error)
+	SignCSRUnstored(ctx context.Context, csrPEM []byte, profile string, validityDays int, tenantID string) (*x509.Certificate, error)
 }
 
 // NewSigner returns a Signer for cfg. The certificate must certify the
@@ -248,7 +250,7 @@ func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: encoding.PEMTypeCertificateRequest, Bytes: der})
 
-	certificate, err := issuer.SignCSRRaw(ctx, csrPEM, ProfileCodeSigning, 0, tenantID)
+	certificate, err := issuer.SignCSRUnstored(ctx, csrPEM, ProfileCodeSigning, 0, tenantID)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrCertificateRequestFailed, Cause: err}
 	}

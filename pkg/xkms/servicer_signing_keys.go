@@ -436,7 +436,12 @@ func (s *XKMSService) SignImage(ctx context.Context, req *transport.SignImageReq
 		return &ImageSignError{Reference: ref.String(), KeyID: key.KeyID, Err: err}
 	}
 
-	certificate, err := image.RequestCodeSigningCertificate(ctx, issuer, signer, tenant, ref.Repository)
+	// The certificate is issued unstored: it is named after the caller's
+	// repository and returned with the signature, so the CA's store, keyed
+	// by common name alone, never holds it. A CA that cannot issue unstored
+	// yields a nil issuer, which RequestCodeSigningCertificate refuses.
+	codeSigningIssuer, _ := issuer.(image.CertificateIssuer)
+	certificate, err := image.RequestCodeSigningCertificate(ctx, codeSigningIssuer, signer, tenant, ref.Repository)
 	if err != nil {
 		return nil, signImageErr(err)
 	}

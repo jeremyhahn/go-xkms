@@ -89,9 +89,9 @@ func newCodeSigningCA(t *testing.T) *codeSigningCA {
 	}
 }
 
-// SignCSRRaw certifies the CSR's key for code signing, or returns the
+// SignCSRUnstored certifies the CSR's key for code signing, or returns the
 // mockCA's signCSRErr when one is set.
-func (c *codeSigningCA) SignCSRRaw(_ context.Context, csrPEM []byte, profile string, _ int, tenantID string) (*x509.Certificate, error) {
+func (c *codeSigningCA) SignCSRUnstored(_ context.Context, csrPEM []byte, profile string, _ int, tenantID string) (*x509.Certificate, error) {
 	c.profile = profile
 	c.signCSRTenant = tenantID
 	if c.signCSRErr != nil {
