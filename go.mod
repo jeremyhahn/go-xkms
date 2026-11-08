@@ -286,7 +286,7 @@ replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
 
 replace github.com/jeremyhahn/go-xkms/sdk/go => ./sdk/go
 
-replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.9.9-0.20261015005355-56ec25c36102
+replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.0.0-20261108040111-edb18e51d83f
 
 // held: go-enclave v0.9.0-alpha removes MemoryEnclave, which go-qrdb v0.50.0-alpha's
 // graph (go-quicraft v0.22.0-alpha, go-truststrap v0.6.0-alpha, go-objstore v0.4.0-alpha,
