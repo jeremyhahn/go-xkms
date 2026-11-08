@@ -61,6 +61,13 @@ type Transport struct {
 	// credentials the caller's original connection presents: the caller's own
 	// identity must reach the leader, never a delegated one.
 	credsOpt grpc.DialOption
+
+	// dialed and plaintextChannel record, from Connect's credentials
+	// decision, whether the channel it established is plaintext. The
+	// secure-channel guard reads them once set, since the caller may change
+	// TLSEnabled on its Config after Connect without changing the channel.
+	dialed           bool
+	plaintextChannel bool
 }
 
 // New creates a new gRPC transport with the given options.
@@ -98,9 +105,15 @@ func (t *Transport) requireSecureChannel() error {
 
 // requireSecureTarget applies the secure-channel guard to one dial target:
 // the configured address or a leader the server advertises. With TLS
-// disabled, only a unix target passes without the opt-out.
+// disabled, only a unix target passes without the opt-out. After Connect,
+// TLS is judged from the channel Connect established, not from the Config;
+// the opt-out is still read at call time.
 func (t *Transport) requireSecureTarget(target string) error {
-	plaintext := !t.config.TLSEnabled && !transport.IsUnixEndpoint(target)
+	tlsEnabled := t.config.TLSEnabled
+	if t.dialed {
+		tlsEnabled = !t.plaintextChannel
+	}
+	plaintext := !tlsEnabled && !transport.IsUnixEndpoint(target)
 	return t.config.RequireSecureChannel("grpc", plaintext)
 }
 
@@ -108,10 +121,10 @@ func (t *Transport) requireSecureTarget(target string) error {
 // transport's configured transport credentials (TLS, possibly mTLS, or
 // insecure). It is used both for the primary connection and, via credsOpt, to
 // redial a redirected leader with the identical credentials.
-func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
+func (t *Transport) transportCredentialsOption() (opt grpc.DialOption, plaintext bool, err error) {
 	if !t.config.TLSEnabled {
 		// TLSEnabled=false is the caller's own explicit transport.Config choice.
-		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), true, nil // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
 	}
 
 	// A caller-built tls.Config (transport.WithTLSConfig: a CA bundle held
@@ -122,7 +135,7 @@ func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 		if tlsConfig.MinVersion < tls.VersionTLS13 {
 			tlsConfig.MinVersion = tls.VersionTLS13
 		}
-		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
+		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), false, nil
 	}
 
 	tlsConfig := &tls.Config{
@@ -133,11 +146,11 @@ func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 	if t.config.TLSCAFile != "" {
 		caCert, err := os.ReadFile(t.config.TLSCAFile)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to read CA certificate", Err: err}
+			return nil, false, &errs.Wrapped{Msg: "failed to read CA certificate", Err: err}
 		}
 		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, &errs.Message{Msg: "failed to parse CA certificate"}
+			return nil, false, &errs.Message{Msg: "failed to parse CA certificate"}
 		}
 		tlsConfig.RootCAs = caCertPool
 	}
@@ -146,7 +159,7 @@ func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 	if t.config.TLSCertFile != "" && t.config.TLSKeyFile != "" {
 		cert, err := tls.LoadX509KeyPair(t.config.TLSCertFile, t.config.TLSKeyFile)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
+			return nil, false, &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
 		}
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
@@ -155,7 +168,7 @@ func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 		tlsConfig = spki.PinTLSConfig(tlsConfig, t.config.SPKIPin)
 	}
 
-	return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
+	return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), false, nil
 }
 
 // authDialOptions returns the dial options that authenticate every RPC: the
@@ -170,11 +183,13 @@ func (t *Transport) authDialOptions() []grpc.DialOption {
 
 // Connect establishes a connection to the xkms server via gRPC.
 func (t *Transport) Connect(ctx context.Context) error {
-	credsOpt, err := t.transportCredentialsOption()
+	credsOpt, plaintext, err := t.transportCredentialsOption()
 	if err != nil {
 		return err
 	}
 	t.credsOpt = credsOpt
+	t.dialed = true
+	t.plaintextChannel = plaintext
 
 	opts := []grpc.DialOption{
 		credsOpt,
