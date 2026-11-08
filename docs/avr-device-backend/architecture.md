@@ -27,7 +27,7 @@ it.
 ```
 caller ──opens link──► io.ReadWriter
                           │
-             aggeneric.Device (arduino-generic/sdk/go)   ◄── owns the wire
+             tfw.Device (trusted-firmware/sdk/go)   ◄── owns the wire
                           │
                    avr.Backend  ──► types.KeyProvider
 ```
@@ -36,7 +36,7 @@ The backend does not own the link. A device is one physical thing with several
 concerns on it, and the code that opened the port is the code that should close
 it; `Close` marks the backend closed and leaves the port alone.
 
-It does own the **conversation** over that link, and has to. `aggeneric.Device`
+It does own the **conversation** over that link, and has to. `tfw.Device`
 is a strict request/response client with no locking of its own — one sequence
 number, one receive buffer, one event list — while `types.KeyProvider` requires
 a thread-safe implementation, so the backend serialises every command on a
@@ -46,9 +46,9 @@ call's context: `Do` derives its read deadline from the device's own timeout and
 sees a context only between reads, so a deadline that never reached the device
 would not be the deadline the read got.
 
-## The boundary with arduino-generic
+## The boundary with trusted-firmware
 
-`arduino-generic` owns the AVR wire protocol, the firmware that speaks it and
+`trusted-firmware` owns the AVR wire protocol, the firmware that speaks it and
 the host SDK for it. This package owns none of those. Every byte that reaches
 the wire is put there by an SDK call — there is no frame built here, no command
 id declared here, no reply layout parsed here.
@@ -142,8 +142,8 @@ the evidence carries — the lowercase hex of the UEID read by `dice.DeviceUeid`
 (`pkg/acme/challenges/device-attest-01/identity.go:162-171`).
 
 `pkg/acme/client/device_attest_dice_e2e_test.go` proves the whole path against
-the real arduino-generic firmware compiled for the host and started by the
-SDK's `agsim` simulator (built by `make agsim`): the order is for the device's
+the real trusted-firmware firmware compiled for the host and started by the
+SDK's `tfwsim` simulator (built by `make agsim`): the order is for the device's
 UEID, the evidence answers the challenge's nonce, the CSR is bound to the alias
 key, and the issued certificate carries the UEID as its `permanentIdentifier`.
 Refusals for another UEID, another nonce, untrusted roots and a CSR for another

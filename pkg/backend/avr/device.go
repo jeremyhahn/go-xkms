@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -32,21 +32,21 @@ import (
 // unrecognised one must degrade to the generic refusal — reading it as the
 // nearest known code would turn "this host is older than the firmware" into a
 // specific, wrong diagnosis.
-var statusErrors = map[aggeneric.Status]error{
-	aggeneric.StatusErrUnknownCmd:      ErrCommandUnavailable,
-	aggeneric.StatusErrNotProvisioned:  ErrNotProvisioned,
-	aggeneric.StatusErrCrypto:          ErrDeviceCrypto,
-	aggeneric.StatusErrAuthRequired:    ErrAuthRequired,
-	aggeneric.StatusErrBusy:            ErrDeviceBusy,
-	aggeneric.StatusErrProtectedRegion: ErrProtectedRegion,
-	aggeneric.StatusErrInternal:        ErrDeviceInternal,
-	aggeneric.StatusErrTimeout:         ErrDeviceUnreachable,
-	aggeneric.StatusErrCRC:             ErrDeviceProtocol,
-	aggeneric.StatusErrFraming:         ErrDeviceProtocol,
-	aggeneric.StatusErrUnsupported:     ErrUnsupportedByDevice,
-	aggeneric.StatusErrNACK:            ErrElementUnreachable,
-	aggeneric.StatusErrRange:           ErrInvalidArgument,
-	aggeneric.StatusErrBadArgc:         ErrInvalidArgument,
+var statusErrors = map[tfw.Status]error{
+	tfw.StatusErrUnknownCmd:      ErrCommandUnavailable,
+	tfw.StatusErrNotProvisioned:  ErrNotProvisioned,
+	tfw.StatusErrCrypto:          ErrDeviceCrypto,
+	tfw.StatusErrAuthRequired:    ErrAuthRequired,
+	tfw.StatusErrBusy:            ErrDeviceBusy,
+	tfw.StatusErrProtectedRegion: ErrProtectedRegion,
+	tfw.StatusErrInternal:        ErrDeviceInternal,
+	tfw.StatusErrTimeout:         ErrDeviceUnreachable,
+	tfw.StatusErrCRC:             ErrDeviceProtocol,
+	tfw.StatusErrFraming:         ErrDeviceProtocol,
+	tfw.StatusErrUnsupported:     ErrUnsupportedByDevice,
+	tfw.StatusErrNACK:            ErrElementUnreachable,
+	tfw.StatusErrRange:           ErrInvalidArgument,
+	tfw.StatusErrBadArgc:         ErrInvalidArgument,
 }
 
 // deviceError translates an SDK error into this package's vocabulary.
@@ -80,7 +80,7 @@ func deviceError(err error) error {
 
 // classify picks the sentinel that says what a caller should do next.
 func classify(err error) error {
-	var status aggeneric.Status
+	var status tfw.Status
 	if errors.As(err, &status) {
 		sentinel, ok := statusErrors[status]
 		if !ok {
@@ -93,12 +93,12 @@ func classify(err error) error {
 		return sentinel
 	}
 
-	var version *aggeneric.ProtocolVersionError
+	var version *tfw.ProtocolVersionError
 	if errors.As(err, &version) {
 		return ErrProtocolVersion
 	}
 
-	var short *aggeneric.ShortReplyError
+	var short *tfw.ShortReplyError
 	if errors.As(err, &short) {
 		return ErrDeviceProtocol
 	}
@@ -106,16 +106,16 @@ func classify(err error) error {
 	// An argument the SDK refused before it built a frame. Classified here so
 	// it cannot fall through to "the device did not answer", which would send
 	// a caller to look at the cable for a fault in its own call.
-	var argRange *aggeneric.ArgRangeError
+	var argRange *tfw.ArgRangeError
 	if errors.As(err, &argRange) {
 		return ErrInvalidArgument
 	}
 
 	switch {
-	case errors.Is(err, aggeneric.ErrBadCRC),
-		errors.Is(err, aggeneric.ErrBadFormat),
-		errors.Is(err, aggeneric.ErrShortFrame),
-		errors.Is(err, aggeneric.ErrPayloadTooLarge):
+	case errors.Is(err, tfw.ErrBadCRC),
+		errors.Is(err, tfw.ErrBadFormat),
+		errors.Is(err, tfw.ErrShortFrame),
+		errors.Is(err, tfw.ErrPayloadTooLarge):
 		return ErrDeviceProtocol
 	}
 
@@ -173,7 +173,7 @@ func (i Identity) String() string {
 }
 
 // newIdentity converts what the SDK read off the element.
-func newIdentity(info *aggeneric.ElementInfo) *Identity {
+func newIdentity(info *tfw.ElementInfo) *Identity {
 	serial := make([]byte, len(info.Serial))
 	copy(serial, info.Serial[:])
 	revision := make([]byte, len(info.Revision))
@@ -198,6 +198,6 @@ func newIdentity(info *aggeneric.ElementInfo) *Identity {
 // did.
 type Health struct {
 	Uptime     time.Duration
-	FreeRAM    uint16
-	ResetCause aggeneric.ResetCause
+	FreeRAM    uint32
+	ResetCause tfw.ResetCause
 }

@@ -22,7 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -54,7 +54,7 @@ type Backend struct {
 	// wire serialises every command against the device.
 	//
 	// A mutex rather than a lock-free scheme because the thing being protected
-	// is not a word of state, it is a CONVERSATION. aggeneric.Device is a
+	// is not a word of state, it is a CONVERSATION. tfw.Device is a
 	// strict request/response client over one link: Do allocates the next
 	// sequence number, writes, then reads until a frame carrying that sequence
 	// arrives, collecting events and discarding replies to other sequences on
@@ -69,9 +69,9 @@ type Backend struct {
 	// device"), and types.KeyProvider requires implementations to be
 	// thread-safe. This is where those two meet.
 	wire   sync.Mutex
-	device *aggeneric.Device
+	device *tfw.Device
 
-	caps aggeneric.Caps
+	caps tfw.Caps
 
 	// roots and intermediates are resolved once, at construction, from
 	// Config.Attestation. A trust store that failed to load is a backend that
@@ -95,7 +95,7 @@ type Backend struct {
 // Construction reads CAPS, so it fails when the device is not there, does not
 // answer, or speaks a protocol major this host cannot parse. A device that
 // cannot say what it is is not a backend.
-func NewBackend(ctx context.Context, config *Config, device *aggeneric.Device) (*Backend, error) {
+func NewBackend(ctx context.Context, config *Config, device *tfw.Device) (*Backend, error) {
 	if config == nil {
 		return nil, ErrNilConfig
 	}
@@ -117,12 +117,12 @@ func NewBackend(ctx context.Context, config *Config, device *aggeneric.Device) (
 	// raised for is the one deriving a key in software for several seconds on a
 	// 16 MHz core.
 	//
-	// aggeneric.Option is the SDK's own way to set it and is a plain
+	// tfw.Option is the SDK's own way to set it and is a plain
 	// func(*Device), so it applies here as well as at New. The device is the
 	// caller's and this does change it: a backend that issues every command on
 	// that link owns the deadline those commands are given, and the alternative
 	// is a Config field that lies.
-	aggeneric.WithTimeout(config.RequestTimeout)(device)
+	tfw.WithTimeout(config.RequestTimeout)(device)
 
 	ctx, cancel := context.WithTimeout(ctx, config.RequestTimeout)
 	defer cancel()
@@ -136,7 +136,7 @@ func NewBackend(ctx context.Context, config *Config, device *aggeneric.Device) (
 		return nil, deviceError(err)
 	}
 	if caps == nil {
-		return nil, deviceError(aggeneric.StatusErrInternal)
+		return nil, deviceError(tfw.StatusErrInternal)
 	}
 
 	logger := config.Logger.With("component", "avr_backend")
@@ -158,7 +158,7 @@ func NewBackend(ctx context.Context, config *Config, device *aggeneric.Device) (
 		"crypto_tier", caps.CryptoTier.String(),
 		"attest_level", level.String(),
 		"algorithms", caps.Algorithms.String(),
-		"attestation_feature", caps.Has(aggeneric.FeatureAttest),
+		"attestation_feature", caps.Has(tfw.FeatureAttest),
 	)
 	if levelErr != nil {
 		// Not fatal, and deliberately so. Tiers extend, so a host older than
@@ -271,7 +271,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 }
 
 // Caps returns the device's CAPS reply as it was read at construction.
-func (b *Backend) Caps() aggeneric.Caps { return b.caps }
+func (b *Backend) Caps() tfw.Caps { return b.caps }
 
 // Algorithms reports what the device's crypto provider can perform, from the
 // device's own CAPS bitmap.
@@ -487,11 +487,11 @@ func (b *Backend) hasDeviceKey() bool {
 	return trust.level != types.AttestLevelUnattested
 }
 
-func protocolString(c aggeneric.Caps) string {
+func protocolString(c tfw.Caps) string {
 	return strconv.Itoa(int(c.ProtoMajor)) + "." + strconv.Itoa(int(c.ProtoMinor))
 }
 
-func firmwareString(c aggeneric.Caps) string {
+func firmwareString(c tfw.Caps) string {
 	return strconv.Itoa(int(c.FirmwareMajor)) + "." +
 		strconv.Itoa(int(c.FirmwareMinor)) + "." +
 		strconv.Itoa(int(c.FirmwarePatch))
