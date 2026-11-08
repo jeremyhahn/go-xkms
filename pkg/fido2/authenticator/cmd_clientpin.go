@@ -1590,6 +1590,11 @@ func (a *Authenticator) GetPinUvAuthToken() []byte {
 //
 // The caller must hold a.mu for writing.
 func (a *Authenticator) beginUsingPinUvAuthTokenLocked(token []byte, permissions uint8, rpID string) {
+	// CTAP 2.1 §6.8 and §6.5.5.7: a credential management enumeration is
+	// bound to the token that began it, so issuing a new token by any path
+	// (PIN or built-in UV) discards the enumeration in progress.
+	a.credMgmtState = nil
+
 	now := time.Now()
 	a.pinState.protocol.pinUvAuthToken = token
 	a.pinState.protocol.tokenPermissions = permissions
