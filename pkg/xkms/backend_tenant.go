@@ -43,6 +43,19 @@ func NewTenantScopedBackend(base Backend, tenantID string) *TenantScopedBackend 
 	return &TenantScopedBackend{base: base, tenantID: tenantID}
 }
 
+// keepsTenantScope reports whether a key generated through a
+// TenantScopedBackend over base stays visible to its tenant. AWS KMS, Azure
+// Key Vault and Cloud KMS name and list keys without the tenant, so the
+// scope's ListKeys filters a new key out and a retry generates another.
+func keepsTenantScope(base Backend) bool {
+	switch base.Type() {
+	case types.StoreAWSKMS, types.StoreAzureKV, types.StoreGCPKMS:
+		return false
+	default:
+		return true
+	}
+}
+
 // scopeAttrs returns a copy of attrs with TenantID set to this tenant.
 func (t *TenantScopedBackend) scopeAttrs(attrs *types.KeyAttributes) *types.KeyAttributes {
 	if attrs == nil {
