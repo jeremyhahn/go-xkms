@@ -1192,10 +1192,12 @@ race: agsim
 .PHONY: coverage
 ## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
 # GOMEMLIMIT and -p=2 bound the suite's memory: under -race the Argon2-heavy
-# REST/MCP packages exhaust a runner's memory without them. Under CI the suite
-# must leave the tree as it found it (#454). The per-package report is
-# advisory (#704).
-coverage: export GOMEMLIMIT := 10GiB
+# REST/MCP packages exhaust a runner's memory without them. GOMEMLIMIT is per
+# test process and -p=2 runs two, so 2 x 5GiB plus the race detector's shadow
+# memory (outside the limit) has to fit a 16 GB GitHub-hosted runner. Under CI
+# the suite must leave the tree as it found it (#454). The per-package report
+# is advisory (#704).
+coverage: export GOMEMLIMIT := 5GiB
 coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=2)
 coverage: test
 	@total=$$($(GO) tool cover -func=$(COVERAGE_FILE) | awk '/^total:/ {print $$3}' | tr -d %); \
