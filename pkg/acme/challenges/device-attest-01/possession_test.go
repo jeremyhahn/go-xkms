@@ -57,9 +57,10 @@ const (
 	// file: the application evidence, here SHA-256("abc").
 	vectorApplicationEvidence = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
-	// arduinoGenericMeasurements is the measurements claim of arduino-generic's
-	// alias certificate (pkg/backend/avr/vectors_test.go:57-60): the shape with
-	// its own tag-id, software-name "ag-fw" and entity "ag".
+	// arduinoGenericMeasurements is the measurements claim of the firmware's
+	// alias certificate from before the trusted-firmware rename
+	// (pkg/backend/avr/vectors_test.go:59-62): the shape with its own tag-id,
+	// software-name "ag-fw" and entity "ag".
 	arduinoGenericMeasurements = "81821901025855a500505eec7874aaa557fdaaaef3f9fe0ccfb4016561672d667702a2181f62616718210103a111a20782015820ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad1818636170700c00"
 )
 
@@ -601,16 +602,16 @@ func TestPossessionMeasurementsShape(t *testing.T) {
 
 	// The tag-id, tag-version, software-name and entity are the producer's
 	// (RFC 9393 section 2.3, CA m463): any value of the right type is the
-	// shape. arduino-generic's names its own (pkg/backend/avr/vectors_test.go:58).
+	// shape. The pre-rename firmware names its own (pkg/backend/avr/vectors_test.go:59-60).
 	arduinoGeneric := vectorCoswid(t)
 	arduinoGeneric[0] = mustHex(t, "5eec7874aaa557fdaaaef3f9fe0ccfb4")
 	arduinoGeneric[1] = "ag-fw"
 	arduinoGeneric[2] = map[int64]any{31: "ag", 33: 1}
-	require.Equal(t, mustHex(t, arduinoGenericMeasurements), measurementsOf(t, arduinoGeneric), "the helpers must encode arduino-generic's claim")
+	require.Equal(t, mustHex(t, arduinoGenericMeasurements), measurementsOf(t, arduinoGeneric), "the helpers must encode the pre-rename firmware's claim")
 	producers := map[string][]byte{
-		"arduino-generic's CoSWID": mustHex(t, arduinoGenericMeasurements),
-		"a text tag-id":            withCoswid(func(coswid map[int64]any) { coswid[0] = "tfw-app-1" }),
-		"another tag-version":      withCoswid(func(coswid map[int64]any) { coswid[12] = 3 }),
+		"the pre-rename CoSWID": mustHex(t, arduinoGenericMeasurements),
+		"a text tag-id":         withCoswid(func(coswid map[int64]any) { coswid[0] = "tfw-app-1" }),
+		"another tag-version":   withCoswid(func(coswid map[int64]any) { coswid[12] = 3 }),
 		"a tag-creator among roles": withCoswid(func(coswid map[int64]any) {
 			coswid[2] = map[int64]any{31: "tfw", 33: []any{1, 2}}
 		}),
