@@ -374,6 +374,33 @@ func TestRunBackendFailures(t *testing.T) {
 	}
 }
 
+// TestRunRetriesAfterFailedDelete pins the recovery path: a record imported
+// before its old key could be deleted is imported again on the next run, over
+// the copy already in the catalog, and only then leaves the old store.
+func TestRunRetriesAfterFailedDelete(t *testing.T) {
+	ctx := t.Context()
+	backend := &failingBackend{Backend: storage.New(), deleteErr: errors.New("boom")}
+	if err := backend.Put(ctx, sessionPath, []byte(`{"id":"abc123","title":"t","host":"h"}`)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	daos := testutil.NewMemoryDAOFactory()
+	if _, err := migrate.Run(ctx, backend, daos); err == nil {
+		t.Fatal("first Run succeeded with a failing Delete")
+	}
+
+	backend.deleteErr = nil
+	report, err := migrate.Run(ctx, backend, daos)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if want := (migrate.Report{Migrated: 1}); report != want {
+		t.Fatalf("second Report = %+v, want %+v", report, want)
+	}
+	if left := remaining(t, backend.Backend); len(left) != 0 {
+		t.Fatalf("old store keeps %v, want nothing", left)
+	}
+}
+
 func TestRunInvalidInputs(t *testing.T) {
 	var nilErr *migrate.NilInputError
 	if _, err := migrate.Run(t.Context(), nil, testutil.NewMemoryDAOFactory()); !errors.As(err, &nilErr) || nilErr.Field != "legacy" {
