@@ -217,34 +217,38 @@ eq "major outranks minor and patch together" "major" "$(bump_level v0.9.4-alpha 
 # branch is pushed through, in each shape the fleet's remotes use.
 
 section "forge_repo_url"
-unset GITEA_HTTP_PORT
+# The fixtures name a neutral forge HTTP port, so GITEA_HTTP_PORT is set to it
+# for every case below; the unset default is checked by shape only.
+eq "an unset GITEA_HTTP_PORT still maps to an HTTP port" "1" \
+	"$( (unset GITEA_HTTP_PORT; forge_repo_url 'ssh://git@192.0.2.50:22/jeremyhahn/go-xkms.git') | grep -cE '^http://192\.0\.2\.50:[0-9]+/jeremyhahn/go-xkms$')"
+export GITEA_HTTP_PORT=3000
 eq "an ssh:// remote maps its SSH port to the forge's HTTP port" \
-	"http://192.0.2.50:3001/jeremyhahn/go-xkms" \
-	"$(forge_repo_url 'ssh://git@192.0.2.50:2222/jeremyhahn/go-xkms.git')"
-eq "an ssh:// remote with no user or port" "http://forge.example.com:3001/jeremyhahn/go-xkms" \
+	"http://192.0.2.50:3000/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'ssh://git@192.0.2.50:22/jeremyhahn/go-xkms.git')"
+eq "an ssh:// remote with no user or port" "http://forge.example.com:3000/jeremyhahn/go-xkms" \
 	"$(forge_repo_url 'ssh://forge.example.com/jeremyhahn/go-xkms')"
 eq "an ssh:// remote honours GITEA_HTTP_PORT" "http://192.0.2.50:8080/jeremyhahn/go-xkms" \
-	"$(GITEA_HTTP_PORT=8080 forge_repo_url 'ssh://git@192.0.2.50:2222/jeremyhahn/go-xkms.git')"
-eq "an scp-like remote" "http://192.0.2.50:3001/jeremyhahn/go-xkms" \
+	"$(GITEA_HTTP_PORT=8080 forge_repo_url 'ssh://git@192.0.2.50:22/jeremyhahn/go-xkms.git')"
+eq "an scp-like remote" "http://192.0.2.50:3000/jeremyhahn/go-xkms" \
 	"$(forge_repo_url 'git@192.0.2.50:jeremyhahn/go-xkms.git')"
-eq "an scp-like remote with no user" "http://forge.example.com:3001/jeremyhahn/go-xkms" \
+eq "an scp-like remote with no user" "http://forge.example.com:3000/jeremyhahn/go-xkms" \
 	"$(forge_repo_url 'forge.example.com:jeremyhahn/go-xkms.git')"
 eq "an scp-like remote with no user honours GITEA_HTTP_PORT" "http://forge.example.com:8080/jeremyhahn/go-xkms" \
 	"$(GITEA_HTTP_PORT=8080 forge_repo_url 'forge.example.com:jeremyhahn/go-xkms')"
 eq "a local path with a colon after a slash names no forge" "" \
 	"$(forge_repo_url './srv:jeremyhahn/go-xkms')"
 eq "an scp-like remote with no host names no forge" "" "$(forge_repo_url ':jeremyhahn/go-xkms')"
-eq "an http remote keeps its host and port" "http://192.0.2.50:3001/jeremyhahn/go-xkms" \
-	"$(forge_repo_url 'http://192.0.2.50:3001/jeremyhahn/go-xkms.git')"
+eq "an http remote keeps its host and port" "http://192.0.2.50:3000/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'http://192.0.2.50:3000/jeremyhahn/go-xkms.git')"
 eq "an https remote drops its credentials" "https://forge.example.com/jeremyhahn/go-xkms" \
 	"$(forge_repo_url 'https://agent:secret@forge.example.com/jeremyhahn/go-xkms')"
-eq "a trailing slash is not part of the repository" "http://192.0.2.50:3001/jeremyhahn/go-xkms" \
-	"$(forge_repo_url 'http://192.0.2.50:3001/jeremyhahn/go-xkms/')"
+eq "a trailing slash is not part of the repository" "http://192.0.2.50:3000/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'http://192.0.2.50:3000/jeremyhahn/go-xkms/')"
 eq "a local path names no forge" "" "$(forge_repo_url '/srv/git/go-xkms.git')"
 eq "a file:// URL names no forge" "" "$(forge_repo_url 'file:///srv/git/jeremyhahn/go-xkms.git')"
-eq "a URL with no owner names no repository" "" "$(forge_repo_url 'http://192.0.2.50:3001/go-xkms.git')"
+eq "a URL with no owner names no repository" "" "$(forge_repo_url 'http://192.0.2.50:3000/go-xkms.git')"
 eq "a URL nested deeper than owner/repo names no repository" "" \
-	"$(forge_repo_url 'http://192.0.2.50:3001/a/b/go-xkms')"
+	"$(forge_repo_url 'http://192.0.2.50:3000/a/b/go-xkms')"
 eq "a URL with no host names no forge" "" "$(forge_repo_url 'ssh:///jeremyhahn/go-xkms')"
 eq "the empty string names no forge" "" "$(forge_repo_url '')"
 
@@ -321,10 +325,10 @@ section "--dry-run against a real tree (end to end)"
 
 FXROOT=$(mktemp -d)
 
-FX_SSH_URL=ssh://git@forge.example.invalid:2222/jeremyhahn/go-xkms.git
-FX_HTTP_URL=http://forge.example.invalid:3001/jeremyhahn/go-xkms.git
-FX_FORGE=http://forge.example.invalid:3001/jeremyhahn/go-xkms
-FX_API=http://forge.example.invalid:3001/api/v1/repos/jeremyhahn/go-xkms
+FX_SSH_URL=ssh://git@forge.example.invalid:22/jeremyhahn/go-xkms.git
+FX_HTTP_URL=http://forge.example.invalid:3000/jeremyhahn/go-xkms.git
+FX_FORGE=http://forge.example.invalid:3000/jeremyhahn/go-xkms
+FX_API=http://forge.example.invalid:3000/api/v1/repos/jeremyhahn/go-xkms
 
 # The forge API is reached through $CURL. This fake records each request as
 # "<method> <url> <auth header>" then the request body on the next line, and
@@ -346,7 +350,7 @@ while [ $# -gt 0 ]; do
 done
 printf '%s %s %s\n%s\n' "$method" "$url" "$auth" "$data" >>"$CURLLOG"
 if [ "$method" = POST ]; then
-	printf '{"number":7,"user":{"html_url":"http://forge.example.invalid:3001/agent-go-xkms"},"html_url":"http://forge.example.invalid:3001/jeremyhahn/go-xkms/pulls/7"}' >"$out"
+	printf '{"number":7,"user":{"html_url":"http://forge.example.invalid:3000/example-bot"},"html_url":"http://forge.example.invalid:3000/jeremyhahn/go-xkms/pulls/7"}' >"$out"
 	printf '%s' "${FAKE_POST_CODE:-201}"
 else
 	printf '{}' >"$out"
@@ -657,7 +661,7 @@ eq "the pull request is titled exactly as the release commit, from the release b
 	'{"title":"chore(release): v0.2.0-alpha","head":"release/v0.2.0-alpha","base":"main",' \
 	"$(grep -A1 '^POST ' "$CURLLOG" | tail -n 1 | grep -oE '^\{"title":[^,]*,"head":[^,]*,"base":[^,]*,')"
 true_ "the run prints the opened pull request's URL" \
-	grep -qF "opened pull request \"chore(release): v0.2.0-alpha\": http://forge.example.invalid:3001/jeremyhahn/go-xkms/pulls/7" <<<"$OUT"
+	grep -qF "opened pull request \"chore(release): v0.2.0-alpha\": http://forge.example.invalid:3000/jeremyhahn/go-xkms/pulls/7" <<<"$OUT"
 true_ "the run names release-tag as the next step" \
 	grep -q 'make release-tag VERSION=0.2.0-alpha' <<<"$OUT"
 
