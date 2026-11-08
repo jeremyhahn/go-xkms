@@ -1,7 +1,12 @@
 # Integrity pin for the trusted-firmware source scripts/build-agsim.sh compiles and
-# runs. The root module is not in go.mod, so go.sum does not cover it, and
-# first-party modules bypass the checksum database; this file is its go.sum.
-# Format: <module> <version> <h1 hash of the module zip>. Bumping the
-# trusted-firmware/sdk/go dependency means adding the new version's line here:
-#   go mod download -json github.com/jeremyhahn/trusted-firmware@<version>   (the "Sum" field)
-github.com/jeremyhahn/trusted-firmware v0.4.2-alpha h1:grU5O32H5kJGxK4qZy7D8akly0zaFs8S5xQyQYhH+2w=
+# runs. The source comes from git, not the Go module proxy: the repository root
+# has no go.mod, so proxy.golang.org and sum.golang.org serve no version of
+# github.com/jeremyhahn/trusted-firmware, and go.sum cannot cover it. This file
+# pins the commit and its tree instead.
+# Format: <repository URL> <version> <commit sha> <tree sha>. Bumping the
+# trusted-firmware/sdk/go dependency means adding the new version's line here,
+# read from the repository, not from the tag name alone:
+#   git ls-remote <URL> 'refs/tags/<version>^{}'                 (the commit)
+#   git init t && git -C t fetch --depth 1 <URL> <commit> &&
+#   git -C t rev-parse 'FETCH_HEAD^{commit}' 'FETCH_HEAD^{tree}'  (commit, tree)
+https://github.com/jeremyhahn/trusted-firmware v0.4.2-alpha e0ae83d062b45dccc0e4cf08c87bf6def80a946c de53b2be47bdfdf05cc04432fdd997cf685794eb
