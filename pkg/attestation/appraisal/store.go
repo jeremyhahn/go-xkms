@@ -53,9 +53,12 @@ const (
 )
 
 // ValidateName applies the record-name rule: a name is 1-253 bytes and holds
-// no '/' that could escape its key prefix. It returns a *NameError.
+// no '/' that could escape its key prefix. It also refuses "." and "..": a
+// client puts the name in a URL path segment, and URL normalization resolves
+// those segments away, so a record so named could never be read or deleted.
+// It returns a *NameError.
 func ValidateName(name string) error {
-	if name == "" || len(name) > maxNameLen || strings.ContainsRune(name, '/') {
+	if name == "" || name == "." || name == ".." || len(name) > maxNameLen || strings.ContainsRune(name, '/') {
 		return &NameError{Name: name}
 	}
 	return nil
