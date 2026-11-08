@@ -261,4 +261,4 @@ require (
 	software.sslmate.com/src/go-pkcs12 v0.7.4 // indirect
 )
 
-replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.9.9-0.20261015005355-56ec25c36102
+replace github.com/google/go-tpm => github.com/jeremyhahn/go-tpm v0.0.0-20261108040111-edb18e51d83f
