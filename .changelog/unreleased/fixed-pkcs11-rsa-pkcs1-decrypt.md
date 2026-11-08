@@ -1,0 +1,1 @@
+- The integration test daemons (`configs/xkmsd-integration.yaml`, `scripts/start-test-xkmsd.sh`) set `crypto.allow_legacy_key_wrap`, so the OpenSSL suites' RSA PKCS#1 v1.5 decrypt through the PKCS#11 module (CKM_RSA_PKCS) is no longer refused with CKR_ARGUMENTS_BAD.

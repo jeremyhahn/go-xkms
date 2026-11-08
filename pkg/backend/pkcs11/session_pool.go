@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 
 	"github.com/miekg/pkcs11"
 )
@@ -429,7 +430,7 @@ func (p *SessionPool) WithSearch(session pkcs11.SessionHandle, template []*pkcs1
 	defer lock.Unlock()
 
 	if err := p.ctx.FindObjectsInit(session, template); err != nil {
-		return err
+		return hardware.ClearFailedPKCS11Search(p.ctx, session, err)
 	}
 	defer func() {
 		// The search is being torn down regardless of find's outcome. A Final

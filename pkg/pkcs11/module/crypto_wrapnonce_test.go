@@ -74,6 +74,9 @@ func (w *wrapTransport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyB
 		return nil, err
 	}
 	blob := slices.Concat(sealed.Nonce, sealed.Ciphertext, sealed.Tag)
+	if req.Algorithm == string(types.WrapAESGCM) {
+		blob = fakeServiceGCMWrapFrame(sealed)
+	}
 
 	return &transport.WrapKeyByIDResponse{WrappedKey: blob, Algorithm: req.Algorithm}, nil
 }
@@ -133,8 +136,9 @@ func TestWrapKeyByIDRefusesAReusedIVUnderOneKey(t *testing.T) {
 	blobA, err := cm.WrapKeyByID(context.Background(),
 		gcmWrapRequest("wrapnonce-be", "reuse-kek", iv, targetA))
 	require.NoError(t, err, "the first use of an IV under a key is legitimate")
-	require.Equal(t, append(append([]byte{}, iv...), oracleA...), blobA,
-		"the wrap must agree with the standard library for the same key, IV and plaintext")
+	require.Equal(t, oracleA, blobA,
+		"the wrap must agree with the standard library for the same key, IV and plaintext, "+
+			"returning ciphertext || tag with no IV (PKCS#11 v3.2 §6.13.3)")
 
 	blobB, err := cm.WrapKeyByID(context.Background(),
 		gcmWrapRequest("wrapnonce-be", "reuse-kek", iv, targetB))
@@ -177,11 +181,11 @@ func TestWrapKeyByIDAcceptsAFreshIVUnderTheSameKey(t *testing.T) {
 	assert.Equal(t, 2, client.wraps)
 
 	// Both blobs must still be the real thing, checked outside the module.
-	plainFirst, err := gcmOpenOracle(t, kek, first, blobFirst[GCMNonceSize:], nil)
+	plainFirst, err := gcmOpenOracle(t, kek, first, blobFirst, nil)
 	require.NoError(t, err)
 	assert.Equal(t, target, plainFirst)
 
-	plainSecond, err := gcmOpenOracle(t, kek, second, blobSecond[GCMNonceSize:], nil)
+	plainSecond, err := gcmOpenOracle(t, kek, second, blobSecond, nil)
 	require.NoError(t, err)
 	assert.Equal(t, target, plainSecond)
 }
@@ -270,7 +274,7 @@ func TestWrapKeyByIDDoesNotConsumeTheIVOfARefusedWrap(t *testing.T) {
 	require.NoError(t, err,
 		"the refused wrap must not have claimed the IV: the caller's corrected retry has nothing else to change")
 
-	plaintext, err := gcmOpenOracle(t, kek, iv, blob[GCMNonceSize:], nil)
+	plaintext, err := gcmOpenOracle(t, kek, iv, blob, nil)
 	require.NoError(t, err)
 	assert.Equal(t, target, plaintext)
 }
@@ -313,23 +317,24 @@ func TestWrapKeyByIDDoesNotClaimTheIVOfANonAEADMechanism(t *testing.T) {
 // would fail the guard's own input check on the very first such wrap and make
 // every token-generated-IV wrap impossible. The generated nonce is claimed by
 // the service that produced it, against this same process-wide guard.
-func TestWrapKeyByIDLeavesAGeneratedNonceToTheService(t *testing.T) {
+func TestWrapKeyByIDRefusesAGCMWrapWithoutTheIV(t *testing.T) {
+	// PKCS#11 v3.2 §6.13.3: C_WrapKey returns only ciphertext || tag and
+	// CK_GCM_PARAMS.pIv is input only, so a nonce the service generated could
+	// never reach the caller and the wrapped key could never be unwrapped.
 	kek := []byte("generated-iv-KEK")
 	target := []byte("generated-target")
 
 	client := newWrapTransport(map[string][]byte{"generated-kek": kek})
 	cm := NewCryptoManager(client, &CryptoManagerConfig{DefaultBackend: "wrapnonce-be"})
 
-	first, err := cm.WrapKeyByID(context.Background(),
-		gcmWrapRequest("wrapnonce-be", "generated-kek", nil, target))
-	require.NoError(t, err)
-	require.Len(t, first, GCMNonceSize+len(target)+GCMTagSize)
-
-	_, err = cm.WrapKeyByID(context.Background(),
-		gcmWrapRequest("wrapnonce-be", "generated-kek", nil, target))
-	require.NoError(t, err,
-		"a wrap that supplies no IV must not be refused by a claim this module cannot make")
-	assert.Equal(t, 2, client.wraps)
+	for _, iv := range [][]byte{nil, make([]byte, GCMNonceSize-1)} {
+		blob, err := cm.WrapKeyByID(context.Background(),
+			gcmWrapRequest("wrapnonce-be", "generated-kek", iv, target))
+		require.Error(t, err, "a %d-byte IV must be refused", len(iv))
+		assert.Nil(t, blob)
+		assert.True(t, errorHasCode(err, CKR_MECHANISM_PARAM_INVALID), "got %v", err)
+	}
+	assert.Zero(t, client.wraps, "the refusal must happen before the request reaches the service")
 }
 
 // TestEncryptRefusesAReusedIVAcrossTwoCryptoManagers is why the claim goes to

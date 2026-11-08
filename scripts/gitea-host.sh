@@ -4,9 +4,9 @@
 #
 # Resolution order:
 #   1. GITEA_HOST in the environment.
-#   2. GITEA_HOST= in the gitignored build/docker/devcontainer/.env, beside GITEA_GO_TOKEN.
+#   2. GITEA_HOST= in the gitignored build/docker/devcontainer/.env, beside FORGE_MODULE_TOKEN.
 #   3. The repository's own origin remote, which in any real Gitea checkout
-#      names the server. An SSH origin (ssh://git@host:2222/... or
+#      names the server. An SSH origin (ssh://git@host:<sshport>/... or
 #      git@host:...) maps its SSH port to the HTTP port (GITEA_HTTP_PORT,
 #      default 3001); an HTTP(S) origin keeps host and port as written.
 #

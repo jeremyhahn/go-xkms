@@ -65,8 +65,21 @@ case "$1" in
           short) echo "${5%:*}@sha256:abc" ;;
         esac
         ;;
+      *Created*)
+        case " ${FAKE_INSPECT_FAIL:-} " in *" $5 "*) echo "Error: No such image: $5" >&2; exit 1 ;; esac
+        printf '%s\n' "${FAKE_IMAGES:-}" | while read -r _ _ i c; do
+          [ "$i" != "$5" ] || { echo "$c"; break; }
+        done
+        ;;
       *) echo "$FAKE_IMAGE_ID" ;;
     esac
+    ;;
+  # FAKE_IMAGES: one "<repository> <tag> <id> <created>" line per name.
+  images) printf '%s\n' "${FAKE_IMAGES:-}" | cut -d' ' -f1-3 ;;
+  ps) case " ${FAKE_IN_USE:-} " in *" ${4#ancestor=} "*) echo c0ffee000000 ;; esac ;;
+  rmi)
+    case " ${FAKE_RMI_FAIL:-} " in *" $2 "*) echo "Error response from daemon: conflict: unable to remove $2" >&2; exit 1 ;; esac
+    echo "Untagged: $2"
     ;;
   pull) exit "${FAKE_PULL_RC:-0}" ;;
   create) exit "${FAKE_CREATE_RC:-0}" ;;
@@ -295,7 +308,7 @@ run_script() {
       FAKE_BEARER="$BEARER_SECRET" \
       FAKE_MANIFEST_BODY="$MANIFEST" \
       FAKE_MANIFEST_DIGEST="$MANIFEST_DIGEST" \
-      CI_REGISTRY_OWNER=agent-ci-images \
+      CI_REGISTRY_OWNER=example-ci-images \
       "${envs[@]}" \
       bash "$SCRIPT_UNDER_TEST" "${args[@]}" >"$WORK_DIR/stdout" 2>"$WORK_DIR/stderr"
   )
@@ -371,15 +384,15 @@ stdout_is_digest_ref() {
 
 RUN_TOKEN=(CI_REGISTRY_USER=runner "CI_REGISTRY_TOKEN=$SECRET")
 RELEASE=(CI_PUBLISH=true "RELEASE_REGISTRY=$FORGE" RELEASE_REGISTRY_USER=releaser "RELEASE_REGISTRY_TOKEN=$RELEASE_SECRET")
-TOOLCHAIN_REPO="$FORGE/agent-ci-images/go-xkms-ci-toolchain"
+TOOLCHAIN_REPO="$FORGE/example-ci-images/go-xkms-ci-toolchain"
 
 # --------------------------------------------------------------------------
-MANIFEST_PATH="agent-ci-images/go-xkms-ci-toolchain/manifests/0123456789abcdef-main"
-TOKEN_QUERY="service=container_registry&scope=repository:agent-ci-images/go-xkms-ci-toolchain:pull"
+MANIFEST_PATH="example-ci-images/go-xkms-ci-toolchain/manifests/0123456789abcdef-main"
+TOKEN_QUERY="service=container_registry&scope=repository:example-ci-images/go-xkms-ci-toolchain:pull"
 ACCEPT="application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json"
 HTTP_FORGE=("GITHUB_SERVER_URL=http://$FORGE" FAKE_SERVES=http)
 
-start_case "resolve: main's image of the same content, by digest, read anonymously from agent-ci-images over https"
+start_case "resolve: main's image of the same content, by digest, read anonymously from example-ci-images over https"
 run_script 0 resolve toolchain
 stdout_is "$TOOLCHAIN_REPO@$MANIFEST_DIGEST"
 called "curl GET https://$FORGE/v2/token?$TOKEN_QUERY auth=none"
@@ -635,7 +648,7 @@ no_secret_printed
 
 start_case "publish: a refused login names the registry"
 run_script 1 publish toolchain -- "${RELEASE[@]}" FAKE_LOGIN=refused
-stderr_has "the Gitea registry refused the login: the release runner's credential cannot push agent-ci-images's container packages"
+stderr_has "the Gitea registry refused the login: the release runner's credential cannot push example-ci-images's container packages"
 not_called "docker push"
 no_secret_printed
 
@@ -657,7 +670,7 @@ stdout_is_digest_ref
 start_case "publish: a release registry other than the forge's warns that pull requests will not find the image"
 run_script 0 publish toolchain -- "${RELEASE[@]}" RELEASE_REGISTRY=registry.invalid:5000
 stderr_has "::warning::ci-registry: publish: RELEASE_REGISTRY (registry.invalid:5000) is not the forge's registry ($FORGE), which pull requests resolve against"
-stdout_is "registry.invalid:5000/agent-ci-images/go-xkms-ci-toolchain@$MANIFEST_DIGEST"
+stdout_is "registry.invalid:5000/example-ci-images/go-xkms-ci-toolchain@$MANIFEST_DIGEST"
 warnings_are 1
 
 start_case "publish: a forge served over plain http is looked up over http; any other registry over https"
@@ -666,8 +679,8 @@ stdout_is "$TOOLCHAIN_REPO@$MANIFEST_DIGEST"
 called "curl GET http://$FORGE/v2/token?$TOKEN_QUERY auth=basic releaser"
 not_called "https://"
 run_script 0 publish toolchain -- "${RELEASE[@]}" RELEASE_REGISTRY=registry.invalid:5000 "GITHUB_SERVER_URL=http://$FORGE"
-stdout_is "registry.invalid:5000/agent-ci-images/go-xkms-ci-toolchain@$MANIFEST_DIGEST"
-called "curl GET https://registry.invalid:5000/v2/agent-ci-images/go-xkms-ci-toolchain/manifests/0123456789abcdef-main auth=bearer"
+stdout_is "registry.invalid:5000/example-ci-images/go-xkms-ci-toolchain@$MANIFEST_DIGEST"
+called "curl GET https://registry.invalid:5000/v2/example-ci-images/go-xkms-ci-toolchain/manifests/0123456789abcdef-main auth=bearer"
 not_called "http://"
 no_secret_printed
 
@@ -736,12 +749,12 @@ stderr_has "CI_REGISTRY_TOKEN is empty: the run's token is not in the job's envi
 not_called "docker login"
 not_called "docker pull"
 
-start_case "use: a reference outside agent-ci-images is refused before any pull"
+start_case "use: a reference outside example-ci-images is refused before any pull"
 run_script 1 use toolchain "$FORGE/jeremyhahn/go-xkms-ci-toolchain@$DIGEST"
-stderr_has "'$FORGE/jeremyhahn/go-xkms-ci-toolchain@$DIGEST' is not under $FORGE/agent-ci-images/, where main publishes"
+stderr_has "'$FORGE/jeremyhahn/go-xkms-ci-toolchain@$DIGEST' is not under $FORGE/example-ci-images/, where main publishes"
 not_called "docker pull"
-run_script 1 use toolchain "$FORGE/agent-ci-images-x/go-xkms-ci-toolchain@$DIGEST"
-stderr_has "is not under $FORGE/agent-ci-images/"
+run_script 1 use toolchain "$FORGE/example-ci-images-x/go-xkms-ci-toolchain@$DIGEST"
+stderr_has "is not under $FORGE/example-ci-images/"
 not_called "docker pull"
 
 start_case "use: a bad digest reference is refused before any pull"
@@ -797,6 +810,74 @@ if [ "$(grep -c '^docker rm' "$CALL_LOG")" -eq 1 ]; then
 else
   fail "$(grep -c '^docker rm' "$CALL_LOG") removals, want 1"
 fi
+
+# --------------------------------------------------------------------------
+# retain (#1789): four IT generations, each under its local and registry
+# names, one older toolchain generation and an unrelated image.
+gen_id() { printf 'sha256:%064d' "$1"; }
+IT_REPO="$FORGE/example-ci-images/go-xkms-ci-it"
+RETAIN_IMAGES=""
+for g in 1 2 3 4; do
+  RETAIN_IMAGES+="go-xkms-ci-it ${g}${g}${g}${g}000000000000 $(gen_id "$g") 2026-10-2${g}T10:00:00.5Z"$'\n'
+  RETAIN_IMAGES+="$IT_REPO ${g}${g}${g}${g}000000000000-main $(gen_id "$g") 2026-10-2${g}T10:00:00.5Z"$'\n'
+done
+RETAIN_IMAGES+="go-xkms-toolchain 0123456789abcdef $(gen_id 5) 2026-01-01T00:00:00Z"$'\n'
+RETAIN_IMAGES+="$FORGE/example-ci-images/go-xkms-ci-toolchain 0123456789abcdef-main $(gen_id 5) 2026-01-01T00:00:00Z"$'\n'
+RETAIN_IMAGES+="postgres 16 $(gen_id 6) 2025-01-01T00:00:00Z"
+
+start_case "retain: removes all but the newest two generations, by every name"
+run_script 0 retain it -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES"
+for g in 1 2; do
+  called "docker rmi go-xkms-ci-it:${g}${g}${g}${g}000000000000"
+  called "docker rmi $IT_REPO:${g}${g}${g}${g}000000000000-main"
+done
+for g in 3 4; do
+  not_called "docker rmi go-xkms-ci-it:${g}${g}${g}${g}"
+  not_called "docker rmi $IT_REPO:${g}${g}${g}${g}"
+done
+not_called "docker rmi -f"
+not_called "docker rmi sha256:"
+not_called "docker rmi go-xkms-toolchain"
+not_called "docker rmi $FORGE/example-ci-images/go-xkms-ci-toolchain"
+not_called "docker rmi postgres"
+not_called "docker login"
+stdout_is ""
+warnings_are 0
+
+start_case "retain: keeps an old generation a container uses"
+run_script 0 retain it -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES" FAKE_IN_USE="$(gen_id 1)"
+called "docker ps -aq --filter ancestor=$(gen_id 1)"
+not_called "docker rmi go-xkms-ci-it:1111"
+not_called "docker rmi $IT_REPO:1111"
+called "docker rmi go-xkms-ci-it:2222000000000000"
+stderr_has "($(gen_id 1)) is used by a container; it is kept"
+
+start_case "retain: a failed removal warns and retain goes on"
+run_script 0 retain it -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES" FAKE_RMI_FAIL="go-xkms-ci-it:1111000000000000"
+stderr_has "cannot remove go-xkms-ci-it:1111000000000000"
+called "docker rmi $IT_REPO:1111000000000000-main"
+called "docker rmi go-xkms-ci-it:2222000000000000"
+warnings_are 1
+
+start_case "retain: an image it cannot inspect is kept"
+run_script 0 retain it -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES" FAKE_INSPECT_FAIL="$(gen_id 1)"
+not_called "docker rmi go-xkms-ci-it:1111"
+called "docker rmi go-xkms-ci-it:2222000000000000"
+warnings_are 1
+
+start_case "retain: the other family's generations are its own"
+run_script 0 retain toolchain -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES"
+not_called "docker rmi"
+
+start_case "retain: refuses unless CI_PUBLISH is true"
+run_script 1 retain it -- FAKE_IMAGES="$RETAIN_IMAGES"
+stderr_has "CI_PUBLISH is not true"
+not_called "docker"
+
+start_case "retain: an unknown family"
+run_script 1 retain bogus -- CI_PUBLISH=true FAKE_IMAGES="$RETAIN_IMAGES"
+stderr_has "family 'bogus' is neither toolchain nor it"
+not_called "docker"
 
 start_case "an unknown command"
 run_script 1 push toolchain

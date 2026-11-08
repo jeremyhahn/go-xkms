@@ -1,0 +1,1 @@
+xkey: the `pkg/ipc` tests take their xkey home and socket directories from a short temporary directory, so their socket paths stay within the 90-character limit and the kernel's `sun_path` limit whatever `TMPDIR` is (CI's `/var/tmp` pushed `<home>/run/xkey.sock` to 92 characters, main run 73897).
