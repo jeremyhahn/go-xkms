@@ -1,4 +1,4 @@
-# batch-template: v1.1 — token-free CPU work on the batch runners: fuzz,
+# batch-template: v1.1 — token-free CPU work on GitHub-hosted runners: fuzz,
 # race-full, soak, bench. Dispatch only; never in a merge gate.
 #
 # Owner order 2026-10-12 10:43 EDT (relayed by the Company Agent 17:24Z):
@@ -22,9 +22,10 @@
 #              artifact on Gitea)
 # A finding that is already an open issue gets a comment, not a new issue.
 #
-# RUNNERS. `runs-on: batch`: Infrastructure registers "batch" runners on the
-# worker nodes (19 slots in all). Nothing else uses that label, so batch work
-# never takes a CI slot from a pull request.
+# RUNNERS. `runs-on: ubuntu-latest` for every job (CA m2061, DS-7373: GitHub-
+# hosted runners by default). No job needs hardware: soak loops only the
+# device-free in-process integration suites (SOAK_CMD), and race-full and bench
+# leave out the hardware-bound packages.
 #
 # ARTIFACTS. actions/upload-artifact v4 and later refuse any server that is
 # not github.com ("not currently supported on GHES"; Gitea presents as one),
@@ -39,12 +40,12 @@
 #     doubles, yubikey/smartcardhsm hardware), and builds the trusted-firmware
 #     simulators and installs swtpm the way ci.yml's Unit Tests job does;
 #   - bench passes BENCH_TAGS: the DAO-backed benchmarks need a codec tag.
-# Private modules: no token setup. As in ci.yml, the runners inject
-# GOPRIVATE for the jeremyhahn/* modules.
+# Modules: no token setup. The jeremyhahn/* modules are public and resolve
+# from proxy.golang.org with no GOPRIVATE (handbook dependency-resolution.md).
 #
 # xkey (a separate Go module) is not in race-full: its Makefile suite builds
 # the webkit GUI tags, and ci.yml's curated nested-module-test runs it as an
-# unprivileged user that the batch runner does not provide.
+# unprivileged user that a batch job does not set up.
 
 name: Batch
 
@@ -114,7 +115,7 @@ jobs:
   fuzz:
     name: Fuzz (shard ${{ matrix.shard }}/4)
     if: inputs.jobs == 'all' || inputs.jobs == 'fuzz'
-    runs-on: batch
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -205,7 +206,7 @@ jobs:
   race-full:
     name: Race (full, -count=3)
     if: inputs.jobs == 'all' || inputs.jobs == 'race-full'
-    runs-on: batch
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     # ci.yml's Unit Tests bounds: the Go toolchain is cgroup-unaware, and
     # pkg/api/mcp and pkg/api/rest each peak near 7 GB under -race.
@@ -259,7 +260,7 @@ jobs:
   soak:
     name: Soak (${{ inputs.soak_minutes }} min)
     if: inputs.jobs == 'all' || inputs.jobs == 'soak'
-    runs-on: batch
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -319,7 +320,7 @@ jobs:
   bench:
     name: Bench
     if: inputs.jobs == 'all' || inputs.jobs == 'bench'
-    runs-on: batch
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
