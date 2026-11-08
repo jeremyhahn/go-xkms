@@ -180,8 +180,11 @@ Invariants:
 - **Delete after Put.** Each record is read, imported, wiped from memory
   (`secure.Wipe`) and only then deleted from `legacy`. A failure at any step
   leaves the old key in place.
-- **Idempotent.** A migrated key is gone from `legacy`, so a second run finds
-  nothing and returns a zero `Report`.
+- **Idempotent.** A migrated key is gone from `legacy`, so a second run
+  migrates nothing: its `Report` has `Migrated` and `Failed` at zero and
+  `Skipped` unchanged. A record imported but not deleted (a `delete` failure)
+  is imported again over its catalog copy by the next run, then deleted
+  (`TestRunRetriesAfterFailedDelete`).
 - **Counts.** `Report{Migrated, Skipped, Failed}`. Skipped: tenant-prefixed
   sessions and profiles, and `ssh/` keys matching no layout. Keys outside
   `ssh/` are not counted.
