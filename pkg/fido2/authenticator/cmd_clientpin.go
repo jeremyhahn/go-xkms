@@ -697,7 +697,7 @@ func (a *Authenticator) handleGetPINToken(req *ClientPINRequest) ([]byte, error)
 		currentPinHash = nil
 	}
 
-	if err := a.verifyPinHashAndConsumeRetryLocked(currentPinHash); err != nil {
+	if err := a.verifyPinForTokenLocked(currentPinHash); err != nil {
 		return nil, err
 	}
 
@@ -803,7 +803,7 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 		currentPinHash = nil
 	}
 
-	if err := a.verifyPinHashAndConsumeRetryLocked(currentPinHash); err != nil {
+	if err := a.verifyPinForTokenLocked(currentPinHash); err != nil {
 		if errors.Is(err, ErrPINInvalid) || errors.Is(err, ErrPINBlocked) {
 			slog.Warn("[CTAP2] PIN hash mismatch",
 				"error", err,
@@ -1050,6 +1050,28 @@ func (a *Authenticator) verifyPinHashAndConsumeRetryLocked(candidateHash []byte)
 
 	a.pinState.mismatches.reset()
 	a.state.SetPINRetries(a.config.PINMaxRetries)
+	if err := a.storage.SaveState(a.state); err != nil {
+		return errors.Join(ErrStorageError, err)
+	}
+	return nil
+}
+
+// verifyPinForTokenLocked verifies the PIN of a request that mints a
+// pinUvAuthToken. A matching PIN in getPinToken (CTAP 2.1 §6.5.5.5) or
+// getPinUvAuthTokenUsingPinWithPermissions (§6.5.5.7.1) sets pinRetries and,
+// on an authenticator with built-in user verification, uvRetries back to
+// their maximum, so UV blocked by failed ceremonies recovers through the PIN
+// rather than only through a reset.
+//
+// The caller must hold a.mu for writing.
+func (a *Authenticator) verifyPinForTokenLocked(candidateHash []byte) error {
+	if err := a.verifyPinHashAndConsumeRetryLocked(candidateHash); err != nil {
+		return err
+	}
+	if a.userVerifier() == nil || a.state.UVRetries() == DefaultUVRetries {
+		return nil
+	}
+	a.state.ResetUVRetries()
 	if err := a.storage.SaveState(a.state); err != nil {
 		return errors.Join(ErrStorageError, err)
 	}
