@@ -10,7 +10,7 @@ require (
 	github.com/jeremyhahn/go-qrdb v0.25.1-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.25.1-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
-	github.com/jeremyhahn/go-xkms v0.49.0-alpha
+	github.com/jeremyhahn/go-xkms v0.49.1-alpha
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/quic-go/quic-go v0.63.0
 	github.com/stretchr/testify v1.12.1
@@ -149,7 +149,7 @@ require (
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-luks2 v0.2.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.15.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.49.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.49.1-alpha // indirect
 	github.com/jeremyhahn/trusted-firmware/sdk/go v0.3.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
