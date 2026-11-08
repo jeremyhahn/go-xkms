@@ -386,7 +386,8 @@ func (cfg *TestConfig) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(cfg.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
-		return "mcp://" + cfg.MCPAddr
+		// xkmsd serves MCP over TLS only; mcp:// is plaintext.
+		return "mcps://" + cfg.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""

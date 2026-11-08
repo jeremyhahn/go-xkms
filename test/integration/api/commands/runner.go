@@ -86,14 +86,15 @@ type TestRunner struct {
 }
 
 // TLSArgs returns the xkmsctl TLS flags for protocol: the CA that signs the
-// server's certificate and the admin client credential. Unix, gRPC, QUIC and
-// REST over https run TLS; MCP (mcp://), REST over http and embedded do not.
+// server's certificate and the admin client credential. Unix, gRPC, QUIC, MCP
+// (mcps://) and REST over https run TLS; REST over http and embedded do not.
 func (r *TestRunner) TLSArgs(t *testing.T, protocol ProtocolType) []string {
 	t.Helper()
 
 	usesTLS := protocol == ProtocolUnix ||
 		protocol == ProtocolGRPC ||
 		protocol == ProtocolQUIC ||
+		protocol == ProtocolMCP ||
 		protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://")
 	if !usesTLS {
 		return nil
@@ -102,7 +103,7 @@ func (r *TestRunner) TLSArgs(t *testing.T, protocol ProtocolType) []string {
 }
 
 // tlsURLSchemes are the --server URL schemes whose transport runs TLS.
-var tlsURLSchemes = []string{"unix://", "https://", "grpc://", "grpcs://", "quic://"}
+var tlsURLSchemes = []string{"unix://", "https://", "grpc://", "grpcs://", "quic://", "mcps://"}
 
 // TLSArgsForURL is TLSArgs for the transport a --server URL selects.
 func (r *TestRunner) TLSArgsForURL(t *testing.T, serverURL string) []string {
@@ -187,7 +188,8 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(r.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
-		return "mcp://" + r.MCPAddr
+		// xkmsd serves MCP over TLS only; mcp:// is plaintext.
+		return "mcps://" + r.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""

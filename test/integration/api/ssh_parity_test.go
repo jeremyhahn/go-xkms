@@ -130,18 +130,6 @@ func needsTLSScheme(u string) bool {
 		strings.HasPrefix(u, "mcps://")
 }
 
-// sshServerURL maps a protocol to the xkey --server URL. For gRPC the harness
-// default is grpcs://, the unix socket maps to unix://, and MCP to mcps://.
-func sshServerURL(cfg *TestConfig, proto ProtocolType) string {
-	if proto == ProtocolMCP {
-		// xkmsd serves MCP over TLS. xkey reads mcp:// as plaintext, which
-		// the TLS listener answers with a 400 and which presents no client
-		// certificate; mcps:// carries TLS and the admin credential.
-		return "mcps://" + cfg.MCPAddr
-	}
-	return cfg.GetServerURL(proto)
-}
-
 // sshAlgo describes an SSH algorithm to exercise in the parity matrix, with the
 // authorized_keys line prefix it produces. RSA-2048 and ECDSA-P256 are the
 // cross-backend defaults that TPM 2.0, SoftHSM2, and the software backend all
@@ -183,7 +171,7 @@ func TestXkeySSHMultiProtocol(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
 				t.Fatalf("server not available for protocol %s", proto)
 			}
-			serverURL := sshServerURL(cfg, proto)
+			serverURL := cfg.GetServerURL(proto)
 			for _, algo := range sshDefaultAlgos {
 				algo := algo
 				t.Run(algo.name, func(t *testing.T) {
@@ -273,7 +261,7 @@ func TestXkeySSHBackendSelection(t *testing.T) {
 	if !cfg.IsProtocolAvailable(t, proto) {
 		t.Fatalf("no remote protocol available for backend-selection test")
 	}
-	serverURL := sshServerURL(cfg, proto)
+	serverURL := cfg.GetServerURL(proto)
 	owner := adminSubject
 
 	for _, raw := range backends {
