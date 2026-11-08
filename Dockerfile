@@ -2,7 +2,7 @@
 # Supports PKCS#11 (SoftHSM2), TPM 2.0 (SWTPM), and Quantum-Safe Cryptography (liboqs)
 
 # Stage 1: Builder stage - compile dependencies and prepare environment
-FROM golang:1.25.5-bookworm AS builder
+FROM golang:1.26.1-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -51,7 +51,7 @@ RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git /build/l
     DESTDIR=/build/liboqs-install ninja install
 
 # Stage 2: Test runtime environment
-FROM golang:1.25.5-bookworm
+FROM golang:1.26.1-bookworm
 
 LABEL maintainer="go-keychain"
 LABEL description="Integration testing environment for go-keychain with PKCS#11 and TPM 2.0 support"
