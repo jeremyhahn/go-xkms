@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"testing"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 
@@ -31,11 +31,11 @@ import (
 func TestNewDeviceKeyAcceptsThePointTheElementReturns(t *testing.T) {
 	point, pub := testPoint(t)
 
-	key, err := newDeviceKey(point, aggeneric.SlotDeviceID, DefaultKeyCN)
+	key, err := newDeviceKey(point, tfw.SlotDeviceID, DefaultKeyCN)
 	require.NoError(t, err)
 
 	assert.True(t, pub.Equal(key.Public()))
-	assert.Equal(t, aggeneric.SlotDeviceID, key.Slot())
+	assert.Equal(t, tfw.SlotDeviceID, key.Slot())
 	assert.Equal(t, DefaultKeyCN, key.CN())
 }
 
@@ -48,7 +48,7 @@ func TestNewDeviceKeyRefusesAPointThatIsNotOnTheCurve(t *testing.T) {
 		point[i] = 0xAA
 	}
 
-	key, err := newDeviceKey(point, aggeneric.SlotDeviceID, DefaultKeyCN)
+	key, err := newDeviceKey(point, tfw.SlotDeviceID, DefaultKeyCN)
 
 	assert.Nil(t, key)
 	assert.ErrorIs(t, err, ErrInvalidDevicePoint)
@@ -58,7 +58,7 @@ func TestNewDeviceKeyRefusesAPointThatIsNotOnTheCurve(t *testing.T) {
 // 64-byte reply from a slot that holds no key, and it must not become an
 // identity.
 func TestNewDeviceKeyRefusesTheIdentityPoint(t *testing.T) {
-	key, err := newDeviceKey(make([]byte, devicePointLen), aggeneric.SlotDeviceID, DefaultKeyCN)
+	key, err := newDeviceKey(make([]byte, devicePointLen), tfw.SlotDeviceID, DefaultKeyCN)
 
 	assert.Nil(t, key)
 	assert.ErrorIs(t, err, ErrInvalidDevicePoint)
@@ -66,7 +66,7 @@ func TestNewDeviceKeyRefusesTheIdentityPoint(t *testing.T) {
 
 func TestNewDeviceKeyRefusesAPointOfTheWrongLength(t *testing.T) {
 	for _, n := range []int{0, 32, 63, 65, 128} {
-		key, err := newDeviceKey(make([]byte, n), aggeneric.SlotDeviceID, DefaultKeyCN)
+		key, err := newDeviceKey(make([]byte, n), tfw.SlotDeviceID, DefaultKeyCN)
 
 		assert.Nil(t, key, "length %d", n)
 		require.ErrorIs(t, err, ErrInvalidDevicePoint, "length %d", n)
@@ -80,7 +80,7 @@ func TestNewDeviceKeyRefusesAPointOfTheWrongLength(t *testing.T) {
 // the assertion puts it at the start, where a negotiation can still act on it.
 func TestDeviceKeyIsNotASigner(t *testing.T) {
 	point, _ := testPoint(t)
-	key, err := newDeviceKey(point, aggeneric.SlotDeviceID, DefaultKeyCN)
+	key, err := newDeviceKey(point, tfw.SlotDeviceID, DefaultKeyCN)
 	require.NoError(t, err)
 
 	_, isSigner := crypto.PrivateKey(key).(crypto.Signer)
@@ -96,11 +96,11 @@ func TestDeviceKeyEqualComparesThePoint(t *testing.T) {
 	pointA, _ := testPoint(t)
 	pointB, _ := testPoint(t)
 
-	a, err := newDeviceKey(pointA, aggeneric.SlotDeviceID, DefaultKeyCN)
+	a, err := newDeviceKey(pointA, tfw.SlotDeviceID, DefaultKeyCN)
 	require.NoError(t, err)
-	sameA, err := newDeviceKey(pointA, aggeneric.SlotDeviceID, "another-name")
+	sameA, err := newDeviceKey(pointA, tfw.SlotDeviceID, "another-name")
 	require.NoError(t, err)
-	b, err := newDeviceKey(pointB, aggeneric.SlotDeviceID, DefaultKeyCN)
+	b, err := newDeviceKey(pointB, tfw.SlotDeviceID, DefaultKeyCN)
 	require.NoError(t, err)
 
 	assert.True(t, a.Equal(sameA), "the same point in the same slot is the same key")
@@ -109,7 +109,7 @@ func TestDeviceKeyEqualComparesThePoint(t *testing.T) {
 
 func TestDeviceKeyEqualRefusesAnythingElse(t *testing.T) {
 	point, pub := testPoint(t)
-	key, err := newDeviceKey(point, aggeneric.SlotDeviceID, DefaultKeyCN)
+	key, err := newDeviceKey(point, tfw.SlotDeviceID, DefaultKeyCN)
 	require.NoError(t, err)
 
 	assert.False(t, key.Equal(pub))
@@ -132,7 +132,7 @@ func TestKeyAttributes_UnknownCryptoTierFailsSafeAndLogs(t *testing.T) {
 	b := &Backend{
 		config: testConfig(),
 		logger: slog.New(slog.NewTextHandler(&buf, nil)),
-		caps:   aggeneric.Caps{CryptoTier: aggeneric.CryptoTier(9)},
+		caps:   tfw.Caps{CryptoTier: tfw.CryptoTier(9)},
 	}
 
 	attrs := b.keyAttributes()
