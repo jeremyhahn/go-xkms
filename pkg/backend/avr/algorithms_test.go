@@ -16,7 +16,7 @@ package avr
 import (
 	"testing"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -27,7 +27,7 @@ import (
 // algorithm the element then fails to perform, at the point where it matters
 // most.
 func TestAlgorithmsReportsOnlyWhatTheDeviceClaims(t *testing.T) {
-	a := Algorithms{set: aggeneric.AlgECDSAP256SHA256 | aggeneric.AlgHMACSHA256}
+	a := Algorithms{set: tfw.AlgECDSAP256SHA256 | tfw.AlgHMACSHA256}
 
 	assert.Equal(t, []Algorithm{AlgorithmECDSAP256SHA256, AlgorithmHMACSHA256}, a.Named())
 	assert.True(t, a.Can(AlgorithmECDSAP256SHA256))
@@ -42,9 +42,9 @@ func TestAlgorithmsReportsOnlyWhatTheDeviceClaims(t *testing.T) {
 // travels in an attestation frame is 0x10. A reader that confused the two
 // would read a device as offering nothing it actually offers.
 func TestAlgorithmsUsesCapabilityBitsAndNotWireIdentifiers(t *testing.T) {
-	a := Algorithms{set: aggeneric.AlgECDSAP256SHA256 | aggeneric.AlgHMACSHA256}
+	a := Algorithms{set: tfw.AlgECDSAP256SHA256 | tfw.AlgHMACSHA256}
 
-	assert.Equal(t, aggeneric.AlgorithmSet(0x0005), a.Set())
+	assert.Equal(t, tfw.AlgorithmSet(0x0005), a.Set())
 	assert.True(t, a.Can(AlgorithmHMACSHA256))
 }
 
@@ -65,8 +65,8 @@ func TestAlgorithmsTreatsAnAbsentBitmapAsClaimingNothing(t *testing.T) {
 // fleet mid-upgrade. The unnamed bits are reported rather than dropped, so an
 // operator can see that the device said more than the host could read.
 func TestAlgorithmsReportsBitsItCannotName(t *testing.T) {
-	const future = aggeneric.AlgorithmSet(0x0100)
-	a := Algorithms{set: aggeneric.AlgECDSAP256SHA256 | future}
+	const future = tfw.AlgorithmSet(0x0100)
+	a := Algorithms{set: tfw.AlgECDSAP256SHA256 | future}
 
 	assert.Equal(t, []Algorithm{AlgorithmECDSAP256SHA256}, a.Named())
 	assert.Equal(t, future, a.Unnamed())

@@ -13,9 +13,9 @@
 
 // Package avr makes a classic AVR device a first-class xkms backend.
 //
-// The device is reached over the arduino-generic wire protocol through that
-// project's Layer 0 host SDK, github.com/jeremyhahn/arduino-generic/sdk/go.
-// arduino-generic owns the protocol, the firmware that speaks it and the host
+// The device is reached over the trusted-firmware wire protocol through that
+// project's Layer 0 host SDK, github.com/jeremyhahn/trusted-firmware/sdk/go.
+// trusted-firmware owns the protocol, the firmware that speaks it and the host
 // SDK for it; this package owns none of those and reimplements none of them.
 // Every byte that goes on the wire is put there by an SDK call.
 //

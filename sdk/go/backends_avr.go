@@ -32,7 +32,7 @@ import (
 // layer guard refuses a pkg/ import outright. An enum value with no constructor
 // behind it is an internal capability with a public label.
 //
-// The device itself comes from github.com/jeremyhahn/arduino-generic/sdk/go,
+// The device itself comes from github.com/jeremyhahn/trusted-firmware/sdk/go,
 // which is a separate Layer 0 module a consumer imports directly -- it is not
 // go-xkms internals and there is nothing here to re-export it through. Open the
 // link, wrap it in an aggeneric.Device, and hand that to NewAVRBackend.
