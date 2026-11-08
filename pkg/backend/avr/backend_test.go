@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 
@@ -35,12 +35,12 @@ func TestNewBackendReadsCapsOnce(t *testing.T) {
 	b := newTestBackend(t, link)
 
 	require.Len(t, link.requests, 1, "CAPS is read once on connect and cached")
-	assert.Equal(t, aggeneric.CmdCaps, link.requests[0].Cmd())
+	assert.Equal(t, tfw.CmdCaps, link.requests[0].Cmd())
 
 	caps := b.Caps()
-	assert.Equal(t, aggeneric.CryptoSecureElement, caps.CryptoTier)
-	assert.True(t, caps.Has(aggeneric.FeatureAttest))
-	assert.Equal(t, uint8(aggeneric.MaxPayload), caps.MaxPayload)
+	assert.Equal(t, tfw.CryptoSecureElement, caps.CryptoTier)
+	assert.True(t, caps.Has(tfw.FeatureAttest))
+	assert.Equal(t, uint8(tfw.MaxPayload), caps.MaxPayload)
 
 	// Capabilities answers from the cache and asks the device nothing.
 	b.Capabilities()
@@ -103,7 +103,7 @@ func TestNewBackendRefusesACorruptedReply(t *testing.T) {
 // A CAPS reply too short for the header is the two ends disagreeing about a
 // reply's shape, which the backend refuses rather than reading past.
 func TestNewBackendRefusesAShortCapsReply(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps, make([]byte, 9))
+	link := newFakeLink().answer(tfw.CmdCaps, make([]byte, 9))
 
 	_, err := NewBackend(context.Background(), testConfig(), newTestDevice(link))
 
@@ -114,7 +114,7 @@ func TestNewBackendRefusesAShortCapsReply(t *testing.T) {
 // not parse the same way, so nothing past CAPS can be trusted to mean what it
 // appears to mean.
 func TestNewBackendRefusesAnUnsupportedProtocolMajor(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayloadWithProtocol(2, 0))
+	link := newFakeLink().answer(tfw.CmdCaps, capsPayloadWithProtocol(3, 0))
 
 	_, err := NewBackend(context.Background(), testConfig(), newTestDevice(link))
 
@@ -124,7 +124,7 @@ func TestNewBackendRefusesAnUnsupportedProtocolMajor(t *testing.T) {
 // A protocol MINOR ahead of this host is tolerated in both directions. That is
 // what lets a fleet run mixed firmware without a flag day.
 func TestNewBackendAcceptsANewerProtocolMinor(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayloadWithProtocol(1, 9))
+	link := newFakeLink().answer(tfw.CmdCaps, capsPayloadWithProtocol(2, 9))
 
 	b, err := NewBackend(context.Background(), testConfig(), newTestDevice(link))
 	require.NoError(t, err)
@@ -135,8 +135,8 @@ func TestNewBackendAcceptsANewerProtocolMinor(t *testing.T) {
 // device: tiers extend, and refusing here would take a fleet down on a host
 // upgrade alone. The backend attaches, and reports unattested.
 func TestNewBackendAttachesToADeviceWithAnUnknownTier(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps,
-		capsPayload(aggeneric.CryptoTier(9), aggeneric.FeatureAttest, aggeneric.AlgECDSAP256SHA256))
+	link := newFakeLink().answer(tfw.CmdCaps,
+		capsPayload(tfw.CryptoTier(9), tfw.FeatureAttest, tfw.AlgECDSAP256SHA256))
 
 	b := newTestBackend(t, link)
 
@@ -162,21 +162,21 @@ func TestTypeIsAVR(t *testing.T) {
 func TestAttestLevelComesFromTheDeviceTier(t *testing.T) {
 	tests := []struct {
 		name     string
-		tier     aggeneric.CryptoTier
+		tier     tfw.CryptoTier
 		level    types.AttestLevel
 		hardware bool
 		security types.SecurityLevel
 	}{
-		{"none", aggeneric.CryptoNone, types.AttestLevelUnattested, false, types.SecurityLevelLow},
-		{"software", aggeneric.CryptoSoftware, types.AttestLevelSoftware, false, types.SecurityLevelLow},
-		{"secure element", aggeneric.CryptoSecureElement, types.AttestLevelHardware, true, types.SecurityLevelHigh},
-		{"tpm2", aggeneric.CryptoTPM2, types.AttestLevelHardware, true, types.SecurityLevelVeryHigh},
+		{"none", tfw.CryptoNone, types.AttestLevelUnattested, false, types.SecurityLevelLow},
+		{"software", tfw.CryptoSoftware, types.AttestLevelSoftware, false, types.SecurityLevelLow},
+		{"secure element", tfw.CryptoSecureElement, types.AttestLevelHardware, true, types.SecurityLevelHigh},
+		{"tpm2", tfw.CryptoTPM2, types.AttestLevelHardware, true, types.SecurityLevelVeryHigh},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			link := newFakeLink().answer(aggeneric.CmdCaps,
-				capsPayload(tt.tier, aggeneric.FeatureAttest, aggeneric.AlgECDSAP256SHA256))
+			link := newFakeLink().answer(tfw.CmdCaps,
+				capsPayload(tt.tier, tfw.FeatureAttest, tfw.AlgECDSAP256SHA256))
 			b := newTestBackend(t, link)
 
 			level, err := b.AttestLevel()
@@ -194,14 +194,14 @@ func TestAttestLevelComesFromTheDeviceTier(t *testing.T) {
 // still software. The feature bit says a command is compiled in; the tier says
 // what the root of trust is, and only the second one is an attestation claim.
 func TestAttestLevelIgnoresTheAttestationFeatureBit(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps,
-		capsPayload(aggeneric.CryptoSoftware, aggeneric.FeatureAttest, aggeneric.AlgECDSAP256SHA256))
+	link := newFakeLink().answer(tfw.CmdCaps,
+		capsPayload(tfw.CryptoSoftware, tfw.FeatureAttest, tfw.AlgECDSAP256SHA256))
 	b := newTestBackend(t, link)
 
 	level, err := b.AttestLevel()
 	require.NoError(t, err)
 	assert.Equal(t, types.AttestLevelSoftware, level)
-	assert.True(t, b.Caps().Has(aggeneric.FeatureAttest))
+	assert.True(t, b.Caps().Has(tfw.FeatureAttest))
 }
 
 // The algorithms this backend reports are the device's bitmap and nothing
@@ -219,7 +219,7 @@ func TestAlgorithmsComeFromTheDeviceBitmap(t *testing.T) {
 // which is correct by the contract it was built against. It is read as
 // claiming nothing rather than rejected.
 func TestAlgorithmsAreEmptyForFirmwareOlderThanTheBitmap(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps, legacyCapsPayload(aggeneric.CryptoSecureElement))
+	link := newFakeLink().answer(tfw.CmdCaps, legacyCapsPayload(tfw.CryptoSecureElement))
 	b := newTestBackend(t, link)
 
 	assert.True(t, b.Algorithms().Empty())
@@ -250,7 +250,7 @@ func TestCapabilitiesDoNotClaimKeyGenerationOrSigning(t *testing.T) {
 
 func TestGetKeyReadsThePublicPointFromTheElement(t *testing.T) {
 	point, pub := testPoint(t)
-	link := secureElementLink().answer(aggeneric.CmdProvPubKey, point)
+	link := secureElementLink().answer(tfw.CmdProvPubKey, point)
 	b := newTestBackend(t, link)
 
 	key, err := b.GetKey(context.Background(), &types.KeyAttributes{CN: DefaultKeyCN})
@@ -263,10 +263,10 @@ func TestGetKeyReadsThePublicPointFromTheElement(t *testing.T) {
 	// PROV_PUBKEY recomputes the point from the key already in the slot; the
 	// generating command would have REPLACED the identity being asked about.
 	last := link.requests[len(link.requests)-1]
-	assert.Equal(t, aggeneric.CmdProvPubKey, last.Cmd())
-	assert.Equal(t, []byte{aggeneric.SlotDeviceID}, last.Payload)
+	assert.Equal(t, tfw.CmdProvPubKey, last.Cmd())
+	assert.Equal(t, []byte{tfw.SlotDeviceID}, last.Payload)
 	for _, req := range link.requests {
-		assert.NotEqual(t, aggeneric.CmdProvGenKey, req.Cmd(),
+		assert.NotEqual(t, tfw.CmdProvGenKey, req.Cmd(),
 			"nothing here may reach the command that replaces the identity")
 	}
 }
@@ -284,7 +284,7 @@ func TestGetKeyReportsAProductionImageAsHavingNoHandler(t *testing.T) {
 }
 
 func TestGetKeyReportsAnUnprovisionedDevice(t *testing.T) {
-	link := secureElementLink().refuse(aggeneric.CmdProvPubKey, aggeneric.StatusErrNotProvisioned)
+	link := secureElementLink().refuse(tfw.CmdProvPubKey, tfw.StatusErrNotProvisioned)
 	b := newTestBackend(t, link)
 
 	_, err := b.GetKey(context.Background(), &types.KeyAttributes{CN: DefaultKeyCN})
@@ -293,7 +293,7 @@ func TestGetKeyReportsAnUnprovisionedDevice(t *testing.T) {
 }
 
 func TestGetKeyRefusesAPointTheDeviceCouldNotHaveMeant(t *testing.T) {
-	link := secureElementLink().answer(aggeneric.CmdProvPubKey, make([]byte, devicePointLen))
+	link := secureElementLink().answer(tfw.CmdProvPubKey, make([]byte, devicePointLen))
 	b := newTestBackend(t, link)
 
 	_, err := b.GetKey(context.Background(), &types.KeyAttributes{CN: DefaultKeyCN})
@@ -303,7 +303,7 @@ func TestGetKeyRefusesAPointTheDeviceCouldNotHaveMeant(t *testing.T) {
 
 func TestGetKeyRefusesAnythingButTheConfiguredName(t *testing.T) {
 	point, _ := testPoint(t)
-	link := secureElementLink().answer(aggeneric.CmdProvPubKey, point)
+	link := secureElementLink().answer(tfw.CmdProvPubKey, point)
 	b := newTestBackend(t, link)
 
 	before := len(link.requests)
@@ -325,7 +325,7 @@ func TestGetKeyRefusesNilAttributes(t *testing.T) {
 // A device with no crypto provider holds no identity, so there is nothing to
 // read and nothing to ask for.
 func TestGetKeyRefusesWhenTheDeviceHasNoProvider(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayload(aggeneric.CryptoNone, 0, 0))
+	link := newFakeLink().answer(tfw.CmdCaps, capsPayload(tfw.CryptoNone, 0, 0))
 	b := newTestBackend(t, link)
 
 	before := len(link.requests)
@@ -358,8 +358,8 @@ func TestListKeysDescribesTheOneKeyTheDeviceHolds(t *testing.T) {
 // software-tier part is recorded as software rather than as the hardware the
 // backend would prefer to claim.
 func TestListKeysStampsTheDeviceAttestLevel(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps,
-		capsPayload(aggeneric.CryptoSoftware, aggeneric.FeatureAttest, aggeneric.AlgECDSAP256SHA256))
+	link := newFakeLink().answer(tfw.CmdCaps,
+		capsPayload(tfw.CryptoSoftware, tfw.FeatureAttest, tfw.AlgECDSAP256SHA256))
 	b := newTestBackend(t, link)
 
 	keys, err := b.ListKeys(context.Background())
@@ -369,7 +369,7 @@ func TestListKeysStampsTheDeviceAttestLevel(t *testing.T) {
 }
 
 func TestListKeysIsEmptyWhenTheDeviceHasNoProvider(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayload(aggeneric.CryptoNone, 0, 0))
+	link := newFakeLink().answer(tfw.CmdCaps, capsPayload(tfw.CryptoNone, 0, 0))
 	b := newTestBackend(t, link)
 
 	keys, err := b.ListKeys(context.Background())
@@ -408,20 +408,20 @@ func TestUnsupportedOperationsRefuseWithoutTouchingTheWire(t *testing.T) {
 // -------------------------------------------------------------------- lifecycle
 
 func TestHealthReportsRuntimeStateAndNotATimestamp(t *testing.T) {
-	link := secureElementLink().answer(aggeneric.CmdSysInfo,
-		sysInfoPayload(90*time.Second, 1234, aggeneric.ResetWatchdog))
+	link := secureElementLink().answer(tfw.CmdSysInfo,
+		sysInfoPayload(90*time.Second, 1234, tfw.ResetWatchdog))
 	b := newTestBackend(t, link)
 
 	health, err := b.Health(context.Background())
 	require.NoError(t, err)
 
 	assert.Equal(t, 90*time.Second, health.Uptime)
-	assert.Equal(t, uint16(1234), health.FreeRAM)
-	assert.Equal(t, aggeneric.ResetWatchdog, health.ResetCause)
+	assert.Equal(t, uint32(1234), health.FreeRAM)
+	assert.Equal(t, tfw.ResetWatchdog, health.ResetCause)
 }
 
 func TestHealthReportsADeviceThatWillNotAnswer(t *testing.T) {
-	link := secureElementLink().refuse(aggeneric.CmdSysInfo, aggeneric.StatusErrInternal)
+	link := secureElementLink().refuse(tfw.CmdSysInfo, tfw.StatusErrInternal)
 	b := newTestBackend(t, link)
 
 	_, err := b.Health(context.Background())
@@ -480,7 +480,7 @@ func TestEveryOperationRefusesAfterClose(t *testing.T) {
 // caller's own select on context.Canceled still works through the backend.
 func TestGetKeyHonoursACancelledContext(t *testing.T) {
 	point, _ := testPoint(t)
-	link := secureElementLink().answer(aggeneric.CmdProvPubKey, point)
+	link := secureElementLink().answer(tfw.CmdProvPubKey, point)
 	b := newTestBackend(t, link)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -493,7 +493,7 @@ func TestGetKeyHonoursACancelledContext(t *testing.T) {
 
 func mustEncodePing(t *testing.T) []byte {
 	t.Helper()
-	frame, err := aggeneric.EncodeRequest(1, aggeneric.CmdPing, nil)
+	frame, err := tfw.EncodeRequest(1, tfw.CmdPing, nil)
 	require.NoError(t, err)
 	return frame
 }
@@ -502,8 +502,8 @@ func mustEncodePing(t *testing.T) []byte {
 // an identity whose backing cannot be stated would put an unattested key into
 // a record that has nowhere to say so.
 func TestADeviceWithAnUnknownTierExposesNoKey(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps,
-		capsPayload(aggeneric.CryptoTier(9), aggeneric.FeatureAttest, aggeneric.AlgECDSAP256SHA256))
+	link := newFakeLink().answer(tfw.CmdCaps,
+		capsPayload(tfw.CryptoTier(9), tfw.FeatureAttest, tfw.AlgECDSAP256SHA256))
 	b := newTestBackend(t, link)
 	before := len(link.requests)
 
@@ -520,7 +520,7 @@ func TestADeviceWithAnUnknownTierExposesNoKey(t *testing.T) {
 
 func TestIdentityReadsTheElementSerialAndLockState(t *testing.T) {
 	serial := []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x5A}
-	link := secureElementLink().answer(aggeneric.CmdProvInfo,
+	link := secureElementLink().answer(tfw.CmdProvInfo,
 		provInfoPayload(serial, true, true))
 	b := newTestBackend(t, link)
 
@@ -541,7 +541,7 @@ func TestIdentityReadsTheElementSerialAndLockState(t *testing.T) {
 // as finished is an identity nobody wrote being trusted.
 func TestIdentityDoesNotInvertTheLockPolarity(t *testing.T) {
 	serial := make([]byte, 9)
-	link := secureElementLink().answer(aggeneric.CmdProvInfo,
+	link := secureElementLink().answer(tfw.CmdProvInfo,
 		provInfoPayload(serial, false, false))
 	b := newTestBackend(t, link)
 
@@ -558,7 +558,7 @@ func TestIdentityDoesNotInvertTheLockPolarity(t *testing.T) {
 // mistaken for either.
 func TestIdentityDistinguishesAPartlyProvisionedPart(t *testing.T) {
 	serial := make([]byte, 9)
-	link := secureElementLink().answer(aggeneric.CmdProvInfo,
+	link := secureElementLink().answer(tfw.CmdProvInfo,
 		provInfoPayload(serial, true, false))
 	b := newTestBackend(t, link)
 
@@ -585,7 +585,7 @@ func TestIdentityReportsAProductionImageAsHavingNoHandler(t *testing.T) {
 // clocked too fast for the wake pulse, so it points at the bus. That is a
 // different fault from a device that did not answer at all.
 func TestIdentityReportsAnElementThatWillNotWake(t *testing.T) {
-	link := secureElementLink().refuse(aggeneric.CmdProvInfo, aggeneric.StatusErrNACK)
+	link := secureElementLink().refuse(tfw.CmdProvInfo, tfw.StatusErrNACK)
 	b := newTestBackend(t, link)
 
 	_, err := b.Identity(context.Background())
@@ -598,7 +598,7 @@ func TestIdentityReportsAnElementThatWillNotWake(t *testing.T) {
 // short reply rather than read past -- the defect this replaced indexed byte
 // 90 of a 36-byte payload and panicked on every legal answer.
 func TestIdentityRefusesAReplyWithoutTheLockBytes(t *testing.T) {
-	link := secureElementLink().answer(aggeneric.CmdProvInfo, make([]byte, 36))
+	link := secureElementLink().answer(tfw.CmdProvInfo, make([]byte, 36))
 	b := newTestBackend(t, link)
 
 	_, err := b.Identity(context.Background())
