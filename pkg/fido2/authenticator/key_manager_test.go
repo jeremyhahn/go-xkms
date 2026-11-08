@@ -52,6 +52,26 @@ func createTestKeyManagerState() (*AuthenticatorState, *Config) {
 	return state, config
 }
 
+// concurrentKDFBudgetKiB bounds the Argon2id scratch a test may hold live at
+// once when it fans SO PIN derivations out over goroutines: one derivation at
+// the shipped parameters (64 MiB). The race detector multiplies that scratch,
+// and this package's race run was OOM-killed in CI's 8g container with tests
+// that ran twenty production-strength derivations at once (DS-7814).
+const concurrentKDFBudgetKiB = SOPINDefaultMemory
+
+// requireConcurrentKDFBudget fails the test when n concurrent derivations with
+// mgr's Argon2id parameters (the defaults when mgr is nil, as InitializeSOPIN
+// then creates one) would exceed concurrentKDFBudgetKiB.
+func requireConcurrentKDFBudget(t *testing.T, mgr *SOPINManager, n int) {
+	t.Helper()
+	memory := uint64(SOPINDefaultMemory)
+	if mgr != nil {
+		memory = uint64(mgr.Memory)
+	}
+	require.LessOrEqual(t, uint64(n)*memory, uint64(concurrentKDFBudgetKiB),
+		"%d concurrent SO PIN derivations at %d KiB each exceed the test's Argon2id budget", n, memory)
+}
+
 // createUserPINHash generates a CTAP2-style PIN hash from a PIN string.
 // The hash is the left 16 bytes of SHA-256(PIN).
 func createUserPINHash(pin string) []byte {
@@ -1985,6 +2005,8 @@ func TestKeyManager_ConcurrentAccess(t *testing.T) {
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
+		requireConcurrentKDFBudget(t, state.SOPINManager, 20)
+
 		var wg sync.WaitGroup
 
 		// Mix of lock and unlock operations
@@ -2261,15 +2283,21 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 	t.Run("multiple rapid initializations on different managers", func(t *testing.T) {
 		t.Parallel()
 
+		states := make([]*AuthenticatorState, 10)
+		configs := make([]*Config, 10)
+		for i := range states {
+			states[i], configs[i] = createTestKeyManagerState()
+		}
+		requireConcurrentKDFBudget(t, states[0].SOPINManager, len(states))
+
 		var wg sync.WaitGroup
 		results := make(chan error, 10)
 
-		for i := 0; i < 10; i++ {
+		for i := range states {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				state, config := createTestKeyManagerState()
-				km := NewKeyManager(state, config)
+				km := NewKeyManager(states[i], configs[i])
 
 				err := km.InitializeSOPIN(testSOPIN)
 				if err != nil {
