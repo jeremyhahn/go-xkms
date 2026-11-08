@@ -77,7 +77,7 @@ const (
 	BackendSymmetric BackendType = "symmetric"
 
 	// BackendAVR represents an AVR device with a DICE-rooted identity,
-	// reached over the arduino-generic wire protocol.
+	// reached over the trusted-firmware wire protocol.
 	// Always compiled in.
 	BackendAVR BackendType = "avr"
 )

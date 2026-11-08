@@ -29,24 +29,25 @@ import (
 )
 
 // testVector is one entry of testdata/vectors.json. Every field is hex. The
-// HUKs are test values: the first is QEMU's all-zero HUK, never a real one.
+// TA unique keys are test values, never a real device's, and are not derived
+// from any HUK: they are inputs to go-xkms's HKDF (README §6).
 type testVector struct {
-	Name      string `json:"name"`
-	HUK       string `json:"huk"`
-	TAUUID    string `json:"ta_uuid"`
-	KDFInfo   string `json:"kdf_info"`
-	Key       string `json:"key"`
-	Nonce     string `json:"nonce"`
-	Plaintext string `json:"plaintext"`
-	AAD       string `json:"aad"`
-	Blob      string `json:"blob"`
+	Name        string `json:"name"`
+	TAUniqueKey string `json:"ta_unique_key"`
+	TAUUID      string `json:"ta_uuid"`
+	KDFInfo     string `json:"kdf_info"`
+	Key         string `json:"key"`
+	Nonce       string `json:"nonce"`
+	Plaintext   string `json:"plaintext"`
+	AAD         string `json:"aad"`
+	Blob        string `json:"blob"`
 }
 
 // decodedVector is a testVector with its fields decoded.
 type decodedVector struct {
-	name                                        string
-	ta                                          opteeblob.TAUUID
-	huk, info, key, nonce, plaintext, aad, blob []byte
+	name                                          string
+	ta                                            opteeblob.TAUUID
+	taKey, info, key, nonce, plaintext, aad, blob []byte
 }
 
 func loadVectors(t *testing.T) []decodedVector {
@@ -70,7 +71,7 @@ func loadVectors(t *testing.T) []decodedVector {
 			t.Fatalf("%s: TA UUID is %d bytes", v.Name, len(uuid))
 		}
 		copy(d.ta[:], uuid)
-		d.huk = mustHex(t, v.HUK)
+		d.taKey = mustHex(t, v.TAUniqueKey)
 		d.info = mustHex(t, v.KDFInfo)
 		d.key = mustHex(t, v.Key)
 		d.nonce = mustHex(t, v.Nonce)
@@ -110,14 +111,14 @@ func TestVectors(t *testing.T) {
 			if got := []byte(opteeblob.KDFInfo(v.ta)); !bytes.Equal(got, v.info) {
 				t.Fatalf("kdf_info = %x, want %x", got, v.info)
 			}
-			key, err := opteeblob.DeriveKey(v.huk, v.ta)
+			key, err := opteeblob.DeriveKey(v.taKey, v.ta)
 			if err != nil {
 				t.Fatalf("DeriveKey: %v", err)
 			}
 			if !bytes.Equal(key, v.key) {
 				t.Fatalf("key = %x, want %x", key, v.key)
 			}
-			if want := rfc5869Key(v.huk, v.info); !bytes.Equal(key, want) {
+			if want := rfc5869Key(v.taKey, v.info); !bytes.Equal(key, want) {
 				t.Fatalf("key = %x, RFC 5869 gives %x", key, want)
 			}
 			if got := opteeblob.Enc0AAD(v.ta); !bytes.Equal(got, v.aad) {
@@ -204,26 +205,24 @@ func TestKeyLengthErrors(t *testing.T) {
 		if _, err := opteeblob.Unseal(key, ta, nil); !errors.Is(err, opteeblob.ErrKeyLength) {
 			t.Errorf("Unseal with a %d-byte key: %v, want ErrKeyLength", size, err)
 		}
-	}
-	for _, size := range []int{0, 8, 15} {
-		if _, err := opteeblob.DeriveKey(make([]byte, size), ta); !errors.Is(err, opteeblob.ErrHUKLength) {
-			t.Errorf("DeriveKey with a %d-byte HUK: %v, want ErrHUKLength", size, err)
+		if _, err := opteeblob.DeriveKey(key, ta); !errors.Is(err, opteeblob.ErrTAUniqueKeyLength) {
+			t.Errorf("DeriveKey with a %d-byte TA unique key: %v, want ErrTAUniqueKeyLength", size, err)
 		}
 	}
 }
 
 func TestDeriveKeyBindsTheTA(t *testing.T) {
-	huk := make([]byte, opteeblob.MinHUKSize)
-	first, err := opteeblob.DeriveKey(huk, opteeblob.TAUUID{1})
+	taKey := make([]byte, opteeblob.TAUniqueKeySize)
+	first, err := opteeblob.DeriveKey(taKey, opteeblob.TAUUID{1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := opteeblob.DeriveKey(huk, opteeblob.TAUUID{2})
+	second, err := opteeblob.DeriveKey(taKey, opteeblob.TAUUID{2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Equal(first, second) {
-		t.Fatal("two TAs derived the same key from one HUK")
+		t.Fatal("two TAs derived the same key from one TA unique key")
 	}
 }
 
