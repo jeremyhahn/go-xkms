@@ -1,0 +1,1 @@
+- The API suite's comprehensive key copy test passes only the flags `key copy` defines, as the complete suite's does (run 77537).
