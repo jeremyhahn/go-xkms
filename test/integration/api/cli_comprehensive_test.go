@@ -586,6 +586,7 @@ func TestCLIComprehensiveKeyOperationsAllAlgorithms(t *testing.T) {
 							}
 							stdout, stderr, err := suite.runCLI(serverURL,
 								"key", "decrypt", keyID, ciphertext,
+								"--hash", "sha256",
 							)
 							if err != nil {
 								t.Fatalf("decrypt failed: %v\nstderr: %s", err, stderr)
