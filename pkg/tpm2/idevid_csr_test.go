@@ -138,61 +138,48 @@ func createMinimalTCGCSRIDevIDCoverage(hashAlgo uint32, signature []byte) *TCG_C
 }
 
 func TestUnmarshalIDevIDCSRCoverage(t *testing.T) {
+	packed := func(t *testing.T, sigSize int) []byte {
+		t.Helper()
+		csr := createMinimalTCGCSRIDevIDCoverage(uint32(tpm2.TPMAlgSHA256), make([]byte, sigSize))
+		data, err := PackIDevIDCSR(csr)
+		require.NoError(t, err)
+		return data
+	}
+
 	tests := []struct {
 		name        string
-		setup       func() []byte
+		setup       func(t *testing.T) []byte
 		expectError bool
 	}{
 		{
-			name: "unmarshal packed CSR",
-			setup: func() []byte {
-				csr := createMinimalTCGCSRIDevIDCoverage(uint32(tpm2.TPMAlgSHA256), make([]byte, 64))
-				packed, _ := PackIDevIDCSR(csr)
-				return packed
-			},
-			expectError: false,
+			name:  "unmarshal packed CSR",
+			setup: func(t *testing.T) []byte { return packed(t, 64) },
 		},
 		{
-			name: "unmarshal with different signature size",
-			setup: func() []byte {
-				csr := createMinimalTCGCSRIDevIDCoverage(uint32(tpm2.TPMAlgSHA256), make([]byte, 128))
-				packed, _ := PackIDevIDCSR(csr)
-				return packed
-			},
-			expectError: false,
+			name:  "unmarshal with different signature size",
+			setup: func(t *testing.T) []byte { return packed(t, 128) },
 		},
 		{
-			name: "unmarshal truncated data",
-			setup: func() []byte {
-				return make([]byte, 8)
-			},
+			name:        "unmarshal truncated data",
+			setup:       func(*testing.T) []byte { return make([]byte, 8) },
 			expectError: true,
 		},
 		{
-			name: "unmarshal empty data",
-			setup: func() []byte {
-				return []byte{}
-			},
+			name:        "unmarshal empty data",
+			setup:       func(*testing.T) []byte { return []byte{} },
 			expectError: true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			data := tc.setup()
-			csr, err := UnmarshalIDevIDCSR(data)
+			csr, err := UnmarshalIDevIDCSR(tc.setup(t))
 			if tc.expectError {
-				if err == nil {
-					t.Errorf("expected error but got none")
-				}
+				require.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if csr == nil {
-				t.Fatal("unmarshaled CSR should not be nil")
-			}
+			require.NoError(t, err)
+			require.NotNil(t, csr)
 		})
 	}
 }
