@@ -15,12 +15,13 @@ package avr
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"testing"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	aggeneric "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 
@@ -114,7 +115,7 @@ func TestNewBackendRefusesAShortCapsReply(t *testing.T) {
 // not parse the same way, so nothing past CAPS can be trusted to mean what it
 // appears to mean.
 func TestNewBackendRefusesAnUnsupportedProtocolMajor(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayloadWithProtocol(2, 0))
+	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayloadWithProtocol(3, 0))
 
 	_, err := NewBackend(context.Background(), testConfig(), newTestDevice(link))
 
@@ -124,7 +125,7 @@ func TestNewBackendRefusesAnUnsupportedProtocolMajor(t *testing.T) {
 // A protocol MINOR ahead of this host is tolerated in both directions. That is
 // what lets a fleet run mixed firmware without a flag day.
 func TestNewBackendAcceptsANewerProtocolMinor(t *testing.T) {
-	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayloadWithProtocol(1, 9))
+	link := newFakeLink().answer(aggeneric.CmdCaps, capsPayloadWithProtocol(2, 9))
 
 	b, err := NewBackend(context.Background(), testConfig(), newTestDevice(link))
 	require.NoError(t, err)
@@ -418,6 +419,30 @@ func TestHealthReportsRuntimeStateAndNotATimestamp(t *testing.T) {
 	assert.Equal(t, 90*time.Second, health.Uptime)
 	assert.Equal(t, uint16(1234), health.FreeRAM)
 	assert.Equal(t, aggeneric.ResetWatchdog, health.ResetCause)
+}
+
+// A device built after trusted-firmware #12 appends the error counters and an
+// exact u32 free RAM, saturating the u16 at 0xFFFF. Health's field is a u16,
+// so a part with more than 64 KiB free must read as 0xFFFF, not wrap.
+func TestHealthSaturatesFreeRAMAboveSixtyFourKiB(t *testing.T) {
+	p := sysInfoPayload(90*time.Second, 0xFFFF, aggeneric.ResetPowerOn)
+	p = append(p, 0, 0, 0, 0) // err_crc, err_format
+	p = binary.LittleEndian.AppendUint32(p, 0x00012345)
+	link := secureElementLink().answer(aggeneric.CmdSysInfo, p)
+	b := newTestBackend(t, link)
+
+	health, err := b.Health(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, uint16(0xFFFF), health.FreeRAM)
+}
+
+func TestSaturateFreeRAM(t *testing.T) {
+	assert.Equal(t, uint16(0), saturateFreeRAM(0))
+	assert.Equal(t, uint16(1234), saturateFreeRAM(1234))
+	assert.Equal(t, uint16(0xFFFF), saturateFreeRAM(0xFFFF))
+	assert.Equal(t, uint16(0xFFFF), saturateFreeRAM(0x10000))
+	assert.Equal(t, uint16(0xFFFF), saturateFreeRAM(0x00012345))
 }
 
 func TestHealthReportsADeviceThatWillNotAnswer(t *testing.T) {

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	aggeneric "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )

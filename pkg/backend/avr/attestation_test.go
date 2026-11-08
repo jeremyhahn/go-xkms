@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	aggeneric "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"

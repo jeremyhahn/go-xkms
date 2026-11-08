@@ -18,11 +18,12 @@ import (
 	"crypto"
 	"crypto/x509"
 	"log/slog"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	aggeneric "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -340,9 +341,19 @@ func (b *Backend) Health(ctx context.Context) (*Health, error) {
 	}
 	return &Health{
 		Uptime:     info.Uptime,
-		FreeRAM:    info.FreeRAM,
+		FreeRAM:    saturateFreeRAM(info.FreeRAM),
 		ResetCause: info.ResetCause,
 	}, nil
+}
+
+// saturateFreeRAM narrows the SDK's u32 free RAM to Health's u16 the way the
+// device saturates its own u16 field: a part with more than 64 KiB free reads
+// as 0xFFFF, never as the low 16 bits of the real figure.
+func saturateFreeRAM(n uint32) uint16 {
+	if n > math.MaxUint16 {
+		return math.MaxUint16
+	}
+	return uint16(n)
 }
 
 // GenerateKey is refused.

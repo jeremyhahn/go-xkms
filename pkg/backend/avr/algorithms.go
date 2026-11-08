@@ -14,7 +14,7 @@
 package avr
 
 import (
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	aggeneric "github.com/jeremyhahn/trusted-firmware/sdk/go"
 )
 
 // Algorithm names one signature algorithm an AVR crypto provider may be able

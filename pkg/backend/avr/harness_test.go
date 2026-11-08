@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	aggeneric "github.com/jeremyhahn/arduino-generic/sdk/go"
+	aggeneric "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +34,7 @@ import (
 //
 // Every byte a test sends is framed by the SDK's own EncodeResponse and every
 // byte the backend sends is parsed by the SDK's own Decode, so what is under
-// test is this package against the protocol as arduino-generic implements it.
+// test is this package against the protocol as trusted-firmware implements it.
 // Mocking *aggeneric.Device instead would replace the one thing worth
 // exercising — a reply's layout, a status code's meaning, the length a command
 // needs — with this package's own opinion of it, and the tests would pass for a
@@ -159,11 +159,11 @@ func (l *fakeLink) Read(p []byte) (int, error) {
 }
 
 // capsPayload builds the board header a current firmware sends, mirroring the
-// layout in include/ag/protocol.h: the fourteen-byte header every version has,
+// layout in include/tfw/protocol.h: the fourteen-byte header every version has,
 // then the algorithm bitmap appended after it.
 func capsPayload(tier aggeneric.CryptoTier, features uint32, algorithms aggeneric.AlgorithmSet) []byte {
 	p := make([]byte, 16)
-	p[0], p[1] = 1, 0 // protocol 1.0
+	p[0], p[1] = 2, 0 // protocol 2.0
 	p[2], p[3], p[4] = 0, 2, 0
 	p[5] = 0x01 // board id
 	p[6] = 22   // pin count

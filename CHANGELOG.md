@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.1-alpha] - 2026-11-08
+
+### Changed
+
+- **The AVR backend's wire SDK is `github.com/jeremyhahn/trusted-firmware/sdk/go` v0.3.0-alpha, not `github.com/jeremyhahn/arduino-generic/sdk/go` v0.3.0-alpha.** arduino-generic was renamed trusted-firmware and its old module path no longer resolves, so v0.49.0-alpha cannot be built from the module proxy. The import path changes in `pkg/backend/avr` and `sdk/go/backends_avr.go`; every identifier the backend uses is exported at the new path. trusted-firmware reports free RAM as a `uint32` (a device with more than 64 KiB free sends the exact figure after saturating the old 16-bit field), so `avr.Health.FreeRAM` stays a `uint16` and saturates at 0xFFFF rather than wrapping. **trusted-firmware sdk/go v0.3.0-alpha speaks wire protocol 2.0 and refuses a device that reports protocol 1.0, so v0.49.1-alpha drives only trusted-firmware firmware, not arduino-generic firmware;** the backend's test harness now answers as a protocol 2.0 device. `go.sum` in the root module, `sdk/go`, `xkey` and `web/desktop` records the checksums the proxy now serves for go-codec v1.4.0, go-frost v0.3.0-alpha, go-objstore v0.3.0-alpha, go-qrdb v0.25.1-alpha and go-truststrap v0.4.0-alpha, whose tags moved when their repositories were rewritten. No other change from v0.49.0-alpha.
+
 ## [0.49.0-alpha] - 2026-10-01
 
 ### Added
