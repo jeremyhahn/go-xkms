@@ -163,10 +163,10 @@ Rejected:
 (`pkg/xkms/registry_external.go:54`, SPEC backend-registry) has no call that
 hands go-xkms device evidence. The backend contract's only attestation
 capability, `types.AttestingKeyProvider.AttestKey`
-(`pkg/types/types.go:1936`), attests one key. The device's DICE claims
+(`pkg/types/types.go:1953`), attests one key. The device's DICE claims
 arrive in `dice.Evidence` (`pkg/attestation/dice/verify.go:114`), which has no
-submodule field: its `Claims.Other` (`:125`) only holds the claims go-xkms
-does not model.
+submodule field: its `Claims.Other` (`pkg/attestation/dice/uccs.go:201`)
+only holds the claims go-xkms does not model.
 
 The planned row adds one optional capability interface to the backend
 contract, in the `AttestingKeyProvider` pattern. It embeds `KeyProvider` and
