@@ -34,20 +34,21 @@ decisions without changing anything.
 `scripts/check-public-literals.sh` (go-xkms#1030) is the public-release
 readiness gate: it fails with `file:line` output if any file in the tree
 carries a lab-network address, a fleet host name, or an owner workstation
-path. The exact literals are declared once, in the script's own `PATTERN`
-and its header comment — not repeated here, so there is exactly one place to
-keep them current as the fleet changes. It scans with `grep -rIniE`, so
-binary files are skipped automatically (`-I`), and excludes `.git` (file or
-directory, so it works from an ordinary checkout or a worktree), `.claude/`,
-`CLAUDE.md`, `AGENTS.md` and its own source — those are agent-instruction
-files the owner publishes on a separate schedule, not part of the scrub. A fleet
-host name that is also an ordinary word is matched as its exact full host
-name, not a wildcard on the bare word: the bare word appears legitimately
-(a public gTLD, an unrelated test fixture value), so widening the match
-would flag those as false positives. `make check-public-literals` runs it against the
-repository root; the script takes an optional root-directory argument
-(`ROOT`, default the repository root) so its own test can point it at a
-scratch tree instead.
+path. The rules that find them are private and are not in the tree, neither
+in the script nor here: the gate reads them at run time from the environment
+variable `RELEASABILITY_PATTERNS`, one `class<TAB>regex` rule per line, the
+same text ci.yml's Releasability (private patterns) step reads, in the format
+[lint-gates.md](../development/lint-gates.md) describes (DS-7983). A
+malformed or empty rule set exits 2, naming the bad line by number only.
+With the variable unset the gate prints a notice and exits 0 without
+scanning: a skipped scan, never evidence of a clean tree. It scans tracked
+files only (`git grep -I`, so binary files are skipped) and excludes
+`.claude/`, `CLAUDE.md`, `AGENTS.md` and `code-review.yml` at any depth —
+the agent-instruction files are published by the owner on a separate
+schedule, not part of the scrub. `make check-public-literals` runs it
+against the repository root; the script takes an optional root-directory
+argument (`ROOT`, default the repository root) so its own test can point it
+at a scratch tree instead.
 
 `scripts/retry.sh` (go-xkms#1026) is a generic bounded-attempt/linear-backoff
 wrapper — `retry.sh [--attempts N] [--backoff SECONDS] -- CMD [ARG...]`,
@@ -329,18 +330,20 @@ alongside the non-release script suites `clean-test-containers.test.sh`,
 
 `check-public-literals.test.sh` runs the gate against synthetic scratch trees
 under `mktemp -d` only — never against this repository's own tree, so it
-cannot go red because something else in the tree changed. It asserts: a clean
-tree (generic private-range test data, an `example.com` address, a `$HOME`
-placeholder) passes; each of the five literal categories is caught with its
-own `file:line`; a bare fixture-style string built from the same word is not
-mistaken for the one known fleet name in that family; and `CLAUDE.md`,
-`AGENTS.md` and `.claude/` are excluded at any depth. Each scratch tree is
-a git repository with its files tracked, because the gate reads tracked files
-only: an untracked file holding a literal is not reported, a tracked one is
-reported as `path:line` without its text, and a tree outside git is refused
-with exit 2. The planted literals
-are themselves assembled from split fragments rather than written out whole,
-so this test's own source does not trip the gate it exercises.
+cannot go red because something else in the tree changed, and it feeds the
+gate synthetic rules over documentation values (192.0.2.x, 198.51.100.x,
+`example.com`) through `RELEASABILITY_PATTERNS`. It asserts: a clean tree
+passes; each rule is caught with its own `path:line`, a `/i` rule whatever
+the case; CRLF rules read the same; a bad rule line exits 2 and is named by
+number, never quoted; a set-but-empty variable exits 2 and an unset one
+prints a notice and exits 0; a waiver with a reason is not reported; and
+`CLAUDE.md`, `AGENTS.md` and `.claude/` are excluded at any depth. Each
+scratch tree is a git repository with its files tracked, because the gate
+reads tracked files only: an untracked file holding a literal is not
+reported, a tracked one is reported as `path:line` without its text, a file
+whose name holds a newline is still scanned, and a tree outside git is
+refused with exit 2. An unusable TMPDIR or a rule file that cannot be
+written makes the gate exit 2 instead of reporting clean.
 `release-assets.test.sh` stands up a local HTTP stub of the two Gitea endpoints the asset
 script uses and asserts the whole decision table: `expected` is the matrix,
 `verify` names exactly the missing assets, `verify-complete` additionally
