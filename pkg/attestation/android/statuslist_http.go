@@ -280,6 +280,11 @@ func freshnessLifetime(header http.Header, received time.Time) (_ time.Duration,
 			case "no-store", "no-cache":
 				return 0, false
 			case "max-age":
+				// §4.2.1: the first occurrence is used, in this field
+				// or an earlier one, so a later one cannot extend it.
+				if hasMaxAge {
+					continue
+				}
 				seconds, ok := parseDeltaSeconds(value)
 				if !ok {
 					// An invalid max-age is a response that is not fresh.
