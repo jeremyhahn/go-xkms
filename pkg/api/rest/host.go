@@ -96,8 +96,9 @@ type TokenIssuerParams struct {
 	QRDBClient *qrdbsdk.Client
 
 	// CallContext, when set, derives the context the refresh store's qrdb
-	// calls run on (token.WithCallContext); xkmsd binds the embedded node's
-	// service principal.
+	// calls (token.WithCallContext) and the refresh user re-check's lookups
+	// run on; xkmsd binds the embedded node's service principal, since the
+	// public refresh endpoint's request context carries none.
 	CallContext func(ctx context.Context) (context.Context, error)
 
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
@@ -223,6 +224,9 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		}
 		refreshStore = qs
 		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
+		if p.CallContext != nil {
+			userResolver = boundUserResolver{inner: userResolver, bind: p.CallContext}
+		}
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
@@ -251,6 +255,21 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		return nil, &TokenIssuerConfigError{Err: err}
 	}
 	return issuer, nil
+}
+
+// boundUserResolver runs the refresh user re-check's lookups on the context
+// bind derives; the re-check itself (lifecycle, current roles) is inner's.
+type boundUserResolver struct {
+	inner token.UserResolver
+	bind  func(ctx context.Context) (context.Context, error)
+}
+
+func (r boundUserResolver) ResolveUser(ctx context.Context, id *auth.Identity) (*auth.Identity, error) {
+	bound, err := r.bind(ctx)
+	if err != nil {
+		return nil, &auth.RefreshUserLookupError{Err: err}
+	}
+	return r.inner.ResolveUser(bound, id)
 }
 
 // Compile-time check: pkg/auth's QRDBUserResolver cannot declare this
