@@ -52,12 +52,19 @@ fi
 # --- the rules --------------------------------------------------------------
 # Each usable regex goes to one of two 0600 files, case-sensitive or `/i`.
 # An error names the line by number and never quotes it.
-RULES_DIR=$(mktemp -d)
-chmod 700 "$RULES_DIR"
+# Every step is checked: a rule that never reaches its file is a rule never
+# applied, and the gate would report a dirty tree clean.
+fail() {
+	echo "$ME: $*" >&2
+	exit 2
+}
+RULES_DIR=$(mktemp -d) && [ -d "$RULES_DIR" ] || fail "cannot create the temporary rules directory"
 trap 'rm -rf "$RULES_DIR"' EXIT
+chmod 700 "$RULES_DIR" || fail "cannot restrict the temporary rules directory"
 RULES_CS="$RULES_DIR/cs"
 RULES_CI="$RULES_DIR/ci"
-(umask 077 && : >"$RULES_CS" && : >"$RULES_CI")
+FILES="$RULES_DIR/files"
+(umask 077 && : >"$RULES_CS" && : >"$RULES_CI" && : >"$FILES") || fail "cannot create the temporary rule files"
 tab=$'\t'
 n=0 bad=0 count=0
 while IFS= read -r line || [ -n "$line" ]; do
@@ -95,7 +102,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 	case $class in
 	*/i) printf '%s\n' "$re" >>"$RULES_CI" ;;
 	*) printf '%s\n' "$re" >>"$RULES_CS" ;;
-	esac
+	esac || fail "cannot write the rule of RELEASABILITY_PATTERNS line $n to its temporary file"
 	count=$((count + 1))
 done <<<"$RELEASABILITY_PATTERNS"
 if [ "$bad" != 0 ]; then
@@ -132,44 +139,55 @@ fi
 # git grep searches tracked files only. -l lists matching paths without their
 # text, -z keeps paths verbatim, -I skips binary files, -E extended regex; -i
 # only for the `/i` rules. An empty rules file is never passed: git grep
-# refuses a run with no pattern.
-files=
+# refuses a run with no pattern. The paths stay NUL-terminated from git grep
+# to the scan, so a name holding a newline is still one path.
 for rules in "$RULES_CS" "$RULES_CI"; do
 	[ -s "$rules" ] || continue
 	icase=
 	[ "$rules" = "$RULES_CI" ] && icase=-i
-	out=$(git -C "$ROOT" grep -lzIE $icase -f "$rules" -- "${PATHSPEC[@]}" | tr '\0' '\n')
-	status=${PIPESTATUS[0]}
+	status=0
+	git -C "$ROOT" grep -lzIE $icase -f "$rules" -- "${PATHSPEC[@]}" >>"$FILES" || status=$?
 	if [ "$status" -gt 1 ]; then
-		echo "$ME: git grep failed (exit $status)" >&2
-		exit "$status"
+		fail "git grep failed (exit $status)"
 	fi
-	files+="$out"$'\n'
 done
+sort -zu "$FILES" >"$FILES.sorted" || fail "cannot sort the matching paths"
 
 # lines prints the numbers of the lines of one file that a rule matches and
 # that carry no waiver with a reason. grep on a single file prints
 # "line:text"; cut keeps the line number and drops the text before anything
-# reaches the log.
+# reaches the log. The hits go through a 0600 file in the rules directory so
+# that each grep's own status is checked: a file grep cannot read (exit 2) is
+# a scan failure, never a clean file.
+HITS="$RULES_DIR/hits"
 lines() {
-	{
-		[ -s "$RULES_CS" ] && grep -nE -f "$RULES_CS" -- "$1"
-		[ -s "$RULES_CI" ] && grep -niE -f "$RULES_CI" -- "$1"
-	} | grep -vE 'lab-string-ok:[[:space:]]*[[:alnum:]]' | cut -d: -f1 | sort -nu
+	local rc
+	(umask 077 && : >"$HITS") || return 2
+	if [ -s "$RULES_CS" ]; then
+		rc=0
+		grep -nE -f "$RULES_CS" -- "$1" >>"$HITS" || rc=$?
+		[ "$rc" -le 1 ] || return 2
+	fi
+	if [ -s "$RULES_CI" ]; then
+		rc=0
+		grep -niE -f "$RULES_CI" -- "$1" >>"$HITS" || rc=$?
+		[ "$rc" -le 1 ] || return 2
+	fi
+	{ grep -vE 'lab-string-ok:[[:space:]]*[[:alnum:]]' -- "$HITS" || [ "$?" = 1 ]; } | cut -d: -f1 | sort -nu
 }
 
 found=0
-while IFS= read -r path; do
+while IFS= read -r -d '' path; do
 	[ -n "$path" ] || continue
-	while IFS= read -r line; do
-		[ -n "$line" ] || continue
+	nums=$(lines "$ROOT/$path") || fail "cannot scan a tracked file: $path"
+	for line in $nums; do
 		if [ "$found" = 0 ]; then
 			echo "$ME: internal literal(s) found (go-xkms#1030; path:line, the values are not shown):" >&2
 			found=1
 		fi
 		printf '%s:%s\n' "$path" "$line" >&2
-	done < <(lines "$ROOT/$path")
-done < <(printf '%s' "$files" | sort -u)
+	done
+done <"$FILES.sorted"
 
 if [ "$found" != 0 ]; then
 	exit 1
