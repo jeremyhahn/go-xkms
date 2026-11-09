@@ -2,6 +2,8 @@ package buildgates
 
 import (
 	"fmt"
+	"go/build/constraint"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -258,6 +260,229 @@ func TestRaceCoverageCatchesEachForm(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			if got := raceCoverageProblems(c.makefile, parseWorkflow(t, []byte(c.workflow))); len(got) != c.want {
+				t.Errorf("got %d problems, want %d: %q", len(got), c.want, got)
+			}
+		})
+	}
+}
+
+// backendTags are the tags make race and the race job's go test add to
+// TEST_TAGS. A file built only without one of them never runs there.
+var backendTags = []string{"pkcs8", "awskms", "gcpkms", "azurekv", "pkcs11", "vault"}
+
+var makeRunsStubs = regexp.MustCompile(`(?m)^\s*(?:\S+=\S+\s+)*make\b.*\s(race-stubs)\b`)
+
+// negatesBackend reports whether expr is false whenever some backend tag is
+// set, counting a tag under an odd number of negations.
+func negatesBackend(expr constraint.Expr, negated bool) bool {
+	switch e := expr.(type) {
+	case *constraint.NotExpr:
+		return negatesBackend(e.X, !negated)
+	case *constraint.AndExpr:
+		return negatesBackend(e.X, negated) || negatesBackend(e.Y, negated)
+	case *constraint.OrExpr:
+		return negatesBackend(e.X, negated) || negatesBackend(e.Y, negated)
+	case *constraint.TagExpr:
+		return negated && slices.Contains(backendTags, e.Tag)
+	}
+	return false
+}
+
+// stubPackages returns, relative to root, the package directories under dirs
+// holding a .go file whose //go:build line negates a backend tag. It skips
+// directories exclude matches, testdata and nested modules, as go list does.
+func stubPackages(root string, dirs []string, exclude *regexp.Regexp) ([]string, error) {
+	found := map[string]bool{}
+	for _, dir := range dirs {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(root, path)
+			rel = filepath.ToSlash(rel)
+			if d.IsDir() {
+				if rel != dir {
+					if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+						return filepath.SkipDir
+					}
+				}
+				if d.Name() == "testdata" || exclude.MatchString(rel) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "package ") {
+					break
+				}
+				if !constraint.IsGoBuild(line) {
+					continue
+				}
+				expr, err := constraint.Parse(line)
+				if err != nil {
+					return fmt.Errorf("%s: %w", rel, err)
+				}
+				if negatesBackend(expr, false) {
+					found[filepath.ToSlash(filepath.Dir(rel))] = true
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return slices.Sorted(maps.Keys(found)), nil
+}
+
+// raceStubProblems lists what keeps the backend-stub files under stubs from
+// running under -race: RACE_STUB_PKGS must name exactly those packages, make
+// race-stubs must run them with -race and TEST_TAGS, and the race job must
+// run make race-stubs.
+func raceStubProblems(makefile string, wf workflow, stubs []string) []string {
+	vars := makeVars(makefile)
+	var listed []string
+	for _, p := range strings.Fields(expandMakeVars(vars["RACE_STUB_PKGS"], vars)) {
+		listed = append(listed, strings.TrimSuffix(strings.TrimPrefix(p, "./"), "/"))
+	}
+	var problems []string
+	for _, dir := range stubs {
+		if !slices.Contains(listed, dir) {
+			problems = append(problems, fmt.Sprintf("RACE_STUB_PKGS lacks %s, whose backend-stub files never run under -race", dir))
+		}
+	}
+	for _, dir := range listed {
+		if !slices.Contains(stubs, dir) {
+			problems = append(problems, fmt.Sprintf("RACE_STUB_PKGS names %s, which holds no backend-stub file", dir))
+		}
+	}
+
+	if cmd, ok := goTestCommand(makefile, "race-stubs"); !ok {
+		problems = append(problems, "no race-stubs target runs go test")
+	} else {
+		fields := strings.Fields(expandMakeVars(cmd, vars))
+		if !slices.Contains(fields, "-race") {
+			problems = append(problems, "race-stubs runs go test without -race")
+		}
+		if value, ok := tagsValue(expandMakeVars(cmd, vars)); !ok {
+			problems = append(problems, "race-stubs passes no -tags")
+		} else if got, want := tagSet(value, vars), tagSet(vars["TEST_TAGS"], vars); !maps.Equal(got, want) {
+			problems = append(problems, fmt.Sprintf("race-stubs's -tags are %v, want TEST_TAGS %v", slices.Sorted(maps.Keys(got)), slices.Sorted(maps.Keys(want))))
+		}
+		for _, dir := range listed {
+			if !slices.Contains(fields, "./"+dir) && !slices.Contains(fields, "./"+dir+"/") {
+				problems = append(problems, "race-stubs does not run "+dir)
+			}
+		}
+	}
+
+	race, ok := wf.Jobs[raceJob]
+	if !ok {
+		return append(problems, "no "+raceJob+" job")
+	}
+	for _, step := range race.Steps {
+		if makeRunsStubs.MatchString(strings.ReplaceAll(step.Run, "\\\n", " ")) {
+			return problems
+		}
+	}
+	return append(problems, raceJob+" job does not run make race-stubs")
+}
+
+func TestRaceDetectorCoversTheBackendStubs(t *testing.T) {
+	makefile, err := os.ReadFile(filepath.Join(repoRoot, "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	vars := makeVars(string(makefile))
+	exclude, err := regexp.Compile(strings.ReplaceAll(vars["UNIT_TEST_EXCLUDE"], "$$", "$"))
+	if err != nil || vars["UNIT_TEST_EXCLUDE"] == "" {
+		t.Fatalf("the Makefile's UNIT_TEST_EXCLUDE %q is no regexp: %v", vars["UNIT_TEST_EXCLUDE"], err)
+	}
+	stubs, err := stubPackages(repoRoot, []string{"pkg", "cmd", "sdk"}, exclude)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(stubs) == 0 {
+		t.Fatal("found no backend-stub file: the walk is broken")
+	}
+	for _, p := range raceStubProblems(string(makefile), parseWorkflow(t, data), stubs) {
+		t.Error(p)
+	}
+}
+
+func TestStubPackagesFindsEachForm(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"pkg/a/a_stub.go":           "//go:build !pkcs11\n\npackage a\n",
+		"pkg/b/b_test.go":           "//go:build !(vault && cgo)\n\npackage b\n",
+		"pkg/c/c.go":                "//go:build pkcs11\n\npackage c\n",
+		"pkg/d/d.go":                "//go:build !frost\n\npackage d\n",
+		"pkg/e/e.go":                "package e\n\n//go:build !vault\n",
+		"pkg/mocks/m.go":            "//go:build !awskms\n\npackage mocks\n",
+		"pkg/f/testdata/t.go":       "//go:build !gcpkms\n\npackage t\n",
+		"sdk/go/go.mod":             "module x\n",
+		"sdk/go/s.go":               "//go:build !azurekv\n\npackage s\n",
+		"cmd/g/g.go":                "//go:build linux && !pkcs8\n\npackage main\n",
+		"cmd/g/notes.txt":           "//go:build !pkcs8\n",
+		"pkg/h/h.go":                "//go:build !(!pkcs11)\n\npackage h\n",
+		"pkg/i/deeper/i_vault_a.go": "//go:build !vault || !cgo\n\npackage deeper\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	got, err := stubPackages(root, []string{"pkg", "cmd", "sdk"}, regexp.MustCompile(`/mocks`))
+	if err != nil {
+		t.Fatalf("stubPackages: %v", err)
+	}
+	want := []string{"cmd/g", "pkg/a", "pkg/b", "pkg/i/deeper"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRaceStubsCatchEachForm(t *testing.T) {
+	const covers = "comma := ,\nTEST_TAGS := codec_cbor tpm_simulator frost\n" +
+		"TEST_FLAGS := -v -race -timeout 75m -tags=\"$(call go_tags,$(TEST_TAGS))\"\n" +
+		"RACE_STUB_PKGS := ./pkg/a/ ./pkg/b/\n" +
+		"race-stubs: agsim\n\t@$(GOTEST) $(TEST_FLAGS) $(RACE_STUB_PKGS)\n"
+	const job = "jobs:\n  race:\n    steps:\n      - run: |\n          make race-nofrost\n" +
+		"          GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-stubs\n"
+	stubs := []string{"pkg/a", "pkg/b"}
+	cases := map[string]struct {
+		makefile, workflow string
+		stubs              []string
+		want               int
+	}{
+		"covers":                  {covers, job, stubs, 0},
+		"package not listed":      {covers, job, append(slices.Clone(stubs), "pkg/c"), 1},
+		"stale entry":             {covers, job, stubs[:1], 1},
+		"no race-stubs":           {strings.Replace(covers, "race-stubs:", "other:", 1), job, stubs, 1},
+		"race-stubs without race": {strings.Replace(covers, "TEST_FLAGS := -v -race", "TEST_FLAGS := -v", 1), job, stubs, 1},
+		"race-stubs with pkcs11":  {strings.Replace(covers, "$(GOTEST) $(TEST_FLAGS)", "$(GOTEST) -race -tags=\"$(call go_tags,$(TEST_TAGS) pkcs11)\"", 1), job, stubs, 1},
+		"race-stubs one package":  {strings.Replace(covers, "$(RACE_STUB_PKGS)", "./pkg/a/", 1), job, stubs, 1},
+		"job runs no race-stubs":  {covers, strings.Replace(job, "make race-stubs", "make race", 1), stubs, 1},
+		"no race job":             {covers, "jobs:\n  lint:\n    runs-on: x\n", stubs, 1},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := raceStubProblems(c.makefile, parseWorkflow(t, []byte(c.workflow)), c.stubs); len(got) != c.want {
 				t.Errorf("got %d problems, want %d: %q", len(got), c.want, got)
 			}
 		})
