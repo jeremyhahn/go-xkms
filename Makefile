@@ -1207,6 +1207,21 @@ race-nofrost: agsim
 	@$(GOTEST) $(TEST_FLAGS_NOFROST) ./pkg/api/rest/... ./pkg/api/mcp/... ./pkg/api/grpc/... ./pkg/server/...
 	@echo "$(GREEN)$(BOLD)✓ !frost stub race detector tests passed!$(RESET)"
 
+# Packages holding a file built only without a backend tag (pkcs8, awskms,
+# gcpkms, azurekv, pkcs11, vault). make race and the race job carry all of those
+# tags, so these files run under -race only through race-stubs (#2023).
+# internal/buildgates fails when the list and the tree disagree.
+RACE_STUB_PKGS := ./pkg/crypto/rand/ ./pkg/pivcert/pkcs11/ ./pkg/pkcs11/manager/ ./pkg/pkcs11strategy/ ./pkg/server/ ./pkg/xkms/
+
+.PHONY: race-stubs
+## race-stubs: Run the backend-stub builds (RACE_STUB_PKGS) with TEST_TAGS, no
+## backend tags, under the race detector; make race carries every backend tag
+race-stubs: export XKMS_DENY_HARDWARE_TPM := 1
+race-stubs: agsim
+	@echo "$(CYAN)$(BOLD)→ Running backend-stub race detector tests...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) $(RACE_STUB_PKGS)
+	@echo "$(GREEN)$(BOLD)✓ Backend-stub race detector tests passed!$(RESET)"
+
 .PHONY: coverage
 ## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
 # It runs test's lanes, but its go test runs without -race (COVERAGE_TEST_FLAGS):

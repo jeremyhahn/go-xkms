@@ -2239,7 +2239,8 @@ jobs:
       # #2023: make coverage runs without -race, so this job is the -race run
       # of every unit lane: its tags hold all of the Makefile's TEST_TAGS
       # (tpm_simulator included), and make race-nofrost runs the !frost stub
-      # lane (test-nofrost's packages) under -race after it.
+      # lane (test-nofrost's packages) under -race after it; make race-stubs
+      # runs the backend-stub builds (RACE_STUB_PKGS, TEST_TAGS only) under -race.
       - name: Race detector, all backends including FROST and the !frost stub lane (toolchain image)
         env:
           IN_IMAGE_NETWORK: bridge
@@ -2256,6 +2257,7 @@ jobs:
             GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
               -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,tpm_simulator,frost" ./...
             GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-nofrost
+            GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-stubs
           '
 
       - name: Tear down
