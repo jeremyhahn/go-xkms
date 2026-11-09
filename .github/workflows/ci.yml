@@ -468,8 +468,9 @@
 
 # >>> CUSTOMIZE (go-xkms)
 # go-xkms runs the v1.24 tiers. The pr tier (changes, image, arch-gates,
-# static-analysis, build, nested-module-build) runs on every event. The full
-# tier (integration, nested-module-test, build-raft, race, tpm2-simulator)
+# static-analysis, build, nested-module-build) runs on every event, and race
+# runs on every ready PR (#2023). The full
+# tier (integration, nested-module-test, build-raft, tpm2-simulator)
 # runs on push to main, nightly, on workflow_dispatch and on a PR labelled
 # ci:full; its jobs carry CI_FULL_TIER's expression as `if:`. Soak is
 # nightly: the schedule and workflow_dispatch only (m751 (e)). Every job runs
@@ -1128,9 +1129,9 @@ jobs:
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
         run: scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"
 
-      # The test stage (m601 (c)): make coverage runs the whole unit suite with
-      # -race (make test's flags), the PR tier's unit test and race checks in
-      # one run (v1.23), and fails when total coverage is below
+      # The test stage (m601 (c)): make coverage runs the whole unit suite
+      # without -race so it fits the hosted runner (#2023); the PR-tier Race
+      # Detector job carries the race check. It fails when total coverage is below
       # COVERAGE_THRESHOLD (testing-guidelines.md), so the suite runs once.
       # Tags matter here too: without them tag-gated packages are neither
       # tested nor counted. The integration stage is its own job below.
@@ -2172,14 +2173,14 @@ jobs:
   # with a token at slot 0 and the trusted-firmware simulators (sdk/go/tfwsim;
   # a missing binary FAILS that test). -p 2 because under -race the
   # password-vault packages (pkg/api/mcp, pkg/api/rest) each peak near 7 GB,
-  # and eight in parallel OOM-killed the job (#1389). The PR tier's race
-  # check is make coverage (make test runs -race); this job adds the backend
-  # tag set and stays full tier.
+  # and eight in parallel OOM-killed the job (#1389). It is the PR tier's
+  # race check: make coverage runs without -race so it fits the hosted
+  # runner (#2023), and CI Gate requires this job on every ready PR.
   race:
     name: Race Detector
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
-    # v1.26: never on a draft PR, ci:full or not.
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
+    # v1.26: never on a draft PR. #2023: every ready PR, ci:full or not.
+    if: ${{ !github.event.pull_request.draft }}
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
       contents: read
@@ -2449,7 +2450,7 @@ jobs:
           check nested-module-build "${{ needs.nested-module-build.result }}" pr
           check nested-module-test "${{ needs.nested-module-test.result }}" full
           check build-raft         "${{ needs.build-raft.result }}" full
-          check race               "${{ needs.race.result }}" full
+          check race               "${{ needs.race.result }}" pr
           check tpm2-simulator     "${{ needs.tpm2-simulator.result }}" full
           check ci-images          "${{ needs.ci-images.result }}" pr
           # <<< CUSTOMIZE

@@ -482,7 +482,8 @@ TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
 TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
 # make coverage's flags: TEST_FLAGS and TEST_FLAGS_NOFROST without -race
 # (#2023). The race detector's CPU and memory cost kept the Coverage job from
-# finishing on a 4-vCPU hosted runner; the Race Detector job runs -race.
+# finishing on a 4-vCPU hosted runner; ci.yml's Race Detector job, which runs on
+# every ready PR and which CI Gate requires, carries -race.
 COVERAGE_TEST_FLAGS := -v -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS))"
 COVERAGE_TEST_FLAGS_NOFROST := -v -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
@@ -1198,7 +1199,7 @@ race: agsim
 ## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
 # It runs test's lanes, but its go test runs without -race (COVERAGE_TEST_FLAGS):
 # under -race at -p=2 the suite never finished inside the Coverage job's 180
-# minutes on a 4-vCPU hosted runner (#2023); the Race Detector job runs -race.
+# minutes on a 4-vCPU hosted runner (#2023); the PR-tier Race Detector job runs -race.
 # -p=4 matches that runner's vCPUs; GOMEMLIMIT bounds the Argon2-heavy REST/MCP
 # packages. Under CI the suite must leave the tree as it found it (#454). The
 # per-package report is advisory (#704).
