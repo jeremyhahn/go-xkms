@@ -16,6 +16,7 @@ package authenticator
 import (
 	"bytes"
 	"runtime"
+	"runtime/metrics"
 	"strings"
 	"sync"
 	"testing"
@@ -666,9 +667,33 @@ func TestSOPINManager_DeriveKeyMemoryBudget(t *testing.T) {
 	mgr.Salt = bytes.Repeat([]byte{0x5a}, SOPINSaltSize)
 	budget := 4 * uint64(mgr.Memory) * 1024
 
+	// The peak of live heap objects while the callers run, not an end-to-end
+	// HeapSys delta: the runtime can return heap to the OS mid-test, and a
+	// uint64 delta of a shrinking HeapSys wraps to about 2^64.
+	sample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
+	heapObjects := func() uint64 {
+		metrics.Read(sample)
+		return sample[0].Value.Uint64()
+	}
+
 	runtime.GC()
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
+	before := heapObjects()
+
+	done := make(chan struct{})
+	peakc := make(chan uint64)
+	go func() {
+		peak := before
+		for {
+			peak = max(peak, heapObjects())
+			select {
+			case <-done:
+				peakc <- max(peak, heapObjects())
+				return
+			default:
+				runtime.Gosched()
+			}
+		}
+	}()
 
 	var wg sync.WaitGroup
 	for range callers {
@@ -679,13 +704,13 @@ func TestSOPINManager_DeriveKeyMemoryBudget(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	close(done)
+	peak := <-peakc
 
-	var after runtime.MemStats
-	runtime.ReadMemStats(&after)
-	growth := after.HeapSys - before.HeapSys
+	growth := peak - before
 	require.LessOrEqualf(t, growth, budget,
-		"%d concurrent derivations reserved %d MiB of heap, budget %d MiB",
-		callers, growth>>20, budget>>20)
+		"%d concurrent derivations took live heap from %d MiB to a peak of %d MiB (+%d MiB), budget %d MiB",
+		callers, before>>20, peak>>20, growth>>20, budget>>20)
 }
 
 func TestSOPINManager_EdgeCases(t *testing.T) {
