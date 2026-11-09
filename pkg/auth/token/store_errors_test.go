@@ -244,7 +244,7 @@ func TestQRDBRefreshStore_RevokeFamily_DeleteError(t *testing.T) {
 
 func TestQRDBRefreshStore_RevokeBySubject_ScanError(t *testing.T) {
 	store := newQRDBStore(t, newErrorKV("scan"))
-	err := store.RevokeBySubject(context.Background(), "alice")
+	err := store.RevokeBySubject(context.Background(), "acme", "alice")
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "scan", se.Op)
@@ -258,7 +258,7 @@ func TestQRDBRefreshStore_RevokeBySubject_DecodeErrorSurfaces(t *testing.T) {
 	require.NoError(t, kv.Put(context.Background(), refreshKey("f1", "j1"), []byte("not json")))
 	store := newQRDBStore(t, kv)
 
-	err := store.RevokeBySubject(context.Background(), "alice")
+	err := store.RevokeBySubject(context.Background(), "acme", "alice")
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "decode", se.Op)
@@ -269,11 +269,11 @@ func TestQRDBRefreshStore_RevokeBySubject_RevokeFamilyErrorPropagates(t *testing
 	store := newQRDBStore(t, kv)
 	ctx := context.Background()
 	require.NoError(t, store.Save(ctx, &Record{
-		JTI: "j1", Family: "f1", Subject: "alice", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		JTI: "j1", Family: "f1", Subject: "alice", Tenant: "acme", ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}))
 	kv.failOp = "putifabsent"
 
-	err := store.RevokeBySubject(ctx, "alice")
+	err := store.RevokeBySubject(ctx, "acme", "alice")
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "put-if-absent", se.Op)
@@ -399,8 +399,8 @@ func TestQRDBRefreshStore_CallContext_RunsAsServicePrincipal(t *testing.T) {
 	require.NoError(t, store.MarkRotated(ctx, "f1", "j1"))
 	require.NoError(t, store.RevokeFamily(ctx, "f1"))
 
-	require.NoError(t, store.Save(ctx, &Record{JTI: "j2", Family: "f2", Subject: "s2", ExpiresAt: exp}))
-	require.NoError(t, store.RevokeBySubject(ctx, "s2"))
+	require.NoError(t, store.Save(ctx, &Record{JTI: "j2", Family: "f2", Subject: "s2", Tenant: "acme", ExpiresAt: exp}))
+	require.NoError(t, store.RevokeBySubject(ctx, "acme", "s2"))
 }
 
 // TestQRDBRefreshStore_CallContext_BindError proves a call context that
@@ -418,7 +418,7 @@ func TestQRDBRefreshStore_CallContext_BindError(t *testing.T) {
 	require.ErrorIs(t, err, bindErr)
 	require.ErrorIs(t, store.MarkRotated(context.Background(), "f1", "j1"), bindErr)
 	require.ErrorIs(t, store.RevokeFamily(context.Background(), "f1"), bindErr)
-	require.ErrorIs(t, store.RevokeBySubject(context.Background(), "s1"), bindErr)
+	require.ErrorIs(t, store.RevokeBySubject(context.Background(), "acme", "s1"), bindErr)
 }
 
 func mustJSON(t *testing.T, v interface{}) []byte {

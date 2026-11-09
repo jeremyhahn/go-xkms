@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	xkmsjwt "github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
@@ -258,15 +259,16 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 	return i.mintPair(ctx, identity, family)
 }
 
-// RevokeBySubject revokes every refresh-token family belonging to subject,
-// immediately ending every session it holds regardless of which login flow
-// minted it. It is the hook a user-lifecycle change (disable, delete) calls
+// RevokeBySubject revokes every refresh-token family belonging to subject
+// in tenant, immediately ending every session it holds regardless of which
+// login flow minted it, and no session of a same-named account in another
+// tenant. It is the hook a user-lifecycle change (disable, delete) calls
 // once the underlying account update has succeeded (go-xkms#1297); the
 // refresh-time re-check a UserResolver performs is the backstop for a
 // lifecycle change that reaches the identity plane through a path this
 // method is never called from.
-func (i *Issuer) RevokeBySubject(ctx context.Context, subject string) error {
-	return i.store.RevokeBySubject(ctx, subject)
+func (i *Issuer) RevokeBySubject(ctx context.Context, tenant, subject string) error {
+	return i.store.RevokeBySubject(ctx, tenant, subject)
 }
 
 // Revoke invalidates the refresh token's whole family (logout). An invalid
@@ -331,6 +333,7 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 		JTI:       jti,
 		Family:    family,
 		Subject:   id.Subject,
+		Tenant:    qrdbsdk.NormalizeTenantID(id.TenantID),
 		ExpiresAt: refreshExp.Unix(),
 	}); err != nil {
 		return nil, err

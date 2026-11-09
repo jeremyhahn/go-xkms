@@ -1083,7 +1083,7 @@ func (s *spyRefreshStore) MarkRotated(context.Context, string, string) error { r
 
 func (s *spyRefreshStore) RevokeFamily(context.Context, string) error { return nil }
 
-func (s *spyRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *spyRefreshStore) RevokeBySubject(_ context.Context, _, subject string) error {
 	s.revoked = append(s.revoked, subject)
 	if s.failOn != "" && subject == s.failOn {
 		return errors.New("revoke store unavailable")
