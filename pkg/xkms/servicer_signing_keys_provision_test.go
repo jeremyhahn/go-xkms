@@ -28,7 +28,9 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // releaseResolution is the resolution of an unbound repository.
@@ -144,6 +146,63 @@ func TestProvisionReleaseKey_KeepsAKeyOnABlobCollision(t *testing.T) {
 	ctx := withSigningKeys(t, svc, corimSignPermission)
 
 	require.NoError(t, svc.provisionReleaseKey(ctx, "tenant-a", ""))
+}
+
+// lateListingBackend models the loser of a release-key race between two
+// instances sharing storage: the winner has published the key material, so
+// generate collides, but the tenant record is not yet written, so the first
+// misses listings return nothing.
+type lateListingBackend struct {
+	Backend
+	collide bool
+	misses  int
+	lists   int
+}
+
+func (b *lateListingBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	if b.collide {
+		return nil, ErrKeyAlreadyExists
+	}
+	return b.Backend.GenerateECDSA(ctx, attrs)
+}
+
+func (b *lateListingBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
+	b.lists++
+	if b.lists <= b.misses {
+		return nil, nil
+	}
+	return b.Backend.ListKeys(ctx)
+}
+
+func TestProvisionReleaseKey_CollisionWaitsForTheWinnersKey(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+	backoff := releaseKeyResolveBackoff
+	releaseKeyResolveBackoff = 0
+	t.Cleanup(func() { releaseKeyResolveBackoff = backoff })
+
+	factory, ok := GetBackendFactory(BackendSoftware)
+	require.True(t, ok)
+	provider, err := factory(map[string]interface{}{"key_dir": "memory"})
+	require.NoError(t, err)
+	inner, err := New(&BackendConfig{Backend: provider, CertStorage: storage.New()})
+	require.NoError(t, err)
+	late := &lateListingBackend{Backend: inner}
+	require.NoError(t, Initialize(&ServiceConfig{
+		Backends:       map[string]Backend{"software": late},
+		DefaultBackend: "software",
+	}))
+	svc, err := Get()
+	require.NoError(t, err)
+	wireKeyVersionStore(t)
+
+	winner := generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+	late.collide, late.misses, late.lists = true, 5, 0
+
+	signer, err := svc.releaseKeySigner(context.Background(), "tenant-a", releaseResolution())
+	require.NoError(t, err, "the loser of a collision signs once the winner's key resolves")
+	assert.True(t, winner.(*ecdsa.PublicKey).Equal(signer.Public()), "the loser signs with the winner's key")
+	assert.Greater(t, late.lists, late.misses, "the lookup is retried past the listings that miss the key")
 }
 
 func TestSignCoRIM_SystemTenantIsNeverProvisioned(t *testing.T) {
