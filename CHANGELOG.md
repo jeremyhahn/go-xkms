@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 CI: a push to main no longer cancels the main run still in progress; integration jobs run on the bigdisk runners.
-CI: the Security Scan job's timeout is 30 minutes, since gosec takes 9 to 15 minutes on the minis and omega and the 15-minute limit failed runs 64485, 64577 and 64578 (Infra #1206).
+CI: the Security Scan job's timeout is 30 minutes, since gosec takes 9 to 15 minutes on the [CI runners] and the 15-minute limit failed runs 64485, 64577 and 64578 (Infra #1206).
 - **Wire change for go-quicbaas and trusted-firmware: the OTA image signature is RFC 9053 §2.1 fixed-width `r || s` (ruling 136)** — `SignOTAImage` (REST `POST /api/v1/ota-image-keys/{board}/sign`, gRPC/Unix `SignOTAImage`, MCP `xkms.signOTAImage`, the SDK and `xkmsctl key ota-image sign`) now returns the OTA_AUTH signature as 32-byte big-endian `r` then 32-byte big-endian `s`, each left-padded with zeros: 64 bytes for ES256, where it returned ASN.1 DER. The 328P and 32U4 boards carry no DER parser. A backend signature that does not convert is refused with `ErrOTASignatureEncoding`. Every other signature, the generic sign on the same board key included, stays DER. Docs: `docs/key-management/engineering.md#per-board-ota-image-keys`.
 
 ### Fixed
