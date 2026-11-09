@@ -15,6 +15,7 @@ package authenticator
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -650,6 +651,41 @@ func TestSOPINManager_Retries(t *testing.T) {
 		// 100 goroutines * 10 attempts = 1000 retries spent
 		require.Equal(t, 0, mgr.Retries())
 	})
+}
+
+// TestSOPINManager_DeriveKeyMemoryBudget bounds the heap that concurrent SO
+// PIN derivations on one manager can reserve. Each Argon2id derivation holds
+// Memory KiB; run side by side, 20 of them reserved 1.25 GiB of heap, and
+// under the race detector the shadow memory took the package's test binary
+// past 6 GB (main run 42509523145, signal: killed). One derivation at a time
+// keeps the growth to a few multiples of Memory, whatever the callers do.
+func TestSOPINManager_DeriveKeyMemoryBudget(t *testing.T) {
+	const callers = 20
+
+	mgr := NewSOPINManager()
+	mgr.Salt = bytes.Repeat([]byte{0x5a}, SOPINSaltSize)
+	budget := 4 * uint64(mgr.Memory) * 1024
+
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mgr.DeriveKey(testValidPIN)
+		}()
+	}
+	wg.Wait()
+
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	growth := after.HeapSys - before.HeapSys
+	require.LessOrEqualf(t, growth, budget,
+		"%d concurrent derivations reserved %d MiB of heap, budget %d MiB",
+		callers, growth>>20, budget>>20)
 }
 
 func TestSOPINManager_EdgeCases(t *testing.T) {
