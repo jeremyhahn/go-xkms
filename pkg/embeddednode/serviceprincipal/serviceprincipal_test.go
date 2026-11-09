@@ -132,17 +132,17 @@ func TestOption_WebAuthnUserStoreCallsSucceed(t *testing.T) {
 
 	users := node.Client().Users()
 	var denied *qrdbsdk.PermissionDeniedError
-	_, err = users.GetUserByEmail(ctx, "default", "alice@example.com")
+	_, err = users.GetUserByEmail(ctx, "system", "alice@example.com")
 	assert.NotErrorAs(t, err, &denied, "an absent user is not-found, never denied")
 
 	u, err := users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: "alice@example.com",
 		Email:    "alice@example.com",
 		Name:     "Alice",
-		TenantID: "default",
+		TenantID: "system",
 	})
 	require.NoError(t, err)
-	_, err = users.GetUserByEmail(ctx, "default", "alice@example.com")
+	_, err = users.GetUserByEmail(ctx, "system", "alice@example.com")
 	require.NoError(t, err)
 	_, err = users.GetUser(ctx, u.ID)
 	require.NoError(t, err)
