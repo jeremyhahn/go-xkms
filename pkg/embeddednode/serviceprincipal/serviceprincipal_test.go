@@ -121,6 +121,36 @@ func TestOption_CallOutsideGrantIsRefused(t *testing.T) {
 	require.ErrorAs(t, err, &denied)
 }
 
+// TestOption_WebAuthnUserStoreCallsSucceed proves the grant covers every
+// users call the WebAuthn user store (pkg/webauthn.qrdbUserStore) makes as
+// the principal: look a user up by email, create it, read it by ID, update
+// its display name and delete it.
+func TestOption_WebAuthnUserStoreCallsSucceed(t *testing.T) {
+	node := newNode(t, Option())
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+
+	users := node.Client().Users()
+	var denied *qrdbsdk.PermissionDeniedError
+	_, err = users.GetUserByEmail(ctx, "default", "alice@example.com")
+	assert.NotErrorAs(t, err, &denied, "an absent user is not-found, never denied")
+
+	u, err := users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+		Username: "alice@example.com",
+		Email:    "alice@example.com",
+		Name:     "Alice",
+		TenantID: "default",
+	})
+	require.NoError(t, err)
+	_, err = users.GetUserByEmail(ctx, "default", "alice@example.com")
+	require.NoError(t, err)
+	_, err = users.GetUser(ctx, u.ID)
+	require.NoError(t, err)
+	_, err = users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: u.ID, Name: "Alice B"})
+	require.NoError(t, err)
+	require.NoError(t, users.DeleteUser(ctx, u.ID))
+}
+
 // TestOption_UnboundCallIsNotThePrincipal proves the principal is not
 // ambient: a call on a context ServiceContext did not derive -- a request's
 // context -- keeps that context's identity, here none, and is refused.
