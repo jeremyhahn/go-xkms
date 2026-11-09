@@ -11,12 +11,16 @@ import (
 	"log/slog"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -87,4 +91,56 @@ func TestInitializeTokenIssuer_ConfigErrorAborts(t *testing.T) {
 	var configErr *rest.TokenIssuerConfigError
 	assert.ErrorAs(t, err, &configErr)
 	assert.Nil(t, s.tokenIssuer)
+}
+
+// TestInitializeTokenIssuer_EmbeddedNode_RefreshInHolderTenant mints the
+// PIV/mTLS identity for a holder in a non-system tenant and refreshes it
+// through xkmsd's own issuer wiring: the refresh re-check must find the
+// holder in the token's tenant, and only there.
+func TestInitializeTokenIssuer_EmbeddedNode_RefreshInHolderTenant(t *testing.T) {
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil, serviceprincipal.Option())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, node.Close()) })
+
+	_, err = node.UserService().CreateUser(qrdbsdk.ContextWithTenant(context.Background(), "acme"),
+		&qrdbsdk.CreateUserRequest{Username: "bob", Email: "bob@example.com", TenantID: "acme"})
+	require.NoError(t, err)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	s := newTokenIssuerServer(t, &signingKeyBackend{signer: key}, &config.Config{})
+	s.qrdbNode = node
+	s.qrdbClient = node.Client()
+	require.NoError(t, s.initializeTokenIssuer())
+	require.NotNil(t, s.tokenIssuer)
+
+	pivIdentity := func(tenant string) *auth.Identity {
+		return &auth.Identity{
+			Subject:  "bob",
+			TenantID: tenant,
+			Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUsername},
+		}
+	}
+
+	pair, err := s.tokenIssuer.Mint(context.Background(), pivIdentity("acme"))
+	require.NoError(t, err)
+	refreshed, err := s.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
+	require.NoError(t, err)
+	assert.NotEmpty(t, refreshed.AccessToken)
+
+	// Strict tenant isolation: the same username claimed in another tenant
+	// does not resolve to the acme holder.
+	pair, err = s.tokenIssuer.Mint(context.Background(), pivIdentity("other"))
+	require.NoError(t, err)
+	_, err = s.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
+	assert.ErrorIs(t, err, auth.ErrRefreshSubjectNotFound)
 }
