@@ -49,7 +49,7 @@
 # when the job has no quota; IN_IMAGE_CPUS overrides), and the sibling gets
 # --cpus N with GOMAXPROCS=N and GOFLAGS=-p=N. golangci-lint's default
 # concurrency follows the container CPU quota, so lint takes N with no flag.
-# A 4-CPU slot on the Dells gives 4; never a hardcoded number.
+# A 4-CPU slot on a [runner host] gives 4; never a hardcoded number.
 #
 # v4 (ci-template v1.29.4, Company Agent ruling 261(c); claude-agents #379
 # comment 157032):
