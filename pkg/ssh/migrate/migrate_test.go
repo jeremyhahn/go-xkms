@@ -411,6 +411,75 @@ func TestRunInvalidInputs(t *testing.T) {
 	}
 }
 
+// A tenant-scoped PrefixBackend lists its keys without the tenant prefix,
+// so Run would read acme's records as system ones and move them across
+// tenants. Run refuses such a source before it lists or deletes anything.
+func TestRun_RefusesATenantPrefixedSource(t *testing.T) {
+	ctx := t.Context()
+	inner := storage.New()
+	acmeKey := "acme/" + keyPath
+	if err := inner.Put(ctx, acmeKey, legacyKey(t, scope.User, "alice")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	view, err := storage.NewPrefixBackend(inner, "acme/")
+	if err != nil {
+		t.Fatalf("NewPrefixBackend: %v", err)
+	}
+	daos := testutil.NewMemoryDAOFactory()
+
+	report, err := migrate.Run(ctx, view, daos)
+	if !errors.Is(err, migrate.ErrPartitionedSource) || report != (migrate.Report{}) {
+		t.Fatalf("Run(prefixed view) = %+v, %v; want ErrPartitionedSource", report, err)
+	}
+	if left := remaining(t, inner); !slices.Equal(left, []string{acmeKey}) {
+		t.Fatalf("old store keeps %v, want %v", left, []string{acmeKey})
+	}
+	keyStore, err := keys.NewDAOStore(daos)
+	if err != nil {
+		t.Fatalf("keys store: %v", err)
+	}
+	if k, err := keyStore.Get(ctx, scope.User, "alice", "id"); err == nil {
+		k.Destroy()
+		t.Fatal("the acme key was imported into the system tenant")
+	}
+}
+
+// Tenant ID "ssh" is valid, so ssh/ssh/... is that tenant's record, not a
+// system one.
+func TestRun_MigratesTheTenantNamedSSH(t *testing.T) {
+	ctx := t.Context()
+	legacy := storage.New()
+	sshKey := "ssh/" + keyPath
+	if err := legacy.Put(ctx, sshKey, legacyKey(t, scope.User, "alice")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	daos := testutil.NewMemoryDAOFactory()
+
+	report, err := migrate.Run(ctx, legacy, daos)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if want := (migrate.Report{Migrated: 1}); report != want {
+		t.Fatalf("Report = %+v, want %+v", report, want)
+	}
+	if left := remaining(t, legacy); len(left) != 0 {
+		t.Fatalf("old store keeps %v, want nothing", left)
+	}
+	keyStore, err := keys.NewDAOStore(daos)
+	if err != nil {
+		t.Fatalf("keys store: %v", err)
+	}
+	tenantKeys, err := keyStore.Partition("ssh")
+	if err != nil {
+		t.Fatalf("Partition: %v", err)
+	}
+	k, err := tenantKeys.Get(ctx, scope.User, "alice", "id")
+	if err != nil {
+		t.Fatalf("key in tenant ssh: %v", err)
+	}
+	k.Destroy()
+}
+
 func TestRunStopsWhenCancelled(t *testing.T) {
 	legacy := seedLegacy(t)
 	ctx, cancel := context.WithCancel(t.Context())
