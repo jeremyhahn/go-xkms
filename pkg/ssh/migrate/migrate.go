@@ -32,6 +32,7 @@ package migrate
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -53,6 +54,11 @@ const (
 	foldersPrefix  = "ssh/profiles/__folders__/"
 	profileSuffix  = ".json"
 )
+
+// ErrPartitionedSource reports a legacy backend that is a tenant-scoped
+// storage.PrefixBackend view. Its keys come back without the tenant prefix,
+// so Run would move that tenant's records into the system tenant.
+var ErrPartitionedSource = errors.New("ssh/migrate: legacy backend is a tenant-prefixed view; pass the unpartitioned backend")
 
 // Report counts what one Run did with the old store's SSH records. Keys
 // outside the SSH layout are not counted.
@@ -91,9 +97,17 @@ type migrator struct {
 // left in legacy and reported in a *RecordsFailedError beside the counts;
 // the other records still migrate. Run stops early, returning ctx's error,
 // when ctx is done.
+//
+// legacy must be the unpartitioned backend the old stores wrote through,
+// with every tenant's "{tenant}/" prefix in its keys. A tenant-scoped
+// *storage.PrefixBackend is refused with ErrPartitionedSource before
+// anything is listed.
 func Run(ctx context.Context, legacy storage.Backend, daos *qrdbsdk.DAOFactory) (Report, error) {
 	if legacy == nil {
 		return Report{}, &NilInputError{Field: "legacy"}
+	}
+	if _, ok := legacy.(*storage.PrefixBackend); ok {
+		return Report{}, ErrPartitionedSource
 	}
 	if daos == nil {
 		return Report{}, &NilInputError{Field: "daos"}
@@ -224,14 +238,16 @@ func (m *migrator) importFolder(ctx context.Context, _, rel string, _ []byte) er
 // split separates an old key into its tenant prefix and the SSH key below
 // it. ok is false for keys outside the SSH layout.
 func split(key string) (tenant, rel string, ok bool) {
+	// The tenant form comes first: tenant ID "ssh" is valid, and the
+	// unprefixed layout has no "ssh/ssh/" branch to confuse it with.
+	tenant, rel, found := strings.Cut(key, "/")
+	if found && tenant != "" && strings.HasPrefix(rel, sshPrefix) {
+		return tenant, rel, true
+	}
 	if strings.HasPrefix(key, sshPrefix) {
 		return "", key, true
 	}
-	tenant, rel, found := strings.Cut(key, "/")
-	if !found || tenant == "" || !strings.HasPrefix(rel, sshPrefix) {
-		return "", "", false
-	}
-	return tenant, rel, true
+	return "", "", false
 }
 
 // migrateRecord reads the record at key, imports it and deletes the old key
