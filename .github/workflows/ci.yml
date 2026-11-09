@@ -1899,6 +1899,8 @@ jobs:
   # tags in a 4-CPU, 8g, swap-off cgroup (2026-11-08), peak RSS per test
   # binary: pkg/fido2/authenticator 2.77 GiB, pkg/api/rest 1.65, pkg/api/mcp
   # 1.37; -p 2 over ./pkg/fido2/... ./pkg/api/... passed with no OOM kill.
+  # pkg/fido2/authenticator, the largest, runs alone in its own step with
+  # -p 1 -parallel 2 and is excluded from the all-backends step (DS-7817).
   # The PR tier's race
   # check is make coverage (make test runs -race); this job adds the backend
   # tag set and stays full tier.
@@ -1965,6 +1967,7 @@ jobs:
         env:
           IN_IMAGE_NETWORK: bridge
         run: |
+          # shellcheck disable=SC2016 # expands in the toolchain container
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
             mkdir -p /tmp/softhsm2/tokens
@@ -1973,8 +1976,30 @@ jobs:
             softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234
             export TFWSIM_DIR=/src/build/agsim
             make agsim
+            tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost"
+            go list -tags="$tags" ./... > /tmp/race-all.txt
+            grep -vx "github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator" /tmp/race-all.txt > /tmp/race-pkgs.txt
             GOMEMLIMIT=3GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
-              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+              -tags="$tags" $(cat /tmp/race-pkgs.txt)
+          '
+
+      # pkg/fido2/authenticator alone, after the all-backends step, which
+      # excludes it: its key manager tests derive SO PIN Argon2id keys from
+      # concurrent goroutines and peaked at 2.77 GiB under -race even after
+      # the floor-cost fix (DS-7814 OOM-killed it at 4.05 GiB a test beside
+      # another package in the 8g container). Alone, with -p 1 -parallel 2,
+      # it cannot share the container with another test binary (DS-7817).
+      # The exclusion above names its import path: keep the two in sync if
+      # the package moves or is renamed.
+      - name: Race detector, pkg/fido2/authenticator (-p 1, -parallel 2)
+        env:
+          IN_IMAGE_NETWORK: bridge
+        run: |
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
+            set -e
+            GOMEMLIMIT=3GiB GOMAXPROCS=8 go test -race -p 1 -parallel 2 -timeout 75m \
+              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" \
+              ./pkg/fido2/authenticator
           '
 
       - name: Tear down
