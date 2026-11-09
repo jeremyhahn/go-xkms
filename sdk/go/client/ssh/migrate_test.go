@@ -95,3 +95,24 @@ func TestMigrateLegacyStores_CorruptRecord(t *testing.T) {
 		t.Fatalf("old key exists = %v, %v; want it kept", exists, err)
 	}
 }
+
+func TestMigrateLegacyStores_RefusesATenantPrefixedSource(t *testing.T) {
+	ctx := t.Context()
+	inner := storage.New()
+	// Through the view this acme record reads as a system one.
+	acmeKey := legacyPinKey
+	if err := inner.Put(ctx, acmeKey, []byte(`{`)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	view, err := storage.NewPrefixBackend(inner, "acme/")
+	if err != nil {
+		t.Fatalf("NewPrefixBackend: %v", err)
+	}
+	report, err := sdkssh.MigrateLegacyStores(ctx, view, testutil.NewMemoryDAOFactory())
+	if !errors.Is(err, sdkssh.ErrMigratePartitionedSource) || report != (sdkssh.MigrateReport{}) {
+		t.Fatalf("MigrateLegacyStores(prefixed view) = %+v, %v; want ErrMigratePartitionedSource", report, err)
+	}
+	if exists, err := inner.Exists(ctx, acmeKey); err != nil || !exists {
+		t.Fatalf("old key exists = %v, %v; want it kept", exists, err)
+	}
+}
