@@ -614,6 +614,10 @@ func eccAttributesFromConfig(config *store.ECCConfig) (*types.ECCAttributes, err
 	return &types.ECCAttributes{Curve: curve}, nil
 }
 
+// EKAttributesFromConfig builds the EK's key attributes from its config. The
+// CertHandle is the index the EK's key type resolves to (configuredEKCertIndex),
+// so an ECC P-256 EK that keeps the RSA default 0x01C00002 reads its
+// certificate at 0x01C0000A (TCG EK Credential Profile v2.1 §2.2.1.4).
 func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, idevidConfig *IDevIDConfig) (*types.KeyAttributes, error) {
 
 	if config.CN == "" {
@@ -669,7 +673,7 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 		TPMPolicy:    platformPolicyName(config.PlatformPolicy),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
-			CertHandle:    tpm2.TPMHandle(config.CertHandle),
+			CertHandle:    configuredEKCertIndex(config),
 			Handle:        tpm2.TPMHandle(config.Handle),
 			HandleType:    tpm2.TPMHTPersistent,
 			Hierarchy:     tpm2.TPMHandle(tpm2.TPMRHEndorsement),
