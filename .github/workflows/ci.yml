@@ -2241,10 +2241,14 @@ jobs:
       # (tpm_simulator included), and make race-nofrost runs the !frost stub
       # lane (test-nofrost's packages) under -race after it; make race-stubs
       # runs the backend-stub builds (RACE_STUB_PKGS, TEST_TAGS only) under -race.
+      # Both make lanes append -p=2 to GOFLAGS (the last -p wins over
+      # in-toolchain-image.sh's -p=<CPU count>) and keep the go test line's -p 2,
+      # because GOMEMLIMIT is per process and does not bound the sum.
       - name: Race detector, all backends including FROST and the !frost stub lane (toolchain image)
         env:
           IN_IMAGE_NETWORK: bridge
         run: |
+          # shellcheck disable=SC2016 # expands in the toolchain container
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
             mkdir -p /tmp/softhsm2/tokens
@@ -2256,8 +2260,8 @@ jobs:
             make agsim
             GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
               -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,tpm_simulator,frost" ./...
-            GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-nofrost
-            GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-stubs
+            GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=2" GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-nofrost
+            GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=2" GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-stubs
           '
 
       - name: Tear down
