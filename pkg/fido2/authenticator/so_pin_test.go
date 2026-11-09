@@ -15,9 +15,11 @@ package authenticator
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -234,6 +236,63 @@ func TestSOPINManager_DeriveKey(t *testing.T) {
 
 		require.NotEqual(t, key1, key2)
 	})
+}
+
+// TestSOPINManager_ConcurrentDeriveKeyHeapBudget pins the fix for main run
+// 42509523145: concurrent Argon2id SO PIN derivations on one manager each
+// held SOPINDefaultMemory at once, and the race detector's runner was killed.
+func TestSOPINManager_ConcurrentDeriveKeyHeapBudget(t *testing.T) {
+	const derivations = 6
+	const budget = 3 * SOPINDefaultMemory * 1024 // bytes
+
+	mgr := NewSOPINManager()
+	_, err := mgr.Initialize(testValidPIN)
+	require.NoError(t, err)
+
+	var stats runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&stats)
+	baseline := stats.HeapAlloc
+
+	done := make(chan struct{})
+	peak := make(chan uint64, 1)
+	go func() {
+		var max uint64
+		var s runtime.MemStats
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		for {
+			runtime.ReadMemStats(&s)
+			if s.HeapAlloc > baseline && s.HeapAlloc-baseline > max {
+				max = s.HeapAlloc - baseline
+			}
+			select {
+			case <-done:
+				peak <- max
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	keys := make([][]byte, derivations)
+	for i := range derivations {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			keys[i] = mgr.DeriveKey(testValidPIN)
+		}(i)
+	}
+	wg.Wait()
+	close(done)
+
+	for _, key := range keys {
+		require.Len(t, key, SOPINDerivedKeySize)
+		require.Equal(t, keys[0], key)
+	}
+	require.LessOrEqual(t, <-peak, uint64(budget),
+		"%d concurrent SO PIN derivations exceeded the heap budget", derivations)
 }
 
 func TestSOPINManager_BeginVerify(t *testing.T) {
