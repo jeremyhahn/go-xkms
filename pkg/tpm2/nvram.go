@@ -1088,8 +1088,11 @@ func (tpm *TPM2) certNVPublic(nvIndex tpm2.TPMHandle, size int) tpm2.TPMSNVPubli
 		NVIndex: nvIndex,
 		NameAlg: tpm.algID,
 		Attributes: tpm2.TPMANV{
+			// Writes take owner authorization only: no TPMA_NV_AUTHWRITE,
+			// so the index's own empty authValue cannot overwrite the
+			// certificate. This attribute set is also what tells a
+			// certificate index from an NVWrite index, which sets AuthWrite.
 			OwnerWrite: true,
-			AuthWrite:  true,
 			OwnerRead:  true,
 			AuthRead:   true,
 			NoDA:       true,
