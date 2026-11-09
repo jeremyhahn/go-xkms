@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/go-tpm v0.9.8
-	github.com/jeremyhahn/go-enclave v0.8.0-alpha
+	github.com/jeremyhahn/go-enclave v0.8.0-alpha // held: go-enclave frozen at v0.8.0 (DS-7715)
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: in-house, moves only to a tag Infra verifies (ruling 390); v0.9+ go-enclave needed, frozen (DS-7715)
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
