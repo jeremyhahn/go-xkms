@@ -365,7 +365,12 @@ var SigningKeySentinelClasses = []SentinelClass{
 }
 
 // SigningKeyClassOf classifies an error of the repository signing-key verbs.
+// SignCoRIM and SignImage admit the key as Sign does, so a policy denial or a
+// disabled or revoked key keeps the class KeyPolicyClassOf gives it.
 func SigningKeyClassOf(err error) (Class, bool) {
+	if class, ok := KeyPolicyClassOf(err); ok {
+		return class, true
+	}
 	return ClassOf(SigningKeySentinelClasses, err)
 }
 
