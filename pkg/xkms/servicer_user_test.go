@@ -27,12 +27,15 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -1139,6 +1142,67 @@ func TestDeleteUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
 
 	wantHandle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(7))
 	assert.ElementsMatch(t, []string{"bob", wantHandle}, store.revoked)
+}
+
+// TestUserLifecycle_RevokesOnlyTheTenantsOwnSessions proves disabling or
+// deleting one tenant's "bob" ends that bob's sessions and leaves another
+// tenant's "bob" signed in. The store runs on a real embedded node, bound to
+// the service principal in the system tenant as pkg/server binds it, so every
+// tenant's refresh records sit in the one keyspace a revoke scans.
+func TestUserLifecycle_RevokesOnlyTheTenantsOwnSessions(t *testing.T) {
+	for _, op := range []string{"disable", "delete"} {
+		t.Run(op, func(t *testing.T) {
+			svc, users, _ := setupServiceWithUserClients(t)
+			users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+				return &qrdbtransport.User{ID: 7, Username: "bob", TenantID: "tenant-a"}, nil
+			}
+			users.disableUser = func(_ context.Context, _ uint64) error { return nil }
+			users.deleteUser = func(_ context.Context, _ uint64) error { return nil }
+
+			node := newServiceNode(t)
+			store, err := token.NewQRDBRefreshStore(node.Client().KV(), token.WithCallContext(
+				func(ctx context.Context) (context.Context, error) {
+					return node.ServiceContext(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID))
+				}))
+			require.NoError(t, err)
+			issuer := newTestTokenIssuerWithStore(t, store)
+			svc.SetTokenIssuer(issuer)
+
+			ctx := context.Background()
+			bobA, err := issuer.Mint(ctx, &auth.Identity{Subject: "bob", TenantID: "tenant-a"})
+			require.NoError(t, err)
+			bobB, err := issuer.Mint(ctx, &auth.Identity{Subject: "bob", TenantID: "tenant-b"})
+			require.NoError(t, err)
+
+			if op == "disable" {
+				require.NoError(t, svc.DisableUser(ctx, "bob"))
+			} else {
+				require.NoError(t, svc.DeleteUser(ctx, "bob"))
+			}
+
+			_, err = issuer.Refresh(ctx, bobA.RefreshToken)
+			require.Error(t, err, "tenant-a's bob must be signed out")
+			_, err = issuer.Refresh(ctx, bobB.RefreshToken)
+			require.NoError(t, err, "tenant-b's bob must stay signed in")
+		})
+	}
+}
+
+func newServiceNode(t *testing.T) *qrdbnode.Node {
+	t.Helper()
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil, serviceprincipal.Option())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, node.Close()) })
+	return node
 }
 
 // TestDisableUser_NoTokenIssuerConfiguredStillSucceeds proves a deployment
