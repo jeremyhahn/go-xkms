@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1319,25 +1320,16 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		return ekCert, nil
 	}
 
-	// Build list of NV indices to try (configured first, then standard locations)
-	var indicesToTry []tpm2.TPMHandle
-
-	// Add configured/attribute-based index first
-	if ekAttrs.TPMAttributes != nil && ekAttrs.TPMAttributes.CertHandle != 0 {
-		indicesToTry = append(indicesToTry, ekAttrs.TPMAttributes.CertHandle)
-	} else if tpm.config.EK.CertHandle > 0 {
-		indicesToTry = append(indicesToTry, tpm2.TPMHandle(tpm.config.EK.CertHandle))
-	}
-
-	// Add standard RSA and EC locations as fallbacks (avoiding duplicates)
-	rsaIndex := tpm2.TPMHandle(ekCertIndexRSA2048)
-	ecIndex := tpm2.TPMHandle(ekCertIndexECCP256)
-
-	if len(indicesToTry) == 0 || indicesToTry[0] != rsaIndex {
-		indicesToTry = append(indicesToTry, rsaIndex)
-	}
-	if len(indicesToTry) < 2 || (indicesToTry[0] != ecIndex && indicesToTry[1] != ecIndex) {
-		indicesToTry = append(indicesToTry, ecIndex)
+	// Try the index the write resolves for the configured EK key type
+	// first, then the standard RSA and EC locations (avoiding duplicates).
+	indicesToTry := []tpm2.TPMHandle{configuredEKCertIndex(*tpm.config.EK)}
+	for _, fallback := range []tpm2.TPMHandle{
+		tpm2.TPMHandle(ekCertIndexRSA2048),
+		tpm2.TPMHandle(ekCertIndexECCP256),
+	} {
+		if !slices.Contains(indicesToTry, fallback) {
+			indicesToTry = append(indicesToTry, fallback)
+		}
 	}
 
 	// Try each NV index until we find a valid certificate
