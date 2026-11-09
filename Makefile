@@ -480,6 +480,11 @@ TEST_FLAGS_FIPS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,
 # excluded by every other test lane, which always carries frost (go-xkms#1249).
 TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
 TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
+# make coverage's flags: TEST_FLAGS and TEST_FLAGS_NOFROST without -race
+# (#2023). The race detector's CPU and memory cost kept the Coverage job from
+# finishing on a 4-vCPU hosted runner; the Race Detector job runs -race.
+COVERAGE_TEST_FLAGS := -v -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS))"
+COVERAGE_TEST_FLAGS_NOFROST := -v -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 # Where `make agsim` puts the trusted-firmware host simulators. Exported so every
 # go test the Makefile runs finds them (sdk/go/tfwsim reads TFWSIM_DIR).
@@ -1191,13 +1196,29 @@ race: agsim
 
 .PHONY: coverage
 ## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
-# GOMEMLIMIT and -p=2 bound the suite's memory: under -race the Argon2-heavy
-# REST/MCP packages exhaust a runner's memory without them. Under CI the suite
-# must leave the tree as it found it (#454). The per-package report is
-# advisory (#704).
+# It runs test's lanes, but its go test runs without -race (COVERAGE_TEST_FLAGS):
+# under -race at -p=2 the suite never finished inside the Coverage job's 180
+# minutes on a 4-vCPU hosted runner (#2023); the Race Detector job runs -race.
+# -p=4 matches that runner's vCPUs; GOMEMLIMIT bounds the Argon2-heavy REST/MCP
+# packages. Under CI the suite must leave the tree as it found it (#454). The
+# per-package report is advisory (#704).
 coverage: export GOMEMLIMIT := 10GiB
-coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=2)
-coverage: test
+coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=4)
+coverage: export XKMS_DENY_HARDWARE_TPM := 1
+coverage: check-insecure-tls agsim
+	@$(MAKE) --no-print-directory test-scripts
+	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@bash -c 'set -o pipefail; \
+	$(GO) test $(COVERAGE_TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
+		$$(go list -e $(UNIT_TEST_SCOPE) 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)") \
+		2>&1 | tee $(COVERAGE_DIR)/test.log' || \
+		{ grep -E "FAIL|panic" $(COVERAGE_DIR)/test.log | head -20; exit 1; }
+	@$(MAKE) --no-print-directory coverage-report
+	@$(MAKE) --no-print-directory test-nofrost TEST_FLAGS_NOFROST='$(COVERAGE_TEST_FLAGS_NOFROST)'
+	@$(MAKE) --no-print-directory test-pkcs11
+	@$(MAKE) --no-print-directory test-web
+	@$(MAKE) --no-print-directory check-wailsjs
 	@total=$$($(GO) tool cover -func=$(COVERAGE_FILE) | awk '/^total:/ {print $$3}' | tr -d %); \
 	echo "Total coverage: $${total}%"; \
 	awk -v c="$$total" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { if (c + 0 < t + 0) { print "coverage below " t "%"; exit 1 } }'
