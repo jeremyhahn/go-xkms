@@ -66,11 +66,21 @@ type MigrateRecordError = migrate.RecordError
 // MigrateLegacyStores call; errors.As reaches each of them.
 type MigrateRecordsFailedError = migrate.RecordsFailedError
 
+// ErrMigratePartitionedSource reports a legacy backend that is a
+// tenant-scoped storage.PrefixBackend view, which MigrateLegacyStores
+// refuses.
+var ErrMigratePartitionedSource = migrate.ErrPartitionedSource
+
 // MigrateLegacyStores moves the SSH records the pre-DAO stores kept in the
 // sealed-KV backend legacy into the DAO catalogs of daos: keys, known_hosts,
 // authorized_keys, sessions and profiles. The consumer calls it at store
 // open, with the backend the old stores used and before NewStores or the
 // session and profile stores serve requests.
+//
+// legacy must be the unpartitioned backend, whose keys keep each tenant's
+// "{tenant}/" prefix. A tenant-scoped *storage.PrefixBackend (the view the
+// old tenancy client wrote through) lists keys without that prefix, so it
+// is refused with ErrMigratePartitionedSource before anything moves.
 //
 // Each record is imported first and its old key deleted only after the
 // import succeeds. The call is idempotent: once everything has moved, a
