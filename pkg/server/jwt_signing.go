@@ -58,7 +58,7 @@ func (s *Server) initializeTokenIssuer() error {
 	var callContext func(context.Context) (context.Context, error)
 	var userLookup rest.RefreshUserLookup
 	if s.qrdbNode != nil {
-		callContext = s.qrdbNode.ServiceContext
+		callContext = systemServiceContext(s.qrdbNode)
 		userLookup = nodeUsers{node: s.qrdbNode}
 	}
 
@@ -112,6 +112,18 @@ func (s *Server) initializeTokenIssuer() error {
 // service principal lives in the system tenant and may not read a holder in
 // another one, so the client path would refuse every non-system-tenant
 // refresh. The service is read per call: it is nil until the node has booted.
+// systemServiceContext binds the refresh store's qrdb calls to the node's
+// service principal in the system tenant, whatever tenant the incoming
+// context carries. Node.ServiceContext replaces only the identity: the
+// anonymous login stores records in the system tenant, while an
+// authenticated logout arrives with the holder's tenant bound, where the
+// principal's self-scope grants do not reach and the revoke was refused.
+func systemServiceContext(node *qrdbnode.Node) func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) {
+		return node.ServiceContext(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID))
+	}
+}
+
 type nodeUsers struct {
 	node *qrdbnode.Node
 }
