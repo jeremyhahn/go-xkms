@@ -277,6 +277,25 @@ func TestFreshUntil_FirstMaxAgeWins(t *testing.T) {
 	}
 }
 
+// TestFreshUntil_NoStoreKeepsTheExpiryCheck checks that no-store and
+// no-cache only stop the list being reused: a response that has outlived
+// its max-age or Expires is still stale.
+func TestFreshUntil_NoStoreKeepsTheExpiryCheck(t *testing.T) {
+	received := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	cases := map[string]http.Header{
+		"no-store max-age": {"Cache-Control": {"no-store, max-age=60"}, "Age": {"120"}},
+		"no-cache max-age": {"Cache-Control": {"no-cache, max-age=60"}, "Age": {"120"}},
+		"no-store Expires": {"Cache-Control": {"no-store"}, "Expires": {received.Add(-time.Hour).Format(http.TimeFormat)}, "Date": {received.Format(http.TimeFormat)}},
+	}
+	for name, header := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, stale := freshUntil(header, received, received)
+			assert.True(t, stale, "no-store and no-cache forbid reuse, not the expiry check")
+			assert.False(t, got.After(received))
+		})
+	}
+}
+
 // staleOnceEndpoint answers its first request as a cache holding a list
 // past its max-age would, and later ones as the origin, recording whether
 // each request asked for revalidation.
