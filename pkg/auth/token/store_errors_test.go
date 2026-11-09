@@ -20,7 +20,10 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -344,6 +347,78 @@ func TestQRDBRefreshStore_MarkRotated_CompareAndSwapError(t *testing.T) {
 func TestIsNotFound_StringFallback(t *testing.T) {
 	assert.True(t, isNotFound(stringNotFoundError{}))
 	assert.False(t, isNotFound(errors.New("connection reset by peer")))
+}
+
+// newServiceNode boots a real in-memory standalone qrdb node configured with
+// xkms's service principal, as embeddednode.NewNode configures production's.
+func newServiceNode(t *testing.T) *qrdbnode.Node {
+	t.Helper()
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil, serviceprincipal.Option())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, node.Close()) })
+	return node
+}
+
+// TestQRDBRefreshStore_EmbeddedNode_BareContextIsRefused shows why the store
+// needs a call context: a WebAuthn registration finish mints its first token
+// pair on the anonymous request's context, and the embedded node refuses that
+// context's KV write as unauthenticated.
+func TestQRDBRefreshStore_EmbeddedNode_BareContextIsRefused(t *testing.T) {
+	node := newServiceNode(t)
+	store, err := NewQRDBRefreshStore(node.Client().KV())
+	require.NoError(t, err)
+
+	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.ErrorIs(t, store.Save(context.Background(), rec), qrdbsdk.ErrUnauthenticated)
+}
+
+// TestQRDBRefreshStore_CallContext_RunsAsServicePrincipal proves every qrdb
+// call the store makes runs on the bound call context: on the anonymous
+// request's context, a token pair is saved, read, rotated and revoked as the
+// node's service principal.
+func TestQRDBRefreshStore_CallContext_RunsAsServicePrincipal(t *testing.T) {
+	node := newServiceNode(t)
+	store, err := NewQRDBRefreshStore(node.Client().KV(), WithCallContext(node.ServiceContext))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour).Unix()
+	require.NoError(t, store.Save(ctx, &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: exp}))
+	got, err := store.Get(ctx, "f1", "j1")
+	require.NoError(t, err)
+	assert.Equal(t, "s1", got.Subject)
+	require.NoError(t, store.MarkRotated(ctx, "f1", "j1"))
+	require.NoError(t, store.RevokeFamily(ctx, "f1"))
+
+	require.NoError(t, store.Save(ctx, &Record{JTI: "j2", Family: "f2", Subject: "s2", ExpiresAt: exp}))
+	require.NoError(t, store.RevokeBySubject(ctx, "s2"))
+}
+
+// TestQRDBRefreshStore_CallContext_BindError proves a call context that
+// cannot bind fails the call instead of falling back to the caller's context.
+func TestQRDBRefreshStore_CallContext_BindError(t *testing.T) {
+	bindErr := errors.New("bind failed")
+	store, err := NewQRDBRefreshStore(newGuardedMemoryKV(), WithCallContext(func(context.Context) (context.Context, error) {
+		return nil, bindErr
+	}))
+	require.NoError(t, err)
+
+	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.ErrorIs(t, store.Save(context.Background(), rec), bindErr)
+	_, err = store.Get(context.Background(), "f1", "j1")
+	require.ErrorIs(t, err, bindErr)
+	require.ErrorIs(t, store.MarkRotated(context.Background(), "f1", "j1"), bindErr)
+	require.ErrorIs(t, store.RevokeFamily(context.Background(), "f1"), bindErr)
+	require.ErrorIs(t, store.RevokeBySubject(context.Background(), "s1"), bindErr)
 }
 
 func mustJSON(t *testing.T, v interface{}) []byte {
