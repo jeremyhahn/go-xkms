@@ -258,6 +258,25 @@ func TestFreshUntil_AgeBeyondLifetimeIsStale(t *testing.T) {
 	}
 }
 
+// TestFreshUntil_FirstMaxAgeWins pins RFC 9111 §4.2.1: a later max-age
+// directive, in the same field or another Cache-Control field, does not
+// extend the lifetime the first one gave.
+func TestFreshUntil_FirstMaxAgeWins(t *testing.T) {
+	received := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	cases := map[string][]string{
+		"one field":  {"max-age=60, max-age=86400"},
+		"two fields": {"max-age=60", "max-age=86400"},
+	}
+	for name, cacheControl := range cases {
+		t.Run(name, func(t *testing.T) {
+			header := http.Header{"Cache-Control": cacheControl, "Age": {"120"}}
+			got, stale := freshUntil(header, received, received)
+			assert.True(t, stale, "the first max-age, 60, is outlived by Age 120")
+			assert.False(t, got.After(received))
+		})
+	}
+}
+
 // staleOnceEndpoint answers its first request as a cache holding a list
 // past its max-age would, and later ones as the origin, recording whether
 // each request asked for revalidation.

@@ -7,12 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // errUserNotVerified is what the verifying backend below answers when it is
@@ -27,11 +29,17 @@ type verifyingKeyBackend struct {
 	err   error
 	calls int
 	rpID  string
+	// wait, when set, holds VerifyUser as a user being asked on another
+	// device would.
+	wait func(ctx context.Context)
 }
 
 var _ keybackend.UserVerifier = (*verifyingKeyBackend)(nil)
 
-func (b *verifyingKeyBackend) VerifyUser(_ context.Context, rpID string) error {
+func (b *verifyingKeyBackend) VerifyUser(ctx context.Context, rpID string) error {
+	if b.wait != nil {
+		b.wait(ctx)
+	}
 	b.calls++
 	b.rpID = rpID
 	return b.err
@@ -259,6 +267,26 @@ func TestGetPinUvAuthTokenUsingUv_RPScopedPermissionNeedsRPID(t *testing.T) {
 		auth.mu.RUnlock()
 		require.Equal(t, "example.com", rpID, "the token is bound to the RP the user was asked for")
 	})
+}
+
+// TestGetPinUvAuthTokenUsingUv_OverlongRPIDSpendsNoRetry pins that an rpId
+// the verifier cannot name to the user is a parameter error answered before
+// the user is asked, not a failed verification that spends uvRetries.
+func TestGetPinUvAuthTokenUsingUv_OverlongRPIDSpendsNoRetry(t *testing.T) {
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+	auth := newVerifyingAuthenticator(t, backend)
+	rpID := strings.Repeat("a", pairingproto.VerifyUserRPNameMaxLen+1)
+
+	for range 3 {
+		reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionGetAssertion, rpID)
+		resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+
+		require.ErrorIs(t, err, ErrInvalidParameter)
+		require.Equal(t, []byte{byte(StatusInvalidParameter)}, resp)
+	}
+	require.Zero(t, backend.calls, "the user is never asked for an RP the verifier cannot name")
+	require.Nil(t, auth.GetPinUvAuthToken())
+	require.Equal(t, DefaultUVRetries, auth.state.UVRetries())
 }
 
 // TestGetPinUvAuthTokenUsingUv_VerifierRefusalBlocksMinting pins that a

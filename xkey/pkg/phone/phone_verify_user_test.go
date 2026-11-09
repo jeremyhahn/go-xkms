@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/stretchr/testify/require"
 )
 
@@ -226,6 +227,25 @@ func TestVerifyUser_MalformedStatusListFileIsUnavailable(t *testing.T) {
 	err := backend.VerifyUser(context.Background(), "example.com")
 	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
 	require.ErrorIs(t, err, xkms.ErrAndroidStatusListMalformed)
+}
+
+// TestVerifyUser_TrustOutageIsUnavailable drives the attestation verifier
+// with a trust loader that fails: each call is unavailable, so the
+// authenticator, which spends a uvRetry on any other error, spends none.
+func TestVerifyUser_TrustOutageIsUnavailable(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	errNoStore := errors.New("trust store unavailable")
+	backend := connectedVerifyUserBackend(t, attestation.NewUserVerifier(
+		func() (*xkms.AndroidDeviceTrust, error) { return nil, errNoStore },
+		slog.New(slog.NewTextHandler(io.Discard, nil))))
+
+	for range 3 {
+		err := backend.VerifyUser(context.Background(), "example.com")
+		require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+		require.ErrorIs(t, err, errNoStore)
+	}
 }
 
 // TestVerifyUser_NoVerifierRefuses proves a backend built without a
