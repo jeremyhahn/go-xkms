@@ -53,6 +53,9 @@ const Name = "xkms"
 //   - admin:shard_state -- a clustered xkmsd waits for its shard's leader
 //     before serving (Server.waitForClusterLeader); the leader query is a
 //     shard-state read.
+//   - users:read, users:create, users:update, users:delete -- the WebAuthn
+//     user store (pkg/webauthn.qrdbUserStore) looks a registering user up by
+//     email or ID, creates it, saves its display name and deletes it.
 var grant = []qrdbsdk.Permission{
 	"kv:get",
 	"kv:put",
@@ -68,6 +71,10 @@ var grant = []qrdbsdk.Permission{
 	"index:create",
 	"index:query",
 	"admin:shard_state",
+	"users:read",
+	"users:create",
+	"users:update",
+	"users:delete",
 }
 
 var registerOnce sync.Once

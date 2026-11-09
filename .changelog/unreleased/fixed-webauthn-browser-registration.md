@@ -1,1 +1,2 @@
 - xkmsd's WebAuthn registration no longer answers `internal_error`: the WebAuthn user store's calls into the embedded qrdb node run as the node's service principal, where the request context carried none and qrdb refused them as unauthenticated.
+- The node's service principal holds `users:read`, `users:create`, `users:update` and `users:delete`, the qrdb users calls the WebAuthn user store makes, where qrdb denied a registering user's lookup as `cannot read on users`.
