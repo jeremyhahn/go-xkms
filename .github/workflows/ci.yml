@@ -6,7 +6,8 @@
 #   - ci-images takes the schedule guard as the image job does; the CUSTOMIZE jobs that need ci-images skip with it on a busy schedule run;
 #   - CUSTOMIZE jobs static-analysis, build, nested-module-build, nested-module-test, build-raft, race and tpm2-simulator, each in CI Gate's needs and results;
 #   - the image job folds Lint into its stages (timeout 240), and the integration (180) and soak (210) jobs keep longer bounds;
-#   - scripts/in-toolchain-image.sh v4 already held the /var/tmp scratch volume (#1733) and keeps its CUSTOMIZE blocks.
+#   - scripts/in-toolchain-image.sh v4 already held the /var/tmp scratch volume (#1733) and keeps its CUSTOMIZE blocks;
+#   - #1922 (DS-7888, ruling 386): the integration job is a matrix of suite-group shards, each with its own IT_PROJECT.
 # v1.29.5 (Company Agent ruling 262(a), 2026-10-30): one change, the
 # GO_BUILD_PROXY separator. Each `make docker-build` passes
 # GO_BUILD_PROXY=<DEVCACHE_GOPROXY>|https://proxy.golang.org|direct, with
@@ -1249,16 +1250,44 @@ jobs:
   # first (v1.18) and keeps its own teardown last under `if: always()`.
   # v1.23: full tier only (CI_FULL_TIER's expression); never on a plain PR.
   integration:
-    name: Integration [integration image]
+    name: Integration [integration image] (${{ matrix.group }})
     # v1.26: never on a draft PR, ci:full or not. v1.29.3: on a schedule run,
     # only on the schedule guard's `run`.
     needs: schedule-guard
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
-    timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
+    timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25, per shard
+    # >>> CUSTOMIZE (go-xkms, #1922, DS-7888, ruling 386)
+    # The prerequisites of `make integration-test` (clean-test-containers
+    # aside) split into suite-group shards, so the job's wall time is its
+    # longest shard. The heavy suites (api-all, webauthn, pkcs11-module-all,
+    # tpm2, cli, sdk-go, challenges) are spread first, the lighter ones
+    # fill around them. Together the shards run every prerequisite once;
+    # integration-test-cluster stays out, as it does in integration-test.
+    # CI Gate checks the aggregate `needs.integration.result`, which fails
+    # when any shard fails.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: api
+            targets: integration-test-api-all integration-test-software integration-test-pkcs8 integration-test-quantum
+          - group: webauthn
+            targets: integration-test-webauthn integration-test-fido2 integration-test-frost integration-test-utils
+          - group: pkcs11
+            targets: integration-test-pkcs11-module-all integration-test-pkcs11 integration-test-pkcs11-barrier
+          - group: tpm2
+            targets: integration-test-tpm2 integration-test-storage integration-test-initceremony integration-test-bootstrap
+          - group: cli
+            targets: integration-test-cli integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault
+          - group: sdk
+            targets: integration-test-sdk-go integration-test-challenges integration-test-sshagent
+    # <<< CUSTOMIZE
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      # CUSTOMIZE (go-xkms, #1922): one IT_PROJECT per shard, so the shards'
+      # stacks never collide on a shared host.
+      IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.group }}
       # >>> CUSTOMIZE (go-xkms)
       # The suite also runs against a live xkmsd in compose.
       XKMS_COMPOSE_SERVER: "1"
@@ -1319,8 +1348,14 @@ jobs:
             if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
           done
 
-      - name: make integration-test (integration image)
-        run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
+      # CUSTOMIZE (go-xkms, #1922): the shard's group in place of the whole
+      # integration-test, clean-test-containers first as integration-test runs it.
+      - name: make integration-test, ${{ matrix.group }} group (integration image)
+        env:
+          IT_TARGETS: ${{ matrix.targets }}
+        run: |
+          read -ra targets <<< "$IT_TARGETS"
+          make clean-test-containers "${targets[@]}" MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
         if: always()
