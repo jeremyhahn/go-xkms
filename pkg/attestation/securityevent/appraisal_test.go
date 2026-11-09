@@ -186,6 +186,33 @@ func TestAppraiseAcceptsTextHashAlgorithm(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAppraiseRejectsUnhashableHashAlgorithm(t *testing.T) {
+	d := newDevice(t)
+	record := testRecord(t)
+	digest := sha256Digest(record)
+
+	tests := map[string]struct {
+		alg any
+	}{
+		"array algorithm":       {alg: []any{}},
+		"byte string algorithm": {alg: []byte{0}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			payload := claimsWith(t, verifierNonce, digestSubmods(tc.alg, digest))
+			evidence := &types.SecurityEventEvidence{
+				Evidence: sign(t, d.aliasKey, cose.AlgorithmES256, payload),
+				Chain:    d.chain,
+				Record:   record,
+			}
+
+			var err error
+			require.NotPanics(t, func() { _, err = Appraise(evidence, d.options()) })
+			require.ErrorIs(t, err, ErrUnsupportedHashAlgorithm)
+		})
+	}
+}
+
 func TestAppraiseRejectsChangedRecord(t *testing.T) {
 	d := newDevice(t)
 	evidence := d.evidenceFor(t, testRecord(t), verifierNonce)
@@ -265,6 +292,7 @@ func TestAppraiseRejectsSignerChain(t *testing.T) {
 		"empty chain":       {chain: nil, roots: d.roots, want: ErrMalformedChain},
 		"unparseable chain": {chain: [][]byte{{0x30, 0x00}}, roots: d.roots, want: ErrMalformedChain},
 		"unanchored chain":  {chain: d.chain, roots: x509.NewCertPool(), want: ErrUntrustedSigner},
+		"nil roots":         {chain: d.chain, roots: nil, want: ErrUntrustedSigner},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
