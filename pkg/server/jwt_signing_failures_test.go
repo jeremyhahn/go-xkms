@@ -98,6 +98,44 @@ func TestInitializeTokenIssuer_ConfigErrorAborts(t *testing.T) {
 // through xkmsd's own issuer wiring: the refresh re-check must find the
 // holder in the token's tenant, and only there.
 func TestInitializeTokenIssuer_EmbeddedNode_RefreshInHolderTenant(t *testing.T) {
+	s := newAcmeTokenIssuerServer(t)
+
+	pair, err := s.tokenIssuer.Mint(context.Background(), acmePIVIdentity("acme"))
+	require.NoError(t, err)
+	refreshed, err := s.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
+	require.NoError(t, err)
+	assert.NotEmpty(t, refreshed.AccessToken)
+
+	// Strict tenant isolation: the same username claimed in another tenant
+	// does not resolve to the acme holder.
+	pair, err = s.tokenIssuer.Mint(context.Background(), acmePIVIdentity("other"))
+	require.NoError(t, err)
+	_, err = s.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
+	assert.ErrorIs(t, err, auth.ErrRefreshSubjectNotFound)
+}
+
+// TestInitializeTokenIssuer_EmbeddedNode_LogoutInHolderTenant mints a pair
+// on the anonymous login context for a holder in a non-system tenant, then
+// logs out on the authenticated request's context, which carries the
+// holder's tenant: the revoke must reach the record the login stored, and
+// the refresh token must be refused afterwards.
+func TestInitializeTokenIssuer_EmbeddedNode_LogoutInHolderTenant(t *testing.T) {
+	s := newAcmeTokenIssuerServer(t)
+
+	pair, err := s.tokenIssuer.Mint(context.Background(), acmePIVIdentity("acme"))
+	require.NoError(t, err)
+
+	holderCtx := qrdbsdk.ContextWithTenant(context.Background(), "acme")
+	require.NoError(t, s.tokenIssuer.Revoke(holderCtx, pair.RefreshToken))
+
+	_, err = s.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
+	assert.Error(t, err)
+}
+
+// newAcmeTokenIssuerServer runs xkmsd's own issuer wiring over a real
+// embedded node holding user "bob" in tenant "acme".
+func newAcmeTokenIssuerServer(t *testing.T) *Server {
+	t.Helper()
 	cfg := qrdbsdk.DefaultDaemonConfig()
 	cfg.Raft.DataDir = t.TempDir()
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
@@ -122,25 +160,15 @@ func TestInitializeTokenIssuer_EmbeddedNode_RefreshInHolderTenant(t *testing.T) 
 	s.qrdbClient = node.Client()
 	require.NoError(t, s.initializeTokenIssuer())
 	require.NotNil(t, s.tokenIssuer)
+	return s
+}
 
-	pivIdentity := func(tenant string) *auth.Identity {
-		return &auth.Identity{
-			Subject:  "bob",
-			TenantID: tenant,
-			Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUsername},
-		}
+// acmePIVIdentity is the PIV/mTLS login identity (sub_kind username) for
+// "bob" claimed in tenant.
+func acmePIVIdentity(tenant string) *auth.Identity {
+	return &auth.Identity{
+		Subject:  "bob",
+		TenantID: tenant,
+		Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUsername},
 	}
-
-	pair, err := s.tokenIssuer.Mint(context.Background(), pivIdentity("acme"))
-	require.NoError(t, err)
-	refreshed, err := s.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
-	require.NoError(t, err)
-	assert.NotEmpty(t, refreshed.AccessToken)
-
-	// Strict tenant isolation: the same username claimed in another tenant
-	// does not resolve to the acme holder.
-	pair, err = s.tokenIssuer.Mint(context.Background(), pivIdentity("other"))
-	require.NoError(t, err)
-	_, err = s.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
-	assert.ErrorIs(t, err, auth.ErrRefreshSubjectNotFound)
 }
