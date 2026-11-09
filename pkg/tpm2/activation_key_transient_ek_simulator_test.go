@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,6 +91,51 @@ func TestAnswerCredentialChallenge_NonPersistentEK_CreatesTransientEK(t *testing
 	handles, err := transientHandles(h.TPM.transport)
 	require.NoError(t, err)
 	assert.Empty(t, handles, "the transient EK and the activation key must both be flushed")
+}
+
+// TestAnswerCredentialChallenge_ECCEKUsesTheResolvedCertIndex: an ECC P-256
+// EK config that keeps the default CertHandle 0x01C00002 reads its
+// certificate at 0x01C0000A (TCG EK Credential Profile v2.1 §2.2.1.4) when no
+// persistent EK exists, and never the unrelated RSA certificate at the
+// configured handle.
+func TestAnswerCredentialChallenge_ECCEKUsesTheResolvedCertIndex(t *testing.T) {
+	h := newSimHarness(t, func(c *Config) {
+		c.EK.HierarchyAuth = nil
+		c.EK.CertHandle = ekCertIndexRSA2048
+		c.EK.KeyAlgorithm = x509.ECDSA.String()
+		c.EK.RSAConfig = nil
+		c.EK.ECCConfig = &store.ECCConfig{Curve: "P-256"}
+	})
+
+	ekPub, err := h.TPM.EKECC()
+	require.NoError(t, err)
+	writeEKCertToNV(t, h.TPM, ekPub)
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	rsaTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "unrelated-rsa"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	rsaDER, err := x509.CreateCertificate(rand.Reader, rsaTemplate, rsaTemplate, &rsaKey.PublicKey, rsaKey)
+	require.NoError(t, err)
+	require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048), nil, rsaDER))
+	evictPersistentEK(t, h.TPM)
+	h.TPM.ekAttrs = nil
+
+	ekAttrs, err := h.TPM.EKAttributes()
+	require.NoError(t, err)
+	assert.Equal(t, tpm2.TPMHandle(ekCertIndexECCP256), ekAttrs.TPMAttributes.CertHandle)
+
+	key, err := h.TPM.CreateActivationKey()
+	require.NoError(t, err)
+	challenge, secret, err := NewCredentialChallenge(ekPub, key.Name.Buffer)
+	require.NoError(t, err)
+
+	got, err := h.TPM.AnswerCredentialChallenge(key, challenge)
+	require.NoError(t, err)
+	assert.Equal(t, secret, got)
 }
 
 // TestAnswerCredentialChallenge_NonPersistentEK_NoCertInNV proves a missing
