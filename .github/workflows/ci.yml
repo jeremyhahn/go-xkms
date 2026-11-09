@@ -2235,7 +2235,12 @@ jobs:
       # resolves it only with GOPRIVATE covering it, which in-toolchain-image.sh
       # passes to a bridge stage alone. On a no-network stage Go asks the
       # checksum database instead and `go mod download` fails (run 66181).
-      - name: Race detector, all backends including FROST (toolchain image)
+      #
+      # #2023: make coverage runs without -race, so this job is the -race run
+      # of every unit lane: its tags hold all of the Makefile's TEST_TAGS
+      # (tpm_simulator included), and make race-nofrost runs the !frost stub
+      # lane (test-nofrost's packages) under -race after it.
+      - name: Race detector, all backends including FROST and the !frost stub lane (toolchain image)
         env:
           IN_IMAGE_NETWORK: bridge
         run: |
@@ -2246,9 +2251,11 @@ jobs:
             export SOFTHSM2_CONF=/tmp/softhsm2.conf
             softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234
             export TFWSIM_DIR=/src/build/agsim
+            export XKMS_DENY_HARDWARE_TPM=1
             make agsim
             GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
-              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,tpm_simulator,frost" ./...
+            GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-nofrost
           '
 
       - name: Tear down

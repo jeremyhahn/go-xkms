@@ -1189,11 +1189,23 @@ test-all: test test-importexport
 
 .PHONY: race
 ## race: Run tests with race detector on all backends (matches GitHub Actions)
+# Its tags hold all of TEST_TAGS (tpm_simulator, frost): make coverage runs
+# without -race (#2023), so this is the only -race run of those tests.
+race: export XKMS_DENY_HARDWARE_TPM := 1
 race: agsim
 	@echo "$(CYAN)$(BOLD)→ Running race detector tests with all backends...$(RESET)"
-	@CGO_ENABLED=1 $(GO) test -race -tags="$(call go_tags,pkcs8$(comma)awskms$(comma)gcpkms$(comma)azurekv$(comma)pkcs11$(comma)vault$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)" ./... || \
+	@CGO_ENABLED=1 $(GO) test -race -tags="$(call go_tags,pkcs8$(comma)awskms$(comma)gcpkms$(comma)azurekv$(comma)pkcs11$(comma)vault$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack$(comma)tpm_simulator$(comma)frost)" ./... || \
 		(echo "$(RED)$(BOLD)✗ Race detector found issues$(RESET)" && exit 1)
 	@echo "$(GREEN)$(BOLD)✓ Race detector tests passed!$(RESET)"
+
+.PHONY: race-nofrost
+## race-nofrost: Run the !frost stub-build unit tests (test-nofrost's packages)
+## under the race detector; make coverage runs that lane without -race (#2023)
+race-nofrost: export XKMS_DENY_HARDWARE_TPM := 1
+race-nofrost: agsim
+	@echo "$(CYAN)$(BOLD)→ Running !frost stub race detector tests...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS_NOFROST) ./pkg/api/rest/... ./pkg/api/mcp/... ./pkg/api/grpc/... ./pkg/server/...
+	@echo "$(GREEN)$(BOLD)✓ !frost stub race detector tests passed!$(RESET)"
 
 .PHONY: coverage
 ## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
