@@ -1,0 +1,1 @@
+- **ci:** the Devcontainer image job runs as the parallel jobs `lint`, `checks`, `make-build`, `coverage`, `security` and `trivy`, each taking the toolchain image and caches on its own, so the wall time is the longest stage (`make coverage`) rather than the sum of all of them; CI Gate checks each one (#1923).

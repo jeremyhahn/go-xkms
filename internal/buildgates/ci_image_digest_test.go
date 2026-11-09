@@ -443,9 +443,9 @@ func TestCIImageDigest_RevertedConsumerFails(t *testing.T) {
 	}
 	src = strings.Replace(src, take, revert, 1)
 	problems := digestProblems(parseDigestWorkflow(t, []byte(src)), consumerFloor)
-	for _, want := range []string{"image: runs a toolchain stage without", "image: rebuilds or probes"} {
+	for _, want := range []string{"lint: runs a toolchain stage without", "lint: rebuilds or probes"} {
 		if !slices.ContainsFunc(problems, func(p string) bool { return strings.HasPrefix(p, want) }) {
-			t.Errorf("reverted image job: want a problem %q, got %q", want, problems)
+			t.Errorf("reverted lint job: want a problem %q, got %q", want, problems)
 		}
 	}
 }
