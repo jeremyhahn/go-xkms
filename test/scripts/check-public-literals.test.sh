@@ -154,6 +154,40 @@ track "$ALLOW"
 gate "$RULES" "$ALLOW" >/dev/null
 eq "CLAUDE.md/AGENTS.md/.claude are excluded at any depth" "0" "$?"
 
+# --- a path is read whole, whatever bytes its name holds ------------------------
+# git grep -z hands over NUL-terminated paths; a name with a newline in it must
+# reach the scan as one path, not as two that do not exist.
+section "a file name with a newline"
+NEWLINE="$WORK/newline"
+mkdir -p "$NEWLINE"
+echo "lab address: 198.51.100.9" > "$NEWLINE/odd"$'\n'"name.txt"
+track "$NEWLINE"
+gate "$RULES" "$NEWLINE" >/dev/null
+eq "a match in a file whose name holds a newline fails the gate" "1" "$?"
+
+# --- the rule files must be written, or the gate fails closed --------------------
+# A rule that never reaches its file would be a rule never applied: a clean
+# report on a dirty tree.
+section "the rule files fail closed"
+OUT=$(TMPDIR="$WORK/no-such-dir" RELEASABILITY_PATTERNS="$RULES" "$SCRIPT" "$DIRTY" 2>&1); RC=$?
+eq "an unusable TMPDIR exits 2" "2" "$RC"
+eq "says the rules could not be set up" "1" "$(grep -c 'rules' <<<"$OUT")"
+eq "an unusable TMPDIR never quotes a rule" "0" "$(grep -cF -e '\.' -e 'acme-owner' <<<"$OUT")"
+# A fake mktemp whose rule files are /dev/full: creating them succeeds, and
+# every rule append fails with ENOSPC.
+FAKEBIN="$WORK/fakebin"
+mkdir -p "$FAKEBIN"
+cat > "$FAKEBIN/mktemp" <<'EOF'
+#!/usr/bin/env bash
+d=$(PATH=${PATH#*:} mktemp "$@") || exit
+ln -s /dev/full "$d/cs" && ln -s /dev/full "$d/ci" && echo "$d"
+EOF
+chmod +x "$FAKEBIN/mktemp"
+OUT=$(PATH="$FAKEBIN:$PATH" RELEASABILITY_PATTERNS="$RULES" "$SCRIPT" "$DIRTY" 2>&1); RC=$?
+eq "a failing rule write exits 2" "2" "$RC"
+eq "names the rule line it could not write" "1" "$(grep -c 'line 3' <<<"$OUT")"
+eq "a failing rule write never quotes a rule" "0" "$(grep -cF -e '\.' -e 'acme-owner' <<<"$OUT")"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
 exit $?
