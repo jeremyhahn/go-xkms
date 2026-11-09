@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/image"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -53,6 +54,10 @@ func TestSigningKeyClassOf(t *testing.T) {
 		{&xkms.ImageSignError{Reference: "registry.example/acme/app:1", KeyID: "release-signing", Err: image.ErrRegistryUnavailable}, ClassUnavailable},
 		{&xkms.ImageSignError{Reference: "registry.example/acme/app:1", KeyID: "release-signing", Err: image.ErrRegistryAuth}, ClassFailedPrecondition},
 		{image.ErrInvalidReference, ClassInvalidArgument},
+		// admitKey's refusals keep the class KeyPolicyClassOf gives them.
+		{&keypolicy.PolicyDeniedError{KeyID: "release-signing", Operation: keypolicy.OpSign, Reason: "caller not allowed"}, ClassPermissionDenied},
+		{&keypolicy.KeyUnavailableError{KeyID: "release-signing", Status: keypolicy.StatusDisabled}, ClassFailedPrecondition},
+		{&keypolicy.KeyUnavailableError{KeyID: "release-signing", Status: keypolicy.StatusRevoked}, ClassFailedPrecondition},
 	}
 	for _, tt := range tests {
 		got, ok := SigningKeyClassOf(tt.err)
