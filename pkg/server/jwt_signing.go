@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -51,6 +52,10 @@ func (s *Server) initializeTokenIssuer() error {
 	}
 
 	accessTTL, refreshTTL := s.sessionTTLs()
+	var callContext func(context.Context) (context.Context, error)
+	if s.qrdbNode != nil {
+		callContext = s.qrdbNode.ServiceContext
+	}
 
 	issuer, err := rest.BuildTokenIssuer(s.ctx, rest.TokenIssuerParams{
 		Backend:      backend,
@@ -61,6 +66,7 @@ func (s *Server) initializeTokenIssuer() error {
 		AccessTTL:    accessTTL,
 		RefreshTTL:   refreshTTL,
 		QRDBClient:   s.qrdbClient,
+		CallContext:  callContext,
 		Logger:       s.logger,
 		Retry:        retryNotLeader,
 	})

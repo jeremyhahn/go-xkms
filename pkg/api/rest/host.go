@@ -95,6 +95,11 @@ type TokenIssuerParams struct {
 	// restart).
 	QRDBClient *qrdbsdk.Client
 
+	// CallContext, when set, derives the context the refresh store's qrdb
+	// calls run on (token.WithCallContext); xkmsd binds the embedded node's
+	// service principal.
+	CallContext func(ctx context.Context) (context.Context, error)
+
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
 
@@ -208,7 +213,11 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		userResolver token.UserResolver
 	)
 	if p.QRDBClient != nil {
-		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV())
+		var storeOpts []token.QRDBRefreshStoreOption
+		if p.CallContext != nil {
+			storeOpts = append(storeOpts, token.WithCallContext(p.CallContext))
+		}
+		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV(), storeOpts...)
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
