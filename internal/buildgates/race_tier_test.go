@@ -488,3 +488,78 @@ func TestRaceStubsCatchEachForm(t *testing.T) {
 		})
 	}
 }
+
+// raceLane finds a go test or make race-* command on a line of the race job;
+// raceBound finds a -p 2 bound on that line, as a flag or appended to GOFLAGS.
+var (
+	raceLane  = regexp.MustCompile(`\bgo test\b|\bmake\s+race-\S+`)
+	raceBound = regexp.MustCompile(`(?:^|[\s"}=])-p(?:=|\s+)2(?:[\s"]|$)`)
+)
+
+// raceParallelismProblems reports each go test or make race-* line of the race
+// job that runs without a -p 2 bound. in-toolchain-image.sh sets
+// GOFLAGS=-p=<CPU count>, and GOMEMLIMIT is per process, so only the package
+// bound keeps the -race test binaries of the REST/MCP/gRPC/server suites inside
+// the runner (#2023).
+func raceParallelismProblems(wf workflow) []string {
+	race, ok := wf.Jobs[raceJob]
+	if !ok {
+		return []string{"no " + raceJob + " job"}
+	}
+	var problems []string
+	lanes := 0
+	for _, step := range race.Steps {
+		for _, line := range strings.Split(strings.ReplaceAll(step.Run, "\\\n", " "), "\n") {
+			cmd := raceLane.FindString(line)
+			if cmd == "" {
+				continue
+			}
+			lanes++
+			if !raceBound.MatchString(line) {
+				problems = append(problems, fmt.Sprintf("%s job runs %s without -p 2", raceJob, cmd))
+			}
+		}
+	}
+	if lanes == 0 {
+		problems = append(problems, raceJob+" job runs no go test or make race-* line")
+	}
+	return problems
+}
+
+func TestRaceJobBoundsPackageParallelism(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	for _, p := range raceParallelismProblems(parseWorkflow(t, data)) {
+		t.Error(p)
+	}
+}
+
+func TestRaceParallelismCatchesEachForm(t *testing.T) {
+	const job = "jobs:\n  race:\n    steps:\n      - run: |\n" +
+		"          GOMEMLIMIT=10GiB go test -race -p 2 -timeout 75m \\\n            -tags=frost ./...\n" +
+		"          GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-p=2\" GOMEMLIMIT=10GiB make race-nofrost\n" +
+		"          GOFLAGS=-p=2 make race-stubs\n"
+	cases := map[string]struct {
+		workflow string
+		want     int
+	}{
+		"bounded":              {job, 0},
+		"go test unbounded":    {strings.Replace(job, " -p 2", "", 1), 1},
+		"go test -p 20":        {strings.Replace(job, " -p 2", " -p 20", 1), 1},
+		"go test -p=2":         {strings.Replace(job, " -p 2", " -p=2", 1), 0},
+		"make lane unbounded":  {strings.Replace(job, "GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-p=2\" ", "", 1), 1},
+		"both make lanes bare": {strings.ReplaceAll(strings.Replace(job, "GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-p=2\" ", "", 1), "GOFLAGS=-p=2 ", ""), 2},
+		"make lane -p=4":       {strings.Replace(job, "GOFLAGS=-p=2", "GOFLAGS=-p=4", 1), 1},
+		"no lane":              {"jobs:\n  race:\n    steps:\n      - run: make agsim\n", 1},
+		"no race job":          {"jobs:\n  lint:\n    runs-on: x\n", 1},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := raceParallelismProblems(parseWorkflow(t, []byte(c.workflow))); len(got) != c.want {
+				t.Errorf("got %d problems, want %d: %q", len(got), c.want, got)
+			}
+		})
+	}
+}
