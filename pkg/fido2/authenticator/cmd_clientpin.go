@@ -882,7 +882,7 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *Clien
 	}
 
 	a.mu.Lock()
-	encKey, err := a.prepareUvTokenLocked(req)
+	secret, err := a.prepareUvTokenLocked(req)
 	a.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -903,8 +903,11 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *Clien
 		return nil, ErrCryptoError
 	}
 	a.beginUsingPinUvAuthTokenLocked(pinToken, req.Permissions, req.RPID)
+	// The new token's protocol and keys take effect with the token itself.
+	a.commitSharedSecretLocked(secret)
+	a.pinState.protocol.sharedSecret = secret.hmacKey
 
-	encryptedToken, err := a.encryptData(encKey, req.PinUvAuthProtocol, pinToken)
+	encryptedToken, err := a.encryptData(secret.aesKey, req.PinUvAuthProtocol, pinToken)
 	if err != nil {
 		return nil, err
 	}
@@ -924,8 +927,13 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *Clien
 
 // prepareUvTokenLocked runs the checks of CTAP 2.1 §6.5.5.7.3 that precede the
 // user verification ceremony, so a malformed request never prompts the user,
-// and returns the key the minted token is encrypted under.
-func (a *Authenticator) prepareUvTokenLocked(req *ClientPINRequest) ([]byte, error) {
+// and returns the request's shared secret, which the minted token is
+// encrypted under. The secret is agreed in request scope: the PIN protocol,
+// keys and shared secret of pinState still verify the outstanding token, and
+// change only when a verified user's new token replaces it, so a cancelled,
+// refused or unavailable verification under another protocol leaves that
+// token usable.
+func (a *Authenticator) prepareUvTokenLocked(req *ClientPINRequest) (*pinSharedSecret, error) {
 	if req.Permissions == 0 {
 		return nil, ErrInvalidParameter
 	}
@@ -958,16 +966,7 @@ func (a *Authenticator) prepareUvTokenLocked(req *ClientPINRequest) ([]byte, err
 		return nil, ErrMissingKeyAgreement
 	}
 
-	sharedSecret, err := a.deriveSharedSecret(req.KeyAgreement, req.PinUvAuthProtocol)
-	if err != nil {
-		return nil, err
-	}
-	a.pinState.protocol.sharedSecret = sharedSecret
-
-	if req.PinUvAuthProtocol == PINProtocol2 {
-		return a.pinState.protocol.aesKey, nil
-	}
-	return sharedSecret, nil
+	return a.agreeSharedSecret(req.KeyAgreement, req.PinUvAuthProtocol)
 }
 
 // failUserVerificationLocked records a failed built-in user verification and
@@ -1287,12 +1286,20 @@ func (a *Authenticator) deriveSharedSecret(platformKeyAgreement []byte, protocol
 		return nil, err
 	}
 
-	a.pinState.protocol.activeProtocol = protocol
-	if protocol == PINProtocol2 {
+	a.commitSharedSecretLocked(secret)
+	return secret.hmacKey, nil
+}
+
+// commitSharedSecretLocked makes secret's PIN protocol the active one, with
+// its keys for protocol 2, so later pinUvAuthParams verify under it.
+//
+// The caller must hold a.mu for writing.
+func (a *Authenticator) commitSharedSecretLocked(secret *pinSharedSecret) {
+	a.pinState.protocol.activeProtocol = secret.protocol
+	if secret.protocol == PINProtocol2 {
 		a.pinState.protocol.hmacKey = secret.hmacKey
 		a.pinState.protocol.aesKey = secret.aesKey
 	}
-	return secret.hmacKey, nil
 }
 
 // verifyPinAuth verifies the pinUvAuthParam using HMAC-SHA-256.
