@@ -7,9 +7,9 @@ require (
 	github.com/google/go-tpm v0.9.8
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
-	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: in-house, moves only to a tag Infra verifies (ruling 390); v0.9+ go-enclave needed, frozen (DS-7715)
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
-	github.com/mark3labs/mcp-go v1.3.0
+	github.com/mark3labs/mcp-go v1.3.0 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/quic-go/quic-go v0.64.1
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.58.0
