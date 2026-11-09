@@ -15,7 +15,7 @@
 // templates, the authorization-code, device and import login flows, PKCE,
 // DPoP, the loopback callback listener and the token stores. xkey and
 // xkmsctl reach the OIDC core through this package, never through pkg/oidc
-// directly (the Architecture Gates job in CI enforces it).
+// directly (the architecture gates of CI's Preflight job enforce it).
 //
 // Every identifier is an alias of its pkg/oidc counterpart, so values cross
 // freely between the two and errors.Is/errors.As see the same sentinels.

@@ -22,7 +22,7 @@ import (
 // construct a software or TPM-platform PIN backend through the SDK. The
 // pinselect Config identifier is prefixed PINSelect* to stay unambiguous in
 // the flat SDK namespace. xkey depends only on this package (sdk/go) and
-// its subpackages, never on go-xkms/pkg/* directly (Architecture Gates);
+// its subpackages, never on go-xkms/pkg/* directly (CI's architecture gates);
 // every pinselect/pintpm2 symbol a consumer needs is re-exported here
 // rather than imported from pkg/* downstream.
 

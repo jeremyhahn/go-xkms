@@ -1,4 +1,4 @@
-# ci-template: v1.29.5 (customized)
+# ci-template: v1.34.1 (customized)
 # go-xkms deviations from the template (#1773), one per line:
 #   - a ci-images job (ruling 169) publishes the toolchain and integration images on main and resolves main's on a pull request; every bigdisk job takes its image through scripts/ci-registry.sh use, not make docker-build;
 #   - so the v1.29.4/v1.29.5 Athens probe is a "Route the image build through Athens" step that exports GO_BUILD_PROXY to the job's environment ahead of ci-registry.sh, whose make docker-build-* reads it, in place of the template's ${bp:+"$bp"} argument;
@@ -7,6 +7,7 @@
 #   - CUSTOMIZE jobs static-analysis, build, nested-module-build, nested-module-test, build-raft, race and tpm2-simulator, each in CI Gate's needs and results;
 #   - the image job folds Lint into its stages (timeout 240), and the integration (180) and soak (210) jobs keep longer bounds;
 #   - scripts/in-toolchain-image.sh v4 already held the /var/tmp scratch volume (#1733) and keeps its CUSTOMIZE blocks.
+#   - v1.34.1's preflight consolidation is adopted (DS-7802); the unit/race shard merge is not, because go-xkms has no unit or race shards: make coverage in the image job is the unit suite with -race, and the race job is the main/ci:full cloud-backend run.
 # v1.29.5 (Company Agent ruling 262(a), 2026-10-30): one change, the
 # GO_BUILD_PROXY separator. Each `make docker-build` passes
 # GO_BUILD_PROXY=<DEVCACHE_GOPROXY>|https://proxy.golang.org|direct, with
@@ -572,16 +573,41 @@ jobs:
   # runs lint only; build and make coverage are skipped. Off pull_request, or
   # on a ci:full PR, docs_only is always false. Any doubt (a failed diff, an
   # empty list) reads as false, so the tier fails toward running the tests.
-  changes:
-    name: Changed files
+  #
+  # v1.29.3 (Company Agent ruling 255(10)/(11)(c)): one nightly per
+  # repository, and none while main is busy. On a schedule run only, the
+  # guard step asks the API whether this workflow has a push run on main in
+  # progress or waiting, and sets `verdict`: `run` (none, or not a schedule
+  # run), `busy` (one is) or `unreadable` (no count came back). On a schedule
+  # run every bigdisk job runs only on `run`; CI Gate skips on `busy` and
+  # fails on `unreadable`. The job runs on every event, not on schedule
+  # alone, so no bigdisk job's `needs` meets a skipped job off schedule; off
+  # schedule it makes no call. The tokens reach the guard step only, and no
+  # repository code runs in this job: the checkout is read by git diff and
+  # by the architecture gates' greps.
+  #
+  # v1.34.1 (DS-7802): one preflight job runs the changed-files check (the
+  # `diff` step), the schedule guard (the `guard` step) and the architecture
+  # gates, which were three ubuntu-latest jobs (changes, schedule-guard and
+  # arch-gates): two fewer hosted-runner starts per run. The outputs' steps
+  # come before the gate steps.
+  preflight:
+    name: Preflight
     runs-on: ubuntu-latest
     # v1.26: a draft PR runs no CI; the image job needs this one and skips with it.
     if: ${{ !github.event.pull_request.draft }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      OBJSTORE_SEAMS: 'pkg/ca/|pkg/storage/'      # CUSTOMIZE
     outputs:
       docs_only: ${{ steps.diff.outputs.docs_only }}
+      verdict: ${{ steps.guard.outputs.verdict }}
     steps:
+      # v1.34.1: always, with full history: the diff step reads the PR's
+      # base, and the architecture gates read the tree.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        if: ${{ github.event_name == 'pull_request' && env.CI_FULL_TIER != 'true' }}
         with:
           fetch-depth: 0
       - name: Is every changed file docs or markdown?
@@ -602,28 +628,6 @@ jobs:
           fi
           echo "docs only: $docs_only"
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-
-  # v1.29.3 (Company Agent ruling 255(10)/(11)(c)): one nightly per
-  # repository, and none while main is busy. On a schedule run only, this job
-  # asks the API whether this workflow has a push run on main in progress or
-  # waiting, and sets `verdict`: `run` (none, or not a schedule run), `busy`
-  # (one is) or `unreadable` (no count came back). On a schedule run every
-  # bigdisk job runs only on `run`; CI Gate skips on `busy` and fails on
-  # `unreadable`. The job runs on every event, not on schedule alone, so no
-  # bigdisk job's `needs` meets a skipped job off schedule; off schedule it
-  # makes no call. It checks nothing out, so no repository code runs beside
-  # the tokens.
-  schedule-guard:
-    name: Schedule guard
-    runs-on: ubuntu-latest
-    # v1.26: a draft PR runs no CI (as the changes job).
-    if: ${{ !github.event.pull_request.draft }}
-    permissions:
-      actions: read
-      contents: read
-    outputs:
-      verdict: ${{ steps.guard.outputs.verdict }}
-    steps:
       - name: Is a main push run of this workflow in flight?
         id: guard
         env:
@@ -677,6 +681,49 @@ jobs:
           fi
           echo "verdict: $verdict"
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+
+      # Architecture gate (v1.20, Company Agent m270 item 9; go-xkms arch-gates,
+      # in the preflight job since v1.34.1).
+      # go-objstore owns every blob backend (docs/00), and a repo reaches it only
+      # through the packages that are its storage seam. Test files are exempt, and
+      # go-objstore itself passes. CUSTOMIZE: OBJSTORE_SEAMS, an extended regex of
+      # the paths that may import go-objstore (go-xkms: 'pkg/ca/|pkg/storage/');
+      # empty means none may. CUSTOMIZE: the repo's own layering rules (go-xkms:
+      # xkmsctl and xkey depend only on sdk/go) are further steps in this job.
+      # A source check with grep, not a stage: it runs on the runner's shell.
+      # v1.23: a lint-class check, so it stays on the PR tier.
+      - name: No direct go-objstore import outside the storage seam
+        run: |
+          if [ "$(sed -n 's/^module //p' go.mod)" = github.com/jeremyhahn/go-objstore ]; then
+            echo "OK: this is go-objstore"; exit 0
+          fi
+          hits=$(grep -rln --include='*.go' '"github.com/jeremyhahn/go-objstore' . \
+                 | grep -v '_test\.go$' \
+                 | { if [ -n "$OBJSTORE_SEAMS" ]; then grep -vE "$OBJSTORE_SEAMS"; else cat; fi; } || true)
+          if [ -n "$hits" ]; then
+            echo "go-objstore may be imported only in the storage seam (OBJSTORE_SEAMS='$OBJSTORE_SEAMS'):"
+            echo "$hits"; exit 1
+          fi
+          echo "OK: no go-objstore import outside the storage seam"
+      # >>> CUSTOMIZE (go-xkms)
+      - name: xkmsctl is sdk/go-only (production)
+        run: |
+          hits=$(grep -rln '"github.com/jeremyhahn/go-xkms/pkg/' --include='*.go' cmd/xkmsctl/ \
+                 | grep -v '_test\.go' || true)
+          if [ -n "$hits" ]; then
+            echo "xkmsctl production code must depend only on sdk/go, found pkg/* imports:"; echo "$hits"; exit 1
+          fi
+          echo "OK: xkmsctl is sdk/go-only"
+
+      - name: xkey is sdk/go-only (production)
+        run: |
+          hits=$(grep -rln '"github.com/jeremyhahn/go-xkms/pkg/' --include='*.go' xkey/ \
+                 | grep -vE '/xkey/pkg/|_test\.go' || true)
+          if [ -n "$hits" ]; then
+            echo "xkey production code must depend only on sdk/go, found go-xkms/pkg/* imports:"; echo "$hits"; exit 1
+          fi
+          echo "OK: xkey is sdk/go-only"
+      # <<< CUSTOMIZE
 
   # v1.21: every stage runs in the project's own devcontainer image and no
   # other (ci-standard.md §2, devcontainer.md §7). One image job (Company Agent
@@ -732,11 +779,11 @@ jobs:
   # step hands the script the run's token and a GHCR read logs in with it.
   ci-images:
     name: CI images [publish on main, resolve on pull requests]
-    needs: schedule-guard     # v1.29.3
+    needs: preflight     # v1.29.3; v1.34.1 (DS-7802)
     # v1.26: never on a draft. v1.29.3: on a schedule run, only on the
     # schedule guard's `run`; every CUSTOMIZE job needs this one, so it skips
     # with it.
-    if: ${{ !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
+    if: ${{ !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.preflight.outputs.verdict == 'run') }}
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
     timeout-minutes: 120
     permissions:
@@ -831,9 +878,9 @@ jobs:
   image:
     name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
-    needs: [changes, schedule-guard, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; CUSTOMIZE (go-xkms, ruling 169): ci-images
+    needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34.1 (DS-7802); CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
-    if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
+    if: ${{ github.event_name != 'schedule' || needs.preflight.outputs.verdict == 'run' }}
     timeout-minutes: 240      # CUSTOMIZE (go-xkms): the Lint (90) and image (150) jobs' bounds, now one job
     permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
       contents: read
@@ -955,7 +1002,7 @@ jobs:
       # it runs the releasability test alone; any other run gets it from make
       # coverage.
       - name: Releasability test (docs-only PR)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.RELEASABILITY_TEST != '' && needs.changes.outputs.docs_only == 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.RELEASABILITY_TEST != '' && needs.preflight.outputs.docs_only == 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "go test -count=1 -tags '$GO_BUILD_TAGS' $RELEASABILITY_TEST"
 
       # v1.9.2, now in the image: the declared tag set must select code. Each
@@ -963,13 +1010,13 @@ jobs:
       # (tests included), it is misspelled or dead. Compares files, not
       # packages, and a tag may swap files (a `!foo` stub for a `foo` body).
       - name: Assert every build tag selects code
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.GO_BUILD_TAGS != '' && needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.GO_BUILD_TAGS != '' && needs.preflight.outputs.docs_only != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "GO_BUILD_TAGS='$GO_BUILD_TAGS' sh scripts/assert-build-tags.sh"
 
       # CUSTOMIZE: nested modules (sdk/go, xkey) and variants (FIPS) are built
       # by `make build` itself, never by an extra step here.
       - name: make build
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
         # >>> CUSTOMIZE (go-xkms)
         # build-xkey-local runs `npm ci` against the npm registry.
         env:
@@ -984,7 +1031,7 @@ jobs:
       # Tags matter here too: without them tag-gated packages are neither
       # tested nor counted. The integration stage is its own job below.
       - name: make coverage (unit tests and the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
         # >>> CUSTOMIZE (go-xkms)
         # test-web runs `npm ci` against the npm registry.
         env:
@@ -1082,10 +1129,10 @@ jobs:
   lint-gates:
     name: Lint Gates [toolchain image]
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
-    needs: [schedule-guard, ci-images] # v1.29.3; CUSTOMIZE (go-xkms, ruling 169): ci-images
+    needs: [preflight, ci-images] # v1.29.3; v1.34.1 (DS-7802); CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.26: never on a draft. v1.29.3: on a schedule run, only on the
     # schedule guard's `run`.
-    if: ${{ !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
+    if: ${{ !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.preflight.outputs.verdict == 'run') }}
     timeout-minutes: 45       # CUSTOMIZE: the repo's lint-gates time, with honest headroom
     permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
       contents: read
@@ -1252,8 +1299,8 @@ jobs:
     name: Integration [integration image]
     # v1.26: never on a draft PR, ci:full or not. v1.29.3: on a schedule run,
     # only on the schedule guard's `run`.
-    needs: schedule-guard
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
+    needs: preflight
+    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.preflight.outputs.verdict == 'run') }}
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
@@ -1351,8 +1398,8 @@ jobs:
   soak:
     name: Soak [integration image]
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
-    needs: schedule-guard
-    if: ${{ (github.event_name == 'schedule' && needs.schedule-guard.outputs.verdict == 'run') || github.event_name == 'workflow_dispatch' }}
+    needs: preflight
+    if: ${{ (github.event_name == 'schedule' && needs.preflight.outputs.verdict == 'run') || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     timeout-minutes: 210      # CUSTOMIZE (go-xkms): SOAK_MINUTES (30) plus one 180-minute iteration
     env:
@@ -1467,17 +1514,17 @@ jobs:
   # integration job's `if:`, `full` in CI Gate) unless it is lint, build,
   # unit or race, which stay on the PR tier.
   # v1.29.2 (ruling 239(8)): a CUSTOMIZE job that runs only when certain
-  # paths change (the changes job gains an output for them, `optee` here)
+  # paths change (the preflight job gains an output for them, `optee` here)
   # needs the image job as well, and its `if:` tests an image job output
   # that its build step sets (here `built`, which the image job declares in
   # `outputs:` when a repository adds such a job), never `needs.<job>.result`
-  # and never the changes job's outputs alone. Reading `needs.changes.outputs.*`
+  # and never the preflight job's outputs alone. Reading `needs.preflight.outputs.*`
   # in the same `if:` is fine:
-  #   needs: [changes, image]
-  #   if: ${{ !cancelled() && needs.image.outputs.built == 'true' && !github.event.pull_request.draft && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'pull_request' && needs.changes.outputs.optee == 'true')) }}
+  #   needs: [preflight, image]
+  #   if: ${{ !cancelled() && needs.image.outputs.built == 'true' && !github.event.pull_request.draft && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'pull_request' && needs.preflight.outputs.optee == 'true')) }}
   # v1.29.3 (ruling 255(10)/(11)(c)): a CUSTOMIZE job on bigdisk adds
-  # `schedule-guard` to its needs and
-  # `(github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run')`
+  # `preflight` (v1.34.1; the schedule guard before) to its needs and
+  # `(github.event_name != 'schedule' || needs.preflight.outputs.verdict == 'run')`
   # to its `if:`, so it skips on a schedule run while main is busy. One that
   # needs the image job skips with it already.
 
@@ -1496,7 +1543,7 @@ jobs:
     timeout-minutes: 120  # #1587: ~2x 58m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     # DS-3164: a docs-only PR compiles nothing, so the sweeps skip at step
     # level and the job still reports success to CI Gate.
-    needs: [changes, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
+    needs: [preflight, ci-images] # v1.34.1 (DS-7802); CUSTOMIZE (go-xkms, ruling 169): ci-images
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
       contents: read
       packages: read
@@ -1530,7 +1577,7 @@ jobs:
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
       # (as in the image job).
       - name: Take the toolchain image
-        if: needs.changes.outputs.docs_only != 'true'
+        if: needs.preflight.outputs.docs_only != 'true'
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -1538,7 +1585,7 @@ jobs:
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Static analysis (toolchain image)
-        if: needs.changes.outputs.docs_only != 'true'
+        if: needs.preflight.outputs.docs_only != 'true'
         run: |
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
@@ -2036,57 +2083,6 @@ jobs:
   # exists to prevent: callers first, gate second.
   # <<< CUSTOMIZE
 
-  # Architecture gate (v1.20, Company Agent m270 item 9; go-xkms arch-gates).
-  # go-objstore owns every blob backend (docs/00), and a repo reaches it only
-  # through the packages that are its storage seam. Test files are exempt, and
-  # go-objstore itself passes. CUSTOMIZE: OBJSTORE_SEAMS, an extended regex of
-  # the paths that may import go-objstore (go-xkms: 'pkg/ca/|pkg/storage/');
-  # empty means none may. CUSTOMIZE: the repo's own layering rules (go-xkms:
-  # xkmsctl and xkey depend only on sdk/go) are further steps in this job.
-  # A source check with grep, not a stage: it runs on the runner's shell.
-  # v1.23: a lint-class check, so it stays on the PR tier.
-  arch-gates:
-    name: Architecture Gates
-    runs-on: ubuntu-latest
-    if: ${{ !github.event.pull_request.draft }}   # v1.26
-    env:
-      OBJSTORE_SEAMS: 'pkg/ca/|pkg/storage/'      # CUSTOMIZE
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: No direct go-objstore import outside the storage seam
-        run: |
-          if [ "$(sed -n 's/^module //p' go.mod)" = github.com/jeremyhahn/go-objstore ]; then
-            echo "OK: this is go-objstore"; exit 0
-          fi
-          hits=$(grep -rln --include='*.go' '"github.com/jeremyhahn/go-objstore' . \
-                 | grep -v '_test\.go$' \
-                 | { if [ -n "$OBJSTORE_SEAMS" ]; then grep -vE "$OBJSTORE_SEAMS"; else cat; fi; } || true)
-          if [ -n "$hits" ]; then
-            echo "go-objstore may be imported only in the storage seam (OBJSTORE_SEAMS='$OBJSTORE_SEAMS'):"
-            echo "$hits"; exit 1
-          fi
-          echo "OK: no go-objstore import outside the storage seam"
-      # >>> CUSTOMIZE (go-xkms)
-      - name: xkmsctl is sdk/go-only (production)
-        run: |
-          hits=$(grep -rln '"github.com/jeremyhahn/go-xkms/pkg/' --include='*.go' cmd/xkmsctl/ \
-                 | grep -v '_test\.go' || true)
-          if [ -n "$hits" ]; then
-            echo "xkmsctl production code must depend only on sdk/go, found pkg/* imports:"; echo "$hits"; exit 1
-          fi
-          echo "OK: xkmsctl is sdk/go-only"
-
-      - name: xkey is sdk/go-only (production)
-        run: |
-          hits=$(grep -rln '"github.com/jeremyhahn/go-xkms/pkg/' --include='*.go' xkey/ \
-                 | grep -vE '/xkey/pkg/|_test\.go' || true)
-          if [ -n "$hits" ]; then
-            echo "xkey production code must depend only on sdk/go, found go-xkms/pkg/* imports:"; echo "$hits"; exit 1
-          fi
-          echo "OK: xkey is sdk/go-only"
-      # <<< CUSTOMIZE
-
   # The single required check (devops.md §1). Every job above must appear in
   # BOTH the needs list and the results check — a gate that can pass vacuously
   # is worse than no gate. Do not use join(needs.*.result); it evaluates empty
@@ -2101,10 +2097,10 @@ jobs:
     # gate, so `CI / CI Gate (schedule)` posts `skipped` (Gitea 1.27.1 posts a
     # skipped job as `skipped`, not `success`), never a green nightly. Every
     # other verdict, an empty one included, runs it.
-    if: ${{ always() && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict != 'busy') }}
+    if: ${{ always() && (github.event_name != 'schedule' || needs.preflight.outputs.verdict != 'busy') }}
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
-    needs: [changes, schedule-guard, image, lint-gates, integration, soak, arch-gates, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
+    needs: [preflight, image, lint-gates, integration, soak, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
     steps:
       - name: Fail closed on any non-success
         env:
@@ -2118,7 +2114,7 @@ jobs:
           DRAFT: ${{ github.event.pull_request.draft == true }}
           # v1.29.3: the schedule guard's verdict on a schedule run.
           SCHEDULE: ${{ github.event_name == 'schedule' }}
-          SCHEDULE_GUARD: ${{ needs.schedule-guard.outputs.verdict }}
+          SCHEDULE_GUARD: ${{ needs.preflight.outputs.verdict }}
         run: |
           if [ "${DRAFT}" = true ]; then
             echo "FAIL draft pull request: no CI runs on a draft. Mark it ready, then push an empty commit to start its run."
@@ -2144,18 +2140,16 @@ jobs:
           # `busy`. Any verdict but `run` means its bigdisk jobs skipped
           # because the guard had no count: fail closed.
           if [ "${SCHEDULE}" = true ] && [ "${SCHEDULE_GUARD}" != run ]; then
-            echo "FAIL schedule-guard (verdict '${SCHEDULE_GUARD:-none}': the bigdisk jobs skipped because the guard could not read the API; see its log)"; BAD=1
+            echo "FAIL schedule-guard (verdict '${SCHEDULE_GUARD:-none}': the bigdisk jobs skipped because the guard could not read the API; see the preflight job's log)"; BAD=1
           fi
           # CUSTOMIZE: one line per job in needs above. A job gated to the
           # full tier by its `if:` is marked full, one gated to schedule and
           # workflow_dispatch is nightly; every other job is pr.
-          check changes     "${{ needs.changes.result }}" pr
-          check schedule-guard "${{ needs.schedule-guard.result }}" pr
+          check preflight   "${{ needs.preflight.result }}" pr
           check image       "${{ needs.image.result }}" pr
           check lint-gates  "${{ needs.lint-gates.result }}" pr
           check integration "${{ needs.integration.result }}" full
           check soak        "${{ needs.soak.result }}" nightly
-          check arch-gates  "${{ needs.arch-gates.result }}" pr
           # >>> CUSTOMIZE (go-xkms)
           check static-analysis    "${{ needs.static-analysis.result }}" pr
           check build              "${{ needs.build.result }}" pr
