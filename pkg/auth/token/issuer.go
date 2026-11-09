@@ -237,6 +237,15 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 	if rec == nil {
 		return nil, &RefreshRevokedError{}
 	}
+	if rec.Tenant == "" {
+		// A record minted before records carried a tenant is out of reach of
+		// the tenant-scoped RevokeBySubject, so it fails closed: the family
+		// is revoked and the holder signs in again.
+		if revokeErr := i.store.RevokeFamily(ctx, family); revokeErr != nil {
+			return nil, revokeErr
+		}
+		return nil, &RefreshRevokedError{}
+	}
 	if rec.Rotated {
 		// Reuse: revoke the lineage before failing.
 		if revokeErr := i.store.RevokeFamily(ctx, family); revokeErr != nil {

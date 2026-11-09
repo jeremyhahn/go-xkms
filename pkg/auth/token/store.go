@@ -59,7 +59,8 @@ type Record struct {
 
 	// Tenant is the holder's tenant, normalized at mint so the system
 	// tenant is never stored as "". A subject is unique only within its
-	// tenant, so RevokeBySubject matches on both.
+	// tenant, so RevokeBySubject matches on both. Issuer.Refresh refuses a
+	// record without a tenant and revokes its family.
 	Tenant string `json:"tenant"`
 
 	// ExpiresAt is the refresh token's absolute expiry (Unix seconds).
