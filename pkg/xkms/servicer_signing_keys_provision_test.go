@@ -21,6 +21,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
@@ -133,19 +134,12 @@ func TestSignCoRIM_ReleaseKeyGenerateFailure(t *testing.T) {
 // concurrent first uses, the one that loses still finds the key the other
 // made and signs with it.
 func TestProvisionReleaseKey_KeepsAKeyOnABlobCollision(t *testing.T) {
-	Reset()
-	t.Cleanup(Reset)
-	store := newMockKeyStore("software")
-	store.generateErr = &tpmstore.BlobWriteError{Name: "release-signing-key", Cause: tpmstore.ErrBlobExists}
-	require.NoError(t, Initialize(&ServiceConfig{
-		Backends:       map[string]Backend{"software": store},
-		DefaultBackend: "software",
-	}))
-	svc, err := Get()
-	require.NoError(t, err)
-	ctx := withSigningKeys(t, svc, corimSignPermission)
+	svc, late := setupLateListingService(t)
+	existing := generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+	late.collide = &tpmstore.BlobWriteError{Name: "release-signing-key", Cause: tpmstore.ErrBlobExists}
 
-	require.NoError(t, svc.provisionReleaseKey(ctx, "tenant-a", ""))
+	require.NoError(t, svc.provisionReleaseKey(context.Background(), "tenant-a", ""))
+	assert.True(t, existing.(*ecdsa.PublicKey).Equal(releasePublicKey(t, svc, "tenant-a")), "a blob collision keeps the existing key")
 }
 
 // lateListingBackend models the loser of a release-key race between two
@@ -154,14 +148,14 @@ func TestProvisionReleaseKey_KeepsAKeyOnABlobCollision(t *testing.T) {
 // misses listings return nothing.
 type lateListingBackend struct {
 	Backend
-	collide bool
+	collide error
 	misses  int
 	lists   int
 }
 
 func (b *lateListingBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	if b.collide {
-		return nil, ErrKeyAlreadyExists
+	if b.collide != nil {
+		return nil, b.collide
 	}
 	return b.Backend.GenerateECDSA(ctx, attrs)
 }
@@ -175,6 +169,20 @@ func (b *lateListingBackend) ListKeys(ctx context.Context) ([]*types.KeyAttribut
 }
 
 func TestProvisionReleaseKey_CollisionWaitsForTheWinnersKey(t *testing.T) {
+	svc, late := setupLateListingService(t)
+	winner := generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+	late.collide, late.misses, late.lists = ErrKeyAlreadyExists, 5, 0
+
+	signer, err := svc.releaseKeySigner(context.Background(), "tenant-a", releaseResolution())
+	require.NoError(t, err, "the loser of a collision signs once the winner's key resolves")
+	assert.True(t, winner.(*ecdsa.PublicKey).Equal(signer.Public()), "the loser signs with the winner's key")
+	assert.Greater(t, late.lists, late.misses, "the lookup is retried past the listings that miss the key")
+}
+
+// setupLateListingService initializes the service on a software backend
+// wrapped in a lateListingBackend, with no pause between release-key lookups.
+func setupLateListingService(t *testing.T) (*XKMSService, *lateListingBackend) {
+	t.Helper()
 	Reset()
 	t.Cleanup(Reset)
 	backoff := releaseKeyResolveBackoff
@@ -195,14 +203,22 @@ func TestProvisionReleaseKey_CollisionWaitsForTheWinnersKey(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 	wireKeyVersionStore(t)
+	return svc, late
+}
 
-	winner := generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
-	late.collide, late.misses, late.lists = true, 5, 0
+// A collision with a key that never resolves for the tenant is not taken as
+// the tenant's key: the wait ends with ErrKeyNotFound at the deadline.
+func TestProvisionReleaseKey_CollisionWithoutAKeyFails(t *testing.T) {
+	svc, late := setupLateListingService(t)
+	late.collide = &tpmstore.BlobWriteError{Name: "release-signing-key", Cause: tpmstore.ErrBlobExists}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
 
-	signer, err := svc.releaseKeySigner(context.Background(), "tenant-a", releaseResolution())
-	require.NoError(t, err, "the loser of a collision signs once the winner's key resolves")
-	assert.True(t, winner.(*ecdsa.PublicKey).Equal(signer.Public()), "the loser signs with the winner's key")
-	assert.Greater(t, late.lists, late.misses, "the lookup is retried past the listings that miss the key")
+	err := svc.provisionReleaseKey(ctx, "tenant-a", "")
+	var provisionErr *ReleaseKeyProvisionError
+	require.ErrorAs(t, err, &provisionErr)
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestSignCoRIM_SystemTenantIsNeverProvisioned(t *testing.T) {

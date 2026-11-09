@@ -18,6 +18,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"errors"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -152,6 +153,16 @@ const (
 	releaseKeyAlgorithm = "ecdsa"
 	releaseKeyCurve     = "P-256"
 )
+
+// releaseKeyResolveTimeout bounds how long the loser of a release-key
+// generation race waits for the winner's key to become resolvable: a
+// software backend publishes the key material before the tenant record, so
+// the collision can be seen before the tenant-filtered listing finds the key.
+const releaseKeyResolveTimeout = 3 * time.Second
+
+// releaseKeyResolveBackoff is the pause between those lookups; a test sets
+// it to zero.
+var releaseKeyResolveBackoff = 50 * time.Millisecond
 
 // authorizeSigningKeys refuses a caller that does not hold
 // attestation_signing_keys:action.
@@ -324,10 +335,41 @@ func (s *XKMSService) provisionReleaseKey(ctx context.Context, tenant, backendNa
 		Curve:     releaseKeyCurve,
 		TenantID:  tenant,
 	})
-	if err == nil || errors.Is(err, ErrKeyAlreadyExists) || errors.Is(err, store.ErrBlobExists) {
+	if err == nil {
 		return nil
 	}
+	if errors.Is(err, ErrKeyAlreadyExists) || errors.Is(err, store.ErrBlobExists) {
+		return s.awaitReleaseKey(ctx, tenant, backendName)
+	}
 	return &ReleaseKeyProvisionError{TenantID: tenant, Err: err}
+}
+
+// awaitReleaseKey waits until the release key another instance generated
+// resolves for tenant. A software backend publishes the key material before
+// the tenant record, so the loser of a generation race can collide with a
+// key that the tenant-filtered lookup does not yet find. The wait is bounded
+// by releaseKeyResolveTimeout and ctx; a key that never resolves is reported
+// as ErrKeyNotFound.
+func (s *XKMSService) awaitReleaseKey(ctx context.Context, tenant, backendName string) error {
+	key := &appraisal.SigningKeyResolution{KeyID: appraisal.ReleaseSigningKeyID, Backend: backendName}
+	ctx, cancel := context.WithTimeout(ctx, releaseKeyResolveTimeout)
+	defer cancel()
+	for {
+		_, err := s.repositoryKey(ctx, tenant, key)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, ErrKeyNotFound) {
+			return &ReleaseKeyProvisionError{TenantID: tenant, Err: err}
+		}
+		timer := time.NewTimer(releaseKeyResolveBackoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return &ReleaseKeyProvisionError{TenantID: tenant, Err: errors.Join(err, ctx.Err())}
+		case <-timer.C:
+		}
+	}
 }
 
 // ResolveSigningKey returns the key that signs one of the caller's tenant's
