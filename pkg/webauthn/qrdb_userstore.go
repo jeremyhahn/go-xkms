@@ -40,6 +40,13 @@ type QRDBUserStoreOptions struct {
 	// the system tenant ("system") for daemon-internal use, or a
 	// per-tenant id for multi-tenant deployments. Required.
 	TenantID string
+
+	// CallContext derives the context each call into Users runs on from
+	// the caller's context. An embedded go-qrdb node refuses a context
+	// with no principal, so xkmsd binds its node's service principal here
+	// (the ceremonies arrive on a request context that carries none). Nil
+	// runs the calls on the caller's context.
+	CallContext func(ctx context.Context) (context.Context, error)
 }
 
 // qrdbUserStore implements xkms's UserStore over qrdb's user records. A
@@ -49,6 +56,53 @@ type qrdbUserStore struct {
 	users    qrdbtransport.UserClient
 	creds    CredentialStore
 	tenantID string
+}
+
+// boundUserClient runs the user-client calls qrdbUserStore makes on the
+// context bind derives (QRDBUserStoreOptions.CallContext).
+type boundUserClient struct {
+	qrdbtransport.UserClient
+	bind func(ctx context.Context) (context.Context, error)
+}
+
+func (c boundUserClient) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.UserClient.CreateUser(ctx, req)
+}
+
+func (c boundUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.UserClient.GetUser(ctx, id)
+}
+
+func (c boundUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.UserClient.GetUserByEmail(ctx, tenantID, email)
+}
+
+func (c boundUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.UserClient.UpdateUser(ctx, req)
+}
+
+func (c boundUserClient) DeleteUser(ctx context.Context, id uint64) error {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return err
+	}
+	return c.UserClient.DeleteUser(ctx, id)
 }
 
 // NewQRDBUserStoreAdapter constructs the (UserStore, CredentialStore) pair
@@ -70,7 +124,11 @@ func NewQRDBUserStoreAdapter(opts QRDBUserStoreOptions) (UserStore, CredentialSt
 	if err != nil {
 		return nil, nil, WrapError("build credential store", err)
 	}
-	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID}
+	userClient := opts.Users
+	if opts.CallContext != nil {
+		userClient = boundUserClient{UserClient: opts.Users, bind: opts.CallContext}
+	}
+	users := &qrdbUserStore{users: userClient, creds: creds, tenantID: opts.TenantID}
 	return users, creds, nil
 }
 

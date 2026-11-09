@@ -1,0 +1,1 @@
+- xkmsd's WebAuthn registration no longer answers `internal_error`: the WebAuthn user store's calls into the embedded qrdb node run as the node's service principal, where the request context carried none and qrdb refused them as unauthenticated.
