@@ -480,6 +480,55 @@ func TestRun_MigratesTheTenantNamedSSH(t *testing.T) {
 	k.Destroy()
 }
 
+func TestRun_MigratesThroughTheSSHNamespaceView(t *testing.T) {
+	ctx := t.Context()
+	mem := storage.New()
+	// The view xkey/pkg/sshstore.ResolveBackend returns when the barrier is active.
+	view, err := storage.NewPrefixBackend(mem, "ssh/")
+	if err != nil {
+		t.Fatalf("NewPrefixBackend: %v", err)
+	}
+	session := `{"id":"abc123","title":"alice@example.com","host":"example.com","port":22,"user":"alice"}`
+	if err := view.Put(ctx, sessionPath, []byte(session)); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if err := view.Put(ctx, "acme/"+keyPath, legacyKey(t, scope.User, "alice")); err != nil {
+		t.Fatalf("seed key: %v", err)
+	}
+	daos := testutil.NewMemoryDAOFactory()
+
+	report, err := migrate.Run(ctx, view, daos)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if want := (migrate.Report{Migrated: 2}); report != want {
+		t.Fatalf("Report = %+v, want %+v", report, want)
+	}
+	if left := remaining(t, mem); len(left) != 0 {
+		t.Fatalf("old store keeps %v, want nothing", left)
+	}
+	sessionStore, err := sessions.NewStore(daos)
+	if err != nil {
+		t.Fatalf("sessions store: %v", err)
+	}
+	if s, err := sessionStore.Get("abc123"); err != nil || s.Title != "alice@example.com" {
+		t.Fatalf("session = %+v, %v", s, err)
+	}
+	keyStore, err := keys.NewDAOStore(daos)
+	if err != nil {
+		t.Fatalf("keys store: %v", err)
+	}
+	acmeKeys, err := keyStore.Partition("acme")
+	if err != nil {
+		t.Fatalf("Partition: %v", err)
+	}
+	k, err := acmeKeys.Get(ctx, scope.User, "alice", "id")
+	if err != nil {
+		t.Fatalf("key in tenant acme: %v", err)
+	}
+	k.Destroy()
+}
+
 func TestRunStopsWhenCancelled(t *testing.T) {
 	legacy := seedLegacy(t)
 	ctx, cancel := context.WithCancel(t.Context())
