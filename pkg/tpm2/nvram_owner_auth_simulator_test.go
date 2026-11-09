@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -108,6 +109,63 @@ func TestWriteCertToNVRAM_MismatchedIndexFailsTyped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, foreign.Attributes, stored.Attributes, "the foreign index is left untouched")
 	assert.Equal(t, foreign.DataSize, stored.DataSize)
+}
+
+// An NVWrite secret index (platform policy off) at a certificate handle is
+// not a certificate index: the write is refused and the secret survives.
+func TestWriteCertToNVRAM_RefusesAnNVWriteSecretIndex(t *testing.T) {
+	soPIN := []byte("so-pin-1960-secret")
+	h := newOwnedSimHarness(t, nil, soPIN)
+	index := tpm2.TPMHandle(nvramOwnerIndex)
+	secret := []byte("nvwrite-secret-1960")
+	keyAttrs := &types.KeyAttributes{
+		Parent: &types.KeyAttributes{
+			TPMAttributes: &types.TPMAttributes{HierarchyAuth: mustPassword(t, soPIN)},
+		},
+		SealData: types.NewSealData(secret),
+		TPMAttributes: &types.TPMAttributes{
+			Handle:    index,
+			HashAlg:   tpm2.TPMAlgSHA256,
+			Hierarchy: tpm2.TPMRHOwner,
+		},
+	}
+	require.NoError(t, h.TPM.NVWrite(keyAttrs), "test setup: an NVWrite secret index")
+
+	err := h.TPM.writeCertToNVRAM(index, soPIN, nvramTestCert(t).Raw)
+	assert.ErrorIs(t, err, ErrNVCertIndexMismatch)
+
+	rsp, err := tpm2.NVReadPublic{NVIndex: index}.Execute(h.TPM.transport)
+	require.NoError(t, err)
+	stored, err := rsp.NVPublic.Contents()
+	require.NoError(t, err)
+	assert.Equal(t, uint16(len(secret)), stored.DataSize, "the secret index keeps its size")
+
+	got, err := h.TPM.NVRead(keyAttrs, 0)
+	require.NoError(t, err)
+	assert.Equal(t, secret, got, "the secret is left unchanged")
+}
+
+// A certificate index takes writes under owner authorization only: the index
+// itself with an empty password cannot overwrite the certificate.
+func TestWriteCertToNVRAM_IndexRejectsEmptyPasswordWrite(t *testing.T) {
+	soPIN := []byte("so-pin-1960-authwrite")
+	h := newOwnedSimHarness(t, nil, soPIN)
+	index := tpm2.TPMHandle(nvramOwnerIndex)
+	cert := nvramTestCert(t)
+	require.NoError(t, h.TPM.writeCertToNVRAM(index, soPIN, cert.Raw))
+
+	rsp, err := tpm2.NVReadPublic{NVIndex: index}.Execute(h.TPM.transport)
+	require.NoError(t, err)
+	_, err = tpm2.NVWrite{
+		AuthHandle: tpm2.AuthHandle{Handle: index, Name: rsp.NVName, Auth: tpm2.PasswordAuth(nil)},
+		NVIndex:    tpm2.NamedHandle{Handle: index, Name: rsp.NVName},
+		Data:       tpm2.TPM2BMaxNVBuffer{Buffer: []byte("forged")},
+	}.Execute(h.TPM.transport)
+	assert.Error(t, err, "an empty-password index write must be refused")
+
+	got, err := h.TPM.readCertFromNVRAM(index)
+	require.NoError(t, err)
+	assert.Equal(t, cert.Raw, got, "the certificate is left unchanged")
 }
 
 // TestProvisionEKCert_ECCEKLandsAtECCIndex: an ECC P-256 EK's certificate is
