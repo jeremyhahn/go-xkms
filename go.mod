@@ -35,7 +35,7 @@ require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
-	github.com/jeremyhahn/go-frost v0.3.0-alpha // held: in-house, moves only to a tag Infra verifies (ruling 390)
+	github.com/jeremyhahn/go-frost v0.3.1-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // held: in-house, moves only to a tag Infra verifies (ruling 390); v0.9+ go-enclave needed, frozen (DS-7715)
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
