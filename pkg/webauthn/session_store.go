@@ -136,13 +136,15 @@ const (
 	MaxRegistrationEmailBytes = 254
 
 	// MaxRegistrationDisplayNameBytes is the longest display name a pending
-	// registration carries.
+	// registration carries, unless the display name is the email itself.
 	MaxRegistrationDisplayNameBytes = 64
 )
 
 // Validate refuses a pending registration whose email or display name
-// exceeds its byte limit with an error that wraps ErrInvalidRequest. A nil
-// pending registration is valid: the session carries none.
+// exceeds its byte limit with an error that wraps ErrInvalidRequest. A
+// display name equal to the email is the fallback for a request without one
+// and is bounded by the email limit alone. A nil pending registration is
+// valid: the session carries none.
 func (p *PendingRegistration) Validate() error {
 	if p == nil {
 		return nil
@@ -150,7 +152,7 @@ func (p *PendingRegistration) Validate() error {
 	if len(p.Email) > MaxRegistrationEmailBytes {
 		return NewError("email exceeds 254 bytes", ErrInvalidRequest)
 	}
-	if len(p.DisplayName) > MaxRegistrationDisplayNameBytes {
+	if p.DisplayName != p.Email && len(p.DisplayName) > MaxRegistrationDisplayNameBytes {
 		return NewError("display name exceeds 64 bytes", ErrInvalidRequest)
 	}
 	return nil
