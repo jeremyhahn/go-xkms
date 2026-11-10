@@ -4,7 +4,7 @@
 
 ## What this is for
 
-You have a small AVR board running `arduino-generic` firmware with a secure
+You have a small AVR board running `trusted-firmware` firmware with a secure
 element on it. The element holds a P-256 keypair that was generated inside it on
 a provisioning bench and cannot be read out. This backend lets a Go program hold
 that device as an xkms key provider: read its public identity, and read what the
@@ -51,7 +51,7 @@ device says about its own root of trust.
   answers the challenge, and the CA accepts its certificate and names it by the
   hex of its UEID. Finalizing the order needs a CSR signed by the device key,
   and `Signer` refuses with `ErrSigningUnsupported` for the reason above. The
-  whole flow has been proven only against the `agsim` simulator (`make agsim`).
+  whole flow has been proven only against the `tfwsim` simulator (`make agsim`).
 
 ## Reading an error
 

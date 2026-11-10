@@ -31,6 +31,12 @@ import (
 // primary PIV slots and returns a session pool bound to it.
 func newSlotModelTestPool(t *testing.T) *standalonePool {
 	t.Helper()
+	return newSlotModelTestPoolOfSize(t, 2)
+}
+
+// newSlotModelTestPoolOfSize is newSlotModelTestPool with size sessions.
+func newSlotModelTestPoolOfSize(t *testing.T, size int) *standalonePool {
+	t.Helper()
 
 	tok := provisionPIVToken(t)
 
@@ -47,7 +53,7 @@ func newSlotModelTestPool(t *testing.T) *standalonePool {
 	slotID, err := resolveSlot(ctx, tok.config())
 	require.NoError(t, err, "resolve provisioned token slot")
 
-	pool, err := newSessionPool(ctx, slotID, mustPINSecret(tok.UserPIN), 2)
+	pool, err := newSessionPool(ctx, slotID, mustPINSecret(tok.UserPIN), size)
 	require.NoError(t, err, "create session pool")
 
 	t.Cleanup(func() {
@@ -57,6 +63,31 @@ func newSlotModelTestPool(t *testing.T) *standalonePool {
 	})
 
 	return pool
+}
+
+// TestPIVSlotModel_Refresh_FailedSearchInitLeavesSessionUsable leaves a search
+// active on the pool's only session, as a C_FindObjectsInit that fails part
+// way through does (SoftHSM2 under concurrent writes), and proves Refresh
+// reports that failure and finalizes the stale search, so the next Refresh on
+// the same session succeeds instead of failing CKR_OPERATION_ACTIVE forever.
+func TestPIVSlotModel_Refresh_FailedSearchInitLeavesSessionUsable(t *testing.T) {
+	pool := newSlotModelTestPoolOfSize(t, 1)
+	m, err := NewPIVSlotModel(pool)
+	require.NoError(t, err)
+	occupied, err := m.OccupiedSlots()
+	require.NoError(t, err)
+
+	require.NoError(t, pool.WithSession(func(session p11.SessionHandle) error {
+		return pool.Ctx().FindObjectsInit(session, nil)
+	}))
+
+	err = m.Refresh()
+	require.ErrorIs(t, err, p11.Error(p11.CKR_OPERATION_ACTIVE), "the failed Init must be reported")
+
+	require.NoError(t, m.Refresh(), "the failed search must not leave the session searching")
+	after, err := m.OccupiedSlots()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, occupied, after)
 }
 
 // parseOIDString converts a dotted OID string (e.g., "1.2.840.10045.3.1.7")

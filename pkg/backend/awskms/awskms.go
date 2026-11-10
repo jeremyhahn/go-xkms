@@ -488,7 +488,24 @@ func (b *Backend) getKeyID(ctx context.Context, cn string) (string, error) {
 	return keyID, nil
 }
 
-// getKeySpec converts types.KeyAttributes to AWS KMS KeySpec.
+// rsaKeySpecs maps an RSA modulus size to the CreateKey KeySpec AWS KMS
+// documents for it.
+var rsaKeySpecs = map[int]awstypes.KeySpec{
+	types.RSAKeySize2048: awstypes.KeySpecRsa2048,
+	types.RSAKeySize3072: awstypes.KeySpecRsa3072,
+	types.RSAKeySize4096: awstypes.KeySpecRsa4096,
+}
+
+// eccKeySpecs maps a NIST curve name to the CreateKey KeySpec AWS KMS
+// documents for it.
+var eccKeySpecs = map[string]awstypes.KeySpec{
+	"P-256": awstypes.KeySpecEccNistP256,
+	"P-384": awstypes.KeySpecEccNistP384,
+	"P-521": awstypes.KeySpecEccNistP521,
+}
+
+// getKeySpec converts types.KeyAttributes to AWS KMS KeySpec: symmetric key
+// types get SYMMETRIC_DEFAULT and RSA or ECDSA keys get asymmetricKeySpec.
 func (b *Backend) getKeySpec(attrs *types.KeyAttributes) (awstypes.KeySpec, error) {
 	// Check if this is a symmetric key request
 	// KEY_TYPE_SIGNING can be used for HMAC symmetric keys
@@ -499,14 +516,35 @@ func (b *Backend) getKeySpec(attrs *types.KeyAttributes) (awstypes.KeySpec, erro
 		// For symmetric keys, use SYMMETRIC_DEFAULT (AES-256-GCM)
 		return awstypes.KeySpecSymmetricDefault, nil
 	}
+	return asymmetricKeySpec(attrs)
+}
 
+// asymmetricKeySpec returns the CreateKey KeySpec for an RSA or ECDSA key.
+// RSA keys take their size from RSAAttributes and ECDSA keys their curve from
+// ECCAttributes, defaulting to RSA_2048 and ECC_NIST_P256 when unset; a size
+// or curve AWS KMS does not offer returns ErrInvalidKeySpec.
+func asymmetricKeySpec(attrs *types.KeyAttributes) (awstypes.KeySpec, error) {
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		// Default to RSA_2048 if not specified
-		return awstypes.KeySpecRsa2048, nil
+		keySize := types.RSAKeySize2048
+		if attrs.RSAAttributes != nil && attrs.RSAAttributes.KeySize != 0 {
+			keySize = attrs.RSAAttributes.KeySize
+		}
+		spec, ok := rsaKeySpecs[keySize]
+		if !ok {
+			return "", &errs.Detail{Err: ErrInvalidKeySpec, Detail: fmt.Sprintf("RSA key size %d", keySize)}
+		}
+		return spec, nil
 	case x509.ECDSA:
-		// Default to ECC_NIST_P256 if not specified
-		return awstypes.KeySpecEccNistP256, nil
+		curveName := "P-256"
+		if attrs.ECCAttributes != nil && attrs.ECCAttributes.Curve != nil {
+			curveName = types.CurveName(attrs.ECCAttributes.Curve)
+		}
+		spec, ok := eccKeySpecs[curveName]
+		if !ok {
+			return "", &errs.Detail{Err: ErrInvalidKeySpec, Detail: "ECDSA curve " + curveName}
+		}
+		return spec, nil
 	default:
 		return "", &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: attrs.KeyAlgorithm.String()}
 	}
@@ -579,11 +617,11 @@ func (b *Backend) Capabilities() types.Capabilities {
 		Import:              true,  // AWS KMS supports key import via wrapping
 		Export:              false, // AWS KMS does not allow key extraction
 		SecurityLevel:       types.SecurityLevelMedium,
-		// getKeySpec creates RSA_2048, ECC_NIST_P256 and SYMMETRIC_DEFAULT
-		// (AES-256-GCM) keys only.
+		// getKeySpec creates every RSA size and NIST curve in rsaKeySpecs and
+		// eccKeySpecs, plus SYMMETRIC_DEFAULT (AES-256-GCM) keys.
 		KeyAlgorithms: types.KeyAlgorithms{
-			RSAKeySizes: []int{types.RSAKeySize2048},
-			ECDSACurves: []string{"P-256"},
+			RSAKeySizes: []int{types.RSAKeySize2048, types.RSAKeySize3072, types.RSAKeySize4096},
+			ECDSACurves: []string{"P-256", "P-384", "P-521"},
 			Symmetric:   []types.SymmetricAlgorithm{types.SymmetricAES256GCM},
 		},
 	}
@@ -1081,11 +1119,12 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 
 	// Determine key spec from attributes
 	keySpec := ""
-	switch attrs.KeyAlgorithm {
-	case x509.RSA:
-		keySpec = "RSA_2048" // Default, could be adjusted based on key size
-	case x509.ECDSA:
-		keySpec = "ECC_NIST_P256" // Default
+	if attrs.KeyAlgorithm == x509.RSA || attrs.KeyAlgorithm == x509.ECDSA {
+		spec, err := asymmetricKeySpec(attrs)
+		if err != nil {
+			return nil, err
+		}
+		keySpec = string(spec)
 	}
 
 	return &backend.ImportParameters{

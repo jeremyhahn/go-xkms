@@ -7,6 +7,7 @@
 #   ci-registry.sh resolve toolchain|it    any other event: prints main's digest reference, or ""
 #   ci-registry.sh use toolchain|it <ref>  prints <FAMILY>_IMAGE= and <FAMILY>_HOLD= for $GITHUB_ENV
 #   ci-registry.sh release <hold>...       removes the holds
+#   ci-registry.sh retain toolchain|it     push to main: removes all but the newest two local generations
 #
 # Each image is named by its content: the Makefile's tag (`make -s
 # toolchain-image`, `make -s it-image`) carries a hash of its inputs, and the
@@ -25,7 +26,8 @@
 # The registry is the forge the run belongs to, derived from GITHUB_SERVER_URL:
 # ghcr.io on GitHub, the forge's own host[:port] on Gitea; no address is
 # written here or in ci.yml. The namespace is CI_REGISTRY_OWNER, which
-# ci.yml's workflow env sets on the forge to agent-ci-images, the release
+# ci.yml's workflow env sets on the forge from the repository variable of the
+# same name: the release
 # runner's public user: Gitea 1.27 lets only a user namespace's owner or an
 # admin write it (go-xkms #1730, ruling 217). On GHCR, where the run's token
 # pushes, it is GITHUB_REPOSITORY_OWNER. A lookup speaks the registry API
@@ -139,8 +141,8 @@ registry_name() {
 }
 
 # registry_owner prints the namespace main's images live under:
-# CI_REGISTRY_OWNER when the workflow sets it (agent-ci-images on the
-# forge), else GITHUB_REPOSITORY_OWNER.
+# CI_REGISTRY_OWNER when the workflow sets it (the forge's CI images
+# namespace), else GITHUB_REPOSITORY_OWNER.
 registry_owner() {
   local var=GITHUB_REPOSITORY_OWNER owner
   [ -z "${CI_REGISTRY_OWNER:-}" ] || var=CI_REGISTRY_OWNER
@@ -684,8 +686,66 @@ release() {
   done
 }
 
+# retain keeps the newest two generations of family $1 on the release
+# runner's daemon and removes the older ones (#1789): every main commit leaves
+# a new IT generation under its local and registry names, and nothing else
+# removes them there. A generation is one image ID, whatever names it has; an
+# image a container uses is kept, and `docker rmi` runs without -f, by name,
+# since it refuses an ID with several names. A failed removal or inspect is a
+# warning and retain goes on. It reads the local daemon alone and prints
+# nothing on stdout.
+retain() {
+  [ $# -eq 1 ] || die "usage: retain toolchain|it"
+  check_family "$1"
+  [ "${CI_PUBLISH:-}" = true ] || die "retain runs on the release runner on a push to main alone, and CI_PUBLISH is not true"
+  local family=$1 local_repo listing repo tag id created generations name users tags n=0
+  local -A names=()
+  case $family in
+    toolchain) local_repo=go-xkms-toolchain ;;
+    it) local_repo=go-xkms-ci-it ;;
+  esac
+  if ! listing=$(docker images --no-trunc --format '{{.Repository}} {{.Tag}} {{.ID}}'); then
+    warn "retain: cannot list the $family images; nothing removed"
+    return 0
+  fi
+  while read -r repo tag id; do
+    case $repo in
+      "$local_repo" | */go-xkms-ci-"$family") ;;
+      *) continue ;;
+    esac
+    [ "$tag" != "<none>" ] || continue
+    names[$id]+="$repo:$tag "
+  done <<<"$listing"
+  generations=$(
+    for id in "${!names[@]}"; do
+      if created=$(docker image inspect -f '{{.Created}}' "$id"); then
+        printf '%s %s\n' "$created" "$id"
+      else
+        warn "retain: cannot inspect $id; it is kept"
+      fi
+    done | sort -r
+  )
+  while read -r created id; do
+    [ -n "$id" ] || continue
+    n=$((n + 1))
+    [ "$n" -gt 2 ] || continue
+    if ! users=$(docker ps -aq --filter "ancestor=$id"); then
+      warn "retain: cannot list the containers of $id; it is kept"
+      continue
+    fi
+    if [ -n "$users" ]; then
+      echo "==> retain: ${names[$id]% } ($id) is used by a container; it is kept" >&2
+      continue
+    fi
+    read -ra tags <<<"${names[$id]}"
+    for name in "${tags[@]}"; do
+      docker rmi "$name" >&2 || warn "retain: cannot remove $name"
+    done
+  done <<<"$generations"
+}
+
 main() {
-  [ $# -ge 1 ] || die "usage: ci-registry.sh publish|resolve|use|release ..."
+  [ $# -ge 1 ] || die "usage: ci-registry.sh publish|resolve|use|release|retain ..."
   local cmd=$1
   shift
   case $cmd in
@@ -693,6 +753,7 @@ main() {
     resolve) resolve "$@" ;;
     use) use "$@" ;;
     release) release "$@" ;;
+    retain) retain "$@" ;;
     *) die "unknown command '$cmd'" ;;
   esac
 }

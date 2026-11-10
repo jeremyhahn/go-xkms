@@ -618,7 +618,10 @@ Tests:
   seals the token PIN with `xkmsd seal-pkcs11-pin`, then starts xkmsd twice
   with `barrier.strategy: pkcs11` and no PIN in the configuration; both starts
   must report the barrier initialized and unsealed with no operator input.
-  It then extends the platform PCR on the swtpm. The next start must exit
+  The node unseals before it serves, so there is no sealed window: the test
+  reads `GET /v1/barrier/status` as the first-boot administrator
+  (`xkmsdtest.AdminClient`), trusting the CA bundle the server publishes
+  for first contact. It then extends the platform PCR on the swtpm. The next start must exit
   non-zero at the node seal, and the same resolution in-process must return
   `*embeddednode.NodeSealError` wrapping `*pkcs11strategy.BuildError` and
   `*preseal.RefusedError` for `platform/pkcs11-pin`. The build tags are

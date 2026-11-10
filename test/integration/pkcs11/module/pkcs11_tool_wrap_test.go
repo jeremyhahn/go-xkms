@@ -30,8 +30,14 @@
 //     --input-file <path> --key-type <type> --application-id <new-id>
 //     --application-label <new-label>" reverses that, creating a new token
 //     object named by --application-id/--application-label.
-//   - pkcs11-tool's default --keygen (no --usage-* flag) sets CKA_WRAP and
-//     CKA_UNWRAP true, so the wrapping key needs no extra flag.
+//   - pkcs11-tool's default --keygen (no --usage-* flag) puts only
+//     CKA_ENCRYPT and CKA_DECRYPT in the C_GenerateKey template; CKA_WRAP and
+//     CKA_UNWRAP are sent, both CK_TRUE, only with --usage-wrap. PKCS#11 v3.2
+//     §4.11 (secret key objects) gives CKA_WRAP no default, so it is
+//     token-specific: SoftHSM2 defaults it to CK_TRUE, go-xkms to CK_FALSE.
+//     §5.18.3 requires CKA_WRAP CK_TRUE on the wrapping key (and §5.18.4
+//     CKA_UNWRAP for C_UnwrapKey), so the wrapping key is generated with
+//     --usage-wrap.
 //   - The key being wrapped needs CKA_EXTRACTABLE, which pkcs11-tool only
 //     sets when --extractable is passed; go-xkms's C_WrapKey refuses a
 //     non-extractable target with CKR_KEY_UNEXTRACTABLE (see
@@ -69,12 +75,13 @@ func TestPKCS11Tool_KeyWrapUnwrap(t *testing.T) {
 		targetLabel := "wrap-target-aeskw"
 		targetID := "91"
 
-		// Wrapping key: AES-256, default usage flags (includes wrap+unwrap).
+		// Wrapping key: AES-256 with CKA_WRAP and CKA_UNWRAP set by --usage-wrap.
 		keygenOutput, keygenStderr, keygenErr := runPKCS11ToolCommand(t, cfg,
 			"--login", "--pin", cfg.PIN,
 			"--slot", cfg.SlotID,
 			"--keygen",
 			"--key-type", "aes:32",
+			"--usage-wrap",
 			"--label", wrapLabel,
 			"--id", wrapID,
 		)

@@ -388,9 +388,8 @@ request the forge refuses fails the run with the hand-opening instructions.
 `release-tag.test.sh` covers the same shape of fixture, extended with a real
 `chore(release): <version>` commit (`mkrelease_commit`, reproducing exactly
 what a real `release-alpha.sh` cut leaves) and real SSH tag signing with this
-repository's own agent key
-(`~/.agent-identity/keys/agent-go-xkms.key` — never the
-owner's hardware key). It asserts each of the four preconditions refuses on
+repository's own agent key (the checkout's `user.signingkey`, or
+`RELEASE_TAG_TEST_SIGNING_KEY` — never the owner's hardware key). It asserts each of the four preconditions refuses on
 its own: a local `HEAD` behind the fetched tip, a checkout on the wrong
 branch, a `VERSION` not matching `--version`, a `VERSION` match with no
 reachable release commit, an inconsistent pin set at the release commit, and a

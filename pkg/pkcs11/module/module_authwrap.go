@@ -603,14 +603,13 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 
 	// Validate wrapping key has CKA_WRAP attribute set to true.
 	//
-	// The code is CKR_WRAPPING_KEY_TYPE_INCONSISTENT, not
-	// CKR_KEY_FUNCTION_NOT_PERMITTED: C_WrapKeyAuthenticated's return table
-	// lists the former and does not list the latter, and PKCS#11 v3.2 §5.1
-	// defines it as "the type of the wrapping key does not match the type
-	// required by the mechanism", which is what a key not marked for wrapping
-	// is.
+	// The code is CKR_KEY_FUNCTION_NOT_PERMITTED, for the reason C_WrapKey
+	// gives: PKCS#11 v3.2 §5.1.6 defines it as a key used for a purpose its
+	// attributes do not allow, and defines CKR_WRAPPING_KEY_TYPE_INCONSISTENT
+	// as a key type inconsistent with the mechanism, which a correctly typed
+	// key lacking CKA_WRAP is not (§5.1.7, §5.18.6).
 	if !isBoolAttributeTrue(wrappingKey, CKA_WRAP) {
-		return nil, NewPKCS11ErrorWithMessage(CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
+		return nil, NewPKCS11ErrorWithMessage(CKR_KEY_FUNCTION_NOT_PERMITTED,
 			"wrapping key does not have CKA_WRAP set to true")
 	}
 
@@ -800,12 +799,11 @@ func (m *Module) WrapKeyAuthenticatedSize(sessionHandle SessionHandle, mechanism
 	if err != nil {
 		return 0, NewPKCS11Error(CKR_WRAPPING_KEY_HANDLE_INVALID)
 	}
-	// CKR_WRAPPING_KEY_TYPE_INCONSISTENT rather than
 	// CKR_KEY_FUNCTION_NOT_PERMITTED, for the reason given in
 	// WrapKeyAuthenticated: the size query must answer with the same code the
 	// wrap itself would.
 	if !isBoolAttributeTrue(wrappingKey, CKA_WRAP) {
-		return 0, NewPKCS11ErrorWithMessage(CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
+		return 0, NewPKCS11ErrorWithMessage(CKR_KEY_FUNCTION_NOT_PERMITTED,
 			"wrapping key does not have CKA_WRAP set to true")
 	}
 
@@ -997,14 +995,12 @@ func (m *Module) UnwrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *
 
 	// Validate unwrapping key has CKA_UNWRAP attribute set to true.
 	//
-	// The code is CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, not
-	// CKR_KEY_FUNCTION_NOT_PERMITTED: C_UnwrapKeyAuthenticated's return table
-	// lists the former and does not list the latter, and PKCS#11 v3.2 §5.1
-	// defines it as "the type of the unwrapping key does not match the type
-	// required by the mechanism", which is what a key not marked for
-	// unwrapping is.
+	// The code is CKR_KEY_FUNCTION_NOT_PERMITTED, for the reason C_UnwrapKey
+	// gives: the key's type is consistent with the mechanism, so §5.1.6's
+	// CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT does not apply, and only the
+	// attribute is wrong (§5.1.7, §5.18.7).
 	if !isBoolAttributeTrue(unwrappingKey, CKA_UNWRAP) {
-		return ObjectHandle(InvalidHandle), NewPKCS11ErrorWithMessage(CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT,
+		return ObjectHandle(InvalidHandle), NewPKCS11ErrorWithMessage(CKR_KEY_FUNCTION_NOT_PERMITTED,
 			"unwrapping key does not have CKA_UNWRAP set to true")
 	}
 

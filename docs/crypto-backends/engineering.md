@@ -681,15 +681,16 @@ credentials, with `session_token` optional. Otherwise the AWS SDK default
 chain is used, through `awsconfig.LoadDefaultConfig`
 (`pkg/backend/awskms/awskms.go:138-153`).
 
-**Generation.** `getKeySpec` (`awskms.go:492-513`) maps every RSA request to
-`RSA_2048` and every ECDSA request to `ECC_NIST_P256`, regardless of the
-requested size or curve (**defect**). Symmetric and HMAC keys use
-`SYMMETRIC_DEFAULT`.
+**Generation.** `asymmetricKeySpec` (`awskms.go:526-551`) maps the requested
+RSA size to `RSA_2048`, `RSA_3072` or `RSA_4096` and the requested curve to
+`ECC_NIST_P256`, `ECC_NIST_P384` or `ECC_NIST_P521` (`awskms.go:493-505`),
+defaulting to RSA-2048 and P-256. Any other size or curve is rejected with
+`ErrInvalidKeySpec`. Symmetric and HMAC keys use `SYMMETRIC_DEFAULT`.
 
 **Signing.** Supported schemes are RSASSA-PSS and PKCS#1 v1.5 with
-SHA-256/384/512, and ECDSA with SHA-256/384/512 (`awskms.go:947-974`).
+SHA-256/384/512, and ECDSA with SHA-256/384/512 (`awskms.go:983-1026`).
 
-**Import.** The wrapping key spec is RSA-2048 (`awskms.go:1057`).
+**Import.** The wrapping key spec is RSA-2048 (`awskms.go:1102`).
 
 #### gcpkms
 
@@ -712,13 +713,17 @@ SHA-256/384/512, and ECDSA with SHA-256/384/512 (`awskms.go:947-974`).
 
 `xkmsd` cannot set `endpoint`, `insecure` or `CredentialsJSON`.
 
-**Generation.** RSA keys are PKCS#1 SHA-256 at 2048, 3072 or 4096 bits
-(`gcpkms.go:424-430`). EC keys are P-256 with SHA-256 or P-384 with SHA-384
-(`gcpkms.go:518-522`). Symmetric keys use `GOOGLE_SYMMETRIC_ENCRYPTION`
-(`gcpkms.go:632`).
+**Generation.** RSA keys are PKCS#1 SHA-256 at the requested 2048, 3072 or
+4096 bits (`gcpkms.go:1457-1461`). EC keys are P-256 with SHA-256 or P-384
+with SHA-384 on the requested curve (`gcpkms.go:1466-1469`). Both default to
+RSA-2048 and P-256. Cloud KMS defines no EC_SIGN algorithm on P-521, so P-521
+and any other curve are rejected with `ErrUnsupportedCurve`; other RSA sizes are
+rejected with `ErrUnsupportedKeySize`. Import (`mapKeyAttributesToAlgorithm`)
+uses the same mapping. Symmetric keys use `GOOGLE_SYMMETRIC_ENCRYPTION`
+(`gcpkms.go:622`).
 
 **Import.** Import jobs use the `HSM` protection level
-(`gcpkms_importexport.go:65`).
+(`gcpkms_importexport.go:66`).
 
 #### azurekv
 

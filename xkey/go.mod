@@ -43,14 +43,14 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	github.com/tobischo/gokeepasslib/v3 v3.7.0
+	github.com/tobischo/gokeepasslib/v3 v3.7.1
 	github.com/wailsapp/wails/v2 v2.17.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	google.golang.org/grpc v1.84.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.60.1
+	modernc.org/sqlite v1.61.0
 	tinygo.org/x/bluetooth v0.16.0
 )
 
@@ -123,7 +123,7 @@ require (
 	github.com/dolthub/go-mysql-server v0.20.1-0.20260812191550-bda99d66b4bf // indirect
 	github.com/dolthub/jsonpath v0.0.2-0.20260807003725-336cd89c1c76 // indirect
 	github.com/dolthub/vitess v0.0.0-20260728212736-0542037326d7 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
@@ -170,13 +170,13 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
-	github.com/jeremyhahn/arduino-generic/sdk/go v0.7.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.22.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // indirect
+	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.20.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
@@ -213,7 +213,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -246,7 +246,7 @@ require (
 	github.com/tinygo-org/pio v0.3.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
-	github.com/tobischo/argon2 v0.1.0 // indirect
+	github.com/tobischo/argon2 v0.2.0 // indirect
 	github.com/transparency-dev/merkle v0.0.2 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.2 // indirect
@@ -297,7 +297,7 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
-	modernc.org/libc v1.77.1 // indirect
+	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 	rsc.io/qr v0.2.0 // indirect

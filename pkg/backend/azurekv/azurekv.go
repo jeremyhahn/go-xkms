@@ -28,8 +28,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
@@ -328,11 +330,11 @@ func (b *Backend) Capabilities() types.Capabilities {
 	caps.Import = true              // Supported via ImportKey API
 	caps.Export = false             // Azure KV does not allow key extraction for security
 	caps.SecurityLevel = types.SecurityLevelMedium
-	// getKeyParameters creates RSA 2048 and EC P-256 keys only; symmetric
-	// keys are AES secrets of any GCM size.
+	// getKeyParameters creates the RSA sizes in rsaKeySizes and the curves
+	// in eccCurves; symmetric keys are AES secrets of any GCM size.
 	caps.KeyAlgorithms = types.KeyAlgorithms{
-		RSAKeySizes: []int{types.RSAKeySize2048},
-		ECDSACurves: []string{"P-256"},
+		RSAKeySizes: slices.Sorted(maps.Keys(rsaKeySizes)),
+		ECDSACurves: slices.Sorted(maps.Keys(eccCurves)),
 		Symmetric:   []types.SymmetricAlgorithm{types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM},
 	}
 	return caps
@@ -628,6 +630,24 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 }
 
 // getKeyParameters converts types.KeyAttributes to Azure Key Vault CreateKeyParameters.
+// rsaKeySizes maps an RSA modulus size to the azkeys CreateKeyParameters
+// KeySize Azure Key Vault creates for key type RSA ("Key types, algorithms,
+// and operations": RSA 2048, 3072 and 4096 bits).
+var rsaKeySizes = map[int]int32{
+	types.RSAKeySize2048: 2048,
+	types.RSAKeySize3072: 3072,
+	types.RSAKeySize4096: 4096,
+}
+
+// eccCurves maps a NIST curve name to the azkeys CreateKeyParameters Curve
+// Azure Key Vault creates for key type EC (azkeys CurveNameP256, P384,
+// P521). P-256K is not mapped: pkg/types has no elliptic.Curve for it.
+var eccCurves = map[string]azkeys.CurveName{
+	"P-256": azkeys.CurveNameP256,
+	"P-384": azkeys.CurveNameP384,
+	"P-521": azkeys.CurveNameP521,
+}
+
 func (b *Backend) getKeyParameters(attrs *types.KeyAttributes) (azkeys.CreateKeyParameters, error) {
 	params := azkeys.CreateKeyParameters{}
 
@@ -636,8 +656,14 @@ func (b *Backend) getKeyParameters(attrs *types.KeyAttributes) (azkeys.CreateKey
 		keyType := azkeys.KeyTypeRSA
 		params.Kty = &keyType
 
-		// Default to RSA 2048 if not specified
-		keySize := int32(2048)
+		requested := types.RSAKeySize2048
+		if attrs.RSAAttributes != nil && attrs.RSAAttributes.KeySize != 0 {
+			requested = attrs.RSAAttributes.KeySize
+		}
+		keySize, ok := rsaKeySizes[requested]
+		if !ok {
+			return params, &errs.Detail{Err: ErrInvalidKeySize, Detail: fmt.Sprintf("RSA key size %d", requested)}
+		}
 		params.KeySize = &keySize
 
 		// Set key operations
@@ -650,8 +676,14 @@ func (b *Backend) getKeyParameters(attrs *types.KeyAttributes) (azkeys.CreateKey
 		keyType := azkeys.KeyTypeEC
 		params.Kty = &keyType
 
-		// Default to P-256 if not specified
-		curve := azkeys.CurveNameP256
+		curveName := "P-256"
+		if attrs.ECCAttributes != nil && attrs.ECCAttributes.Curve != nil {
+			curveName = types.CurveName(attrs.ECCAttributes.Curve)
+		}
+		curve, ok := eccCurves[curveName]
+		if !ok {
+			return params, &errs.Detail{Err: ErrInvalidCurve, Detail: "ECDSA curve " + curveName}
+		}
 		params.Curve = &curve
 
 		// Set key operations
