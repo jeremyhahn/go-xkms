@@ -155,7 +155,7 @@ func newSimulatedDeviceAdapter(t *testing.T, issuer *attestationCA) *XKMSTPMAdap
 
 	iak, err := tpm.IAK()
 	require.NoError(t, err)
-	require.NoError(t, tpm.ProvisionIAKCert(issuer.issueAIK(t, iak)))
+	require.NoError(t, tpm.ProvisionIAKCert(nil, issuer.issueAIK(t, iak)))
 
 	return NewXKMSTPMAdapter(tpm, factory.KeyBackend())
 }
