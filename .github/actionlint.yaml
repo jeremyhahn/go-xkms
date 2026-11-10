@@ -6,7 +6,4 @@ self-hosted-runner:
     - dells
     - bigdisk
     - ci-gate
-    # 2026-11-10 (DS-8210): the label set of the self-hosted bigdisk runner.
-    - self-hosted
-    - linux
-    - x64
+    - bigdisk
