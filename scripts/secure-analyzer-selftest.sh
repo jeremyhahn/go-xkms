@@ -199,6 +199,36 @@ else
 		fail "keying fixture: the baseline finding did not match its own freshly derived allowlist entry"
 	fi
 
+	# A cold module cache makes `go vet` print `go: downloading <module>
+	# <version>` into the same output as the diagnostics (main CI red, run
+	# 42881658762). Those lines, and only those, are not failures; any other
+	# non-diagnostic line still is.
+	cold_out="$WORK/keyed-cold.out"
+	printf '%s\n%s\n' 'go: downloading example.com/m v1.0.0' "$diagline" >"$cold_out"
+	before=$fails
+	process_diagnostics "$cold_out" "" "$KEYWORK" >"$WORK/keyed-cold.classify"
+	if [ "$fails" -eq "$before" ]; then
+		note "ok: a go: downloading line next to an allowed finding does not fail the sweep"
+	else
+		fails=$before
+		fail "cold cache: a go: downloading line failed the sweep:
+      $(cat "$WORK/keyed-cold.classify")"
+	fi
+	for other in 'go: example.com/m: missing go.sum entry' \
+		'go: downloading example.com/m v1.0.0 extra' \
+		'go: downloading example.com/m'; do
+		printf '%s\n%s\n' "$other" "$diagline" >"$cold_out"
+		before=$fails
+		process_diagnostics "$cold_out" "" "$KEYWORK" >"$WORK/keyed-cold.classify"
+		if [ "$fails" -eq $((before + 1)) ]; then
+			fails=$before
+			note "ok: a non-diagnostic line still fails the sweep: $other"
+		else
+			fails=$before
+			fail "a non-diagnostic line did not fail the sweep exactly once: $other"
+		fi
+	done
+
 	# A comment inserted directly ABOVE the field shifts its line number and
 	# changes nothing else about it -- go-xkms#607 exists because the
 	# previous path:line key would stop matching here; path+rule+symbol
