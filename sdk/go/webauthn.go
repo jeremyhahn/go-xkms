@@ -41,6 +41,9 @@ type WebAuthnSessionStore = webauthn.SessionStore
 // WebAuthnPendingRegistration is the account a public registration creates at finish, saved with its session.
 type WebAuthnPendingRegistration = webauthn.PendingRegistration
 
+// WebAuthnSessionData is the ceremony session a custom session store saves and takes.
+type WebAuthnSessionData = webauthn.SessionData
+
 // NewWebAuthnService constructs the WebAuthn relying-party service.
 var NewWebAuthnService = webauthn.NewService
 

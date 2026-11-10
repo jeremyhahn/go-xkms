@@ -5,13 +5,11 @@ import (
 	"errors"
 	"sync"
 	"testing"
-
-	gowebauthn "github.com/go-webauthn/webauthn/webauthn"
 )
 
 // sdkSessionStore is a custom WebAuthn session store a composer writes
 // against the SDK alone: every type in its method set comes from this
-// package or from go-webauthn.
+// package.
 type sdkSessionStore struct {
 	mu       sync.Mutex
 	next     int
@@ -19,7 +17,7 @@ type sdkSessionStore struct {
 }
 
 type sdkSessionEntry struct {
-	data    *gowebauthn.SessionData
+	data    *WebAuthnSessionData
 	pending *WebAuthnPendingRegistration
 }
 
@@ -27,11 +25,11 @@ var _ WebAuthnSessionStore = (*sdkSessionStore)(nil)
 
 var errSDKSessionNotFound = errors.New("session not found")
 
-func (s *sdkSessionStore) Save(ctx context.Context, data *gowebauthn.SessionData) (string, error) {
+func (s *sdkSessionStore) Save(ctx context.Context, data *WebAuthnSessionData) (string, error) {
 	return s.SaveRegistration(ctx, data, nil)
 }
 
-func (s *sdkSessionStore) SaveRegistration(_ context.Context, data *gowebauthn.SessionData, pending *WebAuthnPendingRegistration) (string, error) {
+func (s *sdkSessionStore) SaveRegistration(_ context.Context, data *WebAuthnSessionData, pending *WebAuthnPendingRegistration) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.next++
@@ -40,7 +38,7 @@ func (s *sdkSessionStore) SaveRegistration(_ context.Context, data *gowebauthn.S
 	return id, nil
 }
 
-func (s *sdkSessionStore) Get(_ context.Context, sessionID string) (*gowebauthn.SessionData, error) {
+func (s *sdkSessionStore) Get(_ context.Context, sessionID string) (*WebAuthnSessionData, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry, ok := s.sessions[sessionID]
@@ -50,12 +48,12 @@ func (s *sdkSessionStore) Get(_ context.Context, sessionID string) (*gowebauthn.
 	return entry.data, nil
 }
 
-func (s *sdkSessionStore) Take(ctx context.Context, sessionID string) (*gowebauthn.SessionData, error) {
+func (s *sdkSessionStore) Take(ctx context.Context, sessionID string) (*WebAuthnSessionData, error) {
 	data, _, err := s.TakeRegistration(ctx, sessionID)
 	return data, err
 }
 
-func (s *sdkSessionStore) TakeRegistration(_ context.Context, sessionID string) (*gowebauthn.SessionData, *WebAuthnPendingRegistration, error) {
+func (s *sdkSessionStore) TakeRegistration(_ context.Context, sessionID string) (*WebAuthnSessionData, *WebAuthnPendingRegistration, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry, ok := s.sessions[sessionID]
@@ -83,7 +81,7 @@ func TestWebAuthnSessionStore_ImplementableFromTheSDK(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	data := &gowebauthn.SessionData{Challenge: "challenge"}
+	data := &WebAuthnSessionData{Challenge: "challenge"}
 	pending := &WebAuthnPendingRegistration{Email: "sdk@example.com", DisplayName: "SDK"}
 	id, err := params.SessionStore.SaveRegistration(ctx, data, pending)
 	if err != nil {

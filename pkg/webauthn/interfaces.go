@@ -51,6 +51,9 @@ type SessionCleaner interface {
 
 // SessionStore manages temporary WebAuthn session data during registration
 // and authentication ceremonies. Sessions are typically short-lived (60-120 seconds).
+// SessionData is the go-webauthn ceremony session a SessionStore saves and takes.
+type SessionData = webauthn.SessionData
+
 // PendingRegistration is the account a public registration ceremony creates
 // at finish. The ceremony runs under the random user handle in the session's
 // UserID; a SessionStore persists this record alongside the session.
