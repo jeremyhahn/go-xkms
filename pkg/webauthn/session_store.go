@@ -127,9 +127,43 @@ func (s *MemorySessionStore) Save(ctx context.Context, data *webauthn.SessionDat
 	return s.SaveRegistration(ctx, data, nil)
 }
 
+// Byte limits of a pending registration. An anonymous caller chooses both
+// fields and a store keeps them until the session expires, while the session
+// cap counts entries, not bytes: the limits bound what one entry can hold.
+const (
+	// MaxRegistrationEmailBytes is the longest email a pending registration
+	// carries: the 254-byte maximum of a deliverable address.
+	MaxRegistrationEmailBytes = 254
+
+	// MaxRegistrationDisplayNameBytes is the longest display name a pending
+	// registration carries.
+	MaxRegistrationDisplayNameBytes = 64
+)
+
+// Validate refuses a pending registration whose email or display name
+// exceeds its byte limit with an error that wraps ErrInvalidRequest. A nil
+// pending registration is valid: the session carries none.
+func (p *PendingRegistration) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if len(p.Email) > MaxRegistrationEmailBytes {
+		return NewError("email exceeds 254 bytes", ErrInvalidRequest)
+	}
+	if len(p.DisplayName) > MaxRegistrationDisplayNameBytes {
+		return NewError("display name exceeds 64 bytes", ErrInvalidRequest)
+	}
+	return nil
+}
+
 // SaveRegistration is Save for a public registration ceremony: the
-// pending registration lives and expires with the session.
+// pending registration lives and expires with the session. It refuses a
+// pending registration that fails Validate before it saves anything.
 func (s *MemorySessionStore) SaveRegistration(ctx context.Context, data *webauthn.SessionData, pending *PendingRegistration) (string, error) {
+	if err := pending.Validate(); err != nil {
+		return "", err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
