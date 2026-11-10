@@ -75,6 +75,14 @@ var NewWebAuthnQRDBUserStoreAdapter = webauthn.NewQRDBUserStoreAdapter
 // "no passkey enrolled" case distinctly from other login failures.
 var ErrWebAuthnNoCredentials = webauthn.ErrNoCredentials
 
+// ErrWebAuthnSessionNotFound is what a custom session store returns for a
+// missing or already taken session; the service answers it with 400 invalid_session.
+var ErrWebAuthnSessionNotFound = webauthn.ErrSessionNotFound
+
+// ErrWebAuthnSessionExpired is what a custom session store returns for an
+// expired session; the service answers it with session_expired.
+var ErrWebAuthnSessionExpired = webauthn.ErrSessionExpired
+
 // WebAuthnUser is the interface a WebAuthn account entity satisfies.
 type WebAuthnUser = webauthn.User
 
