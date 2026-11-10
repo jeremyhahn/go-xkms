@@ -16,7 +16,9 @@
 package fido2
 
 import (
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -65,7 +67,12 @@ func TestLinuxHIDDevice_UHIDRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = kernel.Close() })
 
 	cfg := uhid.DefaultCreateConfig()
-	cfg.Uniq = fmt.Sprintf("hid2052-%d", os.Getpid())
+	// A PID is not unique across containers that share the host kernel, so
+	// the device carries a random HID_UNIQ that no other run can match.
+	nonce := make([]byte, 16)
+	_, nonceErr := rand.Read(nonce)
+	require.NoError(t, nonceErr)
+	cfg.Uniq = "hid2052-" + hex.EncodeToString(nonce)
 	require.NoError(t, kernel.Create(cfg))
 
 	path := findUHIDHidrawNode(t, cfg.Uniq)
@@ -134,7 +141,7 @@ func findUHIDHidrawNode(t *testing.T, uniq string) string {
 		entries, _ := os.ReadDir(hidrawClassDir)
 		for _, entry := range entries {
 			uevent, err := os.ReadFile(filepath.Join(hidrawClassDir, entry.Name(), "device", "uevent"))
-			if err != nil || !strings.Contains(string(uevent), want) {
+			if err != nil || !ueventHasLine(string(uevent), want) {
 				continue
 			}
 			node := filepath.Join(devDir, entry.Name())
@@ -158,6 +165,17 @@ func findUHIDHidrawNode(t *testing.T, uniq string) string {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// ueventHasLine reports whether one line of a sysfs uevent equals want
+// exactly, so HID_UNIQ=abc never matches HID_UNIQ=abcd.
+func ueventHasLine(uevent, want string) bool {
+	for _, line := range strings.Split(uevent, "\n") {
+		if line == want {
+			return true
+		}
+	}
+	return false
 }
 
 // mknodHidrawNode creates a character device file for the named hidraw node
@@ -186,11 +204,25 @@ func readRawUHIDOutput(t *testing.T, kernel *uhid.Device) []byte {
 	t.Helper()
 	const sizeOffset = 4 + uhid.MaxReportDescriptorSize
 	buf := make([]byte, sizeOffset+3)
+	fd := kernel.Fd()
 	deadline := time.Now().Add(uhidRoundTripTimeout)
-	for time.Now().Before(deadline) {
-		n, err := syscall.Read(kernel.Fd(), buf)
+	for {
+		// The descriptor blocks, so a read with no UHID_OUTPUT pending would
+		// never return: poll first, bounded by the time left to the deadline.
+		ms := int(time.Until(deadline).Milliseconds())
+		if ms < 1 {
+			ms = 1
+		}
+		ready, err := unix.Poll([]unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}, ms)
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		require.NoError(t, err)
+		if ready == 0 {
+			break
+		}
+		n, err := syscall.Read(fd, buf)
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR) {
-			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 		require.NoError(t, err)
