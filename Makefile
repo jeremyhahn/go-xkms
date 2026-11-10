@@ -346,7 +346,23 @@ COMPOSE_NS := go-xkms-$(COMPOSE_RUN_ID)
 #   COMPOSE_PROJECT_NAME  is inherited by child processes, so a script a recipe
 #                         shells out to lands in the same project instead of
 #                         silently falling back to its directory basename.
-compose = COMPOSE_PROJECT_NAME=$(COMPOSE_NS)-$(1) docker compose -p $(COMPOSE_NS)-$(1)
+#
+# COMPOSE_BIN is the host's Compose: the `docker compose` plugin first, else
+# the standalone docker-compose binary. A Docker CLI without the plugin parses
+# `docker compose -p ...` as `docker -p` and fails late, at the devcontainer's
+# tar step (run 42881658762), so it is detected here, once per make: `:=` under
+# ifndef, because the compose variables below are `:=` and a `?=` would run
+# `docker compose version` again at each of them.
+ifndef COMPOSE_BIN
+COMPOSE_BIN := $(shell docker compose version >/dev/null 2>&1 && echo 'docker compose' || { command -v docker-compose >/dev/null 2>&1 && echo docker-compose; })
+endif
+
+# Without a Compose, expanding the macro stops make, also under -n, before
+# any compose command line runs or is printed. The variables built from it
+# (DOCKER_COMPOSE, EMULATOR_COMPOSE, ...) are recursive (`=`) so that this
+# happens only when a recipe that uses compose is expanded: `make help` and
+# every other target still work on such a host.
+compose = $(if $(strip $(COMPOSE_BIN)),COMPOSE_PROJECT_NAME=$(COMPOSE_NS)-$(1) $(COMPOSE_BIN) -p $(COMPOSE_NS)-$(1),$(error docker compose plugin or docker-compose is required (run 42881658762)))
 
 # An image TAG is daemon-global -- the project namespace does not reach it.
 # `docker build -t go-xkms-integration:latest` on one job retags that name for
@@ -2026,7 +2042,7 @@ coverage-hardware-storage:
 # Cloud Service Emulator Management
 # ==============================================================================
 
-EMULATOR_COMPOSE := $(call compose,emulators) -f docker-compose.emulators.yml
+EMULATOR_COMPOSE = $(call compose,emulators) -f docker-compose.emulators.yml
 
 .PHONY: emulator-start
 ## emulator-start: Start cloud service emulators
@@ -2636,9 +2652,9 @@ COMPOSE_PROJECT := $(COMPOSE_NS)-devcontainer
 # target path across -f files, so the overlay need only list the one mount
 # that changes.
 ifneq ($(COMPOSE_RUN_ID),local)
-DOCKER_COMPOSE := $(call compose,devcontainer) -f build/docker/devcontainer/compose.yaml -f build/docker/devcontainer/compose.ci.yaml
+DOCKER_COMPOSE = $(call compose,devcontainer) -f build/docker/devcontainer/compose.yaml -f build/docker/devcontainer/compose.ci.yaml
 else
-DOCKER_COMPOSE := $(call compose,devcontainer) -f build/docker/devcontainer/compose.yaml
+DOCKER_COMPOSE = $(call compose,devcontainer) -f build/docker/devcontainer/compose.yaml
 endif
 
 # Devcontainer identity is a POSITIVE marker, never an ambient side effect.
@@ -4788,7 +4804,7 @@ integration-test-local-api:
 # Docker configuration for protocol integration tests
 DEVCONTAINER_IMAGE := go-xkms-devcontainer:latest
 API_TEST_NETWORK := xkms-api-test
-API_COMPOSE := cd $(API_TEST_DIR) && $(call compose,api)
+API_COMPOSE = cd $(API_TEST_DIR) && $(call compose,api)
 
 # Tear down THIS run's API stack, and nothing else.
 #
@@ -4973,11 +4989,11 @@ integration-test-sdk-go-remote:
 # Bootstrap Integration Tests
 # ==============================================================================
 
-BOOTSTRAP_COMPOSE := $(call compose,bootstrap) -f test/integration/bootstrap/docker-compose.yml
+BOOTSTRAP_COMPOSE = $(call compose,bootstrap) -f test/integration/bootstrap/docker-compose.yml
 
 # Absolute -f path: the ssh-backend lane tears its stack down from a trap,
 # which can fire with the shell in any directory.
-AWSKMS_COMPOSE := $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/docker-compose.yml
+AWSKMS_COMPOSE = $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/docker-compose.yml
 
 .PHONY: integration-test-bootstrap
 ## integration-test-bootstrap: Run bootstrap integration tests (DANE/TLSA, Noise, SPKI, Direct, Auto)
