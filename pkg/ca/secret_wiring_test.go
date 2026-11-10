@@ -320,3 +320,60 @@ func TestCarryKeyPassword_NoPasswordLeavesIdentityUnchanged(t *testing.T) {
 	noKeys := Identity{}
 	assert.NoError(t, carryKeyPassword(ctx, &noKeys, &types.KeyAttributes{Password: pw}), "an identity without keys is a no-op")
 }
+
+// unreadablePassword is a Password whose secret cannot be retrieved: Bytes
+// returns nil and WithBytes reports the retrieval error without calling fn,
+// as a platform password does when unsealing fails.
+type unreadablePassword struct {
+	err error
+}
+
+func (p unreadablePassword) Bytes() []byte { return nil }
+
+func (p unreadablePassword) WithBytes(func([]byte) error) error { return p.err }
+
+func (p unreadablePassword) String() string { return types.PasswordRedacted }
+
+func (p unreadablePassword) Clear() {}
+
+// TestCA_UnreadableKeyPassword_FailsConstruction verifies that a configured
+// key password which cannot be read fails CA construction with the retrieval
+// error, instead of building the identity with no password (which would let a
+// later initialization persist an unencrypted CA key).
+func TestCA_UnreadableKeyPassword_FailsConstruction(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	errUnavailable := errors.New("password unavailable")
+
+	t.Run("carryKeyPassword", func(t *testing.T) {
+		t.Parallel()
+		id := rootIdentity("Unreadable PW CA")
+		err := carryKeyPassword(ctx, &id, &types.KeyAttributes{Password: unreadablePassword{err: errUnavailable}})
+		require.ErrorIs(t, err, errUnavailable)
+		assert.Nil(t, id.Keys[0].Password, "no password may land on the identity")
+	})
+
+	t.Run("New", func(t *testing.T) {
+		t.Parallel()
+		root := rootIdentity("Unreadable PW New CA")
+		keyAttrs, err := root.ToKeyAttributes(ctx)
+		require.NoError(t, err)
+		keyAttrs.Password = unreadablePassword{err: errUnavailable}
+
+		instance, err := New(&Params{
+			Config: &CAConfig{
+				Identity:  "Unreadable PW New CA",
+				Subject:   &Subject{CommonName: "Unreadable PW New CA"},
+				IsRootCA:  true,
+				StoreType: types.StoreSoftware,
+			},
+			KeyAttributes:   keyAttrs,
+			KeyStore:        newInMemoryBackend(t),
+			BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+			RevocationStore: storage.NewMemory(),
+			CertStore:       newInMemoryCertStore(t),
+		})
+		require.ErrorIs(t, err, errUnavailable)
+		assert.Nil(t, instance, "no CA may be built without its configured password")
+	})
+}
