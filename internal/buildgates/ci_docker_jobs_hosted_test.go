@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -12,38 +11,30 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DS-8210 (Company Agent m2450 (2)): the coverage shards and Integration are
-// the two jobs a hosted runner does not carry, so on github.com they run on
-// the self-hosted bigdisk runner. That runner is persistent, so it runs only
-// code from this repository: a push to refs/heads/main, or a pull request
-// whose head repository is this repository. A fork PR, another ref,
-// workflow_dispatch and the schedule stay on ubuntu-latest. The tests below
-// evaluate each job's runs-on expression; they do not look for the label.
+// DS-8215 (Company Agent m2460, InfoSec W-1): the coverage shards and
+// Integration run Docker, so on github.com they run on GitHub-hosted runners,
+// for every event: a push to main and a pull request from this repository
+// included. The tests below evaluate each job's runs-on expression for each
+// event; they do not look for a label in its text.
 
 const (
 	runnerRepository = "jeremyhahn/go-xkms"
 	runnerGitHub     = "https://github.com"
 	runnerOtherForge = "https://git.example.test"
-	// runnerScheduleIf is the v1.29.3 clause that keeps a schedule run's
-	// bigdisk jobs off unless the schedule guard says `run`.
+	// runnerScheduleIf is the v1.29.3 clause that keeps a job off a schedule
+	// run unless the schedule guard says `run`.
 	runnerScheduleIf = "github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run'"
-	// runnerTrimRun and runnerTrimIf are the v1.22 cache trim step as the
-	// image and build jobs write it.
-	runnerTrimRun = `scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"`
-	runnerTrimIf  = "${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}"
-	// runnerCleanImages removes the images a run tagged; the Makefile derives
-	// the tag from IT_PROJECT, so the step passes the job's own.
-	runnerCleanImages = `make clean-run-images IT_PROJECT="$IT_PROJECT"`
 )
 
 var (
-	// bigdiskJobs are the jobs that take the bigdisk runner.
-	bigdiskJobs = []string{"coverage", "integration"}
-	// bigdiskLabels is the label set of the owner's self-hosted runner.
-	bigdiskLabels = []string{"self-hosted", "linux", "x64", "bigdisk"}
-	hostedLabels  = []string{"ubuntu-latest"}
-	// hostPackages matches a step that changes the persistent host.
-	hostPackages = regexp.MustCompile(`\b(sudo|apt-get)\b`)
+	// dockerJobs are the jobs that run Docker and stay hosted on github.com.
+	dockerJobs   = []string{"coverage", "integration"}
+	hostedLabels = []string{"ubuntu-latest"}
+	// otherForgeLabels is what both jobs select off github.com.
+	otherForgeLabels = []string{"bigdisk"}
+	// unhostedRunsOn are the spellings, in lower case, that a runs-on needs to
+	// name a runner GitHub does not host.
+	unhostedRunsOn = []string{"self-hosted", "fromjson"}
 )
 
 type runnerWorkflow struct {
@@ -52,18 +43,9 @@ type runnerWorkflow struct {
 }
 
 type runnerJob struct {
-	RunsOn yaml.Node    `yaml:"runs-on"`
-	Needs  needsList    `yaml:"needs"`
-	If     string       `yaml:"if"`
-	Steps  []runnerStep `yaml:"steps"`
-}
-
-type runnerStep struct {
-	Name string               `yaml:"name"`
-	Uses string               `yaml:"uses"`
-	If   string               `yaml:"if"`
-	Run  string               `yaml:"run"`
-	With map[string]yaml.Node `yaml:"with"`
+	RunsOn yaml.Node `yaml:"runs-on"`
+	Needs  needsList `yaml:"needs"`
+	If     string    `yaml:"if"`
 }
 
 func parseRunnerWorkflow(t *testing.T, data []byte) runnerWorkflow {
@@ -161,8 +143,8 @@ func isNameByte(c byte) bool {
 	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
-// exprParser evaluates the subset of the Actions expression language the
-// bigdisk runs-on lines use: string literals, context names, ==, !=, &&, ||,
+// exprParser evaluates the subset of the Actions expression language a
+// runs-on line may use: string literals, context names, ==, !=, &&, ||,
 // parentheses and fromJSON of a literal string array. A value is a string, a
 // bool or a []string. Both sides of && and || are evaluated, so an error in
 // the branch an event does not take is still an error.
@@ -356,29 +338,28 @@ func workflowTriggers(on yaml.Node) []string {
 	return events
 }
 
-func TestCIBigdiskRunner_OnlyThisRepositorysCode(t *testing.T) {
+func TestCIDockerJobs_HostedOnGitHubForEveryEvent(t *testing.T) {
 	wf := readRunnerWorkflow(t)
 	cases := []struct {
 		name string
 		ev   runnerEvent
 		want []string
 	}{
-		{"github.com push to main", runnerEvent{runnerGitHub, "push", "refs/heads/main", ""}, bigdiskLabels},
-		{"github.com same-repo PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", runnerRepository}, bigdiskLabels},
+		{"github.com push to main", runnerEvent{runnerGitHub, "push", "refs/heads/main", ""}, hostedLabels},
+		{"github.com same-repo PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", runnerRepository}, hostedLabels},
 		{"github.com fork PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", "mallory/go-xkms"}, hostedLabels},
 		{"github.com PR with an empty head repository", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", ""}, hostedLabels},
-		{"github.com fork PR whose ref reads refs/heads/main", runnerEvent{runnerGitHub, "pull_request", "refs/heads/main", "mallory/go-xkms"}, hostedLabels},
 		{"github.com push to refs/heads/main-x", runnerEvent{runnerGitHub, "push", "refs/heads/main-x", ""}, hostedLabels},
 		{"github.com push to refs/tags/main", runnerEvent{runnerGitHub, "push", "refs/tags/main", ""}, hostedLabels},
 		{"github.com workflow_dispatch", runnerEvent{runnerGitHub, "workflow_dispatch", "refs/heads/main", ""}, hostedLabels},
 		{"github.com schedule", runnerEvent{runnerGitHub, "schedule", "refs/heads/main", ""}, hostedLabels},
-		{"another forge push to main", runnerEvent{runnerOtherForge, "push", "refs/heads/main", ""}, []string{"bigdisk"}},
-		{"another forge same-repo PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", runnerRepository}, []string{"bigdisk"}},
-		{"another forge fork PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", "mallory/go-xkms"}, []string{"bigdisk"}},
-		{"another forge workflow_dispatch", runnerEvent{runnerOtherForge, "workflow_dispatch", "refs/heads/main", ""}, []string{"bigdisk"}},
-		{"another forge schedule", runnerEvent{runnerOtherForge, "schedule", "refs/heads/main", ""}, []string{"bigdisk"}},
+		{"another forge push to main", runnerEvent{runnerOtherForge, "push", "refs/heads/main", ""}, otherForgeLabels},
+		{"another forge same-repo PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", runnerRepository}, otherForgeLabels},
+		{"another forge fork PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", "mallory/go-xkms"}, otherForgeLabels},
+		{"another forge workflow_dispatch", runnerEvent{runnerOtherForge, "workflow_dispatch", "refs/heads/main", ""}, otherForgeLabels},
+		{"another forge schedule", runnerEvent{runnerOtherForge, "schedule", "refs/heads/main", ""}, otherForgeLabels},
 	}
-	for _, name := range bigdiskJobs {
+	for _, name := range dockerJobs {
 		j, ok := wf.Jobs[name]
 		if !ok {
 			t.Errorf("%s: no such job", name)
@@ -387,6 +368,11 @@ func TestCIBigdiskRunner_OnlyThisRepositorysCode(t *testing.T) {
 		if j.RunsOn.Kind != yaml.ScalarNode {
 			t.Errorf("%s: runs-on is not a scalar", name)
 			continue
+		}
+		for _, word := range unhostedRunsOn {
+			if strings.Contains(strings.ToLower(j.RunsOn.Value), word) {
+				t.Errorf("%s: runs-on %q contains %q", name, j.RunsOn.Value, word)
+			}
 		}
 		for _, tc := range cases {
 			t.Run(name+"/"+tc.name, func(t *testing.T) {
@@ -402,12 +388,12 @@ func TestCIBigdiskRunner_OnlyThisRepositorysCode(t *testing.T) {
 	}
 }
 
-func TestCIBigdiskRunner_JobsKeepThePersistentHostClean(t *testing.T) {
+func TestCIDockerJobs_KeepTheScheduleGuardAndTheTriggers(t *testing.T) {
 	wf := readRunnerWorkflow(t)
 	if slices.Contains(workflowTriggers(wf.On), "pull_request_target") {
 		t.Error("the workflow triggers on pull_request_target, which runs a fork's PR with this repository's token")
 	}
-	for _, name := range bigdiskJobs {
+	for _, name := range dockerJobs {
 		j, ok := wf.Jobs[name]
 		if !ok {
 			t.Errorf("%s: no such job", name)
@@ -419,117 +405,27 @@ func TestCIBigdiskRunner_JobsKeepThePersistentHostClean(t *testing.T) {
 		if !strings.Contains(j.If, runnerScheduleIf) {
 			t.Errorf("%s: if %q lacks %q", name, j.If, runnerScheduleIf)
 		}
-		checkouts := 0
-		for i, s := range j.Steps {
-			if strings.HasPrefix(s.Uses, "actions/checkout@") {
-				checkouts++
-				if v := s.With["persist-credentials"]; v.Value != "false" {
-					t.Errorf("%s: step %d (%s) has persist-credentials %q, want false", name, i, s.Uses, v.Value)
-				}
-			}
-			if m := hostPackages.FindString(s.Run); m != "" {
-				t.Errorf("%s: step %d (%s) runs %s on the persistent runner", name, i, s.Name, m)
-			}
-		}
-		if checkouts == 0 {
-			t.Errorf("%s: no actions/checkout step", name)
-		}
 	}
 }
 
-// stepsRunning returns the indexes of the steps whose run: carries one of the
-// commands.
-func stepsRunning(steps []runnerStep, commands ...string) []int {
-	var at []int
-	for i, s := range steps {
-		for _, c := range commands {
-			if strings.Contains(s.Run, c) {
-				at = append(at, i)
-				break
-			}
-		}
-	}
-	return at
-}
-
-// residueProblems reports what a bigdisk job would leave on the persistent
-// runner, which a hosted VM threw away with itself: Integration's run-tagged
-// images and the coverage shards' growth of the CI cache volumes.
-func residueProblems(wf runnerWorkflow) []string {
-	var problems []string
-
-	integration := wf.Jobs["integration"].Steps
-	teardowns := stepsRunning(integration, "docker compose", "make clean-test-containers", "make devcontainer-clean")
-	if len(teardowns) < 2 {
-		problems = append(problems, fmt.Sprintf("integration: %d compose tear-down steps, want at least 2", len(teardowns)))
-	}
-	switch clean := stepsRunning(integration, "make clean-run-images"); {
-	case len(clean) != 1:
-		problems = append(problems, fmt.Sprintf("integration: %d steps run make clean-run-images, want 1", len(clean)))
-	default:
-		s := integration[clean[0]]
-		if strings.TrimSpace(s.Run) != runnerCleanImages {
-			problems = append(problems, fmt.Sprintf("integration: step %q runs %q, want %q", s.Name, s.Run, runnerCleanImages))
-		}
-		if condition(s.If) != "always()" {
-			problems = append(problems, fmt.Sprintf("integration: step %q has if %q, want always()", s.Name, s.If))
-		}
-		if len(teardowns) > 0 && clean[0] < teardowns[len(teardowns)-1] {
-			problems = append(problems, fmt.Sprintf("integration: step %q comes before the compose tear-down %q", s.Name, integration[teardowns[len(teardowns)-1]].Name))
-		}
-	}
-
-	coverage := wf.Jobs["coverage"].Steps
-	shard := stepsRunning(coverage, "make coverage-shard")
-	image := stepsRunning(coverage, "ci-registry.sh use toolchain")
-	if len(shard) != 1 || len(image) != 1 {
-		problems = append(problems, fmt.Sprintf("coverage: %d coverage-shard steps and %d toolchain image steps, want 1 of each", len(shard), len(image)))
-	}
-	switch trim := stepsRunning(coverage, "trim-ci-caches.sh"); {
-	case len(trim) != 1:
-		problems = append(problems, fmt.Sprintf("coverage: %d steps run scripts/trim-ci-caches.sh, want 1", len(trim)))
-	default:
-		s := coverage[trim[0]]
-		if strings.TrimSpace(s.Run) != runnerTrimRun {
-			problems = append(problems, fmt.Sprintf("coverage: step %q runs %q, want %q", s.Name, s.Run, runnerTrimRun))
-		}
-		if collapse(s.If) != runnerTrimIf {
-			problems = append(problems, fmt.Sprintf("coverage: step %q has if %q, want %q", s.Name, s.If, runnerTrimIf))
-		}
-		if len(shard) == 1 && trim[0] > shard[0] {
-			problems = append(problems, fmt.Sprintf("coverage: step %q comes after the shard runs", s.Name))
-		}
-		if len(image) == 1 && trim[0] < image[0] {
-			problems = append(problems, fmt.Sprintf("coverage: step %q comes before the toolchain image it names", s.Name))
-		}
-	}
-	return problems
-}
-
-func TestCIBigdiskRunner_JobsLeaveNoResidue(t *testing.T) {
-	for _, p := range residueProblems(readRunnerWorkflow(t)) {
-		t.Error(p)
-	}
-}
-
-// TestCIBigdiskRunner_EvaluatorCanFail proves the evaluator rejects what it
-// does not know instead of reading it as a pass.
-func TestCIBigdiskRunner_EvaluatorCanFail(t *testing.T) {
+// TestCIDockerJobs_EvaluatorCanFail proves the evaluator rejects what it does
+// not know instead of reading it as a pass.
+func TestCIDockerJobs_EvaluatorCanFail(t *testing.T) {
 	ev := runnerEvent{runnerGitHub, "push", "refs/heads/main", ""}
 	for _, tc := range []struct{ name, runsOn string }{
-		{"unknown context", "${{ github.actor == 'x' && 'bigdisk' || 'ubuntu-latest' }}"},
-		{"unknown function", "${{ contains(github.ref, 'main') && 'bigdisk' || 'ubuntu-latest' }}"},
-		{"negation", "${{ !github.ref && 'bigdisk' || 'ubuntu-latest' }}"},
-		{"number", "${{ 1 == 1 && 'bigdisk' || 'ubuntu-latest' }}"},
+		{"unknown context", "${{ github.actor == 'x' && 'a' || 'ubuntu-latest' }}"},
+		{"unknown function", "${{ contains(github.ref, 'main') && 'a' || 'ubuntu-latest' }}"},
+		{"negation", "${{ !github.ref && 'a' || 'ubuntu-latest' }}"},
+		{"number", "${{ 1 == 1 && 'a' || 'ubuntu-latest' }}"},
 		{"fromJSON of a name", "${{ fromJSON(github.ref) }}"},
 		{"fromJSON of an object", "${{ fromJSON('{\"a\":1}') }}"},
 		{"fromJSON of null", "${{ fromJSON('null') }}"},
-		{"array compared", "${{ fromJSON('[\"a\"]') == 'a' && 'bigdisk' || 'ubuntu-latest' }}"},
+		{"array compared", "${{ fromJSON('[\"a\"]') == 'a' && 'b' || 'ubuntu-latest' }}"},
 		{"unterminated string", "${{ github.ref == 'refs/heads/main }}"},
-		{"unbalanced parenthesis", "${{ (github.ref == 'refs/heads/main' && 'bigdisk' || 'ubuntu-latest' }}"},
-		{"trailing token", "${{ 'bigdisk' 'ubuntu-latest' }}"},
-		{"error in the branch not taken", "${{ 'bigdisk' || github.actor }}"},
-		{"two expressions", "${{ 'bigdisk' }}${{ 'x' }}"},
+		{"unbalanced parenthesis", "${{ (github.ref == 'refs/heads/main' && 'a' || 'ubuntu-latest' }}"},
+		{"trailing token", "${{ 'a' 'ubuntu-latest' }}"},
+		{"error in the branch not taken", "${{ 'a' || github.actor }}"},
+		{"two expressions", "${{ 'a' }}${{ 'x' }}"},
 		{"a bool", "${{ github.ref == 'refs/heads/main' }}"},
 		{"an empty label", "${{ github.event.pull_request.head.repo.full_name }}"},
 	} {
@@ -543,7 +439,7 @@ func TestCIBigdiskRunner_EvaluatorCanFail(t *testing.T) {
 		name, runsOn string
 		want         []string
 	}{
-		{"plain label", "bigdisk", []string{"bigdisk"}},
+		{"plain label", "ubuntu-latest", []string{"ubuntu-latest"}},
 		{"case-insensitive ==", "${{ github.event_name == 'PUSH' && 'a' || 'b' }}", []string{"a"}},
 		{"&& binds tighter than ||", "${{ 'a' || 'b' && 'c' }}", []string{"a"}},
 		{"quote escape", "${{ 'it''s' }}", []string{"it's"}},
