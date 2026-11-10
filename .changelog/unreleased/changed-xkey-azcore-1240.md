@@ -1,0 +1,1 @@
+- **The root module and xkey take azcore v1.24.0** -- the root module and `xkey` require github.com/Azure/azure-sdk-for-go/sdk/azcore v1.24.0 (from v1.23.3), as `make deps-check` requires; the upgrade also lifts golang.org/x/net to v0.62.0 and the indirect go.yaml.in/yaml/v3 to v3.0.6 in both. Nothing changes for go-xkms users.
