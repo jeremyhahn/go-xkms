@@ -37,7 +37,7 @@ func TestIntegrationRecipesBuildWithTheCodecTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Makefile: %v", err)
 	}
-	for _, target := range []string{"integration-test-sshagent", "integration-test-fido2"} {
+	for _, target := range []string{"integration-test-sshagent", "integration-test-fido2", "integration-test-fido2-cli"} {
 		t.Run(target, func(t *testing.T) {
 			values := tagsValue.FindAllStringSubmatch(strings.Join(recipeOf(string(data), target), "\n"), -1)
 			if len(values) == 0 {
