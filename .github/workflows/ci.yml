@@ -1062,9 +1062,13 @@ jobs:
   # The shards are github.com-only (DS-8194): the profiles travel as artifacts,
   # and the Gitea v3 artifact steps are gone (DS-8159). Elsewhere each shard is
   # a green job that runs no test and coverage-threshold runs the whole suite.
+  # DS-8210 (Company Agent m2450 (2)): on github.com the shards run on the
+  # self-hosted bigdisk runner. It is persistent, so it runs only this
+  # repository's code: a push to main or a PR whose head repository is this
+  # one. A fork PR, another ref, a dispatch and the schedule stay hosted.
   coverage:
     name: Coverage shard ${{ matrix.shard }}/6
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ github.server_url != 'https://github.com' && 'bigdisk' || ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     needs: [changes, schedule-guard, ci-images]
     if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
     timeout-minutes: 90       # CUSTOMIZE (go-xkms, DS-8139): one sixth of the unit suite under -race
@@ -1080,6 +1084,8 @@ jobs:
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Mask the forge credentials
         run: |
@@ -1363,13 +1369,17 @@ jobs:
   # stack is named per run under the repo's prefix, the job reaps stale stacks
   # first (v1.18) and keeps its own teardown last under `if: always()`.
   # v1.23: full tier only (CI_FULL_TIER's expression); never on a plain PR.
+  # DS-8210 (Company Agent m2450 (2)): on github.com Integration runs on the
+  # self-hosted bigdisk runner. It is persistent, so it runs only this
+  # repository's code: a push to main or a PR whose head repository is this
+  # one. A fork PR, another ref, a dispatch and the schedule stay hosted.
   integration:
     name: Integration [integration image]
     # v1.26: never on a draft PR, ci:full or not. v1.29.3: on a schedule run,
     # only on the schedule guard's `run`.
     needs: schedule-guard
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ github.server_url != 'https://github.com' && 'bigdisk' || ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1380,6 +1390,8 @@ jobs:
       # <<< CUSTOMIZE
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
       # any other step. The runner injects them as plain environment
