@@ -110,7 +110,11 @@ order and for each record:
 5. deletes the legacy key only after the save succeeded.
 
 Once every record is processed, a user's index is deleted when none of that
-user's legacy credentials remain. A failed step leaves the record in place and
+user's legacy credentials remain. A run that leaves a record whose owner is
+unknown (step 1 failed, or `UserIDFromHandle` in step 2) deletes no index: that
+record can belong to any of them, and the run after its repair or removal
+cleans up (`pkg/webauthn/legacy_migration.go`, `MigrateLegacyCredentials`). A
+failed step leaves the record in place and
 adds a typed error to the report; the run then returns
 `*CredentialMigrationIncompleteError`, and the next run retries it. The context
 is checked before each record.

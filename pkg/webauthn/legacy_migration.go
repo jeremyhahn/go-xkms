@@ -125,25 +125,33 @@ func MigrateLegacyCredentials(ctx context.Context, m LegacyCredentialMigration) 
 	sort.Strings(keys)
 
 	// remaining holds the owners that still have a legacy credential after
-	// this run; their credential-ID index must stay.
+	// this run; their credential-ID index must stay. ownerUnknown is set when
+	// a record stays behind without naming its owner: it can belong to any
+	// index, so this run deletes none.
 	remaining := make(map[uint64]bool)
+	ownerUnknown := false
 	for _, key := range keys {
 		if err := ctx.Err(); err != nil {
 			return report, WrapError("migrate legacy credentials", err)
 		}
-		owner, moved, err := m.migrateOne(ctx, key, records[key])
-		switch {
-		case err != nil:
+		owner, ownerKnown, moved, err := m.migrateOne(ctx, key, records[key])
+		if err != nil {
 			report.fail(err)
-			remaining[owner] = true
-		case moved:
+		} else if moved {
 			report.Migrated++
-		default:
+			continue
+		} else {
 			report.Skipped++
+		}
+		if ownerKnown {
 			remaining[owner] = true
+		} else {
+			ownerUnknown = true
 		}
 	}
-	m.deleteOrphanIndexes(ctx, remaining, &report)
+	if !ownerUnknown {
+		m.deleteOrphanIndexes(ctx, remaining, &report)
+	}
 
 	if report.Failed > 0 {
 		return report, &CredentialMigrationIncompleteError{Failures: report.Failures}
@@ -166,34 +174,36 @@ func (m *LegacyCredentialMigration) validate() error {
 }
 
 // migrateOne moves the legacy record at key when its owner belongs to
-// m.TenantID. It returns the owner's qrdb user ID (zero when undecodable) and
-// whether the record moved; moved false with a nil error is a skip.
-func (m *LegacyCredentialMigration) migrateOne(ctx context.Context, key string, blob []byte) (uint64, bool, error) {
+// m.TenantID. It returns the owner's qrdb user ID, whether that ID is known
+// (false when the record or its user handle cannot be decoded: zero is a
+// legal user ID, so it cannot say that), and whether the record moved; moved
+// false with a nil error is a skip.
+func (m *LegacyCredentialMigration) migrateOne(ctx context.Context, key string, blob []byte) (owner uint64, ownerKnown, moved bool, err error) {
 	cred, err := decodeLegacyCredential(key, blob)
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
-	owner, err := UserIDFromHandle(cred.UserID)
+	owner, err = UserIDFromHandle(cred.UserID)
 	if err != nil {
-		return 0, false, &CredentialOwnerUnresolvedError{Key: key, Err: err}
+		return 0, false, false, &CredentialOwnerUnresolvedError{Key: key, Err: err}
 	}
 	user, err := m.Users.GetUser(ctx, owner)
 	if err != nil {
-		return owner, false, &CredentialOwnerUnresolvedError{Key: key, UserID: owner, Err: err}
+		return owner, true, false, &CredentialOwnerUnresolvedError{Key: key, UserID: owner, Err: err}
 	}
 	if user.TenantID == "" {
-		return owner, false, &CredentialOwnerUnresolvedError{Key: key, UserID: owner, Err: ErrCredentialOwnerHasNoTenant}
+		return owner, true, false, &CredentialOwnerUnresolvedError{Key: key, UserID: owner, Err: ErrCredentialOwnerHasNoTenant}
 	}
 	if user.TenantID != m.TenantID {
-		return owner, false, nil
+		return owner, true, false, nil
 	}
 	if err := m.save(ctx, key, cred); err != nil {
-		return owner, false, err
+		return owner, true, false, err
 	}
 	if err := m.Legacy.Delete(ctx, key); err != nil {
-		return owner, false, &CredentialMoveError{Key: key, Op: "delete legacy key", Err: err}
+		return owner, true, false, &CredentialMoveError{Key: key, Op: "delete legacy key", Err: err}
 	}
-	return owner, true, nil
+	return owner, true, true, nil
 }
 
 // save stores cred in the tenant store. A credential already there for the
@@ -218,7 +228,9 @@ func (m *LegacyCredentialMigration) save(ctx context.Context, key string, cred *
 
 // deleteOrphanIndexes deletes every legacy credential-ID index whose user has
 // no legacy credential left. The tenant store does not read the index, so
-// one left by a failed delete is retried by the next run.
+// one left by a failed delete is retried by the next run. The caller does
+// not call it for a run that left a record whose owner is unknown: remaining
+// cannot name that record's index.
 func (m *LegacyCredentialMigration) deleteOrphanIndexes(ctx context.Context, remaining map[uint64]bool, report *CredentialMigrationReport) {
 	keys, err := m.Legacy.List(ctx, legacyUserIndexPrefix)
 	if err != nil {
