@@ -1100,6 +1100,7 @@ jobs:
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
         env:
           IN_IMAGE_NETWORK: bridge
+          IN_IMAGE_EXPORT: build/coverage/shard-${{ matrix.shard }}.out
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard SHARD=${{ matrix.shard }} SHARDS=6 GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
       - name: Upload the shard profile (Gitea)
