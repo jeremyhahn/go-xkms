@@ -2912,7 +2912,7 @@ devcontainer-server-wait:
 
 .PHONY: integration-test-fido2
 ## integration-test-fido2: Run all FIDO2 integration tests (runs in devcontainer)
-# xkmsctl is built with the same "integration,fido2" tags as the test package:
+# xkmsctl is built with the same "integration fido2" and codec tags as the test package:
 # only that build compiles in the //go:build integration && fido2 virtual-device
 # seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
 # binary (make build / make release-*) never carries those tags. See #807.
@@ -2922,7 +2922,7 @@ integration-test-fido2:
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration fido2 gms_pure_go codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration fido2 codec_cbor codec_json codec_msgpack)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
 
 .PHONY: integration-test-fido2-hardware
 ## integration-test-fido2-hardware: Run FIDO2 ceremonies against a REAL attached authenticator (requires a physical YubiKey/CTAP2 key and a human to touch it)
