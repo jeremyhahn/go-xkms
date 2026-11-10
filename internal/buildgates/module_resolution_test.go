@@ -141,6 +141,11 @@ func makefileGoPrivate(t *testing.T, moduleEnv ...string) string {
 		"buildgates-print-goprivate")
 	for _, kv := range os.Environ() {
 		key, _, _ := strings.Cut(kv, "=")
+		// A parent make (make test-buildgates, make race) exports the
+		// GOMODAUTH_* it derived from its own environment; none may leak in.
+		if strings.HasPrefix(key, "GOMODAUTH_") {
+			continue
+		}
 		switch key {
 		case "GOPRIVATE", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
 			"FORGE_MODULE_TOKEN", "GITEA_HOST", "MAKEFLAGS", "MFLAGS", "MAKELEVEL":
@@ -174,6 +179,16 @@ func TestMakefileGoPrivateDefaultIsEmpty(t *testing.T) {
 			}
 		})
 	}
+
+	// The values a parent make derived and exported do not reach the case.
+	t.Run("a parent make's derived GOMODAUTH_ exports", func(t *testing.T) {
+		t.Setenv("GOPRIVATE", firstPartyGlob)
+		t.Setenv("GOMODAUTH_GOPRIVATE", firstPartyGlob)
+		t.Setenv("GOMODAUTH_GIT_CONFIG_COUNT", "1")
+		if got := makefileGoPrivate(t); got != "" {
+			t.Errorf("GOMODAUTH_GOPRIVATE = %q with the parent's exported, want it empty", got)
+		}
+	})
 
 	// A caller that sets GOPRIVATE itself still gets it passed through.
 	for name, moduleEnv := range map[string][]string{
