@@ -1,61 +1,137 @@
 package buildgates
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
 
-// coverageStep is the Devcontainer job's unit-suite step in ci.yml.
-const coverageStep = "make coverage (unit tests and the threshold)"
+// coverageShards is the coverage job's shard count in ci.yml.
+const coverageShards = 6
 
-// TestDevcontainerCoverageStepFitsTheHostedContainer pins the coverage step to
-// one race test binary at a time under a GOMEMLIMIT below the 8g, no-swap
-// container scripts/in-toolchain-image.sh gives a GitHub-hosted runner. The
-// coverage target's own 10GiB and -p=2 outgrew it, and the stage hung until
-// the job timeout (DS-8097).
-func TestDevcontainerCoverageStepFitsTheHostedContainer(t *testing.T) {
+// TestCoverageRunsAsShardsThenOneThreshold pins the unit suite to package
+// shards, each its own job with its own timeout, whose profiles one threshold
+// job merges. make coverage in the Devcontainer job never finished on a
+// GitHub-hosted runner, at -p=2 or -p=1 (DS-8139, CA m2406(2)).
+func TestCoverageRunsAsShardsThenOneThreshold(t *testing.T) {
 	data, err := os.ReadFile(ciWorkflow)
 	if err != nil {
 		t.Fatalf("read %s: %v", ciWorkflow, err)
 	}
+	type step struct {
+		Run  string `yaml:"run"`
+		Uses string `yaml:"uses"`
+	}
 	var wf struct {
 		Jobs map[string]struct {
-			Steps []struct {
-				Name string `yaml:"name"`
-				Run  string `yaml:"run"`
-			} `yaml:"steps"`
+			Needs    needsList `yaml:"needs"`
+			Timeout  int       `yaml:"timeout-minutes"`
+			Strategy struct {
+				Matrix struct {
+					Shard []int `yaml:"shard"`
+				} `yaml:"matrix"`
+			} `yaml:"strategy"`
+			Steps []step `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &wf); err != nil {
 		t.Fatalf("parse workflow: %v", err)
 	}
-
-	var runs []string
-	for _, j := range wf.Jobs {
-		for _, s := range j.Steps {
-			if s.Name == coverageStep {
-				runs = append(runs, s.Run)
-			}
-		}
-	}
-	if len(runs) != 1 {
-		t.Fatalf("ci.yml has %d steps named %q, want 1", len(runs), coverageStep)
+	has := func(steps []step, pred func(step) bool) bool {
+		return slices.ContainsFunc(steps, pred)
 	}
 
-	_, cmd, ok := strings.Cut(runs[0], "make coverage ")
+	if has(wf.Jobs["image"].Steps, func(s step) bool { return strings.Contains(s.Run, "make coverage") }) {
+		t.Error("the image job still runs make coverage")
+	}
+
+	cov, ok := wf.Jobs["coverage"]
 	if !ok {
-		t.Fatalf("step %q does not run make coverage: %q", coverageStep, runs[0])
+		t.Fatal("ci.yml has no coverage job")
 	}
-	args := map[string]bool{}
-	for _, f := range strings.Fields(cmd) {
-		args[strings.Trim(f, `"'`)] = true
+	if len(cov.Strategy.Matrix.Shard) != coverageShards {
+		t.Errorf("coverage job matrix shard = %v, want %d shards", cov.Strategy.Matrix.Shard, coverageShards)
 	}
-	for _, want := range []string{"GOFLAGS=-p=1", "GOMEMLIMIT=6GiB"} {
-		if !args[want] {
-			t.Errorf("step %q: make coverage lacks %s: %q", coverageStep, want, runs[0])
+	if cov.Timeout <= 0 {
+		t.Error("coverage job has no timeout-minutes of its own")
+	}
+	shardRun := fmt.Sprintf("SHARDS=%d", coverageShards)
+	if !has(cov.Steps, func(s step) bool {
+		return strings.Contains(s.Run, "make coverage-shard") &&
+			strings.Contains(s.Run, "SHARD=${{ matrix.shard }}") && strings.Contains(s.Run, shardRun)
+	}) {
+		t.Errorf("coverage job does not run make coverage-shard SHARD=${{ matrix.shard }} %s", shardRun)
+	}
+	if !has(cov.Steps, func(s step) bool { return strings.HasPrefix(s.Uses, "actions/upload-artifact@") }) {
+		t.Error("coverage job does not upload its profile")
+	}
+
+	thr, ok := wf.Jobs["coverage-threshold"]
+	if !ok {
+		t.Fatal("ci.yml has no coverage-threshold job")
+	}
+	if !slices.Contains(thr.Needs, "coverage") {
+		t.Errorf("coverage-threshold needs %v, want coverage", thr.Needs)
+	}
+	if thr.Timeout <= 0 {
+		t.Error("coverage-threshold job has no timeout-minutes")
+	}
+	if !has(thr.Steps, func(s step) bool { return strings.HasPrefix(s.Uses, "actions/download-artifact@") }) {
+		t.Error("coverage-threshold job does not download the profiles")
+	}
+	if !has(thr.Steps, func(s step) bool { return strings.Contains(s.Run, "make coverage-merge") }) {
+		t.Error("coverage-threshold job does not run make coverage-merge")
+	}
+
+	for _, j := range []string{"coverage", "coverage-threshold"} {
+		if !slices.Contains(wf.Jobs[gateJob].Needs, j) {
+			t.Errorf("CI Gate does not need %s", j)
 		}
+	}
+}
+
+// makeLines runs make in the repository root and returns its output words.
+func makeLines(t *testing.T, args ...string) []string {
+	t.Helper()
+	out, err := exec.Command("make", append([]string{"-s", "--no-print-directory", "-C", repoRoot}, args...)...).Output()
+	if err != nil {
+		t.Fatalf("make %v: %v", args, err)
+	}
+	return strings.Fields(string(out))
+}
+
+// TestCoverageShardsPartitionTheUnitPackages proves the coverage shards are
+// disjoint and together test every package make test's Go unit run covers.
+func TestCoverageShardsPartitionTheUnitPackages(t *testing.T) {
+	want := makeLines(t, "unit-test-pkgs")
+	if len(want) == 0 {
+		t.Fatal("make unit-test-pkgs printed no packages")
+	}
+	seen := map[string]int{}
+	for i := 1; i <= coverageShards; i++ {
+		pkgs := makeLines(t, "coverage-shard-pkgs", fmt.Sprintf("SHARD=%d", i), fmt.Sprintf("SHARDS=%d", coverageShards))
+		if len(pkgs) == 0 {
+			t.Errorf("shard %d/%d has no packages", i, coverageShards)
+		}
+		for _, p := range pkgs {
+			if s, dup := seen[p]; dup {
+				t.Errorf("package %s is in shard %d and shard %d", p, s, i)
+			}
+			seen[p] = i
+		}
+	}
+	for _, p := range want {
+		if _, ok := seen[p]; !ok {
+			t.Errorf("package %s is in no shard", p)
+		}
+		delete(seen, p)
+	}
+	for p := range seen {
+		t.Errorf("shard package %s is not in make unit-test-pkgs", p)
 	}
 }
