@@ -35,6 +35,12 @@ type WebAuthnService = webauthn.Service
 // WebAuthnServiceParams carries the dependencies for NewWebAuthnService.
 type WebAuthnServiceParams = webauthn.ServiceParams
 
+// WebAuthnSessionStore is the ceremony session store contract a custom store implements.
+type WebAuthnSessionStore = webauthn.SessionStore
+
+// WebAuthnPendingRegistration is the account a public registration creates at finish, saved with its session.
+type WebAuthnPendingRegistration = webauthn.PendingRegistration
+
 // NewWebAuthnService constructs the WebAuthn relying-party service.
 var NewWebAuthnService = webauthn.NewService
 
