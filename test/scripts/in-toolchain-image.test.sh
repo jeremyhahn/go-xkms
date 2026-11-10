@@ -70,6 +70,8 @@ if [ -d "$FAKE_STATE/../produced" ]; then
   mkdir -p "$FAKE_STATE/src"
   cp -R "$FAKE_STATE/../produced/." "$FAKE_STATE/src/"
 fi
+# A stage that fails after it wrote its outputs.
+if [ -e "$FAKE_STATE/../fail-stage" ]; then exit 7; fi
 EOF
 chmod +x "$WORK/bin/docker" "$WORK/bin/trivy"
 
@@ -150,7 +152,15 @@ eq "the first export is copied back with the same bytes" "same" \
 	"$(cmp -s "$WORK/produced/coverage/shard-1.out" "$WORK/src/coverage/shard-1.out" && echo same || echo differs)"
 eq "the second export is copied back with the same bytes" "same" \
 	"$(cmp -s "$WORK/produced/shard-1.json" "$WORK/src/shard-1.json" && echo same || echo differs)"
-rm -rf "$WORK/produced"
+
+# A stage that produced its export and then failed exports nothing.
+rm -rf "$WORK/src/coverage" "$WORK/src/shard-1.json"
+: >"$WORK/fail-stage"
+run IN_IMAGE_EXPORT=coverage/shard-1.out
+eq "a stage that failed after producing its export exits with the stage's status" "7" "$RC"
+eq "the failed stage left its export in the container" "yes" "$([ -e "$FAKE_STATE/src/coverage/shard-1.out" ] && echo yes || echo no)"
+eq "nothing was copied back from the failed stage" "no" "$([ -e "$WORK/src/coverage" ] && echo yes || echo no)"
+rm -rf "$WORK/produced" "$WORK/fail-stage"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
