@@ -114,11 +114,11 @@ func TestDecryptWrongKeyFails(t *testing.T) {
 // bytes and refuse any other size with ErrTagSizeNotSupported and no result.
 func TestTagSize(t *testing.T) {
 	constructors := []struct {
-		name string
-		new  func([]byte) (AEAD, error)
+		name    string
+		require func(*testing.T, []byte) (AEAD, bool)
 	}{
-		{name: "ChaCha20-Poly1305", new: New},
-		{name: "XChaCha20-Poly1305", new: NewX},
+		{name: "ChaCha20-Poly1305", require: requireCipher},
+		{name: "XChaCha20-Poly1305", require: requireCipherX},
 	}
 	tests := []struct {
 		name    string
@@ -134,8 +134,10 @@ func TestTagSize(t *testing.T) {
 	for _, c := range constructors {
 		key, err := GenerateKey()
 		require.NoError(t, err)
-		cipher, err := c.new(key)
-		require.NoError(t, err)
+		cipher, ok := c.require(t, key)
+		if !ok {
+			continue
+		}
 		sealed, err := cipher.Encrypt([]byte("payload"), nil)
 		require.NoError(t, err)
 
