@@ -2934,12 +2934,12 @@ integration-test-fido2-hardware:
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
 integration-test-fido2-webauthn:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)webauthn)' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration fido2 gms_pure_go codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration fido2 webauthn codec_cbor codec_json codec_msgpack)' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
 integration-test-fido2-multiprotocol:
-	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration$(comma)fido2)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
+	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration fido2 codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration fido2 codec_cbor codec_json codec_msgpack)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
 
 .PHONY: integration-test-uhid
 ## integration-test-uhid: Run UHID package integration tests (runs in devcontainer with /dev/uhid access)
