@@ -365,11 +365,10 @@ func (s *Service) runBeginRegistration(ctx context.Context, user webauthn.User, 
 	}
 	var sessionID string
 	if pending != nil {
-		store, ok := s.sessions.(registrationSessionStore)
-		if !ok {
-			return nil, "", ErrRegistrationRefused
-		}
-		sessionID, err = store.SaveRegistration(ctx, session, pending)
+		sessionID, err = s.sessions.SaveRegistration(ctx, session, &PendingRegistration{
+			Email:       pending.email,
+			DisplayName: pending.displayName,
+		})
 	} else {
 		sessionID, err = s.sessions.Save(ctx, session)
 	}
@@ -466,24 +465,16 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 	// Claim the session BEFORE anything is validated. Take is get-and-delete in
 	// one atomic step, so two concurrent finish requests for one ceremony
 	// cannot both proceed: the loser has nothing to validate against.
-	var (
-		session *webauthn.SessionData
-		pending any
-		err     error
-	)
-	if store, ok := s.sessions.(registrationSessionStore); ok {
-		session, pending, err = store.TakeRegistration(ctx, sessionID)
-	} else {
-		session, err = s.sessions.Take(ctx, sessionID)
-	}
+	session, pending, err := s.sessions.TakeRegistration(ctx, sessionID)
 	if err != nil {
 		return nil, sessionClaimError("take registration session", err)
 	}
 
-	if reg, ok := pending.(*registrant); ok {
+	if pending != nil {
 		if !allowPublic {
 			return nil, ErrRegistrationRefused
 		}
+		reg := &registrant{handle: session.UserID, email: pending.Email, displayName: pending.DisplayName}
 		return s.finishPublicRegistration(ctx, session, reg, response, accept)
 	}
 

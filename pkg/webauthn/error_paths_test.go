@@ -160,18 +160,18 @@ func (s *faultySessionStore) Delete(ctx context.Context, sessionID string) error
 	return s.inner.Delete(ctx, sessionID)
 }
 
-func (s *faultySessionStore) SaveRegistration(ctx context.Context, data *webauthn.SessionData, registrant any) (string, error) {
+func (s *faultySessionStore) SaveRegistration(ctx context.Context, data *webauthn.SessionData, pending *PendingRegistration) (string, error) {
 	if s.saveErr != nil {
 		return "", s.saveErr
 	}
-	return s.inner.(registrationSessionStore).SaveRegistration(ctx, data, registrant)
+	return s.inner.SaveRegistration(ctx, data, pending)
 }
 
-func (s *faultySessionStore) TakeRegistration(ctx context.Context, sessionID string) (*webauthn.SessionData, any, error) {
+func (s *faultySessionStore) TakeRegistration(ctx context.Context, sessionID string) (*webauthn.SessionData, *PendingRegistration, error) {
 	if s.getErr != nil {
 		return nil, nil, s.getErr
 	}
-	return s.inner.(registrationSessionStore).TakeRegistration(ctx, sessionID)
+	return s.inner.TakeRegistration(ctx, sessionID)
 }
 
 // newServiceWith builds a Service backed by the given (possibly faulty)
