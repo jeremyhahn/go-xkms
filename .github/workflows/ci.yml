@@ -983,6 +983,11 @@ jobs:
       # COVERAGE_THRESHOLD (testing-guidelines.md), so the suite runs once.
       # Tags matter here too: without them tag-gated packages are neither
       # tested nor counted. The integration stage is its own job below.
+      # GOFLAGS=-p=1 GOMEMLIMIT=6GiB (DS-8097, Infra 198220, CA m2361(5)): on a
+      # GitHub-hosted runner in-toolchain-image.sh gives this container 8g with
+      # no swap, below the coverage target's own GOMEMLIMIT of 10GiB, and two
+      # race test binaries at -p=2 outgrew it and hung the stage until the job
+      # timeout. Command-line variables override the target's values.
       - name: make coverage (unit tests and the threshold)
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
         # >>> CUSTOMIZE (go-xkms)
@@ -990,7 +995,7 @@ jobs:
         env:
           IN_IMAGE_NETWORK: bridge
         # <<< CUSTOMIZE
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GOFLAGS=-p=1 GOMEMLIMIT=6GiB GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
 
       # make security: gosec, govulncheck, go mod verify (devops.md §8), with
       # trivy fs per the phase (§8a). The target owns gosec's flags and its
