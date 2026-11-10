@@ -1,0 +1,1 @@
+- The unified API surface applies the configured CORS policy (`cors.allowed_origins`) to every route and answers the preflight of an allowed origin, so a cross-origin WebAuthn ceremony in a browser reaches xkmsd again (WebAuthn browser suite, cross-origin ceremony).

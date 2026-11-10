@@ -498,6 +498,15 @@ func NewServer(cfg *Config) (*Server, error) {
 	return server, nil
 }
 
+// CORSMiddleware returns the middleware that applies the server's configured
+// CORS policy. The chi router carries it in its global chain; a host that
+// serves the routes of Routes() one by one (the unified API surface) wraps
+// each of them with it, since that chain does not run there. With no policy
+// configured it passes every request through.
+func (s *Server) CORSMiddleware() func(http.Handler) http.Handler {
+	return NewCORSMiddleware(s.cors)
+}
+
 // setupRouter configures the chi router with all routes and middleware.
 func (s *Server) setupRouter() *chi.Mux {
 	r := chi.NewRouter()
@@ -507,7 +516,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(correlation.Middleware()) // Add correlation ID before logging
 	r.Use(s.LoggingMiddleware())
 	r.Use(metrics.HTTPMiddleware) // Metrics middleware
-	r.Use(NewCORSMiddleware(s.cors))
+	r.Use(s.CORSMiddleware())
 
 	// Rate limiting middleware (if configured)
 	if s.rateLimiter != nil && s.rateLimiter.IsEnabled() {
