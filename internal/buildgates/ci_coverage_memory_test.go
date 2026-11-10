@@ -95,6 +95,75 @@ func TestCoverageRunsAsShardsThenOneThreshold(t *testing.T) {
 	}
 }
 
+// inToolchainImage runs every CI stage in a disposable container that gets a
+// copy of the checkout and is removed on exit.
+const inToolchainImage = "../../scripts/in-toolchain-image.sh"
+
+// TestCoverageShardProfileLeavesTheContainer pins the coverage shard's
+// profile to a copy out of the toolchain container: in-toolchain-image.sh
+// copies the checkout in and nothing back, so without IN_IMAGE_EXPORT the
+// upload steps find no file (DS-8139, Codex P1).
+func TestCoverageShardProfileLeavesTheContainer(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Run  string            `yaml:"run"`
+				Uses string            `yaml:"uses"`
+				Env  map[string]string `yaml:"env"`
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatalf("parse workflow: %v", err)
+	}
+	var export string
+	var uploads []string
+	for _, s := range wf.Jobs["coverage"].Steps {
+		if strings.Contains(s.Run, "make coverage-shard") {
+			export = s.Env["IN_IMAGE_EXPORT"]
+		}
+		if strings.HasPrefix(s.Uses, "actions/upload-artifact@") {
+			uploads = append(uploads, s.With["path"])
+		}
+	}
+	const want = "build/coverage/shard-${{ matrix.shard }}.out"
+	if export != want {
+		t.Errorf("make coverage-shard step IN_IMAGE_EXPORT = %q, want %q", export, want)
+	}
+	if len(uploads) == 0 {
+		t.Error("coverage job has no upload step")
+	}
+	for _, p := range uploads {
+		if p != export {
+			t.Errorf("upload path %q is not the exported %q", p, export)
+		}
+	}
+
+	script, err := os.ReadFile(inToolchainImage)
+	if err != nil {
+		t.Fatalf("read %s: %v", inToolchainImage, err)
+	}
+	text := string(script)
+	start := strings.Index(text, `docker start -a "$name"`)
+	cp := strings.Index(text, `docker cp "$name:/src/`)
+	switch {
+	case start < 0:
+		t.Errorf("%s does not run docker start -a", inToolchainImage)
+	case cp < 0:
+		t.Errorf("%s never copies an IN_IMAGE_EXPORT path out with docker cp \"$name:/src/...", inToolchainImage)
+	case cp < start:
+		t.Errorf("%s copies the exports out before docker start -a", inToolchainImage)
+	}
+	if !strings.Contains(text, "IN_IMAGE_EXPORT") {
+		t.Errorf("%s does not read IN_IMAGE_EXPORT", inToolchainImage)
+	}
+}
+
 // makeLines runs make in the repository root and returns its output words.
 func makeLines(t *testing.T, args ...string) []string {
 	t.Helper()
