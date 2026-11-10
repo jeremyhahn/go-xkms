@@ -15,16 +15,30 @@ package handlers
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/go-jose/go-jose/v4"
 )
 
-// parseSignedAny parses a JWS in either serialization: the JSON
-// serialization when the input starts with '{' after white space, the
-// compact serialization otherwise.
+// parseSignedAny parses a JWS in either serialization, as the
+// jose.ParseSigned of go-jose v4.1.6 did: the input is the JSON
+// serialization when it starts with '{' once every Unicode white space
+// character is removed, and is then parsed as given; otherwise it is the
+// compact serialization, parsed with the white space removed.
 func parseSignedAny(s string, algs []jose.SignatureAlgorithm) (*jose.JSONWebSignature, error) {
-	if strings.HasPrefix(strings.TrimLeft(s, " \t\r\n"), "{") {
+	stripped := stripWhitespace(s)
+	if strings.HasPrefix(stripped, "{") {
 		return jose.ParseSignedJSON(s, algs)
 	}
-	return jose.ParseSignedCompact(s, algs)
+	return jose.ParseSignedCompact(stripped, algs)
+}
+
+// stripWhitespace removes every Unicode white space character from s.
+func stripWhitespace(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
