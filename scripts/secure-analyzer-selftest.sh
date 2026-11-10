@@ -184,6 +184,10 @@ else
 	lineno=$(printf '%s\n' "$diagline" | sed -E 's/^[^:]+:([0-9]+):[0-9]+:.*/\1/')
 	colno=$(printf '%s\n' "$diagline" | sed -E 's/^[^:]+:[0-9]+:([0-9]+):.*/\1/')
 	msg=$(printf '%s\n' "$diagline" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: //')
+	# process_diagnostics runs in this shell and reads into the global
+	# diagline; its final EOF read empties it. Keep the baseline finding.
+	baseline_diag=$diagline
+	baseline_relfile=$relfile
 	rule=$(rule_for "$msg") || fail "keying fixture: baseline diagnostic did not classify as a known securecheck rule"
 	symbol=$(symbol_for "$rule" "$KEYWORK/$relfile" "$lineno" "$colno" "$msg" "$KEYWORK") || fail "keying fixture: could not derive a symbol for the baseline finding"
 
@@ -204,7 +208,8 @@ else
 	# 42881658762). Those lines, and only those, are not failures; any other
 	# non-diagnostic line still is.
 	cold_out="$WORK/keyed-cold.out"
-	printf '%s\n%s\n' 'go: downloading example.com/m v1.0.0' "$diagline" >"$cold_out"
+	printf '%s\n%s\n' 'go: downloading example.com/m v1.0.0' "$baseline_diag" >"$cold_out"
+	: >"$WORK/hits"
 	before=$fails
 	process_diagnostics "$cold_out" "" "$KEYWORK" >"$WORK/keyed-cold.classify"
 	if [ "$fails" -eq "$before" ]; then
@@ -214,10 +219,18 @@ else
 		fail "cold cache: a go: downloading line failed the sweep:
       $(cat "$WORK/keyed-cold.classify")"
 	fi
+	# The allowed baseline finding must still be matched next to the
+	# download line, or the case above passes without classifying anything.
+	if grep -qF "$(printf '%s\t' "$baseline_relfile")" "$WORK/hits"; then
+		note "ok: the baseline finding next to a go: downloading line is matched ($baseline_relfile)"
+	else
+		fail "cold cache: the baseline finding next to a go: downloading line was not matched:
+      $(cat "$WORK/keyed-cold.classify")"
+	fi
 	for other in 'go: example.com/m: missing go.sum entry' \
 		'go: downloading example.com/m v1.0.0 extra' \
 		'go: downloading example.com/m'; do
-		printf '%s\n%s\n' "$other" "$diagline" >"$cold_out"
+		printf '%s\n%s\n' "$other" "$baseline_diag" >"$cold_out"
 		before=$fails
 		process_diagnostics "$cold_out" "" "$KEYWORK" >"$WORK/keyed-cold.classify"
 		if [ "$fails" -eq $((before + 1)) ]; then
