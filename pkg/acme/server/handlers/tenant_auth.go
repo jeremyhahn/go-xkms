@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-jose/go-jose/v4"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 )
