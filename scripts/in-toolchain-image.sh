@@ -22,6 +22,11 @@
 # bound, a non-root user, no network. The root filesystem is writable only
 # because `docker cp` cannot write into a read-only one.
 #
+# CUSTOMIZE (go-xkms, DS-8139): IN_IMAGE_EXPORT copies named outputs back to
+# the runner; the coverage shards need it. It is space-separated paths relative
+# to /src, copied to the same path under $PWD after the command succeeds; a
+# path the command did not produce fails the stage.
+#
 # IN_IMAGE_NETWORK=bridge gives the container a network, for the stages that
 # must reach one: `make deps-check` asks the module proxy for the newest
 # releases, and `make security` fetches the vulnerability databases. Only then
@@ -139,6 +144,12 @@ case $scratch in
   /*) ;;
   *) echo "IN_IMAGE_SCRATCH must be an absolute path: $scratch" >&2; exit 2 ;;
 esac
+read -r -a exports <<<"${IN_IMAGE_EXPORT:-}"
+for p in "${exports[@]}"; do
+  case /$p/ in
+    //* | */../*) echo "IN_IMAGE_EXPORT paths must be relative to /src with no ..: $p" >&2; exit 2 ;;
+  esac
+done
 args=(
   --name "$name"
   --cpus "$cpus"
@@ -210,3 +221,7 @@ docker create "${args[@]}" "$image" sh -c "$guard; $*" >/dev/null
 tar -C "$PWD" --owner="$uid" --group="$uid" --numeric-owner -cf - . |
   docker cp -a - "$name:/src"
 docker start -a "$name"
+for p in "${exports[@]}"; do
+  mkdir -p "$PWD/$(dirname "$p")"
+  docker cp "$name:/src/$p" "$PWD/$p" || { echo "in-toolchain-image: IN_IMAGE_EXPORT path $p was not produced" >&2; exit 1; }
+done
