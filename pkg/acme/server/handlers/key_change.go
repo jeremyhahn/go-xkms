@@ -97,7 +97,7 @@ func (s *RestService) KeyChangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	// (2) Check that the payload of the JWS is a well-formed JWS object
 	// The inner JWS is signed with the NEW key, so we must allow all algorithms
-	innerJWS, err := jose.ParseSigned(string(outerPayload), server.AllowedJOSEAlgorithms)
+	innerJWS, err := parseSignedAny(string(outerPayload), server.AllowedJOSEAlgorithms)
 	if err != nil {
 		writeError(w, common.MalformedError("Invalid inner JWS", nil))
 		return
