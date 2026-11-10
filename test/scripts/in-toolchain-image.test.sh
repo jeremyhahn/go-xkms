@@ -6,6 +6,11 @@
 # and a scratch directory the image lacks fails the stage by name. A fake
 # `docker` on PATH runs the container's command here with the --env values
 # `docker create` was given; a fake `trivy` records what it saw.
+#
+# It also covers the daemon CPU cap: `docker info --format '{{.NCPU}}'`
+# answers FAKE_NCPU (exit FAKE_NCPU_RC), and a positive integer below the
+# computed bound lowers --cpus, GOMAXPROCS and GOFLAGS=-p to it; empty, 0,
+# malformed or failed output leaves the bound as it was.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/in-toolchain-image.sh"
@@ -28,6 +33,11 @@ cat >"$WORK/bin/docker" <<'EOF'
 # Fake docker: create records its arguments, the --env values and the
 # `sh -c` command; start runs that command with only those values set.
 case $1 in
+  info)
+    shift
+    printf '%s\n' "$@" >"$FAKE_STATE/info.args"
+    printf '%s\n' "${FAKE_NCPU:-}"
+    exit "${FAKE_NCPU_RC:-0}" ;;
   run) exit 0 ;;
   cp) cat >/dev/null; exit 0 ;;
   rm) shift; printf '%s\n' "$@" >"$FAKE_STATE/rm.args"; exit 0 ;;
@@ -102,6 +112,32 @@ run IN_IMAGE_SCRATCH=var/tmp
 eq "the script exits 2" "2" "$RC"
 eq "the error names the variable" "IN_IMAGE_SCRATCH must be an absolute path: var/tmp" "$OUT"
 eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
+
+# --- the daemon's NCPU caps the CPU bound -----------------------------------
+# cpus CASE WANT [VAR=value...] -- runs the script with the given environment
+# and checks --cpus, GOMAXPROCS and GOFLAGS on `docker create` are all WANT.
+cpus() {
+	local name=$1 want=$2
+	shift 2
+	run "$@"
+	eq "$name: the stage exits 0" "0" "$RC"
+	local got
+	got=$(sed -n '/^--cpus$/{n;p;q}' "$FAKE_STATE/create.args")
+	eq "$name: --cpus" "$want" "$got"
+	has "$name: GOMAXPROCS" "$FAKE_STATE/create.args" "GOMAXPROCS=$want"
+	has "$name: GOFLAGS" "$FAKE_STATE/create.args" "GOFLAGS=-p=$want"
+}
+section "daemon CPU cap"
+cpus "host 128, daemon 80" 80 IN_IMAGE_CPUS=128 FAKE_NCPU=80
+has "the daemon is asked for its NCPU" "$FAKE_STATE/info.args" "{{.NCPU}}"
+cpus "requested 4, daemon 80" 4 IN_IMAGE_CPUS=4 FAKE_NCPU=80
+cpus "daemon equal to the bound" 16 IN_IMAGE_CPUS=16 FAKE_NCPU=16
+cpus "daemon output empty" 128 IN_IMAGE_CPUS=128 FAKE_NCPU=
+cpus "daemon output 0" 128 IN_IMAGE_CPUS=128 FAKE_NCPU=0
+cpus "daemon output malformed" 128 IN_IMAGE_CPUS=128 FAKE_NCPU=abc
+cpus "docker info fails with no output" 128 IN_IMAGE_CPUS=128 FAKE_NCPU= FAKE_NCPU_RC=1
+# An unreachable daemon: the CLI still renders the template (NCPU 0) and exits 1.
+cpus "docker info fails printing 0" 128 IN_IMAGE_CPUS=128 FAKE_NCPU=0 FAKE_NCPU_RC=1
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
