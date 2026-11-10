@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/fido2/uhid"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 // uhidRoundTripTimeout bounds every wait in the UHID round trip, so a framing
@@ -140,8 +141,16 @@ func findUHIDHidrawNode(t *testing.T, uniq string) string {
 			if _, err := os.Stat(node); err == nil {
 				return node
 			}
+			// A container's /dev is populated when the container starts, so a
+			// hidraw device the kernel adds later has no file there. Make one
+			// from the sysfs major:minor in a private directory instead.
+			made, mknodErr := mknodHidrawNode(t, entry.Name())
+			if mknodErr == nil {
+				return made
+			}
 			if time.Now().After(deadline) {
-				skipUnlessUHIDRequired(t, "%s exists in sysfs but %s was not created", entry.Name(), node)
+				skipUnlessUHIDRequired(t, "%s exists in sysfs but %s was not created and mknod failed: %v",
+					entry.Name(), node, mknodErr)
 			}
 		}
 		if time.Now().After(deadline) {
@@ -149,6 +158,26 @@ func findUHIDHidrawNode(t *testing.T, uniq string) string {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// mknodHidrawNode creates a character device file for the named hidraw node
+// in a test temporary directory, from the major:minor the kernel publishes in
+// /sys/class/hidraw/<name>/dev. It needs CAP_MKNOD (root).
+func mknodHidrawNode(t *testing.T, name string) (string, error) {
+	t.Helper()
+	devNum, err := os.ReadFile(filepath.Join(hidrawClassDir, name, "dev"))
+	if err != nil {
+		return "", err
+	}
+	var major, minor uint32
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(devNum)), "%d:%d", &major, &minor); err != nil {
+		return "", fmt.Errorf("parse %s/%s/dev %q: %w", hidrawClassDir, name, devNum, err)
+	}
+	path := filepath.Join(t.TempDir(), name)
+	if err := unix.Mknod(path, unix.S_IFCHR|0o600, int(unix.Mkdev(major, minor))); err != nil {
+		return "", fmt.Errorf("mknod %s (%d:%d): %w", path, major, minor, err)
+	}
+	return path, nil
 }
 
 // readRawUHIDOutput returns the payload of the next UHID_OUTPUT event exactly
