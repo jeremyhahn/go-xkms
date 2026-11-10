@@ -6,6 +6,11 @@
 # and a scratch directory the image lacks fails the stage by name. A fake
 # `docker` on PATH runs the container's command here with the --env values
 # `docker create` was given; a fake `trivy` records what it saw.
+#
+# IN_IMAGE_EXPORT has its cases too: a path outside /src is refused before any
+# container, a path the stage did not produce fails the stage, and a produced
+# one comes back under $PWD. The fake `trivy` leaves the files of
+# $WORK/produced in the container's /src, where the fake `docker cp` finds them.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/in-toolchain-image.sh"
@@ -29,7 +34,14 @@ cat >"$WORK/bin/docker" <<'EOF'
 # `sh -c` command; start runs that command with only those values set.
 case $1 in
   run) exit 0 ;;
-  cp) cat >/dev/null; exit 0 ;;
+  cp)
+    # Copy-in (`cp -a - NAME:/src`) swallows the tar stream; copy-back
+    # (`cp NAME:/src/PATH DEST`) copies what the stage left in the container.
+    if [ "$2" = -a ]; then cat >/dev/null; exit 0; fi
+    from="$FAKE_STATE/src/${2#*:/src/}"
+    [ -f "$from" ] || exit 1
+    cp "$from" "$3"
+    exit $? ;;
   rm) shift; printf '%s\n' "$@" >"$FAKE_STATE/rm.args"; exit 0 ;;
   create)
     shift
@@ -53,6 +65,11 @@ EOF
 cat >"$WORK/bin/trivy" <<'EOF'
 #!/usr/bin/env bash
 printf 'TMPDIR=%s\nTRIVY_CACHE_DIR=%s\nargs=%s\n' "$TMPDIR" "$TRIVY_CACHE_DIR" "$*" >"$FAKE_STATE/trivy.out"
+# The stage's outputs: what the test staged in produced/ lands in /src.
+if [ -d "$FAKE_STATE/../produced" ]; then
+  mkdir -p "$FAKE_STATE/src"
+  cp -R "$FAKE_STATE/../produced/." "$FAKE_STATE/src/"
+fi
 EOF
 chmod +x "$WORK/bin/docker" "$WORK/bin/trivy"
 
@@ -102,6 +119,38 @@ run IN_IMAGE_SCRATCH=var/tmp
 eq "the script exits 2" "2" "$RC"
 eq "the error names the variable" "IN_IMAGE_SCRATCH must be an absolute path: var/tmp" "$OUT"
 eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
+
+# --- IN_IMAGE_EXPORT: only paths under /src, and every one must be produced --
+section "IN_IMAGE_EXPORT"
+run IN_IMAGE_EXPORT=/coverage/shard-1.out
+eq "an absolute path exits 2" "2" "$RC"
+eq "the error names the absolute path" \
+	"IN_IMAGE_EXPORT paths must be relative to /src with no ..: /coverage/shard-1.out" "$OUT"
+eq "no container was created for an absolute path" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
+
+run IN_IMAGE_EXPORT="coverage/shard-1.out coverage/../../shard-2.out"
+eq "a path with .. exits 2" "2" "$RC"
+eq "the error names the path with .." \
+	"IN_IMAGE_EXPORT paths must be relative to /src with no ..: coverage/../../shard-2.out" "$OUT"
+eq "no container was created for a path with .." "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
+
+run IN_IMAGE_EXPORT=coverage/shard-1.out
+eq "a path the stage did not produce exits 1" "1" "$RC"
+eq "the error names the path that was not produced" \
+	"in-toolchain-image: IN_IMAGE_EXPORT path coverage/shard-1.out was not produced" "$OUT"
+eq "the stage ran before the export failed" "yes" "$([ -e "$FAKE_STATE/trivy.out" ] && echo yes || echo no)"
+eq "nothing was copied back" "no" "$([ -e "$WORK/src/coverage/shard-1.out" ] && echo yes || echo no)"
+
+mkdir -p "$WORK/produced/coverage"
+printf 'mode: atomic\npkg/a.go:1.1,2.2 1 1\n' >"$WORK/produced/coverage/shard-1.out"
+printf '{"Action":"pass"}\n' >"$WORK/produced/shard-1.json"
+run IN_IMAGE_EXPORT="coverage/shard-1.out shard-1.json"
+eq "a stage that produced its exports exits 0" "0" "$RC"
+eq "the first export is copied back with the same bytes" "same" \
+	"$(cmp -s "$WORK/produced/coverage/shard-1.out" "$WORK/src/coverage/shard-1.out" && echo same || echo differs)"
+eq "the second export is copied back with the same bytes" "same" \
+	"$(cmp -s "$WORK/produced/shard-1.json" "$WORK/src/shard-1.json" && echo same || echo differs)"
+rm -rf "$WORK/produced"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
