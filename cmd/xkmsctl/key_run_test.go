@@ -532,3 +532,49 @@ func TestKeyUnwrapCmd_Success(t *testing.T) {
 		t.Errorf("expected unwrapped file to be written: %v", err)
 	}
 }
+
+func TestKeyImportCmd_Success(t *testing.T) {
+	mock := &mockKeyClient{importKeyResp: &client.ImportKeyResponse{}}
+	withGlobalConfig(t, newKeyRunConfig("text", mock))
+
+	wrapped := backend.WrappedKeyMaterial{WrappedKey: []byte("wrapped-bytes"), Algorithm: "RSAES_OAEP_SHA_256"}
+	data, err := json.Marshal(wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "wrapped.json")
+	if err := os.WriteFile(p, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// --key-type names the algorithm of the material inside the wrapper. The
+	// server cannot infer it from ciphertext, so the command requires it.
+	if err := keyImportCmd.Flags().Set("key-type", "rsa"); err != nil {
+		t.Fatal(err)
+	}
+	if err := keyImportCmd.Flags().Set("key-size", "2048"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = keyImportCmd.Flags().Set("key-type", "")
+		_ = keyImportCmd.Flags().Set("key-size", "0")
+	})
+
+	out := captureStdout(t, func() {
+		keyImportCmd.Run(keyImportCmd, []string{"k1", p})
+	})
+	if !strings.Contains(out, "Successfully imported") {
+		t.Errorf("expected success message, got: %q", out)
+	}
+	if mock.importKeyReq == nil {
+		t.Fatal("ImportKey was never called")
+	}
+	if mock.importKeyReq.KeyType != "rsa" {
+		t.Errorf("KeyType = %q, want %q -- the algorithm must reach the server, "+
+			"or the imported key is stored with none and no later operation can resolve it",
+			mock.importKeyReq.KeyType, "rsa")
+	}
+	if mock.importKeyReq.KeySize != 2048 {
+		t.Errorf("KeySize = %d, want 2048", mock.importKeyReq.KeySize)
+	}
+}
