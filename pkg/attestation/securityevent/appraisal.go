@@ -99,7 +99,8 @@ type Options struct {
 	Nonce []byte
 
 	// DICE verifies the chain of the key that signed the evidence; its
-	// TrustedRoots anchor the chain. Its ExpectedNonce is the nonce the leaf
+	// TrustedRoots anchor the chain and are required: dice.Verify skips the
+	// chain check when they are nil. Its ExpectedNonce is the nonce the leaf
 	// certificate's own UCCS evidence was minted over, which is not Nonce
 	// unless the device minted the leaf for this challenge.
 	DICE dice.VerifyOptions
@@ -134,6 +135,9 @@ func Appraise(evidence *types.SecurityEventEvidence, opts *Options) (*Result, er
 	}
 	if len(opts.Nonce) == 0 {
 		return nil, ErrNonceRequired
+	}
+	if opts.DICE.TrustedRoots == nil {
+		return nil, ErrTrustedRootsRequired
 	}
 
 	chain, err := parseChain(evidence.Chain)
@@ -240,6 +244,15 @@ func recordDigest(submods []byte) (*detachedDigest, error) {
 // no wrapping (RFC 9711 §4.2.18.2), compares it with the signed digest, and
 // checks the record is one well-formed Claims-Set.
 func verifyRecord(record []byte, signed *detachedDigest) error {
+	// Algorithm is decoded into any: only the two key types of the map may
+	// reach the lookup, since a byte string, array or map does not hash.
+	switch signed.Algorithm.(type) {
+	case int64, string:
+	case uint64:
+		return ErrUnsupportedHashAlgorithm
+	default:
+		return &errs.Joined{Lead: ErrMalformedEvidence, Detail: "the detached digest algorithm"}
+	}
 	hash, ok := hashByCOSEAlgorithm[signed.Algorithm]
 	if !ok {
 		return ErrUnsupportedHashAlgorithm
