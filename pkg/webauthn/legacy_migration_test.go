@@ -327,6 +327,49 @@ func TestMigrateLegacyCredentials_CorruptRecords(t *testing.T) {
 	}
 }
 
+func TestMigrateLegacyCredentials_CorruptRecordKeepsEveryIndex(t *testing.T) {
+	kv := newFakeLegacyKV()
+	users := newFakeUserClient()
+	store := newTestCredentialStore(t, newTestDAOFactory())
+	carol := createTenantUser(t, users, "tenant-a", "carol@example.com")
+	dave := createTenantUser(t, users, "tenant-a", "dave@example.com")
+	seedLegacyCredential(t, kv, legacyCred("carol-1", carol))
+	seedLegacyCredential(t, kv, legacyCred("dave-1", dave))
+	// Carol's only credential is corrupt: its blob no longer names her.
+	carolKey := legacyCredKey([]byte("carol-1"))
+	kv.data[carolKey] = []byte("{not json")
+	m := LegacyCredentialMigration{Legacy: kv, Users: users, TenantID: "tenant-a", Store: store}
+
+	report, err := MigrateLegacyCredentials(context.Background(), m)
+
+	var corrupt *LegacyCredentialCorruptError
+	require.ErrorAs(t, err, &corrupt)
+	assert.Equal(t, carolKey, corrupt.Key)
+	assert.Equal(t, 1, report.Migrated)
+	assert.Equal(t, 1, report.Failed)
+	assert.True(t, kv.has(carolKey), "a corrupt record is never deleted")
+	assert.True(t, kv.has(legacyIndexKey(uidOf(t, carol))), "the index of a record with an unknown owner stays")
+	assert.True(t, kv.has(legacyIndexKey(uidOf(t, dave))), "no index is deleted while an owner is unknown")
+	assert.False(t, kv.has(legacyCredKey([]byte("dave-1"))))
+	_, err = store.GetByCredentialID(context.Background(), []byte("dave-1"))
+	require.NoError(t, err)
+
+	// Once the blob is repaired, the next run moves it and cleans up.
+	blob, err := json.Marshal(legacyCred("carol-1", carol))
+	require.NoError(t, err)
+	kv.data[carolKey] = blob
+
+	report, err = MigrateLegacyCredentials(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, CredentialMigrationReport{Migrated: 1}, report)
+	assert.False(t, kv.has(carolKey))
+	assert.False(t, kv.has(legacyIndexKey(uidOf(t, carol))))
+	assert.False(t, kv.has(legacyIndexKey(uidOf(t, dave))))
+	got, err := store.GetByCredentialID(context.Background(), []byte("carol-1"))
+	require.NoError(t, err)
+	assert.Equal(t, carol, got.UserID)
+}
+
 func TestMigrateLegacyCredentials_UnresolvableOwner(t *testing.T) {
 	users := newFakeUserClient()
 	noTenant := createTenantUser(t, users, "", "orphan@example.com")
