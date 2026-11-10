@@ -1408,6 +1408,23 @@ coverage-dice:
 	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/dice.txt | awk '{print $$NF}'); \
 	echo "$(CYAN)dice coverage: $${TOTAL}$(RESET)"
 
+.PHONY: test-securityevent
+## test-securityevent: Run device security-event appraisal package unit tests
+test-securityevent:
+	@echo "$(CYAN)→ Testing security-event appraisal package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/attestation/securityevent/...
+
+.PHONY: coverage-securityevent
+## coverage-securityevent: Generate coverage report for the device security-event appraisal package
+coverage-securityevent:
+	@echo "$(CYAN)→ Generating security-event appraisal coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/securityevent/... -coverprofile=$(COVERAGE_DIR)/securityevent.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/securityevent.out -o $(COVERAGE_DIR)/securityevent-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/securityevent.out > $(COVERAGE_DIR)/securityevent.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/securityevent.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)securityevent coverage: $${TOTAL}$(RESET)"
+
 .PHONY: coverage-attestation
 ## coverage-attestation: Generate coverage report for the attestation packages
 coverage-attestation:
