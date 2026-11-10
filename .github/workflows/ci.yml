@@ -952,8 +952,8 @@ jobs:
       # <<< CUSTOMIZE
 
       # v1.26.1 (Company Agent m1128 (9)): a docs-only PR skips make coverage, so
-      # it runs the releasability test alone; any other run gets it from make
-      # coverage.
+      # it runs the releasability test alone; any other run gets it from the
+      # coverage shards (DS-8139).
       - name: Releasability test (docs-only PR)
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.RELEASABILITY_TEST != '' && needs.changes.outputs.docs_only == 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "go test -count=1 -tags '$GO_BUILD_TAGS' $RELEASABILITY_TEST"
@@ -977,25 +977,8 @@ jobs:
         # <<< CUSTOMIZE
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make build GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
-      # The test stage (m601 (c)): make coverage runs the whole unit suite with
-      # -race (make test's flags), the PR tier's unit test and race checks in
-      # one run (v1.23), and fails when total coverage is below
-      # COVERAGE_THRESHOLD (testing-guidelines.md), so the suite runs once.
-      # Tags matter here too: without them tag-gated packages are neither
-      # tested nor counted. The integration stage is its own job below.
-      # GOFLAGS=-p=1 GOMEMLIMIT=6GiB (DS-8097, Infra 198220, CA m2361(5)): on a
-      # GitHub-hosted runner in-toolchain-image.sh gives this container 8g with
-      # no swap, below the coverage target's own GOMEMLIMIT of 10GiB, and two
-      # race test binaries at -p=2 outgrew it and hung the stage until the job
-      # timeout. Command-line variables override the target's values.
-      - name: make coverage (unit tests and the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
-        # >>> CUSTOMIZE (go-xkms)
-        # test-web runs `npm ci` against the npm registry.
-        env:
-          IN_IMAGE_NETWORK: bridge
-        # <<< CUSTOMIZE
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GOFLAGS=-p=1 GOMEMLIMIT=6GiB GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+      # The test stage (m601 (c)) is the coverage and coverage-threshold jobs
+      # below (DS-8139).
 
       # make security: gosec, govulncheck, go mod verify (devops.md §8), with
       # trivy fs per the phase (§8a). The target owns gosec's flags and its
@@ -1068,6 +1051,138 @@ jobs:
         run: |
           rm -f it-image.tar
           scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" "${IT_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+  # >>> CUSTOMIZE (go-xkms, DS-8139, CA m2406(2))
+  # The test stage: make coverage in the image job never finished on
+  # ubuntu-latest (cancelled at the 4 h limit at -p=2 and at -p=1), so the unit
+  # suite runs as six package shards, each its own job and bound, and
+  # coverage-threshold merges their profiles and applies COVERAGE_THRESHOLD
+  # once. Tags matter: without them tag-gated packages are neither tested nor
+  # counted. A docs-only PR skips the steps, as in the image job.
+  coverage:
+    name: Coverage shard ${{ matrix.shard }}/6
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [changes, schedule-guard, ci-images]
+    if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
+    timeout-minutes: 90       # CUSTOMIZE (go-xkms, DS-8139): one sixth of the unit suite under -race
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Take the toolchain image
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+
+      # test-web runs `npm ci` against the npm registry (shard 1).
+      - name: make coverage-shard
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
+        env:
+          IN_IMAGE_NETWORK: bridge
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard SHARD=${{ matrix.shard }} SHARDS=6 GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+
+      - name: Upload the shard profile (Gitea)
+        if: ${{ success() && needs.changes.outputs.docs_only != 'true' && github.server_url != 'https://github.com' }}
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: build/coverage/shard-${{ matrix.shard }}.out
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload the shard profile (GitHub)
+        if: ${{ success() && needs.changes.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: build/coverage/shard-${{ matrix.shard }}.out
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Tear down
+        if: always()
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}"
+
+  # Merges the six shard profiles and runs the threshold, the dirty-tree check
+  # and the advisory per-package report, which runs the tpm2-simulator,
+  # pkcs11-tagged and FIPS coverage lanes (make coverage-merge).
+  coverage-threshold:
+    name: Coverage threshold
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [changes, schedule-guard, ci-images, coverage]
+    if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
+    timeout-minutes: 45       # CUSTOMIZE (go-xkms, DS-8139): the merge and threshold, plus the per-package report's three lanes
+    permissions:
+      contents: read
+      packages: read
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Take the toolchain image
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+
+      # v3 puts each artifact in its own directory; coverage-merge finds the
+      # profiles at any depth under build/coverage.
+      - name: Download the shard profiles (Gitea)
+        if: ${{ needs.changes.outputs.docs_only != 'true' && github.server_url != 'https://github.com' }}
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
+        with:
+          path: build/coverage
+
+      - name: Download the shard profiles (GitHub)
+        if: ${{ needs.changes.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          pattern: coverage-shard-*
+          merge-multiple: true
+          path: build/coverage
+
+      - name: make coverage-merge (the threshold)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      - name: Tear down
+        if: always()
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}"
+  # <<< CUSTOMIZE
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and
@@ -2109,7 +2224,7 @@ jobs:
     if: ${{ always() && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict != 'busy') }}
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
-    needs: [changes, schedule-guard, image, lint-gates, integration, soak, arch-gates, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
+    needs: [changes, schedule-guard, image, coverage, coverage-threshold, lint-gates, integration, soak, arch-gates, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
     steps:
       - name: Fail closed on any non-success
         env:
@@ -2158,6 +2273,8 @@ jobs:
           check schedule-guard "${{ needs.schedule-guard.result }}" pr
           check image       "${{ needs.image.result }}" pr
           check lint-gates  "${{ needs.lint-gates.result }}" pr
+          check coverage    "${{ needs.coverage.result }}" pr
+          check coverage-threshold "${{ needs.coverage-threshold.result }}" pr
           check integration "${{ needs.integration.result }}" full
           check soak        "${{ needs.soak.result }}" nightly
           check arch-gates  "${{ needs.arch-gates.result }}" pr

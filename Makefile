@@ -1198,13 +1198,80 @@ race: agsim
 coverage: export GOMEMLIMIT := 10GiB
 coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=2)
 coverage: test
+	@$(MAKE) --no-print-directory coverage-gate
+
+# coverage-gate: the threshold, the dirty-tree check (#454) and the advisory
+# per-package report (#704) on $(COVERAGE_FILE), shared by coverage and
+# coverage-merge.
+.PHONY: coverage-gate
+coverage-gate:
 	@total=$$($(GO) tool cover -func=$(COVERAGE_FILE) | awk '/^total:/ {print $$3}' | tr -d %); \
 	echo "Total coverage: $${total}%"; \
 	awk -v c="$$total" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { if (c + 0 < t + 0) { print "coverage below " t "%"; exit 1 } }'
 	@if [ -n "$$CI" ] && [ -n "$$(git status --porcelain)" ]; then \
-		git status --porcelain; echo "make coverage left the tree dirty (#454)"; exit 1; \
+		git status --porcelain; echo "the unit suite left the tree dirty (#454)"; exit 1; \
 	fi
 	@$(MAKE) --no-print-directory coverage-threshold-report || echo "per-package report is non-blocking (#704)"
+
+# coverage-shard and coverage-merge (DS-8139, CA m2406(2)): make coverage
+# never finished on a GitHub-hosted runner, so CI runs the unit suite as
+# SHARDS jobs. Shard SHARD tests every SHARDS-th package of test-go's sorted
+# list (round robin) with test-go's flags into $(COVERAGE_DIR)/shard-$(SHARD).out;
+# shard 1 also runs make test's other parts (shell, !frost, pkcs11, web,
+# wailsjs). coverage-merge joins the shard profiles into $(COVERAGE_FILE)
+# and runs coverage-gate. GOMEMLIMIT stays below the hosted 8g container.
+SHARD ?= 1
+SHARDS ?= 1
+
+.PHONY: coverage-shard-pkgs coverage-shard coverage-merge
+## coverage-shard-pkgs: Print shard SHARD of SHARDS of test-go's package list
+coverage-shard-pkgs:
+	@go list -e $(UNIT_TEST_SCOPE) 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)" | LC_ALL=C sort | \
+		awk -v s="$(SHARD)" -v n="$(SHARDS)" '(NR - 1) % n == s - 1'
+
+## coverage-shard: Run unit test shard SHARD of SHARDS with coverage (CI's test stage)
+coverage-shard: export XKMS_DENY_HARDWARE_TPM := 1
+coverage-shard: export GOMEMLIMIT := 5GiB
+coverage-shard: export GOFLAGS := $(strip $(GOFLAGS) -p=2)
+coverage-shard: check-insecure-tls agsim
+	@echo "$(CYAN)$(BOLD)→ Running unit test shard $(SHARD)/$(SHARDS)...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@if [ "$(SHARD)" = 1 ]; then $(MAKE) --no-print-directory test-scripts; fi
+	@bash -c 'set -o pipefail; \
+	pkgs=$$($(MAKE) -s --no-print-directory coverage-shard-pkgs); \
+	if [ -z "$$pkgs" ]; then echo "$(RED)✗ shard $(SHARD)/$(SHARDS) has no packages$(RESET)"; exit 1; fi; \
+	echo "shard $(SHARD)/$(SHARDS): $$(echo "$$pkgs" | wc -l) packages"; \
+	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/shard-$(SHARD).out -covermode=atomic $$pkgs \
+		2>&1 | tee $(COVERAGE_DIR)/shard-$(SHARD).log; \
+	EXIT_CODE=$${PIPESTATUS[0]}; \
+	if [ $$EXIT_CODE -ne 0 ]; then \
+		echo "$(RED)$(BOLD)✗ Unit test shard $(SHARD)/$(SHARDS) failed with exit code $$EXIT_CODE$(RESET)"; \
+		grep -E "FAIL|panic" $(COVERAGE_DIR)/shard-$(SHARD).log | head -20; \
+		exit $$EXIT_CODE; \
+	fi'
+	@if [ "$(SHARD)" = 1 ]; then \
+		$(MAKE) --no-print-directory test-nofrost && \
+		$(MAKE) --no-print-directory test-pkcs11 && \
+		$(MAKE) --no-print-directory test-web && \
+		$(MAKE) --no-print-directory check-wailsjs; \
+	fi
+	@if [ -n "$$CI" ] && [ -n "$$(git status --porcelain)" ]; then \
+		git status --porcelain; echo "unit test shard $(SHARD)/$(SHARDS) left the tree dirty (#454)"; exit 1; \
+	fi
+	@echo "$(GREEN)$(BOLD)✓ Unit test shard $(SHARD)/$(SHARDS) passed$(RESET)"
+
+## coverage-merge: Merge the shard profiles into COVERAGE_FILE, then the threshold
+coverage-merge:
+	@profiles=$$(find $(COVERAGE_DIR) -name 'shard-*.out' | LC_ALL=C sort); \
+	if [ -z "$$profiles" ]; then echo "$(RED)✗ no shard profiles in $(COVERAGE_DIR)$(RESET)"; exit 1; fi; \
+	modes=$$(head -q -n 1 $$profiles | sort -u); \
+	if [ "$$(echo "$$modes" | wc -l)" -ne 1 ] || [ "$${modes#mode: }" = "$$modes" ]; then \
+		echo "$(RED)✗ shard profiles disagree on mode: $$modes$(RESET)"; exit 1; \
+	fi; \
+	{ echo "$$modes"; for f in $$profiles; do tail -n +2 "$$f"; done; } > $(COVERAGE_FILE).tmp; \
+	mv $(COVERAGE_FILE).tmp $(COVERAGE_FILE); \
+	echo "Merged $$(echo "$$profiles" | wc -l) shard profiles into $(COVERAGE_FILE)"
+	@$(MAKE) --no-print-directory coverage-gate
 
 .PHONY: coverage-full
 ## coverage-full: Generate comprehensive coverage report (unit + integration tests)
