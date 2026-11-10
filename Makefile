@@ -1266,6 +1266,10 @@ coverage-shard: check-insecure-tls agsim
 coverage-merge:
 	@profiles=$$(find $(COVERAGE_DIR) -name 'shard-*.out' | LC_ALL=C sort); \
 	if [ -z "$$profiles" ]; then echo "$(RED)✗ no shard profiles in $(COVERAGE_DIR)$(RESET)"; exit 1; fi; \
+	for i in $$(seq 1 $(SHARDS)); do \
+		n=$$(find $(COVERAGE_DIR) -name "shard-$$i.out" | wc -l); \
+		if [ "$$n" -ne 1 ]; then echo "$(RED)✗ coverage-merge: shard $$i of $(SHARDS): $$n profiles$(RESET)"; exit 1; fi; \
+	done; \
 	for f in $$profiles; do \
 		case "$$(head -n 1 "$$f")" in "mode: "*) ;; *) echo "$(RED)✗ $$f has no mode line$(RESET)"; exit 1 ;; esac; \
 	done; \
