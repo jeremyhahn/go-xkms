@@ -5,6 +5,9 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
 // sdkSessionStore is a custom WebAuthn session store a composer writes
@@ -23,8 +26,6 @@ type sdkSessionEntry struct {
 
 var _ WebAuthnSessionStore = (*sdkSessionStore)(nil)
 
-var errSDKSessionNotFound = errors.New("session not found")
-
 func (s *sdkSessionStore) Save(ctx context.Context, data *WebAuthnSessionData) (string, error) {
 	return s.SaveRegistration(ctx, data, nil)
 }
@@ -41,9 +42,9 @@ func (s *sdkSessionStore) SaveRegistration(_ context.Context, data *WebAuthnSess
 func (s *sdkSessionStore) Get(_ context.Context, sessionID string) (*WebAuthnSessionData, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entry, ok := s.sessions[sessionID]
-	if !ok {
-		return nil, errSDKSessionNotFound
+	entry, err := s.liveEntry(sessionID)
+	if err != nil {
+		return nil, err
 	}
 	return entry.data, nil
 }
@@ -56,12 +57,27 @@ func (s *sdkSessionStore) Take(ctx context.Context, sessionID string) (*WebAuthn
 func (s *sdkSessionStore) TakeRegistration(_ context.Context, sessionID string) (*WebAuthnSessionData, *WebAuthnPendingRegistration, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entry, ok := s.sessions[sessionID]
-	if !ok {
-		return nil, nil, errSDKSessionNotFound
+	entry, err := s.liveEntry(sessionID)
+	if err != nil {
+		return nil, nil, err
 	}
 	delete(s.sessions, sessionID)
 	return entry.data, entry.pending, nil
+}
+
+// liveEntry answers with the SDK's session sentinels: not found for a missing
+// or taken session, expired (and dropped) for one past its deadline. The
+// caller holds s.mu.
+func (s *sdkSessionStore) liveEntry(sessionID string) (sdkSessionEntry, error) {
+	entry, ok := s.sessions[sessionID]
+	if !ok {
+		return sdkSessionEntry{}, ErrWebAuthnSessionNotFound
+	}
+	if !entry.data.Expires.IsZero() && time.Now().After(entry.data.Expires) {
+		delete(s.sessions, sessionID)
+		return sdkSessionEntry{}, ErrWebAuthnSessionExpired
+	}
+	return entry, nil
 }
 
 func (s *sdkSessionStore) Delete(_ context.Context, sessionID string) error {
@@ -94,7 +110,26 @@ func TestWebAuthnSessionStore_ImplementableFromTheSDK(t *testing.T) {
 	if gotData != data || gotPending == nil || *gotPending != *pending {
 		t.Fatalf("TakeRegistration returned %v, %v; want the saved session and %v", gotData, gotPending, pending)
 	}
-	if _, _, err := params.SessionStore.TakeRegistration(ctx, id); !errors.Is(err, errSDKSessionNotFound) {
+	if _, _, err := params.SessionStore.TakeRegistration(ctx, id); !errors.Is(err, ErrWebAuthnSessionNotFound) {
 		t.Fatalf("a taken session must be gone, got %v", err)
+	}
+
+	expiredID, err := params.SessionStore.Save(ctx, &WebAuthnSessionData{Challenge: "late", Expires: time.Now().Add(-time.Minute)})
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := params.SessionStore.Take(ctx, expiredID); !errors.Is(err, ErrWebAuthnSessionExpired) {
+		t.Fatalf("an expired session must answer ErrWebAuthnSessionExpired, got %v", err)
+	}
+}
+
+// The SDK's session sentinels are the ones the WebAuthn service maps to
+// 400 invalid_session and session_expired, so an SDK-only store keeps them.
+func TestWebAuthnSessionSentinels_AreTheCanonicalErrors(t *testing.T) {
+	if !errors.Is(ErrWebAuthnSessionNotFound, webauthn.ErrSessionNotFound) {
+		t.Fatal("ErrWebAuthnSessionNotFound must be webauthn.ErrSessionNotFound")
+	}
+	if !errors.Is(ErrWebAuthnSessionExpired, webauthn.ErrSessionExpired) {
+		t.Fatal("ErrWebAuthnSessionExpired must be webauthn.ErrSessionExpired")
 	}
 }
