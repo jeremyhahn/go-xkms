@@ -160,6 +160,20 @@ func (s *faultySessionStore) Delete(ctx context.Context, sessionID string) error
 	return s.inner.Delete(ctx, sessionID)
 }
 
+func (s *faultySessionStore) SaveRegistration(ctx context.Context, data *webauthn.SessionData, registrant any) (string, error) {
+	if s.saveErr != nil {
+		return "", s.saveErr
+	}
+	return s.inner.(registrationSessionStore).SaveRegistration(ctx, data, registrant)
+}
+
+func (s *faultySessionStore) TakeRegistration(ctx context.Context, sessionID string) (*webauthn.SessionData, any, error) {
+	if s.getErr != nil {
+		return nil, nil, s.getErr
+	}
+	return s.inner.(registrationSessionStore).TakeRegistration(ctx, sessionID)
+}
+
 // newServiceWith builds a Service backed by the given (possibly faulty)
 // stores using the same valid config as the rest of the suite. Registration
 // is opened explicitly so the store-fault branches past the policy gate stay
@@ -200,26 +214,15 @@ func TestService_BeginRegistration_GetByEmailError(t *testing.T) {
 	}
 }
 
-func TestService_BeginRegistration_CreateError(t *testing.T) {
-	// GetByEmail returns not-found (memory store, no user), Create fails.
+func TestService_BeginRegistration_DoesNotCreate(t *testing.T) {
+	// Create would fail, but public begin never calls it: the account is
+	// created at finish (ruling 417(2)).
 	users, creds := newTestStores(t)
 	us := &faultyUserStore{inner: users, createErr: errBoom}
 	svc := newServiceWith(t, us, NewMemorySessionStore(), creds)
 
-	_, _, err := svc.BeginRegistration(context.Background(), "new@example.com", "New")
-	if !errors.Is(err, errBoom) {
-		t.Fatalf("expected create error, got %v", err)
-	}
-}
-
-func TestService_BeginRegistration_GetCredentialsError(t *testing.T) {
-	users, creds := newTestStores(t)
-	cs := &faultyCredStore{inner: creds, getByUserIDErr: errBoom}
-	svc := newServiceWith(t, users, NewMemorySessionStore(), cs)
-
-	_, _, err := svc.BeginRegistration(context.Background(), "c@example.com", "C")
-	if !errors.Is(err, errBoom) {
-		t.Fatalf("expected get-credentials error, got %v", err)
+	if _, _, err := svc.BeginRegistration(context.Background(), "new@example.com", "New"); err != nil {
+		t.Fatalf("begin must not create the account, got %v", err)
 	}
 }
 
@@ -377,12 +380,16 @@ func TestService_DiscoverableUserHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	credID := []byte("disc-credential")
+	if err := creds.Save(ctx, &Credential{ID: credID, UserID: user.WebAuthnID()}); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
 	svc := newServiceWith(t, users, NewMemorySessionStore(), creds)
 
 	handler := svc.discoverableUserHandler(ctx)
 
-	// Happy path: handle resolves to the user.
-	got, err := handler(nil, user.WebAuthnID())
+	// Happy path: the credential resolves to its account.
+	got, err := handler(credID, user.WebAuthnID())
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -390,9 +397,9 @@ func TestService_DiscoverableUserHandler(t *testing.T) {
 		t.Fatalf("handler returned wrong user")
 	}
 
-	// Error path: unknown handle surfaces the store error.
-	if _, err := handler(nil, []byte("does-not-exist")); err == nil {
-		t.Fatal("expected error for unknown user handle")
+	// Error path: an unknown credential surfaces the store error.
+	if _, err := handler([]byte("does-not-exist"), user.WebAuthnID()); err == nil {
+		t.Fatal("expected error for unknown credential")
 	}
 }
 

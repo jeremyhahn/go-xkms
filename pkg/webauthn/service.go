@@ -14,7 +14,9 @@
 package webauthn
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"log/slog"
@@ -189,22 +191,66 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 	if !s.config.PublicRegistrationAllowed() {
 		return nil, "", ErrRegistrationRefused
 	}
-	user, err := s.users.Create(ctx, email, displayName)
-	if err != nil {
-		return nil, "", WrapError("create user", err)
-	}
 
-	// A brand-new account cannot hold a credential, but the credential store
-	// is still consulted rather than assumed empty: a storage fault here
-	// must surface as an error, not be silently treated as "no credentials".
-	existingCreds, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
-	if err != nil {
-		return nil, "", WrapError("get credentials", err)
+	// The account is created at finish, not here (ruling 417(2)): a begin
+	// that is abandoned must leave nothing behind, or the email could never
+	// register again. The ceremony runs for a registrant under a random
+	// handle drawn per registration; the session carries who registers.
+	handle := make([]byte, registrationHandleSize)
+	if _, err := rand.Read(handle); err != nil {
+		return nil, "", WrapError("generate user handle", err)
 	}
+	reg := &registrant{handle: handle, email: email, displayName: displayName}
+	return s.runBeginRegistration(ctx, reg, nil, reg)
+}
 
-	// beginRegistrationFor also checks account standing — which is how
-	// public registration created accounts as active from the start.
-	return s.beginRegistrationFor(ctx, user, existingCreds)
+// registrationHandleSize is the length of the random user handle a public
+// registration gives the authenticator: the 64-byte maximum WebAuthn allows.
+const registrationHandleSize = 64
+
+// registrant is the WebAuthn user of a public registration ceremony: the
+// account it names does not exist until the ceremony finishes.
+type registrant struct {
+	handle      []byte
+	email       string
+	displayName string
+}
+
+func (r *registrant) WebAuthnID() []byte                         { return r.handle }
+func (r *registrant) WebAuthnName() string                       { return r.email }
+func (r *registrant) WebAuthnDisplayName() string                { return r.displayName }
+func (r *registrant) WebAuthnCredentials() []webauthn.Credential { return nil }
+
+// handleView presents an account under the user handle one of its
+// credentials was registered with, so go-webauthn's check that the asserted
+// handle names the returned user holds for a per-registration handle.
+type handleView struct {
+	webauthn.User
+	handle []byte
+}
+
+func (v *handleView) WebAuthnID() []byte { return v.handle }
+
+// assertingUser returns the account as the asserted user handle names it.
+// A handle that is not the account's own ID resolves through the credential
+// the assertion names: it must belong to the account and have been
+// registered under that handle. Otherwise the account is returned as is,
+// and go-webauthn refuses the mismatch.
+func (s *Service) assertingUser(ctx context.Context, user User, rawID, userHandle []byte) (webauthn.User, error) {
+	if len(userHandle) == 0 || bytes.Equal(userHandle, user.WebAuthnID()) {
+		return user, nil
+	}
+	cred, err := s.creds.GetByCredentialID(ctx, rawID)
+	if err != nil {
+		if IsCredentialNotFound(err) {
+			return user, nil
+		}
+		return nil, err
+	}
+	if bytes.Equal(cred.UserID, user.WebAuthnID()) && bytes.Equal(cred.UserHandle, userHandle) {
+		return &handleView{User: user, handle: userHandle}, nil
+	}
+	return user, nil
 }
 
 // BeginInviteRegistration opens a WebAuthn registration ceremony for a
@@ -244,7 +290,7 @@ func (s *Service) BeginInviteRegistration(ctx context.Context, email string) (*p
 		return nil, "", ErrRegistrationRefused
 	}
 
-	return s.runBeginRegistration(ctx, user, nil)
+	return s.runBeginRegistration(ctx, user, nil, nil)
 }
 
 // BeginAddCredential starts a registration ceremony that adds a passkey to
@@ -291,7 +337,7 @@ func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingC
 		s.logStandingRefusal("begin registration", err)
 		return nil, "", ErrRegistrationRefused
 	}
-	return s.runBeginRegistration(ctx, user, existingCreds)
+	return s.runBeginRegistration(ctx, user, existingCreds, nil)
 }
 
 // runBeginRegistration starts the go-webauthn ceremony for an already
@@ -301,7 +347,7 @@ func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingC
 // reaching here — because BeginInviteRegistration's policy (pending, zero
 // credentials) and beginRegistrationFor's (active) are deliberately
 // different gates in front of the identical ceremony mechanics.
-func (s *Service) runBeginRegistration(ctx context.Context, user User, existingCreds []*Credential) (*protocol.CredentialCreation, string, error) {
+func (s *Service) runBeginRegistration(ctx context.Context, user webauthn.User, existingCreds []*Credential, pending *registrant) (*protocol.CredentialCreation, string, error) {
 	excludeList := make([]protocol.CredentialDescriptor, len(existingCreds))
 	for i, cred := range existingCreds {
 		excludeList[i] = protocol.CredentialDescriptor{
@@ -317,8 +363,16 @@ func (s *Service) runBeginRegistration(ctx context.Context, user User, existingC
 	if err != nil {
 		return nil, "", WrapError("begin registration", err)
 	}
-
-	sessionID, err := s.sessions.Save(ctx, session)
+	var sessionID string
+	if pending != nil {
+		store, ok := s.sessions.(registrationSessionStore)
+		if !ok {
+			return nil, "", ErrRegistrationRefused
+		}
+		sessionID, err = store.SaveRegistration(ctx, session, pending)
+	} else {
+		sessionID, err = s.sessions.Save(ctx, session)
+	}
 	if err != nil {
 		return nil, "", WrapError("save session", err)
 	}
@@ -364,7 +418,7 @@ func (s *Service) FinishRegistrationPair(ctx context.Context, sessionID string, 
 // The account must still be active: it may have left that state since the
 // ceremony began.
 func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
-	return s.runFinishRegistration(ctx, sessionID, response, func(user User) error {
+	return s.runFinishRegistration(ctx, sessionID, response, true, func(user User) error {
 		if err := checkLifecycle(user); err != nil {
 			s.logStandingRefusal("finish registration", err)
 			return ErrRegistrationRefused
@@ -388,7 +442,7 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 // retryable rather than a redeemed invite pointing at a still-pending
 // account with no way back in.
 func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
-	return s.runFinishRegistration(ctx, sessionID, response, func(user User) error {
+	return s.runFinishRegistration(ctx, sessionID, response, false, func(user User) error {
 		if user.Lifecycle() != qrdbsdk.LifecyclePending {
 			return ErrRegistrationRefused
 		}
@@ -404,7 +458,7 @@ func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string
 // account must still be pending): everything else about completing a
 // WebAuthn registration ceremony is identical, and duplicating it per caller
 // is how the two could silently drift.
-func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData, accept func(User) error) (User, error) {
+func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData, allowPublic bool, accept func(User) error) (User, error) {
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
@@ -412,9 +466,25 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 	// Claim the session BEFORE anything is validated. Take is get-and-delete in
 	// one atomic step, so two concurrent finish requests for one ceremony
 	// cannot both proceed: the loser has nothing to validate against.
-	session, err := s.sessions.Take(ctx, sessionID)
+	var (
+		session *webauthn.SessionData
+		pending any
+		err     error
+	)
+	if store, ok := s.sessions.(registrationSessionStore); ok {
+		session, pending, err = store.TakeRegistration(ctx, sessionID)
+	} else {
+		session, err = s.sessions.Take(ctx, sessionID)
+	}
 	if err != nil {
 		return nil, sessionClaimError("take registration session", err)
+	}
+
+	if reg, ok := pending.(*registrant); ok {
+		if !allowPublic {
+			return nil, ErrRegistrationRefused
+		}
+		return s.finishPublicRegistration(ctx, session, reg, response, accept)
 	}
 
 	// Get user
@@ -433,13 +503,47 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 		return nil, verificationError("create credential", err)
 	}
 
-	// Convert and store credential
+	return s.saveRegisteredCredential(ctx, user, FromWebAuthnCredential(user.WebAuthnID(), credential))
+}
+
+// finishPublicRegistration verifies a public registration's attestation for
+// its registrant and only then creates the account (ruling 417(2)). The
+// credential belongs to the account and keeps the registration's handle, by
+// which a passkey login maps back to the account.
+func (s *Service) finishPublicRegistration(ctx context.Context, session *webauthn.SessionData, reg *registrant, response *protocol.ParsedCredentialCreationData, accept func(User) error) (User, error) {
+	// An account may have appeared for the email since begin: this
+	// unauthenticated entry point never enrolls a credential on it.
+	if _, err := s.users.GetByEmail(ctx, reg.email); err == nil {
+		return nil, ErrRegistrationRefused
+	} else if !IsUserNotFound(err) {
+		return nil, WrapError("get user by email", err)
+	}
+
+	credential, err := s.webauthn.CreateCredential(reg, *session, response)
+	if err != nil {
+		return nil, verificationError("create credential", err)
+	}
+
+	user, err := s.users.Create(ctx, reg.email, reg.displayName)
+	if err != nil {
+		return nil, WrapError("create user", err)
+	}
+	if err := accept(user); err != nil {
+		return nil, err
+	}
+
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
+	cred.UserHandle = reg.handle
+	return s.saveRegisteredCredential(ctx, user, cred)
+}
+
+// saveRegisteredCredential stores a newly registered credential and adds it
+// to its account.
+func (s *Service) saveRegisteredCredential(ctx context.Context, user User, cred *Credential) (User, error) {
 	if err := s.creds.Save(ctx, cred); err != nil {
 		return nil, WrapError("save credential", err)
 	}
 
-	// Add credential to user
 	user.AddCredential(cred)
 	if err := s.users.Save(ctx, user); err != nil {
 		return nil, WrapError("save user", err)
@@ -695,7 +799,15 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 			return nil, WrapError("get user", err)
 		}
 
-		credential, err = s.webauthn.ValidateLogin(user, *session, response)
+		// A credential registered under a per-registration handle asserts
+		// that handle: validate against the account as the handle names it.
+		asserting, aErr := s.assertingUser(ctx, user, response.RawID, response.Response.UserHandle)
+		if aErr != nil {
+			return nil, WrapError("get credential", aErr)
+		}
+		identified := *session
+		identified.UserID = asserting.WebAuthnID()
+		credential, err = s.webauthn.ValidateLogin(asserting, identified, response)
 		if err != nil {
 			return nil, verificationError("validate login", err)
 		}
@@ -865,11 +977,16 @@ func (s *Service) mintTokens(ctx context.Context, user User) (*TokenPair, error)
 // discoverableUserHandler returns a handler for discoverable credential login.
 func (s *Service) discoverableUserHandler(ctx context.Context) func(rawID, userHandle []byte) (webauthn.User, error) {
 	return func(rawID, userHandle []byte) (webauthn.User, error) {
-		// Try to find user by user handle
-		user, err := s.users.GetByID(ctx, userHandle)
+		// A public registration's handle is random per registration and
+		// names no account: resolve the account through the credential.
+		cred, err := s.creds.GetByCredentialID(ctx, rawID)
 		if err != nil {
 			return nil, err
 		}
-		return user, nil
+		user, err := s.users.GetByID(ctx, cred.UserID)
+		if err != nil {
+			return nil, err
+		}
+		return s.assertingUser(ctx, user, rawID, userHandle)
 	}
 }

@@ -93,6 +93,17 @@ func (s *MemorySessionStore) clock() time.Time {
 type sessionEntry struct {
 	data      *webauthn.SessionData
 	createdAt time.Time
+	// registrant is who a public registration ceremony registers; nil for
+	// every other ceremony.
+	registrant any
+}
+
+// registrationSessionStore is a SessionStore that carries a public
+// registration's registrant with its session, so the account is created
+// at finish and an abandoned begin leaves nothing behind (ruling 417(2)).
+type registrationSessionStore interface {
+	SaveRegistration(ctx context.Context, data *webauthn.SessionData, registrant any) (string, error)
+	TakeRegistration(ctx context.Context, sessionID string) (*webauthn.SessionData, any, error)
 }
 
 // NewMemorySessionStore creates a new in-memory session store.
@@ -121,6 +132,12 @@ func NewMemorySessionStoreWithTTL(ttl time.Duration, opts ...MemorySessionStoreO
 // *SessionLimitError when the store holds its maximum number of live
 // sessions.
 func (s *MemorySessionStore) Save(ctx context.Context, data *webauthn.SessionData) (string, error) {
+	return s.SaveRegistration(ctx, data, nil)
+}
+
+// SaveRegistration is Save for a public registration ceremony: the
+// registrant lives and expires with the session.
+func (s *MemorySessionStore) SaveRegistration(ctx context.Context, data *webauthn.SessionData, registrant any) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -139,8 +156,9 @@ func (s *MemorySessionStore) Save(ctx context.Context, data *webauthn.SessionDat
 	sessionID := hex.EncodeToString(idBytes)
 
 	s.sessions[sessionID] = &sessionEntry{
-		data:      data,
-		createdAt: s.clock(),
+		data:       data,
+		createdAt:  s.clock(),
+		registrant: registrant,
 	}
 
 	return sessionID, nil
@@ -172,20 +190,27 @@ func (s *MemorySessionStore) Get(ctx context.Context, sessionID string) (*webaut
 // An expired session is consumed as well: leaving it behind would let a
 // caller retry it, and it is worthless either way.
 func (s *MemorySessionStore) Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error) {
+	data, _, err := s.TakeRegistration(ctx, sessionID)
+	return data, err
+}
+
+// TakeRegistration is Take that also returns the registrant
+// SaveRegistration stored with the session (nil for any other session).
+func (s *MemorySessionStore) TakeRegistration(ctx context.Context, sessionID string) (*webauthn.SessionData, any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	entry, ok := s.sessions[sessionID]
 	if !ok {
-		return nil, ErrSessionNotFound
+		return nil, nil, ErrSessionNotFound
 	}
 	delete(s.sessions, sessionID)
 
 	if s.clock().Sub(entry.createdAt) > s.ttl {
-		return nil, ErrSessionExpired
+		return nil, nil, ErrSessionExpired
 	}
 
-	return entry.data, nil
+	return entry.data, entry.registrant, nil
 }
 
 // Delete removes session data by its ID.

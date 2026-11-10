@@ -150,9 +150,9 @@ func TestSDKBeginRegistration_InactiveZeroCredentialAccountRefused(t *testing.T)
 	svc.SetWebAuthn(waSvc)
 	ctx := context.Background()
 
-	// A begin creates the account (public registration is open) without
-	// enrolling a passkey: the zero-credential onboarding state.
-	_, err = svc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{Email: "provisioned@example.com"})
+	// A provisioned account without a passkey: the zero-credential
+	// onboarding state. Public begin creates no account (ruling 417(2)).
+	_, err = stores.Users.Create(ctx, "provisioned@example.com", "")
 	require.NoError(t, err)
 	stores.SetStanding(t, "provisioned@example.com", qrdbsdk.LifecyclePending, nil)
 
