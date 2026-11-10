@@ -102,6 +102,43 @@ func TestBeginRegistration_OversizedRegistrantIsRefusedAndNotSaved(t *testing.T)
 	})
 }
 
+// TestBeginRegistrationAcceptsALongEmailAsItsDisplayName covers the fallback
+// of the registration entry points, which pass the email as the display name
+// when the request has none: a valid email longer than the display-name limit
+// is accepted, and both limits still hold for every other input.
+func TestBeginRegistrationAcceptsALongEmailAsItsDisplayName(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := validTestConfig()
+	cfg.AllowPublicRegistration = openRegistration()
+	users, creds := newTestStores(t)
+	sessions := NewMemorySessionStore()
+	svc, err := NewService(ServiceParams{
+		Config:          cfg,
+		UserStore:       users,
+		SessionStore:    sessions,
+		CredentialStore: creds,
+	})
+	require.NoError(t, err)
+
+	email := strings.Repeat("a", 100-len("@example.com")) + "@example.com"
+	require.Len(t, email, 100)
+
+	_, sessionID, err := svc.BeginRegistration(ctx, email, email)
+	require.NoError(t, err, "the email fallback must not hit the display-name limit")
+	assert.NotEmpty(t, sessionID)
+	assert.Equal(t, 1, sessions.Count())
+
+	_, _, err = svc.BeginRegistration(ctx, email, strings.Repeat("n", 65))
+	require.ErrorIs(t, err, ErrInvalidRequest, "a display name that is not the email keeps its limit")
+
+	longEmail := strings.Repeat("a", 255-len("@example.com")) + "@example.com"
+	require.Len(t, longEmail, 255)
+	_, _, err = svc.BeginRegistration(ctx, longEmail, longEmail)
+	require.ErrorIs(t, err, ErrInvalidRequest, "the email fallback keeps the email limit")
+	assert.Equal(t, 1, sessions.Count(), "a refused begin must save no pending registration")
+}
+
 func TestBeginRegistration_HandleIsRandomPerRegistration(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newServiceWithPublicRegistration(t, true)

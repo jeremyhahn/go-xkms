@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	waprotocol "github.com/go-webauthn/webauthn/protocol"
@@ -138,6 +139,27 @@ func TestRegistrationCeremony_EndToEnd(t *testing.T) {
 	registered, err := waSvc.IsRegistered(ctx, user.WebAuthnID())
 	require.NoError(t, err)
 	assert.True(t, registered)
+}
+
+// TestBeginRegistrationWithNoDisplayNameAcceptsALongEmail proves a request
+// with no display name, for which the email stands in, is not refused by the
+// display-name limit when the email is valid and longer than 64 bytes.
+func TestBeginRegistrationWithNoDisplayNameAcceptsALongEmail(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	svc.SetWebAuthn(newConfiguredWebAuthnService(t))
+
+	email := strings.Repeat("a", 100-len("@example.com")) + "@example.com"
+	require.Len(t, email, 100)
+
+	beginResp, err := svc.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{
+		Email: email,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, beginResp.SessionID)
+	require.NotEmpty(t, beginResp.OptionsJSON)
 }
 
 // registerCredentialForLogin drives the full registration ceremony so a
