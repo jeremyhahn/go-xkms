@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"go/token"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/descope/virtualwebauthn"
@@ -39,6 +40,66 @@ func TestBeginRegistration_AbandonedCeremonyDoesNotBlockRetry(t *testing.T) {
 	require.NoError(t, err, "a retry after an abandoned ceremony must begin")
 	require.NotNil(t, options)
 	assert.NotEmpty(t, sessionID)
+}
+
+// Begin creates no account, so the same absent email can begin again and
+// again: a pending registration must hold only a bounded email and display
+// name, or anonymous begins retain memory the session cap does not count.
+func TestBeginRegistration_OversizedRegistrantIsRefusedAndNotSaved(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := validTestConfig()
+	cfg.AllowPublicRegistration = openRegistration()
+	users, creds := newTestStores(t)
+	sessions := NewMemorySessionStore()
+	svc, err := NewService(ServiceParams{
+		Config:          cfg,
+		UserStore:       users,
+		SessionStore:    sessions,
+		CredentialStore: creds,
+	})
+	require.NoError(t, err)
+
+	longEmail := strings.Repeat("a", 255-len("@example.com")) + "@example.com"
+	longName := strings.Repeat("n", 65)
+	require.Len(t, longEmail, 255)
+
+	tests := []struct {
+		name        string
+		email       string
+		displayName string
+	}{
+		{"email over 254 bytes", longEmail, "Oversized"},
+		{"display name over 64 bytes", "oversized@example.com", longName},
+		{"display name near the body limit", "oversized@example.com", strings.Repeat("n", 1<<20)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for attempt := 0; attempt < 3; attempt++ {
+				options, sessionID, err := svc.BeginRegistration(ctx, tt.email, tt.displayName)
+				require.Error(t, err, "an oversized begin must be refused")
+				assert.ErrorIs(t, err, ErrInvalidRequest)
+				assert.Nil(t, options)
+				assert.Empty(t, sessionID)
+				assert.Equal(t, 0, sessions.Count(), "a refused begin must save no pending registration")
+			}
+		})
+	}
+
+	t.Run("the store refuses what the service would", func(t *testing.T) {
+		_, err := sessions.SaveRegistration(ctx, &SessionData{}, &PendingRegistration{Email: longEmail, DisplayName: "Oversized"})
+		require.ErrorIs(t, err, ErrInvalidRequest)
+		_, err = sessions.SaveRegistration(ctx, &SessionData{}, &PendingRegistration{Email: "oversized@example.com", DisplayName: longName})
+		require.ErrorIs(t, err, ErrInvalidRequest)
+		assert.Equal(t, 0, sessions.Count())
+	})
+
+	t.Run("the limits themselves are accepted", func(t *testing.T) {
+		_, sessionID, err := svc.BeginRegistration(ctx, longEmail[1:], longName[1:])
+		require.NoError(t, err)
+		assert.NotEmpty(t, sessionID)
+		assert.Equal(t, 1, sessions.Count())
+	})
 }
 
 func TestBeginRegistration_HandleIsRandomPerRegistration(t *testing.T) {
