@@ -34,15 +34,32 @@ import (
 // fault fails the test instead of hanging it.
 const uhidRoundTripTimeout = 2 * time.Second
 
+// requireUHIDEnv names the environment variable that turns the UHID round
+// trip's skips into failures. make integration-test-fido2 sets it to 1.
+const requireUHIDEnv = "XKMS_REQUIRE_UHID"
+
+// skipUnlessUHIDRequired skips the test with the formatted reason, or fails
+// it with that reason when requireUHIDEnv is "1".
+func skipUnlessUHIDRequired(t *testing.T, format string, args ...any) {
+	t.Helper()
+	reason := fmt.Sprintf(format, args...)
+	if os.Getenv(requireUHIDEnv) == "1" {
+		t.Fatalf("%s=1 but %s", requireUHIDEnv, reason)
+	}
+	t.Skipf("skipped: %s", reason)
+}
+
 // TestLinuxHIDDevice_UHIDRoundTrip drives LinuxHIDDevice through a real hidraw
 // node backed by a kernel UHID device (#2052). It proves that Write hands the
 // kernel the report ID byte followed by the whole 64-byte frame, also when the
 // frame's CID starts with 0x00, and that Read returns the 64-byte input report
-// unchanged. It skips when /dev/uhid cannot be opened.
+// unchanged. It skips when /dev/uhid cannot be opened, and fails instead when
+// XKMS_REQUIRE_UHID=1 is set (the Integration job sets it, so a CI run that
+// cannot reach /dev/uhid is red, not silently skipped).
 func TestLinuxHIDDevice_UHIDRoundTrip(t *testing.T) {
 	kernel, err := uhid.Open()
 	if err != nil {
-		t.Skipf("skipped: %s cannot be opened: %v", uhid.UHIDDevicePath, err)
+		skipUnlessUHIDRequired(t, "%s cannot be opened: %v", uhid.UHIDDevicePath, err)
 	}
 	t.Cleanup(func() { _ = kernel.Close() })
 
@@ -124,7 +141,7 @@ func findUHIDHidrawNode(t *testing.T, uniq string) string {
 				return node
 			}
 			if time.Now().After(deadline) {
-				t.Skipf("skipped: %s exists in sysfs but %s was not created", entry.Name(), node)
+				skipUnlessUHIDRequired(t, "%s exists in sysfs but %s was not created", entry.Name(), node)
 			}
 		}
 		if time.Now().After(deadline) {
