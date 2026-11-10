@@ -61,6 +61,15 @@ Appraiser wired, each returns `ErrNotConfigured`.
 | Read a binding | `GET /api/v1/attestation/signing-keys/binding?repository=` | `GetSigningKeyBinding` | same as REST | `attestation.signing_key.get` | `GetSigningKeyBinding` | `attestation_signing_keys:get` |
 | Remove a binding | `DELETE /api/v1/attestation/signing-keys/binding?repository=` (204) | `DeleteSigningKeyBinding` | same as REST | `attestation.signing_key.delete` | `DeleteSigningKeyBinding` | `attestation_signing_keys:bind` |
 | Resolve a repository's key | `GET /api/v1/attestation/signing-keys/resolve?repository=` | `ResolveSigningKey` | same as REST | `attestation.signing_key.resolve` | `ResolveSigningKey` | `attestation_signing_keys:get` |
+| Sign a CoRIM with a repository's key | `POST /api/v1/attestation/signing-keys/sign-corim` | `SignCoRIM` | same as REST | `attestation.signing_key.sign_corim` | `SignCoRIM` | `attestation_signing_keys:sign` |
+
+`SignCoRIM` resolves the repository's key like `ResolveSigningKey` and wraps
+the unsigned CoRIM in a COSE_Sign1 with that key, draft-ietf-rats-corim-11
+§4.2 (`XKMSService.SignCoRIM`, `pkg/xkms/servicer_signing_keys.go:219`;
+`refvalue.Sign`, `pkg/attestation/refvalue/sign.go:69`). A malformed CoRIM or
+signer metadata is a 400 / `InvalidArgument`; a missing key is a 503 /
+`FailedPrecondition`. `sdk/go/evidence` re-exports the signer as `SignCoRIM`
+(`sdk/go/evidence/refvalue.go:58`); `sdk/ts` posts it as `signingKeys.signCoRIM`.
 
 USB returns `ErrNotSupported`. A repository path contains slashes
 (`"org/app"`), so the REST routes take it as the `repository` query

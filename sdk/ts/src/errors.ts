@@ -83,6 +83,24 @@ export class XkmsNetworkError extends Error {
 }
 
 /**
+ * XkmsInsecureTransportError refuses a request that carries a credential to
+ * a destination that is not https:// (ruling 152), before anything is sent.
+ * It mirrors the Go transports' ErrInsecureTransport.
+ */
+export class XkmsInsecureTransportError extends Error {
+  readonly url: string;
+
+  constructor(url: string) {
+    super(
+      `transport: refusing to send credentials to ${url}: ` +
+        'use an https:// base URL or explicitly set allowInsecureTransport (unsafe, loopback test/dev only)',
+    );
+    this.name = 'XkmsInsecureTransportError';
+    this.url = url;
+  }
+}
+
+/**
  * parseErrorEnvelope maps a failed HTTP response body to an XkmsApiError.
  * Tolerates non-JSON bodies (proxies, HTML error pages).
  */

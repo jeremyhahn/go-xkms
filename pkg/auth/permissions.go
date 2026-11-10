@@ -151,7 +151,9 @@ const (
 	// per-repository signing-key bindings (pkg/attestation/appraisal):
 	// naming the key that signs one of the caller's tenant's repositories in
 	// place of the tenant release key, reading, listing and resolving them.
-	// Changing a binding is attestation_signing_keys:bind (ActionBind).
+	// Changing a binding is attestation_signing_keys:bind (ActionBind);
+	// signing a repository's CoRIM reference values with the key it
+	// resolves to is attestation_signing_keys:sign (ActionSign).
 	ResourceAttestationSigningKeys = "attestation_signing_keys"
 
 	// ResourceTrust is the platform trust plane's write verbs that act

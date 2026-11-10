@@ -749,11 +749,13 @@ var goldenMethodPermissions = map[string]string{
 	"oidc.credential.device.poll":  "oidc_credentials:update",
 
 	// Repository signing keys (go-xkms#1697).
-	"attestation.signing_key.set":     "attestation_signing_keys:bind",
-	"attestation.signing_key.get":     "attestation_signing_keys:get",
-	"attestation.signing_key.list":    "attestation_signing_keys:list",
-	"attestation.signing_key.delete":  "attestation_signing_keys:bind",
-	"attestation.signing_key.resolve": "attestation_signing_keys:get",
+	"attestation.signing_key.set":        "attestation_signing_keys:bind",
+	"attestation.signing_key.get":        "attestation_signing_keys:get",
+	"attestation.signing_key.list":       "attestation_signing_keys:list",
+	"attestation.signing_key.delete":     "attestation_signing_keys:bind",
+	"attestation.signing_key.resolve":    "attestation_signing_keys:get",
+	"attestation.signing_key.sign_corim": "attestation_signing_keys:sign",
+	"attestation.signing_key.sign_image": "attestation_signing_keys:sign",
 
 	// Attested-caller evidence.
 	"peer.attestation.challenge": "peer_attestation:challenge",

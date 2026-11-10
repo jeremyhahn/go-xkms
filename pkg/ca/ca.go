@@ -2036,6 +2036,19 @@ func (ca *CA) signingSerial(ctx context.Context, opts *SignOptions) (*big.Int, e
 // certificate and records its tenant. signCSR and signCallerNamedCSR both end
 // here, so the two name-sourcing rules share one signing, storage and tenant
 // path.
+// unstoredIssuanceKey marks a context whose issuance issueSignedSpec does not
+// store in the certificate store. Only SignCSRUnstored sets it.
+type unstoredIssuanceKey struct{}
+
+func withUnstoredIssuance(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unstoredIssuanceKey{}, true)
+}
+
+func isUnstoredIssuance(ctx context.Context) bool {
+	unstored, _ := ctx.Value(unstoredIssuanceKey{}).(bool)
+	return unstored
+}
+
 func (ca *CA) issueSignedSpec(
 	ctx context.Context,
 	spec *CertificateSpec,
@@ -2122,7 +2135,10 @@ func (ca *CA) issueSignedSpec(
 	// profile issues such a certificate — an X.509-SVID needs no subject —
 	// and it stays revocable: RevokeCert takes the certificate itself, and
 	// its tenant is recorded below by serial.
-	if cert.Subject.CommonName != "" || !isCallerSANProfile(spec.Profile) {
+	// An unstored issuance (SignCSRUnstored) returns the certificate to its
+	// caller only: its common name is the caller's to choose, so storing it
+	// would replace whatever certificate of any tenant carries that name.
+	if !isUnstoredIssuance(ctx) && (cert.Subject.CommonName != "" || !isCallerSANProfile(spec.Profile)) {
 		if err := ca.certStore.StoreCertificate(cert); err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to store certificate", Err: err}
 		}

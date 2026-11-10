@@ -27,6 +27,8 @@ import (
 	"testing"
 
 	gossh "golang.org/x/crypto/ssh"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // ----------------------------------------------------------------------------
@@ -698,6 +700,10 @@ type restKeyDoc struct {
 // covered by go-xkms's pkg/api/rest handler tests; this stub asserts
 // the client/CLI half of the same wire shape.
 func TestSSHRESTTransport(t *testing.T) {
+	// The stub is a plain-HTTP loopback server, the one use the
+	// mandatory-TLS opt-out exists for (ruling 152); the CLI inherits it.
+	t.Setenv(transport.EnvAllowInsecureTransport, "true")
+
 	type recorded struct {
 		method string
 		path   string
@@ -781,7 +787,7 @@ func TestSSHRESTTransport(t *testing.T) {
 	t.Run("unreachable_server_fails_without_fallback", func(t *testing.T) {
 		// Port 9 (discard) refuses connections; the CLI must fail
 		// rather than silently falling back to the embedded store.
-		h := NewSSHTestHelperREST(t, "http://127.0.0.1:9", "")
+		h := NewSSHTestHelperREST(t, "https://127.0.0.1:9", "")
 
 		result := h.RunSSHKeys("list")
 		if result.Success() {
