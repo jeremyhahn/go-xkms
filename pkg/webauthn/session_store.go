@@ -93,6 +93,9 @@ func (s *MemorySessionStore) clock() time.Time {
 type sessionEntry struct {
 	data      *webauthn.SessionData
 	createdAt time.Time
+	// pending is the account a public registration ceremony creates at
+	// finish; nil for every other ceremony.
+	pending *PendingRegistration
 }
 
 // NewMemorySessionStore creates a new in-memory session store.
@@ -121,6 +124,12 @@ func NewMemorySessionStoreWithTTL(ttl time.Duration, opts ...MemorySessionStoreO
 // *SessionLimitError when the store holds its maximum number of live
 // sessions.
 func (s *MemorySessionStore) Save(ctx context.Context, data *webauthn.SessionData) (string, error) {
+	return s.SaveRegistration(ctx, data, nil)
+}
+
+// SaveRegistration is Save for a public registration ceremony: the
+// pending registration lives and expires with the session.
+func (s *MemorySessionStore) SaveRegistration(ctx context.Context, data *webauthn.SessionData, pending *PendingRegistration) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -141,6 +150,7 @@ func (s *MemorySessionStore) Save(ctx context.Context, data *webauthn.SessionDat
 	s.sessions[sessionID] = &sessionEntry{
 		data:      data,
 		createdAt: s.clock(),
+		pending:   pending,
 	}
 
 	return sessionID, nil
@@ -172,20 +182,27 @@ func (s *MemorySessionStore) Get(ctx context.Context, sessionID string) (*webaut
 // An expired session is consumed as well: leaving it behind would let a
 // caller retry it, and it is worthless either way.
 func (s *MemorySessionStore) Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error) {
+	data, _, err := s.TakeRegistration(ctx, sessionID)
+	return data, err
+}
+
+// TakeRegistration is Take that also returns the PendingRegistration
+// SaveRegistration stored with the session (nil for any other session).
+func (s *MemorySessionStore) TakeRegistration(ctx context.Context, sessionID string) (*webauthn.SessionData, *PendingRegistration, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	entry, ok := s.sessions[sessionID]
 	if !ok {
-		return nil, ErrSessionNotFound
+		return nil, nil, ErrSessionNotFound
 	}
 	delete(s.sessions, sessionID)
 
 	if s.clock().Sub(entry.createdAt) > s.ttl {
-		return nil, ErrSessionExpired
+		return nil, nil, ErrSessionExpired
 	}
 
-	return entry.data, nil
+	return entry.data, entry.pending, nil
 }
 
 // Delete removes session data by its ID.

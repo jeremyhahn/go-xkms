@@ -43,6 +43,14 @@ func openRegistration() *bool {
 }
 
 func newTestHandler(t *testing.T) *Handler {
+	h, _ := newTestHandlerWithUsers(t)
+	return h
+}
+
+// newTestHandlerWithUsers is newTestHandler that also returns its user
+// store, for a test that needs an account public registration never leaves
+// behind: one without credentials (ruling 417(2)).
+func newTestHandlerWithUsers(t *testing.T) (*Handler, pkgwebauthn.UserStore) {
 	stores := webauthntest.NewStores(t)
 	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
 		Config: &pkgwebauthn.Config{
@@ -56,7 +64,7 @@ func newTestHandler(t *testing.T) *Handler {
 		CredentialStore: stores.Credentials,
 	})
 	require.NoError(t, err)
-	return NewHandler(svc)
+	return NewHandler(svc), stores.Users
 }
 
 func TestHandler_BeginRegistration(t *testing.T) {
@@ -631,18 +639,11 @@ func TestHandler_WriteError(t *testing.T) {
 }
 
 func TestHandler_BeginLogin_WithValidUserID(t *testing.T) {
-	h := newTestHandler(t)
+	h, users := newTestHandlerWithUsers(t)
 
-	// Register a user to get a valid user ID
-	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
-		strings.NewReader(`{"email":"validuser@example.com"}`))
-	regReq.Header.Set("Content-Type", "application/json")
-	regRec := httptest.NewRecorder()
-	h.BeginRegistration(regRec, regReq)
-	require.Equal(t, http.StatusOK, regRec.Code)
-
-	// Extract user ID from the service
-	user, err := h.service.GetUserByEmail(regReq.Context(), "validuser@example.com")
+	// An account without credentials: public registration leaves none
+	// behind (ruling 417(2)), so it is created in the store.
+	user, err := users.Create(context.Background(), "validuser@example.com", "validuser@example.com")
 	require.NoError(t, err)
 	userID := base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
 
@@ -717,18 +718,11 @@ func TestHandler_FinishLogin_InvalidResponse(t *testing.T) {
 }
 
 func TestHandler_BeginLogin_EmailWithoutCredentials(t *testing.T) {
-	h := newTestHandler(t)
+	h, users := newTestHandlerWithUsers(t)
 
-	// Register a user first
-	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
-		strings.NewReader(`{"email":"login-with-creds@example.com"}`))
-	regReq.Header.Set("Content-Type", "application/json")
-	regRec := httptest.NewRecorder()
-	h.BeginRegistration(regRec, regReq)
-	require.Equal(t, http.StatusOK, regRec.Code)
-
-	// Get the user to retrieve the user ID
-	user, err := h.service.GetUserByEmail(regReq.Context(), "login-with-creds@example.com")
+	// An account without credentials: public registration leaves none
+	// behind (ruling 417(2)), so it is created in the store.
+	user, err := users.Create(context.Background(), "login-with-creds@example.com", "login-with-creds@example.com")
 	require.NoError(t, err)
 
 	// Test BeginLogin by email
@@ -793,18 +787,11 @@ func TestHandler_FinishLogin_ParseError(t *testing.T) {
 }
 
 func TestHandler_BeginLogin_UserIDNotNil(t *testing.T) {
-	h := newTestHandler(t)
+	h, users := newTestHandlerWithUsers(t)
 
-	// Register a user
-	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
-		strings.NewReader(`{"email":"userid-header@example.com"}`))
-	regReq.Header.Set("Content-Type", "application/json")
-	regRec := httptest.NewRecorder()
-	h.BeginRegistration(regRec, regReq)
-	require.Equal(t, http.StatusOK, regRec.Code)
-
-	// Get user ID from service
-	user, err := h.service.GetUserByEmail(regReq.Context(), "userid-header@example.com")
+	// An account without credentials: public registration leaves none
+	// behind (ruling 417(2)), so it is created in the store.
+	user, err := users.Create(context.Background(), "userid-header@example.com", "userid-header@example.com")
 	require.NoError(t, err)
 	userIDStr := base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
 

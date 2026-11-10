@@ -40,18 +40,18 @@ func enrollSDKAccount(t *testing.T, wa *pkgwebauthn.Service, email string) (*pkg
 
 	options, sessionID, err := wa.BeginRegistration(ctx, email, email)
 	require.NoError(t, err)
-	user, err := wa.GetUserByEmail(ctx, email)
-	require.NoError(t, err)
+	handle, ok := options.Response.User.ID.(waprotocol.URLEncodedBase64)
+	require.True(t, ok)
 
 	authenticator, err := pkgwebauthn.NewMockAuthenticator("localhost")
 	require.NoError(t, err)
-	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, user.WebAuthnID(), finishUniformOrigin)
+	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, handle, finishUniformOrigin)
 	require.NoError(t, err)
 	raw, err := json.Marshal(attestation.Raw)
 	require.NoError(t, err)
 	parsed, err := waprotocol.ParseCredentialCreationResponseBody(bytes.NewReader(raw))
 	require.NoError(t, err)
-	_, _, err = wa.FinishRegistration(ctx, sessionID, parsed)
+	_, user, err := wa.FinishRegistration(ctx, sessionID, parsed)
 	require.NoError(t, err)
 
 	return authenticator, user.WebAuthnID()

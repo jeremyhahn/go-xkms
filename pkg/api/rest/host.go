@@ -32,6 +32,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -94,6 +95,19 @@ type TokenIssuerParams struct {
 	// when set; nil falls back to an in-memory store (sessions then end on
 	// restart).
 	QRDBClient *qrdbsdk.Client
+
+	// CallContext, when set, derives the context the refresh store's qrdb
+	// calls (token.WithCallContext) and the refresh user re-check's lookups
+	// run on; xkmsd binds the embedded node's service principal, since the
+	// public refresh endpoint's request context carries none.
+	CallContext func(ctx context.Context) (context.Context, error)
+
+	// UserLookup, when set, answers the refresh user re-check in place of
+	// QRDBClient's user client, scoped to the refresh token's own tenant.
+	// xkmsd passes the embedded node's user service: its service principal
+	// lives in the system tenant and may not read a holder in another one,
+	// so a non-system-tenant session could never refresh through it.
+	UserLookup RefreshUserLookup
 
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
@@ -208,12 +222,22 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		userResolver token.UserResolver
 	)
 	if p.QRDBClient != nil {
-		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV())
+		var storeOpts []token.QRDBRefreshStoreOption
+		if p.CallContext != nil {
+			storeOpts = append(storeOpts, token.WithCallContext(p.CallContext))
+		}
+		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV(), storeOpts...)
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
 		refreshStore = qs
 		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
+		if p.UserLookup != nil {
+			userResolver = tenantUserResolver{inner: auth.NewQRDBUserResolver(
+				lookupUserClient{UserClient: p.QRDBClient.Users(), lookup: p.UserLookup})}
+		} else if p.CallContext != nil {
+			userResolver = boundUserResolver{inner: userResolver, bind: p.CallContext}
+		}
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
@@ -242,6 +266,81 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		return nil, &TokenIssuerConfigError{Err: err}
 	}
 	return issuer, nil
+}
+
+// boundUserResolver runs the refresh user re-check's lookups on the context
+// bind derives; the re-check itself (lifecycle, current roles) is inner's.
+type boundUserResolver struct {
+	inner token.UserResolver
+	bind  func(ctx context.Context) (context.Context, error)
+}
+
+func (r boundUserResolver) ResolveUser(ctx context.Context, id *auth.Identity) (*auth.Identity, error) {
+	bound, err := r.bind(ctx)
+	if err != nil {
+		return nil, &auth.RefreshUserLookupError{Err: err}
+	}
+	return r.inner.ResolveUser(bound, id)
+}
+
+// RefreshUserLookup is the part of a qrdb user service the refresh user
+// re-check calls. It resolves within the tenant bound on the context
+// (qrdbsdk.ContextWithTenant) and refuses a user outside it.
+type RefreshUserLookup interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error)
+	GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error)
+}
+
+// tenantUserResolver runs the refresh user re-check in the tenant the
+// verified refresh token names, so a holder resolves in its own tenant and
+// in no other; the re-check itself (lifecycle, current roles) is inner's.
+type tenantUserResolver struct {
+	inner token.UserResolver
+}
+
+func (r tenantUserResolver) ResolveUser(ctx context.Context, id *auth.Identity) (*auth.Identity, error) {
+	if id == nil {
+		return r.inner.ResolveUser(ctx, id)
+	}
+	return r.inner.ResolveUser(qrdbsdk.ContextWithTenant(ctx, id.TenantID), id)
+}
+
+// lookupUserClient serves the re-check's two lookups from a
+// RefreshUserLookup; the rest of the user client is never called by it.
+type lookupUserClient struct {
+	qrdbtransport.UserClient
+	lookup RefreshUserLookup
+}
+
+func (c lookupUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	u, err := c.lookup.GetUser(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return transportUser(u), nil
+}
+
+func (c lookupUserClient) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error) {
+	u, err := c.lookup.GetUserByUsername(ctx, tenantID, username)
+	if err != nil {
+		return nil, err
+	}
+	return transportUser(u), nil
+}
+
+// transportUser carries the fields the re-check reads.
+func transportUser(u *qrdbsdk.User) *qrdbtransport.User {
+	return &qrdbtransport.User{
+		ID:          u.ID,
+		Username:    u.Username,
+		Email:       u.Email,
+		Name:        u.Name,
+		TenantID:    u.TenantID,
+		RoleIDs:     u.RoleIDs,
+		System:      u.System,
+		Lifecycle:   string(u.Lifecycle),
+		AuthMethods: u.AuthMethods,
+	}
 }
 
 // Compile-time check: pkg/auth's QRDBUserResolver cannot declare this
@@ -356,6 +455,13 @@ type WebAuthnServiceParams struct {
 	// Defaults to DefaultWebAuthnTenant.
 	TenantID string
 
+	// CallContext derives the context the WebAuthn user store's calls into
+	// QRDBClient.Users() run on (webauthn.QRDBUserStoreOptions.CallContext).
+	// An embedded node refuses a context with no principal, so its host
+	// binds the node's service principal. Nil runs them on the caller's
+	// context.
+	CallContext func(ctx context.Context) (context.Context, error)
+
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
@@ -416,9 +522,10 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      p.QRDBClient.Users(),
-		DAOFactory: p.DAOFactory,
-		TenantID:   tenantID,
+		Users:       p.QRDBClient.Users(),
+		DAOFactory:  p.DAOFactory,
+		TenantID:    tenantID,
+		CallContext: p.CallContext,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}

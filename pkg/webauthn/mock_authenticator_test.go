@@ -298,15 +298,10 @@ func TestMockAuthenticator_FullRegistrationFlow(t *testing.T) {
 	}
 
 	// Get the user to get their ID for the attestation
-	user, err := svc.GetUserByEmail(ctx, email)
-	if err != nil {
-		t.Fatalf("Failed to get user: %v", err)
-	}
-
 	// Create attestation response using mock authenticator
 	attestation, err := auth.CreateAttestationObject(
 		options.Response.Challenge,
-		user.WebAuthnID(),
+		registrationHandle(t, options),
 		origin,
 	)
 	if err != nil {
@@ -332,7 +327,7 @@ func TestMockAuthenticator_FullRegistrationFlow(t *testing.T) {
 	}
 
 	// Verify user is now registered
-	isRegistered, err := svc.IsRegistered(ctx, user.WebAuthnID())
+	isRegistered, err := svc.IsRegistered(ctx, registeredUser.WebAuthnID())
 	if err != nil {
 		t.Fatalf("IsRegistered failed: %v", err)
 	}
@@ -382,21 +377,16 @@ func TestMockAuthenticator_FullLoginFlow(t *testing.T) {
 		t.Fatalf("BeginRegistration failed: %v", err)
 	}
 
-	user, err := svc.GetUserByEmail(ctx, email)
-	if err != nil {
-		t.Fatalf("Failed to get user: %v", err)
-	}
-
 	attestation, err := auth.CreateAttestationObject(
 		regOptions.Response.Challenge,
-		user.WebAuthnID(),
+		registrationHandle(t, regOptions),
 		origin,
 	)
 	if err != nil {
 		t.Fatalf("Failed to create attestation: %v", err)
 	}
 
-	_, _, err = svc.FinishRegistration(ctx, regSessionID, attestation)
+	_, user, err := svc.FinishRegistration(ctx, regSessionID, attestation)
 	if err != nil {
 		t.Fatalf("FinishRegistration failed: %v", err)
 	}
@@ -485,21 +475,16 @@ func TestMockAuthenticator_CloneDetection(t *testing.T) {
 		t.Fatalf("BeginRegistration failed: %v", err)
 	}
 
-	user, err := svc.GetUserByEmail(ctx, email)
-	if err != nil {
-		t.Fatalf("Failed to get user: %v", err)
-	}
-
 	attestation, err := auth.CreateAttestationObject(
 		regOptions.Response.Challenge,
-		user.WebAuthnID(),
+		registrationHandle(t, regOptions),
 		origin,
 	)
 	if err != nil {
 		t.Fatalf("Failed to create attestation: %v", err)
 	}
 
-	_, _, err = svc.FinishRegistration(ctx, regSessionID, attestation)
+	_, user, err := svc.FinishRegistration(ctx, regSessionID, attestation)
 	if err != nil {
 		t.Fatalf("FinishRegistration failed: %v", err)
 	}
@@ -608,14 +593,9 @@ func TestMockAuthenticator_DiscoverableCredentials(t *testing.T) {
 		t.Fatalf("BeginRegistration failed: %v", err)
 	}
 
-	user, err := svc.GetUserByEmail(ctx, email)
-	if err != nil {
-		t.Fatalf("Failed to get user: %v", err)
-	}
-
 	attestation, err := auth.CreateAttestationObject(
 		regOptions.Response.Challenge,
-		user.WebAuthnID(),
+		registrationHandle(t, regOptions),
 		origin,
 	)
 	if err != nil {
@@ -693,21 +673,16 @@ func TestMockAuthenticator_MultipleCredentials(t *testing.T) {
 		t.Fatalf("BeginRegistration 1 failed: %v", err)
 	}
 
-	user, err := svc.GetUserByEmail(ctx, email)
-	if err != nil {
-		t.Fatalf("Failed to get user: %v", err)
-	}
-
 	attestation1, err := auth1.CreateAttestationObject(
 		regOptions1.Response.Challenge,
-		user.WebAuthnID(),
+		registrationHandle(t, regOptions1),
 		origin,
 	)
 	if err != nil {
 		t.Fatalf("Failed to create attestation 1: %v", err)
 	}
 
-	_, _, err = svc.FinishRegistration(ctx, regSessionID1, attestation1)
+	_, user, err := svc.FinishRegistration(ctx, regSessionID1, attestation1)
 	if err != nil {
 		t.Fatalf("FinishRegistration 1 failed: %v", err)
 	}

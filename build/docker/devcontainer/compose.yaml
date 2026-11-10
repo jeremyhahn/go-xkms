@@ -136,8 +136,13 @@ services:
       # Credentials: the Makefile's GOMODAUTH_* resolution (the CI runner's
       # injected rewrite first), else the read-only token from the gitignored
       # build/docker/devcontainer/.env when compose is loaded directly.
+      # GOPRIVATE follows the same resolution: set only with a Gitea rewrite.
+      # On the public path (a GitHub checkout, no GITEA_HOST) it stays empty,
+      # so in-house modules come from proxy.golang.org and are checked against
+      # sum.golang.org (dependency-resolution.md §1), never fetched direct
+      # from GitHub, where a moved tag fails go.sum (go-xkms CI 42509523145).
       - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
+      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+github.com/jeremyhahn/*}}
       - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
       - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${FORGE_MODULE_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
       - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}

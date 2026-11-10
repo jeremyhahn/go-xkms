@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -56,12 +57,25 @@ type Record struct {
 	// Subject is the identity the token refreshes.
 	Subject string `json:"subject"`
 
+	// Tenant is the holder's tenant, normalized at mint so the system
+	// tenant is never stored as "". A subject is unique only within its
+	// tenant, so RevokeBySubject matches on both. Issuer.Refresh refuses a
+	// record without a tenant and revokes its family.
+	Tenant string `json:"tenant"`
+
 	// ExpiresAt is the refresh token's absolute expiry (Unix seconds).
 	ExpiresAt int64 `json:"expires_at"`
 
 	// Rotated marks a token that was already exchanged for a successor.
 	// Presenting a rotated token again is reuse — the family is revoked.
 	Rotated bool `json:"rotated"`
+}
+
+// holds reports whether r belongs to subject in tenant. tenant is
+// normalized as Mint normalizes it; a record stored without a tenant never
+// matches.
+func (r *Record) holds(tenant, subject string) bool {
+	return r.Tenant != "" && r.Tenant == qrdbsdk.NormalizeTenantID(tenant) && r.Subject == subject
 }
 
 // revocation is the tombstone written when a family is revoked.
@@ -103,13 +117,15 @@ type RefreshStore interface {
 	// slip a successor past the sweep.
 	RevokeFamily(ctx context.Context, family string) error
 
-	// RevokeBySubject revokes every family whose Record.Subject equals
-	// subject, exactly as RevokeFamily revokes one -- so a user-lifecycle
-	// change (disable, delete) ends every session the account holds, no
-	// matter which login flow minted it. It is idempotent: a subject with no
-	// live family is a no-op success, matching RevokeFamily's own logout
-	// semantics.
-	RevokeBySubject(ctx context.Context, subject string) error
+	// RevokeBySubject revokes every family whose Record.Tenant and
+	// Record.Subject equal tenant and subject, exactly as RevokeFamily
+	// revokes one -- so a user-lifecycle change (disable, delete) ends every
+	// session the account holds, no matter which login flow minted it, and
+	// no session of a same-named account in another tenant. tenant is
+	// normalized as at mint; a record without a tenant never matches. It is
+	// idempotent: a subject with no live family is a no-op success, matching
+	// RevokeFamily's own logout semantics.
+	RevokeBySubject(ctx context.Context, tenant, subject string) error
 }
 
 // refreshKey builds the KV key for a record.
@@ -206,13 +222,13 @@ func (s *MemoryRefreshStore) RevokeFamily(_ context.Context, family string) erro
 }
 
 // RevokeBySubject implements RefreshStore.
-func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, tenant, subject string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	families := make(map[string]struct{})
 	for _, rec := range s.records {
-		if rec.Subject == subject {
+		if rec.holds(tenant, subject) {
 			families[rec.Family] = struct{}{}
 		}
 	}
@@ -281,7 +297,7 @@ type QRDBRefreshStore struct {
 // second refresh can slip between — so construction fails instead. There is
 // deliberately no degraded non-atomic path: a refresh store that cannot
 // arbitrate a race is a refresh store that mints two live successors.
-func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
+func NewQRDBRefreshStore(kv qrdbtransport.KVClient, opts ...QRDBRefreshStoreOption) (*QRDBRefreshStore, error) {
 	if kv == nil {
 		return nil, &NilInputError{Field: "kv"}
 	}
@@ -289,7 +305,110 @@ func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
 	if !ok {
 		return nil, &GuardedKVUnsupportedError{ClientType: fmt.Sprintf("%T", kv)}
 	}
+	var o qrdbRefreshStoreOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.callContext != nil {
+		guarded = boundGuardedKV{GuardedKVClient: guarded, bind: o.callContext}
+	}
 	return &QRDBRefreshStore{kv: guarded}, nil
+}
+
+// QRDBRefreshStoreOption configures a QRDBRefreshStore.
+type QRDBRefreshStoreOption func(*qrdbRefreshStoreOptions)
+
+type qrdbRefreshStoreOptions struct {
+	callContext func(ctx context.Context) (context.Context, error)
+}
+
+// WithCallContext derives the context every qrdb call of the store runs on
+// from the caller's. xkmsd binds the embedded node's service principal
+// (Node.ServiceContext): the store persists refresh-token records on its own
+// behalf, often for an anonymous request such as a WebAuthn registration
+// finish that mints the first token pair, whose context carries no qrdb
+// principal and is refused as unauthenticated.
+func WithCallContext(bind func(ctx context.Context) (context.Context, error)) QRDBRefreshStoreOption {
+	return func(o *qrdbRefreshStoreOptions) { o.callContext = bind }
+}
+
+// boundGuardedKV runs every KV call on the context bind derives from the
+// caller's; a bind error fails the call.
+type boundGuardedKV struct {
+	qrdbtransport.GuardedKVClient
+	bind func(ctx context.Context) (context.Context, error)
+}
+
+func (c boundGuardedKV) Put(ctx context.Context, key string, value []byte, opts ...qrdbtransport.WriteOption) error {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return err
+	}
+	return c.GuardedKVClient.Put(ctx, key, value, opts...)
+}
+
+func (c boundGuardedKV) Get(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) ([]byte, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.GuardedKVClient.Get(ctx, key, opts...)
+}
+
+func (c boundGuardedKV) Delete(ctx context.Context, key string, opts ...qrdbtransport.WriteOption) error {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return err
+	}
+	return c.GuardedKVClient.Delete(ctx, key, opts...)
+}
+
+func (c boundGuardedKV) List(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) ([]string, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.GuardedKVClient.List(ctx, prefix, opts...)
+}
+
+func (c boundGuardedKV) Scan(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) (map[string][]byte, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.GuardedKVClient.Scan(ctx, prefix, opts...)
+}
+
+func (c boundGuardedKV) Exists(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) (bool, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return false, err
+	}
+	return c.GuardedKVClient.Exists(ctx, key, opts...)
+}
+
+func (c boundGuardedKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return false, err
+	}
+	return c.GuardedKVClient.PutIfAbsent(ctx, key, value)
+}
+
+func (c boundGuardedKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return false, err
+	}
+	return c.GuardedKVClient.CompareAndDelete(ctx, key, expected)
+}
+
+func (c boundGuardedKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	ctx, err := c.bind(ctx)
+	if err != nil {
+		return false, err
+	}
+	return c.GuardedKVClient.CompareAndSwap(ctx, key, expected, next)
 }
 
 // Save implements RefreshStore.
@@ -436,7 +555,7 @@ func (s *QRDBRefreshStore) RevokeFamily(ctx context.Context, family string) erro
 // have to stay consistent with RevokeFamily's own delete-by-prefix sweep,
 // and a lifecycle change is rare enough next to a refresh that the scan's
 // cost is the right place to pay it.
-func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, tenant, subject string) error {
 	entries, err := s.kv.Scan(ctx, refreshPrefix)
 	if err != nil {
 		return &StoreError{Op: "scan", Err: err}
@@ -448,7 +567,7 @@ func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) 
 		if err := json.Unmarshal(data, &rec); err != nil {
 			return &StoreError{Op: "decode", Err: err}
 		}
-		if rec.Subject == subject {
+		if rec.holds(tenant, subject) {
 			families[rec.Family] = struct{}{}
 		}
 	}

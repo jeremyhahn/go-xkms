@@ -17,6 +17,7 @@ package fido2
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 	"time"
@@ -163,13 +164,13 @@ func runRegistrationCeremony(t *testing.T, surface *ceremonySurface, handler *fi
 	// configured with origin "https://" + rpID, so derive it identically here.
 	origin := "https://" + rpID
 
-	// Resolve the canonical user handle the server bound to this ceremony. Using
-	// the service's own user record (rather than re-decoding options.Response.User.ID)
-	// guarantees the attestation's user handle matches what the verifier expects.
-	user, err := surface.webauthnSvc.GetUserByEmail(ctx, username)
-	require.NoError(t, err, "resolve ceremony user")
-	userID := user.WebAuthnID()
-	require.NotEmpty(t, userID, "user handle")
+	// The user handle is the random per-registration handle the server put in
+	// the options; the account itself does not exist until finish (ruling 417(2)).
+	encodedHandle, ok := options.Response.User.ID.(string)
+	require.True(t, ok, "user handle has type %T", options.Response.User.ID)
+	handle, err := base64.RawURLEncoding.DecodeString(encodedHandle)
+	require.NoError(t, err, "decode user handle")
+	require.NotEmpty(t, handle, "user handle")
 
 	// Step 3: Drive the REAL CTAP2 authenticator to produce an attestation over
 	// the server-issued challenge. The virtual device auto-confirms user presence;
@@ -180,7 +181,7 @@ func runRegistrationCeremony(t *testing.T, surface *ceremonySurface, handler *fi
 		Origin:                  origin,
 		RPID:                    rpID,
 		RPName:                  rpName,
-		UserID:                  userID,
+		UserID:                  handle,
 		UserName:                username,
 		UserDisplayName:         username,
 		RequireUserVerification: false,
@@ -201,6 +202,9 @@ func runRegistrationCeremony(t *testing.T, surface *ceremonySurface, handler *fi
 	require.NoError(t, err, "FinishRegistration (server-side attestation verification)")
 	require.True(t, finishResp.Success, "registration reported success")
 	require.NotEmpty(t, finishResp.CredentialID, "persisted credential ID")
+	user, err := surface.webauthnSvc.GetUserByEmail(ctx, username)
+	require.NoError(t, err, "finish created the account")
+	userID := user.WebAuthnID()
 
 	// Step 5: Prove the credential was actually persisted by the ceremony, the
 	// same way the unit test asserts persistence.

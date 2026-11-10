@@ -21,18 +21,22 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -1080,7 +1084,7 @@ func (s *spyRefreshStore) MarkRotated(context.Context, string, string) error { r
 
 func (s *spyRefreshStore) RevokeFamily(context.Context, string) error { return nil }
 
-func (s *spyRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *spyRefreshStore) RevokeBySubject(_ context.Context, _, subject string) error {
 	s.revoked = append(s.revoked, subject)
 	if s.failOn != "" && subject == s.failOn {
 		return errors.New("revoke store unavailable")
@@ -1139,6 +1143,171 @@ func TestDeleteUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
 
 	wantHandle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(7))
 	assert.ElementsMatch(t, []string{"bob", wantHandle}, store.revoked)
+}
+
+// TestUserLifecycle_RevokesOnlyTheTenantsOwnSessions proves disabling or
+// deleting one tenant's "bob" ends that bob's sessions and leaves another
+// tenant's "bob" signed in. The store runs on a real embedded node, bound to
+// the service principal in the system tenant as pkg/server binds it, so every
+// tenant's refresh records sit in the one keyspace a revoke scans.
+func TestUserLifecycle_RevokesOnlyTheTenantsOwnSessions(t *testing.T) {
+	for _, op := range []string{"disable", "delete"} {
+		t.Run(op, func(t *testing.T) {
+			svc, users, _ := setupServiceWithUserClients(t)
+			users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+				return &qrdbtransport.User{ID: 7, Username: "bob", TenantID: "tenant-a"}, nil
+			}
+			users.disableUser = func(_ context.Context, _ uint64) error { return nil }
+			users.deleteUser = func(_ context.Context, _ uint64) error { return nil }
+
+			node := newServiceNode(t)
+			store, err := token.NewQRDBRefreshStore(node.Client().KV(), token.WithCallContext(
+				func(ctx context.Context) (context.Context, error) {
+					return node.ServiceContext(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID))
+				}))
+			require.NoError(t, err)
+			issuer := newTestTokenIssuerWithStore(t, store)
+			svc.SetTokenIssuer(issuer)
+
+			ctx := context.Background()
+			bobA, err := issuer.Mint(ctx, &auth.Identity{Subject: "bob", TenantID: "tenant-a"})
+			require.NoError(t, err)
+			bobB, err := issuer.Mint(ctx, &auth.Identity{Subject: "bob", TenantID: "tenant-b"})
+			require.NoError(t, err)
+
+			if op == "disable" {
+				require.NoError(t, svc.DisableUser(ctx, "bob"))
+			} else {
+				require.NoError(t, svc.DeleteUser(ctx, "bob"))
+			}
+
+			_, err = issuer.Refresh(ctx, bobA.RefreshToken)
+			require.Error(t, err, "tenant-a's bob must be signed out")
+			_, err = issuer.Refresh(ctx, bobB.RefreshToken)
+			require.NoError(t, err, "tenant-b's bob must stay signed in")
+		})
+	}
+}
+
+func newServiceNode(t *testing.T) *qrdbnode.Node {
+	t.Helper()
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil, serviceprincipal.Option())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, node.Close()) })
+	return node
+}
+
+// legacyRecordStore saves every refresh record the way the store did before
+// records carried a tenant, so a test holds a pre-change refresh token.
+type legacyRecordStore struct {
+	token.RefreshStore
+	save func(ctx context.Context, rec *token.Record) error
+	last *token.Record
+}
+
+func (s *legacyRecordStore) Save(ctx context.Context, rec *token.Record) error {
+	cp := *rec
+	s.last = &cp
+	return s.save(ctx, rec)
+}
+
+// newLegacyRecordStores returns a QRDB refresh store on a real embedded node
+// and a memory refresh store, each wrapped to save pre-change records.
+func newLegacyRecordStores(t *testing.T) map[string]*legacyRecordStore {
+	t.Helper()
+	node := newServiceNode(t)
+	bind := func(ctx context.Context) (context.Context, error) {
+		return node.ServiceContext(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID))
+	}
+	qrdbStore, err := token.NewQRDBRefreshStore(node.Client().KV(), token.WithCallContext(bind))
+	require.NoError(t, err)
+	memStore := token.NewMemoryRefreshStore()
+
+	return map[string]*legacyRecordStore{
+		"qrdb": {RefreshStore: qrdbStore, save: func(ctx context.Context, rec *token.Record) error {
+			if err := qrdbStore.Save(ctx, rec); err != nil {
+				return err
+			}
+			// Overwrite with the pre-change encoding, which has no tenant field.
+			data, err := json.Marshal(struct {
+				JTI       string `json:"jti"`
+				Family    string `json:"family"`
+				Subject   string `json:"subject"`
+				ExpiresAt int64  `json:"expires_at"`
+				Rotated   bool   `json:"rotated"`
+			}{rec.JTI, rec.Family, rec.Subject, rec.ExpiresAt, rec.Rotated})
+			if err != nil {
+				return err
+			}
+			bound, err := bind(ctx)
+			if err != nil {
+				return err
+			}
+			return node.Client().KV().Put(bound, "auth/refresh/"+rec.Family+"/"+rec.JTI, data)
+		}},
+		"memory": {RefreshStore: memStore, save: func(ctx context.Context, rec *token.Record) error {
+			old := *rec
+			old.Tenant = ""
+			return memStore.Save(ctx, &old)
+		}},
+	}
+}
+
+func TestUserLifecycle_ReenabledUserCannotRefreshAPreTenantRecord(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 7, Username: "bob", TenantID: "tenant-a"}, nil
+	}
+	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
+	users.enableUser = func(_ context.Context, _ uint64) error { return nil }
+
+	store := newLegacyRecordStores(t)["qrdb"]
+	issuer := newTestTokenIssuerWithStore(t, store)
+	svc.SetTokenIssuer(issuer)
+
+	ctx := context.Background()
+	old, err := issuer.Mint(ctx, &auth.Identity{Subject: "bob", TenantID: "tenant-a"})
+	require.NoError(t, err)
+
+	require.NoError(t, svc.DisableUser(ctx, "bob"))
+	require.NoError(t, svc.EnableUser(ctx, "bob"))
+
+	_, err = issuer.Refresh(ctx, old.RefreshToken)
+	var revoked *token.RefreshRevokedError
+	require.ErrorAs(t, err, &revoked, "a refresh token minted before records carried a tenant must not survive a disable and re-enable")
+}
+
+func TestRefresh_RefusesATenantlessRecordAndRevokesItsFamily(t *testing.T) {
+	for name, store := range newLegacyRecordStores(t) {
+		t.Run(name, func(t *testing.T) {
+			issuer := newTestTokenIssuerWithStore(t, store)
+			ctx := context.Background()
+			old, err := issuer.Mint(ctx, &auth.Identity{Subject: "bob", TenantID: "tenant-a"})
+			require.NoError(t, err)
+			rec := store.last
+
+			pair, err := issuer.Refresh(ctx, old.RefreshToken)
+			var revoked *token.RefreshRevokedError
+			require.ErrorAs(t, err, &revoked, "a tenantless refresh record must be refused")
+			require.Nil(t, pair)
+
+			_, err = issuer.Refresh(ctx, old.RefreshToken)
+			require.ErrorAs(t, err, &revoked, "a replay of the tenantless token must be refused")
+
+			successor := &token.Record{JTI: "successor", Family: rec.Family, Subject: "bob", Tenant: "tenant-a", ExpiresAt: rec.ExpiresAt}
+			var familyRevoked *token.FamilyRevokedError
+			require.ErrorAs(t, store.RefreshStore.Save(ctx, successor), &familyRevoked, "the tenantless record's family must be tombstoned")
+		})
+	}
 }
 
 // TestDisableUser_NoTokenIssuerConfiguredStillSucceeds proves a deployment

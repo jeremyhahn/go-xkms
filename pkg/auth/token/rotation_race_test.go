@@ -570,21 +570,30 @@ func TestRevokeBySubject_RevokesEveryFamilyForSubjectAndNoOther(t *testing.T) {
 			store := tc.newStore(t)
 
 			// alice holds two families (e.g. two browser sessions); bob holds
-			// one. Revoking alice must not touch bob's.
+			// one, and another tenant's alice one. Revoking alice must not
+			// touch bob's or the other tenant's alice's.
 			require.NoError(t, store.Save(ctx, &Record{
-				JTI: "jti-1", Family: "fam-alice-1", Subject: "alice",
+				JTI: "jti-1", Family: "fam-alice-1", Subject: "alice", Tenant: "acme",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			}))
 			require.NoError(t, store.Save(ctx, &Record{
-				JTI: "jti-2", Family: "fam-alice-2", Subject: "alice",
+				JTI: "jti-2", Family: "fam-alice-2", Subject: "alice", Tenant: "acme",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			}))
 			require.NoError(t, store.Save(ctx, &Record{
-				JTI: "jti-3", Family: "fam-bob-1", Subject: "bob",
+				JTI: "jti-3", Family: "fam-bob-1", Subject: "bob", Tenant: "acme",
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			}))
+			require.NoError(t, store.Save(ctx, &Record{
+				JTI: "jti-4", Family: "fam-alice-other", Subject: "alice", Tenant: "other",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			}))
 
-			require.NoError(t, store.RevokeBySubject(ctx, "alice"))
+			require.NoError(t, store.RevokeBySubject(ctx, "acme", "alice"))
+
+			got4, err := store.Get(ctx, "fam-alice-other", "jti-4")
+			require.NoError(t, err)
+			require.NotNil(t, got4, "another tenant's alice must survive acme's alice's revocation")
 
 			got1, err := store.Get(ctx, "fam-alice-1", "jti-1")
 			require.NoError(t, err)
@@ -615,7 +624,7 @@ func TestRevokeBySubject_NoFamiliesIsANoop(t *testing.T) {
 	for _, tc := range refreshStoreCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			store := tc.newStore(t)
-			require.NoError(t, store.RevokeBySubject(context.Background(), "nobody"))
+			require.NoError(t, store.RevokeBySubject(context.Background(), "acme", "nobody"))
 		})
 	}
 }
@@ -632,7 +641,7 @@ func TestRevokeBySubject_IssuerIntegration(t *testing.T) {
 			pair, err := issuer.Mint(ctx, testIdentity())
 			require.NoError(t, err)
 
-			require.NoError(t, issuer.RevokeBySubject(ctx, testIdentity().Subject))
+			require.NoError(t, issuer.RevokeBySubject(ctx, testIdentity().TenantID, testIdentity().Subject))
 
 			_, err = issuer.Refresh(ctx, pair.RefreshToken)
 			var revokedErr *RefreshRevokedError

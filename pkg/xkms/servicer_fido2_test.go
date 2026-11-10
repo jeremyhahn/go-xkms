@@ -2,6 +2,7 @@ package xkms
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -92,8 +93,11 @@ func TestRegistrationCeremony_EndToEnd(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(beginResp.OptionsJSON), &options))
 	require.NotEmpty(t, options.Response.Challenge)
 
-	// Step 3: Resolve the user ID so the mock attestation binds to the right user.
-	user, err := waSvc.GetUserByEmail(ctx, email)
+	// The ceremony runs under a random per-registration handle; the account
+	// is created at finish (ruling 417(2)).
+	handleText, ok := options.Response.User.ID.(string)
+	require.True(t, ok)
+	handle, err := base64.RawURLEncoding.DecodeString(handleText)
 	require.NoError(t, err)
 
 	// Step 4: Drive the mock authenticator to produce a valid attestation for
@@ -103,7 +107,7 @@ func TestRegistrationCeremony_EndToEnd(t *testing.T) {
 
 	attestation, err := mockAuth.CreateAttestationObject(
 		options.Response.Challenge,
-		user.WebAuthnID(),
+		handle,
 		origin,
 	)
 	require.NoError(t, err)
@@ -123,7 +127,10 @@ func TestRegistrationCeremony_EndToEnd(t *testing.T) {
 	assert.NotEmpty(t, finishResp.CredentialID)
 	assert.NotEmpty(t, finishResp.Token)
 
-	// Step 6: Prove the credential was actually persisted by the ceremony.
+	// Step 6: Prove the credential was actually persisted by the ceremony,
+	// on the account finish created.
+	user, err := waSvc.GetUserByEmail(ctx, email)
+	require.NoError(t, err)
 	creds, err := waSvc.GetCredentials(ctx, user.WebAuthnID())
 	require.NoError(t, err)
 	require.Len(t, creds, 1)
@@ -150,7 +157,11 @@ func registerCredentialForLogin(t *testing.T, svc *XKMSService, waSvc *webauthn.
 	var options waprotocol.CredentialCreation
 	require.NoError(t, json.Unmarshal([]byte(beginResp.OptionsJSON), &options))
 
-	user, err := waSvc.GetUserByEmail(ctx, email)
+	// The ceremony runs under a random per-registration handle; the account
+	// is created at finish (ruling 417(2)).
+	handleText, ok := options.Response.User.ID.(string)
+	require.True(t, ok)
+	handle, err := base64.RawURLEncoding.DecodeString(handleText)
 	require.NoError(t, err)
 
 	mockAuth, err := webauthn.NewMockAuthenticator(rpID)
@@ -158,7 +169,7 @@ func registerCredentialForLogin(t *testing.T, svc *XKMSService, waSvc *webauthn.
 
 	attestation, err := mockAuth.CreateAttestationObject(
 		options.Response.Challenge,
-		user.WebAuthnID(),
+		handle,
 		origin,
 	)
 	require.NoError(t, err)
@@ -173,6 +184,8 @@ func registerCredentialForLogin(t *testing.T, svc *XKMSService, waSvc *webauthn.
 	require.NoError(t, err)
 	require.True(t, finishResp.Success)
 
+	user, err := waSvc.GetUserByEmail(ctx, email)
+	require.NoError(t, err)
 	return mockAuth, user.WebAuthnID()
 }
 
