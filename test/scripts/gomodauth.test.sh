@@ -80,7 +80,7 @@ expect_all GIT_CONFIG_COUNT 1 runner
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" runner
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" runner
 eq "runner: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "runner credentials with no FORGE_MODULE_TOKEN (the CI checkout)"
@@ -96,7 +96,7 @@ eq "make succeeds" "0" "$?"
 expect_all GIT_CONFIG_COUNT 1 count2
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" count2
 eq "count2: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "FORGE_MODULE_TOKEN and GITEA_HOST compose the rewrite"
@@ -106,7 +106,16 @@ expect_all GIT_CONFIG_COUNT 1 token
 expect_all GIT_CONFIG_KEY_0 "$TOKEN_KEY" token
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" token
 eq "token: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$TOKEN_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$TOKEN_KEY" "$VALUE")" \
+	"$(cat "$WORK/gomodauth.env")"
+
+section "a caller-supplied GOPRIVATE is staged with the rewrite"
+via_make GOPRIVATE='example.com/private/*' \
+	GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$VALUE"
+eq "make succeeds" "0" "$?"
+expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" goprivate
+eq "goprivate: gomodauth secret" \
+	"$(printf 'export GOPRIVATE=example.com/private/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "no credentials resolve publicly"
