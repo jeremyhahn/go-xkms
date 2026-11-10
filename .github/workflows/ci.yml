@@ -1059,6 +1059,9 @@ jobs:
   # coverage-threshold merges their profiles and applies COVERAGE_THRESHOLD
   # once. Tags matter: without them tag-gated packages are neither tested nor
   # counted. A docs-only PR skips the steps, as in the image job.
+  # The shards are github.com-only (DS-8194): the profiles travel as artifacts,
+  # and the Gitea v3 artifact steps are gone (DS-8159). Elsewhere each shard is
+  # a green job that runs no test and coverage-threshold runs the whole suite.
   coverage:
     name: Coverage shard ${{ matrix.shard }}/6
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
@@ -1088,7 +1091,7 @@ jobs:
           done
 
       - name: Take the toolchain image
-        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ needs.changes.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -1097,7 +1100,7 @@ jobs:
 
       # test-web runs `npm ci` against the npm registry (shard 1).
       - name: make coverage-shard
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
         env:
           IN_IMAGE_NETWORK: bridge
           IN_IMAGE_EXPORT: build/coverage/shard-${{ matrix.shard }}.out
@@ -1118,13 +1121,15 @@ jobs:
 
   # Merges the six shard profiles and runs the threshold, the dirty-tree check
   # and the advisory per-package report, which runs the tpm2-simulator,
-  # pkcs11-tagged and FIPS coverage lanes (make coverage-merge).
+  # pkcs11-tagged and FIPS coverage lanes (make coverage-merge). Off
+  # github.com no profile reaches this job (DS-8159), so it runs the whole
+  # make coverage, the suite and the threshold, as the image job did (DS-8194).
   coverage-threshold:
     name: Coverage threshold
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: [changes, schedule-guard, ci-images, coverage]
     if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
-    timeout-minutes: 45       # CUSTOMIZE (go-xkms, DS-8139): the merge and threshold, plus the per-package report's three lanes
+    timeout-minutes: 240      # CUSTOMIZE (go-xkms, DS-8139, DS-8194): on github.com the merge, threshold and per-package report need minutes; elsewhere the whole suite needs the image job's bound
     permissions:
       contents: read
       packages: read
@@ -1159,8 +1164,14 @@ jobs:
           merge-multiple: true
           path: build/coverage
 
+      - name: make coverage (the whole suite and the threshold, not github.com)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' && github.server_url != 'https://github.com' }}
+        env:
+          IN_IMAGE_NETWORK: bridge
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
       - name: make coverage-merge (the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge SHARDS=6 GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
 
       - name: Tear down
