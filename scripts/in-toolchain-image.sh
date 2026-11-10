@@ -49,7 +49,7 @@
 # when the job has no quota; IN_IMAGE_CPUS overrides), and the sibling gets
 # --cpus N with GOMAXPROCS=N and GOFLAGS=-p=N. golangci-lint's default
 # concurrency follows the container CPU quota, so lint takes N with no flag.
-# A 4-CPU slot on the Dells gives 4; never a hardcoded number.
+# A 4-CPU slot on a [runner host] gives 4; never a hardcoded number.
 #
 # v4 (ci-template v1.29.4, Company Agent ruling 261(c); claude-agents #379
 # comment 157032):
@@ -157,7 +157,7 @@ args=(
   # Go's build and link scratch ($WORK, go-link-*) on disk, not the 3 GB
   # /tmp tmpfs: `make coverage` links cgo test binaries there and filled it
   # (ENOSPC "final link failed") in 8 Devcontainer jobs on 2026-10-26, on
-  # every Dell runner and omega-b (Company Agent m1417, ruling 219(9);
+  # every [runner host] (Company Agent m1417, ruling 219(9);
   # ruling 108). An anonymous volume on the image's /var/tmp (mode 1777) is
   # on the daemon's data disk, and cleanup's `docker rm -v` removes it.
   # trivy's cache (vulnerability and Java DBs) lives there too, not in

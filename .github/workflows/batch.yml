@@ -2,7 +2,7 @@
 # race-full, soak, bench. Dispatch only; never in a merge gate.
 #
 # Owner order 2026-10-12 10:43 EDT (relayed by the Company Agent 17:24Z):
-# "the fleet is still not working hard. omega is 21%, both dell servers are
+# "the fleet is still not working hard. [one host] is 21%, [others] are
 # under 50%. we need to give them more work!" Lanes are bound by Claude
 # accounts; this workflow is work that needs none and still finds defects in
 # the release-candidate products.

@@ -36,7 +36,7 @@ cat > "$PROBE" <<'EOF'
 root="$1"
 shift
 for f in "$@"; do
-	for k in GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+	for k in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
 		expr=$(sed -n "s/^ *- $k=//p" "$f")
 		eval "v=\"$expr\""
 		printf '%s %s=%s\n' "${f#"$root"/}" "$k" "$v"
@@ -80,7 +80,7 @@ expect_all GIT_CONFIG_COUNT 1 runner
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" runner
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" runner
 eq "runner: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "runner credentials with no FORGE_MODULE_TOKEN (the CI checkout)"
@@ -96,7 +96,7 @@ eq "make succeeds" "0" "$?"
 expect_all GIT_CONFIG_COUNT 1 count2
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" count2
 eq "count2: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "FORGE_MODULE_TOKEN and GITEA_HOST compose the rewrite"
@@ -106,7 +106,7 @@ expect_all GIT_CONFIG_COUNT 1 token
 expect_all GIT_CONFIG_KEY_0 "$TOKEN_KEY" token
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" token
 eq "token: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$TOKEN_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$TOKEN_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "no credentials resolve publicly"
@@ -123,6 +123,31 @@ expect_all GIT_CONFIG_KEY_0 "$TOKEN_KEY" direct
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" direct
 env -i bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
 expect_all GIT_CONFIG_COUNT "" direct-public
+
+# --- the caller's GOPRIVATE reaches the secret and every compose file ----------
+# There is no in-house default (DS-7983): an empty GOPRIVATE above proves only
+# that none is added, so a nonempty one must arrive unchanged, through make for
+# both credential sources and through compose loaded directly.
+PRIVATE=example.com/private
+section "the caller's GOPRIVATE is forwarded"
+eq "every compose file that sets GOPRIVATE is probed" "" \
+	"$(grep -rl --include=docker-compose.yml --include=compose.yaml -- '- GOPRIVATE=' \
+		"$ROOT/build/docker/devcontainer" "$ROOT/test/integration" | sort |
+		comm -23 - <(printf '%s\n' "${COMPOSE_FILES[@]}"))"
+via_make GOPRIVATE="$PRIVATE" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$VALUE"
+eq "make succeeds" "0" "$?"
+expect_all GOPRIVATE "$PRIVATE" private-runner
+eq "private-runner: gomodauth secret" \
+	"$(printf 'export GOPRIVATE=%s\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$PRIVATE" "$RUNNER_KEY" "$VALUE")" \
+	"$(cat "$WORK/gomodauth.env")"
+via_make GOPRIVATE="$PRIVATE" FORGE_MODULE_TOKEN=local-token GITEA_HOST=gitea.example.com
+eq "make succeeds" "0" "$?"
+expect_all GOPRIVATE "$PRIVATE" private-token
+eq "private-token: gomodauth secret" \
+	"$(printf 'export GOPRIVATE=%s\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$PRIVATE" "$TOKEN_KEY" "$VALUE")" \
+	"$(cat "$WORK/gomodauth.env")"
+env -i GOPRIVATE="$PRIVATE" bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
+expect_all GOPRIVATE "$PRIVATE" private-direct
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

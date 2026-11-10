@@ -283,13 +283,17 @@ GITEA_INSTEADOF_KEY = url.http://x:$(FORGE_MODULE_TOKEN)@$(GITEA_HOST)/jeremyhah
 # A required `${GITEA_HOST:?...}` cannot serve here: compose evaluates it when
 # the file is LOADED, so it fails a public checkout before any service starts,
 # which is the opposite of the public-resolution path this exists to provide.
+#
+# GOPRIVATE is the caller's, passed through and never defaulted: first-party
+# modules resolve from proxy.golang.org and sum.golang.org like any other
+# (DS-7944), so an in-house default would send them around the proxy and the
+# checksum database (DS-7983).
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 ifneq ($(GIT_CONFIG_KEY_0),)
-GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
 else ifneq ($(and $(FORGE_MODULE_TOKEN),$(GITEA_HOST)),)
-GOMODAUTH_GOPRIVATE := github.com/jeremyhahn/*
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GITEA_INSTEADOF_KEY)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := https://github.com/jeremyhahn/

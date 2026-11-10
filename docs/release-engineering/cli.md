@@ -149,19 +149,28 @@ tree. It scans tracked files only (`git grep`), so an untracked, gitignored
 file such as the staged `gomodauth.env` credentials is never read, and it
 refuses with exit 2 outside a git work tree. A finding is reported as
 `path:line` with the line's text left out, because CI logs are public.
-Runs in CI as part of the `lint` job, and can be run locally:
+
+The rules are private and are not in the tree: the gate reads them at run
+time from the environment variable `RELEASABILITY_PATTERNS`, one
+`class<TAB>regex` rule per line, in the format
+[lint-gates.md](../development/lint-gates.md) describes (DS-7983). Supply
+them from the private source CI uses, never from a file in the checkout:
 
 ```sh
-make check-public-literals
+RELEASABILITY_PATTERNS="$(<private rules>)" make check-public-literals
 ```
 
 ```
-check-public-literals.sh: internal literal(s) found (go-xkms#1030):
+check-public-literals.sh: internal literal(s) found (go-xkms#1030; path:line, the values are not shown):
 docs/example.md:12
 ```
 
-A clean tree prints nothing and exits 0. See
-[engineering.md](engineering.md#surface) for the pattern list and the
+A clean tree exits 0 and says how many rules it applied. A malformed or
+empty rule set exits 2, naming the bad line by number only. With
+`RELEASABILITY_PATTERNS` unset, the gate prints a notice that nothing was
+scanned and exits 0: that is a skipped scan, not a clean one, and does not
+show a tree is ready to publish. See
+[engineering.md](engineering.md#surface) for the
 `CLAUDE.md`/`AGENTS.md`/`.claude/` allowlist.
 
 ## Refusals you should expect

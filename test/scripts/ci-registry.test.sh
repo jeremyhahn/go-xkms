@@ -298,7 +298,7 @@ run_script() {
       GITHUB_RUN_ATTEMPT=1 \
       CI_STACK_PREFIX=go-xkms-ci- \
       CI_REGISTRY_BACKOFF=0 \
-      GOPRIVATE=github.com/jeremyhahn \
+      GOPRIVATE=example.com/private \
       FAKE_LOG="$CALL_LOG" \
       FAKE_DIGEST="$DIGEST" \
       FAKE_IMAGE_ID="$IMAGE_ID" \
