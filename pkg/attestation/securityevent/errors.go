@@ -26,6 +26,11 @@ var (
 	// nonce is the only freshness the evidence carries (RFC 9334 §10).
 	ErrNonceRequired = errors.New("securityevent: a verifier nonce is required")
 
+	// ErrTrustedRootsRequired indicates the caller configured no trusted
+	// roots. Without them the signer's chain is not anchored, so the evidence
+	// cannot be attributed to a device.
+	ErrTrustedRootsRequired = errors.New("securityevent: trusted roots are required")
+
 	// ErrMalformedChain indicates the signer's certificate chain is empty or
 	// a certificate in it does not parse.
 	ErrMalformedChain = errors.New("securityevent: malformed signer certificate chain")
