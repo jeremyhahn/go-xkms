@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // covFixtureFile is the source file the fixture profiles below describe
@@ -41,9 +43,10 @@ func writeProfile(t *testing.T, dir, name, mode string, records []string) {
 
 // runCoverageMerge runs the real `make coverage-merge` over dir with the given
 // threshold, the advisory per-package report switched off (it would run the
-// tagged coverage lanes) and CI unset so the dirty-tree check is skipped. It
+// tagged coverage lanes), CI unset so the dirty-tree check is skipped and the
+// extra make variables after those. It
 // returns the merged file's path, the output and the error.
-func runCoverageMerge(t *testing.T, dir string, threshold int) (string, string, error) {
+func runCoverageMerge(t *testing.T, dir string, threshold int, extra ...string) (string, string, error) {
 	t.Helper()
 	for _, tool := range []string{"make", "go"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -57,6 +60,7 @@ func runCoverageMerge(t *testing.T, dir string, threshold int) (string, string, 
 		fmt.Sprintf("COVERAGE_THRESHOLD=%d", threshold),
 		"COVERAGE_REPORT=",
 	}
+	vars = append(vars, extra...)
 	// Never let the report run for real: it starts the tagged test lanes.
 	dry, err := exec.Command("make", append([]string{"-n", "--no-print-directory", "-C", repoRoot, "coverage-gate"}, vars...)...).CombinedOutput()
 	if err != nil {
@@ -141,5 +145,88 @@ func TestCoverageMergeFailsUnderTheThreshold(t *testing.T) {
 	}
 	if _, out, err := runCoverageMerge(t, dir, 75); err != nil {
 		t.Errorf("75%% coverage failed a 75%% threshold: %v\n%s", err, out)
+	}
+}
+
+// writeShards writes shard-N.out for every N in shards, at the top of dir or,
+// as download-artifact v3 lays them out, in dir/coverage-shard-N/.
+func writeShards(t *testing.T, dir string, nested bool, shards ...int) {
+	t.Helper()
+	for _, n := range shards {
+		d := dir
+		if nested {
+			d = filepath.Join(dir, fmt.Sprintf("coverage-shard-%d", n))
+			if err := os.MkdirAll(d, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		records := shard2Records
+		if n == 1 {
+			records = shard1Records
+		}
+		writeProfile(t, d, fmt.Sprintf("shard-%d.out", n), "mode: atomic", records)
+	}
+}
+
+func TestCoverageMergeNeedsEveryShardOnce(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+		names string // what the failure must name; "" means the merge passes
+	}{
+		{"shard 6 absent", func(t *testing.T, dir string) { writeShards(t, dir, false, 1, 2, 3, 4, 5) }, "shard 6 of 6"},
+		{"shard 3 absent, one per directory", func(t *testing.T, dir string) { writeShards(t, dir, true, 1, 2, 4, 5, 6) }, "shard 3 of 6"},
+		{"shard 2 twice", func(t *testing.T, dir string) {
+			writeShards(t, dir, true, 1, 2, 3, 4, 5, 6)
+			writeShards(t, dir, false, 2)
+		}, "shard 2 of 6"},
+		{"all six", func(t *testing.T, dir string) { writeShards(t, dir, true, 1, 2, 3, 4, 5, 6) }, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			c.setup(t, dir)
+			_, out, err := runCoverageMerge(t, dir, 0, "SHARDS=6")
+			switch {
+			case c.names == "" && err != nil:
+				t.Fatalf("make coverage-merge SHARDS=6: %v\n%s", err, out)
+			case c.names != "" && err == nil:
+				t.Fatalf("make coverage-merge SHARDS=6 passed:\n%s", out)
+			case c.names != "" && !strings.Contains(out, c.names):
+				t.Fatalf("the failure does not name %q:\n%s", c.names, out)
+			}
+		})
+	}
+}
+
+// TestCoverageThresholdJobPassesTheShardCount checks that the coverage-threshold
+// job tells coverage-merge how many shard profiles to expect.
+func TestCoverageThresholdJobPassesTheShardCount(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Run string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("SHARDS=%d", coverageShards)
+	found := false
+	for _, s := range wf.Jobs["coverage-threshold"].Steps {
+		if strings.Contains(s.Run, "make coverage-merge") {
+			found = true
+			if !strings.Contains(s.Run, want) {
+				t.Errorf("coverage-threshold runs coverage-merge without %s: %s", want, s.Run)
+			}
+		}
+	}
+	if !found {
+		t.Error("coverage-threshold job does not run make coverage-merge")
 	}
 }
