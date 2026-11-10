@@ -839,11 +839,12 @@ func (tpm *TPM2) checkEKCertForNV(ekCertDER []byte) (tpm2.TPMHandle, error) {
 }
 
 // ekCertIndexByCurve maps an ECC EK's curve to its EK certificate NV index
-// (TCG EK Credential Profile v2.1 §2.2.1.4).
+// (TCG EK Credential Profile v2.1 §2.2.1.4). Only curves that CreateEK and
+// the transient EK recovery both build a template for are mapped: every ECC
+// EK is made from the P-256 ECCEKTemplate, so P-384 (0x01C00016) and P-521
+// (0x01C00018) fail with ErrEKCertKeyType until they have one.
 var ekCertIndexByCurve = map[elliptic.Curve]tpm2.TPMHandle{
 	elliptic.P256(): ekCertIndexECCP256,
-	elliptic.P384(): ekCertIndexECCP384,
-	elliptic.P521(): ekCertIndexECCP521,
 }
 
 // ekCertIndex returns the NV index the EK certificate is written to. A
