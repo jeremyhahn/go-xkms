@@ -308,6 +308,8 @@ concurrency:
 
 permissions:
   contents: read
+  # owner ruling 443: the review jobs read the PR file list (gh api).
+  pull-requests: read
 
 env:
   # v5.9.0: GitHub or Gitea, by the server this run is on.
@@ -361,9 +363,41 @@ jobs:
     # the job.
     timeout-minutes: 75
     steps:
+      # owner ruling 443 (2026-11-10): a PR whose every changed file is under
+      # .github/ gets no review. First, before the guard and any checkout: the
+      # PR's file list (both sides of a rename) is read from the API and no PR
+      # code is fetched. An API failure, an empty list or a list at the API's
+      # 3000-entry cap is no skip: the review runs as before.
+      # InfoSec Y-1: only a PR whose head repository is this repository can
+      # skip. A fork PR (or one whose head repository is gone) gets a normal
+      # review round, never a skip and never a failed job.
+      - name: Skip a CI/SDLC-only change (owner 2026-11-10)
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -uo pipefail
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "The head repository is not this repository; reviewing as usual."
+            exit 0
+          fi
+          if ! files=$(gh api --paginate repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[] | .filename, (.previous_filename // empty)'); then
+            echo "Could not list the PR's changed files; reviewing as usual."
+            exit 0
+          fi
+          n=$(printf '%s\n' "$files" | grep -c . || true)
+          if [ "$n" -gt 0 ] && [ "$n" -lt 3000 ] &&
+             ! printf '%s\n' "$files" | grep -v -e '^\.github/' | grep -q .; then
+            msg="CI/SDLC-only change: no review (owner 2026-11-10)"
+            echo "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       # ROOT. Before checkout, so a stale, duplicate or unrequested run costs a
       # few API calls rather than a clone and a review.
       - name: Check the container, the request, the head and any standing verdict
+        if: steps.scope.outputs.skip != 'true'
         id: guard
         env:
           EVENT_ACTION: ${{ github.event.action }}
@@ -715,7 +749,7 @@ jobs:
       # ROOT (a node action). Untrusted code from here on: no credential in
       # .git/config, and the next step hands the tree to uid 1000.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
+        if: steps.scope.outputs.skip != 'true' && (steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == '')
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -731,7 +765,7 @@ jobs:
       # proxy with no token, and only after their go.sum h1: hash matches.
       - name: Fetch the first-party modules the change requires
         id: deps
-        if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
+        if: steps.scope.outputs.skip != 'true' && (steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == '')
         timeout-minutes: 6
         env:
           SRC: ${{ github.workspace }}/src
@@ -1026,7 +1060,7 @@ jobs:
       # ROOT orchestrates; the git reads and codex run as uid 1000.
       - name: Review the head with codex as uid 1000
         id: codex
-        if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
+        if: steps.scope.outputs.skip != 'true' && (steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == '')
         env:
           SRC: ${{ github.workspace }}/src
           MODEL: ${{ steps.guard.outputs.codex_model }}
@@ -1199,7 +1233,7 @@ jobs:
       # happened. Every uid 1000 process is killed first, so nothing can swap
       # the file for a link while it is shredded; a link is never followed.
       - name: Shred codex's per-job login
-        if: always()
+        if: steps.scope.outputs.skip != 'true' && (always())
         run: |
           [ -e "$WORK/lib.sh" ] || exit 0
           # shellcheck source=/dev/null
@@ -1213,7 +1247,7 @@ jobs:
       # the model.
       - name: Post the verdict
         id: post
-        if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
+        if: steps.scope.outputs.skip != 'true' && (steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == '')
         env:
           MODEL: ${{ steps.guard.outputs.codex_model }}
           EFFORT: ${{ steps.guard.outputs.codex_effort }}
@@ -1306,8 +1340,8 @@ jobs:
       # that approval.
       - name: Confirm a codex verdict stands on this head
         if: >-
-          steps.guard.outputs.requested == 'true' &&
-          (steps.guard.outputs.skip == '' || steps.guard.outputs.skip == 'reviewed')
+          steps.scope.outputs.skip != 'true' &&
+          (steps.guard.outputs.requested == 'true' && (steps.guard.outputs.skip == '' || steps.guard.outputs.skip == 'reviewed'))
         env:
           REVIEW_ID: ${{ steps.post.outputs.review_id }}
         run: |
@@ -1343,7 +1377,7 @@ jobs:
       # and is not reported here; every other failure is, in one comment per
       # head, edited by a later failure on the same head.
       - name: Report a pipeline error on the pull request
-        if: failure() && steps.guard.outputs.requested == 'true'
+        if: steps.scope.outputs.skip != 'true' && (failure() && steps.guard.outputs.requested == 'true')
         run: |
           # shellcheck source=/dev/null
           . "$WORK/lib.sh"
@@ -1375,7 +1409,7 @@ jobs:
       # ROOT. The header file and root's copy of the login go with the job, and
       # so does what uid 1000 wrote.
       - name: Remove the credential header and the review files
-        if: always()
+        if: steps.scope.outputs.skip != 'true' && (always())
         run: |
           if [ -f "$WORK/codex-auth.json" ]; then shred -u "$WORK/codex-auth.json"; fi
           rm -rf "$WORK" "$OUT" "$DEPS"
@@ -1442,7 +1476,39 @@ jobs:
       OC_DATA: /tmp/opencode-data
       ROUTED_MODEL: ${{ needs.review.outputs.model }}
     steps:
+      # owner ruling 443 (2026-11-10): a PR whose every changed file is under
+      # .github/ gets no review. First, before the guard and any checkout: the
+      # PR's file list (both sides of a rename) is read from the API and no PR
+      # code is fetched. An API failure, an empty list or a list at the API's
+      # 3000-entry cap is no skip: the review runs as before.
+      # InfoSec Y-1: only a PR whose head repository is this repository can
+      # skip. A fork PR (or one whose head repository is gone) gets a normal
+      # review round, never a skip and never a failed job.
+      - name: Skip a CI/SDLC-only change (owner 2026-11-10)
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -uo pipefail
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "The head repository is not this repository; reviewing as usual."
+            exit 0
+          fi
+          if ! files=$(gh api --paginate repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[] | .filename, (.previous_filename // empty)'); then
+            echo "Could not list the PR's changed files; reviewing as usual."
+            exit 0
+          fi
+          n=$(printf '%s\n' "$files" | grep -c . || true)
+          if [ "$n" -gt 0 ] && [ "$n" -lt 3000 ] &&
+             ! printf '%s\n' "$files" | grep -v -e '^\.github/' | grep -q .; then
+            msg="CI/SDLC-only change: no review (owner 2026-11-10)"
+            echo "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Check the token, the request, the head, any standing verdict and the model
+        if: steps.scope.outputs.skip != 'true'
         id: guard
         run: |
           set -euo pipefail
@@ -1602,7 +1668,7 @@ jobs:
 
       # Root's, and it stays root's: never chowned (v5.2.2).
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
+        if: steps.scope.outputs.skip != 'true' && (steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == '')
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -1611,7 +1677,7 @@ jobs:
       # ROOT, before uid 1000 runs anything: the job config, the change as a
       # diff, the prompt, and uid 1000's directories.
       - name: Prepare the reviewer's config, the change and the prompt
-        if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
+        if: steps.scope.outputs.skip != 'true' && (steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == '')
         env:
           REPO: ${{ github.event.repository.name }}
           DRAFT: ${{ steps.guard.outputs.draft }}
@@ -1694,7 +1760,7 @@ jobs:
       # model stops talking, so a run that ends with no marked body is resumed
       # ONCE with `--continue` (same session, context kept).
       - name: Review the head with opencode
-        if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
+        if: steps.scope.outputs.skip != 'true' && (steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == '')
         run: |
           # shellcheck source=/dev/null
           . "$WORK/lib.sh"
@@ -1785,7 +1851,7 @@ jobs:
 
       # ROOT posts the one advisory review; the model never holds the token.
       - name: Post the advisory opencode review
-        if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
+        if: steps.scope.outputs.skip != 'true' && (steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == '')
         run: |
           # shellcheck source=/dev/null
           . "$WORK/lib.sh"
@@ -1806,8 +1872,8 @@ jobs:
       # on this head and no decisive opencode review does (v5.1: advisory only).
       - name: Confirm an advisory opencode review stands on this head
         if: >-
-          steps.guard.outputs.requested == 'true' &&
-          (steps.guard.outputs.skip == '' || steps.guard.outputs.skip == 'reviewed')
+          steps.scope.outputs.skip != 'true' &&
+          (steps.guard.outputs.requested == 'true' && (steps.guard.outputs.skip == '' || steps.guard.outputs.skip == 'reviewed'))
         run: |
           # shellcheck source=/dev/null
           . "$WORK/lib.sh"
@@ -1830,7 +1896,7 @@ jobs:
       # posts reviews and nothing else, so it files no issue comment. The job
       # is advisory and not a required context; the Codex review is unaffected.
       - name: Remove the credential header, uid 1000's processes and the review files
-        if: always()
+        if: steps.scope.outputs.skip != 'true' && (always())
         run: |
           if [ -f "$WORK/lib.sh" ]; then
             # shellcheck source=/dev/null
