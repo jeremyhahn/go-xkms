@@ -132,12 +132,13 @@ services:
       # container impersonate the devcontainer (go-xkms #19).
       - XKMS_DEVCONTAINER=1
       - GOPATH=/go
-      # In-house modules resolve from Gitea tags (dependency-resolution.md §6).
-      # Credentials: the Makefile's GOMODAUTH_* resolution (the CI runner's
-      # injected rewrite first), else the read-only token from the gitignored
-      # build/docker/devcontainer/.env when compose is loaded directly.
+      # Every module, github.com/jeremyhahn/* included, resolves from
+      # proxy.golang.org and is verified against sum.golang.org: no GOPRIVATE,
+      # GONOSUMDB or GONOPROXY here. A tag moved upstream then fails the go.sum
+      # check instead of being fetched direct. The GIT_CONFIG_* rewrite is the
+      # Makefile's GOMODAUTH_* resolution, else the read-only token from the
+      # gitignored build/docker/devcontainer/.env when compose is loaded directly.
       - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
       - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
       - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${FORGE_MODULE_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
       - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}
