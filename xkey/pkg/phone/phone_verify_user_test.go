@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/stretchr/testify/require"
 )
 
@@ -157,6 +158,53 @@ func TestVerifyUser_PhoneRefusalIsTyped(t *testing.T) {
 			require.ErrorIs(t, err, tt.want)
 			require.ErrorIs(t, err, errVerifierRefused, "the verifier's own error is kept")
 		})
+	}
+}
+
+// TestVerifyUser_CancelledPromptIsCancelled pins that a prompt the user
+// dismissed on the phone (-32001) reaches the authenticator as
+// keybackend.ErrUserVerificationCancelled, on which it spends no uvRetries,
+// and still as the phone's typed refusal.
+func TestVerifyUser_CancelledPromptIsCancelled(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	backend := refusingPhone(t, func(ctx context.Context, exchange pairingproto.RPCExchange, _ []byte, _ string) error {
+		resp, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalVerifyUser, nil))
+		if err != nil {
+			return err
+		}
+		// As attestation.NewUserVerifier reports a phone's RPC error.
+		return fmt.Errorf("%w: %w", errVerifierRefused, resp.Error)
+	}, pairingproto.ErrorCodeUserCancelled)
+
+	for range 3 {
+		err := backend.VerifyUser(context.Background(), "example.com")
+		require.ErrorIs(t, err, keybackend.ErrUserVerificationCancelled)
+		require.ErrorIs(t, err, pairingproto.ErrUserCancelled)
+		require.ErrorIs(t, err, errVerifierRefused, "the verifier's own error is kept")
+		require.NotErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+	}
+}
+
+// TestVerifyUser_UnloadableTrustIsUnavailable pins that a trust the verifier
+// could not load — devices.yaml or the trust store could not be read — is an
+// outage, not a failed verification: no prompt was sent, so every such call
+// answers ErrUserVerificationUnavailable with the loader's cause kept.
+func TestVerifyUser_UnloadableTrustIsUnavailable(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	errNoStore := errors.New("test: trust store unreadable")
+	backend := connectedVerifyUserBackend(t, attestation.NewUserVerifier(
+		func() (*xkms.AndroidDeviceTrust, error) { return nil, errNoStore },
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	))
+
+	for range 3 {
+		err := backend.VerifyUser(context.Background(), "example.com")
+		require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+		require.ErrorIs(t, err, errNoStore)
 	}
 }
 

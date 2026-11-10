@@ -380,6 +380,33 @@ func TestGetPinUvAuthTokenUsingUv_CancelSpendsNoRetry(t *testing.T) {
 	require.Nil(t, auth.GetPinUvAuthToken())
 }
 
+// TestGetPinUvAuthTokenUsingUv_DismissedPromptSpendsNoRetry pins that a user
+// dismissing the prompt on the verifier is not a failed verification: it
+// mints nothing, answers CTAP2_ERR_OPERATION_DENIED, and spends no uvRetries,
+// however often the prompt is dismissed.
+func TestGetPinUvAuthTokenUsingUv_DismissedPromptSpendsNoRetry(t *testing.T) {
+	dismissed := &keybackend.SentinelCauseError{
+		Sentinel: keybackend.ErrUserVerificationCancelled,
+		Cause:    errors.New("test: user dismissed the prompt"),
+	}
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}, err: dismissed}
+	auth := newVerifyingAuthenticator(t, backend)
+
+	for range DefaultUVRetries {
+		reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
+		resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+
+		require.ErrorIs(t, err, keybackend.ErrUserVerificationCancelled)
+		require.ErrorIs(t, err, ErrOperationDenied)
+		require.NotErrorIs(t, err, ErrUVInvalid)
+		require.NotErrorIs(t, err, ErrUVBlocked)
+		require.Equal(t, []byte{byte(StatusOperationDenied)}, resp)
+		require.Equal(t, DefaultUVRetries, auth.state.UVRetries(), "a dismissed prompt is not a failed verification")
+		require.Nil(t, auth.GetPinUvAuthToken())
+	}
+	require.Equal(t, DefaultUVRetries, backend.calls, "the user is still asked after dismissing a prompt")
+}
+
 // TestGetPinUvAuthTokenUsingUv_UnavailableSpendsNoRetry pins that a verifier
 // which could not reach a decision — the phone dropped, the exchange timed
 // out, the revocation list was unreachable — mints nothing, answers
