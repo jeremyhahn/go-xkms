@@ -130,6 +130,7 @@ type TCGCA interface {
 	// signature are the raw TPM2_Certify evidence; signatureAlgorithm is the
 	// IAK's X.509 signature algorithm; lakPublicArea is the LAK's marshalled
 	// TPMT_PUBLIC; nonce is the qualifying data the evidence must echo.
+	// tenantID is the caller's tenant.
 	IssueLAKCertificateRaw(
 		ctx context.Context,
 		tpmManufacturer, tpmModel, tpmFirmwareVersion string,
@@ -137,5 +138,6 @@ type TCGCA interface {
 		certifyInfo, signature []byte,
 		signatureAlgorithm x509.SignatureAlgorithm,
 		lakPublicArea, nonce []byte,
+		tenantID string,
 	) (certDER []byte, err error)
 }
