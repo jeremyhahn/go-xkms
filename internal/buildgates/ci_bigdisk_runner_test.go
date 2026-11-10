@@ -27,6 +27,13 @@ const (
 	// runnerScheduleIf is the v1.29.3 clause that keeps a schedule run's
 	// bigdisk jobs off unless the schedule guard says `run`.
 	runnerScheduleIf = "github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run'"
+	// runnerTrimRun and runnerTrimIf are the v1.22 cache trim step as the
+	// image and build jobs write it.
+	runnerTrimRun = `scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"`
+	runnerTrimIf  = "${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}"
+	// runnerCleanImages removes the images a run tagged; the Makefile derives
+	// the tag from IT_PROJECT, so the step passes the job's own.
+	runnerCleanImages = `make clean-run-images IT_PROJECT="$IT_PROJECT"`
 )
 
 var (
@@ -54,6 +61,7 @@ type runnerJob struct {
 type runnerStep struct {
 	Name string               `yaml:"name"`
 	Uses string               `yaml:"uses"`
+	If   string               `yaml:"if"`
 	Run  string               `yaml:"run"`
 	With map[string]yaml.Node `yaml:"with"`
 }
@@ -426,6 +434,81 @@ func TestCIBigdiskRunner_JobsKeepThePersistentHostClean(t *testing.T) {
 		if checkouts == 0 {
 			t.Errorf("%s: no actions/checkout step", name)
 		}
+	}
+}
+
+// stepsRunning returns the indexes of the steps whose run: carries one of the
+// commands.
+func stepsRunning(steps []runnerStep, commands ...string) []int {
+	var at []int
+	for i, s := range steps {
+		for _, c := range commands {
+			if strings.Contains(s.Run, c) {
+				at = append(at, i)
+				break
+			}
+		}
+	}
+	return at
+}
+
+// residueProblems reports what a bigdisk job would leave on the persistent
+// runner, which a hosted VM threw away with itself: Integration's run-tagged
+// images and the coverage shards' growth of the CI cache volumes.
+func residueProblems(wf runnerWorkflow) []string {
+	var problems []string
+
+	integration := wf.Jobs["integration"].Steps
+	teardowns := stepsRunning(integration, "docker compose", "make clean-test-containers", "make devcontainer-clean")
+	if len(teardowns) < 2 {
+		problems = append(problems, fmt.Sprintf("integration: %d compose tear-down steps, want at least 2", len(teardowns)))
+	}
+	switch clean := stepsRunning(integration, "make clean-run-images"); {
+	case len(clean) != 1:
+		problems = append(problems, fmt.Sprintf("integration: %d steps run make clean-run-images, want 1", len(clean)))
+	default:
+		s := integration[clean[0]]
+		if strings.TrimSpace(s.Run) != runnerCleanImages {
+			problems = append(problems, fmt.Sprintf("integration: step %q runs %q, want %q", s.Name, s.Run, runnerCleanImages))
+		}
+		if condition(s.If) != "always()" {
+			problems = append(problems, fmt.Sprintf("integration: step %q has if %q, want always()", s.Name, s.If))
+		}
+		if len(teardowns) > 0 && clean[0] < teardowns[len(teardowns)-1] {
+			problems = append(problems, fmt.Sprintf("integration: step %q comes before the compose tear-down %q", s.Name, integration[teardowns[len(teardowns)-1]].Name))
+		}
+	}
+
+	coverage := wf.Jobs["coverage"].Steps
+	shard := stepsRunning(coverage, "make coverage-shard")
+	image := stepsRunning(coverage, "ci-registry.sh use toolchain")
+	if len(shard) != 1 || len(image) != 1 {
+		problems = append(problems, fmt.Sprintf("coverage: %d coverage-shard steps and %d toolchain image steps, want 1 of each", len(shard), len(image)))
+	}
+	switch trim := stepsRunning(coverage, "trim-ci-caches.sh"); {
+	case len(trim) != 1:
+		problems = append(problems, fmt.Sprintf("coverage: %d steps run scripts/trim-ci-caches.sh, want 1", len(trim)))
+	default:
+		s := coverage[trim[0]]
+		if strings.TrimSpace(s.Run) != runnerTrimRun {
+			problems = append(problems, fmt.Sprintf("coverage: step %q runs %q, want %q", s.Name, s.Run, runnerTrimRun))
+		}
+		if collapse(s.If) != runnerTrimIf {
+			problems = append(problems, fmt.Sprintf("coverage: step %q has if %q, want %q", s.Name, s.If, runnerTrimIf))
+		}
+		if len(shard) == 1 && trim[0] > shard[0] {
+			problems = append(problems, fmt.Sprintf("coverage: step %q comes after the shard runs", s.Name))
+		}
+		if len(image) == 1 && trim[0] < image[0] {
+			problems = append(problems, fmt.Sprintf("coverage: step %q comes before the toolchain image it names", s.Name))
+		}
+	}
+	return problems
+}
+
+func TestCIBigdiskRunner_JobsLeaveNoResidue(t *testing.T) {
+	for _, p := range residueProblems(readRunnerWorkflow(t)) {
+		t.Error(p)
 	}
 }
 
