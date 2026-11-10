@@ -1262,6 +1262,44 @@ func TestPIVService_LocalExportPublicKey_ListKeysFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "export public key for slot 9a")
 }
 
+// TestPIVService_LocalExportPublicKey exports the public half of a key
+// generated into a slot as a PEM PUBLIC KEY block, and reports a slot that
+// holds no key instead of returning an empty export.
+func TestPIVService_LocalExportPublicKey(t *testing.T) {
+	xkms.Reset()
+	require.NoError(t, xkms.AutoInitialize(&xkms.AutoConfig{}))
+	t.Cleanup(xkms.Reset)
+	initTestPIVManager(t)
+	// Route PIV key generation through the xkms backends, as the GUI does
+	// (App.initLocalKeyStore), so the generated key is one ListKeys returns.
+	keystore, err := xkms.Get()
+	require.NoError(t, err)
+	require.NoError(t, keystore.InitPIVBackendResolver())
+
+	svc := NewPIVService(nil, "software")
+	svc.SetLocalEnabled(true)
+	svc.SetContext(context.Background())
+
+	_, err = svc.GenerateKey("9a", "ECCP256")
+	require.NoError(t, err)
+
+	pemText, err := svc.ExportPublicKey("9A")
+	require.NoError(t, err)
+	block, rest := pem.Decode([]byte(pemText))
+	require.NotNil(t, block)
+	assert.Empty(t, rest)
+	assert.Equal(t, "PUBLIC KEY", block.Type)
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	require.NoError(t, err)
+	ecPub, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok, "public key is %T, want *ecdsa.PublicKey", pub)
+	assert.Equal(t, elliptic.P256(), ecPub.Curve)
+
+	_, err = svc.ExportPublicKey("9c")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no key found in slot 9c")
+}
+
 func TestPIVService_LocalDeleteCertificate(t *testing.T) {
 	initTestPIVManager(t)
 
@@ -1349,6 +1387,73 @@ func TestPIVService_LocalDeleteCertificate_NoCert(t *testing.T) {
 
 	err := svc.DeleteCertificate("9a")
 	assert.True(t, errors.Is(err, ErrPIVNoCertificate))
+}
+
+// TestPIVService_LocalDeleteCertificate_EmptiesTheSlot drives the local path
+// against a running xkms service, so the key listing succeeds: deleting a
+// generated slot must remove the certificate AND the "piv-<slot>" key, and a
+// second delete must then report the slot empty rather than succeed.
+func TestPIVService_LocalDeleteCertificate_EmptiesTheSlot(t *testing.T) {
+	xkms.Reset()
+	require.NoError(t, xkms.AutoInitialize(&xkms.AutoConfig{}))
+	t.Cleanup(xkms.Reset)
+	initTestPIVManager(t)
+
+	svc := NewPIVService(nil, "software")
+	svc.SetLocalEnabled(true)
+	svc.SetContext(context.Background())
+
+	_, err := svc.GenerateKey("9A", "ECCP256")
+	require.NoError(t, err)
+
+	// The key half of the slot, held by the software key backend under the
+	// "piv-<slot>" name DeleteCertificate matches on.
+	backend, err := xkms.GetBackend("software")
+	require.NoError(t, err)
+	_, err = backend.GenerateECDSA(context.Background(), &xkms.KeyAttributes{
+		CN: "piv-9a", KeyType: xkms.KeyTypeSigning, StoreType: backend.Type(),
+		KeyAlgorithm: x509.ECDSA, ECCAttributes: &xkms.ECCAttributes{Curve: elliptic.P256()},
+	})
+	require.NoError(t, err)
+	slotKeys := func() int {
+		keys, err := xkms.ListKeys(context.Background(), "software")
+		require.NoError(t, err)
+		n := 0
+		for _, k := range keys {
+			if k.CN == "piv-9a" {
+				n++
+			}
+		}
+		return n
+	}
+	require.Equal(t, 1, slotKeys())
+
+	require.NoError(t, svc.DeleteCertificate("9A"))
+
+	_, err = svc.GetCertificate("9a")
+	assert.ErrorIs(t, err, ErrPIVNoCertificate)
+	assert.Zero(t, slotKeys(), "the slot key must be deleted with its certificate")
+
+	err = svc.DeleteCertificate("9a")
+	require.ErrorIs(t, err, ErrPIVNoCertificate)
+	assert.Contains(t, err.Error(), "neither certificate nor key")
+}
+
+// TestPIVService_LocalDeleteCertificate_StoreFailureIsNotAbsence checks that a
+// certificate delete the PIV manager cannot perform at all is reported as a
+// failure, not mistaken for an empty slot and followed by a key delete.
+func TestPIVService_LocalDeleteCertificate_StoreFailureIsNotAbsence(t *testing.T) {
+	xkms.XKMSResetPIV()
+	t.Cleanup(xkms.XKMSResetPIV)
+
+	svc := NewPIVService(nil, "software")
+	svc.SetLocalEnabled(true)
+	svc.SetContext(context.Background())
+
+	err := svc.DeleteCertificate("9a")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrPIVNoCertificate)
+	assert.Contains(t, err.Error(), "pivcert: delete slot 9a")
 }
 
 func TestPIVService_LocalGenerateCSR(t *testing.T) {

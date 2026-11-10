@@ -39,9 +39,7 @@ func TestServer_MetricsGatherer_IncludesRegisteredGatherer(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	srv, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, srv)
+	srv := newServerForTest(t, cfg)
 
 	acmeRegistry := prometheus.NewRegistry()
 	acmeCounter := prometheus.NewCounter(prometheus.CounterOpts{
@@ -71,9 +69,7 @@ func TestServer_MetricsGatherer_NoExtraGatherers(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	srv, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, srv)
+	srv := newServerForTest(t, cfg)
 
 	handler := promhttp.HandlerFor(serverGatherer{s: srv}, promhttp.HandlerOpts{})
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)

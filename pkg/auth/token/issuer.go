@@ -44,6 +44,10 @@ const (
 	// refreshTokenType is the typ claim distinguishing refresh tokens from
 	// access tokens, so one can never be presented as the other.
 	refreshTokenType = auth.RefreshTokenType
+
+	// ATJWTType is the typ header of an RFC 9068 §2.1 JWT access token.
+	// Config.AccessTokenType selects it.
+	ATJWTType = "at+jwt"
 )
 
 // Pair is one issued access/refresh token pair.
@@ -70,8 +74,20 @@ type Config struct {
 	// method selection. Required.
 	KeyAttributes *types.KeyAttributes
 
-	// KeyID is the kid header stamped on issued tokens (optional).
+	// KeyID is the kid header (RFC 7515 §4.1.4) stamped on issued tokens
+	// (optional).
 	KeyID string
+
+	// AccessTokenType is the typ header (RFC 7515 §4.1.9) stamped on access
+	// tokens (optional). ATJWTType selects RFC 9068 §2.1 access tokens;
+	// empty keeps the default "JWT". Refresh tokens never carry it: they
+	// keep the default header and their own typ claim.
+	AccessTokenType string
+
+	// ClientID is the client_id claim (RFC 9068 §2.2, RFC 8693 §4.3) of
+	// at+jwt access tokens: the OAuth client the tokens are issued to.
+	// Required when AccessTokenType is ATJWTType; ignored otherwise.
+	ClientID string
 
 	// Issuer is the iss claim. Defaults to "go-xkms".
 	Issuer string
@@ -103,6 +119,8 @@ type Issuer struct {
 	signer     crypto.Signer
 	keyAttrs   *types.KeyAttributes
 	keyID      string
+	accessTyp  string
+	clientID   string
 	issuer     string
 	audience   []string
 	accessTTL  time.Duration
@@ -125,6 +143,11 @@ func NewIssuer(cfg *Config) (*Issuer, error) {
 	}
 	if cfg.RefreshStore == nil {
 		return nil, &NilInputError{Field: "refresh store"}
+	}
+	// RFC 9068 §2.1: the at+jwt header declares the §2.2 claim set, whose
+	// client_id is REQUIRED.
+	if cfg.AccessTokenType == ATJWTType && cfg.ClientID == "" {
+		return nil, &ATJWTClientIDRequiredError{}
 	}
 
 	issuer := cfg.Issuer
@@ -154,6 +177,8 @@ func NewIssuer(cfg *Config) (*Issuer, error) {
 		signer:     cfg.Signer,
 		keyAttrs:   cfg.KeyAttributes,
 		keyID:      cfg.KeyID,
+		accessTyp:  cfg.AccessTokenType,
+		clientID:   cfg.ClientID,
 		issuer:     issuer,
 		audience:   audience,
 		accessTTL:  accessTTL,
@@ -297,8 +322,17 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 		"exp": now.Add(i.accessTTL).Unix(),
 	}
 	addIdentityClaims(accessClaims, id)
+	if i.accessTyp == ATJWTType {
+		// RFC 9068 §2.2 also requires client_id and jti.
+		accessJTI, err := randomID()
+		if err != nil {
+			return nil, &SigningError{Err: err}
+		}
+		accessClaims["client_id"] = i.clientID
+		accessClaims["jti"] = accessJTI
+	}
 
-	accessToken, err := i.sign(accessClaims)
+	accessToken, err := i.sign(accessClaims, i.accessTyp)
 	if err != nil {
 		return nil, &SigningError{Err: err}
 	}
@@ -322,7 +356,7 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 	}
 	addIdentityClaims(refreshClaims, id)
 
-	refreshToken, err := i.sign(refreshClaims)
+	refreshToken, err := i.sign(refreshClaims, "")
 	if err != nil {
 		return nil, &SigningError{Err: err}
 	}
@@ -373,12 +407,10 @@ func addIdentityClaims(claims jwt.MapClaims, id *auth.Identity) {
 	}
 }
 
-// sign signs claims with the configured crypto.Signer.
-func (i *Issuer) sign(claims jwt.MapClaims) (string, error) {
-	if i.keyID != "" {
-		return i.jwtSigner.SignWithSignerAndKID(i.signer, claims, i.keyAttrs, i.keyID)
-	}
-	return i.jwtSigner.SignWithSigner(i.signer, claims, i.keyAttrs)
+// sign signs claims with the configured crypto.Signer, stamping the
+// configured kid and the given typ header (empty keeps "JWT").
+func (i *Issuer) sign(claims jwt.MapClaims, typ string) (string, error) {
+	return i.jwtSigner.SignWithSignerKIDAndType(i.signer, claims, i.keyAttrs, i.keyID, typ)
 }
 
 // verifyRefresh validates a refresh token's signature, expiry, issuer, and

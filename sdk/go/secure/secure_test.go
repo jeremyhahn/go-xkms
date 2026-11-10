@@ -204,3 +204,17 @@ func TestCopyOut_DestroyedBuffer(t *testing.T) {
 		t.Fatalf("CopyOut on destroyed buffer: err = %v, want *NilBufferError", err)
 	}
 }
+
+// TestCoreDumpHardeningError_UnwrapsTheEnclaveError verifies a caller can
+// reach go-enclave's error through the wrapper, and that the message names
+// the failed step.
+func TestCoreDumpHardeningError_UnwrapsTheEnclaveError(t *testing.T) {
+	cause := errors.New("setrlimit refused")
+	err := error(&xkmssecure.CoreDumpHardeningError{Err: cause})
+	if !errors.Is(err, cause) {
+		t.Fatalf("errors.Is(%v, cause) = false", err)
+	}
+	if got, want := err.Error(), "secure: disable core dumps: setrlimit refused"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+}

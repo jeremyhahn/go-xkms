@@ -40,14 +40,35 @@ func WithCallContext(bind qrdbstorage.CallContext) Option {
 
 // callContext derives the context a call into go-qrdb runs on from ctx.
 func (d *Datastore) callContext(ctx context.Context) (context.Context, error) {
-	if d.bind == nil {
+	return bindCallContext(ctx, d.bind)
+}
+
+// bindCallContext derives the context a call into go-qrdb runs on: ctx
+// itself without a binder, the binder's context otherwise. A bind failure
+// is an *ErrCallContext.
+func bindCallContext(ctx context.Context, bind qrdbstorage.CallContext) (context.Context, error) {
+	if bind == nil {
 		return ctx, nil
 	}
-	bound, err := d.bind(ctx)
+	bound, err := bind(ctx)
 	if err != nil {
 		return nil, &ErrCallContext{Err: err}
 	}
 	return bound, nil
+}
+
+// BindKV returns kv with every call run on the context bind derives from the
+// caller's, as the datastore's own KV calls are (WithCallContext). The
+// result keeps kv's guarded verbs (transport.GuardedKVClient). A bind
+// failure fails the call with ErrCallContext before it reaches go-qrdb; a
+// nil bind returns kv unchanged.
+func BindKV(kv transport.KVClient, bind qrdbstorage.CallContext) transport.KVClient {
+	if bind == nil {
+		return kv
+	}
+	return &boundKV{kv: kv, bind: func(ctx context.Context) (context.Context, error) {
+		return bindCallContext(ctx, bind)
+	}}
 }
 
 // kvStore returns the DAO store over client: the SDK's own adapter, built

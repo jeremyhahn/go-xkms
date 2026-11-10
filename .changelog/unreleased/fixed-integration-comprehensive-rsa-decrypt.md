@@ -1,0 +1,1 @@
+- The API suite's comprehensive RSA round trip decrypts with `--hash sha256`, the OAEP hash `key encrypt-asym` used, instead of the PKCS#1 v1.5 fallback that policy refuses (run 77537).

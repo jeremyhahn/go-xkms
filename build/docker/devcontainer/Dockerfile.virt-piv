@@ -11,6 +11,8 @@
 #       -f build/docker/devcontainer/Dockerfile.virt-piv build/docker/devcontainer
 
 FROM debian:bookworm-slim AS softhsm
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY apt-retries.conf /etc/apt/apt.conf.d/80-retries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential autoconf automake libtool pkg-config libssl-dev \
     curl ca-certificates \
@@ -21,6 +23,9 @@ RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# apt retries transient fetch errors with backoff (see the softhsm stage).
+COPY apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -100,6 +100,42 @@ func TestC704gMigrate_TempMountFailureRestoresTheSource(t *testing.T) {
 	assert.Equal(t, content, source, "the original container is restored")
 }
 
+// TestC704gMigrate_UnrestorableSourceKeepsTheBackup covers a rollback whose
+// rename back fails because something now occupies the source path: the
+// migration still fails with the original operation, warns that the source
+// was not restored, and leaves the original container intact at ".old".
+func TestC704gMigrate_UnrestorableSourceKeepsTheBackup(t *testing.T) {
+	tests := []struct {
+		fail, op string
+	}{
+		{fail: "create xkey.luks", op: "create"},
+		{fail: "unlock xkey.luks.old", op: "unlock_old"},
+		{fail: "unlock xkey.luks", op: "unlock_new"},
+		{fail: "copy xkey.luks", op: "copy_data"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.op, func(t *testing.T) {
+			host, content := c704cMigrate(t)
+			host.fail[tt.fail] = errC704cHost
+			host.before = map[string]func(){tt.fail: func() {
+				// A non-empty directory at the source path refuses the
+				// rename back over it.
+				require.NoError(t, os.RemoveAll(migrateSourcePath))
+				require.NoError(t, os.MkdirAll(migrateSourcePath, 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(migrateSourcePath, "occupant"), nil, 0o600))
+			}}
+
+			out, err := runLUKSCmd(t, runMigrate)
+			c704cRequireOp(t, err, tt.op)
+			assert.Contains(t, out, "Warning: could not restore original container")
+			assert.NotContains(t, out, "Migration complete")
+			backup, rerr := os.ReadFile(migrateSourcePath + ".old")
+			require.NoError(t, rerr)
+			assert.Equal(t, content, backup, "the original container survives as the backup")
+		})
+	}
+}
+
 // Without --source the container is the one in the xkey home, whether the
 // home was resolved at startup or is resolved by the command.
 func TestC704gMigrate_DefaultsToTheHomeContainer(t *testing.T) {

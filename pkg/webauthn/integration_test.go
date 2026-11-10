@@ -357,8 +357,9 @@ func TestIntegration_MultipleCredentials(t *testing.T) {
 	require.ErrorIs(t, err, ErrRegistrationRefused)
 
 	regOptions2, regSessionID2, err := svc.BeginAddCredential(ctx, SessionAccount{
-		UserID: user.WebAuthnID(),
-		Email:  "multicred@example.com",
+		UserID:   user.WebAuthnID(),
+		Email:    "multicred@example.com",
+		TenantID: "system",
 	})
 	require.NoError(t, err)
 

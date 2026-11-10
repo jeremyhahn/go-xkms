@@ -75,7 +75,11 @@ func (f *securityFixture) account(t *testing.T, email string) pkgwebauthn.User {
 func identityFor(user pkgwebauthn.User) *auth.Identity {
 	return &auth.Identity{
 		Subject:  base64.RawURLEncoding.EncodeToString(user.WebAuthnID()),
-		Metadata: map[string]string{"email": user.Email()},
+		TenantID: "system",
+		Metadata: map[string]string{
+			"email":                     user.Email(),
+			auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle,
+		},
 	}
 }
 

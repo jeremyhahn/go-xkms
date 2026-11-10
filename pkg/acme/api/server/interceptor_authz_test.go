@@ -216,8 +216,8 @@ var grpcAuthzCases = []grpcAuthzCase{
 	{adminv1.AdminService_GetEAB_FullMethodName, auth.ResourceACMEEAB, auth.ActionRead, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 	{adminv1.AdminService_ListEABs_FullMethodName, auth.ResourceACMEEAB, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 
-	{adminv1.AdminService_CreateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-	{adminv1.AdminService_UpdateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{adminv1.AdminService_CreateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_UpdateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameUser},
 	{adminv1.AdminService_DeleteTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionDelete, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
 	{adminv1.AdminService_GetTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionRead, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
 	{adminv1.AdminService_ListTenantRoles_FullMethodName, auth.ResourceRoles, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
@@ -484,10 +484,9 @@ func TestUnaryAuthorizationInterceptor_HandlerErrorPropagates(t *testing.T) {
 // canonical admin role reaches the ACME admin gRPC methods an Admin should
 // reach, and revoking that role removes access.
 func TestUnaryAuthorizationInterceptor_QRDBAdminReachesGRPCSurface(t *testing.T) {
-	// SO-exclusive role mutation stays with the Security Officer.
+	// Since go-qrdb v0.58 Admin creates and updates roles; deleting one stays
+	// with the Security Officer.
 	soOnly := map[string]bool{
-		adminv1.AdminService_CreateTenantRole_FullMethodName: true,
-		adminv1.AdminService_UpdateTenantRole_FullMethodName: true,
 		adminv1.AdminService_DeleteTenantRole_FullMethodName: true,
 	}
 

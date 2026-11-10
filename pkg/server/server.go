@@ -42,6 +42,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/aeadnonce"
@@ -464,11 +465,11 @@ type Server struct {
 	// extraModules holds additional qrdb ServiceModules to register on the
 	// embedded node's unified server alongside xkms's own module (the "xkms"
 	// ModuleName in pkg/apimodule). Set via WithExtraModules; consumed by
-	// initEmbeddedQRDBNode, which appends them into the same qrdbsdk.WithModule
+	// initEmbeddedQRDBNode, which appends them into the same qrdbserver.WithModule
 	// option list as xkmsModule. A composing binary (e.g. cmd/xkmsd mounting
 	// the admin surface) supplies its own ServiceModule this way instead of
 	// xkms hosting a second embedded node.
-	extraModules []qrdbsdk.ServiceModule
+	extraModules []qrdbserver.ServiceModule
 
 	// attestedCallerPolicy is the embedder's attested-caller gate policy, set
 	// via WithAttestedCallerPolicy. attestation.peer_gate decides whether a
@@ -538,16 +539,25 @@ func (s *Server) SetMetricsListener(l net.Listener) {
 // namespace, and the private key never leaves the device. Returns nil when
 // the XKMSService is unavailable (SSH routes are then not mounted).
 func (s *Server) ensureSSHClient() sdkssh.Client {
+	return s.composeSSHClient(s.xkmsService)
+}
+
+// composeSSHClient builds the SSH client over svc exactly once. New calls it
+// before publishing the XKMSService, so the "ssh" database is created during
+// composition and never on a request path: the first module RPC used to pay
+// for it (go-xkms DS-4012). A nil svc returns nil without consuming the
+// sync.Once, so a call made before composition cannot latch a nil client.
+func (s *Server) composeSSHClient(svc *xkms.XKMSService) sdkssh.Client {
+	if svc == nil {
+		return nil
+	}
 	s.sshOnce.Do(func() {
-		if s.xkmsService == nil {
-			return
-		}
 		daos, err := s.daoFactory(sshrecords.DatabaseName)
 		if err != nil {
 			s.logger.Error("Failed to open the SSH database", slog.Any("error", err))
 			return
 		}
-		client, err := compose.BuildSSHClient(daos, s.xkmsService.LookupBackend, s.xkmsService)
+		client, err := compose.BuildSSHClient(daos, svc.LookupBackend, svc)
 		if err != nil {
 			s.logger.Error("Failed to build SSH client", slog.Any("error", err))
 			return
@@ -577,11 +587,11 @@ func WithAuthenticatorDecorator(fn func(auth.Authenticator) auth.Authenticator) 
 // node's unified server, alongside xkms's own "xkms" module. It is additive:
 // the composing binary supplies modules built against its own resolvers (for
 // example an admin-surface module mounted on the unified mTLS listener), and
-// initEmbeddedQRDBNode appends them into the same qrdbsdk.WithModule option
+// initEmbeddedQRDBNode appends them into the same qrdbserver.WithModule option
 // list it builds for the xkms module. Registering a module under a name that
 // collides with an existing one fails node construction, exactly as
-// qrdbsdk.WithModule does for any other duplicate.
-func WithExtraModules(mods ...qrdbsdk.ServiceModule) Option {
+// qrdbserver.WithModule does for any other duplicate.
+func WithExtraModules(mods ...qrdbserver.ServiceModule) Option {
 	return func(s *Server) { s.extraModules = append(s.extraModules, mods...) }
 }
 
@@ -908,13 +918,6 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// s.passwordManager) never observes it half-composed.
 		stores := s.composedStores()
 
-		// Published under the lock: with the unified API server enabled the
-		// embedded node serves module RPCs concurrently with this
-		// composition, and the module resolver reads the reference through
-		// XKMSService.
-		s.mu.Lock()
-		s.xkmsService = svc
-		s.mu.Unlock()
 		// The service shares the transports' Authorizer for the decisions
 		// made below the route gate (XKMSService.AuthorizeCaller).
 		// A nil Authorizer means RBAC is disabled, as it does there.
@@ -988,6 +991,21 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 			s.logger.Info("Hardware attestation trust anchors wired",
 				"formats", svc.AttestationFormats())
 		}
+
+		// Compose the SSH subsystem before the service is published: it
+		// creates the "ssh" database, which on a loaded host takes seconds,
+		// and must not run inside the first RPC's deadline.
+		s.composeSSHClient(svc)
+
+		// Published last, under the lock: with the unified API server enabled
+		// the embedded node serves module RPCs concurrently with this
+		// composition, and the module resolver reads the reference through
+		// XKMSService. Until it is set, every module RPC fails fast with
+		// Unavailable ("server still composing") instead of reaching a
+		// service whose authorizer, stores or SSH client are not yet wired.
+		s.mu.Lock()
+		s.xkmsService = svc
+		s.mu.Unlock()
 	}
 
 	return s, nil
@@ -1164,12 +1182,16 @@ func (s *Server) initializeBackends() error {
 	// Each backend has separate files with build tags that automatically
 	// compile the real implementation or a stub based on build flags
 
-	if err := s.initTPM2Backend(); err != nil {
-		return &ErrBackendInit{Backend: "TPM2", Err: err}
-	}
-
+	// PKCS#11 before TPM2: with no configured PIN the token PIN is released
+	// from the TPM-sealed pre-barrier store, and that release must open (and
+	// close) the TPM before the tpm2 backend holds its own connection -- a
+	// second open hangs the simulator and a real swtpm.
 	if err := s.initPKCS11Backend(); err != nil {
 		return &ErrBackendInit{Backend: "PKCS#11", Err: err}
+	}
+
+	if err := s.initTPM2Backend(); err != nil {
+		return &ErrBackendInit{Backend: "TPM2", Err: err}
 	}
 
 	if err := s.initAWSKMSBackend(); err != nil {
@@ -1528,6 +1550,7 @@ func (s *Server) initializeWebAuthnService() error {
 		QRDBClient:  ds.Client(),
 		DAOFactory:  ds.DAOFactory(),
 		TenantID:    webAuthnSystemTenant,
+		CallContext: s.relyingPartyCallContext(),
 		TokenIssuer: s.tokenIssuer,
 		Logger:      s.logger,
 		AuditLogger: s.auditLogger,

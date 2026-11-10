@@ -42,13 +42,33 @@ func (s *Server) initPKCS11Backend() error {
 		return nil
 	}
 
-	pkcs11Backend, err := s.openPKCS11Backend(s.config.Backends.PKCS11.Pin)
+	pin, err := s.pkcs11BackendPIN()
+	if err != nil {
+		return err
+	}
+	pkcs11Backend, err := s.openPKCS11Backend(pin)
 	if err != nil {
 		return err
 	}
 	s.keyProviders["pkcs11"] = pkcs11Backend
 	s.logger.Info("PKCS#11 backend initialized", "backend", "pkcs11", "library", s.config.Backends.PKCS11.Library, "token", s.config.Backends.PKCS11.Token)
 	return nil
+}
+
+// pkcs11BackendPIN returns the configured token PIN or, when none is
+// configured, the PIN `xkmsd seal-pkcs11-pin` sealed into the pre-barrier
+// store. A store holding no PIN yields nil, which the token login refuses as
+// before; any other release failure is refused here.
+func (s *Server) pkcs11BackendPIN() (*types.SecretValue, error) {
+	if pin := s.config.Backends.PKCS11.Pin; pin != nil {
+		return pin, nil
+	}
+	pin, err := s.releasePreNodePKCS11PIN()
+	var notSealed *preseal.NotFoundError
+	if errors.As(err, &notSealed) {
+		return nil, nil
+	}
+	return pin, err
 }
 
 // openPKCS11Backend is the one construction of the configured PKCS#11
@@ -124,15 +144,20 @@ func (s *Server) registerPreNodePKCS11Backend(pin *types.SecretValue) error {
 }
 
 // releasePreNodePKCS11PIN releases the sealed token PIN from the pre-barrier
-// store, over the seal autodetect's TPM open when there is one (a second
-// open hangs a simulator), else over its own.
+// store, over the TPM the seal autodetect or the platform store already
+// opened when there is one (a second open hangs a simulator), else over its
+// own.
 func (s *Server) releasePreNodePKCS11PIN() (*types.SecretValue, error) {
 	var (
 		store      *preseal.Store
 		closeStore func() error
 		err        error
 	)
-	if shared, ok := s.nodeSealTPM.(*tpm2backend.Backend); ok {
+	shared, ok := s.nodeSealTPM.(*tpm2backend.Backend)
+	if !ok {
+		shared, ok = s.platformStoreTPM.(*tpm2backend.Backend)
+	}
+	if ok {
 		dir, dirErr := embeddednode.ResolvePresealDir(s.config)
 		if dirErr != nil {
 			return nil, dirErr

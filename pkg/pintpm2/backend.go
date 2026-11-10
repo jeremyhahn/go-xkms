@@ -59,7 +59,7 @@ const minPINLength = 6
 type TPM2Backend struct {
 	platformStore PlatformAuthProvider
 	userPINSet    atomic.Bool
-	fido2Enclave  atomic.Pointer[enclave.MemoryEnclave]
+	fido2Enclave  atomic.Pointer[enclave.ByteAccess]
 }
 
 // NewTPM2Backend creates a new TPM2Backend that delegates PIN verification
@@ -174,7 +174,7 @@ func (b *TPM2Backend) VerifyUserPIN(p string) error {
 	// now known so UserPINSet reports the confirmed state rather than a
 	// guess derived from SRK presence.
 	b.userPINSet.Store(true)
-	enc := b.fido2Enclave.Load()
+	enc := b.fido2Hash()
 	if enc == nil || !enc.IsAlive() {
 		return b.cacheFIDO2Hash([]byte(p))
 	}
@@ -221,7 +221,11 @@ func (b *TPM2Backend) VerifyFIDO2Hash(hash []byte) bool {
 	if len(hash) != qrdbsdk.FIDO2PINHashSize {
 		return false
 	}
-	match, err := b.fido2Enclave.Load().EqualTo(hash)
+	enc := b.fido2Hash()
+	if enc == nil {
+		return false
+	}
+	match, err := enc.EqualTo(hash)
 	if err != nil {
 		return false
 	}
@@ -232,7 +236,7 @@ func (b *TPM2Backend) VerifyFIDO2Hash(hash []byte) bool {
 // multiple times. It returns ErrFIDO2HashDestroyFailed when the enclave
 // cannot be wiped.
 func (b *TPM2Backend) Close() error {
-	if enc := b.fido2Enclave.Load(); enc != nil {
+	if enc := b.fido2Hash(); enc != nil {
 		return destroyFIDO2Enclave(enc)
 	}
 	return nil
@@ -240,7 +244,16 @@ func (b *TPM2Backend) Close() error {
 
 // destroyFIDO2Enclave wipes enc, reporting a failure as
 // ErrFIDO2HashDestroyFailed.
-func destroyFIDO2Enclave(enc *enclave.MemoryEnclave) error {
+// fido2Hash returns the cached FIDO2 PIN hash enclave, or nil when none is
+// cached.
+func (b *TPM2Backend) fido2Hash() enclave.ByteAccess {
+	if p := b.fido2Enclave.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+func destroyFIDO2Enclave(enc enclave.ByteAccess) error {
 	if err := enc.Destroy(); err != nil {
 		return &errs.Joined{Lead: ErrFIDO2HashDestroyFailed, Cause: err}
 	}
@@ -291,8 +304,8 @@ func (b *TPM2Backend) cacheFIDO2Hash(pinBytes []byte) error {
 	if err != nil {
 		return b.failFIDO2HashCache(err)
 	}
-	if old := b.fido2Enclave.Swap(enc); old != nil {
-		return destroyFIDO2Enclave(old)
+	if old := b.fido2Enclave.Swap(&enc); old != nil {
+		return destroyFIDO2Enclave(*old)
 	}
 	return nil
 }
@@ -310,7 +323,7 @@ func (b *TPM2Backend) failFIDO2HashCache(cause error) error {
 // reports false until a new hash is cached.
 func (b *TPM2Backend) dropFIDO2Hash() error {
 	if enc := b.fido2Enclave.Swap(nil); enc != nil {
-		return destroyFIDO2Enclave(enc)
+		return destroyFIDO2Enclave(*enc)
 	}
 	return nil
 }

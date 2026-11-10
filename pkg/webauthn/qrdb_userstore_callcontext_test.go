@@ -1,0 +1,238 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package webauthn
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+)
+
+// boundKey marks a context the store's CallContext derived, standing in
+// for the identity node.ServiceContext attaches.
+type boundKey struct{}
+
+// errUnboundCall is what boundUserClient answers a call that carries no
+// bound identity, as go-qrdb's authorization answers a public request's
+// call (main run 74687).
+var errUnboundCall = errors.New("qrdb/auth: unauthenticated: no valid credentials provided")
+
+// errBindFailed is the binder failure the store must surface typed.
+var errBindFailed = errors.New("service principal unavailable")
+
+// boundUserClient is the in-memory user client that refuses every call
+// made on a context the store's CallContext did not derive.
+type boundUserClient struct {
+	*fakeUserClient
+}
+
+func refuseUnbound(ctx context.Context) error {
+	if ctx.Value(boundKey{}) == nil {
+		return errUnboundCall
+	}
+	return nil
+}
+
+func (b *boundUserClient) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+	if err := refuseUnbound(ctx); err != nil {
+		return nil, err
+	}
+	return b.fakeUserClient.CreateUser(ctx, req)
+}
+
+func (b *boundUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	if err := refuseUnbound(ctx); err != nil {
+		return nil, err
+	}
+	return b.fakeUserClient.GetUser(ctx, id)
+}
+
+func (b *boundUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	if err := refuseUnbound(ctx); err != nil {
+		return nil, err
+	}
+	return b.fakeUserClient.GetUserByEmail(ctx, tenantID, email)
+}
+
+func (b *boundUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	if err := refuseUnbound(ctx); err != nil {
+		return nil, err
+	}
+	return b.fakeUserClient.UpdateUser(ctx, req)
+}
+
+func (b *boundUserClient) DeleteUser(ctx context.Context, id uint64) error {
+	if err := refuseUnbound(ctx); err != nil {
+		return err
+	}
+	return b.fakeUserClient.DeleteUser(ctx, id)
+}
+
+func bindForTest(ctx context.Context) (context.Context, error) {
+	return context.WithValue(ctx, boundKey{}, true), nil
+}
+
+func newBoundUserStore(t *testing.T, bind func(context.Context) (context.Context, error)) UserStore {
+	t.Helper()
+	return newBoundUserStoreOn(t, &boundUserClient{fakeUserClient: newFakeUserClient()}, bind)
+}
+
+func newBoundUserStoreOn(t *testing.T, users *boundUserClient, bind func(context.Context) (context.Context, error)) UserStore {
+	t.Helper()
+	us, _, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
+		Users:       users,
+		DAOFactory:  newTestDAOFactory(),
+		KV:          testutil.NewQRDBFakeTransport(),
+		TenantID:    "system",
+		CallContext: bind,
+	})
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	return us
+}
+
+// TestQRDBUserStore_CallContextBindsEveryUserCall is the regression for
+// main run 74687: a public registration ceremony's user-record calls
+// carry no identity, so each must run on the context CallContext derives.
+func TestQRDBUserStore_CallContextBindsEveryUserCall(t *testing.T) {
+	us := newBoundUserStore(t, bindForTest)
+	ctx := context.Background()
+
+	if _, err := us.GetByEmail(ctx, "new@example.com"); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("GetByEmail before registration: want ErrUserNotFound, got %v", err)
+	}
+	user, err := us.Create(ctx, "new@example.com", "New")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := us.GetByID(ctx, user.WebAuthnID()); err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if _, err := us.GetByEmail(ctx, "new@example.com"); err != nil {
+		t.Fatalf("GetByEmail: %v", err)
+	}
+	if err := us.Save(ctx, user); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// Delete is an administrator's act: it runs on the caller's context,
+	// so the unbound caller here is refused rather than bound.
+	if err := us.Delete(ctx, user.WebAuthnID()); !errors.Is(err, errUnboundCall) {
+		t.Fatalf("Delete on an unbound caller: want the unauthenticated refusal, got %v", err)
+	}
+}
+
+// TestQRDBUserStore_NoCallContextIsRefused shows the refusing client is a
+// real seam: without a binder, the ceremony's first user lookup fails the
+// way main run 74687 did.
+func TestQRDBUserStore_NoCallContextIsRefused(t *testing.T) {
+	us := newBoundUserStore(t, nil)
+
+	_, err := us.GetByEmail(context.Background(), "new@example.com")
+	if !errors.Is(err, errUnboundCall) {
+		t.Fatalf("GetByEmail without a binder: want the unauthenticated refusal, got %v", err)
+	}
+	if _, err := us.Create(context.Background(), "new@example.com", "New"); !errors.Is(err, errUnboundCall) {
+		t.Fatalf("Create without a binder: want the unauthenticated refusal, got %v", err)
+	}
+}
+
+// TestQRDBUserStore_CallContextErrorIsTyped checks a binder failure stops
+// every bound call before the user client and surfaces as
+// QRDBCallContextError. Delete binds nothing, so it is not among them.
+func TestQRDBUserStore_CallContextErrorIsTyped(t *testing.T) {
+	users := &boundUserClient{fakeUserClient: newFakeUserClient()}
+	ctx := context.Background()
+	user, err := newBoundUserStoreOn(t, users, bindForTest).Create(ctx, "old@example.com", "Old")
+	if err != nil {
+		t.Fatalf("Create on the bound store: %v", err)
+	}
+	us := newBoundUserStoreOn(t, users, func(context.Context) (context.Context, error) {
+		return nil, errBindFailed
+	})
+	id := user.WebAuthnID()
+
+	calls := map[string]func() error{
+		"GetByID": func() error {
+			_, err := us.GetByID(ctx, id)
+			return err
+		},
+		"GetByEmail": func() error {
+			_, err := us.GetByEmail(ctx, "new@example.com")
+			return err
+		},
+		"Create": func() error {
+			_, err := us.Create(ctx, "new@example.com", "New")
+			return err
+		},
+		"Save": func() error { return us.Save(ctx, user) },
+	}
+	for name, call := range calls {
+		err := call()
+		var bindErr *QRDBCallContextError
+		if !errors.As(err, &bindErr) {
+			t.Fatalf("%s: want *QRDBCallContextError, got %T %v", name, err, err)
+		}
+		if !errors.Is(err, errBindFailed) {
+			t.Fatalf("%s: the error must wrap the binder's, got %v", name, err)
+		}
+	}
+}
+
+// TestPublicRegistrationDisabled_BoundStoreRefusesUnknownUser pins the
+// security scope of the main run 74687 fix: binding the user calls to the
+// service principal lets the ceremony read and write user records, but it
+// never opens sign-up. With allow_public_registration false, an unknown
+// email's registration begin is still refused, and no account is created.
+func TestPublicRegistrationDisabled_BoundStoreRefusesUnknownUser(t *testing.T) {
+	ctx := context.Background()
+	closed := false
+	cfg := validTestConfig()
+	cfg.AllowPublicRegistration = &closed
+
+	users, creds, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
+		Users:       &boundUserClient{fakeUserClient: newFakeUserClient()},
+		DAOFactory:  newTestDAOFactory(),
+		KV:          testutil.NewQRDBFakeTransport(),
+		TenantID:    "system",
+		CallContext: bindForTest,
+	})
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	svc, err := NewService(ServiceParams{
+		Config:          cfg,
+		UserStore:       users,
+		SessionStore:    NewMemorySessionStore(),
+		CredentialStore: creds,
+	})
+	if err != nil {
+		t.Fatalf("service: %v", err)
+	}
+
+	options, sessionID, err := svc.BeginRegistration(ctx, "stranger@example.com", "Stranger")
+	if !errors.Is(err, ErrRegistrationRefused) {
+		t.Fatalf("closed registration over a bound store: want ErrRegistrationRefused, got %v", err)
+	}
+	if options != nil || sessionID != "" {
+		t.Fatalf("a refused begin must return no options and no session, got %v %q", options, sessionID)
+	}
+	if _, err := users.GetByEmail(ctx, "stranger@example.com"); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("a refused registration must not leave an account behind, got %v", err)
+	}
+}

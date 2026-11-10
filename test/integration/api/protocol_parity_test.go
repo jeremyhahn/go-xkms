@@ -19,8 +19,6 @@
 package integration
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
@@ -281,11 +279,11 @@ func isProtocolAvailable(t *testing.T, runner *commands.TestRunner, protocol com
 	case commands.ProtocolUnix:
 		return checkUnixSocketExists(runner.UnixSocketPath)
 	case commands.ProtocolREST:
-		return checkHTTPEndpoint(runner.RESTBaseURL + "/health")
+		return checkHTTPEndpoint(t, runner.RESTBaseURL+"/health")
 	case commands.ProtocolGRPC:
 		return checkTCPEndpoint(runner.GRPCAddr)
 	case commands.ProtocolQUIC:
-		return checkQUICEndpoint(runner.QUICBaseURL)
+		return checkQUICEndpoint(t, runner.QUICBaseURL)
 	case commands.ProtocolMCP:
 		return checkTCPEndpoint(runner.MCPAddr)
 	default:
@@ -300,21 +298,11 @@ func checkUnixSocketExists(socketPath string) bool {
 	return true
 }
 
-func checkHTTPEndpoint(url string) bool {
-	caFile := os.Getenv("KEYSTORE_TLS_CA")
-	if caFile == "" {
-		caFile = "/etc/xkms/certs/ca.crt"
-	}
-	pool := x509.NewCertPool()
-	if caPEM, err := os.ReadFile(caFile); err == nil {
-		pool.AppendCertsFromPEM(caPEM)
-	}
+func checkHTTPEndpoint(tb testing.TB, url string) bool {
 	client := &http.Client{
 		Timeout: 3 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs: pool,
-			},
+			TLSClientConfig: clientTLSConfig(tb),
 		},
 	}
 	resp, err := client.Get(url) //nolint:noctx // simple health check
@@ -325,7 +313,7 @@ func checkHTTPEndpoint(url string) bool {
 	return resp.StatusCode < 500
 }
 
-func checkQUICEndpoint(baseURL string) bool {
+func checkQUICEndpoint(t *testing.T, baseURL string) bool {
 	// QUIC uses HTTP/3 over UDP — standard HTTP/TCP clients can't reach it.
 	// Probe the server via the CLI with a lightweight backends list command that
 	// requires an actual server round-trip.
@@ -334,12 +322,9 @@ func checkQUICEndpoint(baseURL string) bool {
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {
 		return false
 	}
-	caFile := os.Getenv("KEYSTORE_TLS_CA")
-	if caFile == "" {
-		caFile = "/etc/xkms/certs/ca.crt"
-	}
 	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
-	cmd := exec.Command(binPath, "--server", "quic://"+host, "--tls-ca", caFile, "backends", "list")
+	args := append([]string{"--server", "quic://" + host}, runner.TLSArgs(t, commands.ProtocolQUIC)...)
+	cmd := exec.Command(binPath, append(args, "backends", "list")...)
 	return cmd.Run() == nil
 }
 

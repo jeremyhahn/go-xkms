@@ -17,10 +17,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // errKVFault is a non-not-found storage fault. It must NOT be mapped to the
@@ -109,6 +113,7 @@ type faultyUserClient struct {
 	inner *fakeUserClient
 
 	createErr error
+	updateErr error
 	deleteErr error
 }
 
@@ -136,6 +141,9 @@ func (f *faultyUserClient) GetUserByCertThumbprint(ctx context.Context, thumbpri
 }
 
 func (f *faultyUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
 	return f.inner.UpdateUser(ctx, req)
 }
 
@@ -179,7 +187,7 @@ func (f *faultyUserClient) AddCertBinding(ctx context.Context, userID uint64, th
 func newFaultyAdapter(t *testing.T, uc qrdbtransport.UserClient, factory *qrdbsdk.DAOFactory) (UserStore, CredentialStore) {
 	t.Helper()
 	us, cs, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
-		Users: uc, DAOFactory: factory, TenantID: "system",
+		Users: uc, DAOFactory: factory, TenantID: "system", KV: testutil.NewQRDBFakeTransport(),
 	})
 	if err != nil {
 		t.Fatalf("adapter: %v", err)
@@ -204,6 +212,134 @@ func TestQRDBAdapter_Create_UserClientError(t *testing.T) {
 	_, err := us.Create(context.Background(), "a@example.com", "A")
 	if !errors.Is(err, errKVFault) {
 		t.Fatalf("expected wrapped create error, got %v", err)
+	}
+}
+
+// errDeleteDenied is the refusal the embedded node's service principal gets
+// for users:delete, a permission it is deliberately not granted
+// (serviceprincipal TestOption_PrincipalCannotDeleteUsers).
+var errDeleteDenied = errors.New("permission denied: users:delete")
+
+// newDeleteDeniedAdapter is a store whose user client refuses DeleteUser, as
+// the real service principal does, and fails every rename until updateErr
+// is cleared.
+func newDeleteDeniedAdapter(t *testing.T) (*faultyUserClient, UserStore, CredentialStore) {
+	t.Helper()
+	uc := &faultyUserClient{inner: newFakeUserClient(), updateErr: errKVFault, deleteErr: errDeleteDenied}
+	us, cs := newFaultyAdapter(t, uc, newTestDAOFactory())
+	return uc, us, cs
+}
+
+// TestQRDBAdapter_Create_UsernameAssignError_LeavesEmailRegistrable checks a
+// failed rename to the user ID is a *QRDBUsernameAssignError that deletes
+// nothing, and that the record it leaves under the placeholder does not lock
+// the email out: the next registration finishes the rename and gets that user.
+func TestQRDBAdapter_Create_UsernameAssignError_LeavesEmailRegistrable(t *testing.T) {
+	uc, us, cs := newDeleteDeniedAdapter(t)
+	cfg := validTestConfig()
+	cfg.AllowPublicRegistration = openRegistration()
+	svc, err := NewService(ServiceParams{
+		Config:          cfg,
+		UserStore:       us,
+		SessionStore:    NewMemorySessionStore(),
+		CredentialStore: cs,
+	})
+	if err != nil {
+		t.Fatalf("service: %v", err)
+	}
+	ctx := context.Background()
+
+	_, _, err = svc.BeginRegistration(ctx, "a@example.com", "A")
+	var assignErr *QRDBUsernameAssignError
+	if !errors.As(err, &assignErr) {
+		t.Fatalf("expected *QRDBUsernameAssignError, got %T: %v", err, err)
+	}
+	if !errors.Is(err, errKVFault) || errors.Is(err, errDeleteDenied) {
+		t.Fatalf("the error must carry the rename fault and no delete: %v", err)
+	}
+
+	uc.updateErr = nil
+	if _, _, err := svc.BeginRegistration(ctx, "a@example.com", "A"); err != nil {
+		t.Fatalf("registration after a failed rename: %v", err)
+	}
+	if n := len(uc.inner.byID); n != 1 {
+		t.Fatalf("records = %d, want the one recovered record", n)
+	}
+	rec, err := uc.inner.GetUserByEmail(ctx, "system", "a@example.com")
+	if err != nil {
+		t.Fatalf("GetUserByEmail: %v", err)
+	}
+	if rec.ID != assignErr.UserID || rec.Username != strconv.FormatUint(rec.ID, 10) {
+		t.Fatalf("record %d has Username %q, want the first record named by its ID", rec.ID, rec.Username)
+	}
+}
+
+// TestQRDBAdapter_Create_PendingUserWithCredentialIsNotTakenOver checks a
+// placeholder record that already holds a credential is never renamed and
+// handed to a new registration of its email.
+func TestQRDBAdapter_Create_PendingUserWithCredentialIsNotTakenOver(t *testing.T) {
+	uc, us, cs := newDeleteDeniedAdapter(t)
+	ctx := context.Background()
+
+	_, err := us.Create(ctx, "a@example.com", "A")
+	var assignErr *QRDBUsernameAssignError
+	if !errors.As(err, &assignErr) {
+		t.Fatalf("expected *QRDBUsernameAssignError, got %T: %v", err, err)
+	}
+	cred := &Credential{ID: []byte("cred-1"), UserID: HandleFromUserID(assignErr.UserID), PublicKey: []byte("pk")}
+	if err := cs.Save(ctx, cred); err != nil {
+		t.Fatalf("cred Save: %v", err)
+	}
+
+	uc.updateErr = nil
+	_, err = us.Create(ctx, "a@example.com", "A")
+	var claimedErr *QRDBPendingUserClaimedError
+	if !errors.As(err, &claimedErr) || claimedErr.UserID != assignErr.UserID {
+		t.Fatalf("expected *QRDBPendingUserClaimedError for user %d, got %T: %v", assignErr.UserID, err, err)
+	}
+	rec, err := uc.inner.GetUser(ctx, assignErr.UserID)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if !strings.HasPrefix(rec.Username, pendingUsernamePrefix) {
+		t.Fatalf("the credentialed placeholder was renamed to %q", rec.Username)
+	}
+}
+
+// TestQRDBAdapter_Create_PendingPrefixedAccountIsNotTakenOver pins that the
+// placeholder prefix is no evidence of an abandoned public sign-up: an
+// account that public sign-up never created keeps its name and stays out
+// of reach of an unauthenticated Create, whatever its username says.
+func TestQRDBAdapter_Create_PendingPrefixedAccountIsNotTakenOver(t *testing.T) {
+	ctx := context.Background()
+	uc := newFakeUserClient()
+	us, _ := newFaultyAdapter(t, uc, newTestDAOFactory())
+	rec, err := uc.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+		Username: pendingUsernamePrefix + "alice",
+		Email:    "alice@example.com",
+		Name:     "Alice",
+		TenantID: "system",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	if _, err := us.GetByEmail(ctx, "alice@example.com"); err != nil {
+		t.Fatalf("GetByEmail hid the existing account: %v", err)
+	}
+	if _, err := us.Create(ctx, "alice@example.com", "Mallory"); !errors.Is(err, ErrRegistrationRefused) {
+		t.Fatalf("expected ErrRegistrationRefused, got %T: %v", err, err)
+	}
+	after, err := uc.GetUser(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if after.Username != rec.Username {
+		t.Fatalf("the account was renamed to %q", after.Username)
+	}
+	store := us.(*qrdbUserStore)
+	if _, claimed, err := store.readClaim(ctx, store.claimKey(rec.ID)); err != nil || claimed {
+		t.Fatalf("an enrolment claim exists for the account (claimed=%v, err=%v)", claimed, err)
 	}
 }
 
@@ -277,9 +413,14 @@ func TestQRDBAdapter_UserSave_StoreFaultDoesNotAffectIt(t *testing.T) {
 // ----- user Delete -----
 
 func TestQRDBAdapter_UserDelete_ClientError(t *testing.T) {
-	uc := &faultyUserClient{inner: newFakeUserClient(), deleteErr: errKVFault}
+	uc := &faultyUserClient{inner: newFakeUserClient()}
 	us, _ := newFaultyAdapter(t, uc, newTestDAOFactory())
-	if err := us.Delete(context.Background(), HandleFromUserID(1)); !errors.Is(err, errKVFault) {
+	user, err := us.Create(context.Background(), "userdel1@example.com", "User Del1")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	uc.deleteErr = errKVFault
+	if err := us.Delete(context.Background(), user.WebAuthnID()); !errors.Is(err, errKVFault) {
 		t.Fatalf("expected delete error, got %v", err)
 	}
 }
@@ -322,6 +463,54 @@ func TestQRDBAdapter_UserDelete_CredentialDeleteErrorPropagates(t *testing.T) {
 	store.deleteErr = errKVFault
 	if err := us.Delete(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
 		t.Fatalf("expected credential delete error, got %v", err)
+	}
+}
+
+// TestQRDBAdapter_UserDelete_RetryCompletesCleanup pins that a delete whose
+// credential cleanup failed after the account was removed is finished by
+// the next delete, and that an ID that never existed is still not found.
+func TestQRDBAdapter_UserDelete_RetryCompletesCleanup(t *testing.T) {
+	ctx := context.Background()
+	store, factory := newFaultyStore()
+	us, cs := newFaultyAdapter(t, newFakeUserClient(), factory)
+	user, err := us.Create(ctx, "userdel3@example.com", "User Del3")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	handle := user.WebAuthnID()
+	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: handle}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	id, err := UserIDFromHandle(handle)
+	if err != nil {
+		t.Fatalf("UserIDFromHandle: %v", err)
+	}
+	qs := us.(*qrdbUserStore)
+	if _, err := qs.kv.PutIfAbsent(ctx, qs.credentialMarkerKey(id), []byte("marker")); err != nil {
+		t.Fatalf("put marker: %v", err)
+	}
+
+	store.deleteErr = errKVFault
+	if err := us.Delete(ctx, handle); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected credential delete error, got %v", err)
+	}
+	store.deleteErr = nil
+	if err := us.Delete(ctx, handle); err != nil {
+		t.Fatalf("retried delete: %v", err)
+	}
+	creds, err := cs.GetByUserID(ctx, handle)
+	if err != nil {
+		t.Fatalf("GetByUserID: %v", err)
+	}
+	if len(creds) != 0 {
+		t.Fatalf("credentials left after the retried delete: %d", len(creds))
+	}
+	if _, marked, err := qs.readClaim(ctx, qs.credentialMarkerKey(id)); err != nil || marked {
+		t.Fatalf("marker left after the retried delete (marked=%v, err=%v)", marked, err)
+	}
+
+	if err := us.Delete(ctx, HandleFromUserID(id+1000)); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("delete of an unknown ID: expected ErrUserNotFound, got %v", err)
 	}
 }
 

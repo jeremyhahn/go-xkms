@@ -1,0 +1,1 @@
+- The API suite's xkmsd raises the per-client login rate (`auth.session.login_rate_per_min: 6000`), as the WebAuthn browser suite does: its WebAuthn finish-login checks ran after enough ceremonies from one address that the production default of 10 per minute answered them `429` instead of the `400` they assert. The limiter stays on (run 77537).

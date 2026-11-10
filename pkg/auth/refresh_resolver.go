@@ -60,11 +60,30 @@ const (
 // declared.
 type QRDBUserResolver struct {
 	users qrdbtransport.UserClient
+	bind  func(ctx context.Context) (context.Context, error)
+}
+
+// QRDBUserResolverOption configures a QRDBUserResolver.
+type QRDBUserResolverOption func(*QRDBUserResolver)
+
+// WithResolverCallContext runs every user lookup on the context bind derives
+// from the caller's. A refresh request carries no identity go-qrdb's
+// authorization accepts, so an embedded node passes its service principal
+// (node.ServiceContext). A bind failure fails the refresh closed with
+// *RefreshUserLookupError.
+func WithResolverCallContext(bind func(ctx context.Context) (context.Context, error)) QRDBUserResolverOption {
+	return func(r *QRDBUserResolver) {
+		r.bind = bind
+	}
 }
 
 // NewQRDBUserResolver wires the qrdb user client into a QRDBUserResolver.
-func NewQRDBUserResolver(users qrdbtransport.UserClient) *QRDBUserResolver {
-	return &QRDBUserResolver{users: users}
+func NewQRDBUserResolver(users qrdbtransport.UserClient, opts ...QRDBUserResolverOption) *QRDBUserResolver {
+	r := &QRDBUserResolver{users: users}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // ResolveUser looks up the CURRENT qrdb record for id.Subject, resolved
@@ -82,6 +101,14 @@ func NewQRDBUserResolver(users qrdbtransport.UserClient) *QRDBUserResolver {
 func (r *QRDBUserResolver) ResolveUser(ctx context.Context, id *Identity) (*Identity, error) {
 	if id == nil || id.Subject == "" {
 		return nil, ErrRefreshSubjectNotFound
+	}
+
+	if r.bind != nil {
+		bound, err := r.bind(ctx)
+		if err != nil {
+			return nil, &RefreshUserLookupError{Err: err}
+		}
+		ctx = bound
 	}
 
 	u, err := r.lookup(ctx, id)

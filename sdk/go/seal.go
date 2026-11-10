@@ -155,6 +155,10 @@ var NewCredentials = seal.NewCredentials
 // zero SealCredentials ("no credentials supplied") rather than an error.
 var CredentialsFor = seal.CredentialsFor
 
+// DestroyCredentials releases the secret of caller-owned SealCredentials and
+// returns the release error; the zero SealCredentials is a no-op.
+var DestroyCredentials = seal.DestroyCredentials
+
 // MustCredentials is NewCredentials for fixtures; it panics where
 // NewCredentials would return an error.
 var MustCredentials = seal.MustCredentials

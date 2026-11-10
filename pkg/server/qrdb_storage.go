@@ -14,9 +14,11 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
@@ -107,6 +109,43 @@ func (s *Server) storageCallContext() []qrdbstorage.Option {
 		return nil
 	}
 	return []qrdbstorage.Option{qrdbstorage.WithCallContext(s.qrdbNode.ServiceContext)}
+}
+
+// relyingPartyCallContext returns the binder for the WebAuthn relying
+// party's qrdb user-record calls. Over the embedded node they run as its
+// service principal (embeddednode.ServicePrincipal) whatever the request
+// carries, as the relying party's credential records do (storageCallContext):
+// the records are the relying party's own, and the service decides every
+// ceremony before it touches one -- the sign-up policy on a public
+// registration, the session-account binding on an added passkey. An
+// authenticated session's own identity holds no grant over user records, so
+// keeping it would refuse the session's lookup of its own account. Nil
+// without an embedded node.
+func (s *Server) relyingPartyCallContext() func(ctx context.Context) (context.Context, error) {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	return s.qrdbNode.ServiceContext
+}
+
+// publicCallContext returns the binder for the qrdb identity-plane calls
+// xkms makes while serving an unauthenticated request: the token issuer's
+// refresh records and refresh-time user lookups. Such a request carries no identity go-qrdb's
+// authorization accepts, so the call runs as the node's service principal
+// (embeddednode.ServicePrincipal). A call made for an authenticated request
+// keeps the caller's identity: it never runs as the principal. Nil without
+// an embedded node.
+func (s *Server) publicCallContext() func(ctx context.Context) (context.Context, error) {
+	node := s.qrdbNode
+	if node == nil {
+		return nil
+	}
+	return func(ctx context.Context) (context.Context, error) {
+		if auth.GetIdentity(ctx) != nil {
+			return ctx, nil
+		}
+		return node.ServiceContext(ctx)
+	}
 }
 
 // closeQRDBStorage tears down the in-process qrdb node when xkms hosts it

@@ -1,0 +1,1 @@
+CI: the Integration job (ci.yml) is a matrix of six shards, each its own compose project running `make integration-test-shard IT_SHARD=<n>` with a 90-minute bound, instead of one 180-minute serial `make integration-test` (main run 75835 took 142 minutes and more). The Makefile's `IT_SHARD_1`..`IT_SHARD_6` group the suites, and `make integration-test` runs their union (#1870).

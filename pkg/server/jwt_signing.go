@@ -53,16 +53,19 @@ func (s *Server) initializeTokenIssuer() error {
 	accessTTL, refreshTTL := s.sessionTTLs()
 
 	issuer, err := rest.BuildTokenIssuer(s.ctx, rest.TokenIssuerParams{
-		Backend:      backend,
-		BackendName:  s.defaultBackendName,
-		SigningKeyCN: cn,
-		IssuerName:   issuerName,
-		Audience:     audience,
-		AccessTTL:    accessTTL,
-		RefreshTTL:   refreshTTL,
-		QRDBClient:   s.qrdbClient,
-		Logger:       s.logger,
-		Retry:        retryNotLeader,
+		Backend:         backend,
+		BackendName:     s.defaultBackendName,
+		SigningKeyCN:    cn,
+		IssuerName:      issuerName,
+		Audience:        audience,
+		AccessTTL:       accessTTL,
+		RefreshTTL:      refreshTTL,
+		AccessTokenType: s.accessTokenType(),
+		ClientID:        s.accessTokenClientID(),
+		QRDBClient:      s.qrdbClient,
+		CallContext:     s.publicCallContext(),
+		Logger:          s.logger,
+		Retry:           retryNotLeader,
 	})
 	if err != nil {
 		// A signing-key backend failure (provisioning or signer
@@ -114,4 +117,24 @@ func (s *Server) sessionTTLs() (access, refresh time.Duration) {
 		}
 	}
 	return access, refresh
+}
+
+// accessTokenType returns the configured access token typ header
+// (auth.session.access_token_type, validated as "" or "at+jwt"); empty keeps
+// the issuer's "JWT" default.
+func (s *Server) accessTokenType() string {
+	if s.config.Auth.Session == nil {
+		return ""
+	}
+	return s.config.Auth.Session.AccessTokenType
+}
+
+// accessTokenClientID returns the configured client_id claim of at+jwt
+// access tokens (auth.session.client_id, RFC 9068 §2.2; validated as set
+// when access_token_type is "at+jwt").
+func (s *Server) accessTokenClientID() string {
+	if s.config.Auth.Session == nil {
+		return ""
+	}
+	return s.config.Auth.Session.ClientID
 }

@@ -31,16 +31,24 @@ tls:
   key_file: /etc/xkms/certs/server.key
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
-  # No client auth for integration tests
-  client_auth: none
+  # "request" asks every client for its certificate without chain-verifying
+  # it in the handshake: "none" sends no CertificateRequest, so the client
+  # never presents one (RFC 8446 §4.4.2) and every call is anonymous.
+  client_auth: request
 
-# Adaptive authentication: anonymous until the first user is provisioned, then
-# enforced. This keeps the integration suites able to exercise the API without
-# pre-seeding credentials while still satisfying the secure-by-default gate
-# (the daemon has no insecure override).
+# Composite authentication admits no anonymous caller (the adaptive mode was
+# removed). The suite authenticates with the admin mTLS credential that
+# `xkmsd init --admin-factor mtls` writes to /data/xkms; the auth chain, not
+# the handshake, checks that certificate (the SPKI thumbprint bound to the
+# admin user), as test/integration/initceremony does.
 auth:
   enabled: true
   type: "composite"
+  # The suite runs every WebAuthn ceremony from one address in seconds; the
+  # login limiter's production default (10/min per client) answers the late
+  # ones 429, as in test/integration/webauthn-browser. The limiter stays on.
+  session:
+    login_rate_per_min: 6000
 
 # WebAuthn/FIDO2 authentication enabled for integration tests
 webauthn:
@@ -110,10 +118,13 @@ backends:
   pkcs11:
     # PKCS#11 loads in-process: the server container's own SoftHSM2 install
     # is used (Debian path); the token is initialized by the entrypoint.
+    # No pin: backends.pkcs11.pin is a protected secret target (go-xkms#654)
+    # that refuses a literal, so the entrypoint seals the token PIN with
+    # `xkmsd seal-pkcs11-pin` and the backend releases it from the
+    # TPM-backed pre-barrier store.
     enabled: true
     library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
-    pin: "123456"
 
 # Encryption-at-rest. Required by the secure-by-default gate (the daemon has
 # no insecure override). There is no config-sourced boot-time secret any more
@@ -123,3 +134,12 @@ backends:
 barrier:
   enabled: true
   strategy: "passphrase"
+  # The barrier boots sealed and the node serves its sealed window on
+  # server.host, which must stay 0.0.0.0 so the integration-tests container
+  # can dial xkms-server over the compose network; the node refuses that bind
+  # and xkmsd exits at startup unless this is set. Acceptable only because
+  # this is a throwaway per-run test server on the run's private compose
+  # network, guarding a disposable data volume. Same precedent as
+  # configs/xkmsd-integration.yaml; a deployment binds the window to loopback
+  # or a trusted management interface.
+  sealed_window_allow_remote: true

@@ -3,6 +3,8 @@
 
 # Stage 1: Builder stage - compile dependencies and prepare environment
 FROM golang:1.27.3-bookworm AS builder
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -47,6 +49,8 @@ RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 # Stage 2: Test runtime environment
 FROM golang:1.27.3-bookworm
+# apt retries transient fetch errors with backoff (go-xkms#342).
+COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
 LABEL maintainer="go-xkms"
 LABEL description="Integration testing environment for go-xkms with PKCS#11 and TPM 2.0 support"

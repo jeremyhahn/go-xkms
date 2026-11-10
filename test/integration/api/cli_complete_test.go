@@ -26,16 +26,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/test/integration/api/commands"
 )
 
 // CLITestSuite provides comprehensive testing of all CLI commands across all protocols.
 // This ensures 100% of the xkms service is implemented and working across all interfaces.
 type CLITestSuite struct {
-	t         *testing.T
-	cfg       *TestConfig
-	keyDir    string
-	certDir   string
-	tlsCACert string
+	t       *testing.T
+	cfg     *TestConfig
+	keyDir  string
+	certDir string
+	tls     *commands.TestRunner
 }
 
 // NewCLITestSuite creates a new CLI test suite
@@ -55,11 +57,11 @@ func NewCLITestSuite(t *testing.T) *CLITestSuite {
 	}
 
 	return &CLITestSuite{
-		t:         t,
-		cfg:       cfg,
-		keyDir:    keyDir,
-		certDir:   certDir,
-		tlsCACert: getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
+		t:       t,
+		cfg:     cfg,
+		keyDir:  keyDir,
+		certDir: certDir,
+		tls:     commands.NewTestRunner(),
 	}
 }
 
@@ -79,15 +81,8 @@ func (s *CLITestSuite) runCLI(serverURL string, args ...string) (string, string,
 		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
-	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-	needsTLS := strings.HasPrefix(serverURL, "https://") ||
-		strings.HasPrefix(serverURL, "grpc://") ||
-		strings.HasPrefix(serverURL, "grpcs://") ||
-		strings.HasPrefix(serverURL, "quic://")
-
-	if needsTLS && s.tlsCACert != "" {
-		prefixArgs = append(prefixArgs, "--tls-ca", s.tlsCACert)
-	}
+	// TLS transports present the server's CA and the admin client credential.
+	prefixArgs = append(prefixArgs, s.tls.TLSArgsForURL(s.t, serverURL)...)
 
 	args = append(prefixArgs, args...)
 	cmd := exec.Command(s.cfg.CLIBinPath, args...)
@@ -326,6 +321,7 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 					"key", "decrypt", keyID, ciphertext,
 					"--backend", "software",
 					"--key-dir", suite.keyDir,
+					"--hash", "sha256",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
@@ -794,9 +790,6 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				args := []string{
 					"key", "copy", sourceKeyID, destKeyID,
 					"--backend", "software",
-					"--key-type", "signing",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
 					"--dest-backend", "software",
 					"--dest-keydir", destKeyDir,

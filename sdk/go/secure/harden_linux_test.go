@@ -56,11 +56,39 @@ func TestHardenProcessChild(t *testing.T) {
 	}
 }
 
+// TestHardenProcessCoreLimitChild is the subprocess body for the core-dump
+// check. It hardens, then reports RLIMIT_CORE on stdout. It does nothing
+// unless re-executed by runChild.
+func TestHardenProcessCoreLimitChild(t *testing.T) {
+	if os.Getenv(hardenChildEnv) != "1" {
+		return
+	}
+	if _, err := HardenProcess(nil); err != nil {
+		t.Fatalf("HardenProcess: %v", err)
+	}
+	var limit syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_CORE, &limit); err != nil {
+		t.Fatalf("getrlimit(RLIMIT_CORE): %v", err)
+	}
+	report := "core=" + strconv.FormatUint(limit.Cur, 10) + "/" + strconv.FormatUint(limit.Max, 10) + "\n"
+	if _, err := os.Stdout.WriteString(report); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+}
+
 // runHardenChild re-executes this test binary as the hardening child with the
 // given opt-out value ("" leaves it unset) and returns its report line.
 func runHardenChild(t *testing.T, optOut string) string {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestHardenProcessChild$", "-test.count=1")
+	return runChild(t, "TestHardenProcessChild", optOut, "dumpable=")
+}
+
+// runChild re-executes this test binary to run the named child test with the
+// given opt-out value ("" leaves it unset) and returns its first stdout line
+// that starts with prefix.
+func runChild(t *testing.T, name, optOut, prefix string) string {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^"+name+"$", "-test.count=1")
 	env := []string{hardenChildEnv + "=1"}
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, AllowProcessInspectionEnv+"=") {
@@ -80,7 +108,7 @@ func runHardenChild(t *testing.T, optOut string) string {
 		t.Fatalf("hardening child: %v", err)
 	}
 	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "dumpable=") {
+		if strings.HasPrefix(line, prefix) {
 			return line
 		}
 	}
@@ -105,6 +133,17 @@ func stackFIPSMode() bool {
 func TestHardenProcess_MarksTheProcessNonDumpable(t *testing.T) {
 	want := "dumpable=0 outcome=" + ProcessHardened.String()
 	if got := runHardenChild(t, ""); got != want {
+		t.Fatalf("child reported %q, want %q", got, want)
+	}
+}
+
+// TestHardenProcess_DisablesCoreDumps verifies hardening lowers RLIMIT_CORE
+// to zero, soft and hard. Since go-enclave v0.11 importing it no longer does
+// this, so a crash would otherwise write the process's memory -- and every
+// unsealed secret in it -- to a core file.
+func TestHardenProcess_DisablesCoreDumps(t *testing.T) {
+	want := "core=0/0"
+	if got := runChild(t, "TestHardenProcessCoreLimitChild", "", "core="); got != want {
 		t.Fatalf("child reported %q, want %q", got, want)
 	}
 }

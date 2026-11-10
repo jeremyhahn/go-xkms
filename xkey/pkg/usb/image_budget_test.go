@@ -91,3 +91,40 @@ func TestAdmitPassphraseCopy_RefusedByProcessBudget(t *testing.T) {
 		t.Fatalf("read source buffer: %v", err)
 	}
 }
+
+// A memory enclave has the Freezer capability, so freeze succeeds.
+func TestFreeze_MemoryEnclave(t *testing.T) {
+	enc, err := enclave.NewMemorySized(16)
+	if err != nil {
+		t.Fatalf("NewMemorySized: %v", err)
+	}
+	defer enc.Destroy()
+
+	if err := freeze(enc); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+}
+
+// unfreezable hides the Freezer capability of the handle it wraps.
+type unfreezable struct {
+	enclave.ByteAccess
+}
+
+// A handle without the Freezer capability is refused with a CapabilityError
+// naming the freeze capability, never handed on unfrozen.
+func TestFreeze_RefusesHandleWithoutFreezer(t *testing.T) {
+	enc, err := enclave.NewMemorySized(16)
+	if err != nil {
+		t.Fatalf("NewMemorySized: %v", err)
+	}
+	defer enc.Destroy()
+
+	err = freeze(unfreezable{enc})
+	var capErr *enclave.CapabilityError
+	if !errors.As(err, &capErr) {
+		t.Fatalf("freeze error = %v, want *enclave.CapabilityError", err)
+	}
+	if capErr.Capability != enclave.CapabilityFreeze {
+		t.Fatalf("capability = %q, want %q", capErr.Capability, enclave.CapabilityFreeze)
+	}
+}

@@ -113,6 +113,7 @@ func independentQRDBCredentialStore(t *testing.T, client *qrdbsdk.Client, factor
 		Users:      client.Users(),
 		DAOFactory: factory,
 		TenantID:   DefaultWebAuthnTenant,
+		KV:         client.KV(),
 	})
 	require.NoError(t, err)
 	return creds

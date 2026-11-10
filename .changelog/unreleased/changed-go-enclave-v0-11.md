@@ -1,0 +1,1 @@
+- **go-enclave v0.11.0-alpha.** The root module, `sdk/go`, `xkey` and `web/desktop` now require `github.com/jeremyhahn/go-enclave` v0.11.0-alpha in place of v0.10.0-alpha, so `make deps-check` no longer reports it as behind. The TPM 2.0 and OP-TEE enclave providers pass the v0.11 conformance suite unchanged.

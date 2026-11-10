@@ -117,11 +117,17 @@ func unsealAndCompare(
 // claim it still holds.
 func compareInEnclave(
 	ctx context.Context,
-	enc *enclave.MemoryEnclave,
+	enc enclave.ByteAccess,
 	u types.UnsealerInto,
 	sealed *types.SealedData,
 	expected []byte,
 ) (bool, error) {
+	// enclave.ByteAccess is an interface, so a nil handle has no methods to
+	// refuse with; it is reported as the unreadable enclave it stands for.
+	if enc == nil {
+		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: enclave.ErrEnclaveDestroyed}
+	}
+
 	matched := false
 
 	// Captured separately so the two failure classes stay distinguishable after
