@@ -529,6 +529,11 @@ permissions:
   contents: read
 
 env:
+  # The bigdisk path only (lint-gates, arch-gates): setup-go installs this Go
+  # where the hosted path takes it from the toolchain image. Keep it equal to
+  # GO_IMAGE in scripts/tool-pins.sh line 13 (golang:1.27.3-bookworm@sha256:...),
+  # the FROM ${GO_IMAGE} of build/docker/devcontainer/Dockerfile.
+  GO_VERSION: '1.27.3'
   COVERAGE_THRESHOLD: 90      # CUSTOMIZE: per testing-guidelines.md
   # CUSTOMIZE (v1.9.2): the repo's full build-tag set, SPACE separated — the go
   # tool's own form. Leave EMPTY if no package is tag-gated. Every analysis step
@@ -574,9 +579,12 @@ jobs:
   # runs lint only; build and make coverage are skipped. Off pull_request, or
   # on a ci:full PR, docs_only is always false. Any doubt (a failed diff, an
   # empty list) reads as false, so the tier fails toward running the tests.
+  # Routing (m2475): a push to main and a pull_request from this repository
+  # run on the bigdisk pool; fork PRs, dispatch and the schedule stay on
+  # ubuntu-latest. The job needs git, curl and jq only.
   changes:
     name: Changed files
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     # v1.26: a draft PR runs no CI; the image job needs this one and skips with it.
     if: ${{ !github.event.pull_request.draft }}
     outputs:
@@ -585,6 +593,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         if: ${{ github.event_name == 'pull_request' && env.CI_FULL_TIER != 'true' }}
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Is every changed file docs or markdown?
         id: diff
@@ -615,9 +624,12 @@ jobs:
   # bigdisk job's `needs` meets a skipped job off schedule; off schedule it
   # makes no call. It checks nothing out, so no repository code runs beside
   # the tokens.
+  # Routing (m2475): a push to main and a pull_request from this repository
+  # run on the bigdisk pool; fork PRs, dispatch and the schedule stay on
+  # ubuntu-latest. The job needs git, curl and jq only.
   schedule-guard:
     name: Schedule guard
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     # v1.26: a draft PR runs no CI (as the changes job).
     if: ${{ !github.event.pull_request.draft }}
     permissions:
@@ -1347,9 +1359,16 @@ jobs:
   # v1.29.1 (ruling 226(15), 108 repair): the step fails fast. `make
   # lint-gates` runs without `-k`, so the first failing gate ends the step
   # and the job; the gates after it run on the next push.
+  # Routing (2026-11-10): a push to main and a pull_request from this
+  # repository run on the bigdisk pool [self-hosted, linux, x64, bigdisk];
+  # fork PRs, workflow_dispatch and the schedule stay on ubuntu-latest. The
+  # pool is a single-use container with no Docker, so the toolchain-image
+  # steps are hosted-only and the pool runs the same make target natively
+  # (setup-go at GO_VERSION, the image's tool pins via go install,
+  # XKMS_NATIVE_BUILD=1). The probe and the releasability gate run on both.
   lint-gates:
     name: Lint Gates [toolchain image]
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     needs: [schedule-guard, ci-images] # v1.29.3; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.26: never on a draft. v1.29.3: on a schedule run, only on the
     # schedule guard's `run`.
@@ -1364,6 +1383,12 @@ jobs:
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: runner.environment == 'self-hosted'
+        with:
+          persist-credentials: false
 
       # v1.21.1: mask the forge credentials before any other step (as above).
       - name: Mask the forge credentials
@@ -1389,11 +1414,12 @@ jobs:
           fi
 
       - name: Reap stale CI stacks
-        if: ${{ steps.probe.outputs.has_target == 'true' }}
+        if: ${{ runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' }}
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
+        if: runner.environment == 'github-hosted'
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
@@ -1402,7 +1428,7 @@ jobs:
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
       # (as in the image job).
       - name: Take the toolchain image
-        if: ${{ steps.probe.outputs.has_target == 'true' }}
+        if: ${{ runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' }}
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -1412,18 +1438,45 @@ jobs:
       # v1.22: bound this repo's cache volumes (as in the image job). It never
       # fails the job and keeps every volume a container mounts.
       - name: Trim the CI caches
-        if: ${{ !cancelled() && steps.probe.outputs.has_target == 'true' && env.TOOLCHAIN_IMAGE != '' }}
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' && env.TOOLCHAIN_IMAGE != '' }}
         run: scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"
 
       # v1.29.1: no -k; the first failing gate ends the step (ruling 226(15)).
       - name: make lint-gates
-        if: ${{ !cancelled() && steps.probe.outputs.has_target == 'true' && env.TOOLCHAIN_IMAGE != '' }}
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' && env.TOOLCHAIN_IMAGE != '' }}
         env:
           IN_IMAGE_NETWORK: none   # CUSTOMIZE: bridge when a gate needs the module proxy or a network
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make lint-gates GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
+      # The bigdisk pool: the same target, natively. Go from setup-go at
+      # GO_VERSION; the gate tools the toolchain image carries, at its pins
+      # (scripts/tool-pins.sh GOLANGCI_VERSION, ACTIONLINT_VERSION), from
+      # proxy.golang.org; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the
+      # image sets them, so make runs in place and never shells out to Docker.
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install the gate tools at the toolchain image's pins
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: make lint-gates (native)
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
+        env:
+          GOTOOLCHAIN: local
+          XKMS_NATIVE_BUILD: '1'
+        run: make lint-gates GO_BUILD_TAGS="$GO_BUILD_TAGS"
+
       - name: Tear down
-        if: always()
+        if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
       # v1.32 (2026-11-08, Company Agent m2098 item 2, InfoSec finding): the
@@ -1769,9 +1822,14 @@ jobs:
   # build-tag combination (go-xkms#650); the suites themselves run in the
   # integration job. secure-analyzer-selftest proves the gate goes red on a
   # known violation before secure-analyzer sweeps the tree (go-xkms#549).
+  # Routing (m2475): a push to main and a pull_request from this repository
+  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
+  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Docker, so the toolchain-image steps are hosted-only and the pool runs the
+  # same commands natively (needs the runner image's package set).
   static-analysis:
     name: Static Analysis
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     timeout-minutes: 120  # #1587: ~2x 58m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     # DS-3164: a docs-only PR compiles nothing, so the sweeps skip at step
     # level and the job still reports success to CI Gate.
@@ -1797,10 +1855,12 @@ jobs:
           done
 
       - name: Reap stale CI stacks
+        if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
+        if: runner.environment == 'github-hosted'
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
@@ -1809,7 +1869,7 @@ jobs:
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
       # (as in the image job).
       - name: Take the toolchain image
-        if: needs.changes.outputs.docs_only != 'true'
+        if: ${{ runner.environment == 'github-hosted' && needs.changes.outputs.docs_only != 'true' }}
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -1817,7 +1877,7 @@ jobs:
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Static analysis (toolchain image)
-        if: needs.changes.outputs.docs_only != 'true'
+        if: ${{ runner.environment == 'github-hosted' && needs.changes.outputs.docs_only != 'true' }}
         run: |
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
@@ -1826,8 +1886,29 @@ jobs:
             make secure-analyzer
           '
 
+      # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
+      # Go from setup-go at GO_VERSION; the runner image carries the toolchain
+      # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
+      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: ${{ runner.environment == 'self-hosted' && needs.changes.outputs.docs_only != 'true' }}
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Static analysis (native)
+        if: ${{ runner.environment == 'self-hosted' && needs.changes.outputs.docs_only != 'true' }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+          XKMS_NATIVE_BUILD: '1'
+        run: |
+          set -e
+          make vet-integration
+          make secure-analyzer-selftest
+          make secure-analyzer
+
       - name: Tear down
-        if: always()
+        if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # build: what `make build` does not compile.
@@ -1847,9 +1928,14 @@ jobs:
   # gui-tagged suites then run without `production` (Wails' stub, no webview)
   # and with codec_json, which acme-client's DAO layer needs from go-qrdb's
   # codec registry.
+  # Routing (m2475): a push to main and a pull_request from this repository
+  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
+  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Docker, so the toolchain-image steps are hosted-only and the pool runs the
+  # same commands natively (needs the runner image's package set).
   build:
     name: Build (all backends, acme-client GUI)
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     if: ${{ !github.event.pull_request.draft }}   # v1.26
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
@@ -1874,10 +1960,12 @@ jobs:
           done
 
       - name: Reap stale CI stacks
+        if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
+        if: runner.environment == 'github-hosted'
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
@@ -1886,6 +1974,7 @@ jobs:
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
       # (as in the image job).
       - name: Take the toolchain image
+        if: runner.environment == 'github-hosted'
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -1895,7 +1984,7 @@ jobs:
       # This job writes the shared cache volumes too, so it bounds them first,
       # as the image job does (ci-standard.md §6). It never fails the job.
       - name: Trim the CI caches
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' }}
         run: scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"
 
       # Go keeps its index of GOROOT in GOCACHE. When that write fails, Go
@@ -1907,6 +1996,7 @@ jobs:
       # passes either way; the stage also proves it owns every entry under the
       # root before it builds, and names the owner when it does not.
       - name: Backend-tagged binaries and the acme-client GUI (toolchain image)
+        if: runner.environment == 'github-hosted'
         run: |
           # shellcheck disable=SC2016 # expands in the toolchain container
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
@@ -1934,17 +2024,61 @@ jobs:
             go test -timeout 20m -tags "gui codec_json" ./cmd/acme-client/... ./pkg/acme/gui/...
           '
 
+      # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
+      # Go from setup-go at GO_VERSION; the runner image carries the toolchain
+      # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
+      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: ${{ runner.environment == 'self-hosted' }}
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Backend-tagged binaries and the acme-client GUI (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+          XKMS_NATIVE_BUILD: '1'
+        run: |
+          set -e
+          sh .github/scripts/disk-usage.sh "before the build"
+          cache=$(go env GOCACHE)
+          foreign=$(find "$cache" -mindepth 1 -maxdepth 1 ! -user "$(id -u)" | wc -l)
+          if [ "$foreign" -gt 0 ]; then
+            echo "GOCACHE $cache holds $foreign entries uid $(id -u) does not own, so Go cannot add to them; the cache volume needs re-owning on its Docker host. For example:" >&2
+            find "$cache" -mindepth 1 -maxdepth 1 ! -user "$(id -u)" -exec stat -c "  %u:%g %a %n" {} + | head -n 3 >&2
+            exit 1
+          fi
+          probe="$cache/.write-probe-$$"
+          if ! head -c 1048576 /dev/zero > "$probe"; then
+            echo "GOCACHE $cache does not take a 1 MiB write: the cache volume host is full or the volume is not writable" >&2
+            exit 1
+          fi
+          rm -f "$probe"
+          TAGS=pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault,frost
+          go build -tags="$TAGS" -o build/xkmsctl ./cmd/xkmsctl
+          go build -tags="$TAGS" -o build/xkmsd ./cmd/xkmsd
+          (cd xkey && go build -tags="$TAGS" -o ../build/xkey ./cmd/xkey)
+          go build -tags "gui production webkit2_41" -o /dev/null ./cmd/acme-client
+          go test -timeout 20m -run "^\$" -tags "gui production webkit2_41" ./cmd/acme-client
+          go test -timeout 20m -tags "gui codec_json" ./cmd/acme-client/... ./pkg/acme/gui/...
+
       - name: Tear down
-        if: always()
+        if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # nested-module-build: sdk/go, xkey and web/desktop are separate modules
   # that `./...` from the root never enters, so they must still COMPILE on
   # every PR. `go vet` for all three runs in Lint (Makefile LINT_MODULES); the
   # race suites are nested-module-test, on the full tier.
+  # Routing (m2475): a push to main and a pull_request from this repository
+  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
+  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Docker, so the toolchain-image steps are hosted-only and the pool runs the
+  # same commands natively (needs the runner image's package set).
   nested-module-build:
     name: Nested Module Build (sdk/go, xkey, web/desktop)
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     if: ${{ !github.event.pull_request.draft }}   # v1.26
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
@@ -1969,10 +2103,12 @@ jobs:
           done
 
       - name: Reap stale CI stacks
+        if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
+        if: runner.environment == 'github-hosted'
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
@@ -1981,6 +2117,7 @@ jobs:
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
       # (as in the image job).
       - name: Take the toolchain image
+        if: runner.environment == 'github-hosted'
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -1988,6 +2125,7 @@ jobs:
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Build sdk/go, web/desktop and xkey (toolchain image)
+        if: runner.environment == 'github-hosted'
         run: |
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
@@ -1996,8 +2134,29 @@ jobs:
             (cd xkey && go build ./...)
           '
 
+      # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
+      # Go from setup-go at GO_VERSION; the runner image carries the toolchain
+      # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
+      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: ${{ runner.environment == 'self-hosted' }}
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build sdk/go, web/desktop and xkey (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+          XKMS_NATIVE_BUILD: '1'
+        run: |
+          set -e
+          (cd sdk/go && go build ./...)
+          (cd web/desktop && go build ./...)
+          (cd xkey && go build ./...)
+
       - name: Tear down
-        if: always()
+        if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # nested-module-test: the nested modules' race suites.
@@ -2014,9 +2173,14 @@ jobs:
   # tests included (#31); ./pkg/phone/ runs whole under -race, never a named
   # list (#79, #27). pkg/attestation is the device attestation decision
   # (#130), named because a silent deletion there is the most expensive.
+  # Routing (m2475): a push to main and a pull_request from this repository
+  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
+  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Docker, so the toolchain-image steps are hosted-only and the pool runs the
+  # same commands natively (needs the runner image's package set).
   nested-module-test:
     name: Nested Module Tests (sdk/go, xkey, web/desktop)
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
@@ -2042,10 +2206,12 @@ jobs:
           done
 
       - name: Reap stale CI stacks
+        if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
+        if: runner.environment == 'github-hosted'
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
@@ -2054,6 +2220,7 @@ jobs:
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
       # (as in the image job).
       - name: Take the toolchain image
+        if: runner.environment == 'github-hosted'
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -2061,6 +2228,7 @@ jobs:
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: sdk/go and web/desktop tests (toolchain image)
+        if: runner.environment == 'github-hosted'
         run: |
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
@@ -2073,6 +2241,7 @@ jobs:
       # it), and the last command merges them and fails the job below xkey's
       # Makefile COVERAGE_THRESHOLD (SPEC row xkey-ci-coverage).
       - name: xkey tests (toolchain image)
+        if: runner.environment == 'github-hosted'
         run: |
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
@@ -2101,16 +2270,67 @@ jobs:
               build/coverage/attestation.out"
           '
 
+      # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
+      # Go from setup-go at GO_VERSION; the runner image carries the toolchain
+      # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
+      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: ${{ runner.environment == 'self-hosted' }}
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: sdk/go and web/desktop tests (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+          XKMS_NATIVE_BUILD: '1'
+        run: |
+          set -e
+          (cd sdk/go && go test -race -timeout 60m -v -tags codec_json ./...)
+          (cd web/desktop && go test -race -timeout 60m -v ./...)
+
+      - name: xkey tests (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+          XKMS_NATIVE_BUILD: '1'
+        run: |
+          set -e
+          cd xkey
+          go test -race -timeout 60m -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
+          go test -race -timeout 60m -v -tags codec_json ./pkg/oath/...
+          go test -race -timeout 60m -tags "codec_json tpm_simulator" -count=1 \
+            ./cmd/e2eprobe ./cmd/xkey ./cmd/xkey/cmd \
+            ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
+            ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
+            ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
+            ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
+            ./pkg/oidc/aws ./pkg/oidc/handlers \
+            ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
+            ./pkg/serverregistry ./pkg/shellquote ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
+            ./pkg/tokenstore ./pkg/usb ./pkg/xhome
+          go test -race -timeout 60m -tags "ble codec_json tpm_simulator" -count=1 ./cmd/xkey/cmd ./pkg/gui/services
+          go vet -tags ble ./...
+          go test -race -timeout 60m -tags ble ./pkg/phone/ -count=1
+          go test -timeout 60m ./pkg/attestation/... -count=1
+
       - name: Tear down
-        if: always()
+        if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # build-raft: the default build is standalone; `-tags raft` is the
   # clustered configuration, and each leg tests a different half of
   # pkg/config, pkg/xkms and pkg/embeddednode.
+  # Routing (m2475): a push to main and a pull_request from this repository
+  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
+  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Docker, so the toolchain-image steps are hosted-only and the pool runs the
+  # same commands natively (needs the runner image's package set).
   build-raft:
     name: Build & Test (raft tag matrix, ${{ matrix.tags }})
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     # #1587: ~2x 13m, slowest green (forge API, last 60 CI runs, 2026-10-17;
@@ -2142,10 +2362,12 @@ jobs:
           done
 
       - name: Reap stale CI stacks
+        if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
+        if: runner.environment == 'github-hosted'
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
@@ -2154,6 +2376,7 @@ jobs:
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
       # (as in the image job).
       - name: Take the toolchain image
+        if: runner.environment == 'github-hosted'
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -2161,6 +2384,7 @@ jobs:
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Build, vet and test (toolchain image)
+        if: runner.environment == 'github-hosted'
         env:
           TAGS: ${{ matrix.tags }}
         run: |
@@ -2171,8 +2395,30 @@ jobs:
             go test -timeout 15m -tags '$TAGS' ./pkg/config/... ./pkg/xkms/... ./pkg/embeddednode/... -count=1
           "
 
+      # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
+      # Go from setup-go at GO_VERSION; the runner image carries the toolchain
+      # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
+      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: ${{ runner.environment == 'self-hosted' }}
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build, vet and test (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+          XKMS_NATIVE_BUILD: '1'
+          TAGS: ${{ matrix.tags }}
+        run: |
+          set -e
+          go build -tags "$TAGS" ./...
+          go vet -tags "$TAGS" ./pkg/server/... ./pkg/config/...
+          go test -timeout 15m -tags "$TAGS" ./pkg/config/... ./pkg/xkms/... ./pkg/embeddednode/... -count=1
+
       - name: Tear down
-        if: always()
+        if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # race: the race detector over every backend, FROST included, on SoftHSM
@@ -2182,9 +2428,14 @@ jobs:
   # and eight in parallel OOM-killed the job (#1389). The PR tier's race
   # check is make coverage (make test runs -race); this job adds the backend
   # tag set and stays full tier.
+  # Routing (m2475): a push to main and a pull_request from this repository
+  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
+  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Docker, so the toolchain-image steps are hosted-only and the pool runs the
+  # same commands natively (needs the runner image's package set).
   race:
     name: Race Detector
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
@@ -2210,10 +2461,12 @@ jobs:
           done
 
       - name: Reap stale CI stacks
+        if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
+        if: runner.environment == 'github-hosted'
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
@@ -2222,6 +2475,7 @@ jobs:
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
       # (as in the image job).
       - name: Take the toolchain image
+        if: runner.environment == 'github-hosted'
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -2242,6 +2496,7 @@ jobs:
       # passes to a bridge stage alone. On a no-network stage Go asks the
       # checksum database instead and `go mod download` fails (run 66181).
       - name: Race detector, all backends including FROST (toolchain image)
+        if: runner.environment == 'github-hosted'
         env:
           IN_IMAGE_NETWORK: bridge
         run: |
@@ -2257,15 +2512,46 @@ jobs:
               -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
           '
 
+      # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
+      # Go from setup-go at GO_VERSION; the runner image carries the toolchain
+      # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
+      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: ${{ runner.environment == 'self-hosted' }}
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Race detector, all backends including FROST (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+          XKMS_NATIVE_BUILD: '1'
+        run: |
+          set -e
+          mkdir -p /tmp/softhsm2/tokens
+          printf "directories.tokendir = /tmp/softhsm2/tokens\nobjectstore.backend = file\nlog.level = INFO\n" > /tmp/softhsm2.conf
+          export SOFTHSM2_CONF=/tmp/softhsm2.conf
+          softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234
+          export TFWSIM_DIR="$GITHUB_WORKSPACE/build/agsim"
+          make agsim
+          GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
+            -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+
       - name: Tear down
-        if: always()
+        if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # tpm2-simulator: pkg/tpm2 against the in-process TPM simulator
   # (go-tpm-tools, cgo against libcrypto); pkg/tpm2/vtpm supervises swtpm.
+  # Routing (m2475): a push to main and a pull_request from this repository
+  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
+  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Docker, so the toolchain-image steps are hosted-only and the pool runs the
+  # same commands natively (needs the runner image's package set).
   tpm2-simulator:
     name: TPM2 Simulator Tests
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
@@ -2291,10 +2577,12 @@ jobs:
           done
 
       - name: Reap stale CI stacks
+        if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
+        if: runner.environment == 'github-hosted'
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org|direct" >> "$GITHUB_ENV"
@@ -2303,6 +2591,7 @@ jobs:
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
       # (as in the image job).
       - name: Take the toolchain image
+        if: runner.environment == 'github-hosted'
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -2310,10 +2599,29 @@ jobs:
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: pkg/tpm2 on the simulator (toolchain image)
+        if: runner.environment == 'github-hosted'
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" make test-tpm2-simulator
 
+      # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
+      # Go from setup-go at GO_VERSION; the runner image carries the toolchain
+      # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
+      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: ${{ runner.environment == 'self-hosted' }}
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: pkg/tpm2 on the simulator (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+          XKMS_NATIVE_BUILD: '1'
+        run: |
+          make test-tpm2-simulator
+
       - name: Tear down
-        if: always()
+        if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # Job 8 (FIPS 140-3 gate) IS NOT HERE ON PURPOSE. Do not re-add it without
@@ -2334,14 +2642,25 @@ jobs:
   # xkmsctl and xkey depend only on sdk/go) are further steps in this job.
   # A source check with grep, not a stage: it runs on the runner's shell.
   # v1.23: a lint-class check, so it stays on the PR tier.
+  # Routing (2026-11-10): a push to main and a pull_request from this
+  # repository run on the bigdisk pool [self-hosted, linux, x64, bigdisk];
+  # fork PRs, workflow_dispatch and the schedule stay on ubuntu-latest. Every
+  # gate is grep and sed on the checkout, so the pool needs only its own
+  # checkout (token not persisted) and no Go.
   arch-gates:
     name: Architecture Gates
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     if: ${{ !github.event.pull_request.draft }}   # v1.26
     env:
       OBJSTORE_SEAMS: 'pkg/ca/|pkg/storage/'      # CUSTOMIZE
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: runner.environment == 'self-hosted'
+        with:
+          persist-credentials: false
 
       - name: No direct go-objstore import outside the storage seam
         run: |
@@ -2385,7 +2704,10 @@ jobs:
   # (v1.9, devops.md §8a: the alpha regime).
   ci-gate:
     name: CI Gate
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'ci-gate' }}
+    # CA m2475 (2h): the gate runs on the self-hosted bigdisk pool (main pushes
+    # and same-repo PRs), so it never waits in the hosted queue and always
+    # reports; it needs no Docker. Fork PRs stay on ubuntu-latest.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     # v1.29.3: on a schedule run the schedule guard decides. `busy` skips the
     # gate, so `CI / CI Gate (schedule)` posts `skipped` (Gitea 1.27.1 posts a
     # skipped job as `skipped`, not `success`), never a green nightly. Every
