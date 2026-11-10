@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -52,12 +53,14 @@ func newStandingFixture(t *testing.T, email string) *standingFixture {
 	require.NoError(t, err)
 	var options waprotocol.CredentialCreation
 	require.NoError(t, json.Unmarshal([]byte(begin.OptionsJson), &options))
-	user, err := rp.GetUserByEmail(ctx, email)
+	encodedHandle, ok := options.Response.User.ID.(string)
+	require.True(t, ok, "user handle has type %T", options.Response.User.ID)
+	handle, err := base64.RawURLEncoding.DecodeString(encodedHandle)
 	require.NoError(t, err)
 
 	authenticator, err := webauthn.NewMockAuthenticator("example.com")
 	require.NoError(t, err)
-	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, user.WebAuthnID(), standingOrigin)
+	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, handle, standingOrigin)
 	require.NoError(t, err)
 	attestationJSON, err := json.Marshal(attestation.Raw)
 	require.NoError(t, err)
@@ -65,6 +68,8 @@ func newStandingFixture(t *testing.T, email string) *standingFixture {
 		SessionId:       begin.SessionId,
 		AttestationJson: string(attestationJSON),
 	})
+	require.NoError(t, err)
+	user, err := rp.GetUserByEmail(ctx, email)
 	require.NoError(t, err)
 
 	return &standingFixture{svc: svc, rp: rp, authenticator: authenticator, user: user, stores: stores}
