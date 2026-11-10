@@ -251,7 +251,7 @@ func verifyRecord(record []byte, signed *detachedDigest) error {
 	case uint64:
 		return ErrUnsupportedHashAlgorithm
 	default:
-		return &errs.Joined{Lead: ErrMalformedEvidence, Detail: "the detached digest algorithm"}
+		return &errs.Detail{Err: ErrMalformedEvidence, Detail: "the detached digest algorithm"}
 	}
 	hash, ok := hashByCOSEAlgorithm[signed.Algorithm]
 	if !ok {
