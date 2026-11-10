@@ -1,0 +1,1 @@
+- **A successful PIN restores built-in user verification (#1721).** Per CTAP 2.1 §6.5.5.5 and §6.5.5.7.1, a matching PIN in getPinToken or getPinUvAuthTokenUsingPinWithPermissions sets uvRetries back to its maximum on an authenticator with built-in user verification, so UV blocked by three failed ceremonies works again without a full reset.

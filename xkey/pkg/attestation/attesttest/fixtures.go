@@ -131,6 +131,12 @@ func Applications() pairing.ApplicationPolicy {
 	}}}
 }
 
+// NoRevocations returns an empty attestation status list, which lists no
+// certificate of the test chains.
+func NoRevocations() *xkms.AndroidStatusList {
+	return &xkms.AndroidStatusList{}
+}
+
 // DeviceKeyClaims is the claims a contract-faithful device's attestation
 // carries: the TEE-enforced key was GENERATED inside secure hardware and is
 // authorized to SIGN (go-xkms#132), and the softwareEnforced
@@ -298,14 +304,32 @@ func (d *DAK) Fingerprint() []byte { return d.FP }
 // It takes no *testing.T because responders call it from a goroutine, where a
 // require would abort the wrong test.
 func (d *DAK) SignRaw(purpose string, nonce, channelBinding []byte) ([]byte, error) {
+	return d.signTranscript(d.handTranscript(purpose, nonce, channelBinding))
+}
+
+// SignVerifyUserRaw produces the UVK's local.verifyUser signature: the
+// verify-user transcript laid out by hand, then the RP name behind its
+// one-byte length (ruling 180).
+func (d *DAK) SignVerifyUserRaw(nonce, channelBinding []byte, rpName string) ([]byte, error) {
+	transcript := d.handTranscript(pairingproto.AttestPurposeVerifyUser, nonce, channelBinding)
+	transcript = append(transcript, byte(len(rpName)))
+	transcript = append(transcript, []byte(rpName)...)
+	return d.signTranscript(transcript)
+}
+
+// handTranscript lays out the version 2 transcript by hand, per the wire
+// contract, so the fixture does not share the builder it checks.
+func (d *DAK) handTranscript(purpose string, nonce, channelBinding []byte) []byte {
 	transcript := make([]byte, 0, 160)
 	transcript = append(transcript, []byte(pairingproto.AttestTranscriptDomain)...)
 	transcript = append(transcript, byte(len(purpose)))
 	transcript = append(transcript, []byte(purpose)...)
 	transcript = append(transcript, nonce...)
 	transcript = append(transcript, channelBinding...)
-	transcript = append(transcript, d.FP...)
+	return append(transcript, d.FP...)
+}
 
+func (d *DAK) signTranscript(transcript []byte) ([]byte, error) {
 	digest := sha256.Sum256(transcript)
 	return ecdsa.SignASN1(rand.Reader, d.Key, digest[:])
 }
@@ -332,6 +356,49 @@ func (d *DAK) Respond(t *testing.T, purpose string, nonce, channelBinding []byte
 		Nonce:              nonce,
 		Purpose:            purpose,
 		Signature:          d.Sign(t, purpose, nonce, channelBinding),
+		SignatureAlgorithm: pairingproto.AttestSignatureES256,
+	}
+}
+
+// UserVerificationGenesis is the attestation challenge a user-verification
+// key (UVK) is generated with (ruling 167).
+func UserVerificationGenesis() []byte {
+	return []byte(pairingproto.UserVerificationGenesisChallenge)
+}
+
+// UserVerificationKeyClaims are DeviceKeyClaims plus what a UVK's
+// teeEnforced list must carry: userAuthType biometric or device credential
+// (AUTH_BIOMETRIC_STRONG | AUTH_DEVICE_CREDENTIAL, ruling 180), with no
+// authTimeout, so every signature needs a fresh user verification.
+func UserVerificationKeyClaims() *xkms.AndroidAttestationExtensionOptions {
+	claims := DeviceKeyClaims()
+	claims.UserAuthType = xkms.AndroidUserAuthTypeFingerprint | xkms.AndroidUserAuthTypePassword
+	claims.RootOfTrust = AttestedBootState()
+	return claims
+}
+
+// NewUVK builds a StrongBox user-verification key under issuer carrying
+// claims. The returned key signs transcripts exactly as a DAK does; only its
+// genesis challenge and authorization list differ.
+func NewUVK(t *testing.T, issuer *CA, claims *xkms.AndroidAttestationExtensionOptions) *DAK {
+	t.Helper()
+
+	return NewDAKWithClaims(t, issuer, UserVerificationGenesis(), xkms.AndroidSecurityLevelStrongBox, claims)
+}
+
+// RespondVerifyUser is the phone's local.verifyUser answer: the UVK chain and
+// its signature over the verify-user transcript for nonce, channelBinding and
+// rpName.
+func (d *DAK) RespondVerifyUser(t *testing.T, nonce, channelBinding []byte, rpName string) *pairingproto.LocalVerifyUserResult {
+	t.Helper()
+
+	sig, err := d.SignVerifyUserRaw(nonce, channelBinding, rpName)
+	require.NoError(t, err)
+
+	return &pairingproto.LocalVerifyUserResult{
+		ProtocolVersion:    pairingproto.AttestProtocolV2,
+		CertificateChain:   d.Chain,
+		Signature:          sig,
 		SignatureAlgorithm: pairingproto.AttestSignatureES256,
 	}
 }

@@ -1,0 +1,1 @@
+- **The verify-user decision lives in the library (#1721)** — the `local.verifyUser` challenge and the UV attestation verification move from `xkey/pkg/attestation` to `pkg/attestation/userverify`, re-exported by `sdk/go/userverify`; xkey keeps only the exchange, `attestation.NewUserVerifier`.

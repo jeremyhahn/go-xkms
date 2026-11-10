@@ -52,6 +52,13 @@ var (
 
 	// ErrBackendNotFound indicates the requested backend does not exist in the composite.
 	ErrBackendNotFound = errors.New("keybackend: backend not found")
+
+	// ErrUserVerificationUnavailable indicates a UserVerifier could not
+	// reach a decision about the user, for an operational reason such as a
+	// lost connection, an exchange that timed out or a revocation source
+	// that could not be read. It is not a failed verification, so it spends
+	// no uvRetries. Verifiers wrap the cause with SentinelCauseError.
+	ErrUserVerificationUnavailable = errors.New("keybackend: user verification unavailable")
 )
 
 // DetailError appends detail text directly after a wrapped error while

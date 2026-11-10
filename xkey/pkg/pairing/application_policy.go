@@ -34,10 +34,30 @@ var (
 	// ErrApplicationPolicyUnconfigured means no application is allow-listed,
 	// so there is nothing to judge the attested application against and every
 	// device is refused until an operator lists the builds it trusts.
-	ErrApplicationPolicyUnconfigured = errors.New(
-		"pairing: no application is allow-listed for device attestation - " +
-			"configure allowed_applications (package_name and signing_digests)")
+	//
+	// It wraps xkms.ErrAndroidNilApplicationMatcher, the library's sentinel
+	// for a verification given no application policy, so errors.Is against
+	// that one sentinel matches an unconfigured policy on every path: this
+	// package's Match, attestation.LoadTrust, and the library's own
+	// refusal of a trust that carries no matcher (#1721).
+	ErrApplicationPolicyUnconfigured error = &applicationPolicyUnconfiguredError{}
 )
+
+// applicationPolicyUnconfiguredError is the type of
+// ErrApplicationPolicyUnconfigured: xkey's operator-facing text over the
+// library's sentinel for the same condition.
+type applicationPolicyUnconfiguredError struct{}
+
+// Error names what to configure.
+func (*applicationPolicyUnconfiguredError) Error() string {
+	return "pairing: no application is allow-listed for device attestation - " +
+		"configure allowed_applications (package_name and signing_digests)"
+}
+
+// Unwrap returns the library sentinel this error refines.
+func (*applicationPolicyUnconfiguredError) Unwrap() error {
+	return xkms.ErrAndroidNilApplicationMatcher
+}
 
 // AllowedApplication pins one application build.
 //
