@@ -249,7 +249,10 @@ func TestKeyManagementClient(t *testing.T) {
 			},
 			func(ctx context.Context) error { _, err := c.UpdateKeyMetadata(ctx, nil); return err }},
 		{"SetKeyPolicy",
-			func(ctx context.Context) error { _, err := c.SetKeyPolicy(ctx, &transport.SetKeyPolicyRequest{}); return err },
+			func(ctx context.Context) error {
+				_, err := c.SetKeyPolicy(ctx, &transport.SetKeyPolicyRequest{})
+				return err
+			},
 			func(ctx context.Context) error { _, err := c.SetKeyPolicy(ctx, nil); return err }},
 		{"GetKeyPolicy",
 			func(ctx context.Context) error { _, err := c.GetKeyPolicy(ctx, keyReq); return err },
@@ -288,7 +291,10 @@ func TestKeyManagementClient(t *testing.T) {
 			func(ctx context.Context) error { _, err := c.ClearKeySafety(ctx, keyReq); return err },
 			func(ctx context.Context) error { _, err := c.ClearKeySafety(ctx, nil); return err }},
 		{"SafetyCheck",
-			func(ctx context.Context) error { _, err := c.SafetyCheck(ctx, &transport.SafetyCheckRequest{}); return err },
+			func(ctx context.Context) error {
+				_, err := c.SafetyCheck(ctx, &transport.SafetyCheckRequest{})
+				return err
+			},
 			func(ctx context.Context) error { _, err := c.SafetyCheck(ctx, nil); return err }},
 		{"SafetyReport",
 			func(ctx context.Context) error {
