@@ -36,10 +36,10 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-frost v0.3.1-alpha
-	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
+	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // held: v1.0.2-alpha needs go-enclave v0.10.0-alpha, and the go-enclave replace holds v0.8.0-alpha; lift with that replace
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
-	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: v0.7.1-alpha needs go-enclave v0.10.0-alpha, and the go-enclave replace holds v0.8.0-alpha; lift with that replace
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
 	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha
 	github.com/kevinburke/ssh_config v1.6.0
