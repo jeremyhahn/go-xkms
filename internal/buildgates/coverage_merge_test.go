@@ -50,7 +50,7 @@ func runCoverageMerge(t *testing.T, dir string, threshold int, extra ...string) 
 	t.Helper()
 	for _, tool := range []string{"make", "go"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s is not on PATH", tool)
+			t.Fatalf("%s is not on PATH", tool)
 		}
 	}
 	merged := filepath.Join(t.TempDir(), "coverage.out")
@@ -140,8 +140,12 @@ func TestCoverageMergeFailsUnderTheThreshold(t *testing.T) {
 	dir := t.TempDir()
 	writeProfile(t, dir, "shard-1.out", "mode: atomic", shard1Records)
 	writeProfile(t, dir, "shard-2.out", "mode: atomic", shard2Records)
-	if _, out, err := runCoverageMerge(t, dir, 76); err == nil {
+	_, out, err := runCoverageMerge(t, dir, 76)
+	if err == nil {
 		t.Errorf("75%% coverage passed a 76%% threshold:\n%s", out)
+	}
+	if !strings.Contains(out, "coverage below") {
+		t.Errorf("the failed threshold does not say \"coverage below\":\n%s", out)
 	}
 	if _, out, err := runCoverageMerge(t, dir, 75); err != nil {
 		t.Errorf("75%% coverage failed a 75%% threshold: %v\n%s", err, out)
