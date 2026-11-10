@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -94,9 +95,12 @@ func TestCoverageMergeKeepsEveryShardUnderOneMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merged profile: %v\n%s", err, out)
 	}
+	// The shards are merged in path order, so compare the records as a set.
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	want := append(append([]string{"mode: atomic"}, shard1Records...), shard2Records...)
-	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+	sort.Strings(lines[1:])
+	sort.Strings(want[1:])
+	if lines[0] != "mode: atomic" || strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("merged profile:\n%s\nwant:\n%s", data, strings.Join(want, "\n"))
 	}
 	if !strings.Contains(out, "Total coverage: 75.0%") {

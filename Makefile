@@ -1202,7 +1202,9 @@ coverage: test
 
 # coverage-gate: the threshold, the dirty-tree check (#454) and the advisory
 # per-package report (#704) on $(COVERAGE_FILE), shared by coverage and
-# coverage-merge.
+# coverage-merge. COVERAGE_REPORT= skips the report (the coverage-merge tests
+# in internal/buildgates; it would start the tagged coverage lanes).
+COVERAGE_REPORT ?= coverage-threshold-report
 .PHONY: coverage-gate
 coverage-gate:
 	@total=$$($(GO) tool cover -func=$(COVERAGE_FILE) | awk '/^total:/ {print $$3}' | tr -d %); \
@@ -1211,7 +1213,7 @@ coverage-gate:
 	@if [ -n "$$CI" ] && [ -n "$$(git status --porcelain)" ]; then \
 		git status --porcelain; echo "the unit suite left the tree dirty (#454)"; exit 1; \
 	fi
-	@$(MAKE) --no-print-directory coverage-threshold-report || echo "per-package report is non-blocking (#704)"
+	@$(if $(COVERAGE_REPORT),$(MAKE) --no-print-directory $(COVERAGE_REPORT) || echo "per-package report is non-blocking (#704)")
 
 # coverage-shard and coverage-merge (DS-8139, CA m2406(2)): make coverage
 # never finished on a GitHub-hosted runner, so CI runs the unit suite as
@@ -1264,6 +1266,9 @@ coverage-shard: check-insecure-tls agsim
 coverage-merge:
 	@profiles=$$(find $(COVERAGE_DIR) -name 'shard-*.out' | LC_ALL=C sort); \
 	if [ -z "$$profiles" ]; then echo "$(RED)✗ no shard profiles in $(COVERAGE_DIR)$(RESET)"; exit 1; fi; \
+	for f in $$profiles; do \
+		case "$$(head -n 1 "$$f")" in "mode: "*) ;; *) echo "$(RED)✗ $$f has no mode line$(RESET)"; exit 1 ;; esac; \
+	done; \
 	modes=$$(head -q -n 1 $$profiles | sort -u); \
 	if [ "$$(echo "$$modes" | wc -l)" -ne 1 ] || [ "$${modes#mode: }" = "$$modes" ]; then \
 		echo "$(RED)✗ shard profiles disagree on mode: $$modes$(RESET)"; exit 1; \
