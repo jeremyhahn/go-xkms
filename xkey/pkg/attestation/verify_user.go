@@ -35,6 +35,12 @@ import (
 // a cancelled prompt — rather than the evidence being bad.
 var ErrUserVerificationExchangeFailed = errors.New("attestation: user verification exchange failed")
 
+// ErrUserVerificationTrustUnavailable indicates the trust a verification is
+// judged against could not be loaded — devices.yaml or the trust store could
+// not be read — so no prompt was sent and the user was neither verified nor
+// refused.
+var ErrUserVerificationTrustUnavailable = errors.New("attestation: user verification trust could not be loaded")
+
 // NewUserVerifier builds the verify-user exchange a phone backend runs on its
 // established session when the authenticator needs a user verification. It
 // draws a fresh challenge for the relying party, sends local.verifyUser, refuses a response that
@@ -53,7 +59,7 @@ func NewUserVerifier(
 	return func(ctx context.Context, exchange pairingproto.RPCExchange, channelBinding []byte, rpName string) error {
 		trust, err := loadTrust()
 		if err != nil {
-			return &SentinelCauseError{Sentinel: userverify.ErrVerificationFailed, Cause: err}
+			return &SentinelCauseError{Sentinel: ErrUserVerificationTrustUnavailable, Cause: err}
 		}
 
 		challenge, err := userverify.NewChallenge(channelBinding, rpName)

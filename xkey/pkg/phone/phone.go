@@ -39,6 +39,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/userverify"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -783,9 +784,12 @@ func (b *PhoneKeyBackend) proveLiveness(ctx context.Context) error {
 // A call that reached no decision about the user wraps
 // keybackend.ErrUserVerificationUnavailable, so the authenticator spends no
 // uvRetries on it (CTAP 2.1 §6.5.5.7.3): no verifier, no session, an
-// exchange the phone never answered — a lost connection or a timeout — or a
-// revocation status list that could not be read, so the answer was never
-// judged. A refused answer is returned as the verifier gave it.
+// exchange the phone never answered — a lost connection or a timeout — a
+// trust that could not be loaded, so no prompt was sent, or a revocation
+// status list that could not be read, so the answer was never judged. A
+// prompt the user dismissed on the phone wraps
+// keybackend.ErrUserVerificationCancelled, which spends none either. Any
+// other refused answer is returned as the verifier gave it.
 func (b *PhoneKeyBackend) VerifyUser(ctx context.Context, rpName string) error {
 	if b.cfg.VerifyUser == nil {
 		b.log.Error("user verification was requested but no verifier was supplied")
@@ -815,14 +819,18 @@ func (b *PhoneKeyBackend) VerifyUser(ctx context.Context, rpName string) error {
 	ctx, cancel := context.WithTimeout(ctx, verifyUserTimeout)
 	defer cancel()
 	err = b.cfg.VerifyUser(ctx, b.verifyUserExchange, binding, rpName)
-	if errors.Is(err, xkms.ErrAndroidStatusListUnavailable) {
+	if errors.Is(err, xkms.ErrAndroidStatusListUnavailable) ||
+		errors.Is(err, attestation.ErrUserVerificationTrustUnavailable) {
 		return userVerificationUnavailable(err)
 	}
 	// A phone's refusal is typed by its code, so the caller can tell a
 	// cancelled prompt from a lockout or a missing pairing (#1712).
 	var rpcErr *pairingproto.RPCError
 	if errors.As(err, &rpcErr) {
-		return &SentinelCauseError{Sentinel: pairingproto.MapVerifyUserRPCError(rpcErr), Cause: err}
+		err = &SentinelCauseError{Sentinel: pairingproto.MapVerifyUserRPCError(rpcErr), Cause: err}
+	}
+	if errors.Is(err, pairingproto.ErrUserCancelled) {
+		return &keybackend.SentinelCauseError{Sentinel: keybackend.ErrUserVerificationCancelled, Cause: err}
 	}
 	return err
 }

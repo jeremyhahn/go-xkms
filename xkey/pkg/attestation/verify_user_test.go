@@ -123,7 +123,7 @@ func TestNewUserVerifier_Refuses(t *testing.T) {
 			name:      "the trust store cannot be loaded",
 			loadTrust: func() (*xkms.AndroidDeviceTrust, error) { return nil, errNoStore },
 			exchange:  verifyUserExchange(t, uvk, channelBinding, nil),
-			wantErr:   userverify.ErrVerificationFailed,
+			wantErr:   attestation.ErrUserVerificationTrustUnavailable,
 			wantCause: errNoStore,
 		},
 		{
