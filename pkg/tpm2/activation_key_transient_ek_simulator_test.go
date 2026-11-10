@@ -138,6 +138,58 @@ func TestAnswerCredentialChallenge_ECCEKUsesTheResolvedCertIndex(t *testing.T) {
 	assert.Equal(t, secret, got)
 }
 
+// TestAnswerCredentialChallenge_P384ConfigRecoversTheEKActuallyCreated: an
+// ECDSA P-384 EK config still makes a P-256 EK (CreateEK has only the P-256
+// ECCEKTemplate), so it gets no P-384 certificate index: provisioning its
+// certificate is refused, and with no persistent EK, activation recovers
+// the real EK from a certificate for its public key at the configured index.
+func TestAnswerCredentialChallenge_P384ConfigRecoversTheEKActuallyCreated(t *testing.T) {
+	h := newSimHarness(t, func(c *Config) {
+		c.EK.HierarchyAuth = nil
+		c.EK.CertHandle = ekCertIndexRSA2048
+		c.EK.KeyAlgorithm = x509.ECDSA.String()
+		c.EK.RSAConfig = nil
+		c.EK.ECCConfig = &store.ECCConfig{Curve: "P-384"}
+	})
+
+	ekPub, err := h.TPM.EKECC()
+	require.NoError(t, err)
+	require.Equal(t, elliptic.P256(), ekPub.Curve, "CreateEK uses the P-256 template")
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "ek"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, ekPub, caKey)
+	require.NoError(t, err)
+
+	assert.ErrorIs(t, h.TPM.ProvisionEKCert(nil, der), ErrEKCertKeyType)
+	_, err = tpm2.NVReadPublic{NVIndex: tpm2.TPMHandle(ekCertIndexECCP384)}.Execute(h.TPM.transport)
+	assert.ErrorIs(t, err, tpmRCHandle, "nothing is written at the P-384 index")
+
+	require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048), nil, der))
+	evictPersistentEK(t, h.TPM)
+	h.TPM.ekAttrs = nil
+
+	ekAttrs, err := h.TPM.EKAttributes()
+	require.NoError(t, err)
+	assert.Equal(t, tpm2.TPMHandle(ekCertIndexRSA2048), ekAttrs.TPMAttributes.CertHandle)
+
+	key, err := h.TPM.CreateActivationKey()
+	require.NoError(t, err)
+	challenge, secret, err := NewCredentialChallenge(ekPub, key.Name.Buffer)
+	require.NoError(t, err)
+
+	got, err := h.TPM.AnswerCredentialChallenge(key, challenge)
+	require.NoError(t, err)
+	assert.Equal(t, secret, got)
+}
+
 // TestAnswerCredentialChallenge_NonPersistentEK_NoCertInNV proves a missing
 // persistent EK with no EK certificate in NV is refused with
 // ErrEKCertNotInNV: there is nothing to select or verify a template against.

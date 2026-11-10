@@ -67,12 +67,26 @@ func TestWriteCertToNVRAM_ExistingMatchingIndexIsRewritten(t *testing.T) {
 	first := nvramTestCert(t)
 
 	require.NoError(t, h.TPM.writeCertToNVRAM(index, soPIN, first.Raw))
-	require.NoError(t, h.TPM.writeCertToNVRAM(index, soPIN, first.Raw), "same-size rewrite")
+
+	// The same length with other bytes: the last signature byte changes, so
+	// a rewrite that writes nothing reads back the first certificate.
+	sameSize := append([]byte(nil), first.Raw...)
+	sameSize[len(sameSize)-1] ^= 0xFF
+	require.NoError(t, h.TPM.writeCertToNVRAM(index, soPIN, sameSize), "same-size rewrite")
+	got, err := h.TPM.readCertFromNVRAM(index)
+	require.NoError(t, err)
+	assert.Equal(t, sameSize, got, "the same-size rewrite replaces the contents")
+
+	err = h.TPM.writeCertToNVRAM(index, []byte("not-the-so-pin"), first.Raw)
+	assert.ErrorIs(t, err, ErrNVCertHierarchyAuth)
+	got, err = h.TPM.readCertFromNVRAM(index)
+	require.NoError(t, err)
+	assert.Equal(t, sameSize, got, "a rejected owner auth leaves the contents")
 
 	larger := nvramTestCertLargerThan(t, len(first.Raw)+1)
 	require.NoError(t, h.TPM.writeCertToNVRAM(index, soPIN, larger.Raw), "resize redefines the index")
 
-	got, err := h.TPM.readCertFromNVRAM(index)
+	got, err = h.TPM.readCertFromNVRAM(index)
 	require.NoError(t, err)
 	assert.Equal(t, larger.Raw, got)
 }

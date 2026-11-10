@@ -31,16 +31,6 @@ func TestEKCertIndex_FollowsEKKeyType(t *testing.T) {
 			attrs: &types.KeyAttributes{KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()}},
 			want:  0x01C0000A,
 		},
-		{
-			name:  "ECC P-384",
-			attrs: &types.KeyAttributes{KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P384()}},
-			want:  0x01C00016,
-		},
-		{
-			name:  "ECC P-521",
-			attrs: &types.KeyAttributes{KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P521()}},
-			want:  0x01C00018,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,6 +61,10 @@ func TestEKCertIndex_UnmappedKeyTypeFails(t *testing.T) {
 	}{
 		{"RSA 3072", &types.KeyAttributes{KeyAlgorithm: x509.RSA, RSAAttributes: &types.RSAAttributes{KeySize: 3072}}},
 		{"RSA without attributes", &types.KeyAttributes{KeyAlgorithm: x509.RSA}},
+		// CreateEK uses the P-256 ECCEKTemplate for every ECC config, so
+		// a P-384 or P-521 index would name a key the TPM never made.
+		{"ECC P-384", &types.KeyAttributes{KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P384()}}},
+		{"ECC P-521", &types.KeyAttributes{KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P521()}}},
 		{"ECC P-224", &types.KeyAttributes{KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P224()}}},
 		{"ECC without attributes", &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}},
 		{"Ed25519", &types.KeyAttributes{KeyAlgorithm: x509.Ed25519}},
