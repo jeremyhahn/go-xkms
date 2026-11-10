@@ -195,6 +195,63 @@ func TestStore_ReferenceValues(t *testing.T) {
 	}
 }
 
+// seedStoredRecord saves record under name straight through the collection's
+// DAO, keyed as put keys it, without the write rule: a record stored before
+// that rule refused the name.
+func seedStoredRecord[T any](t testing.TB, c collection[T], tenant, name string, record T) {
+	t.Helper()
+	prefix, err := c.prefix(tenant)
+	if err != nil {
+		t.Fatalf("prefix: %v", err)
+	}
+	if err := c.records.Save(context.Background(), &recordEntity[T]{Key: prefix + name, Record: record}); err != nil {
+		t.Fatalf("seed %q: %v", name, err)
+	}
+}
+
+// TestStoreDeletesRecordsNamedBeforeTheDotRule is the upgrade regression: an
+// endorsement or reference-values record named "." or ".." was accepted
+// before ValidateName refused those names. It is still listed, so it must
+// still be deletable, while a new write under such a name stays refused.
+func TestStoreDeletesRecordsNamedBeforeTheDotRule(t *testing.T) {
+	ctx := context.Background()
+	for _, name := range []string{".", ".."} {
+		t.Run(name, func(t *testing.T) {
+			store := newTestStore(t)
+			seedStoredRecord(t, store.endorsements, "acme", name, Endorsement{Name: name, Kind: EndorsementAKRoot, CertificatePEM: []byte("pem")})
+			seedStoredRecord(t, store.referenceValues, "acme", name, ReferenceValues{Name: name, SignedCoRIM: []byte("corim")})
+
+			if list, err := store.ListEndorsements(ctx, "acme"); err != nil || len(list) != 1 || list[0].Name != name {
+				t.Fatalf("ListEndorsements = %+v, %v; want the stored %q", list, err, name)
+			}
+			if list, err := store.ListReferenceValues(ctx, "acme"); err != nil || len(list) != 1 || list[0].Name != name {
+				t.Fatalf("ListReferenceValues = %+v, %v; want the stored %q", list, err, name)
+			}
+
+			if err := store.DeleteEndorsement(ctx, "acme", name); err != nil {
+				t.Fatalf("DeleteEndorsement(%q) = %v, want the stored record deleted", name, err)
+			}
+			if err := store.DeleteReferenceValues(ctx, "acme", name); err != nil {
+				t.Fatalf("DeleteReferenceValues(%q) = %v, want the stored record deleted", name, err)
+			}
+			if list, err := store.ListEndorsements(ctx, "acme"); err != nil || len(list) != 0 {
+				t.Fatalf("ListEndorsements after delete = %+v, %v", list, err)
+			}
+			if list, err := store.ListReferenceValues(ctx, "acme"); err != nil || len(list) != 0 {
+				t.Fatalf("ListReferenceValues after delete = %+v, %v", list, err)
+			}
+
+			// A new write under the name stays refused.
+			if err := store.PutEndorsement(ctx, "acme", &Endorsement{Name: name}); !errors.Is(err, ErrInvalidName) {
+				t.Fatalf("PutEndorsement(%q) = %v, want ErrInvalidName", name, err)
+			}
+			if err := store.PutReferenceValues(ctx, "acme", &ReferenceValues{Name: name}); !errors.Is(err, ErrInvalidName) {
+				t.Fatalf("PutReferenceValues(%q) = %v, want ErrInvalidName", name, err)
+			}
+		})
+	}
+}
+
 func TestStore_RefusesInvalidInput(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
