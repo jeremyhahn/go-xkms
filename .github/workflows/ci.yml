@@ -1104,6 +1104,13 @@ jobs:
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
+      # DS-8210: the shards write the shared cache volumes, and the bigdisk
+      # runner keeps them, so each shard bounds them first, as the image job
+      # does (ci-standard.md §6). It never fails the job.
+      - name: Trim the CI caches
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"
+
       # test-web runs `npm ci` against the npm registry (shard 1).
       - name: make coverage-shard
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
@@ -1467,6 +1474,13 @@ jobs:
       - name: Tear down the devcontainer
         if: always()
         run: make devcontainer-clean IT_PROJECT="$IT_PROJECT"
+
+      # DS-8210: the Makefile tags the images a run builds with IT_PROJECT
+      # (XKMS_IMAGE_TAG), and the bigdisk runner keeps them. Last, after the
+      # stacks that use them are down.
+      - name: Remove the run-tagged images
+        if: always()
+        run: make clean-run-images IT_PROJECT="$IT_PROJECT"
       # <<< CUSTOMIZE
 
   # Soak (v1.23, owner item 101): the integration suite looped in the
