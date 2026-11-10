@@ -1103,15 +1103,6 @@ jobs:
           IN_IMAGE_EXPORT: build/coverage/shard-${{ matrix.shard }}.out
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard SHARD=${{ matrix.shard }} SHARDS=6 GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
-      - name: Upload the shard profile (Gitea)
-        if: ${{ success() && needs.changes.outputs.docs_only != 'true' && github.server_url != 'https://github.com' }}
-        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
-        with:
-          name: coverage-shard-${{ matrix.shard }}
-          path: build/coverage/shard-${{ matrix.shard }}.out
-          if-no-files-found: error
-          retention-days: 3
-
       - name: Upload the shard profile (GitHub)
         if: ${{ success() && needs.changes.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -1159,14 +1150,6 @@ jobs:
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
-
-      # v3 puts each artifact in its own directory; coverage-merge finds the
-      # profiles at any depth under build/coverage.
-      - name: Download the shard profiles (Gitea)
-        if: ${{ needs.changes.outputs.docs_only != 'true' && github.server_url != 'https://github.com' }}
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
-        with:
-          path: build/coverage
 
       - name: Download the shard profiles (GitHub)
         if: ${{ needs.changes.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
