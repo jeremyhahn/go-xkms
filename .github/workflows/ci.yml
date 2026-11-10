@@ -842,7 +842,7 @@ jobs:
 
   image:
     name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     needs: [changes, schedule-guard, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
@@ -1307,7 +1307,7 @@ jobs:
     # only on the schedule guard's `run`.
     needs: schedule-guard
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1406,7 +1406,7 @@ jobs:
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     needs: schedule-guard
     if: ${{ (github.event_name == 'schedule' && needs.schedule-guard.outputs.verdict == 'run') || github.event_name == 'workflow_dispatch' }}
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 210      # CUSTOMIZE (go-xkms): SOAK_MINUTES (30) plus one 180-minute iteration
     env:
       SOAK_MINUTES: 30        # CUSTOMIZE
