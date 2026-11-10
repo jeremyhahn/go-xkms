@@ -368,12 +368,20 @@ jobs:
       # PR's file list (both sides of a rename) is read from the API and no PR
       # code is fetched. An API failure, an empty list or a list at the API's
       # 3000-entry cap is no skip: the review runs as before.
+      # InfoSec Y-1: only a PR whose head repository is this repository can
+      # skip. A fork PR (or one whose head repository is gone) gets a normal
+      # review round, never a skip and never a failed job.
       - name: Skip a CI/SDLC-only change (owner 2026-11-10)
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -uo pipefail
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "The head repository is not this repository; reviewing as usual."
+            exit 0
+          fi
           if ! files=$(gh api --paginate repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[] | .filename, (.previous_filename // empty)'); then
             echo "Could not list the PR's changed files; reviewing as usual."
             exit 0
@@ -1473,12 +1481,20 @@ jobs:
       # PR's file list (both sides of a rename) is read from the API and no PR
       # code is fetched. An API failure, an empty list or a list at the API's
       # 3000-entry cap is no skip: the review runs as before.
+      # InfoSec Y-1: only a PR whose head repository is this repository can
+      # skip. A fork PR (or one whose head repository is gone) gets a normal
+      # review round, never a skip and never a failed job.
       - name: Skip a CI/SDLC-only change (owner 2026-11-10)
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -uo pipefail
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "The head repository is not this repository; reviewing as usual."
+            exit 0
+          fi
           if ! files=$(gh api --paginate repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[] | .filename, (.previous_filename // empty)'); then
             echo "Could not list the PR's changed files; reviewing as usual."
             exit 0
