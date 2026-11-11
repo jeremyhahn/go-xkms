@@ -107,6 +107,10 @@ func TestGoPrivateProblemsCatchEachForm(t *testing.T) {
 		"ENV GOINSECURE " + inHouseModules + "/*",
 		"export GOPRIVATE=" + inHouseModules + "/* # in-house",
 		"docker run -e GOPRIVATE='" + inHouseModules + "/*' img",
+		// An unconditional module name stays refused next to main's form.
+		"      - GOPRIVATE=" + inHouseModules + "/*",
+		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-" + inHouseModules + "/*}",
+		"      - GOPRIVATE=${GITEA_HOST:+x} " + inHouseModules + "/*",
 	}
 	for _, line := range bad {
 		if got := goPrivateProblems("f", line); len(got) != 1 {
@@ -116,6 +120,8 @@ func TestGoPrivateProblemsCatchEachForm(t *testing.T) {
 	good := []string{
 		"GOMODAUTH_GOPRIVATE := $(GOPRIVATE)",
 		"      - GOPRIVATE=${GOPRIVATE:-}",
+		// Main's #2057 form (CA m2514): the module only behind a Gitea rewrite.
+		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+" + inHouseModules + "/*}}",
 		"                    -e GOPRIVATE='$(GOMODAUTH_GOPRIVATE)' \\",
 		"# GOPRIVATE=" + inHouseModules + "/* was the old default",
 		"      - GOWORK=off # GOPRIVATE=" + inHouseModules + "/*",
