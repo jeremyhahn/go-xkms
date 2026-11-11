@@ -30,7 +30,6 @@ import (
 	"testing"
 	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
