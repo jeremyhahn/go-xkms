@@ -516,7 +516,7 @@ WildcardCAA).
 | | `go test -count=1 -cover ./pkg/acme/server/handlers/` (TEST_TAGS) |
 |---|---|
 | before | 90.6% |
-| after  | AFTER_PENDING |
+| after  | 90.6% |
 
 ## Test counts per file (slice 3)
 
@@ -933,3 +933,30 @@ Only changed files are listed; the other 50 files keep their counts.
 | tpm_coverage | TestExtendPCR_TPMCoverage | duplicate of TestExtendPCR at compliance_attestation_test.go |
 | tpm_coverage | TestParseTPMSignature_TPMCoverage | duplicate of TestParseTPMSignature_Handlers90 at coverage_90_target_test.go |
 | tpm_coverage | TestVerifyQuoteSignature_TPMCoverage | duplicate of TestVerifyQuoteSignature at compliance_attestation_test.go |
+
+## Gates (slice 3)
+
+All runs use TEST_TAGS and the DS-7500 module env (fresh GOMODCACHE, `-mod=mod`).
+
+| gate | result |
+|---|---|
+| `go test -count=1 -cover ./pkg/acme/server/handlers/` | ok, 90.6% (before 90.6%) |
+| `go test -race -count=1 ./pkg/acme/server/handlers/` | ok |
+| `go vet ./pkg/acme/server/handlers/` | clean |
+| `make lint` | see lane report |
+| production code | unchanged: only `pkg/acme/server/handlers/*_test.go` and this plan differ from 04ed58c73 |
+| test count | `go test -list .` shows 962 tests (+10 benchmarks); 1346 - 384 = 962, no listed test remains, no kept test is missing |
+
+Files deleted because no test was left in them: coverage_90_additional_test.go,
+coverage_90_extra_test.go, coverage_90_final_push_test.go (their helpers
+`createDummyCSR90` and `formatAccountID` had no callers). Helpers and mock
+types that lost their last caller were removed in the same commits:
+`setupTestServiceWithMockCAForCoverage`, `createKeyChangePayload`
+(coverage_90_target), `createCAAValidatedAuthz` (coverage_92_push),
+`createKeyChangePayloadSimple` (coverage_boost_simple), and
+`brokenWriterCovPush`, `failingReaderCovPush`, `shortReaderCovPush`,
+`mockKMSServiceCovPush` (9 methods), `createTestCSRCovPush` (coverage_push).
+
+Correction: commit 6bff70ed6 says "remove 279" in its subject, but its
+per-file counts (11, 19, 6, 21, 14, 23, 5, 24, 6, 33, 24, 40, 31) sum to
+257, which is the true count. 257 + 127 (239da6c09) = 384.
