@@ -541,6 +541,9 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 
 	logger.Info("IPC server listening",
 		slog.String("socket", server.SocketPath()))
+	if serveListening != nil {
+		serveListening(server.SocketPath())
+	}
 
 	// 10. Wait for shutdown signal or parent context cancellation.
 	// Using the command's context as parent allows tests to cancel via
@@ -1011,6 +1014,12 @@ func probeTPMSealer(logger *slog.Logger, dataDir, device string, useSimulator bo
 var (
 	pkcs11BarrierStrategy   = buildPKCS11BarrierStrategy
 	cloudKMSBarrierStrategy = buildCloudKMSBarrierStrategy
+
+	// serveListening, when set, is called with the socket path once the
+	// IPC listener accepts connections (ipc.NewServer binds and listens).
+	// It is nil in production; tests wait on it instead of a fixed
+	// deadline (CA m2545).
+	serveListening func(socketPath string)
 )
 
 // Compile-time interface satisfaction checks.

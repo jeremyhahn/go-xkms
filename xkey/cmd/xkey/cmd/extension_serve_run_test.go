@@ -64,6 +64,18 @@ const serveTestClientTimeout = 30 * time.Second
 
 func startServe(t *testing.T, cmd *cobra.Command, socketPath string) (*ipc.Client, func()) {
 	t.Helper()
+	// serve signals once its socket accepts a dial; barrier unseal under
+	// -race on a loaded runner has no fixed bound, so there is no wall-clock
+	// deadline here: go test -timeout bounds the wait (CA m2545).
+	listening := make(chan struct{}, 1)
+	prev := serveListening
+	serveListening = func(path string) {
+		if path == socketPath {
+			listening <- struct{}{}
+		}
+	}
+	t.Cleanup(func() { serveListening = prev })
+
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- cmd.ExecuteContext(ctx) }()
@@ -86,24 +98,11 @@ func startServe(t *testing.T, cmd *cobra.Command, socketPath string) (*ipc.Clien
 	}
 	t.Cleanup(stop)
 
-	// Wait for a dial to succeed, not for the socket file to appear:
-	// net.Listen binds (creating the file) before it listens, and a dial in
-	// between is refused.
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if conn, err := net.Dial("unix", socketPath); err == nil {
-			require.NoError(t, conn.Close())
-			break
-		}
-		select {
-		case err := <-done:
-			exited = true
-			t.Fatalf("serve exited before listening: %v", err)
-		case <-time.After(20 * time.Millisecond):
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("serve never opened its socket")
-		}
+	select {
+	case <-listening:
+	case err := <-done:
+		exited = true
+		t.Fatalf("serve exited before listening: %v", err)
 	}
 
 	// A correct-PIN unlock runs the PIN KDF and, with a barrier, the barrier
