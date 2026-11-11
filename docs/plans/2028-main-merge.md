@@ -1,3 +1,7 @@
 - Merge: main d55b1b73c into #2028 as 4da60bc14f (compose GOPRIVATE lines take main's #2057 form, CA m2514).
 - Checks: go test ./internal/buildgates/... (codec tags); test/scripts gomodauth, check-public-literals, ci-registry; make lint.
 - Results to follow.
+- buildgates: refused main's form in 10 compose files (TestGoPrivateNamesNoInHouseModule); the gate now drops ${GITEA_HOST:+...} and passes; an unconditional name is still refused.
+- gomodauth.test.sh: 236 passed, 30 failed. runner-nohost (test/scripts/gomodauth.test.sh:101) and count2 (:109) want github.com/jeremyhahn/* but get empty: #2028's Makefile no longer sets GOMODAUTH_GOPRIVATE, and main's compose names the module only with GITEA_HOST. private-direct (:168) wants the caller's GOPRIVATE, but main's compose reads only GOMODAUTH_GOPRIVATE. The fix belongs in the Makefile or compose files (out of this lane; CA call).
+- check-public-literals.test.sh: pass (48). ci-registry.test.sh: pass.
+- make lint: pass (actionlint and golangci-lint, 0 issues).
