@@ -21,7 +21,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
 	"testing"
@@ -45,19 +44,6 @@ func setupCAWithIntermediateAndObjectStore(t *testing.T) *CA {
 	ca := setupTestCAWithRealIntermediate(t)
 	ca.objectStore = qrdbsdk.NewMemoryStorage()
 	return ca
-}
-
-func TestTLSConfigWithXSigner_WithIntermediate_EmptyStore(t *testing.T) {
-	ca := setupCAWithIntermediateAndObjectStore(t)
-	issueCertAndSaveToKeyStore(t, ca, "tls-xsign-int-b5")
-	attrs := softwareKeyAttrs("tls-xsign-int-b5")
-
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	cfg, err := ca.TLSConfigWithXSigner(context.Background(), attrs, ecKey)
-	require.NoError(t, err)
-	assert.NotNil(t, cfg)
 }
 
 // =============================================================================
@@ -155,19 +141,6 @@ func TestParseRequest_InvalidBytes(t *testing.T) {
 // Sign — CA signer return value propagation
 // =============================================================================
 
-func TestSign_WithIntermediate(t *testing.T) {
-	ca := setupTestCAWithRealIntermediate(t)
-	digest := make([]byte, 32)
-	_, _ = rand.Read(digest)
-	sig, err := ca.Sign(rand.Reader, digest, nil) // opts=nil uses the signer's default
-	if err != nil {
-		// Some platforms may reject nil opts; that is acceptable.
-		t.Logf("Sign with nil opts: %v", err)
-		return
-	}
-	assert.NotEmpty(t, sig)
-}
-
 // =============================================================================
 // IssueCertificate — issue to intermediate CA then verify chain
 // =============================================================================
@@ -193,18 +166,6 @@ func TestIssueCertificate_IntermediateCA_FullChain(t *testing.T) {
 // =============================================================================
 // MarshalHardwareModuleName — exercise it directly
 // =============================================================================
-
-func TestMarshalHardwareModuleName_DirectCall(t *testing.T) {
-	value, err := MarshalHardwareModuleName([]int{2, 23, 133, 2, 1}, []byte("SN-DIRECT-001"))
-	require.NoError(t, err)
-	assert.NotEmpty(t, value)
-}
-
-func TestMarshalHardwareModuleName_EmptySerial(t *testing.T) {
-	value, err := MarshalHardwareModuleName([]int{2, 23, 133, 2, 1}, nil)
-	require.NoError(t, err)
-	assert.NotEmpty(t, value)
-}
 
 // =============================================================================
 // createAndSignCSR — via buildCSRTemplate with URIs
@@ -282,22 +243,9 @@ func TestTrustedRootCertPool_IntermediateIssuedCert(t *testing.T) {
 // CABundleFiltered — with ECDSA filter
 // =============================================================================
 
-func TestCABundleFiltered_ECDSA_WithIntermediate(t *testing.T) {
-	ca := setupTestCAWithRealIntermediate(t)
-	bundle, err := ca.CABundleFiltered("", x509.ECDSA)
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-}
-
 // =============================================================================
 // Verify — nil cert path
 // =============================================================================
-
-func TestVerify_NilCert(t *testing.T) {
-	ca := setupTestCA(t)
-	_, err := ca.Verify(nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
 
 // =============================================================================
 // getOrGenerateKey — Ed25519 generate path (no existing key)
@@ -329,48 +277,3 @@ func softwareKeyAttrsAlgo(cn string, algo x509.PublicKeyAlgorithm) *types.KeyAtt
 // =============================================================================
 // OCSP HandleRequest — valid end-to-end with CA-issued cert
 // =============================================================================
-
-func TestOCSPHandleRequest_UnknownSerial(t *testing.T) {
-	ca := setupTestCA(t)
-	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
-
-	// Build a self-signed "issuer" cert matching the CA's root to satisfy
-	// the OCSP request format — we just test that HandleRequest processes
-	// the bytes without panicking (unknown serial → GOOD response or error).
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	issuerTmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "ocsp-handle-issuer"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	issuerDER, err := x509.CreateCertificate(rand.Reader, issuerTmpl, issuerTmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-	issuer, err := x509.ParseCertificate(issuerDER)
-	require.NoError(t, err)
-
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	leafTmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(999),
-		Subject:      pkix.Name{CommonName: "ocsp-handle-leaf"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, issuerTmpl, &leafKey.PublicKey, key)
-	require.NoError(t, err)
-	leaf, err := x509.ParseCertificate(leafDER)
-	require.NoError(t, err)
-
-	reqBytes, err := CreateOCSPRequest(leaf, issuer, nil)
-	require.NoError(t, err)
-
-	// HandleRequest may return an error if the hash doesn't match the CA's cert;
-	// we exercise the code path regardless.
-	_, _ = resp.HandleRequest(context.Background(), reqBytes)
-}

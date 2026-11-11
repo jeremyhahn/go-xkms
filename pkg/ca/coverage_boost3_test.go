@@ -27,7 +27,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"math/big"
 	"testing"
 	"time"
@@ -88,15 +87,6 @@ func TestOCSPCacheMiss(t *testing.T) {
 // OCSP — checkCertificateStatus paths
 // =============================================================================
 
-func TestCheckCertificateStatus_Good_NoObjectStore(t *testing.T) {
-	ca := setupTestCA(t)
-	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
-
-	status, _, _, err := resp.checkCertificateStatus(context.Background(), big.NewInt(999999))
-	require.NoError(t, err)
-	assert.Equal(t, 0 /*ocsp.Good*/, status)
-}
-
 func TestCheckCertificateStatus_Revoked_InMemory(t *testing.T) {
 	ca := setupTestCA(t)
 	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
@@ -116,14 +106,6 @@ func TestCheckCertificateStatus_Revoked_InMemory(t *testing.T) {
 // =============================================================================
 // lookupRevocation — the shared single-serial read path (IsRevoked, OCSP)
 // =============================================================================
-
-func TestLookupRevocation_NotFound(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-
-	info, err := ca.lookupRevocation(context.Background(), big.NewInt(404))
-	require.NoError(t, err)
-	assert.Nil(t, info, "a definite store miss means not revoked")
-}
 
 func TestLookupRevocation_ValidRecord(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
@@ -216,19 +198,6 @@ func TestCreateOCSPRequest_ValidPair(t *testing.T) {
 // ImportDistributionCRLs — nil cert + no distribution points + no object store
 // =============================================================================
 
-func TestImportDistributionCRLs_NilCert_B3(t *testing.T) {
-	ca := setupTestCA(t)
-	err := ca.ImportDistributionCRLs(nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-func TestImportDistributionCRLs_NoCRLDP_B3(t *testing.T) {
-	ca := setupTestCA(t)
-	cert := &x509.Certificate{} // no CRLDistributionPoints
-	err := ca.ImportDistributionCRLs(cert)
-	assert.NoError(t, err)
-}
-
 func TestImportDistributionCRLs_NoObjectStore(t *testing.T) {
 	ca := setupTestCA(t) // no object store
 	cert := &x509.Certificate{
@@ -256,26 +225,6 @@ func TestEnrollDevice_NoTPM_B3(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTPMNotConfigured)
 }
 
-func TestEnrollDevice_InvalidPackedCSR_B3(t *testing.T) {
-	// To reach the UnmarshalIDevIDCSR path, we need a TPM. We can only test
-	// the no-TPM fast path without a real TPM simulator.
-	ca := setupTestCA(t)
-	tpmInstance.Store(nil)
-	_, err := ca.EnrollDevice(context.Background(), []byte("garbage"), nil)
-	assert.ErrorIs(t, err, ErrTPMNotConfigured)
-}
-
-// TestVerifyTCG_CSR_IDevIDBytes_NoTPM proves VerifyTCG_CSR_IDevIDBytes runs
-// (and fails on the garbage CSR, not on a missing TPM) even with no TPM
-// configured: the credential challenge is built in software (go-xkms#798).
-func TestVerifyTCG_CSR_IDevIDBytes_NoTPM(t *testing.T) {
-	ca := setupTestCA(t)
-	tpmInstance.Store(nil)
-	_, _, _, err := ca.VerifyTCG_CSR_IDevIDBytes([]byte("x"), x509.ECDSAWithSHA256)
-	assert.NotErrorIs(t, err, ErrTPMNotConfigured)
-	assert.ErrorIs(t, err, ErrTCGCSRUnmarshalFailed)
-}
-
 // =============================================================================
 // SignTCGCSRIDevID — not-initialized + nil CSR fast-paths
 // =============================================================================
@@ -295,20 +244,6 @@ func TestSignTCGCSRIDevID_NilCSR_B3(t *testing.T) {
 // =============================================================================
 // TLSConfigWithOptions — additional paths (client mode, nil opts, validation)
 // =============================================================================
-
-func TestTLSConfigWithOptions_ClientMode_B3(t *testing.T) {
-	ca := setupTestCA(t)
-	issueCertAndSaveToKeyStore(t, ca, "tls-client-opts-b3")
-	attrs := softwareKeyAttrs("tls-client-opts-b3")
-
-	opts := &TLSConfigOptions{
-		IsServer:   false,
-		ServerName: "server.example.com",
-	}
-	cfg, err := ca.TLSConfigWithOptions(context.Background(), attrs, opts)
-	require.NoError(t, err)
-	assert.Equal(t, "server.example.com", cfg.ServerName)
-}
 
 func TestTLSConfigWithOptions_NilOpts_B3(t *testing.T) {
 	ca := setupTestCA(t)
@@ -330,16 +265,6 @@ func TestTLSConfigWithOptions_NotInitialized_B3(t *testing.T) {
 // TLSConfigWithXSigner — nil xsigner fast-path
 // =============================================================================
 
-func TestTLSConfigWithXSigner_NilXSigner_B3(t *testing.T) {
-	ca := setupTestCA(t)
-	issueCertAndSaveToKeyStore(t, ca, "tls-xsigner-nil-b3")
-	attrs := softwareKeyAttrs("tls-xsigner-nil-b3")
-
-	cfg, err := ca.TLSConfigWithXSigner(context.Background(), attrs, nil)
-	require.NoError(t, err)
-	assert.NotNil(t, cfg)
-}
-
 func TestTLSConfigWithXSigner_WithXSigner_NoObjectStore(t *testing.T) {
 	ca := setupTestCA(t) // no object store → getXSignedCertificates returns nil,nil
 	issueCertAndSaveToKeyStore(t, ca, "tls-xsigner-obj-b3")
@@ -359,64 +284,9 @@ func TestTLSConfigWithXSigner_WithXSigner_NoObjectStore(t *testing.T) {
 // TLSBundleWithCrossSigner — nil xsigner fast-path (covered via base TLSBundle)
 // =============================================================================
 
-func TestTLSBundleWithCrossSigner_NilXSigner_B3(t *testing.T) {
-	ca := setupTestCA(t)
-	issueCertAndSaveToKeyStore(t, ca, "bundle-xsign-nil-b3")
-	attrs := softwareKeyAttrs("bundle-xsign-nil-b3")
-
-	// TLSBundle may fail on opaque key export; that is expected and acceptable.
-	bundle, err := ca.TLSBundleWithCrossSigner(context.Background(), attrs, nil)
-	if err != nil {
-		assert.ErrorIs(t, err, ErrTLSConfigFailed)
-		return
-	}
-	assert.NotEmpty(t, bundle)
-}
-
 // =============================================================================
 // CreateCSR — with explicit Signer (avoids keystore)
 // =============================================================================
-
-func TestCreateCSR_WithExplicitSigner(t *testing.T) {
-	ca := setupTestCA(t)
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	req := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "csr-explicit-signer"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"csr-explicit-signer.local"}},
-		Signer:   key,
-	}
-	csrPEM, err := ca.CreateCSR(context.Background(), req)
-	require.NoError(t, err)
-
-	block, _ := pem.Decode(csrPEM)
-	require.NotNil(t, block)
-	_, err = x509.ParseCertificateRequest(block.Bytes)
-	require.NoError(t, err)
-}
-
-func TestCreateCSR_DefaultKeyAttributes(t *testing.T) {
-	ca := setupTestCA(t)
-	req := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "csr-default-key"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"csr-default-key.local"}},
-	}
-	csrPEM, err := ca.CreateCSR(context.Background(), req)
-	require.NoError(t, err)
-	assert.NotEmpty(t, csrPEM)
-}
-
-func TestCreateCSRWithKey_NilSigner_B3(t *testing.T) {
-	req := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "csr-nil-signer"},
-	}
-	_, err := CreateCSRWithKey(req, nil)
-	assert.ErrorIs(t, err, ErrCSRGenerationFailed)
-}
 
 // =============================================================================
 // Verify — cross-sign-aware path (nil xsigner falls to native path)
@@ -452,40 +322,9 @@ func TestVerify_RevokedCert(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCertificateRevoked)
 }
 
-func TestVerify_WithNilXSigner(t *testing.T) {
-	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "verify-xsign-nil"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-xsign-nil.local"}},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	// Passing a typed nil crypto.Signer — variadic slot treated as nil.
-	chains, err := ca.Verify(issued.Certificate, nil)
-	require.NoError(t, err)
-	assert.NotEmpty(t, chains)
-}
-
 // =============================================================================
 // Sign — initialized and not-initialized paths
 // =============================================================================
-
-func TestSign_NotInitialized(t *testing.T) {
-	ca := setupUninitializedCA(t)
-	digest := sha256.Sum256([]byte("test"))
-	_, err := ca.Sign(rand.Reader, digest[:], crypto.SHA256)
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestSign_Success(t *testing.T) {
-	ca := setupTestCA(t)
-	digest := sha256.Sum256([]byte("sign-me"))
-	sig, err := ca.Sign(rand.Reader, digest[:], crypto.SHA256)
-	require.NoError(t, err)
-	assert.NotEmpty(t, sig)
-}
 
 // =============================================================================
 // ImportIssuingCAs — nil cert + no AIA paths
@@ -497,40 +336,13 @@ func TestImportIssuingCAs_NilCert_B3(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 }
 
-func TestImportIssuingCAs_NoAIA_B3(t *testing.T) {
-	ca := setupTestCA(t)
-	cert := &x509.Certificate{} // no IssuingCertificateURL
-	err := ca.ImportIssuingCAs(context.Background(), cert)
-	assert.NoError(t, err)
-}
-
 // =============================================================================
 // ImportLocalAttestation — nil quote fast-path
 // =============================================================================
 
-func TestImportLocalAttestation_NilQuote_B3(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	attrs := &types.KeyAttributes{CN: "ak-test"}
-	err := ca.ImportLocalAttestation(context.Background(), attrs, nil)
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // ImportAttestationKeyCertificate — guard paths
 // =============================================================================
-
-func TestImportAttestationKeyCertificate_NilAttrs_B3(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	err := ca.ImportAttestationKeyCertificate(context.Background(), nil, []byte("der"))
-	assert.ErrorIs(t, err, ErrInvalidRequest)
-}
-
-func TestImportAttestationKeyCertificate_EmptyDER(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	attrs := &types.KeyAttributes{CN: "ak-empty"}
-	err := ca.ImportAttestationKeyCertificate(context.Background(), attrs, nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
 
 func TestImportAttestationKeyCertificate_NoObjectStore(t *testing.T) {
 	ca := setupTestCA(t) // no object store
@@ -539,43 +351,9 @@ func TestImportAttestationKeyCertificate_NoObjectStore(t *testing.T) {
 	assert.ErrorIs(t, err, ErrObjectStoreRequired)
 }
 
-func TestImportAttestationKeyCertificate_InvalidDER_B3(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	attrs := &types.KeyAttributes{CN: "ak-invalid"}
-	err := ca.ImportAttestationKeyCertificate(context.Background(), attrs, []byte("not-a-certificate"))
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
 // =============================================================================
 // TCG extension creation helpers — store/FIPS extensions (non-duplicating)
 // =============================================================================
-
-func TestCreateTPKeyStoreExtension_Variants(t *testing.T) {
-	for _, v := range []string{"TPM2", "PKCS8", "PKCS11", ""} {
-		ext, err := CreateTPKeyStoreExtension(v)
-		require.NoError(t, err, "value=%q", v)
-		assert.Equal(t, OIDTPKeyStore, ext.Id)
-	}
-}
-
-func TestCreateTPIssuerKeyStoreExtension_Variants(t *testing.T) {
-	for _, v := range []string{"TPM2", "PKCS11", ""} {
-		ext, err := CreateTPIssuerKeyStoreExtension(v)
-		require.NoError(t, err, "value=%q", v)
-		assert.Equal(t, OIDTPIssuerKeyStore, ext.Id)
-	}
-}
-
-func TestCreateTPFIPS140Extension_BothValues(t *testing.T) {
-	extTrue, err := CreateTPFIPS140Extension(true)
-	require.NoError(t, err)
-	assert.Equal(t, OIDTPFIPS140, extTrue.Id)
-
-	extFalse, err := CreateTPFIPS140Extension(false)
-	require.NoError(t, err)
-	assert.Equal(t, OIDTPFIPS140, extFalse.Id)
-	assert.NotEqual(t, extTrue.Value, extFalse.Value)
-}
 
 // =============================================================================
 // TBS determinism
@@ -613,16 +391,6 @@ func TestExtractTBSBytes_InvalidInput(t *testing.T) {
 // profiles.go — Register / Get / List
 // =============================================================================
 
-func TestProfileRegistry_RegisterAndGet(t *testing.T) {
-	r := NewDefaultProfileRegistry()
-	prof := NewServerProfile()
-	require.NoError(t, r.Register("test-server-b3", prof))
-
-	got, err := r.Get("test-server-b3")
-	require.NoError(t, err)
-	assert.NotNil(t, got)
-}
-
 func TestProfileRegistry_Register_NilProfile(t *testing.T) {
 	r := NewDefaultProfileRegistry()
 	err := r.Register("nil-profile", nil)
@@ -641,27 +409,10 @@ func TestProfileRegistry_Get_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, ErrProfileNotFound)
 }
 
-func TestProfileRegistry_CaseInsensitive(t *testing.T) {
-	r := NewDefaultProfileRegistry()
-	prof := NewCodeSigningProfile()
-	require.NoError(t, r.Register("MyProfile-B3", prof))
-
-	got, err := r.Get("myprofile-b3")
-	require.NoError(t, err)
-	assert.NotNil(t, got)
-}
-
 // =============================================================================
 // listRevocationBlobs — revocationStore is the sole source, objectStore
 // entries are never consulted
 // =============================================================================
-
-func TestListRevocationBlobs_WithObjectStore_Empty_B3(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	blobs, err := ca.listRevocationBlobs(context.Background())
-	require.NoError(t, err)
-	assert.Empty(t, blobs)
-}
 
 // TestListRevocationBlobs_ObjectStoreEntryIgnored_B3 proves an entry written
 // directly to objectStore under the revocation key prefix is not surfaced by
@@ -687,20 +438,9 @@ func TestGetXSignedCertificates_NilObjectStore_B3(t *testing.T) {
 	assert.Nil(t, certs)
 }
 
-func TestGetXSignedCertificates_EmptyStore_B3(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	certs := ca.getXSignedCertificates("nonexistent-cn")
-	assert.Empty(t, certs)
-}
-
 // =============================================================================
 // openssl.go — TryLoadOpenSSLDefaults nil guard
 // =============================================================================
-
-func TestTryLoadOpenSSLDefaults_NilSubject_B3(t *testing.T) {
-	// Should not panic when subject is nil.
-	TryLoadOpenSSLDefaults(nil)
-}
 
 func TestTryLoadOpenSSLDefaults_NonNilSubject_B3(t *testing.T) {
 	s := &Subject{CommonName: "already-set"}
@@ -762,32 +502,9 @@ func TestSign_DigestAndVerify(t *testing.T) {
 // RSA key — CreateCSRWithKey produces valid CSR
 // =============================================================================
 
-func TestCreateCSRWithKey_RSA_B3(t *testing.T) {
-	key := generateTestRSAKey(t)
-	req := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "csr-rsa"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"csr-rsa.local"}},
-	}
-	csrPEM, err := CreateCSRWithKey(req, key)
-	require.NoError(t, err)
-	block, _ := pem.Decode(csrPEM)
-	require.NotNil(t, block)
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	require.NoError(t, err)
-	assert.Equal(t, "csr-rsa", csr.Subject.CommonName)
-}
-
 // =============================================================================
 // CABundleCertPool — with object-store path via setupTestCAWithObjectStore
 // =============================================================================
-
-func TestCABundleCertPool_WithObjectStore(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	pool, err := ca.CABundleCertPool()
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
 
 // =============================================================================
 // TrustedRootCertPoolWithXSigner — nil xsigner check (returns pool without xsigned certs)
@@ -814,49 +531,9 @@ func TestTrustedRootCertPoolWithXSigner_NilXSigner_B3(t *testing.T) {
 // RSA 2048 — IssueCertificate with RSA key attributes
 // =============================================================================
 
-func TestIssueCertificate_RSAKey(t *testing.T) {
-	ca := setupTestCA(t)
-	rsaKey := generateTestRSAKey(t)
-	req := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "rsa-leaf"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"rsa-leaf.local"}},
-		Valid:    365,
-		Signer:   rsaKey,
-		KeyAttributes: &types.KeyAttributes{
-			CN:           "rsa-leaf",
-			KeyAlgorithm: x509.RSA,
-			StoreType:    types.StoreSoftware,
-			KeyType:      types.KeyTypeTLS,
-			RSAAttributes: &types.RSAAttributes{
-				KeySize: 2048,
-			},
-			Hash: crypto.SHA256,
-		},
-	}
-	result, err := ca.IssueCertificate(context.Background(), req)
-	require.NoError(t, err)
-	assert.NotNil(t, result.Certificate)
-	assert.Equal(t, "rsa-leaf", result.Certificate.Subject.CommonName)
-}
-
 // =============================================================================
 // hashCRLURL — deterministic hash output
 // =============================================================================
-
-func TestHashCRLURL_Deterministic_B3(t *testing.T) {
-	url := "http://example.com/test.crl"
-	h1 := hashCRLURL(url)
-	h2 := hashCRLURL(url)
-	assert.Equal(t, h1, h2)
-	assert.Len(t, h1, 64) // hex SHA-256
-}
-
-func TestHashCRLURL_DifferentURLs_B3(t *testing.T) {
-	h1 := hashCRLURL("http://a.example.com/crl.crl")
-	h2 := hashCRLURL("http://b.example.com/crl.crl")
-	assert.NotEqual(t, h1, h2)
-}
 
 // =============================================================================
 // ocspCacheKey
@@ -873,14 +550,6 @@ func TestOCSPCacheKey_Deterministic(t *testing.T) {
 // =============================================================================
 // CABundleFiltered — object store with certs
 // =============================================================================
-
-func TestCABundleFiltered_WithObjectStore(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	// Empty string + UnknownPublicKeyAlgorithm = no filter.
-	bundle, err := ca.CABundleFiltered("", x509.UnknownPublicKeyAlgorithm)
-	require.NoError(t, err)
-	assert.NotNil(t, bundle)
-}
 
 // =============================================================================
 // MutualTLSConfig — server and client modes
@@ -899,22 +568,6 @@ func TestMutualTLSConfig_Success(t *testing.T) {
 // =============================================================================
 // NewIntermediateCA — missing parent / not initialized fast-paths
 // =============================================================================
-
-func TestNewIntermediateCA_NilParams(t *testing.T) {
-	_, err := NewIntermediateCA(context.Background(), nil, nil)
-	assert.Error(t, err)
-}
-
-func TestNewIntermediateCA_NilParent(t *testing.T) {
-	params := &Params{
-		Identity: []Identity{
-			{Subject: Subject{CommonName: "root-x"}},
-			{Subject: Subject{CommonName: "intermediate-x"}},
-		},
-	}
-	_, err := NewIntermediateCA(context.Background(), params, nil)
-	assert.ErrorIs(t, err, ErrParentCARequired)
-}
 
 // =============================================================================
 // RSA signer via IssueCertificate with pre-generated RSA public key

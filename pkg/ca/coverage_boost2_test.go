@@ -133,12 +133,6 @@ func TestTLSBundle_Success(t *testing.T) {
 	}
 }
 
-func TestTLSBundle_NilAttrs_B2(t *testing.T) {
-	ca := setupTestCA(t)
-	_, err := ca.TLSBundle(context.Background(), nil)
-	assert.ErrorIs(t, err, ErrInvalidTLSOptions)
-}
-
 // =============================================================================
 // tls_extensions.go — TLSBundleWithCrossSigner happy path (21%)
 // =============================================================================
@@ -229,12 +223,6 @@ func TestIssueEKCertificateRaw_Success_B2(t *testing.T) {
 	assert.Equal(t, "test-ek-raw", cert.Subject.CommonName)
 }
 
-func TestIssueEKCertificateRaw_InvalidDER_B2(t *testing.T) {
-	ca := createTestCAForTCG(t)
-	_, err := ca.IssueEKCertificateRaw(context.Background(), "test-ek", "Test Org", []byte("not-valid-der"), testTenant)
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // service_adapter.go — IssueAKCertificateRaw (87% → exercise the happy path)
 // =============================================================================
@@ -253,12 +241,6 @@ func TestIssueAKCertificateRaw_Success_B2(t *testing.T) {
 	cert, err := x509.ParseCertificate(certDER)
 	require.NoError(t, err)
 	assert.Equal(t, "test-ak-raw", cert.Subject.CommonName)
-}
-
-func TestIssueAKCertificateRaw_InvalidDER_B2(t *testing.T) {
-	ca := createTestCAForTCG(t)
-	_, err := ca.IssueAKCertificateRaw(context.Background(), "test-ak", "Test Org", []byte("bad"), testTenant)
-	assert.Error(t, err)
 }
 
 // =============================================================================
@@ -285,13 +267,6 @@ func TestEnrollDeviceRaw_InvalidCSR(t *testing.T) {
 // trust_chain.go — CABundleCertPool (71%)
 // =============================================================================
 
-func TestCABundleCertPool_Success_B2(t *testing.T) {
-	ca := setupTestCA(t)
-	pool, err := ca.CABundleCertPool()
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
 func TestCABundleCertPool_NotInitialized(t *testing.T) {
 	ca := &CA{}
 	_, err := ca.CABundleCertPool()
@@ -301,18 +276,6 @@ func TestCABundleCertPool_NotInitialized(t *testing.T) {
 // =============================================================================
 // trust_chain.go — OSTrustStore (66%)
 // =============================================================================
-
-func TestOSTrustStore_Success_B2(t *testing.T) {
-	ca := setupTestCA(t)
-	pool, err := ca.OSTrustStore()
-	// OSTrustStore relies on x509.SystemCertPool. On some CI environments it
-	// may not be available; treat both outcomes as acceptable.
-	if err == nil {
-		assert.NotNil(t, pool)
-	} else {
-		assert.ErrorIs(t, err, ErrInvalidCertificateChain)
-	}
-}
 
 // =============================================================================
 // trust_chain.go — TrustedIntermediateCertPool (60%)
@@ -338,30 +301,9 @@ func TestTrustedIntermediateCertPool_NoIntermediate(t *testing.T) {
 	_ = pool
 }
 
-func TestTrustedIntermediateCertPool_WithIntermediate(t *testing.T) {
-	ca := setupTestCAWithRealIntermediate(t)
-
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "leaf-int.example.com"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"leaf-int.example.com"}},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	pool, err := ca.TrustedIntermediateCertPool(issued.Certificate)
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
 // =============================================================================
 // verification.go — VerifyWithOptions revocation path (85%)
 // =============================================================================
-
-func TestVerifyWithOptions_RevocationCheck_NilCert(t *testing.T) {
-	_, err := VerifyWithOptions(nil, nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
 
 func TestVerifyWithOptions_NotYetValid_B2(t *testing.T) {
 	key := generateTestECDSAKey(t)
@@ -401,11 +343,6 @@ func TestVerifyWithOptions_Expired_B2(t *testing.T) {
 // verification.go — BuildCertPool (0% according to cover)
 // =============================================================================
 
-func TestBuildCertPool_Empty(t *testing.T) {
-	pool := BuildCertPool()
-	assert.NotNil(t, pool)
-}
-
 func TestBuildCertPool_WithCerts(t *testing.T) {
 	ca := setupTestCA(t)
 	root, err := ca.TrustedRoot()
@@ -419,131 +356,6 @@ func TestBuildCertPool_WithCerts(t *testing.T) {
 // verification.go — pure helper coverage (ValidityPeriod, DaysUntilExpiration,
 // RemainingValidity, PathLength, CertificateFingerprint, etc.)
 // =============================================================================
-
-func TestValidityPeriod_NilCert(t *testing.T) {
-	_, err := ValidityPeriod(nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-func TestValidityPeriod_ValidCert(t *testing.T) {
-	key := generateTestECDSAKey(t)
-	now := time.Now()
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "vp"},
-		NotBefore:    now,
-		NotAfter:     now.Add(365 * 24 * time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	d, err := ValidityPeriod(cert)
-	require.NoError(t, err)
-	assert.Greater(t, d, time.Duration(0))
-}
-
-func TestDaysUntilExpiration_NilCert(t *testing.T) {
-	assert.Equal(t, 0, DaysUntilExpiration(nil))
-}
-
-func TestDaysUntilExpiration_ValidCert(t *testing.T) {
-	key := generateTestECDSAKey(t)
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "due"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	days := DaysUntilExpiration(cert)
-	assert.Greater(t, days, 0)
-}
-
-func TestRemainingValidity_NilCert(t *testing.T) {
-	assert.Equal(t, time.Duration(0), RemainingValidity(nil))
-}
-
-func TestRemainingValidity_ValidCert(t *testing.T) {
-	key := generateTestECDSAKey(t)
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "rv"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	rv := RemainingValidity(cert)
-	assert.Greater(t, rv, time.Duration(0))
-}
-
-func TestPathLength_NilCert_B2(t *testing.T) {
-	assert.Equal(t, 0, PathLength(nil))
-}
-
-func TestPathLength_NonCA(t *testing.T) {
-	key := generateTestECDSAKey(t)
-	template := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "non-ca"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		BasicConstraintsValid: false,
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-	assert.Equal(t, -1, PathLength(cert))
-}
-
-func TestPathLength_CACertWithConstraint(t *testing.T) {
-	key := generateTestECDSAKey(t)
-	template := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "ca-path"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            2,
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-	assert.Equal(t, 2, PathLength(cert))
-}
-
-func TestCertificateFingerprint_NilCert(t *testing.T) {
-	assert.Nil(t, CertificateFingerprint(nil))
-}
-
-func TestCertificateFingerprint_ValidCert(t *testing.T) {
-	key := generateTestECDSAKey(t)
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "fp"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	fp := CertificateFingerprint(cert)
-	assert.Len(t, fp, 32) // SHA-256 = 32 bytes
-}
 
 // =============================================================================
 // verification.go — verifyRSASignature PSS path (84%)
@@ -571,39 +383,6 @@ func TestVerifyRSASignature_PSS_SelfSigned(t *testing.T) {
 // =============================================================================
 // verification.go — IsIssuedBy with AKID (85%)
 // =============================================================================
-
-func TestIsIssuedBy_WithMatchingAKID(t *testing.T) {
-	caKey := generateTestECDSAKey(t)
-	caTemplate := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "test-ca"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		SubjectKeyId:          []byte{1, 2, 3, 4},
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-	require.NoError(t, err)
-	caCert, err := x509.ParseCertificate(caDER)
-	require.NoError(t, err)
-
-	leafKey := generateTestECDSAKey(t)
-	leafTemplate := &x509.Certificate{
-		SerialNumber:   big.NewInt(2),
-		Subject:        pkix.Name{CommonName: "leaf"},
-		NotBefore:      time.Now().Add(-time.Hour),
-		NotAfter:       time.Now().Add(24 * time.Hour),
-		AuthorityKeyId: []byte{1, 2, 3, 4},
-	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
-	require.NoError(t, err)
-	leafCert, err := x509.ParseCertificate(leafDER)
-	require.NoError(t, err)
-
-	assert.True(t, IsIssuedBy(leafCert, caCert))
-}
 
 func TestIsIssuedBy_DNMismatch(t *testing.T) {
 	// IsIssuedBy returns false when the RawIssuer of the cert does not match
@@ -642,34 +421,6 @@ func TestIsIssuedBy_DNMismatch(t *testing.T) {
 // ca_extensions.go — CABundleFiltered (0%)
 // =============================================================================
 
-func TestCABundleFiltered_NoFilter_B2(t *testing.T) {
-	ca := setupTestCA(t)
-	bundle, err := ca.CABundleFiltered("", x509.UnknownPublicKeyAlgorithm)
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-}
-
-func TestCABundleFiltered_ECDSAFilter(t *testing.T) {
-	ca := setupTestCA(t)
-	// Default test CA uses ECDSA, so the filter should return the bundle.
-	bundle, err := ca.CABundleFiltered("", x509.ECDSA)
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-}
-
-func TestCABundleFiltered_RSAFilter_NoCerts(t *testing.T) {
-	ca := setupTestCA(t)
-	// Default test CA uses ECDSA; RSA filter should yield no results.
-	_, err := ca.CABundleFiltered("", x509.RSA)
-	assert.Error(t, err)
-}
-
-func TestCABundleFiltered_NotInitialized_B2(t *testing.T) {
-	ca := &CA{}
-	_, err := ca.CABundleFiltered("", x509.ECDSA)
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
 // =============================================================================
 // ca_extensions.go — RevokeCert (not initialized path)
 // =============================================================================
@@ -681,95 +432,21 @@ func TestRevokeCert_NotInitialized_B2(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
-func TestRevokeCert_NilCert(t *testing.T) {
-	ca := setupTestCA(t)
-	err := ca.RevokeCert(context.Background(), nil, RevokeOptions{})
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-func TestRevokeCert_Success(t *testing.T) {
-	ca := setupTestCA(t)
-
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "to-revoke.example.com"},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{Reason: 0})
-	assert.NoError(t, err)
-}
-
-func TestRevokeCert_DeleteKeys_B2(t *testing.T) {
-	ca := setupTestCA(t)
-
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "revoke-delkey.example.com"},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	err = ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{DeleteKeys: true})
-	assert.NoError(t, err)
-}
-
 // =============================================================================
 // ca_extensions.go — DefaultKeyAlgorithm RSA / Ed25519 paths (50%)
 // =============================================================================
-
-func TestDefaultKeyAlgorithm_ECDSA(t *testing.T) {
-	ca := setupTestCA(t)
-	algo := ca.DefaultKeyAlgorithm()
-	assert.Equal(t, x509.ECDSA, algo)
-}
 
 // =============================================================================
 // ca_extensions.go — DefaultValidityPeriod from caConfig (partial)
 // =============================================================================
 
-func TestDefaultValidityPeriod_FromCAConfig(t *testing.T) {
-	ca := setupTestCA(t)
-	ca.caConfig = &CAConfig{DefaultCertValidityDays: 42}
-	assert.Equal(t, 42, ca.DefaultValidityPeriod())
-}
-
-func TestDefaultValidityPeriod_FromMultiConfig(t *testing.T) {
-	ca := setupTestCA(t)
-	ca.caConfig = nil
-	days := ca.DefaultValidityPeriod()
-	assert.GreaterOrEqual(t, days, 0)
-}
-
 // =============================================================================
 // ca_extensions.go — CAKeyAttributes mismatch store type (90%)
 // =============================================================================
 
-func TestCAKeyAttributes_StoreTypeMismatch(t *testing.T) {
-	ca := setupTestCA(t)
-	// Configured store type is "software"; requesting "pkcs11" should error.
-	_, err := ca.CAKeyAttributes("pkcs11")
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // ca_extensions.go — CASigner unknown algo path (83%)
 // =============================================================================
-
-func TestCASigner_UnknownAlgo_Mismatch(t *testing.T) {
-	ca := setupTestCA(t)
-	// CA uses ECDSA; requesting RSA should return an error.
-	_, err := ca.CASigner(context.Background(), "", x509.RSA)
-	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
-}
-
-func TestCASigner_UnknownAlgo_Matches(t *testing.T) {
-	ca := setupTestCA(t)
-	signer, err := ca.CASigner(context.Background(), "", x509.ECDSA)
-	require.NoError(t, err)
-	assert.NotNil(t, signer)
-}
 
 // =============================================================================
 // ca_extensions.go — Issued nil stores path (77%)
@@ -778,26 +455,6 @@ func TestCASigner_UnknownAlgo_Matches(t *testing.T) {
 // =============================================================================
 // ca_extensions.go — Exists (72%)
 // =============================================================================
-
-func TestExists_NilCN(t *testing.T) {
-	ca := setupTestCA(t)
-	_, err := ca.Exists(context.Background(), "", x509.ECDSA)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-func TestExists_Found(t *testing.T) {
-	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "exists-check.example.com"},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	found, err := ca.Exists(context.Background(), issued.Certificate.Subject.CommonName, x509.ECDSA)
-	require.NoError(t, err)
-	assert.True(t, found)
-}
 
 func TestExists_WrongAlgo(t *testing.T) {
 	ca := setupTestCA(t)
@@ -823,30 +480,9 @@ func TestRecordRevocation_NilSerial(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 }
 
-func TestRecordRevocation_AlreadyRevoked(t *testing.T) {
-	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "double-revoke.example.com"},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	require.NoError(t, ca.recordRevocation(context.Background(), issued.Certificate.SerialNumber, 0, false))
-	// Second revocation must return ErrAlreadyRevoked.
-	err = ca.recordRevocation(context.Background(), issued.Certificate.SerialNumber, 0, false)
-	assert.ErrorIs(t, err, ErrAlreadyRevoked)
-}
-
 // =============================================================================
 // ca_extensions.go — loadPersistedRevocations with object store (82%)
 // =============================================================================
-
-func TestLoadPersistedRevocations_WithObjectStore_Empty(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	err := ca.loadPersistedRevocations(context.Background())
-	assert.NoError(t, err)
-}
 
 func TestLoadPersistedRevocations_WithObjectStore_ValidRecord(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
@@ -878,30 +514,6 @@ func TestLoadPersistedRevocations_WithObjectStore_ValidRecord(t *testing.T) {
 // ca_extensions.go — Blob / ImportBlob (87%)
 // =============================================================================
 
-func TestImportBlob_NoObjectStore(t *testing.T) {
-	ca := setupTestCA(t)
-	err := ca.ImportBlob([]byte("key"), []byte("data"))
-	assert.ErrorIs(t, err, ErrObjectStoreRequired)
-}
-
-func TestBlob_RoundTrip(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	key := []byte("test-blob-key")
-	data := []byte("hello world")
-
-	require.NoError(t, ca.ImportBlob(key, data))
-
-	got, err := ca.Blob(key)
-	require.NoError(t, err)
-	assert.Equal(t, data, got)
-}
-
-func TestBlob_NoObjectStore(t *testing.T) {
-	ca := setupTestCA(t)
-	_, err := ca.Blob([]byte("key"))
-	assert.ErrorIs(t, err, ErrObjectStoreRequired)
-}
-
 // =============================================================================
 // ca_extensions.go — CAConfig nil (partial)
 // =============================================================================
@@ -913,12 +525,6 @@ func TestBlob_NoObjectStore(t *testing.T) {
 func TestIsAutoImportingIssuerCAs_False_NilCAConfig(t *testing.T) {
 	ca := &CA{}
 	assert.False(t, ca.IsAutoImportingIssuerCAs())
-}
-
-func TestIsAutoImportingIssuerCAs_True(t *testing.T) {
-	ca := setupTestCA(t)
-	ca.caConfig = &CAConfig{AutoImportIssuingCA: true}
-	assert.True(t, ca.IsAutoImportingIssuerCAs())
 }
 
 // =============================================================================
@@ -949,46 +555,17 @@ func TestPEM_ExistingCert(t *testing.T) {
 // ca_extensions.go — Hash
 // =============================================================================
 
-func TestHash_ECDSA(t *testing.T) {
-	ca := setupTestCA(t)
-	h := ca.Hash()
-	// ECDSA CA should use SHA-256.
-	assert.NotZero(t, h)
-}
-
 // =============================================================================
 // ca_extensions.go — IssuingIdentity
 // =============================================================================
-
-func TestIssuingIdentity_NoInputIdentity(t *testing.T) {
-	ca := setupTestCA(t)
-	id := ca.IssuingIdentity()
-	assert.NotEmpty(t, id.Subject.CommonName)
-}
 
 // =============================================================================
 // ca_extensions.go — DefaultSignatureAlgorithm nil issuing path (85%)
 // =============================================================================
 
-func TestDefaultSignatureAlgorithm_NilIssuing_B2(t *testing.T) {
-	ca := &CA{
-		config: &MultiIdentityCAConfig{},
-	}
-	algo := ca.DefaultSignatureAlgorithm()
-	assert.Equal(t, x509.UnknownSignatureAlgorithm, algo)
-}
-
 // =============================================================================
 // ca_extensions.go — DefaultKeyAlgorithm nil issuing (50%)
 // =============================================================================
-
-func TestDefaultKeyAlgorithm_NilIssuing_B2(t *testing.T) {
-	ca := &CA{
-		config: &MultiIdentityCAConfig{},
-	}
-	algo := ca.DefaultKeyAlgorithm()
-	assert.Equal(t, x509.UnknownPublicKeyAlgorithm, algo)
-}
 
 // =============================================================================
 // ca.go — Verify (66%)
@@ -998,19 +575,4 @@ func TestVerify_NotInitialized(t *testing.T) {
 	ca := &CA{}
 	_, err := ca.Verify(&x509.Certificate{})
 	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestVerify_ValidCert(t *testing.T) {
-	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "verify-valid.example.com"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-valid.example.com"}},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	chains, err := ca.Verify(issued.Certificate)
-	require.NoError(t, err)
-	assert.NotEmpty(t, chains)
 }

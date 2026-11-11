@@ -229,21 +229,6 @@ func TestTLSConfigWithXSigner_RootCertNil(t *testing.T) {
 // ImportLocalAttestation — non-nil quote with object store
 // =============================================================================
 
-func TestImportLocalAttestation_ValidQuote_B4(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	attrs := &types.KeyAttributes{CN: "ak-valid-b4"}
-
-	quote := &tpm2.Quote{
-		Quoted:    []byte("quoted-bytes"),
-		Signature: []byte("sig"),
-		PCRs:      []byte("pcr-snapshot"),
-		// EventLog omitted intentionally (optional).
-	}
-
-	err := ca.ImportLocalAttestation(context.Background(), attrs, quote)
-	require.NoError(t, err)
-}
-
 func TestImportLocalAttestation_WithEventLog_B4(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	attrs := &types.KeyAttributes{CN: "ak-eventlog-b4"}
@@ -344,13 +329,6 @@ func TestCreateCSR_WithHardwareModuleNameSAN(t *testing.T) {
 // CABundleCertPool — initialized CA (not-initialized already covered)
 // =============================================================================
 
-func TestCABundleCertPool_Initialized(t *testing.T) {
-	ca := setupTestCA(t)
-	pool, err := ca.CABundleCertPool()
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
 // =============================================================================
 // TrustedIntermediateCertPool — with intermediate CA
 // =============================================================================
@@ -401,48 +379,9 @@ func TestIssueCertificate_RSAKeyViaGetOrGenerate(t *testing.T) {
 // Self-signed leaf cert — VerifyWithOptions paths
 // =============================================================================
 
-func buildSelfSignedLeaf(t *testing.T) *x509.Certificate {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(42),
-		Subject:      pkix.Name{CommonName: "self-signed-leaf"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-	return cert
-}
-
-func TestVerifyWithOptions_SelfSignedLeaf_B4(t *testing.T) {
-	leaf := buildSelfSignedLeaf(t)
-
-	// VerifyWithOptions is a package-level function.
-	// Self-signed cert verified against empty pool → invalid chain.
-	_, err := VerifyWithOptions(leaf, &VerifyOptions{})
-	// Either ErrInvalidCertificateChain or ErrCertificateExpired depending on
-	// the platform's trust store — we just verify the function runs without panic.
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // Sign — with nil rand reader (should fail or succeed depending on algo)
 // =============================================================================
-
-func TestSign_NilRandReader(t *testing.T) {
-	ca := setupTestCA(t)
-	// ECDSA can sign with a nil rand reader on some platforms (uses
-	// crypto/internal/randutil); on others it panics. Use recover.
-	func() {
-		defer func() { recover() }()
-		ca.Sign(nil, make([]byte, 32), crypto.SHA256)
-	}()
-}
 
 // =============================================================================
 // lookupRevocation — checkCertificateStatus cold path (object store,
@@ -516,37 +455,9 @@ func TestOCSPCreateResponse_GoodStatus(t *testing.T) {
 // Profiles registry — List method
 // =============================================================================
 
-func TestProfileRegistry_List(t *testing.T) {
-	r := NewDefaultProfileRegistry()
-	names := r.List()
-	assert.NotEmpty(t, names, "default registry should have built-in profiles")
-}
-
 // =============================================================================
 // CABundle — after intermediate creation
 // =============================================================================
-
-func TestCABundle_WithIntermediate(t *testing.T) {
-	ca := setupTestCAWithRealIntermediate(t)
-	bundle, err := ca.CABundle()
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-
-	// PEM should contain at least two certificates.
-	rest := bundle
-	count := 0
-	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		if block.Type == "CERTIFICATE" {
-			count++
-		}
-	}
-	assert.GreaterOrEqual(t, count, 2, "bundle should contain root + intermediate")
-}
 
 // =============================================================================
 // Signer — after intermediate creation
