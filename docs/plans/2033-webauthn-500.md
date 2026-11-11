@@ -64,15 +64,51 @@ these in, CI's daemon log shows the cause of the next 500.
   clientDataJSON}, clientExtensionResults}`) NOT sent yet: the slice hit
   its turn budget. Whether the 500 reproduces is still open.
 
+## CI-like native run (lane mf2533d): no 500
+
+- xkmsd built to /tmp with the recipe's tags (logger fix included); the
+  suite and `build/docker/devcontainer/scripts` copied to a /tmp tree with
+  the repository layout; the suite's own `run-server.sh` run with
+  `config.yaml` UNCHANGED (relative paths), `XKMSD_BIN` set.
+- The daemon logs, at init and at boot, `WARN volume pool: failed to open
+  volume; pool will not be served on this node ... invalid path
+  ".runtime/storage/tenant-volumes": must be an absolute path` — the same
+  warning as CI.
+- A /tmp Go program sent `runRegistration`'s public sign-up exactly
+  (`POST /api/v1/webauthn/registration/begin` `{email, display_name}`, then
+  `/registration/finish` with header `X-Session-Id` and body `{id, rawId,
+  type, response{attestationObject, clientDataJSON}, clientExtensionResults:
+  {}}`, origin `https://localhost:18443`), the attestation built by
+  `SoftwareAdapter`: finish answers **200** with `token`, `refresh_token`,
+  `user_id`. Six concurrent registrations: all 200. No Error line, no 500.
+- So the relative volume path does NOT cause the 500 (the pool is
+  unserved natively too, and finish succeeds); the suite config is not the
+  cause. Nothing was changed in `config.yaml` or `run-server.sh`.
+- Side finding: the same finish with `clientExtensionResults:
+  {"credProps":{"rk":true}}` (not requested by begin) answers 401
+  `verification_failed`, not 500. Chrome reports no credProps unless it is
+  requested, so this is not the browser's body.
+
+## Request differences left (browser vs this run)
+
+The JSON field set is identical. What differs is inside the two base64url
+blobs, which the CDP virtual authenticator (`ctap2`, `usb`,
+`hasResidentKey`, `hasUserVerification`, `isUserVerified`) produces:
+
+1. `attestationObject`: Chrome's authenticator data flags (UV set, a
+   resident/discoverable credential for `residentKey: "preferred"`, BE/BS
+   bits), its AAGUID, and the COSE key it chose from `pubKeyCredParams`;
+   `SoftwareAdapter`'s may differ in each.
+2. `clientDataJSON`: Chrome adds `crossOrigin: false` and may add
+   `other_keys_can_be_added_here`; `SoftwareAdapter` builds its own
+   `CollectedClientData`.
+3. Environment: CI runs in the integration image (Docker), with the
+   Playwright readiness probe's TLS handshakes; workers: 1, retries: 0.
+
 ## Next slice
 
-1. Run the Playwright suite natively (`npm ci`, `npx playwright install
-   chromium chromium-headless-shell`, `XKMSD_BIN=... npx playwright test`) to
-   see whether the 500 reproduces without Docker; the browser's virtual
-   authenticator differs from `SoftwareAdapter` (resident key, attestation
-   format, algorithm, `runRegistration` body fields at spec line 95-200).
-2. Find where the webauthn `Handler`'s logger is built and why its Debug
-   line is dropped; with it visible, the underlying error is in the log.
-3. Candidate paths in `runFinishRegistration` (`pkg/webauthn/service.go:467`):
-   `finishPublicRegistration` (public sign-up, which the suite uses),
-   `saveRegisteredCredential`, then `mintTokens` (`service.go:959`).
+1. With the logger fix (commits c304bf62c + 5b83c3e63) in a CI run, CI's
+   daemon log now shows the Error line `"webauthn: internal error"` with
+   the cause of the 500: read it there (one CI run of #2033), or
+2. reproduce Chrome's blobs: build the attestation with UV + discoverable
+   flags and Chrome's clientDataJSON keys, and send them as above.
