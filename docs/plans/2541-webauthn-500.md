@@ -122,3 +122,9 @@ CORS headers on the host's 401/403 responses (go-qrdb). Suite assertions are unc
 - P1 (1) done: test 955fc155e, fix ded5754bb. P1 (2) done: tests 81137d408 + e7d3a3f3d, fix 76f673f41 (token.BindUserResolver).
 - P1 (3) remains; no go-qrdb change is needed. Planned fix: in JWTAuthenticator.validateToken (pkg/auth/jwt.go), when the `sub_kind` claim is `user_handle`, decode Subject with decodeWebAuthnHandle (pkg/auth/refresh_resolver.go) and call identity.BindUser(id, username claim). That sets UserID and the decimal Subject, so qrdb loads roles by id. Test first: an enforcing node (helpers in pkg/api/rest/host_callcontext_test.go) with a user holding a keys:read role, a token minted with sub_kind=user_handle, and the bearer sent through node.AuthMiddleware().RESTMiddleware (qrdb pkg/auth/middleware) or the module's AuthenticateHTTP, expecting authorization to succeed.
 - Not run yet: the race tests, vet with TEST_TAGS, the webauthn-browser suite, and make lint.
+
+## Slice wa2541k
+
+- P1 (3) test (pkg/api/rest): an access token with sub_kind=user_handle for an account holding a keys:read role is authorized through the module's HTTP authenticator.
+- P1 (3) fix (pkg/auth/jwt.go validateToken): decode a user_handle subject with decodeWebAuthnHandle and call identity.BindUser(id, username).
+- Checks: go test -race and go vet with TEST_TAGS on pkg/apimodule, pkg/api/rest, pkg/auth, pkg/webauthn; the webauthn-browser suite natively if present; make lint.
