@@ -85,6 +85,12 @@ The [WebServer] log line, once per test:
   `users:update`, `users:delete`, go-qrdb `pkg/permission` names),
   registered only when the server builds the WebAuthn service over the
   embedded node. No go-qrdb change.
+- Second layer fixed (wa2541f): `serviceprincipal.RegisterWebAuthnGrant`,
+  called in `pkg/server` before `rest.BuildWebAuthnService`. Native rerun:
+  the users calls pass; all six still answer 500 with a third layer,
+  `generate token: auth/token: refresh store put failed: qrdb/auth:
+  unauthenticated: no valid credentials provided`: the token service's
+  refresh store calls qrdb on the anonymous request context.
 
 ## Out of scope
 
