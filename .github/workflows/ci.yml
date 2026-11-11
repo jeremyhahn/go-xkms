@@ -529,9 +529,9 @@ permissions:
 env:
   # The bigdisk path only (lint-gates, arch-gates): setup-go installs this Go
   # where the hosted path takes it from the toolchain image. Keep it equal to
-  # GO_IMAGE in scripts/tool-pins.sh line 13 (golang:1.27.3-bookworm@sha256:...),
+  # GO_IMAGE in scripts/tool-pins.sh line 13 (golang:1.27.4-bookworm@sha256:...),
   # the FROM ${GO_IMAGE} of build/docker/devcontainer/Dockerfile.
-  GO_VERSION: '1.27.3'
+  GO_VERSION: '1.27.4'
   COVERAGE_THRESHOLD: 90      # CUSTOMIZE: per testing-guidelines.md
   # CUSTOMIZE (v1.9.2): the repo's full build-tag set, SPACE separated — the go
   # tool's own form. Leave EMPTY if no package is tag-gated. Every analysis step
