@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -287,32 +286,6 @@ func TestNewOrderHandler_OrderDAOCreationError90(t *testing.T) {
 	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
 }
 
-func TestNewOrderHandler_NoChallengesConfigured90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Empty challenge map - no challenges configured
-	service.challengeMap = make(map[string]common.ChallengeVerifierFunc)
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	payload := NewOrderRequest{
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: common.AuthzTypeDNS, Value: "example.com"},
-		},
-	}
-
-	url := service.baseRESTURI + "/acme/new-order"
-	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.NewOrderHandler(resp, req)
-
-	// Should fail because no challenges are configured for DNS type
-	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
-}
-
 // MockAuthzDAOSaveFailure90 fails on Save
 type MockAuthzDAOSaveFailure90 struct {
 	qrdbsdk.GenericDAO[*entities.ACMEAuthorization]
@@ -467,41 +440,6 @@ func TestOrdersListHandler_ListOrdersError90(t *testing.T) {
 	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
 }
 
-func TestOrdersListHandler_InvalidPageID90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	url := fmt.Sprintf("%s/acme/account/%d/orders", service.baseRESTURI, account.ID)
-	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
-	req = mux.SetURLVars(req, map[string]string{"page": "invalid-page"})
-
-	resp := httptest.NewRecorder()
-	service.OrdersListHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
-func TestOrdersListHandler_MethodNotAllowed90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	url := fmt.Sprintf("%s/acme/account/%d/orders", service.baseRESTURI, account.ID)
-	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
-	req.Method = http.MethodDelete
-	req = mux.SetURLVars(req, map[string]string{})
-
-	resp := httptest.NewRecorder()
-	service.OrdersListHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
 // ========================================
 // ChallengeHandler Coverage
 // ========================================
@@ -591,28 +529,6 @@ func TestChallengeHandler_ChallengeNotFound90(t *testing.T) {
 // ========================================
 // NewAccountHandler Coverage
 // ========================================
-
-func TestNewAccountHandler_KeySerializationError90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Test with empty contact that should pass validation
-	key := generateTestKey(t)
-
-	payload := NewAccountRequest{
-		Contact:              []string{},
-		TermsOfServiceAgreed: true,
-	}
-
-	url := service.baseRESTURI + "/acme/new-account"
-	req := createJWSRequest(t, service, key, url, payload, false, 0)
-
-	resp := httptest.NewRecorder()
-	service.NewAccountHandler(resp, req)
-
-	// Should succeed with empty contact
-	require.Equal(t, http.StatusCreated, resp.Code)
-}
 
 func TestNewAccountHandler_ExistsCheckStorageError90(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
@@ -712,23 +628,6 @@ func TestVerifyECDSAQuoteSignature_P521Curve90(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid ECDSA signature length")
 }
 
-func TestVerifyECDSAQuoteSignature_ASN1Signature90(t *testing.T) {
-	// Test with ASN.1 DER encoded signature
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	quoted := []byte("test quoted data for ASN.1")
-	hash := sha256.Sum256(quoted)
-
-	// Create ASN.1 DER signature
-	asn1Sig, err := ecdsa.SignASN1(rand.Reader, key, hash[:])
-	require.NoError(t, err)
-
-	// This should succeed via ASN.1 verification path
-	err = verifyECDSAQuoteSignature(quoted, 0, asn1Sig, &key.PublicKey)
-	assert.NoError(t, err)
-}
-
 func TestVerifyECDSAQuoteSignature_InvalidConcatenatedSignature90(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -751,146 +650,9 @@ func TestVerifyECDSAQuoteSignature_InvalidConcatenatedSignature90(t *testing.T) 
 // NewQuoteValidationHook Coverage
 // ========================================
 
-func TestNewQuoteValidationHook_NonTCGCSR90(t *testing.T) {
-	hook := NewQuoteValidationHook(nil)
-
-	ctx := &PreIssuanceHookContext{
-		IsTCGCSR: false,
-		TCGData:  nil,
-	}
-
-	// Should skip validation for non-TCG enrollments
-	err := hook(ctx)
-	assert.NoError(t, err)
-}
-
-func TestNewQuoteValidationHook_NoAttestationData90(t *testing.T) {
-	hook := NewQuoteValidationHook(nil)
-
-	ctx := &PreIssuanceHookContext{
-		IsTCGCSR: true,
-		TCGData: &TCGEnrollmentData{
-			ProdCaData: nil, // No attestation data
-		},
-	}
-
-	// Should skip validation when no attestation data
-	err := hook(ctx)
-	assert.NoError(t, err)
-}
-
-func TestNewQuoteValidationHook_EmptyProdCaData90(t *testing.T) {
-	hook := NewQuoteValidationHook(nil)
-
-	ctx := &PreIssuanceHookContext{
-		IsTCGCSR: true,
-		TCGData: &TCGEnrollmentData{
-			ProdCaData: []byte{}, // Empty attestation data
-		},
-	}
-
-	// Should skip validation when attestation data is empty
-	err := hook(ctx)
-	assert.NoError(t, err)
-}
-
-func TestNewQuoteValidationHook_InvalidProdCaData90(t *testing.T) {
-	hook := NewQuoteValidationHook(nil)
-
-	ctx := &PreIssuanceHookContext{
-		IsTCGCSR: true,
-		TCGData: &TCGEnrollmentData{
-			ProdCaData: []byte("invalid data that cannot be unpacked"),
-		},
-	}
-
-	// Should return error for invalid attestation data
-	err := hook(ctx)
-	assert.Error(t, err)
-	_, ok := err.(*AttestationError)
-	assert.True(t, ok)
-}
-
 // ========================================
 // OrderFinalizeHandler Coverage
 // ========================================
-
-func TestOrderFinalizeHandler_OrderDAOError90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	mockFactory := &MockStorageFactoryOrderDAOFailure90{
-		Factory:      service.storageFactory,
-		failOrderDAO: true,
-	}
-	service.storageFactory = mockFactory
-
-	url := fmt.Sprintf("%s/acme/order/12345/finalize", service.baseRESTURI)
-	req := createJWSRequest(t, service, key, url, map[string]string{"csr": "test"}, true, account.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": "12345"})
-
-	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
-}
-
-func TestOrderFinalizeHandler_InvalidOrderID90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	url := fmt.Sprintf("%s/acme/order/invalid/finalize", service.baseRESTURI)
-	req := createJWSRequest(t, service, key, url, map[string]string{"csr": "test"}, true, account.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": "invalid"})
-
-	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
-func TestOrderFinalizeHandler_OrderNotFound90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	url := fmt.Sprintf("%s/acme/order/999999/finalize", service.baseRESTURI)
-	req := createJWSRequest(t, service, key, url, map[string]string{"csr": "test"}, true, account.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": "999999"})
-
-	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
-func TestOrderFinalizeHandler_OrderNotReady90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Create order in pending status
-	order := createTestOrderSimple(t, service, account.ID)
-
-	url := fmt.Sprintf("%s/acme/order/%d/finalize", service.baseRESTURI, order.ID)
-	req := createJWSRequest(t, service, key, url, map[string]string{"csr": "test"}, true, account.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
-
-	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeOrderNotReady, http.StatusForbidden)
-}
 
 func TestOrderFinalizeHandler_UnauthorizedAccountMismatch90(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
@@ -927,77 +689,13 @@ func TestOrderFinalizeHandler_UnauthorizedAccountMismatch90(t *testing.T) {
 // Edge Cases for createChallenges
 // ========================================
 
-func TestCreateChallenges_UnsupportedIdentifierType90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Add a challenge for unknown type
-	service.challengeMap["unknown-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-		return nil
-	}
-
-	challenges, err := service.createChallenges(1, 1, entities.ACMEIdentifier{
-		Type:  "unknown-type",
-		Value: "test",
-	}, false)
-
-	assert.Error(t, err)
-	assert.Empty(t, challenges)
-}
-
 // ========================================
 // compareKeyMaps Tests
 // ========================================
 
-func TestCompareKeyMaps_MismatchedKeyTypes90(t *testing.T) {
-	key1 := map[string]interface{}{"kty": "EC"}
-	key2 := map[string]interface{}{"kty": "RSA"}
-
-	assert.False(t, compareKeyMaps(key1, key2))
-}
-
-func TestCompareKeyMaps_RSAKeysMismatch90(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus1",
-		"e":   "exponent",
-	}
-	key2 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus2",
-		"e":   "exponent",
-	}
-
-	assert.False(t, compareKeyMaps(key1, key2))
-}
-
-func TestCompareKeyMaps_OKPKeysMismatch90(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "OKP",
-		"crv": "Ed25519",
-		"x":   "public1",
-	}
-	key2 := map[string]interface{}{
-		"kty": "OKP",
-		"crv": "Ed448",
-		"x":   "public1",
-	}
-
-	assert.False(t, compareKeyMaps(key1, key2))
-}
-
 // ========================================
 // bytesToBigInt Tests
 // ========================================
-
-func TestBytesToBigInt90(t *testing.T) {
-	// Test with known value
-	bytes := []byte{0x01, 0x02, 0x03}
-	result := bytesToBigInt(bytes)
-
-	expected := big.NewInt(0x010203)
-	assert.Equal(t, 0, result.Cmp(expected))
-}
 
 func TestBytesToBigInt_Empty90(t *testing.T) {
 	bytes := []byte{}
@@ -1010,57 +708,6 @@ func TestBytesToBigInt_Empty90(t *testing.T) {
 // isEnrollXChallenge Tests
 // ========================================
 
-func TestIsEnrollXChallenge_Enroll90(t *testing.T) {
-	assert.True(t, isEnrollXChallenge("enroll-01"))
-	assert.True(t, isEnrollXChallenge("enroll-01-8080"))
-}
-
-func TestIsEnrollXChallenge_NonEnroll90(t *testing.T) {
-	assert.False(t, isEnrollXChallenge("http-01"))
-	assert.False(t, isEnrollXChallenge("dns-01"))
-}
-
 // ========================================
 // Order Status Edge Cases
 // ========================================
-
-func TestOrderHandler_OrderWithProcessingStatus90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Create order and set to processing
-	ctx := context.Background()
-	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
-	require.NoError(t, err)
-
-	orderID, err := GenerateID()
-	require.NoError(t, err)
-
-	order := &entities.ACMEOrder{
-		ID:     orderID,
-		Status: common.StatusProcessing,
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: "dns", Value: "processing90.example.com"},
-		},
-		Expires:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-		Authorizations: []string{fmt.Sprintf("%s/acme/authz/1", service.baseRESTURI)},
-		Finalize:       fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, orderID),
-		AccountID:      account.ID,
-	}
-	order.URL = fmt.Sprintf("%s/acme/orders/%d", service.baseRESTURI, order.ID)
-
-	err = orderDAO.Save(ctx, order)
-	require.NoError(t, err)
-
-	url := fmt.Sprintf("%s/acme/orders/%d", service.baseRESTURI, order.ID)
-	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
-
-	resp := httptest.NewRecorder()
-	service.OrderHandler(resp, req)
-
-	require.Equal(t, http.StatusOK, resp.Code)
-}

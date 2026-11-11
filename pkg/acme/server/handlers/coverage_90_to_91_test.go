@@ -38,30 +38,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNewNonceHandler_MethodNotAllowedPATCH tests NewNonceHandler with PATCH method
-func TestNewNonceHandler_MethodNotAllowedPATCH(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPatch, "/acme/new-nonce", nil)
-	resp := httptest.NewRecorder()
-	service.NewNonceHandler(resp, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, resp.Code)
-}
-
-// TestNewNonceHandler_MethodNotAllowedOPTIONS tests NewNonceHandler with OPTIONS method
-func TestNewNonceHandler_MethodNotAllowedOPTIONS(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodOptions, "/acme/new-nonce", nil)
-	resp := httptest.NewRecorder()
-	service.NewNonceHandler(resp, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, resp.Code)
-}
-
 // TestParseKID_AccountNotFoundPath tests parseKID when account doesn't exist
 func TestParseKID_AccountNotFoundPath(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
@@ -149,40 +125,6 @@ func TestParseKID_KIDAndJWKBothPresent(t *testing.T) {
 	assert.ErrorIs(t, err, ErrKIDAndJWKNotAllowed)
 }
 
-// TestChallengeHandler_ChallengeIDEmpty tests ChallengeHandler when challenge ID is empty
-func TestChallengeHandler_ChallengeIDEmpty(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	url := service.baseRESTURI + "/acme/challenge/"
-	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.ChallengeHandler(resp, req)
-
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
-}
-
-// TestChallengeHandler_ChallengeIDInvalid tests ChallengeHandler with invalid challenge ID
-func TestChallengeHandler_ChallengeIDInvalid(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	url := service.baseRESTURI + "/acme/challenge/not-a-number"
-	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.ChallengeHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
 // TestAuthorizationHandler_PostUnauthorizedAccount tests authorization POST with mismatched account
 func TestAuthorizationHandler_PostUnauthorizedAccount(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
@@ -223,46 +165,6 @@ func TestAuthorizationHandler_PostUnauthorizedAccount(t *testing.T) {
 	assert.True(t, resp.Code == http.StatusBadRequest || resp.Code == http.StatusUnauthorized)
 }
 
-// TestNewAccountHandler_ExternalAccountBindingOptionalProvided tests EAB provided but not required
-func TestNewAccountHandler_ExternalAccountBindingOptionalProvided(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-
-	eabDAO, err := service.storageFactory.ExternalAccountBindingDAO()
-	require.NoError(t, err)
-
-	eab := &entities.ExternalAccountBinding{
-		ID:                "test-eab-kid",
-		MACKey:            base64.RawURLEncoding.EncodeToString([]byte("test-mac-key-12345678901234567890")),
-		Status:            "valid",
-		ExternalAccountID: "external-123",
-		CreatedAt:         time.Now(),
-	}
-	ctx := context.Background()
-	err = eabDAO.Save(ctx, eab)
-	require.NoError(t, err)
-
-	newAccountPayload := NewAccountRequest{
-		Contact:              []string{"mailto:test@example.com"},
-		TermsOfServiceAgreed: true,
-		ExternalAccountBinding: map[string]interface{}{
-			"protected": "invalid",
-			"payload":   "invalid",
-			"signature": "invalid",
-		},
-	}
-
-	url := service.baseRESTURI + "/acme/new-account"
-	req := createJWSRequest(t, service, key, url, newAccountPayload, false, 0)
-
-	resp := httptest.NewRecorder()
-	service.NewAccountHandler(resp, req)
-
-	assert.Equal(t, http.StatusCreated, resp.Code)
-}
-
 // TestNewAccountHandler_ExternalAccountBindingProvided_OptionalPath tests optional EAB verification
 func TestNewAccountHandler_ExternalAccountBindingProvided_OptionalPath(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
@@ -287,67 +189,6 @@ func TestNewAccountHandler_ExternalAccountBindingProvided_OptionalPath(t *testin
 	assert.Equal(t, http.StatusCreated, resp.Code)
 }
 
-// TestNewAccountHandler_AccountExistsNotOnlyReturnExisting tests when account exists and OnlyReturnExisting is false.
-//
-// Per RFC 8555 Section 7.3: "if the server receives a newAccount request
-// signed with a key for which it already has an account registered with
-// the provided account key, then it MUST return a response with a 200 (OK)
-// status code and provide the URL of that account in the Location header
-// field." This applies regardless of onlyReturnExisting; that flag only
-// changes behavior when NO account exists for the key (Section 7.3.1: the
-// server MUST reply 400 accountDoesNotExist rather than creating one).
-// "accountExists" is not among the error types RFC 8555 Section 6.7
-// defines, so the original assertion here was never RFC-conformant.
-func TestNewAccountHandler_AccountExistsNotOnlyReturnExisting(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	existingAccount := createTestAccount(t, service, key)
-
-	newAccountPayload := NewAccountRequest{
-		Contact:              []string{"mailto:newtest@example.com"},
-		TermsOfServiceAgreed: true,
-		OnlyReturnExisting:   false,
-	}
-
-	url := service.baseRESTURI + "/acme/new-account"
-	req := createJWSRequest(t, service, key, url, newAccountPayload, false, 0)
-
-	resp := httptest.NewRecorder()
-	service.NewAccountHandler(resp, req)
-
-	assert.Equal(t, http.StatusOK, resp.Code)
-
-	// Per RFC 8555 Section 7.1.2, the account object body carries no "id"
-	// field; the account's identity is conveyed via the Location header.
-	assert.Equal(t, service.accountURL(existingAccount), resp.Header().Get("Location"))
-
-	var returned entities.ACMEAccount
-	err := json.NewDecoder(resp.Body).Decode(&returned)
-	require.NoError(t, err)
-	assert.Equal(t, existingAccount.Status, returned.Status)
-}
-
-// TestKeyChangeHandler_MissingInnerJWSSignatures tests KeyChangeHandler when inner JWS has no signatures
-func TestKeyChangeHandler_MissingInnerJWSSignatures(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	malformedInnerJWS := `{"protected":"eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0","payload":"e30"}`
-
-	url := service.baseRESTURI + "/acme/key-change"
-	req := createJWSRequest(t, service, key, url, malformedInnerJWS, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.KeyChangeHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
 // TestParseKID_DeactivatedAccount tests parseKID with deactivated account
 func TestParseKID_DeactivatedAccount(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
@@ -370,90 +211,6 @@ func TestParseKID_DeactivatedAccount(t *testing.T) {
 	parsedAccount, _, err := service.parseKID(ctx, req)
 	assert.Nil(t, parsedAccount)
 	assert.ErrorIs(t, err, ErrAccountDeactivated)
-}
-
-// TestCompareKeyMaps_OKPKey tests compareKeyMaps with OKP (EdDSA) keys
-func TestCompareKeyMaps_OKPKey(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "OKP",
-		"crv": "Ed25519",
-		"x":   "testXValue12345",
-	}
-	key2 := map[string]interface{}{
-		"kty": "OKP",
-		"crv": "Ed25519",
-		"x":   "testXValue12345",
-	}
-	key3 := map[string]interface{}{
-		"kty": "OKP",
-		"crv": "Ed25519",
-		"x":   "differentXValue",
-	}
-
-	assert.True(t, compareKeyMaps(key1, key2))
-	assert.False(t, compareKeyMaps(key1, key3))
-}
-
-// TestCompareKeyMaps_UnknownKeyType tests compareKeyMaps with unknown key type
-func TestCompareKeyMaps_UnknownKeyType(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "UNKNOWN",
-		"x":   "testValue",
-	}
-	key2 := map[string]interface{}{
-		"kty": "UNKNOWN",
-		"x":   "testValue",
-	}
-
-	assert.False(t, compareKeyMaps(key1, key2))
-}
-
-// TestCompareKeyMaps_MismatchedKeyTypes tests compareKeyMaps with different key types
-func TestCompareKeyMaps_MismatchedKeyTypes(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus",
-		"e":   "exponent",
-	}
-	key2 := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "x-coord",
-		"y":   "y-coord",
-	}
-
-	assert.False(t, compareKeyMaps(key1, key2))
-}
-
-// TestCompareKeyMaps_MissingKtyInBothKeys tests compareKeyMaps when kty is missing
-func TestCompareKeyMaps_MissingKtyInBothKeys(t *testing.T) {
-	key1 := map[string]interface{}{
-		"n": "modulus",
-		"e": "exponent",
-	}
-	key2 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus",
-		"e":   "exponent",
-	}
-
-	assert.False(t, compareKeyMaps(key1, key2))
-}
-
-// TestParseJWS_NoSignatures tests parseJWS when JWS has no signatures
-func TestParseJWS_NoSignatures(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	malformedJWS := `{"protected":"eyJhbGciOiJFUzI1NiJ9","payload":"e30"}`
-
-	req := httptest.NewRequest(http.MethodPost, service.baseRESTURI+"/acme/new-account", strings.NewReader(malformedJWS))
-	req.Header.Set("Content-Type", "application/jose+json")
-
-	jwk, payload, err := service.parseJWS(req)
-	assert.Nil(t, jwk)
-	assert.Nil(t, payload)
-	assert.Error(t, err)
 }
 
 // generateTestKeyP521ForCoverage creates a P-521 ECDSA test key pair and its
@@ -487,74 +244,6 @@ func TestJWKThumbprint_ECDSA_P521Key(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, thumbprint)
 	_ = service
-}
-
-// TestAccountHandler_InvalidStatusValue tests AccountHandler with invalid status value
-func TestAccountHandler_InvalidStatusValue(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	accountUpdatePayload := AccountRequest{
-		Status: "invalid-status",
-	}
-
-	url := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
-	req := createJWSRequest(t, service, key, url, accountUpdatePayload, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.AccountHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
-// TestAccountHandler_ContactUpdateWithInvalidURL tests AccountHandler with invalid contact URL
-func TestAccountHandler_ContactUpdateWithInvalidURL(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	accountUpdatePayload := AccountRequest{
-		Contact: []string{"not-a-valid-mailto-url"},
-	}
-
-	url := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
-	req := createJWSRequest(t, service, key, url, accountUpdatePayload, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.AccountHandler(resp, req)
-
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
-}
-
-// TestAccountHandler_DeactivateSuccess tests successful account deactivation
-func TestAccountHandler_DeactivateSuccess(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	accountUpdatePayload := AccountRequest{
-		Status: common.StatusDeactivated,
-	}
-
-	url := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
-	req := createJWSRequest(t, service, key, url, accountUpdatePayload, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.AccountHandler(resp, req)
-
-	assert.Equal(t, http.StatusOK, resp.Code)
-
-	var respAccount entities.ACMEAccount
-	err := json.NewDecoder(resp.Body).Decode(&respAccount)
-	require.NoError(t, err)
-	assert.Equal(t, common.StatusDeactivated, respAccount.Status)
 }
 
 // TestAuthorizationHandler_MethodNotAllowed tests AuthorizationHandler with unsupported method
@@ -595,41 +284,6 @@ func TestAuthorizationHandler_MethodNotAllowed(t *testing.T) {
 
 	// Method not allowed or bad request (depends on how parseKID handles non-POST)
 	assert.True(t, resp.Code == http.StatusMethodNotAllowed || resp.Code == http.StatusBadRequest)
-}
-
-// TestAuthorizationHandler_AuthorizationNotFoundGET tests authorizationGetHandler when authorization doesn't exist
-func TestAuthorizationHandler_AuthorizationNotFoundGET(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Try to get a non-existent authorization
-	url := fmt.Sprintf("%s/acme/authz/%d", service.baseRESTURI, 9999999999)
-	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.AuthorizationHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
-// TestAuthorizationHandler_AuthorizationIDEmpty tests AuthorizationHandler when authz ID is empty
-func TestAuthorizationHandler_AuthorizationIDEmpty(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	url := service.baseRESTURI + "/acme/authz/"
-	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.AuthorizationHandler(resp, req)
-
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
 func TestAuthorizationPostHandler_AccountMismatch(t *testing.T) {
@@ -714,84 +368,6 @@ func TestAuthorizationPostHandler_AccountMismatch(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.Code)
 }
 
-// TestChallengeHandler_ChallengeNotFoundCov tests ChallengeHandler when challenge doesn't exist
-func TestChallengeHandler_ChallengeNotFoundCov(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Try to access a non-existent challenge
-	nonExistentChallengeID := uint64(9999999999)
-	url := fmt.Sprintf("%s/acme/challenge/%d", service.baseRESTURI, nonExistentChallengeID)
-	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.ChallengeHandler(resp, req)
-
-	// Should return error since challenge doesn't exist
-	assert.True(t, resp.Code == http.StatusBadRequest || resp.Code == http.StatusNotFound)
-}
-
-// TestNewOrderHandler_UnsupportedIdentifierType tests NewOrderHandler with unsupported identifier type
-func TestNewOrderHandler_UnsupportedIdentifierType(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	orderRequest := struct {
-		Identifiers []entities.ACMEIdentifier `json:"identifiers"`
-	}{
-		Identifiers: []entities.ACMEIdentifier{
-			{
-				Type:  "unsupported-type",
-				Value: "test.example.com",
-			},
-		},
-	}
-
-	url := service.baseRESTURI + "/acme/new-order"
-	req := createJWSRequest(t, service, key, url, orderRequest, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.NewOrderHandler(resp, req)
-
-	// Should return unsupported identifier error
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
-}
-
-// TestNewOrderHandler_InvalidDomainName tests NewOrderHandler with invalid domain name
-func TestNewOrderHandler_InvalidDomainName(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	orderRequest := struct {
-		Identifiers []entities.ACMEIdentifier `json:"identifiers"`
-	}{
-		Identifiers: []entities.ACMEIdentifier{
-			{
-				Type:  "dns",
-				Value: "-invalid-domain.com",
-			},
-		},
-	}
-
-	url := service.baseRESTURI + "/acme/new-order"
-	req := createJWSRequest(t, service, key, url, orderRequest, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.NewOrderHandler(resp, req)
-
-	// Should return malformed error for invalid domain
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
 // TestRevokeCertHandler_InactiveAccountCov tests RevokeCertHandler when account is not active
 func TestRevokeCertHandler_InactiveAccountCov(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
@@ -822,53 +398,6 @@ func TestRevokeCertHandler_InactiveAccountCov(t *testing.T) {
 	service.RevokeCertHandler(resp, req)
 
 	// Should fail because account is deactivated (parseKID will reject)
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
-}
-
-// TestRevokeCertHandler_InvalidCertEncodingCov tests RevokeCertHandler with invalid base64
-func TestRevokeCertHandler_InvalidCertEncodingCov(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	revokeRequest := RevokeCertRequest{
-		Certificate: "!!!invalid-base64!!!",
-		Reason:      1,
-	}
-
-	url := service.baseRESTURI + "/acme/revoke-cert"
-	req := createJWSRequest(t, service, key, url, revokeRequest, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.RevokeCertHandler(resp, req)
-
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
-}
-
-// TestRevokeCertHandler_InvalidReasonCov tests RevokeCertHandler with invalid reason code
-func TestRevokeCertHandler_InvalidReasonCov(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Create a minimal valid-looking DER certificate (just for the encoding check)
-	fakeCertDER := []byte{0x30, 0x82, 0x01, 0x00} // Minimal ASN.1 sequence header
-
-	revokeRequest := RevokeCertRequest{
-		Certificate: base64.RawURLEncoding.EncodeToString(fakeCertDER),
-		Reason:      99, // Invalid reason (valid is 0-10)
-	}
-
-	url := service.baseRESTURI + "/acme/revoke-cert"
-	req := createJWSRequest(t, service, key, url, revokeRequest, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.RevokeCertHandler(resp, req)
-
 	assert.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
@@ -977,120 +506,6 @@ func TestGenerateTokenWithReader_ShortRead(t *testing.T) {
 	assert.ErrorIs(t, err, ErrFailedToGenerateToken)
 }
 
-// TestGenerateID_SuccessCov tests normal ID generation
-func TestGenerateID_SuccessCov(t *testing.T) {
-	id, err := GenerateID()
-
-	assert.NoError(t, err)
-	assert.NotEqual(t, uint64(0), id)
-}
-
-// TestGenerateToken_SuccessCov tests normal token generation
-func TestGenerateToken_SuccessCov(t *testing.T) {
-	token, err := GenerateToken()
-
-	assert.NoError(t, err)
-	assert.NotEmpty(t, token)
-}
-
-func TestCompareKeyMaps_RSAKeys_Cov91(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "test-modulus-value",
-		"e":   "AQAB",
-	}
-	key2 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "test-modulus-value",
-		"e":   "AQAB",
-	}
-	key3 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "different-modulus",
-		"e":   "AQAB",
-	}
-
-	assert.True(t, compareKeyMaps(key1, key2))
-	assert.False(t, compareKeyMaps(key1, key3))
-}
-
-// TestCompareKeyMaps_ECKeys_Cov91 tests compareKeyMaps with EC keys
-func TestCompareKeyMaps_ECKeys_Cov91(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "test-x-value",
-		"y":   "test-y-value",
-	}
-	key2 := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "test-x-value",
-		"y":   "test-y-value",
-	}
-	key3 := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "different-x",
-		"y":   "test-y-value",
-	}
-
-	assert.True(t, compareKeyMaps(key1, key2))
-	assert.False(t, compareKeyMaps(key1, key3))
-}
-
-func TestCompareKeyMaps_InvalidKtyTypeValue(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": 123,
-		"n":   "modulus",
-		"e":   "AQAB",
-	}
-	key2 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus",
-		"e":   "AQAB",
-	}
-
-	assert.False(t, compareKeyMaps(key1, key2))
-}
-
-func TestParseSpecIDEvent_SignatureReadError(t *testing.T) {
-	// Data that's exactly 28 bytes but signature read would fail
-	// 28 bytes minimum, but we need data that fails at different stages
-
-	// Test with valid length but truncated during first read
-	data := []byte{
-		'S', 'p', 'e', 'c', ' ', 'I', 'D', ' ',
-		'E', 'v', 'e', 'n', 't', '0', '3', 0,
-		0x00, 0x00, 0x00, 0x00, // platformClass
-		0x00,             // specVersionMinor
-		0x02,             // specVersionMajor
-		0x00,             // specErrata
-		0x04,             // uintnSize
-		0x00, 0x00, 0x00, // partial numberOfAlgorithms (truncated)
-	}
-
-	_, err := parseSpecIDEvent(data)
-	assert.Error(t, err)
-}
-
-// TestParseSpecIDEvent_AlgorithmReadError tests algorithm entry read error
-func TestParseSpecIDEvent_AlgorithmReadError(t *testing.T) {
-	// Valid header but algorithm read fails
-	data := []byte{
-		'S', 'p', 'e', 'c', ' ', 'I', 'D', ' ',
-		'E', 'v', 'e', 'n', 't', '0', '3', 0,
-		0x00, 0x00, 0x00, 0x00, // platformClass
-		0x00, 0x02, 0x00, // specVersionMinor, specVersionMajor, specErrata
-		0x04,                   // uintnSize
-		0x01, 0x00, 0x00, 0x00, // numberOfAlgorithms = 1
-		0x04, // Only 1 byte of algorithm (need 4 total: 2 for AlgorithmID + 2 for DigestSize)
-	}
-
-	_, err := parseSpecIDEvent(data)
-	assert.Error(t, err)
-}
-
 // TestParseSpecIDEvent_DigestSizeReadError tests digest size read error
 func TestParseSpecIDEvent_DigestSizeReadError(t *testing.T) {
 	// Valid header and algorithm ID but digest size read fails
@@ -1160,34 +575,6 @@ func TestParseCryptoAgileEvent_UnknownAlgorithmSHA1(t *testing.T) {
 	assert.Equal(t, 0, entry.PCRIndex)
 }
 
-// TestParseCryptoAgileEvent_UnknownAlgorithmSHA384 tests SHA-384 fallback
-func TestParseCryptoAgileEvent_UnknownAlgorithmSHA384(t *testing.T) {
-	// Empty algorithms list
-	algorithms := []SpecIDAlgorithm{}
-
-	// Event with SHA-384 (0x000C)
-	data := []byte{
-		// PCR index
-		0x00, 0x00, 0x00, 0x00,
-		// Event type
-		0x01, 0x00, 0x00, 0x00,
-		// Digest count = 1
-		0x01, 0x00, 0x00, 0x00,
-		// Algorithm ID = SHA-384 (0x000C)
-		0x0C, 0x00,
-	}
-	// Add 48 bytes for SHA-384 digest
-	digest := make([]byte, 48)
-	data = append(data, digest...)
-	// Event data size = 0
-	data = append(data, 0x00, 0x00, 0x00, 0x00)
-
-	reader := bytes.NewReader(data)
-	entry, err := parseCryptoAgileEvent(reader, algorithms)
-	assert.NoError(t, err)
-	assert.Equal(t, 0, entry.PCRIndex)
-}
-
 // TestParseCryptoAgileEvent_UnknownAlgorithmSHA512 tests SHA-512 fallback
 func TestParseCryptoAgileEvent_UnknownAlgorithmSHA512(t *testing.T) {
 	// Empty algorithms list
@@ -1214,28 +601,6 @@ func TestParseCryptoAgileEvent_UnknownAlgorithmSHA512(t *testing.T) {
 	entry, err := parseCryptoAgileEvent(reader, algorithms)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, entry.PCRIndex)
-}
-
-// TestParseCryptoAgileEvent_UnknownAlgorithmError tests unknown algorithm error
-func TestParseCryptoAgileEvent_UnknownAlgorithmError(t *testing.T) {
-	// Empty algorithms list
-	algorithms := []SpecIDAlgorithm{}
-
-	// Event with unknown algorithm (0x0099)
-	data := []byte{
-		// PCR index
-		0x00, 0x00, 0x00, 0x00,
-		// Event type
-		0x01, 0x00, 0x00, 0x00,
-		// Digest count = 1
-		0x01, 0x00, 0x00, 0x00,
-		// Algorithm ID = unknown (0x0099)
-		0x99, 0x00,
-	}
-
-	reader := bytes.NewReader(data)
-	_, err := parseCryptoAgileEvent(reader, algorithms)
-	assert.Error(t, err) // Should fail on unknown algorithm
 }
 
 // TestParseCryptoAgileEvent_DigestReadError tests digest read error

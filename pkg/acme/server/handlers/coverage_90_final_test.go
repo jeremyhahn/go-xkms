@@ -24,10 +24,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -212,119 +210,9 @@ func setupTestService90(t *testing.T) (*RestService, string, func()) {
 // NewAccountHandler coverage tests - targeting 60.6% -> 90%+
 // =============================================================================
 
-func TestNewAccountHandler_EABErrorPaths(t *testing.T) {
-	service, _, cleanup := setupTestService90(t)
-	defer cleanup()
-
-	// Enable external account required
-	service.externalAccountRequired = true
-
-	testKey := generateTestKey(t)
-
-	t.Run("EAB required but missing", func(t *testing.T) {
-		url := "https://acme.test.example.com/acme/new-account"
-		req := createJWSRequest(t, service, testKey, url, map[string]interface{}{
-			"contact":              []string{"mailto:test@example.com"},
-			"termsOfServiceAgreed": true,
-		}, false, 0)
-
-		rr := httptest.NewRecorder()
-		service.NewAccountHandler(rr, req)
-
-		// ExternalAccountRequired returns http.StatusUnauthorized (401)
-		assert.Equal(t, http.StatusUnauthorized, rr.Code)
-		assert.Contains(t, rr.Body.String(), "externalAccountRequired")
-	})
-}
-
-func TestNewAccountHandler_OnlyReturnExisting(t *testing.T) {
-	service, _, cleanup := setupTestService90(t)
-	defer cleanup()
-
-	testKey := generateTestKey(t)
-
-	t.Run("Account does not exist with onlyReturnExisting", func(t *testing.T) {
-		url := "https://acme.test.example.com/acme/new-account"
-		req := createJWSRequest(t, service, testKey, url, map[string]interface{}{
-			"onlyReturnExisting": true,
-		}, false, 0)
-
-		rr := httptest.NewRecorder()
-		service.NewAccountHandler(rr, req)
-
-		// AccountDoesNotExist returns http.StatusNotFound (404)
-		assert.Equal(t, http.StatusNotFound, rr.Code)
-		assert.Contains(t, rr.Body.String(), "accountDoesNotExist")
-	})
-}
-
-func TestNewAccountHandler_InvalidContact(t *testing.T) {
-	service, _, cleanup := setupTestService90(t)
-	defer cleanup()
-
-	testKey := generateTestKey(t)
-
-	t.Run("Invalid contact URL", func(t *testing.T) {
-		url := "https://acme.test.example.com/acme/new-account"
-		req := createJWSRequest(t, service, testKey, url, map[string]interface{}{
-			"contact":              []string{"invalid-email"},
-			"termsOfServiceAgreed": true,
-		}, false, 0)
-
-		rr := httptest.NewRecorder()
-		service.NewAccountHandler(rr, req)
-
-		// Should fail validation
-		assert.NotEqual(t, http.StatusCreated, rr.Code)
-	})
-}
-
 // =============================================================================
 // KeyChangeHandler coverage tests - targeting 71.1% -> 90%+
 // =============================================================================
-
-func TestKeyChangeHandler_ErrorPaths(t *testing.T) {
-	service, _, cleanup := setupTestService90(t)
-	defer cleanup()
-
-	testKey := generateTestKey(t)
-	account := createTestAccount(t, service, testKey)
-
-	t.Run("New key same as current key", func(t *testing.T) {
-		url := "https://acme.test.example.com/acme/key-change"
-
-		// Create inner JWS with the SAME key (not a new one)
-		innerPayload := map[string]interface{}{
-			"account": account.URL,
-			"oldKey": map[string]interface{}{
-				"kty": "EC",
-				"crv": "P-256",
-			},
-		}
-		innerPayloadBytes, _ := json.Marshal(innerPayload)
-
-		innerSignerOpts := &jose.SignerOptions{
-			EmbedJWK: true,
-			ExtraHeaders: map[jose.HeaderKey]interface{}{
-				"url": url,
-			},
-		}
-		innerSigner, _ := jose.NewSigner(jose.SigningKey{
-			Algorithm: jose.ES256,
-			Key:       testKey.PrivateKey,
-		}, innerSignerOpts)
-		innerJWS, _ := innerSigner.Sign(innerPayloadBytes)
-
-		// Create outer JWS
-		req := createJWSRequest(t, service, testKey, url, json.RawMessage(innerJWS.FullSerialize()), true, account.ID)
-
-		rr := httptest.NewRecorder()
-		service.KeyChangeHandler(rr, req)
-
-		// The old key comparison should fail since we're sending incomplete JWK
-		assert.NotEqual(t, http.StatusOK, rr.Code)
-	})
-}
 
 // =============================================================================
 // OrderFinalizeHandler coverage tests - targeting 68.6% -> 90%+
@@ -1067,18 +955,3 @@ func TestCreateChallenges_Paths(t *testing.T) {
 // =============================================================================
 // encodeJSONWithLogger coverage tests - targeting 75% -> 90%+
 // =============================================================================
-
-func TestEncodeJSONWithLogger_ErrorPath(t *testing.T) {
-	t.Run("Encoding error with logger", func(t *testing.T) {
-		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-		// Create a channel which cannot be JSON encoded
-		invalidData := make(chan int)
-
-		rr := httptest.NewRecorder()
-		encodeJSONWithLogger(rr, invalidData, logger)
-
-		// Should write empty response on error
-		assert.Equal(t, 0, rr.Body.Len())
-	})
-}

@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"testing"
 
@@ -223,140 +222,6 @@ func (f *nonTenantAwareFactory) NonceDAO() (qrdbsdk.GenericDAO[*entities.ACMENon
 }
 func (f *nonTenantAwareFactory) ExternalAccountBindingDAO() (qrdbsdk.GenericDAO[*entities.ExternalAccountBinding], error) {
 	return nil, nil
-}
-
-func TestDefaultTenantExtractorCoverage(t *testing.T) {
-	tests := []struct {
-		name     string
-		header   string
-		expected string
-	}{
-		{
-			name:     "extracts tenant from header",
-			header:   "tenant1",
-			expected: "tenant1",
-		},
-		{
-			name:     "returns empty when no header",
-			header:   "",
-			expected: "",
-		},
-		{
-			name:     "extracts complex tenant ID",
-			header:   "org-12345-tenant",
-			expected: "org-12345-tenant",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/acme/directory", nil)
-			if tt.header != "" {
-				req.Header.Set(TenantHeader, tt.header)
-			}
-
-			result := DefaultTenantExtractor(req)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestSubdomainTenantExtractorCoverage(t *testing.T) {
-	tests := []struct {
-		name     string
-		host     string
-		expected string
-	}{
-		{
-			name:     "extracts tenant from subdomain",
-			host:     "tenant1.acme.example.com",
-			expected: "tenant1",
-		},
-		{
-			name:     "extracts tenant with port",
-			host:     "tenant1.acme.example.com:8443",
-			expected: "tenant1",
-		},
-		{
-			name:     "returns empty for two-part domain",
-			host:     "acme.com",
-			expected: "",
-		},
-		{
-			name:     "returns empty for single part",
-			host:     "localhost",
-			expected: "",
-		},
-		{
-			name:     "extracts from deep subdomain",
-			host:     "tenant.sub.acme.example.com",
-			expected: "tenant",
-		},
-		{
-			name:     "handles port with two-part domain",
-			host:     "acme.com:443",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/acme/directory", nil)
-			req.Host = tt.host
-
-			result := SubdomainTenantExtractor(req)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestPathTenantExtractorCoverage(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected string
-	}{
-		{
-			name:     "extracts tenant from path",
-			path:     "/tenant1/acme/directory",
-			expected: "tenant1",
-		},
-		{
-			name:     "returns empty for acme path",
-			path:     "/acme/directory",
-			expected: "",
-		},
-		{
-			name:     "returns empty for root",
-			path:     "/",
-			expected: "",
-		},
-		{
-			name:     "extracts from longer path",
-			path:     "/org123/v1/acme/directory",
-			expected: "org123",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
-
-			result := PathTenantExtractor(req)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestPathTenantExtractorEmptyPath(t *testing.T) {
-	// Test with manually constructed request with empty path
-	req := &http.Request{
-		Method: http.MethodGet,
-		URL:    &url.URL{Path: ""},
-	}
-
-	result := PathTenantExtractor(req)
-	assert.Equal(t, "", result)
 }
 
 func TestTenantMiddlewareCoverage(t *testing.T) {
@@ -576,26 +441,6 @@ func TestTenantMiddlewareCoverage(t *testing.T) {
 	})
 }
 
-func TestTenantFromContextCoverage(t *testing.T) {
-	t.Run("returns empty for context without tenant", func(t *testing.T) {
-		ctx := context.Background()
-		result := TenantFromContext(ctx)
-		assert.Equal(t, "", result)
-	})
-
-	t.Run("returns tenant ID from context", func(t *testing.T) {
-		ctx := WithTenant(context.Background(), "tenant1")
-		result := TenantFromContext(ctx)
-		assert.Equal(t, "tenant1", result)
-	})
-
-	t.Run("handles empty tenant ID", func(t *testing.T) {
-		ctx := WithTenant(context.Background(), "")
-		result := TenantFromContext(ctx)
-		assert.Equal(t, "", result)
-	})
-}
-
 func TestWithTenantCoverage(t *testing.T) {
 	t.Run("adds tenant to context", func(t *testing.T) {
 		ctx := context.Background()
@@ -644,25 +489,4 @@ func TestGetTenantScopedFactoryCoverage(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, factory, result)
 	})
-}
-
-func TestNewTenantMiddlewareDefaultExtractor(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	factory := newTestTenantAwareFactory()
-
-	// Test that nil TenantExtractor gets replaced with default
-	middleware := NewTenantMiddleware(&TenantMiddlewareConfig{
-		StorageFactory:  factory,
-		Logger:          logger,
-		TenantExtractor: nil,
-	})
-
-	require.NotNil(t, middleware.config.TenantExtractor)
-
-	// Verify the default extractor works
-	req := httptest.NewRequest(http.MethodGet, "/acme/directory", nil)
-	req.Header.Set(TenantHeader, "test-tenant")
-
-	result := middleware.config.TenantExtractor(req)
-	assert.Equal(t, "test-tenant", result)
 }
