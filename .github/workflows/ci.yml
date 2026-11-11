@@ -584,9 +584,10 @@ on:
   # runs are on the default branch. CUSTOMIZE: the hour, off nightly.yml's.
   # v1.29.3: one schedule run per repository (the concurrency group below),
   # and its bigdisk jobs skip while a main push run is in flight (the
-  # schedule-guard job).
+  # schedule-guard job). The nightly runs Saturday 05:00 UTC, the end of this
+  # project's Friday night in the CA m1919 rotation (#1928).
   schedule:
-    - cron: '0 5 * * *'
+    - cron: '0 5 * * 6'
 
 # v1.25: on main the group is the workflow and the event, so a push to main
 # cancels the in-progress main push run of an older commit, and a schedule or
