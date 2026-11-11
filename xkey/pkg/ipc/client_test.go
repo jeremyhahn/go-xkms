@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -323,6 +324,38 @@ func TestIsDaemonNotRunning_OtherSyscallError(t *testing.T) {
 func TestNewClient_SetsDefaultTimeout(t *testing.T) {
 	client := NewClient("/tmp/test.sock")
 	assert.Equal(t, DefaultTimeout, client.timeout)
+}
+
+func TestNewClient_WithTimeout_SetsTheConnectionDeadline(t *testing.T) {
+	const d = 150 * time.Millisecond
+	assert.Equal(t, 30*time.Second, NewClient("/tmp/test.sock", WithTimeout(30*time.Second)).timeout)
+
+	// A server whose handler never answers: the client must give up after
+	// d, not after DefaultTimeout.
+	sockPath := testSocketPath(t)
+	handler := &blockingStatusHandler{entered: make(chan struct{}), release: make(chan struct{})}
+	srv, err := NewServer(sockPath, handler, testLogger())
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+	defer func() {
+		close(handler.release)
+		require.NoError(t, srv.Close())
+	}()
+
+	client := NewClient(sockPath, WithTimeout(d))
+	start := time.Now()
+	_, err = client.Status()
+	elapsed := time.Since(start)
+	require.Error(t, err)
+	assert.GreaterOrEqual(t, elapsed, d)
+	assert.Less(t, elapsed, DefaultTimeout, "the client used DefaultTimeout, not WithTimeout's deadline")
+}
+
+func TestWithTimeout_NonPositiveKeepsTheDefault(t *testing.T) {
+	assert.Equal(t, DefaultTimeout, NewClient("/tmp/test.sock", WithTimeout(0)).timeout)
+	assert.Equal(t, DefaultTimeout, NewClient("/tmp/test.sock", WithTimeout(-time.Second)).timeout)
 }
 
 func TestClient_ConnectionFailed_PermissionDenied(t *testing.T) {
