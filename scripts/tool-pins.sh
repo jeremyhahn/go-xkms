@@ -10,7 +10,7 @@
 # SHA-256 in the same commit; every download is checked against it.
 
 # Base image: the Go toolchain, pinned by digest.
-GO_IMAGE=golang:1.27.3-bookworm@sha256:5c3e9b43cfd3bb95c7937462e29d87ada57b481a96fa23ad0eb61778d7a00110
+GO_IMAGE=golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
 
 # Go-installed gate tools (module proxy checksums cover them).
 GOLANGCI_VERSION=v2.14.0
