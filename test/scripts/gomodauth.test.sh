@@ -82,7 +82,7 @@ expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" runner
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" runner
 expect_all GOPRIVATE "$GLOB" runner
 eq "runner: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "runner credentials with no FORGE_MODULE_TOKEN (the CI checkout)"
@@ -108,7 +108,7 @@ expect_all GIT_CONFIG_COUNT 1 count2
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" count2
 expect_all GOPRIVATE "$GLOB" count2
 eq "count2: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "FORGE_MODULE_TOKEN and GITEA_HOST compose the rewrite"
@@ -119,7 +119,7 @@ expect_all GIT_CONFIG_KEY_0 "$TOKEN_KEY" token
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" token
 expect_all GOPRIVATE "$GLOB" token
 eq "token: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$TOKEN_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$TOKEN_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "no credentials resolve publicly"
@@ -143,9 +143,9 @@ expect_all GIT_CONFIG_COUNT "" direct-public
 expect_all GOPRIVATE "" direct-public
 
 # --- the caller's GOPRIVATE reaches the secret and every compose file ----------
-# There is no in-house default (DS-7983): an empty GOPRIVATE above proves only
-# that none is added, so a nonempty one must arrive unchanged, through make for
-# both credential sources and through compose loaded directly.
+# The in-house default above applies only when the caller sets no GOPRIVATE: a
+# nonempty one must arrive unchanged through make for both credential sources,
+# and through compose loaded directly, which reads GOMODAUTH_GOPRIVATE (#2057).
 PRIVATE=example.com/private
 section "the caller's GOPRIVATE is forwarded"
 eq "every compose file that sets GOPRIVATE is probed" "" \
@@ -164,7 +164,7 @@ expect_all GOPRIVATE "$PRIVATE" private-token
 eq "private-token: gomodauth secret" \
 	"$(printf 'export GOPRIVATE=%s\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$PRIVATE" "$TOKEN_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
-env -i GOPRIVATE="$PRIVATE" bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
+env -i GOMODAUTH_GOPRIVATE="$PRIVATE" bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
 expect_all GOPRIVATE "$PRIVATE" private-direct
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
