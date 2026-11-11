@@ -136,3 +136,23 @@ synchronisation.
   MismatchedCIDMockDevice, KeepaliveMockDevice (coverage_test.go),
   IncompletePacketDeviceFC (device_edge_cases_test.go), testLoggerCB,
   ErrorEnumeratorCB (coverage_boost_test.go)
+
+# Slice 2: pkg/ca (top-level package)
+
+Scope: `pkg/ca/*_test.go` only. Out of scope: `checkpoint/`, `provider/`,
+production code. Tests run with the Makefile TEST_TAGS
+(`codec_cbor,codec_json,codec_msgpack,tpm_simulator,frost`); without
+`codec_json` the package fails to build its signer store.
+
+Method: each test was run on its own with a coverage profile. A test in a
+`coverage_*` file is removed when one surviving test covers every block it
+covers (a superset); that surviving test is named in the table and kept.
+
+## Coverage (slice 2)
+
+| | `go test -count=1 -cover ./pkg/ca/` (TEST_TAGS) |
+|---|---|
+| before | 91.7% |
+| after  | (pending) |
+
+Baseline test count: 1842 `func Test` in 95 files.
