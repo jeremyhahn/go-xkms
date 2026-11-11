@@ -567,8 +567,9 @@
 
 # >>> CUSTOMIZE (go-xkms)
 # go-xkms runs the v1.24 tiers. The pr tier (changes, image, arch-gates,
-# static-analysis, build, nested-module-build) runs on every event. The full
-# tier (integration, nested-module-test, build-raft, race, tpm2-simulator)
+# static-analysis, build, nested-module-build) runs on every event, and race
+# runs on every ready PR (#2023). The full
+# tier (integration, nested-module-test, build-raft, tpm2-simulator)
 # runs on push to main, nightly, on workflow_dispatch and on a PR labelled
 # ci:full; its jobs carry CI_FULL_TIER's expression as `if:`. Soak is
 # nightly: the schedule and workflow_dispatch only (m751 (e)). Every job runs
@@ -1238,9 +1239,9 @@ jobs:
         # <<< CUSTOMIZE
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make build GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
-      # The test stage (m601 (c)): make coverage runs the whole unit suite with
-      # -race (make test's flags), the PR tier's unit test and race checks in
-      # one run (v1.23), and fails when total coverage is below
+      # The test stage (m601 (c)): make coverage runs the whole unit suite
+      # without -race so it fits the hosted runner (#2023); the PR-tier Race
+      # Detector job carries the race check. It fails when total coverage is below
       # COVERAGE_THRESHOLD (testing-guidelines.md), so the suite runs once.
       # Tags matter here too: without them tag-gated packages are neither
       # tested nor counted. The integration stage is its own job below.
@@ -2434,9 +2435,9 @@ jobs:
   # with a token at slot 0 and the trusted-firmware simulators (sdk/go/tfwsim;
   # a missing binary FAILS that test). -p 2 because under -race the
   # password-vault packages (pkg/api/mcp, pkg/api/rest) each peak near 7 GB,
-  # and eight in parallel OOM-killed the job (#1389). The PR tier's race
-  # check is make coverage (make test runs -race); this job adds the backend
-  # tag set and stays full tier.
+  # and eight in parallel OOM-killed the job (#1389). It is the PR tier's
+  # race check: make coverage runs without -race so it fits the hosted
+  # runner (#2023), and CI Gate requires this job on every ready PR.
   # Routing (m2475): a push to main and a pull_request from this repository
   # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
   # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
@@ -2445,8 +2446,8 @@ jobs:
   race:
     name: Race Detector
     runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
-    # v1.26: never on a draft PR, ci:full or not.
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
+    # v1.26: never on a draft PR. #2023: every ready PR, ci:full or not.
+    if: ${{ !github.event.pull_request.draft }}
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
       contents: read
@@ -2504,11 +2505,21 @@ jobs:
       # resolves it only with GOPRIVATE covering it, which in-toolchain-image.sh
       # passes to a bridge stage alone. On a no-network stage Go asks the
       # checksum database instead and `go mod download` fails (run 66181).
-      - name: Race detector, all backends including FROST (toolchain image)
+      #
+      # #2023: make coverage runs without -race, so this job is the -race run
+      # of every unit lane: its tags hold all of the Makefile's TEST_TAGS
+      # (tpm_simulator included), and make race-nofrost runs the !frost stub
+      # lane (test-nofrost's packages) under -race after it; make race-stubs
+      # runs the backend-stub builds (RACE_STUB_PKGS, TEST_TAGS only) under -race.
+      # Both make lanes append -p=2 to GOFLAGS (the last -p wins over
+      # in-toolchain-image.sh's -p=<CPU count>) and keep the go test line's -p 2,
+      # because GOMEMLIMIT is per process and does not bound the sum.
+      - name: Race detector, all backends including FROST and the !frost stub lane (toolchain image)
         if: runner.environment == 'github-hosted'
         env:
           IN_IMAGE_NETWORK: bridge
         run: |
+          # shellcheck disable=SC2016 # expands in the toolchain container
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
             mkdir -p /tmp/softhsm2/tokens
@@ -2516,9 +2527,12 @@ jobs:
             export SOFTHSM2_CONF=/tmp/softhsm2.conf
             softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234
             export TFWSIM_DIR=/src/build/agsim
+            export XKMS_DENY_HARDWARE_TPM=1
             make agsim
             GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
-              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,tpm_simulator,frost" ./...
+            GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=2" GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-nofrost
+            GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=2" GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-stubs
           '
 
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
@@ -2530,7 +2544,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Race detector, all backends including FROST (native)
+      - name: Race detector, all backends including FROST and the !frost stub lane (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOPROXY: https://proxy.golang.org
@@ -2543,9 +2557,12 @@ jobs:
           export SOFTHSM2_CONF=/tmp/softhsm2.conf
           softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234
           export TFWSIM_DIR="$GITHUB_WORKSPACE/build/agsim"
+          export XKMS_DENY_HARDWARE_TPM=1
           make agsim
           GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
-            -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+            -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,tpm_simulator,frost" ./...
+          GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=2" GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-nofrost
+          GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=2" GOMEMLIMIT=10GiB GOMAXPROCS=8 make race-stubs
 
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'
@@ -2856,7 +2873,7 @@ jobs:
           check nested-module-build "${{ needs.nested-module-build.result }}" pr
           check nested-module-test "${{ needs.nested-module-test.result }}" full
           check build-raft         "${{ needs.build-raft.result }}" full
-          check race               "${{ needs.race.result }}" full
+          check race               "${{ needs.race.result }}" pr
           check tpm2-simulator     "${{ needs.tpm2-simulator.result }}" full
           check ci-images          "${{ needs.ci-images.result }}" pr
           check signatures         "${{ needs.signatures.result }}" pr   # v1.35

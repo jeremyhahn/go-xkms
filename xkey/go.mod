@@ -20,7 +20,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.9
 	github.com/aws/aws-sdk-go-v2/service/kms v1.61.5
 	github.com/flynn/noise v1.1.0
-	github.com/fxamacker/cbor/v2 v2.9.6
+	github.com/fxamacker/cbor/v2 v2.9.6 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/godbus/dbus/v5 v5.2.4
@@ -28,8 +28,8 @@ require (
 	github.com/google/go-tpm v0.9.8
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
-	github.com/jeremyhahn/go-enclave v0.8.0-alpha
-	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
+	github.com/jeremyhahn/go-enclave v0.8.0-alpha // held: go-enclave frozen at v0.8.0 (DS-7715)
+	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // held: in-house, moves only to a tag Infra verifies (ruling 390); v0.9+ go-enclave needed, frozen (DS-7715)
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
@@ -40,22 +40,22 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/quic-go/quic-go v0.64.1
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.10
+	github.com/spf13/pflag v1.0.10 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
 	github.com/tobischo/gokeepasslib/v3 v3.7.1
-	github.com/wailsapp/wails/v2 v2.17.0
+	github.com/wailsapp/wails/v2 v2.17.0 // held: owner freeze 2026-11-08 (ruling 390)
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.85.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.61.0
-	tinygo.org/x/bluetooth v0.16.0
+	tinygo.org/x/bluetooth v0.16.0 // held: owner freeze 2026-11-08 (ruling 390)
 )
 
 require (
-	cel.dev/expr v0.25.2 // indirect
+	cel.dev/expr v0.25.3 // indirect
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.24.1-0.20261001053825-dbc26066f70a // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.3.0 // indirect
@@ -124,7 +124,7 @@ require (
 	github.com/dolthub/jsonpath v0.0.2-0.20260807003725-336cd89c1c76 // indirect
 	github.com/dolthub/vitess v0.0.0-20260728212736-0542037326d7 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
-	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
+	github.com/envoyproxy/go-control-plane/envoy v1.39.1-0.20260819172001-e6e3fd93e4be // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
@@ -171,7 +171,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
-	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
+	github.com/jeremyhahn/go-frost v0.3.1-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.22.0-alpha // indirect
@@ -282,7 +282,7 @@ require (
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
 	golang.org/x/mod v0.42.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261009151841-97e8ea77aa2a // indirect
@@ -292,7 +292,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/api v0.305.0 // indirect
 	google.golang.org/genproto v0.0.0-20260810153831-ec0a7760b754 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260810153831-ec0a7760b754 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260817212433-ac3dfec99bb1 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
