@@ -52,6 +52,18 @@ The [WebServer] log line, once per test:
 - The fix must not weaken an auth check. State the change in the fix
   commit.
 
+## Repro plan (slice wa2541c)
+
+- Handler chain: the REST server's router (CORS, logging, recovery, the
+  public WebAuthn mount) in front of `webauthnhttp` begin, with the
+  qrdb-backed user store, as `pkg/api/rest/host.go` wires it.
+- Header set: Chrome's same-origin POST (`Origin: https://localhost:18443`,
+  `Sec-Fetch-Site: same-origin`, `Sec-Fetch-Mode: cors`,
+  `Content-Type: application/json`), then bisected against a request with
+  none of them.
+- Test file: a `_test.go` next to the code the cause names (the qrdb user
+  store or the REST WebAuthn mount), failing before the fix.
+
 ## Out of scope
 
 The cross-origin test (CORS, #2033). Suite assertions are unchanged.
