@@ -726,13 +726,13 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping test-web$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/sdk...$(RESET)"
-	@cd $(SDK_TS_DIR) && npm ci --silent && npm run test:coverage
+	@cd $(SDK_TS_DIR) && npm ci --silent --fetch-timeout=60000 --fetch-retries=2 && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/svelte-auth...$(RESET)"
-	@cd $(SVELTE_AUTH_DIR) && npm ci --silent && npm run test:coverage
+	@cd $(SVELTE_AUTH_DIR) && npm ci --silent --fetch-timeout=60000 --fetch-retries=2 && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing web/app...$(RESET)"
-	@cd $(WEB_APP_DIR) && npm ci --silent && npm run check && npm run test:coverage
+	@cd $(WEB_APP_DIR) && npm ci --silent --fetch-timeout=60000 --fetch-retries=2 && npm run check && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing the xKey GUI frontend...$(RESET)"
-	@cd $(XKEY_FRONTEND_DIR) && npm ci --silent && npm run check -- --fail-on-warnings && npm test
+	@cd $(XKEY_FRONTEND_DIR) && npm ci --silent --fetch-timeout=60000 --fetch-retries=2 && npm run check -- --fail-on-warnings && npm test
 	@echo "$(GREEN)✓ web UI tests passed$(RESET)"
 endif
 

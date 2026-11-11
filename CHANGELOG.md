@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Devcontainer image job: a hung step fails fast (CA m2536).** Main run 42965847875 sat two hours in `make coverage` until it was cancelled at the job's 240 min. Every `scripts/in-toolchain-image.sh` step of the Devcontainer image job now carries its own `timeout-minutes` below the job's, and the four `npm ci` calls of `make test-web` pass `--fetch-timeout=60000 --fetch-retries=2`, so a stalled registry fetch errors out instead of hanging.
+
 ### Security
 
 - **Go toolchain 1.27.4 for GO-2026-6859, `net/http` (#2058).** govulncheck reports GO-2026-6859 in the go1.27.3 standard library, fixed in go1.27.4 (2026-11-02). The `go` line of `go.mod`, `sdk/go`, `web/desktop` and `xkey`, every workflow `GO_VERSION`, every `golang:` builder and test image tag, the Go tarball downloads in `xkey`, and the digest-pinned `GO_IMAGE` (`scripts/tool-pins.sh`, `Dockerfile.cli`, `release.yml` `GO_IMAGE_DIGEST`, now the `golang:1.27.4-bookworm` index `sha256:4fa7c968…`) move to 1.27.4. No dependency or code change.
