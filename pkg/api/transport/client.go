@@ -364,6 +364,26 @@ type FIDO2Service interface {
 	FinishAuthentication(ctx context.Context, req *FinishAuthenticationRequest) (*FinishAuthenticationResponse, error)
 }
 
+// TransparencyLogService reads the CA's transparency log.
+type TransparencyLogService interface {
+	// GetTransparencyLogHead returns the log's current signed tree head.
+	GetTransparencyLogHead(ctx context.Context, req *GetTransparencyLogHeadRequest) (*GetTransparencyLogHeadResponse, error)
+
+	// GetTransparencyLogEntry returns one encoded log entry.
+	GetTransparencyLogEntry(ctx context.Context, req *GetTransparencyLogEntryRequest) (*GetTransparencyLogEntryResponse, error)
+
+	// GetTransparencyLogInclusionProof returns an entry's inclusion proof.
+	GetTransparencyLogInclusionProof(ctx context.Context, req *GetTransparencyLogInclusionProofRequest) (*GetTransparencyLogInclusionProofResponse, error)
+
+	// GetTransparencyLogConsistencyProof returns the consistency proof
+	// between two tree sizes.
+	GetTransparencyLogConsistencyProof(ctx context.Context, req *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error)
+
+	// AppendTransparencyLogExternal appends an external entry under the
+	// caller's SPIFFE ID and returns its leaf index.
+	AppendTransparencyLogExternal(ctx context.Context, req *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error)
+}
+
 // CAService handles Certificate Authority operations.
 type CAService interface {
 	// GetCABundle retrieves the CA certificate bundle.
@@ -709,6 +729,7 @@ type Client interface {
 	PIVService
 	FIDO2Service
 	CAService
+	TransparencyLogService
 	TCGCAService
 	PINService
 	UserService

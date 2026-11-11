@@ -22,7 +22,7 @@ import (
 
 // go-xkms's qrdb ServiceModule surface, re-exported so downstream hosts
 // (go-quicbaas, go-trusted-platform) that embed a qrdb node can register the
-// xkms hardware crypto + identity plane via qrdbsdk.WithModule without
+// xkms hardware crypto + identity plane via qrdbserver.WithModule without
 // importing go-xkms/pkg. The stack-wide convention is one module per provider
 // project, named after the project; xkms's registers as ModuleName ("xkms").
 

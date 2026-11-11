@@ -123,6 +123,19 @@ type FinishAuthenticationResponse = pkgtransport.FinishAuthenticationResponse
 // CA types.
 type GetCABundleRequest = pkgtransport.GetCABundleRequest
 type GetCABundleResponse = pkgtransport.GetCABundleResponse
+
+// CA transparency log types.
+type GetTransparencyLogHeadRequest = pkgtransport.GetTransparencyLogHeadRequest
+type GetTransparencyLogHeadResponse = pkgtransport.GetTransparencyLogHeadResponse
+type GetTransparencyLogEntryRequest = pkgtransport.GetTransparencyLogEntryRequest
+type GetTransparencyLogEntryResponse = pkgtransport.GetTransparencyLogEntryResponse
+type GetTransparencyLogInclusionProofRequest = pkgtransport.GetTransparencyLogInclusionProofRequest
+type GetTransparencyLogInclusionProofResponse = pkgtransport.GetTransparencyLogInclusionProofResponse
+type GetTransparencyLogConsistencyProofRequest = pkgtransport.GetTransparencyLogConsistencyProofRequest
+type GetTransparencyLogConsistencyProofResponse = pkgtransport.GetTransparencyLogConsistencyProofResponse
+type AppendTransparencyLogExternalRequest = pkgtransport.AppendTransparencyLogExternalRequest
+type AppendTransparencyLogExternalResponse = pkgtransport.AppendTransparencyLogExternalResponse
+
 type GetCACertificateRequest = pkgtransport.GetCACertificateRequest
 type GetCACertificateResponse = pkgtransport.GetCACertificateResponse
 type SignCSRRequest = pkgtransport.SignCSRRequest

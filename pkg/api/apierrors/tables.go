@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/image"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
@@ -144,6 +145,16 @@ var TrustRootSentinelClasses = []SentinelClass{
 	// tenant-scoped caller is refused with xkms.TenantBindingError, which
 	// unwraps to go-qrdb's unknown-tenant sentinel.
 	{qrdbsdk.ErrTenantMissing, ClassNotFound},
+}
+
+// TransparencyLogSentinelClasses classifies the errors of the CA
+// transparency log's verbs, for every transport that serves them.
+var TransparencyLogSentinelClasses = []SentinelClass{
+	{xkms.ErrTransparencyLogNotConfigured, ClassUnavailable},
+	{xkms.ErrTransparencyLogRange, ClassInvalidArgument},
+	{xkms.ErrTransparencyLogNoCallerSPIFFEID, ClassUnauthenticated},
+	{tlog.ErrInvalidEntry, ClassInvalidArgument},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
 }
 
 // PINSentinelClasses classifies the go-qrdb PIN backend domain errors

@@ -1000,6 +1000,31 @@ func (s *TestXKMSService) GetCABundle(ctx context.Context, req *xkms.GetCABundle
 	return &xkms.GetCABundleResponse{}, nil
 }
 
+// GetTransparencyLogHead retrieves the transparency log's signed head.
+func (s *TestXKMSService) GetTransparencyLogHead(ctx context.Context, req *xkms.GetTransparencyLogHeadRequest) (*xkms.GetTransparencyLogHeadResponse, error) {
+	return &xkms.GetTransparencyLogHeadResponse{}, nil
+}
+
+// GetTransparencyLogEntry retrieves one transparency log entry by index.
+func (s *TestXKMSService) GetTransparencyLogEntry(ctx context.Context, req *xkms.GetTransparencyLogEntryRequest) (*xkms.GetTransparencyLogEntryResponse, error) {
+	return &xkms.GetTransparencyLogEntryResponse{}, nil
+}
+
+// GetTransparencyLogInclusionProof retrieves an inclusion proof for one entry.
+func (s *TestXKMSService) GetTransparencyLogInclusionProof(ctx context.Context, req *xkms.GetTransparencyLogInclusionProofRequest) (*xkms.GetTransparencyLogInclusionProofResponse, error) {
+	return &xkms.GetTransparencyLogInclusionProofResponse{}, nil
+}
+
+// GetTransparencyLogConsistencyProof retrieves a consistency proof between two tree sizes.
+func (s *TestXKMSService) GetTransparencyLogConsistencyProof(ctx context.Context, req *xkms.GetTransparencyLogConsistencyProofRequest) (*xkms.GetTransparencyLogConsistencyProofResponse, error) {
+	return &xkms.GetTransparencyLogConsistencyProofResponse{}, nil
+}
+
+// AppendTransparencyLogExternal appends an external entry to the transparency log.
+func (s *TestXKMSService) AppendTransparencyLogExternal(ctx context.Context, req *xkms.AppendTransparencyLogExternalRequest) (*xkms.AppendTransparencyLogExternalResponse, error) {
+	return &xkms.AppendTransparencyLogExternalResponse{}, nil
+}
+
 // GetCACertificate retrieves the CA certificate.
 func (s *TestXKMSService) GetCACertificate(ctx context.Context, req *xkms.GetCACertificateRequest) (*xkms.GetCACertificateResponse, error) {
 	return &xkms.GetCACertificateResponse{}, nil

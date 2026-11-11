@@ -220,6 +220,21 @@ func (s *stubClient) ActivateInvitePIV(context.Context, *ActivateInvitePIVReques
 func (s *stubClient) GetCABundle(context.Context, *GetCABundleRequest) (*GetCABundleResponse, error) {
 	panic("stub")
 }
+func (s *stubClient) GetTransparencyLogHead(context.Context, *GetTransparencyLogHeadRequest) (*GetTransparencyLogHeadResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) GetTransparencyLogEntry(context.Context, *GetTransparencyLogEntryRequest) (*GetTransparencyLogEntryResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) GetTransparencyLogInclusionProof(context.Context, *GetTransparencyLogInclusionProofRequest) (*GetTransparencyLogInclusionProofResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) GetTransparencyLogConsistencyProof(context.Context, *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) AppendTransparencyLogExternal(context.Context, *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error) {
+	panic("stub")
+}
 func (s *stubClient) GetCACertificate(context.Context, *GetCACertificateRequest) (*GetCACertificateResponse, error) {
 	panic("stub")
 }

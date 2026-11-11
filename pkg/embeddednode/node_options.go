@@ -22,6 +22,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 )
 
 // DefaultTrustDomain is the SPIFFE trust domain stamped into Raft node
@@ -117,7 +118,7 @@ type NodeOptions struct {
 
 	// ServerOptions and NodeOptions are forwarded verbatim to go-qrdb;
 	// NewNode adds xkms's service principal ([serviceprincipal.Option]) to every node it builds.
-	ServerOptions []qrdbsdk.ServerOption
+	ServerOptions []qrdbserver.ServerOption
 	NodeOptions   []qrdbnode.NodeOption
 
 	// RaftMTLSResolver supplies inter-node mTLS material for multi-node

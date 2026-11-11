@@ -77,7 +77,7 @@ func (c *Controller) Unseal(passphrase []byte) (err error) {
 	if credErr != nil {
 		return credErr
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, seal.DestroyCredentials(creds)) }()
 
 	if initErr := c.barrier.Initialize(ctx, creds); initErr != nil && !isAlreadyInitialized(initErr) {
 		return initErr
@@ -129,7 +129,7 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		if credErr != nil {
 			return credErr
 		}
-		defer func() { err = errors.Join(err, oldCreds.Secret.Destroy()) }()
+		defer func() { err = errors.Join(err, seal.DestroyCredentials(oldCreds)) }()
 		unsealErr := c.barrier.Unseal(ctx, oldCreds)
 		if isUninitialized(unsealErr) {
 			return nil // no barrier yet; first login will key it to the new PIN
@@ -148,7 +148,7 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		}
 		return credErr
 	}
-	defer func() { err = errors.Join(err, newCreds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, seal.DestroyCredentials(newCreds)) }()
 	if changeErr := c.barrier.ChangePassword(ctx, newCreds); changeErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {

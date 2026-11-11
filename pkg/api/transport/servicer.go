@@ -46,6 +46,7 @@ type XKMSServicer interface {
 	PIVServicer
 	FIDO2Servicer
 	CAServicer
+	TransparencyLogServicer
 	TCGCAServicer
 	PINServicer
 	UserServicer
@@ -219,6 +220,16 @@ type CAServicer interface {
 	RevokeCertificate(ctx context.Context, req *RevokeCertificateRequest) (*RevokeCertificateResponse, error)
 	GenerateCRL(ctx context.Context, req *GenerateCRLRequest) (*GenerateCRLResponse, error)
 	IsRevoked(ctx context.Context, req *IsRevokedRequest) (*IsRevokedResponse, error)
+}
+
+// TransparencyLogServicer handles the read verbs of the CA's transparency
+// log: its signed tree head, its entries and its RFC 9162 proofs.
+type TransparencyLogServicer interface {
+	GetTransparencyLogHead(ctx context.Context, req *GetTransparencyLogHeadRequest) (*GetTransparencyLogHeadResponse, error)
+	GetTransparencyLogEntry(ctx context.Context, req *GetTransparencyLogEntryRequest) (*GetTransparencyLogEntryResponse, error)
+	GetTransparencyLogInclusionProof(ctx context.Context, req *GetTransparencyLogInclusionProofRequest) (*GetTransparencyLogInclusionProofResponse, error)
+	GetTransparencyLogConsistencyProof(ctx context.Context, req *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error)
+	AppendTransparencyLogExternal(ctx context.Context, req *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error)
 }
 
 // TCGCAServicer handles TCG-specific Certificate Authority operations.

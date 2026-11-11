@@ -269,6 +269,26 @@ func (m *MockXKMSService) GetCABundle(ctx context.Context, req *transport.GetCAB
 	return nil, &mockUnsupportedError{capability: "CA bundle"}
 }
 
+func (m *MockXKMSService) GetTransparencyLogHead(ctx context.Context, req *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log head"}
+}
+
+func (m *MockXKMSService) GetTransparencyLogEntry(ctx context.Context, req *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log entry"}
+}
+
+func (m *MockXKMSService) GetTransparencyLogInclusionProof(ctx context.Context, req *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log inclusion proof"}
+}
+
+func (m *MockXKMSService) GetTransparencyLogConsistencyProof(ctx context.Context, req *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log consistency proof"}
+}
+
+func (m *MockXKMSService) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log append"}
+}
+
 func (m *MockXKMSService) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, &mockUnsupportedError{capability: "CA certificate"}
 }

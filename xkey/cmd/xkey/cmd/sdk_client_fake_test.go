@@ -365,6 +365,26 @@ func (b *baseSDKClient) GetCABundle(ctx context.Context, req *transport.GetCABun
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) GetTransparencyLogHead(ctx context.Context, req *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) GetTransparencyLogEntry(ctx context.Context, req *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) GetTransparencyLogInclusionProof(ctx context.Context, req *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) GetTransparencyLogConsistencyProof(ctx context.Context, req *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (b *baseSDKClient) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return nil, errNotImplemented
 }

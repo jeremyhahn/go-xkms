@@ -373,6 +373,41 @@ func (m *mockService) GetCABundle(_ context.Context, _ *transport.GetCABundleReq
 	return &transport.GetCABundleResponse{}, nil
 }
 
+func (m *mockService) GetTransparencyLogHead(_ context.Context, _ *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogHeadResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogEntry(_ context.Context, _ *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogEntryResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogInclusionProof(_ context.Context, _ *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogInclusionProofResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogConsistencyProofResponse{}, nil
+}
+
+func (m *mockService) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.AppendTransparencyLogExternalResponse{}, nil
+}
+
 func (m *mockService) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

@@ -288,6 +288,25 @@ func (m *mockClient) ActivateInvitePIV(context.Context, *transport.ActivateInvit
 func (m *mockClient) GetCABundle(context.Context, *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	panic("not implemented")
 }
+
+func (m *mockClient) GetTransparencyLogHead(context.Context, *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	panic("not implemented")
+}
+
+func (m *mockClient) GetTransparencyLogEntry(context.Context, *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	panic("not implemented")
+}
+
+func (m *mockClient) GetTransparencyLogInclusionProof(context.Context, *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	panic("not implemented")
+}
+
+func (m *mockClient) GetTransparencyLogConsistencyProof(context.Context, *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	panic("not implemented")
+}
+func (m *mockClient) AppendTransparencyLogExternal(context.Context, *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	panic("not implemented")
+}
 func (m *mockClient) GetCACertificate(context.Context, *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	panic("not implemented")
 }

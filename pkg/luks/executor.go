@@ -79,7 +79,7 @@ func findLoop(ctx context.Context, file string) (loopDevice, error) {
 }
 
 // formatVolume writes a new LUKS2 header to device, protected by pass.
-func formatVolume(ctx context.Context, device string, pass *enclave.MemoryEnclave, params luks2.FormatParams) error {
+func formatVolume(ctx context.Context, device string, pass enclave.ByteAccess, params luks2.FormatParams) error {
 	volume, err := luks2.Open(ctx, device)
 	if err != nil {
 		return err
@@ -91,7 +91,7 @@ func formatVolume(ctx context.Context, device string, pass *enclave.MemoryEnclav
 // it under name. The volume key never leaves go-luks2: it is destroyed as
 // soon as the mapping exists, and a mapping whose volume could not be
 // released is torn down again rather than reported half-done.
-func activateVolume(ctx context.Context, device string, pass *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+func activateVolume(ctx context.Context, device string, pass enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 	volume, err := luks2.Open(ctx, device)
 	if err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func detachLoop(ctx context.Context, dev loopDevice) error {
 // protectPassphrase moves passphrase into locked memory for go-luks2, which
 // takes credentials only as enclaves. The enclave is admitted against the
 // process locked-memory budget; a refusal is returned, never bypassed.
-func protectPassphrase(passphrase string) (*enclave.MemoryEnclave, error) {
+func protectPassphrase(passphrase string) (enclave.ByteAccess, error) {
 	alloc, err := enclave.ProcessAllocator()
 	if err != nil {
 		return nil, &ExecutorError{Operation: "protect_passphrase", Err: err}
@@ -306,7 +306,7 @@ func (e *LibExecutor) Create(ctx context.Context, config *VolumeConfig, sizeByte
 }
 
 // destroyPassphrase wipes and releases a passphrase enclave.
-func destroyPassphrase(pass *enclave.MemoryEnclave) error {
+func destroyPassphrase(pass enclave.ByteAccess) error {
 	if err := pass.Destroy(); err != nil {
 		return &ExecutorError{Operation: "destroy_passphrase", Err: err}
 	}

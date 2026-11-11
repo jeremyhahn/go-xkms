@@ -84,13 +84,13 @@ endif
 # CLI doesn't include pkcs11 (requires CGO) for easier distribution
 CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault frost codec_cbor codec_json codec_msgpack gms_pure_go
 # Server includes all tags including pkcs11 and the object-storage cloud backends
-SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 frost awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack
+SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 frost awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack qrdb_vlog
 # All tags for integration testing (includes all possible build tags)
-ALL_TAGS := integration frost pkcs8 pkcs11 awskms gcpkms azurekv vault nitrokey fido2 webauthn awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack
+ALL_TAGS := integration frost pkcs8 pkcs11 awskms gcpkms azurekv vault nitrokey fido2 webauthn awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack qrdb_vlog
 
 # Build tags based on backend flags (for development/testing)
 # Codec tags are always required for go-qrdb DAO layer serialization
-BUILD_TAGS := codec_cbor codec_json codec_msgpack
+BUILD_TAGS := codec_cbor codec_json codec_msgpack qrdb_vlog
 ifeq ($(WITH_PKCS8),1)
 	BUILD_TAGS += pkcs8
 endif
@@ -464,7 +464,7 @@ XKMS_PKCS11_BACKENDS ?= software
 
 # Test configuration - include codec build tags for go-codec support
 # Include frost tag for threshold signature scheme unit tests (issue #703)
-TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost
+TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost qrdb_vlog
 # Per-binary go test bound for the unit lanes CI's Unit Tests job runs through
 # `make coverage` (#1587): above that job's slowest green run, 70m, and below
 # its 140m timeout-minutes, so a hung test fails with a goroutine dump first.
@@ -1602,7 +1602,7 @@ coverage-quantum:
 coverage-ca:
 	@echo "$(CYAN)→ Generating CA coverage...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@$(GO) test $(TAG_FLAGS) ./pkg/ca/... -coverprofile=$(COVERAGE_DIR)/ca.out -covermode=atomic
+	@$(GO) test -tags "$(call go_tags,$(BUILD_TAGS) qrdb_vlog)" ./pkg/ca/... -coverprofile=$(COVERAGE_DIR)/ca.out -covermode=atomic
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/ca.out -o $(COVERAGE_DIR)/ca-coverage.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/ca.out > $(COVERAGE_DIR)/ca.txt
 	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/ca.txt | awk '{print $$NF}'); \

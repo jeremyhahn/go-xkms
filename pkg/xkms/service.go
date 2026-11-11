@@ -167,6 +167,11 @@ type XKMSService struct {
 	// provider.TCGCA for TCG operations).
 	ca subsystem[provider.CA]
 
+	// transparencyLog is the CA's transparency log, read and appended to
+	// external entries, set by
+	// SetTransparencyLog once the server has opened the log.
+	transparencyLog subsystem[TransparencyLog]
+
 	// attestationVerifiers holds the hardware-attestation verifiers keyed by
 	// normalized attestation format ("tpm2", "yubikey-piv", ...). Each verifier
 	// carries the trust anchors for that format's device vendor, so a YubiKey

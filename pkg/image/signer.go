@@ -48,18 +48,24 @@ type SignerConfig struct {
 	// Timestamper, when set, adds an RFC 3161 timestamp over every
 	// envelope.
 	Timestamper Timestamper
+
+	// TransparencyLog, when set, records every signature as an image-signed
+	// entry before it is pushed. A failed append fails the signing: no
+	// attestation is pushed or returned. Nil records nothing.
+	TransparencyLog TransparencyLog
 }
 
 // Signer signs container images: it attests an image digest in a DSSE
 // envelope over an in-toto statement and pushes it to the image's
 // registry.
 type Signer struct {
-	signer         crypto.Signer
-	certificate    *x509.Certificate
-	certificatePEM []byte
-	chainPEM       []byte
-	registry       RegistryClient
-	timestamper    Timestamper
+	signer          crypto.Signer
+	certificate     *x509.Certificate
+	certificatePEM  []byte
+	chainPEM        []byte
+	registry        RegistryClient
+	timestamper     Timestamper
+	transparencyLog TransparencyLog
 }
 
 // SignOptions shapes the statement an image is attested with.
@@ -134,18 +140,20 @@ func NewSigner(cfg *SignerConfig) (*Signer, error) {
 		}
 	}
 	return &Signer{
-		signer:         cfg.Signer,
-		certificate:    cfg.Certificate,
-		certificatePEM: certificatePEM,
-		chainPEM:       chainPEM,
-		registry:       cfg.Registry,
-		timestamper:    cfg.Timestamper,
+		signer:          cfg.Signer,
+		certificate:     cfg.Certificate,
+		certificatePEM:  certificatePEM,
+		chainPEM:        chainPEM,
+		registry:        cfg.Registry,
+		timestamper:     cfg.Timestamper,
+		transparencyLog: cfg.TransparencyLog,
 	}, nil
 }
 
 // SignImage resolves ref to its manifest digest, signs an in-toto
 // statement with that digest as subject into a DSSE envelope, timestamps
-// the envelope when the Signer has a Timestamper, and pushes it as an OCI
+// the envelope when the Signer has a Timestamper, records it in the
+// Signer's transparency log when it has one, and pushes it as an OCI
 // 1.1 referrer and to the image's cosign ".att" tag. opts may be nil.
 func (s *Signer) SignImage(ctx context.Context, ref string, opts *SignOptions) (*SignResult, error) {
 	reference, err := ParseReference(ref)
@@ -191,6 +199,9 @@ func (s *Signer) SignImage(ctx context.Context, ref string, opts *SignOptions) (
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := s.appendImageSigned(ctx, subject.Digest, envelope); err != nil {
+		return nil, err
 	}
 	push, err := s.registry.PushAttestation(ctx, pinned, subject, &Attestation{
 		Envelope:      envelope,

@@ -382,6 +382,13 @@ var rpcMethods = map[string]rpcMethod{
 	"xkms.ca.crl":         handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleGenerateCRL),
 	"xkms.ca.is-revoked":  handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleIsRevoked),
 
+	// CA transparency log reads (docs/transparency-log).
+	"xkms.ca.transparency-log.head":              handle(auth.ResourceVlog, auth.ActionHead, (*Server).handleTransparencyLogHead),
+	"xkms.ca.transparency-log.entry":             handle(auth.ResourceVlog, auth.ActionGet, (*Server).handleTransparencyLogEntry),
+	"xkms.ca.transparency-log.inclusion-proof":   handle(auth.ResourceVlog, auth.ActionProof, (*Server).handleTransparencyLogInclusionProof),
+	"xkms.ca.transparency-log.consistency-proof": handle(auth.ResourceVlog, auth.ActionProof, (*Server).handleTransparencyLogConsistencyProof),
+	"xkms.ca.transparency-log.append":            handle(auth.ResourceVlog, auth.ActionAppend, (*Server).handleTransparencyLogAppend),
+
 	// TCG certificate authority -- pkg/api/grpc/service_ca_tcg.go.
 	"xkms.ca.tcg.issue-ek":  handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleIssueEKCertificate),
 	"xkms.ca.tcg.issue-ak":  handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleIssueAKCertificate),

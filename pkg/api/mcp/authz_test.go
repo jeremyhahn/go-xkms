@@ -738,6 +738,12 @@ var goldenMethodPermissions = map[string]string{
 	"trust.root.quarantine": "trust_roots:update",
 	"trust.root.remove":     "trust_roots:delete",
 
+	"xkms.ca.transparency-log.head":              "vlog:head",
+	"xkms.ca.transparency-log.entry":             "vlog:get",
+	"xkms.ca.transparency-log.inclusion-proof":   "vlog:proof",
+	"xkms.ca.transparency-log.consistency-proof": "vlog:proof",
+	"xkms.ca.transparency-log.append":            "vlog:append",
+
 	// Server-side OIDC credentials — pkg/api/grpc's OIDCCredential* RPCs.
 	"oidc.credential.create":       "oidc_credentials:create",
 	"oidc.credential.import":       "oidc_credentials:update",
@@ -880,6 +886,7 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourcePeerAttestation:            {},
 		auth.ResourcePIN:                        {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
 		auth.ResourceUsers: {}, auth.ResourceBackup: {},
+		auth.ResourceVlog: {},
 	}
 
 	for method, perm := range registeredPermissions() {

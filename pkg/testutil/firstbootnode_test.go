@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -91,7 +92,7 @@ func TestFirstBootNode_ProvisionTenantRejectsEmptyID(t *testing.T) {
 // node: an injected audit sink is what makes the client expose an audit
 // client, and a node built without one exposes none.
 func TestFirstBootNode_ServerOptionsReachTheNode(t *testing.T) {
-	withSink, err := NewFirstBootNode(t, qrdbsdk.WithAuditLogger(qrdbsdk.NewAuditRingBuffer(8)))
+	withSink, err := NewFirstBootNode(t, qrdbserver.WithAuditLogger(qrdbsdk.NewAuditRingBuffer(8)))
 	require.NoError(t, err)
 	assert.NotNil(t, withSink.Client().Audit())
 
