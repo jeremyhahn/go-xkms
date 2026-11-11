@@ -14,9 +14,14 @@
 package rest
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/require"
@@ -88,4 +93,38 @@ func TestNewHostServer_TokenIssuerRunsOnTheCallContext(t *testing.T) {
 	})
 	require.NoError(t, err, "minting on an anonymous context must run as the service principal")
 	require.NotNil(t, pair)
+}
+
+// TestNewHostServer_RefreshResolvesOnTheCallContext is the regression test
+// for #2541 P1 (2): POST /api/v1/auth/refresh is public, so the resolver's
+// current-account lookup runs on the host's bound context. A valid refresh
+// token for a live account rotates (200) on a node that enforces
+// authentication instead of failing unauthenticated (401).
+func TestNewHostServer_RefreshResolvesOnTheCallContext(t *testing.T) {
+	node := newEnforcingNode(t)
+	srv := newEnforcingHostServer(t, node)
+
+	// The account exists before the login: seed it below the RBAC layer, as
+	// an operator's earlier sign-up would have.
+	_, err := node.UserService().CreateUser(context.Background(), &qrdbuser.CreateUserRequest{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Name:     "Alice",
+	})
+	require.NoError(t, err)
+
+	pair, err := srv.tokenIssuer.Mint(context.Background(), &auth.Identity{
+		Subject:  "alice",
+		TenantID: "default",
+		Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUsername},
+	})
+	require.NoError(t, err)
+
+	body, err := json.Marshal(map[string]string{"refresh_token": pair.RefreshToken})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
