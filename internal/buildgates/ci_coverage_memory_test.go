@@ -17,7 +17,7 @@ const coverageShards = 6
 // TestCoverageRunsAsShardsThenOneThreshold pins the unit suite to package
 // shards, each its own job with its own timeout, whose profiles one threshold
 // job merges. make coverage in the Devcontainer job never finished on a
-// GitHub-hosted runner, at -p=2 or -p=1 (DS-8139, CA m2406(2)).
+// GitHub-hosted runner, even at -p=1 (DS-8139, CA m2406(2)).
 func TestCoverageRunsAsShardsThenOneThreshold(t *testing.T) {
 	data, err := os.ReadFile(ciWorkflow)
 	if err != nil {
@@ -172,6 +172,33 @@ func makeLines(t *testing.T, args ...string) []string {
 		t.Fatalf("make %v: %v", args, err)
 	}
 	return strings.Fields(string(out))
+}
+
+// TestCoverageTargetsRunOneTestBinary pins make coverage and make
+// coverage-shard (what CI runs) to one test binary at a time under a 5GiB
+// per-process GOMEMLIMIT: at -p=2 the pkg/fido2/authenticator binary was
+// OOM-killed in the 8g swap-off container, at -p=1 it passed (#2042 Codex P1).
+func TestCoverageTargetsRunOneTestBinary(t *testing.T) {
+	data, err := os.ReadFile(repoRoot + "/Makefile")
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, target := range []string{"coverage", "coverage-shard"} {
+		memLimit := target + ": export GOMEMLIMIT := 5GiB"
+		if !slices.Contains(lines, memLimit) {
+			t.Errorf("Makefile has no line %q", memLimit)
+		}
+		prefix := target + ": export GOFLAGS := "
+		i := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, prefix) })
+		if i < 0 {
+			t.Errorf("Makefile has no %s GOFLAGS export", target)
+			continue
+		}
+		if flags := strings.TrimSuffix(strings.TrimSpace(lines[i]), ")"); !strings.HasSuffix(flags, " -p=1") {
+			t.Errorf("%s GOFLAGS = %q, want it to end with -p=1", target, lines[i])
+		}
+	}
 }
 
 // TestCoverageShardsPartitionTheUnitPackages proves the coverage shards are
