@@ -1059,6 +1059,37 @@ func TestHandler_WithLogger_CustomLogger(t *testing.T) {
 	assert.NotNil(t, h)
 }
 
+// TestHandler_InternalError_LogsCauseAtError tests that an unclassified
+// service error, answered as 500 internal_error, is logged with its cause at
+// Error level, so a daemon running at Info still records why (go-xkms#2033).
+func TestHandler_InternalError_LogsCauseAtError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	h := newTestHandler(t).WithLogger(logger)
+
+	w := httptest.NewRecorder()
+	h.handleServiceError(w, errors.New("volume pool: storage unavailable"))
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	out := buf.String()
+	assert.Contains(t, out, "level=ERROR")
+	assert.Contains(t, out, "volume pool: storage unavailable")
+}
+
+// TestHandler_ClientError_NotLoggedAtError tests that a classified 4xx
+// service error is not raised to Error level.
+func TestHandler_ClientError_NotLoggedAtError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	h := newTestHandler(t).WithLogger(logger)
+
+	w := httptest.NewRecorder()
+	h.handleServiceError(w, pkgwebauthn.ErrSessionNotFound)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.NotContains(t, buf.String(), "level=ERROR")
+}
+
 // TestHandler_BeginLogin_HeaderSetOnSuccess tests that BeginLogin returns the
 // session header and never a user identifier.
 func TestHandler_BeginLogin_HeaderSetOnSuccess(t *testing.T) {

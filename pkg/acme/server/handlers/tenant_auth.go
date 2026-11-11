@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-jose/go-jose/v4"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 )
@@ -67,7 +66,7 @@ func authenticatedJWSFromContext(ctx context.Context) (*authenticatedJWSResult, 
 // JWS with no signatures reports ok=false — only a request that names an existing account by kid can ever
 // resolve to a tenant.
 func peekJWSKeyID(body []byte) (kid string, ok bool) {
-	jws, err := jose.ParseSigned(strings.TrimSpace(string(body)), server.AllowedJOSEAlgorithms)
+	jws, err := parseSignedAny(strings.TrimSpace(string(body)), server.AllowedJOSEAlgorithms)
 	if err != nil || len(jws.Signatures) == 0 {
 		return "", false
 	}

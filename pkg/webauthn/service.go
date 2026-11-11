@@ -180,6 +180,13 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 		return nil, "", ErrNotConfigured
 	}
 
+	// The session keeps the email and display name until it expires, and
+	// the same absent email can begin again and again: both are bounded
+	// before anything is looked up or saved.
+	if err := (&PendingRegistration{Email: email, DisplayName: displayName}).Validate(); err != nil {
+		return nil, "", err
+	}
+
 	if _, err := s.users.GetByEmail(ctx, email); err == nil {
 		// The account already exists: whatever its credential count, this
 		// unauthenticated entry point never enrolls its first credential.
