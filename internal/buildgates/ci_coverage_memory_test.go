@@ -131,9 +131,9 @@ func TestCoverageShardProfileLeavesTheContainer(t *testing.T) {
 			uploads = append(uploads, s.With["path"])
 		}
 	}
-	// The extras entry (#2042) writes no profile, so it exports none.
+	// The extras entries (#2042) write no profile, so they export none.
 	const profile = "build/coverage/shard-${{ matrix.shard }}.out"
-	const want = "${{ matrix.shard != 'extras' && format('build/coverage/shard-{0}.out', matrix.shard) || '' }}"
+	const want = "${{ !startsWith(matrix.shard, 'extras-') && format('build/coverage/shard-{0}.out', matrix.shard) || '' }}"
 	if export != want {
 		t.Errorf("make coverage-shard step IN_IMAGE_EXPORT = %q, want %q", export, want)
 	}
