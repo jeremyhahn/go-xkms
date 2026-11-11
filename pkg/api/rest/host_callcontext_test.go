@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package rest
+
+import (
+	"context"
+	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
+)
+
+// newEnforcingNode boots a real in-memory standalone qrdb node that enforces
+// authentication and carries xkms's service principal, as xkmsd's embedded
+// node does.
+func newEnforcingNode(t *testing.T) *qrdbnode.Node {
+	t.Helper()
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil, serviceprincipal.Option())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, node.Close()) })
+	return node
+}
+
+// newEnforcingHostServer builds the host REST surface over an
+// authentication-enforcing node, bound to its ServiceContext the way xkmsd
+// wires it.
+func newEnforcingHostServer(t *testing.T, node *qrdbnode.Node) *Server {
+	t.Helper()
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "test",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+
+	srv, err := NewHostServer(context.Background(), &HostConfig{
+		XKMSService:         svc,
+		QRDBClient:          node.Client(),
+		DAOFactory:          testutil.NewMemoryDAOFactory(),
+		WebAuthnCallContext: node.ServiceContext,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, srv.tokenIssuer, "the host must mount a token issuer")
+	return srv
+}
+
+// TestNewHostServer_TokenIssuerRunsOnTheCallContext is the regression test
+// for #2541 P1 (1): the refresh-token record a ceremony's Finish writes runs
+// on the host's bound context, so an anonymous login completes on a node
+// that enforces authentication instead of failing unauthenticated (a 500).
+func TestNewHostServer_TokenIssuerRunsOnTheCallContext(t *testing.T) {
+	node := newEnforcingNode(t)
+	srv := newEnforcingHostServer(t, node)
+
+	pair, err := srv.tokenIssuer.Mint(context.Background(), &auth.Identity{
+		Subject:  "alice",
+		TenantID: "default",
+	})
+	require.NoError(t, err, "minting on an anonymous context must run as the service principal")
+	require.NotNil(t, pair)
+}
