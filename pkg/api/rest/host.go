@@ -772,7 +772,11 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			AccessTTL:    session.AccessTTL,
 			RefreshTTL:   session.RefreshTTL,
 			QRDBClient:   hc.QRDBClient,
-			Logger:       logger,
+			// The refresh record a login writes is xkms's own persistence
+			// and the login may be anonymous: run it on the same binder
+			// the WebAuthn user store uses (#2541).
+			CallContext: token.CallContext(hc.WebAuthnCallContext),
+			Logger:      logger,
 		})
 		if tiErr != nil {
 			logger.Error("host REST surface: token issuer construction failed; "+
