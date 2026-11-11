@@ -133,6 +133,12 @@ func compareInEnclave(
 	// here than on the empty-plaintext path above.
 	var unsealErr error
 
+	// A nil ByteAccess is an enclave that cannot be read: the same failure a
+	// destroyed enclave reports, never a nil-interface panic.
+	if enc == nil {
+		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: enclave.ErrEnclaveDestroyed}
+	}
+
 	if err := enc.WithBytes(func(buf []byte) error {
 		out, err := u.UnsealInto(ctx, buf[:0], sealed, nil)
 		if err != nil {
