@@ -2,7 +2,7 @@
 # Supports PKCS#11 (SoftHSM2), TPM 2.0 (SWTPM), and quantum-safe cryptography (ML-DSA, ML-KEM)
 
 # Stage 1: Builder stage - compile dependencies and prepare environment
-FROM golang:1.27.3-bookworm AS builder
+FROM golang:1.27.4-bookworm AS builder
 # apt retries transient fetch errors with backoff (go-xkms#342).
 COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
@@ -48,7 +48,7 @@ COPY scripts/build-softhsm.sh /build/build-softhsm.sh
 RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 # Stage 2: Test runtime environment
-FROM golang:1.27.3-bookworm
+FROM golang:1.27.4-bookworm
 # apt retries transient fetch errors with backoff (go-xkms#342).
 COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 

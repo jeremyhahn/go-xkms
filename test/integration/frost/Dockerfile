@@ -1,5 +1,5 @@
 # Dockerfile for FROST threshold signature integration tests
-FROM golang:1.27.3-bookworm
+FROM golang:1.27.4-bookworm
 # apt retries transient fetch errors with backoff (go-xkms#342).
 COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 

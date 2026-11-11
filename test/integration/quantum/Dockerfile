@@ -1,7 +1,7 @@
 # Dockerfile for quantum-safe cryptography integration tests
 # Pure-Go implementations: circl (ML-DSA) and crypto/mlkem (ML-KEM)
 # No CGO or external libraries required.
-FROM golang:1.27.3-bookworm
+FROM golang:1.27.4-bookworm
 # apt retries transient fetch errors with backoff (go-xkms#342).
 COPY build/docker/devcontainer/apt-retries.conf /etc/apt/apt.conf.d/80-retries
 
