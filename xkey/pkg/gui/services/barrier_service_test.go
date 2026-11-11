@@ -625,3 +625,17 @@ func TestBarrierService_ChangePassword_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, svc2.IsUnsealed())
 }
+
+func TestBarrierService_ChangePassword_HardwareStrategyEmptyPasswords(t *testing.T) {
+	// A hardware strategy takes no passphrase: both passwords are empty, so
+	// CredentialsFor yields the zero Credentials with a nil Secret. The
+	// deferred destroys must skip a nil Secret rather than panic.
+	svc := NewBarrierService(t.TempDir(), slog.Default())
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
+		return &mockSealer{canSeal: true}
+	})
+	require.NoError(t, svc.Initialize("", string(xkms.StrategyTPM2)))
+	require.NotPanics(t, func() {
+		require.NoError(t, svc.ChangePassword("", ""))
+	})
+}
