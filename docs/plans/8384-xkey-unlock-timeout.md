@@ -48,3 +48,4 @@ Weakening the test, skips, retries; the PIN KDF cost.
   failed once on pkcs11 barrier unseal under -race and load). No ipc change.
 
 Main merge d55b1b73c7 (DS-8445): results to follow
+Blocked: the merge (no conflicts) carries main's .github/workflows/ci.yml; lane policy-guard refuses the commit without LANE_POLICY_ALLOW. Merge aborted; no checks run.
