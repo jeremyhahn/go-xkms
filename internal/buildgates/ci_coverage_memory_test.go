@@ -131,7 +131,9 @@ func TestCoverageShardProfileLeavesTheContainer(t *testing.T) {
 			uploads = append(uploads, s.With["path"])
 		}
 	}
-	const want = "build/coverage/shard-${{ matrix.shard }}.out"
+	// The extras entry (#2042) writes no profile, so it exports none.
+	const profile = "build/coverage/shard-${{ matrix.shard }}.out"
+	const want = "${{ matrix.shard != 'extras' && format('build/coverage/shard-{0}.out', matrix.shard) || '' }}"
 	if export != want {
 		t.Errorf("make coverage-shard step IN_IMAGE_EXPORT = %q, want %q", export, want)
 	}
@@ -139,8 +141,8 @@ func TestCoverageShardProfileLeavesTheContainer(t *testing.T) {
 		t.Error("coverage job has no upload step")
 	}
 	for _, p := range uploads {
-		if p != export {
-			t.Errorf("upload path %q is not the exported %q", p, export)
+		if p != profile {
+			t.Errorf("upload path %q is not the exported %q", p, profile)
 		}
 	}
 
@@ -184,7 +186,7 @@ func TestCoverageTargetsRunOneTestBinary(t *testing.T) {
 		t.Fatalf("read Makefile: %v", err)
 	}
 	lines := strings.Split(string(data), "\n")
-	for _, target := range []string{"coverage", "coverage-shard"} {
+	for _, target := range []string{"coverage", "coverage-shard", "coverage-extras"} {
 		memLimit := target + ": export GOMEMLIMIT := 5GiB"
 		if !slices.Contains(lines, memLimit) {
 			t.Errorf("Makefile has no line %q", memLimit)
