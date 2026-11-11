@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Go toolchain 1.27.4 for GO-2026-6859, `net/http` (#2058).** govulncheck reports GO-2026-6859 in the go1.27.3 standard library, fixed in go1.27.4 (2026-11-02). The `go` line of `go.mod`, `sdk/go`, `web/desktop` and `xkey`, every workflow `GO_VERSION`, every `golang:` builder and test image tag, the Go tarball downloads in `xkey`, and the digest-pinned `GO_IMAGE` (`scripts/tool-pins.sh`, `Dockerfile.cli`, `release.yml` `GO_IMAGE_DIGEST`, now the `golang:1.27.4-bookworm` index `sha256:4fa7c968…`) move to 1.27.4. No dependency or code change.
+
 ## [0.64.0-alpha] - 2026-10-25
 
 ### Security

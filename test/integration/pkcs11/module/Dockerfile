@@ -9,7 +9,7 @@
 # Build: docker build -t xkms-pkcs11-module-test -f test/integration/pkcs11/module/Dockerfile .
 
 # Stage 1: Builder - compile the PKCS#11 module
-FROM golang:1.27.3-bookworm AS builder
+FROM golang:1.27.4-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -48,7 +48,7 @@ RUN mkdir -p /build/lib && \
 # (scripts/build-softhsm.sh) instead of Debian's 2.6.1, which answers an AES-GCM
 # tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
 # be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
-FROM golang:1.27.3-bookworm AS softhsm
+FROM golang:1.27.4-bookworm AS softhsm
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake libtool libssl-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -56,7 +56,7 @@ COPY scripts/build-softhsm.sh /build/build-softhsm.sh
 RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 # Stage 2: Test runtime environment
-FROM golang:1.27.3-bookworm
+FROM golang:1.27.4-bookworm
 
 LABEL maintainer="go-xkms"
 LABEL description="PKCS#11 module integration test environment"
