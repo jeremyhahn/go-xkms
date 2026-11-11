@@ -365,7 +365,11 @@ func (s *BarrierService) Initialize(password, strategyID string) (err error) {
 		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
 		return errors.Join(credErr, closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() {
+		if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, creds.Secret.Destroy())
+		}
+	}()
 
 	if initErr := barrier.Initialize(ctx, creds); initErr != nil {
 		closeErr := base.Close()
@@ -436,7 +440,11 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 			s.mu.Unlock()
 			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
 		}
-		defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+		defer func() {
+			if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+				err = errors.Join(err, creds.Secret.Destroy())
+			}
+		}()
 
 		if err := s.barrier.Unseal(ctx, creds); err != nil {
 			s.mu.Unlock()
@@ -507,7 +515,11 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 		s.mu.Unlock()
 		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID}), closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() {
+		if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, creds.Secret.Destroy())
+		}
+	}()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		closeErr := base.Close()
@@ -579,12 +591,20 @@ func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (er
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
-	defer func() { err = errors.Join(err, current.Secret.Destroy()) }()
+	defer func() {
+		if current.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, current.Secret.Destroy())
+		}
+	}()
 	creds, credErr := xkms.CredentialsFor(ctx, []byte(newPassword))
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() {
+		if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, creds.Secret.Destroy())
+		}
+	}()
 
 	if err := s.barrier.ChangePassword(ctx, current, creds); err != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)

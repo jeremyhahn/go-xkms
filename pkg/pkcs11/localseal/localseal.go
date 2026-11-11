@@ -77,7 +77,11 @@ func (c *Controller) Unseal(passphrase []byte) (err error) {
 	if credErr != nil {
 		return credErr
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() {
+		if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, creds.Secret.Destroy())
+		}
+	}()
 
 	if initErr := c.barrier.Initialize(ctx, creds); initErr != nil && !isAlreadyInitialized(initErr) {
 		return initErr
@@ -128,7 +132,11 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 	if credErr != nil {
 		return credErr
 	}
-	defer func() { err = errors.Join(err, oldCreds.Secret.Destroy()) }()
+	defer func() {
+		if oldCreds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, oldCreds.Secret.Destroy())
+		}
+	}()
 	if wasSealed {
 		unsealErr := c.barrier.Unseal(ctx, oldCreds)
 		if isUninitialized(unsealErr) {
@@ -148,7 +156,11 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		}
 		return credErr
 	}
-	defer func() { err = errors.Join(err, newCreds.Secret.Destroy()) }()
+	defer func() {
+		if newCreds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, newCreds.Secret.Destroy())
+		}
+	}()
 	if changeErr := c.barrier.ChangePassword(ctx, oldCreds, newCreds); changeErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {
