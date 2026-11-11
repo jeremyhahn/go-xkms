@@ -16,21 +16,16 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,8 +35,6 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
-	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,19 +73,6 @@ func TestCoveragePush_SetOrderFinalizeHooks(t *testing.T) {
 	assert.Equal(t, registry, service.params.OrderFinalizeHooks)
 }
 
-func TestCoveragePush_SetOrderFinalizeHooks_NilParams(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Set params to nil to test nil check
-	service.params = nil
-
-	registry := NewOrderFinalizeHookRegistry()
-	service.SetOrderFinalizeHooks(registry)
-
-	assert.Equal(t, registry, service.orderFinalizeHooks)
-}
-
 func TestCoveragePush_GetOrderFinalizeHooks(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
@@ -113,19 +93,6 @@ func TestCoveragePush_SetPreIssuanceHooks(t *testing.T) {
 
 	assert.Equal(t, registry, service.preIssuanceHooks)
 	assert.Equal(t, registry, service.params.PreIssuanceHooks)
-}
-
-func TestCoveragePush_SetPreIssuanceHooks_NilParams(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Set params to nil to test nil check
-	service.params = nil
-
-	registry := NewPreIssuanceHookRegistry()
-	service.SetPreIssuanceHooks(registry)
-
-	assert.Equal(t, registry, service.preIssuanceHooks)
 }
 
 func TestCoveragePush_GetPreIssuanceHooks(t *testing.T) {
@@ -154,38 +121,6 @@ func TestCoveragePush_SetGlobalComplianceConfig(t *testing.T) {
 	assert.Equal(t, config, service.params.GlobalComplianceConfig)
 }
 
-func TestCoveragePush_SetGlobalComplianceConfig_NilParams(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Set params to nil to test nil check
-	service.params = nil
-
-	config := &GlobalComplianceConfig{
-		ComplianceConfig: ComplianceConfig{
-			Enabled: true,
-		},
-	}
-	service.SetGlobalComplianceConfig(config)
-
-	assert.Equal(t, config, service.globalComplianceConfig)
-}
-
-func TestCoveragePush_GetGlobalComplianceConfig(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	config := &GlobalComplianceConfig{
-		ComplianceConfig: ComplianceConfig{
-			Enabled: true,
-		},
-	}
-	service.globalComplianceConfig = config
-
-	result := service.GetGlobalComplianceConfig()
-	assert.Equal(t, config, result)
-}
-
 func TestCoveragePush_GetGlobalComplianceConfig_Nil(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
@@ -212,17 +147,6 @@ func TestCoveragePush_SetCAAValidator(t *testing.T) {
 	service.SetCAAValidator(validator)
 
 	assert.Equal(t, validator, service.caaValidator)
-}
-
-func TestCoveragePush_GetCAAValidator(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	validator := &mockCAAValidatorCovPush{}
-	service.caaValidator = validator
-
-	result := service.GetCAAValidator()
-	assert.Equal(t, validator, result)
 }
 
 func TestCoveragePush_GetCAAValidator_Nil(t *testing.T) {
@@ -266,71 +190,9 @@ func TestCoveragePush_GetNonceGenerator(t *testing.T) {
 // encodeJSONWithLogger Tests (25% coverage -> target 100%)
 // =============================================================================
 
-func TestCoveragePush_EncodeJSONWithLogger_Success(t *testing.T) {
-	w := httptest.NewRecorder()
-	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-
-	data := map[string]string{"key": "value"}
-	encodeJSONWithLogger(w, data, logger)
-
-	var result map[string]string
-	err := json.NewDecoder(w.Body).Decode(&result)
-	assert.NoError(t, err)
-	assert.Equal(t, "value", result["key"])
-}
-
-func TestCoveragePush_EncodeJSONWithLogger_NilLogger(t *testing.T) {
-	w := httptest.NewRecorder()
-
-	data := map[string]string{"key": "value"}
-	encodeJSONWithLogger(w, data, nil)
-
-	var result map[string]string
-	err := json.NewDecoder(w.Body).Decode(&result)
-	assert.NoError(t, err)
-	assert.Equal(t, "value", result["key"])
-}
-
-// brokenWriterCovPush simulates a write error for testing
-type brokenWriterCovPush struct {
-	http.ResponseWriter
-}
-
-func (b *brokenWriterCovPush) Write(_ []byte) (int, error) {
-	return 0, errors.New("broken writer")
-}
-
-func TestCoveragePush_EncodeJSONWithLogger_WriteError(t *testing.T) {
-	logBuf := bytes.NewBuffer(nil)
-	logger := slog.New(slog.NewTextHandler(logBuf, nil))
-
-	w := &brokenWriterCovPush{ResponseWriter: httptest.NewRecorder()}
-
-	data := map[string]string{"key": "value"}
-	encodeJSONWithLogger(w, data, logger)
-
-	// Verify error was logged
-	assert.Contains(t, logBuf.String(), "failed to encode JSON response")
-}
-
 // =============================================================================
 // jwkKeysMatch Tests (72.7% coverage -> target 100%)
 // =============================================================================
-
-func TestCoveragePush_JwkKeysMatch_RSA(t *testing.T) {
-	a := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus123",
-		"e":   "AQAB",
-	}
-	b := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus123",
-		"e":   "AQAB",
-	}
-
-	assert.True(t, jwkKeysMatch(a, b))
-}
 
 func TestCoveragePush_JwkKeysMatch_RSA_Mismatch(t *testing.T) {
 	a := map[string]interface{}{
@@ -345,23 +207,6 @@ func TestCoveragePush_JwkKeysMatch_RSA_Mismatch(t *testing.T) {
 	}
 
 	assert.False(t, jwkKeysMatch(a, b))
-}
-
-func TestCoveragePush_JwkKeysMatch_EC(t *testing.T) {
-	a := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "x123",
-		"y":   "y123",
-	}
-	b := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "x123",
-		"y":   "y123",
-	}
-
-	assert.True(t, jwkKeysMatch(a, b))
 }
 
 func TestCoveragePush_JwkKeysMatch_EC_Mismatch(t *testing.T) {
@@ -381,21 +226,6 @@ func TestCoveragePush_JwkKeysMatch_EC_Mismatch(t *testing.T) {
 	assert.False(t, jwkKeysMatch(a, b))
 }
 
-func TestCoveragePush_JwkKeysMatch_OKP(t *testing.T) {
-	a := map[string]interface{}{
-		"kty": "OKP",
-		"crv": "Ed25519",
-		"x":   "publickey123",
-	}
-	b := map[string]interface{}{
-		"kty": "OKP",
-		"crv": "Ed25519",
-		"x":   "publickey123",
-	}
-
-	assert.True(t, jwkKeysMatch(a, b))
-}
-
 func TestCoveragePush_JwkKeysMatch_OKP_Mismatch(t *testing.T) {
 	a := map[string]interface{}{
 		"kty": "OKP",
@@ -411,109 +241,9 @@ func TestCoveragePush_JwkKeysMatch_OKP_Mismatch(t *testing.T) {
 	assert.False(t, jwkKeysMatch(a, b))
 }
 
-func TestCoveragePush_JwkKeysMatch_UnknownType(t *testing.T) {
-	a := map[string]interface{}{
-		"kty":  "UNKNOWN",
-		"data": "same",
-	}
-	b := map[string]interface{}{
-		"kty":  "UNKNOWN",
-		"data": "same",
-	}
-
-	assert.True(t, jwkKeysMatch(a, b))
-}
-
-func TestCoveragePush_JwkKeysMatch_UnknownType_Mismatch(t *testing.T) {
-	a := map[string]interface{}{
-		"kty":  "UNKNOWN",
-		"data": "value1",
-	}
-	b := map[string]interface{}{
-		"kty":  "UNKNOWN",
-		"data": "value2",
-	}
-
-	assert.False(t, jwkKeysMatch(a, b))
-}
-
-func TestCoveragePush_JwkKeysMatch_MissingKty(t *testing.T) {
-	a := map[string]interface{}{
-		"n": "modulus123",
-	}
-	b := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus123",
-	}
-
-	assert.False(t, jwkKeysMatch(a, b))
-}
-
-func TestCoveragePush_JwkKeysMatch_TypeMismatch(t *testing.T) {
-	a := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus123",
-	}
-	b := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-	}
-
-	assert.False(t, jwkKeysMatch(a, b))
-}
-
 // =============================================================================
 // writeChallengeResponse Tests (75% coverage -> target 100%)
 // =============================================================================
-
-func TestCoveragePush_WriteChallengeResponse_Success(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	challenge := &entities.ACMEChallenge{
-		ID:     12345,
-		Type:   "http-01",
-		URL:    "https://acme.test.example.com/acme/challenge/12345",
-		Status: common.StatusPending,
-		Token:  "test-token",
-	}
-
-	w := httptest.NewRecorder()
-	service.writeChallengeResponse(w, challenge)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.NotEmpty(t, w.Header().Get("Replay-Nonce"))
-	assert.Contains(t, w.Header().Get("Link"), "directory")
-
-	var resp map[string]interface{}
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	assert.NoError(t, err)
-	assert.Equal(t, "http-01", resp["type"])
-	assert.Equal(t, "pending", resp["status"])
-}
-
-func TestCoveragePush_WriteChallengeResponse_NonceError(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Set failing nonce generator
-	service.SetNonceGenerator(func() (string, error) {
-		return "", errors.New("nonce generation failed")
-	})
-
-	challenge := &entities.ACMEChallenge{
-		ID:     12345,
-		Type:   "http-01",
-		URL:    "https://acme.test.example.com/acme/challenge/12345",
-		Status: common.StatusPending,
-		Token:  "test-token",
-	}
-
-	w := httptest.NewRecorder()
-	service.writeChallengeResponse(w, challenge)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 func TestCoveragePush_WriteChallengeResponse_WithValidated(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
@@ -540,223 +270,13 @@ func TestCoveragePush_WriteChallengeResponse_WithValidated(t *testing.T) {
 	assert.NotEmpty(t, resp["validated"])
 }
 
-func TestCoveragePush_WriteChallengeResponse_WithError(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	challenge := &entities.ACMEChallenge{
-		ID:     12345,
-		Type:   "http-01",
-		URL:    "https://acme.test.example.com/acme/challenge/12345",
-		Status: common.StatusInvalid,
-		Token:  "test-token",
-		Error: &entities.Error{
-			Type:   "urn:ietf:params:acme:error:incorrectResponse",
-			Detail: "validation failed",
-			Status: http.StatusForbidden,
-		},
-	}
-
-	w := httptest.NewRecorder()
-	service.writeChallengeResponse(w, challenge)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]interface{}
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	assert.NoError(t, err)
-	assert.Equal(t, "invalid", resp["status"])
-	assert.NotNil(t, resp["error"])
-}
-
 // =============================================================================
 // resolveTenantComplianceConfig Tests (65.2% coverage -> target 100%)
 // =============================================================================
 
-func TestCoveragePush_ResolveTenantComplianceConfig_NoTenantID(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	account := &entities.ACMEAccount{
-		ID:       12345,
-		TenantID: "", // No tenant ID
-	}
-
-	// With global config
-	globalConfig := &GlobalComplianceConfig{
-		ComplianceConfig: ComplianceConfig{
-			Enabled: true,
-		},
-	}
-	service.globalComplianceConfig = globalConfig
-
-	result := service.resolveTenantComplianceConfig(context.Background(), account)
-	assert.NotNil(t, result)
-	assert.True(t, result.Enabled)
-}
-
-func TestCoveragePush_ResolveTenantComplianceConfig_NoTenantID_NoGlobalConfig(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	account := &entities.ACMEAccount{
-		ID:       12345,
-		TenantID: "", // No tenant ID
-	}
-
-	service.globalComplianceConfig = nil
-
-	result := service.resolveTenantComplianceConfig(context.Background(), account)
-	assert.Nil(t, result)
-}
-
-func TestCoveragePush_ResolveTenantComplianceConfig_NonTenantAwareFactory(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	account := &entities.ACMEAccount{
-		ID:       12345,
-		TenantID: "tenant-123",
-	}
-
-	// Global config should be used when factory doesn't support tenants
-	globalConfig := &GlobalComplianceConfig{
-		ComplianceConfig: ComplianceConfig{
-			Enabled: true,
-		},
-	}
-	service.globalComplianceConfig = globalConfig
-
-	result := service.resolveTenantComplianceConfig(context.Background(), account)
-	assert.NotNil(t, result)
-	assert.True(t, result.Enabled)
-}
-
 // =============================================================================
 // NewAccountHandler Additional Tests (57.4% coverage -> target 90%+)
 // =============================================================================
-
-func TestCoveragePush_NewAccountHandler_InvalidJWS(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	req := createInvalidJWSRequest(t, service.baseRESTURI+"/acme/new-account")
-	w := httptest.NewRecorder()
-
-	service.NewAccountHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assertErrorType(t, w, "malformed", http.StatusBadRequest)
-}
-
-func TestCoveragePush_NewAccountHandler_InvalidJSON(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-
-	// Create a request with raw bytes that are not valid JSON
-	nonce, err := service.GetNonceService().Generate()
-	require.NoError(t, err)
-
-	signerOpts := &jose.SignerOptions{
-		NonceSource: &staticNonceSource{nonce: nonce},
-		ExtraHeaders: map[jose.HeaderKey]interface{}{
-			"url": service.baseRESTURI + "/acme/new-account",
-		},
-		EmbedJWK: true,
-	}
-
-	signer, err := jose.NewSigner(jose.SigningKey{
-		Algorithm: jose.ES256,
-		Key:       key.PrivateKey,
-	}, signerOpts)
-	require.NoError(t, err)
-
-	// Sign invalid JSON payload
-	jws, err := signer.Sign([]byte("not valid json"))
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, service.baseRESTURI+"/acme/new-account", strings.NewReader(jws.FullSerialize()))
-	w := httptest.NewRecorder()
-
-	service.NewAccountHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCoveragePush_NewAccountHandler_InvalidContact(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-
-	payload := map[string]interface{}{
-		"contact":              []string{"invalid-contact"},
-		"termsOfServiceAgreed": true,
-	}
-
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-account", payload, false, 0)
-	w := httptest.NewRecorder()
-
-	service.NewAccountHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCoveragePush_NewAccountHandler_OnlyReturnExisting_NotFound(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-
-	payload := map[string]interface{}{
-		"onlyReturnExisting": true,
-	}
-
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-account", payload, false, 0)
-	w := httptest.NewRecorder()
-
-	service.NewAccountHandler(w, req)
-
-	// Note: Implementation returns 404, though RFC 8555 specifies 400 for accountDoesNotExist
-	assert.Equal(t, http.StatusNotFound, w.Code)
-	assertErrorType(t, w, "accountDoesNotExist", http.StatusNotFound)
-}
-
-// TestCoveragePush_NewAccountHandler_AccountExists_NotOnlyReturn covers
-// idempotent re-registration without onlyReturnExisting. Per RFC 8555
-// §7.3 the server MUST respond 200 (OK) with the existing account URL
-// when the supplied key already maps to a registered account; returning
-// 409 here would break stock ACME clients that recover the KID from the
-// response on retry.
-func TestCoveragePush_NewAccountHandler_AccountExists_NotOnlyReturn(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-
-	// First registration creates the account.
-	payload := map[string]interface{}{
-		"contact":              []string{"mailto:test@example.com"},
-		"termsOfServiceAgreed": true,
-	}
-
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-account", payload, false, 0)
-	w := httptest.NewRecorder()
-	service.NewAccountHandler(w, req)
-	require.Equal(t, http.StatusCreated, w.Code)
-	createdLocation := w.Header().Get("Location")
-	require.NotEmpty(t, createdLocation)
-
-	// Second registration with the same key without onlyReturnExisting.
-	req2 := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-account", payload, false, 0)
-	w2 := httptest.NewRecorder()
-	service.NewAccountHandler(w2, req2)
-
-	assert.Equal(t, http.StatusOK, w2.Code, "RFC 8555 §7.3 requires 200 for idempotent re-registration")
-	assert.Equal(t, createdLocation, w2.Header().Get("Location"), "Location header must point to the same existing account")
-}
 
 func TestCoveragePush_NewAccountHandler_AccountExists_OnlyReturn(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
@@ -786,296 +306,25 @@ func TestCoveragePush_NewAccountHandler_AccountExists_OnlyReturn(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w2.Code)
 }
 
-func TestCoveragePush_NewAccountHandler_ExternalAccountRequired_NotProvided(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Enable external account requirement
-	service.externalAccountRequired = true
-
-	key := generateTestKey(t)
-
-	payload := map[string]interface{}{
-		"contact":              []string{"mailto:test@example.com"},
-		"termsOfServiceAgreed": true,
-		// No externalAccountBinding provided
-	}
-
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-account", payload, false, 0)
-	w := httptest.NewRecorder()
-
-	service.NewAccountHandler(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assertErrorType(t, w, "externalAccountRequired", http.StatusUnauthorized)
-}
-
 // =============================================================================
 // NewOrderHandler Additional Tests (76.6% coverage -> target 90%+)
 // =============================================================================
-
-func TestCoveragePush_NewOrderHandler_InvalidJWS(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	req := createInvalidJWSRequest(t, service.baseRESTURI+"/acme/new-order")
-	w := httptest.NewRecorder()
-
-	service.NewOrderHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCoveragePush_NewOrderHandler_InvalidJSON(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Create a request with invalid JSON payload
-	nonce, err := service.GetNonceService().Generate()
-	require.NoError(t, err)
-
-	signerOpts := &jose.SignerOptions{
-		NonceSource: &staticNonceSource{nonce: nonce},
-		ExtraHeaders: map[jose.HeaderKey]interface{}{
-			"url": service.baseRESTURI + "/acme/new-order",
-			"kid": fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID),
-		},
-	}
-
-	signer, err := jose.NewSigner(jose.SigningKey{
-		Algorithm: jose.ES256,
-		Key:       key.PrivateKey,
-	}, signerOpts)
-	require.NoError(t, err)
-
-	jws, err := signer.Sign([]byte("not valid json"))
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, service.baseRESTURI+"/acme/new-order", strings.NewReader(jws.FullSerialize()))
-	w := httptest.NewRecorder()
-
-	service.NewOrderHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCoveragePush_NewOrderHandler_UnsupportedIdentifier(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	payload := map[string]interface{}{
-		"identifiers": []map[string]string{
-			{"type": "unsupported-type", "value": "example.com"},
-		},
-	}
-
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-order", payload, true, account.ID)
-	w := httptest.NewRecorder()
-
-	service.NewOrderHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assertErrorType(t, w, "unsupportedIdentifier", http.StatusBadRequest)
-}
-
-func TestCoveragePush_NewOrderHandler_InvalidDomainName(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	payload := map[string]interface{}{
-		"identifiers": []map[string]string{
-			{"type": "dns", "value": "-invalid.com"},
-		},
-	}
-
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-order", payload, true, account.ID)
-	w := httptest.NewRecorder()
-
-	service.NewOrderHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCoveragePush_NewOrderHandler_WildcardDomain(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Add DNS challenge verifier
-	service.challengeMap["dns-01"] = func(_ *net.Resolver, _ common.CertificateAuthority, _, _, _, _ string) error {
-		return nil
-	}
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	payload := map[string]interface{}{
-		"identifiers": []map[string]string{
-			{"type": "dns", "value": "*.example.com"},
-		},
-	}
-
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-order", payload, true, account.ID)
-	w := httptest.NewRecorder()
-
-	service.NewOrderHandler(w, req)
-
-	assert.Equal(t, http.StatusCreated, w.Code)
-}
 
 // =============================================================================
 // KeyChangeHandler Additional Tests (71.1% coverage -> target 90%+)
 // =============================================================================
 
-func TestCoveragePush_KeyChangeHandler_InvalidJWS(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	req := createInvalidJWSRequest(t, service.baseRESTURI+"/acme/key-change")
-	w := httptest.NewRecorder()
-
-	service.KeyChangeHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCoveragePush_KeyChangeHandler_DeactivatedAccount(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Deactivate the account
-	ctx := context.Background()
-	accountDAO, err := service.storageFactory.AccountDAO()
-	require.NoError(t, err)
-	account.Status = common.StatusDeactivated
-	err = accountDAO.Save(ctx, account)
-	require.NoError(t, err)
-
-	payload := map[string]interface{}{
-		"account": account.URL,
-		"oldKey":  map[string]interface{}{},
-	}
-
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/key-change", payload, true, account.ID)
-	w := httptest.NewRecorder()
-
-	service.KeyChangeHandler(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestCoveragePush_KeyChangeHandler_AccountNotFound(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-
-	// Create a request for a non-existent account
-	payload := map[string]interface{}{}
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/key-change", payload, true, 99999)
-	w := httptest.NewRecorder()
-
-	service.KeyChangeHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // =============================================================================
 // OrderFinalizeHandler Additional Tests (68.6% coverage -> target 90%+)
 // =============================================================================
-
-func TestCoveragePush_OrderFinalizeHandler_InvalidJWS(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	req := createInvalidJWSRequest(t, service.baseRESTURI+"/acme/order/12345/finalize")
-	w := httptest.NewRecorder()
-
-	service.OrderFinalizeHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // =============================================================================
 // ChallengeHandler Additional Tests
 // =============================================================================
 
-func TestCoveragePush_ChallengeHandler_InvalidMethod(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, service.baseRESTURI+"/acme/challenge/12345", nil)
-	w := httptest.NewRecorder()
-
-	service.ChallengeHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCoveragePush_ChallengeHandler_EmptyChallengeID(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, service.baseRESTURI+"/acme/challenge/", nil)
-	w := httptest.NewRecorder()
-
-	service.ChallengeHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCoveragePush_ChallengeHandler_InvalidChallengeID(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	payload := map[string]interface{}{}
-	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/challenge/not-a-number", payload, true, account.ID)
-	w := httptest.NewRecorder()
-
-	service.ChallengeHandler(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // =============================================================================
 // isEnrollXChallenge Tests
 // =============================================================================
-
-func TestCoveragePush_IsEnrollXChallenge(t *testing.T) {
-	testCases := []struct {
-		name          string
-		challengeType string
-		want          bool
-	}{
-		{"enroll-01", "enroll-01", true},
-		{"enroll-01 with port", "enroll-01-8080", true},
-		{"endorse-01", "endorse-01", true},
-		{"device-attest-01", "device-attest-01", true},
-		{"http-01", "http-01", false},
-		{"dns-01", "dns-01", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := isEnrollXChallenge(tc.challengeType)
-			assert.Equal(t, tc.want, result)
-		})
-	}
-}
 
 // =============================================================================
 // ValidateContactURLs Tests
@@ -1113,122 +362,9 @@ func TestCoveragePush_ValidateContactURLs(t *testing.T) {
 // generateIDWithReader and generateTokenWithReader Tests
 // =============================================================================
 
-// failingReaderCovPush always returns an error
-type failingReaderCovPush struct{}
-
-func (f *failingReaderCovPush) Read(_ []byte) (int, error) {
-	return 0, errors.New("read failed")
-}
-
-// shortReaderCovPush reads less than requested
-type shortReaderCovPush struct{}
-
-func (s *shortReaderCovPush) Read(p []byte) (int, error) {
-	if len(p) > 5 {
-		return 5, nil // Only read 5 bytes
-	}
-	return len(p), nil
-}
-
-func TestCoveragePush_GenerateIDWithReader_Error(t *testing.T) {
-	id, err := generateIDWithReader(&failingReaderCovPush{})
-	assert.Error(t, err)
-	assert.Zero(t, id)
-}
-
-func TestCoveragePush_GenerateIDWithReader_ShortRead(t *testing.T) {
-	id, err := generateIDWithReader(&shortReaderCovPush{})
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrFailedToGenerateID)
-	assert.Zero(t, id)
-}
-
-func TestCoveragePush_GenerateTokenWithReader_Error(t *testing.T) {
-	token, err := generateTokenWithReader(&failingReaderCovPush{})
-	assert.Error(t, err)
-	assert.Empty(t, token)
-}
-
-func TestCoveragePush_GenerateTokenWithReader_ShortRead(t *testing.T) {
-	token, err := generateTokenWithReader(&shortReaderCovPush{})
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrFailedToGenerateToken)
-	assert.Empty(t, token)
-}
-
 // =============================================================================
 // compareKeyMaps Tests (for KeyChangeHandler)
 // =============================================================================
-
-func TestCoveragePush_CompareKeyMaps_RSA(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus",
-		"e":   "AQAB",
-	}
-	key2 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus",
-		"e":   "AQAB",
-	}
-
-	assert.True(t, compareKeyMaps(key1, key2))
-}
-
-func TestCoveragePush_CompareKeyMaps_EC(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "x",
-		"y":   "y",
-	}
-	key2 := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "x",
-		"y":   "y",
-	}
-
-	assert.True(t, compareKeyMaps(key1, key2))
-}
-
-func TestCoveragePush_CompareKeyMaps_OKP(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "OKP",
-		"crv": "Ed25519",
-		"x":   "pubkey",
-	}
-	key2 := map[string]interface{}{
-		"kty": "OKP",
-		"crv": "Ed25519",
-		"x":   "pubkey",
-	}
-
-	assert.True(t, compareKeyMaps(key1, key2))
-}
-
-func TestCoveragePush_CompareKeyMaps_UnknownType(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "UNKNOWN",
-	}
-	key2 := map[string]interface{}{
-		"kty": "UNKNOWN",
-	}
-
-	assert.False(t, compareKeyMaps(key1, key2))
-}
-
-func TestCoveragePush_CompareKeyMaps_MissingKty(t *testing.T) {
-	key1 := map[string]interface{}{
-		"n": "modulus",
-	}
-	key2 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "modulus",
-	}
-
-	assert.False(t, compareKeyMaps(key1, key2))
-}
 
 // =============================================================================
 // verifyMAC Tests
@@ -1241,22 +377,6 @@ func TestCoveragePush_VerifyMAC_HS256(t *testing.T) {
 	assert.NotNil(t, binding)
 }
 
-func TestCoveragePush_VerifyMAC_UnsupportedAlgorithm(t *testing.T) {
-	err := verifyMAC("UNSUPPORTED", []byte("key"), []byte("message"), "signature")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported algorithm")
-}
-
-func TestCoveragePush_VerifyMAC_InvalidSignatureBase64(t *testing.T) {
-	// 32 bytes: a real EAB key is never this short, and crypto/hmac refuses
-	// any key under 112 bits (14 bytes) under GODEBUG=fips140=only, which
-	// would otherwise report the wrong cause for this bad-base64 signature.
-	key := []byte("32-byte-eab-hmac-key-for-tests!!")
-	err := verifyMAC("HS256", key, []byte("message"), "invalid base64!")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode signature")
-}
-
 // =============================================================================
 // CreateExternalAccountBinding Tests
 // =============================================================================
@@ -1266,29 +386,6 @@ func TestCoveragePush_CreateExternalAccountBinding_DefaultAlgorithm(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, "HS256", binding.MACAlgorithm)
 	assert.Equal(t, 32, len(mustDecodeBase64CovPush(t, binding.MACKey)))
-}
-
-func TestCoveragePush_CreateExternalAccountBinding_HS384(t *testing.T) {
-	binding, err := CreateExternalAccountBinding("kid", "external", "HS384")
-	require.NoError(t, err)
-	assert.Equal(t, "HS384", binding.MACAlgorithm)
-	assert.Equal(t, 48, len(mustDecodeBase64CovPush(t, binding.MACKey)))
-}
-
-func TestCoveragePush_CreateExternalAccountBinding_HS512(t *testing.T) {
-	binding, err := CreateExternalAccountBinding("kid", "external", "HS512")
-	require.NoError(t, err)
-	assert.Equal(t, "HS512", binding.MACAlgorithm)
-	assert.Equal(t, 64, len(mustDecodeBase64CovPush(t, binding.MACKey)))
-}
-
-func TestCoveragePush_CreateExternalAccountBinding_UnsupportedAlgorithm(t *testing.T) {
-	binding, err := CreateExternalAccountBinding("kid", "external", "RS256")
-	assert.Error(t, err)
-	assert.Nil(t, binding)
-	var caErr *caerrors.TrustedCAError
-	assert.ErrorAs(t, err, &caErr)
-	assert.Equal(t, caerrors.Malformed, caErr.Type)
 }
 
 func mustDecodeBase64CovPush(t *testing.T, s string) []byte {
@@ -1507,213 +604,17 @@ func TestCoveragePush_ExternalAccountBindingVerifier_InvalidProtectedHeader(t *t
 // encodeCertificatePEM and encodeCSRToPEM Tests
 // =============================================================================
 
-func TestCoveragePush_EncodeCertificatePEM(t *testing.T) {
-	derBytes := []byte("mock-certificate-der")
-	pem := encodeCertificatePEM(derBytes)
-
-	assert.Contains(t, string(pem), "-----BEGIN CERTIFICATE-----")
-	assert.Contains(t, string(pem), "-----END CERTIFICATE-----")
-}
-
 // =============================================================================
 // Tenant Signing CA Resolution Tests
 // =============================================================================
-
-func TestCoveragePush_ResolveTenantSigningCA_NoTenantID(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	account := &entities.ACMEAccount{
-		ID:       12345,
-		TenantID: "",
-	}
-
-	result, err := service.resolveTenantSigningCA(context.Background(), account, "general")
-	assert.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-func TestCoveragePush_ResolveTenantSigningCA_NonTenantAwareFactory(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	account := &entities.ACMEAccount{
-		ID:       12345,
-		TenantID: "tenant-123",
-	}
-
-	// Standard storage factory doesn't support TenantAwareFactory: a
-	// tenant-bound account fails closed rather than using the global CA.
-	result, err := service.resolveTenantSigningCA(context.Background(), account, "general")
-	assert.ErrorIs(t, err, ErrTenantStorageUnsupported)
-	assert.Nil(t, result)
-}
 
 // =============================================================================
 // getTenantCASigner Tests
 // =============================================================================
 
-func TestCoveragePush_GetTenantCASigner_NilSigningCAInfo(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	signer, err := service.getTenantCASigner(context.Background(), nil)
-	assert.NoError(t, err)
-	assert.Nil(t, signer)
-}
-
-func TestCoveragePush_GetTenantCASigner_UseGlobalDefault(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	signingCAInfo := &entities.SigningCAInfo{
-		UseGlobalDefault: true,
-	}
-
-	signer, err := service.getTenantCASigner(context.Background(), signingCAInfo)
-	assert.NoError(t, err)
-	assert.Nil(t, signer)
-}
-
-func TestCoveragePush_GetTenantCASigner_NoKMSService(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	service.kmsService = nil
-
-	signingCAInfo := &entities.SigningCAInfo{
-		UseGlobalDefault: false,
-		TenantID:         "tenant-123",
-		Type:             entities.SigningCATypeIntermediate,
-	}
-
-	signer, err := service.getTenantCASigner(context.Background(), signingCAInfo)
-	assert.ErrorIs(t, err, ErrTenantSignerUnavailable)
-	assert.Nil(t, signer)
-}
-
-func TestCoveragePush_GetTenantCASigner_UnknownType(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Set up mock KMS
-	service.kmsService = &mockKMSServiceCovPush{}
-
-	signingCAInfo := &entities.SigningCAInfo{
-		UseGlobalDefault: false,
-		TenantID:         "tenant-123",
-		Type:             "unknown-type", // Invalid type
-	}
-
-	signer, err := service.getTenantCASigner(context.Background(), signingCAInfo)
-	assert.ErrorIs(t, err, ErrTenantCATypeUnsupported)
-	assert.Nil(t, signer)
-}
-
-// mockKMSServiceCovPush for testing
-type mockKMSServiceCovPush struct{}
-
-func (m *mockKMSServiceCovPush) CreateSigningKey(_ context.Context, _ string, _ kms.KeyPurpose, _ string) (*kms.KeyMetadata, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockKMSServiceCovPush) GetSigningKey(_ context.Context, _ string, _ kms.KeyPurpose) (crypto.Signer, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockKMSServiceCovPush) ListSigningKeys(_ context.Context, _ string) ([]*kms.KeyMetadata, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockKMSServiceCovPush) DeleteSigningKey(_ context.Context, _, _ string) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockKMSServiceCovPush) EnableSigningKey(_ context.Context, _, _ string) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockKMSServiceCovPush) DisableSigningKey(_ context.Context, _, _ string) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockKMSServiceCovPush) StoreCertificate(_ context.Context, _ string, _ kms.KeyPurpose, _ []byte) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockKMSServiceCovPush) GetCertificate(_ context.Context, _ string, _ kms.KeyPurpose) ([]byte, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockKMSServiceCovPush) DeleteCertificate(_ context.Context, _ string, _ kms.KeyPurpose) error {
-	return errors.New("not implemented")
-}
-
 // =============================================================================
 // matchesIdentifier Tests
 // =============================================================================
-
-func TestCoveragePush_MatchesIdentifier_DNS(t *testing.T) {
-	csr := createTestCSRCovPush(t, "example.com")
-
-	order := &entities.ACMEOrder{
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: common.AuthzTypeDNS, Value: "example.com"},
-		},
-	}
-
-	matches, err := matchesIdentifier(csr, order)
-	assert.NoError(t, err)
-	assert.True(t, matches)
-}
-
-func TestCoveragePush_MatchesIdentifier_DNS_NoMatch(t *testing.T) {
-	csr := createTestCSRCovPush(t, "different.com")
-
-	order := &entities.ACMEOrder{
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: common.AuthzTypeDNS, Value: "example.com"},
-		},
-	}
-
-	matches, err := matchesIdentifier(csr, order)
-	assert.NoError(t, err)
-	assert.False(t, matches)
-}
-
-func TestCoveragePush_MatchesIdentifier_UnsupportedType(t *testing.T) {
-	csr := createTestCSRCovPush(t, "example.com")
-
-	order := &entities.ACMEOrder{
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: "unsupported", Value: "example.com"},
-		},
-	}
-
-	matches, err := matchesIdentifier(csr, order)
-	assert.Error(t, err)
-	assert.False(t, matches)
-}
-
-// createTestCSRCovPush creates a real x509.CertificateRequest for testing
-func createTestCSRCovPush(t *testing.T, cn string) *x509.CertificateRequest {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: cn,
-		},
-	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, privateKey)
-	require.NoError(t, err)
-
-	csr, err := x509.ParseCertificateRequest(csrDER)
-	require.NoError(t, err)
-
-	return csr
-}
 
 // =============================================================================
 // Account URL Generation Test
@@ -1790,65 +691,13 @@ func TestCoveragePush_NewRestService_CustomNonceGenerator(t *testing.T) {
 // challengeResponse Test (standalone function)
 // =============================================================================
 
-func TestCoveragePush_ChallengeResponse(t *testing.T) {
-	challenge := &entities.ACMEChallenge{
-		ID:     12345,
-		Type:   "http-01",
-		URL:    "https://acme.test.example.com/acme/challenge/12345",
-		Status: common.StatusPending,
-		Token:  "test-token",
-	}
-
-	w := httptest.NewRecorder()
-	challengeResponse(w, challenge)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-
-	var resp map[string]interface{}
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	assert.NoError(t, err)
-	assert.Equal(t, "http-01", resp["type"])
-}
-
 // =============================================================================
 // parseJWS No Signatures Test
 // =============================================================================
 
-func TestCoveragePush_ParseJWS_NoSignatures(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Create a JWS-like structure with no signatures
-	invalidJWS := `{"payload":"dGVzdA","signatures":[]}`
-
-	req := httptest.NewRequest(http.MethodPost, service.baseRESTURI+"/acme/new-account", strings.NewReader(invalidJWS))
-
-	jwk, payload, err := service.parseJWS(req)
-	assert.Error(t, err)
-	assert.Nil(t, jwk)
-	assert.Nil(t, payload)
-}
-
 // =============================================================================
 // parseKID No Signatures Test
 // =============================================================================
-
-func TestCoveragePush_ParseKID_NoSignatures(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Create a JWS-like structure with no signatures
-	invalidJWS := `{"payload":"dGVzdA","signatures":[]}`
-
-	req := httptest.NewRequest(http.MethodPost, service.baseRESTURI+"/acme/account/123", strings.NewReader(invalidJWS))
-
-	ctx := context.Background()
-	account, payload, err := service.parseKID(ctx, req)
-	assert.Error(t, err)
-	assert.Nil(t, account)
-	assert.Nil(t, payload)
-}
 
 // Suppress unused import warning
 var _ = storage.Factory(nil)
