@@ -64,6 +64,20 @@ The [WebServer] log line, once per test:
 - Test file: a `_test.go` next to the code the cause names (the qrdb user
   store or the REST WebAuthn mount), failing before the fix.
 
+## Findings
+
+- Cause (wa2541d, coordinator-checked on a1ae1253a7): the Origin lead is
+  not it. `pkg/webauthn/qrdb_userstore.go` calls the qrdb users and
+  credentials clients on the caller's request context, while every DAO runs
+  on the node's service principal through `datastore.WithCallContext`
+  (`node.ServiceContext`). `pkg/api/rest/host.go` builds the store without
+  that binder, so an anonymous browser `registration/begin` reaches qrdb
+  with no principal: `qrdb/auth: unauthenticated`.
+- Fix (wa2541e): `QRDBUserStoreOptions.CallContext` (type
+  `qrdbstorage.CallContext`); every users/creds call runs on the bound
+  context; both `BuildWebAuthnService` call sites pass the node's service
+  context binder.
+
 ## Out of scope
 
 The cross-origin test (CORS, #2033). Suite assertions are unchanged.
