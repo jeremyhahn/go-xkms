@@ -58,7 +58,7 @@ func (e *ErrRaftTLSRead) Unwrap() error { return e.Err }
 // single-node. The Raft parameters were mapped onto qcfg.Raft by
 // buildXKMSQRDBConfig; the initial membership comes from Cluster.Peers.
 func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbserver.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
-	res, err := embeddednode.NewNode(s.ctx, &embeddednode.NodeOptions{
+	res, err := embeddednode.NewNode(s.nodeBuildContext(), &embeddednode.NodeOptions{
 		QRDB:             qcfg,
 		Cluster:          s.nodeClusterOptions(),
 		Logger:           s.logger,

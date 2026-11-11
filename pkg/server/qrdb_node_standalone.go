@@ -34,7 +34,7 @@ var ErrClusterRequiresRaftBuild = embeddednode.ErrClusterRequiresRaftBuild
 // under `-tags raft`. If cluster.enabled is set in this build, pkg/embeddednode
 // fails loudly rather than silently running unclustered.
 func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbserver.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
-	res, err := embeddednode.NewNode(s.ctx, &embeddednode.NodeOptions{
+	res, err := embeddednode.NewNode(s.nodeBuildContext(), &embeddednode.NodeOptions{
 		QRDB:          qcfg,
 		Cluster:       embeddednode.ClusterOptions{Enabled: s.config.Cluster.Enabled},
 		Logger:        s.logger,
