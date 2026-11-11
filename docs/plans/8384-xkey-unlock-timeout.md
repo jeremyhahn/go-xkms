@@ -40,3 +40,9 @@ Weakening the test, skips, retries; the PIN KDF cost.
   unseal under transitionMu; no sleep, retry or contended lock on the path.
   The time is CPU-bound work by design, so the fix is the test client's
   deadline (slices 2-3); DefaultTimeout stays 5 s (0.2 s outside load).
+- Findings (nm8384b, CA m2545): the listener is live when `ipc.NewServer`
+  returns (net.Listen binds and listens there; Serve only accepts), so the
+  ready signal is serve-level: a nil-in-production package hook
+  `serveListening` called right after NewServer succeeds. startServe waits
+  on it or on serve's exit, with no wall-clock deadline (the 10 s dial loop
+  failed once on pkcs11 barrier unseal under -race and load). No ipc change.
