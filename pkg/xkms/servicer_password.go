@@ -359,7 +359,11 @@ func (s *XKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.Pa
 	if err != nil {
 		return err
 	}
-	defer cred.Secret.Destroy()
+	defer func() {
+		if cred.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			cred.Secret.Destroy()
+		}
+	}()
 	return manager.UnlockUser(ctx, tenantID, subject, cred)
 }
 

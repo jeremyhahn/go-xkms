@@ -175,7 +175,11 @@ func runBarrierInit(cmd *cobra.Command, args []string) (err error) {
 			Err:       credErr,
 		}
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() {
+		if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, creds.Secret.Destroy())
+		}
+	}()
 
 	if err := barrier.Initialize(ctx, creds); err != nil {
 		return &BarrierError{
