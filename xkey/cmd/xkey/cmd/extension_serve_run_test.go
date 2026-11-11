@@ -114,6 +114,47 @@ func startServe(t *testing.T, cmd *cobra.Command, socketPath string) (*ipc.Clien
 	return client, stop
 }
 
+// TestExtensionServe_ListeningHookFiresOnceTheSocketAccepts proves serve
+// calls serveListening with its socket path once, and only once a dial to
+// that socket succeeds: the ready signal the serve tests wait on in place of
+// a fixed deadline (CA m2545).
+func TestExtensionServe_ListeningHookFiresOnceTheSocketAccepts(t *testing.T) {
+	isolateServeHome(t)
+	socketPath := filepath.Join(privateTempDir(t), "serve.sock")
+
+	type call struct {
+		path    string
+		dialErr error
+	}
+	calls := make(chan call, 2)
+	prev := serveListening
+	serveListening = func(path string) {
+		conn, err := net.Dial("unix", path)
+		if err == nil {
+			err = conn.Close()
+		}
+		calls <- call{path: path, dialErr: err}
+	}
+	t.Cleanup(func() { serveListening = prev })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- serveRunCmd(t, socketPath, true).ExecuteContext(ctx) }()
+
+	select {
+	case got := <-calls:
+		assert.Equal(t, socketPath, got.path)
+		require.NoError(t, got.dialErr, "the socket must accept a dial when serveListening runs")
+	case err := <-done:
+		cancel()
+		t.Fatalf("serve exited before signalling it listens: %v", err)
+	}
+
+	cancel()
+	require.NoError(t, <-done, "serve should stop cleanly")
+	assert.Empty(t, calls, "serveListening must fire once")
+}
+
 // requireLockState asserts the lock state the running daemon reports.
 func requireLockState(t *testing.T, client *ipc.Client, want string) {
 	t.Helper()
