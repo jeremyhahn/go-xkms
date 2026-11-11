@@ -93,7 +93,7 @@ func newProvisionedDevice(t *testing.T, issuer *aikIssuer, iak func(*xtpm2.IAKCo
 	require.NoError(t, err)
 	iakCertificate, err := x509.ParseCertificate(issuer.issue(t, iakPublic, nil))
 	require.NoError(t, err)
-	require.NoError(t, tpm.ProvisionIAKCert(iakCertificate))
+	require.NoError(t, tpm.ProvisionIAKCert(nil, iakCertificate))
 
 	backend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
 		TPM:        tpm,
