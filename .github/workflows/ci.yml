@@ -1214,6 +1214,7 @@ jobs:
       # with no network. On the full tier make security runs it below, so it
       # runs once per event.
       - name: make gosec (PR tier)
+        timeout-minutes: 20   # CA m2536 (fold m2575): not in the measured set; make build's bound
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER != 'true' && needs.preflight.outputs.docs_only != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make gosec GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
