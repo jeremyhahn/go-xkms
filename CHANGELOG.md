@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **The WebAuthn browser suite prints the xkmsd log when it fails.** `run-server.sh` keeps xkmsd's full output in the git-ignored `.runtime/xkmsd.log`, and `make integration-test-webauthn-browser` runs the suite through `run-suite.sh`, which prints the log's last 400 lines when Playwright fails and keeps its exit status (CA m2529).
+
 ## [0.64.0-alpha] - 2026-10-25
 
 ### Security
