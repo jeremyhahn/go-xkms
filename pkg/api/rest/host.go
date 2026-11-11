@@ -96,6 +96,12 @@ type TokenIssuerParams struct {
 	// restart).
 	QRDBClient *qrdbsdk.Client
 
+	// CallContext, when set, derives the context every qrdb refresh store
+	// call runs on (the server passes the embedded node's ServiceContext):
+	// refresh-token records are xkms's own persistence, and a login that
+	// writes them may be anonymous (#2541). Nil runs them on the caller's.
+	CallContext token.CallContext
+
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
 
@@ -213,7 +219,7 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
-		refreshStore = qs
+		refreshStore = token.BindRefreshStore(qs, p.CallContext)
 		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
