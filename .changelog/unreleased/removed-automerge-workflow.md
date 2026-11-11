@@ -1,0 +1,1 @@
+- **automerge.yml removed (CA m2555, DS-8408)** — `.github/workflows/automerge.yml` is deleted. PRs land only through the factory's arm-merge, which arms GitHub's squash auto-merge on an approved head once the required checks pass; no workflow merges PRs any more.
