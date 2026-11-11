@@ -368,6 +368,20 @@ go-quicbaas now re-exports it.
   `attestation_reference_values` and `attestation_verifier`
   (`pkg/auth/permissions.go:137`, `:142`, `:147`). The SDK re-exports the
   package as `sdk/go/attestation_appraisal.go`.
+- **Transports.** The eight endorsement, reference-value and quote verbs are
+  `transport.AttestationAppraisalService`
+  (`pkg/api/transport/types_attestation_appraisal.go:26`), part of the
+  transport `Client` (`pkg/api/transport/client.go:713`). The server routes
+  are REST (`pkg/api/rest/routes.go:475`), gRPC
+  (`pkg/api/grpc/service_attestation_appraisal.go:63`) and MCP
+  (`pkg/api/mcp/server.go:546`). Each gates on the verb's permission and maps
+  the Verifier's errors through `apierrors.AttestationAppraisalClassOf`
+  (`pkg/api/apierrors/attestation_appraisal.go:44`). A server with no
+  Appraiser answers unavailable. The client transports carry the verbs over
+  unix, REST, QUIC, gRPC, MCP and embedded; USB answers `ErrNotSupported`. The
+  eight permissions are self-scoped (`pkg/apimodule/module_scopes.go`), like
+  the signing-key verbs, because the service binds every call to the
+  caller's tenant. See [`api.md`](api.md#attestation-verifier).
 
 ## Repository signing keys
 
@@ -446,7 +460,7 @@ certificate chains to.
 - **It does not distribute or fetch trust anchors** — `pkg/attestation/truststore`
   loads what the operator configured (embedded well-known roots or local PEM
   files); nothing here walks AIA or ships vendor roots.
-- **It does not yet expose the appraisal verbs on a transport.** The service
-  layer and its permissions exist; the REST, gRPC and MCP routes are open
-  work under #1608. The repository signing-key verbs above are the
-  exception: they are on every transport. See [`cli.md`](cli.md) and [`api.md`](api.md).
+- **It does not appraise hosts or containers over a transport.** The
+  transports carry quote appraisal only. `AppraiseHost` and
+  `AppraiseContainer` are called in-process by the embedder that admits the
+  host or launches the container.

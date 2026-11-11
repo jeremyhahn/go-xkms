@@ -466,6 +466,21 @@ func Routes() []RouteSpec {
 	permIf("DELETE", "/trust-roots/{fingerprint}", auth.ResourceTrustRoots, auth.ActionDelete, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.RemoveHandler })
 	permIf("POST", "/trust-roots/{fingerprint}/quarantine", auth.ResourceTrustRoots, auth.ActionUpdate, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.QuarantineHandler })
 
+	// --- Attestation Verifier (go-xkms#1608). attestation_endorsements:*,
+	// attestation_reference_values:* and attestation_verifier:verify are
+	// xkms-owned permission families whose tenancy scope
+	// pkg/apimodule/module_scopes.go declares; the service binds each call to
+	// the caller's tenant. ---
+	hasAppraisal := func(s *Server) bool { return s.attestationAppraisalHandlers != nil }
+	permIf("PUT", "/attestation/endorsements", auth.ResourceAttestationEndorsements, auth.ActionCreate, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.PutEndorsementHandler })
+	permIf("GET", "/attestation/endorsements", auth.ResourceAttestationEndorsements, auth.ActionList, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.ListEndorsementsHandler })
+	permIf("DELETE", "/attestation/endorsements/{name}", auth.ResourceAttestationEndorsements, auth.ActionDelete, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.DeleteEndorsementHandler })
+	permIf("PUT", "/attestation/reference-values", auth.ResourceAttestationReferenceValues, auth.ActionCreate, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.PutReferenceValuesHandler })
+	permIf("GET", "/attestation/reference-values", auth.ResourceAttestationReferenceValues, auth.ActionList, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.ListReferenceValuesHandler })
+	permIf("GET", "/attestation/reference-values/{name}", auth.ResourceAttestationReferenceValues, auth.ActionGet, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.GetReferenceValuesHandler })
+	permIf("DELETE", "/attestation/reference-values/{name}", auth.ResourceAttestationReferenceValues, auth.ActionDelete, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.DeleteReferenceValuesHandler })
+	permIf("POST", "/attestation/appraise", auth.ResourceAttestationVerifier, auth.ActionVerify, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.AppraiseQuoteHandler })
+
 	// --- Repository signing keys (go-xkms#1697). attestation_signing_keys:*
 	// is an xkms-owned permission family whose tenancy scope
 	// pkg/apimodule/module_scopes.go declares; the service binds each call to

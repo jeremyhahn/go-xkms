@@ -993,6 +993,56 @@ service KeystoreService {
     option (qrdb.v1.permission) = "peer_attestation:submit";
   }
 
+  // ==================== Attestation Verifier ====================
+  // The RATS Verifier (RFC 9334 §3, go-xkms#1608): the tenant's trust
+  // anchors (endorsements) and signed CoRIM reference values, and the
+  // appraisal of TPM quote evidence against them. Every call acts on the
+  // caller's tenant.
+
+  // PutAttestationEndorsement stores a trust anchor: an attestation-key root
+  // or a reference-value signer.
+  rpc PutAttestationEndorsement(PutAttestationEndorsementRequest) returns (AttestationEndorsement) {
+    option (qrdb.v1.permission) = "attestation_endorsements:create";
+  }
+
+  // ListAttestationEndorsements lists the tenant's trust anchors, optionally
+  // of one kind.
+  rpc ListAttestationEndorsements(ListAttestationEndorsementsRequest) returns (ListAttestationEndorsementsResponse) {
+    option (qrdb.v1.permission) = "attestation_endorsements:list";
+  }
+
+  // DeleteAttestationEndorsement removes a trust anchor.
+  rpc DeleteAttestationEndorsement(DeleteAttestationEndorsementRequest) returns (DeleteAttestationEndorsementResponse) {
+    option (qrdb.v1.permission) = "attestation_endorsements:delete";
+  }
+
+  // PutAttestationReferenceValues verifies a signed CoRIM and stores its
+  // reference values.
+  rpc PutAttestationReferenceValues(PutAttestationReferenceValuesRequest) returns (AttestationReferenceValues) {
+    option (qrdb.v1.permission) = "attestation_reference_values:create";
+  }
+
+  // GetAttestationReferenceValues returns stored reference values.
+  rpc GetAttestationReferenceValues(GetAttestationReferenceValuesRequest) returns (AttestationReferenceValues) {
+    option (qrdb.v1.permission) = "attestation_reference_values:get";
+  }
+
+  // ListAttestationReferenceValues lists the tenant's reference values.
+  rpc ListAttestationReferenceValues(ListAttestationReferenceValuesRequest) returns (ListAttestationReferenceValuesResponse) {
+    option (qrdb.v1.permission) = "attestation_reference_values:list";
+  }
+
+  // DeleteAttestationReferenceValues removes stored reference values.
+  rpc DeleteAttestationReferenceValues(DeleteAttestationReferenceValuesRequest) returns (DeleteAttestationReferenceValuesResponse) {
+    option (qrdb.v1.permission) = "attestation_reference_values:delete";
+  }
+
+  // AppraiseAttestationQuote appraises TPM quote evidence against stored
+  // reference values and returns the attestation result.
+  rpc AppraiseAttestationQuote(AppraiseAttestationQuoteRequest) returns (AttestationResult) {
+    option (qrdb.v1.permission) = "attestation_verifier:verify";
+  }
+
   // ==================== Repository Signing Keys ====================
   // The key that signs a repository's images and CoRIM: the tenant release
   // key unless a binding names another of the tenant's keys (go-xkms#1697).
@@ -4571,6 +4621,116 @@ message SubmitPeerAttestationRequest {
 }
 
 message SubmitPeerAttestationResponse {}
+
+// ============================================================================
+// Attestation Verifier Messages (go-xkms#1608)
+// ============================================================================
+
+// AttestationEndorsement is a trust anchor. kind is "reference-signer" or
+// "ak-root"; it carries a certificate, a public key, or both, in PEM.
+message AttestationEndorsement {
+  string name = 1;
+  string kind = 2;
+  bytes certificate_pem = 3;
+  bytes public_key_pem = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message PutAttestationEndorsementRequest {
+  string name = 1;
+  string kind = 2;
+  bytes certificate_pem = 3;
+  bytes public_key_pem = 4;
+}
+
+// ListAttestationEndorsementsRequest filters by kind; empty lists every kind.
+message ListAttestationEndorsementsRequest {
+  string kind = 1;
+}
+
+message ListAttestationEndorsementsResponse {
+  repeated AttestationEndorsement endorsements = 1;
+}
+
+message DeleteAttestationEndorsementRequest {
+  string name = 1;
+}
+
+message DeleteAttestationEndorsementResponse {}
+
+// AttestationReferenceValues are verified CoRIM reference values as stored.
+// repository, when set, is the repository whose signing key verified them.
+message AttestationReferenceValues {
+  string name = 1;
+  string manifest_id = 2;
+  string profile = 3;
+  string signer = 4;
+  string repository = 5;
+  google.protobuf.Timestamp not_before = 6;
+  google.protobuf.Timestamp not_after = 7;
+  repeated uint32 pcr_indices = 8;
+  google.protobuf.Timestamp stored_at = 9;
+  bytes signed_corim = 10;
+}
+
+// PutAttestationReferenceValuesRequest carries a COSE_Sign1 signed CoRIM.
+// With repository set it verifies under the repository's signing key;
+// otherwise against the tenant's reference-signer endorsements.
+message PutAttestationReferenceValuesRequest {
+  string name = 1;
+  bytes signed_corim = 2;
+  string repository = 3;
+}
+
+message GetAttestationReferenceValuesRequest {
+  string name = 1;
+}
+
+message ListAttestationReferenceValuesRequest {}
+
+message ListAttestationReferenceValuesResponse {
+  repeated AttestationReferenceValues reference_values = 1;
+}
+
+message DeleteAttestationReferenceValuesRequest {
+  string name = 1;
+}
+
+message DeleteAttestationReferenceValuesResponse {}
+
+// AppraiseAttestationQuoteRequest is TPM quote evidence: the attestation
+// key's certificate chain in PEM (leaf first), the marshaled TPMS_ATTEST and
+// its signature, the verifier-issued nonce, the quoted PCR values by index,
+// an optional TCG event log, and the reference values to compare against.
+message AppraiseAttestationQuoteRequest {
+  bytes ak_certificate_pem = 1;
+  bytes quote = 2;
+  bytes signature = 3;
+  bytes nonce = 4;
+  map<uint32, bytes> pcrs = 5;
+  bytes event_log = 6;
+  string reference_values = 7;
+}
+
+// AttestationAppraisalCheck is one check's outcome: "pass", "forged",
+// "absent" or "skipped".
+message AttestationAppraisalCheck {
+  string name = 1;
+  string outcome = 2;
+  string reason = 3;
+}
+
+// AttestationResult is the appraisal's attestation result (RFC 9334 §3).
+message AttestationResult {
+  bool verified = 1;
+  bool cryptographic_failure = 2;
+  repeated AttestationAppraisalCheck checks = 3;
+  string reference_values = 4;
+  string manifest_id = 5;
+  string signer = 6;
+  string baseline_source = 7;
+  google.protobuf.Timestamp appraised_at = 8;
+}
 
 // SigningKeyBinding names the tenant key that signs a repository.
 message SigningKeyBinding {

@@ -1,6 +1,6 @@
 # Attestation Verifier — API
 
-> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-24
+> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-25
 
 Transport shapes:
 [`../key-management/api.md`](../key-management/api.md).
@@ -8,8 +8,8 @@ Transport shapes:
 ## Not a transport of its own
 
 `pkg/attestation` has no REST route, gRPC method, QUIC handler or MCP tool
-(its `appraisal` subpackage's signing-key verbs do; see
-[below](#repository-signing-keys)).
+(its `appraisal` subpackage's [Verifier](#attestation-verifier) and
+[signing-key](#repository-signing-keys) verbs do).
 It runs inside the handler for one existing capability — `SignCSR` — gating
 whether that call succeeds, not exposing a new one. The route itself is
 documented in [`../certificate-authority/api.md`](../certificate-authority/api.md):
@@ -48,10 +48,58 @@ not call (see [`architecture.md`](architecture.md) §"Two checks belong to
 different call paths"). Do not infer that setting them changes CSR-signing
 behavior today.
 
+## Attestation Verifier
+
+The Verifier verbs (#1608) manage a tenant's trust anchors and signed
+reference values and appraise a TPM quote against them. Each acts on the
+caller's tenant.
+
+| Capability | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
+|---|---|---|---|---|---|---|
+| Store an endorsement | `PUT /api/v1/attestation/endorsements` | `PutAttestationEndorsement` | same as REST | `attestation.endorsement.put` | `PutAttestationEndorsement` | `attestation_endorsements:create` |
+| List endorsements | `GET /api/v1/attestation/endorsements?kind=` | `ListAttestationEndorsements` | same as REST | `attestation.endorsement.list` | `ListAttestationEndorsements` | `attestation_endorsements:list` |
+| Remove an endorsement | `DELETE /api/v1/attestation/endorsements/{name}` (204) | `DeleteAttestationEndorsement` | same as REST | `attestation.endorsement.delete` | `DeleteAttestationEndorsement` | `attestation_endorsements:delete` |
+| Store reference values | `PUT /api/v1/attestation/reference-values` | `PutAttestationReferenceValues` | same as REST | `attestation.reference_values.put` | `PutAttestationReferenceValues` | `attestation_reference_values:create` |
+| Read reference values | `GET /api/v1/attestation/reference-values/{name}` | `GetAttestationReferenceValues` | same as REST | `attestation.reference_values.get` | `GetAttestationReferenceValues` | `attestation_reference_values:get` |
+| List reference values | `GET /api/v1/attestation/reference-values` | `ListAttestationReferenceValues` | same as REST | `attestation.reference_values.list` | `ListAttestationReferenceValues` | `attestation_reference_values:list` |
+| Remove reference values | `DELETE /api/v1/attestation/reference-values/{name}` (204) | `DeleteAttestationReferenceValues` | same as REST | `attestation.reference_values.delete` | `DeleteAttestationReferenceValues` | `attestation_reference_values:delete` |
+| Appraise a quote | `POST /api/v1/attestation/appraise` | `AppraiseAttestationQuote` | same as REST | `attestation.quote.appraise` | `AppraiseAttestationQuote` | `attestation_verifier:verify` |
+
+USB returns `ErrNotSupported`. The REST routes are
+`pkg/api/rest/routes.go:475`–`:482`, and the wire client is
+`pkg/api/rest/wire/attestation_appraisal.go`. The gRPC methods are
+`pkg/api/grpc/proto/xkmsv1/xkms.proto:1004`–`:1042`. MCP routes them in
+`pkg/api/mcp/server.go:546`–`:553`; the two MCP deletes answer with the
+request they removed. The TypeScript SDK serves them as `client.attestation`
+(`sdk/ts/src/clients/attestationAppraisal.ts`). The eight permissions are
+self-scoped (`pkg/apimodule/module_scopes.go`).
+
+Fields (JSON) are those of `pkg/attestation/appraisal/verifier.go:95`–`:231`;
+Go `[]byte` fields are base64. An endorsement is `name`, `kind` (`ak-root` or
+`reference-signer`), and `certificate_pem` or `public_key_pem`. Reference
+values are stored from `name`, `signed_corim` (a COSE_Sign1 CoRIM) and an
+optional `repository`. A quote appraisal sends `ak_certificate_pem`, `quote`,
+`signature`, `nonce`, `pcrs` (PCR index to value), an optional `event_log`
+and the `reference_values` name. It answers with `verified`,
+`cryptographic_failure` and one `checks` entry per check, each `pass`,
+`forged`, `absent` or `skipped`. A quote that fails appraisal is a result
+with `verified` false, not an error.
+
+| Condition | Sentinel | Class (HTTP) |
+|---|---|---|
+| no Appraiser wired; store outage | `ErrNotConfigured`, `ErrStoreUnavailable` | unavailable (503) |
+| nil request; bad name, repository, endorsement or AK intermediate; a CoRIM that no endorsement or repository key verifies | `ErrNilRequest`, `ErrInvalidName`, `ErrInvalidRepository`, `ErrEndorsementInvalid`, `ErrInvalidAKIntermediate`, `ErrReferenceValuesRejected`, `ErrSigningKeyRefused` | invalid argument (400) |
+| get or delete of an absent record | `ErrRecordNotFound` | not found (404) |
+
+The classes come from `apierrors.AttestationAppraisalSentinelClasses`
+(`pkg/api/apierrors/attestation_appraisal.go:28`). A REST body or MCP
+parameter object that does not decode is invalid argument before it reaches
+the Verifier.
+
 ## Repository signing keys
 
-The repository signing-key verbs (#1697) are the one appraisal capability
-served on every transport. Each acts on the caller's tenant. Without an
+The repository signing-key verbs (#1697) are served on every transport.
+Each acts on the caller's tenant. Without an
 Appraiser wired, each returns `ErrNotConfigured`.
 
 | Capability | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
@@ -74,7 +122,7 @@ signer metadata is a 400 / `InvalidArgument`; a missing key is a 503 /
 USB returns `ErrNotSupported`. A repository path contains slashes
 (`"org/app"`), so the REST routes take it as the `repository` query
 parameter (`pkg/api/rest/wire/signing_key.go:16`–`:27`). The gRPC methods
-are `pkg/api/grpc/proto/xkmsv1/xkms.proto:1002`–`:1023`. MCP routes them in
+are `pkg/api/grpc/proto/xkmsv1/xkms.proto:1052`–`:1073`. MCP routes them in
 `pkg/api/mcp/server.go:535`–`:539`. The TypeScript SDK serves them as
 `client.signingKeys` (`sdk/ts/src/clients/signingKey.ts`).
 

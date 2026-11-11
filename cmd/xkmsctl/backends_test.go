@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -232,6 +233,10 @@ func TestConvertBackendInfoToCapabilities_ZeroValue(t *testing.T) {
 
 // mockBackendsClient is a mock client for testing backend operations
 type mockBackendsClient struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	listBackendsResp *client.ListBackendsResponse
 	listBackendsErr  error
 	getBackendResp   *client.BackendInfo

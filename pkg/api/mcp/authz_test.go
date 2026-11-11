@@ -757,6 +757,15 @@ var goldenMethodPermissions = map[string]string{
 	"attestation.signing_key.sign_corim": "attestation_signing_keys:sign",
 	"attestation.signing_key.sign_image": "attestation_signing_keys:sign",
 
+	"attestation.endorsement.put":         "attestation_endorsements:create",
+	"attestation.endorsement.list":        "attestation_endorsements:list",
+	"attestation.endorsement.delete":      "attestation_endorsements:delete",
+	"attestation.reference_values.put":    "attestation_reference_values:create",
+	"attestation.reference_values.get":    "attestation_reference_values:get",
+	"attestation.reference_values.list":   "attestation_reference_values:list",
+	"attestation.reference_values.delete": "attestation_reference_values:delete",
+	"attestation.quote.appraise":          "attestation_verifier:verify",
+
 	// Attested-caller evidence.
 	"peer.attestation.challenge": "peer_attestation:challenge",
 	"peer.attestation.submit":    "peer_attestation:submit",
@@ -860,12 +869,15 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceBarrier: {}, auth.ResourceCeremony: {},
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
-		auth.ResourceTPMPolicy:              {},
-		auth.ResourceOIDCCredentials:        {},
-		auth.ResourceAttestationSigningKeys: {},
-		auth.ResourceTrustRoots:             {},
-		auth.ResourcePeerAttestation:        {},
-		auth.ResourcePIN:                    {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
+		auth.ResourceTPMPolicy:                  {},
+		auth.ResourceOIDCCredentials:            {},
+		auth.ResourceAttestationSigningKeys:     {},
+		auth.ResourceAttestationEndorsements:    {},
+		auth.ResourceAttestationReferenceValues: {},
+		auth.ResourceAttestationVerifier:        {},
+		auth.ResourceTrustRoots:                 {},
+		auth.ResourcePeerAttestation:            {},
+		auth.ResourcePIN:                        {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
 		auth.ResourceUsers: {}, auth.ResourceBackup: {},
 	}
 

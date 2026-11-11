@@ -208,7 +208,7 @@ func TestAppraiseRejectsUnhashableHashAlgorithm(t *testing.T) {
 
 			var err error
 			require.NotPanics(t, func() { _, err = Appraise(evidence, d.options()) })
-			require.ErrorIs(t, err, ErrUnsupportedHashAlgorithm)
+			require.ErrorIs(t, err, ErrMalformedEvidence)
 		})
 	}
 }
@@ -292,7 +292,7 @@ func TestAppraiseRejectsSignerChain(t *testing.T) {
 		"empty chain":       {chain: nil, roots: d.roots, want: ErrMalformedChain},
 		"unparseable chain": {chain: [][]byte{{0x30, 0x00}}, roots: d.roots, want: ErrMalformedChain},
 		"unanchored chain":  {chain: d.chain, roots: x509.NewCertPool(), want: ErrUntrustedSigner},
-		"nil roots":         {chain: d.chain, roots: nil, want: ErrUntrustedSigner},
+		"nil trusted roots": {chain: d.chain, roots: nil, want: ErrTrustedRootsRequired},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -300,8 +300,9 @@ func TestAppraiseRejectsSignerChain(t *testing.T) {
 			evidence.Chain = tc.chain
 			opts := d.options()
 			opts.DICE.TrustedRoots = tc.roots
-			_, err := Appraise(evidence, opts)
+			result, err := Appraise(evidence, opts)
 			require.ErrorIs(t, err, tc.want)
+			require.Nil(t, result)
 		})
 	}
 }
@@ -314,6 +315,7 @@ func TestAppraiseRejectsMalformedEvidence(t *testing.T) {
 	tests := map[string]struct {
 		evidence []byte
 		want     error
+		detail   string
 	}{
 		"not a COSE_Sign1": {
 			evidence: mustCBOR(t, []int{1, 2, 3}),
@@ -353,6 +355,29 @@ func TestAppraiseRejectsMalformedEvidence(t *testing.T) {
 				}})),
 			want: ErrMalformedEvidence,
 		},
+		"hash algorithm is a byte string": {
+			evidence: sign(t, d.aliasKey, cose.AlgorithmES256,
+				claimsWith(t, verifierNonce, digestSubmods([]byte{0x2f}, digest))),
+			want:   ErrMalformedEvidence,
+			detail: "the detached digest algorithm",
+		},
+		"hash algorithm is an array": {
+			evidence: sign(t, d.aliasKey, cose.AlgorithmES256,
+				claimsWith(t, verifierNonce, digestSubmods([]any{-16}, digest))),
+			want:   ErrMalformedEvidence,
+			detail: "the detached digest algorithm",
+		},
+		"hash algorithm is a map": {
+			evidence: sign(t, d.aliasKey, cose.AlgorithmES256,
+				claimsWith(t, verifierNonce, digestSubmods(map[int]int{1: -16}, digest))),
+			want:   ErrMalformedEvidence,
+			detail: "the detached digest algorithm",
+		},
+		"hash algorithm is a positive integer": {
+			evidence: sign(t, d.aliasKey, cose.AlgorithmES256,
+				claimsWith(t, verifierNonce, digestSubmods(16, digest))),
+			want: ErrUnsupportedHashAlgorithm,
+		},
 		"unsupported hash algorithm": {
 			evidence: sign(t, d.aliasKey, cose.AlgorithmES256,
 				claimsWith(t, verifierNonce, digestSubmods("SHA-1", digest))),
@@ -364,6 +389,10 @@ func TestAppraiseRejectsMalformedEvidence(t *testing.T) {
 			evidence := &types.SecurityEventEvidence{Evidence: tc.evidence, Chain: d.chain, Record: record}
 			_, err := Appraise(evidence, d.options())
 			require.ErrorIs(t, err, tc.want)
+			require.NotEmpty(t, err.Error())
+			if tc.detail != "" {
+				require.ErrorContains(t, err, tc.detail)
+			}
 		})
 	}
 }

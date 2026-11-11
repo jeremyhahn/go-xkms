@@ -359,6 +359,23 @@ type OIDCCredentialImportRequest = pkgtransport.OIDCCredentialImportRequest
 type OIDCCredentialListRequest = pkgtransport.OIDCCredentialListRequest
 type OIDCCredentialListResponse = pkgtransport.OIDCCredentialListResponse
 
+// Attestation Verifier types (go-xkms#1608).
+type AttestationEndorsementKind = pkgtransport.AttestationEndorsementKind
+type AttestationEndorsement = pkgtransport.AttestationEndorsement
+type PutAttestationEndorsementRequest = pkgtransport.PutAttestationEndorsementRequest
+type ListAttestationEndorsementsRequest = pkgtransport.ListAttestationEndorsementsRequest
+type ListAttestationEndorsementsResponse = pkgtransport.ListAttestationEndorsementsResponse
+type DeleteAttestationEndorsementRequest = pkgtransport.DeleteAttestationEndorsementRequest
+type AttestationReferenceValues = pkgtransport.AttestationReferenceValues
+type PutAttestationReferenceValuesRequest = pkgtransport.PutAttestationReferenceValuesRequest
+type GetAttestationReferenceValuesRequest = pkgtransport.GetAttestationReferenceValuesRequest
+type ListAttestationReferenceValuesResponse = pkgtransport.ListAttestationReferenceValuesResponse
+type DeleteAttestationReferenceValuesRequest = pkgtransport.DeleteAttestationReferenceValuesRequest
+type AppraiseAttestationQuoteRequest = pkgtransport.AppraiseAttestationQuoteRequest
+type AttestationResult = pkgtransport.AttestationResult
+type AttestationAppraisalCheck = pkgtransport.AttestationAppraisalCheck
+type AttestationAppraisalOutcome = pkgtransport.AttestationAppraisalOutcome
+
 // Repository signing-key binding types (go-xkms#1697).
 type SigningKeyBinding = pkgtransport.SigningKeyBinding
 type SetSigningKeyBindingRequest = pkgtransport.SetSigningKeyBindingRequest
