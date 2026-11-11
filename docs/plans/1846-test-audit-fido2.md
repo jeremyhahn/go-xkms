@@ -153,9 +153,44 @@ covers (a superset); that surviving test is named in the table and kept.
 | | `go test -count=1 -cover ./pkg/ca/` (TEST_TAGS) |
 |---|---|
 | before | 91.7% |
-| after  | (pending) |
+| after  | 91.7% |
 
-Baseline test count: 1842 `func Test` in 95 files.
+Baseline test count: 1842 `func Test` in 95 files. After: 1565 (277
+removed). Four of the 1842 are build-tagged out under TEST_TAGS (awskms,
+azurekv, gcpkms and the frost race file), so `go test -list` prints 1839
+before.
+
+## Test counts per file (slice 2)
+
+Only changed files are listed; the other 78 files keep their counts.
+
+| file | before | removed | after |
+|---|---|---|---|
+| coverage_boost_test.go | 73 | 27 | 46 |
+| coverage_gap_test.go | 119 | 43 | 76 |
+| coverage_boost2_test.go | 70 | 46 | 24 |
+| coverage_boost3_test.go | 74 | 36 | 38 |
+| coverage_boost4_test.go | 25 | 6 | 19 |
+| coverage_boost5_test.go | 18 | 7 | 11 |
+| coverage_boost6_test.go | 9 | 2 | 7 |
+| coverage_boost7_test.go | 48 | 30 | 18 |
+| coverage_boost8_test.go | 28 | 5 | 23 |
+| coverage_boost9_test.go | 50 | 18 | 32 |
+| coverage_boost10_test.go | 38 | 19 | 19 |
+| coverage_boost11_test.go | 34 | 17 | 17 |
+| coverage_boost12_test.go | 16 | 6 | 10 |
+| coverage_boost13_test.go | 12 | 3 | 9 |
+| coverage_boost14_test.go | 21 | 6 | 15 |
+| coverage_boost15_test.go | 40 | 4 | 36 |
+| coverage_boost18_test.go | 8 | 2 | 6 |
+| total (95 files) | 1842 | 277 | 1565 |
+
+Kept on purpose: TestOCSPCreateResponse_RefusesSHA1UnderFIPSOnly
+(coverage_boost15). Its branch runs only under `GODEBUG=fips140=only`, so a
+per-test profile taken without it cannot show a superset.
+
+Helpers removed with their last caller: buildRSAPSSCert
+(coverage_boost2_test.go), buildSelfSignedLeaf (coverage_boost4_test.go).
 
 ## Removed tests (slice 2)
 
@@ -443,3 +478,16 @@ subject were kept.
 | coverage_gap | TestVerifyOCSPResponse_EmptyBytes | duplicate of TestVerifyOCSPResponse_EmptyInput_B3 at coverage_boost3_test.go |
 | coverage_gap | TestVerifyOCSPResponse_InvalidBytes | duplicate of TestVerifyOCSPResponse_InvalidBytes_B3 at coverage_boost3_test.go |
 | coverage_gap | TestVerifyWithOptions_NilCert | duplicate of TestVerifyWithOptions at verification_test.go |
+
+## Gates (slice 2)
+
+All with TEST_TAGS and the DS-7500 module env.
+
+- `go test -count=1 -cover ./pkg/ca/`: pass, 91.7% before and after
+- race: `go test -race -count=1 ./pkg/ca/` pass
+- vet: `go vet ./pkg/ca/` clean
+- make lint: pass, 0 issues
+- production code: `git diff --stat` against the merge base with main shows
+  no non-test file under `pkg/ca/`
+- the table above has 277 rows; each removed test is absent and each named
+  superset test is still present
