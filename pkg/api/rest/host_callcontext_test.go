@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -68,10 +69,18 @@ func newEnforcingHostServer(t *testing.T, node *qrdbnode.Node) *Server {
 	svc, err := xkms.Get()
 	require.NoError(t, err)
 
+	// As xkmsd does when it builds WebAuthn over its embedded node: the
+	// principal gains the user store's users grant.
+	serviceprincipal.RegisterWebAuthnGrant()
+	allow := true
 	srv, err := NewHostServer(context.Background(), &HostConfig{
-		XKMSService:         svc,
-		QRDBClient:          node.Client(),
-		DAOFactory:          testutil.NewMemoryDAOFactory(),
+		XKMSService: svc,
+		QRDBClient:  node.Client(),
+		DAOFactory:  testutil.NewMemoryDAOFactory(),
+		WebAuthn: WebAuthnConfigFromXKMS(&config.WebAuthnConfig{
+			RPID:                    "example.com",
+			AllowPublicRegistration: &allow,
+		}),
 		WebAuthnCallContext: node.ServiceContext,
 	})
 	require.NoError(t, err)
@@ -115,7 +124,7 @@ func TestNewHostServer_RefreshResolvesOnTheCallContext(t *testing.T) {
 
 	pair, err := srv.tokenIssuer.Mint(context.Background(), &auth.Identity{
 		Subject:  "alice",
-		TenantID: "default",
+		TenantID: DefaultWebAuthnTenant,
 		Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUsername},
 	})
 	require.NoError(t, err)
