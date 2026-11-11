@@ -65,6 +65,8 @@ CI: the Security Scan job's timeout is 30 minutes, since gosec takes 9 to 15 min
 
 ### Fixed
 
+- **xkey serve unlock test no longer times out at the 5 s IPC deadline on a loaded runner (DS-8384)** — `ipc.NewClient` takes options, and `ipc.WithTimeout(d)` sets the per-request deadline in place of `DefaultTimeout` (still 5 s). The `xkey extension serve` tests' client uses 30 s: a correct-PIN unlock (PIN KDF plus barrier unseal) takes about 0.2 s alone under -race and passed 5 s on the loaded CI runner.
+
 - **Host and container appraisal keep AK intermediates.** `HostEvidence` and `ContainerEvidence` gain `AKIntermediates`, which `AppraiseHost` forwards after the AK certificate, so an attestation key issued by an intermediate CA now chains to a tenant's root-only `ak-root` endorsement instead of failing as forged. A nil intermediate is refused with `ErrInvalidAKIntermediate` (`sdk/go`: `ErrAttestationInvalidAKIntermediate`). (#1608)
 
 - **Make targets read `GO_BUILD_TAGS`.** `make lint|build|coverage|security|integration-test GO_BUILD_TAGS='a b'`, as ci-template calls them, now adds those tags to every `-tags` / `--build-tags` list the target already uses (comma-joined, duplicates dropped; gosec and govulncheck gain `-tags`), so tag-gated code is compiled, linted and covered in CI. One join, `scripts/go-build-tags.mk`, shared by the root Makefile and `xkey/Makefile`; an empty or unset `GO_BUILD_TAGS` leaves every command line unchanged. `test/scripts/go-build-tags.test.sh` (run by `make test-scripts`) checks it. (#1603)

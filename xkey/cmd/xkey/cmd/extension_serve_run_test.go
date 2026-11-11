@@ -59,6 +59,9 @@ func serveRunCmd(t *testing.T, socketPath string, noBarrier bool) *cobra.Command
 // startServe runs cmd until its socket appears and returns a client for it
 // together with a stop function. Stopping cancels the run and requires a
 // clean exit; it is idempotent and also runs at cleanup.
+// serveTestClientTimeout is the IPC deadline of the serve tests' client.
+const serveTestClientTimeout = 30 * time.Second
+
 func startServe(t *testing.T, cmd *cobra.Command, socketPath string) (*ipc.Client, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -103,7 +106,10 @@ func startServe(t *testing.T, cmd *cobra.Command, socketPath string) (*ipc.Clien
 		}
 	}
 
-	client := ipc.NewClient(socketPath)
+	// A correct-PIN unlock runs the PIN KDF and, with a barrier, the barrier
+	// unseal: about 0.2 s alone under -race, but past the 5 s DefaultTimeout
+	// on a loaded CI runner (DS-8384). The deadline fits that, not production.
+	client := ipc.NewClient(socketPath, ipc.WithTimeout(serveTestClientTimeout))
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	return client, stop
 }
