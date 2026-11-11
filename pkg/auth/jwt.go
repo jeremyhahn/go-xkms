@@ -239,14 +239,14 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 
 	// A passkey login mints its subject as the account's base64 WebAuthn
 	// handle (sub_kind=user_handle). Bind it back to the account, so the
-	// identity carries UserID and the RBAC layer finds the account's grants;
-	// a token declaring a handle it does not carry fails closed.
+	// identity carries UserID and the RBAC layer finds the account's grants.
+	// A handle that encodes no account id stays unbound: it names no
+	// account, so it holds no account's grants.
 	if kind, _ := claims[SubjectKindMetadataKey].(string); kind == SubjectKindUserHandle {
-		userID, ok := decodeWebAuthnHandle(sub)
-		if !ok {
-			return nil, &errs.Message{Msg: "malformed user handle subject"}
+		identity.Metadata[SubjectKindMetadataKey] = kind
+		if userID, ok := decodeWebAuthnHandle(sub); ok {
+			identity.BindUser(userID, identity.Metadata["username"])
 		}
-		identity.BindUser(userID, identity.Metadata["username"])
 	}
 
 	// Extract name if present

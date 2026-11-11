@@ -127,4 +127,5 @@ CORS headers on the host's 401/403 responses (go-qrdb). Suite assertions are unc
 
 - P1 (3) test (pkg/api/rest): an access token with sub_kind=user_handle for an account holding a keys:read role is authorized through the module's HTTP authenticator.
 - P1 (3) fix (pkg/auth/jwt.go validateToken): decode a user_handle subject with decodeWebAuthnHandle and call identity.BindUser(id, username).
+- Follow-up (caught by the existing add-credential and adapter tests): a handle that encodes no account id stays unbound instead of failing, and webauthn.SessionAccountFromIdentity rebuilds the handle from a bound identity's UserID.
 - Checks: go test -race and go vet with TEST_TAGS on pkg/apimodule, pkg/api/rest, pkg/auth, pkg/webauthn; the webauthn-browser suite natively if present; make lint.
