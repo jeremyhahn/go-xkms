@@ -193,6 +193,7 @@ func (s *XKMSService) IssueLAKCertificate(ctx context.Context, req *transport.Is
 		req.CertifyInfo, req.Signature,
 		x509.SignatureAlgorithm(req.SignatureAlgorithm),
 		req.LAKPublicArea, req.Nonce,
+		callerTenant(ctx),
 	)
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "issue lak certificate", Err: err}
