@@ -797,6 +797,32 @@ func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSig
 	}, nil
 }
 
+// ExportOTAImageKey returns the public half of the current version of a
+// board's OTA image-signing key.
+func (t *Transport) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.ExportOTAImageKey(ctx, &pb.OTAImageKeyRequest{
+		BoardId:   req.BoardID,
+		Backend:   req.Backend,
+		Algorithm: req.Algorithm,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.ExportOTAImageKeyResponse{
+		BoardID:    resp.BoardId,
+		KeyID:      resp.KeyId,
+		KeyVersion: resp.KeyVersion,
+		Algorithm:  resp.Algorithm,
+		PublicKey:  resp.PublicKey,
+		COSEKey:    resp.CoseKey,
+	}, nil
+}
+
 // GetImportParameters gets the parameters needed to import a key.
 func (t *Transport) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	if t.client == nil {

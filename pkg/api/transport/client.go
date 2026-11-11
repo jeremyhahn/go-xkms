@@ -78,6 +78,11 @@ type KeyService interface {
 	// board's key.
 	SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error)
 
+	// ExportOTAImageKey returns the public half of the current version of a
+	// board's OTA image-signing key, as raw X || Y and as a COSE_Key, with
+	// the record of which board id its key ID belongs to.
+	ExportOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error)
+
 	// GetImportParameters gets the parameters needed to import a key.
 	GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error)
 

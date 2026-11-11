@@ -194,6 +194,10 @@ func (m *mockCertClient) SignOTAImage(ctx context.Context, req *client.OTAImageS
 	return nil, nil
 }
 
+func (m *mockCertClient) ExportOTAImageKey(ctx context.Context, req *client.OTAImageKeyRequest) (*client.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockCertClient) GetImportParameters(ctx context.Context, req *client.GetImportParametersRequest) (*client.GetImportParametersResponse, error) {
 	return &client.GetImportParametersResponse{Algorithm: req.Algorithm}, nil
 }

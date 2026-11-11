@@ -16,6 +16,8 @@
 package integration
 
 import (
+	"github.com/veraison/go-cose"
+
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -440,6 +442,47 @@ func (s *TestXKMSService) SignOTAImage(ctx context.Context, req *xkms.OTAImageSi
 		return nil, err
 	}
 	return s.Sign(ctx, &xkms.SignRequest{KeyID: keyID, Backend: req.Backend, Data: req.Data, DataIsDigest: req.DataIsDigest})
+}
+
+func (s *TestXKMSService) ExportOTAImageKey(ctx context.Context, req *xkms.OTAImageKeyRequest) (*xkms.ExportOTAImageKeyResponse, error) {
+	keyID, err := otaImageKeyID(req.BoardID, req.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+	key, err := s.GetKey(ctx, req.Backend, keyID)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode([]byte(key.PublicKeyPEM))
+	if block == nil {
+		return nil, &xkmssvc.ErrValidation{Sentinel: xkmssvc.ErrOTAImageAlgorithm, Detail: keyID}
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	pub, ok := parsed.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, &xkmssvc.ErrValidation{Sentinel: xkmssvc.ErrOTAImageAlgorithm, Detail: keyID}
+	}
+	ecdhPub, err := pub.ECDH()
+	if err != nil {
+		return nil, err
+	}
+	point := ecdhPub.Bytes()[1:]
+	coseKey, err := cose.NewKeyEC2(cose.AlgorithmES256, point[:32], point[32:], nil)
+	if err != nil {
+		return nil, err
+	}
+	coseKey.ID = []byte(keyID)
+	encoded, err := coseKey.MarshalCBOR()
+	if err != nil {
+		return nil, err
+	}
+	return &xkms.ExportOTAImageKeyResponse{
+		BoardID: req.BoardID, KeyID: keyID, KeyVersion: 1, Algorithm: xkmssvc.OTAImageAlgorithmES256,
+		PublicKey: point, COSEKey: encoded,
+	}, nil
 }
 
 func (s *TestXKMSService) GetImportParameters(ctx context.Context, req *xkms.GetImportParametersRequest) (*xkms.GetImportParametersResponse, error) {

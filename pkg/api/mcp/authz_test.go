@@ -598,6 +598,7 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.createOTAImageKey":     "keys:create",
 	"xkms.rotateOTAImageKey":     "keys:rotate",
 	"xkms.signOTAImage":          "keys:sign",
+	"xkms.exportOTAImageKey":     "keys:get",
 	"xkms.listKeyVersions":       "keys:list",
 	"xkms.enableKeyVersion":      "keys:rotate",
 	"xkms.disableKeyVersion":     "keys:rotate",

@@ -130,6 +130,10 @@ func (m *MockXKMSService) SignOTAImage(ctx context.Context, req *xkms.OTAImageSi
 	return &xkms.SignResponse{Signature: []byte("mock-signature"), KeyVersion: 1}, nil
 }
 
+func (m *MockXKMSService) ExportOTAImageKey(ctx context.Context, req *xkms.OTAImageKeyRequest) (*xkms.ExportOTAImageKeyResponse, error) {
+	return &xkms.ExportOTAImageKeyResponse{BoardID: req.BoardID, KeyID: "ota-image-" + req.BoardID, KeyVersion: 1, Algorithm: "ES256"}, nil
+}
+
 func (m *MockXKMSService) GetImportParameters(ctx context.Context, req *xkms.GetImportParametersRequest) (*xkms.GetImportParametersResponse, error) {
 	return &xkms.GetImportParametersResponse{}, nil
 }

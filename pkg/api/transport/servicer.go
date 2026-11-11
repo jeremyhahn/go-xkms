@@ -122,6 +122,7 @@ type KeyServicer interface {
 	CreateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*GenerateKeyResponse, error)
 	RotateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*RotateKeyResponse, error)
 	SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error)
+	ExportOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error)
 	GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error)
 	CopyKey(ctx context.Context, req *CopyKeyRequest) (*CopyKeyResponse, error)
 	ExportKeyMaterial(ctx context.Context, req *ExportKeyMaterialRequest) (*ExportKeyMaterialResponse, error)
