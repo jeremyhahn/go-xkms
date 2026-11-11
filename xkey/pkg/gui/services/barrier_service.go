@@ -365,7 +365,11 @@ func (s *BarrierService) Initialize(password, strategyID string) (err error) {
 		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
 		return errors.Join(credErr, closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() {
+		if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, creds.Secret.Destroy())
+		}
+	}()
 
 	if initErr := barrier.Initialize(ctx, creds); initErr != nil {
 		closeErr := base.Close()
@@ -436,7 +440,11 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 			s.mu.Unlock()
 			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
 		}
-		defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+		defer func() {
+			if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+				err = errors.Join(err, creds.Secret.Destroy())
+			}
+		}()
 
 		if err := s.barrier.Unseal(ctx, creds); err != nil {
 			s.mu.Unlock()
@@ -507,7 +515,11 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 		s.mu.Unlock()
 		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID}), closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() {
+		if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, creds.Secret.Destroy())
+		}
+	}()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		closeErr := base.Close()
@@ -563,7 +575,7 @@ func (s *BarrierService) Seal() error {
 // The barrier must be initialized and unsealed. For hardware-backed
 // strategies this is a no-op because those strategies do not use
 // password-derived wrapping keys.
-func (s *BarrierService) ChangePassword(newPassword string) (err error) {
+func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -571,17 +583,42 @@ func (s *BarrierService) ChangePassword(newPassword string) (err error) {
 		return ErrBarrierNotInitialized
 	}
 
+	// A hardware-backed strategy (TPM2, PKCS#11, cloud KMS) has no password
+	// to change: the call is a no-op as documented. go-qrdb v0.58.2's
+	// StorageBarrier.ChangePassword has no hardware path and refuses the
+	// empty credentials, so it is not called here.
+	if s.barrier.Status().HardwareBacked {
+		if auditErr := s.logBarrierEvent(audit.OpBarrierPasswordChanged, true, nil, nil); auditErr != nil {
+			return auditErr
+		}
+		s.log.Info("barrier password change skipped: hardware-backed strategy")
+		return nil
+	}
+
 	ctx := s.context()
 	// CredentialsFor: ChangePassword is a no-op for hardware-backed
 	// strategies, which are called with an empty newPassword by design (see
 	// the doc comment above); NewCredentials would reject that empty input.
+	current, credErr := xkms.CredentialsFor(ctx, []byte(currentPassword))
+	if credErr != nil {
+		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
+	}
+	defer func() {
+		if current.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, current.Secret.Destroy())
+		}
+	}()
 	creds, credErr := xkms.CredentialsFor(ctx, []byte(newPassword))
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() {
+		if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, creds.Secret.Destroy())
+		}
+	}()
 
-	if err := s.barrier.ChangePassword(ctx, creds); err != nil {
+	if err := s.barrier.ChangePassword(ctx, current, creds); err != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)
 	}
 

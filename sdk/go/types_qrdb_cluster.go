@@ -26,7 +26,7 @@
 package xkms
 
 import (
-	qrdb "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbcluster "github.com/jeremyhahn/go-qrdb/sdk/go/cluster"
 )
 
 // ==========================================================================
@@ -34,50 +34,50 @@ import (
 // ==========================================================================
 
 // QRDBPeer is a discovered cluster peer.
-type QRDBPeer = qrdb.Peer
+type QRDBPeer = qrdbcluster.Peer
 
 // QRDBDiscoveryBackend is the behavior implemented by every runtime discovery
 // method.
-type QRDBDiscoveryBackend = qrdb.DiscoveryBackend
+type QRDBDiscoveryBackend = qrdbcluster.DiscoveryBackend
 
 // QRDBDiscoveryConfig is the shared runtime discovery configuration.
-type QRDBDiscoveryConfig = qrdb.DiscoveryConfig
+type QRDBDiscoveryConfig = qrdbcluster.DiscoveryConfig
 
 // QRDBDiscoveryStaticConfig configures static (fixed peer-list) discovery.
-type QRDBDiscoveryStaticConfig = qrdb.DiscoveryStaticConfig
+type QRDBDiscoveryStaticConfig = qrdbcluster.DiscoveryStaticConfig
 
 // QRDBDiscoveryMulticastConfig configures multicast (LAN announcement)
 // discovery.
-type QRDBDiscoveryMulticastConfig = qrdb.DiscoveryMulticastConfig
+type QRDBDiscoveryMulticastConfig = qrdbcluster.DiscoveryMulticastConfig
 
 // QRDBDiscoveryDNSConfig configures DNS SRV-record discovery.
-type QRDBDiscoveryDNSConfig = qrdb.DiscoveryDNSConfig
+type QRDBDiscoveryDNSConfig = qrdbcluster.DiscoveryDNSConfig
 
 // QRDBDiscoveryTokenConfig configures token-server (HTTP) discovery.
-type QRDBDiscoveryTokenConfig = qrdb.DiscoveryTokenConfig
+type QRDBDiscoveryTokenConfig = qrdbcluster.DiscoveryTokenConfig
 
 // QRDBDiscoveryManager fans out across multiple discovery methods.
-type QRDBDiscoveryManager = qrdb.DiscoveryManager
+type QRDBDiscoveryManager = qrdbcluster.DiscoveryManager
 
 // QRDBDiscoveryManagerConfig configures a QRDBDiscoveryManager.
-type QRDBDiscoveryManagerConfig = qrdb.DiscoveryManagerConfig
+type QRDBDiscoveryManagerConfig = qrdbcluster.DiscoveryManagerConfig
 
 // Runtime discovery constructors.
 var (
 	// QRDBNewDiscoveryManager builds a discovery Manager from its config.
-	QRDBNewDiscoveryManager = qrdb.NewDiscoveryManager
+	QRDBNewDiscoveryManager = qrdbcluster.NewDiscoveryManager
 
 	// QRDBNewStaticDiscovery builds a static discovery method.
-	QRDBNewStaticDiscovery = qrdb.NewStaticDiscovery
+	QRDBNewStaticDiscovery = qrdbcluster.NewStaticDiscovery
 
 	// QRDBNewMulticastDiscovery builds a multicast discovery method.
-	QRDBNewMulticastDiscovery = qrdb.NewMulticastDiscovery
+	QRDBNewMulticastDiscovery = qrdbcluster.NewMulticastDiscovery
 
 	// QRDBNewDNSDiscovery builds a DNS SRV discovery method.
-	QRDBNewDNSDiscovery = qrdb.NewDNSDiscovery
+	QRDBNewDNSDiscovery = qrdbcluster.NewDNSDiscovery
 
 	// QRDBNewTokenDiscovery builds a token-server discovery method.
-	QRDBNewTokenDiscovery = qrdb.NewTokenDiscovery
+	QRDBNewTokenDiscovery = qrdbcluster.NewTokenDiscovery
 )
 
 // ==========================================================================
@@ -86,14 +86,14 @@ var (
 
 // QRDBDiscoveryOptions configures cluster-formation discovery
 // (QRDBBuildDiscovery).
-type QRDBDiscoveryOptions = qrdb.DiscoveryOptions
+type QRDBDiscoveryOptions = qrdbcluster.DiscoveryOptions
 
 // Cluster-formation constructors.
 var (
 	// QRDBBuildDiscovery constructs a QRDBDiscoveryBackend from
 	// QRDBDiscoveryOptions.
-	QRDBBuildDiscovery = qrdb.BuildDiscovery
+	QRDBBuildDiscovery = qrdbcluster.BuildDiscovery
 
 	// QRDBBootstrapShard forms or joins a Raft shard using peer discovery.
-	QRDBBootstrapShard = qrdb.BootstrapShard
+	QRDBBootstrapShard = qrdbcluster.BootstrapShard
 )
