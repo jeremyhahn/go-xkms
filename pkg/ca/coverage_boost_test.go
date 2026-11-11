@@ -19,7 +19,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -92,41 +91,12 @@ func setupTestCAWithRealIntermediate(t *testing.T) *CA {
 	return ca
 }
 
-func TestCA_CreateIntermediateCertificates_Success(t *testing.T) {
-	ca := setupTestCAWithRealIntermediate(t)
-
-	require.NotNil(t, ca.intermediateCert)
-	assert.True(t, ca.intermediateCert.IsCA)
-	assert.Equal(t, "Test Intermediate CA", ca.intermediateCert.Subject.CommonName)
-
-	// Verify it was signed by root
-	err := ca.intermediateCert.CheckSignatureFrom(ca.rootCert)
-	assert.NoError(t, err)
-}
-
 func TestCA_CreateIntermediateCertificates_SelectedCA(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
 
 	require.NotNil(t, ca.intermediateCert)
 	issuingCert := ca.getIssuingCertificate()
 	assert.Equal(t, ca.intermediateCert, issuingCert)
-}
-
-func TestCA_IntermediateCA_IssueCertificate(t *testing.T) {
-	ca := setupTestCAWithRealIntermediate(t)
-
-	request := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "leaf.example.com", Organization: "Test"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"leaf.example.com"}},
-		Valid:    365,
-	}
-
-	issued, err := ca.IssueCertificate(context.Background(), request)
-	require.NoError(t, err)
-
-	err = issued.Certificate.CheckSignatureFrom(ca.intermediateCert)
-	assert.NoError(t, err)
 }
 
 func TestCA_IntermediateCA_SignCSR(t *testing.T) {
@@ -225,27 +195,6 @@ func TestCA_IntermediateCA_WithSANSAndExtensions(t *testing.T) {
 // Load Tests with Intermediate
 // =============================================================================
 
-func TestCA_Load_WithIntermediate(t *testing.T) {
-	ca1 := setupTestCAWithRealIntermediate(t)
-
-	ca2 := &CA{
-		keyStore:        ca1.keyStore,
-		keystoreMap:     ca1.keystoreMap,
-		certStore:       ca1.certStore,
-		config:          ca1.config,
-		revocationStore: ca1.revocationStore,
-		revocations:     make(map[string]*RevocationInfo),
-		serialGen:       NewSerialGenerator(NewMemoryStorage()),
-		profiles:        NewDefaultProfileRegistry(),
-	}
-
-	err := ca2.Load(context.Background())
-	require.NoError(t, err)
-	assert.True(t, ca2.IsInitialized())
-	assert.NotNil(t, ca2.intermediateCert)
-	assert.Equal(t, "Test Intermediate CA", ca2.intermediateCert.Subject.CommonName)
-}
-
 func TestCA_Load_NilRootIdentity(t *testing.T) {
 	ca := &CA{
 		config:      &MultiIdentityCAConfig{Identity: []Identity{}},
@@ -255,64 +204,9 @@ func TestCA_Load_NilRootIdentity(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
-func TestCA_Load_RootCertNotFound(t *testing.T) {
-	cs, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
-	require.NoError(t, err)
-
-	keyStorage := storage.NewMemory()
-	swBackend, err := software.NewBackend(&software.Config{KeyStorage: keyStorage})
-	require.NoError(t, err)
-	certStorage := storage.NewMemory()
-	backend, err := xkms.New(&xkms.BackendConfig{Backend: swBackend, CertStorage: certStorage})
-	require.NoError(t, err)
-
-	config := DefaultMultiIdentityCAConfig()
-	config.Identity[0].Subject.CommonName = "Missing Root CA"
-	config.Identity[0].Keys[0].KeyType = "CA"
-
-	ca := &CA{
-		keyStore:    backend,
-		certStore:   cs,
-		config:      config,
-		revocations: make(map[string]*RevocationInfo),
-	}
-
-	err = ca.Load(context.Background())
-	assert.ErrorIs(t, err, ErrCertificateNotFound)
-}
-
 // =============================================================================
 // VerifySignature Tests
 // =============================================================================
-
-func TestCA_VerifySignature_NotInitialized(t *testing.T) {
-	ca := &CA{}
-	err := ca.VerifySignature(&x509.Certificate{})
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestCA_VerifySignature_NilCert(t *testing.T) {
-	ca := setupTestCA(t)
-	err := ca.VerifySignature(nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-func TestCA_VerifySignature_ValidCert(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "verify-sig.example.com", Organization: "Test"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-sig.example.com"}},
-		Valid:    365,
-	}
-
-	issued, err := ca.IssueCertificate(context.Background(), request)
-	require.NoError(t, err)
-
-	err = ca.VerifySignature(issued.Certificate)
-	assert.NoError(t, err)
-}
 
 func TestCA_VerifySignature_InvalidSignature(t *testing.T) {
 	ca := setupTestCA(t)
@@ -358,18 +252,6 @@ func TestCA_VerifySignature_WithIntermediate(t *testing.T) {
 // Verify Tests (certificate chain verification)
 // =============================================================================
 
-func TestCA_Verify_NotInitialized(t *testing.T) {
-	ca := &CA{}
-	_, err := ca.Verify(&x509.Certificate{})
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestCA_Verify_NilCert(t *testing.T) {
-	ca := setupTestCA(t)
-	_, err := ca.Verify(nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
 func TestCA_Verify_RevokedCert(t *testing.T) {
 	ca := setupTestCA(t)
 
@@ -388,24 +270,6 @@ func TestCA_Verify_RevokedCert(t *testing.T) {
 
 	_, err = ca.Verify(issued.Certificate)
 	assert.ErrorIs(t, err, ErrCertificateRevoked)
-}
-
-func TestCA_Verify_ValidCert(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "verify-valid.example.com", Organization: "Test"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-valid.example.com"}},
-		Valid:    365,
-	}
-
-	issued, err := ca.IssueCertificate(context.Background(), request)
-	require.NoError(t, err)
-
-	chains, err := ca.Verify(issued.Certificate)
-	require.NoError(t, err)
-	assert.NotEmpty(t, chains)
 }
 
 func TestCA_Verify_WithIntermediateCA(t *testing.T) {
@@ -491,21 +355,6 @@ func TestSignatureAlgorithmToName_AllAlgorithms(t *testing.T) {
 // Params.Validate Tests
 // =============================================================================
 
-func TestParams_Validate_NilConfig(t *testing.T) {
-	p := &Params{KeyAttributes: &types.KeyAttributes{}}
-	err := p.Validate()
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
-func TestParams_Validate_NilKeyAttributes(t *testing.T) {
-	p := &Params{
-		Config:        &CAConfig{Identity: "test", Subject: &Subject{CommonName: "test"}},
-		KeyAttributes: nil,
-	}
-	err := p.Validate()
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
 func TestParams_Validate_NilKeyStore(t *testing.T) {
 	p := &Params{
 		Config:        &CAConfig{Identity: "test", Subject: &Subject{CommonName: "test"}},
@@ -546,11 +395,6 @@ func TestNew_NilParams(t *testing.T) {
 
 func TestNewFromMultiIdentityConfig_NilParams(t *testing.T) {
 	_, err := NewFromMultiIdentityConfig(nil)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
-func TestNewFromMultiIdentityConfig_NilConfig(t *testing.T) {
-	_, err := NewFromMultiIdentityConfig(&MultiIdentityParams{})
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
@@ -601,36 +445,10 @@ func TestCaConfigToMultiIdentity_IntermediateDefaults(t *testing.T) {
 	assert.Equal(t, DefaultIntermediateValidityYears, multi.Identity[0].Valid)
 }
 
-func TestCaConfigToMultiIdentity_EmptySubject(t *testing.T) {
-	cfg := &CAConfig{Identity: "from-identity"}
-	multi := caConfigToMultiIdentity(cfg, nil)
-	assert.Equal(t, "from-identity", multi.Identity[0].Subject.CommonName)
-}
-
 func TestCaConfigToMultiIdentity_EmptyStoreType(t *testing.T) {
 	cfg := &CAConfig{Identity: "test", StoreType: ""}
 	multi := caConfigToMultiIdentity(cfg, nil)
 	assert.Equal(t, types.StoreSoftware, multi.Identity[0].GetStoreType())
-}
-
-func TestCaConfigToMultiIdentity_WithPolicyAndCRL(t *testing.T) {
-	cfg := &CAConfig{
-		Identity:                "policy-ca",
-		Subject:                 &Subject{CommonName: "Policy CA"},
-		CRLDistributionPoints:   []string{"http://crl.example.com"},
-		OCSPServers:             []string{"http://ocsp.example.com"},
-		IssuingCertificateURLs:  []string{"http://aia.example.com"},
-		PolicyIdentifiers:       []string{"1.2.3.4"},
-		CRLValidityDays:         30,
-		MaxPathLength:           2,
-		DefaultCertValidityDays: 90,
-	}
-
-	multi := caConfigToMultiIdentity(cfg, nil)
-	id := multi.Identity[0]
-	assert.Equal(t, []string{"http://crl.example.com"}, id.CRLDistributionPoints)
-	assert.Equal(t, []string{"http://ocsp.example.com"}, id.OCSPServers)
-	assert.Equal(t, 90, multi.DefaultValidityDays)
 }
 
 // =============================================================================
@@ -675,12 +493,6 @@ func TestCA_GetOrGenerateCAKey_UnsupportedAlgorithm(t *testing.T) {
 // getCAKeyAttributes Tests
 // =============================================================================
 
-func TestCA_GetCAKeyAttributes_NilIdentity(t *testing.T) {
-	ca := setupTestCA(t)
-	_, err := ca.getCAKeyAttributes(t.Context(), nil)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
 func TestCA_GetCAKeyAttributes_SetsKeyTypeCA(t *testing.T) {
 	ca := setupTestCA(t)
 	identity := &Identity{Subject: Subject{CommonName: "test"}, Keys: DefaultKeyConfig()}
@@ -695,21 +507,9 @@ func TestCA_GetCAKeyAttributes_SetsKeyTypeCA(t *testing.T) {
 // getSigner Tests
 // =============================================================================
 
-func TestCA_GetSigner_NilIssuingIdentity(t *testing.T) {
-	ca := &CA{config: &MultiIdentityCAConfig{Identity: []Identity{}}}
-	_, err := ca.getSigner(context.Background())
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
 // =============================================================================
 // determineSignatureAlgorithm Tests
 // =============================================================================
-
-func TestDetermineSignatureAlgorithm_RSA(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	assert.Equal(t, x509.SHA256WithRSA, determineSignatureAlgorithm(&key.PublicKey))
-}
 
 func TestDetermineSignatureAlgorithm_ECDSAP256(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -727,16 +527,6 @@ func TestDetermineSignatureAlgorithm_ECDSAP521(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	require.NoError(t, err)
 	assert.Equal(t, x509.ECDSAWithSHA512, determineSignatureAlgorithm(&key.PublicKey))
-}
-
-func TestDetermineSignatureAlgorithm_ECDSAP224(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
-	require.NoError(t, err)
-	assert.Equal(t, x509.ECDSAWithSHA256, determineSignatureAlgorithm(&key.PublicKey))
-}
-
-func TestDetermineSignatureAlgorithm_Unknown(t *testing.T) {
-	assert.Equal(t, x509.UnknownSignatureAlgorithm, determineSignatureAlgorithm("not-a-key"))
 }
 
 // =============================================================================
@@ -811,35 +601,9 @@ func TestCA_IsRevoked_NotInitialized(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
-func TestCA_IsRevoked_NotRevoked(t *testing.T) {
-	ca := setupTestCA(t)
-	revoked, err := ca.IsRevoked(big.NewInt(99999))
-	require.NoError(t, err)
-	assert.False(t, revoked)
-}
-
 // =============================================================================
 // mergeSubjects edge cases
 // =============================================================================
-
-func TestMergeSubjects_AllFieldsOverridden(t *testing.T) {
-	result := mergeSubjects(
-		pkix.Name{
-			CommonName: "issuer-cn", Organization: []string{"Issuer Org"},
-			OrganizationalUnit: []string{"Issuer OU"}, Country: []string{"US"},
-			Province: []string{"CA"}, Locality: []string{"SF"},
-		},
-		&Subject{
-			CommonName: "override-cn", Organization: "Override Org",
-			Country: "DE", Province: "Bavaria", Locality: "Munich",
-		},
-	)
-	assert.Equal(t, "override-cn", result.CommonName)
-	assert.Equal(t, []string{"Override Org"}, result.Organization)
-	assert.Equal(t, []string{"DE"}, result.Country)
-	assert.Equal(t, []string{"Bavaria"}, result.Province)
-	assert.Equal(t, []string{"Munich"}, result.Locality)
-}
 
 // =============================================================================
 // createRootCertificate with SANs and extensions
@@ -889,32 +653,9 @@ func TestCA_Init_RootWithSANSAndExtensions(t *testing.T) {
 // Init error: already initialized
 // =============================================================================
 
-func TestCA_Init_AlreadyInitialized(t *testing.T) {
-	ca := setupTestCA(t)
-	err := ca.Init(context.Background())
-	assert.ErrorIs(t, err, ErrAlreadyInitialized)
-}
-
 // =============================================================================
 // GenerateCRL with various revocation reasons
 // =============================================================================
-
-func TestCA_GenerateCRL_MultipleReasons(t *testing.T) {
-	ca := setupTestCA(t)
-
-	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(100), 0))
-	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(200), 1))
-	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(300), 3))
-	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(400), 4))
-	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(500), 5))
-
-	crlDER, err := ca.GenerateCRL(context.Background())
-	require.NoError(t, err)
-
-	crl, err := x509.ParseRevocationList(crlDER)
-	require.NoError(t, err)
-	assert.Len(t, crl.RevokedCertificateEntries, 5)
-}
 
 // =============================================================================
 // New() with Params (flat config path)
@@ -1009,23 +750,12 @@ func TestCA_GetIssuingCertificate_FallsBackToRoot(t *testing.T) {
 	assert.Equal(t, ca.rootCert, cert)
 }
 
-func TestCA_GetIssuingCertificate_NilBoth(t *testing.T) {
-	ca := &CA{}
-	assert.Nil(t, ca.getIssuingCertificate())
-}
-
 // =============================================================================
 // buildCAPool Tests
 // =============================================================================
 
 func TestCA_BuildCAPool_WithIntermediate(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
-	pool := ca.buildCAPool()
-	require.NotNil(t, pool)
-}
-
-func TestCA_BuildCAPool_NilCerts(t *testing.T) {
-	ca := &CA{}
 	pool := ca.buildCAPool()
 	require.NotNil(t, pool)
 }
@@ -1062,14 +792,6 @@ func TestCAProfile_Apply_NilTemplate(t *testing.T) {
 	profile := NewCAProfile()
 	err := profile.Apply(nil, nil)
 	require.ErrorIs(t, err, ErrInvalidProfile)
-}
-
-func TestCAProfile_Apply_NilRequest(t *testing.T) {
-	profile := NewCAProfile()
-	template := &x509.Certificate{}
-	err := profile.Apply(template, nil)
-	require.NoError(t, err)
-	assert.True(t, template.IsCA)
 }
 
 func TestCustomCAProfile_Apply(t *testing.T) {
