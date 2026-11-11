@@ -40,6 +40,30 @@ Not found yet. Lane mf2533b (native, no Docker, on this node):
   `logging.level: debug`, yet CI's daemon log shows no such line, so that
   handler's logger does not appear to honour the configured level.
 
+## Why the Debug line was dropped (lane mf2533c)
+
+`pkg/api/rest/server.go:399` built the handler as
+`webauthnhttp.NewHandler(cfg.WebAuthnService)` without `WithLogger`, so the
+handler kept `slog.Default()` (`pkg/webauthn/http/handler.go:38`), which
+logs at Info, not the daemon's configured logger. `logging.level: debug`
+never reached it. Fixed by commits `test(webauthn): a 500 from the WebAuthn
+handler logs its cause at Error` and `fix(webauthn): the WebAuthn handler
+logs the cause of a 500 at Error`: the default branch of
+`handleServiceError` now logs `"webauthn: internal error"` with the error
+text at Error, and the server passes its logger (`WithLogger(log)`). With
+these in, CI's daemon log shows the cause of the next 500.
+
+## CI-like native run (lane mf2533c, partial)
+
+- xkmsd built with the recipe's tags (fix included); suite copied to
+  /tmp, `run-server.sh` run with `config.yaml` UNCHANGED (relative paths),
+  `XKMSD_BIN` set: init, boot and barrier unseal succeed.
+- Registration begin + finish with the spec's exact bodies (public
+  sign-up: `{email, display_name}` to `/registration/begin`, `X-Session-Id`
+  header, finish body `{id, rawId, type, response{attestationObject,
+  clientDataJSON}, clientExtensionResults}`) NOT sent yet: the slice hit
+  its turn budget. Whether the 500 reproduces is still open.
+
 ## Next slice
 
 1. Run the Playwright suite natively (`npm ci`, `npx playwright install
