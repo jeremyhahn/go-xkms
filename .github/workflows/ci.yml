@@ -527,6 +527,10 @@ permissions:
   contents: read
 
 env:
+  # Toolchain-container memory bound on the self-hosted pools: make coverage's
+  # race-instrumented authenticator.test alone reaches 6.6 GB, past the 8g
+  # default. Hosted runs (forks) keep the script's default.
+  IN_IMAGE_MEMORY: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '24g' || '' }}
   # The bigdisk path only (lint-gates, arch-gates): setup-go installs this Go
   # where the hosted path takes it from the toolchain image. Keep it equal to
   # GO_IMAGE in scripts/tool-pins.sh line 13 (golang:1.27.4-bookworm@sha256:...),
