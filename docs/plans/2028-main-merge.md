@@ -6,3 +6,8 @@
 - check-public-literals.test.sh: pass (48). ci-registry.test.sh: pass.
 - make lint: pass (actionlint and golangci-lint, 0 issues).
 - Lane cf2028b (CA m2576 / DS-8464): fix the gomodauth.test.sh failure above (runner-nohost, count2, private-direct) in the Makefile: GOMODAUTH_GOPRIVATE keeps main's default github.com/jeremyhahn/* when the caller sets no GOPRIVATE.
+- cf2028b gomodauth.test.sh before the fix: 236 passed, 30 failed (runner-nohost, count2, private-direct, 10 each).
+- cf2028b gomodauth.test.sh after: 266 passed, 0 failed (test commit takes main's secret default and GOMODAUTH_GOPRIVATE for private-direct).
+- cf2028b check-public-literals.test.sh: 48 passed, 0 failed.
+- cf2028b buildgates (codec tags): ok.
+- cf2028b make lint: pass, 0 issues.
