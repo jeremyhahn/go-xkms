@@ -16,11 +16,14 @@ package rest
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
 	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -136,4 +139,50 @@ func TestNewHostServer_RefreshResolvesOnTheCallContext(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+}
+
+// TestNewHostServer_PasskeyAccessTokenNamesTheAccount covers Codex P1 (3):
+// a passkey login mints an access token whose subject is the account's
+// base64 WebAuthn handle (sub_kind=user_handle). Bearer authentication must
+// bind that handle back to the account (UserID, Username, Subject =
+// UserSubject), or the RBAC layer finds no account behind the identity and
+// refuses an account holding keys:read.
+func TestNewHostServer_PasskeyAccessTokenNamesTheAccount(t *testing.T) {
+	node := newEnforcingNode(t)
+	srv := newEnforcingHostServer(t, node)
+
+	u, err := node.UserService().CreateUser(context.Background(), &qrdbuser.CreateUserRequest{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Name:     "Alice",
+	})
+	require.NoError(t, err)
+
+	var raw [8]byte
+	binary.BigEndian.PutUint64(raw[:], u.ID)
+	pair, err := srv.tokenIssuer.Mint(context.Background(), &auth.Identity{
+		Subject:  base64.RawURLEncoding.EncodeToString(raw[:]),
+		TenantID: DefaultWebAuthnTenant,
+		Metadata: map[string]string{
+			auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle,
+			"username":                  "alice",
+		},
+	})
+	require.NoError(t, err)
+
+	jwtAuth, err := auth.NewJWTAuthenticator(&auth.JWTConfig{
+		PublicKey:  srv.tokenIssuer.PublicKey(),
+		Issuer:     srv.tokenIssuer.IssuerName(),
+		Audience:   srv.tokenIssuer.Audience(),
+		HeaderName: "Authorization",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	id, err := jwtAuth.AuthenticateHTTP(req)
+	require.NoError(t, err)
+	require.Equal(t, u.ID, id.UserID, "the identity must name the account the handle encodes")
+	require.Equal(t, "alice", id.Username)
+	require.Equal(t, qrdbauth.UserSubject(u.ID), id.Subject)
 }
