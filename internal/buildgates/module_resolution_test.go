@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -36,6 +37,12 @@ func serviceEnvironment(raw any) map[string]string {
 	return env
 }
 
+// giteaOnlyGoPrivate matches the one GOPRIVATE form the fold keeps (main's
+// #2057 rule): a caller's GOMODAUTH_GOPRIVATE, else the first-party glob only
+// when GITEA_HOST names a Gitea rewrite. Without either it expands to empty,
+// so every module still resolves from proxy.golang.org.
+var giteaOnlyGoPrivate = regexp.MustCompile(`^\$\{GOMODAUTH_GOPRIVATE:-\$\{GITEA_HOST:\+[^}]*\}\}$`)
+
 // moduleResolutionProblems reports every service of the compose file that
 // takes module resolution off proxy.golang.org and sum.golang.org.
 func moduleResolutionProblems(composePath string) ([]string, error) {
@@ -60,6 +67,9 @@ func moduleResolutionProblems(composePath string) ([]string, error) {
 		env := serviceEnvironment(svc.Environment)
 		for _, key := range []string{"GOPRIVATE", "GONOSUMDB", "GONOPROXY"} {
 			if value, ok := env[key]; ok {
+				if key == "GOPRIVATE" && giteaOnlyGoPrivate.MatchString(value) {
+					continue // #2057: empty unless a Gitea rewrite is configured
+				}
 				problems = append(problems, fmt.Sprintf(
 					"%s: service %s sets %s=%s: modules resolve from proxy.golang.org and sum.golang.org only",
 					composePath, name, key, value))
@@ -119,7 +129,8 @@ func TestModuleResolutionProblemsCatchEachOverride(t *testing.T) {
 	}
 
 	composePath := filepath.Join(t.TempDir(), "compose.yaml")
-	content := "services:\n  test:\n    image: example\n    environment:\n      GOPROXY: \"off\"\n      GOFLAGS: -mod=readonly\n"
+	content := "services:\n  test:\n    image: example\n    environment:\n      GOPROXY: \"off\"\n      GOFLAGS: -mod=readonly\n" +
+		"  gitea:\n    image: example\n    environment:\n      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+" + firstPartyGlob + "}}\n"
 	if err := os.WriteFile(composePath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +139,7 @@ func TestModuleResolutionProblemsCatchEachOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(problems) != 0 {
-		t.Fatalf("problems = %q, want none for an offline service", problems)
+		t.Fatalf("problems = %q, want none for an offline service or a Gitea-only GOPRIVATE", problems)
 	}
 }
 
