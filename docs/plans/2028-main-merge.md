@@ -5,3 +5,4 @@
 - gomodauth.test.sh: 236 passed, 30 failed. runner-nohost (test/scripts/gomodauth.test.sh:101) and count2 (:109) want github.com/jeremyhahn/* but get empty: #2028's Makefile no longer sets GOMODAUTH_GOPRIVATE, and main's compose names the module only with GITEA_HOST. private-direct (:168) wants the caller's GOPRIVATE, but main's compose reads only GOMODAUTH_GOPRIVATE. The fix belongs in the Makefile or compose files (out of this lane; CA call).
 - check-public-literals.test.sh: pass (48). ci-registry.test.sh: pass.
 - make lint: pass (actionlint and golangci-lint, 0 issues).
+- Lane cf2028b (CA m2576 / DS-8464): fix the gomodauth.test.sh failure above (runner-nohost, count2, private-direct) in the Makefile: GOMODAUTH_GOPRIVATE keeps main's default github.com/jeremyhahn/* when the caller sets no GOPRIVATE.
