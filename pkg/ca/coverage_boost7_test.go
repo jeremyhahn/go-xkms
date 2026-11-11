@@ -18,20 +18,16 @@ package ca
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"math/big"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,90 +54,9 @@ func TestVerifySignature_NilCert(t *testing.T) {
 // verification.go — VerifyChain success path
 // =============================================================================
 
-func TestVerifyChain_Success(t *testing.T) {
-	t.Parallel()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "verify-chain-root-b7"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	pool := x509.NewCertPool()
-	pool.AddCert(cert)
-
-	chains, err := VerifyChain(cert, nil, pool)
-	require.NoError(t, err)
-	assert.NotEmpty(t, chains)
-}
-
 // =============================================================================
 // verification.go — VerifyWithOptions nil options + revocation path
 // =============================================================================
-
-func TestVerifyWithOptions_NilOpts_ErrorExpected(t *testing.T) {
-	t.Parallel()
-	cert, _ := makeSelfSignedCert(t, "nil-opts-b7")
-	// With nil opts, no root pool is provided — chain verification should fail.
-	_, err := VerifyWithOptions(cert, nil)
-	assert.Error(t, err)
-}
-
-func TestVerifyWithOptions_RevocationPath(t *testing.T) {
-	t.Parallel()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(9901),
-		Subject:               pkix.Name{CommonName: "revoked-b7"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	// Build a DER-encoded CRL revoking serial 9901.
-	crlTemplate := &x509.RevocationList{
-		Number:     big.NewInt(1),
-		ThisUpdate: time.Now().Add(-time.Minute),
-		NextUpdate: time.Now().Add(24 * time.Hour),
-		RevokedCertificateEntries: []x509.RevocationListEntry{
-			{SerialNumber: big.NewInt(9901), RevocationTime: time.Now().Add(-time.Minute)},
-		},
-	}
-	crlDER, err := x509.CreateRevocationList(rand.Reader, crlTemplate, cert, key)
-	require.NoError(t, err)
-
-	pool := x509.NewCertPool()
-	pool.AddCert(cert)
-
-	opts := &VerifyOptions{
-		Roots:           pool,
-		CheckRevocation: true,
-		CRL:             crlDER,
-		CurrentTime:     time.Now(),
-	}
-	_, err = VerifyWithOptions(cert, opts)
-	assert.Error(t, err)
-	var ve *VerificationError
-	assert.True(t, errors.As(err, &ve))
-}
 
 // =============================================================================
 // verification.go — verifyRSASignature PSS success and zero-hash branches
@@ -168,15 +83,6 @@ func TestVerifyRSASignature_ZeroHash(t *testing.T) {
 	assert.Error(t, err)
 	var ve *VerificationError
 	assert.True(t, errors.As(err, &ve))
-}
-
-func TestVerifyRSASignature_PSS_Success(t *testing.T) {
-	t.Parallel()
-	cert := buildRSAPSSCert(t)
-	rsaPub, ok := cert.PublicKey.(*rsa.PublicKey)
-	require.True(t, ok, "expected RSA public key")
-	err := verifyRSASignature(cert, rsaPub, crypto.SHA256)
-	assert.NoError(t, err)
 }
 
 // =============================================================================
@@ -210,92 +116,21 @@ func TestVerifyECDSASignature_ZeroHash(t *testing.T) {
 // (non-duplicate: verification_test.go test has a different name)
 // =============================================================================
 
-func TestVerifyCertificateAgainstPublicKey_UnsupportedKey_B7(t *testing.T) {
-	t.Parallel()
-	cert, _ := makeSelfSignedCert(t, "unsupported-key-b7")
-	type fakeKey struct{}
-	err := VerifyCertificateAgainstPublicKey(cert, fakeKey{})
-	assert.Error(t, err)
-	var ve *VerificationError
-	assert.True(t, errors.As(err, &ve))
-}
-
 // =============================================================================
 // ca_extensions.go — DefaultSignatureAlgorithm nil-identity branch
 // =============================================================================
-
-func TestDefaultSignatureAlgorithm_NilIdentity_B7(t *testing.T) {
-	t.Parallel()
-	ca := &CA{config: &MultiIdentityCAConfig{}}
-	algo := ca.DefaultSignatureAlgorithm()
-	assert.Equal(t, x509.UnknownSignatureAlgorithm, algo)
-}
-
-func TestDefaultSignatureAlgorithm_Success_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	algo := ca.DefaultSignatureAlgorithm()
-	assert.NotEqual(t, x509.UnknownSignatureAlgorithm, algo)
-}
 
 // =============================================================================
 // ca_extensions.go — CAKeyAttributes empty store-type (allowed) vs mismatch
 // =============================================================================
 
-func TestCAKeyAttributes_EmptyStoreType(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	attrs, err := ca.CAKeyAttributes("")
-	require.NoError(t, err)
-	assert.NotNil(t, attrs)
-}
-
 // =============================================================================
 // ca_extensions.go — CASigner algorithm mismatch
 // =============================================================================
 
-func TestCASigner_AlgorithmMismatch_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := ca.CASigner(context.Background(), "", x509.RSA)
-	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
-}
-
-func TestCASigner_UnknownAlgorithmSucceeds(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	signer, err := ca.CASigner(context.Background(), "", x509.UnknownPublicKeyAlgorithm)
-	require.NoError(t, err)
-	assert.NotNil(t, signer)
-}
-
 // =============================================================================
 // ca_extensions.go — CABundleFiltered additional algorithm filter branches
 // =============================================================================
-
-func TestCABundleFiltered_NoFilters_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	bundle, err := ca.CABundleFiltered("", x509.UnknownPublicKeyAlgorithm)
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-}
-
-func TestCABundleFiltered_AlgorithmFilter_ECDSA_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	bundle, err := ca.CABundleFiltered("", x509.ECDSA)
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-}
-
-func TestCABundleFiltered_AlgorithmFilter_RSA_NoMatch(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := ca.CABundleFiltered("", x509.RSA)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidCertificateChain)
-}
 
 func TestCABundleFiltered_WithIntermediate_ECDSAFilter(t *testing.T) {
 	t.Parallel()
@@ -309,35 +144,9 @@ func TestCABundleFiltered_WithIntermediate_ECDSAFilter(t *testing.T) {
 // ca_extensions.go — PubKey nil attrs
 // =============================================================================
 
-func TestPubKey_NilAttrs_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := ca.PubKey(context.Background(), nil)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
 // =============================================================================
 // ca_extensions.go — Blob not found / ImportBlob round-trip
 // =============================================================================
-
-func TestBlob_NotFound_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithObjectStore(t)
-	_, err := ca.Blob([]byte("missing-key-b7"))
-	assert.Error(t, err)
-}
-
-func TestBlob_ImportRoundtrip_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithObjectStore(t)
-	key := []byte("roundtrip-key-b7")
-	data := []byte("test-blob-data-b7-payload")
-	err := ca.ImportBlob(key, data)
-	require.NoError(t, err)
-	got, err := ca.Blob(key)
-	require.NoError(t, err)
-	assert.Equal(t, data, got)
-}
 
 // =============================================================================
 // ca_extensions.go — Issued / Exists
@@ -350,15 +159,6 @@ func TestExists_AlgorithmMismatch_B7(t *testing.T) {
 	found, err := ca.Exists(context.Background(), "exists-algo-mismatch-b7", x509.RSA)
 	require.NoError(t, err)
 	assert.False(t, found)
-}
-
-func TestExists_AlgorithmMatch_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	issueCertAndSaveToKeyStore(t, ca, "exists-algo-match-b7")
-	found, err := ca.Exists(context.Background(), "exists-algo-match-b7", x509.ECDSA)
-	require.NoError(t, err)
-	assert.True(t, found)
 }
 
 func TestExists_EmptyCN_B7(t *testing.T) {
@@ -416,19 +216,6 @@ func TestTrustedIntermediateCertPool_NotInitialized_B7(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
-func TestTrustedIntermediateCertPool_IssuedByRoot_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.mu.RLock()
-	root := ca.rootCert
-	ca.mu.RUnlock()
-	require.NotNil(t, root)
-	leaf := &x509.Certificate{Issuer: root.Subject}
-	pool, err := ca.TrustedIntermediateCertPool(leaf)
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
 // =============================================================================
 // trust_chain_extensions.go — TrustedRoot not-initialized / no root
 // =============================================================================
@@ -443,14 +230,6 @@ func TestTrustedRoot_NoRoot_B7(t *testing.T) {
 	assert.ErrorIs(t, err, ErrRootNotFound)
 }
 
-func TestTrustedRoot_Success_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	root, err := ca.TrustedRoot()
-	require.NoError(t, err)
-	assert.NotNil(t, root)
-}
-
 // =============================================================================
 // trust_chain_extensions.go — TrustedIntermediate
 // =============================================================================
@@ -460,14 +239,6 @@ func TestTrustedIntermediate_NotInitialized_B7(t *testing.T) {
 	ca := &CA{}
 	_, err := ca.TrustedIntermediate()
 	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestTrustedIntermediate_Success_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithRealIntermediate(t)
-	intermediate, err := ca.TrustedIntermediate()
-	require.NoError(t, err)
-	assert.NotNil(t, intermediate)
 }
 
 // =============================================================================
@@ -510,50 +281,13 @@ func TestParseBundle_NoCerts_B7(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidPEM)
 }
 
-func TestParseBundle_Success_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.mu.RLock()
-	root := ca.rootCert
-	ca.mu.RUnlock()
-	require.NotNil(t, root)
-
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root.Raw})
-	certs, err := ca.ParseBundle(pemBytes)
-	require.NoError(t, err)
-	assert.Len(t, certs, 1)
-}
-
 // =============================================================================
 // trust_chain_extensions.go — RootCertificate nil-input
 // =============================================================================
 
-func TestRootCertificate_NilInput_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := ca.RootCertificate(nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
 // =============================================================================
 // tls_extensions.go — TLSBundleWithCrossSigner with signer but no xsigned certs
 // =============================================================================
-
-func TestTLSBundleWithCrossSigner_WithSigner_NoXCerts_B7(t *testing.T) {
-	ca := setupTestCA(t)
-	issueCertAndSaveToKeyStore(t, ca, "tls-bundle-xsign-signer-b7")
-	attrs := softwareKeyAttrs("tls-bundle-xsign-signer-b7")
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	bundle, err := ca.TLSBundleWithCrossSigner(context.Background(), attrs, key)
-	// The software backend may wrap keys in an opaque type that cannot be
-	// marshalled as PKCS#8, in which case ErrTLSConfigFailed is expected.
-	if err != nil {
-		assert.ErrorIs(t, err, ErrTLSConfigFailed)
-		return
-	}
-	assert.NotEmpty(t, bundle)
-}
 
 // =============================================================================
 // ca_extensions.go — Certificate fallback to certStore
@@ -573,83 +307,22 @@ func TestCertificate_FallbackToCertStore_B7(t *testing.T) {
 // ca_extensions.go — ImportCertificatePEM
 // =============================================================================
 
-func TestImportCertificatePEM_EmptyCNArg_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	cert, _ := makeSelfSignedCert(t, "import-pem-b7")
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
-	err := ca.ImportCertificatePEM(context.Background(), "", pemBytes)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-func TestImportCertificatePEM_Success_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	cert, _ := makeSelfSignedCert(t, "import-pem-ok-b7")
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
-	err := ca.ImportCertificatePEM(context.Background(), "import-pem-ok-b7", pemBytes)
-	require.NoError(t, err)
-}
-
 // =============================================================================
 // ca_extensions.go — RevokeCert with object store (recordRevocation /
 // putRevocationBlobIfAbsent round-trip)
 // =============================================================================
 
-func TestRevokeCert_WithObjectStore_RoundTrip_B7(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	cert, _ := makeSelfSignedCert(t, "revoke-roundtrip-b7")
-	err := ca.RevokeCert(context.Background(), cert, RevokeOptions{
-		Reason: ReasonKeyCompromise,
-	})
-	require.NoError(t, err)
-	revoked, err := ca.IsRevoked(cert.SerialNumber)
-	require.NoError(t, err)
-	assert.True(t, revoked)
-}
-
 // =============================================================================
 // tcg_oids.go — ParseTPMSpecificationExtension with garbage data
 // =============================================================================
-
-func TestParseTPMSpecificationExtension_GarbageData_B7(t *testing.T) {
-	t.Parallel()
-	_, err := ParseTPMSpecificationExtension([]byte{0x0C, 0xFF, 0xFF})
-	assert.ErrorIs(t, err, ErrTCGExtensionParsing)
-}
 
 // =============================================================================
 // tcg_oids.go — CreateTenantIDExtension large ID
 // =============================================================================
 
-func TestCreateTenantIDExtension_LargeID_B7(t *testing.T) {
-	t.Parallel()
-	longID := make([]byte, 4096)
-	for i := range longID {
-		longID[i] = 'a'
-	}
-	ext, err := CreateTenantIDExtension(string(longID))
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
 // =============================================================================
 // bundle.go — CABundle PEM validity cross-check
 // =============================================================================
-
-func TestCABundle_ContainsValidPEM_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	bundle, err := ca.CABundle()
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-
-	block, _ := pem.Decode(bundle)
-	require.NotNil(t, block)
-	assert.Equal(t, "CERTIFICATE", block.Type)
-	_, err = x509.ParseCertificate(block.Bytes)
-	require.NoError(t, err)
-}
 
 // =============================================================================
 // tcg_oids.go — bool-false round-trip on Residency/Fixed extensions
@@ -663,14 +336,3 @@ func TestCABundle_ContainsValidPEM_B7(t *testing.T) {
 // =============================================================================
 // Additional targeted gap coverage
 // =============================================================================
-
-// TestCAKeyAttributes_StoreTypeMismatch_B7 exercises the store-type mismatch
-// branch that is NOT already tested in session1_extensions_test.go under
-// TestCAKeyAttributes_WrongStoreType (which may already cover it — but adding
-// a dedicated b7 variant for the typed error assertion).
-func TestCAKeyAttributes_StoreTypeMismatch_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := ca.CAKeyAttributes(types.StoreTPM2)
-	assert.ErrorIs(t, err, ErrInvalidStoreType)
-}

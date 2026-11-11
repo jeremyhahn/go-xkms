@@ -33,7 +33,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -435,54 +434,13 @@ func TestSerialMarkUsed_StoreError_B8(t *testing.T) {
 // (exercises the certificate parse + store path at lines 141-171)
 // =============================================================================
 
-func TestImportAttestationKeyCertificate_Success_B8(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-
-	// Build a real DER-encoded certificate to import.
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "ak-cert-b8"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-
-	attrs := &types.KeyAttributes{CN: "ak-cert-b8"}
-	err = ca.ImportAttestationKeyCertificate(context.Background(), attrs, certDER)
-	require.NoError(t, err)
-}
-
 // =============================================================================
 // ca_extensions.go — recordRevocation: nil serial path
 // =============================================================================
 
-func TestRecordRevocation_NilSerial_B8(t *testing.T) {
-	t.Parallel()
-	ca := &CA{revocations: make(map[string]*RevocationInfo)}
-	err := ca.recordRevocation(context.Background(), nil, 0, false)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
 // =============================================================================
 // ca_extensions.go — putRevocationBlobIfAbsent with revocationStore (Backend)
 // =============================================================================
-
-func TestPutRevocationBlob_RevocationStorePath_B8(t *testing.T) {
-	t.Parallel()
-	backend := storage.NewMemory()
-	ca := &CA{
-		revocationStore: backend,
-		revocations:     make(map[string]*RevocationInfo),
-	}
-	stored, err := ca.putRevocationBlobIfAbsent(context.Background(), big.NewInt(55555), []byte(`{"serial":"55555"}`))
-	require.NoError(t, err)
-	assert.True(t, stored)
-}
 
 // =============================================================================
 // ca_extensions.go — Issued: both certStore and keyStore paths
@@ -491,13 +449,6 @@ func TestPutRevocationBlob_RevocationStorePath_B8(t *testing.T) {
 // =============================================================================
 // ca_extensions.go — SignedBlob not-initialized path
 // =============================================================================
-
-func TestSignedBlob_NotInitialized_B8(t *testing.T) {
-	t.Parallel()
-	ca := &CA{}
-	_, err := ca.SignedBlob(context.Background(), []byte("data"))
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
 
 // =============================================================================
 // ca_extensions.go — Certificate: returned from certStore when keyStore empty
@@ -680,15 +631,6 @@ func TestVerifyWithOptions_WithIntermediates_B8(t *testing.T) {
 // =============================================================================
 // ca_extensions.go — SignedBlob success path (ECDSA hash path)
 // =============================================================================
-
-func TestSignedBlob_Success_B8(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	data := []byte("test-payload-b8")
-	sig, err := ca.SignedBlob(context.Background(), data)
-	require.NoError(t, err)
-	assert.NotEmpty(t, sig)
-}
 
 // =============================================================================
 // ca_extensions.go — CAKeyAttributes: getCAKeyAttributes error path

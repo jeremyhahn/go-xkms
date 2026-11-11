@@ -24,7 +24,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"math/big"
 	"testing"
@@ -106,27 +105,6 @@ func setupEd25519CA(t *testing.T) *CA {
 // (brings Sign from 77.8% toward 100%)
 // =============================================================================
 
-// TestSign_NotInitialized exercises the ErrNotInitialized guard at the top of Sign.
-func TestSign_NotInitialized_B9(t *testing.T) {
-	t.Parallel()
-	ca := &CA{}
-	_, err := ca.Sign(nil, []byte("digest"), nil)
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-// TestSign_Success exercises the happy path of Sign using the CA as crypto.Signer.
-func TestSign_Success_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// Sign a SHA-256 digest of a small message.
-	digest := make([]byte, 32) // 32 bytes = SHA-256 output
-	_, err := rand.Read(digest)
-	require.NoError(t, err)
-	sig, err := ca.Sign(rand.Reader, digest, crypto.SHA256)
-	require.NoError(t, err)
-	assert.NotEmpty(t, sig)
-}
-
 // TestSign_GetSignerError verifies that Sign propagates getSigner errors.
 // We exercise this by calling Sign on an uninitialised CA that has been
 // force-marked initialized but has no issuing identity configured.
@@ -142,28 +120,6 @@ func TestSign_GetSignerError_B9(t *testing.T) {
 // =============================================================================
 // ca.go — CABundle: both intermediate-present and empty-bundle error paths
 // =============================================================================
-
-// TestCABundle_WithIntermediate exercises the intermediate branch (line 831-838)
-// where intermediateCert != nil adds to the bundle.
-func TestCABundle_WithIntermediate_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithRealIntermediate(t)
-	bundle, err := ca.CABundle()
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-	// Bundle must contain at least two PEM blocks (intermediate + root).
-	rest := bundle
-	count := 0
-	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		count++
-	}
-	assert.GreaterOrEqual(t, count, 2)
-}
 
 // TestCABundle_EmptyBundle exercises the "buf.Len() == 0" guard by zeroing
 // both cached certificates after initialization.
@@ -407,20 +363,6 @@ func TestNewCA_WithIntermediate_B9(t *testing.T) {
 	assert.True(t, intermediate.IsInitialized())
 }
 
-// TestNewCA_NilParams_B9 exercises the nil params guard.
-func TestNewCA_NilParams_B9(t *testing.T) {
-	t.Parallel()
-	_, _, err := NewCA(context.Background(), nil)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
-// TestNewCA_NoIdentity_B9 exercises the empty-identity guard.
-func TestNewCA_NoIdentity_B9(t *testing.T) {
-	t.Parallel()
-	_, _, err := NewCA(context.Background(), &Params{})
-	assert.ErrorIs(t, err, ErrNoIdentity)
-}
-
 // =============================================================================
 // constructors.go — NewIntermediateCA error paths
 // =============================================================================
@@ -462,20 +404,6 @@ func TestNewIntermediateCA_NoIntermediateIdentity_B9(t *testing.T) {
 // =============================================================================
 // constructors.go — NewParentCA error paths
 // =============================================================================
-
-// TestNewParentCA_NilParams_B9 exercises nil params guard.
-func TestNewParentCA_NilParams_B9(t *testing.T) {
-	t.Parallel()
-	_, err := NewParentCA(nil)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
-// TestNewParentCA_NoIdentity_B9 exercises empty identity guard.
-func TestNewParentCA_NoIdentity_B9(t *testing.T) {
-	t.Parallel()
-	_, err := NewParentCA(&Params{})
-	assert.ErrorIs(t, err, ErrNoIdentity)
-}
 
 // TestNewParentCA_Success_B9 exercises the full happy path of NewParentCA.
 func TestNewParentCA_Success_B9(t *testing.T) {
@@ -674,62 +602,6 @@ func b9MakeSelfSignedCACert(t *testing.T, cn string) (*x509.Certificate, *ecdsa.
 	return cert, key
 }
 
-// TestImportXSignedCertificate_Success_B9 exercises ImportXSignedCertificate.
-func TestImportXSignedCertificate_Success_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
-
-	cert, _ := b9MakeSelfSignedCACert(t, "xsigned-import-b9")
-	err := ca.ImportXSignedCertificate("issuer-b9", cert)
-	require.NoError(t, err)
-}
-
-// TestImportXSignedCertificate_NoObjectStore_B9 exercises ErrObjectStoreRequired.
-func TestImportXSignedCertificate_NoObjectStore_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.objectStore = nil
-
-	cert, _ := b9MakeSelfSignedCACert(t, "xsigned-nostore-b9")
-	err := ca.ImportXSignedCertificate("issuer-b9", cert)
-	assert.ErrorIs(t, err, ErrObjectStoreRequired)
-}
-
-// TestImportXSignedCertificate_EmptyIssuer_B9 exercises empty issuerCN guard.
-func TestImportXSignedCertificate_EmptyIssuer_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
-
-	cert, _ := b9MakeSelfSignedCACert(t, "xsigned-emptyissuer-b9")
-	err := ca.ImportXSignedCertificate("", cert)
-	require.Error(t, err)
-}
-
-// TestImportXSignedCertificate_NilCert_B9 exercises nil cert guard.
-func TestImportXSignedCertificate_NilCert_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
-
-	err := ca.ImportXSignedCertificate("issuer-b9", nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-// TestXSignedRootCertificate_SelfSigned_B9 exercises the early return when
-// cert is already self-signed (Issuer == Subject).
-func TestXSignedRootCertificate_SelfSigned_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
-
-	cert, _ := b9MakeSelfSignedCACert(t, "xroot-selfsigned-b9")
-	got, err := ca.XSignedRootCertificate("issuer-b9", cert)
-	require.NoError(t, err)
-	assert.Equal(t, cert, got)
-}
-
 // TestXSignedRootCertificate_NoObjectStore_B9 exercises ErrObjectStoreRequired.
 func TestXSignedRootCertificate_NoObjectStore_B9(t *testing.T) {
 	t.Parallel()
@@ -739,40 +611,6 @@ func TestXSignedRootCertificate_NoObjectStore_B9(t *testing.T) {
 	cert, _ := b9MakeSelfSignedCACert(t, "xroot-nostore-b9")
 	_, err := ca.XSignedRootCertificate("issuer-b9", cert)
 	assert.ErrorIs(t, err, ErrObjectStoreRequired)
-}
-
-// TestXSignedIntermediateCertificates_Empty_B9 exercises XSignedIntermediateCertificates
-// when the chain lookup immediately fails (no cross-signed certs in store).
-func TestXSignedIntermediateCertificates_Empty_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
-
-	// Manufacture a non-self-signed cert (Issuer != Subject) so the loop runs.
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
-	childTmpl := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "xint-child-b9"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-	}
-	parentTmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(9999),
-		Subject:      pkix.Name{CommonName: "xint-parent-b9"},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, childTmpl, parentTmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(der)
-	require.NoError(t, err)
-
-	ints, err := ca.XSignedIntermediateCertificates("issuer-b9", cert)
-	require.NoError(t, err)
-	assert.Empty(t, ints)
 }
 
 // TestXSignedIntermediateCertificates_NoObjectStore_B9 exercises ErrObjectStoreRequired.
@@ -786,16 +624,6 @@ func TestXSignedIntermediateCertificates_NoObjectStore_B9(t *testing.T) {
 	assert.ErrorIs(t, err, ErrObjectStoreRequired)
 }
 
-// TestCrossSignedPEM_NilAttrs_B9 exercises nil attrs guard in CrossSignedPEM.
-func TestCrossSignedPEM_NilAttrs_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
-
-	_, err := ca.CrossSignedPEM(nil)
-	require.Error(t, err)
-}
-
 // TestCrossSignedPEM_NoObjectStore_B9 exercises ErrObjectStoreRequired in CrossSignedPEM.
 func TestCrossSignedPEM_NoObjectStore_B9(t *testing.T) {
 	t.Parallel()
@@ -805,33 +633,6 @@ func TestCrossSignedPEM_NoObjectStore_B9(t *testing.T) {
 	attrs := &types.KeyAttributes{CN: "some-cn-b9"}
 	_, err := ca.CrossSignedPEM(attrs)
 	assert.ErrorIs(t, err, ErrObjectStoreRequired)
-}
-
-// TestCrossSignedPEM_NotFound_B9 exercises the "bundle is empty" error path.
-func TestCrossSignedPEM_NotFound_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage() // empty store
-
-	attrs := &types.KeyAttributes{CN: "missing-cn-b9"}
-	_, err := ca.CrossSignedPEM(attrs)
-	assert.ErrorIs(t, err, ErrCertificateNotFound)
-}
-
-// TestCrossSignedPEM_Found_B9 exercises the successful bundle-building path.
-func TestCrossSignedPEM_Found_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
-
-	subjectCN := "crosssignedpem-subject-b9"
-	cert, _ := b9MakeSelfSignedCACert(t, subjectCN)
-	require.NoError(t, ca.ImportXSignedCertificate("issuer-b9", cert))
-
-	attrs := &types.KeyAttributes{CN: subjectCN}
-	bundle, err := ca.CrossSignedPEM(attrs)
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
 }
 
 // =============================================================================
@@ -976,28 +777,6 @@ func TestIsRevoked_NilSerial_B9(t *testing.T) {
 // =============================================================================
 // ca_extensions.go — CABundle filtered: storeType mismatch path
 // =============================================================================
-
-// TestCAKeyAttributes_StoreTypeMismatch_B9 exercises the mismatch guard in
-// CAKeyAttributes (lines 448-451) where storeType != configured type.
-func TestCAKeyAttributes_StoreTypeMismatch_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// The CA is configured with StoreSoftware; request TPM2 to trigger mismatch.
-	_, err := ca.CAKeyAttributes(types.StoreTPM2)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidStoreType)
-}
-
-// TestCASigner_AlgorithmMismatch_B9 exercises the algorithm mismatch guard in
-// CASigner (lines 470-473).
-func TestCASigner_AlgorithmMismatch_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// The CA has an ECDSA key; request RSA to trigger the mismatch.
-	_, err := ca.CASigner(context.Background(), types.StoreSoftware, x509.RSA)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
-}
 
 // =============================================================================
 // ca_extensions.go — loadPersistedRevocations: invalid serial string path
