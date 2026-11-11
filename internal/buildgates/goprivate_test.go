@@ -23,6 +23,11 @@ const inHouseModules = "github.com/jeremyhahn"
 var goPrivateAssign = regexp.MustCompile(
 	`(?:^|[^A-Za-z0-9_])(?:(GOPRIVATE|GONOSUMDB|GONOPROXY|GOINSECURE|GOMODAUTH_GOPRIVATE)(?:\s*(?::=|\?=|\+=|=)\s*|:\s+)|ENV\s+(GOPRIVATE|GONOSUMDB|GONOPROXY|GOINSECURE)\s+)(.*)`)
 
+// giteaOnly matches a ${GITEA_HOST:+...} expansion: the module name it holds
+// only applies with a Gitea rewrite configured (main #2057, CA m2514), so
+// the gate drops it before it looks for an in-house module.
+var giteaOnly = regexp.MustCompile(`\$\{GITEA_HOST:\+[^{}]*\}`)
+
 // goPrivateProblems reports each line of src (named name) that assigns one of
 // the variables above a value naming an in-house module. A comment line, or
 // the comment after ` #`, does not count; a value passed through from the
@@ -37,7 +42,7 @@ func goPrivateProblems(name, src string) []string {
 			line = line[:j]
 		}
 		for _, m := range goPrivateAssign.FindAllStringSubmatch(line, -1) {
-			if strings.Contains(m[3], inHouseModules) {
+			if strings.Contains(giteaOnly.ReplaceAllString(m[3], ""), inHouseModules) {
 				problems = append(problems, name+":"+strconv.Itoa(i+1)+": "+m[1]+m[2]+" names an in-house module")
 			}
 		}
