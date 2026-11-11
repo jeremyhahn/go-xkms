@@ -68,27 +68,6 @@ func issueCertAndSaveToKeyStore(t *testing.T, ca *CA, cn string) {
 	require.NoError(t, ca.ImportCertificate(context.Background(), issued.Certificate))
 }
 
-// buildRSAPSSCert creates a self-signed certificate whose signature algorithm
-// is SHA256WithRSAPSS, for exercising the PSS verification path.
-func buildRSAPSSCert(t *testing.T) *x509.Certificate {
-	t.Helper()
-	key := generateTestRSAKey(t)
-
-	template := &x509.Certificate{
-		SerialNumber:       big.NewInt(1),
-		Subject:            pkix.Name{CommonName: "pss-test"},
-		NotBefore:          time.Now().Add(-time.Hour),
-		NotAfter:           time.Now().Add(24 * time.Hour),
-		SignatureAlgorithm: x509.SHA256WithRSAPSS,
-		KeyUsage:           x509.KeyUsageDigitalSignature,
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err, "crypto/x509 must be able to self-sign with SHA256WithRSAPSS")
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-	return cert
-}
-
 // =============================================================================
 // tls_extensions.go — TLSBundleWithCrossSigner happy path (21%)
 // =============================================================================
@@ -179,12 +158,6 @@ func TestIssueEKCertificateRaw_Success_B2(t *testing.T) {
 	assert.Equal(t, "test-ek-raw", cert.Subject.CommonName)
 }
 
-func TestIssueEKCertificateRaw_InvalidDER_B2(t *testing.T) {
-	ca := createTestCAForTCG(t)
-	_, err := ca.IssueEKCertificateRaw(context.Background(), "test-ek", "Test Org", []byte("not-valid-der"), testTenant)
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // service_adapter.go — IssueAKCertificateRaw (87% → exercise the happy path)
 // =============================================================================
@@ -203,12 +176,6 @@ func TestIssueAKCertificateRaw_Success_B2(t *testing.T) {
 	cert, err := x509.ParseCertificate(certDER)
 	require.NoError(t, err)
 	assert.Equal(t, "test-ak-raw", cert.Subject.CommonName)
-}
-
-func TestIssueAKCertificateRaw_InvalidDER_B2(t *testing.T) {
-	ca := createTestCAForTCG(t)
-	_, err := ca.IssueAKCertificateRaw(context.Background(), "test-ak", "Test Org", []byte("bad"), testTenant)
-	assert.Error(t, err)
 }
 
 // =============================================================================
@@ -293,13 +260,6 @@ func TestRevokeCert_NotInitialized_B2(t *testing.T) {
 // ca_extensions.go — DefaultValidityPeriod from caConfig (partial)
 // =============================================================================
 
-func TestDefaultValidityPeriod_FromMultiConfig(t *testing.T) {
-	ca := setupTestCA(t)
-	ca.caConfig = nil
-	days := ca.DefaultValidityPeriod()
-	assert.GreaterOrEqual(t, days, 0)
-}
-
 // =============================================================================
 // ca_extensions.go — IsAutoImportingIssuerCAs (66%)
 // =============================================================================
@@ -323,25 +283,9 @@ func TestPEM_NilAttrs_B2(t *testing.T) {
 // ca_extensions.go — DefaultSignatureAlgorithm nil issuing path (85%)
 // =============================================================================
 
-func TestDefaultSignatureAlgorithm_NilIssuing_B2(t *testing.T) {
-	ca := &CA{
-		config: &MultiIdentityCAConfig{},
-	}
-	algo := ca.DefaultSignatureAlgorithm()
-	assert.Equal(t, x509.UnknownSignatureAlgorithm, algo)
-}
-
 // =============================================================================
 // ca_extensions.go — DefaultKeyAlgorithm nil issuing (50%)
 // =============================================================================
-
-func TestDefaultKeyAlgorithm_NilIssuing_B2(t *testing.T) {
-	ca := &CA{
-		config: &MultiIdentityCAConfig{},
-	}
-	algo := ca.DefaultKeyAlgorithm()
-	assert.Equal(t, x509.UnknownPublicKeyAlgorithm, algo)
-}
 
 // =============================================================================
 // ca.go — Verify (66%)

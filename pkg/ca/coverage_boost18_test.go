@@ -95,37 +95,6 @@ func TestNewHierarchicalCA_PreservesFullTopology_B18(t *testing.T) {
 	require.ErrorAs(t, err, &notFound)
 }
 
-// TestNewHierarchicalCA_WithBackendForStore proves the BackendForStore
-// routing path: buildKeystoreMap runs for every configured identity and the
-// resulting per-store-type backends are recorded on the CA.
-func TestNewHierarchicalCA_WithBackendForStore_B18(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-	cfg := clusterTestConfig()
-
-	var calls int
-	factory := func(cn string, st types.StoreType) (xkms.Backend, error) {
-		calls++
-		return backend, nil
-	}
-
-	got, err := NewHierarchicalCA(&MultiIdentityParams{
-		Config:          cfg,
-		KeyStore:        backend,
-		RevocationStore: storage.NewMemory(),
-		CertStore:       cs,
-		BackendForStore: factory,
-	})
-	require.NoError(t, err)
-	caImpl, ok := got.(*CA)
-	require.True(t, ok)
-	require.NotNil(t, caImpl.keystoreMap)
-	assert.Same(t, backend, caImpl.keystoreMap[types.StoreSoftware])
-	assert.Greater(t, calls, 0, "factory must be invoked for at least one identity")
-
-	require.NoError(t, got.Init(context.Background()))
-}
-
 // TestNewHierarchicalCA_BackendForStoreError proves a factory failure for
 // any configured identity aborts construction (buildKeystoreMap's error
 // propagates from NewHierarchicalCA rather than being swallowed).

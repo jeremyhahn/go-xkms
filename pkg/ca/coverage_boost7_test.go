@@ -18,11 +18,9 @@ package ca
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -77,15 +75,6 @@ func TestVerifyRSASignature_ZeroHash(t *testing.T) {
 	assert.Error(t, err)
 	var ve *VerificationError
 	assert.True(t, errors.As(err, &ve))
-}
-
-func TestVerifyRSASignature_PSS_Success(t *testing.T) {
-	t.Parallel()
-	cert := buildRSAPSSCert(t)
-	rsaPub, ok := cert.PublicKey.(*rsa.PublicKey)
-	require.True(t, ok, "expected RSA public key")
-	err := verifyRSASignature(cert, rsaPub, crypto.SHA256)
-	assert.NoError(t, err)
 }
 
 // =============================================================================

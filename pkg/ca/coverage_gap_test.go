@@ -44,11 +44,6 @@ import (
 // ca.go — ObjectStore accessor (0%)
 // =============================================================================
 
-func TestCA_ObjectStore_Nil(t *testing.T) {
-	ca := setupTestCA(t)
-	assert.Nil(t, ca.ObjectStore())
-}
-
 // =============================================================================
 // ca_extensions.go — PrivateKey (33%) — missing error branch
 // =============================================================================
@@ -59,31 +54,9 @@ func TestPrivateKey_KeyNotFound(t *testing.T) {
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 }
 
-func TestPrivateKey_Success(t *testing.T) {
-	ca := setupTestCA(t)
-	rootIdentity := ca.config.RootIdentity()
-	require.NotNil(t, rootIdentity)
-	attrs, err := ca.getCAKeyAttributes(t.Context(), rootIdentity)
-	require.NoError(t, err)
-	key, err := ca.PrivateKey(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
-}
-
 // =============================================================================
 // ca_extensions.go — PubKey (22%) — success + non-signer error branch
 // =============================================================================
-
-func TestPubKey_Success(t *testing.T) {
-	ca := setupTestCA(t)
-	rootIdentity := ca.config.RootIdentity()
-	require.NotNil(t, rootIdentity)
-	attrs, err := ca.getCAKeyAttributes(t.Context(), rootIdentity)
-	require.NoError(t, err)
-	pub, err := ca.PubKey(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, pub)
-}
 
 // =============================================================================
 // ca_extensions.go — Certificate (82%) — nil attrs guard

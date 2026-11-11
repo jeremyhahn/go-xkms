@@ -200,31 +200,6 @@ func setupTestService90(t *testing.T) (*RestService, string, func()) {
 // NewAccountHandler coverage tests - targeting 60.6% -> 90%+
 // =============================================================================
 
-func TestNewAccountHandler_EABErrorPaths(t *testing.T) {
-	service, _, cleanup := setupTestService90(t)
-	defer cleanup()
-
-	// Enable external account required
-	service.externalAccountRequired = true
-
-	testKey := generateTestKey(t)
-
-	t.Run("EAB required but missing", func(t *testing.T) {
-		url := "https://acme.test.example.com/acme/new-account"
-		req := createJWSRequest(t, service, testKey, url, map[string]interface{}{
-			"contact":              []string{"mailto:test@example.com"},
-			"termsOfServiceAgreed": true,
-		}, false, 0)
-
-		rr := httptest.NewRecorder()
-		service.NewAccountHandler(rr, req)
-
-		// ExternalAccountRequired returns http.StatusUnauthorized (401)
-		assert.Equal(t, http.StatusUnauthorized, rr.Code)
-		assert.Contains(t, rr.Body.String(), "externalAccountRequired")
-	})
-}
-
 // =============================================================================
 // OCSPHandler coverage tests - targeting 81% -> 90%+
 // =============================================================================

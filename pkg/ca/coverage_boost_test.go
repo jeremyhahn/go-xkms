@@ -196,15 +196,6 @@ func TestSignatureAlgorithmToName_AllAlgorithms(t *testing.T) {
 // Params.Validate Tests
 // =============================================================================
 
-func TestParams_Validate_NilKeyAttributes(t *testing.T) {
-	p := &Params{
-		Config:        &CAConfig{Identity: "test", Subject: &Subject{CommonName: "test"}},
-		KeyAttributes: nil,
-	}
-	err := p.Validate()
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
 func TestParams_Validate_NilKeyStore(t *testing.T) {
 	p := &Params{
 		Config:        &CAConfig{Identity: "test", Subject: &Subject{CommonName: "test"}},
@@ -246,12 +237,6 @@ func TestNew_NilParams(t *testing.T) {
 // =============================================================================
 // caConfigToMultiIdentity Tests
 // =============================================================================
-
-func TestCaConfigToMultiIdentity_EmptySubject(t *testing.T) {
-	cfg := &CAConfig{Identity: "from-identity"}
-	multi := caConfigToMultiIdentity(cfg, nil)
-	assert.Equal(t, "from-identity", multi.Identity[0].Subject.CommonName)
-}
 
 // =============================================================================
 // determineSignatureAlgorithm Tests

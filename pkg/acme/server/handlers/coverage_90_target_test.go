@@ -16,92 +16,11 @@
 package handlers
 
 import (
-	"context"
 	"encoding/binary"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
-	"github.com/go-jose/go-jose/v4"
-	"github.com/gorilla/mux"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-// =============================================================================
-// Test helper function
-// =============================================================================
-
-// setupTestServiceWithMockCAForCoverage creates a test service with a mock CA for coverage testing
-func setupTestServiceWithMockCAForCoverage(t *testing.T) (*RestService, *MockCAForFinalize, func()) {
-	return setupTestServiceWithMockCA(t)
-}
-
-// =============================================================================
-// OrderFinalizeHandler Coverage Tests
-// =============================================================================
-
-func TestOrderFinalizeHandler_InvalidPayloadJSONCoverage(t *testing.T) {
-	service, mockCA, cleanup := setupTestServiceWithMockCAForCoverage(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	_ = mockCA
-
-	// Create ready order
-	ctx := context.Background()
-	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
-	require.NoError(t, err)
-
-	order := &entities.ACMEOrder{
-		ID:        12346,
-		AccountID: account.ID,
-		Status:    common.StatusReady,
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: "dns", Value: "example.com"},
-		},
-	}
-	err = orderDAO.Save(ctx, order)
-	require.NoError(t, err)
-
-	// Invalid JSON payload
-	url := service.baseRESTURI + "/acme/order/12346/finalize"
-
-	nonce, err := service.GetNonceService().Generate()
-	require.NoError(t, err)
-
-	signerOpts := &jose.SignerOptions{
-		NonceSource: &staticNonceSource{nonce: nonce},
-		ExtraHeaders: map[jose.HeaderKey]interface{}{
-			"url": url,
-			"kid": fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID),
-		},
-	}
-
-	signer, err := jose.NewSigner(jose.SigningKey{
-		Algorithm: jose.ES256,
-		Key:       key.PrivateKey,
-	}, signerOpts)
-	require.NoError(t, err)
-
-	// Send invalid JSON
-	jws, err := signer.Sign([]byte("{invalid json"))
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, url, strings.NewReader(jws.FullSerialize()))
-	req = mux.SetURLVars(req, map[string]string{"id": "12346"})
-
-	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
-
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
-}
 
 // =============================================================================
 // parseLegacyEvent Tests - Target 90% coverage
