@@ -100,7 +100,13 @@ The [WebServer] log line, once per test:
 - Open: `NewHostServer` (API module hosts) builds its token issuer without
   a CallContext, and the issuer's qrdb user resolver (refresh re-check)
   still runs on the caller's context; neither is in the six tests.
+- Cross-origin fixed (wa2541g): #2033's CORS test and fix brought in
+  (`pkg/apimodule` wraps each unified-surface route with the REST server's
+  `CORSMiddleware` and answers preflights). Native rerun in Chrome on this
+  node: 7 of 7 browser tests pass, the cross-origin test included.
+- Known gap (go-qrdb, ruling 159): Codex's P1 on #2033, CORS headers on the
+  host's 401/403 responses, sits in go-qrdb; no go-qrdb change here.
 
 ## Out of scope
 
-The cross-origin test (CORS, #2033). Suite assertions are unchanged.
+CORS headers on the host's 401/403 responses (go-qrdb). Suite assertions are unchanged.
