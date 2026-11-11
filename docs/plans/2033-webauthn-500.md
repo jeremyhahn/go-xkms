@@ -24,4 +24,31 @@ The daemon log in CI shows no WARN or ERROR line for these 500s.
 
 ## Underlying error
 
-To be filled by the reproduction.
+Not found yet. Lane mf2533b (native, no Docker, on this node):
+
+- Built `./cmd/xkmsd` with the recipe's tags
+  (`pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack`), ran
+  `run-server.sh` from a copy of the suite directory under /tmp: init, boot,
+  barrier unsealed through `open-server-barrier.sh`.
+- Drove `registration/begin` + `registration/finish` with
+  `pkg/webauthn/client` (`HTTPRelyingParty` + `SoftwareAdapter`, origin
+  `https://localhost:18443`): registration **succeeds** (no error, result
+  returned). So the plain same-origin finish path, `mintTokens` included,
+  works natively with the software authenticator.
+- `handleServiceError` (`pkg/webauthn/http/handler.go:303`) logs the cause
+  only at Debug (`"webauthn service error"`); the suite's config already sets
+  `logging.level: debug`, yet CI's daemon log shows no such line, so that
+  handler's logger does not appear to honour the configured level.
+
+## Next slice
+
+1. Run the Playwright suite natively (`npm ci`, `npx playwright install
+   chromium chromium-headless-shell`, `XKMSD_BIN=... npx playwright test`) to
+   see whether the 500 reproduces without Docker; the browser's virtual
+   authenticator differs from `SoftwareAdapter` (resident key, attestation
+   format, algorithm, `runRegistration` body fields at spec line 95-200).
+2. Find where the webauthn `Handler`'s logger is built and why its Debug
+   line is dropped; with it visible, the underlying error is in the log.
+3. Candidate paths in `runFinishRegistration` (`pkg/webauthn/service.go:467`):
+   `finishPublicRegistration` (public sign-up, which the suite uses),
+   `saveRegisteredCredential`, then `mintTokens` (`service.go:959`).
