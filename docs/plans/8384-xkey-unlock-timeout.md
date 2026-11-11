@@ -55,3 +55,7 @@ xkey go vet (TEST_TAGS) on cmd/xkey/cmd and pkg/ipc: pass.
 xkey go test -count=3 -race (TEST_TAGS): pkg/ipc pass; cmd/xkey/cmd fails only TestOIDCServerMode_{Lifecycle,DeviceLogin,Refusals} on 2 of 3 counts, "oidc: provider not found" at xkey/cmd/xkey/cmd/oidc_server_test.go:128; alone with -count=3 they pass; that file is main's (not in #2068), so not fixed here. Untagged go test fails on the codec_json tag, so use the Makefile tags.
 root go build: pass.
 - OIDC server-mode tests fail under -count=3 (oidc_server_test.go:128, provider not found); fix to follow (lane xk2068b, DS-8447).
+- Cause: runOIDCCommand reset every flag of the command; once cobra merged the persistent flags, that cleared the root --xkmsd-url bound to xkmsdURL (root.go:230), so later commands ran locally. Fix: reset only the flags the call set; TestRunOIDCCommand_KeepsTheServerEndpoint fails before it.
+- xkey go test -race -count=3 (TEST_TAGS) ./cmd/xkey/cmd: pass.
+- xkey go test -race -count=3 (TEST_TAGS) ./pkg/ipc: pass.
+- xkey go vet (TEST_TAGS) ./cmd/xkey/cmd: pass.
