@@ -77,6 +77,14 @@ The [WebServer] log line, once per test:
   `qrdbstorage.CallContext`); every users/creds call runs on the bound
   context; both `BuildWebAuthnService` call sites pass the node's service
   context binder.
+- Second layer (wa2541e native rerun after the binder): begin passes, finish
+  answers 500 with `qrdb/auth/rbac: permission denied: qrdb-service:xkms
+  cannot read on users`. The running xkmsd's service principal holds no user
+  permission (`pkg/embeddednode/serviceprincipal`: only `xkmsd init` adds
+  its ceremony grant). Fix: a WebAuthn grant (`users:read`, `users:create`,
+  `users:update`, `users:delete`, go-qrdb `pkg/permission` names),
+  registered only when the server builds the WebAuthn service over the
+  embedded node. No go-qrdb change.
 
 ## Out of scope
 
