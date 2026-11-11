@@ -198,6 +198,8 @@ const (
 	KeystoreService_ListSigningKeyBindings_FullMethodName       = "/xkms.v1.KeystoreService/ListSigningKeyBindings"
 	KeystoreService_DeleteSigningKeyBinding_FullMethodName      = "/xkms.v1.KeystoreService/DeleteSigningKeyBinding"
 	KeystoreService_ResolveSigningKey_FullMethodName            = "/xkms.v1.KeystoreService/ResolveSigningKey"
+	KeystoreService_SignCoRIM_FullMethodName                    = "/xkms.v1.KeystoreService/SignCoRIM"
+	KeystoreService_SignImage_FullMethodName                    = "/xkms.v1.KeystoreService/SignImage"
 	KeystoreService_PKCS11StatePut_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StatePut"
 	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName       = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
 	KeystoreService_PKCS11StateCAS_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StateCAS"
@@ -681,6 +683,13 @@ type KeystoreServiceClient interface {
 	DeleteSigningKeyBinding(ctx context.Context, in *DeleteSigningKeyBindingRequest, opts ...grpc.CallOption) (*DeleteSigningKeyBindingResponse, error)
 	// ResolveSigningKey returns the key that signs a repository.
 	ResolveSigningKey(ctx context.Context, in *ResolveSigningKeyRequest, opts ...grpc.CallOption) (*SigningKeyResolution, error)
+	// SignCoRIM signs a repository's CoRIM with the key ResolveSigningKey
+	// returns, as a draft-ietf-rats-corim-11 §4.2 signed CoRIM.
+	SignCoRIM(ctx context.Context, in *SignCoRIMRequest, opts ...grpc.CallOption) (*SignedCoRIM, error)
+	// SignImage signs an image with the key ResolveSigningKey returns for the
+	// image's repository and pushes the DSSE attestation to the registry as an
+	// OCI 1.1 referrer and to the image's cosign ".att" tag.
+	SignImage(ctx context.Context, in *SignImageRequest, opts ...grpc.CallOption) (*SignedImage, error)
 	PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error)
@@ -2513,6 +2522,26 @@ func (c *keystoreServiceClient) ResolveSigningKey(ctx context.Context, in *Resol
 	return out, nil
 }
 
+func (c *keystoreServiceClient) SignCoRIM(ctx context.Context, in *SignCoRIMRequest, opts ...grpc.CallOption) (*SignedCoRIM, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SignedCoRIM)
+	err := c.cc.Invoke(ctx, KeystoreService_SignCoRIM_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) SignImage(ctx context.Context, in *SignImageRequest, opts ...grpc.CallOption) (*SignedImage, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SignedImage)
+	err := c.cc.Invoke(ctx, KeystoreService_SignImage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PKCS11StatePutResponse)
@@ -3372,6 +3401,13 @@ type KeystoreServiceServer interface {
 	DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBindingRequest) (*DeleteSigningKeyBindingResponse, error)
 	// ResolveSigningKey returns the key that signs a repository.
 	ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error)
+	// SignCoRIM signs a repository's CoRIM with the key ResolveSigningKey
+	// returns, as a draft-ietf-rats-corim-11 §4.2 signed CoRIM.
+	SignCoRIM(context.Context, *SignCoRIMRequest) (*SignedCoRIM, error)
+	// SignImage signs an image with the key ResolveSigningKey returns for the
+	// image's repository and pushes the DSSE attestation to the registry as an
+	// OCI 1.1 referrer and to the image's cosign ".att" tag.
+	SignImage(context.Context, *SignImageRequest) (*SignedImage, error)
 	PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error)
@@ -3978,6 +4014,12 @@ func (UnimplementedKeystoreServiceServer) DeleteSigningKeyBinding(context.Contex
 }
 func (UnimplementedKeystoreServiceServer) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResolveSigningKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SignCoRIM(context.Context, *SignCoRIMRequest) (*SignedCoRIM, error) {
+	return nil, status.Error(codes.Unimplemented, "method SignCoRIM not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SignImage(context.Context, *SignImageRequest) (*SignedImage, error) {
+	return nil, status.Error(codes.Unimplemented, "method SignImage not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PKCS11StatePut not implemented")
@@ -7276,6 +7318,42 @@ func _KeystoreService_ResolveSigningKey_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_SignCoRIM_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SignCoRIMRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SignCoRIM(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SignCoRIM_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SignCoRIM(ctx, req.(*SignCoRIMRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_SignImage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SignImageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SignImage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SignImage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SignImage(ctx, req.(*SignImageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PKCS11StatePut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PKCS11StatePutRequest)
 	if err := dec(in); err != nil {
@@ -8738,6 +8816,14 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResolveSigningKey",
 			Handler:    _KeystoreService_ResolveSigningKey_Handler,
+		},
+		{
+			MethodName: "SignCoRIM",
+			Handler:    _KeystoreService_SignCoRIM_Handler,
+		},
+		{
+			MethodName: "SignImage",
+			Handler:    _KeystoreService_SignImage_Handler,
 		},
 		{
 			MethodName: "PKCS11StatePut",

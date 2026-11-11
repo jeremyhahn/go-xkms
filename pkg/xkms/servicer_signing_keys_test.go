@@ -51,6 +51,14 @@ func (g grantedRBAC) Authorize(_ context.Context, _ *qrdbtransport.Identity, res
 // Authorizer granting exactly grants, and a context for a tenant-a caller.
 func signingKeyService(t *testing.T, grants ...string) (*XKMSService, context.Context) {
 	t.Helper()
+	svc := &XKMSService{}
+	return svc, withSigningKeys(t, svc, grants...)
+}
+
+// withSigningKeys wires an in-memory Appraiser and an authorizer holding
+// grants into svc, and returns a tenant-a caller's context.
+func withSigningKeys(t *testing.T, svc *XKMSService, grants ...string) context.Context {
+	t.Helper()
 	store, err := appraisal.NewStore(appraisal.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
 	appraiser, err := appraisal.NewAppraiser(store)
@@ -59,11 +67,9 @@ func signingKeyService(t *testing.T, grants ...string) (*XKMSService, context.Co
 	for _, g := range grants {
 		granted.grants[g] = true
 	}
-	svc := &XKMSService{}
 	svc.SetAttestationAppraiser(appraiser)
 	svc.SetAuthorizer(auth.NewAuthorizer(granted))
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "release-manager", TenantID: "tenant-a"})
-	return svc, ctx
+	return auth.WithIdentity(context.Background(), &auth.Identity{Subject: "release-manager", TenantID: "tenant-a"})
 }
 
 func TestSigningKeyBinding_SetResolveDelete(t *testing.T) {

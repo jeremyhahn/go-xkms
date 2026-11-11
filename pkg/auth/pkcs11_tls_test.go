@@ -1954,3 +1954,10 @@ func (*authMockClient) DeleteSigningKeyBinding(context.Context, *transport.Delet
 func (*authMockClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, nil
 }
+func (*authMockClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}
+
+func (*authMockClient) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
+	return nil, nil
+}

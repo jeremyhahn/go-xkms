@@ -15,6 +15,7 @@ package phone
 
 import (
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -68,6 +69,23 @@ type AttestationConfig struct {
 	// VerifyBootState enables verification that the device boot state is "verified".
 	// When true, attestations from devices with unlocked bootloaders are rejected.
 	VerifyBootState bool `yaml:"verify_boot_state" json:"verify_boot_state"`
+
+	// StatusListURL is where the platform's attestation certificate
+	// revocation status list is fetched from; every chain certificate is
+	// checked against it. Empty means the platform's published list
+	// (Google's for Android). A list that cannot be fetched fails the
+	// verification closed.
+	StatusListURL string `yaml:"status_list_url" json:"status_list_url"`
+
+	// StatusListFile is a local copy of the status list, used instead of
+	// StatusListURL by hosts that cannot reach it. It is read once, when the
+	// backend starts.
+	StatusListFile string `yaml:"status_list_file" json:"status_list_file"`
+
+	// StatusListClient is the HTTP client the status list is fetched with.
+	// Nil means a default client. It is set in code only (tests, custom
+	// transports), never from a configuration file.
+	StatusListClient *http.Client `yaml:"-" json:"-"`
 }
 
 // Config holds the configuration for the phone backend, which proxies key

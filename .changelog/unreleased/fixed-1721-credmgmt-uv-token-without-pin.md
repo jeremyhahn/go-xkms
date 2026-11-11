@@ -1,0 +1,1 @@
+- **Credential management accepts a pinUvAuthToken minted by built-in user verification on an authenticator with no PIN (#1721).** It answered CTAP2_ERR_PIN_NOT_SET before the token was checked, so every authenticated credential-management command failed; that answer is now kept for a request no usable token can authorize. authenticatorConfig never refused such a token.

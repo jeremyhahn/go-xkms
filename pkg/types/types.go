@@ -1953,6 +1953,42 @@ type AttestingKeyProvider interface {
 	AttestKey(ctx context.Context, attrs *KeyAttributes, nonce []byte) (interface{}, error)
 }
 
+// SecurityEventEvidence is a device's security-event record and the
+// device-signed evidence that binds it, as an AttestSecurityEvents call
+// returns them. The securityevent package appraises it.
+type SecurityEventEvidence struct {
+	// Evidence is the device-signed EAT: a COSE_Sign1 (RFC 9052 §4.2) whose
+	// payload is a CBOR Claims-Set carrying the Verifier's eat_nonce
+	// (RFC 9711 §4.1) and a submods entry (RFC 9711 §4.2.18) holding the
+	// Detached-Submodule-Digest of Record (RFC 9711 §4.2.18.2).
+	Evidence []byte
+
+	// Chain is the DICE certificate chain of the key that signed Evidence,
+	// leaf first, each certificate DER-encoded.
+	Chain [][]byte
+
+	// Record is the security-event record: the CBOR-encoded Claims-Set the
+	// detached digest was computed over, conveyed beside Evidence.
+	Record []byte
+}
+
+// SecurityEventAttester is implemented by backends whose device keeps a
+// security-event (tamper-response) record and can sign evidence over it.
+// It follows the AttestingKeyProvider pattern: an optional capability that
+// callers detect with a type assertion.
+type SecurityEventAttester interface {
+	KeyProvider
+
+	// AttestSecurityEvents returns the device's security-event record and the
+	// evidence the device signed after the record's last entry, carrying the
+	// record's detached digest and nonce as its eat_nonce.
+	//
+	// The nonce is the Verifier's challenge (RFC 9334 §10); the evidence is
+	// fresh only if it echoes this nonce. Returns ErrNotSupported when the
+	// backend keeps no record.
+	AttestSecurityEvents(ctx context.Context, nonce []byte) (*SecurityEventEvidence, error)
+}
+
 // SymmetricKey represents a symmetric encryption key.
 // This is the symmetric analog to crypto.PrivateKey for asymmetric operations.
 type SymmetricKey interface {

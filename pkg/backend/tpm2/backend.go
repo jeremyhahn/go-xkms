@@ -781,6 +781,11 @@ func (s *tpm2Signer) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts)
 		KeyAttributes: scope.bind(s.attrs),
 		Backend:       scope.keys,
 	}
+	// A caller that asks for RSA-PSS says so only through its options, so
+	// they travel with the request: dropping them yields PKCS#1 v1.5.
+	if pssOpts, ok := opts.(*rsa.PSSOptions); ok && pssOpts != nil {
+		signerOpts.PSSOptions = pssOpts
+	}
 
 	// Sign using TPM
 	signature, err := scope.tpm.Sign(rand, digest, signerOpts)

@@ -75,6 +75,7 @@ func newEnrollmentEvidence(
 func (e *enrollmentEvidence) policy() *pairing.EnrollmentPolicy {
 	p := pairing.NewEnrollmentPolicy()
 	p.TrustedRoots = e.ca.Pool()
+	p.Revocation = attesttest.NoRevocations()
 	p.ApplicationPolicy = attesttest.Applications()
 	return p
 }
@@ -132,6 +133,37 @@ func TestEnrollmentPolicyEvaluate_RefusesAnUntrustedChain(t *testing.T) {
 
 	_, err := p.Evaluate(ev.result, nonce, time.Now())
 	assert.ErrorIs(t, err, pairing.ErrEnrollmentChainUntrusted)
+}
+
+// TestEnrollmentPolicyEvaluate_RefusesWithoutARevocationSource pins ruling
+// 180: a policy with no attestation status list enrolls nothing.
+func TestEnrollmentPolicyEvaluate_RefusesWithoutARevocationSource(t *testing.T) {
+	nonce := []byte("enrollment-nonce")
+	ev := newEnrollmentEvidence(t, nonce, xkms.AndroidSecurityLevelTrustedEnvironment,
+		attesttest.AttestedBootState())
+	p := ev.policy()
+	p.Revocation = nil
+
+	_, err := p.Evaluate(ev.result, nonce, time.Now())
+	assert.ErrorIs(t, err, pairing.ErrEnrollmentChainUntrusted)
+	assert.ErrorIs(t, err, xkms.ErrNoAndroidRevocationSource)
+}
+
+// TestEnrollmentPolicyEvaluate_RefusesARevokedRoot pins ruling 180: a chain
+// whose trust anchor is on the status list is refused even though it verifies.
+func TestEnrollmentPolicyEvaluate_RefusesARevokedRoot(t *testing.T) {
+	nonce := []byte("enrollment-nonce")
+	ev := newEnrollmentEvidence(t, nonce, xkms.AndroidSecurityLevelTrustedEnvironment,
+		attesttest.AttestedBootState())
+	serial := ev.ca.Cert.SerialNumber.Text(16)
+	list, err := xkms.ParseAndroidStatusList([]byte(`{"entries":{"` + serial + `":{"status":"REVOKED","reason":"KEY_COMPROMISE"}}}`))
+	require.NoError(t, err)
+	p := ev.policy()
+	p.Revocation = list
+
+	_, err = p.Evaluate(ev.result, nonce, time.Now())
+	assert.ErrorIs(t, err, pairing.ErrEnrollmentChainUntrusted)
+	assert.ErrorIs(t, err, xkms.ErrAndroidCertificateRevoked)
 }
 
 func TestEnrollmentPolicyEvaluate_RefusesAChainThatIsNotBase64(t *testing.T) {

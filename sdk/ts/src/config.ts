@@ -49,6 +49,13 @@ export interface XkmsClientConfig {
   fetch?: typeof fetch;
   /** Auth endpoint path overrides; missing members use DEFAULT_AUTH_PATHS. */
   authPaths?: Partial<AuthPaths>;
+  /**
+   * Lets a call that carries a credential (image signing with registry
+   * credentials) go to a base URL that is not https://, and follow its
+   * redirects. Unsafe: loopback tests and dev setups only, never production.
+   * Mirrors the Go transports' AllowInsecureTransport (ruling 152).
+   */
+  allowInsecureTransport?: boolean;
 }
 
 /** resolveAuthPaths merges configured overrides over the defaults. */

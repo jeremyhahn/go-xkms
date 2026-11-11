@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -113,6 +114,20 @@ type Phone struct {
 	// on the WIRE, after a correct response was built, so nothing about the
 	// honest path is bypassed to produce it.
 	Mutate func(*pairingproto.LocalAttestDeviceResult)
+
+	// UVK is the user-verification key that answers local.verifyUser
+	// (ruling 167). Nil models a phone with no UVK: the responder fails the
+	// exchange instead of answering.
+	UVK *DAK
+
+	// MutateVerifyUser damages the local.verifyUser answer just before it is
+	// sent, as Mutate does for local.attestDevice.
+	MutateVerifyUser func(*pairingproto.LocalVerifyUserResult)
+
+	// verifyUserRPName is the RP name of the last local.verifyUser request,
+	// the name the phone's prompt would show. The responder runs on its own
+	// goroutine, so it is atomic.
+	verifyUserRPName atomic.Pointer[string]
 
 	// staticKey is the phone's PERSISTENT Noise identity, the one written into
 	// the pairing record. It must be the same key on every leg: production
@@ -285,6 +300,7 @@ type exchangeHandler func(p *Phone, req *pairingproto.Request, binding []byte) (
 var exchangeHandlers = map[string]exchangeHandler{
 	pairingproto.MethodPairingConfirm:    (*Phone).confirmPairing,
 	pairingproto.MethodLocalAttestDevice: (*Phone).attestDevice,
+	pairingproto.MethodLocalVerifyUser:   (*Phone).verifyUser,
 }
 
 // serveExchange handles one encrypted JSON-RPC round trip.
@@ -377,6 +393,51 @@ func (p *Phone) attestDevice(req *pairingproto.Request, binding []byte) (any, er
 		p.Mutate(result)
 	}
 	return result, nil
+}
+
+// verifyUser answers local.verifyUser with the UVK, signing the binding the
+// phone derived itself, as attestDevice does.
+func (p *Phone) verifyUser(req *pairingproto.Request, binding []byte) (any, error) {
+	var params pairingproto.LocalVerifyUserParams
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
+	}
+	if params.ProtocolVersion != pairingproto.AttestProtocolV2 {
+		return nil, fmt.Errorf("desktop asked for protocol version %d", params.ProtocolVersion)
+	}
+	if p.UVK == nil {
+		return nil, fmt.Errorf("phone has no user-verification key")
+	}
+	if err := pairingproto.ValidateVerifyUserRPName(params.RPName); err != nil {
+		return nil, err
+	}
+	p.verifyUserRPName.Store(&params.RPName)
+
+	sig, err := p.UVK.SignVerifyUserRaw(params.Nonce, binding, params.RPName)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &pairingproto.LocalVerifyUserResult{
+		ProtocolVersion:    pairingproto.AttestProtocolV2,
+		CertificateChain:   p.UVK.Chain,
+		Signature:          sig,
+		SignatureAlgorithm: pairingproto.AttestSignatureES256,
+	}
+
+	if p.MutateVerifyUser != nil {
+		p.MutateVerifyUser(result)
+	}
+	return result, nil
+}
+
+// VerifyUserRPName returns the RP name of the last local.verifyUser request
+// the phone answered, the name its prompt would show, or "" before the first.
+func (p *Phone) VerifyUserRPName() string {
+	if name := p.verifyUserRPName.Load(); name != nil {
+		return *name
+	}
+	return ""
 }
 
 // decodeParams re-marshals the generic JSON params into the wire struct, the

@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -91,10 +90,20 @@ type SignResult struct {
 	Push *PushResult
 }
 
-// CertificateIssuer issues certificates from CSRs; TrustedCA's issuer
-// (ca.CAIssuer) satisfies it.
+// ProfileCodeSigning is the registry name of TrustedCA's code-signing
+// profile (ca.ProfileNameCodeSigning), under which
+// RequestCodeSigningCertificate asks for a certificate. pkg/image names it
+// itself rather than importing pkg/ca, which imports pkg/xkms, so that the
+// service can sign images with pkg/image.
+const ProfileCodeSigning = "code-signing"
+
+// CertificateIssuer issues certificates from CSRs without storing them.
+// TrustedCA (*ca.CA) satisfies it. The certificate is named after a
+// caller-chosen repository and travels with the signature, so it is never
+// stored where it could replace another certificate of that name. A zero
+// validityDays takes the profile's default lifetime.
 type CertificateIssuer interface {
-	SignCSR(ctx context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error)
+	SignCSRUnstored(ctx context.Context, csrPEM []byte, profile string, validityDays int, tenantID string) (*x509.Certificate, error)
 }
 
 // NewSigner returns a Signer for cfg. The certificate must certify the
@@ -227,7 +236,7 @@ func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer
 		return nil, ErrSignerRequired
 	}
 	if strings.TrimSpace(tenantID) == "" {
-		return nil, ca.ErrTenantRequired
+		return nil, ErrTenantRequired
 	}
 	if strings.TrimSpace(commonName) == "" {
 		return nil, ErrCommonNameRequired
@@ -241,7 +250,7 @@ func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: encoding.PEMTypeCertificateRequest, Bytes: der})
 
-	certificate, err := issuer.SignCSR(ctx, csrPEM, &ca.SignOptions{TenantID: tenantID, Profile: ca.ProfileNameCodeSigning})
+	certificate, err := issuer.SignCSRUnstored(ctx, csrPEM, ProfileCodeSigning, 0, tenantID)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrCertificateRequestFailed, Cause: err}
 	}

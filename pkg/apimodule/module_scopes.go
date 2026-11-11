@@ -153,6 +153,13 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// is ScopeSelf; xkms owns these names too.
 		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionGet),
 		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionList),
+
+		// attestation_signing_keys:sign signs CoRIM reference values of one
+		// of a tenant's repositories with the key that signs it (pkg/xkms
+		// SignCoRIM, owner ruling 134). The service binds it to the caller's
+		// own tenant and signs only with that tenant's keys, which is
+		// ScopeSelf; xkms owns this name too.
+		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionSign),
 	}
 }
 
