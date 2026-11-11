@@ -16,6 +16,7 @@ package android
 import (
 	"crypto/x509"
 	"fmt"
+	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -69,14 +70,16 @@ func NewAndroidVerifier(trustPool *x509.CertPool, cfg *phone.AttestationConfig) 
 	minSecLevel := attestandroid.SecurityLevelSoftware
 	verifyBootState := false
 	var statusListURL, statusListFile string
+	var statusListClient *http.Client
 
 	if cfg != nil {
 		minSecLevel = mapMinSecurityLevel(cfg.MinSecurityLevel)
 		verifyBootState = cfg.VerifyBootState
 		statusListURL, statusListFile = cfg.StatusListURL, cfg.StatusListFile
+		statusListClient = cfg.StatusListClient
 	}
 
-	revocation, err := statusListSource(statusListURL, statusListFile)
+	revocation, err := statusListSource(statusListURL, statusListFile, statusListClient)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +94,7 @@ func NewAndroidVerifier(trustPool *x509.CertPool, cfg *phone.AttestationConfig) 
 
 // statusListSource returns the status list loaded from file when it is set,
 // else an HTTP source for url.
-func statusListSource(url, file string) (attestandroid.StatusListSource, error) {
+func statusListSource(url, file string, client *http.Client) (attestandroid.StatusListSource, error) {
 	if file != "" {
 		list, err := attestandroid.LoadStatusListFile(file)
 		if err != nil {
@@ -99,7 +102,7 @@ func statusListSource(url, file string) (attestandroid.StatusListSource, error) 
 		}
 		return list, nil
 	}
-	source, err := attestandroid.NewHTTPStatusList(attestandroid.HTTPStatusListOptions{URL: url})
+	source, err := attestandroid.NewHTTPStatusList(attestandroid.HTTPStatusListOptions{URL: url, Client: client})
 	if err != nil {
 		return nil, err
 	}
