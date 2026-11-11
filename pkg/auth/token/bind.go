@@ -13,7 +13,11 @@
 
 package token
 
-import "context"
+import (
+	"context"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+)
 
 // CallContext derives the context a refresh store call runs on from the
 // caller's. Over an embedded qrdb node the server passes Node.ServiceContext.
@@ -29,6 +33,33 @@ func BindRefreshStore(store RefreshStore, bind CallContext) RefreshStore {
 		return store
 	}
 	return &boundRefreshStore{store: store, bind: bind}
+}
+
+// BindUserResolver returns resolver with every lookup run on the context
+// bind derives from the caller's. A refresh is a public call (#2541): its
+// current-account lookup is xkms's own read of the identity plane, so it
+// runs as the bound principal; the account checks themselves stay the
+// resolver's. A nil bind returns resolver unchanged.
+func BindUserResolver(resolver UserResolver, bind CallContext) UserResolver {
+	if bind == nil || resolver == nil {
+		return resolver
+	}
+	return &boundUserResolver{resolver: resolver, bind: bind}
+}
+
+// boundUserResolver runs a UserResolver's lookup on a bound context.
+type boundUserResolver struct {
+	resolver UserResolver
+	bind     CallContext
+}
+
+// ResolveUser resolves id on the bound context.
+func (b *boundUserResolver) ResolveUser(ctx context.Context, id *auth.Identity) (*auth.Identity, error) {
+	bound, err := b.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return b.resolver.ResolveUser(bound, id)
 }
 
 type boundRefreshStore struct {

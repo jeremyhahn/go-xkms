@@ -220,7 +220,7 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
 		refreshStore = token.BindRefreshStore(qs, p.CallContext)
-		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
+		userResolver = token.BindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
