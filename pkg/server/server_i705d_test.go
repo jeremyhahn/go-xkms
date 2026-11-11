@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	escrowpkg "github.com/jeremyhahn/go-xkms/pkg/escrow"
@@ -251,6 +252,12 @@ func TestInitializeWebAuthnService_QRDBBacked(t *testing.T) {
 	require.Error(t, err)
 	var denied *qrdbsdk.PermissionDeniedError
 	assert.NotErrorAs(t, err, &denied, "the service principal may read users once WebAuthn is built")
+
+	// #2541 third layer: a WebAuthn login is anonymous, so the issuer's qrdb
+	// refresh store persists the pair as the node's service principal.
+	require.NotNil(t, server.tokenIssuer, "fixture setup: the token issuer is built")
+	_, err = server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "user-2541", TenantID: "system"})
+	require.NoError(t, err, "an anonymous request's login mints a token pair")
 }
 
 // ============================================================================
