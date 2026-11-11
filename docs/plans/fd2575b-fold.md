@@ -1,0 +1,3 @@
+- Merges: #2073 (row/2520-enclave-bump, 7231c6942bfc) into the F2 fold on #2047's graph; go.mod takes the higher version per requirement, go.sum from the fold side then go mod tidy (proxy.golang.org + sum.golang.org) in root, sdk/go, web/desktop, xkey.
+- Checks: go build -mod=readonly ./... and go vet ./... in all four modules; go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/enclave/... ./pkg/acme/... in root; make lint once at the end.
+- Results to follow.
