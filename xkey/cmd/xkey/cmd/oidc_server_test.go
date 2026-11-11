@@ -73,6 +73,24 @@ func runOIDCCommand(t *testing.T, cmd *cobra.Command, args []string, flags map[s
 	return out.String(), err
 }
 
+// TestRunOIDCCommand_KeepsTheServerEndpoint pins that the helper's flag
+// reset leaves the inherited --xkmsd-url (bound to xkmsdURL) alone: once
+// cobra has merged the persistent flags into a command's flag set, as any
+// earlier test that resolves or runs it does, resetting every flag would
+// clear the endpoint and send the next command to the local backend.
+func TestRunOIDCCommand_KeepsTheServerEndpoint(t *testing.T) {
+	startOIDCXKMSd(t)
+	address := xkmsdURL
+	require.NotNil(t, oidcProvidersRemoveCmd.InheritedFlags().Lookup("xkmsd-url"), "the persistent flags are merged")
+
+	_, _ = runOIDCCommand(t, oidcProvidersRemoveCmd, []string{"missing"}, map[string]string{"scope": "tenant"})
+	assert.Equal(t, address, xkmsdURL, "the helper keeps the server endpoint")
+
+	use, err := oidcUseServer(oidcProvidersRemoveCmd)
+	require.NoError(t, err)
+	assert.True(t, use, "the next command still reaches the server")
+}
+
 func TestOIDCUseServer(t *testing.T) {
 	isolateXKMSdEndpoint(t)
 	use, err := oidcUseServer(oidcTokenCmd)
