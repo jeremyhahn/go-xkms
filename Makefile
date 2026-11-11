@@ -1227,17 +1227,20 @@ coverage-gate:
 # never finished on a GitHub-hosted runner, so CI runs the unit suite as
 # SHARDS jobs. Shard SHARD tests every SHARDS-th package of test-go's sorted
 # list (round robin) with test-go's flags into $(COVERAGE_DIR)/shard-$(SHARD).out.
-# SHARD=extras runs make test's other parts, COVERAGE_EXTRAS (shell, !frost,
-# pkcs11, web, wailsjs), as their own job: in shard 1 they made it run 85+ min
-# against 22-27 for the others (#2042). None writes a Go profile, so the
-# extras job exports none. coverage-merge joins the shard profiles into $(COVERAGE_FILE)
+# make test's other parts (shell, !frost, pkcs11, web, wailsjs) run as two
+# extras shards, SHARD=extras-nofrost and SHARD=extras-other (make
+# coverage-extras, the parts in COVERAGE_EXTRAS_$(SHARD)): in shard 1 they made
+# it run 85+ min against 22-27 for the others (#2042). On 4 pinned CPUs
+# test-nofrost took 564 s and the rest 379 s, shard 1's slice 695 s. None
+# writes a Go profile, so the extras jobs export none. coverage-merge joins the shard profiles into $(COVERAGE_FILE)
 # and runs coverage-gate. GOMEMLIMIT stays below the hosted 8g container.
 # The shards keep make coverage's single-process bound, -p=1 (#2042 Codex P1):
 # sharding cuts the package count, not the memory two binaries need at once.
 SHARD ?= 1
 SHARDS ?= 1
-# make test's parts beside test-go, in make test's order (coverage-extras).
-COVERAGE_EXTRAS := test-scripts test-nofrost test-pkcs11 test-web check-wailsjs
+# make test's parts beside test-go, each in one extras shard (coverage-extras).
+COVERAGE_EXTRAS_extras-nofrost := test-nofrost
+COVERAGE_EXTRAS_extras-other := test-scripts test-pkcs11 test-web check-wailsjs
 
 .PHONY: coverage-shard-pkgs coverage-shard coverage-extras coverage-merge
 ## coverage-shard-pkgs: Print shard SHARD of SHARDS of test-go's package list
@@ -1249,7 +1252,7 @@ coverage-shard-pkgs:
 coverage-shard: export XKMS_DENY_HARDWARE_TPM := 1
 coverage-shard: export GOMEMLIMIT := 5GiB
 coverage-shard: export GOFLAGS := $(strip $(GOFLAGS) -p=1)
-ifeq ($(SHARD),extras)
+ifneq ($(filter extras-%,$(SHARD)),)
 coverage-shard: coverage-extras
 else
 coverage-shard: check-insecure-tls agsim
@@ -1273,17 +1276,18 @@ coverage-shard: check-insecure-tls agsim
 	@echo "$(GREEN)$(BOLD)✓ Unit test shard $(SHARD)/$(SHARDS) passed$(RESET)"
 endif
 
-## coverage-extras: Run make test's parts beside test-go (COVERAGE_EXTRAS), CI's extras shard
+## coverage-extras: Run extras shard SHARD (extras-nofrost or extras-other) of make test's other parts
 coverage-extras: export XKMS_DENY_HARDWARE_TPM := 1
 coverage-extras: export GOMEMLIMIT := 5GiB
 coverage-extras: export GOFLAGS := $(strip $(GOFLAGS) -p=1)
 coverage-extras:
-	@echo "$(CYAN)$(BOLD)→ Running the unit suite's extras: $(COVERAGE_EXTRAS)...$(RESET)"
-	@for t in $(COVERAGE_EXTRAS); do $(MAKE) --no-print-directory $$t || exit 1; done
+	@if [ -z "$(COVERAGE_EXTRAS_$(SHARD))" ]; then echo "$(RED)✗ SHARD=$(SHARD) is not an extras shard (extras-nofrost, extras-other)$(RESET)"; exit 1; fi
+	@echo "$(CYAN)$(BOLD)→ Running extras shard $(SHARD): $(COVERAGE_EXTRAS_$(SHARD))...$(RESET)"
+	@for t in $(COVERAGE_EXTRAS_$(SHARD)); do $(MAKE) --no-print-directory $$t || exit 1; done
 	@if [ -n "$$CI" ] && [ -n "$$(git status --porcelain)" ]; then \
-		git status --porcelain; echo "the unit suite's extras left the tree dirty (#454)"; exit 1; \
+		git status --porcelain; echo "extras shard $(SHARD) left the tree dirty (#454)"; exit 1; \
 	fi
-	@echo "$(GREEN)$(BOLD)✓ Unit suite extras passed$(RESET)"
+	@echo "$(GREEN)$(BOLD)✓ Extras shard $(SHARD) passed$(RESET)"
 
 ## coverage-merge: Merge the shard profiles into COVERAGE_FILE, then the threshold
 coverage-merge:

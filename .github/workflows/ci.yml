@@ -1296,8 +1296,8 @@ jobs:
   # >>> CUSTOMIZE (go-xkms, DS-8139, CA m2406(2))
   # The test stage: make coverage in the image job never finished on
   # ubuntu-latest (cancelled at the 4 h limit at -p=2 and at -p=1), so the unit
-  # suite runs as six package shards plus an extras entry (make test's other
-  # parts, #2042), each its own job and bound, and
+  # suite runs as six package shards plus two extras entries (make test's
+  # other parts, #2042), each its own job and bound, and
   # coverage-threshold merges their profiles and applies COVERAGE_THRESHOLD
   # once. Tags matter: without them tag-gated packages are neither tested nor
   # counted. A docs-only PR skips the steps, as in the image job.
@@ -1318,9 +1318,12 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
         # make test's parts beside test-go (make coverage-extras, #2042): in
-        # shard 1 they made it the one 85+ min job. They write no profile.
+        # shard 1 they made it the one 85+ min job. test-nofrost alone is the
+        # longest (564 s on 4 CPUs of the lane node, the rest 379 s, shard 1's
+        # slice 695 s). They write no profile.
         include:
-          - shard: extras
+          - shard: extras-nofrost
+          - shard: extras-other
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
@@ -1344,16 +1347,16 @@ jobs:
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
-      # test-web runs `npm ci` against the npm registry (shard extras).
+      # test-web runs `npm ci` against the npm registry (shard extras-other).
       - name: make coverage-shard
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
         env:
           IN_IMAGE_NETWORK: bridge
-          IN_IMAGE_EXPORT: ${{ matrix.shard != 'extras' && format('build/coverage/shard-{0}.out', matrix.shard) || '' }}
+          IN_IMAGE_EXPORT: ${{ !startsWith(matrix.shard, 'extras-') && format('build/coverage/shard-{0}.out', matrix.shard) || '' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard SHARD=${{ matrix.shard }} SHARDS=6 GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
       - name: Upload the shard profile (GitHub)
-        if: ${{ success() && matrix.shard != 'extras' && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        if: ${{ success() && !startsWith(matrix.shard, 'extras-') && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coverage-shard-${{ matrix.shard }}
