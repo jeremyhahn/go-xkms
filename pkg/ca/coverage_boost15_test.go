@@ -319,21 +319,6 @@ func TestCABundleFiltered_StoreTypeMismatch_B15(t *testing.T) {
 // constructors.go — initializeAsIntermediate ErrAlreadyInitialized (line 337)
 // =============================================================================
 
-// TestInitializeAsIntermediate_AlreadyInitialized_B15 exercises the
-// ErrAlreadyInitialized guard in initializeAsIntermediate (line 337.16,339.3)
-// by calling it on a CA that is already initialized.
-func TestInitializeAsIntermediate_AlreadyInitialized_B15(t *testing.T) {
-	t.Parallel()
-	// Use a fully initialized CA as the caInstance argument.
-	ca := setupTestCA(t)
-	parent := setupTestCA(t)
-
-	parentIdentity := parent.config.Identity[0]
-	err := initializeAsIntermediate(context.Background(), ca, parentIdentity, parent)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrAlreadyInitialized)
-}
-
 // =============================================================================
 // constructors.go — NewIntermediateCA nil KeyStore (line 272)
 // =============================================================================
@@ -538,37 +523,6 @@ func TestVerifyHybridCertificate_ParseError_B15(t *testing.T) {
 	quantumIssuer := &quantum.MLDSAPublicKey{Algorithm: "ML-DSA-44", Key: []byte("pubkey")}
 
 	verErr := VerifyHybridCertificate([]byte("garbage-DER"), classicalIssuer, quantumIssuer)
-	assert.Error(t, verErr)
-}
-
-// TestVerifyHybridCertificate_NoAltSigAlgExt_B15 covers hybrid.go:253.27,258.3
-// by passing a well-formed certificate that lacks the altSignatureAlgorithm
-// extension, after classical signature verification passes.
-func TestVerifyHybridCertificate_NoAltSigAlgExt_B15(t *testing.T) {
-	t.Parallel()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
-	// Self-signed cert — classicalIssuer is the cert itself, so CheckSignatureFrom
-	// will succeed.
-	tmpl := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "hybrid-no-altsig-b15"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	quantumIssuer := &quantum.MLDSAPublicKey{Algorithm: "ML-DSA-44", Key: []byte("pubkey")}
-
-	verErr := VerifyHybridCertificate(certDER, cert, quantumIssuer)
 	assert.Error(t, verErr)
 }
 
@@ -846,35 +800,6 @@ func TestVerifyPeerCertificate_IsRevokedError_B15(t *testing.T) {
 	_ = verErr
 }
 
-// TestVerifyPeerCertificate_IntermediateIsRevokedError_B15 covers
-// tls.go:568.17,573.4 by providing two raw certs where the second (intermediate)
-// parse succeeds but IsRevoked returns an error (uninitialized CA).
-func TestVerifyPeerCertificate_IntermediateIsRevokedError_B15(t *testing.T) {
-	t.Parallel()
-	ca := setupUninitializedCA(t)
-
-	// Build two minimal self-signed certs.
-	makeCert := func(cn string) []byte {
-		key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-		tmpl := &x509.Certificate{
-			SerialNumber: serial,
-			Subject:      pkix.Name{CommonName: cn},
-			NotBefore:    time.Now().Add(-time.Hour),
-			NotAfter:     time.Now().Add(24 * time.Hour),
-		}
-		der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-		return der
-	}
-
-	peerDER := makeCert("peer-intermediate-error-b15")
-	intermediateDER := makeCert("intermediate-error-b15")
-
-	verErr := ca.VerifyPeerCertificate([][]byte{peerDER, intermediateDER}, nil)
-	// IsRevoked errors are logged and the loop continues; no hard error.
-	_ = verErr
-}
-
 // TestVerifyPeerCertificate_RevokedIntermediate_B15 covers tls.go:573.21,580.4
 // (revoked intermediate returns ErrCertificateRevoked) by revoking a cert whose
 // serial matches that of the fake intermediate DER.
@@ -1051,47 +976,4 @@ func TestOCSPCreateResponse_SignerError_B15(t *testing.T) {
 	_, handleErr := responder.HandleRequest(context.Background(), ocspReqDER)
 	assert.Error(t, handleErr)
 	assert.ErrorIs(t, handleErr, ErrOCSPSigningFailed)
-}
-
-// TestOCSPCheckCertificateStatus_ColdPathRevoked_B15 covers ocsp.go:237.2,237.53
-// (cold path: in-memory map is empty, object store has the revocation record).
-//
-// NOTE: NOT parallel — mutates CA revocation map.
-func TestOCSPCheckCertificateStatus_ColdPathRevoked_B15(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-
-	// Issue a cert and revoke it so the revocation is written to the object store.
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "ocsp-cold-revoked-b15"},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-	cert := issued.Certificate
-	require.NotNil(t, cert)
-
-	require.NoError(t, ca.RevokeCert(context.Background(), cert, RevokeOptions{}))
-
-	// Clear the in-memory revocations map to force the cold path.
-	ca.revocationsMutex.Lock()
-	ca.revocations = make(map[string]*RevocationInfo)
-	ca.revocationsMutex.Unlock()
-
-	// Build a valid OCSP request for the revoked cert's serial.
-	issuerCert := ca.rootCert
-	require.NotNil(t, issuerCert)
-	ocspReqDER, err := gocsp.CreateRequest(cert, issuerCert, &gocsp.RequestOptions{Hash: crypto.SHA256})
-	require.NoError(t, err)
-
-	responder := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
-	resp, handleErr := responder.HandleRequest(context.Background(), ocspReqDER)
-	require.NoError(t, handleErr)
-
-	// Parse the response and verify it shows Revoked.
-	ocspResp, parseErr := gocsp.ParseResponse(resp, issuerCert)
-	if parseErr == nil {
-		assert.Equal(t, gocsp.Revoked, ocspResp.Status)
-	}
-	// Even if gocsp.ParseResponse fails (e.g. signature mismatch with self-signed issuer),
-	// the HandleRequest itself should have succeeded — the cold path was exercised.
 }

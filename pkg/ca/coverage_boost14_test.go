@@ -24,7 +24,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/asn1"
 	"math/big"
 	"testing"
 	"time"
@@ -208,19 +207,6 @@ func TestOCSPResponder_IntermediateCA_B14(t *testing.T) {
 // trust_chain.go — OSTrustStore (lines 125-128)
 // =============================================================================
 
-// TestOSTrustStore_B14 exercises OSTrustStore. On Linux the OS trust store is
-// available; either result path is valid as long as the call is exercised.
-func TestOSTrustStore_B14(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	pool, err := ca.OSTrustStore()
-	if err != nil {
-		assert.Nil(t, pool)
-	} else {
-		assert.NotNil(t, pool)
-	}
-}
-
 // =============================================================================
 // cross_signing.go — XSignedRootCertificate nil cert (line 91)
 // =============================================================================
@@ -260,25 +246,6 @@ func TestXSignedIntermediateCertificates_NilCert_B14(t *testing.T) {
 // =============================================================================
 // cross_signing.go — CrossSignedPEM nil attrs and no objectStore (lines 171, 174)
 // =============================================================================
-
-// TestCrossSignedPEM_NilAttrs_B14 exercises the nil-attrs / empty-CN error
-// path (cross_signing.go line 171) in CrossSignedPEM.
-func TestCrossSignedPEM_NilAttrs_B14(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithObjectStore(t)
-	_, err := ca.CrossSignedPEM(nil)
-	assert.Error(t, err)
-}
-
-// TestCrossSignedPEM_NoObjectStore_B14 exercises the no-objectStore error
-// path (cross_signing.go line 173-174) in CrossSignedPEM.
-func TestCrossSignedPEM_NoObjectStore_B14(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	attrs := softwareKeyAttrs("cross-no-store-b14")
-	_, err := ca.CrossSignedPEM(attrs)
-	assert.ErrorIs(t, err, ErrObjectStoreRequired)
-}
 
 // =============================================================================
 // constructors.go — NewCA: NewIntermediateCA error path (line 399)
@@ -345,17 +312,6 @@ func TestCertificate_IntermediateMatch_B14(t *testing.T) {
 // =============================================================================
 // ca_extensions.go — CAKeyAttributes: storeType mismatch (line 453)
 // =============================================================================
-
-// TestCAKeyAttributes_StoreTypeMismatch_B14 exercises the storeType mismatch
-// error path in CAKeyAttributes (ca_extensions.go line 453) by requesting a
-// store type that differs from the CA's configured type.
-func TestCAKeyAttributes_StoreTypeMismatch_B14(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// The CA is configured as StoreSoftware. Requesting StoreTPM2 forces mismatch.
-	_, err := ca.CAKeyAttributes(types.StoreTPM2)
-	assert.ErrorIs(t, err, ErrInvalidStoreType)
-}
 
 // =============================================================================
 // profiles.go — baseProfile.Apply: nil template (line 180)
@@ -458,24 +414,6 @@ func TestVerifyMLDSASignature_UnknownAlgorithm_B14(t *testing.T) {
 // quantum.go — oidToQuantumAlgorithm: unknown OID error return (line 317)
 // =============================================================================
 
-// TestOIDToQuantumAlgorithm_UnknownOID_B14 exercises the error return in
-// oidToQuantumAlgorithm (quantum.go line 317) by passing an OID not registered
-// for any ML-DSA variant.
-func TestOIDToQuantumAlgorithm_UnknownOID_B14(t *testing.T) {
-	t.Parallel()
-	unknownOID := asn1.ObjectIdentifier{1, 2, 3, 4}
-	_, err := oidToQuantumAlgorithm(unknownOID)
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // quantum.go — quantumAlgorithmOID: unknown algorithm error return (line 305)
 // =============================================================================
-
-// TestQuantumAlgorithmOID_UnknownAlgo_B14 exercises the error return in
-// quantumAlgorithmOID (quantum.go line 305) by passing an unrecognized string.
-func TestQuantumAlgorithmOID_UnknownAlgo_B14(t *testing.T) {
-	t.Parallel()
-	_, err := quantumAlgorithmOID("UNKNOWN-ALGO-B14")
-	assert.Error(t, err)
-}

@@ -219,7 +219,6 @@ subject were kept.
 | coverage_boost14 | TestQuantumAlgorithmOID_UnknownAlgo_B14 | duplicate of TestQuantumAlgorithmOID at quantum_test.go |
 | coverage_boost15 | TestInitializeAsIntermediate_AlreadyInitialized_B15 | duplicate of TestInitializeAsIntermediate_AlreadyInitialized_B10 at coverage_boost10_test.go |
 | coverage_boost15 | TestOCSPCheckCertificateStatus_ColdPathRevoked_B15 | duplicate of TestOCSPCheckCertificateStatus_ColdPath_RevocationStore at ocsp_revocationstore_test.go |
-| coverage_boost15 | TestOCSPCreateResponse_RefusesSHA1UnderFIPSOnly | duplicate of TestOCSPCreateResponse_GoodStatus at coverage_boost4_test.go |
 | coverage_boost15 | TestVerifyHybridCertificate_NoAltSigAlgExt_B15 | duplicate of TestVerifyHybridCertificate_MissingExtensions at hybrid_test.go |
 | coverage_boost15 | TestVerifyPeerCertificate_IntermediateIsRevokedError_B15 | duplicate of TestVerifyPeerCertificate_IsRevokedError_B15 at coverage_boost15_test.go |
 | coverage_boost18 | TestNewHierarchicalCA_NilConfig_B18 | duplicate of TestNewHierarchicalCA_NilParams_B18 at coverage_boost18_test.go |

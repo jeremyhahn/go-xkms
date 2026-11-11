@@ -317,14 +317,6 @@ func TestNewCA_SingleIdentity_B13(t *testing.T) {
 // ca_extensions.go — PubKey: nil attrs path (88.9%)
 // =============================================================================
 
-// TestPubKey_NilAttrs_B13 exercises PubKey when nil attrs are passed.
-func TestPubKey_NilAttrs_B13(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := ca.PubKey(context.Background(), nil)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
 // TestPubKey_Success_B13 exercises the success path of PubKey on an initialized CA.
 func TestPubKey_Success_B13(t *testing.T) {
 	t.Parallel()
@@ -343,26 +335,9 @@ func TestPubKey_Success_B13(t *testing.T) {
 // ca.go — Load: already-initialized guard (81.8%)
 // =============================================================================
 
-// TestLoad_AlreadyInitialized_B13 exercises the ErrAlreadyInitialized path in Load.
-func TestLoad_AlreadyInitialized_B13(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// ca is already initialized; calling Load should return ErrAlreadyInitialized.
-	err := ca.Load(context.Background())
-	assert.ErrorIs(t, err, ErrAlreadyInitialized)
-}
-
 // =============================================================================
 // bundle.go — encodeCertsToPEM: empty certs slice path (90.0%)
 // =============================================================================
-
-// TestEncodeCertsToPEM_Empty_B13 exercises encodeCertsToPEM with an empty slice
-// which triggers the ErrNoCACertificates error path.
-func TestEncodeCertsToPEM_Empty_B13(t *testing.T) {
-	t.Parallel()
-	_, err := encodeCertsToPEM(nil)
-	assert.ErrorIs(t, err, ErrNoCACertificates)
-}
 
 // TestEncodeCertsToPEM_WithCerts_B13 exercises encodeCertsToPEM with a valid cert.
 func TestEncodeCertsToPEM_WithCerts_B13(t *testing.T) {

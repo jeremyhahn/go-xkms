@@ -22,14 +22,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/asn1"
 	"io"
 	"math/big"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,35 +36,6 @@ import (
 // ca.go — createRootCertificate: CRL/OCSP/IssuingCertURL conditional branches
 // (78.6% → covers 3 more statements)
 // =============================================================================
-
-// TestCreateRootCertificate_WithCRLAndOCSP_B12 exercises the CRLDistributionPoints,
-// OCSPServers, and IssuingCertificateURLs branches in createRootCertificate.
-func TestCreateRootCertificate_WithCRLAndOCSP_B12(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-
-	config := DefaultMultiIdentityCAConfig()
-	config.Identity[0].Subject.CommonName = "CRL OCSP Root B12"
-	config.Identity[0].Keys[0].KeyType = "CA"
-	config.Identity[0].CRLDistributionPoints = []string{"http://crl.example.com/root.crl"}
-	config.Identity[0].OCSPServers = []string{"http://ocsp.example.com"}
-	config.Identity[0].IssuingCertificateURLs = []string{"http://certs.example.com/root.crt"}
-
-	ca := &CA{
-		config:      config,
-		keyStore:    backend,
-		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
-		certStore:   cs,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
-	}
-	require.NoError(t, ca.Init(context.Background()))
-	require.NotNil(t, ca.rootCert)
-	assert.Equal(t, []string{"http://crl.example.com/root.crl"}, ca.rootCert.CRLDistributionPoints)
-	assert.Equal(t, []string{"http://ocsp.example.com"}, ca.rootCert.OCSPServer)
-	assert.Equal(t, []string{"http://certs.example.com/root.crt"}, ca.rootCert.IssuingCertificateURL)
-}
 
 // =============================================================================
 // ca_extensions.go — putRevocationBlobIfAbsent: revocationStore success path
@@ -101,26 +70,6 @@ func TestPutRevocationBlob_RevocationStore_B12(t *testing.T) {
 // ca_extensions.go — listRevocationBlobs: revocationStore Scan path
 // (80% → covers 2 more statements: Scan call + return out)
 // =============================================================================
-
-// TestListRevocationBlobs_RevocationStore_B12 exercises the revocationStore Scan
-// path in listRevocationBlobs.
-func TestListRevocationBlobs_RevocationStore_B12(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.revocationStore = storage.NewMemory()
-
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "revoked-scan-b12"},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-	require.NoError(t, ca.Revoke(context.Background(), issued.Certificate.SerialNumber, 1))
-
-	blobs, err := ca.listRevocationBlobs(context.Background())
-	require.NoError(t, err)
-	assert.NotEmpty(t, blobs)
-}
 
 // =============================================================================
 // csr.go — createAndSignCSR: getSignatureAlgorithm error path
@@ -193,47 +142,10 @@ func TestGetECDSASignatureAlgorithm_Default_B12(t *testing.T) {
 // ca.go — GenerateCRL: issuingCert nil path
 // =============================================================================
 
-// TestGenerateCRL_NilIssuingCert_B12 exercises the ErrCRLGenerationFailed return
-// when both rootCert and intermediateCert are nil after initialization.
-func TestGenerateCRL_NilIssuingCert_B12(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.mu.Lock()
-	orig := ca.rootCert
-	ca.rootCert = nil
-	ca.mu.Unlock()
-	defer func() {
-		ca.mu.Lock()
-		ca.rootCert = orig
-		ca.mu.Unlock()
-	}()
-
-	_, err := ca.GenerateCRL(context.Background())
-	assert.ErrorIs(t, err, ErrCRLGenerationFailed)
-}
-
 // =============================================================================
 // csr.go — addSANsExtension: HardwareModuleInfo success path
 // (94.4% → covers call + ExtraExtensions append)
 // =============================================================================
-
-// TestAddSANsExtension_HardwareModuleName_B12 exercises the HardwareModuleName
-// branch in addSANsExtension, verifying the extension is added to ExtraExtensions.
-func TestAddSANsExtension_HardwareModuleName_B12(t *testing.T) {
-	t.Parallel()
-	template := &x509.CertificateRequest{}
-	sans := &SubjectAlternativeNames{
-		DNS: []string{"example.com"},
-		HardwareModuleName: &HardwareModuleInfo{
-			HWType:         asn1.ObjectIdentifier{2, 23, 133, 1},
-			HWSerialNumber: "SN-B12-001",
-		},
-	}
-	err := addSANsExtension(template, sans)
-	require.NoError(t, err)
-	assert.Len(t, template.DNSNames, 1)
-	assert.NotEmpty(t, template.ExtraExtensions)
-}
 
 // =============================================================================
 // config.go — GetSignatureAlgorithm: ParseKeyAlgorithm error + default paths
@@ -311,25 +223,6 @@ func TestRecordRevocation_AlreadyRevoked_B12(t *testing.T) {
 // ca.go — CABundle: buf.Len()==0 path (no certs in CA)
 // =============================================================================
 
-// TestCABundle_EmptyBundle_B12 exercises the ErrInvalidCertificateChain return
-// when neither rootCert nor intermediateCert are set (after stripping them).
-func TestCABundle_EmptyBundle_B12(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.mu.Lock()
-	orig := ca.rootCert
-	ca.rootCert = nil
-	ca.mu.Unlock()
-	defer func() {
-		ca.mu.Lock()
-		ca.rootCert = orig
-		ca.mu.Unlock()
-	}()
-
-	_, err := ca.CABundle()
-	assert.ErrorIs(t, err, ErrInvalidCertificateChain)
-}
-
 // =============================================================================
 // config.go — GetSignatureAlgorithm: ECDSA P384 branch via derivation
 // =============================================================================
@@ -390,45 +283,6 @@ func TestCABundle_WithIntermediate_B12(t *testing.T) {
 // =============================================================================
 // ca.go — getOrGenerateCAKey: key store type mismatch (existing cached key path)
 // =============================================================================
-
-// TestGetOrGenerateCAKey_CachedKey_B12 exercises getOrGenerateCAKey when the key
-// already exists in the key store (second Init with same config returns cached key).
-func TestGetOrGenerateCAKey_CachedKey_B12(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-
-	config := DefaultMultiIdentityCAConfig()
-	config.Identity[0].Subject.CommonName = "Cached Key Root B12"
-	config.Identity[0].Keys[0].KeyType = "CA"
-
-	ca := &CA{
-		config:      config,
-		keyStore:    backend,
-		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
-		certStore:   cs,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
-	}
-	require.NoError(t, ca.Init(context.Background()))
-
-	// Calling Init again returns ErrAlreadyInitialized — but we can test
-	// getOrGenerateCAKey directly via a second CA instance sharing the same backend.
-	ca2 := &CA{
-		config:      config,
-		keyStore:    backend,
-		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
-		certStore:   cs,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
-	}
-	// Init on ca2 re-generates or loads the key — exercises the "key exists" path.
-	err := ca2.Init(context.Background())
-	// May return ErrAlreadyInitialized from certStore or succeed with existing keys.
-	// Either way the key-retrieval path in getOrGenerateCAKey is exercised.
-	assert.True(t, err == nil || err.Error() != "")
-}
 
 // =============================================================================
 // ca.go — getSigner: error path via missing key store entry
