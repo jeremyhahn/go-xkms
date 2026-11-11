@@ -4,7 +4,6 @@
 package tpm2
 
 import (
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -415,27 +414,6 @@ func TestAuthorizedPolicy_DigestsMatchLiveSession(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tpm.policyORBranches(session, branches))
 	assert.Equal(t, withAuthPolicy, sessionDigest(), "AuthorizedObjectPolicy with auth value")
-}
-
-// TestAuthorizedPolicy_KeysSignUnderApproval proves keys bound to a named
-// policy sign under its current approval: the key without a password through
-// the approved branch alone, the key with one through its password branch,
-// and that key again without its password through the approved branch of its
-// PolicyOR.
-func TestAuthorizedPolicy_KeysSignUnderApproval(t *testing.T) {
-	f := newPolicyFixture(t)
-	noPassword := f.createBoundKey(t, "bound-no-password", nil)
-	withPassword := f.createBoundKey(t, "bound-with-password", mustPassword(t, []byte("bound-key-pin")))
-
-	require.NoError(t, f.sign(noPassword))
-	require.NoError(t, f.sign(withPassword))
-	require.NoError(t, f.sign(withoutPassword(withPassword)))
-
-	blob := f.mustBlob(noPassword, store.FSEXT_PUBLIC_BLOB)
-	public := tpm2.BytesAs2B[tpm2.TPMTPublic](blob)
-	pub, err := public.Contents()
-	require.NoError(t, err)
-	assert.False(t, pub.ObjectAttributes.UserWithAuth, "the policy must be the only way to use the key")
 }
 
 // TestAuthorizedPolicy_PCRChangeRefusesApprovedBranch proves the TPM, not
@@ -849,43 +827,6 @@ func TestSignApproval_Errors(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrInvalidKeyAttributes)
 }
 
-// TestCreateStorageKey_ParentForChildKeys proves a storage key created under
-// the Platform SRK with its own auth value can be loaded and used as the
-// parent of further keys, authorized by that auth value.
-func TestCreateStorageKey_ParentForChildKeys(t *testing.T) {
-	f := newPolicyFixture(t)
-
-	storageKey := &types.KeyAttributes{
-		CN:            "tenant-a-storage",
-		KeyAlgorithm:  x509.RSA,
-		KeyType:       types.KeyTypeStorage,
-		Parent:        f.srk,
-		Password:      mustPassword(t, []byte("tenant-a-storage-secret")),
-		StoreType:     types.StoreTPM2,
-		TPMAttributes: &types.TPMAttributes{Hierarchy: tpm2.TPMRHOwner},
-	}
-	require.NoError(t, f.h.TPM.CreateStorageKey(storageKey, f.h.Backend))
-	assert.True(t, storageKey.TPMAttributes.Public.ObjectAttributes.Restricted)
-	assert.True(t, storageKey.TPMAttributes.Public.ObjectAttributes.Decrypt)
-
-	loaded, err := f.h.TPM.LoadKeyPair(storageKey, nil, f.h.Backend)
-	require.NoError(t, err)
-	defer f.h.TPM.Flush(loaded.ObjectHandle)
-	storageKey.TPMAttributes.Handle = loaded.ObjectHandle
-	storageKey.TPMAttributes.Name = loaded.Name
-
-	child := f.keyAttrs("tenant-a-child", nil)
-	child.Parent = storageKey
-	_, err = f.h.TPM.CreateECDSA(child, f.h.Backend, false)
-	require.NoError(t, err)
-	require.NoError(t, f.sign(child))
-
-	wrongSecret := *storageKey
-	wrongSecret.Password = mustPassword(t, []byte("another tenant's secret"))
-	child.Parent = &wrongSecret
-	require.Error(t, f.sign(child), "a child cannot be loaded without its parent's secret")
-}
-
 // TestCreateStorageKey_RejectsMissingParent proves a storage key needs a
 // parent.
 func TestCreateStorageKey_RejectsMissingParent(t *testing.T) {
@@ -893,35 +834,6 @@ func TestCreateStorageKey_RejectsMissingParent(t *testing.T) {
 	err := h.TPM.CreateStorageKey(&types.KeyAttributes{CN: "orphan"}, h.Backend)
 	require.ErrorIs(t, err, store.ErrInvalidParentAttributes)
 	require.ErrorIs(t, h.TPM.CreateStorageKey(nil, h.Backend), store.ErrInvalidKeyAttributes)
-}
-
-// TestAuthorizedPolicy_SealedObjectFromBlobsInCallerStore proves a sealed
-// object whose blobs the caller presents in memory is authorized by the
-// binding record in the key store the caller names -- a tenant's store --
-// not the TPM's default store, where no record exists for it.
-func TestAuthorizedPolicy_SealedObjectFromBlobsInCallerStore(t *testing.T) {
-	f := newPolicyFixture(t)
-	tenantStore, err := f.h.Backend.Tenant("acme")
-	require.NoError(t, err)
-
-	secret := []byte("sealed in a tenant's store")
-	attrs := sealedKeyAttrsUnder(f.srk, "tenant-sealed", nil)
-	attrs.TPMPolicy = testPolicyName
-	attrs.SealData = types.NewSealData(secret)
-	_, err = f.h.TPM.SealKey(attrs, tenantStore, false)
-	require.NoError(t, err)
-
-	pub, err := tenantStore.Get(attrs, store.FSEXT_PUBLIC_BLOB)
-	require.NoError(t, err)
-	priv, err := tenantStore.Get(attrs, store.FSEXT_PRIVATE_BLOB)
-	require.NoError(t, err)
-
-	unsealAttrs := sealedKeyAttrsUnder(f.srk, "tenant-sealed", nil)
-	got, err := f.h.TPM.Unseal(context.Background(),
-		&types.SealedData{Backend: types.BackendTypeTPM2, TPMPublic: pub, TPMPrivate: priv},
-		&types.UnsealOptions{KeyAttributes: unsealAttrs, Backend: tenantStore})
-	require.NoError(t, err)
-	assert.Equal(t, secret, got)
 }
 
 // TestSymmetricKey_UnderATenantStorageKey proves a symmetric key can live

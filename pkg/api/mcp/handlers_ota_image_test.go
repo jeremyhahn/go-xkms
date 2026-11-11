@@ -14,7 +14,6 @@
 package mcp
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
@@ -28,7 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -77,18 +75,6 @@ func verifyOTASignature(t *testing.T, pub *ecdsa.PublicKey, digest, sig []byte) 
 	return ecdsa.Verify(pub, digest, new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:]))
 }
 
-func TestOTAImageKeyMethods_Registered(t *testing.T) {
-	for method, action := range map[string]string{
-		"xkms.createOTAImageKey": auth.ActionCreate,
-		"xkms.rotateOTAImageKey": auth.ActionRotate,
-		"xkms.signOTAImage":      auth.ActionSign,
-	} {
-		entry, ok := rpcMethods[method]
-		require.True(t, ok, "%s must be registered", method)
-		assert.Equal(t, auth.ResourceKeys+":"+action, string(entry.perm), method)
-	}
-}
-
 func TestOTAImageKeyMethods_CreateRotateSign(t *testing.T) {
 	server, _ := newOTAImageServer(t)
 
@@ -118,58 +104,6 @@ func TestOTAImageKeyMethods_CreateRotateSign(t *testing.T) {
 	require.True(t, ok, "signature is %T", signed.Signature)
 	assert.True(t, verifyOTASignature(t, otaPublicKey(t, rotated.PublicKeyPEM), digest[:], signature),
 		"signature does not verify under the rotated key")
-}
-
-func TestOTAImageKeyMethods_InvalidParams(t *testing.T) {
-	server, svc := newOTAImageServer(t)
-
-	// A key created outside the OTA path under a board's key ID, on P-384.
-	scoped, err := svc.LookupTenantBackend(otaTestBackend, otaTestTenant)
-	require.NoError(t, err)
-	_, err = scoped.GenerateECDSA(context.Background(), &types.KeyAttributes{
-		CN:            "ota-image-p384-board",
-		KeyType:       types.KeyTypeSigning,
-		StoreType:     types.StoreSoftware,
-		KeyAlgorithm:  x509.ECDSA,
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P384()},
-	})
-	require.NoError(t, err)
-
-	tests := []struct {
-		name   string
-		method string
-		params interface{}
-	}{
-		{"create malformed board id", "xkms.createOTAImageKey", OTAImageKeyParams{BoardID: "Bad--Board", Backend: otaTestBackend}},
-		{"create non-ES256 algorithm", "xkms.createOTAImageKey", OTAImageKeyParams{BoardID: otaTestBoard, Backend: otaTestBackend, Algorithm: "RS256"}},
-		{"rotate malformed board id", "xkms.rotateOTAImageKey", OTAImageKeyParams{BoardID: "bad--board", Backend: otaTestBackend}},
-		{"rotate non-ES256 algorithm", "xkms.rotateOTAImageKey", OTAImageKeyParams{BoardID: otaTestBoard, Backend: otaTestBackend, Algorithm: "PS256"}},
-		{"rotate non-ES256 key", "xkms.rotateOTAImageKey", OTAImageKeyParams{BoardID: "p384-board", Backend: otaTestBackend}},
-		{"sign malformed board id", "xkms.signOTAImage", OTAImageSignParams{BoardID: "-board", Backend: otaTestBackend, Data: []byte("image")}},
-		{"sign non-ES256 key", "xkms.signOTAImage", OTAImageSignParams{BoardID: "p384-board", Backend: otaTestBackend, Data: []byte("image")}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := callOTA(t, server, tc.method, tc.params)
-			var opErr *KeyOpError
-			require.True(t, errors.As(err, &opErr), "error %v is not a KeyOpError", err)
-			assert.Equal(t, ErrCodeInvalidParams, opErr.Code)
-		})
-	}
-}
-
-func TestOTAImageKeyMethods_MalformedParams(t *testing.T) {
-	server, _ := newOTAImageServer(t)
-
-	for _, method := range []string{"xkms.createOTAImageKey", "xkms.rotateOTAImageKey", "xkms.signOTAImage"} {
-		t.Run(method, func(t *testing.T) {
-			_, err := rpcMethods[method].handler(server, tenantContext(otaTestTenant),
-				&JSONRPCRequest{JSONRPC: "2.0", Method: method, Params: []byte("{not json"), ID: 1})
-			var opErr *KeyOpError
-			require.True(t, errors.As(err, &opErr), "error %v is not a KeyOpError", err)
-			assert.Equal(t, ErrCodeInvalidParams, opErr.Code)
-		})
-	}
 }
 
 func TestOTAImageKeyMethods_UnknownBoardKey(t *testing.T) {

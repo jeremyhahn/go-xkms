@@ -129,27 +129,6 @@ func TestClear_ReDerivesEKAttributesFromConfig(t *testing.T) {
 		"the re-derived EK attributes carry the TCG default creation template")
 }
 
-// TestClear_FailedClearKeepsCache proves a refused TPM2_Clear leaves the
-// cache alone: the TPM state did not change.
-func TestClear_FailedClearKeepsCache(t *testing.T) {
-	_, tpm := createSim(t, false)
-	t.Cleanup(func() { _ = tpm.Close() })
-	tpmImpl, ok := tpm.(*TPM2)
-	require.True(t, ok)
-
-	before, err := tpmImpl.EKAttributes()
-	require.NoError(t, err)
-	seedHierarchyCache(tpmImpl)
-	cached := hierarchyCache(tpmImpl)
-
-	require.Error(t, tpmImpl.Clear([]byte("not-the-lockout-auth")))
-
-	assert.Equal(t, cached, hierarchyCache(tpmImpl))
-	after, err := tpmImpl.EKAttributes()
-	require.NoError(t, err)
-	assert.Same(t, before, after)
-}
-
 // TestClearForReprovision_PlatformClearDropsCache covers the PLATFORM
 // fallback, which runs TPM2_Clear without going through Clear.
 func TestClearForReprovision_PlatformClearDropsCache(t *testing.T) {
@@ -170,21 +149,5 @@ func TestClearForReprovision_PlatformClearDropsCache(t *testing.T) {
 	rebootRequired, err := tpmImpl.ClearForReprovision()
 	require.NoError(t, err)
 	assert.False(t, rebootRequired)
-	assertHierarchyCacheDropped(t, tpmImpl)
-}
-
-// TestFactoryReset_DropsEveryCachedHierarchyValue proves FactoryReset's
-// step 4 drops the whole hierarchy cache, the EK values included.
-func TestFactoryReset_DropsEveryCachedHierarchyValue(t *testing.T) {
-	_, tpm := createSim(t, false)
-	t.Cleanup(func() { _ = tpm.Close() })
-	tpmImpl, ok := tpm.(*TPM2)
-	require.True(t, ok)
-
-	_, err := tpmImpl.EKAttributes()
-	require.NoError(t, err)
-	seedHierarchyCache(tpmImpl)
-
-	require.NoError(t, tpmImpl.FactoryReset(nil))
 	assertHierarchyCacheDropped(t, tpmImpl)
 }

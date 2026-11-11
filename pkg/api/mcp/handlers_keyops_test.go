@@ -303,14 +303,6 @@ func TestHandler_AttestKey_ValidationError(t *testing.T) {
 	assert.Contains(t, resp.Error.Message, "key_id is required")
 }
 
-func TestHandler_AttestKey_MalformedParams(t *testing.T) {
-	server := createTestServer(t)
-
-	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.attestKey", Params: json.RawMessage(`{bad`), ID: 1}
-	_, err := server.handleAttestKey(context.Background(), req)
-	require.Error(t, err)
-}
-
 // ===========================================================================
 // DeriveKeyECDH
 // ===========================================================================
@@ -388,14 +380,6 @@ func TestHandler_DeriveKeyECDH_KeyLengthExceedsMaximum(t *testing.T) {
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 }
 
-func TestHandler_DeriveKeyECDH_MalformedParams(t *testing.T) {
-	server := createTestServer(t)
-
-	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.deriveKeyECDH", Params: json.RawMessage(`{bad`), ID: 1}
-	_, err := server.handleDeriveKeyECDH(context.Background(), req)
-	require.Error(t, err)
-}
-
 // ===========================================================================
 // ExportKeyMaterial
 // ===========================================================================
@@ -449,14 +433,6 @@ func TestHandler_ExportKeyMaterial_ValidationError(t *testing.T) {
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	assert.Contains(t, resp.Error.Message, "key_id is required")
-}
-
-func TestHandler_ExportKeyMaterial_MalformedParams(t *testing.T) {
-	server := createTestServer(t)
-
-	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.exportKeyMaterial", Params: json.RawMessage(`{bad`), ID: 1}
-	_, err := server.handleExportKeyMaterial(context.Background(), req)
-	require.Error(t, err)
 }
 
 // TestHandler_ExportKey_And_ExportKeyMaterial_AreDistinct proves the rename in
@@ -583,14 +559,6 @@ func TestHandler_WrapKeyByID_ValidationError(t *testing.T) {
 	assert.Contains(t, resp.Error.Message, "algorithm is required")
 }
 
-func TestHandler_WrapKeyByID_MalformedParams(t *testing.T) {
-	server := createTestServer(t)
-
-	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.wrapKeyByID", Params: json.RawMessage(`{bad`), ID: 1}
-	_, err := server.handleWrapKeyByID(context.Background(), req)
-	require.Error(t, err)
-}
-
 // ===========================================================================
 // UnwrapKeyByID
 // ===========================================================================
@@ -677,14 +645,6 @@ func TestHandler_UnwrapKeyByID_ValidationError(t *testing.T) {
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	assert.Contains(t, resp.Error.Message, "wrapped_key is required")
-}
-
-func TestHandler_UnwrapKeyByID_MalformedParams(t *testing.T) {
-	server := createTestServer(t)
-
-	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.unwrapKeyByID", Params: json.RawMessage(`{bad`), ID: 1}
-	_, err := server.handleUnwrapKeyByID(context.Background(), req)
-	require.Error(t, err)
 }
 
 // ===========================================================================

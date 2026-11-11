@@ -15,16 +15,12 @@ package pbconv
 
 import (
 	"context"
-	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -207,22 +203,8 @@ func (s *recordingServer) TenantVTPMStop(_ context.Context, r *pb.TenantVTPMRequ
 // and returns a TPMPolicyClient over it.
 func newRecordingClient(t *testing.T) (TPMPolicyClient, *recordingServer) {
 	t.Helper()
-	lis := bufconn.Listen(1 << 20)
-	srv := grpc.NewServer()
 	rec := &recordingServer{last: map[string]any{}}
-	pb.RegisterKeystoreServiceServer(srv, rec)
-	served := make(chan error, 1)
-	go func() { served <- srv.Serve(lis) }()
-	conn, err := grpc.NewClient("passthrough:///bufnet",
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, conn.Close())
-		srv.Stop()
-		require.NoError(t, <-served)
-	})
-	return TPMPolicyClient{Client: pb.NewKeystoreServiceClient(conn)}, rec
+	return TPMPolicyClient{Client: dialKeystore(t, rec)}, rec
 }
 
 // TestTPMPolicyClient_CarriesEveryRequest proves each client method sends
@@ -333,24 +315,10 @@ func TestTPMPolicyClient_RefusesNilRequests(t *testing.T) {
 // TestTPMPolicyClient_ServerErrorsPassThrough proves an RPC failure of every
 // kind of method reaches the caller as the server's status.
 func TestTPMPolicyClient_ServerErrorsPassThrough(t *testing.T) {
-	lis := bufconn.Listen(1 << 20)
-	srv := grpc.NewServer()
-	pb.RegisterKeystoreServiceServer(srv, &pb.UnimplementedKeystoreServiceServer{})
-	served := make(chan error, 1)
-	go func() { served <- srv.Serve(lis) }()
-	conn, err := grpc.NewClient("passthrough:///bufnet",
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, conn.Close())
-		srv.Stop()
-		require.NoError(t, <-served)
-	}()
-	c := TPMPolicyClient{Client: pb.NewKeystoreServiceClient(conn)}
+	c := TPMPolicyClient{Client: dialKeystore(t, &pb.UnimplementedKeystoreServiceServer{})}
 	ctx := context.Background()
 
-	_, err = c.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{Name: "boot"})
+	_, err := c.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{Name: "boot"})
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
 	_, err = c.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{})
 	assert.Equal(t, codes.Unimplemented, status.Code(err))

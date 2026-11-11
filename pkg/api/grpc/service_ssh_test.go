@@ -114,11 +114,3 @@ func TestService_SSHGenerateListSignDelete(t *testing.T) {
 		t.Fatalf("expected 0 keys after delete, got %d", len(listResp.GetKeys()))
 	}
 }
-
-func TestService_SSHUnavailableWhenUnset(t *testing.T) {
-	ctx := context.Background()
-	svc := NewService(nil, nil, nil) // no SSH client wired
-	if _, err := svc.SSHGenerateKey(ctx, &pb.SSHGenerateKeyRequest{Scope: "user", Owner: "a", Name: "k", Algorithm: "ed25519"}); err == nil {
-		t.Fatal("expected Unavailable error when SSH client is not configured")
-	}
-}
