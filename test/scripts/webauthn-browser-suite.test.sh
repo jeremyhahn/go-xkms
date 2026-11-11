@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# Tests for test/integration/webauthn-browser/run-suite.sh (CA m2529).
+#
+# The WebAuthn browser suite runs inside the devcontainer, so the only way the
+# xkmsd log reaches the CI job log is for the suite's own command to print it.
+# These tests run the wrapper against a stub `npx` on PATH in a copy of the
+# suite directory: a failing run must print the log's tail under a header and
+# keep Playwright's status; a passing run prints nothing extra. No Docker, no
+# browser, no network.
+set -uo pipefail
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+SCRIPT="$ROOT/test/integration/webauthn-browser/run-suite.sh"
+set +e
+PASS=0
+FAIL=0
+ok() { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
+no() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n    want: %s\n    got:  %s\n' "$1" "$2" "$3" >&2; }
+eq() { [ "$2" = "$3" ] && ok "$1" || no "$1" "$2" "$3"; }
+has() { case "$3" in *"$2"*) ok "$1" ;; *) no "$1" "contains: $2" "$3" ;; esac; }
+lacks() { case "$3" in *"$2"*) no "$1" "does not contain: $2" "$3" ;; *) ok "$1" ;; esac; }
+section() { printf '\n%s\n' "$1"; }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+# The suite directory: the wrapper and a runtime directory holding the log.
+SUITE="$WORK/suite"
+mkdir -p "$SUITE/.runtime"
+cp "$SCRIPT" "$SUITE/run-suite.sh"
+
+# The stub npx records its arguments, prints a line and exits $STUB_RC.
+FAKEBIN="$WORK/bin"
+mkdir -p "$FAKEBIN"
+cat >"$FAKEBIN/npx" <<'EOF'
+#!/bin/sh
+echo "npx $*" >>"$STUB_LOG"
+echo "stub playwright output"
+exit "${STUB_RC:-0}"
+EOF
+chmod +x "$FAKEBIN/npx"
+
+# A log longer than the printed tail: line 1 must not appear, the Error line
+# near the end must.
+{
+	for i in $(seq 1 450); do echo "{\"level\":\"INFO\",\"msg\":\"line $i\"}"; done
+	echo '{"level":"ERROR","msg":"webauthn registration failed","error":"stub cause"}'
+} >"$SUITE/.runtime/xkmsd.log"
+
+# run [ENV...] -- run the wrapper from another directory. Sets out, rc, calls.
+run() {
+	: >"$WORK/calls"
+	out=$(cd "$WORK" && env PATH="$FAKEBIN:$PATH" STUB_LOG="$WORK/calls" "$@" bash "$SUITE/run-suite.sh" 2>&1)
+	rc=$?
+	calls=$(cat "$WORK/calls")
+}
+
+section "a failing suite prints the xkmsd log and keeps its status"
+run STUB_RC=3
+eq "exit status is Playwright's" 3 "$rc"
+eq "it runs playwright test" "npx playwright test" "$calls"
+has "it relays Playwright's output" "stub playwright output" "$out"
+has "it prints a header" "last 400 lines of the xkmsd log" "$out"
+has "it prints the Error line" '"level":"ERROR","msg":"webauthn registration failed"' "$out"
+has "it prints the tail" '"msg":"line 450"' "$out"
+lacks "it prints only the last 400 lines" '"msg":"line 51"}' "$out"
+
+section "a passing suite prints nothing extra"
+run STUB_RC=0
+eq "exit 0" 0 "$rc"
+has "it relays Playwright's output" "stub playwright output" "$out"
+lacks "no header" "xkmsd log" "$out"
+lacks "no log line" "webauthn registration failed" "$out"
+
+section "a failing suite without a log says so and keeps its status"
+rm -f "$SUITE/.runtime/xkmsd.log"
+run STUB_RC=1
+eq "exit status is Playwright's" 1 "$rc"
+has "it says the log is missing" "no xkmsd log at" "$out"
+
+printf '\npassed %d, failed %d\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

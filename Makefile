@@ -1098,6 +1098,7 @@ test-scripts:
 	@bash test/scripts/socket-probe.test.sh
 	@bash test/scripts/start-test-xkmsd.test.sh
 	@bash test/scripts/xkms-server-diagnostics.test.sh
+	@bash test/scripts/webauthn-browser-suite.test.sh
 	@bash test/scripts/check-public-literals.test.sh
 	@bash test/scripts/build-agsim.test.sh
 	@bash test/scripts/check-test-helpers.test.sh
