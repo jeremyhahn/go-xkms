@@ -1,0 +1,1 @@
+Tests: `pkg/api/grpc` drops 359 tests that covered no statement the kept tests miss, repeated a kept test's path, or ran no package code, along with the helpers and imports they alone used; coverage is unchanged, and no authorisation, tenant-isolation, interceptor or error-scrubbing assertion was removed (#1794).

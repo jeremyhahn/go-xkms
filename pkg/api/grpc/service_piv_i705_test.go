@@ -28,22 +28,6 @@ import (
 // their validation branches had a test (service_piv_test.go), never the
 // actual store round trip. It reuses that file's setupPIVTest helper.
 
-func TestServiceGetPIVCertificate_Success(t *testing.T) {
-	cleanup := setupPIVTest(t)
-	defer cleanup()
-	svc := newPIVTestService()
-	ctx := context.Background()
-
-	genResp, err := svc.GeneratePIVKey(ctx, &pb.GeneratePIVKeyRequest{Backend: "software", Slot: "9a", Subject: "Test Key"})
-	require.NoError(t, err)
-	require.NotEmpty(t, genResp.Certificate)
-
-	getResp, err := svc.GetPIVCertificate(ctx, &pb.GetPIVCertificateRequest{Backend: "software", Slot: "9a", Format: "pem"})
-	require.NoError(t, err)
-	assert.Equal(t, "9a", getResp.Slot)
-	assert.NotEmpty(t, getResp.Certificate)
-}
-
 func TestServiceStorePIVCertificate_Success(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()

@@ -28,27 +28,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-func TestExtractPublicKey_RSA(t *testing.T) {
-	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA key: %v", err)
-	}
-
-	pubKey, err := extractPublicKey(privKey)
-	if err != nil {
-		t.Fatalf("extractPublicKey failed: %v", err)
-	}
-
-	rsaPub, ok := pubKey.(*rsa.PublicKey)
-	if !ok {
-		t.Fatalf("expected *rsa.PublicKey, got %T", pubKey)
-	}
-
-	if rsaPub.N.Cmp(privKey.N) != 0 {
-		t.Error("extracted public key does not match")
-	}
-}
-
 func TestExtractPublicKey_ECDSA(t *testing.T) {
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -297,27 +276,6 @@ func TestExtractPublicKey_CryptoSigner(t *testing.T) {
 	}
 }
 
-func TestGetPublicKey_RSA(t *testing.T) {
-	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA key: %v", err)
-	}
-
-	pubKey := getPublicKey(privKey)
-	if pubKey == nil {
-		t.Fatal("expected non-nil public key")
-	}
-
-	rsaPub, ok := pubKey.(*rsa.PublicKey)
-	if !ok {
-		t.Fatalf("expected *rsa.PublicKey, got %T", pubKey)
-	}
-
-	if rsaPub.N.Cmp(privKey.N) != 0 {
-		t.Error("extracted public key does not match")
-	}
-}
-
 func TestGetPublicKey_ECDSA(t *testing.T) {
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -343,48 +301,6 @@ func TestGetPublicKey_UnsupportedType(t *testing.T) {
 	pubKey := getPublicKey("not-a-key")
 	if pubKey != nil {
 		t.Errorf("expected nil for unsupported type, got %T", pubKey)
-	}
-}
-
-func TestAlgorithmString_SymmetricAlgorithm(t *testing.T) {
-	attrs := &types.KeyAttributes{
-		SymmetricAlgorithm: types.SymmetricAlgorithm("aes256-gcm"),
-	}
-
-	result := attrs.AlgorithmString()
-	if result != "aes256-gcm" {
-		t.Errorf("expected aes256-gcm, got %s", result)
-	}
-}
-
-func TestAlgorithmString_AsymmetricAlgorithm(t *testing.T) {
-	attrs := &types.KeyAttributes{
-		KeyAlgorithm: x509.RSA,
-	}
-
-	result := attrs.AlgorithmString()
-	if result != "RSA" {
-		t.Errorf("expected RSA, got %s", result)
-	}
-}
-
-func TestAlgorithmString_ECDSAAlgorithm(t *testing.T) {
-	attrs := &types.KeyAttributes{
-		KeyAlgorithm: x509.ECDSA,
-	}
-
-	result := attrs.AlgorithmString()
-	if result != "ECDSA" {
-		t.Errorf("expected ECDSA, got %s", result)
-	}
-}
-
-func TestAlgorithmString_UnknownAlgorithm(t *testing.T) {
-	attrs := &types.KeyAttributes{}
-
-	result := attrs.AlgorithmString()
-	if result != "" {
-		t.Errorf("expected empty string, got %s", result)
 	}
 }
 

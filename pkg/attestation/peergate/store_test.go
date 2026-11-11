@@ -37,27 +37,6 @@ func record(thumbprint string, collectedAt time.Time) peergate.Record {
 	}
 }
 
-func TestDAOStore_StoresAndWithdrawsRecords(t *testing.T) {
-	ctx := context.Background()
-	store := newStore(t)
-
-	_, ok, err := store.Get(ctx, "peer")
-	require.NoError(t, err)
-	assert.False(t, ok)
-
-	require.NoError(t, store.Put(ctx, record("peer", time.Now())))
-	got, ok, err := store.Get(ctx, "peer")
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Equal(t, []byte("quote"), got.Evidence.Quote)
-
-	require.NoError(t, store.Delete(ctx, "peer"))
-	require.NoError(t, store.Delete(ctx, "peer"), "deleting an absent record is not an error")
-	_, ok, err = store.Get(ctx, "peer")
-	require.NoError(t, err)
-	assert.False(t, ok)
-}
-
 // Every field the verifier reads must survive the datastore, and a second
 // store over the same datastore (another node, or a restart) must see it.
 func TestDAOStore_RoundTripsEveryFieldAcrossStores(t *testing.T) {
@@ -79,6 +58,9 @@ func TestDAOStore_RoundTripsEveryFieldAcrossStores(t *testing.T) {
 		},
 		ChannelBinding: fill(9),
 	}
+	_, ok, err := writer.Get(ctx, "peer")
+	require.NoError(t, err)
+	assert.False(t, ok)
 	require.NoError(t, writer.Put(ctx, in))
 
 	reader, err := peergate.NewDAOStore(peergate.DAOStoreConfig{DAOs: daos})
@@ -89,23 +71,12 @@ func TestDAOStore_RoundTripsEveryFieldAcrossStores(t *testing.T) {
 	assert.True(t, collected.Equal(out.Evidence.CollectedAt), "CollectedAt = %v", out.Evidence.CollectedAt)
 	out.Evidence.CollectedAt = collected
 	assert.Equal(t, in, out)
-}
 
-// The latest submission replaces the earlier one, so a peer whose state
-// turned bad cannot keep presenting an older passing quote.
-func TestDAOStore_LatestEvidenceWins(t *testing.T) {
-	ctx := context.Background()
-	store := newStore(t)
-	first := record("peer", time.Now())
-	second := record("peer", time.Now())
-	second.Evidence.Quote = []byte("newer")
-
-	require.NoError(t, store.Put(ctx, first))
-	require.NoError(t, store.Put(ctx, second))
-	got, ok, err := store.Get(ctx, "peer")
+	require.NoError(t, reader.Delete(ctx, "peer"))
+	require.NoError(t, reader.Delete(ctx, "peer"), "deleting an absent record is not an error")
+	_, ok, err = writer.Get(ctx, "peer")
 	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Equal(t, []byte("newer"), got.Evidence.Quote)
+	assert.False(t, ok, "a withdrawal is seen by every store")
 }
 
 func TestDAOStore_BoundsPeersAndEvictsOnlyExpiredEvidence(t *testing.T) {

@@ -234,19 +234,3 @@ func TestHandler_HandlerFunc(t *testing.T) {
 		})
 	}
 }
-
-func TestHandler_HandlerFunc_WithStripPrefix(t *testing.T) {
-	svc := newTestService(t)
-	h := NewHandler(svc)
-
-	mux := http.NewServeMux()
-	mux.Handle("/api/v1/webauthn/", http.StripPrefix("/api/v1/webauthn", h.HandlerFunc()))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin",
-		strings.NewReader(`{"email":"test@example.com"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-}

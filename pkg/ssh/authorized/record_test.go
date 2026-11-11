@@ -92,8 +92,9 @@ func TestStore_List_NamesRoundTripToGetAndRemove(t *testing.T) {
 		if gerr != nil {
 			t.Fatalf("Get(%s/%s/%s) from listed record: %v", rec.Scope, rec.Owner, rec.Name, gerr)
 		}
-		if got.Name != rec.Name {
-			t.Fatalf("Get returned Name %q, want %q", got.Name, rec.Name)
+		if got.Scope != rec.Scope || got.Owner != rec.Owner || got.Name != rec.Name {
+			t.Fatalf("Get coordinates = %s/%s/%s, want %s/%s/%s",
+				got.Scope, got.Owner, got.Name, rec.Scope, rec.Owner, rec.Name)
 		}
 		if got.Entry.Key.Fingerprint != rec.Entry.Key.Fingerprint {
 			t.Fatalf("Get(%q) returned a different key than List", rec.Name)

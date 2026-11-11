@@ -388,24 +388,3 @@ func TestSlotModel_RefreshTreatsEmptyStoreAsNoOccupancy(t *testing.T) {
 		t.Errorf("AvailableSlots() returned %d slots, want %d", len(available), len(pivcert.AllSlots()))
 	}
 }
-
-// TestSlotModel_IgnoresUnknownCertIDs verifies records belonging to other
-// subsystems never mark a PIV slot occupied.
-func TestSlotModel_IgnoresUnknownCertIDs(t *testing.T) {
-	fake := newFakeCertStorage()
-	fake.put("platform-root-ca", &x509.Certificate{Raw: []byte{0x30, 0x00}})
-	fake.put("0x01800000", &x509.Certificate{Raw: []byte{0x30, 0x00}})
-
-	model, err := NewPIVSlotModel(fake)
-	if err != nil {
-		t.Fatalf("NewPIVSlotModel() error = %v", err)
-	}
-
-	occupied, err := model.OccupiedSlots()
-	if err != nil {
-		t.Fatalf("OccupiedSlots() error = %v", err)
-	}
-	if len(occupied) != 0 {
-		t.Errorf("OccupiedSlots() = %v, want none", occupied)
-	}
-}

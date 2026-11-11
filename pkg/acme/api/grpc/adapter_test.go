@@ -296,12 +296,6 @@ func TestNewAdapter_MissingAddress(t *testing.T) {
 	assert.Contains(t, err.Error(), "gRPC address is required")
 }
 
-func TestNewAdapter_EmptyAddress(t *testing.T) {
-	_, err := NewAdapter(&api.AdapterConfig{GRPCAddr: ""})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gRPC address is required")
-}
-
 // =============================================================================
 // Protocol and Close Tests
 // =============================================================================
@@ -375,28 +369,6 @@ func TestCreateTenant_Error(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to create tenant")
-}
-
-func TestCreateTenant_NilSettings(t *testing.T) {
-	mockClient := &mockAdminServiceClient{
-		createTenantFunc: func(ctx context.Context, in *pb.CreateTenantRequest, opts ...grpc.CallOption) (*pb.TenantInfo, error) {
-			assert.Nil(t, in.Settings)
-			return &pb.TenantInfo{
-				Id:   in.Id,
-				Name: in.Name,
-			}, nil
-		},
-	}
-
-	adapter := newTestAdapter(mockClient, "")
-	result, err := adapter.CreateTenant(context.Background(), &admin.CreateTenantRequest{
-		ID:       "tenant-1",
-		Name:     "Test Tenant",
-		Settings: nil,
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-1", result.ID)
 }
 
 func TestGetTenant_Success(t *testing.T) {
@@ -1392,25 +1364,6 @@ func TestGetStatus_NoStartedAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, status.Initialized)
 	assert.True(t, status.StartedAt.IsZero())
-}
-
-func TestGetStatus_NoIntermediateCA(t *testing.T) {
-	mockClient := &mockAdminServiceClient{
-		getStatusFunc: func(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*pb.CAStatus, error) {
-			return &pb.CAStatus{
-				Identity:       "Test CA",
-				Initialized:    true,
-				RootCa:         "CN=Root",
-				IntermediateCa: "",
-			}, nil
-		},
-	}
-
-	adapter := newTestAdapter(mockClient, "")
-	status, err := adapter.GetStatus(context.Background())
-
-	require.NoError(t, err)
-	assert.Empty(t, status.IntermediateCA)
 }
 
 func TestGetStatus_Error(t *testing.T) {

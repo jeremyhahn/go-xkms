@@ -148,15 +148,6 @@ func TestOTAImageKeyRPCs_InvalidArgument(t *testing.T) {
 	}
 }
 
-func TestOTAImageKeyRPCs_UnknownBoardKey(t *testing.T) {
-	s, _ := crossTenantService(t)
-
-	_, err := s.RotateOTAImageKey(tenantCtx(crossTenantA), &pb.OTAImageKeyRequest{
-		BoardId: otaTestBoard, Backend: crossTenantSource,
-	})
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
 func TestOTAImageKeyRPCs_NotInitialized(t *testing.T) {
 	s := NewService(nil, nil, nil)
 	ctx := tenantCtx(crossTenantA)

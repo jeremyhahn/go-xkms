@@ -24,28 +24,8 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/stretchr/testify/require"
 )
-
-// TestNewTPM2_UnknownHashName proves NewTPM2 rejects a Config.Hash value
-// that names no hash this process recognizes at all. A pre-supplied
-// Transport takes the "already have a live connection" branch of the
-// transport switch, so this exercises the hash validation in isolation
-// from device/simulator opening; a missing check would fall through with
-// a zero algID instead.
-func TestNewTPM2_UnknownHashName(t *testing.T) {
-	params := &Params{
-		Config:    &Config{Hash: "not-a-real-hash-name"},
-		Logger:    slog.Default(),
-		Transport: &noopTransport{},
-	}
-
-	tpmIface, err := NewTPM2(params)
-	require.Nil(t, tpmIface)
-	require.ErrorIs(t, err, store.ErrInvalidHashFunction)
-}
 
 // TestNewTPM2_HashWithNoTPMAlgID proves NewTPM2 rejects a Config.Hash that
 // names a real, linked crypto.Hash (so store.AvailableHashes accepts it)
@@ -63,29 +43,6 @@ func TestNewTPM2_HashWithNoTPMAlgID(t *testing.T) {
 	tpmIface, err := NewTPM2(params)
 	require.Nil(t, tpmIface)
 	require.ErrorIs(t, err, ErrInvalidCryptoHashAlgID)
-}
-
-// TestForceClear_PPIPathUnavailable proves ForceClear surfaces the PPI
-// sysfs write failure as a typed *errs.Detail wrapping ErrForceClear rather
-// than a bare fmt.Errorf, and that it maps "tpmrm0" to the "tpm0" sysfs PPI
-// node per the kernel's resource-manager naming convention. This process
-// has no /sys/class/tpm/tpm0 node (no real TPM device is present, and this
-// test writes nothing -- the write is expected to fail), so this exercises
-// the error path deterministically; the success path (a real PPI write)
-// requires kernel TPM sysfs support this test environment cannot provide.
-func TestForceClear_PPIPathUnavailable(t *testing.T) {
-	tpmObj := &TPM2{
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		config: &Config{Device: "/dev/tpmrm0"},
-	}
-
-	err := tpmObj.ForceClear()
-	require.Error(t, err)
-	require.ErrorIs(t, err, ErrForceClear)
-
-	var detail *errs.Detail
-	require.ErrorAs(t, err, &detail)
-	require.NotEmpty(t, detail.Detail)
 }
 
 // TestClose_DeviceCloseErrorIsLoggedNotReturned proves Close tolerates a

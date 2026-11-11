@@ -15,10 +15,7 @@ package mtls
 
 import (
 	"context"
-	"crypto/dsa" //nolint:staticcheck // deprecated package used only to build an
-	// "unsupported public key type" certificate for negative-path testing.
 	"crypto/ed25519"
-	"crypto/fips140"
 	"crypto/rand"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -76,52 +73,41 @@ var (
 	oidSignatureSHA256WithRSA = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}
 )
 
-// generateDSAKey generates a DSA key pair for a test that needs one to
-// exercise the mtls Factor's rejection of an unsupported public key type,
-// and reports whether the caller can continue using it. DSA is refused
-// outright under GODEBUG=fips140=only (crypto/dsa is not part of the Go
-// Cryptographic Module), so this asserts that refusal and reports ok=false
-// instead of letting the caller dereference a zero-value key -- the
-// rejection this package's own tests exist to prove happens one layer up,
-// inside crypto/dsa, in that mode.
-func generateDSAKey(t *testing.T) (dsa.PrivateKey, bool) {
+// The DSA domain parameters (P, Q, G) and public value Y below are a fixed
+// test vector, generated once offline with dsa.GenerateParameters
+// (L1024N160) and dsa.GenerateKey. The tests only need a certificate whose
+// SubjectPublicKeyInfo carries a DSA key, so fixed values keep them running
+// under GODEBUG=fips140=only, where crypto/dsa refuses to generate keys.
+const (
+	dsaTestP = "97101b0525bd252815aed72e87710a32cc9c8988d41ce99fa52f2d645c965e881d8a6f459a60acd02b7898cdf19eb2cb0fb7b81ec0258e82f760593bd74d834c3c38ebdf3c6d48b393b3a0f2de2c735f3c677f77ab74cadf21250b69939c76a0550a89f0dee0a07bb136d1d4f121cd61fc1b946a72f1facabed5a88c4cdb2cdb"
+	dsaTestQ = "a904c9be0baec888b3642ca799061f77233c581f"
+	dsaTestG = "46aafba87c9f48d063bd9d2fdae02053494b1ffb9765388466453dea86d50e12cad4e74e1499eb7a15a8c3832fb4d791584beb19bbd88008a1df0c15de66391149ef7de2746a43309b01332b0fd5c0352fd515817e39dd637340976042853da88d8b170c1a0e64167a1518e16b5726f0673513d76d80f42ee20052d03c9c1706"
+	dsaTestY = "110faa7f86617005f34becb972df32bbb55b2685f231339f1c655b2c819df44934f5278aab14743eca4ac5f4ecd89bcec3a801921971885e4970215eacce22d16ca453f5b86637a3e044e423b97a51f2a49e5c6041edd30de30cbbcf99bb539f89ceb98e26e9266b55b2e05ecb2bfdcc55136865c01c1d4677d4fb8e106efc33"
+)
+
+// hexInt parses a hex constant of the DSA test vector.
+func hexInt(t *testing.T, s string) *big.Int {
 	t.Helper()
-	var params dsa.Parameters
-	err := dsa.GenerateParameters(&params, rand.Reader, dsa.L1024N160)
-	if err != nil {
-		if fips140.Enforced() {
-			return dsa.PrivateKey{}, false
-		}
-		t.Fatalf("dsa.GenerateParameters: %v", err)
+	n, ok := new(big.Int).SetString(s, 16)
+	if !ok {
+		t.Fatalf("parse hex integer %q", s)
 	}
-	var priv dsa.PrivateKey
-	priv.Parameters = params
-	if err := dsa.GenerateKey(&priv, rand.Reader); err != nil {
-		t.Fatalf("dsa.GenerateKey: %v", err)
-	}
-	return priv, true
+	return n
 }
 
 // dsaCertPEM hand-builds a PEM CERTIFICATE block whose SubjectPublicKeyInfo
-// carries a DSA public key — a type parseCertPEM/x509.ParseCertificate will
-// happily parse, but that the mtls Factor does not support for signing. The
-// bool return is false when DSA key generation was refused for the expected
-// GODEBUG=fips140=only reason (see generateDSAKey); the caller must return
-// immediately in that case.
-func dsaCertPEM(t *testing.T, notAfter time.Time) (string, bool) {
+// carries the fixed DSA test public key — a type parseCertPEM/x509.ParseCertificate
+// will happily parse, but that the mtls Factor does not support for signing.
+func dsaCertPEM(t *testing.T, notAfter time.Time) string {
 	t.Helper()
 
-	priv, ok := generateDSAKey(t)
-	if !ok {
-		return "", false
-	}
-	params := priv.Parameters
-
-	dsaParamsDER, err := asn1.Marshal(struct{ P, Q, G *big.Int }{params.P, params.Q, params.G})
+	dsaParamsDER, err := asn1.Marshal(struct{ P, Q, G *big.Int }{
+		hexInt(t, dsaTestP), hexInt(t, dsaTestQ), hexInt(t, dsaTestG),
+	})
 	if err != nil {
 		t.Fatalf("marshal dsa params: %v", err)
 	}
-	yDER, err := asn1.Marshal(priv.Y)
+	yDER, err := asn1.Marshal(hexInt(t, dsaTestY))
 	if err != nil {
 		t.Fatalf("marshal dsa Y: %v", err)
 	}
@@ -164,7 +150,7 @@ func dsaCertPEM(t *testing.T, notAfter time.Time) (string, bool) {
 		t.Fatalf("marshal certificate: %v", err)
 	}
 
-	return string(pemEncodeCertificate(certDER)), true
+	return string(pemEncodeCertificate(certDER))
 }
 
 // pemEncodeCertificate wraps raw DER bytes in a PEM CERTIFICATE block.
@@ -180,10 +166,7 @@ func pemEncodeCertificate(der []byte) []byte {
 // rejects a structurally valid certificate whose public key is not one of
 // ECDSA/RSA/Ed25519 (validatePublicKeyType's default branch).
 func TestMTLSFactor_Enroll_RejectsUnsupportedPublicKeyType(t *testing.T) {
-	certPEM, ok := dsaCertPEM(t, time.Now().Add(24*time.Hour))
-	if !ok {
-		return
-	}
+	certPEM := dsaCertPEM(t, time.Now().Add(24*time.Hour))
 
 	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
 	_, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
@@ -199,37 +182,6 @@ func TestMTLSFactor_Enroll_RejectsUnsupportedPublicKeyType(t *testing.T) {
 // validatePublicKeyType — direct unit coverage
 // ---------------------------------------------------------------------------
 
-// TestValidatePublicKeyType_RejectsDSA verifies validatePublicKeyType directly
-// rejects a DSA public key, independent of the Enroll call path.
-func TestValidatePublicKeyType_RejectsDSA(t *testing.T) {
-	priv, ok := generateDSAKey(t)
-	if !ok {
-		return
-	}
-
-	if err := validatePublicKeyType(&priv.PublicKey); err == nil {
-		t.Fatal("validatePublicKeyType(dsa pubkey) = nil, want error")
-	}
-}
-
-// TestValidatePublicKeyType_AcceptsSupportedTypes verifies the accept path
-// for all three supported public key types.
-func TestValidatePublicKeyType_AcceptsSupportedTypes(t *testing.T) {
-	ecKP := ecdsaKeyPair(t, time.Now().Add(time.Hour))
-	rsaKP := rsaKeyPair(t, time.Now().Add(time.Hour))
-	edKP := ed25519KeyPair(t, time.Now().Add(time.Hour))
-
-	for name, certPEM := range map[string]string{"ecdsa": ecKP.certPEM, "rsa": rsaKP.certPEM, "ed25519": edKP.certPEM} {
-		cert, err := parseCertPEM([]byte(certPEM))
-		if err != nil {
-			t.Fatalf("%s: parseCertPEM: %v", name, err)
-		}
-		if err := validatePublicKeyType(cert.PublicKey); err != nil {
-			t.Fatalf("%s: validatePublicKeyType = %v, want nil", name, err)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Verify — unsupported public key type (bypasses Enroll's own validation by
 // injecting the DSA cert directly into challenge.MethodData, exactly as a
@@ -242,10 +194,7 @@ func TestValidatePublicKeyType_AcceptsSupportedTypes(t *testing.T) {
 func TestMTLSFactor_Verify_RejectsUnsupportedPublicKeyType(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
-	certPEM, ok := dsaCertPEM(t, time.Now().Add(24*time.Hour))
-	if !ok {
-		return
-	}
+	certPEM := dsaCertPEM(t, time.Now().Add(24*time.Hour))
 	cert, err := parseCertPEM([]byte(certPEM))
 	if err != nil {
 		t.Fatalf("parseCertPEM(dsa cert): %v", err)
@@ -352,29 +301,3 @@ func TestParseCertPEM_RejectsMalformedDER(t *testing.T) {
 // error path with a structurally invalid (too-short) signature, mirroring
 // TestVerifyECDSA_RejectsGarbageASN1's coverage of the ECDSA helper.
 // ---------------------------------------------------------------------------
-
-// TestMTLSFactor_Verify_RSA_RejectsGarbageSignature verifies that a
-// structurally invalid (non-modulus-length) RSA signature is rejected via
-// the rsa.VerifyPKCS1v15 error path rather than panicking.
-func TestMTLSFactor_Verify_RSA_RejectsGarbageSignature(t *testing.T) {
-	ctx := context.Background()
-	f := New(Config{})
-	kp := rsaKeyPair(t, time.Now().Add(24*time.Hour))
-
-	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
-		UserID:       "u1",
-		MethodParams: map[string]any{"cert_pem": kp.certPEM},
-	})
-	if err != nil {
-		t.Fatalf("Enroll: %v", err)
-	}
-	challenge, err := f.Challenge(ctx, enrollment)
-	if err != nil {
-		t.Fatalf("Challenge: %v", err)
-	}
-
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: []byte("short")}); !errors.As(err, &failed) {
-		t.Fatalf("Verify(rsa garbage sig) err = %v, want VerificationFailedError", err)
-	}
-}

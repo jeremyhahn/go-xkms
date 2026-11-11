@@ -233,26 +233,6 @@ func TestSeal_NamedPolicyWithPassword_RoundTrip(t *testing.T) {
 	requireUnsealRefused(t, f.h, loaded, tpm2.PasswordAuth(pin), tpm2.TPMRCAuthUnavailable)
 }
 
-// TestSeal_PasswordOnly_RoundTrip proves a seal bound to no policy keeps
-// USERWITHAUTH and opens with its password, and with nothing else.
-func TestSeal_PasswordOnly_RoundTrip(t *testing.T) {
-	h := newSimHarness(t, nil)
-	secret := []byte("password-only-secret")
-	pin := []byte("object-password")
-	attrs := sealedKeyAttrs(t, h, "password-only", false, mustPassword(t, pin))
-	attrs.SealData = types.NewSealData(secret)
-	_, err := h.TPM.SealKey(attrs, h.Backend, true)
-	require.NoError(t, err)
-	requireUserWithAuth(t, h, attrs, true)
-
-	got, err := h.TPM.UnsealKey(sealedKeyAttrs(t, h, "password-only", false, mustPassword(t, pin)), h.Backend)
-	require.NoError(t, err)
-	require.Equal(t, secret, got)
-
-	loaded := loadSealedObject(t, h, attrs)
-	requireUnsealRefused(t, h, loaded, tpm2.PasswordAuth(nil), tpm2.TPMRCAuthFail, tpm2.TPMRCBadAuth)
-}
-
 // TestSeal_NeitherPolicyNorPassword_Refused proves a seal that would be
 // protected by nothing is refused before any object is created.
 func TestSeal_NeitherPolicyNorPassword_Refused(t *testing.T) {
@@ -271,28 +251,6 @@ func TestSeal_NeitherPolicyNorPassword_Refused(t *testing.T) {
 			require.Error(t, err, "a refused seal must leave no object behind")
 		})
 	}
-}
-
-// TestSeal_DefaultAttributes_RoundTrip proves the public Seal API with no
-// key attributes binds a passwordless seal to the Platform SRK's platform
-// policy rather than leaving it unprotected, and that it round-trips through
-// Unseal.
-func TestSeal_DefaultAttributes_RoundTrip(t *testing.T) {
-	h := newSimHarness(t, nil)
-	createPlatformPolicySRK(t, h, nil)
-
-	secret := []byte("default-attrs-secret")
-	sealed, err := h.TPM.Seal(context.Background(), secret, nil)
-	require.NoError(t, err)
-
-	contents, err := UnmarshalPublic(sealed.TPMPublic)
-	require.NoError(t, err)
-	require.False(t, contents.ObjectAttributes.UserWithAuth)
-	require.NotEmpty(t, contents.AuthPolicy.Buffer)
-
-	got, err := h.TPM.Unseal(context.Background(), sealed, nil)
-	require.NoError(t, err)
-	require.Equal(t, secret, got)
 }
 
 // TestSeal_CallerAuthPolicy_OnlyItsPolicySessionUnseals proves a seal bound

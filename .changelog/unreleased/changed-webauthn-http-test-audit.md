@@ -1,0 +1,1 @@
+webauthn: the `pkg/webauthn/http` tests test each behaviour once (#1794): 13 tests that repeated a kept test's path and assertions, or tested `http.StripPrefix`, are removed with the store doubles only they used; every refusal, indistinguishability and account-standing test stays, and coverage holds at 94.9%.

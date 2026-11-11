@@ -1,0 +1,1 @@
+- Tests: the `pkg/ca` suite drops 463 coverage-padding tests that repeated paths the remaining tests already cover (one padding file deleted whole, 7,123 lines). The empty section headers and unused helpers they left go too, and package coverage holds at 91.7% (#1794).

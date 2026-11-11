@@ -20,18 +20,6 @@ import (
 	"time"
 )
 
-func TestSigningKeys_ResolveDefaultsToTheReleaseKey(t *testing.T) {
-	w := newVerifierWorld(t)
-	got, err := w.app.ResolveSigningKey(w.ctx, w.tenant, &ResolveSigningKeyRequest{Repository: "acme/app"})
-	if err != nil {
-		t.Fatalf("ResolveSigningKey: %v", err)
-	}
-	want := &SigningKeyResolution{Repository: "acme/app", KeyID: ReleaseSigningKeyID, Default: true}
-	if *got != *want {
-		t.Fatalf("resolution = %+v, want %+v", got, want)
-	}
-}
-
 func TestSigningKeys_BindingOverridesTheReleaseKeyForItsRepositoryOnly(t *testing.T) {
 	w := newVerifierWorld(t)
 	at := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
@@ -59,8 +47,9 @@ func TestSigningKeys_BindingOverridesTheReleaseKeyForItsRepositoryOnly(t *testin
 	if err != nil {
 		t.Fatalf("ResolveSigningKey(other): %v", err)
 	}
-	if other.KeyID != ReleaseSigningKeyID || !other.Default {
-		t.Fatalf("other repository resolution = %+v, want the release key", other)
+	release := SigningKeyResolution{Repository: "acme/other", KeyID: ReleaseSigningKeyID, Default: true}
+	if *other != release {
+		t.Fatalf("other repository resolution = %+v, want the release key %+v", other, release)
 	}
 
 	elsewhere, err := w.app.ResolveSigningKey(w.ctx, "globex", &ResolveSigningKeyRequest{Repository: "acme/app"})

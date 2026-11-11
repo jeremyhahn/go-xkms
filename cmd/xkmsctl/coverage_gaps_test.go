@@ -154,33 +154,6 @@ func TestAuthFactorErrorUnwrap(t *testing.T) {
 // auth_factor_handlers.go — xkmsLoadCertCredentialAndMetadata (0%)
 // =============================================================================
 
-// TestXkmsLoadCertCredentialAndMetadata_Success validates the happy path:
-// a DER-encoded self-signed certificate is read from a PEM file and the
-// SPKI thumbprint plus metadata map are returned.
-func TestXkmsLoadCertCredentialAndMetadata_Success(t *testing.T) {
-	certPEM := makeSelfSignedCert(t, "test-cn")
-	p := filepath.Join(t.TempDir(), "cert.pem")
-	if err := os.WriteFile(p, certPEM, 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	key, meta, err := xkmsLoadCertCredentialAndMetadata(p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(key) == 0 {
-		t.Error("expected non-empty lookup key")
-	}
-	if meta["cert_cn"] != "test-cn" {
-		t.Errorf("cert_cn = %q, want test-cn", meta["cert_cn"])
-	}
-	for _, field := range []string{"cert_serial", "cert_not_after", "cert_not_before", "cert_spki_thumbprint"} {
-		if meta[field] == "" {
-			t.Errorf("metadata field %q is empty", field)
-		}
-	}
-}
-
 // TestXkmsLoadCertCredentialAndMetadata_Missing exercises the
 // os.ReadFile error path.
 func TestXkmsLoadCertCredentialAndMetadata_Missing(t *testing.T) {
@@ -657,18 +630,6 @@ func TestInvokeClose_NilFn(t *testing.T) {
 	}
 }
 
-// TestInvokeClose_NonNilFn exercises the non-nil closer path.
-func TestInvokeClose_NonNilFn(t *testing.T) {
-	called := false
-	err := invokeClose(func() error { called = true; return nil })
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !called {
-		t.Error("expected closer to be invoked")
-	}
-}
-
 // TestInvokeClose_ReturnsError exercises the error propagation path.
 func TestInvokeClose_ReturnsError(t *testing.T) {
 	want := errors.New("close failed")
@@ -804,9 +765,17 @@ func TestTrustConfigFromFile_EmptyPath(t *testing.T) {
 
 // TestTrustConfigFromFile_MissingFile exercises the load-error path.
 func TestTrustConfigFromFile_MissingFile(t *testing.T) {
-	_, err := trustConfigFromFile("/nonexistent/config.yaml")
-	if err == nil {
-		t.Fatal("expected error for missing file")
+	const path = "/nonexistent/config.yaml"
+	_, err := trustConfigFromFile(path)
+	var loadErr *ConfigLoadError
+	if !errors.As(err, &loadErr) {
+		t.Fatalf("err = %v, want *ConfigLoadError", err)
+	}
+	if loadErr.Unwrap() == nil {
+		t.Error("ConfigLoadError dropped the loader's cause")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error %q does not name the config file", err)
 	}
 }
 
@@ -1124,40 +1093,6 @@ func TestEnrollMTLSAdmin_SuccessJSONFormat(t *testing.T) {
 // admin.go — loadEnrollmentCert no-source path (66%)
 // =============================================================================
 
-// TestLoadEnrollmentCert_NoCertNoModule exercises the ErrNoCertificateSource path
-// when neither --cert-file nor PKCS11Module is configured.
-func TestLoadEnrollmentCert_NoCertNoModule(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().String("cert-file", "", "")
-
-	cfg := &Config{PKCS11Module: ""}
-
-	_, err := loadEnrollmentCert(cmd, cfg)
-	if err == nil {
-		t.Fatal("expected error when no cert source is configured")
-	}
-	if !errors.Is(err, ErrNoCertificateSource) {
-		t.Errorf("want ErrNoCertificateSource, got %T: %v", err, err)
-	}
-}
-
-// TestLoadEnrollmentCert_PKCS11Error exercises the PKCS#11 error path.
-// Providing a non-existent module path causes NewPKCS11TLSConfig to error.
-func TestLoadEnrollmentCert_PKCS11Error(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().String("cert-file", "", "")
-
-	cfg := &Config{PKCS11Module: "/nonexistent/pkcs11.so"}
-
-	_, err := loadEnrollmentCert(cmd, cfg)
-	if err == nil {
-		t.Fatal("expected error for non-existent PKCS#11 module")
-	}
-	if !strings.Contains(err.Error(), "PKCS") && !strings.Contains(err.Error(), "pkcs") && !strings.Contains(err.Error(), "failed") {
-		t.Errorf("error %q does not mention pkcs11 or failed", err.Error())
-	}
-}
-
 // =============================================================================
 // auth_factor_handlers.go — runXKMSAuthFactorList parse error (87.5%)
 // =============================================================================
@@ -1210,35 +1145,6 @@ func TestRunXKMSAuthFactorRemove_RPCError(t *testing.T) {
 	err := runXKMSAuthFactorRemove(context.Background(), "factor-abc", false)
 	if err == nil {
 		t.Fatal("expected error from RemoveAuthFactor RPC")
-	}
-}
-
-// TestRunXKMSAuthFactorRemove_Success exercises the success output path.
-func TestRunXKMSAuthFactorRemove_Success(t *testing.T) {
-	mock, restore := installMockFactory(t)
-	defer restore()
-	mock.factors["rm-1"] = &qrdbtransport.AuthFactorRecord{
-		ID:           "rm-1",
-		Type:         "fido2",
-		RegisteredAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-	}
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := runXKMSAuthFactorRemove(context.Background(), "rm-1", false)
-
-	_ = w.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(buf.String(), "OK") {
-		t.Errorf("expected OK in output, got: %q", buf.String())
 	}
 }
 
@@ -1303,41 +1209,6 @@ func TestRunXKMSAuthFactorRotate_RPCError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error from RotateAuthFactor RPC")
-	}
-}
-
-// TestRunXKMSAuthFactorRotate_Success exercises the success output path.
-func TestRunXKMSAuthFactorRotate_Success(t *testing.T) {
-	mock, restore := installMockFactory(t)
-	defer restore()
-	mock.factors["old-id"] = &qrdbtransport.AuthFactorRecord{
-		ID:           "old-id",
-		Type:         "fido2",
-		Label:        "old-yk",
-		UserID:       1,
-		RegisteredAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-	}
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := runXKMSAuthFactorRotate(context.Background(), "old-id", &authFactorAddFlags{
-		factorType:    "fido2",
-		label:         "new-yk",
-		credentialHex: "deadbeef",
-	})
-
-	_ = w.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(buf.String(), "Old factor revoked") {
-		t.Errorf("expected 'Old factor revoked' in output, got: %q", buf.String())
 	}
 }
 

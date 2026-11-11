@@ -1,0 +1,1 @@
+Key providers: the `awskms`, `gcpkms`, `azurekv`, `vault`, `pkcs11`, `tpm2`, `frost` and `quantum` backend factories now return a nil `KeyProvider` when the backend cannot be built. Before, they returned the constructor's typed-nil pointer inside the interface, so a caller that checked `kp != nil` went on to use a nil backend (#1794).

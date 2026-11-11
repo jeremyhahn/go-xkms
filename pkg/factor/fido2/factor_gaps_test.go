@@ -17,7 +17,10 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // TestDecodeB64 pins the standard/raw-url dual decoding: a value that
@@ -159,5 +162,75 @@ func TestNewWithLocalCeremony_DelegatesAvailability(t *testing.T) {
 	}
 	if f.Name() != FactorName {
 		t.Fatalf("Name() = %q, want %q", f.Name(), FactorName)
+	}
+}
+
+// TestFIDO2Factor_Enroll_RefusesMalformedOriginsAndUV pins each refusal of an
+// "origins" or "require_user_verification" value Enroll cannot record: the
+// enrollment is refused with a typed EnrollmentInvalidError naming the
+// parameter and why, and no enrollment is returned. An origin list recorded
+// wrongly would widen the origins Verify accepts.
+func TestFIDO2Factor_Enroll_RefusesMalformedOriginsAndUV(t *testing.T) {
+	cases := []struct {
+		name   string
+		param  string
+		value  any
+		reason string
+	}{
+		{"empty origin string", "origins", "", "origins must not be empty"},
+		{"empty origin list of any", "origins", []any{}, "origins must not be empty"},
+		{"origin list with a non-string", "origins", []any{"https://example.com", 7}, "origins must be non-empty strings"},
+		{"origin list with an empty string", "origins", []any{"https://example.com", ""}, "origins must be non-empty strings"},
+		{"origins of the wrong type", "origins", 42, "origins must be a string or []string"},
+		{"unparseable require_user_verification", "require_user_verification", "maybe", "require_user_verification must be a bool"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newAuthenticator(t, "example.com")
+			enrollment, err := New(Config{RPID: "example.com"}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
+				UserID: "custodian-1",
+				MethodParams: map[string]any{
+					"cose_public_key": base64.StdEncoding.EncodeToString(a.coseKey(t)),
+					"credential_id":   base64.RawURLEncoding.EncodeToString([]byte("credential-id-1")),
+					tc.param:          tc.value,
+				},
+			})
+			var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
+			if !errors.As(err, &inv) {
+				t.Fatalf("Enroll err = %v, want EnrollmentInvalidError", err)
+			}
+			if !strings.Contains(inv.Reason, tc.reason) {
+				t.Errorf("Reason = %q, want it to contain %q", inv.Reason, tc.reason)
+			}
+			if enrollment != nil {
+				t.Errorf("Enroll returned enrollment %+v alongside its refusal", enrollment)
+			}
+		})
+	}
+}
+
+// TestFIDO2Factor_Enroll_RecordsEachAcceptedParamShape pins the accepted
+// shapes the refusals above border on: a single origin string, an origin
+// list decoded from JSON as []any, and a require_user_verification string.
+func TestFIDO2Factor_Enroll_RecordsEachAcceptedParamShape(t *testing.T) {
+	cases := []struct {
+		name  string
+		param string
+		value any
+		key   string
+		want  string
+	}{
+		{"single origin string", "origins", "https://login.example.com", "origins", "https://login.example.com"},
+		{"origin list of any", "origins", []any{"https://example.com", "https://www.example.com"}, "origins", "https://example.com,https://www.example.com"},
+		{"require_user_verification string", "require_user_verification", "false", "require_uv", "false"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := New(Config{RPID: "example.com"})
+			enrollment := enrollWithParams(t, f, newAuthenticator(t, "example.com"), map[string]any{tc.param: tc.value})
+			if got := enrollment.Metadata[tc.key]; got != tc.want {
+				t.Errorf("Metadata[%q] = %q, want %q", tc.key, got, tc.want)
+			}
+		})
 	}
 }

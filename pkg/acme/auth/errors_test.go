@@ -29,12 +29,6 @@ func TestInvalidTokenError(t *testing.T) {
 	assert.False(t, IsTokenRevoked(err))
 }
 
-func TestInvalidTokenErrorEmptyReason(t *testing.T) {
-	err := &InvalidTokenError{}
-	assert.Equal(t, "invalid token: ", err.Error())
-	assert.True(t, IsInvalidToken(err))
-}
-
 func TestTokenExpiredError(t *testing.T) {
 	expiry := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
 	err := &TokenExpiredError{ExpiredAt: expiry}
@@ -44,24 +38,12 @@ func TestTokenExpiredError(t *testing.T) {
 	assert.False(t, IsTokenRevoked(err))
 }
 
-func TestTokenExpiredErrorZeroTime(t *testing.T) {
-	err := &TokenExpiredError{}
-	assert.Contains(t, err.Error(), "token expired at")
-	assert.True(t, IsTokenExpired(err))
-}
-
 func TestTokenRevokedError(t *testing.T) {
 	err := &TokenRevokedError{TokenID: "tok-abc-123"}
 	assert.Equal(t, "token revoked: tok-abc-123", err.Error())
 	assert.True(t, IsTokenRevoked(err))
 	assert.False(t, IsInvalidToken(err))
 	assert.False(t, IsTokenExpired(err))
-}
-
-func TestTokenRevokedErrorEmptyTokenID(t *testing.T) {
-	err := &TokenRevokedError{}
-	assert.Equal(t, "token revoked: ", err.Error())
-	assert.True(t, IsTokenRevoked(err))
 }
 
 func TestAuthServiceError(t *testing.T) {
@@ -83,23 +65,4 @@ func TestAuthServiceErrorUnwrap(t *testing.T) {
 	err := &AuthServiceError{Message: "request failed", Cause: cause}
 	assert.True(t, errors.Is(err, cause))
 	assert.Equal(t, cause, errors.Unwrap(err))
-}
-
-func TestAuthServiceErrorUnwrapNil(t *testing.T) {
-	err := &AuthServiceError{Message: "no cause"}
-	assert.Nil(t, errors.Unwrap(err))
-}
-
-func TestIsHelperFunctionsWithNonAuthErrors(t *testing.T) {
-	err := errors.New("generic error")
-	assert.False(t, IsInvalidToken(err))
-	assert.False(t, IsTokenExpired(err))
-	assert.False(t, IsTokenRevoked(err))
-}
-
-func TestErrorsImplementErrorInterface(t *testing.T) {
-	var _ error = (*InvalidTokenError)(nil)
-	var _ error = (*TokenExpiredError)(nil)
-	var _ error = (*TokenRevokedError)(nil)
-	var _ error = (*AuthServiceError)(nil)
 }

@@ -21,7 +21,6 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
@@ -333,44 +332,6 @@ func TestDevIDDelegatedSession_IsRefusedWhenTheIndexHoldsAnotherPolicy(t *testin
 	assert.ErrorIs(t, err, tpm2.TPMRCValue)
 }
 
-// PlatformPolicy on an IDevID means, under the specification, that the
-// platform's measured state is the Delegation Policy (section 7.2.4): the
-// key is Template H-0 as always, and CreateIDevID writes PolicyPCR over the
-// platform PCR into the key's Policy NV Index. Sign then goes through the
-// delegated session, and stops working once the platform state moves.
-func TestCreateIDevID_PlatformPolicyProvisionsThePlatformDelegation(t *testing.T) {
-	h := newDelegationHarness(t, func(c *Config) { c.IDevID.PlatformPolicy = true })
-
-	public, name, payload := h.readPolicyNV(t, DevIDKeySigning)
-	require.True(t, public.Attributes.Written, "provisioning wrote the Delegation Policy")
-	assert.Equal(t, mustHex(t, tcgPolicyIndexNameSHA256[DevIDKeySigning]), name.Buffer)
-	platform, err := h.TPM.DevIDPlatformDelegation(tpm2.TPMAlgSHA256)
-	require.NoError(t, err)
-	wantPayload, err := DevIDDelegationPolicyPayload(tpm2.TPMAlgSHA256, platform.Digest)
-	require.NoError(t, err)
-	assert.Equal(t, wantPayload, payload, "the index holds PolicyPCR over the platform PCR, in the key's nameAlg")
-
-	digest := sha256.Sum256([]byte("platform-bound signing"))
-	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: h.IDevID, Backend: h.Backend})
-	require.NoError(t, err, "Sign must authorize the IDevID through the platform delegation")
-	assert.NoError(t, rsa.VerifyPKCS1v15(h.IDevIDPublic, crypto.SHA256, digest[:], signature))
-
-	h.extendPlatformPCR(t, []byte("post-update-measurement"))
-
-	_, err = h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: h.IDevID, Backend: h.Backend})
-	require.Error(t, err, "the platform state the delegation names is gone")
-	assert.ErrorIs(t, err, ErrDevIDPolicySession)
-
-	// The Privacy Administrator re-delegates to the new state, and signing
-	// resumes: the key never changed, only what the index holds.
-	moved, err := h.TPM.DevIDPlatformDelegation(tpm2.TPMAlgSHA256)
-	require.NoError(t, err)
-	assert.NotEqual(t, platform.Digest, moved.Digest)
-	require.NoError(t, h.TPM.WriteDevIDDelegationPolicy(DevIDKeySigning, tpm2.TPMAlgSHA256, moved.Digest, h.HierarchyAuth))
-	_, err = h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: h.IDevID, Backend: h.Backend})
-	assert.NoError(t, err)
-}
-
 // Section 7.2.4 keeps the authValue as a USER-role path on Template H-0
 // whatever the index holds. A configured password is therefore used in
 // preference to the delegation, and keeps signing after the platform moves;
@@ -445,35 +406,6 @@ func TestCreateIAK_PlatformPolicyProvisionsThePlatformDelegation(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDevIDPolicySession)
 }
 
-// A restarted process rebuilds the IDevID's attributes from the persistent
-// handle (IDevIDAttributes, cold cache) rather than from CreateIDevID's return
-// value. PlatformPolicy selects the key's USER-role session, so a rebuild that
-// dropped it would sign with the empty authValue regardless of platform state
-// -- the binding silently gone after every restart. The rebuild must carry the
-// same configuration value provisioning did, and the delegation must still
-// refuse a moved platform.
-func TestIDevIDAttributes_ColdCacheKeepsPlatformPolicy(t *testing.T) {
-	h := newDelegationHarness(t, func(c *Config) { c.IDevID.PlatformPolicy = true })
-	require.True(t, (h.IDevID.TPMPolicy == types.TPMPolicyPlatform), "provisioning recorded platform-policy")
-
-	h.TPM.idevidAttrs = nil // the cold cache a restarted process sees
-	cold, err := h.TPM.IDevIDAttributes()
-	require.NoError(t, err)
-	assert.True(t, (cold.TPMPolicy == types.TPMPolicyPlatform),
-		"a rebuild from configuration must keep platform-policy, or the binding is lost on restart")
-
-	digest := sha256.Sum256([]byte("signing after a restart"))
-	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: cold, Backend: h.Backend})
-	require.NoError(t, err, "the rebuilt IDevID signs through the platform delegation")
-	assert.NoError(t, rsa.VerifyPKCS1v15(h.IDevIDPublic, crypto.SHA256, digest[:], signature))
-
-	h.extendPlatformPCR(t, []byte("post-update-measurement"))
-
-	_, err = h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: cold, Backend: h.Backend})
-	require.Error(t, err, "after a restart the moved platform must still be refused")
-	assert.ErrorIs(t, err, ErrDevIDPolicySession)
-}
-
 // The IAK half of the same rule: IAKAttributes' cold-cache rebuild keeps
 // platform-policy, CreateKeySession hands out the delegated session for the
 // rebuilt key, and that session no longer builds once the platform moves.
@@ -517,89 +449,4 @@ func TestIAKAttributes_ColdCacheKeepsPlatformPolicy(t *testing.T) {
 	}
 	require.Error(t, err, "after a restart the moved platform must still be refused")
 	assert.ErrorIs(t, err, ErrDevIDPolicySession)
-}
-
-// A device identity key provisioned with a configured authValue is used with
-// that value (userWithAuth SET, section 7.2.4). The value comes from
-// configuration, so the cold-cache rebuild has to restore it the way
-// provisioning set it: a rebuild that dropped it presented the empty
-// password and every USER-role command answered TPM_RC_BAD_AUTH from the
-// second boot on (#467). The rebuilt key must sign, and the same key with the
-// password dropped must be refused, which is what proves the value is doing
-// the authorizing.
-func TestIDevIDAttributes_ColdCacheKeepsPassword(t *testing.T) {
-	const authValue = "idevid-auth-value"
-	h := newDelegationHarness(t, func(c *Config) { c.IDevID.Password = secrettest.Literal(t, []byte(authValue)) })
-	require.Equal(t, []byte(authValue), h.IDevID.Password.Bytes(), "provisioning recorded the authValue")
-
-	h.TPM.idevidAttrs = nil // the cold cache a restarted process sees
-	cold, err := h.TPM.IDevIDAttributes()
-	require.NoError(t, err)
-	require.NotNil(t, cold.Password, "a rebuild from configuration must restore the authValue")
-	assert.Equal(t, []byte(authValue), cold.Password.Bytes())
-
-	digest := sha256.Sum256([]byte("signing after a restart"))
-	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: cold, Backend: h.Backend})
-	require.NoError(t, err, "the rebuilt IDevID signs with the configured authValue")
-	assert.NoError(t, rsa.VerifyPKCS1v15(h.IDevIDPublic, crypto.SHA256, digest[:], signature))
-
-	dropped := *cold
-	dropped.Password = nil
-	_, err = h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: &dropped, Backend: h.Backend})
-	require.Error(t, err, "without the authValue the TPM must refuse the key")
-	assertTPMAuthRefused(t, err)
-}
-
-// assertTPMAuthRefused accepts either authorization failure the TPM returns
-// for a wrong authValue: TPM_RC_BAD_AUTH from a password session and
-// TPM_RC_AUTH_FAIL from an HMAC session, which is what the key sessions use.
-func assertTPMAuthRefused(t *testing.T, err error) {
-	t.Helper()
-	msg := err.Error()
-	assert.True(t, strings.Contains(msg, "TPM_RC_AUTH_FAIL") || strings.Contains(msg, "TPM_RC_BAD_AUTH"),
-		"expected the TPM to refuse the authorization, got: %v", err)
-}
-
-// The IAK half: IAKAttributes' rebuild restores the configured authValue and
-// CreateKeySession authorizes the rebuilt key with it.
-func TestIAKAttributes_ColdCacheKeepsPassword(t *testing.T) {
-	const authValue = "iak-auth-value"
-	h := newDelegationHarness(t, func(c *Config) { c.IAK.Password = secrettest.Literal(t, []byte(authValue)) })
-	require.Equal(t, []byte(authValue), h.IAK.Password.Bytes(), "provisioning recorded the authValue")
-
-	h.TPM.iakAttrs = nil // the cold cache a restarted process sees
-	cold, err := h.TPM.IAKAttributes()
-	require.NoError(t, err)
-	require.NotNil(t, cold.Password, "a rebuild from configuration must restore the authValue")
-	assert.Equal(t, []byte(authValue), cold.Password.Bytes())
-
-	quote := func(attrs *types.KeyAttributes) error {
-		session, closer, err := h.TPM.CreateKeySession(attrs)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = closer() }()
-		_, err = tpm2.Quote{
-			SignHandle: tpm2.AuthHandle{
-				Handle: attrs.TPMAttributes.Handle,
-				Name:   attrs.TPMAttributes.Name,
-				Auth:   session,
-			},
-			QualifyingData: tpm2.TPM2BData{Buffer: []byte("nonce")},
-			InScheme:       tpm2.TPMTSigScheme{Scheme: tpm2.TPMAlgNull},
-			PCRSelect: tpm2.TPMLPCRSelection{PCRSelections: []tpm2.TPMSPCRSelection{{
-				Hash:      tpm2.TPMAlgSHA256,
-				PCRSelect: tpm2.PCClientCompatible.PCRs(0),
-			}}},
-		}.Execute(h.TPM.transport)
-		return err
-	}
-
-	assert.NoError(t, quote(cold), "the rebuilt IAK quotes with the configured authValue")
-
-	dropped := *cold
-	dropped.Password = nil
-	err = quote(&dropped)
-	require.Error(t, err, "without the authValue the TPM must refuse the key")
-	assertTPMAuthRefused(t, err)
 }

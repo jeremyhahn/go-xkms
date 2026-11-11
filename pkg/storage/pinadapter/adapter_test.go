@@ -62,13 +62,6 @@ func TestNew_NilBackend(t *testing.T) {
 	assert.Equal(t, "pinadapter: backend cannot be nil", err.Error())
 }
 
-func TestNew_ValidBackend(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-	require.NotNil(t, adapter)
-}
-
 // =============================================================================
 // Get Tests
 // =============================================================================
@@ -87,11 +80,15 @@ func TestGet_NotFoundTranslatedToPinErrNotFound(t *testing.T) {
 	assert.NotErrorIs(t, err, storage.ErrNotFound)
 }
 
-func TestGet_ExistingKey(t *testing.T) {
+func TestPutThenGet_StoresInBackendAndReadsBack(t *testing.T) {
 	backend := storage.NewMemory()
-	require.NoError(t, backend.Put(context.Background(), "k", []byte("v")))
 	adapter, err := New(backend)
 	require.NoError(t, err)
+
+	require.NoError(t, adapter.Put(context.Background(), "k", []byte("v")))
+	stored, err := backend.Get(context.Background(), "k")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v"), stored)
 
 	value, err := adapter.Get(context.Background(), "k")
 	require.NoError(t, err)
@@ -109,23 +106,13 @@ func TestGet_BackendErrorWrappedInGetError(t *testing.T) {
 	require.ErrorAs(t, err, &getErr)
 	assert.Equal(t, "any", getErr.Key)
 	assert.ErrorIs(t, err, sentinel)
+	assert.Equal(t, "pinadapter: get any: disk gone", err.Error())
 	assert.NotErrorIs(t, err, qrdbsdk.ErrPINStorageNotFound)
 }
 
 // =============================================================================
 // Put Tests
 // =============================================================================
-
-func TestPut_Success(t *testing.T) {
-	backend := storage.NewMemory()
-	adapter, err := New(backend)
-	require.NoError(t, err)
-
-	require.NoError(t, adapter.Put(context.Background(), "k", []byte("v")))
-	value, err := backend.Get(context.Background(), "k")
-	require.NoError(t, err)
-	assert.Equal(t, []byte("v"), value)
-}
 
 func TestPut_BackendErrorWrappedInPutError(t *testing.T) {
 	sentinel := errors.New("read-only fs")
@@ -138,6 +125,7 @@ func TestPut_BackendErrorWrappedInPutError(t *testing.T) {
 	require.ErrorAs(t, err, &putErr)
 	assert.Equal(t, "k", putErr.Key)
 	assert.ErrorIs(t, err, sentinel)
+	assert.Equal(t, "pinadapter: put k: read-only fs", err.Error())
 }
 
 func TestDelete_RemovesRecord(t *testing.T) {
@@ -169,6 +157,7 @@ func TestDelete_BackendErrorWrappedInDeleteError(t *testing.T) {
 	require.ErrorAs(t, err, &deleteErr)
 	assert.Equal(t, "k", deleteErr.Key)
 	assert.ErrorIs(t, err, sentinel)
+	assert.Equal(t, "pinadapter: delete k: read-only fs", err.Error())
 }
 
 // =============================================================================

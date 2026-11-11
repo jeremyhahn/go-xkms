@@ -1,0 +1,1 @@
+Tests: `pkg/ratelimit`'s tests test each behaviour by one path (#1794): duplicate constructor, disabled-limiter, client-IP, wait, middleware and error-message tests were removed or folded into the tests that reach the same code, and the 1 s refill sleep went with `TestAllow`.

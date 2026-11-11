@@ -93,65 +93,37 @@ func (m *mockVolumeOperator) Lock() error {
 	return nil
 }
 
-func TestNewBackend(t *testing.T) {
-	mock := newMockVolumeOperator(t.TempDir())
-	b := NewBackend(mock)
-
-	if b == nil {
-		t.Fatal("expected non-nil backend")
+func TestVerbs_Locked_ReturnErrVolumeLocked(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(b *Backend) error
+	}{
+		{"Get", func(b *Backend) error {
+			_, err := b.Get(context.Background(), "test-key")
+			return err
+		}},
+		{"Put", func(b *Backend) error {
+			return b.Put(context.Background(), "test-key", []byte("value"))
+		}},
+		{"Delete", func(b *Backend) error {
+			return b.Delete(context.Background(), "test-key")
+		}},
+		{"List", func(b *Backend) error {
+			_, err := b.List(context.Background(), "")
+			return err
+		}},
+		{"Exists", func(b *Backend) error {
+			_, err := b.Exists(context.Background(), "test-key")
+			return err
+		}},
 	}
-	if b.IsUnlocked() {
-		t.Error("new backend should start in locked state")
-	}
-}
-
-func TestGet_Locked_ReturnsError(t *testing.T) {
-	mock := newMockVolumeOperator(t.TempDir())
-	b := NewBackend(mock)
-
-	_, err := b.Get(context.Background(), "test-key")
-	if !errors.Is(err, ErrVolumeLocked) {
-		t.Errorf("expected ErrVolumeLocked, got %v", err)
-	}
-}
-
-func TestPut_Locked_ReturnsError(t *testing.T) {
-	mock := newMockVolumeOperator(t.TempDir())
-	b := NewBackend(mock)
-
-	err := b.Put(context.Background(), "test-key", []byte("value"))
-	if !errors.Is(err, ErrVolumeLocked) {
-		t.Errorf("expected ErrVolumeLocked, got %v", err)
-	}
-}
-
-func TestDelete_Locked_ReturnsError(t *testing.T) {
-	mock := newMockVolumeOperator(t.TempDir())
-	b := NewBackend(mock)
-
-	err := b.Delete(context.Background(), "test-key")
-	if !errors.Is(err, ErrVolumeLocked) {
-		t.Errorf("expected ErrVolumeLocked, got %v", err)
-	}
-}
-
-func TestList_Locked_ReturnsError(t *testing.T) {
-	mock := newMockVolumeOperator(t.TempDir())
-	b := NewBackend(mock)
-
-	_, err := b.List(context.Background(), "")
-	if !errors.Is(err, ErrVolumeLocked) {
-		t.Errorf("expected ErrVolumeLocked, got %v", err)
-	}
-}
-
-func TestExists_Locked_ReturnsError(t *testing.T) {
-	mock := newMockVolumeOperator(t.TempDir())
-	b := NewBackend(mock)
-
-	_, err := b.Exists(context.Background(), "test-key")
-	if !errors.Is(err, ErrVolumeLocked) {
-		t.Errorf("expected ErrVolumeLocked, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBackend(newMockVolumeOperator(t.TempDir()))
+			if err := tt.call(b); !errors.Is(err, ErrVolumeLocked) {
+				t.Errorf("%s: expected ErrVolumeLocked, got %v", tt.name, err)
+			}
+		})
 	}
 }
 
@@ -332,24 +304,6 @@ func TestLock_AlreadyLocked(t *testing.T) {
 	err := b.Lock()
 	if !errors.Is(err, ErrVolumeLocked) {
 		t.Errorf("expected ErrVolumeLocked when locking already-locked backend, got %v", err)
-	}
-}
-
-func TestLock_VolumeLockFails(t *testing.T) {
-	tmpDir := t.TempDir()
-	mock := newMockVolumeOperator(tmpDir)
-	b := NewBackend(mock)
-
-	err := b.Unlock("test-passphrase")
-	if err != nil {
-		t.Fatalf("Unlock failed: %v", err)
-	}
-
-	mock.lockErr = errors.New("lock failed")
-
-	err = b.Lock()
-	if !errors.Is(err, ErrVolumeLockFailed) {
-		t.Errorf("expected ErrVolumeLockFailed, got %v", err)
 	}
 }
 

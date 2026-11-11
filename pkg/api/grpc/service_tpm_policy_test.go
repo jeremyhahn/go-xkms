@@ -238,15 +238,3 @@ func TestTPMPolicyRPCs_RefuseAnotherTenant(t *testing.T) {
 		})
 	}
 }
-
-// TestTPMPolicyRPCs_UnavailableWithoutAService proves every policy RPC
-// answers Unavailable on a server with no XKMSService.
-func TestTPMPolicyRPCs_UnavailableWithoutAService(t *testing.T) {
-	s := NewService(nil, nil, nil)
-
-	for name, call := range tpmPolicyRPCs(s, "") {
-		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, codes.Unavailable, status.Code(call(platformScopeCtx(qrdbsdk.SystemTenantID))))
-		})
-	}
-}

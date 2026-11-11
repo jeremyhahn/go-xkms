@@ -1,0 +1,1 @@
+Tests: `pkg/ssh/local` keeps one test per behaviour (#1794). Five tests that repeated another test's path were removed, and the assertions only they made were moved into the test that stays. Coverage is unchanged at 91.0%.

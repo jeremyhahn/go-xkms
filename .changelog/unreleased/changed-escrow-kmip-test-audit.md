@@ -1,0 +1,1 @@
+escrow/kmip: the `pkg/escrow/kmip` tests are audited (#1794): the constructor, validation, not-found, empty-list and registry tests that repeat the round-trip and `escrow.NewAgent` dispatch tests are removed, so each behaviour keeps one test at the uppermost layer that reaches it.

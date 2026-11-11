@@ -30,18 +30,6 @@ import (
 // PKCS11StateCAD had a test (service_pkcs11state_cad_test.go). It reuses that
 // file's newPKCS11StateGRPCService helper.
 
-func TestServicePKCS11StatePut_Success(t *testing.T) {
-	svc, _ := newPKCS11StateGRPCService(t)
-	resp, err := svc.PKCS11StatePut(context.Background(), &pb.PKCS11StatePutRequest{Token: "tok0", Key: "k", Value: []byte("v")})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-
-	got, err := svc.PKCS11StateGet(context.Background(), &pb.PKCS11StateGetRequest{Token: "tok0", Key: "k"})
-	require.NoError(t, err)
-	assert.True(t, got.Found)
-	assert.Equal(t, []byte("v"), got.Value)
-}
-
 func TestServicePKCS11StatePut_MissingToken(t *testing.T) {
 	svc, _ := newPKCS11StateGRPCService(t)
 	_, err := svc.PKCS11StatePut(context.Background(), &pb.PKCS11StatePutRequest{Key: "k", Value: []byte("v")})
@@ -113,13 +101,6 @@ func TestServicePKCS11StateCAS_Unavailable(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 	_, err := svc.PKCS11StateCAS(context.Background(), &pb.PKCS11StateCASRequest{Token: "tok0", Key: "k"})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
-func TestServicePKCS11StateGet_NotFound(t *testing.T) {
-	svc, _ := newPKCS11StateGRPCService(t)
-	resp, err := svc.PKCS11StateGet(context.Background(), &pb.PKCS11StateGetRequest{Token: "tok0", Key: "missing"})
-	require.NoError(t, err, "a missing key is a not-found result, not an RPC error")
-	assert.False(t, resp.Found)
 }
 
 func TestServicePKCS11StateGet_MissingToken(t *testing.T) {

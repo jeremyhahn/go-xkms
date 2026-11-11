@@ -63,16 +63,6 @@ func TestConfig_backendConfig_MapsCredentialFlags(t *testing.T) {
 	}
 }
 
-func TestConfig_backendConfig_PKCS11ModuleError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.PKCS11Module = "/nonexistent/pkcs11.so"
-
-	_, err := cfg.backendConfig()
-	if !errors.Is(err, ErrCreatePKCS11TLSConfigFailed) {
-		t.Fatalf("backendConfig() error = %v, want ErrCreatePKCS11TLSConfigFailed", err)
-	}
-}
-
 // TestConfig_CreateClient_UnixURLSpeaksTLS proves a unix:// server dials
 // xkmsd's socket -- the qrdb node's TLS listener -- with TLS even when no
 // credential flag is set: the handshake against an untrusted server

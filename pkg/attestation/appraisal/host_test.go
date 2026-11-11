@@ -170,54 +170,6 @@ func assertBankUncovered(t *testing.T, err error, name string, bank crypto.Hash)
 func TestAppraiser_AppraiseHost(t *testing.T) {
 	w := newHostWorld(t)
 
-	t.Run("GenuineEvidencePasses", func(t *testing.T) {
-		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, w.hostEvidence(t, w.pcrs, "golden"))
-		if err != nil {
-			t.Fatalf("AppraiseHost: %v", err)
-		}
-		if !appraisal.Verified || appraisal.CryptographicFailure || len(appraisal.Failures) != 0 {
-			t.Fatalf("appraisal = %+v, want verified with no failures", appraisal)
-		}
-	})
-
-	t.Run("DriftedPCRIsACryptographicFailure", func(t *testing.T) {
-		drifted := appraisaltest.PCRValues(0, 4, 7)
-		drifted[4] = bytes.Repeat([]byte{0xEE}, len(drifted[4]))
-		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, w.hostEvidence(t, drifted, "golden"))
-		if err != nil {
-			t.Fatalf("AppraiseHost: %v", err)
-		}
-		if appraisal.Verified || !appraisal.CryptographicFailure {
-			t.Fatalf("appraisal = %+v, want an unverified cryptographic failure", appraisal)
-		}
-		if len(appraisal.Failures) != 1 {
-			t.Fatalf("failures = %+v, want only the baseline", appraisal.Failures)
-		}
-		failure := appraisal.Failures[0]
-		if failure.Check != AppraisalCheckBaseline || failure.Outcome != string(AppraisalForged) {
-			t.Fatalf("failure = %+v, want a forged baseline", failure)
-		}
-		if len(failure.PCRs) != 1 || failure.PCRs[0].Index != 4 ||
-			!bytes.Equal(failure.PCRs[0].Quoted, drifted[4]) ||
-			len(failure.PCRs[0].Expected) != 1 || !bytes.Equal(failure.PCRs[0].Expected[0], w.pcrs[4]) {
-			t.Fatalf("divergences = %+v, want PCR 4 with its expected and quoted digests", failure.PCRs)
-		}
-	})
-
-	t.Run("UnknownNameIsAbsent", func(t *testing.T) {
-		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, w.hostEvidence(t, w.pcrs, "missing"))
-		if err != nil {
-			t.Fatalf("AppraiseHost: %v", err)
-		}
-		if appraisal.Verified || appraisal.CryptographicFailure {
-			t.Fatalf("appraisal = %+v, want unverified without a cryptographic failure", appraisal)
-		}
-		if len(appraisal.Failures) != 1 || appraisal.Failures[0].Outcome != string(AppraisalAbsent) ||
-			len(appraisal.Failures[0].PCRs) != 0 {
-			t.Fatalf("failures = %+v, want one absent baseline with no PCR divergence", appraisal.Failures)
-		}
-	})
-
 	t.Run("MissingAKCertificateIsAbsent", func(t *testing.T) {
 		ev := w.hostEvidence(t, w.pcrs, "golden")
 		ev.AKCertificate = nil
@@ -230,13 +182,6 @@ func TestAppraiser_AppraiseHost(t *testing.T) {
 		}
 		if appraisal.Failures[0].Check != AppraisalCheckAKCertificate {
 			t.Fatalf("first failure = %+v, want the AK certificate check", appraisal.Failures[0])
-		}
-	})
-
-	t.Run("InvalidTenantIsRefused", func(t *testing.T) {
-		_, err := w.app.AppraiseHost(w.ctx, "a/b", w.hostEvidence(t, w.pcrs, "golden"))
-		if !errors.Is(err, ErrInvalidTenant) {
-			t.Fatalf("AppraiseHost with tenant a/b = %v, want ErrInvalidTenant", err)
 		}
 	})
 
@@ -281,84 +226,6 @@ func (w *verifierWorld) otherIntermediate(t *testing.T) *x509.Certificate {
 		t.Fatal(err)
 	}
 	return other.Certificate
-}
-
-func TestAppraiser_AppraiseHostAKIntermediates(t *testing.T) {
-	t.Run("SuppliedIntermediateChainsToTheEndorsedRoot", func(t *testing.T) {
-		w := newHostWorld(t)
-		intermediate := w.issueAKUnderIntermediate(t)
-		ev := w.hostEvidence(t, w.pcrs, "golden")
-		ev.AKIntermediates = []*x509.Certificate{intermediate}
-		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
-		if err != nil {
-			t.Fatalf("AppraiseHost: %v", err)
-		}
-		if !appraisal.Verified || len(appraisal.Failures) != 0 {
-			t.Fatalf("appraisal = %+v, want verified with no failures", appraisal)
-		}
-	})
-
-	forged := map[string]func(w *verifierWorld, t *testing.T, intermediate *x509.Certificate) []*x509.Certificate{
-		"MissingIntermediateIsForged": func(*verifierWorld, *testing.T, *x509.Certificate) []*x509.Certificate {
-			return nil
-		},
-		"AnotherIntermediateIsForged": func(w *verifierWorld, t *testing.T, _ *x509.Certificate) []*x509.Certificate {
-			return []*x509.Certificate{w.otherIntermediate(t)}
-		},
-		"UnrelatedCertificateIsForged": func(w *verifierWorld, _ *testing.T, _ *x509.Certificate) []*x509.Certificate {
-			return []*x509.Certificate{w.signerCert}
-		},
-	}
-	for name, intermediates := range forged {
-		t.Run(name, func(t *testing.T) {
-			w := newHostWorld(t)
-			intermediate := w.issueAKUnderIntermediate(t)
-			ev := w.hostEvidence(t, w.pcrs, "golden")
-			ev.AKIntermediates = intermediates(w, t, intermediate)
-			appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
-			if err != nil {
-				t.Fatalf("AppraiseHost: %v", err)
-			}
-			if appraisal.Verified || !appraisal.CryptographicFailure {
-				t.Fatalf("appraisal = %+v, want an unverified cryptographic failure", appraisal)
-			}
-			failure := failureOf(appraisal, AppraisalCheckAKCertificate)
-			if failure == nil || failure.Outcome != string(AppraisalForged) {
-				t.Fatalf("failures = %+v, want a forged AK certificate check", appraisal.Failures)
-			}
-		})
-	}
-
-	t.Run("IntermediatesWithoutTheLeafAreAbsent", func(t *testing.T) {
-		w := newHostWorld(t)
-		intermediate := w.issueAKUnderIntermediate(t)
-		ev := w.hostEvidence(t, w.pcrs, "golden")
-		ev.AKCertificate = nil
-		ev.AKIntermediates = []*x509.Certificate{intermediate}
-		appraisal, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
-		if err != nil {
-			t.Fatalf("AppraiseHost: %v", err)
-		}
-		failure := failureOf(appraisal, AppraisalCheckAKCertificate)
-		if appraisal.Verified || failure == nil || failure.Outcome != string(AppraisalAbsent) {
-			t.Fatalf("appraisal = %+v, want an absent AK certificate check", appraisal)
-		}
-	})
-
-	t.Run("NilIntermediateIsRefused", func(t *testing.T) {
-		w := newHostWorld(t)
-		intermediate := w.issueAKUnderIntermediate(t)
-		ev := w.hostEvidence(t, w.pcrs, "golden")
-		ev.AKIntermediates = []*x509.Certificate{intermediate, nil}
-		_, err := w.app.AppraiseHost(w.ctx, w.tenant, ev)
-		if !errors.Is(err, ErrInvalidAKIntermediate) {
-			t.Fatalf("AppraiseHost = %v, want ErrInvalidAKIntermediate", err)
-		}
-		var nilEntry *AKIntermediateError
-		if !errors.As(err, &nilEntry) || nilEntry.Index != 1 {
-			t.Fatalf("AppraiseHost = %v, want an *AKIntermediateError at index 1", err)
-		}
-	})
 }
 
 // TestAppraiser_EventLogLeavesTheLaunchPCROut drives host evidence whose

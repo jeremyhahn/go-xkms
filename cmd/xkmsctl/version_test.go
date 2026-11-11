@@ -19,26 +19,6 @@ import (
 	"testing"
 )
 
-func TestVersionCmd_Exists(t *testing.T) {
-	if versionCmd == nil {
-		t.Fatal("versionCmd should not be nil")
-	}
-}
-
-func TestVersionCmd_Properties(t *testing.T) {
-	if versionCmd.Use != "version" {
-		t.Errorf("versionCmd.Use = %v, want version", versionCmd.Use)
-	}
-
-	if versionCmd.Short == "" {
-		t.Error("versionCmd.Short should not be empty")
-	}
-
-	if versionCmd.Long == "" {
-		t.Error("versionCmd.Long should not be empty")
-	}
-}
-
 func TestVersionCmd_TextOutput(t *testing.T) {
 	// Save original config
 	originalConfig := *globalConfig
@@ -104,22 +84,5 @@ func TestVersionVariables_Defaults(t *testing.T) {
 
 	if BuildDate == "" {
 		t.Error("BuildDate should have a default value")
-	}
-}
-
-func TestVersionCmd_RunCallback(t *testing.T) {
-	// Save original config
-	originalConfig := *globalConfig
-	defer func() { *globalConfig = originalConfig }()
-
-	// Test both output formats don't panic
-	formats := []string{"text", "json"}
-	for _, format := range formats {
-		t.Run(format, func(t *testing.T) {
-			globalConfig.OutputFormat = format
-
-			// The Run function should not panic
-			versionCmd.Run(versionCmd, []string{})
-		})
 	}
 }

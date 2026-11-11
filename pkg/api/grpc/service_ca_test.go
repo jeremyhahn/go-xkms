@@ -570,29 +570,3 @@ func TestIsRevoked(t *testing.T) {
 		assert.Contains(t, resp.Message, "not revoked")
 	})
 }
-
-func TestParseCASerialHex(t *testing.T) {
-	t.Run("parses plain hex", func(t *testing.T) {
-		serial, err := parseCASerialHex("abc")
-		require.NoError(t, err)
-		assert.Equal(t, "abc", serial.Text(16))
-	})
-
-	t.Run("strips 0x prefix", func(t *testing.T) {
-		serial, err := parseCASerialHex("0xabc")
-		require.NoError(t, err)
-		assert.Equal(t, "abc", serial.Text(16))
-	})
-
-	t.Run("strips 0X prefix", func(t *testing.T) {
-		serial, err := parseCASerialHex("0Xdef")
-		require.NoError(t, err)
-		assert.Equal(t, "def", serial.Text(16))
-	})
-
-	t.Run("returns error for invalid hex", func(t *testing.T) {
-		_, err := parseCASerialHex("not-hex-zzzz")
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrInvalidSerialNumber)
-	})
-}

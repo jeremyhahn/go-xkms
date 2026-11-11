@@ -1,0 +1,1 @@
+- **Per-package make targets reach nested packages** — `make test-<stem>` and `make coverage-<stem>` resolve a stem whose dashes stand for path separators to the nested package under `pkg/` (`make test-factor-mtls` runs `./pkg/factor/mtls/...`); literal `pkg/` and `cmd/` matches such as `cmd/acme-client` still win.

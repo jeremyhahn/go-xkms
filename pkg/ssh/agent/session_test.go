@@ -424,23 +424,6 @@ func TestStartSession_CallerWorkDirIsNotADirectory(t *testing.T) {
 	assert.Equal(t, "WorkDir", ie.Field)
 }
 
-// TestStartSession_MultipleSigners covers serving more than one identity: the
-// ssh-agent protocol is multi-identity and the session must not flatten it.
-func TestStartSession_MultipleSigners(t *testing.T) {
-	ed, rsa := newEd25519Signer(t), newRSASigner(t)
-	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{ed, rsa}})
-	require.NoError(t, err)
-	defer stopClean(t, sess)
-
-	conn, err := net.Dial("unix", sess.SockPath)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	keys, err := sshagent.NewClient(conn).List()
-	require.NoError(t, err)
-	require.Len(t, keys, 2)
-}
-
 // TestStartSession_AlreadyCancelledContext refuses a dead context rather than
 // returning a session whose socket the reaper is already removing -- which
 // would hand a caller a nil error and an SSH_AUTH_SOCK that answers nothing.
@@ -567,6 +550,17 @@ func TestSessionErrorTypes(t *testing.T) {
 	we := &WorkDirError{Err: inner}
 	assert.Contains(t, we.Error(), "boom")
 	assert.ErrorIs(t, we, inner)
+
+	unknown := &UnknownKeyError{Format: "ssh-ed25519"}
+	assert.Contains(t, unknown.Error(), "ssh-ed25519")
+
+	le := &ListenError{Err: inner}
+	assert.Contains(t, le.Error(), "listen")
+	assert.ErrorIs(t, le, inner)
+
+	ae := &AcceptError{Err: inner}
+	assert.Contains(t, ae.Error(), "accept")
+	assert.ErrorIs(t, ae, inner)
 }
 
 // TestStartSession_ShutdownUnderConcurrentDials drives shutdown against

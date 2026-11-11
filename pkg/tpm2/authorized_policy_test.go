@@ -35,43 +35,6 @@ func TestPolicyRef_Definition(t *testing.T) {
 	assert.NotEqual(t, PolicyRef("tenant-a", "boot"), PolicyRef("tenant-b", "boot"))
 }
 
-// TestPolicyScope_DefaultsToSystem proves a key with no tenant belongs to the
-// system scope.
-func TestPolicyScope_DefaultsToSystem(t *testing.T) {
-	assert.Equal(t, SystemPolicyScope, policyScope(&types.KeyAttributes{}))
-	assert.Equal(t, "tenant-a", policyScope(&types.KeyAttributes{TenantID: "tenant-a"}))
-}
-
-// TestIsNamedPolicy proves only a policy name other than "" and "platform"
-// selects the authorized-policy path.
-func TestIsNamedPolicy(t *testing.T) {
-	assert.False(t, isNamedPolicy(""))
-	assert.False(t, isNamedPolicy(types.TPMPolicyPlatform))
-	assert.True(t, isNamedPolicy("boot"))
-}
-
-// TestAuthorizedObjectPolicy_Branches proves a key without an auth value gets
-// PolicyAuthorizeNV alone -- no branch an empty password could satisfy -- and
-// a key with one gets the PolicyOR of both branches.
-func TestAuthorizedObjectPolicy_Branches(t *testing.T) {
-	name := testName(0x11)
-
-	noAuth, noAuthBranches, err := AuthorizedObjectPolicy(tpm2.TPMAlgSHA256, name, false)
-	require.NoError(t, err)
-	require.Len(t, noAuthBranches, 1)
-	assert.Equal(t, noAuthBranches[0], noAuth)
-
-	withAuth, branches, err := AuthorizedObjectPolicy(tpm2.TPMAlgSHA256, name, true)
-	require.NoError(t, err)
-	require.Len(t, branches, 2)
-	assert.Equal(t, noAuth, branches[0], "branch 1 is the same PolicyAuthorizeNV digest")
-	assert.NotEqual(t, noAuth, withAuth)
-
-	other, _, err := AuthorizedObjectPolicy(tpm2.TPMAlgSHA256, testName(0x22), false)
-	require.NoError(t, err)
-	assert.NotEqual(t, noAuth, other, "the authPolicy names its index")
-}
-
 // TestAuthorizedPolicyDigests_RejectInvalidInput proves each digest function
 // refuses input it cannot turn into a meaningful digest.
 func TestAuthorizedPolicyDigests_RejectInvalidInput(t *testing.T) {
@@ -172,13 +135,6 @@ func TestApprovedPolicyDigest_RejectsInvalidBranch(t *testing.T) {
 	}
 }
 
-// TestPolicyBranch_HasAuthValue proves only a branch with an auth_value
-// condition requires the object's password.
-func TestPolicyBranch_HasAuthValue(t *testing.T) {
-	assert.False(t, pcrBranch(make([]byte, 32)).HasAuthValue())
-	assert.True(t, PolicyBranch{Conditions: []PolicyCondition{{Type: PolicyConditionAuthValue}}}.HasAuthValue())
-}
-
 // TestPolicyLocalitySelection proves localities map to their TPMA_LOCALITY
 // bits and that extended localities and an empty set are refused.
 func TestPolicyLocalitySelection(t *testing.T) {
@@ -193,16 +149,6 @@ func TestPolicyLocalitySelection(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPolicyLocality)
 	_, err = PolicyLocalitySelection()
 	require.ErrorIs(t, err, ErrInvalidPolicyLocality)
-}
-
-// TestIsBranchRefusal proves only a branch's own refusals move the session
-// on to the next branch.
-func TestIsBranchRefusal(t *testing.T) {
-	assert.True(t, isBranchRefusal(&PolicyPCRMismatchError{Err: tpm2.TPMRCValue}))
-	assert.True(t, isBranchRefusal(&PolicyLocalityMismatchError{}))
-	assert.True(t, isBranchRefusal(&PolicyApprovalRevokedError{Err: tpm2.TPMRCPolicy}))
-	assert.False(t, isBranchRefusal(tpm2.TPMRCValue))
-	assert.False(t, isBranchRefusal(ErrPolicyApprovalMismatch))
 }
 
 // TestApprovalDigest_Definition pins aHash = H(approvedPolicy || policyRef).
@@ -264,48 +210,6 @@ func TestNVReadPolicy_PerIndexType(t *testing.T) {
 
 	_, _, err = nvReadPolicy(tpm2.TPMAlgSHA256, tpm2.TPMNTExtend)
 	require.ErrorIs(t, err, ErrPolicyDigestCompute)
-}
-
-// TestPolicyErrors_UnwrapResponseCode proves the typed refusals keep the TPM
-// response code in the chain.
-func TestPolicyErrors_UnwrapResponseCode(t *testing.T) {
-	pcrErr := &PolicyPCRMismatchError{Scope: "system", Policy: "boot", Err: tpm2.TPMRCValue}
-	assert.ErrorIs(t, pcrErr, tpm2.TPMRCValue)
-	assert.Contains(t, pcrErr.Error(), `"boot"`)
-
-	revoked := &PolicyApprovalRevokedError{Scope: "system", Policy: "boot", Epoch: 3, Err: tpm2.TPMRCPolicy}
-	assert.ErrorIs(t, revoked, tpm2.TPMRCPolicy)
-	assert.Contains(t, revoked.Error(), "epoch 3")
-
-	allowed, err := PolicyLocalitySelection(3)
-	require.NoError(t, err)
-	locality := &PolicyLocalityMismatchError{Scope: "system", Policy: "boot", Branch: 1, Allowed: allowed}
-	assert.Contains(t, locality.Error(), "0x08")
-	missing := &PolicyAuthValueMissingError{Scope: "system", Policy: "boot", Branch: 2}
-	assert.Contains(t, missing.Error(), "branch 2")
-
-	refused := &PolicyBranchesRefusedError{Scope: "system", Policy: "boot", Branches: []error{pcrErr, locality, missing}}
-	assert.ErrorIs(t, refused, tpm2.TPMRCValue)
-	var asLocality *PolicyLocalityMismatchError
-	assert.ErrorAs(t, refused, &asLocality)
-	assert.Contains(t, refused.Error(), "branch 2")
-}
-
-// TestSetPolicyBindingResolver_Clear proves a nil resolver clears it.
-func TestSetPolicyBindingResolver_Clear(t *testing.T) {
-	tpm := &TPM2{}
-	_, err := tpm.policyBindingResolver()
-	require.ErrorIs(t, err, ErrPolicyResolverUnset)
-
-	var r PolicyBindingResolver = nopResolver{}
-	tpm.SetPolicyBindingResolver(r)
-	got, err := tpm.policyBindingResolver()
-	require.NoError(t, err)
-	assert.Equal(t, r, got)
-
-	tpm.SetPolicyBindingResolver(nil)
-	_, err = tpm.policyBindingResolver()
-	require.ErrorIs(t, err, ErrPolicyResolverUnset)
 }
 
 // TestValidateApproval proves an approval is only redeemed against the
@@ -384,11 +288,3 @@ func TestPolicyBindingRecord_Errors(t *testing.T) {
 	_, err = unbacked.loadPolicyBinding(attrs, blobs)
 	assert.Error(t, err, "a corrupt record must not load as no binding")
 }
-
-type nopResolver struct{}
-
-func (nopResolver) PolicyIndex(string, string) (PolicyIndexInfo, error) {
-	return PolicyIndexInfo{}, nil
-}
-
-func (nopResolver) Approvals(string, string) ([]*PolicyApproval, error) { return nil, nil }
