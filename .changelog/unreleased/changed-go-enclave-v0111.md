@@ -1,1 +1,2 @@
 - go-enclave moves from v0.8.0-alpha (held by a `replace`) to v0.11.1-alpha in every module, with the dependency releases built on it: go-luks2 v1.0.3-alpha, go-objstore v0.9.1-alpha, go-truststrap v0.7.1-alpha, go-quicraft v0.24.3-alpha and go-qrdb v0.58.2-alpha (CA m2520).
+- BREAKING: sdk/go no longer exports ShamirShare (go-qrdb v0.58.2 removed the type).

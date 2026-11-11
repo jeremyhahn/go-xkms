@@ -563,7 +563,7 @@ func (s *BarrierService) Seal() error {
 // The barrier must be initialized and unsealed. For hardware-backed
 // strategies this is a no-op because those strategies do not use
 // password-derived wrapping keys.
-func (s *BarrierService) ChangePassword(newPassword string) (err error) {
+func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -575,13 +575,18 @@ func (s *BarrierService) ChangePassword(newPassword string) (err error) {
 	// CredentialsFor: ChangePassword is a no-op for hardware-backed
 	// strategies, which are called with an empty newPassword by design (see
 	// the doc comment above); NewCredentials would reject that empty input.
+	current, credErr := xkms.CredentialsFor(ctx, []byte(currentPassword))
+	if credErr != nil {
+		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
+	}
+	defer func() { err = errors.Join(err, current.Secret.Destroy()) }()
 	creds, credErr := xkms.CredentialsFor(ctx, []byte(newPassword))
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
 	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
 
-	if err := s.barrier.ChangePassword(ctx, creds); err != nil {
+	if err := s.barrier.ChangePassword(ctx, current, creds); err != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)
 	}
 

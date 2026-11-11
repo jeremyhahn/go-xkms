@@ -329,7 +329,13 @@ func admitPassphraseCopy(buf *secure.Buffer) (enclave.ByteAccess, error) {
 		})
 	})
 	if err == nil {
-		err = pass.Freeze()
+		// Allocator.NewSized documents its enclave as a Freezer.
+		freezer, ok := pass.(enclave.Freezer)
+		if !ok {
+			err = errors.New("usb: passphrase enclave cannot be frozen")
+		} else {
+			err = freezer.Freeze()
+		}
 	}
 	if err != nil {
 		if pass != nil {
