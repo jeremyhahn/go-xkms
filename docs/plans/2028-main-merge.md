@@ -1,0 +1,3 @@
+- Merge: main d55b1b73c into #2028 as 4da60bc14f (compose GOPRIVATE lines take main's #2057 form, CA m2514).
+- Checks: go test ./internal/buildgates/... (codec tags); test/scripts gomodauth, check-public-literals, ci-registry; make lint.
+- Results to follow.
