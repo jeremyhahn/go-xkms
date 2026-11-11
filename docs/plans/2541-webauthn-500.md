@@ -110,3 +110,9 @@ The [WebServer] log line, once per test:
 ## Out of scope
 
 CORS headers on the host's 401/403 responses (go-qrdb). Suite assertions are unchanged.
+
+## Codex findings on wa2541g (lane wa2541i)
+
+- P1 (1) pkg/api/rest/host.go:766-776 (reported :826): NewHostServer builds TokenIssuerParams without CallContext, so QRDBRefreshStore.Save fails with ErrUnauthenticated on an authentication-enforcing node after the credential is saved and Finish returns 500. Fix: pass the host's binder into BuildTokenIssuer; test ceremony completion against an authenticated node.
+- P1 (2) pkg/api/rest/host.go:216-222: QRDBUserResolver calls GetUser/GetUserByUsername on the request context; POST /api/v1/auth/refresh is public, so a valid refresh fails 401. Fix: bind the resolver's lookup context, keep the current-account checks; test a real refresh request.
+- P1 (3) pkg/api/rest/host.go:282-290: the adapter puts the base64 WebAuthn handle in Subject and JWTAuthenticator rebuilds the identity with UserID unset; go-qrdb finalizeIdentity/accountKey looks the handle up as a username, so roles never load and keys:read is refused after passkey login. Fix: translate the verified token into qrdb's immutable user identity; test an authorized request through the real module middleware.
