@@ -29,7 +29,6 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -54,12 +53,14 @@ func startOIDCXKMSd(t *testing.T) {
 // default afterwards so one call's flags never leak into the next.
 func runOIDCCommand(t *testing.T, cmd *cobra.Command, args []string, flags map[string]string) (string, error) {
 	t.Helper()
+	// Reset only the flags this call set: once cobra has merged the
+	// persistent flags into cmd's flag set, resetting all of them would also
+	// clear the inherited --xkmsd-url and with it the package's xkmsdURL.
 	defer func() {
-		for _, set := range []*pflag.FlagSet{cmd.Flags(), cmd.PersistentFlags()} {
-			set.VisitAll(func(f *pflag.Flag) {
-				require.NoError(t, f.Value.Set(f.DefValue))
-				f.Changed = false
-			})
+		for name := range flags {
+			f := cmd.Flags().Lookup(name)
+			require.NoError(t, f.Value.Set(f.DefValue))
+			f.Changed = false
 		}
 	}()
 	for name, value := range flags {
