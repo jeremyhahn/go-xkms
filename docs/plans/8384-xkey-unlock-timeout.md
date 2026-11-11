@@ -49,3 +49,8 @@ Weakening the test, skips, retries; the PIN KDF cost.
 
 Main merge d55b1b73c7 (DS-8445): results to follow
 Blocked: the merge (no conflicts) carries main's .github/workflows/ci.yml; lane policy-guard refuses the commit without LANE_POLICY_ALLOW. Merge aborted; no checks run.
+Resumed with LANE_POLICY_ALLOW: merge commit c0b62cbcf, no conflicts, ci.yml equals main d55b1b73c7.
+xkey go build (Makefile BUILD_TAGS): pass.
+xkey go vet (TEST_TAGS) on cmd/xkey/cmd and pkg/ipc: pass.
+xkey go test -count=3 -race (TEST_TAGS): pkg/ipc pass; cmd/xkey/cmd fails only TestOIDCServerMode_{Lifecycle,DeviceLogin,Refusals} on 2 of 3 counts, "oidc: provider not found" at xkey/cmd/xkey/cmd/oidc_server_test.go:128; alone with -count=3 they pass; that file is main's (not in #2068), so not fixed here. Untagged go test fails on the codec_json tag, so use the Makefile tags.
+root go build: pass.
