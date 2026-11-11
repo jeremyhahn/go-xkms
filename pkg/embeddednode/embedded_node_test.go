@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -213,7 +214,7 @@ func TestOpenEmbeddedNode_ExtraNodeAndServerOptionsApplied(t *testing.T) {
 	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
 		Config:             cfg,
 		Logger:             testLogger(),
-		ExtraServerOptions: []qrdbsdk.ServerOption{qrdbsdk.WithAuditLogger(sink)},
+		ExtraServerOptions: []qrdbserver.ServerOption{qrdbserver.WithAuditLogger(sink)},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, node)

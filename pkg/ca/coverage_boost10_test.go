@@ -28,6 +28,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -183,7 +184,7 @@ func TestInit_AlreadyInitialized_B10(t *testing.T) {
 func TestXSignedCertificate_EmptyIssuer_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	attrs := &types.KeyAttributes{CN: "some-cn"}
 	_, err := ca.XSignedCertificate("", attrs)
@@ -194,7 +195,7 @@ func TestXSignedCertificate_EmptyIssuer_B10(t *testing.T) {
 func TestXSignedCertificate_NilAttrs_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	_, err := ca.XSignedCertificate("issuer-b10", nil)
 	require.Error(t, err)
@@ -215,7 +216,7 @@ func TestXSignedCertificate_NoObjectStore_B10(t *testing.T) {
 func TestXSignedCertificate_NotFound_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage() // empty
+	ca.objectStore = qrdbstorage.NewMemoryStorage() // empty
 
 	attrs := &types.KeyAttributes{CN: "nonexistent-cn"}
 	_, err := ca.XSignedCertificate("issuer-b10", attrs)
@@ -226,7 +227,7 @@ func TestXSignedCertificate_NotFound_B10(t *testing.T) {
 func TestXSignedCertificate_Found_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	subjectCN := "xsignedcert-subject-b10"
 	cert, _ := b9MakeSelfSignedCACert(t, subjectCN)
@@ -247,7 +248,7 @@ func TestXSignedCertificate_Found_B10(t *testing.T) {
 func TestXSignedRootCertificate_WithParentInStore_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	// Build a 2-cert chain: child → parent (self-signed).
 	parentCert, parentKey := b9MakeSelfSignedCACert(t, "xroot-parent-b10")
@@ -290,7 +291,7 @@ func TestXSignedRootCertificate_WithParentInStore_B10(t *testing.T) {
 func TestXSignedIntermediateCertificates_IntermediateFound_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	issuerCN := "xint-issuer-b10"
 
@@ -385,7 +386,7 @@ func TestSign_Ed25519_B10(t *testing.T) {
 func TestPutRevocationBlob_ObjectStoreIgnored_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 	ca.revocationStore = storage.NewMemory()
 
 	payload := []byte(`{"serial":"77777","reason":0,"revoked_at":"2024-01-01T00:00:00Z"}`)
@@ -488,7 +489,7 @@ func TestPrivateKey_Success_B10(t *testing.T) {
 func TestGetXSignedCertificates_SuffixMismatch_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	// Store cross-signed cert under "other-cn", not "target-cn".
 	otherCert, _ := b9MakeSelfSignedCACert(t, "other-cn-b10")
@@ -504,7 +505,7 @@ func TestGetXSignedCertificates_SuffixMismatch_B10(t *testing.T) {
 func TestGetXSignedCertificates_MatchingSuffix_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	cn := "getxsigned-match-b10"
 	cert, _ := b9MakeSelfSignedCACert(t, cn)
@@ -520,7 +521,7 @@ func TestGetXSignedCertificates_MatchingSuffix_B10(t *testing.T) {
 func TestGetXSignedCertificates_InvalidPEM_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	cn := "getxsigned-badpem-b10"
 	// Write raw garbage (not PEM) to a key that matches the suffix.
@@ -588,7 +589,7 @@ func TestCABundleFiltered_NotInitialized_B10(t *testing.T) {
 func TestReadCrossSignedCertificate_InvalidPEM_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	cn := "rcsc-badpem-b10"
 	issuerCN := "rcsc-issuer-b10"

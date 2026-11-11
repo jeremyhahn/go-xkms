@@ -240,7 +240,7 @@ func (b *TPM2Backend) Close() error {
 
 // destroyFIDO2Enclave wipes enc, reporting a failure as
 // ErrFIDO2HashDestroyFailed.
-func destroyFIDO2Enclave(enc *enclave.MemoryEnclave) error {
+func destroyFIDO2Enclave(enc enclave.ByteAccess) error {
 	if err := enc.Destroy(); err != nil {
 		return &errs.Joined{Lead: ErrFIDO2HashDestroyFailed, Cause: err}
 	}

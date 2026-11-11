@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +38,7 @@ import (
 // Embedding rather than reimplementing keeps every other method honest, so a
 // test exercises the real code path right up to the injected fault.
 type faultyStorage struct {
-	qrdbsdk.Storage
+	qrdbstorage.Storage
 
 	existsErr error
 	getErr    error
@@ -45,7 +46,7 @@ type faultyStorage struct {
 }
 
 func newFaultyStorage() *faultyStorage {
-	return &faultyStorage{Storage: qrdbsdk.NewMemoryStorage()}
+	return &faultyStorage{Storage: qrdbstorage.NewMemoryStorage()}
 }
 
 func (f *faultyStorage) Exists(key []byte) (bool, error) {

@@ -69,7 +69,7 @@ func (m *Module) RegisterMCP(srv *mcpserver.MCPServer) {
 
 // Compile-time check: the module declares its MCP tool permissions into the
 // unified server's single MCP authorization path.
-var _ qrdbsdk.ModuleMCPToolPermissioner = (*Module)(nil)
+var _ qrdbserver.ModuleMCPToolPermissioner = (*Module)(nil)
 
 // MCPToolPermissions declares every module tool's permission for the
 // unified server's MCP tool registry: permission-mapped methods carry their

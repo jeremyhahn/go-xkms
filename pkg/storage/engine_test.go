@@ -21,13 +21,14 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
 // newMemEngineBackend returns an engine-backed Backend over the go-qrdb memory
 // engine for fast, host-free adapter tests.
 func newMemEngineBackend(t *testing.T) Backend {
 	t.Helper()
-	return NewEngineBackend(qrdbsdk.NewMemoryStorage())
+	return NewEngineBackend(qrdbstorage.NewMemoryStorage())
 }
 
 func TestEngineBackendPutGet(t *testing.T) {

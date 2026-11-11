@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
 // =============================================================================
@@ -80,7 +81,7 @@ type CertStoreFactoryFunc func(cn string) (certstore.CertStore, error)
 // ObjectStoreFactoryFunc resolves an object store for a given CA common name.
 // See KeyStoreFactoryFunc for semantics. Object store is optional; a factory
 // that returns (nil, nil) is permitted and yields no object store for that CA.
-type ObjectStoreFactoryFunc func(cn string) (qrdbsdk.Storage, error)
+type ObjectStoreFactoryFunc func(cn string) (qrdbstorage.Storage, error)
 
 // =============================================================================
 // ResolveStores
@@ -93,11 +94,11 @@ type ObjectStoreFactoryFunc func(cn string) (qrdbsdk.Storage, error)
 //
 // ResolveStores returns typed errors when a factory yields nil or fails, and
 // when a required shared store is missing.
-func (p *Params) ResolveStores(cn string) (xkms.Backend, certstore.CertStore, qrdbsdk.Storage, error) {
+func (p *Params) ResolveStores(cn string) (xkms.Backend, certstore.CertStore, qrdbstorage.Storage, error) {
 	var (
 		ks  xkms.Backend
 		cs  certstore.CertStore
-		os  qrdbsdk.Storage
+		os  qrdbstorage.Storage
 		err error
 	)
 

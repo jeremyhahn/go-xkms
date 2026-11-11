@@ -30,6 +30,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -50,7 +51,7 @@ func setupCAWithObjectStoreAndXSignedCert(t *testing.T, leafCN string) (*CA, *x5
 	t.Helper()
 
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	// Manufacture a self-signed cert that will act as the cross-signed issuer cert.
 	xKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -111,7 +112,7 @@ func setupCAWithObjStoreAndXSignedRootCert(t *testing.T, leafCN string) *CA {
 	t.Helper()
 
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	ca.mu.RLock()
 	root := ca.rootCert
@@ -172,7 +173,7 @@ func TestTLSConfigWithXSigner_XSignedRootCertsExist_B8(t *testing.T) {
 // intermediate cert and cross-signed certs stored for its CN.
 func TestTLSConfigWithXSigner_WithIntermediateAndXSignedCerts_B8(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	ca.mu.RLock()
 	intermediate := ca.intermediateCert
@@ -223,7 +224,7 @@ func TestTLSConfigWithXSigner_WithIntermediateAndXSignedCerts_B8(t *testing.T) {
 // to the object store so the pool-append loop executes.
 func TestTrustedRootCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	ca.mu.RLock()
 	root := ca.rootCert
@@ -265,7 +266,7 @@ func TestTrustedRootCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 
 func TestTrustedIntermediateCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	ca.mu.RLock()
 	intermediate := ca.intermediateCert

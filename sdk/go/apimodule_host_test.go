@@ -59,7 +59,7 @@ func TestServiceModule_HostCompositionThroughSDK(t *testing.T) {
 	assert.Nil(t, module.HostStores(), "nothing composes before first use")
 
 	var handler http.HandlerFunc
-	registrar := qrdbsdk.NewModuleHTTPRegistrar(chi.NewRouter(),
+	registrar := qrdbserver.NewModuleHTTPRegistrar(chi.NewRouter(),
 		func(method, pattern string, _ qrdbsdk.Permission, h http.HandlerFunc) {
 			if method == http.MethodGet && pattern == "/api/v1/ca/certificate" {
 				handler = h

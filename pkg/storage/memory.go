@@ -21,7 +21,7 @@ import qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 // thread-safe, stores defensive copies, returns ErrNotFound for missing keys,
 // and returns ErrClosed once Close has been called.
 func NewMemoryBackend() (Backend, error) {
-	return NewEngineBackend(qrdbsdk.NewMemoryStorage()), nil
+	return NewEngineBackend(qrdbstorage.NewMemoryStorage()), nil
 }
 
 // NewMemory creates a new in-memory storage backend. This is a convenience
