@@ -1,5 +1,5 @@
 # Dockerfile for FROST threshold signature integration tests
-FROM golang:1.27.3-bookworm
+FROM golang:1.27.4-bookworm
 
 ENV GOTOOLCHAIN=auto
 ENV GOWORK=off

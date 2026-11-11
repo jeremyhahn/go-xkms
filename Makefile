@@ -160,7 +160,7 @@ CLI_TAGS := $(filter-out pkcs11,$(BUILD_TAGS)) gms_pure_go
 #
 # The module declares the Go it needs in go.mod's `go` directive, and the
 # fleet pins GOTOOLCHAIN=local on hosts, under which a host go older than that
-# directive refuses every target ("go: go.mod requires go >= 1.27.3 (running
+# directive refuses every target ("go: go.mod requires go >= 1.27.4 (running
 # go 1.26.4; GOTOOLCHAIN=local)") while the Docker builder, which runs with
 # GOTOOLCHAIN=auto, quietly downloads the right one. Select the declared
 # toolchain explicitly for every recipe: the host go then acts only as the
@@ -3654,8 +3654,9 @@ IT_CI_IMAGE = go-xkms-ci-it:$(shell { git rev-parse 'HEAD^{tree}'; git diff HEAD
 # the checkout; locally it is the file stage-gomodauth writes.
 MODULE_ENV_FILE ?= $(GOMODAUTH_FILE)
 # GO_BUILD_PROXY is the GOPROXY of the image's go install / go mod download
-# stages. CI sets it to <DEVCACHE_GOPROXY>|https://proxy.golang.org|direct when
-# the runner's Athens answers (ci-template v1.29.4, v1.29.5); empty, the
+# stages. CI sets it to <DEVCACHE_GOPROXY>|https://proxy.golang.org, with no
+# `direct` entry, when the runner's Athens answers (ci-template v1.29.4,
+# v1.29.5, v1.34.1); empty, the
 # Dockerfile default applies. The build line quotes it, where an unquoted `|`
 # is a shell pipe (handbook devcontainer.md §4).
 GO_BUILD_PROXY ?=
@@ -4216,6 +4217,22 @@ build-cross-check:
 	if [ -n "$$failed" ]; then echo "$(RED)✗ sdk/go does not build for:$$failed$(RESET)"; exit 1; fi
 	@echo "$(GREEN)✓ sdk/go builds for $(CROSS_CHECK_OSES)$(RESET)"
 
+# The repository's own gates beside `make lint`: format, script, module and
+# generated-code checks, cheapest first. CI runs this target in the lint-gates
+# job, in parallel with `make lint`: in the toolchain image with no network on
+# a hosted runner, and natively under XKMS_NATIVE_BUILD=1 on the bigdisk pool,
+# which has no Docker daemon. Every gate listed here therefore runs in place:
+# none starts a container, calls sudo or installs a tool
+# (internal/buildgates/lint_gates_target_test.go). Two gates are not listed.
+# actionlint stays a prerequisite of `lint`, where
+# .github/scripts/make-gates-test.sh proves it fails closed, and its recipe
+# installs the pin when absent; listed here too it would run twice.
+# check-wailsjs fetches and builds the Wails CLI through the module proxy.
+.PHONY: lint-gates
+## lint-gates: Run the repository's own gates beside lint (fmt-check, check-insecure-tls, check-public-literals, check-test-helpers, proto-check, test-buildgates)
+lint-gates: fmt-check check-insecure-tls check-public-literals check-test-helpers proto-check test-buildgates
+	@echo "$(GREEN)$(BOLD)✓ Lint gates passed$(RESET)"
+
 .PHONY: lint
 ## lint: Run actionlint over the workflows, then golangci-lint across every module (LINT_MODULES), plus the root module's backend and raft tag sets
 lint: actionlint
@@ -4432,8 +4449,8 @@ security: gosec vuln modverify trivy
 	@echo "$(YELLOW)Note: container images are scanned separately - run 'make trivy-image'$(RESET)"
 
 .PHONY: check
-## check: Run all code quality checks (fmt, vet, lint, gosec, vuln)
-check: fmt vet lint gosec vuln
+## check: Run all code quality checks (fmt, vet, lint, lint-gates, gosec, vuln)
+check: fmt vet lint lint-gates gosec vuln
 	@echo "$(GREEN)$(BOLD)✓ All quality checks passed!$(RESET)"
 
 # ==============================================================================
