@@ -1,0 +1,3 @@
+- Merge main d55b1b73c7 into ci/1922-integration-shards (CA m2565): main's v1.34.1 CI file, with #2022's six-shard Integration matrix under main's needs/if/runs-on.
+- Checks: actionlint on .github/workflows/ci.yml; go test of ./internal/buildgates/... with codec_cbor codec_json codec_msgpack; make lint.
+- Results to follow.
