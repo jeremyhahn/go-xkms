@@ -1,0 +1,3 @@
+- Merge main d55b1b73c7 into ci/1923-devcontainer-split: keep main's v1.34.1 job structure (preflight, one image job, verdict if: lines, runs-on routing), drop the #1923 six-job split, carry #2023's race tier (coverage without -race, race on every ready PR, CI Gate race at pr).
+- Checks: actionlint .github/workflows/ci.yml; go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./internal/buildgates/...; make lint.
+- Results to follow.
