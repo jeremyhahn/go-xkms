@@ -12,6 +12,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Keep everything this script and xkmsd write in .runtime/xkmsd.log (git-ignored)
+# as well as on Playwright's pipes: Playwright stops relaying the webServer's
+# output once the server is ready, and run-suite.sh prints this file when the
+# suite fails (CA m2529). Truncated on every start.
+mkdir -p ./.runtime
+exec > >(tee ./.runtime/xkmsd.log) 2>&1
+
 XKMSD_BIN="${XKMSD_BIN:-}"
 BUILD_TAGS="pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack"
 

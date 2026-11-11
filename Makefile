@@ -1098,6 +1098,7 @@ test-scripts:
 	@bash test/scripts/socket-probe.test.sh
 	@bash test/scripts/start-test-xkmsd.test.sh
 	@bash test/scripts/xkms-server-diagnostics.test.sh
+	@bash test/scripts/webauthn-browser-suite.test.sh
 	@bash test/scripts/check-public-literals.test.sh
 	@bash test/scripts/build-agsim.test.sh
 	@bash test/scripts/check-test-helpers.test.sh
@@ -2606,7 +2607,7 @@ integration-test-webauthn: integration-test-webauthn-browser
 ## integration-test-webauthn-browser: Drive Chrome's CDP virtual authenticator against the REAL xkmsd WebAuthn RP (in the devcontainer, which carries Node and Chromium's libraries)
 integration-test-webauthn-browser:
 	@echo "$(CYAN)$(BOLD)→ Chrome virtual authenticator → real RP (/api/v1/webauthn/*)$(RESET)"
-	$(call run_in_devcontainer,mkdir -p $(BIN_DIR) && CGO_ENABLED=1 $(GO) build -buildvcs=false -tags='$(call go_tags,pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/ && cd test/integration/webauthn-browser && npm ci --no-fund --no-audit && npx playwright install chromium chromium-headless-shell && XKMSD_BIN=../../../$(BIN_DIR)/xkmsd npx playwright test,integration-test-webauthn-browser)
+	$(call run_in_devcontainer,mkdir -p $(BIN_DIR) && CGO_ENABLED=1 $(GO) build -buildvcs=false -tags='$(call go_tags,pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/ && cd test/integration/webauthn-browser && npm ci --no-fund --no-audit && npx playwright install chromium chromium-headless-shell && XKMSD_BIN=../../../$(BIN_DIR)/xkmsd bash ./run-suite.sh,integration-test-webauthn-browser)
 
 # Comma for use in function calls (Make escapes commas in function args)
 comma := ,
