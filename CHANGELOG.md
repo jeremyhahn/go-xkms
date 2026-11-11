@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **WebAuthn sign-up no longer fails with a 500 at `registration/begin` (#2541).** The qrdb-backed WebAuthn user store looked users up on the HTTP request's context, so an anonymous browser sign-up reached the embedded qrdb with no principal (`qrdb/auth: unauthenticated`). `QRDBUserStoreOptions.CallContext` (and `WebAuthnServiceParams.CallContext`, `HostConfig.WebAuthnCallContext`) now binds every user and credential call to the node's service principal, as the feature DAOs already run; both the server and the API module host pass `Node.ServiceContext`. No endpoint changes its authentication.
+- **WebAuthn sign-up no longer fails with a 500 at `registration/begin` (#2541).** The qrdb-backed WebAuthn user store looked users up on the HTTP request's context, so an anonymous browser sign-up reached the embedded qrdb with no principal (`qrdb/auth: unauthenticated`). `QRDBUserStoreOptions.CallContext` (and `WebAuthnServiceParams.CallContext`, `HostConfig.WebAuthnCallContext`) now binds every user and credential call to the node's service principal, as the feature DAOs already run; both the server and the API module host pass `Node.ServiceContext`. Over xkmsd's embedded node the service principal gains a WebAuthn grant (`users:read/create/update/delete`, `serviceprincipal.RegisterWebAuthnGrant`, registered only when the WebAuthn service is built), and the token issuer's qrdb refresh store runs on the same service context (`token.BindRefreshStore`, `TokenIssuerParams.CallContext`), so an anonymous login can persist its refresh token. No endpoint changes its authentication.
 
 ## [0.64.0-alpha] - 2026-10-25
 

@@ -16,8 +16,9 @@ of scope.
 2. Done: the cause was reproduced in real Chrome on this node (Playwright +
    CDP virtual authenticator, xkmsd built with the recipe's tags, all six
    same-origin tests red). The cause is below.
-3. Next: a Go test that fails on the cause, then the fix, then rerun the six
-   tests.
+3. Done: three layers, each with a failing Go test and its fix (user store
+   service context, the principal's WebAuthn grant, the refresh store
+   service context); the six same-origin tests pass natively in Chrome.
 
 ## Cause (Chrome run on this node, 2026-11-11)
 
@@ -91,6 +92,14 @@ The [WebServer] log line, once per test:
   `generate token: auth/token: refresh store put failed: qrdb/auth:
   unauthenticated: no valid credentials provided`: the token service's
   refresh store calls qrdb on the anonymous request context.
+- Third layer fixed (wa2541f): `token.BindRefreshStore` +
+  `TokenIssuerParams.CallContext`; `pkg/server` passes
+  `Node.ServiceContext` (kv permissions already in the base grant). Native
+  rerun in Chrome on this node: the six same-origin tests pass; the
+  cross-origin test still fails with `Failed to fetch` (CORS, #2033).
+- Open: `NewHostServer` (API module hosts) builds its token issuer without
+  a CallContext, and the issuer's qrdb user resolver (refresh re-check)
+  still runs on the caller's context; neither is in the six tests.
 
 ## Out of scope
 
