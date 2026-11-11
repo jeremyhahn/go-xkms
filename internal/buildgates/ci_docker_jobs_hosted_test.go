@@ -21,9 +21,9 @@ const (
 	runnerRepository = "jeremyhahn/go-xkms"
 	runnerGitHub     = "https://github.com"
 	runnerOtherForge = "https://git.example.test"
-	// runnerScheduleIf is the v1.29.3 clause that keeps a job off a schedule
-	// run unless the schedule guard says `run`.
-	runnerScheduleIf = "github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run'"
+	// runnerScheduleIf is the v1.34 clause that keeps a job off a run unless
+	// the preflight job's verdict is `run`.
+	runnerScheduleIf = "needs.preflight.outputs.verdict == 'run'"
 )
 
 var (

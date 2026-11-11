@@ -4,7 +4,8 @@
 #   usage: scripts/in-toolchain-image.sh <image> <command...>
 #   e.g.   scripts/in-toolchain-image.sh go-enclave-toolchain:abc make build
 #
-# in-toolchain-template: v4 (ci-template v1.29.4). Ships beside ci.yml; copy it to
+# in-toolchain-template: v4 (ci-template v1.29.4), with v5's bridge GOPROXY
+# (ci-template v1.34.1). Ships beside ci.yml; copy it to
 # scripts/ with the workflow. From go-quicraft's scripts/in-toolchain-image.sh
 # (a141c3c), with the container prefix and uid taken from the environment.
 #
@@ -76,10 +77,12 @@
 #   lacks, or the run's user cannot write, fails the stage by name. go-xkms's
 #   copy held this before v4, and its TRIVY_CACHE_DIR is on the same volume.
 # - A bridge stage's GOPROXY puts DEVCACHE_GOPROXY (Athens, devops.md §2a)
-#   first when the runner sets it: <DEVCACHE_GOPROXY>|https://proxy.golang.org|direct,
+#   first when the runner sets it: <DEVCACHE_GOPROXY>|https://proxy.golang.org,
 #   so a miss or an unreachable cache falls through to the public proxy.
 #   GOPRIVATE travels with it, so a private path never reaches either proxy.
-#   Unset, the chain is https://proxy.golang.org|direct.
+#   Unset, the chain is https://proxy.golang.org. There is no `direct` entry
+#   (v5, dependency-resolution.md, "No direct fetch, anywhere"); a private
+#   path is fetched by GOPRIVATE/GONOPROXY, never through GOPROXY.
 #
 # The container is named <CI_STACK_PREFIX>tc-<pid>-<random>, under the prefix
 # scripts/reap-stale-ci-stacks.sh reaps (default <checkout dir>-ci-, which in CI
@@ -223,7 +226,7 @@ if [ "$network" = bridge ]; then
   # The baked module cache is read-only to the run's user and holds only the
   # root module's build list; the nested modules deps-check walks fetch more.
   # Athens first when the runner sets DEVCACHE_GOPROXY (v4, above).
-  args+=(--env "GOPROXY=${DEVCACHE_GOPROXY:+$DEVCACHE_GOPROXY|}https://proxy.golang.org|direct" --env "GOMODCACHE=$modcache")
+  args+=(--env "GOPROXY=${DEVCACHE_GOPROXY:+$DEVCACHE_GOPROXY|}https://proxy.golang.org" --env "GOMODCACHE=$modcache")
   for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
     if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
   done

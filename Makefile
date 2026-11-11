@@ -3738,8 +3738,9 @@ IT_CI_IMAGE = go-xkms-ci-it:$(shell { git rev-parse 'HEAD^{tree}'; git diff HEAD
 # the checkout; locally it is the file stage-gomodauth writes.
 MODULE_ENV_FILE ?= $(GOMODAUTH_FILE)
 # GO_BUILD_PROXY is the GOPROXY of the image's go install / go mod download
-# stages. CI sets it to <DEVCACHE_GOPROXY>|https://proxy.golang.org|direct when
-# the runner's Athens answers (ci-template v1.29.4, v1.29.5); empty, the
+# stages. CI sets it to <DEVCACHE_GOPROXY>|https://proxy.golang.org, with no
+# `direct` entry, when the runner's Athens answers (ci-template v1.29.4,
+# v1.29.5, v1.34.1); empty, the
 # Dockerfile default applies. The build line quotes it, where an unquoted `|`
 # is a shell pipe (handbook devcontainer.md §4).
 GO_BUILD_PROXY ?=
