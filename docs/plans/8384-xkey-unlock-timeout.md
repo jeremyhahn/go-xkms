@@ -35,3 +35,8 @@ Weakening the test, skips, retries; the PIN KDF cost.
   155-196 ms. With `-cpu 1` beside `go test -race ./pkg/...`: 298-739 ms.
   Far under 5 s here; CI's >5 s needs ~25x this, so the cost scales with
   contention (CPU-bound KDF), next: read AppLockService.HandleUnlock.
+- Findings: HandleUnlock -> AppLockService.UnlockVerified -> unlock ->
+  releaseAppLock: PIN verification (KDF) and, with a barrier, the barrier
+  unseal under transitionMu; no sleep, retry or contended lock on the path.
+  The time is CPU-bound work by design, so the fix is the test client's
+  deadline (slices 2-3); DefaultTimeout stays 5 s (0.2 s outside load).
