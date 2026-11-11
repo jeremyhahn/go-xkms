@@ -12,3 +12,8 @@ Slices:
 Out of scope: other workflows, actionlint config, go.mod/go.sum, SPEC, ROADMAP.
 
 ## Results
+
+- Merge d3dc3745a: ci-images keeps main's v1.34.1 `if:` (preflight verdict), runs-on is ruling 442; ci.yml differs from main only there.
+- actionlint .github/workflows/ci.yml: pass.
+- go test ./internal/buildgates/... (codec_cbor codec_json codec_msgpack): pass.
+- make lint: pass.
