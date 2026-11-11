@@ -900,6 +900,7 @@ jobs:
       # on this runner with no push and held by image ID. The integration
       # image is needed by the full tier's scan alone.
       - name: Take the toolchain image
+        timeout-minutes: 50   # CA m2536: max 25.2 min, forge API 2026-11-11
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
@@ -917,6 +918,7 @@ jobs:
           echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
 
       - name: Take the integration image
+        timeout-minutes: 60   # CA m2536: max 31.8 min, forge API 2026-11-11
         if: ${{ env.CI_FULL_TIER == 'true' }}
         env:
           IT_REF: ${{ needs.ci-images.outputs.it_ref }}
@@ -937,6 +939,7 @@ jobs:
       # `make lint-gates` runs in the lint-gates job beside this one, never
       # here and never as a prerequisite of lint.
       - name: make lint
+        timeout-minutes: 45   # CA m2536: max 21.3 min, forge API 2026-11-11
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make lint GO_BUILD_TAGS='$GO_BUILD_TAGS'"
       # >>> CUSTOMIZE (go-xkms)
@@ -947,6 +950,7 @@ jobs:
       # SKILL.md cites a command or flag xkey does not have, and
       # check-public-literals keeps internal literals out of the public tree.
       - name: go-xkms checks (fmt, vet, gate tests, skill reference, public literals)
+        timeout-minutes: 45   # CA m2536: not in the measured set; make lint's bound (fmt, vet and gate tests are lint-class)
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
         run: |
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
@@ -967,6 +971,7 @@ jobs:
       # it runs the releasability test alone; any other run gets it from make
       # coverage.
       - name: Releasability test (docs-only PR)
+        timeout-minutes: 20   # CA m2536: not in the measured set; one go test package, make build's bound
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.RELEASABILITY_TEST != '' && needs.changes.outputs.docs_only == 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "go test -count=1 -tags '$GO_BUILD_TAGS' $RELEASABILITY_TEST"
 
@@ -975,12 +980,14 @@ jobs:
       # (tests included), it is misspelled or dead. Compares files, not
       # packages, and a tag may swap files (a `!foo` stub for a `foo` body).
       - name: Assert every build tag selects code
+        timeout-minutes: 20   # CA m2536: not in the measured set; go list per tag, make build's bound
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.GO_BUILD_TAGS != '' && needs.changes.outputs.docs_only != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "GO_BUILD_TAGS='$GO_BUILD_TAGS' sh scripts/assert-build-tags.sh"
 
       # CUSTOMIZE: nested modules (sdk/go, xkey) and variants (FIPS) are built
       # by `make build` itself, never by an extra step here.
       - name: make build
+        timeout-minutes: 20   # CA m2536: max 10.1 min, forge API 2026-11-11
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
         # >>> CUSTOMIZE (go-xkms)
         # build-xkey-local runs `npm ci` against the npm registry.
@@ -996,6 +1003,9 @@ jobs:
       # Tags matter here too: without them tag-gated packages are neither
       # tested nor counted. The integration stage is its own job below.
       - name: make coverage (unit tests and the threshold)
+        # CA m2536: no successful completion in the last ~200 runs (forge API
+        # 2026-11-11), so 120, below the job's 240; run 42965847875 sat here 2 h.
+        timeout-minutes: 120
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
         # >>> CUSTOMIZE (go-xkms)
         # test-web runs `npm ci` against the npm registry.
@@ -1010,6 +1020,7 @@ jobs:
       # reports a kill by signal as a kill, not a finding. Nothing is uploaded
       # to code scanning (m601 (d): CI runs on Gitea).
       - name: make security
+        timeout-minutes: 30   # CA m2536: no #1587 measure for this step, forge API 2026-11-11
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
         env:
           IN_IMAGE_NETWORK: bridge
@@ -1020,6 +1031,7 @@ jobs:
       # v1.28: a lint-class gate of seconds on the PR tier, every event, a
       # docs-only PR included (ruling 219(3)); it was full tier only from v1.23.
       - name: make deps-check
+        timeout-minutes: 10   # CA m2536: max 1.3 min, forge API 2026-11-11
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
         env:
           IN_IMAGE_NETWORK: bridge
@@ -1030,6 +1042,7 @@ jobs:
       # (v1.20). trivy fs and make security never take --ignore-unfixed.
       # A PR builds no image for a registry, so the scan is full tier (v1.23).
       - name: trivy image (integration image)
+        timeout-minutes: 30   # CA m2536: no #1587 measure for this step, forge API 2026-11-11
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
         env:
           IN_IMAGE_NETWORK: bridge
@@ -1043,6 +1056,7 @@ jobs:
       # gomodauth secret; the step removes the file, the image and the tar
       # itself and keeps the scan's exit code.
       - name: trivy image (CLI image)
+        timeout-minutes: 30   # CA m2536: no #1587 measure for this step, forge API 2026-11-11
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
         env:
           IN_IMAGE_NETWORK: bridge
