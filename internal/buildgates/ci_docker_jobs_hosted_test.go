@@ -27,9 +27,15 @@ const (
 )
 
 var (
-	// dockerJobs are the jobs that run Docker and stay hosted on github.com.
-	dockerJobs   = []string{"coverage", "integration"}
-	hostedLabels = []string{"ubuntu-latest"}
+	// dockerJobs are the jobs that run Docker.
+	dockerJobs = []string{"coverage", "integration"}
+	// ruling442Jobs are the Docker jobs under ruling 442 (#2050): a push to
+	// main and a same-repository PR run on bigdiskDockerLabels, any other
+	// event on hostedLabels. The coverage shards are this PR's own jobs and
+	// stay hosted on github.com.
+	ruling442Jobs       = []string{"integration"}
+	bigdiskDockerLabels = []string{"self-hosted", "linux", "x64", "bigdisk-docker"}
+	hostedLabels        = []string{"ubuntu-latest"}
 	// otherForgeLabels is what both jobs select off github.com.
 	otherForgeLabels = []string{"bigdisk"}
 	// unhostedRunsOn are the spellings, in lower case, that a runs-on needs to
@@ -338,26 +344,28 @@ func workflowTriggers(on yaml.Node) []string {
 	return events
 }
 
-func TestCIDockerJobs_HostedOnGitHubForEveryEvent(t *testing.T) {
+func TestCIDockerJobs_BigdiskForSameRepositoryHostedOtherwise(t *testing.T) {
 	wf := readRunnerWorkflow(t)
+	// sameRepo marks a push to main or a same-repository PR, the events
+	// ruling 442 sends to bigdisk-docker.
 	cases := []struct {
-		name string
-		ev   runnerEvent
-		want []string
+		name     string
+		ev       runnerEvent
+		sameRepo bool
 	}{
-		{"github.com push to main", runnerEvent{runnerGitHub, "push", "refs/heads/main", ""}, hostedLabels},
-		{"github.com same-repo PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", runnerRepository}, hostedLabels},
-		{"github.com fork PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", "mallory/go-xkms"}, hostedLabels},
-		{"github.com PR with an empty head repository", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", ""}, hostedLabels},
-		{"github.com push to refs/heads/main-x", runnerEvent{runnerGitHub, "push", "refs/heads/main-x", ""}, hostedLabels},
-		{"github.com push to refs/tags/main", runnerEvent{runnerGitHub, "push", "refs/tags/main", ""}, hostedLabels},
-		{"github.com workflow_dispatch", runnerEvent{runnerGitHub, "workflow_dispatch", "refs/heads/main", ""}, hostedLabels},
-		{"github.com schedule", runnerEvent{runnerGitHub, "schedule", "refs/heads/main", ""}, hostedLabels},
-		{"another forge push to main", runnerEvent{runnerOtherForge, "push", "refs/heads/main", ""}, otherForgeLabels},
-		{"another forge same-repo PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", runnerRepository}, otherForgeLabels},
-		{"another forge fork PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", "mallory/go-xkms"}, otherForgeLabels},
-		{"another forge workflow_dispatch", runnerEvent{runnerOtherForge, "workflow_dispatch", "refs/heads/main", ""}, otherForgeLabels},
-		{"another forge schedule", runnerEvent{runnerOtherForge, "schedule", "refs/heads/main", ""}, otherForgeLabels},
+		{"github.com push to main", runnerEvent{runnerGitHub, "push", "refs/heads/main", ""}, true},
+		{"github.com same-repo PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", runnerRepository}, true},
+		{"github.com fork PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", "mallory/go-xkms"}, false},
+		{"github.com PR with an empty head repository", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", ""}, false},
+		{"github.com push to refs/heads/main-x", runnerEvent{runnerGitHub, "push", "refs/heads/main-x", ""}, false},
+		{"github.com push to refs/tags/main", runnerEvent{runnerGitHub, "push", "refs/tags/main", ""}, false},
+		{"github.com workflow_dispatch", runnerEvent{runnerGitHub, "workflow_dispatch", "refs/heads/main", ""}, false},
+		{"github.com schedule", runnerEvent{runnerGitHub, "schedule", "refs/heads/main", ""}, false},
+		{"another forge push to main", runnerEvent{runnerOtherForge, "push", "refs/heads/main", ""}, true},
+		{"another forge same-repo PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", runnerRepository}, true},
+		{"another forge fork PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", "mallory/go-xkms"}, false},
+		{"another forge workflow_dispatch", runnerEvent{runnerOtherForge, "workflow_dispatch", "refs/heads/main", ""}, false},
+		{"another forge schedule", runnerEvent{runnerOtherForge, "schedule", "refs/heads/main", ""}, false},
 	}
 	for _, name := range dockerJobs {
 		j, ok := wf.Jobs[name]
@@ -369,19 +377,31 @@ func TestCIDockerJobs_HostedOnGitHubForEveryEvent(t *testing.T) {
 			t.Errorf("%s: runs-on is not a scalar", name)
 			continue
 		}
-		for _, word := range unhostedRunsOn {
-			if strings.Contains(strings.ToLower(j.RunsOn.Value), word) {
-				t.Errorf("%s: runs-on %q contains %q", name, j.RunsOn.Value, word)
+		ruling442 := slices.Contains(ruling442Jobs, name)
+		if !ruling442 {
+			for _, word := range unhostedRunsOn {
+				if strings.Contains(strings.ToLower(j.RunsOn.Value), word) {
+					t.Errorf("%s: runs-on %q contains %q", name, j.RunsOn.Value, word)
+				}
 			}
 		}
 		for _, tc := range cases {
+			var want []string
+			switch {
+			case ruling442 && tc.sameRepo:
+				want = bigdiskDockerLabels
+			case ruling442, tc.ev.serverURL == runnerGitHub:
+				want = hostedLabels
+			default:
+				want = otherForgeLabels
+			}
 			t.Run(name+"/"+tc.name, func(t *testing.T) {
 				got, err := runsOnLabels(j.RunsOn.Value, tc.ev)
 				if err != nil {
 					t.Fatalf("evaluate runs-on: %v", err)
 				}
-				if !slices.Equal(got, tc.want) {
-					t.Errorf("runs on %v, want %v", got, tc.want)
+				if !slices.Equal(got, want) {
+					t.Errorf("runs on %v, want %v", got, want)
 				}
 			})
 		}
