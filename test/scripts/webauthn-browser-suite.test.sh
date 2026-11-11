@@ -78,5 +78,51 @@ run STUB_RC=1
 eq "exit status is Playwright's" 1 "$rc"
 has "it says the log is missing" "no xkmsd log at" "$out"
 
+# run-server.sh (Codex P1): the real script in a copy of the repository
+# layout it reaches by relative path, against a stub daemon (XKMSD_BIN) and a
+# stub barrier opener. Its stdout and stderr must reach both .runtime/xkmsd.log
+# and the calling process, and each launch must truncate the previous log.
+SRV_ROOT="$WORK/repo"
+SRV_DIR="$SRV_ROOT/test/integration/webauthn-browser"
+OPENER_DIR="$SRV_ROOT/build/docker/devcontainer/scripts"
+mkdir -p "$SRV_DIR" "$OPENER_DIR"
+cp "$ROOT/test/integration/webauthn-browser/run-server.sh" "$SRV_DIR/run-server.sh"
+cat >"$OPENER_DIR/open-server-barrier.sh" <<'EOF'
+#!/bin/sh
+echo "stub opener $RUN_MARK"
+EOF
+cat >"$FAKEBIN/xkmsd" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = init ]; then
+	echo "stub init $RUN_MARK"
+	exit 0
+fi
+echo "stub daemon stdout $RUN_MARK"
+echo "stub daemon stderr $RUN_MARK" >&2
+exit 0
+EOF
+chmod +x "$FAKEBIN/xkmsd"
+
+# serve MARK -- launch run-server.sh from another directory. Sets out, rc, log.
+serve() {
+	out=$(cd "$WORK" && env XKMSD_BIN="$FAKEBIN/xkmsd" RUN_MARK="$1" bash "$SRV_DIR/run-server.sh" 2>/dev/null)
+	rc=$?
+	log=$(cat "$SRV_DIR/.runtime/xkmsd.log" 2>/dev/null)
+}
+
+section "run-server.sh copies the daemon's stdout and stderr to the log and the caller"
+serve first-run
+eq "exit status is the daemon's" 0 "$rc"
+has "the log holds the daemon's stdout" "stub daemon stdout first-run" "$log"
+has "the log holds the daemon's stderr" "stub daemon stderr first-run" "$log"
+has "the log holds the opener's output" "stub opener first-run" "$log"
+has "the caller gets the daemon's stdout" "stub daemon stdout first-run" "$out"
+has "the caller gets the daemon's stderr" "stub daemon stderr first-run" "$out"
+
+section "a second launch truncates the previous log"
+serve second-run
+has "the log holds the second run" "stub daemon stdout second-run" "$log"
+lacks "the first run is gone" "first-run" "$log"
+
 printf '\npassed %d, failed %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
