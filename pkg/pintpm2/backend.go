@@ -53,13 +53,19 @@ const minPINLength = 6
 // qrdbsdk.ErrPINNotSet.
 //
 // FIDO2 PIN hash verification is supported by caching SHA-256(PIN)[:16]
-// in a go-enclave MemoryEnclave (mlock'd, guard-paged memory), admitted
+// in a go-enclave memory enclave (mlock'd, guard-paged memory), admitted
 // through enclave.ProcessAllocator, when the user PIN is set, verified, or
 // changed.
 type TPM2Backend struct {
 	platformStore PlatformAuthProvider
 	userPINSet    atomic.Bool
-	fido2Enclave  atomic.Pointer[enclave.MemoryEnclave]
+	fido2Enclave  atomic.Pointer[fido2Hash]
+}
+
+// fido2Hash holds the enclave of the cached FIDO2 PIN hash, so the
+// enclave.ByteAccess interface can sit behind an atomic.Pointer.
+type fido2Hash struct {
+	enclave.ByteAccess
 }
 
 // NewTPM2Backend creates a new TPM2Backend that delegates PIN verification
@@ -221,7 +227,11 @@ func (b *TPM2Backend) VerifyFIDO2Hash(hash []byte) bool {
 	if len(hash) != qrdbsdk.FIDO2PINHashSize {
 		return false
 	}
-	match, err := b.fido2Enclave.Load().EqualTo(hash)
+	enc := b.fido2Enclave.Load()
+	if enc == nil {
+		return false
+	}
+	match, err := enc.EqualTo(hash)
 	if err != nil {
 		return false
 	}
@@ -291,7 +301,7 @@ func (b *TPM2Backend) cacheFIDO2Hash(pinBytes []byte) error {
 	if err != nil {
 		return b.failFIDO2HashCache(err)
 	}
-	if old := b.fido2Enclave.Swap(enc); old != nil {
+	if old := b.fido2Enclave.Swap(&fido2Hash{enc}); old != nil {
 		return destroyFIDO2Enclave(old)
 	}
 	return nil

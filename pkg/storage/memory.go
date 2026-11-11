@@ -13,7 +13,7 @@
 
 package storage
 
-import qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+import qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 
 // NewMemoryBackend creates a new in-memory storage backend backed by the
 // go-qrdb in-memory engine (the single canonical memory engine in the stack —

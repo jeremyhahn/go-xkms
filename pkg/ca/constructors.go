@@ -25,7 +25,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
