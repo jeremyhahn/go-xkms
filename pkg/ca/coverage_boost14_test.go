@@ -179,6 +179,17 @@ func TestOCSPResponder_CacheHit_B14(t *testing.T) {
 
 // TestOSTrustStore_B14 exercises OSTrustStore. On Linux the OS trust store is
 // available; either result path is valid as long as the call is exercised.
+func TestOSTrustStore_B14(t *testing.T) {
+	t.Parallel()
+	ca := setupTestCA(t)
+	pool, err := ca.OSTrustStore()
+	if err != nil {
+		assert.Nil(t, pool)
+	} else {
+		assert.NotNil(t, pool)
+	}
+}
+
 // =============================================================================
 // cross_signing.go — XSignedRootCertificate nil cert (line 91)
 // =============================================================================
@@ -221,6 +232,14 @@ func TestXSignedIntermediateCertificates_NilCert_B14(t *testing.T) {
 
 // TestCrossSignedPEM_NoObjectStore_B14 exercises the no-objectStore error
 // path (cross_signing.go line 173-174) in CrossSignedPEM.
+func TestCrossSignedPEM_NoObjectStore_B14(t *testing.T) {
+	t.Parallel()
+	ca := setupTestCA(t)
+	attrs := softwareKeyAttrs("cross-no-store-b14")
+	_, err := ca.CrossSignedPEM(attrs)
+	assert.ErrorIs(t, err, ErrObjectStoreRequired)
+}
+
 // =============================================================================
 // constructors.go — NewCA: NewIntermediateCA error path (line 399)
 // =============================================================================

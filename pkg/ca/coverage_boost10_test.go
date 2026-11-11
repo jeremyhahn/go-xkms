@@ -90,6 +90,12 @@ func TestInitializeAsIntermediate_AlreadyInitialized_B10(t *testing.T) {
 // =============================================================================
 
 // TestNewFromMultiIdentityConfig_NilConfig_B10 exercises the nil Config guard.
+func TestNewFromMultiIdentityConfig_NilConfig_B10(t *testing.T) {
+	t.Parallel()
+	_, err := NewFromMultiIdentityConfig(nil)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
 // TestNewFromMultiIdentityConfig_NilConfigField_B10 exercises the nil mp.Config guard.
 func TestNewFromMultiIdentityConfig_NilConfigField_B10(t *testing.T) {
 	t.Parallel()
@@ -190,6 +196,13 @@ func TestCABundleFiltered_NotInitialized_B10(t *testing.T) {
 // =============================================================================
 
 // TestExists_EmptyCN_B10 exercises the empty CN guard in Exists.
+func TestExists_EmptyCN_B10(t *testing.T) {
+	t.Parallel()
+	ca := setupTestCA(t)
+	_, err := ca.Exists(context.Background(), "", x509.ECDSA)
+	assert.ErrorIs(t, err, ErrInvalidCertificate)
+}
+
 // =============================================================================
 // csr.go — CreateCSR: nil request and missing CN guards
 // =============================================================================

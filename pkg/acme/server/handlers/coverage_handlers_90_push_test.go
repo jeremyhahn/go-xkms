@@ -236,6 +236,126 @@ func TestNewAccountHandler_EABRequired_DAOCreationFailure(t *testing.T) {
 	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
 }
 
+func TestNewAccountHandler_EABRequired_BindingNotFound(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	service.externalAccountRequired = true
+
+	mockEABDAO := &CoverageMockEABDAO{
+		getErr: errors.New("external account binding not found"),
+	}
+	mockFactory := &CoverageMockEABStorageFactory{
+		Factory: service.storageFactory,
+		eabDAO:  mockEABDAO,
+	}
+	service.storageFactory = mockFactory
+
+	key := generateTestKey(t)
+
+	// Create a valid EAB JWS structure
+	jwk := &jose.JSONWebKey{Key: key.PublicKey}
+	macKey := make([]byte, 32)
+	_, _ = rand.Read(macKey)
+	eabJWS := createCoverageEABJWS(t, macKey, "test-kid", service.baseRESTURI+"/acme/new-account", jwk)
+
+	payload := NewAccountRequest{
+		Contact:                []string{"mailto:test@example.com"},
+		TermsOfServiceAgreed:   true,
+		ExternalAccountBinding: eabJWS,
+	}
+
+	url := service.baseRESTURI + "/acme/new-account"
+	req := createJWSRequest(t, service, key, url, payload, false, 0)
+
+	resp := httptest.NewRecorder()
+	service.NewAccountHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeUnauthorized, http.StatusUnauthorized)
+}
+
+func TestNewAccountHandler_EABRequired_URLMismatch(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	service.externalAccountRequired = true
+
+	// Inject a typed Unauthorized error at the DAO level. The verifier wraps
+	// non-NotFound DAO errors as StorageFailure, which falls through to the
+	// handler's default Unauthorized case.
+	mockEABDAO := &CoverageMockEABDAO{
+		getErr: caerrors.UnauthorizedError("EAB URL mismatch"),
+	}
+	mockFactory := &CoverageMockEABStorageFactory{
+		Factory: service.storageFactory,
+		eabDAO:  mockEABDAO,
+	}
+	service.storageFactory = mockFactory
+
+	key := generateTestKey(t)
+	jwk := &jose.JSONWebKey{Key: key.PublicKey}
+	macKey := make([]byte, 32)
+	_, _ = rand.Read(macKey)
+	eabJWS := createCoverageEABJWS(t, macKey, "test-kid", service.baseRESTURI+"/acme/new-account", jwk)
+
+	payload := NewAccountRequest{
+		Contact:                []string{"mailto:test@example.com"},
+		TermsOfServiceAgreed:   true,
+		ExternalAccountBinding: eabJWS,
+	}
+
+	url := service.baseRESTURI + "/acme/new-account"
+	req := createJWSRequest(t, service, key, url, payload, false, 0)
+
+	resp := httptest.NewRecorder()
+	service.NewAccountHandler(resp, req)
+
+	// DAO errors that aren't ErrExternalAccountBindingNotFound are wrapped as
+	// StorageFailure by the verifier, which falls to the handler's default case.
+	assertErrorType(t, resp, common.ErrTypeUnauthorized, http.StatusUnauthorized)
+}
+
+func TestNewAccountHandler_EABRequired_DefaultUnauthorizedError(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	service.externalAccountRequired = true
+
+	// Return a generic error that doesn't match any specific case.
+	// The verifier wraps non-NotFound DAO errors as StorageFailure,
+	// which falls through to the handler's default Unauthorized case.
+	mockEABDAO := &CoverageMockEABDAO{
+		getErr: caerrors.InternalServerError("some unknown error"),
+	}
+	mockFactory := &CoverageMockEABStorageFactory{
+		Factory: service.storageFactory,
+		eabDAO:  mockEABDAO,
+	}
+	service.storageFactory = mockFactory
+
+	key := generateTestKey(t)
+	jwk := &jose.JSONWebKey{Key: key.PublicKey}
+	macKey := make([]byte, 32)
+	_, _ = rand.Read(macKey)
+	eabJWS := createCoverageEABJWS(t, macKey, "test-kid", service.baseRESTURI+"/acme/new-account", jwk)
+
+	payload := NewAccountRequest{
+		Contact:                []string{"mailto:test@example.com"},
+		TermsOfServiceAgreed:   true,
+		ExternalAccountBinding: eabJWS,
+	}
+
+	url := service.baseRESTURI + "/acme/new-account"
+	req := createJWSRequest(t, service, key, url, payload, false, 0)
+
+	resp := httptest.NewRecorder()
+	service.NewAccountHandler(resp, req)
+
+	// Unknown DAO errors get wrapped as StorageFailure by the verifier,
+	// which falls to the handler's default Unauthorized case.
+	assertErrorType(t, resp, common.ErrTypeUnauthorized, http.StatusUnauthorized)
+}
+
 func TestNewAccountHandler_EABWithTenantID(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()

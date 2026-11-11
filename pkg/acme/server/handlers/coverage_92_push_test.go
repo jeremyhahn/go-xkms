@@ -123,6 +123,60 @@ func TestCov92_OrderFinalizeHandler_CAAValidationSkipsNonDNS(t *testing.T) {
 
 // TestCov92_OrderFinalizeHandler_OrderNotOwnedByAccount tests the authorization
 // check where the order's AccountID doesn't match the requesting account.
+func TestCov92_OrderFinalizeHandler_OrderNotOwnedByAccount(t *testing.T) {
+	service, _, cleanup := setupTestServiceWithMockCA(t)
+	defer cleanup()
+
+	key1 := generateTestKey(t)
+	account1 := createTestAccount(t, service, key1)
+
+	key2 := generateTestKey(t)
+	account2 := createTestAccount(t, service, key2)
+
+	// Create order for account2
+	order := createTestOrderSimple(t, service, account2.ID)
+	order.Status = common.StatusReady
+
+	ctx := context.Background()
+	orderDAO2, err := service.storageFactory.OrderDAO(account2.ID)
+	require.NoError(t, err)
+	err = orderDAO2.Save(ctx, order)
+	require.NoError(t, err)
+
+	// Save a copy in account1's partition with account2's AccountID
+	orderDAO1, err := service.storageFactory.OrderDAO(account1.ID)
+	require.NoError(t, err)
+	orderCopy := *order
+	err = orderDAO1.Save(ctx, &orderCopy)
+	require.NoError(t, err)
+
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "example.com",
+		},
+		DNSNames: []string{"example.com"},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	payload := OrderFinalizeRequest{
+		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
+	}
+
+	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
+	req := createJWSRequest(t, service, key1, url, payload, true, account1.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
+
+	resp := httptest.NewRecorder()
+	service.OrderFinalizeHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeUnauthorized, http.StatusUnauthorized)
+}
+
 // --- KeyChangeHandler additional error path tests ---
 
 // TestCov92_KeyChangeHandler_SaveAccountFailure tests the path where saving
@@ -434,6 +488,34 @@ func (m *MockStorageFactory92CertFail) ExternalAccountBindingDAO() (qrdbsdk.Gene
 
 // TestCov92_NewOrderHandler_OrderDAOCreationError tests the NewOrderHandler
 // path where OrderDAO creation fails.
+func TestCov92_NewOrderHandler_OrderDAOCreationError(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	mockFactory := &MockStorageFactory92{
+		realFactory:        service.storageFactory,
+		failOrderDAOCreate: true,
+	}
+	service.storageFactory = mockFactory
+
+	payload := NewOrderRequest{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	url := service.baseRESTURI + "/acme/new-order"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.NewOrderHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+}
+
 // TestCov92_NewOrderHandler_OrderSaveError tests the NewOrderHandler
 // path where saving the order fails.
 func TestCov92_NewOrderHandler_OrderSaveError(t *testing.T) {
@@ -738,6 +820,38 @@ func (m *MockOrderDAO92SaveFail) Save(ctx context.Context, order *entities.ACMEO
 // TestCov92_NewOrderHandler_AuthzDAOCreationErrorWithChallenge tests the
 // NewOrderHandler path where AuthorizationDAO creation fails after setting
 // up challenge map.
+func TestCov92_NewOrderHandler_AuthzDAOCreationErrorWithChallenge(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	service.challengeMap["http-01"] = func(_ *net.Resolver, _ common.CertificateAuthority, _, _, _, _ string) error {
+		return nil
+	}
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	mockFactory := &MockStorageFactory92AuthzFail{
+		realFactory:  service.storageFactory,
+		failAuthzDAO: true,
+	}
+	service.storageFactory = mockFactory
+
+	payload := NewOrderRequest{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	url := service.baseRESTURI + "/acme/new-order"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.NewOrderHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+}
+
 // TestCov92_AccountHandler_AccountDAOCreationError tests the AccountHandler
 // path where AccountDAO creation fails.
 func TestCov92_AccountHandler_AccountDAOCreationError(t *testing.T) {

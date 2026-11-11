@@ -17,6 +17,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/go-jose/go-jose/v4"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/stretchr/testify/assert"
 )
@@ -41,6 +43,35 @@ func TestEncodeJSONWithLoggerEncodingError(t *testing.T) {
 }
 
 // TestRevokeCertHandlerDeactivatedAccount tests RevokeCertHandler with deactivated account
+func TestRevokeCertHandlerDeactivatedAccount(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	// Deactivate account
+	ctx := context.Background()
+	accountDAO, _ := service.storageFactory.AccountDAO()
+	account.Status = common.StatusDeactivated
+	_ = accountDAO.Save(ctx, account)
+
+	// Try to revoke
+	revokeReq := RevokeCertRequest{
+		Certificate: "dGVzdA",
+		Reason:      0,
+	}
+
+	url := "https://acme.test.example.com/acme/revoke-cert"
+	req := createJWSRequest(t, service, key, url, revokeReq, true, account.ID)
+
+	rr := httptest.NewRecorder()
+	service.RevokeCertHandler(rr, req)
+
+	// Should return bad request (parseKID fails for deactivated accounts)
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
 // TestParseTPMSignatureInvalidECDSA tests parseTPMSignature with truncated ECDSA signature
 func TestParseTPMSignatureInvalidECDSA(t *testing.T) {
 	// Create truncated ECDSA signature

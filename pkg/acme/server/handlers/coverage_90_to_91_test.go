@@ -18,6 +18,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -73,6 +74,46 @@ func TestParseKID_KIDAndJWKBothPresent(t *testing.T) {
 	parsedAccount, _, err := service.parseKID(ctx, req)
 	assert.Nil(t, parsedAccount)
 	assert.ErrorIs(t, err, ErrKIDAndJWKNotAllowed)
+}
+
+// TestNewAccountHandler_ExternalAccountBindingOptionalProvided tests EAB provided but not required
+func TestNewAccountHandler_ExternalAccountBindingOptionalProvided(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+
+	eabDAO, err := service.storageFactory.ExternalAccountBindingDAO()
+	require.NoError(t, err)
+
+	eab := &entities.ExternalAccountBinding{
+		ID:                "test-eab-kid",
+		MACKey:            base64.RawURLEncoding.EncodeToString([]byte("test-mac-key-12345678901234567890")),
+		Status:            "valid",
+		ExternalAccountID: "external-123",
+		CreatedAt:         time.Now(),
+	}
+	ctx := context.Background()
+	err = eabDAO.Save(ctx, eab)
+	require.NoError(t, err)
+
+	newAccountPayload := NewAccountRequest{
+		Contact:              []string{"mailto:test@example.com"},
+		TermsOfServiceAgreed: true,
+		ExternalAccountBinding: map[string]interface{}{
+			"protected": "invalid",
+			"payload":   "invalid",
+			"signature": "invalid",
+		},
+	}
+
+	url := service.baseRESTURI + "/acme/new-account"
+	req := createJWSRequest(t, service, key, url, newAccountPayload, false, 0)
+
+	resp := httptest.NewRecorder()
+	service.NewAccountHandler(resp, req)
+
+	assert.Equal(t, http.StatusCreated, resp.Code)
 }
 
 func TestAuthorizationPostHandler_AccountMismatch(t *testing.T) {
@@ -157,6 +198,23 @@ func TestAuthorizationPostHandler_AccountMismatch(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.Code)
 }
 
+// TestParseSpecIDEvent_AlgorithmReadError tests algorithm entry read error
+func TestParseSpecIDEvent_AlgorithmReadError(t *testing.T) {
+	// Valid header but algorithm read fails
+	data := []byte{
+		'S', 'p', 'e', 'c', ' ', 'I', 'D', ' ',
+		'E', 'v', 'e', 'n', 't', '0', '3', 0,
+		0x00, 0x00, 0x00, 0x00, // platformClass
+		0x00, 0x02, 0x00, // specVersionMinor, specVersionMajor, specErrata
+		0x04,                   // uintnSize
+		0x01, 0x00, 0x00, 0x00, // numberOfAlgorithms = 1
+		0x04, // Only 1 byte of algorithm (need 4 total: 2 for AlgorithmID + 2 for DigestSize)
+	}
+
+	_, err := parseSpecIDEvent(data)
+	assert.Error(t, err)
+}
+
 // TestParseSpecIDEvent_DigestSizeReadError tests digest size read error
 func TestParseSpecIDEvent_DigestSizeReadError(t *testing.T) {
 	// Valid header and algorithm ID but digest size read fails
@@ -216,6 +274,34 @@ func TestParseCryptoAgileEvent_UnknownAlgorithmSHA1(t *testing.T) {
 	}
 	// Add 20 bytes for SHA-1 digest
 	digest := make([]byte, 20)
+	data = append(data, digest...)
+	// Event data size = 0
+	data = append(data, 0x00, 0x00, 0x00, 0x00)
+
+	reader := bytes.NewReader(data)
+	entry, err := parseCryptoAgileEvent(reader, algorithms)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, entry.PCRIndex)
+}
+
+// TestParseCryptoAgileEvent_UnknownAlgorithmSHA384 tests SHA-384 fallback
+func TestParseCryptoAgileEvent_UnknownAlgorithmSHA384(t *testing.T) {
+	// Empty algorithms list
+	algorithms := []SpecIDAlgorithm{}
+
+	// Event with SHA-384 (0x000C)
+	data := []byte{
+		// PCR index
+		0x00, 0x00, 0x00, 0x00,
+		// Event type
+		0x01, 0x00, 0x00, 0x00,
+		// Digest count = 1
+		0x01, 0x00, 0x00, 0x00,
+		// Algorithm ID = SHA-384 (0x000C)
+		0x0C, 0x00,
+	}
+	// Add 48 bytes for SHA-384 digest
+	digest := make([]byte, 48)
 	data = append(data, digest...)
 	// Event data size = 0
 	data = append(data, 0x00, 0x00, 0x00, 0x00)

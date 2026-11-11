@@ -143,3 +143,8 @@ func TestExtractTBS_InvalidInput(t *testing.T) {
 // =============================================================================
 // NewIntermediateCA — missing parent / not initialized fast-paths
 // =============================================================================
+
+func TestNewIntermediateCA_NilParams(t *testing.T) {
+	_, err := NewIntermediateCA(context.Background(), nil, nil)
+	assert.Error(t, err)
+}
