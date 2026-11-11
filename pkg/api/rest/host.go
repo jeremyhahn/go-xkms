@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -356,6 +357,13 @@ type WebAuthnServiceParams struct {
 	// Defaults to DefaultWebAuthnTenant.
 	TenantID string
 
+	// CallContext binds the context the qrdb user store's calls run on
+	// (webauthn.QRDBUserStoreOptions.CallContext). Over an embedded node it
+	// is Node.ServiceContext: the store runs as the node's service
+	// principal, as the DAOs do, since a sign-up's registration/begin is
+	// anonymous. Nil keeps the caller's context.
+	CallContext qrdbstorage.CallContext
+
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
@@ -416,9 +424,10 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      p.QRDBClient.Users(),
-		DAOFactory: p.DAOFactory,
-		TenantID:   tenantID,
+		Users:       p.QRDBClient.Users(),
+		DAOFactory:  p.DAOFactory,
+		TenantID:    tenantID,
+		CallContext: p.CallContext,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
@@ -643,6 +652,10 @@ type HostConfig struct {
 	// lookup. Empty selects DefaultWebAuthnTenant.
 	WebAuthnTenantID string
 
+	// WebAuthnCallContext binds the context the qrdb-backed WebAuthn user
+	// store's calls run on; see WebAuthnServiceParams.CallContext.
+	WebAuthnCallContext qrdbstorage.CallContext
+
 	// WebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
 	// store the WebAuthn relying party persists passkeys through, letting
 	// the composing host add its own side effects (an identity-plane auth
@@ -804,6 +817,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				QRDBClient:               hc.QRDBClient,
 				DAOFactory:               hc.DAOFactory,
 				TenantID:                 tenantID,
+				CallContext:              hc.WebAuthnCallContext,
 				TokenIssuer:              cfg.TokenIssuer,
 				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
 				Logger:                   logger,

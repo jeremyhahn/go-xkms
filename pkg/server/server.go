@@ -1523,7 +1523,7 @@ func (s *Server) initializeWebAuthnService() error {
 
 	s.logger.Info("Initializing WebAuthn service...")
 
-	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
+	params := rest.WebAuthnServiceParams{
 		Config:      s.webauthnConfig,
 		QRDBClient:  ds.Client(),
 		DAOFactory:  ds.DAOFactory(),
@@ -1531,7 +1531,14 @@ func (s *Server) initializeWebAuthnService() error {
 		TokenIssuer: s.tokenIssuer,
 		Logger:      s.logger,
 		AuditLogger: s.auditLogger,
-	})
+	}
+	// The relying party's user store is xkms's own persistence, as the
+	// DAOs are: over the embedded node it runs as the node's service
+	// principal, since a sign-up's registration/begin is anonymous (#2541).
+	if s.qrdbNode != nil {
+		params.CallContext = s.qrdbNode.ServiceContext
+	}
+	svc, err := rest.BuildWebAuthnService(params)
 	if err != nil {
 		return &ErrServiceInit{Service: "webauthn service", Err: err}
 	}
