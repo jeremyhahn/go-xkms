@@ -59,6 +59,12 @@ var (
 	// that could not be read. It is not a failed verification, so it spends
 	// no uvRetries. Verifiers wrap the cause with SentinelCauseError.
 	ErrUserVerificationUnavailable = errors.New("keybackend: user verification unavailable")
+
+	// ErrUserVerificationCancelled indicates the user dismissed the prompt
+	// on the verifier, so a UserVerifier was given no answer to judge. It
+	// is not a failed verification, so it spends no uvRetries. Verifiers
+	// wrap the cause with SentinelCauseError.
+	ErrUserVerificationCancelled = errors.New("keybackend: user verification cancelled")
 )
 
 // DetailError appends detail text directly after a wrapped error while

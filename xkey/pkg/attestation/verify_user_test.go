@@ -26,7 +26,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
-	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/userverify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
@@ -124,7 +123,7 @@ func TestNewUserVerifier_Refuses(t *testing.T) {
 			name:      "the trust store cannot be loaded",
 			loadTrust: func() (*xkms.AndroidDeviceTrust, error) { return nil, errNoStore },
 			exchange:  verifyUserExchange(t, uvk, channelBinding, nil),
-			wantErr:   keybackend.ErrUserVerificationUnavailable,
+			wantErr:   attestation.ErrUserVerificationTrustUnavailable,
 			wantCause: errNoStore,
 		},
 		{
@@ -185,10 +184,6 @@ func TestNewUserVerifier_Refuses(t *testing.T) {
 	}
 }
 
-// TestNewUserVerifier_TrustOutageIsUnavailable pins that a trust store that
-// cannot be loaded reaches no decision about the user: every call is
-// unavailable, so the authenticator spends no uvRetries however often the
-// outage repeats, and the phone is never asked.
 func TestNewUserVerifier_TrustOutageIsUnavailable(t *testing.T) {
 	errNoStore := errors.New("devices.yaml unreadable")
 	verify := attestation.NewUserVerifier(
@@ -202,7 +197,7 @@ func TestNewUserVerifier_TrustOutageIsUnavailable(t *testing.T) {
 	for range 3 {
 		err := verify(context.Background(), exchange, channelBinding, uvRPName)
 
-		require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+		require.ErrorIs(t, err, attestation.ErrUserVerificationTrustUnavailable)
 		require.ErrorIs(t, err, errNoStore)
 		require.NotErrorIs(t, err, userverify.ErrVerificationFailed)
 	}

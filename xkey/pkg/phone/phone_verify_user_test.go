@@ -127,37 +127,87 @@ func TestVerifyUser_VerifierRefusalIsReturned(t *testing.T) {
 	require.NotErrorIs(t, err, keybackend.ErrUserVerificationUnavailable, "a refusal is a failed verification")
 }
 
-// TestVerifyUser_UnansweredExchangeIsUnavailable proves an exchange the phone
-// never answered — the link dropped or timed out — reaches the verifier, and
-// so the authenticator, as unavailable rather than as a refusal, and spends
-// no uvRetries.
-func TestVerifyUser_UnansweredExchangeIsUnavailable(t *testing.T) {
+// TestVerifyUser_PhoneRefusalIsTyped guards #1712: each refusal the phone
+// answers local.verifyUser with reaches the caller as its own typed error.
+func TestVerifyUser_PhoneRefusalIsTyped(t *testing.T) {
 	if !noiseOutsideFIPS(t) {
 		return
 	}
-	client, _ := establishedNoiseSessionPair(t)
-	backend := &PhoneKeyBackend{
-		cfg: &PhoneKeyBackendConfig{VerifyUser: func(ctx context.Context, exchange pairingproto.RPCExchange, _ []byte, _ string) error {
-			_, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalVerifyUser, nil))
-			return err
-		}},
-		session: client,
-		transport: &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
-			return nil, context.DeadlineExceeded
-		}},
-		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	refusals := []struct {
+		name string
+		code int
+		want error
+	}{
+		{"user cancelled", pairingproto.ErrorCodeUserCancelled, ErrUserCancelled},
+		{"no biometric enrolled", pairingproto.ErrorCodeVerifyUserNotEnrolled, ErrUserVerificationNotEnrolled},
+		{"lockout", pairingproto.ErrorCodeVerifyUserLockout, ErrUserVerificationLockout},
+		{"not paired", pairingproto.ErrorCodeNotPaired, ErrNotPaired},
 	}
-	backend.connected.Store(true)
+	for _, tt := range refusals {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := refusingPhone(t, func(ctx context.Context, exchange pairingproto.RPCExchange, _ []byte, _ string) error {
+				resp, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalVerifyUser, nil))
+				if err != nil {
+					return err
+				}
+				// As attestation.NewUserVerifier reports a phone's RPC error.
+				return fmt.Errorf("%w: %w", errVerifierRefused, resp.Error)
+			}, tt.code)
 
-	err := backend.VerifyUser(context.Background(), "example.com")
-	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+			err := backend.VerifyUser(context.Background(), "example.com")
+			require.ErrorIs(t, err, tt.want)
+			require.ErrorIs(t, err, errVerifierRefused, "the verifier's own error is kept")
+		})
+	}
 }
 
-// TestVerifyUser_HostCancelIsKeptOverTheTransportError checks that a host
-// cancelling the request while the phone is asked stays context.Canceled,
-// which the authenticator answers with CTAP2_ERR_KEEPALIVE_CANCEL, although
-// the transport reports its own error: BLE times out and USB fails its read.
+// TestVerifyUser_CancelledPromptIsCancelled pins that a prompt the user
+// dismissed on the phone (-32001) reaches the authenticator as
+// keybackend.ErrUserVerificationCancelled, on which it spends no uvRetries,
+// and still as the phone's typed refusal.
+func TestVerifyUser_CancelledPromptIsCancelled(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	backend := refusingPhone(t, func(ctx context.Context, exchange pairingproto.RPCExchange, _ []byte, _ string) error {
+		resp, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalVerifyUser, nil))
+		if err != nil {
+			return err
+		}
+		// As attestation.NewUserVerifier reports a phone's RPC error.
+		return fmt.Errorf("%w: %w", errVerifierRefused, resp.Error)
+	}, pairingproto.ErrorCodeUserCancelled)
+
+	for range 3 {
+		err := backend.VerifyUser(context.Background(), "example.com")
+		require.ErrorIs(t, err, keybackend.ErrUserVerificationCancelled)
+		require.ErrorIs(t, err, pairingproto.ErrUserCancelled)
+		require.ErrorIs(t, err, errVerifierRefused, "the verifier's own error is kept")
+		require.NotErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+	}
+}
+
+// TestVerifyUser_UnloadableTrustIsUnavailable pins that a trust the verifier
+// could not load — devices.yaml or the trust store could not be read — is an
+// outage, not a failed verification: no prompt was sent, so every such call
+// answers ErrUserVerificationUnavailable with the loader's cause kept.
+func TestVerifyUser_UnloadableTrustIsUnavailable(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	errNoStore := errors.New("test: trust store unreadable")
+	backend := connectedVerifyUserBackend(t, attestation.NewUserVerifier(
+		func() (*xkms.AndroidDeviceTrust, error) { return nil, errNoStore },
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	))
+
+	for range 3 {
+		err := backend.VerifyUser(context.Background(), "example.com")
+		require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+		require.ErrorIs(t, err, errNoStore)
+	}
+}
+
 func TestVerifyUser_HostCancelIsKeptOverTheTransportError(t *testing.T) {
 	if !noiseOutsideFIPS(t) {
 		return
@@ -190,6 +240,62 @@ func TestVerifyUser_HostCancelIsKeptOverTheTransportError(t *testing.T) {
 			require.NotErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
 		})
 	}
+}
+
+// refusingPhone is a connected backend whose phone answers every request with
+// an RPC error carrying code.
+func refusingPhone(t *testing.T, verify pairingproto.VerifyUserFunc, code int) *PhoneKeyBackend {
+	t.Helper()
+	client, server := establishedNoiseSessionPair(t)
+	backend := &PhoneKeyBackend{
+		cfg:     &PhoneKeyBackendConfig{VerifyUser: verify},
+		session: client,
+		transport: &scriptedTransport{respond: func(_ context.Context, sent []byte) ([]byte, error) {
+			plaintext, err := server.Decrypt(sent)
+			if err != nil {
+				return nil, err
+			}
+			req, err := pairingproto.DecodeRequest(plaintext)
+			if err != nil {
+				return nil, err
+			}
+			respBytes, err := pairingproto.EncodeErrorResponse(req.ID, req.Generation, code, "refused", nil)
+			if err != nil {
+				return nil, err
+			}
+			return server.Encrypt(respBytes)
+		}},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	backend.connected.Store(true)
+	return backend
+}
+
+// TestVerifyUser_UnansweredExchangeIsUnavailable proves an exchange the phone
+// never answered — the link dropped or timed out — reaches the verifier, and
+// so the authenticator, as unavailable rather than as a refusal, and spends
+// no uvRetries.
+func TestVerifyUser_UnansweredExchangeIsUnavailable(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	client, _ := establishedNoiseSessionPair(t)
+	backend := &PhoneKeyBackend{
+		cfg: &PhoneKeyBackendConfig{VerifyUser: func(ctx context.Context, exchange pairingproto.RPCExchange, _ []byte, _ string) error {
+			_, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalVerifyUser, nil))
+			return err
+		}},
+		session: client,
+		transport: &scriptedTransport{respond: func(context.Context, []byte) ([]byte, error) {
+			return nil, context.DeadlineExceeded
+		}},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	backend.connected.Store(true)
+
+	err := backend.VerifyUser(context.Background(), "example.com")
+	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 // TestVerifyUser_SilentPhoneIsBoundedByTheDeadline pins the verify-user
@@ -265,25 +371,6 @@ func TestVerifyUser_MalformedStatusListFileIsUnavailable(t *testing.T) {
 	err := backend.VerifyUser(context.Background(), "example.com")
 	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
 	require.ErrorIs(t, err, xkms.ErrAndroidStatusListMalformed)
-}
-
-// TestVerifyUser_TrustOutageIsUnavailable drives the attestation verifier
-// with a trust loader that fails: each call is unavailable, so the
-// authenticator, which spends a uvRetry on any other error, spends none.
-func TestVerifyUser_TrustOutageIsUnavailable(t *testing.T) {
-	if !noiseOutsideFIPS(t) {
-		return
-	}
-	errNoStore := errors.New("trust store unavailable")
-	backend := connectedVerifyUserBackend(t, attestation.NewUserVerifier(
-		func() (*xkms.AndroidDeviceTrust, error) { return nil, errNoStore },
-		slog.New(slog.NewTextHandler(io.Discard, nil))))
-
-	for range 3 {
-		err := backend.VerifyUser(context.Background(), "example.com")
-		require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
-		require.ErrorIs(t, err, errNoStore)
-	}
 }
 
 // TestVerifyUser_NoVerifierRefuses proves a backend built without a

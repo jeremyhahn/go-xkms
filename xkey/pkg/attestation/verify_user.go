@@ -19,7 +19,6 @@ import (
 	"log/slog"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/userverify"
 )
@@ -35,6 +34,12 @@ import (
 // failed — transport, encoding, a mismatched response or an RPC error such as
 // a cancelled prompt — rather than the evidence being bad.
 var ErrUserVerificationExchangeFailed = errors.New("attestation: user verification exchange failed")
+
+// ErrUserVerificationTrustUnavailable indicates the trust a verification is
+// judged against could not be loaded — devices.yaml or the trust store could
+// not be read — so no prompt was sent and the user was neither verified nor
+// refused.
+var ErrUserVerificationTrustUnavailable = errors.New("attestation: user verification trust could not be loaded")
 
 // NewUserVerifier builds the verify-user exchange a phone backend runs on its
 // established session when the authenticator needs a user verification. It
@@ -54,9 +59,7 @@ func NewUserVerifier(
 	return func(ctx context.Context, exchange pairingproto.RPCExchange, channelBinding []byte, rpName string) error {
 		trust, err := loadTrust()
 		if err != nil {
-			// No trust to judge an answer against is no decision about
-			// the user, so the authenticator spends no uvRetries on it.
-			return &SentinelCauseError{Sentinel: keybackend.ErrUserVerificationUnavailable, Cause: err}
+			return &SentinelCauseError{Sentinel: ErrUserVerificationTrustUnavailable, Cause: err}
 		}
 
 		challenge, err := userverify.NewChallenge(channelBinding, rpName)

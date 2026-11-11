@@ -308,12 +308,12 @@ func (d *DAK) SignRaw(purpose string, nonce, channelBinding []byte) ([]byte, err
 }
 
 // SignVerifyUserRaw produces the UVK's local.verifyUser signature: the
-// verify-user transcript laid out by hand, then the RP name behind its
-// one-byte length (ruling 180).
+// verify-user transcript laid out by hand, then SHA-256 of the RP name
+// (ruling 180).
 func (d *DAK) SignVerifyUserRaw(nonce, channelBinding []byte, rpName string) ([]byte, error) {
 	transcript := d.handTranscript(pairingproto.AttestPurposeVerifyUser, nonce, channelBinding)
-	transcript = append(transcript, byte(len(rpName)))
-	transcript = append(transcript, []byte(rpName)...)
+	rpNameHash := sha256.Sum256([]byte(rpName))
+	transcript = append(transcript, rpNameHash[:]...)
 	return d.signTranscript(transcript)
 }
 

@@ -170,7 +170,7 @@ func verify(
 		return err
 	}
 	transcript, err := pairingproto.BuildVerifyUserTranscript(
-		challenge.Nonce, challenge.ChannelBinding, fingerprint[:], challenge.RPName)
+		challenge.RPName, challenge.Nonce, challenge.ChannelBinding, fingerprint[:])
 	if err != nil {
 		return err
 	}
