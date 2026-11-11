@@ -2,7 +2,7 @@
 # Contains all tools needed to run the full CI pipeline locally
 # Matches the GitHub CI workflow environment
 
-FROM golang:1.27.3-bookworm
+FROM golang:1.27.4-bookworm
 
 LABEL maintainer="go-xkms"
 LABEL description="CI environment for go-xkms with all linters, security scanners, and test dependencies"
@@ -50,7 +50,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Install golangci-lint from source (must be built with Go 1.27.3+ to support go 1.27.3 projects)
+# Install golangci-lint from source (must be built with Go 1.27.4+ to support go 1.27.4 projects)
 RUN go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest && \
     mv /go/bin/golangci-lint /usr/local/bin/
 
