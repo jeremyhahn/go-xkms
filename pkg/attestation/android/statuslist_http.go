@@ -37,7 +37,9 @@ const maxDeltaSeconds = 2147483648
 
 var (
 	// ErrInvalidStatusListURL is returned for a status list URL that is not
-	// an absolute http or https URL.
+	// an absolute https URL, and for a redirect to a target that is not
+	// https. Plain http is refused: the list decides revocation, so it must
+	// not be readable or replaceable on the path.
 	ErrInvalidStatusListURL = errors.New("android: invalid attestation status list URL")
 
 	// ErrStatusListHTTPStatus is the cause of an unavailable list whose
@@ -138,8 +140,8 @@ func NewHTTPStatusList(opts HTTPStatusListOptions) (*HTTPStatusList, error) {
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrInvalidStatusListURL, Detail: err.Error()}
 	}
-	if (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return nil, &errs.Detail{Err: ErrInvalidStatusListURL, Detail: h.url}
+	if u.Scheme != "https" || u.Host == "" {
+		return nil, &errs.Detail{Err: ErrInvalidStatusListURL, Detail: "not an absolute https URL: " + h.url}
 	}
 	return h, nil
 }
@@ -204,7 +206,7 @@ func (h *HTTPStatusList) download(revalidate bool) (_ *StatusList, _ time.Time, 
 	}
 
 	requested := h.now()
-	resp, err := h.client.Do(req)
+	resp, err := httpsOnlyClient(h.client).Do(req)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -235,6 +237,32 @@ func (h *HTTPStatusList) download(revalidate bool) (_ *StatusList, _ time.Time, 
 		return nil, time.Time{}, &errs.Detail{Err: ErrStatusListStale, Detail: fmt.Sprintf("not fresh on arrival (Cache-Control %q, Expires %q, Age %q)", resp.Header.Get("Cache-Control"), resp.Header.Get("Expires"), resp.Header.Get("Age"))}
 	}
 	return list, until, nil
+}
+
+// maxStatusListRedirects is the redirect limit applied when the caller's
+// client has no CheckRedirect of its own (net/http's default limit).
+const maxStatusListRedirects = 10
+
+// httpsOnlyClient returns a copy of client whose CheckRedirect refuses a
+// redirect to a target that is not https, then defers to the caller's
+// CheckRedirect, or to the default limit of 10 redirects when it has none.
+// The caller's client is not modified.
+func httpsOnlyClient(client *http.Client) *http.Client {
+	c := *client
+	next := client.CheckRedirect
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" {
+			return &errs.Detail{Err: ErrInvalidStatusListURL, Detail: "redirect to a non-https URL refused: " + req.URL.Redacted()}
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		if len(via) >= maxStatusListRedirects {
+			return fmt.Errorf("android: status list: stopped after %d redirects", maxStatusListRedirects)
+		}
+		return nil
+	}
+	return &c
 }
 
 // freshUntil is the instant a response stops being fresh: the time it was

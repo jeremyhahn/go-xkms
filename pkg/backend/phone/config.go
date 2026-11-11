@@ -15,6 +15,7 @@ package phone
 
 import (
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -80,6 +81,11 @@ type AttestationConfig struct {
 	// StatusListURL by hosts that cannot reach it. It is read once, when the
 	// backend starts.
 	StatusListFile string `yaml:"status_list_file" json:"status_list_file"`
+
+	// StatusListClient is the HTTP client the status list is fetched with.
+	// Nil means a default client. It is set in code only (tests, custom
+	// transports), never from a configuration file.
+	StatusListClient *http.Client `yaml:"-" json:"-"`
 }
 
 // Config holds the configuration for the phone backend, which proxies key
