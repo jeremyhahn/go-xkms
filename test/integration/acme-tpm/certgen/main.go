@@ -16,6 +16,13 @@
 // (pkg/config.ACMEConfig.TLS requires pre-existing PEM files on disk; xkmsd
 // does not generate them itself the way it does for its primary listener).
 //
+// With -ca it instead writes a self-signed CA certificate/key pair: the
+// software-TPM EK root the acme-tpm suite signs every swtpm EK certificate
+// with (swtpm_helper_test.go's swtpmTestEKIssuer) and the acme-server trusts
+// (config.acme-tpm.yaml). The Makefile's integration-test-acme-tpm target
+// generates it fresh on every run, before the stack starts, so no private
+// key is ever committed (#1993).
+//
 // It is deliberately stdlib-only (crypto/*, encoding/pem) so the acme-server
 // compose service can run it with `go run` against the source tree already
 // baked into the image, with no external dependency fetch and no reliance on
@@ -44,15 +51,16 @@ func main() {
 	keyPath := flag.String("key", "", "output path for the PEM-encoded private key (required)")
 	commonName := flag.String("cn", "localhost", "certificate common name and primary DNS SAN")
 	validDays := flag.Int("days", 1, "certificate validity, in days")
+	ca := flag.Bool("ca", false, "write a self-signed CA certificate (the swtpm EK root) instead of a TLS server leaf")
 	flag.Parse()
 
-	if err := run(*certPath, *keyPath, *commonName, *validDays); err != nil {
+	if err := run(*certPath, *keyPath, *commonName, *validDays, *ca); err != nil {
 		fmt.Fprintf(os.Stderr, "certgen: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(certPath, keyPath, commonName string, validDays int) error {
+func run(certPath, keyPath, commonName string, validDays int, ca bool) error {
 	if certPath == "" || keyPath == "" {
 		return fmt.Errorf("-cert and -key are required")
 	}
@@ -77,6 +85,16 @@ func run(certPath, keyPath, commonName string, validDays int) error {
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     []string{commonName, "localhost"},
 		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+	}
+
+	if ca {
+		template.Subject = pkix.Name{Organization: []string{"swtpm-test"}, CommonName: commonName}
+		template.KeyUsage = x509.KeyUsageCertSign | x509.KeyUsageCRLSign
+		template.ExtKeyUsage = nil
+		template.DNSNames = nil
+		template.IPAddresses = nil
+		template.BasicConstraintsValid = true
+		template.IsCA = true
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)

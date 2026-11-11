@@ -2469,6 +2469,11 @@ integration-test-peergate:
 integration-test-acme-tpm:
 	@echo "$(CYAN)$(BOLD)→ Running ACME+TPM integration tests...$(RESET)"
 	@cd test/integration/acme-tpm && $(call compose,acme-tpm) down -v >/dev/null 2>&1 || true
+	@echo "$(CYAN)  Generating the swtpm EK root CA (certgen -ca)...$(RESET)"
+	@rm -rf test/integration/acme-tpm/testdata/ek-root
+	@$(GO) run ./test/integration/acme-tpm/certgen -ca -cn "swtpm Test EK CA" \
+		-cert test/integration/acme-tpm/testdata/ek-root/ek-root.crt \
+		-key test/integration/acme-tpm/testdata/ek-root/ek-root.key
 	@cd test/integration/acme-tpm && $(call compose,acme-tpm) up -d --build tpm-simulator acme-server
 	@echo "$(CYAN)  Waiting for swtpm and the ACME server to be ready...$(RESET)"
 	@cd test/integration/acme-tpm && trap '$(call compose,acme-tpm) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
