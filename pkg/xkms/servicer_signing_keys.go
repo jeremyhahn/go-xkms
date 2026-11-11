@@ -297,7 +297,7 @@ func (s *XKMSService) keySigner(ctx context.Context, k *versionedKey, keyID stri
 // The key, existing or just provisioned, is admitted for signing as Sign
 // admits it: a revoked or disabled key, or a caller its policy refuses,
 // never signs.
-func (s *XKMSService) releaseKeySigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.Signer, error) {
+func (s *XKMSService) releaseKeySigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution, signatures int) (crypto.Signer, error) {
 	k, err := s.repositoryKey(ctx, tenant, key)
 	if errors.Is(err, ErrKeyNotFound) && key.Default && !qrdbsdk.IsSystemTenant(tenant) {
 		if err := s.provisionReleaseKey(ctx, tenant, key.Backend); err != nil {
@@ -308,7 +308,10 @@ func (s *XKMSService) releaseKeySigner(ctx context.Context, tenant string, key *
 	if err != nil {
 		return nil, err
 	}
-	if err := s.admitKey(ctx, k, keypolicy.OpSign); err != nil {
+	// Every signature the caller makes with the signer is admitted and
+	// charged here, in one step, before the first is made: the signer
+	// itself performs no admission, so a key's usage limit counts each.
+	if err := s.admitKey(ctx, k, keypolicy.OpSign, make([]uint64, max(signatures, 1))...); err != nil {
 		return nil, err
 	}
 	return s.keySigner(ctx, k, key.KeyID)
@@ -414,7 +417,7 @@ func (s *XKMSService) SignCoRIM(ctx context.Context, req *appraisal.SignCoRIMReq
 	if err != nil {
 		return nil, err
 	}
-	signer, err := s.releaseKeySigner(ctx, tenant, key)
+	signer, err := s.releaseKeySigner(ctx, tenant, key, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +487,8 @@ func (s *XKMSService) SignImage(ctx context.Context, req *transport.SignImageReq
 	if err != nil {
 		return nil, err
 	}
-	signer, err := s.releaseKeySigner(ctx, tenant, key)
+	// The signer signs twice: the code-signing CSR and the DSSE envelope.
+	signer, err := s.releaseKeySigner(ctx, tenant, key, 2)
 	if err != nil {
 		return nil, err
 	}
