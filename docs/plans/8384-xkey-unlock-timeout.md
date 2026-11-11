@@ -46,3 +46,5 @@ Weakening the test, skips, retries; the PIN KDF cost.
   `serveListening` called right after NewServer succeeds. startServe waits
   on it or on serve's exit, with no wall-clock deadline (the 10 s dial loop
   failed once on pkcs11 barrier unseal under -race and load). No ipc change.
+
+Main merge d55b1b73c7 (DS-8445): results to follow
