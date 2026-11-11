@@ -71,9 +71,10 @@ const guardedNightlyIf = "(" + nightlyIf + ") && " + verdictRun
 const scopedIf = draftIf + " && " + verdictRun + " && needs.preflight.outputs.lint_gates != 'false'"
 
 // gateLine matches one `check <job> "${{ needs.<job>.result }}" <tier>` line
-// of CI Gate's script.
+// of CI Gate's script, with an optional trailing shell comment (ci-template
+// v1.35.1 marks its signatures line `# v1.35`).
 var gateLine = regexp.MustCompile(
-	`^check\s+(\S+)\s+"\$\{\{ needs\.([A-Za-z0-9_-]+)\.result \}\}"\s+(\S+)$`)
+	`^check\s+(\S+)\s+"\$\{\{ needs\.([A-Za-z0-9_-]+)\.result \}\}"\s+(\S+)(?:\s+#.*)?$`)
 
 type workflow struct {
 	On struct {
@@ -406,6 +407,8 @@ func TestCIGateTiersCatchEachMismatch(t *testing.T) {
 		{"job missing from the gate", "          check race  \"${{ needs.race.result }}\" full\n", "", "race has no check line in CI Gate"},
 		{"job missing from gate needs", "needs: [lint, build, race, soak, lint-gates, preflight]", "needs: [lint, build, soak, lint-gates, preflight]", "race is not in ci-gate needs"},
 		{"unknown tier", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}" fast`, `tags build "fast"`},
+		{"trailing comment", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}" pr   # v1.35`, ""},
+		{"comment in place of the tier", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}" # pr`, "is malformed"},
 		{"tier missing", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}"`, "is malformed"},
 		{"line reads another job", `build "${{ needs.build.result }}"`, `build "${{ needs.race.result }}"`, "reads needs.race.result"},
 		{"pr job needs a full job", "needs: [lint]\n", "needs: [lint, race]\n", "pr-tier build needs full-tier race"},
