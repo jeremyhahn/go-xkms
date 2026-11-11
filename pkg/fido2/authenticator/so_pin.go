@@ -125,6 +125,13 @@ func NewSOPINManager() *SOPINManager {
 	return m
 }
 
+// argon2IDKey is the Argon2id derivation used by SOPINManager.DeriveKey and
+// KeyManager.deriveUMK. It is argon2.IDKey in production; the package's
+// TestMain replaces it with a low-memory wrapper so the race-instrumented
+// test binary fits its memory limit (CA m2540). Stored parameters are never
+// changed by the seam.
+var argon2IDKey = argon2.IDKey
+
 // DeriveKey derives a 32-byte Storage Master Key (SMK) from the provided PIN
 // using Argon2id with the manager's configured parameters.
 //
@@ -138,7 +145,7 @@ func (m *SOPINManager) DeriveKey(pin string) []byte {
 		return nil
 	}
 
-	return argon2.IDKey(
+	return argon2IDKey(
 		[]byte(pin),
 		m.Salt,
 		m.Iterations,
