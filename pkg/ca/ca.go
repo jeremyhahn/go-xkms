@@ -466,16 +466,26 @@ func caConfigToMultiIdentity(cfg *CAConfig, keyAttrs *types.KeyAttributes) *Mult
 // step every KeyAttributes later derived from the rebuilt identity (key
 // generation, signer reload) would lose the caller's password. The password is
 // re-sealed as a literal SecretValue (KeyConfig.Password, precedence 1 of
-// Identity.ToKeyAttributes) and the transient plaintext copy is wiped.
+// Identity.ToKeyAttributes) and the transient plaintext copy is wiped. A
+// password that cannot be read is an error, never an identity without one.
 func carryKeyPassword(ctx context.Context, identity *Identity, keyAttrs *types.KeyAttributes) error {
 	if identity == nil || len(identity.Keys) == 0 || keyAttrs == nil || keyAttrs.Password == nil {
 		return nil
 	}
-	password := keyAttrs.Password.Bytes()
+	// Borrow through WithBytes, which reports a password that cannot be read
+	// (Bytes returns nil for both an empty and an unavailable one), and seal
+	// the copy only after the borrow ends: borrows do not nest.
+	var password []byte
+	defer func() { secure.Wipe(password) }()
+	if err := keyAttrs.Password.WithBytes(func(b []byte) error {
+		password = append([]byte(nil), b...)
+		return nil
+	}); err != nil {
+		return &errs.Wrapped{Msg: "ca: read CA key password", Err: err}
+	}
 	if len(password) == 0 {
 		return nil
 	}
-	defer secure.Wipe(password)
 
 	sealed, err := types.NewLiteralSecretValue(ctx, password)
 	if err != nil {
