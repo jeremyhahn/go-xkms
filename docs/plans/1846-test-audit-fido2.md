@@ -14,7 +14,7 @@ Scope: `pkg/fido2/*_test.go` only. Out of scope: `authenticator/`, `uhid/`,
 | | `go test -count=1 -cover ./pkg/fido2/` |
 |---|---|
 | before | 92.0% |
-| after  | TBD |
+| after  | 92.0% |
 
 ## Test counts per file (`func Test`)
 
@@ -127,6 +127,12 @@ synchronisation.
 
 ## Gates
 
-- race: TBD
-- vet: TBD
-- make lint: TBD
+- race: `go test -race -count=1 ./pkg/fido2/` pass
+- vet: `go vet ./pkg/fido2/` clean
+- make lint: pass, 0 issues (run with the DS-7500 module env; without it
+  golangci-lint stops at package loading, "no go files to analyze")
+- `go test -list '^Test' ./pkg/fido2/`: 297 tests, matching the table
+- unused helpers removed with their tests: EmptyResponseMockDevice,
+  MismatchedCIDMockDevice, KeepaliveMockDevice (coverage_test.go),
+  IncompletePacketDeviceFC (device_edge_cases_test.go), testLoggerCB,
+  ErrorEnumeratorCB (coverage_boost_test.go)
