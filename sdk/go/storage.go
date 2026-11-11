@@ -19,8 +19,7 @@ import (
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
+	qrdbsdkstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
 // Storage interface and types re-exported from pkg/storage.
@@ -69,7 +68,7 @@ type (
 	// evidence). The backend — memory, file, pebble or a go-objstore
 	// provider — is chosen by configuration; go-quicbaas re-exports this
 	// alias so service-level consumers reach it without naming go-qrdb.
-	ObjectStorage = qrdbstorage.Storage
+	ObjectStorage = qrdbsdkstorage.Storage
 )
 
 // CertStoreDatabase is the go-qrdb database the certificate store keeps its
@@ -130,11 +129,11 @@ var (
 var (
 	// NewObjectStorage opens an ObjectStorage on the configured go-objstore
 	// provider (for example "local", "s3", "gcs") with its provider settings.
-	NewObjectStorage = qrdbstorage.NewObjStoreStorage
+	NewObjectStorage = qrdbsdkstorage.NewObjStoreStorage
 
 	// NewObjectStorageMemory constructs an in-memory ObjectStorage
 	// implementation suitable for testing and embedded use.
-	NewObjectStorageMemory = qrdbstorage.NewMemoryStorage
+	NewObjectStorageMemory = qrdbsdkstorage.NewMemoryStorage
 )
 
 // Storage error sentinels re-exported from pkg/storage.

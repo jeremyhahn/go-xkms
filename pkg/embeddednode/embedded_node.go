@@ -318,10 +318,11 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	qcfg := &qrdbsdk.DaemonConfig{}
 
 	qcfg.Auth.Enabled = qrdbsdk.BoolPtr(cfg.Auth.Enabled)
-	// The CA stamps every client certificate's tenant into a SPIFFE SAN under
-	// this trust domain, so qrdb's mTLS authenticator pins the same one and
-	// rejects a SAN under a foreign trust domain.
-	qcfg.Auth.SPIFFETrustDomain = TrustDomain(cfg)
+	// The deployment's trust domain is qrdb's cluster trust domain: it is
+	// stamped into the Raft node certificates' SPIFFE SAN and pinned by the
+	// cluster key exchange, and qrdb's mTLS authenticator refuses a tenant
+	// named like it.
+	qcfg.Auth.ClusterTrustDomain = TrustDomain(cfg)
 
 	qcfg.Raft.DataDir = cfg.Datastore.Path
 
