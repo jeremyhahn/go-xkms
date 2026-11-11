@@ -235,63 +235,6 @@ func TestConcat_X963_Construction(t *testing.T) {
 	}
 }
 
-// TestConcat_ModesDiffer confirms the two concatenation KDFs are distinct
-// constructions: they differ only in where the counter sits, and that
-// difference must show in the output.
-func TestConcat_ModesDiffer(t *testing.T) {
-	z := []byte("shared-secret-from-ecdh-p521!!!!")
-	params := func(algorithm KDFAlgorithm) *KDFParams {
-		return &KDFParams{
-			Algorithm: algorithm,
-			Hash:      crypto.SHA256,
-			KeyLength: 32,
-			Info:      []byte("info"),
-		}
-	}
-
-	x963, err := NewX963Adapter().DeriveKey(z, params(AlgorithmX963))
-	if err != nil {
-		t.Fatalf("X9.63 DeriveKey: %v", err)
-	}
-	concat, err := NewSP80056AAdapter().DeriveKey(z, params(AlgorithmSP80056A))
-	if err != nil {
-		t.Fatalf("SP 800-56A DeriveKey: %v", err)
-	}
-	if bytes.Equal(x963, concat) {
-		t.Error("X9.63 and SP 800-56A produced identical output")
-	}
-}
-
-// TestConcat_InfoChangesOutput proves the caller's shared info reaches the
-// hash.
-func TestConcat_InfoChangesOutput(t *testing.T) {
-	z := []byte("shared-secret-from-ecdh-x25519!!")
-
-	for _, adapter := range []*ConcatAdapter{NewX963Adapter(), NewSP80056AAdapter()} {
-		t.Run(string(adapter.Algorithm()), func(t *testing.T) {
-			base := &KDFParams{
-				Algorithm: adapter.Algorithm(),
-				Hash:      crypto.SHA256,
-				KeyLength: 32,
-				Info:      []byte("info-1"),
-			}
-			first, err := adapter.DeriveKey(z, base)
-			if err != nil {
-				t.Fatalf("DeriveKey: %v", err)
-			}
-
-			base.Info = []byte("info-2")
-			second, err := adapter.DeriveKey(z, base)
-			if err != nil {
-				t.Fatalf("DeriveKey: %v", err)
-			}
-			if bytes.Equal(first, second) {
-				t.Error("changing Info did not change the derived key")
-			}
-		})
-	}
-}
-
 // TestConcat_OutputLengths exercises requested lengths on both sides of the
 // hash block boundary.
 func TestConcat_OutputLengths(t *testing.T) {

@@ -81,8 +81,10 @@ func TestNewTPM2KeyProvider_WrongConfigValueTypes(t *testing.T) {
 // fails closed (never falls back to a working-directory-relative key
 // directory) when neither key_storage nor key_dir is supplied.
 func TestNewTPM2KeyProvider_MissingKeyStorageFailsClosed(t *testing.T) {
-	_, err := newTPM2KeyProvider(map[string]interface{}{
+	kp, err := newTPM2KeyProvider(map[string]interface{}{
 		"use_simulator": true,
 	})
 	require.Error(t, err)
+	// A failed build yields a nil interface, not one holding a nil pointer.
+	require.True(t, kp == nil, "the factory must return a nil KeyProvider, got %#v", kp)
 }

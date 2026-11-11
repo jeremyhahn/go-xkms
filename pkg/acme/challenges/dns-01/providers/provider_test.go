@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // providerTestMock implements the Provider interface for testing.
@@ -120,81 +119,4 @@ func TestList(t *testing.T) {
 	}
 	assert.True(t, found1, "list-test-1 not found in list")
 	assert.True(t, found2, "list-test-2 not found in list")
-}
-
-func TestProviderFactory(t *testing.T) {
-	// Clean up registry after test
-	defer func() {
-		registryMu.Lock()
-		delete(registry, "factory-test")
-		registryMu.Unlock()
-	}()
-
-	type testConfig struct {
-		Value string
-	}
-
-	// Register a factory that checks config
-	Register("factory-test", func(ctx context.Context, config interface{}) (Provider, error) {
-		cfg, ok := config.(testConfig)
-		if !ok {
-			return nil, ErrInvalidConfig
-		}
-		if cfg.Value == "" {
-			return nil, NewConfigError("factory-test", "value", "cannot be empty")
-		}
-		return &providerTestMock{}, nil
-	})
-
-	factory := Get("factory-test")
-	require.NotNil(t, factory)
-
-	ctx := context.Background()
-
-	// Test valid config
-	provider, err := factory(ctx, testConfig{Value: "test"})
-	require.NoError(t, err)
-	assert.NotNil(t, provider)
-
-	// Test invalid config type
-	_, err = factory(ctx, "invalid")
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-
-	// Test invalid config value
-	_, err = factory(ctx, testConfig{Value: ""})
-	require.Error(t, err)
-	var configErr *ConfigError
-	assert.ErrorAs(t, err, &configErr)
-}
-
-func TestProviderInterface(t *testing.T) {
-	mock := &providerTestMock{}
-	ctx := context.Background()
-
-	// Test Present
-	err := mock.Present(ctx, "example.com", "_acme-challenge.example.com.", "token")
-	assert.NoError(t, err)
-	assert.True(t, mock.presentCalled)
-
-	// Test CleanUp
-	err = mock.CleanUp(ctx, "example.com", "_acme-challenge.example.com.", "token")
-	assert.NoError(t, err)
-	assert.True(t, mock.cleanupCalled)
-}
-
-func TestProviderConstants(t *testing.T) {
-	// Verify provider name constants are unique
-	names := []string{
-		ProviderRoute53,
-		ProviderCloudflare,
-		ProviderAzure,
-		ProviderCloudDNS,
-	}
-
-	seen := make(map[string]bool)
-	for _, name := range names {
-		assert.NotEmpty(t, name)
-		assert.False(t, seen[name], "duplicate provider name: %s", name)
-		seen[name] = true
-	}
 }

@@ -14,13 +14,12 @@
 package console
 
 import (
-	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net"
-	"strings"
 	"testing"
 	"time"
 
@@ -155,59 +154,13 @@ func pinnedHosts(t *testing.T, host string, hostPub ssh.PublicKey) known_hosts.S
 	return store
 }
 
-func TestConsole_DialEchoResizeClose(t *testing.T) {
-	srv := startEchoSSHServer(t)
-	store := pinnedHosts(t, srv.host, srv.hostPub)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	c, err := Dial(ctx, DialRequest{
-		Host:         srv.host,
-		Port:         srv.port,
-		User:         "tester",
-		Signer:       clientSigner(t),
-		KnownHosts:   store,
-		HostKeyScope: scope.User,
-		HostKeyOwner: "tester",
-	}, Config{Term: "xterm-256color", Rows: 30, Cols: 100})
-	if !requireHandshake(t, err) {
-		return
-	}
-	defer c.Close()
-
-	// Resize must succeed against a live PTY.
-	if err := c.Resize(40, 120); err != nil {
-		t.Fatalf("Resize: %v", err)
-	}
-
-	// Type a line; the echo server returns it.
-	if _, err := c.Write([]byte("hello world\n")); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	reader := bufio.NewReader(c)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if !strings.Contains(line, "hello world") {
-		t.Fatalf("echo mismatch: %q", line)
-	}
-
-	if err := c.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	// Resize after close must fail cleanly.
-	if err := c.Resize(10, 10); err == nil {
-		t.Fatal("expected error resizing a closed console")
-	}
-}
-
 func TestConsole_DialValidation(t *testing.T) {
 	ctx := context.Background()
 	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
-	if _, err := Dial(ctx, DialRequest{Host: "h", KnownHosts: store}, Config{}); err == nil {
-		t.Fatal("expected error for missing signer")
+	_, err := Dial(ctx, DialRequest{Host: "h", KnownHosts: store}, Config{})
+	var ie *InputError
+	if !errors.As(err, &ie) || ie.Field != "Signer" {
+		t.Fatalf("expected Signer InputError, got %v", err)
 	}
 	if _, err := Dial(ctx, DialRequest{Host: "h", Signer: clientSigner(t)}, Config{}); err == nil {
 		t.Fatal("expected error for missing known_hosts")

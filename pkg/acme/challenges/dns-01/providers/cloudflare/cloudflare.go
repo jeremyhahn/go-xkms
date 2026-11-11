@@ -99,10 +99,18 @@ func init() {
 		if !ok {
 			return nil, providers.NewConfigError(providerName, "config", "expected cloudflare.Config")
 		}
-		return New(ctx, c)
+		provider, err := New(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		return provider, nil
 	})
 	providers.RegisterEnvFactory(providers.ProviderCloudflare, func(ctx context.Context) (providers.Provider, error) {
-		return NewFromEnv(ctx)
+		provider, err := NewFromEnv(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return provider, nil
 	})
 }
 

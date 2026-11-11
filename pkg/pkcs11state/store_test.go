@@ -97,13 +97,6 @@ func TestStore_RecordsSurviveAFreshStoreOverTheSameDatabase(t *testing.T) {
 	assert.Equal(t, []byte("a"), got)
 }
 
-func TestStore_Get_AbsentIsNotAnError(t *testing.T) {
-	s := newTestStore(t)
-	_, found, err := s.Get(context.Background(), "t", "tok0", "missing")
-	require.NoError(t, err, "an absent key is (nil, false, nil), not an error")
-	assert.False(t, found)
-}
-
 func TestStore_Get_DistinguishesEmptyValueFromAbsent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -112,23 +105,10 @@ func TestStore_Get_DistinguishesEmptyValueFromAbsent(t *testing.T) {
 	_, found, err := s.Get(ctx, "t", "tok0", "empty")
 	require.NoError(t, err)
 	assert.True(t, found, "a present empty value must report found=true, not be mistaken for absent")
-}
 
-func TestStore_PutIfAbsent_IsAtomicFirstWriterWins(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	stored, err := s.PutIfAbsent(ctx, "t", "tok0", "marker", []byte("first"))
-	require.NoError(t, err)
-	assert.True(t, stored, "the first write must be stored")
-
-	stored, err = s.PutIfAbsent(ctx, "t", "tok0", "marker", []byte("second"))
-	require.NoError(t, err)
-	assert.False(t, stored, "a second write to an existing key must be refused")
-
-	got, _, err := s.Get(ctx, "t", "tok0", "marker")
-	require.NoError(t, err)
-	assert.Equal(t, []byte("first"), got, "the original value must be preserved")
+	_, found, err = s.Get(ctx, "t", "tok0", "missing")
+	require.NoError(t, err, "an absent key is (nil, false, nil), not an error")
+	assert.False(t, found)
 }
 
 func TestStore_PutIfAbsent_OneOfManyConcurrentWritersWins(t *testing.T) {
@@ -151,14 +131,19 @@ func TestStore_PutIfAbsent_OneOfManyConcurrentWritersWins(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	winners := 0
+	winners, winner := 0, -1
 	for i, err := range errs {
 		require.NoError(t, err, "worker %d", i)
 		if stored[i] {
 			winners++
+			winner = i
 		}
 	}
-	assert.Equal(t, 1, winners, "exactly one concurrent create of one key may succeed")
+	require.Equal(t, 1, winners, "exactly one concurrent create of one key may succeed")
+
+	got, _, err := s.Get(ctx, "t", "tok0", "marker")
+	require.NoError(t, err)
+	assert.Equal(t, []byte(fmt.Sprint(winner)), got, "the first writer's value must be preserved")
 }
 
 func TestStore_Delete_MissingKeyIsIdempotent(t *testing.T) {

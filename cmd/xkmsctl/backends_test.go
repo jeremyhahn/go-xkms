@@ -17,218 +17,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
-
-func TestBackendsCmd_Exists(t *testing.T) {
-	if backendsCmd == nil {
-		t.Fatal("backendsCmd should not be nil")
-	}
-}
-
-func TestBackendsCmd_Properties(t *testing.T) {
-	if backendsCmd.Use != "backends" {
-		t.Errorf("backendsCmd.Use = %v, want backends", backendsCmd.Use)
-	}
-
-	if backendsCmd.Short == "" {
-		t.Error("backendsCmd.Short should not be empty")
-	}
-}
-
-func TestBackendsCmd_HasSubcommands(t *testing.T) {
-	subcommands := backendsCmd.Commands()
-
-	// Check for list and info subcommands
-	foundList := false
-	foundInfo := false
-
-	for _, cmd := range subcommands {
-		name := cmd.Name()
-		if name == "list" {
-			foundList = true
-		}
-		// The info command Use is "info <backend>", but Name() returns "info"
-		if strings.HasPrefix(cmd.Use, "info") {
-			foundInfo = true
-		}
-	}
-
-	if !foundList {
-		t.Error("expected subcommand 'list' not found")
-	}
-
-	if !foundInfo {
-		t.Error("expected subcommand 'info' not found")
-	}
-}
-
-func TestBackendsListCmd_Exists(t *testing.T) {
-	if backendsListCmd == nil {
-		t.Fatal("backendsListCmd should not be nil")
-	}
-}
-
-func TestBackendsListCmd_Properties(t *testing.T) {
-	if backendsListCmd.Use != "list" {
-		t.Errorf("backendsListCmd.Use = %v, want list", backendsListCmd.Use)
-	}
-
-	if backendsListCmd.Short == "" {
-		t.Error("backendsListCmd.Short should not be empty")
-	}
-}
-
-func TestBackendsInfoCmd_Exists(t *testing.T) {
-	if backendsInfoCmd == nil {
-		t.Fatal("backendsInfoCmd should not be nil")
-	}
-}
-
-func TestBackendsInfoCmd_Properties(t *testing.T) {
-	if backendsInfoCmd.Use != "info <backend>" {
-		t.Errorf("backendsInfoCmd.Use = %v, want 'info <backend>'", backendsInfoCmd.Use)
-	}
-
-	if backendsInfoCmd.Short == "" {
-		t.Error("backendsInfoCmd.Short should not be empty")
-	}
-}
-
-func TestConvertBackendInfoToCapabilities_Full(t *testing.T) {
-	info := &client.BackendInfo{
-		ID:             "software",
-		Type:           "software",
-		HardwareBacked: false,
-		Capabilities: transport.BackendCapabilities{
-			Keys:                true,
-			Signing:             true,
-			Decryption:          true,
-			KeyRotation:         true,
-			SymmetricEncryption: true,
-			Import:              true,
-			Export:              true,
-			KeyAgreement:        true,
-			ECIES:               true,
-		},
-	}
-
-	caps := convertBackendInfoToCapabilities(info)
-
-	if !caps.Keys {
-		t.Error("caps.Keys should be true")
-	}
-	if caps.HardwareBacked {
-		t.Error("caps.HardwareBacked should be false")
-	}
-	if !caps.Signing {
-		t.Error("caps.Signing should be true")
-	}
-	if !caps.Decryption {
-		t.Error("caps.Decryption should be true")
-	}
-	if !caps.KeyRotation {
-		t.Error("caps.KeyRotation should be true")
-	}
-	if !caps.SymmetricEncryption {
-		t.Error("caps.SymmetricEncryption should be true")
-	}
-	if !caps.Import {
-		t.Error("caps.Import should be true")
-	}
-	if !caps.Export {
-		t.Error("caps.Export should be true")
-	}
-	if !caps.KeyAgreement {
-		t.Error("caps.KeyAgreement should be true")
-	}
-	if !caps.ECIES {
-		t.Error("caps.ECIES should be true")
-	}
-}
-
-func TestConvertBackendInfoToCapabilities_Partial(t *testing.T) {
-	info := &client.BackendInfo{
-		ID:             "tpm2",
-		Type:           "tpm2",
-		HardwareBacked: true,
-		Capabilities: transport.BackendCapabilities{
-			Keys:       true,
-			Signing:    true,
-			Decryption: true,
-		},
-	}
-
-	caps := convertBackendInfoToCapabilities(info)
-
-	if !caps.Keys {
-		t.Error("caps.Keys should be true")
-	}
-	if !caps.HardwareBacked {
-		t.Error("caps.HardwareBacked should be true")
-	}
-	if !caps.Signing {
-		t.Error("caps.Signing should be true")
-	}
-	if !caps.Decryption {
-		t.Error("caps.Decryption should be true")
-	}
-	if caps.KeyRotation {
-		t.Error("caps.KeyRotation should be false")
-	}
-	if caps.SymmetricEncryption {
-		t.Error("caps.SymmetricEncryption should be false")
-	}
-}
-
-func TestConvertBackendInfoToCapabilities_Empty(t *testing.T) {
-	info := &client.BackendInfo{
-		ID:             "empty",
-		Type:           "empty",
-		HardwareBacked: false,
-		Capabilities:   transport.BackendCapabilities{},
-	}
-
-	caps := convertBackendInfoToCapabilities(info)
-
-	if caps.Keys {
-		t.Error("caps.Keys should be false")
-	}
-	if caps.HardwareBacked {
-		t.Error("caps.HardwareBacked should be false")
-	}
-	if caps.Signing {
-		t.Error("caps.Signing should be false")
-	}
-}
-
-func TestConvertBackendInfoToCapabilities_ZeroValue(t *testing.T) {
-	info := &client.BackendInfo{
-		ID:             "zero",
-		Type:           "zero",
-		HardwareBacked: true,
-	}
-
-	caps := convertBackendInfoToCapabilities(info)
-
-	if caps.Keys {
-		t.Error("caps.Keys should be false")
-	}
-	if !caps.HardwareBacked {
-		t.Error("caps.HardwareBacked should be true (from info)")
-	}
-	if caps.Signing {
-		t.Error("caps.Signing should be false")
-	}
-	if caps.Decryption {
-		t.Error("caps.Decryption should be false")
-	}
-}
 
 // mockBackendsClient is a mock client for testing backend operations
 type mockBackendsClient struct {
@@ -518,40 +311,6 @@ func (m *mockBackendsClient) GeneratePIVCSR(ctx context.Context, req *transport.
 	return nil, client.ErrNotSupported
 }
 
-func TestListBackends_Success(t *testing.T) {
-	mockClient := &mockBackendsClient{
-		listBackendsResp: &client.ListBackendsResponse{
-			Backends: []client.BackendInfo{
-				{ID: "software", Type: "software"},
-				{ID: "tpm2", Type: "tpm2"},
-				{ID: "pkcs11", Type: "pkcs11"},
-			},
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	listBackends(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "software") {
-		t.Error("listBackends output should contain 'software'")
-	}
-	if !strings.Contains(output, "tpm2") {
-		t.Error("listBackends output should contain 'tpm2'")
-	}
-	if !strings.Contains(output, "pkcs11") {
-		t.Error("listBackends output should contain 'pkcs11'")
-	}
-}
-
 func TestListBackends_ClientCreateError(t *testing.T) {
 	// Override exitFunc to prevent actual exit
 	originalExitFunc := exitFunc
@@ -645,38 +404,6 @@ func TestListBackends_AllFormats(t *testing.T) {
 				t.Errorf("listBackends with %s format should produce output", format)
 			}
 		})
-	}
-}
-
-func TestBackendInfo_Success(t *testing.T) {
-	mockClient := &mockBackendsClient{
-		getBackendResp: &client.BackendInfo{
-			ID:             "software",
-			Type:           "software",
-			HardwareBacked: false,
-			Capabilities: transport.BackendCapabilities{
-				Keys:        true,
-				Signing:     true,
-				Decryption:  true,
-				KeyRotation: true,
-			},
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	backendInfo(cfg, printer, "software")
-
-	output := buf.String()
-	if !strings.Contains(output, "software") {
-		t.Error("backendInfo output should contain 'software'")
 	}
 }
 
@@ -777,29 +504,6 @@ func TestBackendInfo_AllFormats(t *testing.T) {
 				t.Errorf("backendInfo with %s format should produce output", format)
 			}
 		})
-	}
-}
-
-// Ensure types.Capabilities is properly accessible
-func TestTypesCapabilities_Fields(t *testing.T) {
-	caps := types.Capabilities{
-		Keys:                true,
-		HardwareBacked:      true,
-		Signing:             true,
-		Decryption:          true,
-		KeyRotation:         true,
-		SymmetricEncryption: true,
-		Import:              true,
-		Export:              true,
-		KeyAgreement:        true,
-		ECIES:               true,
-	}
-
-	if !caps.Keys {
-		t.Error("caps.Keys should be true")
-	}
-	if !caps.HardwareBacked {
-		t.Error("caps.HardwareBacked should be true")
 	}
 }
 

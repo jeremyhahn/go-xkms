@@ -135,6 +135,92 @@ func TestNewGCMForDecrypt_RandomNonceRejectsTruncatedTag(t *testing.T) {
 	}
 }
 
+// forceArbitraryIVGCMUnavailable makes ArbitraryIVGCMUsable report false for
+// the rest of the test, as it does in a GODEBUG=fips140=only process, so the
+// FIPS-only dispatch counts toward this process's coverage. The subprocess
+// test above is still what proves the probe itself under fips140=only.
+func forceArbitraryIVGCMUnavailable(t *testing.T) {
+	t.Helper()
+	saved := arbitraryIVGCMUsable
+	arbitraryIVGCMUsable = func() bool { return false }
+	t.Cleanup(func() { arbitraryIVGCMUsable = saved })
+}
+
+func TestNewGCMForFreshEncrypt_ArbitraryIVUnavailable(t *testing.T) {
+	tests := []struct {
+		name        string
+		tagSize     int
+		callerNonce bool
+		wantErr     error
+	}{
+		{name: "default tag", tagSize: 0},
+		{name: "explicit full tag", tagSize: GCMFullTagSize},
+		{name: "caller nonce", tagSize: 0, callerNonce: true, wantErr: ErrArbitraryIVGCMUnavailable},
+		{name: "truncated tag", tagSize: 12, wantErr: ErrArbitraryIVGCMUnavailable},
+		{name: "invalid tag", tagSize: 11, wantErr: ErrInvalidGCMTagSize},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			forceArbitraryIVGCMUnavailable(t)
+			block := testBlock(t)
+
+			gcm, randomNonce, err := NewGCMForFreshEncrypt(block, tt.tagSize, tt.callerNonce)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tt.wantErr)
+				}
+				if gcm != nil || randomNonce {
+					t.Fatalf("got gcm=%v randomNonce=%t alongside the error, want nil and false", gcm, randomNonce)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewGCMForFreshEncrypt: %v", err)
+			}
+			if !randomNonce || gcm.NonceSize() != 0 {
+				t.Fatalf("randomNonce=%t NonceSize=%d, want true and 0", randomNonce, gcm.NonceSize())
+			}
+
+			plaintext := []byte("fresh encryption")
+			opener, err := NewGCMForDecrypt(block, tt.tagSize, true)
+			if err != nil {
+				t.Fatalf("NewGCMForDecrypt(randomNonce=true): %v", err)
+			}
+			got, err := opener.Open(nil, nil, gcm.Seal(nil, nil, plaintext, nil), nil)
+			if err != nil || !bytes.Equal(got, plaintext) {
+				t.Fatalf("round trip = %q, %v; want %q", got, err, plaintext)
+			}
+		})
+	}
+}
+
+func TestNewGCMForDecrypt_Refusals(t *testing.T) {
+	tests := []struct {
+		name        string
+		unavailable bool
+		tagSize     int
+		randomNonce bool
+		wantErr     error
+	}{
+		{name: "random nonce invalid tag", tagSize: 11, randomNonce: true, wantErr: ErrInvalidGCMTagSize},
+		{name: "explicit nonce without arbitrary-IV GCM", unavailable: true, randomNonce: false, wantErr: ErrArbitraryIVGCMUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.unavailable {
+				forceArbitraryIVGCMUnavailable(t)
+			}
+			gcm, err := NewGCMForDecrypt(testBlock(t), tt.tagSize, tt.randomNonce)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tt.wantErr)
+			}
+			if gcm != nil {
+				t.Fatalf("got gcm %v alongside the error, want nil", gcm)
+			}
+		})
+	}
+}
+
 // TestSplitJoinGCMWithRandomNonce_RoundTrip pins that Split and Join are
 // inverses across the field boundaries EncryptedData actually stores into
 // (Nonce, Ciphertext, Tag), for both empty and non-empty plaintext.

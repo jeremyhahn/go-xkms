@@ -28,8 +28,10 @@ import (
 // same as calling NewKMIPAgent directly, rather than the adapter
 // swallowing the error or constructing an unusable agent.
 func TestNewKMIPAgentFromConfig_EmptyEndpoint(t *testing.T) {
-	_, err := newKMIPAgentFromConfig(&escrow.AgentConfig{Type: escrow.AgentTypeKMIP})
+	agent, err := newKMIPAgentFromConfig(&escrow.AgentConfig{Type: escrow.AgentTypeKMIP})
 	assert.ErrorIs(t, err, escrow.ErrEmptyEndpoint)
+	// A rejected config yields a nil interface, not one holding a nil pointer.
+	assert.True(t, agent == nil, "the factory must return a nil EscrowAgent, got %#v", agent)
 }
 
 // TestNewAgent_DispatchesToKMIPFactory proves the registration this

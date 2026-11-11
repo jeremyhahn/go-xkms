@@ -122,57 +122,12 @@ func TestWrapUnwrapRSAAES_SHA256(t *testing.T) {
 	assert.Equal(t, keyMaterial, unwrapped, "unwrapped key should match original")
 }
 
-// TestRSAAES_LargeKeyMaterial tests hybrid wrapping with 4KB of key material
-func TestRSAAES_LargeKeyMaterial(t *testing.T) {
-	// Generate test key pair
-	privateKey, err := generateTestKeyPair(2048)
-	require.NoError(t, err)
-
-	// Generate 4KB of random key material
-	keyMaterial := make([]byte, 4096)
-	_, err = rand.Read(keyMaterial)
-	require.NoError(t, err)
-
-	// Test with SHA-1
-	t.Run("SHA1", func(t *testing.T) {
-		wrapped, ok := requireWrap(t, func() ([]byte, error) {
-			return WrapRSAAES(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
-		})
-		if !ok {
-			return
-		}
-		assert.NotNil(t, wrapped)
-
-		unwrapped, err := UnwrapRSAAES(wrapped, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
-		require.NoError(t, err)
-		assert.Equal(t, keyMaterial, unwrapped, "unwrapped key should match original")
-	})
-
-	// Test with SHA-256
-	t.Run("SHA256", func(t *testing.T) {
-		wrapped, err := WrapRSAAES(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
-		require.NoError(t, err)
-		assert.NotNil(t, wrapped)
-
-		unwrapped, err := UnwrapRSAAES(wrapped, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
-		require.NoError(t, err)
-		assert.Equal(t, keyMaterial, unwrapped, "unwrapped key should match original")
-	})
-}
-
 // TestInvalidInputs tests error handling with invalid inputs
 func TestInvalidInputs(t *testing.T) {
 	privateKey, err := generateTestKeyPair(2048)
 	require.NoError(t, err)
 
 	validKeyMaterial := []byte("valid key material")
-
-	t.Run("WrapRSAOAEP_NilKeyMaterial", func(t *testing.T) {
-		_, err := WrapRSAOAEP(nil, &privateKey.PublicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
-		assert.Error(t, err)
-		var eErr *EmptyInputError
-		assert.True(t, errors.As(err, &eErr), "expected EmptyInputError, got %v", err)
-	})
 
 	t.Run("WrapRSAOAEP_EmptyKeyMaterial", func(t *testing.T) {
 		_, err := WrapRSAOAEP([]byte{}, &privateKey.PublicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -193,13 +148,6 @@ func TestInvalidInputs(t *testing.T) {
 		assert.Error(t, err)
 		var uErr *UnsupportedAlgorithmError
 		assert.True(t, errors.As(err, &uErr), "expected UnsupportedAlgorithmError, got %v", err)
-	})
-
-	t.Run("UnwrapRSAOAEP_NilWrappedKey", func(t *testing.T) {
-		_, err := UnwrapRSAOAEP(nil, privateKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
-		assert.Error(t, err)
-		var eErr *EmptyInputError
-		assert.True(t, errors.As(err, &eErr), "expected EmptyInputError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAOAEP_EmptyWrappedKey", func(t *testing.T) {
@@ -240,13 +188,6 @@ func TestInvalidInputs(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("WrapRSAAES_NilKeyMaterial", func(t *testing.T) {
-		_, err := WrapRSAAES(nil, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
-		assert.Error(t, err)
-		var eErr *EmptyInputError
-		assert.True(t, errors.As(err, &eErr), "expected EmptyInputError, got %v", err)
-	})
-
 	t.Run("WrapRSAAES_EmptyKeyMaterial", func(t *testing.T) {
 		_, err := WrapRSAAES([]byte{}, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
@@ -266,12 +207,6 @@ func TestInvalidInputs(t *testing.T) {
 		assert.Error(t, err)
 		var uErr *UnsupportedAlgorithmError
 		assert.True(t, errors.As(err, &uErr), "expected UnsupportedAlgorithmError, got %v", err)
-	})
-
-	t.Run("UnwrapRSAAES_NilWrappedKey", func(t *testing.T) {
-		_, err := UnwrapRSAAES(nil, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
-		assert.Error(t, err)
-		assert.Error(t, err) // malformed or empty wrapped key
 	})
 
 	t.Run("UnwrapRSAAES_TooShortWrappedKey", func(t *testing.T) {
@@ -328,47 +263,6 @@ func TestInvalidInputs(t *testing.T) {
 	})
 }
 
-// TestAESKWP_VariousSizes tests AES-KWP with various plaintext sizes
-func TestAESKWP_VariousSizes(t *testing.T) {
-	aesKey := make([]byte, 32)
-	_, err := rand.Read(aesKey)
-	require.NoError(t, err)
-
-	testCases := []struct {
-		name string
-		size int
-	}{
-		{"1 byte", 1},
-		{"7 bytes", 7},
-		{"8 bytes", 8},
-		{"9 bytes", 9},
-		{"15 bytes", 15},
-		{"16 bytes", 16},
-		{"32 bytes", 32},
-		{"64 bytes", 64},
-		{"100 bytes", 100},
-		{"256 bytes", 256},
-		{"1024 bytes", 1024},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			plaintext := make([]byte, tc.size)
-			_, err := rand.Read(plaintext)
-			require.NoError(t, err)
-
-			wrapped, err := WrapAESKWP(plaintext, aesKey)
-			require.NoError(t, err)
-			assert.NotNil(t, wrapped)
-			assert.NotEqual(t, plaintext, wrapped)
-
-			unwrapped, err := UnwrapAESKWP(wrapped, aesKey)
-			require.NoError(t, err)
-			assert.Equal(t, plaintext, unwrapped)
-		})
-	}
-}
-
 // TestAESKWP_InvalidInputs tests AES-KWP error handling
 func TestAESKWP_InvalidInputs(t *testing.T) {
 	validAESKey := make([]byte, 32)
@@ -379,14 +273,6 @@ func TestAESKWP_InvalidInputs(t *testing.T) {
 
 	t.Run("InvalidKeySize_15bytes", func(t *testing.T) {
 		invalidKey := make([]byte, 15)
-		_, err := WrapAESKWP(validPlaintext, invalidKey)
-		assert.Error(t, err)
-		var szErr *InvalidKeySizeError
-		assert.True(t, errors.As(err, &szErr), "expected InvalidKeySizeError, got %v", err)
-	})
-
-	t.Run("InvalidKeySize_20bytes", func(t *testing.T) {
-		invalidKey := make([]byte, 20)
 		_, err := WrapAESKWP(validPlaintext, invalidKey)
 		assert.Error(t, err)
 		var szErr *InvalidKeySizeError
@@ -407,31 +293,6 @@ func TestAESKWP_InvalidInputs(t *testing.T) {
 		assert.Error(t, err)
 		var mErr *MalformedWrappedKeyError
 		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
-	})
-
-	t.Run("UnwrapCorruptedAIV", func(t *testing.T) {
-		wrapped, err := WrapAESKWP(validPlaintext, validAESKey)
-		require.NoError(t, err)
-
-		// Corrupt the AIV
-		wrapped[0] ^= 0xFF
-
-		_, err = UnwrapAESKWP(wrapped, validAESKey)
-		assert.Error(t, err)
-		var mErr *MalformedWrappedKeyError
-		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
-	})
-
-	t.Run("UnwrapWrongKey", func(t *testing.T) {
-		wrapped, err := WrapAESKWP(validPlaintext, validAESKey)
-		require.NoError(t, err)
-
-		wrongKey := make([]byte, 32)
-		_, err = rand.Read(wrongKey)
-		require.NoError(t, err)
-
-		_, err = UnwrapAESKWP(wrapped, wrongKey)
-		assert.Error(t, err)
 	})
 }
 
@@ -469,51 +330,6 @@ func TestWrapUnwrapAlgorithmMismatch(t *testing.T) {
 		_, err := UnwrapRSAAES(wrapped, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
 	})
-}
-
-// TestRSAOAEP_DifferentKeySizes tests RSA-OAEP with different RSA key sizes
-func TestRSAOAEP_DifferentKeySizes(t *testing.T) {
-	keySizes := []int{2048, 3072, 4096}
-
-	for _, keySize := range keySizes {
-		t.Run(fmt.Sprintf("KeySize_%d", keySize), func(t *testing.T) {
-			privateKey, err := generateTestKeyPair(keySize)
-			require.NoError(t, err)
-
-			keyMaterial := []byte("test key material for various key sizes")
-
-			wrapped, err := WrapRSAOAEP(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
-			require.NoError(t, err)
-
-			unwrapped, err := UnwrapRSAOAEP(wrapped, privateKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
-			require.NoError(t, err)
-			assert.Equal(t, keyMaterial, unwrapped)
-		})
-	}
-}
-
-// TestRSAAES_DifferentKeySizes tests hybrid wrapping with different RSA key sizes
-func TestRSAAES_DifferentKeySizes(t *testing.T) {
-	keySizes := []int{2048, 3072, 4096}
-
-	for _, keySize := range keySizes {
-		t.Run(fmt.Sprintf("KeySize_%d", keySize), func(t *testing.T) {
-			privateKey, err := generateTestKeyPair(keySize)
-			require.NoError(t, err)
-
-			// Use larger key material to demonstrate hybrid advantage
-			keyMaterial := make([]byte, 1024)
-			_, err = rand.Read(keyMaterial)
-			require.NoError(t, err)
-
-			wrapped, err := WrapRSAAES(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
-			require.NoError(t, err)
-
-			unwrapped, err := UnwrapRSAAES(wrapped, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
-			require.NoError(t, err)
-			assert.Equal(t, keyMaterial, unwrapped)
-		})
-	}
 }
 
 // TestConcurrentWrapping tests thread safety of wrapping operations

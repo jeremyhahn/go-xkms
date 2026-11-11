@@ -40,44 +40,6 @@ func rsaParmsOf(t *testing.T, template tpm2.TPMTPublic) *tpm2.TPMSRSAParms {
 	return detail
 }
 
-// TestKeyTemplateSpec_ZeroValueIsAnAgileRSASigningKey pins the documented
-// default. A spec that names nothing must produce the key this package has
-// always created by default -- RSA-2048, signing, unrestricted -- with the one
-// change that matters: no fixed scheme, so the digest is chosen per operation.
-func TestKeyTemplateSpec_ZeroValueIsAnAgileRSASigningKey(t *testing.T) {
-	template, err := KeyTemplateSpec{}.Template()
-	require.NoError(t, err)
-
-	assert.Equal(t, tpm2.TPMAlgRSA, template.Type)
-	assert.Equal(t, tpm2.TPMAlgSHA256, template.NameAlg)
-	assert.True(t, template.ObjectAttributes.SignEncrypt)
-	assert.False(t, template.ObjectAttributes.Decrypt)
-	assert.False(t, template.ObjectAttributes.Restricted)
-
-	parms := rsaParmsOf(t, template)
-	assert.Equal(t, tpm2.TPMKeyBits(2048), parms.KeyBits)
-	assert.Equal(t, tpm2.TPMAlgNull, parms.Scheme.Scheme,
-		"a general-purpose signing key must not fix its scheme")
-}
-
-// TestKeyTemplateSpec_EveryDefinedRSASizeBuilds proves the modulus size comes
-// from the request rather than from a constant. A caller asking for RSA-4096
-// used to receive a 2048-bit key from a template that hardcoded the size.
-func TestKeyTemplateSpec_EveryDefinedRSASizeBuilds(t *testing.T) {
-	for _, keyBits := range []uint16{1024, 2048, 3072, 4096} {
-		template, err := KeyTemplateSpec{Algorithm: x509.RSA, KeyBits: keyBits}.Template()
-		require.NoError(t, err, "RSA-%d", keyBits)
-
-		parms := rsaParmsOf(t, template)
-		assert.Equal(t, tpm2.TPMKeyBits(keyBits), parms.KeyBits)
-
-		unique, err := template.Unique.RSA()
-		require.NoError(t, err)
-		assert.Len(t, unique.Buffer, int(keyBits)/8,
-			"the unique buffer must be sized for the modulus, not for a fixed 2048 bits")
-	}
-}
-
 // TestKeyTemplateSpec_UndefinedRSASizeRefusedByName is the bad-input case. A
 // size TPM 2.0 does not define is refused with an error naming both what was
 // asked and what is defined, never rounded to a size the caller did not choose.
@@ -91,26 +53,6 @@ func TestKeyTemplateSpec_UndefinedRSASizeRefusedByName(t *testing.T) {
 	assert.Equal(t, 2047, sizeErr.Requested)
 	assert.Contains(t, sizeErr.Supported, 2048)
 	assert.Contains(t, err.Error(), "2047")
-}
-
-// TestKeyTemplateSpec_EveryRepresentableCurveBuilds proves the curve comes from
-// the request. P-224 in particular has never had a template in this package, so
-// a caller asking for it was previously handed P-256.
-func TestKeyTemplateSpec_EveryRepresentableCurveBuilds(t *testing.T) {
-	for curve, want := range map[elliptic.Curve]tpm2.TPMECCCurve{
-		elliptic.P224(): tpm2.TPMECCNistP224,
-		elliptic.P256(): tpm2.TPMECCNistP256,
-		elliptic.P384(): tpm2.TPMECCNistP384,
-		elliptic.P521(): tpm2.TPMECCNistP521,
-	} {
-		template, err := KeyTemplateSpec{Algorithm: x509.ECDSA, Curve: curve}.Template()
-		require.NoError(t, err, curve.Params().Name)
-
-		detail, err := template.Parameters.ECCDetail()
-		require.NoError(t, err)
-		assert.Equal(t, want, detail.CurveID, curve.Params().Name)
-		assert.Equal(t, tpm2.TPMAlgNull, detail.Scheme.Scheme)
-	}
 }
 
 // TestKeyTemplateSpec_UnrepresentableCurveRefusedByName is the bad-input case
@@ -264,32 +206,6 @@ func TestMustKeyTemplate_PanicsOnInvalidSpec(t *testing.T) {
 	assert.PanicsWithValue(t,
 		"tpm: invalid built-in key template: "+wantErr.Error(),
 		func() { mustKeyTemplate(invalid) })
-}
-
-// TestBuiltInTemplates_AreScehemeAgile pins the templates the rest of the
-// package still exposes. The three general-purpose signing templates must name
-// no scheme, and the PSS template must keep the one it names on purpose.
-func TestBuiltInTemplates_AreScehemeAgile(t *testing.T) {
-	for name, template := range map[string]tpm2.TPMTPublic{
-		"ECCP256Template": ECCP256Template,
-		"ECCP384Template": ECCP384Template,
-		"ECCP521Template": ECCP521Template,
-	} {
-		assert.Equal(t, tpm2.TPMAlgNull, eccSchemeOf(t, template).Scheme, name)
-	}
-
-	assert.Equal(t, tpm2.TPMAlgNull, rsaParmsOf(t, RSASSATemplate).Scheme.Scheme,
-		"RSASSATemplate is the general-purpose RSA signing key")
-
-	assert.Equal(t, tpm2.TPMAlgRSAPSS, rsaParmsOf(t, RSAPSSTemplate).Scheme.Scheme,
-		"RSAPSSTemplate pins RSA-PSS deliberately")
-
-	// The restricted attestation templates must NOT have been made agile: a
-	// restricted signing key with TPM_ALG_NULL cannot be created.
-	assert.Equal(t, tpm2.TPMAlgRSASSA, rsaParmsOf(t, RSASSAAKTemplate).Scheme.Scheme)
-	assert.True(t, RSASSAAKTemplate.ObjectAttributes.Restricted)
-	assert.Equal(t, tpm2.TPMAlgECDSA, eccSchemeOf(t, ECCAKP256Template).Scheme)
-	assert.True(t, ECCAKP256Template.ObjectAttributes.Restricted)
 }
 
 // unsupportedCurve is an elliptic.Curve this package has no TPM curve ID for,

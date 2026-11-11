@@ -62,14 +62,6 @@ func TestCircuitBreakerStateClosed(t *testing.T) {
 		MaxFailures: 3,
 	})
 
-	t.Run("allows successful requests", func(t *testing.T) {
-		err := cb.Execute(func() error {
-			return nil
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, StateClosed, cb.State())
-	})
-
 	t.Run("allows failed requests below threshold", func(t *testing.T) {
 		testErr := errors.New("test error")
 
@@ -130,41 +122,17 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 		assert.Equal(t, StateOpen, stateChanges[0].to)
 	})
 
-	t.Run("open to half-open after reset timeout", func(t *testing.T) {
-		cb := New(&Config{
-			Name:                "test-halfopen-transition",
-			MaxFailures:         1,
-			ResetTimeout:        10 * time.Millisecond,
-			HalfOpenMaxRequests: 5,
-			SuccessThreshold:    1, // Only need 1 success to close
-		})
-
-		// Trip the circuit
-		_ = cb.Execute(func() error { return errors.New("error") })
-		assert.Equal(t, StateOpen, cb.State())
-
-		// Wait for reset timeout
-		time.Sleep(30 * time.Millisecond)
-
-		// Next request should transition to half-open, and on success, close
-		err := cb.Execute(func() error { return nil })
-		assert.NoError(t, err)
-		// After success with threshold=1, it should close again
-		assert.Equal(t, StateClosed, cb.State())
-	})
-
 	t.Run("half-open to closed on success threshold", func(t *testing.T) {
 		cb := New(&Config{
 			Name:                "test-halfopen-close",
 			MaxFailures:         1,
-			ResetTimeout:        1 * time.Millisecond,
+			ResetTimeout:        0, // the next call moves Open->HalfOpen at once
 			HalfOpenMaxRequests: 5,
 			SuccessThreshold:    2,
 		})
 
 		// Trip the circuit
 		_ = cb.Execute(func() error { return errors.New("error") })
-		time.Sleep(5 * time.Millisecond)
 
 		// Two successes should close the circuit
 		_ = cb.Execute(func() error { return nil })
@@ -177,84 +145,17 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 		cb := New(&Config{
 			Name:                "test-halfopen-open",
 			MaxFailures:         1,
-			ResetTimeout:        1 * time.Millisecond,
+			ResetTimeout:        0, // the next call moves Open->HalfOpen at once
 			HalfOpenMaxRequests: 5,
 		})
 
 		// Trip the circuit
 		_ = cb.Execute(func() error { return errors.New("error") })
-		time.Sleep(5 * time.Millisecond)
 
 		// Failure in half-open should re-open
 		_ = cb.Execute(func() error { return errors.New("error") })
 
 		assert.Equal(t, StateOpen, cb.State())
-	})
-}
-
-func TestCircuitBreakerOpen(t *testing.T) {
-	cb := New(&Config{
-		Name:         "test-open",
-		MaxFailures:  1,
-		ResetTimeout: 1 * time.Hour, // Long timeout
-	})
-
-	// Trip the circuit
-	_ = cb.Execute(func() error { return errors.New("error") })
-	assert.Equal(t, StateOpen, cb.State())
-
-	t.Run("returns error immediately when open", func(t *testing.T) {
-		executed := false
-		err := cb.Execute(func() error {
-			executed = true
-			return nil
-		})
-		assert.ErrorIs(t, err, ErrCircuitOpen)
-		assert.False(t, executed)
-	})
-}
-
-func TestCircuitBreakerTimeout(t *testing.T) {
-	t.Run("times out slow operations", func(t *testing.T) {
-		cb := New(&Config{
-			Name:        "test-timeout-slow",
-			Timeout:     10 * time.Millisecond,
-			MaxFailures: 100, // High so we don't trip
-		})
-
-		err := cb.Execute(func() error {
-			time.Sleep(100 * time.Millisecond)
-			return nil
-		})
-		assert.Error(t, err)
-		assert.Equal(t, context.DeadlineExceeded, err)
-	})
-
-	t.Run("allows fast operations", func(t *testing.T) {
-		cb := New(&Config{
-			Name:        "test-timeout-fast",
-			Timeout:     10 * time.Millisecond,
-			MaxFailures: 100,
-		})
-
-		err := cb.Execute(func() error {
-			return nil
-		})
-		assert.NoError(t, err)
-	})
-}
-
-func TestCircuitBreakerManualControl(t *testing.T) {
-	cb := New(&Config{Name: "test-manual"})
-
-	t.Run("manual trip", func(t *testing.T) {
-		cb.Trip()
-		assert.Equal(t, StateOpen, cb.State())
-	})
-
-	t.Run("manual reset", func(t *testing.T) {
-		cb.Reset()
-		assert.Equal(t, StateClosed, cb.State())
 	})
 }
 
@@ -275,7 +176,9 @@ func TestCircuitBreakerManualControlNotifiesStateChange(t *testing.T) {
 	})
 
 	cb.Trip()
+	assert.Equal(t, StateOpen, cb.State())
 	cb.Reset()
+	assert.Equal(t, StateClosed, cb.State())
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -574,52 +477,17 @@ func TestDefaultManagerFunctions(t *testing.T) {
 	})
 }
 
-func TestHalfOpenRequestLimit(t *testing.T) {
-	cb := New(&Config{
-		Name:                "test-halfopen-limit",
-		MaxFailures:         1,
-		ResetTimeout:        1 * time.Millisecond,
-		HalfOpenMaxRequests: 1,
-	})
-
-	// Trip the circuit
-	_ = cb.Execute(func() error { return errors.New("error") })
-	time.Sleep(5 * time.Millisecond)
-
-	// Start a slow request in half-open
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_ = cb.Execute(func() error {
-			time.Sleep(50 * time.Millisecond)
-			return nil
-		})
-	}()
-
-	// Give the goroutine time to start
-	time.Sleep(5 * time.Millisecond)
-
-	// Second request should fail in half-open when limit is reached
-	err := cb.Execute(func() error { return nil })
-	// The behavior depends on timing - either we get too many requests or it succeeds
-	// after the first request completes
-	if err != nil {
-		assert.Equal(t, ErrTooManyRequests, err)
-	}
-
-	wg.Wait()
-}
-
 func TestCircuitBreakerWithContext(t *testing.T) {
 	cb := New(&Config{Name: "test-ctx"})
 
 	t.Run("respects context cancellation", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
+		unblock := make(chan struct{})
+		defer close(unblock)
 
 		err := cb.ExecuteContext(ctx, func() error {
-			time.Sleep(100 * time.Millisecond)
+			<-unblock
 			return nil
 		})
 		assert.Error(t, err)

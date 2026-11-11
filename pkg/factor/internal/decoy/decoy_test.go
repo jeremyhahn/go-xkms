@@ -62,6 +62,26 @@ func TestNewRejectsEmptyUserID(t *testing.T) {
 	}
 }
 
+func TestErrorMessagesNameTheRefusedInput(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"seed", &SeedError{Size: 7}, "decoy: seed of 7 bytes is shorter than 16"},
+		{"user id", &UserIDError{}, "decoy: user id must not be empty"},
+		{"derivation", &DerivationError{Purpose: "serial"}, "decoy: derivation failed for serial"},
+		{"rsa size", &RSASizeError{Bits: 1024}, "decoy: cannot derive a 1024-bit RSA key (want a multiple of 16 from 2048 to 8192)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.Error(); got != tt.want {
+				t.Fatalf("Error() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBytesDeterministicAndSeparated(t *testing.T) {
 	a := newDeriver(t, testSeed, "alice")
 	first, err := a.Bytes("purpose", 32)
@@ -189,11 +209,14 @@ func TestSerialIsPositiveAndFitsSize(t *testing.T) {
 	}
 }
 
-func TestSerialRejectsNonPositiveSize(t *testing.T) {
-	_, err := newDeriver(t, testSeed, "alice").Serial("serial", 0)
-	var derr *DerivationError
-	if !errors.As(err, &derr) {
-		t.Fatalf("want *DerivationError, got %v", err)
+func TestSerialRejectsUnderivableSizes(t *testing.T) {
+	// HKDF-SHA256 yields at most 255*32 bytes, so 8161 is past its limit.
+	for _, size := range []int{0, 255*sha256.Size + 1} {
+		_, err := newDeriver(t, testSeed, "alice").Serial("serial", size)
+		var derr *DerivationError
+		if !errors.As(err, &derr) || derr.Purpose != "serial" {
+			t.Fatalf("size %d: want *DerivationError for serial, got %v", size, err)
+		}
 	}
 }
 
@@ -328,6 +351,7 @@ func TestShapeOfKey(t *testing.T) {
 		ok   bool
 	}{
 		{"rsa 3072", &rsa.PublicKey{N: modulus(3072), E: 65537}, KeyShape{Algorithm: AlgorithmRSA, Bits: 3072}, true},
+		{"rsa 8192", &rsa.PublicKey{N: modulus(8192), E: 65537}, KeyShape{Algorithm: AlgorithmRSA, Bits: 8192}, true},
 		{"ed25519", make(ed25519.PublicKey, ed25519.PublicKeySize), KeyShape{Algorithm: AlgorithmEd25519}, true},
 		{"rsa 1024", &rsa.PublicKey{N: modulus(1024), E: 65537}, KeyShape{}, false},
 		{"rsa exponent 3", &rsa.PublicKey{N: modulus(2048), E: 3}, KeyShape{}, false},
@@ -358,18 +382,20 @@ func certAt(t *testing.T, notBefore time.Time) []byte {
 
 func TestCertificatesAndNotBeforeSpan(t *testing.T) {
 	early := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	middle := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
 	late := time.Date(2026, 3, 9, 0, 0, 0, 0, time.UTC)
 	like := []*qrdbsdk.AuthFactorEnrollment{
 		nil,
 		{PublicKey: []byte("not pem")},
 		{PublicKey: pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: []byte{1}})},
 		{PublicKey: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte{1}})},
-		{PublicKey: certAt(t, late)},
+		{PublicKey: certAt(t, middle)},
 		{PublicKey: certAt(t, early)},
+		{PublicKey: certAt(t, late)},
 	}
 	certs := Certificates(like)
-	if len(certs) != 2 {
-		t.Fatalf("want the 2 certificates, got %d", len(certs))
+	if len(certs) != 3 {
+		t.Fatalf("want the 3 certificates, got %d", len(certs))
 	}
 	if from, to := NotBeforeSpan(certs); !from.Equal(early) || !to.Equal(late) {
 		t.Errorf("want span [%v, %v], got [%v, %v]", early, late, from, to)
@@ -480,14 +506,6 @@ func TestNonEmpty(t *testing.T) {
 	}
 	if got := NonEmpty([]string{"", ""}); len(got) != 0 {
 		t.Errorf("want no values, got %q", got)
-	}
-}
-
-func TestRSASizeSupported(t *testing.T) {
-	for bits, want := range map[int]bool{2048: true, 3072: true, 8192: true, 1024: false, 2047: false, 8208: false} {
-		if got := RSASizeSupported(bits); got != want {
-			t.Errorf("RSASizeSupported(%d) = %v, want %v", bits, got, want)
-		}
 	}
 }
 

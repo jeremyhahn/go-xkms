@@ -97,28 +97,6 @@ func (h *harness) verify(t *testing.T, v *peergate.Verifier) *qrdbsdk.PeerAttest
 	return verdict
 }
 
-func TestVerifier_AdmitsAPeerWithBoundEvidenceInTheBaselineState(t *testing.T) {
-	h := newHarness(t, device{}, device{})
-	h.submit(t, h.honest(t))
-
-	verdict := h.verify(t, h.verifier(t, peergate.VerifierConfig{}))
-	assert.True(t, verdict.Passed, "reason: %s", verdict.Reason)
-	assert.Equal(t, qrdbsdk.PeerAttestationFailureNone, verdict.Failure)
-	assert.Equal(t, h.attested().Thumbprint, verdict.PeerThumbprint)
-	assert.Equal(t, h.clock.now, verdict.CollectedAt)
-	assert.Empty(t, verdict.Reason)
-}
-
-func TestVerifier_NoEvidenceIsAnAbsence(t *testing.T) {
-	h := newHarness(t, device{}, device{})
-
-	verdict := h.verify(t, h.verifier(t, peergate.VerifierConfig{}))
-	assert.False(t, verdict.Passed)
-	assert.Equal(t, qrdbsdk.PeerAttestationFailureAbsence, verdict.Failure)
-	assert.True(t, verdict.CollectedAt.IsZero(), "no evidence has no collection time, which the gate refuses as no-evidence")
-	assert.Equal(t, h.attested().Thumbprint, verdict.PeerThumbprint)
-}
-
 // Each case is evidence that is present and wrong: the verdict must refuse it
 // as a cryptographic failure, the class go-qrdb's gate audits as a security
 // event.
@@ -373,15 +351,4 @@ func TestNewVerifier_RefusesAnUnusableConfiguration(t *testing.T) {
 			assert.Equal(t, tc.field, cfgErr.Field)
 		})
 	}
-}
-
-// The verifier is what a host hands go-qrdb's gate: the gate must accept it.
-func TestVerifier_BuildsAGoQRDBGate(t *testing.T) {
-	h := newHarness(t, device{}, device{})
-	gate, err := qrdbsdk.NewPeerAttestationGate(h.verifier(t, peergate.VerifierConfig{}), qrdbsdk.PeerAttestationPolicy{
-		Permissions:    []qrdbsdk.Permission{qrdbsdk.PermissionAdminStatus},
-		MaxEvidenceAge: time.Minute,
-	})
-	require.NoError(t, err)
-	assert.True(t, gate.Gates(qrdbsdk.PermissionAdminStatus))
 }

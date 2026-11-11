@@ -1,0 +1,1 @@
+ssh/agent: the `pkg/ssh/agent` tests test each behaviour once (#1794). The duplicate list, sign, RSA-flag, `itoa` and multiple-signer tests are gone, along with the `serveTestAgent` helper they shared, which never waited for its `Serve` goroutine. The read-only and error-type assertions now live in `TestAgent_ReadOnly` and `TestSessionErrorTypes`. Coverage is unchanged at 94.7%.

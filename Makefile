@@ -5379,9 +5379,12 @@ playwright-test-piv:
 	@$(MAKE) -C xkey playwright-test-piv
 
 # test_dir resolves a test-%/coverage-% stem to its directory: a library
-# package under pkg/ or a binary under cmd/ (make test-xkmsd). A stem naming
-# neither is an error, never a silent "matched no packages" pass.
-test_dir = $(or $(wildcard ./pkg/$(1)),$(wildcard ./cmd/$(1)),$(error neither ./pkg/$(1) nor ./cmd/$(1) exists))
+# package under pkg/ or a binary under cmd/ (make test-xkmsd), else a nested
+# package under pkg/ whose path separators the stem spells as dashes
+# (make test-factor-mtls runs ./pkg/factor/mtls). Literal matches come first,
+# so dashed directories such as cmd/acme-client keep resolving as before. A
+# stem naming none is an error, never a silent "matched no packages" pass.
+test_dir = $(or $(wildcard ./pkg/$(1)),$(wildcard ./cmd/$(1)),$(wildcard ./pkg/$(subst -,/,$(1))),$(error none of ./pkg/$(1)$(if $(findstring -,$(1)),$(comma) ./cmd/$(1) or ./pkg/$(subst -,/,$(1)), or ./cmd/$(1)) exists))
 
 # integration_dir does the same for integration-test-%: test/integration/$*.
 integration_dir = $(or $(wildcard ./test/integration/$(1)),$(error ./test/integration/$(1) does not exist))

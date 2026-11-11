@@ -15,8 +15,16 @@ package xkms
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,15 +36,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestNewFederationAgent_Success(t *testing.T) {
-	agent, err := NewFederationAgent(&FederationConfig{
-		Endpoint: "https://dr-xkms.company.com:8443",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, agent)
-	assert.Equal(t, "https://dr-xkms.company.com:8443", agent.endpoint)
-}
 
 func TestNewFederationAgent_NilConfig(t *testing.T) {
 	_, err := NewFederationAgent(nil)
@@ -611,30 +610,6 @@ func TestFederationAgent_RevokeEscrow_ServerUnavailable(t *testing.T) {
 	assert.True(t, errors.Is(err, escrow.ErrAgentUnavailable))
 }
 
-func TestFederationAgent_Close(t *testing.T) {
-	agent, err := NewFederationAgent(&FederationConfig{Endpoint: "https://localhost:8443"})
-	require.NoError(t, err)
-
-	err = agent.Close()
-	require.NoError(t, err)
-	assert.True(t, agent.closed.Load())
-}
-
-func TestFederationConfig_Validate_Success(t *testing.T) {
-	cfg := &FederationConfig{
-		Endpoint: "https://dr-xkms.company.com:8443",
-	}
-	err := cfg.Validate()
-	require.NoError(t, err)
-}
-
-func TestFederationConfig_Validate_EmptyEndpoint(t *testing.T) {
-	cfg := &FederationConfig{}
-	err := cfg.Validate()
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, escrow.ErrEmptyEndpoint))
-}
-
 func TestFederationAgent_EscrowKey_ServerUnavailable(t *testing.T) {
 	agent, err := NewFederationAgent(&FederationConfig{
 		Endpoint: "http://127.0.0.1:19999",
@@ -677,4 +652,98 @@ func TestFederationAgent_RevokeEscrow_ServerError(t *testing.T) {
 	err = agent.RevokeEscrow(context.Background(), "escrow-001")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, escrow.ErrRevokeFailed))
+}
+
+// writeSelfSignedPair writes a self-signed ECDSA P-256 certificate and its
+// PKCS#8 key as PEM files and returns their paths.
+func writeSelfSignedPair(t *testing.T) (certPath, keyPath string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "escrow-client"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	certPath = filepath.Join(dir, "client.pem")
+	keyPath = filepath.Join(dir, "client.key")
+	require.NoError(t, os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
+	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600))
+	return certPath, keyPath
+}
+
+// A valid client pair and CA file configure mutual TLS 1.3: the client
+// presents the certificate and verifies the server against the CA pool.
+func TestNewFederationAgent_MutualTLSConfigured(t *testing.T) {
+	certPath, keyPath := writeSelfSignedPair(t)
+	agent, err := NewFederationAgent(&FederationConfig{
+		Endpoint:   "https://dr-xkms.company.com:8443",
+		ClientCert: certPath,
+		ClientKey:  keyPath,
+		CACert:     certPath,
+	})
+	require.NoError(t, err)
+
+	transport, ok := agent.client.Transport.(*http.Transport)
+	require.True(t, ok)
+	tlsConfig := transport.TLSClientConfig
+	assert.Equal(t, uint16(tls.VersionTLS13), tlsConfig.MinVersion)
+	require.Len(t, tlsConfig.Certificates, 1)
+	assert.NotNil(t, tlsConfig.RootCAs)
+}
+
+// An endpoint that does not parse as a URL fails every operation before any
+// request is sent, each with its operation's sentinel and no partial result.
+func TestFederationAgent_MalformedEndpointRefused(t *testing.T) {
+	agent, err := NewFederationAgent(&FederationConfig{Endpoint: "https://%zz"})
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	assert.False(t, agent.Available(ctx))
+
+	tests := []struct {
+		name    string
+		call    func() (any, error)
+		wantErr error
+	}{
+		{
+			name: "escrow",
+			call: func() (any, error) {
+				return agent.EscrowKey(ctx, &escrow.EscrowRequest{KeyID: "key-001", WrappedKey: []byte("wrapped")})
+			},
+			wantErr: escrow.ErrEscrowFailed,
+		},
+		{
+			name:    "recover",
+			call:    func() (any, error) { return agent.RecoverKey(ctx, &escrow.RecoverRequest{KeyID: "key-001"}) },
+			wantErr: escrow.ErrRecoverFailed,
+		},
+		{
+			name:    "list",
+			call:    func() (any, error) { return agent.ListEscrowed(ctx) },
+			wantErr: escrow.ErrRecoverFailed,
+		},
+		{
+			name:    "revoke",
+			call:    func() (any, error) { return nil, agent.RevokeEscrow(ctx, "escrow-001") },
+			wantErr: escrow.ErrRevokeFailed,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.call()
+			require.ErrorIs(t, err, tt.wantErr)
+			assert.Nil(t, got)
+		})
+	}
 }

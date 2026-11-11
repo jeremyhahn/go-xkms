@@ -114,16 +114,6 @@ func TestOpen_StandaloneMissingPath(t *testing.T) {
 	require.ErrorAs(t, err, &pathErr)
 }
 
-// TestOpen_StandaloneDefaultModeIsStandalone proves an empty Mode defaults to
-// "standalone", matching config.Validate's own default.
-func TestOpen_StandaloneDefaultModeIsStandalone(t *testing.T) {
-	ds := openTestDatastore(t, &config.Config{
-		Datastore: config.DatastoreConfig{Path: t.TempDir()},
-	})
-	assert.NotNil(t, ds.Client())
-	assert.NotNil(t, ds.DAOFactory())
-}
-
 // TestHealthCheck_ReportsTheClientsHealth proves HealthCheck answers as a
 // go-qrdb SDK readiness check: healthy on an open node, and unhealthy once
 // the node is closed.

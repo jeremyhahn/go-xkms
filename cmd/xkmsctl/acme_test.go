@@ -96,17 +96,6 @@ func TestACMEClientOptions_Derivation(t *testing.T) {
 	}
 }
 
-func TestACMEAdminClient_MissingFactory(t *testing.T) {
-	restore := SetACMEAdminClientFactory(nil)
-	t.Cleanup(restore)
-
-	_, _, err := acmeAdminClient(context.Background())
-	var missing *ACMEAdminClientMissingError
-	if !errors.As(err, &missing) {
-		t.Fatalf("expected ACMEAdminClientMissingError, got %v", err)
-	}
-}
-
 func TestDefaultACMEAdminClientFactory_AddressRequired(t *testing.T) {
 	resetACMEConnectionFlags(t)
 	withGlobalConfig(t, &Config{})

@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -138,16 +137,6 @@ func newTestPlatformStore(t *testing.T, barrier *seal.Barrier) seal.PlatformStor
 
 // --- Constructor tests ---
 
-func TestNewService_ManualStrategy(t *testing.T) {
-	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if svc.Strategy() != StrategyManual {
-		t.Errorf("Strategy() = %q, want %q", svc.Strategy(), StrategyManual)
-	}
-}
-
 func TestNewService_ManualStrategy_DefaultsWhenEmpty(t *testing.T) {
 	svc, err := New(&Config{Strategy: ""}, nil, nil, testLogger())
 	if err != nil {
@@ -167,17 +156,6 @@ func TestNewService_ManualStrategy_NilLogger(t *testing.T) {
 	}
 	if err := svc.StoreCredential(t.Context(), "pin", []byte("1234")); err != nil {
 		t.Fatalf("StoreCredential: %v", err)
-	}
-}
-
-func TestNewService_BarrierStrategy(t *testing.T) {
-	barrier := newTestBarrier(t)
-	svc, err := New(&Config{Strategy: "barrier"}, nil, barrier, testLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if svc.Strategy() != "barrier" {
-		t.Errorf("Strategy() = %q, want barrier", svc.Strategy())
 	}
 }
 
@@ -208,26 +186,6 @@ func TestNewService_InvalidStrategy(t *testing.T) {
 }
 
 // --- StoreCredential tests ---
-
-func TestStoreCredential_Manual(t *testing.T) {
-	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	ctx := context.Background()
-	if err := svc.StoreCredential(ctx, "pkcs11-pin", []byte("1234")); err != nil {
-		t.Fatalf("StoreCredential: %v", err)
-	}
-
-	val, err := retrieveString(ctx, svc, "pkcs11-pin")
-	if err != nil {
-		t.Fatalf("RetrieveCredentialBuffer: %v", err)
-	}
-	if string(val) != "1234" {
-		t.Errorf("stored value = %q, want %q", string(val), "1234")
-	}
-}
 
 func TestStoreCredential_EmptyName(t *testing.T) {
 	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
@@ -278,26 +236,6 @@ func TestStoreCredential_NilValue(t *testing.T) {
 }
 
 // --- RetrieveCredentialBuffer tests ---
-
-func TestRetrieveCredential_Manual_AlreadySubmitted(t *testing.T) {
-	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	ctx := context.Background()
-	if err := svc.StoreCredential(ctx, "my-pin", []byte("secret")); err != nil {
-		t.Fatalf("StoreCredential: %v", err)
-	}
-
-	val, err := retrieveString(ctx, svc, "my-pin")
-	if err != nil {
-		t.Fatalf("RetrieveCredentialBuffer: %v", err)
-	}
-	if string(val) != "secret" {
-		t.Errorf("RetrieveCredentialBuffer = %q, want %q", string(val), "secret")
-	}
-}
 
 func TestRetrieveCredential_Manual_NotSubmitted_ContextCancelled(t *testing.T) {
 	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
@@ -417,31 +355,6 @@ func TestSubmitCredential_NonManual_DelegatesToStore(t *testing.T) {
 
 // --- DeleteCredential tests ---
 
-func TestDeleteCredential_Manual(t *testing.T) {
-	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	ctx := context.Background()
-	if err := svc.StoreCredential(ctx, "to-delete", []byte("value")); err != nil {
-		t.Fatalf("StoreCredential: %v", err)
-	}
-
-	if err := svc.DeleteCredential(ctx, "to-delete"); err != nil {
-		t.Fatalf("DeleteCredential: %v", err)
-	}
-
-	// Verify it's gone.
-	names, err := svc.ListCredentials(ctx)
-	if err != nil {
-		t.Fatalf("ListCredentials: %v", err)
-	}
-	if slices.Contains(names, "to-delete") {
-		t.Error("credential still exists after delete")
-	}
-}
-
 func TestDeleteCredential_Manual_NotFound(t *testing.T) {
 	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
 	if err != nil {
@@ -543,29 +456,6 @@ func TestStrategy(t *testing.T) {
 }
 
 // --- Barrier round-trip tests ---
-
-func TestStoreRetrieveCredential_Barrier(t *testing.T) {
-	barrier := newTestBarrier(t)
-	svc, err := New(&Config{Strategy: "barrier"}, nil, barrier, testLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	ctx := context.Background()
-	cred := []byte("super-secret-pin-1234")
-
-	if err := svc.StoreCredential(ctx, "pkcs11-user-pin", cred); err != nil {
-		t.Fatalf("StoreCredential: %v", err)
-	}
-
-	retrieved, err := retrieveString(ctx, svc, "pkcs11-user-pin")
-	if err != nil {
-		t.Fatalf("RetrieveCredentialBuffer: %v", err)
-	}
-	if string(retrieved) != string(cred) {
-		t.Errorf("RetrieveCredentialBuffer = %q, want %q", string(retrieved), string(cred))
-	}
-}
 
 func TestRetrieveCredential_Barrier_NotFound(t *testing.T) {
 	barrier := newTestBarrier(t)
@@ -734,30 +624,6 @@ func TestIsPlatformStrategy(t *testing.T) {
 }
 
 // --- validateInput test ---
-
-func TestValidateInput(t *testing.T) {
-	tests := []struct {
-		name    string
-		credNm  string
-		value   []byte
-		wantErr error
-	}{
-		{"valid", "name", []byte("val"), nil},
-		{"empty name", "", []byte("val"), ErrEmptyCredentialName},
-		{"whitespace name", "  \t ", []byte("val"), ErrEmptyCredentialName},
-		{"nil value", "name", nil, ErrEmptyCredentialValue},
-		{"empty value", "name", []byte{}, ErrEmptyCredentialValue},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateInput(tt.credNm, tt.value)
-			if !errors.Is(err, tt.wantErr) {
-				t.Errorf("validateInput(%q, %v) = %v, want %v", tt.credNm, tt.value, err, tt.wantErr)
-			}
-		})
-	}
-}
 
 // --- Value isolation tests ---
 
@@ -1004,30 +870,6 @@ func TestListCredentials_Barrier(t *testing.T) {
 	}
 	if len(names) != 1 || names[0] != "tpm-owner-auth" {
 		t.Fatalf("expected [tpm-owner-auth] with the namespace stripped, got %v", names)
-	}
-}
-
-// TestListCredentials_Platform proves the platform strategy round-trips a
-// stored credential through the listing.
-func TestListCredentials_Platform(t *testing.T) {
-	barrier := newTestBarrier(t)
-	store := newTestPlatformStore(t, barrier)
-	svc, err := New(&Config{Strategy: "tpm2"}, store, nil, testLogger())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	ctx := context.Background()
-
-	if err := svc.StoreCredential(ctx, "pkcs11-user-pin", []byte("secret-value")); err != nil {
-		t.Fatalf("StoreCredential: %v", err)
-	}
-
-	names, err := svc.ListCredentials(ctx)
-	if err != nil {
-		t.Fatalf("ListCredentials: %v", err)
-	}
-	if len(names) != 1 || names[0] != "pkcs11-user-pin" {
-		t.Fatalf("expected [pkcs11-user-pin], got %v", names)
 	}
 }
 

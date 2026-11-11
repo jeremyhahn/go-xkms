@@ -1,0 +1,1 @@
+oidc/credential: the device-login refusal paths (invalid name, missing credential, unknown provider error, failed store write) are tested for their typed error and for leaving the login pending, bringing `pkg/oidc/credential` back over the 90% coverage floor (#1794).

@@ -48,6 +48,18 @@ func TestNewFROSTKeyProvider_PlaintextDenied(t *testing.T) {
 		"expected pkcs8.ErrPlaintextKeyNotAllowed, got %v (%T)", err, err)
 }
 
+// A threshold above the participant total is rejected by frost.NewBackend,
+// and the factory returns a nil interface, not one holding a nil pointer.
+func TestNewFROSTKeyProvider_ThresholdAboveTotalReturnsNil(t *testing.T) {
+	kp, err := newFROSTKeyProvider(map[string]interface{}{
+		"allow_plaintext_keys": true,
+		"threshold":            4,
+		"total":                3,
+	})
+	require.Error(t, err)
+	require.True(t, kp == nil, "the factory must return a nil KeyProvider, got %#v", kp)
+}
+
 // TestNewFROSTKeyProvider_AllowPlaintextKeys_GenerateAndSign builds two FROST
 // providers through the real factory (one per participant, mirroring a
 // genuine multi-node deployment), each with "allow_plaintext_keys": true for

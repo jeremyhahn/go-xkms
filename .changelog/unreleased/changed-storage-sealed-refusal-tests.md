@@ -1,0 +1,1 @@
+- **Sealed storage refusal tests (#1794)** — `pkg/storage/sealed` pins each refusal (an unsealable write, an inner store without fenced creation, a stored value the barrier cannot open, including an empty one that fails authentication) to its typed error and checks the inner store is left unchanged; package coverage 88.7% → 93.4%.

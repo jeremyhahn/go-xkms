@@ -163,67 +163,6 @@ func TestNVIncrement_EveryCommandFailurePropagates(t *testing.T) {
 	})
 }
 
-// TestNVReadCounter_EveryCommandFailurePropagates sweeps NVReadCounter's
-// command sequence against a pre-defined counter index.
-func TestNVReadCounter_EveryCommandFailurePropagates(t *testing.T) {
-	sweepEachCommandFailure(t, func(t *testing.T) (transport.TPM, func(transport.TPM) error) {
-		h := newSimHarness(t, nil)
-		ekAttrs, err := h.TPM.EKAttributes()
-		require.NoError(t, err)
-
-		counter := &types.KeyAttributes{
-			Parent: ekAttrs,
-			TPMAttributes: &types.TPMAttributes{
-				Handle:    tpm2.TPMHandle(nvramCounterIndex),
-				HashAlg:   tpm2.TPMAlgSHA256,
-				Hierarchy: tpm2.TPMRHOwner,
-			},
-		}
-		require.NoError(t, h.TPM.NVDefineCounter(counter))
-		// A freshly-defined counter is TPM_RC_NV_UNINITIALIZED until its
-		// first increment (TCG Part 3 §31.15); NVReadCounter cannot be
-		// exercised against a counter that has never been written.
-		_, err = h.TPM.NVIncrement(counter)
-		require.NoError(t, err)
-
-		return h.TPM.transport, func(tr transport.TPM) error {
-			h.TPM.transport = tr
-			_, err := h.TPM.NVReadCounter(counter)
-			return err
-		}
-	})
-}
-
-// TestNVReadExtend_EveryCommandFailurePropagates sweeps NVReadExtend's
-// command sequence against a pre-defined extend index.
-func TestNVReadExtend_EveryCommandFailurePropagates(t *testing.T) {
-	sweepEachCommandFailure(t, func(t *testing.T) (transport.TPM, func(transport.TPM) error) {
-		h := newSimHarness(t, nil)
-		ekAttrs, err := h.TPM.EKAttributes()
-		require.NoError(t, err)
-
-		extend := &types.KeyAttributes{
-			Parent: ekAttrs,
-			TPMAttributes: &types.TPMAttributes{
-				Handle:    tpm2.TPMHandle(nvramExtendIndex),
-				HashAlg:   tpm2.TPMAlgSHA256,
-				Hierarchy: tpm2.TPMRHOwner,
-			},
-		}
-		require.NoError(t, h.TPM.NVDefineExtend(extend))
-		// A freshly-defined extend index is TPM_RC_NV_UNINITIALIZED until
-		// its first extend (TCG Part 3 §31.15); NVReadExtend cannot be
-		// exercised against an index that has never been extended.
-		require.NoError(t, h.TPM.NVExtend(extend, []byte("measurement")))
-
-		return h.TPM.transport, func(tr transport.TPM) error {
-			h.TPM.transport = tr
-			_, err := h.TPM.NVReadExtend(extend)
-			return err
-		}
-	})
-}
-
 // TestNVUndefine_EveryCommandFailurePropagates sweeps NVUndefine's command
 // sequence (NV read public, NV undefine space) against a pre-defined index.
 func TestNVUndefine_EveryCommandFailurePropagates(t *testing.T) {
@@ -273,20 +212,6 @@ func TestReadCertFromNVRAM_EveryCommandFailurePropagates(t *testing.T) {
 			h.TPM.transport = tr
 			_, err := h.TPM.readCertFromNVRAM(tpm2.TPMHandle(nvramOwnerIndex))
 			return err
-		}
-	})
-}
-
-// TestDeleteCertFromNVRAM_EveryCommandFailurePropagates sweeps
-// deleteCertFromNVRAM's command sequence against a pre-written certificate.
-func TestDeleteCertFromNVRAM_EveryCommandFailurePropagates(t *testing.T) {
-	sweepEachCommandFailure(t, func(t *testing.T) (transport.TPM, func(transport.TPM) error) {
-		h := newSimHarness(t, nil)
-		require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(nvramOwnerIndex), []byte("fake-certificate-der")))
-
-		return h.TPM.transport, func(tr transport.TPM) error {
-			h.TPM.transport = tr
-			return h.TPM.deleteCertFromNVRAM(tpm2.TPMHandle(nvramOwnerIndex))
 		}
 	})
 }

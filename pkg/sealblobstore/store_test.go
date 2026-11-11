@@ -84,6 +84,8 @@ func TestStore_SaveLoad(t *testing.T) {
 	assert.Equal(t, 256, loaded.SizeBytes)
 	assert.False(t, loaded.PCRBound)
 	assert.Equal(t, entity.SealedData, loaded.SealedData)
+	// A caller-set CreatedAt survives serialization.
+	assert.WithinDuration(t, entity.CreatedAt, loaded.CreatedAt, time.Second)
 }
 
 func TestStore_Save_NilEntity(t *testing.T) {
@@ -354,26 +356,4 @@ func TestStore_PCRBoundBlob(t *testing.T) {
 	assert.True(t, loaded.PCRBound)
 	assert.Equal(t, "platform_policy", loaded.PolicyType)
 	assert.Equal(t, "tpm2", loaded.BackendID)
-}
-
-func TestStore_TimestampPreservation(t *testing.T) {
-	store := newTestStore(t)
-	ctx := context.Background()
-
-	now := time.Now().UTC().Truncate(time.Second)
-	entity := &Entity{
-		Label:      "ts-test",
-		BackendID:  "software",
-		SealedData: []byte("data"),
-		CreatedAt:  now,
-	}
-	require.NoError(t, store.Save(ctx, entity))
-
-	loaded, err := store.Load(ctx, "ts-test")
-	require.NoError(t, err)
-
-	// CreatedAt should be preserved through serialization.
-	assert.WithinDuration(t, now, loaded.CreatedAt, time.Second)
-	// UpdatedAt should be set automatically.
-	assert.False(t, loaded.UpdatedAt.IsZero())
 }

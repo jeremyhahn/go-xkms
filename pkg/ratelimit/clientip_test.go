@@ -60,6 +60,10 @@ func TestParseTrustedProxies_RejectsMalformedEntry(t *testing.T) {
 		var invalid *InvalidTrustedProxyError
 		if !errors.As(err, &invalid) || invalid.Entry != entry {
 			t.Errorf("ParseTrustedProxies(%q) error = %v, want *InvalidTrustedProxyError", entry, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), `"`+entry+`"`) {
+			t.Errorf("InvalidTrustedProxyError message %q does not name the entry", err.Error())
 		}
 	}
 }
@@ -227,6 +231,9 @@ func TestLimiter_MaxClientsRefusesNewClients(t *testing.T) {
 	if err := limiter.Wait(context.Background(), "c"); !errors.As(err, &capErr) || capErr.Limit != 2 {
 		t.Fatalf("Wait beyond the cap = %v, want *CapacityError{Limit: 2}", err)
 	}
+	if !strings.Contains(capErr.Error(), "2") {
+		t.Fatalf("CapacityError message %q does not name the limit", capErr.Error())
+	}
 	if !limiter.Allow("a") {
 		t.Fatal("an already-tracked client must be unaffected by the cap")
 	}
@@ -276,14 +283,5 @@ func TestRateLimitKey_IPv6AddressesInSameSlash64ShareABucket(t *testing.T) {
 	c := RateLimitKey("2001:db8:abcd:2::1")
 	if a == c {
 		t.Fatalf("addresses in different /64s must not share a rate-limit key: both resolved to %q", a)
-	}
-}
-
-func TestCapacityError_Message(t *testing.T) {
-	if got := (&CapacityError{Limit: 7}).Error(); !strings.Contains(got, "7") {
-		t.Fatalf("CapacityError message %q does not name the limit", got)
-	}
-	if got := (&InvalidTrustedProxyError{Entry: "x"}).Error(); !strings.Contains(got, `"x"`) {
-		t.Fatalf("InvalidTrustedProxyError message %q does not name the entry", got)
 	}
 }

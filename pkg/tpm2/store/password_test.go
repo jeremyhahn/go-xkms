@@ -35,45 +35,8 @@ func TestClearPassword_NewPassword(t *testing.T) {
 	assert.Equal(t, password, seen)
 }
 
-func TestClearPassword_NewPassword_DifferentValue(t *testing.T) {
-	password := []byte("clear-password")
-
-	p, err := NewPassword(password)
-	require.NoError(t, err)
-	require.NotNil(t, p)
-
-	// Verify Bytes returns the password
-	assert.Equal(t, password, p.Bytes())
-
-	// String must never return the password
-	assert.Equal(t, types.PasswordRedacted, p.String())
-}
-
 func TestClearPassword_Empty(t *testing.T) {
 	password := []byte{}
-
-	p, err := NewPassword(password)
-	require.NoError(t, err)
-	require.NotNil(t, p)
-
-	// Verify Bytes returns empty slice
-	assert.Empty(t, p.Bytes())
-
-	// String is redacted even when there is nothing to hide
-	assert.Equal(t, types.PasswordRedacted, p.String())
-
-	// WithBytes lends nil: an empty UserAuth means no authentication
-	called := false
-	require.NoError(t, p.WithBytes(func(b []byte) error {
-		called = true
-		assert.Empty(t, b)
-		return nil
-	}))
-	assert.True(t, called)
-}
-
-func TestClearPassword_Nil(t *testing.T) {
-	var password []byte
 
 	p, err := NewPassword(password)
 	require.NoError(t, err)
@@ -93,6 +56,10 @@ func TestClearPassword_Nil(t *testing.T) {
 		return nil
 	}))
 	assert.True(t, called)
+
+	// Clear should not panic on empty password
+	p.Clear()
+	assert.Empty(t, p.Bytes())
 }
 
 func TestClearPassword_Clear(t *testing.T) {
@@ -114,32 +81,6 @@ func TestClearPassword_Clear(t *testing.T) {
 	for i, b := range p.Bytes() {
 		assert.Equal(t, byte(0), b, "byte at index %d should be 0", i)
 	}
-}
-
-func TestClearPassword_ClearEmpty(t *testing.T) {
-	password := []byte{}
-
-	p, err := NewPassword(password)
-	require.NoError(t, err)
-	require.NotNil(t, p)
-
-	// Clear should not panic on empty password
-	p.Clear()
-
-	// Verify Bytes still returns empty slice
-	assert.Empty(t, p.Bytes())
-}
-
-func TestRequiredPassword_NewRequiredPassword(t *testing.T) {
-	p := NewRequiredPassword()
-	require.NotNil(t, p)
-}
-
-func TestRequiredPassword_Bytes(t *testing.T) {
-	p := NewRequiredPassword()
-
-	// Bytes should return nil for RequiredPassword
-	assert.Nil(t, p.Bytes())
 }
 
 func TestRequiredPassword_String(t *testing.T) {
@@ -167,20 +108,4 @@ func TestRequiredPassword_Clear_ViaInterface(t *testing.T) {
 
 	// Verify state is unchanged
 	assert.Nil(t, p.Bytes())
-}
-
-func TestRequiredPassword_Clear_DirectAccess(t *testing.T) {
-	// Test the RequiredPassword.Clear method directly
-	p := &RequiredPassword{}
-
-	// Clear should not panic - it's a no-op
-	p.Clear()
-
-	// Verify state - should still be nil
-	assert.Nil(t, p.Bytes())
-}
-
-func TestDEFAULT_PASSWORD(t *testing.T) {
-	// Verify the default password constant
-	assert.Equal(t, "changeme", DEFAULT_PASSWORD)
 }

@@ -47,6 +47,8 @@ func TestEmitParseRoundtrip_Algorithms(t *testing.T) {
 		{"ed25519", keys.AlgorithmEd25519},
 		{"rsa-2048", keys.AlgorithmRSA},
 		{"ecdsa-p256", keys.AlgorithmECDSAP256},
+		{"ecdsa-p384", keys.AlgorithmECDSAP384},
+		{"ecdsa-p521", keys.AlgorithmECDSAP521},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -144,15 +146,6 @@ func TestParseAll_MultiLineFile(t *testing.T) {
 	}
 }
 
-// TestParseLine_Malformed rejects garbage input with MalformedLineError.
-func TestParseLine_Malformed(t *testing.T) {
-	_, err := authorized.ParseLine("not-an-authorized-keys-line")
-	var m *authorized.MalformedLineError
-	if !errors.As(err, &m) {
-		t.Fatalf("expected MalformedLineError, got %T: %v", err, err)
-	}
-}
-
 // TestEmitAll_RoundTrip verifies EmitAll + ParseAll are inverses.
 func TestEmitAll_RoundTrip(t *testing.T) {
 	k1 := generateKey(t, keys.AlgorithmEd25519)
@@ -174,51 +167,6 @@ func TestEmitAll_RoundTrip(t *testing.T) {
 	}
 	if len(parsed) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(parsed))
-	}
-}
-
-// TestStore_AddGetListRemove is the happy-path storage flow.
-func TestStore_AddGetListRemove(t *testing.T) {
-	store := newStore(t)
-	var err error
-	ctx := context.Background()
-
-	k := generateKey(t, keys.AlgorithmEd25519)
-	defer k.Destroy()
-	entry := &authorized.Entry{Key: k, Comment: "alice@workstation"}
-	if err := store.Add(ctx, scope.User, "alice", "laptop", entry); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	got, err := store.Get(ctx, scope.User, "alice", "laptop")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.Entry.Key.Fingerprint != k.Fingerprint {
-		t.Fatalf("fingerprint mismatch after store")
-	}
-	if got.Scope != scope.User || got.Owner != "alice" || got.Name != "laptop" {
-		t.Fatalf("Get coordinates = %s/%s/%s, want user/alice/laptop", got.Scope, got.Owner, got.Name)
-	}
-
-	list, err := store.List(ctx, scope.User, "alice")
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(list) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(list))
-	}
-	if list[0].Name != "laptop" {
-		t.Fatalf("List dropped the stored name: got %q, want %q", list[0].Name, "laptop")
-	}
-
-	if err := store.Remove(ctx, scope.User, "alice", "laptop"); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
-	_, err = store.Get(ctx, scope.User, "alice", "laptop")
-	var nf *authorized.NotFoundError
-	if !errors.As(err, &nf) {
-		t.Fatalf("expected NotFoundError, got %T: %v", err, err)
 	}
 }
 

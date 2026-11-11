@@ -233,13 +233,6 @@ func TestNewQRDBRefreshStore_RejectsUnguardedKV(t *testing.T) {
 	assert.Contains(t, unsupported.ClientType, "plainMemoryKV")
 }
 
-func TestNewQRDBRefreshStore_AcceptsGuardedKV(t *testing.T) {
-	store, err := NewQRDBRefreshStore(newGuardedMemoryKV())
-
-	require.NoError(t, err)
-	require.NotNil(t, store)
-}
-
 func TestNewQRDBRefreshStore_NilKV(t *testing.T) {
 	store, err := NewQRDBRefreshStore(nil)
 

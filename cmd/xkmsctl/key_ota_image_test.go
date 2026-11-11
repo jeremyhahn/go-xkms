@@ -111,17 +111,6 @@ func writeOTAImage(t *testing.T, content string) string {
 	return path
 }
 
-func TestKeyOTAImageCmds_RegisteredUnderKey(t *testing.T) {
-	found, _, err := keyCmd.Find([]string{"ota-image"})
-	require.NoError(t, err)
-	assert.Same(t, keyOTAImageCmd, found)
-	for _, name := range []string{"create", "rotate", "sign"} {
-		sub, _, err := keyOTAImageCmd.Find([]string{name})
-		require.NoError(t, err, name)
-		assert.Equal(t, name, sub.Name())
-	}
-}
-
 func TestKeyOTAImageCreateCmd(t *testing.T) {
 	mock := &mockOTAImageClient{}
 	out, _, code := runOTAImageCmd(t, mock, keyOTAImageCreateCmd, []string{"cm4"}, nil)

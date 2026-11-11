@@ -276,20 +276,6 @@ func TestIntParamString(t *testing.T) {
 	}
 }
 
-// TestStringParam covers the string coercion used for the key id and token
-// label: only real strings are accepted, so a numeric key id is dropped rather
-// than rendered with Go syntax.
-func TestStringParam(t *testing.T) {
-	if got := stringParam("abc"); got != "abc" {
-		t.Errorf("stringParam(%q) = %q", "abc", got)
-	}
-	for _, v := range []any{nil, 1, 1.5, true, []byte("abc"), []string{"abc"}} {
-		if got := stringParam(v); got != "" {
-			t.Errorf("stringParam(%#v) = %q, want the empty string", v, got)
-		}
-	}
-}
-
 // TestVerify_RejectsBadEnrolledKeyMaterial covers each way the challenge's
 // enrolled key can be absent or unusable. Every one must fail closed with a
 // verification error, and none may fall back to key material in the response.
@@ -437,6 +423,10 @@ func TestVerifyECDSA_RejectsDegenerateSignatures(t *testing.T) {
 		if err == nil {
 			t.Fatal("a non-ASN.1 signature was accepted")
 		}
+		var failed *qrdbsdk.AuthFactorVerificationFailedError
+		if !errors.As(err, &failed) {
+			t.Fatalf("error type = %T, want *AuthFactorVerificationFailedError", err)
+		}
 		if !strings.Contains(err.Error(), "unmarshal signature") {
 			t.Errorf("error %q does not identify the decode failure", err)
 		}
@@ -517,18 +507,6 @@ func TestChallenge_NoncesAreUnique(t *testing.T) {
 		if challenge.ChallengeID == "" {
 			t.Fatalf("challenge #%d has no ChallengeID", i)
 		}
-	}
-}
-
-// TestDerDecodeError_Message keeps the typed DER error's message meaningful:
-// it is the text an operator sees when an enrollment payload is malformed.
-func TestDerDecodeError_Message(t *testing.T) {
-	err := &derDecodeError{reason: "public_key_der is required"}
-	if err.Error() != "public_key_der is required" {
-		t.Errorf("Error() = %q, want the reason verbatim", err.Error())
-	}
-	if (&derDecodeError{}).Error() != "" {
-		t.Error("an empty reason should render as an empty message, not a placeholder")
 	}
 }
 

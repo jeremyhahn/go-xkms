@@ -82,19 +82,6 @@ func TestBuildTLSConfig_InvalidCAFile(t *testing.T) {
 	}
 }
 
-func TestBuildTLSConfig_DefaultPath(t *testing.T) {
-	cfg := transport.DefaultConfig()
-	c := NewClient(cfg)
-
-	result, err := c.buildTLSConfig()
-	if err != nil {
-		t.Fatalf("buildTLSConfig: %v", err)
-	}
-	if result.MinVersion != tls.VersionTLS13 {
-		t.Errorf("MinVersion = %d, want tls.VersionTLS13", result.MinVersion)
-	}
-}
-
 func TestBuildTLSConfig_ValidCAFile(t *testing.T) {
 	ca, err := testutil.GenerateTestCA()
 	if err != nil {
@@ -115,6 +102,9 @@ func TestBuildTLSConfig_ValidCAFile(t *testing.T) {
 	}
 	if result.RootCAs == nil {
 		t.Error("RootCAs must be populated from a valid CA file")
+	}
+	if result.MinVersion != tls.VersionTLS13 {
+		t.Errorf("MinVersion = %d, want tls.VersionTLS13", result.MinVersion)
 	}
 }
 
@@ -313,8 +303,12 @@ func connectedClient(t *testing.T, addr string, opts ...ClientOption) *Client {
 }
 
 func TestClient_ConnectAndCall_Success(t *testing.T) {
+	var gotArgs map[string]any
 	addr, cleanup := newTestServer(t, map[string]func(args map[string]any) serverResponse{
-		"xkms_health": func(map[string]any) serverResponse { return serverResponse{Result: `{"status":"ok"}`} },
+		"xkms_ssh_keys_get": func(args map[string]any) serverResponse {
+			gotArgs = args
+			return serverResponse{Result: `{"status":"ok"}`}
+		},
 	})
 	defer cleanup()
 
@@ -324,22 +318,24 @@ func TestClient_ConnectAndCall_Success(t *testing.T) {
 	}
 
 	var result map[string]string
-	if err := c.Call(context.Background(), "health", nil, &result); err != nil {
+	if err := c.Call(context.Background(), "ssh.keys.get", discardParams{Name: "laptop"}, &result); err != nil {
 		t.Fatalf("Call: %v", err)
 	}
 	if result["status"] != "ok" {
 		t.Errorf("result = %v", result)
 	}
-}
 
-func TestClient_Call_NotConnected(t *testing.T) {
-	cfg := transport.DefaultConfig()
-	cfg.Address = "127.0.0.1:0"
-	c := NewClient(cfg)
+	paramsJSON, _ := gotArgs["params_json"].(string)
+	var decoded discardParams
+	if err := json.Unmarshal([]byte(paramsJSON), &decoded); err != nil {
+		t.Fatalf("decode params_json: %v", err)
+	}
+	if decoded.Name != "laptop" {
+		t.Errorf("Name = %q", decoded.Name)
+	}
 
-	err := c.Call(context.Background(), "health", nil, nil)
-	if !errors.Is(err, ErrNotConnected) {
-		t.Fatalf("expected ErrNotConnected, got %v", err)
+	if err := c.Call(context.Background(), "ssh.keys.get", nil, nil); err != nil {
+		t.Fatalf("Call with a nil result must discard the response: %v", err)
 	}
 }
 
@@ -455,20 +451,6 @@ func TestClient_Call_EnvelopeMissingBecomesProtocolError(t *testing.T) {
 	var rpcErr *RPCError
 	if errors.As(err, &rpcErr) {
 		t.Error("an uncoded failure must not be reported as a classified *RPCError")
-	}
-}
-
-func TestClient_Connect_DialFailure(t *testing.T) {
-	cfg := transport.DefaultConfig()
-	cfg.Address = "127.0.0.1:1" // reserved, nothing listens here
-	c := NewClient(cfg)
-
-	err := c.Connect(context.Background())
-	if err == nil {
-		t.Fatal("expected a connect failure against an unreachable address")
-	}
-	if !errors.Is(err, ErrConnectionFailed) {
-		t.Fatalf("expected ErrConnectionFailed in the chain, got %v", err)
 	}
 }
 
@@ -658,6 +640,9 @@ func TestClient_Close_Idempotent(t *testing.T) {
 func TestClient_Close_NeverConnected(t *testing.T) {
 	cfg := transport.DefaultConfig()
 	c := NewClient(cfg)
+	if err := c.Call(context.Background(), "health", nil, nil); !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("Call before Connect: expected ErrNotConnected, got %v", err)
+	}
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close on a never-connected client must be a no-op, got: %v", err)
 	}
@@ -686,32 +671,6 @@ func TestClient_Config_ReturnsConstructorConfig(t *testing.T) {
 
 type discardParams struct {
 	Name string `json:"name"`
-}
-
-func TestClient_Call_ParamsRoundTrip(t *testing.T) {
-	var gotArgs map[string]any
-	addr, cleanup := newTestServer(t, map[string]func(args map[string]any) serverResponse{
-		"xkms_health": func(map[string]any) serverResponse { return serverResponse{Result: `{}`} },
-		"xkms_ssh_keys_get": func(args map[string]any) serverResponse {
-			gotArgs = args
-			return serverResponse{Result: `{"ok":true}`}
-		},
-	})
-	defer cleanup()
-
-	c := connectedClient(t, addr)
-	if err := c.Call(context.Background(), "ssh.keys.get", discardParams{Name: "laptop"}, nil); err != nil {
-		t.Fatalf("Call: %v", err)
-	}
-
-	paramsJSON, _ := gotArgs["params_json"].(string)
-	var decoded discardParams
-	if err := json.Unmarshal([]byte(paramsJSON), &decoded); err != nil {
-		t.Fatalf("decode params_json: %v", err)
-	}
-	if decoded.Name != "laptop" {
-		t.Errorf("Name = %q", decoded.Name)
-	}
 }
 
 // TestNewClientWithSession proves the in-process-test escape hatch marks the
