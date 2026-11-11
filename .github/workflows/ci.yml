@@ -984,7 +984,11 @@ jobs:
     # schedule guard's `run`; every CUSTOMIZE job needs this one, so it skips
     # with it.
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
+    # Ruling 442: the bigdisk-docker pool, a throwaway guest per job with its
+    # own Docker daemon, for a push to main and a same-repository pull
+    # request; every other event, a fork's pull request among them, stays on
+    # ubuntu-latest.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 120
     permissions:
       contents: read
