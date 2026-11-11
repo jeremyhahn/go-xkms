@@ -14,11 +14,13 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"os"
 	"path/filepath"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -240,6 +242,15 @@ func TestInitializeWebAuthnService_QRDBBacked(t *testing.T) {
 
 	require.NotNil(t, server.qrdbClient, "fixture setup: this deployment must host the embedded qrdb node")
 	assert.NotNil(t, server.webauthnService)
+
+	// #2541: the WebAuthn user store runs as the node's service principal, so
+	// building the service registers the principal's users grant.
+	ctx, err := server.qrdbNode.ServiceContext(context.Background())
+	require.NoError(t, err)
+	_, err = server.qrdbClient.Users().GetUserByEmail(ctx, "system", "nobody@example.com")
+	require.Error(t, err)
+	var denied *qrdbsdk.PermissionDeniedError
+	assert.NotErrorAs(t, err, &denied, "the service principal may read users once WebAuthn is built")
 }
 
 // ============================================================================
