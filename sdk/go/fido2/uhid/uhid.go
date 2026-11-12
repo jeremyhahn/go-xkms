@@ -23,6 +23,7 @@ import (
 const (
 	AuthenticatorDeviceName = uhid.AuthenticatorDeviceName
 	HIDReportSize           = uhid.HIDReportSize
+	MaxReportDescriptorSize = uhid.MaxReportDescriptorSize
 	ProductIDVirtualFIDO    = uhid.ProductIDVirtualFIDO
 	UHIDDevicePath          = uhid.UHIDDevicePath
 	VendorIDVirtualFIDO     = uhid.VendorIDVirtualFIDO
@@ -37,7 +38,11 @@ var (
 	DefaultCreateConfig      = uhid.DefaultCreateConfig
 	FIDO2HIDReportDescriptor = uhid.FIDO2HIDReportDescriptor
 	Open                     = uhid.Open
+	SerializeCreate2Request  = uhid.SerializeCreate2Request
+	SerializeInput2Request   = uhid.SerializeInput2Request
 
-	ErrDeviceNotOpen = uhid.ErrDeviceNotOpen
-	ErrTimeout       = uhid.ErrTimeout
+	ErrDeviceAlreadyCreated = uhid.ErrDeviceAlreadyCreated
+	ErrDeviceNotOpen        = uhid.ErrDeviceNotOpen
+	ErrInvalidPacket        = uhid.ErrInvalidPacket
+	ErrTimeout              = uhid.ErrTimeout
 )
