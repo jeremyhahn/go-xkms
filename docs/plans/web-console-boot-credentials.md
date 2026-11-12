@@ -44,4 +44,16 @@ docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass (the rebuilt tracked sdk/ts/dist was restored, not committed).
+- sdk/ts/svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_boot_credentials.test.ts: pass, 6 tests.
+- web/app npm test (NODE_OPTIONS=--no-experimental-webstorage): pass, 51 files, 418 tests.
+- npm run check: 2 errors, both baseline (UsersView.svelte:121 and view2_users.test.ts:51, role/roles).
+- vite build: pass.
+- go test -race ./pkg/api/rest/ (codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: pass.
+- Simplify pass: nothing to remove.
+- The feat(web) view commit has the test(web) subject by mistake (no amend
+  allowed); the docs(web-console) commit says so.
