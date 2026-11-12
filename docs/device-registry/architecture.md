@@ -37,17 +37,17 @@ appraisal store's collections (`pkg/attestation/appraisal/store.go:198`): one
 qrdb entity type (`paired_devices` in database `devices`) whose ID is a hash
 of the tenant-scoped natural key.
 
-- `Pair` (`pkg/devicereg/registry.go:136`) refuses a nil device, a device with
+- `Pair` (`pkg/devicereg/registry.go:138`) refuses a nil device, a device with
   no identity key or already revoked, and an ID the tenant already holds,
   active or revoked (`ErrDeviceExists`). A revoked ID is never reused: a
   re-pair takes a new ID.
 - `Get`, `IsActive` - `ErrDeviceNotFound` for an ID the tenant does not hold.
-- `List` (`pkg/devicereg/registry.go:170`) - the tenant's devices, active and
+- `List` (`pkg/devicereg/registry.go:172`) - the tenant's devices, active and
   revoked, ordered by ID.
-- `Revoke` (`pkg/devicereg/registry.go:198`) - idempotent: the first
+- `Revoke` (`pkg/devicereg/registry.go:204`) - idempotent: the first
   revocation time is kept, the record is never deleted.
 
-Pair is atomic in the store: it creates the record with the DAO's `SaveIfAbsent` (the KV store's `PutIfAbsent`), so of two registries on one store (two go-xkms processes) pairing one ID exactly one wins, and a store without atomic writes is refused; Revoke is serialised within one `Registry`.
+Pair is atomic in the store: it creates the record with the DAO's `SaveIfAbsent` (the KV store's `PutIfAbsent`), so of two registries on one store (two go-xkms processes) pairing one ID exactly one wins, and a store without atomic writes is refused. Revoke is atomic in the store too: it writes with the DAO's `CompareAndSwap` against the record it read, so of two registries revoking one device exactly one writes and the first revocation time is kept; a lost swap re-reads and returns nil, a swap lost 8 times is a `StoreError` matching `ErrRevokeConflict`, and a store without atomic writes is refused.
 
 ## Tenant scoping
 
