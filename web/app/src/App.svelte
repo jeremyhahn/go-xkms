@@ -20,6 +20,7 @@
   import OidcCredentialsView from "$views/OidcCredentialsView.svelte";
   import PlatformView from "$views/PlatformView.svelte";
   import PivView from "$views/PivView.svelte";
+  import PivSlotsView from "$views/PivSlotsView.svelte";
   import CaView from "$views/CaView.svelte";
   import SshView from "$views/SshView.svelte";
   import FrostView from "$views/FrostView.svelte";
@@ -58,6 +59,7 @@
       <PinView />
     {:else if routerStore.name === "piv"}
       <PivView />
+    {:else if routerStore.name === "pivSlots"}<PivSlotsView />
     {:else if routerStore.name === "ssh"}
       <SshView />
     {:else if routerStore.name === "tpmPolicies"}
