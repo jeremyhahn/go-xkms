@@ -43,3 +43,8 @@ The go-qrdb bump, docs/SPEC.md, an sdk/go typed error, the GUI Svelte view.
 ## Results
 
 Step 0 (merge of 47d09162b) not done: the object is absent from the lane object store and origin has no refs to fetch from; the coordinator merges it.
+
+- go build ./...: pass.
+- go test -run Tenant ./pkg/xkms/ (codec tags): pass.
+- go test ./pkg/api/rest/ (codec tags): pass.
+- make lint: pass (third run; the first two were cut by the 540 s timeout, warm cache finished it).
