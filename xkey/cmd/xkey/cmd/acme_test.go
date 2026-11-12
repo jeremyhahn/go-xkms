@@ -32,6 +32,7 @@ import (
 	"testing"
 	"time"
 
+	sdkacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	"golang.org/x/crypto/acme"
 )
 
@@ -42,6 +43,11 @@ type fakeACMEClient struct {
 	deactivated   bool
 	revokedCert   *x509.Certificate
 	revokedReason acme.CRLReasonCode
+	renewOld      *x509.Certificate
+	renewReq      *sdkacme.ACMECertificateRequest
+	renewed       *x509.Certificate
+	enrollConfig  *sdkacme.ACMEEnrollmentConfig
+	enrollResult  *sdkacme.ACMEEnrollmentResult
 	closed        bool
 	err           error
 }
@@ -71,6 +77,17 @@ func (f *fakeACMEClient) RevokeCertificate(_ context.Context, cert *x509.Certifi
 	f.revokedCert = cert
 	f.revokedReason = reason
 	return f.err
+}
+
+func (f *fakeACMEClient) RenewCertificate(_ context.Context, oldCert *x509.Certificate, req *sdkacme.ACMECertificateRequest) (*x509.Certificate, error) {
+	f.renewOld = oldCert
+	f.renewReq = req
+	return f.renewed, f.err
+}
+
+func (f *fakeACMEClient) EnrollDevice(_ context.Context, config *sdkacme.ACMEEnrollmentConfig) (*sdkacme.ACMEEnrollmentResult, error) {
+	f.enrollConfig = config
+	return f.enrollResult, f.err
 }
 
 func (f *fakeACMEClient) Close() error {
