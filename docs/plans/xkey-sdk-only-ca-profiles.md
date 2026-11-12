@@ -36,4 +36,9 @@ slice), non-test xkey files, pkg/, web/desktop, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/go go test -race (TestReexport_ProfileErrors, TestDefaultProfileRegistry_*): pass
+- sdk/go go build ./...: pass
+- xkey go build ./... and both go vet runs (with and without ble): pass
+- xkey go test -race profile-name tests: pass
+- xkey go test -race -tags ble TestEnrollmentCertProfile*: pass
+- make lint: pass (0 issues on every module and tag set)
