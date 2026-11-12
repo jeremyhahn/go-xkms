@@ -38,7 +38,17 @@ cancel, owner_auth, rejection), vTPM start/stop, list and mode load errors.
 ## Checks
 
 sdk/ts build, web/app npm ci, the new vitest file, npm test, npm run check,
-vite build, pkg/api/rest -race, sdk/go build, make lint. Results to follow.
+vite build, pkg/api/rest -race, sdk/go build, make lint. Results:
+
+- sdk/ts npm ci + build: pass (rewrites tracked sdk/ts/dist; restored, not committed).
+- web/app npm ci: pass.
+- vitest test/view3_tenant_tpm.test.ts: 11/11 pass.
+- npm test: 409 pass, 5 fail + 2 suites, all baseline (theme localStorage under Node 26; view1_login/view2_register svelte-auth import).
+- npm run check: 8 errors, all baseline (sdk/ts/svelte-auth module resolution; UsersView.svelte:121 role/roles and its test); none in this slice.
+- vite build: fails on main's baseline (svelte-auth cannot resolve @go-xkms/sdk) until sdk/ts/svelte-auth has npm ci; with it, pass.
+- go test -race ./pkg/api/rest/: pass.
+- sdk/go go build ./...: pass.
+- make lint: pass.
 
 ## Follow-up
 
