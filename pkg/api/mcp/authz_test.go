@@ -755,6 +755,15 @@ var goldenMethodPermissions = map[string]string{
 	"attestation.signing_key.delete":  "attestation_signing_keys:bind",
 	"attestation.signing_key.resolve": "attestation_signing_keys:get",
 
+	"attestation.endorsement.put":         "attestation_endorsements:create",
+	"attestation.endorsement.list":        "attestation_endorsements:list",
+	"attestation.endorsement.delete":      "attestation_endorsements:delete",
+	"attestation.reference_values.put":    "attestation_reference_values:create",
+	"attestation.reference_values.get":    "attestation_reference_values:get",
+	"attestation.reference_values.list":   "attestation_reference_values:list",
+	"attestation.reference_values.delete": "attestation_reference_values:delete",
+	"attestation.appraise":                "attestation_verifier:verify",
+
 	// Attested-caller evidence.
 	"peer.attestation.challenge": "peer_attestation:challenge",
 	"peer.attestation.submit":    "peer_attestation:submit",
