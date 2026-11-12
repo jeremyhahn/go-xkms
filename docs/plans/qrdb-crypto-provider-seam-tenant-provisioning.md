@@ -60,4 +60,5 @@ the go-qrdb pin moves past v0.51.
 
 ## Results
 
-Results to follow.
+- `go test -count=1 -race -timeout 75m -tags "codec_cbor codec_json codec_msgpack" ./pkg/server/...`: pass (pkg/server 528 s; credentials, loopback pass). The run hits go test's default 10m bound under -race, so it needs the Makefile's UNIT_TEST_TIMEOUT.
+- `make lint`: pass (0 issues, every module and tag set).
