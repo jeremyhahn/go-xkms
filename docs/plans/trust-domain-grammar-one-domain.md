@@ -39,7 +39,8 @@ So xkms node SANs (`spiffe://xkms.cluster/node/...`) and qrdb's peer pin
    the pkg/server raft domain both equal `embeddednode.TrustDomain(cfg)`.
 2. Fix commit: set `qcfg.Auth.ClusterTrustDomain = TrustDomain(cfg)`; the ACME
    hook and `buildClusterCAOptions` call `embeddednode.TrustDomain(cfg)`; the
-   duplicate constants go.
+   duplicate constants go. Removing `defaultRaftTrustDomain` also touches its
+   user `pkg/server/qrdb_node_cluster_acme.go` and that file's test.
 3. Doc commit: `docs/workload-identity/engineering.md` Seams names the one
    source and the qrdb field.
 
