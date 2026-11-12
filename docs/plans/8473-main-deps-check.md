@@ -10,3 +10,9 @@
   - make deps-check (after bump): FAIL, only github.com/jeremyhahn/go-truststrap v0.6.0-alpha -> v0.7.1-alpha (root, sdk/go). Outside cause: v0.7.1-alpha needs go-enclave v0.10.0-alpha (undefined: enclave.ByteAccess under the v0.8.0-alpha replace), and go-enclave is held at v0.8.0-alpha for go-qrdb v0.51.0-alpha; the qrdb/enclave bump (#1995) is frozen.
   - make vuln (after bump, mcp-go v1.5.0): FAIL, GO-2026-6911 unchanged.
   - make modverify (after bump): PASS. make lint: PASS.
+
+## m2616 (11-12)
+
+- make deps-check (887b2c450, go-jose v4.1.9, x/oauth2 v0.38.0, x/sys v0.50.0, kin-openapi v0.153.0, sqlite v1.62.0, go-truststrap held in go.mod and sdk/go/go.mod): PASS.
+- go build ./... with -mod=readonly in root, xkey, sdk/go, web/desktop: PASS.
+- make lint: FAIL, staticcheck SA1019: go-jose v4.1.9 deprecates ParseSigned (pkg/acme/server/handlers/key_change.go:100, service.go:1249, tenant_auth.go:70) and ParseEncrypted (pkg/encoding/jwe/jwe.go:373). Needs a .go change (ParseSignedJSON/Compact, ParseEncryptedJSON/Compact) or a go-jose hold at v4.1.6.
