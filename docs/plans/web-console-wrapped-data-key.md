@@ -46,4 +46,14 @@ KeysView, Go code, sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass (tracked sdk/ts/dist restored after).
+- sdk/ts/svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_wrapped_data_key.test.ts: pass (5 tests).
+- vitest whole web/app suite (NODE_OPTIONS=--no-experimental-webstorage): pass (51 files, 417 tests).
+- svelte-check: pass (0 errors, 0 warnings).
+- vite build to /tmp/sujh-dist: pass.
+- go test -race pkg/api/rest (codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: pass (0 issues on every module and tag set).
+- nav.ts +1, router.svelte.ts +2, App.svelte +2 lines against main, none removed.
