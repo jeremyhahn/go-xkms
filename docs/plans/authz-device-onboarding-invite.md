@@ -38,4 +38,7 @@ v0.51.0-alpha and v0.58.2-alpha.
 
 ## Results
 
-Results to follow.
+- Test commit: the users:create-only case failed (no error); the other three passed.
+- After the fix: `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/xkms/... ./pkg/api/rest/... ./pkg/api/mcp/... ./pkg/api/grpc/...` passed.
+- `make lint` passed (0 issues on every module and tag set).
+- No other invitation-minting path: `createInvite` (pkg/xkms/servicer_invite.go) has one caller, `CreateUser`.
