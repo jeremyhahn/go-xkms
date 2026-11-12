@@ -40,6 +40,7 @@ resource:action pair as each REST route, so `restOnlyPermissions` is empty again
 
 - go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/api/mcp/... ./pkg/api/transport/mcp/... ./pkg/api/transport/quic/... ./pkg/apimodule/...: pass (4 packages ok).
 - cd sdk/go && go build ./...: pass.
+- make lint: pass (0 issues on every tag set and module).
 
 Beyond the file map, three MCP test tables had to name the new tools:
 `goldenMethodPermissions` and the resource list of
