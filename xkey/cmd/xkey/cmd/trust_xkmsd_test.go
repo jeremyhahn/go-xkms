@@ -23,6 +23,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	sdkxkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	sdktruststore "github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 )
 
@@ -159,4 +163,139 @@ func TestTrustListXKMSd_NotConfigured(t *testing.T) {
 
 	require.Error(t, runTrustList(cmd, nil))
 	require.Empty(t, buf.String())
+}
+
+// newTrustAddTestCommand returns a command carrying the trust add flags,
+// writing its output to buf.
+func newTrustAddTestCommand(t *testing.T, buf *bytes.Buffer, purpose, source string) *cobra.Command {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(buf)
+	cmd.Flags().String("purpose", "", "")
+	cmd.Flags().String("source", "", "")
+	if purpose != "" {
+		require.NoError(t, cmd.Flags().Set("purpose", purpose))
+	}
+	if source != "" {
+		require.NoError(t, cmd.Flags().Set("source", source))
+	}
+	return cmd
+}
+
+// writeTrustPEMFile writes a fresh self-signed root to a temp file and
+// returns its path and fingerprint.
+func writeTrustPEMFile(t *testing.T, cn string) (string, string) {
+	t.Helper()
+
+	pemData := selfSignedTrustPEM(t, cn)
+	path := filepath.Join(t.TempDir(), "root.pem")
+	require.NoError(t, os.WriteFile(path, pemData, 0o600))
+	return path, trustPEMFingerprint(t, pemData)
+}
+
+// getServerTrustRoot fetches a root from the running xkmsd.
+func getServerTrustRoot(t *testing.T, fingerprint string) (*transport.TrustRoot, error) {
+	t.Helper()
+
+	client, err := connectXKMSdClient(&cobra.Command{})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, client.Close()) }()
+	return client.TrustRootGet(context.Background(), &transport.TrustRootRequest{Fingerprint: fingerprint})
+}
+
+// requireLocalTrustStoreUntouched checks the local store holds only the
+// root isolateLocalTrustStore seeded.
+func requireLocalTrustStoreUntouched(t *testing.T) {
+	t.Helper()
+
+	store, err := openTrustStore()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+	certs, err := store.Certificates()
+	require.NoError(t, err)
+	require.Len(t, certs, 1)
+}
+
+func TestTrustAddXKMSd_ImportsToServer(t *testing.T) {
+	startTrustXKMSd(t)
+	pemFile, fingerprint := writeTrustPEMFile(t, "strotc added root")
+
+	var buf bytes.Buffer
+	cmd := newTrustAddTestCommand(t, &buf, "user-ca", "test")
+	require.NoError(t, runTrustAdd(cmd, []string{pemFile}))
+	require.Contains(t, buf.String(), "Certificates added: 1")
+
+	root, err := getServerTrustRoot(t, fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, "user-ca", string(root.Purpose))
+	require.Equal(t, "test", root.Source)
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustAddXKMSd_SkipsExisting(t *testing.T) {
+	startTrustXKMSd(t)
+	pemFile, _ := writeTrustPEMFile(t, "strotc twice root")
+
+	var first bytes.Buffer
+	require.NoError(t, runTrustAdd(newTrustAddTestCommand(t, &first, "", ""), []string{pemFile}))
+	require.Contains(t, first.String(), "Certificates added: 1")
+
+	var second bytes.Buffer
+	require.NoError(t, runTrustAdd(newTrustAddTestCommand(t, &second, "", ""), []string{pemFile}))
+	require.Contains(t, second.String(), "Certificates skipped (already present): 1")
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustAddXKMSd_BadPurpose(t *testing.T) {
+	startTrustXKMSd(t)
+	pemFile, fingerprint := writeTrustPEMFile(t, "strotc bad purpose root")
+
+	var buf bytes.Buffer
+	err := runTrustAdd(newTrustAddTestCommand(t, &buf, "nope", ""), []string{pemFile})
+	require.ErrorIs(t, err, ErrTrustAddFailed)
+	require.Empty(t, buf.String())
+
+	_, err = getServerTrustRoot(t, fingerprint)
+	require.Error(t, err)
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustRemoveXKMSd_RemovesServerRoot(t *testing.T) {
+	fingerprint := startTrustXKMSd(t)
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, runTrustRemove(cmd, []string{fingerprint}))
+	require.Contains(t, buf.String(), "Certificate removed: "+fingerprint)
+
+	_, err := getServerTrustRoot(t, fingerprint)
+	require.Error(t, err)
+
+	err = runTrustRemove(cmd, []string{strings.Repeat("ab", 32)})
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTrustRemoveFailed)
+	require.Contains(t, err.Error(), "TrustRootRemove")
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustAddXKMSd_NotConfigured(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	isolateLocalTrustStore(t, "strotc local root")
+
+	svc := newTestXKMSService(t)
+	address, _ := startTestXKMSdService(t, svc)
+	xkmsdURL = address
+
+	pemFile, _ := writeTrustPEMFile(t, "strotc unconfigured root")
+
+	var buf bytes.Buffer
+	require.Error(t, runTrustAdd(newTrustAddTestCommand(t, &buf, "", ""), []string{pemFile}))
+	require.Empty(t, buf.String())
+
+	requireLocalTrustStoreUntouched(t)
 }
