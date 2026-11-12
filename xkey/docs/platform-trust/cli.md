@@ -185,6 +185,14 @@ the guarantee that verification was providing — if an attestation is failing,
 the question is whether the right anchor is present, not whether this one can be
 made to count.
 
+**Against a server.** With an xkmsd endpoint configured, `classify` changes
+the server's trust-root store and never the local one. The server offers one
+reclassification, quarantine: `--purpose synced` calls `TrustRootQuarantine`
+and prints the purpose the server returns. Any other purpose is refused with
+`trust: classify failed` before any call is made; to give a server root
+another purpose, `xkey trust remove` it and `xkey trust add` it again with
+`--purpose`. There is no fallback to the local store.
+
 ## `xkey trust install` / `uninstall <fingerprint>`
 
 ```
