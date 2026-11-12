@@ -754,6 +754,9 @@ var goldenMethodPermissions = map[string]string{
 	"attestation.signing_key.list":    "attestation_signing_keys:list",
 	"attestation.signing_key.delete":  "attestation_signing_keys:bind",
 	"attestation.signing_key.resolve": "attestation_signing_keys:get",
+	"attestation.verdict.list":        "attestation_verdicts:list",
+	"attestation.verdict.latest":      "attestation_verdicts:get",
+	"attestation.verdict.reattest":    "attestation_verdicts:create",
 
 	// Attested-caller evidence.
 	"peer.attestation.challenge": "peer_attestation:challenge",
@@ -861,6 +864,7 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceTPMPolicy:              {},
 		auth.ResourceOIDCCredentials:        {},
 		auth.ResourceAttestationSigningKeys: {},
+		auth.ResourceAttestationVerdicts:    {},
 		auth.ResourceTrustRoots:             {},
 		auth.ResourcePeerAttestation:        {},
 		auth.ResourcePIN:                    {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},

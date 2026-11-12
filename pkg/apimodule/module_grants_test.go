@@ -45,15 +45,7 @@ import (
 // and MCP collapsed both operations into the coarser keys:write. All three
 // transports now gate them on keys:update, so it is no longer REST-only —
 // grpcAndMCPPermissionPairs below finds it too.
-//
-// attestation_verdicts:list, :get and :create (go-xkms#2088) are REST-only
-// until the gRPC and MCP slices of the continuous attestation row serve the
-// same verbs; module_scopes.go scopes them. Remove them here when they land.
-var restOnlyPermissions = map[string]struct{}{
-	"attestation_verdicts:list":   {},
-	"attestation_verdicts:get":    {},
-	"attestation_verdicts:create": {},
-}
+var restOnlyPermissions = map[string]struct{}{}
 
 // restPermissionPairs returns every resource:action pair the REST route table
 // gates on, sorted and de-duplicated.
