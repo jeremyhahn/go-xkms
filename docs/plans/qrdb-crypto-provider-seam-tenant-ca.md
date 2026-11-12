@@ -40,6 +40,18 @@ signature goes through the tenant's xkms key and no software Key B exists.
    with the public key xkms reports.
 2. Feat commit: the factory and the node option.
 
+## Status
+
+- Done: the factory, `EnsureTenant` (P-256 key plus a self-signed CA
+  certificate, OU = tenant, under the tenant scope) and the node option. The
+  factory reads the server's default backend at each call, without blocking on
+  the server lock, so no `Server` field or later bind is needed.
+- Open, next slice: nothing calls `EnsureTenant` in production yet. Once the
+  factory is wired, go-qrdb generates no software Key B, so a tenant has a
+  login CA only after it is provisioned. The tenant create path (and a boot
+  pass over existing tenants) must call `EnsureTenant`.
+- The head signer waits for the go-qrdb v0.58.2-alpha pin (frozen).
+
 ## Out of scope
 
 - The verifiable-log head signer (`WithHeadSignerProvider`) needs the go-qrdb
