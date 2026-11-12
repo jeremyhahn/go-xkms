@@ -1,14 +1,36 @@
 # Attestation Verifier — CLI
 
-> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Feature: `attestation-verifier` · Module: `go-xkms` · Last verified: 2026-11-12
 
-No `xkmsctl` surface. `pkg/attestation`'s `Verifier`/`VerifyInvariants` run
-server-side, automatically, whenever a CSR carries attestation fields
-(`AttestationFormat`/`AttestationChain`/`AttestationNonce`) — there is no
-`xkmsctl` verb that invokes verification directly, and no flag that changes
-how it runs. Verified: no reference to `attestation.Verifier`,
-`attestation.NewVerifier`, `attestation.VerifyInvariants` or
-`SetAttestationVerifiers` exists anywhere under `cmd/xkmsctl/`.
+## `xkmsctl attestation endorsement`
+
+The tenant's endorsement store, the trust anchors the Verifier appraises
+evidence against, is managed with three verbs in
+`cmd/xkmsctl/attestation_endorsement.go`. Each calls the sdk/go `Client`
+verb of the same name through `runClientCall`; `-o json` prints the
+response as JSON. The CLI does not parse the PEM: xkmsd validates it.
+
+| Verb | Usage | Permission |
+|---|---|---|
+| put | `xkmsctl attestation endorsement put <name> --kind ak-root\|reference-signer (--cert <pem file> \| --public-key <pem file>)` | `attestation_endorsements:create` |
+| list | `xkmsctl attestation endorsement list [--kind ak-root\|reference-signer]` | `attestation_endorsements:list` |
+| delete | `xkmsctl attestation endorsement delete <name>` | `attestation_endorsements:delete` |
+
+- `--kind` is required on `put`: `ak-root` anchors attestation-key
+  certificates, `reference-signer` anchors the keys that sign CoRIM
+  reference values. Any other kind is refused before a call.
+- `put` takes exactly one of `--cert` and `--public-key`; both, neither or
+  an unreadable file is refused before a call.
+- Failures carry `ErrPutAttestationEndorsementFailed`,
+  `ErrListAttestationEndorsementsFailed` or
+  `ErrDeleteAttestationEndorsementFailed` (`cmd/xkmsctl/errors.go`).
+
+Reference values and the appraise verbs have no `xkmsctl` surface yet.
+
+`pkg/attestation`'s `Verifier`/`VerifyInvariants` still run server-side,
+automatically, whenever a CSR carries attestation fields
+(`AttestationFormat`/`AttestationChain`/`AttestationNonce`); no `xkmsctl`
+verb invokes that verification directly.
 
 xkey's verbs reach the same `Verifier` through the SDK aliases in
 `sdk/go/attestation_verifier.go` (`NewAttestationVerifier` with
