@@ -58,3 +58,4 @@ sdk/ts, xkey, web/desktop, docs/SPEC.md.
 - `vite build`: pass.
 - `go test -race ./pkg/api/rest/` (codec tags): pass.
 - sdk/go `go build ./...`: pass.
+- `make lint` (root): pass, 0 issues.
