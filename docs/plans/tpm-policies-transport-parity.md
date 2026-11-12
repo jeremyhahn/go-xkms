@@ -26,7 +26,7 @@ server tests, and fixes any transport that drops a field.
 | pkg/api/transport/mcp | pass | pass | pass |
 | pkg/api/transport/quic | pass | pass | pass |
 | pkg/api/grpc (server) | pass | pass | pass (pkg/server/tpm_policy_simulator_test.go, simulator) |
-| pkg/api/mcp (server) | pass | pass | open (see below) |
+| pkg/api/mcp (server) | pass | pass | pass (pkg/server/tpm_policy_simulator_test.go, simulator) |
 
 Cell values: pass (the test passed as written), fixed (a fix commit was
 needed after the test commit), or open (not tested in this slice).
@@ -50,8 +50,11 @@ mapping and is left as is.
 The gRPC server verify cell is proved over the TPM simulator in
 pkg/server/tpm_policy_simulator_test.go (lane stpmpb, plan
 docs/plans/tpm-policies-verify-reference.md). The MCP server verify cell
-stays open: pkg/api/mcp's tests have no simulator-backed XKMSService, and
-MCP serves the same XKMSService call that test proves.
+is closed in the same test by lane stpmpd (plan
+docs/plans/tpm-policies-verify-mcp-cli.md): mcp.NewServer on the
+simulator-backed XKMSService, InvokeMethod "tpm.policy.update" and
+"tpm.policy.verify", the forged manifest refused as a KeyOpError and the
+Reference digest read back through JSON.
 
 ## Out of scope
 

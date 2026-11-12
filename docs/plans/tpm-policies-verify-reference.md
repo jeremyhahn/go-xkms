@@ -32,11 +32,10 @@ updated from a signed reference manifest is reported with its Reference by
 If a Reference is dropped on a path, the fix goes in its own commit after the
 failing test commit.
 
-## MCP server verify cell: stays open
+## MCP server verify cell
 
-pkg/api/mcp's tests have no simulator-backed XKMSService, and the MCP tool
-serves the same `XKMSService.TPMPolicyVerify` call this slice proves; the
-MCP mapping of the Reference is covered by stpmpa's client-side parity tests.
+Closed by lane stpmpd over the TPM simulator in the same test; see
+docs/plans/tpm-policies-verify-mcp-cli.md.
 
 ## Out of scope
 
