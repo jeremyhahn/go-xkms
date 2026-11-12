@@ -6,6 +6,7 @@
   import ToastContainer from "$components/ToastContainer.svelte";
   import PlaceholderView from "$components/PlaceholderView.svelte";
   import LoginView from "$views/LoginView.svelte";
+  import UserCertBindingView from "$views/UserCertBindingView.svelte";
   import RegisterView from "$views/RegisterView.svelte";
   import DashboardView from "$views/DashboardView.svelte";
   import BackendsView from "$views/BackendsView.svelte";
@@ -58,6 +59,7 @@
       <PinView />
     {:else if routerStore.name === "piv"}
       <PivView />
+    {:else if routerStore.name === "userCertBinding"}<UserCertBindingView />
     {:else if routerStore.name === "ssh"}
       <SshView />
     {:else if routerStore.name === "tpmPolicies"}

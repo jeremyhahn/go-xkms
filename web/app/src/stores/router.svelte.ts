@@ -18,6 +18,7 @@
  */
 
 export type RouteName =
+  | "userCertBinding"
   | "dashboard"
   | "login"
   | "register"
@@ -51,6 +52,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/dashboard": "dashboard",
   "/login": "login",
   "/register": "register",
+  "/users/cert-bindings": "userCertBinding",
   "/backends": "backends",
   "/keys": "keys",
   "/certs": "certificates",
