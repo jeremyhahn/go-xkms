@@ -72,6 +72,7 @@ export const navSections: NavSection[] = [
     heading: "Identity & Access",
     items: [
       { route: "users", path: "/users", label: "Users", icon: "Users", requires: { resource: "users", action: "list" } },
+      { route: "userDetail", path: "/users/detail", label: "User Detail", icon: "Users", requires: { resource: "users", action: "read" } },
       { route: "tenants", path: "/tenants", label: "Tenants", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "list" } },
     ],
   },
