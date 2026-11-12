@@ -29,6 +29,7 @@ export type RouteName =
   | "pin"
   | "piv"
   | "ssh"
+  | "sshTrust"
   | "passwords"
   | "oidcCredentials"
   | "platform"
@@ -60,6 +61,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/pin": "pin",
   "/piv": "piv",
   "/ssh": "ssh",
+  "/ssh/trust": "sshTrust",
   "/passwords": "passwords",
   "/oidc/credentials": "oidcCredentials",
   "/platform": "platform",
