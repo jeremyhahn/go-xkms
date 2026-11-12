@@ -118,7 +118,12 @@ leaf's 273 after the nonce check (`verify.go:250`, `verifyApplicationReference`
 `:282`) and compare its 32 bytes in constant time. A differing or missing claim
 is `ErrApplicationEvidenceMismatch`, a claim not of the shape
 `ErrMeasurementsShape`, and a reference that is not 32 bytes
-`ErrInvalidApplicationReference`. Nil checks nothing.
+`ErrInvalidApplicationReference`. Nil checks nothing. The AVR backend sets it
+from the operator's `attestation.application_reference`
+(`AttestationConfig.ApplicationReference`, `pkg/backend/avr/attestation.go:61`):
+`initAttestation` refuses one that is neither empty nor 32 bytes with
+`ErrInvalidApplicationReference` (`pkg/backend/avr/backend.go:196`), and
+`checkAliasCertificate` passes it to `dice.Verify` (`attestation.go:223`).
 
 The ACME client mints the request for a `dice` device:
 `AttestedKey.Format` selects it (`pkg/acme/client/tpm.go`), and

@@ -57,4 +57,9 @@ pkg/attestation/verifier.go, the device registry, sdk/go, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- Field: `AttestationConfig.ApplicationReference` (pkg/backend/avr/attestation.go:61),
+  `[]byte` as in `dice.VerifyOptions`.
+- Refusal at NewBackend: pkg/backend/avr/backend.go:196; reaches dice.Verify at
+  pkg/backend/avr/attestation.go:223.
+- Left: the acme-issuance lane's device-attest-01 finalize match, and a
+  reference held by the device registry rather than one per backend config.
