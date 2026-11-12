@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	waprotocol "github.com/go-webauthn/webauthn/protocol"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -74,9 +75,11 @@ func (f *webauthnSessionFixture) enroll(t *testing.T, email string) (webauthn.Us
 	ctx := context.Background()
 	options, sessionID, err := f.svc.BeginRegistration(ctx, email, email)
 	require.NoError(t, err)
+	handle, ok := options.Response.User.ID.(waprotocol.URLEncodedBase64)
+	require.True(t, ok)
+	token := f.attest(t, options.Response.Challenge, handle, sessionID)
 	user, err := f.svc.GetUserByEmail(ctx, email)
 	require.NoError(t, err)
-	token := f.attest(t, options.Response.Challenge, user.WebAuthnID(), sessionID)
 	return user, token
 }
 

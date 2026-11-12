@@ -93,6 +93,9 @@ func (s *MemorySessionStore) clock() time.Time {
 type sessionEntry struct {
 	data      *webauthn.SessionData
 	createdAt time.Time
+	// pending is the account a public registration ceremony creates at
+	// finish; nil for every other ceremony.
+	pending *PendingRegistration
 }
 
 // NewMemorySessionStore creates a new in-memory session store.
@@ -121,6 +124,48 @@ func NewMemorySessionStoreWithTTL(ttl time.Duration, opts ...MemorySessionStoreO
 // *SessionLimitError when the store holds its maximum number of live
 // sessions.
 func (s *MemorySessionStore) Save(ctx context.Context, data *webauthn.SessionData) (string, error) {
+	return s.SaveRegistration(ctx, data, nil)
+}
+
+// Byte limits of a pending registration. An anonymous caller chooses both
+// fields and a store keeps them until the session expires, while the session
+// cap counts entries, not bytes: the limits bound what one entry can hold.
+const (
+	// MaxRegistrationEmailBytes is the longest email a pending registration
+	// carries: the 254-byte maximum of a deliverable address.
+	MaxRegistrationEmailBytes = 254
+
+	// MaxRegistrationDisplayNameBytes is the longest display name a pending
+	// registration carries, unless the display name is the email itself.
+	MaxRegistrationDisplayNameBytes = 64
+)
+
+// Validate refuses a pending registration whose email or display name
+// exceeds its byte limit with an error that wraps ErrInvalidRequest. A
+// display name equal to the email is the fallback for a request without one
+// and is bounded by the email limit alone. A nil pending registration is
+// valid: the session carries none.
+func (p *PendingRegistration) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if len(p.Email) > MaxRegistrationEmailBytes {
+		return NewError("email exceeds 254 bytes", ErrInvalidRequest)
+	}
+	if p.DisplayName != p.Email && len(p.DisplayName) > MaxRegistrationDisplayNameBytes {
+		return NewError("display name exceeds 64 bytes", ErrInvalidRequest)
+	}
+	return nil
+}
+
+// SaveRegistration is Save for a public registration ceremony: the
+// pending registration lives and expires with the session. It refuses a
+// pending registration that fails Validate before it saves anything.
+func (s *MemorySessionStore) SaveRegistration(ctx context.Context, data *webauthn.SessionData, pending *PendingRegistration) (string, error) {
+	if err := pending.Validate(); err != nil {
+		return "", err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -141,6 +186,7 @@ func (s *MemorySessionStore) Save(ctx context.Context, data *webauthn.SessionDat
 	s.sessions[sessionID] = &sessionEntry{
 		data:      data,
 		createdAt: s.clock(),
+		pending:   pending,
 	}
 
 	return sessionID, nil
@@ -172,20 +218,27 @@ func (s *MemorySessionStore) Get(ctx context.Context, sessionID string) (*webaut
 // An expired session is consumed as well: leaving it behind would let a
 // caller retry it, and it is worthless either way.
 func (s *MemorySessionStore) Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error) {
+	data, _, err := s.TakeRegistration(ctx, sessionID)
+	return data, err
+}
+
+// TakeRegistration is Take that also returns the PendingRegistration
+// SaveRegistration stored with the session (nil for any other session).
+func (s *MemorySessionStore) TakeRegistration(ctx context.Context, sessionID string) (*webauthn.SessionData, *PendingRegistration, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	entry, ok := s.sessions[sessionID]
 	if !ok {
-		return nil, ErrSessionNotFound
+		return nil, nil, ErrSessionNotFound
 	}
 	delete(s.sessions, sessionID)
 
 	if s.clock().Sub(entry.createdAt) > s.ttl {
-		return nil, ErrSessionExpired
+		return nil, nil, ErrSessionExpired
 	}
 
-	return entry.data, nil
+	return entry.data, entry.pending, nil
 }
 
 // Delete removes session data by its ID.

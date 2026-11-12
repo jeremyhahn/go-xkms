@@ -14,8 +14,12 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
@@ -51,6 +55,12 @@ func (s *Server) initializeTokenIssuer() error {
 	}
 
 	accessTTL, refreshTTL := s.sessionTTLs()
+	var callContext func(context.Context) (context.Context, error)
+	var userLookup rest.RefreshUserLookup
+	if s.qrdbNode != nil {
+		callContext = systemServiceContext(s.qrdbNode)
+		userLookup = nodeUsers{node: s.qrdbNode}
+	}
 
 	issuer, err := rest.BuildTokenIssuer(s.ctx, rest.TokenIssuerParams{
 		Backend:      backend,
@@ -61,6 +71,8 @@ func (s *Server) initializeTokenIssuer() error {
 		AccessTTL:    accessTTL,
 		RefreshTTL:   refreshTTL,
 		QRDBClient:   s.qrdbClient,
+		CallContext:  callContext,
+		UserLookup:   userLookup,
 		Logger:       s.logger,
 		Retry:        retryNotLeader,
 	})
@@ -93,6 +105,43 @@ func (s *Server) initializeTokenIssuer() error {
 		"access_ttl", accessTTL.String(),
 		"refresh_ttl", refreshTTL.String())
 	return nil
+}
+
+// nodeUsers answers the refresh user re-check from the embedded node's user
+// service, in the tenant the re-check binds on the context. The node's
+// service principal lives in the system tenant and may not read a holder in
+// another one, so the client path would refuse every non-system-tenant
+// refresh. The service is read per call: it is nil until the node has booted.
+// systemServiceContext binds the refresh store's qrdb calls to the node's
+// service principal in the system tenant, whatever tenant the incoming
+// context carries. Node.ServiceContext replaces only the identity: the
+// anonymous login stores records in the system tenant, while an
+// authenticated logout arrives with the holder's tenant bound, where the
+// principal's self-scope grants do not reach and the revoke was refused.
+func systemServiceContext(node *qrdbnode.Node) func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) {
+		return node.ServiceContext(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID))
+	}
+}
+
+type nodeUsers struct {
+	node *qrdbnode.Node
+}
+
+func (n nodeUsers) GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.GetUser(ctx, id)
+}
+
+func (n nodeUsers) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.GetUserByUsername(ctx, tenantID, username)
 }
 
 // sessionTTLs resolves the configured token lifetimes. Config validation

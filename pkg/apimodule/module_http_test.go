@@ -90,7 +90,21 @@ func TestRegisterHTTP_FullSurface(t *testing.T) {
 			wantOrder++
 		}
 	}
-	require.Len(t, *recs, wantOrder, "one registration per distinct route")
+	// Plus one public CORS preflight (OPTIONS) per distinct pattern that
+	// the table does not already serve for OPTIONS.
+	preflights := map[string]bool{}
+	for k := range want {
+		if _, has := want[key{"OPTIONS", k.p}]; !has {
+			preflights[k.p] = true
+		}
+	}
+	require.Len(t, *recs, wantOrder+len(preflights),
+		"one registration per distinct route and one preflight per pattern")
+	for _, rec := range *recs {
+		if rec.method == "OPTIONS" && preflights[rec.pattern] {
+			assert.True(t, rec.public, "OPTIONS %s must register public", rec.pattern)
+		}
+	}
 
 	got := map[key]captured{}
 	for _, rec := range *recs {

@@ -51,6 +51,17 @@ type SessionCleaner interface {
 
 // SessionStore manages temporary WebAuthn session data during registration
 // and authentication ceremonies. Sessions are typically short-lived (60-120 seconds).
+// SessionData is the go-webauthn ceremony session a SessionStore saves and takes.
+type SessionData = webauthn.SessionData
+
+// PendingRegistration is the account a public registration ceremony creates
+// at finish. The ceremony runs under the random user handle in the session's
+// UserID; a SessionStore persists this record alongside the session.
+type PendingRegistration struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+}
+
 type SessionStore interface {
 	// Save stores session data and returns a session ID.
 	// The session ID should be returned to the client for the finish operation.
@@ -80,6 +91,17 @@ type SessionStore interface {
 	// Implementations that cannot make this atomic must not be used: a
 	// non-atomic take is the defect this method exists to remove.
 	Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error)
+
+	// SaveRegistration stores the session of a public registration ceremony
+	// together with the account it will create at finish, and returns a
+	// session ID. The account does not exist until finish (ruling 417(2)), so
+	// the store must persist pending with the session.
+	SaveRegistration(ctx context.Context, data *webauthn.SessionData, pending *PendingRegistration) (string, error)
+
+	// TakeRegistration claims a session like Take and also returns the
+	// PendingRegistration saved with it, or nil when the session was saved
+	// with Save.
+	TakeRegistration(ctx context.Context, sessionID string) (*webauthn.SessionData, *PendingRegistration, error)
 
 	// Delete removes session data by its ID.
 	// Use it to discard a session that was never claimed; a completed ceremony

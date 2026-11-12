@@ -35,6 +35,15 @@ type WebAuthnService = webauthn.Service
 // WebAuthnServiceParams carries the dependencies for NewWebAuthnService.
 type WebAuthnServiceParams = webauthn.ServiceParams
 
+// WebAuthnSessionStore is the ceremony session store contract a custom store implements.
+type WebAuthnSessionStore = webauthn.SessionStore
+
+// WebAuthnPendingRegistration is the account a public registration creates at finish, saved with its session.
+type WebAuthnPendingRegistration = webauthn.PendingRegistration
+
+// WebAuthnSessionData is the ceremony session a custom session store saves and takes.
+type WebAuthnSessionData = webauthn.SessionData
+
 // NewWebAuthnService constructs the WebAuthn relying-party service.
 var NewWebAuthnService = webauthn.NewService
 
@@ -65,6 +74,14 @@ var NewWebAuthnQRDBUserStoreAdapter = webauthn.NewQRDBUserStoreAdapter
 // composers compare against this sentinel (errors.Is) to surface the
 // "no passkey enrolled" case distinctly from other login failures.
 var ErrWebAuthnNoCredentials = webauthn.ErrNoCredentials
+
+// ErrWebAuthnSessionNotFound is what a custom session store returns for a
+// missing or already taken session; the service answers it with 400 invalid_session.
+var ErrWebAuthnSessionNotFound = webauthn.ErrSessionNotFound
+
+// ErrWebAuthnSessionExpired is what a custom session store returns for an
+// expired session; the service answers it with session_expired.
+var ErrWebAuthnSessionExpired = webauthn.ErrSessionExpired
 
 // WebAuthnUser is the interface a WebAuthn account entity satisfies.
 type WebAuthnUser = webauthn.User

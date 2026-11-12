@@ -24,7 +24,7 @@ protocols:
   mcp: false
 
 logging:
-  level: "info"
+  level: "debug"
   format: "json"
 
 tls:

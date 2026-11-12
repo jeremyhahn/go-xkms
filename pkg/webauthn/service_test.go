@@ -166,13 +166,16 @@ func TestService_BeginRegistration(t *testing.T) {
 	assert.Equal(t, "test@example.com", options.Response.User.Name)
 	assert.Equal(t, "Test User", options.Response.User.DisplayName)
 
-	// A second BeginRegistration for the SAME email is refused: the public
+	// Begin creates no account (ruling 417(2)); once the account exists, a
+	// BeginRegistration for its email is refused: the public
 	// (unauthenticated) entry point never enrolls a credential for an
 	// account that already existed before the call, whether or not it holds
-	// one yet (go-xkms#1294 part B). Adding a credential to an existing
-	// account requires an authenticated session (BeginAddCredential) or, for
+	// one yet (go-xkms#1294 part B).
+	// Adding a credential to an existing account requires an authenticated session (BeginAddCredential) or, for
 	// a provisioned account's first credential, invite redemption
 	// (BeginInviteRegistration).
+	_, err = svc.users.Create(ctx, "test@example.com", "Test User")
+	require.NoError(t, err)
 	options2, sessionID2, err := svc.BeginRegistration(ctx, "test@example.com", "Test User Updated")
 	require.ErrorIs(t, err, ErrRegistrationRefused)
 	assert.Nil(t, options2)
@@ -207,7 +210,7 @@ func TestService_BeginLogin_NoCredentials(t *testing.T) {
 	svc := newTestService(t)
 
 	// Create user without credentials
-	_, _, err := svc.BeginRegistration(ctx, "test@example.com", "Test")
+	_, err := svc.users.Create(ctx, "test@example.com", "Test")
 	require.NoError(t, err)
 
 	user, err := svc.GetUserByEmail(ctx, "test@example.com")
@@ -234,7 +237,7 @@ func TestService_IsRegistered(t *testing.T) {
 	assert.False(t, registered)
 
 	// Create a user
-	_, _, err = svc.BeginRegistration(ctx, "test@example.com", "Test")
+	_, err = svc.users.Create(ctx, "test@example.com", "Test")
 	require.NoError(t, err)
 
 	user, err := svc.GetUserByEmail(ctx, "test@example.com")
@@ -256,7 +259,7 @@ func TestService_GetUser(t *testing.T) {
 	assert.True(t, IsUserNotFound(err))
 
 	// Create user
-	_, _, err = svc.BeginRegistration(ctx, "test@example.com", "Test User")
+	_, err = svc.users.Create(ctx, "test@example.com", "Test User")
 	require.NoError(t, err)
 
 	// Get by email
@@ -295,7 +298,7 @@ func TestService_DeleteUser(t *testing.T) {
 	svc := newTestService(t)
 
 	// Create user
-	_, _, err := svc.BeginRegistration(ctx, "test@example.com", "Test")
+	_, err := svc.users.Create(ctx, "test@example.com", "Test")
 	require.NoError(t, err)
 
 	user, err := svc.GetUserByEmail(ctx, "test@example.com")
@@ -372,7 +375,7 @@ func TestService_WithJWTGenerator(t *testing.T) {
 	require.NoError(t, err)
 
 	// Begin registration to create user
-	_, _, err = svc.BeginRegistration(ctx, "test@example.com", "Test")
+	_, err = svc.users.Create(ctx, "test@example.com", "Test")
 	require.NoError(t, err)
 
 	// User exists
@@ -381,18 +384,16 @@ func TestService_WithJWTGenerator(t *testing.T) {
 	assert.NotNil(t, user)
 }
 
-func TestService_BeginRegistration_RefusesSecondCallForSameEmail(t *testing.T) {
+func TestService_BeginRegistration_RefusesExistingAccount(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a service where user already exists
 	svc := newTestService(t)
-
-	// First registration
-	_, _, err := svc.BeginRegistration(ctx, "test@example.com", "Test User")
+	_, err := svc.users.Create(ctx, "test@example.com", "Test User")
 	require.NoError(t, err)
 
-	// A second call for the SAME email is refused (go-xkms#1294 part B): the
-	// account now exists, and the public entry point never enrolls a
+	// A call for an existing account's email is refused (go-xkms#1294 part
+	// B): the public entry point never enrolls a
 	// credential for an account that already existed before the call.
 	options, sessionID, err := svc.BeginRegistration(ctx, "test@example.com", "Test User 2")
 	require.ErrorIs(t, err, ErrRegistrationRefused)
@@ -405,7 +406,7 @@ func TestService_DeleteUser_WithCredentials(t *testing.T) {
 	svc := newTestService(t)
 
 	// Create user
-	_, _, err := svc.BeginRegistration(ctx, "test@example.com", "Test")
+	_, err := svc.users.Create(ctx, "test@example.com", "Test")
 	require.NoError(t, err)
 
 	user, err := svc.GetUserByEmail(ctx, "test@example.com")
@@ -453,7 +454,7 @@ func TestService_BeginLogin_WithCredentials(t *testing.T) {
 	svc := newTestService(t)
 
 	// Create user
-	_, _, err := svc.BeginRegistration(ctx, "test@example.com", "Test")
+	_, err := svc.users.Create(ctx, "test@example.com", "Test")
 	require.NoError(t, err)
 
 	user, err := svc.GetUserByEmail(ctx, "test@example.com")
@@ -483,7 +484,7 @@ func TestService_IsRegistered_WithCredentials(t *testing.T) {
 	svc := newTestService(t)
 
 	// Create user
-	_, _, err := svc.BeginRegistration(ctx, "test@example.com", "Test")
+	_, err := svc.users.Create(ctx, "test@example.com", "Test")
 	require.NoError(t, err)
 
 	user, err := svc.GetUserByEmail(ctx, "test@example.com")

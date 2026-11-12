@@ -16,6 +16,7 @@ package rest
 import (
 	"context"
 	"errors"
+	waprotocol "github.com/go-webauthn/webauthn/protocol"
 	"sync"
 	"testing"
 
@@ -80,10 +81,10 @@ func registerPasskey(t *testing.T, svc *webauthn.Service, rpID, origin, email st
 	require.NoError(t, err)
 	require.NotEmpty(t, sessionID)
 
-	user, err := svc.GetUserByEmail(ctx, email)
-	require.NoError(t, err)
+	handle, ok := options.Response.User.ID.(waprotocol.URLEncodedBase64)
+	require.True(t, ok)
 
-	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, user.WebAuthnID(), origin)
+	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, handle, origin)
 	require.NoError(t, err)
 
 	_, registered, err := svc.FinishRegistration(ctx, sessionID, attestation)
@@ -255,9 +256,9 @@ func TestBuildWebAuthnService_CredentialStoreDecoratorErrorPropagates(t *testing
 
 	options, sessionID, err := svc.BeginRegistration(ctx, "carol@example.com", "carol@example.com")
 	require.NoError(t, err)
-	user, err := svc.GetUserByEmail(ctx, "carol@example.com")
-	require.NoError(t, err)
-	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, user.WebAuthnID(), "https://example.com")
+	handle, ok := options.Response.User.ID.(waprotocol.URLEncodedBase64)
+	require.True(t, ok)
+	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, handle, "https://example.com")
 	require.NoError(t, err)
 
 	_, _, err = svc.FinishRegistration(ctx, sessionID, attestation)

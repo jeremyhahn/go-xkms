@@ -118,7 +118,7 @@ func TestPublicRegistrationDefault_RefusesUnknownUser(t *testing.T) {
 
 // TestPublicRegistrationAllowed_CreatesUnknownUser is the open case: an email
 // nobody has seen becomes an account.
-func TestPublicRegistrationAllowed_CreatesUnknownUser(t *testing.T) {
+func TestPublicRegistrationAllowed_BeginsForUnknownUser(t *testing.T) {
 	ctx := context.Background()
 	svc, users := newServiceWithPublicRegistration(t, true)
 
@@ -127,8 +127,9 @@ func TestPublicRegistrationAllowed_CreatesUnknownUser(t *testing.T) {
 	require.NotNil(t, options)
 	assert.NotEmpty(t, sessionID)
 
+	// The account is created at finish, not begin (ruling 417(2)).
 	_, err = users.GetByEmail(ctx, "newcomer@example.com")
-	assert.NoError(t, err, "open registration must have created the account")
+	assert.True(t, IsUserNotFound(err), "begin must not create the account, got %v", err)
 }
 
 // TestPublicRegistrationDisabled_RefusesUnknownUser is the closed case: the

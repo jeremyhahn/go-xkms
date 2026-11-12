@@ -323,6 +323,10 @@ func (s *takeFailingSessionStore) Take(context.Context, string) (*webauthn.Sessi
 	return nil, s.err
 }
 
+func (s *takeFailingSessionStore) TakeRegistration(context.Context, string) (*webauthn.SessionData, *PendingRegistration, error) {
+	return nil, nil, s.err
+}
+
 func TestFinishLogin_TakeFailureDoesNotAuthenticate(t *testing.T) {
 	ctx := context.Background()
 	f := newCeremonyFixture(t)

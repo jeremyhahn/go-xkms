@@ -38,18 +38,20 @@ func (f *securityFixture) enrollBrowserAccount(t *testing.T, email string) (*pkg
 	ctx := context.Background()
 	options, sessionID, err := f.h.service.BeginRegistration(ctx, email, email)
 	require.NoError(t, err)
-	user, err := f.users.GetByEmail(ctx, email)
-	require.NoError(t, err)
+	// The account is created at finish, under its own ID; the ceremony
+	// runs under a random per-registration handle (ruling 417(2)).
+	handle, ok := options.Response.User.ID.(protocol.URLEncodedBase64)
+	require.True(t, ok)
 
 	authenticator, err := pkgwebauthn.NewMockAuthenticator("example.com")
 	require.NoError(t, err)
-	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, user.WebAuthnID(), standingOrigin)
+	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, handle, standingOrigin)
 	require.NoError(t, err)
 	raw, err := json.Marshal(attestation.Raw)
 	require.NoError(t, err)
 	parsed, err := protocol.ParseCredentialCreationResponseBody(bytes.NewReader(raw))
 	require.NoError(t, err)
-	_, _, err = f.h.service.FinishRegistration(ctx, sessionID, parsed)
+	_, user, err := f.h.service.FinishRegistration(ctx, sessionID, parsed)
 	require.NoError(t, err)
 	return authenticator, user
 }

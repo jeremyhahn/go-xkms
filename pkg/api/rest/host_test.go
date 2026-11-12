@@ -16,6 +16,7 @@ package rest
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -27,9 +28,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -110,6 +115,90 @@ func TestBuildTokenIssuer_RetryPropagatesBackendFailure(t *testing.T) {
 	require.True(t, errors.As(err, &backendErr))
 	assert.ErrorIs(t, err, sentinel)
 	assert.Equal(t, 1, calls)
+}
+
+// newServiceNode starts an in-memory embedded qrdb node carrying xkmsd's
+// service principal, the node xkmsd's token issuer runs against.
+func newServiceNode(t *testing.T) *qrdbnode.Node {
+	t.Helper()
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil, serviceprincipal.Option())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, node.Close()) })
+	return node
+}
+
+// newNodeIssuerAndPasskeyUser builds the token issuer as xkmsd does against
+// an embedded node and creates a user, returning the identity a WebAuthn
+// passkey login mints for it.
+func newNodeIssuerAndPasskeyUser(t *testing.T) (*qrdbnode.Node, *token.Issuer, *qrdbtransport.User, *auth.Identity) {
+	t.Helper()
+	node := newServiceNode(t)
+	issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
+		Backend:     xkmsmocks.NewMockKeyStore(),
+		BackendName: "test",
+		QRDBClient:  node.Client(),
+		CallContext: node.ServiceContext,
+	})
+	require.NoError(t, err)
+
+	svcCtx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	u, err := node.Client().Users().CreateUser(svcCtx, &qrdbtransport.CreateUserRequest{
+		Username: "alice@example.com",
+		Email:    "alice@example.com",
+		Name:     "Alice",
+		TenantID: "system",
+	})
+	require.NoError(t, err)
+
+	id := &auth.Identity{
+		Subject:  base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(u.ID)),
+		TenantID: "system",
+		Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle},
+	}
+	return node, issuer, u, id
+}
+
+// TestBuildTokenIssuer_EmbeddedNode_RefreshOnAnonymousContext exchanges a
+// newly minted pair the way the public /api/v1/auth/refresh endpoint does:
+// on a context that carries no principal. The refresh user re-check must
+// still reach the embedded node, which refuses an unauthenticated caller.
+func TestBuildTokenIssuer_EmbeddedNode_RefreshOnAnonymousContext(t *testing.T) {
+	_, issuer, _, id := newNodeIssuerAndPasskeyUser(t)
+
+	pair, err := issuer.Mint(context.Background(), id)
+	require.NoError(t, err)
+
+	next, err := issuer.Refresh(context.Background(), pair.RefreshToken)
+	require.NoError(t, err)
+	assert.NotEmpty(t, next.AccessToken)
+	assert.NotEmpty(t, next.RefreshToken)
+	assert.NotEqual(t, pair.RefreshToken, next.RefreshToken)
+}
+
+// TestBuildTokenIssuer_EmbeddedNode_RefreshRefusesDeletedUser keeps the
+// account-standing re-check: a deleted user's refresh token is refused.
+func TestBuildTokenIssuer_EmbeddedNode_RefreshRefusesDeletedUser(t *testing.T) {
+	node, issuer, u, id := newNodeIssuerAndPasskeyUser(t)
+
+	pair, err := issuer.Mint(context.Background(), id)
+	require.NoError(t, err)
+
+	svcCtx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, node.Client().Users().DeleteUser(svcCtx, u.ID))
+
+	_, err = issuer.Refresh(context.Background(), pair.RefreshToken)
+	require.ErrorIs(t, err, auth.ErrRefreshSubjectNotFound)
 }
 
 // ---------------------------------------------------------------------------

@@ -71,6 +71,11 @@ type Credential struct {
 	// UserID is the user handle (WebAuthn user ID) this credential belongs to.
 	UserID []byte `json:"user_id"`
 
+	// UserHandle is the user handle the authenticator holds for this
+	// credential when it is not UserID: a public registration's random
+	// per-registration handle (ruling 417(2)). Empty means UserID.
+	UserHandle []byte `json:"user_handle,omitempty"`
+
 	// PublicKey is the credential's public key in COSE format.
 	PublicKey []byte `json:"public_key"`
 

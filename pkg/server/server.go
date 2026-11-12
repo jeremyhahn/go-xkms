@@ -1523,7 +1523,16 @@ func (s *Server) initializeWebAuthnService() error {
 
 	s.logger.Info("Initializing WebAuthn service...")
 
+	// The ceremonies' user lookups and writes reach the embedded node on a
+	// request context with no qrdb principal; run them as the node's
+	// service principal, as the datastore's calls do.
+	var callContext func(context.Context) (context.Context, error)
+	if s.qrdbNode != nil {
+		callContext = s.qrdbNode.ServiceContext
+	}
+
 	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
+		CallContext: callContext,
 		Config:      s.webauthnConfig,
 		QRDBClient:  ds.Client(),
 		DAOFactory:  ds.DAOFactory(),

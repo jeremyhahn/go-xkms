@@ -541,3 +541,114 @@ func TestUserHandleRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// ----- call context -----
+
+type principalKey struct{}
+
+var errNoPrincipal = errors.New("qrdb/auth: unauthenticated: no valid credentials provided")
+
+// principalUserClient refuses a call whose context carries no principal, as
+// go-qrdb's authentication chain does for an embedded node's bare context.
+type principalUserClient struct{ *fakeUserClient }
+
+func requirePrincipal(ctx context.Context) error {
+	if ctx.Value(principalKey{}) == nil {
+		return errNoPrincipal
+	}
+	return nil
+}
+
+func (c principalUserClient) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+	if err := requirePrincipal(ctx); err != nil {
+		return nil, err
+	}
+	return c.fakeUserClient.CreateUser(ctx, req)
+}
+
+func (c principalUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	if err := requirePrincipal(ctx); err != nil {
+		return nil, err
+	}
+	return c.fakeUserClient.GetUser(ctx, id)
+}
+
+func (c principalUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	if err := requirePrincipal(ctx); err != nil {
+		return nil, err
+	}
+	return c.fakeUserClient.GetUserByEmail(ctx, tenantID, email)
+}
+
+func (c principalUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	if err := requirePrincipal(ctx); err != nil {
+		return nil, err
+	}
+	return c.fakeUserClient.UpdateUser(ctx, req)
+}
+
+func (c principalUserClient) DeleteUser(ctx context.Context, id uint64) error {
+	if err := requirePrincipal(ctx); err != nil {
+		return err
+	}
+	return c.fakeUserClient.DeleteUser(ctx, id)
+}
+
+// TestQRDBAdapter_CallContext_BindsEveryUserCall proves the user store runs
+// each call into the qrdb user client on the context CallContext derives:
+// xkmsd's ceremonies reach the store on a request context with no qrdb
+// principal, and the registration lookup answered unauthenticated
+// (Integration run 42562824081).
+func TestQRDBAdapter_CallContext_BindsEveryUserCall(t *testing.T) {
+	us, _, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
+		Users:      principalUserClient{newFakeUserClient()},
+		DAOFactory: newTestDAOFactory(),
+		TenantID:   "system",
+		CallContext: func(ctx context.Context) (context.Context, error) {
+			return context.WithValue(ctx, principalKey{}, "node"), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	ctx := context.Background()
+
+	if _, err := us.GetByEmail(ctx, "cc@example.com"); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("GetByEmail of an absent user: want ErrUserNotFound, got %v", err)
+	}
+	user, err := us.Create(ctx, "cc@example.com", "CC")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := us.GetByEmail(ctx, "cc@example.com"); err != nil {
+		t.Fatalf("GetByEmail: %v", err)
+	}
+	if _, err := us.GetByID(ctx, user.WebAuthnID()); err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if err := us.Save(ctx, NewDefaultUser(user.WebAuthnID(), "cc@example.com", "CC2")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := us.Delete(ctx, user.WebAuthnID()); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+}
+
+// A CallContext that cannot derive a context fails the call before it
+// reaches the user client.
+func TestQRDBAdapter_CallContext_BindError(t *testing.T) {
+	us, _, err := NewQRDBUserStoreAdapter(QRDBUserStoreOptions{
+		Users:      newFakeUserClient(),
+		DAOFactory: newTestDAOFactory(),
+		TenantID:   "system",
+		CallContext: func(context.Context) (context.Context, error) {
+			return nil, errKVFault
+		},
+	})
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	if _, err := us.GetByEmail(context.Background(), "x@example.com"); !errors.Is(err, errKVFault) {
+		t.Fatalf("want the bind error, got %v", err)
+	}
+}
