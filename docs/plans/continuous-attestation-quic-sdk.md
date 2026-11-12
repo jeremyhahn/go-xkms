@@ -43,4 +43,7 @@ No request carries a tenant: the server uses `callerTenant(ctx)`.
 
 ## Results
 
-Results to follow.
+- Built as planned: wire.AttestationVerdictClient, the QUIC and REST
+  client transports' `verdicts()` accessor plus three methods, and the
+  sdk/go/transport aliases (`Client` unchanged).
+- Left: compose and server wiring of `SetContinuousAttestation` (next slice).
