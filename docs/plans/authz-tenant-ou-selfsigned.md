@@ -34,4 +34,7 @@ covers the two self-signed leaf paths that do not yet carry it:
 
 ## Results
 
-Results to follow.
+- Test commit: the 3 new cases (PIV GeneratePIVKey, SelfSignExistingPIVKey, bootstrap) fail before the fix (OU nil; persisted no-OU certificate reused).
+- Refactor: `go build ./...` and `go test ./pkg/ca/... ./pkg/certsubject/...` pass.
+- Fix: `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/xkms/... ./pkg/server/... ./pkg/ca/... ./pkg/certsubject/...` pass; `make lint` 0 issues.
+- Departure: `GeneratePIVKeyRequest` has no OU field (the `req.OrganizationalUnit` at piv_manager.go:1081 is the CSR path), so the PIV test asserts OU == [tenant] with no request OU; `StampTenant` replaces any OU the subject carries.
