@@ -1,0 +1,1 @@
+- **Attestation Verifier over MCP and QUIC.** The eight appraisal verbs are MCP tools (`attestation.endorsement.*`, `attestation.reference_values.*`, `attestation.appraise`), gated by the same permissions as their REST routes, and the MCP and QUIC client transports implement `AttestationAppraisalService`. gRPC, Unix and USB follow in a later slice.

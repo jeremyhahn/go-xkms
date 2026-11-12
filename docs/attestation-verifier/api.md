@@ -88,22 +88,31 @@ The classes come from `apierrors.SigningKeySentinelClasses`
 ## Endorsements, reference values and quote appraisal
 
 The appraisal verbs of `XKMSService` (`pkg/xkms/servicer_attestation.go`)
-are served over REST and the embedded transport. Routes are declared at
+are served over REST, QUIC, MCP and the embedded transport. Routes are declared at
 `pkg/api/rest/routes.go:483-491`, handled in
 `pkg/api/rest/handlers_attestation_appraisal.go:92-155` and called through
 `pkg/api/rest/wire/attestation_appraisal.go:27-30`. sdk/go reaches them from
 any `Client` with `AttestationAppraisal(c)` (`sdk/go/attestation_appraisal.go:48`).
+QUIC rides the same REST wire client
+(`pkg/api/transport/quic/transport_attestation_appraisal.go:27-32`). MCP
+routes the tools in `pkg/api/mcp/server.go:543-550`, handles them in
+`pkg/api/mcp/handlers_attestation_appraisal.go:62-115` and calls them from
+`pkg/api/transport/mcp/transport_attestation_appraisal.go:29-38`.
 
 | Method and path | Verb | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `PUT /api/v1/attestation/endorsements` | `PutAttestationEndorsement` | yes | later slice | later slice | later slice | yes | `attestation_endorsements:create` |
-| `GET /api/v1/attestation/endorsements?kind=` | `ListAttestationEndorsements` | yes | later slice | later slice | later slice | yes | `attestation_endorsements:list` |
-| `DELETE /api/v1/attestation/endorsements?name=` | `DeleteAttestationEndorsement` | yes | later slice | later slice | later slice | yes | `attestation_endorsements:delete` |
-| `PUT /api/v1/attestation/reference-values` | `PutAttestationReferenceValues` | yes | later slice | later slice | later slice | yes | `attestation_reference_values:create` |
-| `GET /api/v1/attestation/reference-values` | `ListAttestationReferenceValues` | yes | later slice | later slice | later slice | yes | `attestation_reference_values:list` |
-| `GET /api/v1/attestation/reference-values/entry?name=` | `GetAttestationReferenceValues` | yes | later slice | later slice | later slice | yes | `attestation_reference_values:get` |
-| `DELETE /api/v1/attestation/reference-values/entry?name=` | `DeleteAttestationReferenceValues` | yes | later slice | later slice | later slice | yes | `attestation_reference_values:delete` |
-| `POST /api/v1/attestation/appraise` | `AppraiseAttestationQuote` | yes | later slice | later slice | later slice | yes | `attestation_verifier:verify` |
+| `PUT /api/v1/attestation/endorsements` | `PutAttestationEndorsement` | yes | later slice | same as REST | `attestation.endorsement.put` | yes | `attestation_endorsements:create` |
+| `GET /api/v1/attestation/endorsements?kind=` | `ListAttestationEndorsements` | yes | later slice | same as REST | `attestation.endorsement.list` | yes | `attestation_endorsements:list` |
+| `DELETE /api/v1/attestation/endorsements?name=` | `DeleteAttestationEndorsement` | yes | later slice | same as REST | `attestation.endorsement.delete` | yes | `attestation_endorsements:delete` |
+| `PUT /api/v1/attestation/reference-values` | `PutAttestationReferenceValues` | yes | later slice | same as REST | `attestation.reference_values.put` | yes | `attestation_reference_values:create` |
+| `GET /api/v1/attestation/reference-values` | `ListAttestationReferenceValues` | yes | later slice | same as REST | `attestation.reference_values.list` | yes | `attestation_reference_values:list` |
+| `GET /api/v1/attestation/reference-values/entry?name=` | `GetAttestationReferenceValues` | yes | later slice | same as REST | `attestation.reference_values.get` | yes | `attestation_reference_values:get` |
+| `DELETE /api/v1/attestation/reference-values/entry?name=` | `DeleteAttestationReferenceValues` | yes | later slice | same as REST | `attestation.reference_values.delete` | yes | `attestation_reference_values:delete` |
+| `POST /api/v1/attestation/appraise` | `AppraiseAttestationQuote` | yes | later slice | same as REST | `attestation.appraise` | yes | `attestation_verifier:verify` |
+
+An MCP delete returns its request; the MCP error codes follow the same
+classes (`pkg/api/mcp/handlers_attestation_appraisal.go:34-45`). gRPC, Unix
+and USB are a later slice.
 
 Every call is scoped to the caller's tenant. A route is served only when the
 server is built with an `XKMSService`; a service without an Appraiser answers
