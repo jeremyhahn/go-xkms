@@ -98,15 +98,19 @@ type migrator struct {
 // the other records still migrate. Run stops early, returning ctx's error,
 // when ctx is done.
 //
-// legacy must be the unpartitioned backend the old stores wrote through,
-// with every tenant's "{tenant}/" prefix in its keys. A tenant-scoped
-// *storage.PrefixBackend is refused with ErrPartitionedSource before
-// anything is listed.
+// legacy must be a backend the old stores wrote through unpartitioned,
+// with every tenant's "{tenant}/" prefix in its keys: the root backend, or
+// the "ssh/" feature namespace view (a *storage.PrefixBackend whose Prefix
+// is "ssh/") that xkey/pkg/sshstore.ResolveBackend returns over the
+// barrier. Any other *storage.PrefixBackend is a tenant-scoped view and is
+// refused with ErrPartitionedSource before anything is listed. A tenant
+// view is never a valid source, including one for a tenant named "ssh",
+// whose prefix "ssh/" Run cannot tell from the namespace view.
 func Run(ctx context.Context, legacy storage.Backend, daos *qrdbsdk.DAOFactory) (Report, error) {
 	if legacy == nil {
 		return Report{}, &NilInputError{Field: "legacy"}
 	}
-	if _, ok := legacy.(*storage.PrefixBackend); ok {
+	if view, ok := legacy.(*storage.PrefixBackend); ok && view.Prefix() != sshPrefix {
 		return Report{}, ErrPartitionedSource
 	}
 	if daos == nil {

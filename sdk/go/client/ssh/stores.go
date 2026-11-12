@@ -77,10 +77,14 @@ var ErrMigratePartitionedSource = migrate.ErrPartitionedSource
 // open, with the backend the old stores used and before NewStores or the
 // session and profile stores serve requests.
 //
-// legacy must be the unpartitioned backend, whose keys keep each tenant's
-// "{tenant}/" prefix. A tenant-scoped *storage.PrefixBackend (the view the
-// old tenancy client wrote through) lists keys without that prefix, so it
-// is refused with ErrMigratePartitionedSource before anything moves.
+// legacy must be an unpartitioned source, whose keys keep each tenant's
+// "{tenant}/" prefix: the root backend, or the "ssh/" feature namespace
+// view xkey/pkg/sshstore.ResolveBackend returns over the barrier. Any other
+// *storage.PrefixBackend is a tenant-scoped view (the view the old tenancy
+// client wrote through), which lists keys without that prefix, so it is
+// refused with ErrMigratePartitionedSource before anything moves. A tenant
+// view is never a valid source, including one for a tenant named "ssh",
+// whose "ssh/" prefix cannot be told from the namespace view.
 //
 // Each record is imported first and its old key deleted only after the
 // import succeeds. The call is idempotent: once everything has moved, a
