@@ -224,7 +224,9 @@ func (s *Server) tenantCAKeyProviderOptions() []qrdbnode.NodeOption {
 		return nil
 	}
 	f := newTenantCAKeyFactory()
-	f.bindResolver(s.tenantCAKeyBackend)
+	// Left unbound here: the node starts before the key backends exist, and
+	// its background trust refresh would read s.backends while New writes
+	// it. provisionTenantCAKeys binds the factory once they are ready.
 	s.tenantCAKeys = f
 	return []qrdbnode.NodeOption{qrdbnode.WithCertKeyProviderFactory(f)}
 }

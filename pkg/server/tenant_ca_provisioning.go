@@ -54,7 +54,7 @@ func (p *provisioningTenantService) CreateTenant(ctx context.Context, id, name s
 	if ensureErr := p.keys.EnsureTenant(ctx, info.ID); ensureErr != nil {
 		return nil, &TenantProvisionError{
 			TenantID: info.ID,
-			Err:      errors.Join(ensureErr, p.ServiceTenantServicer.DeleteTenant(ctx, info.ID)),
+			Err:      errors.Join(ensureErr, p.DeleteTenant(ctx, info.ID)),
 		}
 	}
 	return info, nil
@@ -71,12 +71,14 @@ func (s *Server) adoptTenantService(svc qrdbsdk.ServiceTenantServicer) {
 }
 
 // provisionTenantCAKeys is the boot pass: every tenant, the system tenant
-// included, gets its login CA key before the server serves. It is a no-op
-// when the factory is not wired, and idempotent otherwise.
+// included, gets its login CA key before the server serves. It first binds
+// the factory to the server's default backend, which exists only from here
+// on. It is a no-op when the factory is not wired, and idempotent otherwise.
 func (s *Server) provisionTenantCAKeys(ctx context.Context) error {
 	if s.tenantCAKeys == nil || s.tenantService == nil {
 		return nil
 	}
+	s.tenantCAKeys.bindResolver(s.tenantCAKeyBackend)
 	return provisionTenantCAKeysWith(ctx, s.tenantService, s.tenantCAKeys)
 }
 
