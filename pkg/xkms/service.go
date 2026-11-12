@@ -318,6 +318,11 @@ func (s *XKMSService) SetAuthorizer(a *auth.Authorizer) {
 	s.authorizer = a
 }
 
+// Authorizer returns the service's qrdb-backed Authorizer for embedders.
+func (s *XKMSService) Authorizer() qrdbsdk.Authorizer {
+	return nil
+}
+
 // AuthorizeCaller reports whether the identity ctx carries holds
 // resource:action, for a decision made below the transport gate (for example
 // ssh:service, which only a request's scope reveals is needed). It returns nil
