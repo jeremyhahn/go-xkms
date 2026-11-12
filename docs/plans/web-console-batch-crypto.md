@@ -43,4 +43,12 @@ KeysView, Go code, sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build: pass (tracked dist restored).
+- svelte-auth npm ci: pass. web/app npm ci: pass.
+- vitest test/view3_batch_crypto.test.ts: pass (6 tests).
+- vitest web/app suite: pass (51 files, 418 tests; no baseline failure seen).
+- svelte-check: pass (0 errors, 0 warnings).
+- vite build: pass.
+- go test -race pkg/api/rest: pass.
+- sdk/go build: pass (first try failed on missing entries in the shared /gocache, rerun with a lane-local GOCACHE).
+- make lint: stopped at the 30-minute background limit during the raft tag set; every golangci-lint pass that finished reported 0 issues.
