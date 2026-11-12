@@ -26,6 +26,7 @@ const (
 	JSONRPCVersion = pairingproto.JSONRPCVersion
 	MinMTU         = pairingproto.MinMTU
 
+	FlagFirstFragment  = pairingproto.FlagFirstFragment
 	FlagLastFragment   = pairingproto.FlagLastFragment
 	FragmentHeaderSize = pairingproto.FragmentHeaderSize
 
