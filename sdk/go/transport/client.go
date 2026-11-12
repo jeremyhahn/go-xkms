@@ -37,6 +37,10 @@ type SealStoreService = pkgtransport.SealStoreService
 type TPMPolicyService = pkgtransport.TPMPolicyService
 type OIDCCredentialService = pkgtransport.OIDCCredentialService
 type SigningKeyService = pkgtransport.SigningKeyService
+
+// AttestationVerdictService lists, reads and refreshes a device's
+// continuous attestation verdicts (go-xkms#2088).
+type AttestationVerdictService = pkgtransport.AttestationVerdictService
 type TrustRootService = pkgtransport.TrustRootService
 type CredentialManagementService = pkgtransport.CredentialManagementService
 type TenantService = pkgtransport.TenantService

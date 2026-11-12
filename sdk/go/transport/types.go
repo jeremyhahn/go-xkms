@@ -367,6 +367,13 @@ type ListSigningKeyBindingsResponse = pkgtransport.ListSigningKeyBindingsRespons
 type DeleteSigningKeyBindingRequest = pkgtransport.DeleteSigningKeyBindingRequest
 type ResolveSigningKeyRequest = pkgtransport.ResolveSigningKeyRequest
 type SigningKeyResolution = pkgtransport.SigningKeyResolution
+
+// Continuous attestation verdict types (go-xkms#2088).
+type (
+	AttestationVerdictRequest       = pkgtransport.AttestationVerdictRequest
+	AttestationVerdict              = pkgtransport.AttestationVerdict
+	ListAttestationVerdictsResponse = pkgtransport.ListAttestationVerdictsResponse
+)
 type OIDCDeviceLogin = pkgtransport.OIDCDeviceLogin
 type OIDCAccessToken = pkgtransport.OIDCAccessToken
 
