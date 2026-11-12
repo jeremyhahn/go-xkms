@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -33,6 +34,7 @@ import (
 
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -188,8 +190,8 @@ func TestTPMPolicy_EndToEnd(t *testing.T) {
 }
 
 // TestTPMPolicy_VerifyReportsReference drives a signed reference manifest
-// through xkmsd's reference_signer config, the XKMSService and the gRPC
-// server, and reads the branch Reference back from verify on both.
+// through xkmsd's reference_signer config, the XKMSService, the gRPC server
+// and the MCP server, and reads the branch Reference back from verify on each.
 func TestTPMPolicy_VerifyReportsReference(t *testing.T) {
 	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -199,6 +201,13 @@ func TestTPMPolicy_VerifyReportsReference(t *testing.T) {
 	svc := newReferenceTPMPolicyServer(t, signer)
 	sys := identityCtx(qrdbsdk.SystemTenantID)
 	grpcSvc := grpcinternal.NewService(nil, nil, svc)
+	mcpSrv, err := mcp.NewServer(&mcp.Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
+	require.NoError(t, err)
+	mcpParams := func(v any) json.RawMessage {
+		raw, err := json.Marshal(v)
+		require.NoError(t, err)
+		return raw
+	}
 
 	final := sha256.Sum256([]byte("next boot"))
 	pcrs := map[uint32][]byte{policyPCR: final[:]}
@@ -218,6 +227,9 @@ func TestTPMPolicy_VerifyReportsReference(t *testing.T) {
 	require.Error(t, err, "the XKMSService refuses a manifest the pinned signer did not sign")
 	_, err = grpcSvc.TPMPolicyUpdate(sys, &pb.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: forged})
 	require.Error(t, err, "the gRPC server refuses a manifest the pinned signer did not sign")
+	_, err = mcpSrv.InvokeMethod(sys, "tpm.policy.update", mcpParams(transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: forged}))
+	var keyOpErr *mcp.KeyOpError
+	require.ErrorAs(t, err, &keyOpErr, "the MCP server refuses a manifest the pinned signer did not sign")
 	before, err := svc.TPMPolicyVerify(sys, &transport.TPMPolicyRequest{Name: "boot"})
 	require.NoError(t, err)
 	for _, b := range before.Branches {
@@ -277,6 +289,29 @@ func TestTPMPolicy_VerifyReportsReference(t *testing.T) {
 			assert.Equal(t, digest[:], b.GetReference().GetDigest())
 		default:
 			t.Fatalf("unexpected branch %q", b.GetName())
+		}
+	}
+
+	_, err = mcpSrv.InvokeMethod(sys, "tpm.policy.update", mcpParams(transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: corim}))
+	require.NoError(t, err, "the MCP server updates the branch from the same manifest")
+	result, err := mcpSrv.InvokeMethod(sys, "tpm.policy.verify", mcpParams(transport.TPMPolicyRequest{Name: "boot"}))
+	require.NoError(t, err)
+	var mcpVerified transport.TPMPolicyVerifyResponse
+	require.NoError(t, json.Unmarshal(mcpParams(result), &mcpVerified), "the MCP result decodes off the wire")
+	require.Len(t, mcpVerified.Branches, 2)
+	for _, b := range mcpVerified.Branches {
+		assert.True(t, b.Approved, "branch %q", b.Name)
+		switch b.Name {
+		case "current":
+			assert.True(t, b.Match)
+			assert.Nil(t, b.Reference)
+		case "next":
+			assert.False(t, b.Match)
+			assert.Equal(t, []uint{policyPCR}, b.Mismatched)
+			require.NotNil(t, b.Reference, "the MCP server reports the reference")
+			assert.Equal(t, digest[:], b.Reference.Digest)
+		default:
+			t.Fatalf("unexpected branch %q", b.Name)
 		}
 	}
 }

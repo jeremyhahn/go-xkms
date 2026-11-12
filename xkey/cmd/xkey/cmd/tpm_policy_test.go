@@ -231,6 +231,10 @@ func TestTPMPolicyUpdate_FromReferenceValues(t *testing.T) {
 	assert.Contains(t, out, "Branch:       name=next;pcr=sha256:7")
 	assert.Contains(t, out, fmt.Sprintf("(no id), sha256 %x", digest))
 
+	out, err = runTPMPolicyCommand(t, runTPMPolicyVerify, "boot")
+	require.NoError(t, err)
+	assert.Contains(t, out, fmt.Sprintf("  Reference: (no id), sha256 %x", digest), "verify prints the branch reference")
+
 	_, err = runTPMPolicyBranchUpdate(t, "", path)
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyBranchUpdate, "reference values without a branch")
 	_, err = runTPMPolicyBranchUpdate(t, "branch-1", path)
