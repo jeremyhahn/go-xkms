@@ -43,4 +43,7 @@ dependency changes.
 
 ## Results
 
-Results to follow.
+- go test (dice, device-attest-01, backend/avr, three codec tags): pass.
+- make lint: pass (0 issues on every tag set).
+- Simplify pass: no change; the parser moved byte for byte, the check is one
+  helper (`verifyApplicationReference`).
