@@ -34,7 +34,7 @@ const PATH = "/api/v1/keys/k1/policy";
 // 2100-01-01T00:00:00Z: always in the future for these tests.
 const FUTURE = 4102444800;
 
-let confirmSpy: ReturnType<typeof vi.spyOn> | null = null;
+let confirmSpy: { mockRestore(): void } | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
