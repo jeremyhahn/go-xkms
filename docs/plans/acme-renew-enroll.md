@@ -46,4 +46,5 @@ revoke.
 
 ## Results
 
-(filled at the end)
+xkey build + cmd tests pass, sdk/go build passes, make lint 0 issues (2026-11-12).
+Renew reuses the package's loadCertificatePEM (as revoke does).
