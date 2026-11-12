@@ -15,6 +15,7 @@
   import PinView from "$views/PinView.svelte";
   import TpmPoliciesView from "$views/TpmPoliciesView.svelte";
   import UsersView from "$views/UsersView.svelte";
+  import AddPasskeyView from "$views/AddPasskeyView.svelte";
   import TenantsView from "$views/TenantsView.svelte";
   import PasswordsView from "$views/PasswordsView.svelte";
   import OidcCredentialsView from "$views/OidcCredentialsView.svelte";
@@ -64,6 +65,7 @@
       <TpmPoliciesView />
     {:else if routerStore.name === "users"}
       <UsersView />
+    {:else if routerStore.name === "addPasskey"}<AddPasskeyView />
     {:else if routerStore.name === "frost"}
       <FrostView />
     {:else if routerStore.name === "tenants"}
