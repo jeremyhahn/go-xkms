@@ -34,6 +34,14 @@ type (
 	// All implementations are thread-safe.
 	StorageBackend = storage.Backend
 
+	// StorageCompareAndSwapper is the guarded-write capability a DAO layer
+	// needs; a wrapper around a StorageBackend must forward it.
+	StorageCompareAndSwapper = storage.CompareAndSwapper
+
+	// StorageCompareAndDeleter is the guarded-delete capability a DAO layer
+	// needs; a wrapper around a StorageBackend must forward it.
+	StorageCompareAndDeleter = storage.CompareAndDeleter
+
 	// StorageCertAdapter wraps a StorageBackend to provide certificate-specific
 	// operations including marshaling/unmarshaling of x509.Certificate objects.
 	StorageCertAdapter = storage.CertAdapter
