@@ -14,83 +14,30 @@
 package cmd
 
 import (
-	"context"
-	"crypto"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	sdkacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/acme"
 )
 
-// acmeClient is the part of the sdk/go ACME client the xkey acme verbs
-// call. *sdkacme.ACMEClient satisfies it; tests swap in a fake.
-type acmeClient interface {
-	RegisterAccount() (*acme.Account, error)
-	UpdateAccount(ctx context.Context, contacts []string) (*acme.Account, error)
-	DeactivateAccount(ctx context.Context) error
-	RevokeCertificate(ctx context.Context, cert *x509.Certificate, reason acme.CRLReasonCode) error
-	RenewCertificate(ctx context.Context, oldCert *x509.Certificate, req *sdkacme.ACMECertificateRequest) (*x509.Certificate, error)
-	EnrollDevice(ctx context.Context, config *sdkacme.ACMEEnrollmentConfig) (*sdkacme.ACMEEnrollmentResult, error)
-	RequestEndorsementKeyCertificate(ctx context.Context, config *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error)
-	Close() error
-}
-
-// acmeClientOptions carries the shared xkey acme flags to the client
-// constructor.
-type acmeClientOptions struct {
-	DirectoryURL string
-	Contact      string
-	Signer       crypto.Signer
-	TrustedRoots []string
-	SystemRoots  bool
-	Logger       *slog.Logger
-}
-
-// acmeClientTimeout bounds each HTTP request to the ACME server.
-const acmeClientTimeout = 30 * time.Second
+// acmeClient, acmeClientOptions and the factory are shared with the GUI
+// ACMEService (xkey/pkg/gui/services/acme_client.go).
+type (
+	acmeClient        = services.ACMEClient
+	acmeClientOptions = services.ACMEClientOptions
+)
 
 // newACMEClientFunc builds the client; a package variable so tests can
 // replace it.
-var newACMEClientFunc = newSDKACMEClient
+var newACMEClientFunc = services.NewACMEClient
 
-// newSDKACMEClient builds an sdk/go ACME client. The account DAO is in
-// memory: the server finds the account again from the account key
-// (RFC 8555 7.3.1), so the verbs keep no local state.
-func newSDKACMEClient(opts acmeClientOptions) (acmeClient, error) {
-	factory, err := sdkacme.NewACMEStorageFactoryFromKVStore(qrdbsdk.NewMemoryKVStore())
-	if err != nil {
-		return nil, fmt.Errorf("acme: account storage: %w", err)
-	}
-	accounts, err := factory.AccountDAO()
-	if err != nil {
-		return nil, fmt.Errorf("acme: account storage: %w", err)
-	}
-	client, err := sdkacme.NewACMEClient(&sdkacme.ACMEClientParams{
-		AccountEmail:  opts.Contact,
-		AccountSigner: opts.Signer,
-		Logger:        opts.Logger,
-		Storage:       accounts,
-		Config: &sdkacme.ACMEClientConfig{
-			DirectoryURL:   opts.DirectoryURL,
-			TrustedRoots:   opts.TrustedRoots,
-			SystemCertPool: opts.SystemRoots,
-			Timeout:        acmeClientTimeout,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("acme: client: %w", err)
-	}
-	return client, nil
-}
+// loadACMEAccountKey reads a PEM account key; errors name the file only.
+var loadACMEAccountKey = services.LoadACMEAccountKey
 
 // acmeFlags holds the persistent flags of xkey acme.
 type acmeFlags struct {
@@ -176,36 +123,6 @@ func (f *acmeFlags) withACMEClient(c *cobra.Command, contact string, fn func(acm
 		}
 	}()
 	return fn(client)
-}
-
-// loadACMEAccountKey reads a PEM private key (PKCS#8, SEC 1 EC or PKCS#1).
-// Errors name the file, never its content.
-func loadACMEAccountKey(path string) (crypto.Signer, error) {
-	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path
-	if err != nil {
-		return nil, fmt.Errorf("acme: account key %s: %w", path, err)
-	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("acme: account key %s: no PEM block", path)
-	}
-	var key any
-	switch block.Type {
-	case "EC PRIVATE KEY":
-		key, err = x509.ParseECPrivateKey(block.Bytes)
-	case "RSA PRIVATE KEY":
-		key, err = x509.ParsePKCS1PrivateKey(block.Bytes)
-	default:
-		key, err = x509.ParsePKCS8PrivateKey(block.Bytes)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("acme: account key %s: unsupported or malformed %q block", path, block.Type)
-	}
-	signer, ok := key.(crypto.Signer)
-	if !ok {
-		return nil, fmt.Errorf("acme: account key %s: key cannot sign", path)
-	}
-	return signer, nil
 }
 
 // stripMailto removes a leading mailto: so the client adds exactly one.

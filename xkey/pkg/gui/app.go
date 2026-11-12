@@ -122,6 +122,7 @@ type App struct {
 	sealService              *services.SealService
 	passwordProtectionSvc    *services.PasswordProtectionService
 	tpmPolicyService         *services.TPMPolicyService
+	acmeService              *services.ACMEService
 	autoUnsealService        *services.AutoUnsealService
 	barrierAutoUnsealService *services.BarrierAutoUnsealService
 	oidcService              *services.OIDCService
@@ -1799,6 +1800,7 @@ func NewApp(cfg *GUIConfig) *App {
 	// ensureLocalTPMPolicies once the TPM and data directory are known), or
 	// on the connected server.
 	tpmPolicySvc := services.NewTPMPolicyService()
+	acmeSvc := services.NewACMEService()
 
 	// Create auto-unseal service (LUKS volumes).
 	autoUnsealSvc := services.NewAutoUnsealService(sealSvc, storageSvc)
@@ -2009,6 +2011,7 @@ func NewApp(cfg *GUIConfig) *App {
 		sealService:              sealSvc,
 		passwordProtectionSvc:    ppSvc,
 		tpmPolicyService:         tpmPolicySvc,
+		acmeService:              acmeSvc,
 		autoUnsealService:        autoUnsealSvc,
 		barrierAutoUnsealService: barrierAutoUnsealSvc,
 		oidcService:              oidcSvc,
@@ -2804,6 +2807,7 @@ func (a *App) Run() error {
 		a.pkcs11Service,
 		a.passwordProtectionSvc,
 		a.tpmPolicyService,
+		a.acmeService,
 		a.autoUnsealService,
 		a.oidcService,
 		a.oidcServerService,
@@ -2909,6 +2913,7 @@ func (a *App) startup(ctx context.Context) {
 	a.pkcs11Service.SetContext(ctx)
 	a.passwordProtectionSvc.SetContext(ctx)
 	a.tpmPolicyService.SetContext(ctx)
+	a.acmeService.SetContext(ctx)
 	a.autoUnsealService.SetContext(ctx)
 	a.oidcService.SetContext(ctx)
 	a.oidcServerService.SetContext(ctx)

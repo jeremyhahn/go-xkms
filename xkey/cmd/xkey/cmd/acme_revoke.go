@@ -14,60 +14,19 @@
 package cmd
 
 import (
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"os"
-	"strconv"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/acme"
 )
 
-// acmeRevocationReasons maps RFC 5280 5.3.1 reason names to codes.
-var acmeRevocationReasons = map[string]acme.CRLReasonCode{
-	"unspecified":          acme.CRLReasonUnspecified,
-	"keyCompromise":        acme.CRLReasonKeyCompromise,
-	"caCompromise":         acme.CRLReasonCACompromise,
-	"affiliationChanged":   acme.CRLReasonAffiliationChanged,
-	"superseded":           acme.CRLReasonSuperseded,
-	"cessationOfOperation": acme.CRLReasonCessationOfOperation,
-	"certificateHold":      acme.CRLReasonCertificateHold,
-	"removeFromCRL":        acme.CRLReasonRemoveFromCRL,
-	"privilegeWithdrawn":   acme.CRLReasonPrivilegeWithdrawn,
-	"aACompromise":         acme.CRLReasonAACompromise,
-}
-
-// parseRevocationReason accepts a reason name or its number (7 is unused
-// in RFC 5280).
-func parseRevocationReason(s string) (acme.CRLReasonCode, error) {
-	if code, ok := acmeRevocationReasons[s]; ok {
-		return code, nil
-	}
-	n, err := strconv.Atoi(s)
-	if err == nil && n >= int(acme.CRLReasonUnspecified) && n <= int(acme.CRLReasonAACompromise) && n != 7 {
-		return acme.CRLReasonCode(n), nil
-	}
-	return 0, fmt.Errorf("acme: unknown revocation reason %q", s)
-}
-
-// loadCertificatePEM reads the first certificate of a PEM file.
-func loadCertificatePEM(path string) (*x509.Certificate, error) {
-	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path
-	if err != nil {
-		return nil, fmt.Errorf("acme: certificate %s: %w", path, err)
-	}
-	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("acme: %s holds no PEM certificate", path)
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("acme: certificate %s: %w", path, err)
-	}
-	return cert, nil
-}
+// parseRevocationReason and loadCertificatePEM are shared with the GUI
+// ACMEService.
+var (
+	parseRevocationReason = services.ParseACMERevocationReason
+	loadCertificatePEM    = services.LoadCertificatePEM
+)
 
 func newACMERevokeCmd(flags *acmeFlags) *cobra.Command {
 	var certFile, reason string

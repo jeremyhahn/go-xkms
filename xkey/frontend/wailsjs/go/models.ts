@@ -878,6 +878,60 @@ export namespace seal {
 
 export namespace services {
 	
+	export class ACMEAccountInfo {
+	    uri: string;
+	    status: string;
+	    contacts: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMEAccountInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uri = source["uri"];
+	        this.status = source["status"];
+	        this.contacts = source["contacts"];
+	    }
+	}
+	export class ACMEConnection {
+	    directoryUrl: string;
+	    accountKeyPath: string;
+	    trustedRootPaths: string[];
+	    systemRoots: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMEConnection(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.directoryUrl = source["directoryUrl"];
+	        this.accountKeyPath = source["accountKeyPath"];
+	        this.trustedRootPaths = source["trustedRootPaths"];
+	        this.systemRoots = source["systemRoots"];
+	    }
+	}
+	export class ACMERenewRequest {
+	    certPath: string;
+	    domain: string;
+	    authzType: string;
+	    challenge: string;
+	    csrPath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMERenewRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.certPath = source["certPath"];
+	        this.domain = source["domain"];
+	        this.authzType = source["authzType"];
+	        this.challenge = source["challenge"];
+	        this.csrPath = source["csrPath"];
+	    }
+	}
 	export class AddFactorRequest {
 	    type: string;
 	    label: string;
