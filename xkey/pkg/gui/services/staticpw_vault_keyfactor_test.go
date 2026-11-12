@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/vaulttoken"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
@@ -35,11 +34,11 @@ var errNoSuchBackend = errors.New("no such backend")
 
 // withKeyBackend gives the service one software key backend, named name,
 // holding an EC P-256 key keyID, and returns it.
-func withKeyBackend(t *testing.T, svc *StaticPasswordService, name, keyID string) pkgxkms.Backend {
+func withKeyBackend(t *testing.T, svc *StaticPasswordService, name, keyID string) xkms.ServiceBackend {
 	t.Helper()
 	kp, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
-	b, err := pkgxkms.New(&pkgxkms.BackendConfig{Backend: kp, CertStorage: xkms.NewStorageMemory()})
+	b, err := xkms.NewServiceBackend(&xkms.ServiceBackendConfig{Backend: kp, CertStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.GenerateECDSA(context.Background(), &xkms.KeyAttributes{
@@ -47,7 +46,7 @@ func withKeyBackend(t *testing.T, svc *StaticPasswordService, name, keyID string
 		KeyAlgorithm: x509.ECDSA, ECCAttributes: &xkms.ECCAttributes{Curve: elliptic.P256()},
 	})
 	require.NoError(t, err)
-	svc.keyLookup = func(n string) (pkgxkms.Backend, error) {
+	svc.keyLookup = func(n string) (xkms.ServiceBackend, error) {
 		if n == name {
 			return b, nil
 		}
