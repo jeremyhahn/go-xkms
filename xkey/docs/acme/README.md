@@ -1,6 +1,6 @@
 # ACME Client Namespace
 
-> **Status: PARTIAL** · Feature: `acme` · Module: `go-xkms/xkey` · Built: `account`, `enroll`, `renew`, `revoke` (CLI); planned: `endorse`, the GUI
+> **Status: PARTIAL** · Feature: `acme` · Module: `go-xkms/xkey` · Built: `account`, `endorse`, `enroll`, `renew`, `revoke` (CLI), GUI Go service (`account`, `renew`, `revoke`); planned: the GUI view, GUI `enroll`/`endorse`
 > Scope: the `xkey acme` namespace; the ACME client itself is [acme-issuance](../../../docs/acme-issuance/).
 
 ## Purpose
@@ -40,5 +40,9 @@ library, for installers, the initrd and hosts without xkey.
 
 ## Status
 
-`account`, `enroll`, `renew` and `revoke` are implemented in the CLI;
-`endorse` and the GUI are planned. See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).
+`account`, `endorse`, `enroll`, `renew` and `revoke` are implemented in the
+CLI. The GUI's Go side is implemented: the Wails-bound `services.ACMEService`
+(`xkey/pkg/gui/services/acme_service.go`) serves account register, update and
+deactivate, revoke and renew, on the client factory the CLI shares
+(`xkey/pkg/gui/services/acme_client.go`). The Svelte view and GUI `enroll`
+and `endorse` (through the GUI's TPM) are planned. See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).

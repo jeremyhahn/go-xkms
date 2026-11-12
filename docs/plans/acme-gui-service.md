@@ -49,3 +49,9 @@ moved out of package cmd so both front ends share one copy.
 - GUI enroll/endorse (need the GUI TPM through TPMAccessor).
 
 ## Results
+- go build ./... (xkey): pass
+- go test cmd/xkey/cmd/... (codec_cbor codec_json codec_msgpack): pass
+- go test -run ACME pkg/gui/services (production codec_json): pass
+- go test -run TestApp_Run_HandsLifecycleHooksToWails pkg/gui: build failed here, "Package webkit2gtk-4.0 was not found in the pkg-config search path" (system library absent in the lane container; CI runs it)
+- make check-wailsjs: pass
+- make lint: pass (0 issues in every module and tag set)
