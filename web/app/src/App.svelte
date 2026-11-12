@@ -10,6 +10,7 @@
   import DashboardView from "$views/DashboardView.svelte";
   import BackendsView from "$views/BackendsView.svelte";
   import SettingsView from "$views/SettingsView.svelte";
+  import FrostKeyImportView from "$views/FrostKeyImportView.svelte";
   import KeysView from "$views/KeysView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
   import PinView from "$views/PinView.svelte";
@@ -66,6 +67,7 @@
       <UsersView />
     {:else if routerStore.name === "frost"}
       <FrostView />
+    {:else if routerStore.name === "frostKeyImport"}<FrostKeyImportView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
     {:else if routerStore.name === "passwords"}
