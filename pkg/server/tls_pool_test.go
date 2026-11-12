@@ -184,7 +184,7 @@ func TestServer_BuildTLSConfig_ListenerWiring(t *testing.T) {
 	// Include duplicate plus a dedicated extra so dedup is exercised.
 	cfg.TLS.ClientCAs = []string{primaryPath, extraPath}
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
