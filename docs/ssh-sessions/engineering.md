@@ -113,6 +113,20 @@ through (`:131-133`).
   folders are go-qrdb DAO entities in the `ssh` database (nil `daos` →
   `ErrNilDAOFactory`).
 
+### Migrating the pre-DAO stores
+
+`sessions.DAOStore.ImportLegacy(ctx, id, data)` (`pkg/ssh/sessions/store.go:164`),
+`profile.DAOStore.ImportLegacy(ctx, id, data)` (`pkg/ssh/profile/store.go:427`)
+and `profile.DAOStore.ImportLegacyFolder(ctx, path)`
+(`pkg/ssh/profile/store.go:452`) import one record of the old sealed-KV
+layout (`ssh/sessions/<id>`, `ssh/profiles/<id>.json`,
+`ssh/profiles/__folders__/<path>`). They keep the old ID, upsert, and wrap a
+corrupt or invalid record in `ErrLegacyRecord`. `pkg/ssh/migrate.Run`, exported
+as `sdk/go/client/ssh.MigrateLegacyStores`, drives them and deletes each old
+key only after its import succeeds; tenant-prefixed sessions and profiles are
+skipped and left in place. The full contract is in
+`../ssh-keys/engineering.md` §"Exported surface — `pkg/ssh/migrate`".
+
 ### `pkg/ssh/local`
 
 - `LoadConfig(paths ...string) (*Config, error)` and

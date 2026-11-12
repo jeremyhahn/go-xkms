@@ -177,6 +177,28 @@ func (s *DAOStore) Remove(ctx context.Context, sc scope.Scope, owner, host strin
 	return nil
 }
 
+// ImportLegacy upserts a pin the pre-DAO sealed-KV store wrote: rel is its
+// old key below the tenant root and data its JSON. It is the per-record step
+// of the SSH store migrator (pkg/ssh/migrate) and returns the
+// records.Table.Import errors.
+func (s *DAOStore) ImportLegacy(ctx context.Context, rel string, data []byte) error {
+	return s.table.Import(ctx, rel, data, checkLegacy)
+}
+
+// checkLegacy refuses a pre-DAO pin that Add would refuse.
+func checkLegacy(e *records.Entity[envelope]) error {
+	if err := validate(e.Scope, e.Owner, e.Name); err != nil {
+		return err
+	}
+	if err := ValidateFingerprint(e.Body.Fingerprint); err != nil {
+		return err
+	}
+	if len(e.Body.PublicKey) == 0 {
+		return &PublicKeyRequiredError{Host: e.Name}
+	}
+	return nil
+}
+
 // validate checks the coordinates of a pin. The host is validated first so
 // a malformed host reports *InvalidHostError; the rest is validated as
 // scope.KindKnownHosts.RecordPath validates it.
