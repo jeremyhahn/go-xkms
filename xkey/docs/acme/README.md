@@ -1,6 +1,6 @@
 # ACME Client Namespace
 
-> **Status: PARTIAL** · Feature: `acme` · Module: `go-xkms/xkey` · Built: `account`, `revoke` (CLI); planned: `enroll`, `endorse`, `renew`, the GUI
+> **Status: PARTIAL** · Feature: `acme` · Module: `go-xkms/xkey` · Built: `account`, `enroll`, `renew`, `revoke` (CLI); planned: `endorse`, the GUI
 > Scope: the `xkey acme` namespace; the ACME client itself is [acme-issuance](../../../docs/acme-issuance/).
 
 ## Purpose
@@ -15,9 +15,9 @@ no client logic of its own.
 | Verb | Purpose | State |
 |---|---|---|
 | `account register\|update\|deactivate` | Create and manage the ACME account | Implemented (CLI) |
-| `enroll` | Obtain a certificate through the `enroll-01` challenge | Planned |
+| `enroll` | Enroll the local TPM through `enroll-01`, `endorse-01` or `device-attest-01`; writes the IDevID, IAK and chain as PEM | Implemented |
 | `endorse` | Obtain a certificate through the `endorse-01` challenge | Planned |
-| `renew` | Renew an issued certificate | Planned |
+| `renew` | Renew an issued certificate (`--cert`, `--domain`); writes the PEM certificate only | Implemented |
 | `revoke` | Revoke an issued certificate (`--cert`, `--reason` RFC 5280 name or number) | Implemented (CLI) |
 
 Shared flags: `--directory` (ACME directory URL), `--account-key` (PEM
@@ -40,5 +40,5 @@ library, for installers, the initrd and hosts without xkey.
 
 ## Status
 
-`account` and `revoke` are implemented in the CLI; `enroll`, `endorse`,
-`renew` and the GUI are planned. See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).
+`account`, `enroll`, `renew` and `revoke` are implemented in the CLI;
+`endorse` and the GUI are planned. See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).
