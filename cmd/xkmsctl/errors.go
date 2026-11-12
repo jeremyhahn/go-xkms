@@ -881,6 +881,18 @@ var (
 	// attestation reference-values flags".
 	ErrInvalidReferenceValuesFlags = errors.New("invalid attestation reference-values flags")
 
+	// ErrAppraiseAttestationQuoteFailed is the sentinel error "failed to
+	// appraise the attestation quote".
+	ErrAppraiseAttestationQuoteFailed = errors.New("failed to appraise the attestation quote")
+
+	// ErrAttestationNotVerified is the sentinel error "attestation not
+	// verified": the appraisal ran and its result is not verified.
+	ErrAttestationNotVerified = errors.New("attestation not verified")
+
+	// ErrInvalidAppraiseFlags is the sentinel error "invalid attestation
+	// appraise flags".
+	ErrInvalidAppraiseFlags = errors.New("invalid attestation appraise flags")
+
 	// ErrChangeKeyVersionFailed is the sentinel error "failed to change the
 	// key version".
 	ErrChangeKeyVersionFailed = errors.New("failed to change the key version")
