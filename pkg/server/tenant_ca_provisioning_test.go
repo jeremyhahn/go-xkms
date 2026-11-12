@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -183,4 +185,26 @@ func TestServer_AdoptTenantService_Nil(t *testing.T) {
 	s := &Server{tenantCAKeys: newTenantCAKeyFactory()}
 	s.adoptTenantService(nil)
 	assert.Nil(t, s.tenantService)
+}
+
+// The factory reads the server's backends only after the boot pass binds it:
+// before that the node's background trust refresh would race New writing
+// s.backends.
+func TestServer_ProvisionTenantCAKeys_BindsFactoryAfterBackends(t *testing.T) {
+	_, base := newTenantCAKeyTestFactory(t)
+	f := newTenantCAKeyFactory()
+	s := &Server{
+		config:        &config.Config{},
+		tenantCAKeys:  f,
+		tenantService: &fakeTenantService{tenants: []string{"tenant-a"}},
+		backends:      map[string]xkms.Backend{"software": base},
+	}
+	_, err := f.ProviderForTenant("tenant-a")
+	require.Error(t, err, "factory resolved a backend before the boot pass")
+
+	require.NoError(t, s.provisionTenantCAKeys(context.Background()))
+	_, err = f.ProviderForTenant("tenant-a")
+	require.NoError(t, err)
+	_, err = f.ProviderForTenant(qrdbsdk.SystemTenantID)
+	require.NoError(t, err)
 }
