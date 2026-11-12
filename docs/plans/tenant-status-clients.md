@@ -32,3 +32,9 @@ status, set or used as a filter, with a typed unsupported-field error".
 ## Out of scope
 
 The go-qrdb bump, docs/SPEC.md, an sdk/go typed error, the GUI Svelte view.
+
+## Results
+
+- `go build ./...`: pass.
+- `go test -count=1 -tags "grpc codec_cbor codec_json codec_msgpack"` on pkg/acme/api/grpc, mcp, quic, pkg/acme/gui/admin/api, pkg/acme/admin/...: pass (grpc tests need the grpc tag).
+- `make lint`: pass (0 issues in every module and tag set).
