@@ -16,11 +16,13 @@ package xkms
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 )
 
 // TenantServicer defines operations for managing tenants and their barriers.
@@ -97,6 +99,14 @@ func (s *XKMSService) CreateTenantDetail(ctx context.Context, req *transport.Cre
 		return nil, ErrTenantNameRequired
 	}
 	tenantID := req.ID
+	// A tenant's ID is its SVIDs' trust domain (pkg/spiffe BuildURI); refuse
+	// one that can never be, before go-qrdb records the tenant.
+	if err := spiffe.ValidateTrustDomain(tenantID); err != nil {
+		return nil, fmt.Errorf("tenant ID: %w", err)
+	}
+	if td := s.SPIFFETrustDomain(); td != "" && tenantID == td {
+		return nil, fmt.Errorf("tenant ID %q: %w", tenantID, spiffe.ErrTenantIsClusterTrustDomain)
+	}
 	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
 		return nil, refuseTenant(ctx, "create tenant", tenantID)
 	}

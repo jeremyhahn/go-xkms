@@ -109,6 +109,10 @@ type TenantAwareAdminService struct {
 	// ErrTenantServiceUnavailable when it is unset: qrdb is the single
 	// tenant authority, so there is no local-only path left to fall back to.
 	tenantSvc qrdbsdk.ServiceTenantServicer
+
+	// clusterTrustDomain is the cluster's SPIFFE trust domain; CreateTenant
+	// refuses it as a tenant ID. Empty skips the check.
+	clusterTrustDomain string
 }
 
 // SetTenantService wires the qrdb TenantServicer the tenant lifecycle
@@ -119,6 +123,13 @@ type TenantAwareAdminService struct {
 // NewTenantAwareAdminService in xkmsd's start-up sequence.
 func (s *TenantAwareAdminService) SetTenantService(svc qrdbsdk.ServiceTenantServicer) {
 	s.tenantSvc = svc
+}
+
+// SetClusterTrustDomain sets the cluster's SPIFFE trust domain, which
+// CreateTenant refuses as a tenant ID (pkg/spiffe BuildURI would refuse
+// every SVID of such a tenant). Empty skips the check.
+func (s *TenantAwareAdminService) SetClusterTrustDomain(trustDomain string) {
+	s.clusterTrustDomain = trustDomain
 }
 
 // TenantDAOInitError reports a failure to obtain the tenant-aware storage
@@ -210,6 +221,9 @@ func (s *TenantAwareAdminService) CreateTenant(ctx context.Context, req CreateTe
 	// one that can never be, before go-qrdb records the tenant.
 	if err := spiffe.ValidateTrustDomain(req.ID); err != nil {
 		return nil, wrapInputCause("id", err)
+	}
+	if s.clusterTrustDomain != "" && req.ID == s.clusterTrustDomain {
+		return nil, wrapInputCause("id", spiffe.ErrTenantIsClusterTrustDomain)
 	}
 	if req.Name == "" {
 		return nil, wrapInputError("name", "tenant name is required")
