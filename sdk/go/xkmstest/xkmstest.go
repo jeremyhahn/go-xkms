@@ -18,6 +18,7 @@
 package xkmstest
 
 import (
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/testing/pkcs11test"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 )
@@ -32,3 +33,11 @@ var NewPKCS11Suite = pkcs11test.NewSuite
 // simulator or swtpm. Provision creates only the TCG-standard keys, and xkms
 // seals under the Platform SRK.
 var EnrollPlatformSRK = tpm2test.EnrollPlatformSRK
+
+// OutsideFIPS reports whether the test may use a non-approved algorithm; under
+// fips140=only it reruns the test with fips140=off and returns false.
+var OutsideFIPS = fipstest.OutsideFIPS
+
+// OutsideFIPSAfterRefusal is OutsideFIPS after asserting err is the FIPS
+// refusal (errors.Is want, or the module's own refusal when want is nil).
+var OutsideFIPSAfterRefusal = fipstest.OutsideFIPSAfterRefusal
