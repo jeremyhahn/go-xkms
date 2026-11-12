@@ -38,6 +38,10 @@ var (
 
 	// ErrDeviceNotFound reports an ID the tenant does not hold.
 	ErrDeviceNotFound = errors.New("devicereg: device not found")
+
+	// ErrRevokeConflict reports a revoke whose every compare-and-swap lost
+	// to a concurrent write of the same record.
+	ErrRevokeConflict = errors.New("devicereg: revoke lost every compare-and-swap")
 )
 
 // StoreError reports a failure of the qrdb store under the registry.

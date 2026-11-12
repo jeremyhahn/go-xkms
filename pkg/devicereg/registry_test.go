@@ -362,6 +362,7 @@ func TestValidateID(t *testing.T) {
 type barrierKV struct {
 	*qrdbsdk.MemoryKVStore
 	arrivals atomic.Int32
+	writes   atomic.Int32
 	writers  sync.WaitGroup
 }
 
@@ -380,12 +381,29 @@ func (b *barrierKV) arrive() {
 
 func (b *barrierKV) Put(ctx context.Context, key string, value []byte) error {
 	b.arrive()
-	return b.MemoryKVStore.Put(ctx, key, value)
+	err := b.MemoryKVStore.Put(ctx, key, value)
+	if err == nil {
+		b.writes.Add(1)
+	}
+	return err
 }
 
 func (b *barrierKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
 	b.arrive()
-	return b.MemoryKVStore.PutIfAbsent(ctx, key, value)
+	stored, err := b.MemoryKVStore.PutIfAbsent(ctx, key, value)
+	if stored {
+		b.writes.Add(1)
+	}
+	return stored, err
+}
+
+func (b *barrierKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	b.arrive()
+	swapped, err := b.MemoryKVStore.CompareAndSwap(ctx, key, expected, next)
+	if swapped {
+		b.writes.Add(1)
+	}
+	return swapped, err
 }
 
 func TestPairConcurrentAcrossRegistries(t *testing.T) {
@@ -447,6 +465,94 @@ func TestPairRefusesNonAtomicStore(t *testing.T) {
 	}
 	if _, err := r.Get(ctx, "acme", "d1"); !errors.Is(err, ErrDeviceNotFound) {
 		t.Fatalf("Get after a refused pair = %v; want ErrDeviceNotFound", err)
+	}
+}
+
+func TestRevokeConcurrentAcrossRegistries(t *testing.T) {
+	ctx := context.Background()
+	kv := newBarrierKV()
+	seed, err := NewRegistry(dao.NewStoreFactory(kv.MemoryKVStore))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Pair(ctx, "acme", testDevice("d1")); err != nil {
+		t.Fatal(err)
+	}
+	var regs [2]*Registry
+	for i := range regs {
+		r, err := NewRegistry(dao.NewStoreFactory(kv))
+		if err != nil {
+			t.Fatal(err)
+		}
+		regs[i] = r
+	}
+	times := [2]time.Time{pairedAt.Add(time.Hour), pairedAt.Add(2 * time.Hour)}
+	var errs [2]error
+	var wg sync.WaitGroup
+	for i := range regs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = regs[i].Revoke(ctx, "acme", "d1", times[i])
+		}(i)
+	}
+	wg.Wait()
+	if errs[0] != nil || errs[1] != nil {
+		t.Fatalf("Revoke results = %v, %v; want both nil", errs[0], errs[1])
+	}
+	if n := kv.writes.Load(); n != 1 {
+		t.Fatalf("revocations written = %d; want 1", n)
+	}
+	got, err := seed.Get(ctx, "acme", "d1")
+	if err != nil || got.RevokedAt == nil || (!got.RevokedAt.Equal(times[0]) && !got.RevokedAt.Equal(times[1])) {
+		t.Fatalf("Get = %+v, %v; want RevokedAt one of %v", got, err, times)
+	}
+}
+
+func TestRevokeRefusesNonAtomicStore(t *testing.T) {
+	ctx := context.Background()
+	mem := qrdbsdk.NewMemoryKVStore()
+	seed, err := NewRegistry(dao.NewStoreFactory(mem))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Pair(ctx, "acme", testDevice("d1")); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewRegistry(dao.NewStoreFactory(nonAtomicKV{mem}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var storeErr *StoreError
+	err = r.Revoke(ctx, "acme", "d1", pairedAt.Add(time.Hour))
+	if !errors.As(err, &storeErr) || storeErr.Op != "revoke" || !errors.Is(err, qrdbsdk.ErrKVAtomicWriteUnsupported) {
+		t.Fatalf("Revoke on a non-atomic store = %v; want a revoke StoreError matching ErrKVAtomicWriteUnsupported", err)
+	}
+	if active, err := seed.IsActive(ctx, "acme", "d1"); err != nil || !active {
+		t.Fatalf("IsActive after a refused revoke = %v, %v; want true", active, err)
+	}
+}
+
+// missKV is a store whose compare-and-swap never matches.
+type missKV struct{ *qrdbsdk.MemoryKVStore }
+
+func (missKV) CompareAndSwap(context.Context, string, []byte, []byte) (bool, error) {
+	return false, nil
+}
+
+func TestRevokeGivesUpOnConflict(t *testing.T) {
+	ctx := context.Background()
+	r, err := NewRegistry(dao.NewStoreFactory(missKV{qrdbsdk.NewMemoryKVStore()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Pair(ctx, "acme", testDevice("d1")); err != nil {
+		t.Fatal(err)
+	}
+	var storeErr *StoreError
+	err = r.Revoke(ctx, "acme", "d1", pairedAt.Add(time.Hour))
+	if !errors.As(err, &storeErr) || storeErr.Op != "revoke" || !errors.Is(err, ErrRevokeConflict) {
+		t.Fatalf("Revoke on a store that never swaps = %v; want a revoke StoreError matching ErrRevokeConflict", err)
 	}
 }
 
