@@ -35,4 +35,10 @@ SPEC and ROADMAP text.
 
 ## Results
 
-Results to follow.
+- xkey `go test -race -run 'TrustListXKMSd|TrustShowXKMSd|Trust' ./cmd/xkey/cmd/`: pass.
+- xkey `go build ./...` + `go vet ./cmd/xkey/cmd/...`: pass.
+- sdk/go `go build ./...` + `go test -race ./truststore/...`: pass.
+- `make lint`: pass (0 issues on every module and tag set).
+
+Note: `xkey trust list` has no `--purpose` flag, so the server call sends an
+empty Purpose (all roots); a purpose filter is a later slice.
