@@ -90,13 +90,13 @@ The classes come from `apierrors.SigningKeySentinelClasses`
 The appraisal verbs of `XKMSService` (`pkg/xkms/servicer_attestation.go`)
 are served over REST, QUIC, MCP, gRPC, the Unix socket and the embedded transport. Routes are declared at
 `pkg/api/rest/routes.go:483-491`, handled in
-`pkg/api/rest/handlers_attestation_appraisal.go:92-155` and called through
+`pkg/api/rest/handlers_attestation_appraisal.go:70-132` and called through
 `pkg/api/rest/wire/attestation_appraisal.go:27-30`. sdk/go reaches them from
 any `Client` with `AttestationAppraisal(c)` (`sdk/go/attestation_appraisal.go:48`).
 QUIC rides the same REST wire client
 (`pkg/api/transport/quic/transport_attestation_appraisal.go:27-32`). MCP
 routes the tools in `pkg/api/mcp/server.go:543-550`, handles them in
-`pkg/api/mcp/handlers_attestation_appraisal.go:62-115` and calls them from
+`pkg/api/mcp/handlers_attestation_appraisal.go:43-96` and calls them from
 `pkg/api/transport/mcp/transport_attestation_appraisal.go:29-38`.
 
 | Method and path | Verb | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
@@ -111,16 +111,19 @@ routes the tools in `pkg/api/mcp/server.go:543-550`, handles them in
 | `POST /api/v1/attestation/appraise` | `AppraiseAttestationQuote` | yes | yes | same as REST | `attestation.appraise` | yes | `attestation_verifier:verify` |
 
 An MCP delete returns its request; the MCP error codes follow the same
-classes (`pkg/api/mcp/handlers_attestation_appraisal.go:34-45`). USB is a
-later slice.
+classes (`pkg/api/mcp/handlers_attestation_appraisal.go:38-40`).
+
+USB: a USB device holds no tenant endorsements or reference values, so each
+of the 8 verbs returns `ErrNotSupported`
+(`pkg/api/transport/usb/transport_attestation_appraisal.go:27-67`).
 
 ### gRPC and the Unix socket
 
 The gRPC RPCs are declared at `pkg/api/grpc/proto/xkmsv1/xkms.proto:1032-1071`,
 each with a `qrdb.v1.permission` option equal to the Auth column above. The
-`Service` serves them at `pkg/api/grpc/service_attestation_appraisal.go:78-191`
-and classifies errors with its copy of the table below
-(`pkg/api/grpc/service_attestation_appraisal.go:40-51`). The Unix socket
+`Service` serves them at `pkg/api/grpc/service_attestation_appraisal.go:62-175`
+and classifies errors with the shared table below
+(`pkg/api/grpc/service_attestation_appraisal.go:54-59`). The Unix socket
 registers the same `Service` (`pkg/api/unix/grpc_server.go:338`). The gRPC and
 Unix transports call the RPCs through `pbconv.AttestationAppraisalClient`
 (`pkg/api/grpc/pbconv/attestation_appraisal.go:294`), from
@@ -154,8 +157,9 @@ server is built with an `XKMSService`; a service without an Appraiser answers
 | `ErrNilRequest`, `ErrInvalidName`, `ErrInvalidTenant`, `ErrInvalidRepository`, `ErrEndorsementInvalid`, `ErrReferenceValuesRejected`, `ErrInvalidAKIntermediate` | InvalidArgument | 400 |
 | `ErrRecordNotFound` | NotFound | 404 |
 
-The table is `appraisalSentinelClasses`
-(`pkg/api/rest/handlers_attestation_appraisal.go:45-56`).
+The table is `apierrors.AttestationAppraisalSentinelClasses`
+(`pkg/api/apierrors/tables.go:355-366`); REST, MCP and gRPC all classify
+through `apierrors.AttestationAppraisalClassOf` (`pkg/api/apierrors/tables.go:370`).
 
 ## Host and container evidence (embedded)
 
