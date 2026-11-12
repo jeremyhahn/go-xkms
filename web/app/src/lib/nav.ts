@@ -55,6 +55,7 @@ export const navSections: NavSection[] = [
     items: [
       { route: "certificates", path: "/certs", label: "Certificates", icon: "FileBadge", requires: { resource: "certs", action: "list" } },
       { route: "ca", path: "/ca", label: "Certificate Authority", icon: "Landmark", capability: "ca" },
+      { route: "trustRoots", path: "/trust/roots", label: "Trust Roots", icon: "Fingerprint", capability: "trust_roots", requires: { resource: "trust_roots", action: "list" } },
     ],
   },
   {

@@ -36,7 +36,7 @@ const root = {
   fingerprint: FP,
   purpose: "tpm-manufacturer",
   subject: "CN=Example TPM Root",
-  issuer: "CN=Example TPM Root",
+  issuer: "CN=Example TPM Issuer",
   algorithm: "ECDSA-P384",
   not_before: "2025-01-01T00:00:00Z",
   not_after: "2045-01-01T00:00:00Z",
