@@ -227,6 +227,18 @@ never copied onto the certificate (`order_finalize.go:851`). The request's key m
 registry vouched for at the challenge, and finalize asks the registry again, so
 a device withdrawn or re-keyed since its challenge is `unauthorized`.
 
+A device or its host assembles that request through `sdk/go/acme`:
+`BuildPossessionCRI(pub, claims, nonce)` returns the bytes to sign, the device
+signs SHA-256 of them as a DER ECDSA signature, and
+`AssemblePossessionCSR(cri, signature)` returns the DER CSR to finalize with.
+`SignPossessionCSR(signer, claims, nonce)` does all three for a device
+reachable as a `crypto.Signer`, and `DICENonce(keyAuthorization)` is the
+nonce. Each is the `deviceattest01` value itself, as are `ParsePossessionCSR`,
+`PossessionRequest` and the `ErrPossession*` sentinels, so `errors.Is` matches
+across the SDK (`sdk/go/acme/possession.go:29` `AssemblePossessionCSR`, `:32`
+`BuildPossessionCRI`, `:35` `SignPossessionCSR`, `:38` `DICENonce`, `:41`
+`PossessionRequest`, `:44` `ParsePossessionCSR`, `:47-56` the sentinels).
+
 The challenge itself also refuses to validate unless the device identity the
 evidence carries — the RFC 4043 `permanentIdentifier` otherName on the AIK
 certificate for `tpm`, the hex-encoded TCG DICE `tcg-dice-Ueid` extension for
