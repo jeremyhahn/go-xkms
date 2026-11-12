@@ -1,6 +1,6 @@
 # ACME Client Namespace
 
-> **Status: PARTIAL** · Feature: `acme` · Module: `go-xkms/xkey` · Built: `account`, `endorse`, `enroll`, `renew`, `revoke` (CLI), GUI Go service (`account`, `renew`, `revoke`); planned: the GUI view, GUI `enroll`/`endorse`
+> **Status: PARTIAL** · Feature: `acme` · Module: `go-xkms/xkey` · Built: `account`, `endorse`, `enroll`, `renew`, `revoke` (CLI), GUI service and view (`account`, `renew`, `revoke`); planned: GUI `enroll`/`endorse`
 > Scope: the `xkey acme` namespace; the ACME client itself is [acme-issuance](../../../docs/acme-issuance/).
 
 ## Purpose
@@ -14,11 +14,11 @@ no client logic of its own.
 
 | Verb | Purpose | State |
 |---|---|---|
-| `account register\|update\|deactivate` | Create and manage the ACME account | Implemented (CLI) |
+| `account register\|update\|deactivate` | Create and manage the ACME account | Implemented (CLI, GUI) |
 | `enroll` | Enroll the local TPM through `enroll-01`, `endorse-01` or `device-attest-01`; writes the IDevID, IAK and chain as PEM | Implemented |
 | `endorse` | Obtain an EK certificate for the local TPM through `endorse-01` (`--ip` required); writes the PEM certificate only, to `--out` or stdout | Implemented |
 | `renew` | Renew an issued certificate (`--cert`, `--domain`); writes the PEM certificate only | Implemented |
-| `revoke` | Revoke an issued certificate (`--cert`, `--reason` RFC 5280 name or number) | Implemented (CLI) |
+| `revoke` | Revoke an issued certificate (`--cert`, `--reason` RFC 5280 name or number) | Implemented (CLI, GUI) |
 
 Shared flags: `--directory` (ACME directory URL), `--account-key` (PEM
 account key; never printed), `--trusted-root` (repeatable) and
@@ -44,5 +44,9 @@ library, for installers, the initrd and hosts without xkey.
 CLI. The GUI's Go side is implemented: the Wails-bound `services.ACMEService`
 (`xkey/pkg/gui/services/acme_service.go`) serves account register, update and
 deactivate, revoke and renew, on the client factory the CLI shares
-(`xkey/pkg/gui/services/acme_client.go`). The Svelte view and GUI `enroll`
-and `endorse` (through the GUI's TPM) are planned. See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).
+(`xkey/pkg/gui/services/acme_client.go`), which also holds the one CSR loader
+(`LoadACMECSR`) the CLI and GUI share. The GUI view
+(`xkey/frontend/src/views/ACME.svelte`, nav entry "ACME") calls that service
+for account register, update contacts and deactivate (after a confirm
+dialog), revoke and renew; it handles paths only, never key material. GUI
+`enroll` and `endorse` (through the GUI's TPM) are planned. See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).
