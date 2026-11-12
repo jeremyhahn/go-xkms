@@ -23,4 +23,11 @@ toolchain container with `--memory=24g` on a runner with less memory.
 - `actionlint .github/workflows/ci.yml`
 - `make lint`
 
-Results to follow.
+## Results
+
+- The new test failed before the fix (neither job set IN_IMAGE_MEMORY)
+  and passes after it.
+- `go test -count=1 ./internal/buildgates/`: ok.
+- `actionlint .github/workflows/ci.yml`: no findings.
+- `make lint`: 0 issues (. sdk/go xkey web/desktop, root backend and raft
+  tag sets).
