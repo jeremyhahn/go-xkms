@@ -479,6 +479,13 @@ func Routes() []RouteSpec {
 	permIf("DELETE", "/attestation/signing-keys/binding", auth.ResourceAttestationSigningKeys, auth.ActionBind, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.DeleteHandler })
 	permIf("GET", "/attestation/signing-keys/resolve", auth.ResourceAttestationSigningKeys, auth.ActionGet, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.ResolveHandler })
 
+	// --- Continuous attestation verdicts (go-xkms#2088): bound to the
+	// caller's tenant by the servicer; the device is a query parameter. ---
+	hasVerdicts := func(s *Server) bool { return s.verdictHandlers != nil }
+	permIf("GET", "/attestation/verdicts", auth.ResourceAttestationVerdicts, auth.ActionList, hasVerdicts, func(s *Server) http.HandlerFunc { return s.verdictHandlers.ListHandler })
+	permIf("GET", "/attestation/verdicts/latest", auth.ResourceAttestationVerdicts, auth.ActionGet, hasVerdicts, func(s *Server) http.HandlerFunc { return s.verdictHandlers.LatestHandler })
+	permIf("POST", "/attestation/verdicts", auth.ResourceAttestationVerdicts, auth.ActionCreate, hasVerdicts, func(s *Server) http.HandlerFunc { return s.verdictHandlers.ReattestHandler })
+
 	// --- Server-side OIDC credentials (pkg/oidc/credential).
 	// oidc_credentials:* is an xkms-owned permission family
 	// (pkg/auth.ResourceOIDCCredentials) whose tenancy scope

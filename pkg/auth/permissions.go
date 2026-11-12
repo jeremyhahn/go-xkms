@@ -154,6 +154,11 @@ const (
 	// Changing a binding is attestation_signing_keys:bind (ActionBind).
 	ResourceAttestationSigningKeys = "attestation_signing_keys"
 
+	// ResourceAttestationVerdicts is continuous attestation's verdicts
+	// (pkg/attestation/continuous): listing a device's verdicts, reading its
+	// latest one, and re-attesting it now (attestation_verdicts:create).
+	ResourceAttestationVerdicts = "attestation_verdicts"
+
 	// ResourceTrust is the platform trust plane's write verbs that act
 	// outside the trust-root store: publishing the CA's DANE TLSA records to
 	// DNS (pkg/trust/dane Publisher.PublishDANE, trust:publish_dane) and
