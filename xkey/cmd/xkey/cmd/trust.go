@@ -154,6 +154,9 @@ file that yields no certificates at all is an error.
 Use --purpose to assign a specific purpose classification to all certificates
 in the file. Use --source to record where the certificates came from.
 
+In server mode (an xkmsd endpoint is configured) the certificates are imported
+into the server's trust-root store; the local store is not touched.
+
 Arguments:
   pem-file  Path to a PEM-encoded certificate file
 
@@ -188,6 +191,9 @@ var trustRemoveCmd = &cobra.Command{
 
 The fingerprint is a 64-character lowercase hex-encoded SHA-256 hash of the
 certificate's DER encoding. Use 'xkey trust list' to find fingerprints.
+
+In server mode (an xkmsd endpoint is configured) the certificate is removed
+from the server's trust-root store; the local store is not touched.
 
 Arguments:
   fingerprint  SHA-256 fingerprint of the certificate to remove
@@ -450,6 +456,22 @@ func runTrustAdd(cmd *cobra.Command, args []string) (err error) {
 		return &SentinelCauseError{Sentinel: ErrTrustPEMReadFailed, Cause: err}
 	}
 
+	purposeStr, _ := cmd.Flags().GetString("purpose")
+	sourceStr, _ := cmd.Flags().GetString("source")
+
+	var purpose truststore.CertPurpose
+	if purposeStr != "" {
+		var parseErr error
+		purpose, parseErr = truststore.ParsePurpose(purposeStr)
+		if parseErr != nil {
+			return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: parseErr}
+		}
+	}
+
+	if resolveXKMSdURL() != "" {
+		return runTrustAddXKMSd(cmd, pemFile, pemData, purposeStr, sourceStr)
+	}
+
 	store, err := openTrustStore()
 	if err != nil {
 		return err
@@ -460,21 +482,8 @@ func runTrustAdd(cmd *cobra.Command, args []string) (err error) {
 		}
 	}()
 
-	purposeStr, _ := cmd.Flags().GetString("purpose")
-	sourceStr, _ := cmd.Flags().GetString("source")
-
 	var opts *truststore.AddCertificateOptions
-
 	if purposeStr != "" || sourceStr != "" {
-		var purpose truststore.CertPurpose
-		if purposeStr != "" {
-			var parseErr error
-			purpose, parseErr = truststore.ParsePurpose(purposeStr)
-			if parseErr != nil {
-				return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: parseErr}
-			}
-		}
-
 		opts = &truststore.AddCertificateOptions{
 			Purpose: purpose,
 			Source:  sourceStr,
@@ -505,6 +514,10 @@ func runTrustAdd(cmd *cobra.Command, args []string) (err error) {
 func runTrustRemove(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
+
+	if resolveXKMSdURL() != "" {
+		return runTrustRemoveXKMSd(cmd, fingerprint)
+	}
 
 	store, err := openTrustStore()
 	if err != nil {
@@ -724,6 +737,62 @@ func runTrustShowXKMSd(cmd *cobra.Command, fingerprint string) (err error) {
 	if root.AddedAt != "" {
 		_, _ = fmt.Fprintf(out, "Added At:       %s\n", root.AddedAt)
 	}
+	return nil
+}
+
+// runTrustAddXKMSd imports the PEM roots into the server's trust-root store.
+// An empty purpose lets the server classify each certificate. It never
+// falls back to the local store.
+func runTrustAddXKMSd(cmd *cobra.Command, pemFile string, pemData []byte, purpose, source string) (err error) {
+	client, err := connectXKMSdClient(cmd)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	resp, err := client.TrustRootImport(trustCommandContext(cmd), &transport.TrustRootImportRequest{
+		PEM:     string(pemData),
+		Purpose: purpose,
+		Source:  source,
+	})
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: fmt.Errorf("TrustRootImport: %w", err)}
+	}
+	if resp.Added == 0 && resp.Skipped == 0 {
+		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: ErrTrustNoCertificates}
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(os.Stderr, "Importing certificates from %s\n", pemFile)
+	_, _ = fmt.Fprintf(out, "Certificates added: %d\n", resp.Added)
+	if resp.Skipped > 0 {
+		_, _ = fmt.Fprintf(out, "Certificates skipped (already present): %d\n", resp.Skipped)
+	}
+	return nil
+}
+
+// runTrustRemoveXKMSd deletes a root from the server's trust-root store. It
+// never falls back to the local store.
+func runTrustRemoveXKMSd(cmd *cobra.Command, fingerprint string) (err error) {
+	client, err := connectXKMSdClient(cmd)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	if err := client.TrustRootRemove(trustCommandContext(cmd), &transport.TrustRootRequest{Fingerprint: fingerprint}); err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustRemoveFailed, Cause: fmt.Errorf("TrustRootRemove: %w", err)}
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Certificate removed: %s\n", fingerprint)
 	return nil
 }
 
