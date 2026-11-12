@@ -7,7 +7,7 @@ Row: device-registry (`docs/SPEC.md:87`). This document is the row's detail doc.
 | Mode | Who is the authority | Where the record lives |
 |---|---|---|
 | Local (embedded) | the xkey host the phone paired with | `pairing.PairedDevice` (`xkey/pkg/pairing/device.go:39`), one row of `devices.yaml`, owned as described in `xkey/docs/phone-hsm/architecture.md:83` |
-| Backend | go-xkms, the verifier for a tenant | `devicereg.Device` (`pkg/devicereg/registry.go:51`), one qrdb record per tenant and device ID |
+| Backend | go-xkms, the verifier for a tenant | `devicereg.Device` (`pkg/devicereg/registry.go:50`), one qrdb record per tenant and device ID |
 
 Local mode already exists. Backend mode is new with `pkg/devicereg`: it gives
 go-xkms a record of which devices a tenant paired, so a later slice can verify
@@ -17,11 +17,11 @@ go-xkms); the two records are separate types whose overlapping field names
 
 ## The record
 
-`Device` (`pkg/devicereg/registry.go:51`):
+`Device` (`pkg/devicereg/registry.go:50`):
 
 - `ID` - the record's key in the tenant, one path-safe name: 1 to 128 ASCII
   letters, digits, `.`, `_` or `-`, not `.` or `..` (`ValidateID`,
-  `pkg/devicereg/registry.go:74`).
+  `pkg/devicereg/registry.go:73`).
 - `Name` - display name.
 - `IdentityKey` - the device identity public key, SPKI DER. Required on pair.
 - `AttestationProtocolVersion` - the attestation model the device paired
@@ -37,24 +37,22 @@ appraisal store's collections (`pkg/attestation/appraisal/store.go:198`): one
 qrdb entity type (`paired_devices` in database `devices`) whose ID is a hash
 of the tenant-scoped natural key.
 
-- `Pair` (`pkg/devicereg/registry.go:134`) refuses a nil device, a device with
+- `Pair` (`pkg/devicereg/registry.go:136`) refuses a nil device, a device with
   no identity key or already revoked, and an ID the tenant already holds,
   active or revoked (`ErrDeviceExists`). A revoked ID is never reused: a
   re-pair takes a new ID.
 - `Get`, `IsActive` - `ErrDeviceNotFound` for an ID the tenant does not hold.
-- `List` (`pkg/devicereg/registry.go:173`) - the tenant's devices, active and
+- `List` (`pkg/devicereg/registry.go:170`) - the tenant's devices, active and
   revoked, ordered by ID.
-- `Revoke` (`pkg/devicereg/registry.go:201`) - idempotent: the first
+- `Revoke` (`pkg/devicereg/registry.go:198`) - idempotent: the first
   revocation time is kept, the record is never deleted.
 
-Pair and Revoke are serialised within one `Registry`. Two registries on one
-store (two go-xkms processes) can race a pair of one ID; closing that needs a
-conditional create in the DAO and is left to a later slice.
+Pair is atomic in the store: it creates the record with the DAO's `SaveIfAbsent` (the KV store's `PutIfAbsent`), so of two registries on one store (two go-xkms processes) pairing one ID exactly one wins, and a store without atomic writes is refused; Revoke is serialised within one `Registry`.
 
 ## Tenant scoping
 
 Every key is `scope.SharedPrefix(tenant, "paired-devices") + ID`
-(`tenantPrefix`, `pkg/devicereg/registry.go:248`). An empty or malformed tenant
+(`tenantPrefix`, `pkg/devicereg/registry.go:245`). An empty or malformed tenant
 is refused with `ErrInvalidTenant` on every call. Because the tenant is part of
 the key, tenant A's `Get` or `Revoke` of tenant B's ID finds nothing
 (`ErrDeviceNotFound`), and `List` returns only the caller's tenant.
