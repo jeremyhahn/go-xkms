@@ -20,4 +20,12 @@
 
 ## Results
 
-Results to follow.
+- Merge: 487310bee, parents c99b583e3 and d55b1b73c; no conflicts.
+- make secure-analyzer-selftest (cold /tmp/gomod): pass, including the go: downloading cold-cache cases.
+- make secure-analyzer: pass (5 rungs clean, 2 allowlist entries all still needed).
+- go test -count=1 -race ./scripts/secure-analyzer-symbol/: pass.
+- make lint: pass (0 issues on every module and tag set).
+- actionlint .github/workflows/ci.yml (the one workflow file differing from main): clean.
+- Note: the -mod=mod lint build rewrote go.mod (github.com/awnumar/memguard v0.23.0 from
+  indirect to direct) and added go.sum lines; not committed (go.mod/go.sum are outside
+  this lane), so a later deps lane should tidy it.
