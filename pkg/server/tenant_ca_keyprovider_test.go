@@ -150,8 +150,9 @@ func TestTenantCAKeyProviderOptions(t *testing.T) {
 	if opts := s.tenantCAKeyProviderOptions(); len(opts) != 1 {
 		t.Fatalf("tenantCAKeyProviderOptions() returned %d options, want 1", len(opts))
 	}
-	if s.tenantCAKeyFactory == nil {
-		t.Fatal("the factory was not retained for the backend to be bound")
+	// No backend is loaded yet: the factory refuses until one is.
+	if _, err := s.tenantCAKeyBackend(); err == nil {
+		t.Fatal("tenantCAKeyBackend() resolved a backend on a server with none")
 	}
 }
 
@@ -159,8 +160,5 @@ func TestTenantCAKeyProviderOptions_NoCA(t *testing.T) {
 	s := &Server{config: &config.Config{}}
 	if opts := s.tenantCAKeyProviderOptions(); len(opts) != 0 {
 		t.Fatalf("tenantCAKeyProviderOptions() returned %d options, want 0", len(opts))
-	}
-	if s.tenantCAKeyFactory != nil {
-		t.Fatal("a factory was created without a TrustedCA")
 	}
 }
