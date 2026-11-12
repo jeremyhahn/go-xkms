@@ -36,4 +36,17 @@ Row: acme-issuance (docs/SPEC.md:41), epic #1667, slice 2 (lane sacmeib), stacke
 
 ## Results
 
-Results to follow.
+- Handler: `TestBindDeviceAttestationKey_ApplicationReference` passes on the
+  branch as it stands (matching issues; mismatched and required-but-absent are
+  badCSR naming the mismatch sentinel; absent admitted by default; 31-byte
+  record and withdrawn device unauthorized without the cause). No handler fix.
+- Config: `dice_require_application_reference` (pkg/config/acme.go:856),
+  passed by `buildDeviceAttestVerifier` (cmd/xkmsd/acme_device_attest.go:79).
+- Commit f6b26ceb1 holds the feat change under the test commit's subject (the
+  message file was not rewritten); not amended, per the lane rules.
+- go test -race handlers, device-attest-01, config: pass.
+- go test -race -run DeviceAttest ./cmd/xkmsd/: pass.
+- sdk/go go build ./...: pass.
+- make lint: pass (0 issues on every tag set).
+- Remaining: the device registry (row device-registry) is the only producer of
+  `ApplicationReference` still missing.
