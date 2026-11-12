@@ -407,8 +407,8 @@ certificate chains to.
 
 A device appraised once, at enrollment, says nothing about the device an
 hour later. `pkg/attestation/continuous` re-attests enrolled devices and
-publishes each verdict (docs/SPEC.md:81). It is a library in this slice:
-no transport or service verb reaches it yet.
+publishes each verdict (docs/SPEC.md:81). The xkms service serves its
+verdicts on REST (below); gRPC, MCP and compose wiring are later work.
 
 - **On demand.** `Engine.Reattest` (pkg/attestation/continuous/engine.go:119)
   draws a fresh 32-byte nonce, asks the `EvidenceSource` for a quote over it,
@@ -432,6 +432,24 @@ no transport or service verb reaches it yet.
 - **Published.** Every `Publisher` receives each stored verdict. What a
   consumer does with it (admit, quarantine, remediate, disconnect) is
   outside xkms; this package names no consumer.
+- **Served as verbs.** `XKMSService.SetContinuousAttestation`
+  (pkg/xkms/servicer_attestation_verdicts.go:34) wires an engine and its
+  store. `ListAttestationVerdicts` (:56), `GetLatestAttestationVerdict`
+  (:70) and `ReattestDevice` (:79) always act for `callerTenant(ctx)`
+  (pkg/xkms/tenant_binding.go:65); the request
+  (pkg/api/transport/types_attestation_verdicts.go) names only the device.
+  With no store wired every verb is `ErrNotConfigured`; with a store but no
+  engine only `ReattestDevice` is.
+- **On REST.** `GET /api/v1/attestation/verdicts?device=`
+  (attestation_verdicts:list), `GET /api/v1/attestation/verdicts/latest?device=`
+  (attestation_verdicts:get) and `POST /api/v1/attestation/verdicts` with
+  `{"device_id": ...}` (attestation_verdicts:create) are gated at
+  pkg/api/rest/routes.go:485-487. `apierrors.VerdictClassOf`
+  (pkg/api/apierrors/tables.go:360) maps an `InputError` to 400, a
+  `VerdictNotFoundError` to 404, and `ErrNotConfigured` or a `StoreError`
+  to 503. The three permissions are ScopeSelf
+  (pkg/apimodule/module_scopes.go) and REST-only until gRPC and MCP serve
+  the verbs (pkg/apimodule/module_grants_test.go `restOnlyPermissions`).
 
 ## What this feature deliberately does not do
 
