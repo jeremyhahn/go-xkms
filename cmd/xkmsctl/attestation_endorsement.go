@@ -29,7 +29,7 @@ var attestationCmd = &cobra.Command{
 	Use:   "attestation",
 	Short: "Manage the attestation Verifier",
 	Long: `Manage the tenant's attestation Verifier: the endorsements (trust anchors)
-it appraises evidence against.`,
+and the signed CoRIM reference values it appraises evidence against.`,
 }
 
 // attestationEndorsementCmd groups the endorsement store verbs.

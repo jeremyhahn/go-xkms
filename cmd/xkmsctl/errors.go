@@ -861,6 +861,26 @@ var (
 	// endorsement flags".
 	ErrInvalidEndorsementFlags = errors.New("invalid attestation endorsement flags")
 
+	// ErrPutAttestationReferenceValuesFailed is the sentinel error "failed to
+	// put the attestation reference values".
+	ErrPutAttestationReferenceValuesFailed = errors.New("failed to put the attestation reference values")
+
+	// ErrGetAttestationReferenceValuesFailed is the sentinel error "failed to
+	// get the attestation reference values".
+	ErrGetAttestationReferenceValuesFailed = errors.New("failed to get the attestation reference values")
+
+	// ErrListAttestationReferenceValuesFailed is the sentinel error "failed to
+	// list the attestation reference values".
+	ErrListAttestationReferenceValuesFailed = errors.New("failed to list the attestation reference values")
+
+	// ErrDeleteAttestationReferenceValuesFailed is the sentinel error "failed
+	// to delete the attestation reference values".
+	ErrDeleteAttestationReferenceValuesFailed = errors.New("failed to delete the attestation reference values")
+
+	// ErrInvalidReferenceValuesFlags is the sentinel error "invalid
+	// attestation reference-values flags".
+	ErrInvalidReferenceValuesFlags = errors.New("invalid attestation reference-values flags")
+
 	// ErrChangeKeyVersionFailed is the sentinel error "failed to change the
 	// key version".
 	ErrChangeKeyVersionFailed = errors.New("failed to change the key version")
