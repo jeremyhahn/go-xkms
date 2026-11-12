@@ -408,7 +408,8 @@ certificate chains to.
 A device appraised once, at enrollment, says nothing about the device an
 hour later. `pkg/attestation/continuous` re-attests enrolled devices and
 publishes each verdict (docs/SPEC.md:81). The xkms service serves its
-verdicts on REST (below); gRPC, MCP and compose wiring are later work.
+verdicts on REST, gRPC, the Unix socket and MCP (below); QUIC and
+compose wiring are later work.
 
 - **On demand.** `Engine.Reattest` (pkg/attestation/continuous/engine.go:119)
   draws a fresh 32-byte nonce, asks the `EvidenceSource` for a quote over it,
@@ -440,16 +441,21 @@ verdicts on REST (below); gRPC, MCP and compose wiring are later work.
   (pkg/api/transport/types_attestation_verdicts.go) names only the device.
   With no store wired every verb is `ErrNotConfigured`; with a store but no
   engine only `ReattestDevice` is.
-- **On REST.** `GET /api/v1/attestation/verdicts?device=`
+- **On the wire.** REST serves `GET /api/v1/attestation/verdicts?device=`
   (attestation_verdicts:list), `GET /api/v1/attestation/verdicts/latest?device=`
   (attestation_verdicts:get) and `POST /api/v1/attestation/verdicts` with
-  `{"device_id": ...}` (attestation_verdicts:create) are gated at
-  pkg/api/rest/routes.go:485-487. `apierrors.VerdictClassOf`
-  (pkg/api/apierrors/tables.go:360) maps an `InputError` to 400, a
-  `VerdictNotFoundError` to 404, and `ErrNotConfigured` or a `StoreError`
-  to 503. The three permissions are ScopeSelf
-  (pkg/apimodule/module_scopes.go) and REST-only until gRPC and MCP serve
-  the verbs (pkg/apimodule/module_grants_test.go `restOnlyPermissions`).
+  `{"device_id": ...}` (attestation_verdicts:create), gated at
+  pkg/api/rest/routes.go:485-487. gRPC, and the Unix socket over the same
+  Service, serves `ListAttestationVerdicts`, `GetLatestAttestationVerdict`
+  and `ReattestDevice` (pkg/api/grpc/service_attestation_verdicts.go) on the
+  same pairs; MCP serves `attestation.verdict.list`, `.latest` and
+  `.reattest` (pkg/api/mcp/server.go:544-546). The gRPC, Unix and MCP client
+  transports implement `transport.AttestationVerdictService`.
+  `apierrors.VerdictClassOf` (pkg/api/apierrors/tables.go:360) maps an
+  `InputError` to 400 (InvalidArgument), a `VerdictNotFoundError` to 404
+  (NotFound), and `ErrNotConfigured` or a `StoreError` to 503 (Unavailable)
+  on every transport. The three permissions are ScopeSelf
+  (pkg/apimodule/module_scopes.go).
 
 ## What this feature deliberately does not do
 

@@ -84,6 +84,24 @@ the release key `release-signing`.
 The classes come from `apierrors.SigningKeySentinelClasses`
 (`pkg/api/apierrors/tables.go:330`).
 
+## Continuous attestation verdicts
+
+The verdict verbs (#2088) read and refresh the verdicts of the continuous
+attestation engine. Each acts on the caller's tenant; the request names only
+the device. Without a verdict store wired, each returns `ErrNotConfigured`.
+
+| Capability | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
+|---|---|---|---|---|---|---|
+| List a device's verdicts | `GET /api/v1/attestation/verdicts?device=` | `ListAttestationVerdicts` | not yet | `attestation.verdict.list` | `ListAttestationVerdicts` | `attestation_verdicts:list` |
+| Read the newest verdict | `GET /api/v1/attestation/verdicts/latest?device=` | `GetLatestAttestationVerdict` | not yet | `attestation.verdict.latest` | `GetLatestAttestationVerdict` | `attestation_verdicts:get` |
+| Re-attest now | `POST /api/v1/attestation/verdicts` with `{"device_id": ...}` | `ReattestDevice` | not yet | `attestation.verdict.reattest` | `ReattestDevice` | `attestation_verdicts:create` |
+
+The gRPC methods are `pkg/api/grpc/proto/xkmsv1/xkms.proto:1032`–`:1044`.
+MCP routes them in `pkg/api/mcp/server.go:544`–`:546`. The errors map through
+`apierrors.VerdictClassOf` (`pkg/api/apierrors/tables.go:360`) on every
+transport: a missing device is invalid argument (400), no verdict yet is not
+found (404), and no store or a store failure is unavailable (503).
+
 ## Host and container evidence (embedded)
 
 `AppraiseHost` and `AppraiseContainer` are Go calls with no wire form. Their
