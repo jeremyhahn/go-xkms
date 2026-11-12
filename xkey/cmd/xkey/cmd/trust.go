@@ -133,11 +133,15 @@ var trustListCmd = &cobra.Command{
 	Long: `List all certificates in the trust store.
 
 Displays a table with fingerprint, subject, purpose, source, algorithm, and
-validity dates for each trusted certificate.
+validity dates for each trusted certificate. --purpose lists only the
+certificates of one purpose; a certificate with no metadata counts as general.
 
 Examples:
   # List all trusted certificates
-  xkey trust list`,
+  xkey trust list
+
+  # List only TPM manufacturer roots
+  xkey trust list --purpose tpm-manufacturer`,
 	RunE: runTrustList,
 }
 
@@ -242,6 +246,10 @@ Available methods:
 
 Configuration is read from the config file under the 'trust.bootstrap' section.
 Use --method to override the method order from the command line.
+
+With an xkmsd endpoint configured, the fetched bundle is imported into the
+server's trust-root store (purpose bootstrap-ca, source platform:<host>)
+and no local trust store is written.
 
 Examples:
   # Bootstrap using configured method order
@@ -349,6 +357,8 @@ func init() {
 		trustBootstrapCmd, trustClassifyCmd, trustInstallCmd, trustUninstallCmd)
 
 	// Add command flags
+	trustListCmd.Flags().String("purpose", "",
+		"List only certificates of this purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer, image-signer, synced)")
 	trustAddCmd.Flags().String("purpose", "",
 		"certificate purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer, synced)")
 	trustAddCmd.Flags().String("source", "",
@@ -403,8 +413,16 @@ func openTrustStore() (*truststore.FileStore, error) {
 
 // runTrustList executes the trust list command.
 func runTrustList(cmd *cobra.Command, args []string) (err error) {
+	// The filter is validated before either path so a typo never reaches
+	// the server or reads as an empty store.
+	purposeFilter, _ := cmd.Flags().GetString("purpose")
+	if purposeFilter != "" {
+		if _, parseErr := truststore.ParsePurpose(purposeFilter); parseErr != nil {
+			return &SentinelCauseError{Sentinel: ErrTrustListFailed, Cause: parseErr}
+		}
+	}
 	if resolveXKMSdURL() != "" {
-		return runTrustListXKMSd(cmd)
+		return runTrustListXKMSd(cmd, purposeFilter)
 	}
 	out := cmd.OutOrStdout()
 	store, err := openTrustStore()
@@ -422,23 +440,15 @@ func runTrustList(cmd *cobra.Command, args []string) (err error) {
 		return &SentinelCauseError{Sentinel: ErrTrustListFailed, Cause: err}
 	}
 
-	if len(certs) == 0 {
-		_, _ = fmt.Fprintln(out, "No trusted certificates found.")
-		return nil
+	type listedCert struct {
+		cert    *x509.Certificate
+		fp      string
+		purpose string
+		source  string
 	}
-
-	_, _ = fmt.Fprintf(out, "Trusted Certificates (%d):\n\n", len(certs))
-
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "FINGERPRINT\tSUBJECT\tPURPOSE\tSOURCE\tALGORITHM\tNOT BEFORE\tNOT AFTER\n")
-
+	listed := make([]listedCert, 0, len(certs))
 	for _, cert := range certs {
 		fp := truststore.Fingerprint(cert)
-		displayFP := fp
-		if len(fp) > 16 {
-			displayFP = fp[:16] + "..."
-		}
-
 		purpose := string(truststore.PurposeGeneral)
 		source := ""
 		meta, metaErr := store.Metadata(fp)
@@ -446,15 +456,35 @@ func runTrustList(cmd *cobra.Command, args []string) (err error) {
 			purpose = string(meta.Purpose)
 			source = meta.Source
 		}
+		if purposeFilter != "" && purpose != purposeFilter {
+			continue
+		}
+		listed = append(listed, listedCert{cert: cert, fp: fp, purpose: purpose, source: source})
+	}
 
+	if len(listed) == 0 {
+		_, _ = fmt.Fprintln(out, "No trusted certificates found.")
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(out, "Trusted Certificates (%d):\n\n", len(listed))
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintf(w, "FINGERPRINT\tSUBJECT\tPURPOSE\tSOURCE\tALGORITHM\tNOT BEFORE\tNOT AFTER\n")
+
+	for _, row := range listed {
+		displayFP := row.fp
+		if len(displayFP) > 16 {
+			displayFP = displayFP[:16] + "..."
+		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			displayFP,
-			cert.Subject.CommonName,
-			purpose,
-			source,
-			cert.PublicKeyAlgorithm.String(),
-			cert.NotBefore.Format(time.DateOnly),
-			cert.NotAfter.Format(time.DateOnly),
+			row.cert.Subject.CommonName,
+			row.purpose,
+			row.source,
+			row.cert.PublicKeyAlgorithm.String(),
+			row.cert.NotBefore.Format(time.DateOnly),
+			row.cert.NotAfter.Format(time.DateOnly),
 		)
 	}
 
@@ -673,7 +703,7 @@ func trustRootDate(value string) string {
 
 // runTrustListXKMSd lists the server's trust roots through TrustRootList.
 // A server error is returned; the local store is never read instead.
-func runTrustListXKMSd(cmd *cobra.Command) (err error) {
+func runTrustListXKMSd(cmd *cobra.Command, purpose string) (err error) {
 	client, err := connectXKMSdClient(cmd)
 	if err != nil {
 		return err
@@ -684,7 +714,7 @@ func runTrustListXKMSd(cmd *cobra.Command) (err error) {
 		}
 	}()
 
-	resp, err := client.TrustRootList(trustCommandContext(cmd), &transport.TrustRootListRequest{})
+	resp, err := client.TrustRootList(trustCommandContext(cmd), &transport.TrustRootListRequest{Purpose: purpose})
 	if err != nil {
 		return fmt.Errorf("TrustRootList: %w", err)
 	}
@@ -1085,6 +1115,10 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) (err error) {
 		return nil
 	}
 
+	if resolveXKMSdURL() != "" {
+		return runTrustBootstrapXKMSd(cmd, resp.PEM, bootstrapServer(autoCfg))
+	}
+
 	store, err := openTrustStore()
 	if err != nil {
 		return err
@@ -1110,6 +1144,37 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) (err error) {
 	_, _ = fmt.Fprintf(out, "Certificates imported: %d\n", result.Added)
 	if result.Skipped > 0 {
 		_, _ = fmt.Fprintf(out, "Certificates skipped (already present): %d\n", result.Skipped)
+	}
+	return nil
+}
+
+// runTrustBootstrapXKMSd files a fetched bootstrap bundle in the server's
+// trust-root store with the same purpose and source the local path uses.
+func runTrustBootstrapXKMSd(cmd *cobra.Command, pemData []byte, server string) (err error) {
+	client, err := connectXKMSdClient(cmd)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	opts := truststore.BootstrapImportOptions(server)
+	resp, err := client.TrustRootImport(trustCommandContext(cmd), &transport.TrustRootImportRequest{
+		PEM:     string(pemData),
+		Purpose: string(opts.Purpose),
+		Source:  opts.Source,
+	})
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustBootstrapFailed, Cause: fmt.Errorf("TrustRootImport: %w", err)}
+	}
+
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "Certificates imported: %d\n", resp.Added)
+	if resp.Skipped > 0 {
+		_, _ = fmt.Fprintf(out, "Certificates skipped (already present): %d\n", resp.Skipped)
 	}
 	return nil
 }
