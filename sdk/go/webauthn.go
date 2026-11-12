@@ -66,6 +66,48 @@ var NewWebAuthnQRDBUserStoreAdapter = webauthn.NewQRDBUserStoreAdapter
 // "no passkey enrolled" case distinctly from other login failures.
 var ErrWebAuthnNoCredentials = webauthn.ErrNoCredentials
 
+// WebAuthnLegacyCredentialMigration names the shared legacy keyspace, the
+// qrdb user client that resolves each credential's tenant, and the tenant
+// credential store MigrateWebAuthnLegacyCredentials moves credentials into.
+type WebAuthnLegacyCredentialMigration = webauthn.LegacyCredentialMigration
+
+// WebAuthnCredentialMigrationReport counts the credentials one run
+// migrated, skipped (another tenant's) and failed to move.
+type WebAuthnCredentialMigrationReport = webauthn.CredentialMigrationReport
+
+// MigrateWebAuthnLegacyCredentials moves the tenant's enrolled WebAuthn
+// credentials out of the shared "__xkms:webauthn/credentials/" keyspace into
+// the tenant's credential store, deleting each legacy key only after the
+// new record is saved. Call it each time a tenant's credential store is
+// opened (the store returned by NewWebAuthnQRDBUserStoreAdapter), before
+// serving a ceremony from it. It is idempotent: a second run migrates
+// nothing. A credential that cannot be moved is reported, never dropped:
+// the run returns a *WebAuthnCredentialMigrationIncompleteError with the
+// report.
+var MigrateWebAuthnLegacyCredentials = webauthn.MigrateLegacyCredentials
+
+// WebAuthnCredentialMigrationIncompleteError is returned when any legacy
+// record was left in place; its Failures carry the per-record errors below.
+type WebAuthnCredentialMigrationIncompleteError = webauthn.CredentialMigrationIncompleteError
+
+// WebAuthnCredentialMigrationConfigError reports a missing migration field.
+type WebAuthnCredentialMigrationConfigError = webauthn.CredentialMigrationConfigError
+
+// WebAuthnLegacyCredentialScanError reports a legacy keyspace that cannot be
+// read, such as one behind a sealed barrier.
+type WebAuthnLegacyCredentialScanError = webauthn.LegacyCredentialScanError
+
+// WebAuthnLegacyCredentialCorruptError reports a legacy record that does not
+// decode to the credential its key names.
+type WebAuthnLegacyCredentialCorruptError = webauthn.LegacyCredentialCorruptError
+
+// WebAuthnCredentialOwnerUnresolvedError reports a legacy credential whose
+// user or tenant cannot be resolved.
+type WebAuthnCredentialOwnerUnresolvedError = webauthn.CredentialOwnerUnresolvedError
+
+// WebAuthnCredentialMoveError reports a failed save or legacy delete.
+type WebAuthnCredentialMoveError = webauthn.CredentialMoveError
+
 // WebAuthnUser is the interface a WebAuthn account entity satisfies.
 type WebAuthnUser = webauthn.User
 

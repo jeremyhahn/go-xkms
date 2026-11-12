@@ -16,6 +16,7 @@ package webauthn
 import (
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 // Sentinel errors for WebAuthn operations.
@@ -263,3 +264,97 @@ func ClassifyLoginFinish(err error) LoginFinishFailure {
 		return LoginFinishInternal
 	}
 }
+
+// ErrLegacyCredentialKeyMismatch is the cause of a LegacyCredentialCorruptError
+// when a legacy record holds a credential other than the one its key names.
+var ErrLegacyCredentialKeyMismatch = errors.New("webauthn: legacy credential ID does not match its key")
+
+// CredentialMigrationConfigError reports a LegacyCredentialMigration field
+// that is missing.
+type CredentialMigrationConfigError struct {
+	Field string
+}
+
+// Error implements error.
+func (e *CredentialMigrationConfigError) Error() string {
+	return "webauthn: credential migration: missing field: " + e.Field
+}
+
+// LegacyCredentialScanError reports that the legacy keyspace under Prefix
+// could not be read, for example because the qrdb barrier is sealed.
+type LegacyCredentialScanError struct {
+	Prefix string
+	Err    error
+}
+
+// Error implements error.
+func (e *LegacyCredentialScanError) Error() string {
+	return "webauthn: credential migration: read legacy keyspace " + e.Prefix + ": " + e.Err.Error()
+}
+
+// Unwrap returns the read failure.
+func (e *LegacyCredentialScanError) Unwrap() error { return e.Err }
+
+// LegacyCredentialCorruptError reports a legacy record that does not decode to
+// the credential its key names. The record is left in place.
+type LegacyCredentialCorruptError struct {
+	Key string
+	Err error
+}
+
+// Error implements error.
+func (e *LegacyCredentialCorruptError) Error() string {
+	return "webauthn: credential migration: corrupt legacy record " + e.Key + ": " + e.Err.Error()
+}
+
+// Unwrap returns the decode failure.
+func (e *LegacyCredentialCorruptError) Unwrap() error { return e.Err }
+
+// CredentialOwnerUnresolvedError reports a legacy credential whose user, or
+// the user's tenant, cannot be resolved. UserID is zero when the user handle
+// does not decode. The record is left in place.
+type CredentialOwnerUnresolvedError struct {
+	Key    string
+	UserID uint64
+	Err    error
+}
+
+// Error implements error.
+func (e *CredentialOwnerUnresolvedError) Error() string {
+	return "webauthn: credential migration: owner of " + e.Key + " unresolved: " + e.Err.Error()
+}
+
+// Unwrap returns the resolution failure.
+func (e *CredentialOwnerUnresolvedError) Unwrap() error { return e.Err }
+
+// CredentialMoveError reports a failed step of moving the legacy record at
+// Key: Op is "save", "read existing", "delete legacy key" or
+// "delete legacy index". The legacy record is left in place.
+type CredentialMoveError struct {
+	Key string
+	Op  string
+	Err error
+}
+
+// Error implements error.
+func (e *CredentialMoveError) Error() string {
+	return "webauthn: credential migration: " + e.Op + " " + e.Key + ": " + e.Err.Error()
+}
+
+// Unwrap returns the step's failure.
+func (e *CredentialMoveError) Unwrap() error { return e.Err }
+
+// CredentialMigrationIncompleteError is returned by MigrateLegacyCredentials
+// when any legacy record was left in place. Failures are the per-record
+// errors, reachable through errors.Is and errors.As.
+type CredentialMigrationIncompleteError struct {
+	Failures []error
+}
+
+// Error implements error.
+func (e *CredentialMigrationIncompleteError) Error() string {
+	return "webauthn: credential migration: " + strconv.Itoa(len(e.Failures)) + " legacy records not migrated"
+}
+
+// Unwrap returns the per-record failures.
+func (e *CredentialMigrationIncompleteError) Unwrap() []error { return e.Failures }
