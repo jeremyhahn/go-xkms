@@ -428,6 +428,12 @@ var (
 	// ErrCertificateAlreadyExists indicates a certificate with the same
 	// subject already exists in the certificate store.
 	ErrCertificateAlreadyExists = pkgca.ErrCertificateAlreadyExists
+
+	// ErrProfileNotFound indicates the requested profile does not exist.
+	ErrProfileNotFound = pkgca.ErrProfileNotFound
+
+	// ErrInvalidProfile indicates the profile configuration is invalid.
+	ErrInvalidProfile = pkgca.ErrInvalidProfile
 )
 
 // ---------------------------------------------------------------------------
