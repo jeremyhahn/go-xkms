@@ -107,11 +107,11 @@ func TestTokenClaimsJSONFieldNames(t *testing.T) {
 	assert.True(t, hasUserID, "JSON should use snake_case field name user_id")
 }
 
-// TestTokenClaimsCarryNoPermissions checks that the claims carry no
+// TestTokenClaimsDropPermissionList checks that the claims carry no
 // permissions list: authorization comes from the qrdb authorizer, so a
 // "permissions" key in a token is dropped on decode and never re-encoded,
 // and a refreshed claim set carries none.
-func TestTokenClaimsCarryNoPermissions(t *testing.T) {
+func TestTokenClaimsDropPermissionList(t *testing.T) {
 	in := []byte(`{"user_id":"uid","username":"uname","roles":["admin"],"permissions":["read","write"],"valid":true}`)
 
 	var claims TokenClaims

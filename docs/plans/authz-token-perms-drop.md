@@ -25,7 +25,7 @@ pkg/oidc and xkey `TokenClaims` types.
 
 ## Results
 
-- test commit, before the refactor: `TestTokenClaimsCarryNoPermissions` fails on both NotContains asserts (expected).
+- test commit, before the refactor: `TestTokenClaimsDropPermissionList` fails on both NotContains asserts (expected).
 - `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/acme/...` after the refactor: all pass except 5 DICE e2e tests in pkg/acme/client (`device_attest_dice_e2e_test.go:274`, `:299`, `:313`, `:329`, `:346`): `tfwsim-atecc608a` not built in the module cache. They fail at a stat of the missing simulator binary, before any code this change touches runs (they need `make tfwsim-atecc608a`). Not re-run on main d55b1b73c7.
 - `go build ./...`: pass.
 - `make lint`: pass (0 issues across all modules and tag sets).
