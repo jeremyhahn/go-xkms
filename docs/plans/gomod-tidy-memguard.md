@@ -26,4 +26,19 @@ Makefile, workflows.
 
 ## Results
 
-Results to follow.
+Departs from the expected edit: under the CI setup, `go mod tidy` leaves
+go.mod unchanged and removes 179 stale go.sum lines (none added). memguard
+v0.23.0 stays indirect: its only importer is
+test/lint/secure/_fixtures/bad/bad.go, an underscore directory go ignores.
+No module version changed; no quicraft/luks2 checksum mismatch.
+
+- `GOFLAGS=-mod=readonly go build ./...`: pass.
+- Second `go mod tidy`: go.mod and go.sum unchanged (idempotent).
+- `make lint` on the tidied tree: pass ("Linting complete"), and it left
+  go.mod/go.sum unchanged. So the memguard move and the +177 go.sum lines
+  that lanes cr2020/cr1962c saw do not reproduce under the CI env. They
+  probably come from those lanes' module env (a shared/warm GOMODCACHE or
+  GOPRIVATE/GONOPROXY not cleared).
+- The secure-analyzer builds go-qrdb's analyzer from the root module
+  (scripts/secure-analyzer.sh:104). With the tidied go.sum it still builds
+  under `-mod=readonly`.
