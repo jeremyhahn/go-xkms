@@ -45,4 +45,7 @@ proto, sdk/go, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- `go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack" ./cmd/xkmsctl/`: ok.
+- `go build ./...` at the root: ok.
+- `go build ./...` in sdk/go: ok.
+- `make lint`: ok, 0 issues in every module and tag set.
