@@ -67,6 +67,7 @@ const tenantsReply: ListTenantsResponse = {
     { id: "t-acme", name: "Acme", sealed: false },
     { id: "t-beta", name: "Beta", sealed: false },
   ],
+  pagination: { page: 1, page_size: 2, total: 2, has_more: false },
 };
 
 async function chooseTenant(id: string): Promise<void> {
@@ -110,7 +111,7 @@ describe("TenantQuotasView", () => {
 
     await waitFor(() => expect(updateQuotas).toHaveBeenCalledTimes(1));
     expect(updateQuotas).toHaveBeenCalledWith("t-acme", { tenant_id: "t-acme", quotas });
-    expect(Object.keys(updateQuotas.mock.calls[0][1].quotas)).toHaveLength(16);
+    expect(Object.keys(updateQuotas.mock.calls[0]?.[1].quotas ?? {})).toHaveLength(16);
     await waitFor(() => expect(toasts).toEqual([{ kind: "success", message: expect.any(String) }]));
   });
 
