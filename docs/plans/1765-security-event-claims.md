@@ -52,5 +52,8 @@ Encode refuses `len(Entries) != Count` with `ErrCountMismatch`.
 Out of scope: a backend implementation, a transport, the binding (signing,
 digest, nonce check), docs/SPEC.md.
 
-## Results to follow
+## Results
+
+- `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/attestation/securityevent/... ./pkg/types/...`: pass (securityevent coverage 95.7%, types 93.0%).
+- `make lint`: pass, 0 issues (root, sdk/go, xkey, web/desktop, root backend and raft tag sets).
 
