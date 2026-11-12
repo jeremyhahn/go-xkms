@@ -27,7 +27,7 @@ function installMock() {
   return acme;
 }
 
-async function fillConnection(view: ReturnType<typeof render>) {
+async function fillConnection(view: { getByLabelText: (text: string) => HTMLElement }) {
   await fireEvent.input(view.getByLabelText('Directory URL'), { target: { value: 'https://ca.test/directory' } });
   await fireEvent.input(view.getByLabelText('Account key path'), { target: { value: '/keys/account.pem' } });
   await fireEvent.input(view.getByLabelText('Trusted root paths'), { target: { value: ' /r1.pem\n\n/r2.pem \n' } });
