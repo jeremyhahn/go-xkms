@@ -43,12 +43,19 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // wrapInputError creates an error with context for invalid input.
 func wrapInputError(field, message string) error {
 	return caerrors.MalformedError("admin: invalid input - %s: %s", field, message)
+}
+
+// wrapInputCause is wrapInputError for a refusal that has a cause, kept
+// reachable with errors.Is.
+func wrapInputCause(field string, cause error) error {
+	return caerrors.Wrap(caerrors.Malformed, cause, "admin: invalid input - %s: %s", field, cause.Error())
 }
 
 // tenantCAEntry represents a cached tenant CA.
@@ -198,6 +205,11 @@ func (s *TenantAwareAdminService) CreateTenant(ctx context.Context, req CreateTe
 	}
 	if req.ID == "" {
 		return nil, wrapInputError("id", "tenant ID is required")
+	}
+	// A tenant's ID is its SVIDs' trust domain (pkg/spiffe BuildURI); refuse
+	// one that can never be, before go-qrdb records the tenant.
+	if err := spiffe.ValidateTrustDomain(req.ID); err != nil {
+		return nil, wrapInputCause("id", err)
 	}
 	if req.Name == "" {
 		return nil, wrapInputError("name", "tenant name is required")
