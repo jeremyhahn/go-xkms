@@ -46,7 +46,18 @@ vite build, `go test -race ./pkg/api/rest/`, sdk/go build, `make lint`.
 Baseline failures on main: view1/view2 svelte-auth tests, svelte-check at
 UsersView.svelte:121.
 
-Results to follow.
+Results (2026-11-12, lane suif):
+
+- sdk/ts build, svelte-auth install, web/app npm ci: pass.
+- vitest test/view3_piv_slots.test.ts: 7 tests pass.
+- vitest whole web/app suite (with the flag): 51 files, 419 tests pass.
+- svelte-check: baseline only (UsersView.svelte:121 and test/view2_users.test.ts:51, role/roles).
+- vite build: pass.
+- go test -race ./pkg/api/rest/: pass.
+- sdk/go go build ./...: pass.
+- make lint: pass.
+- Note: the feat commit carries the test commit's subject by mistake (a
+  reused message file); its content is the view, route and nav lines.
 
 ## Follow-ups (out of scope)
 
