@@ -23,6 +23,7 @@
   import CaView from "$views/CaView.svelte";
   import SshView from "$views/SshView.svelte";
   import FrostView from "$views/FrostView.svelte";
+  import KeyVersionsView from "$views/KeyVersionsView.svelte";
 
   // Once authenticated, ensure the session (permissions + capabilities) is
   // loaded before the shell gates navigation. Runs whenever auth status flips.
@@ -50,6 +51,7 @@
       <BackendsView />
     {:else if routerStore.name === "keys"}
       <KeysView />
+    {:else if routerStore.name === "keyVersions"}<KeyVersionsView />
     {:else if routerStore.name === "certificates"}
       <CertificatesView />
     {:else if routerStore.name === "ca"}

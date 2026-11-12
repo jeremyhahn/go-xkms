@@ -115,7 +115,7 @@ describe("KeyVersionsView", () => {
     disable.mockResolvedValue({ key_id: "signer", version: 1, state: "disabled", changed: true });
     list.mockResolvedValue({
       ...versions,
-      versions: [{ version: 2, state: "enabled", created_at: "2026-02-01T00:00:00Z" }, versions.versions[2]],
+      versions: [{ version: 2, state: "enabled", created_at: "2026-02-01T00:00:00Z" }, versions.versions[2]!],
     });
     await choose();
 
