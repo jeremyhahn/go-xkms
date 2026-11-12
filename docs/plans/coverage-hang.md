@@ -24,4 +24,12 @@ Epic #1794 (E4 Test standard and suite audit).
 
 ## Results
 
-Results to follow.
+Run 1 (lane hangcova) taught two things:
+
+- A lane Bash call is cut at 10 minutes, so `make test` cannot finish in one
+  foreground call; it runs under nohup with a pid file.
+- The shared /gocache in the lane container is missing entries, so every
+  package fails to build with it:
+  `could not import context (open /gocache/...-d: no such file or directory)`.
+
+Run 2 with a private GOCACHE: results to follow.
