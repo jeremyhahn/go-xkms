@@ -192,12 +192,15 @@ func TestAttestationAppraisalREST_ReferenceValuesAndAppraise(t *testing.T) {
 	_, err = client.PutAttestationReferenceValues(ctx, &transport.PutAttestationReferenceValuesRequest{Name: "golden", SignedCoRIM: []byte("not a corim")})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
 
-	// A quote naming reference values the tenant does not hold is refused.
-	_, err = client.AppraiseAttestationQuote(ctx, &transport.AppraiseAttestationQuoteRequest{
+	// Evidence no endorsement of the tenant vouches for is appraised as not
+	// verified, and the result names each check.
+	result, err := client.AppraiseAttestationQuote(ctx, &transport.AppraiseAttestationQuoteRequest{
 		AKCertificatePEM: testAKRootPEM(t), Quote: []byte{1}, Signature: []byte{1}, Nonce: []byte{1},
 		PCRs: map[uint32][]byte{0: make([]byte, 32)}, ReferenceValues: "golden",
 	})
-	assert.Contains(t, []int{http.StatusBadRequest, http.StatusNotFound}, statusOf(err))
+	require.NoError(t, err)
+	assert.False(t, result.Verified)
+	assert.NotEmpty(t, result.Checks)
 }
 
 // TestAttestationAppraisal_RESTEmbeddedParity drives each verb through the
@@ -206,9 +209,8 @@ func TestAttestationAppraisalREST_ReferenceValuesAndAppraise(t *testing.T) {
 func TestAttestationAppraisal_RESTEmbeddedParity(t *testing.T) {
 	svc := signingKeyXKMS(t)
 	restClient := appraisalClient(t, appraisalRouter(svc, acmeIdentity()))
-	tr, err := embedded.NewWithService(svc)
+	tr, err := embedded.New(svc)
 	require.NoError(t, err)
-	require.NoError(t, tr.Connect(context.Background()))
 	ctx := auth.WithIdentity(context.Background(), acmeIdentity())
 	clients := map[string]transport.AttestationAppraisalService{"rest": restClient, "embedded": tr}
 
@@ -227,6 +229,8 @@ func TestAttestationAppraisal_RESTEmbeddedParity(t *testing.T) {
 	}
 	assert.Equal(t, jsonOf(t, lists["rest"]), jsonOf(t, lists["embedded"]))
 
+	akRoot := testAKRootPEM(t)
+	results := map[string]string{}
 	for name, c := range clients {
 		refs, err := c.ListAttestationReferenceValues(ctx)
 		require.NoError(t, err, name)
@@ -239,12 +243,16 @@ func TestAttestationAppraisal_RESTEmbeddedParity(t *testing.T) {
 		_, err = c.PutAttestationReferenceValues(ctx, &transport.PutAttestationReferenceValuesRequest{Name: "golden", SignedCoRIM: []byte("not a corim")})
 		assert.Error(t, err, name)
 
-		_, err = c.AppraiseAttestationQuote(ctx, &transport.AppraiseAttestationQuoteRequest{
-			AKCertificatePEM: testAKRootPEM(t), Quote: []byte{1}, Signature: []byte{1}, Nonce: []byte{1},
+		result, err := c.AppraiseAttestationQuote(ctx, &transport.AppraiseAttestationQuoteRequest{
+			AKCertificatePEM: akRoot, Quote: []byte{1}, Signature: []byte{1}, Nonce: []byte{1},
 			PCRs: map[uint32][]byte{0: make([]byte, 32)}, ReferenceValues: "golden",
 		})
-		assert.Error(t, err, name)
+		require.NoError(t, err, name)
+		results[name] = jsonOf(t, []any{result.Verified, result.CryptographicFailure, result.Checks})
+	}
+	assert.Equal(t, results["rest"], results["embedded"])
 
+	for name, c := range clients {
 		require.NoError(t, c.DeleteAttestationEndorsement(ctx, &transport.DeleteAttestationEndorsementRequest{Name: "root-" + name}), name)
 		assert.True(t, notFound(c.DeleteAttestationEndorsement(ctx, &transport.DeleteAttestationEndorsementRequest{Name: "root-" + name})), name)
 	}
