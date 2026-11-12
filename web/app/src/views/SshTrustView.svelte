@@ -36,6 +36,11 @@
     return e instanceof Error ? e.message : String(e);
   }
 
+  // XkmsApiError carries the HTTP status; a 409 verify is a fingerprint mismatch.
+  function statusOf(e: unknown): number | undefined {
+    return (e as { status?: number } | null)?.status;
+  }
+
   async function load(): Promise<void> {
     loading = true;
     error = null;
@@ -75,7 +80,7 @@
       await getSDKClient().ssh.verifyKnownHost(vHost, { scope, owner, fingerprint: vFingerprint });
       hostResult = { ok: true, message: `Fingerprint matches the pin for ${vHost}.` };
     } catch (e) {
-      if ((e as { status?: number }).status === 409) {
+      if (statusOf(e) === 409) {
         hostResult = { ok: false, message: message(e) };
       } else {
         showToast("error", message(e));
@@ -106,7 +111,8 @@
       const matched = await getSDKClient().ssh.verifyAuthorizedKey({ scope, owner, fingerprint: kFingerprint });
       keyResult = { ok: true, message: `Fingerprint matches ${matched.name}.` };
     } catch (e) {
-      if ((e as { status?: number }).status === 409 || (e as { status?: number }).status === 404) {
+      const status = statusOf(e);
+      if (status === 409 || status === 404) {
         keyResult = { ok: false, message: message(e) };
       } else {
         showToast("error", message(e));
