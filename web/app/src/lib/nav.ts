@@ -40,6 +40,7 @@ export const navSections: NavSection[] = [
     items: [
       { route: "dashboard", path: "/dashboard", label: "Dashboard", icon: "LayoutDashboard" },
       { route: "backends", path: "/backends", label: "Backends", icon: "Server", requires: { resource: "backends", action: "list" } },
+      { route: "backendDiagnostics", path: "/backends/diagnostics", label: "Backend Diagnostics", icon: "Server", requires: { resource: "backends", action: "read" } },
     ],
   },
   {
