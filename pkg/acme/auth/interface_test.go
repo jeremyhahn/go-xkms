@@ -14,6 +14,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -108,6 +109,40 @@ func TestTokenClaimsJSONFieldNames(t *testing.T) {
 	assert.Equal(t, "uname", raw["username"])
 	_, hasUserID := raw["user_id"]
 	assert.True(t, hasUserID, "JSON should use snake_case field name user_id")
+}
+
+// TestTokenClaimsCarryNoPermissions checks that the claims carry no
+// permissions list: authorization comes from the qrdb authorizer, so a
+// "permissions" key in a token is dropped on decode and never re-encoded,
+// and a refreshed claim set carries none.
+func TestTokenClaimsCarryNoPermissions(t *testing.T) {
+	in := []byte(`{"user_id":"uid","username":"uname","roles":["admin"],"permissions":["read","write"],"valid":true}`)
+
+	var claims TokenClaims
+	require.NoError(t, json.Unmarshal(in, &claims))
+	assert.Equal(t, "uid", claims.UserID)
+	assert.Equal(t, []string{"admin"}, claims.Roles)
+
+	out, err := json.Marshal(&claims)
+	require.NoError(t, err)
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(out, &raw))
+	assert.NotContains(t, raw, "permissions", "re-encoded claims must not carry permissions")
+
+	client := NewMemoryClient()
+	client.AddToken("perm-token", &claims)
+	ctx := context.Background()
+	newToken, err := client.RefreshToken(ctx, "perm-token")
+	require.NoError(t, err)
+	refreshed, err := client.ValidateToken(ctx, newToken)
+	require.NoError(t, err)
+	assert.Equal(t, "uid", refreshed.UserID)
+
+	out, err = json.Marshal(refreshed)
+	require.NoError(t, err)
+	raw = nil
+	require.NoError(t, json.Unmarshal(out, &raw))
+	assert.NotContains(t, raw, "permissions", "refreshed claims must not carry permissions")
 }
 
 func TestTokenClaimsZeroValue(t *testing.T) {
