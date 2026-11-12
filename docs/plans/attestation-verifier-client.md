@@ -40,4 +40,19 @@ Proto, server code, transports, XKMSServicer mocks, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- Missed mocks (not in the brief's list; they embed the sub-interfaces
+  instead of declaring methods, so the ResolveSigningKey grep missed them),
+  found by make lint's xkey typecheck and given an embedded
+  `transport.AttestationAppraisalService`:
+  xkey/pkg/gui/services/ca_service_test.go (`mockCAClient`),
+  key_service_test.go (`mockClient`, and `sealMockClient` through it),
+  piv_service_test.go (`mockPIVClient`),
+  xkey/cmd/xkey/cmd/sdk_client_fake_test.go.
+- root `go build ./...`: pass.
+- `go test` pkg/api/transport/... and cmd/xkmsctl/...: pass.
+- `go vet` pkg/auth/...: pass.
+- sdk/go build, transport tests, vet: pass.
+- xkey `go vet ./pkg/pairing/...`: pass.
+- `make lint` run 1: fail, xkey typecheck
+  (xkey/pkg/gui/services/ca_service_test.go:455, missing
+  AppraiseAttestationQuote); run 2 after the xkey fakes: pass.
