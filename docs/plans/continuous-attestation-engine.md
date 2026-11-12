@@ -38,4 +38,5 @@ Checks (tests, committed before the feat commit):
 
 ## Results to follow
 
-(one line per run of the gates)
+- 2026-11-12: `go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack" ./pkg/attestation/continuous/... ./pkg/attestation/appraisal/...` pass; pkg/attestation/continuous coverage 96.3%.
+- 2026-11-12: `make lint`: pass (0 issues on every module and tag set).
