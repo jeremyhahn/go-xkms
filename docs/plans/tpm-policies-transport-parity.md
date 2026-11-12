@@ -25,7 +25,7 @@ server tests, and fixes any transport that drops a field.
 | pkg/api/transport/unix | pass | pass | pass |
 | pkg/api/transport/mcp | pass | pass | pass |
 | pkg/api/transport/quic | pass | pass | pass |
-| pkg/api/grpc (server) | pass | pass | pass, results to follow (pkg/server/tpm_policy_simulator_test.go, simulator) |
+| pkg/api/grpc (server) | pass | pass | pass (pkg/server/tpm_policy_simulator_test.go, simulator) |
 | pkg/api/mcp (server) | pass | pass | open (see below) |
 
 Cell values: pass (the test passed as written), fixed (a fix commit was
