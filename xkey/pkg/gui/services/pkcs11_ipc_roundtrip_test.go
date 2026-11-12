@@ -31,9 +31,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	pkcs11svc "github.com/jeremyhahn/go-xkms/xkey/pkg/pkcs11"
 )
@@ -276,7 +276,7 @@ func TestPKCS11IPCRoundTrip_EncryptDecrypt_GCMAdditionalDataAndTagSize(t *testin
 	})
 	// A truncated tag needs the arbitrary-IV GCM construction, which the
 	// FIPS 140-3 module refuses.
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, pkcs11svc.ErrEncryptionFailed) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, pkcs11svc.ErrEncryptionFailed) {
 		return
 	}
 	require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestPKCS11IPCRoundTrip_EncryptDecrypt_GCMCallerNonce(t *testing.T) {
 		Backend: roundTripBackend, KeyID: "rt-aes", Plaintext: plaintext, Nonce: nonce, AdditionalData: aad,
 	})
 	// The FIPS 140-3 module seals AES-GCM only under its own nonce.
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, pkcs11svc.ErrEncryptionFailed) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, pkcs11svc.ErrEncryptionFailed) {
 		return
 	}
 	require.NoError(t, err)
