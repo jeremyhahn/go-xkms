@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// tagsValue matches the value of one -tags flag in a recipe line, in either
+// recipeTagsValue matches the value of one -tags flag in a recipe line, in either
 // form the Makefile writes: -tags='...' or -tags "...".
-var tagsValue = regexp.MustCompile(`-tags[= ]['"]([^'"]*)['"]`)
+var recipeTagsValue = regexp.MustCompile(`-tags[= ]['"]([^'"]*)['"]`)
 
 // recipeOf returns the recipe lines of target in the Makefile text.
 func recipeOf(makefile, target string) []string {
@@ -39,7 +39,7 @@ func TestIntegrationRecipesBuildWithTheCodecTags(t *testing.T) {
 	}
 	for _, target := range []string{"integration-test-sshagent", "integration-test-fido2", "integration-test-fido2-cli", "integration-test-fido2-webauthn", "integration-test-fido2-multiprotocol"} {
 		t.Run(target, func(t *testing.T) {
-			values := tagsValue.FindAllStringSubmatch(strings.Join(recipeOf(string(data), target), "\n"), -1)
+			values := recipeTagsValue.FindAllStringSubmatch(strings.Join(recipeOf(string(data), target), "\n"), -1)
 			if len(values) == 0 {
 				t.Fatalf("no -tags value in the recipe of %s", target)
 			}
