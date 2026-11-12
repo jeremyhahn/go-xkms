@@ -41,7 +41,23 @@ load and retire errors.
 sdk/ts build, web/app npm ci, the new vitest file, the whole web/app suite,
 svelte-check, vite build, `pkg/api/rest` -race, sdk/go build, make lint.
 
-Results to follow.
+Results (2026-11-12, Node 26.10.0):
+
+- sdk/ts `npm ci && npm run build`: pass (dist/ rebuilt locally, restored, not committed).
+- web/app `npm ci`: pass.
+- `npx vitest run test/view3_key_versions.test.ts`: pass, 10 tests.
+- web/app `npm test`: pass only with `NODE_OPTIONS=--no-experimental-webstorage` (422 tests). Without
+  it, Node 26's built-in `localStorage` shadows jsdom's: store_theme_extra, theme, view1_login and
+  view2_register fail (`Cannot read properties of undefined (reading 'clear')`). Those tests do not
+  touch this slice; it is a container Node version issue.
+- web/app `npm run check`: 2 errors, both on main and not in this slice:
+  src/views/UsersView.svelte:121 and test/view2_users.test.ts:51 (`role` vs `roles` on UserInfo).
+  It also needs `npm ci` in sdk/ts/svelte-auth first (otherwise svelte-auth cannot resolve
+  `@go-xkms/sdk` and the vite build fails too).
+- `npx vite build`: pass (after the svelte-auth `npm ci`).
+- `go test -race ./pkg/api/rest/` (codec tags): pass.
+- sdk/go `go build ./...`: pass.
+- `make lint`: pass.
 
 ## Follow-up
 
