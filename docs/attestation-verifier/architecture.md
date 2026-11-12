@@ -403,6 +403,36 @@ certificate chains to.
   verbs are served on REST, gRPC, Unix, QUIC, MCP and embedded; see
   [`api.md`](api.md#repository-signing-keys).
 
+## Continuous attestation
+
+A device appraised once, at enrollment, says nothing about the device an
+hour later. `pkg/attestation/continuous` re-attests enrolled devices and
+publishes each verdict (docs/SPEC.md:81). It is a library in this slice:
+no transport or service verb reaches it yet.
+
+- **On demand.** `Engine.Reattest` (pkg/attestation/continuous/engine.go:119)
+  draws a fresh 32-byte nonce, asks the `EvidenceSource` for a quote over it,
+  sets the request's nonce to the one it issued, and appraises the evidence
+  with `Appraiser.AppraiseQuote` (pkg/attestation/appraisal/verifier.go:528).
+- **On a schedule.** `Engine.Run` (pkg/attestation/continuous/engine.go:196)
+  makes one `Pass` (pkg/attestation/continuous/engine.go:168) per `Interval`
+  tick of an injected `Ticker`: every enrolled device of every tenant the
+  `Inventory` lists, once. Tests drive the ticker by hand; nothing sleeps.
+- **No silent skip.** A failed collection, a failed appraisal call or
+  evidence that fails appraisal is still a `Verdict`
+  (pkg/attestation/continuous/engine.go:45) with `Verified=false` and a
+  `Cause` (pkg/attestation/continuous/engine.go:142).
+- **Stored per tenant.** `Store.SaveVerdict`
+  (pkg/attestation/continuous/store.go:72) keeps every verdict in the
+  `attestation_verdicts` DAO of the appraisal database, keyed under the
+  tenant's scope prefix like the appraisal records;
+  `Store.ListVerdicts` (pkg/attestation/continuous/store.go:88) and
+  `Store.LatestVerdict` (pkg/attestation/continuous/store.go:121) read one
+  device of one tenant only.
+- **Published.** Every `Publisher` receives each stored verdict. What a
+  consumer does with it (admit, quarantine, remediate, disconnect) is
+  outside xkms; this package names no consumer.
+
 ## What this feature deliberately does not do
 
 - **It does not generate attestations.** `AttestKey` and
