@@ -50,3 +50,22 @@ TestTPMPolicy_VerifyReportsReference.
 
 Proto definitions and generated code, docs/SPEC.md, config.test.yaml,
 go-quicbaas (no cross-repo edit), pkg/tpm2/policy.
+
+## Results
+
+- TestPolicyCommandsCreateNamedBranches before the commands.go edit: fail (create passed --bank sha256 --pcrs 23; verify had no expected lines), as required.
+- TestPolicyCommandsCreateNamedBranches after the edit: pass.
+- go vet -tags integration ./test/integration/api/...: pass.
+- ./pkg/api/transport/... ./pkg/api/rest/...: pass.
+- ./pkg/api/grpc/... ./pkg/api/mcp/... ./pkg/api/unix/...: pass.
+- ./pkg/api/apierrors/... tenantgate/... keyops_parity_test/... authz_consistency_test/...: pass.
+- ./pkg/tpm2/policy/... (tpm_simulator): pass.
+- ./pkg/tpm2 -run 'PolicyBinding|StaticPolicy|AuthorizedPolicy' (tpm_simulator): pass.
+- ./pkg/server -run TestTPMPolicy (tpm_simulator): pass.
+- ./cmd/xkmsctl -run TestTPMPolicy: pass.
+- sdk/go -run TPM: pass.
+- xkey ./cmd/xkey/cmd -run TestTPMPolicy (tpm_simulator): pass.
+- go build ./...: pass.
+- make lint: pass (0 issues in every module and tag set).
+
+Row tpm-policies: all clauses proved; integration targets run in CI only (Docker)
