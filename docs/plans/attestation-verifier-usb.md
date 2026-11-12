@@ -51,4 +51,12 @@ pkg/api/transport/usb/transport_attestation_appraisal.go; test
 
 ## Results
 
-Results to follow.
+- (b) done: `apierrors.AttestationAppraisalSentinelClasses` / `AttestationAppraisalClassOf`
+  (pkg/api/apierrors/tables.go:355-370); REST, MCP and gRPC call it; the
+  three copies were identical. Simplify pass: MCP passes the classifier directly.
+- (a) done: 8 USB methods return `ErrNotSupported`
+  (pkg/api/transport/usb/transport_attestation_appraisal.go:27-67).
+- go test (codec tags) apierrors, rest, mcp, grpc, transport/usb: pass.
+- sdk/go `go build ./...`: pass.
+- make lint: pass (0 issues on every module and tag set).
+- Follow-up: add `AttestationAppraisalService` to `transport.Client`.
