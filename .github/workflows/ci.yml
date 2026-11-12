@@ -1327,6 +1327,8 @@ jobs:
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+      # Hosted runner on github.com has less than 24g: bound the container at 8g (Codex P1 on #2042).
+      IN_IMAGE_MEMORY: ${{ github.server_url == 'https://github.com' && '8g' || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '24g' || '') }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -1385,6 +1387,8 @@ jobs:
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+      # Hosted runner on github.com has less than 24g: bound the container at 8g (Codex P1 on #2042).
+      IN_IMAGE_MEMORY: ${{ github.server_url == 'https://github.com' && '8g' || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '24g' || '') }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
