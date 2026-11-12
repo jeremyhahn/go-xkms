@@ -45,4 +45,9 @@ harness, CLI integration targets.
 
 ## Results
 
-(filled at the end of the slice)
+- TestTPMPolicy_VerifyReportsReference passes on the XKMSService and the
+  gRPC server; no Reference was dropped, so no fix commit. The policy-level
+  Match is false while "next" mismatches (it is the AND of the branches).
+- go build ./..., unit tests of pkg/api/grpc, pkg/api/transport, pkg/api/mcp
+  and pkg/tpm2/policy: pass. make lint: 0 issues (first run hit two missing
+  shared GOCACHE entries, typecheck; rerun on a private GOCACHE was clean).

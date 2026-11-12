@@ -25,8 +25,8 @@ server tests, and fixes any transport that drops a field.
 | pkg/api/transport/unix | pass | pass | pass |
 | pkg/api/transport/mcp | pass | pass | pass |
 | pkg/api/transport/quic | pass | pass | pass |
-| pkg/api/grpc (server) | pass | pass | open |
-| pkg/api/mcp (server) | pass | pass | open |
+| pkg/api/grpc (server) | pass | pass | pass (pkg/server, simulator) |
+| pkg/api/mcp (server) | pass | pass | open (see below) |
 
 Cell values: pass (the test passed as written), fixed (a fix commit was
 needed after the test commit), or open (not tested in this slice).
@@ -38,7 +38,18 @@ that the update hands over the branch and the reference values, because
 each combination draws a different answer from the service, the same
 way the REST handler test does. No transport dropped a field.
 
-Open: the server-side verify-reference cells need a branch updated from
+gRPC server C (lane stpmpb): TestTPMPolicy_VerifyReportsReference in
+pkg/server/tpm_policy_simulator_test.go starts xkmsd on the TPM simulator
+with backends.tpm2.reference_signer, updates a branch from a signed CoRIM
+and reads the Reference digest back from verify through the XKMSService
+and grpcinternal.NewService; a CoRIM from another key is refused on both.
+No fix was needed.
+
+MCP server C stays open: pkg/api/mcp's tests have no simulator-backed
+XKMSService, and the MCP tool serves the same XKMSService.TPMPolicyVerify
+call the pkg/server test proves.
+
+Before stpmpb: the server-side verify-reference cells needed a branch updated from
 a signed CoRIM. No test helper builds one for the offline service
 (pkg/testutil/tpmpolicytest offers only NewOffline and Calls). The proto
 conversion of the verify reference is tested in pkg/api/grpc/pbconv.
