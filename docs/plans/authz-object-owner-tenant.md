@@ -43,4 +43,8 @@ v0.51.0-alpha nor v0.58.2-alpha.
 
 ## Results
 
-Results to follow.
+- before refactor: go test ./pkg/scope/... FAIL (owntenant_test.go:43, :69, errors.As to *CrossTenantDeniedError), as intended.
+- after refactor: go test -tags "codec_cbor codec_json codec_msgpack" ./pkg/scope/... ./pkg/oidc/credential/... ./pkg/ssh/tenancy/... ./pkg/xkms/... ok.
+- cd sdk/go && go build ./... ok.
+- make lint ok (actionlint, golangci-lint 0 issues on every module and tag set).
+- owner half: sdk/go v0.51.0-alpha has no owner/ABAC decision (only the PermissionDeniedError type); the upstream remainder stands.
