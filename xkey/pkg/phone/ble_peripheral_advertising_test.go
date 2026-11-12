@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
 // probeAdvertiser records what the peripheral's lifecycle looked like from

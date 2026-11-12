@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
 // echoHandler returns the request wrapped in a JSON-RPC result so the test can
