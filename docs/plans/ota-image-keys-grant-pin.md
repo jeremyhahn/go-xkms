@@ -19,6 +19,10 @@ confirm permissions are not yet registered in go-qrdb (#737). The pinned
 3. Docs: key-management/engineering.md section `per-board-ota-image-keys`
    names the go-qrdb source; the SPEC row names the test instead of the
    registration blocker.
+   - Departure: the lane's policy guard refuses docs/SPEC.md without
+     LANE_POLICY_ALLOW, so the SPEC row edit is left for a lane launched
+     with it. Status stays `in progress` (the row text does not say the
+     blocker was its only gap).
 
 ## Out of scope
 
