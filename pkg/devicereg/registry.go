@@ -76,12 +76,21 @@ func ValidateID(id string) error {
 		return fmt.Errorf("%w: %q", ErrInvalidID, id)
 	}
 	for i := 0; i < len(id); i++ {
-		c := id[i]
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+		if !idChar(id[i]) {
 			return fmt.Errorf("%w: %q", ErrInvalidID, id)
 		}
 	}
 	return nil
+}
+
+// idChar reports whether c may appear in a device ID.
+func idChar(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	default:
+		return c == '.' || c == '_' || c == '-'
+	}
 }
 
 // entity is a Device as the qrdb DAO stores it, keyed by the tenant-scoped

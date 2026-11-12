@@ -31,20 +31,20 @@ go-xkms); the two records are separate types whose overlapping field names
 
 ## The registry
 
-`Registry` (`pkg/devicereg/registry.go:104`) is built by `NewRegistry` on a
-`*qrdbsdk.DAOFactory` (`pkg/devicereg/registry.go:110`), in the pattern of the
+`Registry` (`pkg/devicereg/registry.go:113`) is built by `NewRegistry` on a
+`*qrdbsdk.DAOFactory` (`pkg/devicereg/registry.go:119`), in the pattern of the
 appraisal store's collections (`pkg/attestation/appraisal/store.go:198`): one
 qrdb entity type (`paired_devices` in database `devices`) whose ID is a hash
 of the tenant-scoped natural key.
 
-- `Pair` (`pkg/devicereg/registry.go:125`) refuses a nil device, a device with
+- `Pair` (`pkg/devicereg/registry.go:134`) refuses a nil device, a device with
   no identity key or already revoked, and an ID the tenant already holds,
   active or revoked (`ErrDeviceExists`). A revoked ID is never reused: a
   re-pair takes a new ID.
 - `Get`, `IsActive` - `ErrDeviceNotFound` for an ID the tenant does not hold.
-- `List` (`pkg/devicereg/registry.go:164`) - the tenant's devices, active and
+- `List` (`pkg/devicereg/registry.go:173`) - the tenant's devices, active and
   revoked, ordered by ID.
-- `Revoke` (`pkg/devicereg/registry.go:192`) - idempotent: the first
+- `Revoke` (`pkg/devicereg/registry.go:201`) - idempotent: the first
   revocation time is kept, the record is never deleted.
 
 Pair and Revoke are serialised within one `Registry`. Two registries on one
@@ -54,7 +54,7 @@ conditional create in the DAO and is left to a later slice.
 ## Tenant scoping
 
 Every key is `scope.SharedPrefix(tenant, "paired-devices") + ID`
-(`tenantPrefix`, `pkg/devicereg/registry.go:239`). An empty or malformed tenant
+(`tenantPrefix`, `pkg/devicereg/registry.go:248`). An empty or malformed tenant
 is refused with `ErrInvalidTenant` on every call. Because the tenant is part of
 the key, tenant A's `Get` or `Revoke` of tenant B's ID finds nothing
 (`ErrDeviceNotFound`), and `List` returns only the caller's tenant.

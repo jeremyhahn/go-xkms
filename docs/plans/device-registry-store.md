@@ -42,4 +42,7 @@ device-share-policy (blocked on go-qrdb). No dependency change. No import of xke
 
 ## Results to follow
 
-(one line per run)
+- 2026-11-12 `go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack" ./pkg/devicereg/...`: pass, coverage 99.0%.
+- 2026-11-12 `make lint` (run 1): staticcheck QF1001 at pkg/devicereg/registry.go:80 (De Morgan); fixed with `idChar`.
+- 2026-11-12 `make lint` (run 2): see the commit that records it.
+- Departure from the plan: `ValidateID` is a local validator (letters, digits, `.`, `_`, `-`; not `.` or `..`), since `appraisal.ValidateName` accepts `..` and spaces. Pair also refuses a record already revoked.
