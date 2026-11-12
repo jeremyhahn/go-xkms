@@ -54,3 +54,11 @@ key (RFC 8555 7.3.1), so no local state is needed for these verbs.
 - Account keys held in a TPM or other key store, EAB, persistent local
   account records.
 - Server-side ACME (row acme-issuance).
+
+## Results (lane sacmeb)
+
+- Slices 2-4 done as planned. The CLI logger writes warnings only, to stderr.
+- Departure: `pkg/acme/client` imports `pkg/acme/linter` (zlint), so
+  `xkey/go.mod` gains three indirect requires (zlint, zcrypto, go-toml v1)
+  for the readonly build; no existing version changes. Kept in its own
+  `build(xkey)` commit.

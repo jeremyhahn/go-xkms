@@ -1,7 +1,7 @@
 # ACME Client Namespace
 
-> **Status: DESIGN** · Feature: `acme` · Module: `go-xkms/xkey` · Planned: nothing on this page is built yet
-> Scope: the planned `xkey acme` namespace; the ACME client itself is [acme-issuance](../../../docs/acme-issuance/).
+> **Status: PARTIAL** · Feature: `acme` · Module: `go-xkms/xkey` · Built: `account`, `revoke` (CLI); planned: `enroll`, `endorse`, `renew`, the GUI
+> Scope: the `xkey acme` namespace; the ACME client itself is [acme-issuance](../../../docs/acme-issuance/).
 
 ## Purpose
 
@@ -12,13 +12,21 @@ no client logic of its own.
 
 ## Verbs
 
-| Verb | Purpose |
-|---|---|
-| `account` | Create and manage the ACME account |
-| `enroll` | Obtain a certificate through the `enroll-01` challenge |
-| `endorse` | Obtain a certificate through the `endorse-01` challenge |
-| `renew` | Renew an issued certificate |
-| `revoke` | Revoke an issued certificate |
+| Verb | Purpose | State |
+|---|---|---|
+| `account register\|update\|deactivate` | Create and manage the ACME account | Implemented (CLI) |
+| `enroll` | Obtain a certificate through the `enroll-01` challenge | Planned |
+| `endorse` | Obtain a certificate through the `endorse-01` challenge | Planned |
+| `renew` | Renew an issued certificate | Planned |
+| `revoke` | Revoke an issued certificate (`--cert`, `--reason` RFC 5280 name or number) | Implemented (CLI) |
+
+Shared flags: `--directory` (ACME directory URL), `--account-key` (PEM
+account key; never printed), `--trusted-root` (repeatable) and
+`--system-roots`. `account deactivate` is irreversible and needs `--yes`.
+The server finds the account from the account key (RFC 8555 7.3.1), so the
+verbs keep no local account state.
+
+Code: `xkey/cmd/xkey/cmd/acme.go`, `acme_account.go`, `acme_revoke.go`.
 
 ## Call path
 
@@ -32,4 +40,5 @@ library, for installers, the initrd and hosts without xkey.
 
 ## Status
 
-Planned. See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).
+`account` and `revoke` are implemented in the CLI; `enroll`, `endorse`,
+`renew` and the GUI are planned. See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).
