@@ -20,9 +20,9 @@ require (
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/flynn/noise v1.1.0
 	github.com/fxamacker/cbor/v2 v2.10.0
-	github.com/getkin/kin-openapi v0.152.0
+	github.com/getkin/kin-openapi v0.153.0
 	github.com/go-chi/chi/v5 v5.5.0
-	github.com/go-jose/go-jose/v4 v4.1.6
+	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -39,7 +39,7 @@ require (
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
-	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: v0.7.1-alpha needs go-enclave v0.10.0-alpha; go-enclave is held at v0.8.0-alpha for go-qrdb v0.51.0-alpha until #1995
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
 	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha
 	github.com/kevinburke/ssh_config v1.6.0
@@ -65,8 +65,8 @@ require (
 	github.com/zmap/zlint/v3 v3.7.3
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.62.0
-	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/oauth2 v0.38.0
+	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	golang.org/x/time v0.16.0
@@ -216,8 +216,6 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/oasdiff/yaml v0.1.1 // indirect
-	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
@@ -270,6 +268,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
+	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
 	golang.org/x/mod v0.42.0 // indirect
