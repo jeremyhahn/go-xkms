@@ -19,8 +19,6 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -32,9 +30,9 @@ import (
 // SSH-capable "software" backend set as the default.
 func newTestSSHService(t *testing.T) *SSHService {
 	t.Helper()
-	kp, err := software.NewBackend(&software.Config{KeyStorage: storage.New()})
+	kp, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	if err != nil {
-		t.Fatalf("software.NewBackend: %v", err)
+		t.Fatalf("NewSoftwareBackend: %v", err)
 	}
 	provider, err := sshclient.NewBackendProvider(func(_ context.Context, _ string) (xkms.KeyProvider, error) {
 		return kp, nil
@@ -43,7 +41,7 @@ func newTestSSHService(t *testing.T) *SSHService {
 		t.Fatalf("NewBackendProvider: %v", err)
 	}
 	embedded, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{
-		Stores:          sshStores(t, sshDAOs(t, storage.New())),
+		Stores:          sshStores(t, sshDAOs(t, xkms.NewStorageMemory())),
 		BackendProvider: provider,
 	})
 	if err != nil {
@@ -184,9 +182,9 @@ func TestSSHService_Setters(t *testing.T) {
 		t.Fatal("expected nil logger by default")
 	}
 
-	kp, err := software.NewBackend(&software.Config{KeyStorage: storage.New()})
+	kp, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	if err != nil {
-		t.Fatalf("software.NewBackend: %v", err)
+		t.Fatalf("NewSoftwareBackend: %v", err)
 	}
 	provider, err := sshclient.NewBackendProvider(func(_ context.Context, _ string) (xkms.KeyProvider, error) {
 		return kp, nil
@@ -195,7 +193,7 @@ func TestSSHService_Setters(t *testing.T) {
 		t.Fatalf("NewBackendProvider: %v", err)
 	}
 	embedded, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{
-		Stores:          sshStores(t, sshDAOs(t, storage.New())),
+		Stores:          sshStores(t, sshDAOs(t, xkms.NewStorageMemory())),
 		BackendProvider: provider,
 	})
 	if err != nil {
@@ -246,7 +244,7 @@ func registerRemoteSSHBackend(t *testing.T, svc *SSHService) {
 // xkmsd: its own store, distinct from the service's local one.
 func newServerSSHClient(t *testing.T) sshclient.Client {
 	t.Helper()
-	server, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{Stores: sshStores(t, sshDAOs(t, storage.New()))})
+	server, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{Stores: sshStores(t, sshDAOs(t, xkms.NewStorageMemory()))})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
 	}

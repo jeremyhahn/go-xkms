@@ -30,14 +30,13 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // sshDAOs returns a DAO factory over backend, the way the GUI wires its SSH
 // stores over the SSH storage.
-func sshDAOs(t *testing.T, backend storage.Backend) *qrdbsdk.DAOFactory {
+func sshDAOs(t *testing.T, backend xkmssdk.StorageBackend) *qrdbsdk.DAOFactory {
 	t.Helper()
 	kv, err := xkmssdk.NewKVStoreAdapter(backend)
 	if err != nil {
@@ -63,7 +62,7 @@ func sshStores(t *testing.T, daos *qrdbsdk.DAOFactory) *sshclient.Stores {
 func setupConnect(t *testing.T) (*SSHConnectService, *capturedExec) {
 	t.Helper()
 	ctx := context.Background()
-	daos := sshDAOs(t, storage.New())
+	daos := sshDAOs(t, xkmssdk.NewStorageMemory())
 
 	client, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{Stores: sshStores(t, daos)})
 	if err != nil {
@@ -271,7 +270,7 @@ func TestSSHConnect_ConnectProfile_NotFound(t *testing.T) {
 	svc, _ := setupConnect(t)
 	defer svc.StopAll()
 
-	store, err := sshclient.NewProfileStore(sshDAOs(t, storage.New()))
+	store, err := sshclient.NewProfileStore(sshDAOs(t, xkmssdk.NewStorageMemory()))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}
@@ -286,7 +285,7 @@ func TestSSHConnect_ConnectProfile_Success(t *testing.T) {
 	svc, cap := setupConnect(t)
 	defer svc.StopAll()
 
-	store, err := sshclient.NewProfileStore(sshDAOs(t, storage.New()))
+	store, err := sshclient.NewProfileStore(sshDAOs(t, xkmssdk.NewStorageMemory()))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}
@@ -418,7 +417,7 @@ func testKnownHostsLine(t *testing.T) string {
 // wedgedStore ignores the context it is handed and blocks until released,
 // standing in for a barrier-backed store that has stopped answering.
 type wedgedStore struct {
-	storage.Backend
+	xkmssdk.StorageBackend
 	entered chan struct{}
 	once    sync.Once
 	release chan struct{}
@@ -427,18 +426,18 @@ type wedgedStore struct {
 func (w *wedgedStore) Get(ctx context.Context, key string) ([]byte, error) {
 	w.once.Do(func() { close(w.entered) })
 	<-w.release
-	return w.Backend.Get(ctx, key)
+	return w.StorageBackend.Get(ctx, key)
 }
 
 // CompareAndSwap forwards to the wrapped backend so the DAO layer keeps its
 // guarded writes; embedding alone does not promote it.
 func (w *wedgedStore) CompareAndSwap(ctx context.Context, key string, expected, value []byte) (bool, []byte, error) {
-	return w.Backend.(storage.CompareAndSwapper).CompareAndSwap(ctx, key, expected, value)
+	return w.StorageBackend.(xkmssdk.StorageCompareAndSwapper).CompareAndSwap(ctx, key, expected, value)
 }
 
 // CompareAndDelete forwards to the wrapped backend; see CompareAndSwap.
 func (w *wedgedStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
-	return w.Backend.(storage.CompareAndDeleter).CompareAndDelete(ctx, key, expected)
+	return w.StorageBackend.(xkmssdk.StorageCompareAndDeleter).CompareAndDelete(ctx, key, expected)
 }
 
 // TestSSHConnect_WatcherShutdownIsNotBlockedByAWedgedStore covers the failure
@@ -456,9 +455,9 @@ func TestSSHConnect_WatcherShutdownIsNotBlockedByAWedgedStore(t *testing.T) {
 	t.Cleanup(func() { sshSyncIntervalOverride.Store(0) })
 
 	wedged := &wedgedStore{
-		Backend: storage.New(),
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
+		StorageBackend: xkmssdk.NewStorageMemory(),
+		entered:        make(chan struct{}),
+		release:        make(chan struct{}),
 	}
 	defer close(wedged.release)
 
