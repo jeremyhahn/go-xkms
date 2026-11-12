@@ -27,4 +27,15 @@ Makefile GOMODAUTH block back to main's two lines:
 
 ## Results
 
-Results to follow.
+1. gomodauth.test.sh: 240 passed, 3 failed. The count2 compose GOPRIVATE
+   checks now pass. Still failing: `runner: gomodauth secret`,
+   `count2: gomodauth secret` and `token: gomodauth secret`. They want
+   `export GOPRIVATE=` (empty), but this fix stages `github.com/jeremyhahn/*`.
+   The #2043 merge (6afcec4100, from c7453558d) changed those three
+   expectations from main's `github.com/jeremyhahn/*` to empty, so the
+   folded test disagrees with itself: the same sections want `$GLOB` in the
+   compose files. Fix, outside this lane's file list: restore main's three
+   secret lines in test/scripts/gomodauth.test.sh and keep #2043's new
+   "caller-supplied GOPRIVATE" section, which passes with main's Makefile.
+2. make test-scripts: fails at Makefile:1115 on the same 3 gomodauth checks.
+3. make lint: pass (0 issues in every module and tag set).
