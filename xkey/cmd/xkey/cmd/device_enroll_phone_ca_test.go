@@ -20,7 +20,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +32,7 @@ import (
 // SignCSR with ErrProfileNotFound (#241). Nothing before this test checked
 // that a requested profile exists until runtime.
 func TestEnrollmentCertProfileIsRegistered(t *testing.T) {
-	registry := ca.NewDefaultProfileRegistry()
+	registry := xkms.NewDefaultProfileRegistry()
 
 	profile, err := registry.Get(enrollmentCertProfile)
 	require.NoError(t, err,
@@ -47,7 +47,7 @@ func TestEnrollmentCertProfileIsRegistered(t *testing.T) {
 // device identity travels in the CSR subject and the re-attestation cadence in
 // the request's ValidityDays, so usages are all the profile must supply.
 func TestEnrollmentCertProfileSemantics(t *testing.T) {
-	registry := ca.NewDefaultProfileRegistry()
+	registry := xkms.NewDefaultProfileRegistry()
 
 	profile, err := registry.Get(enrollmentCertProfile)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestEnrollmentCertProfileSemantics(t *testing.T) {
 		"the credential authenticates the phone as a client, so the profile must grant ClientAuth")
 
 	template := &x509.Certificate{}
-	require.NoError(t, profile.Apply(template, &ca.CertificateRequest{}))
+	require.NoError(t, profile.Apply(template, &xkms.TrustedCACertificateRequest{}))
 	assert.False(t, template.IsCA, "a device credential must never be a CA certificate")
 }
 
@@ -68,10 +68,10 @@ func TestEnrollmentCertProfileSemantics(t *testing.T) {
 // is ever registered, this test failing is the prompt to revisit whether
 // enrollmentCertProfile should point at it.
 func TestEnrollmentCertProfileFormerNameFailsClosed(t *testing.T) {
-	registry := ca.NewDefaultProfileRegistry()
+	registry := xkms.NewDefaultProfileRegistry()
 
 	profile, err := registry.Get("idevid")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ca.ErrProfileNotFound))
+	assert.True(t, errors.Is(err, xkms.ErrProfileNotFound))
 	assert.Nil(t, profile)
 }
