@@ -77,7 +77,7 @@ Tenant paths below are relative to `/api/v1`.
 | GET | `/tenants/{id}` | Get tenant by ID |
 | PUT | `/tenants/{id}` | Update a tenant |
 | DELETE | `/tenants/{id}` | Delete a tenant |
-| PUT | `/tenants/{id}/status` | Change tenant status |
+| PUT | `/tenants/{id}/status` | Change tenant status; answers 400 `TENANT_STATUS_UNSUPPORTED` until go-qrdb carries tenant status |
 
 **Create tenant request** (`CreateTenantRequest`,
 `sdk/go/acme/client/admin/types.go:113`; settings fields from

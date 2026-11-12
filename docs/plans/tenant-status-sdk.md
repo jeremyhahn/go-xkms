@@ -37,4 +37,13 @@ docs/acme/gui/admin/api.md, .changelog/unreleased/changed-2092-sdk-tenant-status
 
 ## Results
 
-Results to follow.
+- Error: `TenantStatusUnsupportedError`, `ErrTenantStatusUnsupported` and
+  `NewTenantStatusUnsupported` in sdk/go/acme/client/admin/errors.go; it also
+  unwraps to its CAError so `errors.IsInvalidInput` holds.
+- Refusals: tenant_ca.go `UpdateTenantStatus` (the unused
+  `updateTenantStatusTransportRequest` is gone) and tenant.go `List`.
+- GUI: tenant_status.go matches the SDK sentinel for 400 `TENANT_STATUS_UNSUPPORTED`.
+- sdk/go `go test -race ./acme/client/admin/...`: pass.
+- sdk/go `go build ./...`: pass.
+- GUI `go test -race ./pkg/acme/gui/admin/...` (codec tags): pass.
+- `make lint`: first run timed out at 540 s (rc=124), second run pass, 0 issues.
