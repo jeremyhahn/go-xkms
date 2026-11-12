@@ -35,6 +35,7 @@ export type RouteName =
   | "tpmPolicies"
   | "users"
   | "frost"
+  | "keyAccessPolicy"
   | "settings"
   | "not-found";
 
@@ -66,6 +67,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/tpm/policies": "tpmPolicies",
   "/users": "users",
   "/frost": "frost",
+  "/keys/access-policy": "keyAccessPolicy",
   "/settings": "settings",
 };
 
