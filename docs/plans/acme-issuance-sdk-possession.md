@@ -43,4 +43,13 @@ pkg/acme/challenges/device-attest-01/*, docs/SPEC.md, ROADMAP.md.
 
 ## Results
 
-Results to follow.
+- Test commit 297ab90e8 precedes feat commit 68362c76a (ruling 286); docs cc5d3e6fa.
+- sdk/go acme tests (`-race`, codec tags): pass (`TestAssemblePossessionCSR_SigningVector`,
+  `TestAssemblePossessionCSR_Refusals`, `TestDICENonce`).
+- sdk/go `go build ./...`: pass.
+- pkg/acme/challenges/device-attest-01 tests (unchanged package): pass.
+- `make lint`: pass, 0 issues in every module and tag set.
+- No pkg/, go.mod or go.sum change.
+
+The row's remaining open item is the device registry (row device-registry),
+the producer of `ApplicationReference`.
