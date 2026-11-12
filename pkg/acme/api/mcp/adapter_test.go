@@ -785,6 +785,39 @@ func TestAdapterTenantOperations(t *testing.T) {
 		}
 	})
 
+	t.Run("ListTenants status filter refused", func(t *testing.T) {
+		handler := newMockMCPHandler(t)
+		handler.validateParams = func(method string, _ json.RawMessage) error {
+			if method == "admin.listTenants" {
+				t.Error("admin.listTenants must not be sent for a status filter")
+			}
+			return nil
+		}
+		handler.errors["admin.listTenants"] = &JSONRPCError{Code: -32603, Message: "unexpected call"}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := strings.TrimPrefix(server.URL, "http://")
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: addr})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		req := &admin.ListTenantsRequest{Page: 1, PerPage: 10, Status: "suspended"}
+		tenants, pagination, err := adapter.ListTenants(context.Background(), req)
+		if !errors.Is(err, admin.ErrTenantStatusUnsupported) {
+			t.Fatalf("ListTenants() err = %v, want %v", err, admin.ErrTenantStatusUnsupported)
+		}
+		var ufe *admin.UnsupportedFieldError
+		if !errors.As(err, &ufe) || ufe.Field != "status" {
+			t.Fatalf("ListTenants() err = %v is not an UnsupportedFieldError for status", err)
+		}
+		if tenants != nil || pagination != nil {
+			t.Fatal("ListTenants() must return nil results alongside the refusal")
+		}
+	})
+
 	t.Run("ListTenants error", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.errors["admin.listTenants"] = &JSONRPCError{
@@ -2245,7 +2278,8 @@ func TestAdapterAccountOperations(t *testing.T) {
 // which are intentionally REST-only per RFC 8555 (ACME is HTTP-based) and
 // tenant CA hierarchy management. Each must refuse with admin.ErrRESTOnly
 // without making any network call, so the adapter under test never needs a
-// server.
+// server. A tenant status set is refused as unsupported
+// (admin.ErrTenantStatusUnsupported) until go-qrdb carries the field.
 func TestAdapterRESTOnlyOperations(t *testing.T) {
 	adapter := &Adapter{}
 	ctx := context.Background()
@@ -2271,8 +2305,13 @@ func TestAdapterRESTOnlyOperations(t *testing.T) {
 	})
 
 	t.Run("UpdateTenantStatus", func(t *testing.T) {
-		if err := adapter.UpdateTenantStatus(ctx, "tenant-1", "disabled"); !errors.Is(err, admin.ErrRESTOnly) {
-			t.Fatalf("UpdateTenantStatus() err = %v, want %v", err, admin.ErrRESTOnly)
+		err := adapter.UpdateTenantStatus(ctx, "tenant-1", "disabled")
+		if !errors.Is(err, admin.ErrTenantStatusUnsupported) {
+			t.Fatalf("UpdateTenantStatus() err = %v, want %v", err, admin.ErrTenantStatusUnsupported)
+		}
+		var ufe *admin.UnsupportedFieldError
+		if !errors.As(err, &ufe) || ufe.Field != "status" {
+			t.Fatalf("UpdateTenantStatus() err = %v is not an UnsupportedFieldError for status", err)
 		}
 	})
 

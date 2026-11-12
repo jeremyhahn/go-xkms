@@ -798,6 +798,18 @@ func TestListTenants_StatusFilterRefused(t *testing.T) {
 	}
 }
 
+func TestUpdateTenantStatus_Refused(t *testing.T) {
+	a := &Adapter{}
+	err := a.UpdateTenantStatus(context.Background(), "tenant-1", "suspended")
+	if !errors.Is(err, admin.ErrTenantStatusUnsupported) {
+		t.Fatalf("error %v is not ErrTenantStatusUnsupported", err)
+	}
+	var ufe *admin.UnsupportedFieldError
+	if !errors.As(err, &ufe) || ufe.Field != "status" {
+		t.Fatalf("error %v is not an UnsupportedFieldError for status", err)
+	}
+}
+
 func TestTenantOperations(t *testing.T) {
 	ctx := context.Background()
 

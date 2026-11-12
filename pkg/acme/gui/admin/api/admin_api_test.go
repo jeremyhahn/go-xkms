@@ -1684,6 +1684,28 @@ func TestUpdateTenantStatus_InternalError(t *testing.T) {
 	}
 }
 
+func TestUpdateTenantStatus_Unsupported(t *testing.T) {
+	admin := defaultFakeAdmin()
+	admin.tenantCAClient = &fakeTenantCAClient{
+		updateTenantStatusFunc: func(ctx context.Context, tenantID, status string) error {
+			return sdkerrors.NewInvalidInput("admin.tenant.ca.UpdateTenantStatus", "tenant status is not supported")
+		},
+	}
+	router := newTestRouter(t, admin)
+	body := bytes.NewBufferString(`{"status":"suspended"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/status", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("TENANT_STATUS_UNSUPPORTED")) {
+		t.Errorf("expected TENANT_STATUS_UNSUPPORTED in body, got %s", rec.Body.String())
+	}
+}
+
 // =============================================================================
 // EAB handlers
 // =============================================================================
