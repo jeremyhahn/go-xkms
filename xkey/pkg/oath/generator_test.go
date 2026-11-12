@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // RFC 4226 test vectors
@@ -156,7 +156,7 @@ func TestGenerator_GenerateCounter_RFC4226(t *testing.T) {
 	gen, err := NewGenerator(cred)
 	// The RFC 4226 Appendix D vectors are HMAC-SHA-1, which fips140=only
 	// refuses.
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {
@@ -329,7 +329,7 @@ func TestGenerator_Generate_HOTP(t *testing.T) {
 	gen, err := NewGenerator(cred)
 	// The RFC 4226 Appendix D vectors are HMAC-SHA-1, which fips140=only
 	// refuses.
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {
@@ -531,7 +531,7 @@ func TestGenerator_Validate_HOTP_Success(t *testing.T) {
 	gen, err := NewGenerator(cred)
 	// The RFC 4226 Appendix D vectors are HMAC-SHA-1, which fips140=only
 	// refuses.
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {
@@ -562,7 +562,7 @@ func TestGenerator_Validate_HOTP_LookAhead(t *testing.T) {
 	gen, err := NewGenerator(cred)
 	// The RFC 4226 Appendix D vectors are HMAC-SHA-1, which fips140=only
 	// refuses.
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {

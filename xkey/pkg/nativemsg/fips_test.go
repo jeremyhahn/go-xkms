@@ -18,7 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // x25519OutsideFIPS reports whether the calling test can run the X25519
@@ -32,7 +32,7 @@ func x25519OutsideFIPS(t *testing.T) bool {
 	if err != nil {
 		require.ErrorIs(t, err, ErrHandshakeFailed)
 	}
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, nil) {
 		return false
 	}
 	require.NoError(t, err)
