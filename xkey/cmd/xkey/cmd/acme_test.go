@@ -48,6 +48,8 @@ type fakeACMEClient struct {
 	renewed       *x509.Certificate
 	enrollConfig  *sdkacme.ACMEEnrollmentConfig
 	enrollResult  *sdkacme.ACMEEnrollmentResult
+	endorseConfig *sdkacme.ACMEEnrollmentConfig
+	endorseCert   *x509.Certificate
 	closed        bool
 	err           error
 }
@@ -88,6 +90,11 @@ func (f *fakeACMEClient) RenewCertificate(_ context.Context, oldCert *x509.Certi
 func (f *fakeACMEClient) EnrollDevice(_ context.Context, config *sdkacme.ACMEEnrollmentConfig) (*sdkacme.ACMEEnrollmentResult, error) {
 	f.enrollConfig = config
 	return f.enrollResult, f.err
+}
+
+func (f *fakeACMEClient) RequestEndorsementKeyCertificate(_ context.Context, config *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error) {
+	f.endorseConfig = config
+	return f.endorseCert, f.err
 }
 
 func (f *fakeACMEClient) Close() error {
