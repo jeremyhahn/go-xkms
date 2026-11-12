@@ -43,7 +43,16 @@ svelte-check, vite build, pkg/api/rest -race, sdk/go build, make lint.
 
 ## Results
 
-Results to follow.
+- sdk/ts `npm ci && npm run build`: pass (rewrites the tracked sdk/ts/dist; restored, not committed).
+- web/app `npm ci`: pass.
+- `npx vitest run test/view3_seal.test.ts`: pass, 6 tests.
+- `npm test`: 404 pass, 5 fail outside this slice: test/store_theme_extra.test.ts:43 and test/theme.test.ts:30 (`localStorage` undefined: Node 26's global localStorage shadows jsdom), test/view1_login.test.ts and test/view2_register.test.ts (fail to load until sdk/ts/svelte-auth has its own `npm ci`, then fail on the same localStorage cause).
+- `npm run check`: pass against the committed sdk/ts dist (with a fresh sdk/ts build: 2 errors in UsersView.svelte:121 and view2_users.test.ts:51, `role` vs `roles`, outside this slice).
+- `npx vite build`: pass.
+- `go test -race ./pkg/api/rest/` (codec tags): pass.
+- `cd sdk/go && go build ./...`: pass.
+- `make lint`: pass, 0 issues.
+- Note: the feat commit carries the test commit's subject line by mistake (stale message file); no amend under the lane rules.
 
 ## Out of scope
 
