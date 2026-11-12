@@ -1,0 +1,1 @@
+- **Web console Key Lifecycle view.** `#/keys/lifecycle` (Keys & Crypto, shown with keys:rotate) enables or disables a key or one of its versions through `POST /api/v1/keys/{id}/status`, and revokes a key through `POST /api/v1/keys/{id}/revoke` only after the operator types the key ID again. Revocation needs keys:delete, which the server enforces, and cannot be undone.
