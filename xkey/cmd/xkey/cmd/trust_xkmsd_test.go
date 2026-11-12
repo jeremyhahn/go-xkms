@@ -22,7 +22,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -458,4 +462,147 @@ func TestTrustUninstallXKMSd_RootGoneFromServer(t *testing.T) {
 	require.Contains(t, buf.String(), "Certificate "+fingerprint+" removed from OS trust store")
 
 	requireLocalTrustStoreUntouched(t)
+}
+
+// startTrustBootstrapServer serves bundlePEM on /v1/ca/bootstrap and points
+// the direct bootstrap method at it. It returns the server's host.
+func startTrustBootstrapServer(t *testing.T, bundlePEM []byte) string {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/ca/bootstrap" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/pem-certificate-chain")
+		_, _ = w.Write(bundlePEM)
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, key := range []string{"trust.bootstrap.server_url", "trust.bootstrap.direct.server_url"} {
+		previous := viper.Get(key)
+		viper.Set(key, srv.URL)
+		t.Cleanup(func() { viper.Set(key, previous) })
+	}
+
+	parsed, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	return parsed.Host
+}
+
+func newTrustBootstrapTestCommand(t *testing.T, buf *bytes.Buffer) *cobra.Command {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(buf)
+	cmd.Flags().StringSlice("method", nil, "")
+	cmd.Flags().Duration("timeout", 5*time.Second, "")
+	require.NoError(t, cmd.Flags().Set("method", "direct"))
+	return cmd
+}
+
+func newTrustListTestCommand(t *testing.T, buf *bytes.Buffer, purpose string) *cobra.Command {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(buf)
+	cmd.Flags().String("purpose", "", "")
+	if purpose != "" {
+		require.NoError(t, cmd.Flags().Set("purpose", purpose))
+	}
+	return cmd
+}
+
+func TestTrustBootstrapXKMSd_ImportsToServer(t *testing.T) {
+	startTrustXKMSd(t)
+	bundlePEM := newTestCertificatePEM(t, "strotf bootstrap CA")
+	host := startTrustBootstrapServer(t, bundlePEM)
+
+	var buf bytes.Buffer
+	require.NoError(t, runTrustBootstrap(newTrustBootstrapTestCommand(t, &buf), nil))
+	require.Contains(t, buf.String(), "Certificates imported: 1")
+
+	root, err := getServerTrustRoot(t, trustPEMFingerprint(t, bundlePEM))
+	require.NoError(t, err)
+	require.Equal(t, "bootstrap-ca", string(root.Purpose))
+	require.Equal(t, "platform:"+host, root.Source)
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustBootstrapXKMSd_ReportsSkipped(t *testing.T) {
+	startTrustXKMSd(t)
+	startTrustBootstrapServer(t, newTestCertificatePEM(t, "strotf bootstrap CA"))
+
+	var first bytes.Buffer
+	require.NoError(t, runTrustBootstrap(newTrustBootstrapTestCommand(t, &first), nil))
+	require.Contains(t, first.String(), "Certificates imported: 1")
+
+	var second bytes.Buffer
+	require.NoError(t, runTrustBootstrap(newTrustBootstrapTestCommand(t, &second), nil))
+	require.Contains(t, second.String(), "Certificates imported: 0")
+	require.Contains(t, second.String(), "Certificates skipped (already present): 1")
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustListXKMSd_PurposeFilter(t *testing.T) {
+	startTrustXKMSd(t)
+	pemFile, _ := writeTrustPEMFile(t, "strotf image signer")
+	var addBuf bytes.Buffer
+	require.NoError(t, runTrustAdd(newTrustAddTestCommand(t, &addBuf, "image-signer", "test"), []string{pemFile}))
+
+	var buf bytes.Buffer
+	require.NoError(t, runTrustList(newTrustListTestCommand(t, &buf, "image-signer"), nil))
+	require.Contains(t, buf.String(), "strotf image signer")
+	require.NotContains(t, buf.String(), "strotb server root")
+
+	var empty bytes.Buffer
+	require.NoError(t, runTrustList(newTrustListTestCommand(t, &empty, "tpm-manufacturer"), nil))
+	require.Contains(t, empty.String(), "No trusted certificates found.")
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustList_PurposeFilterLocal(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	isolateLocalTrustStore(t, "strotf other root")
+	pemFile, _ := writeTrustPEMFile(t, "strotf image signer")
+	var addBuf bytes.Buffer
+	require.NoError(t, runTrustAdd(newTrustAddTestCommand(t, &addBuf, "image-signer", "test"), []string{pemFile}))
+
+	var buf bytes.Buffer
+	require.NoError(t, runTrustList(newTrustListTestCommand(t, &buf, "image-signer"), nil))
+	require.Contains(t, buf.String(), "strotf image signer")
+	require.NotContains(t, buf.String(), "strotf other root")
+
+	var empty bytes.Buffer
+	require.NoError(t, runTrustList(newTrustListTestCommand(t, &empty, "tpm-manufacturer"), nil))
+	require.Contains(t, empty.String(), "No trusted certificates found.")
+}
+
+func TestTrustList_BadPurpose(t *testing.T) {
+	t.Run("server", func(t *testing.T) {
+		fingerprint := startTrustXKMSd(t)
+
+		var buf bytes.Buffer
+		err := runTrustList(newTrustListTestCommand(t, &buf, "nope"), nil)
+		require.Error(t, err)
+		require.True(t, errors.Is(err, ErrTrustListFailed), "got %v", err)
+		require.Empty(t, buf.String())
+
+		_, err = getServerTrustRoot(t, fingerprint)
+		require.NoError(t, err)
+		requireLocalTrustStoreUntouched(t)
+	})
+	t.Run("local", func(t *testing.T) {
+		isolateXKMSdEndpoint(t)
+		isolateLocalTrustStore(t, "strotf general root")
+
+		var buf bytes.Buffer
+		err := runTrustList(newTrustListTestCommand(t, &buf, "nope"), nil)
+		require.Error(t, err)
+		require.True(t, errors.Is(err, ErrTrustListFailed), "got %v", err)
+		require.Empty(t, buf.String())
+	})
 }
