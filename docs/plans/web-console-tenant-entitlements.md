@@ -50,4 +50,12 @@ pkg/api/rest -race, sdk/go build, make lint.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass (the build rewrites the tracked sdk/ts/dist; restored, not committed).
+- sdk/ts/svelte-auth npm ci: pass. web/app npm ci: pass.
+- vitest test/view3_tenant_entitlements.test.ts: 6/6 pass.
+- web/app npm test (NODE_OPTIONS=--no-experimental-webstorage): 51 files, 418 tests pass.
+- npm run check: only the baseline errors (UsersView.svelte:121 and view2_users.test.ts:51, role/roles).
+- vite build: pass.
+- go test -race ./pkg/api/rest/ (codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: pass (0 issues on every module and tag set).
