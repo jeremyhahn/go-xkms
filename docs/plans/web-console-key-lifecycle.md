@@ -41,4 +41,13 @@ user choices, KeysView, Go code, sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build: pass (tracked dist restored).
+- svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_key_lifecycle.test.ts: pass (6 tests).
+- vitest whole web/app suite (NODE_OPTIONS=--no-experimental-webstorage): pass (51 files, 418 tests).
+- svelte-check: pass (0 errors, 0 warnings).
+- vite build: pass.
+- go test -race pkg/api/rest: pass.
+- sdk/go build: pass.
+- make lint: pass (0 issues on every module and tag set).
