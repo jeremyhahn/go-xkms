@@ -23,6 +23,7 @@
   import CaView from "$views/CaView.svelte";
   import SshView from "$views/SshView.svelte";
   import FrostView from "$views/FrostView.svelte";
+  import SystemHealthView from "$views/SystemHealthView.svelte";
 
   // Once authenticated, ensure the session (permissions + capabilities) is
   // loaded before the shell gates navigation. Runs whenever auth status flips.
@@ -74,6 +75,7 @@
       <OidcCredentialsView />
     {:else if routerStore.name === "platform"}
       <PlatformView />
+    {:else if routerStore.name === "systemHealth"}<SystemHealthView />
     {:else if routerStore.name === "settings"}
       <SettingsView />
     {:else if routerStore.name === "login" || routerStore.name === "register"}
