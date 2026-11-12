@@ -57,3 +57,16 @@ brief counted 9 verbs; the service has 8.
 - go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/api/rest/... ./pkg/api/transport/... ./pkg/xkms/...: pass (14 packages ok).
 - go build ./... in sdk/go: pass.
 - make lint: pass (0 issues on every tag set and module).
+
+## Permission scopes (lane att1660-scopes)
+
+lane-verify gate 10 failed in pkg/apimodule: the 8 permissions had no
+declared scope and were on no gRPC or MCP surface.
+
+- module_scopes.go: the 8 pairs are ScopeSelf, like attestation_signing_keys
+  (the service binds every call to the caller's tenant).
+- module_grants_test.go: the 8 pairs are in restOnlyPermissions, reason row
+  1660 (REST and embedded only; gRPC and MCP are a later slice, which must
+  drop them from that set).
+- go test -count=1 -tags "codec_cbor codec_json codec_msgpack"
+  ./pkg/apimodule/ ./pkg/api/rest/: pass (both packages ok).
