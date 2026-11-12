@@ -47,4 +47,12 @@ Go code, sdk/ts, xkey, web/desktop, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build: pass (it rewrites the tracked sdk/ts/dist; restored, not committed).
+- svelte-auth npm ci: pass. web/app npm ci: pass.
+- vitest test/view3_frost_signing.test.ts: 7/7 pass.
+- vitest whole web/app suite (NODE_OPTIONS=--no-experimental-webstorage): 51 files, 419 tests pass.
+- svelte-check: 2 errors, both baseline (UsersView.svelte:121 and view2_users.test.ts:51, role/roles).
+- vite build: pass.
+- go test -race pkg/api/rest: pass.
+- sdk/go build: pass.
+- make lint: pass, 0 issues.
