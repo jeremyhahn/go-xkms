@@ -1,0 +1,1 @@
+- **Web console OTA Image Keys view (#1443)** — `#/keys/ota`, under Keys & Crypto for identities with `keys:create`: create and rotate a board's ES256 OTA image-signing key (key ID, version and public key PEM with copy) and sign a SHA-256 digest (64 hex characters) or raw base64 data, through `POST /api/v1/ota-image-keys/{board}`, `/{board}/rotate` and `/{board}/sign`.
