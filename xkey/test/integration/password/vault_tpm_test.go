@@ -34,7 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // tpmPolicyPCR is the PCR the named-policy test selects: an application PCR
@@ -146,9 +146,9 @@ func createTPMKey(t *testing.T, device, dataDir, keyID string) {
 	t.Helper()
 	host, err := localtpm.OpenHost(localtpm.DeviceParams{DataDir: dataDir, Device: device}, fileStores)
 	require.NoError(t, err)
-	_, err = host.Backend().GenerateKey(t.Context(), &types.KeyAttributes{
-		CN: keyID, KeyAlgorithm: x509.ECDSA, KeyType: types.KeyTypeEncryption,
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()}, TPMPolicy: types.TPMPolicyPlatform,
+	_, err = host.Backend().GenerateKey(t.Context(), &xkms.KeyAttributes{
+		CN: keyID, KeyAlgorithm: x509.ECDSA, KeyType: xkms.KeyTypeEncryption,
+		ECCAttributes: &xkms.ECCAttributes{Curve: elliptic.P256()}, TPMPolicy: xkms.TPMPolicyPlatform,
 	})
 	require.NoError(t, errors.Join(err, host.Close()))
 }
@@ -179,7 +179,7 @@ func TestVault_TPMPlatformPolicy(t *testing.T) {
 	recoveryCodeOf(t, out)
 	keyID, policy := u.tpmFactor(t)
 	assert.Equal(t, "vault-tpm", keyID)
-	assert.Equal(t, types.TPMPolicyPlatform, policy)
+	assert.Equal(t, xkms.TPMPolicyPlatform, policy)
 	u.lock(t)
 
 	t.Run("wrong token", func(t *testing.T) {

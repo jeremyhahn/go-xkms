@@ -48,8 +48,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // testOperatorAuthenticator is a minimal, real implementation of
@@ -118,7 +118,7 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 	caIface, err := pkgca.NewFromMultiIdentityConfig(&pkgca.MultiIdentityParams{
 		Config:   config,
 		KeyStore: backend,
-		BackendForStore: func(string, types.StoreType) (pkgxkms.Backend, error) {
+		BackendForStore: func(string, xkms.StoreType) (pkgxkms.Backend, error) {
 			return backend, nil
 		},
 		RevocationStore: storage.NewMemory(),

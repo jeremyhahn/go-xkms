@@ -19,7 +19,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 
@@ -69,16 +68,16 @@ type fakeSlotModelBackend struct {
 	slotModel xkms.PIVSlotModel
 }
 
-func (b *fakeSlotModelBackend) Type() types.BackendType          { return types.BackendType("pkcs11") }
-func (b *fakeSlotModelBackend) Capabilities() types.Capabilities { return types.Capabilities{} }
-func (b *fakeSlotModelBackend) GenerateKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *fakeSlotModelBackend) Type() xkms.BackendType          { return xkms.BackendType("pkcs11") }
+func (b *fakeSlotModelBackend) Capabilities() xkms.Capabilities { return xkms.Capabilities{} }
+func (b *fakeSlotModelBackend) GenerateKey(_ context.Context, _ *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errMockNotImplemented
 }
-func (b *fakeSlotModelBackend) Get(_ *types.KeyAttributes, _ types.FSExtension) ([]byte, error) {
+func (b *fakeSlotModelBackend) Get(_ *xkms.KeyAttributes, _ xkms.FSExtension) ([]byte, error) {
 	return nil, errMockNotImplemented
 }
-func (b *fakeSlotModelBackend) Delete(_ *types.KeyAttributes) error { return errMockNotImplemented }
-func (b *fakeSlotModelBackend) Signer(_ context.Context, _ *types.KeyAttributes) (crypto.Signer, error) {
+func (b *fakeSlotModelBackend) Delete(_ *xkms.KeyAttributes) error { return errMockNotImplemented }
+func (b *fakeSlotModelBackend) Signer(_ context.Context, _ *xkms.KeyAttributes) (crypto.Signer, error) {
 	return nil, errMockNotImplemented
 }
 func (b *fakeSlotModelBackend) Close() error                 { return nil }
@@ -250,16 +249,16 @@ func TestPKCS11Service_Close_WithRegistry_UnregistersEachModule(t *testing.T) {
 // PIV slot layout.
 type noSlotModelBackend struct{}
 
-func (b *noSlotModelBackend) Type() types.BackendType          { return types.BackendType("pkcs11") }
-func (b *noSlotModelBackend) Capabilities() types.Capabilities { return types.Capabilities{} }
-func (b *noSlotModelBackend) GenerateKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *noSlotModelBackend) Type() xkms.BackendType          { return xkms.BackendType("pkcs11") }
+func (b *noSlotModelBackend) Capabilities() xkms.Capabilities { return xkms.Capabilities{} }
+func (b *noSlotModelBackend) GenerateKey(_ context.Context, _ *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, errMockNotImplemented
 }
-func (b *noSlotModelBackend) Get(_ *types.KeyAttributes, _ types.FSExtension) ([]byte, error) {
+func (b *noSlotModelBackend) Get(_ *xkms.KeyAttributes, _ xkms.FSExtension) ([]byte, error) {
 	return nil, errMockNotImplemented
 }
-func (b *noSlotModelBackend) Delete(_ *types.KeyAttributes) error { return errMockNotImplemented }
-func (b *noSlotModelBackend) Signer(_ context.Context, _ *types.KeyAttributes) (crypto.Signer, error) {
+func (b *noSlotModelBackend) Delete(_ *xkms.KeyAttributes) error { return errMockNotImplemented }
+func (b *noSlotModelBackend) Signer(_ context.Context, _ *xkms.KeyAttributes) (crypto.Signer, error) {
 	return nil, errMockNotImplemented
 }
 func (b *noSlotModelBackend) Close() error { return nil }

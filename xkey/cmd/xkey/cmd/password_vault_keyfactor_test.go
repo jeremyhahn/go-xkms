@@ -26,8 +26,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	pkgstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/vaulttoken"
 )
 
@@ -40,9 +40,9 @@ func useKeyBackend(t *testing.T, name, keyID string) {
 	b, err := pkgxkms.New(&pkgxkms.BackendConfig{Backend: kp, CertStorage: pkgstorage.New()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
-	_, err = b.GenerateECDSA(context.Background(), &types.KeyAttributes{
-		CN: keyID, KeyType: types.KeyTypeEncryption, StoreType: b.Type(),
-		KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+	_, err = b.GenerateECDSA(context.Background(), &xkms.KeyAttributes{
+		CN: keyID, KeyType: xkms.KeyTypeEncryption, StoreType: b.Type(),
+		KeyAlgorithm: x509.ECDSA, ECCAttributes: &xkms.ECCAttributes{Curve: elliptic.P256()},
 	})
 	require.NoError(t, err)
 	original := localKeyBackends

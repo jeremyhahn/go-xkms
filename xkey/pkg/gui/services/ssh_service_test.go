@@ -21,7 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
@@ -36,7 +36,7 @@ func newTestSSHService(t *testing.T) *SSHService {
 	if err != nil {
 		t.Fatalf("software.NewBackend: %v", err)
 	}
-	provider, err := sshclient.NewBackendProvider(func(_ context.Context, _ string) (types.KeyProvider, error) {
+	provider, err := sshclient.NewBackendProvider(func(_ context.Context, _ string) (xkms.KeyProvider, error) {
 		return kp, nil
 	})
 	if err != nil {
@@ -188,7 +188,7 @@ func TestSSHService_Setters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("software.NewBackend: %v", err)
 	}
-	provider, err := sshclient.NewBackendProvider(func(_ context.Context, _ string) (types.KeyProvider, error) {
+	provider, err := sshclient.NewBackendProvider(func(_ context.Context, _ string) (xkms.KeyProvider, error) {
 		return kp, nil
 	})
 	if err != nil {
