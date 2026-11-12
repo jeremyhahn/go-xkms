@@ -26,17 +26,16 @@ import (
 func newTestClaims() *TokenClaims {
 	now := time.Now()
 	return &TokenClaims{
-		UserID:      "user-001",
-		Username:    "alice",
-		Email:       "alice@example.com",
-		TenantID:    "tenant-001",
-		Roles:       []string{"admin"},
-		Groups:      []string{"engineering"},
-		Permissions: []string{"read", "write"},
-		SessionID:   "session-001",
-		IssuedAt:    now,
-		ExpiresAt:   now.Add(1 * time.Hour),
-		Valid:       true,
+		UserID:    "user-001",
+		Username:  "alice",
+		Email:     "alice@example.com",
+		TenantID:  "tenant-001",
+		Roles:     []string{"admin"},
+		Groups:    []string{"engineering"},
+		SessionID: "session-001",
+		IssuedAt:  now,
+		ExpiresAt: now.Add(1 * time.Hour),
+		Valid:     true,
 	}
 }
 

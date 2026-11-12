@@ -95,17 +95,16 @@ func (c *MemoryClient) RefreshToken(_ context.Context, token string) (string, er
 
 	now := time.Now()
 	refreshed := &TokenClaims{
-		UserID:      claims.UserID,
-		Username:    claims.Username,
-		Email:       claims.Email,
-		TenantID:    claims.TenantID,
-		Roles:       claims.Roles,
-		Groups:      claims.Groups,
-		Permissions: claims.Permissions,
-		SessionID:   claims.SessionID,
-		IssuedAt:    now,
-		ExpiresAt:   now.Add(defaultTokenRefreshDuration),
-		Valid:       true,
+		UserID:    claims.UserID,
+		Username:  claims.Username,
+		Email:     claims.Email,
+		TenantID:  claims.TenantID,
+		Roles:     claims.Roles,
+		Groups:    claims.Groups,
+		SessionID: claims.SessionID,
+		IssuedAt:  now,
+		ExpiresAt: now.Add(defaultTokenRefreshDuration),
+		Valid:     true,
 	}
 
 	c.tokens.Store(newToken, refreshed)

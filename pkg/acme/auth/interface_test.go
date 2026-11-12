@@ -28,17 +28,16 @@ func TestTokenClaimsFields(t *testing.T) {
 	expires := now.Add(1 * time.Hour)
 
 	claims := &TokenClaims{
-		UserID:      "user-123",
-		Username:    "testuser",
-		Email:       "test@example.com",
-		TenantID:    "tenant-456",
-		Roles:       []string{"admin", "user"},
-		Groups:      []string{"engineering"},
-		Permissions: []string{"read", "write"},
-		SessionID:   "session-789",
-		IssuedAt:    now,
-		ExpiresAt:   expires,
-		Valid:       true,
+		UserID:    "user-123",
+		Username:  "testuser",
+		Email:     "test@example.com",
+		TenantID:  "tenant-456",
+		Roles:     []string{"admin", "user"},
+		Groups:    []string{"engineering"},
+		SessionID: "session-789",
+		IssuedAt:  now,
+		ExpiresAt: expires,
+		Valid:     true,
 	}
 
 	assert.Equal(t, "user-123", claims.UserID)
@@ -47,7 +46,6 @@ func TestTokenClaimsFields(t *testing.T) {
 	assert.Equal(t, "tenant-456", claims.TenantID)
 	assert.Equal(t, []string{"admin", "user"}, claims.Roles)
 	assert.Equal(t, []string{"engineering"}, claims.Groups)
-	assert.Equal(t, []string{"read", "write"}, claims.Permissions)
 	assert.Equal(t, "session-789", claims.SessionID)
 	assert.Equal(t, now, claims.IssuedAt)
 	assert.Equal(t, expires, claims.ExpiresAt)
@@ -59,17 +57,16 @@ func TestTokenClaimsJSONSerialization(t *testing.T) {
 	expires := now.Add(1 * time.Hour)
 
 	original := &TokenClaims{
-		UserID:      "user-123",
-		Username:    "testuser",
-		Email:       "test@example.com",
-		TenantID:    "tenant-456",
-		Roles:       []string{"admin"},
-		Groups:      []string{"ops"},
-		Permissions: []string{"deploy"},
-		SessionID:   "session-abc",
-		IssuedAt:    now,
-		ExpiresAt:   expires,
-		Valid:       true,
+		UserID:    "user-123",
+		Username:  "testuser",
+		Email:     "test@example.com",
+		TenantID:  "tenant-456",
+		Roles:     []string{"admin"},
+		Groups:    []string{"ops"},
+		SessionID: "session-abc",
+		IssuedAt:  now,
+		ExpiresAt: expires,
+		Valid:     true,
 	}
 
 	data, err := json.Marshal(original)
@@ -85,7 +82,6 @@ func TestTokenClaimsJSONSerialization(t *testing.T) {
 	assert.Equal(t, original.TenantID, decoded.TenantID)
 	assert.Equal(t, original.Roles, decoded.Roles)
 	assert.Equal(t, original.Groups, decoded.Groups)
-	assert.Equal(t, original.Permissions, decoded.Permissions)
 	assert.Equal(t, original.SessionID, decoded.SessionID)
 	assert.True(t, original.IssuedAt.Equal(decoded.IssuedAt))
 	assert.True(t, original.ExpiresAt.Equal(decoded.ExpiresAt))
@@ -154,7 +150,6 @@ func TestTokenClaimsZeroValue(t *testing.T) {
 	assert.Empty(t, claims.TenantID)
 	assert.Nil(t, claims.Roles)
 	assert.Nil(t, claims.Groups)
-	assert.Nil(t, claims.Permissions)
 	assert.Empty(t, claims.SessionID)
 	assert.True(t, claims.IssuedAt.IsZero())
 	assert.True(t, claims.ExpiresAt.IsZero())
