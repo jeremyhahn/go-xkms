@@ -6,7 +6,9 @@
   import Modal from '$lib/components/Modal.svelte';
   import { addNotification } from '$lib/stores/notifications';
   import { isWailsAvailable, callBackendWithError, callBackendVoidWithError } from '$lib/api/backend';
-  import type { ACMEConnection, ACMEAccountInfo, ACMERenewRequest } from '$lib/api/backend';
+  import type {
+    ACMEConnection, ACMEAccountInfo, ACMERenewRequest, ACMEEnrollRequest, ACMEEnrollmentInfo,
+  } from '$lib/api/backend';
 
   // A thin caller of the bound ACMEService: every call gets the connection
   // built from the form. The view handles paths only, never key material.
@@ -38,10 +40,25 @@
   let csrPath = '';
   let renewedPem = '';
 
+  const deviceChallenges = ['enroll-01', 'endorse-01', 'device-attest-01'];
+  let deviceChallenge = 'enroll-01';
+  let ipAddress = '';
+  let port = '';
+  let listenHost = '';
+  let commonName = '';
+  let pcrsText = '';
+  let idevidPem = '';
+  let iakPem = '';
+  let chainPem = '';
+  let ekPem = '';
+
   let busy = false;
   let error = '';
 
   $: ready = backend && !busy && directoryUrl.trim() !== '' && accountKeyPath.trim() !== '';
+  $: hasIP = ipAddress.trim() !== '';
+  $: canEnroll = ready && (hasIP || deviceChallenge === 'device-attest-01');
+  $: canEndorse = ready && hasIP;
 
   function connection(): ACMEConnection {
     return {
@@ -126,10 +143,52 @@
       return err;
     }, 'Certificate renewed');
   }
+
+  function enrollRequest(): ACMEEnrollRequest {
+    return {
+      challenge: deviceChallenge,
+      ipAddress: ipAddress.trim(),
+      port: Number(port.trim()) || 0,
+      listenHost: listenHost.trim(),
+      commonName: commonName.trim(),
+      pcrs: pcrsText.split(',').map((p) => p.trim()).filter((p) => p !== '').map(Number),
+      timeoutSeconds: 0,
+    };
+  }
+
+  function enroll() {
+    if (!canEnroll) return;
+    idevidPem = '';
+    iakPem = '';
+    chainPem = '';
+    const req = enrollRequest();
+    return run(async () => {
+      const { result, error: err } = await callBackendWithError<ACMEEnrollmentInfo>(
+        'ACMEService', 'EnrollDevice', connection(), req);
+      if (!err && result) {
+        idevidPem = result.idevidPem;
+        iakPem = result.iakPem;
+        chainPem = result.chainPem;
+      }
+      return err;
+    }, 'Device enrolled');
+  }
+
+  function endorse() {
+    if (!canEndorse) return;
+    ekPem = '';
+    const req = enrollRequest();
+    return run(async () => {
+      const { result, error: err } = await callBackendWithError<string>(
+        'ACMEService', 'EndorseDevice', connection(), req);
+      if (!err && result) ekPem = result;
+      return err;
+    }, 'EK certificate issued');
+  }
 </script>
 
 <div class="acme-view">
-  <GradientHeader title="ACME" subtitle="Accounts, revocation and renewal on an ACME server" />
+  <GradientHeader title="ACME" subtitle="Accounts, revocation, renewal and device enrollment on an ACME server" />
 
   {#if !backend}
     <div class="acme-alert" role="alert">No backend connection</div>
@@ -192,6 +251,40 @@
     {/if}
   </Card>
 
+  <Card>
+    <h3 class="text-title-medium">Device enrollment</h3>
+    <p class="note">These operations use this device's TPM.</p>
+    <label class="field-label" for="acme-device-challenge">Device challenge</label>
+    <select id="acme-device-challenge" class="field" bind:value={deviceChallenge}>
+      {#each deviceChallenges as c}
+        <option value={c}>{c}</option>
+      {/each}
+    </select>
+    <Input id="acme-ip" label="IP address" bind:value={ipAddress} />
+    <Input id="acme-port" label="Port" bind:value={port} placeholder="8080" />
+    <Input id="acme-listen-host" label="Listen host" bind:value={listenHost} />
+    <Input id="acme-common-name" label="Common name" bind:value={commonName} />
+    <Input id="acme-pcrs" label="PCRs" bind:value={pcrsText} helperText="Comma separated, device-attest-01" />
+    <Button disabled={!canEnroll} on:click={enroll}>Enroll</Button>
+    <Button variant="secondary" disabled={!canEndorse} on:click={endorse}>Request EK certificate</Button>
+    {#if idevidPem}
+      <label class="field-label" for="acme-idevid">IDevID certificate</label>
+      <textarea id="acme-idevid" class="field mono" rows="8" readonly value={idevidPem}></textarea>
+    {/if}
+    {#if iakPem}
+      <label class="field-label" for="acme-iak">IAK certificate</label>
+      <textarea id="acme-iak" class="field mono" rows="8" readonly value={iakPem}></textarea>
+    {/if}
+    {#if chainPem}
+      <label class="field-label" for="acme-chain">Chain</label>
+      <textarea id="acme-chain" class="field mono" rows="8" readonly value={chainPem}></textarea>
+    {/if}
+    {#if ekPem}
+      <label class="field-label" for="acme-ek">EK certificate</label>
+      <textarea id="acme-ek" class="field mono" rows="8" readonly value={ekPem}></textarea>
+    {/if}
+  </Card>
+
   <Modal bind:open={deactivateOpen} title="Deactivate account">
     <p>Deactivation is permanent: the server refuses every later request signed with this account key.</p>
     <svelte:fragment slot="actions">
@@ -220,6 +313,9 @@
   .field {
     width: 100%;
     box-sizing: border-box;
+  }
+  .note {
+    margin: 4px 0 8px;
   }
   .mono {
     font-family: monospace;

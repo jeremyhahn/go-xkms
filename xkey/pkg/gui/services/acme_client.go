@@ -25,6 +25,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	sdkacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	"golang.org/x/crypto/acme"
 )
@@ -175,4 +176,23 @@ func LoadACMECSR(path string) ([]byte, error) {
 		return block.Bytes, nil
 	}
 	return data, nil
+}
+
+// NewACMETPMSource returns a TPM source for ACMEService.SetTPMSource over the
+// shared accessor: each call acquires the TPM and wraps it with the key
+// backend from keys. The release func releases the accessor; the adapter is
+// never closed, since closing it would close the shared TPM.
+func NewACMETPMSource(accessor *TPMAccessor, keys func() xkms.TPMKeyBackend) func() (sdkacme.ACMETPMModule, func(), error) {
+	return func() (sdkacme.ACMETPMModule, func(), error) {
+		tpm, err := accessor.Acquire()
+		if err != nil {
+			return nil, nil, err
+		}
+		k := keys()
+		if k == nil {
+			accessor.Release()
+			return nil, nil, ErrTPMNotAvailable
+		}
+		return sdkacme.NewACMEXKMSTPMAdapter(tpm, k), accessor.Release, nil
+	}
 }

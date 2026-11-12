@@ -6,6 +6,14 @@ export function DeactivateAccount(arg1, arg2) {
   return window['go']['services']['ACMEService']['DeactivateAccount'](arg1, arg2);
 }
 
+export function EndorseDevice(arg1, arg2) {
+  return window['go']['services']['ACMEService']['EndorseDevice'](arg1, arg2);
+}
+
+export function EnrollDevice(arg1, arg2) {
+  return window['go']['services']['ACMEService']['EnrollDevice'](arg1, arg2);
+}
+
 export function RegisterAccount(arg1, arg2) {
   return window['go']['services']['ACMEService']['RegisterAccount'](arg1, arg2);
 }
@@ -20,6 +28,10 @@ export function RevokeCertificate(arg1, arg2, arg3) {
 
 export function SetContext(arg1) {
   return window['go']['services']['ACMEService']['SetContext'](arg1);
+}
+
+export function SetTPMSource(arg1) {
+  return window['go']['services']['ACMEService']['SetTPMSource'](arg1);
 }
 
 export function UpdateAccount(arg1, arg2) {

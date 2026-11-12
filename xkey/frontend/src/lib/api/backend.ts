@@ -854,8 +854,9 @@ export interface TPMPolicyStatus {
   scope: string;
 }
 
-// ACME types: mirror services.ACMEConnection, services.ACMEAccountInfo and
-// services.ACMERenewRequest in wailsjs models.ts. The GUI passes paths only.
+// ACME types: mirror services.ACMEConnection, services.ACMEAccountInfo,
+// services.ACMERenewRequest, services.ACMEEnrollRequest and
+// services.ACMEEnrollmentInfo in wailsjs models.ts. The GUI passes paths only.
 
 export interface ACMEConnection {
   directoryUrl: string;
@@ -876,6 +877,22 @@ export interface ACMERenewRequest {
   authzType: string;
   challenge: string;
   csrPath: string;
+}
+
+export interface ACMEEnrollRequest {
+  challenge: string;
+  ipAddress: string;
+  port: number;
+  listenHost: string;
+  commonName: string;
+  pcrs: number[];
+  timeoutSeconds: number;
+}
+
+export interface ACMEEnrollmentInfo {
+  idevidPem: string;
+  iakPem: string;
+  chainPem: string;
 }
 
 /** The policy authority a rotation installed (services.TPMAuthorityInfo). */

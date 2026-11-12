@@ -15,12 +15,15 @@ package services
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	sdkacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	"golang.org/x/crypto/acme"
@@ -52,12 +55,34 @@ type ACMERenewRequest struct {
 	CSRPath   string `json:"csrPath"`
 }
 
+// ACMEEnrollRequest names the device challenge and its listener for
+// EnrollDevice and EndorseDevice. Zero Port and TimeoutSeconds take the
+// client defaults.
+type ACMEEnrollRequest struct {
+	Challenge      string `json:"challenge"`
+	IPAddress      string `json:"ipAddress"`
+	Port           int    `json:"port"`
+	ListenHost     string `json:"listenHost"`
+	CommonName     string `json:"commonName"`
+	PCRs           []int  `json:"pcrs"`
+	TimeoutSeconds int    `json:"timeoutSeconds"`
+}
+
+// ACMEEnrollmentInfo is the PEM view of an enrollment result: certificates
+// only, never key material.
+type ACMEEnrollmentInfo struct {
+	IDevIDPEM string `json:"idevidPem"`
+	IAKPEM    string `json:"iakPem"`
+	ChainPEM  string `json:"chainPem"`
+}
+
 // ACMEService is the Wails-bound ACME client of the GUI: a thin caller of
 // the sdk/go ACME client, sharing NewACMEClient with the xkey acme CLI.
 type ACMEService struct {
 	ctx       context.Context
 	log       *slog.Logger
 	newClient func(ACMEClientOptions) (ACMEClient, error)
+	tpmSource func() (sdkacme.ACMETPMModule, func(), error)
 }
 
 // NewACMEService returns a service that builds sdk/go ACME clients.
@@ -71,6 +96,13 @@ func NewACMEService() *ACMEService {
 // SetContext sets the Wails runtime context.
 func (s *ACMEService) SetContext(ctx context.Context) {
 	s.ctx = ctx
+}
+
+// SetTPMSource sets the TPM that EnrollDevice and EndorseDevice use: fn
+// returns the module and a release func. app.go wires it to the shared
+// TPMAccessor through NewACMETPMSource, so the GUI never opens a second TPM.
+func (s *ACMEService) SetTPMSource(fn func() (sdkacme.ACMETPMModule, func(), error)) {
+	s.tpmSource = fn
 }
 
 func (s *ACMEService) context() context.Context {
@@ -249,4 +281,110 @@ func (s *ACMEService) RenewCertificate(conn ACMEConnection, req ACMERenewRequest
 		return "", err
 	}
 	return out, nil
+}
+
+// EnrollDevice runs a device enrollment challenge (enroll-01, endorse-01 or
+// device-attest-01; empty means enroll-01) on the GUI's shared TPM and
+// returns the issued certificates as PEM. No key material is returned.
+func (s *ACMEService) EnrollDevice(conn ACMEConnection, req ACMEEnrollRequest) (info *ACMEEnrollmentInfo, err error) {
+	defer s.recoverPanic("EnrollDevice", &err)
+	if req.Challenge == "" {
+		req.Challenge = sdkacme.ACMEChallengeTypeEnroll01
+	}
+	err = s.withDeviceTPM(conn, req, "enroll", func(c ACMEClient, cfg *sdkacme.ACMEEnrollmentConfig) error {
+		res, err := c.EnrollDevice(s.context(), cfg)
+		if err != nil {
+			return fmt.Errorf("acme: enroll device: %w", err)
+		}
+		if res == nil {
+			return errors.New("acme: enroll device: no result")
+		}
+		info = &ACMEEnrollmentInfo{
+			IDevIDPEM: certificatesPEM(res.IDevIDCertificate),
+			IAKPEM:    certificatesPEM(res.IAKCertificate),
+			ChainPEM:  certificatesPEM(res.Chain...),
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+// EndorseDevice requests an EK certificate with the endorse-01 challenge on
+// the GUI's shared TPM and returns it as PEM.
+func (s *ACMEService) EndorseDevice(conn ACMEConnection, req ACMEEnrollRequest) (out string, err error) {
+	defer s.recoverPanic("EndorseDevice", &err)
+	req.Challenge = sdkacme.ACMEChallengeTypeEndorse01
+	err = s.withDeviceTPM(conn, req, "endorse", func(c ACMEClient, cfg *sdkacme.ACMEEnrollmentConfig) error {
+		cert, err := c.RequestEndorsementKeyCertificate(s.context(), cfg)
+		if err != nil {
+			return fmt.Errorf("acme: request EK certificate: %w", err)
+		}
+		if cert == nil {
+			return errors.New("acme: request EK certificate: no certificate")
+		}
+		out = certificatesPEM(cert)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// withDeviceTPM validates req, takes the shared TPM, builds the enrollment
+// config and runs fn on a client. The TPM is released, never closed.
+func (s *ACMEService) withDeviceTPM(conn ACMEConnection, req ACMEEnrollRequest, op string,
+	fn func(ACMEClient, *sdkacme.ACMEEnrollmentConfig) error) error {
+	switch req.Challenge {
+	case sdkacme.ACMEChallengeTypeEnroll01, sdkacme.ACMEChallengeTypeEndorse01:
+		if req.IPAddress == "" {
+			return fmt.Errorf("acme: %s needs an IP address", op)
+		}
+	case sdkacme.ACMEChallengeTypeDeviceAttest01:
+	default:
+		return fmt.Errorf("acme: %s: unknown challenge %q", op, req.Challenge)
+	}
+	if req.TimeoutSeconds < 0 {
+		return fmt.Errorf("acme: %s: timeout must not be negative", op)
+	}
+	if req.Port < 0 {
+		return fmt.Errorf("acme: %s: port must not be negative", op)
+	}
+	if s.tpmSource == nil {
+		return ErrTPMNotAvailable
+	}
+	tpm, release, err := s.tpmSource()
+	if err != nil {
+		return err
+	}
+	defer release()
+	port := ""
+	if req.Port > 0 {
+		port = strconv.Itoa(req.Port)
+	}
+	cfg := &sdkacme.ACMEEnrollmentConfig{
+		Challenge:    req.Challenge,
+		IPAddress:    req.IPAddress,
+		TPMModule:    tpm,
+		Port:         port,
+		ListenHost:   req.ListenHost,
+		CommonName:   req.CommonName,
+		PCRSelection: req.PCRs,
+		Timeout:      time.Duration(req.TimeoutSeconds) * time.Second,
+	}
+	return s.withClient(conn, "", func(c ACMEClient) error { return fn(c, cfg) })
+}
+
+// certificatesPEM concatenates CERTIFICATE PEM blocks, skipping nil.
+func certificatesPEM(certs ...*x509.Certificate) string {
+	var b strings.Builder
+	for _, c := range certs {
+		if c != nil {
+			b.Write(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}))
+		}
+	}
+	return b.String()
 }

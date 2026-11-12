@@ -912,6 +912,46 @@ export namespace services {
 	        this.systemRoots = source["systemRoots"];
 	    }
 	}
+	export class ACMEEnrollRequest {
+	    challenge: string;
+	    ipAddress: string;
+	    port: number;
+	    listenHost: string;
+	    commonName: string;
+	    pcrs: number[];
+	    timeoutSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMEEnrollRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.challenge = source["challenge"];
+	        this.ipAddress = source["ipAddress"];
+	        this.port = source["port"];
+	        this.listenHost = source["listenHost"];
+	        this.commonName = source["commonName"];
+	        this.pcrs = source["pcrs"];
+	        this.timeoutSeconds = source["timeoutSeconds"];
+	    }
+	}
+	export class ACMEEnrollmentInfo {
+	    idevidPem: string;
+	    iakPem: string;
+	    chainPem: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMEEnrollmentInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.idevidPem = source["idevidPem"];
+	        this.iakPem = source["iakPem"];
+	        this.chainPem = source["chainPem"];
+	    }
+	}
 	export class ACMERenewRequest {
 	    certPath: string;
 	    domain: string;

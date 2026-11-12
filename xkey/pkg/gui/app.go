@@ -2066,6 +2066,15 @@ func NewApp(cfg *GUIConfig) *App {
 	a.tpmAccessor = tpmAccessor
 	tpmSvc.SetTPMAccessor(tpmAccessor)
 	sealSvc.SetTPMAccessor(tpmAccessor)
+	acmeSvc.SetTPMSource(services.NewACMETPMSource(tpmAccessor, func() xkmssdk.TPMKeyBackend {
+		a.tpmMu.Lock()
+		factory := a.tpmStorageFactory
+		a.tpmMu.Unlock()
+		if factory == nil {
+			return nil
+		}
+		return factory.KeyBackend()
+	}))
 
 	// Apply persisted sealer backend selection (overrides auto-select).
 	if cfg.SealerBackend != "" {

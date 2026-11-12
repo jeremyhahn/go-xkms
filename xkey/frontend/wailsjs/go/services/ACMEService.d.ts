@@ -5,6 +5,10 @@ import {context} from '../models';
 
 export function DeactivateAccount(arg1:services.ACMEConnection,arg2:boolean):Promise<void>;
 
+export function EndorseDevice(arg1:services.ACMEConnection,arg2:services.ACMEEnrollRequest):Promise<string>;
+
+export function EnrollDevice(arg1:services.ACMEConnection,arg2:services.ACMEEnrollRequest):Promise<services.ACMEEnrollmentInfo>;
+
 export function RegisterAccount(arg1:services.ACMEConnection,arg2:string):Promise<services.ACMEAccountInfo>;
 
 export function RenewCertificate(arg1:services.ACMEConnection,arg2:services.ACMERenewRequest):Promise<string>;
@@ -12,5 +16,7 @@ export function RenewCertificate(arg1:services.ACMEConnection,arg2:services.ACME
 export function RevokeCertificate(arg1:services.ACMEConnection,arg2:string,arg3:string):Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
+
+export function SetTPMSource(arg1:any):Promise<void>;
 
 export function UpdateAccount(arg1:services.ACMEConnection,arg2:Array<string>):Promise<services.ACMEAccountInfo>;

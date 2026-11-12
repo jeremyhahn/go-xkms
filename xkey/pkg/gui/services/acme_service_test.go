@@ -382,7 +382,7 @@ func TestACMEService_EnrollDevice(t *testing.T) {
 	require.NotNil(t, cfg)
 	assert.Equal(t, sdkacme.ACMEChallengeTypeEnroll01, cfg.Challenge)
 	assert.Equal(t, "192.0.2.10", cfg.IPAddress)
-	assert.Equal(t, 9090, cfg.Port)
+	assert.Equal(t, "9090", cfg.Port)
 	assert.Equal(t, "0.0.0.0", cfg.ListenHost)
 	assert.Equal(t, "device-1", cfg.CommonName)
 	assert.Equal(t, []int{0, 7}, cfg.PCRSelection)
