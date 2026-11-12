@@ -66,6 +66,7 @@ export const navSections: NavSection[] = [
       { route: "passwords", path: "/passwords", label: "Passwords", icon: "Vault", capability: "passwords", requires: { resource: "passwords", action: "read" } },
       { route: "oidcCredentials", path: "/oidc/credentials", label: "OIDC Credentials", icon: "LogIn", capability: "oidc_credentials", requires: { resource: "oidc_credentials", action: "list" } },
       { route: "platform", path: "/platform", label: "Platform Secrets", icon: "FolderLock", capability: "platform" },
+      { route: "bootstrapKeys", path: "/bootstrap/keys", label: "Bootstrap Keys", icon: "Network", requires: { resource: "bootstrap", action: "read" } },
     ],
   },
   {
