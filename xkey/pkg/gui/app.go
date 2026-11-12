@@ -1413,6 +1413,12 @@ func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 		return
 	}
 
+	// Audit reads go through the embedded service's go-qrdb authorizer. The
+	// accessor is nil without RBAC, and then AdminService keeps refusing.
+	if authorizer := svc.Authorizer(); authorizer != nil && a.adminService != nil {
+		a.adminService.SetAuthorizer(authorizer)
+	}
+
 	localClient, err := xkmssdk.NewEmbedded(svc)
 	if err != nil {
 		a.log.Warn("failed to create embedded SDK client", "error", err)

@@ -318,9 +318,15 @@ func (s *XKMSService) SetAuthorizer(a *auth.Authorizer) {
 	s.authorizer = a
 }
 
-// Authorizer returns the service's qrdb-backed Authorizer for embedders.
+// Authorizer returns the service's qrdb-backed Authorizer for embedders, or
+// the nil interface when none is wired or RBAC is disabled. A disabled
+// *auth.Authorizer allows every request, so it is never returned: a caller
+// that refuses when the result is nil keeps refusing.
 func (s *XKMSService) Authorizer() qrdbsdk.Authorizer {
-	return nil
+	if s == nil || !s.authorizer.Enabled() {
+		return nil
+	}
+	return s.authorizer
 }
 
 // AuthorizeCaller reports whether the identity ctx carries holds
