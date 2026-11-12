@@ -20,16 +20,32 @@ server tests, and fixes any transport that drops a field.
 
 | Test file | A | B | C |
 |---|---|---|---|
-| pkg/api/transport/rest | todo | todo | todo |
-| pkg/api/transport/grpc | todo | todo | todo |
-| pkg/api/transport/unix | todo | todo | todo |
-| pkg/api/transport/mcp | todo | todo | todo |
-| pkg/api/transport/quic | todo | todo | todo |
-| pkg/api/grpc (server) | todo | todo | todo |
-| pkg/api/mcp (server) | todo | todo | todo |
+| pkg/api/transport/rest | pass | pass | pass |
+| pkg/api/transport/grpc | pass | pass | pass |
+| pkg/api/transport/unix | pass | pass | pass |
+| pkg/api/transport/mcp | pass | pass | pass |
+| pkg/api/transport/quic | pass | pass | pass |
+| pkg/api/grpc (server) | pass | pass | open |
+| pkg/api/mcp (server) | pass | pass | open |
 
-Cell values: pass (the test passed as written) or fixed (a fix commit
-was needed after the test commit).
+Cell values: pass (the test passed as written), fixed (a fix commit was
+needed after the test commit), or open (not tested in this slice).
+
+The client tests run against a mock that echoes the update request, so
+every field must arrive and come back unchanged. The server tests run on
+the offline policy service, which has no reference signer. They prove
+that the update hands over the branch and the reference values, because
+each combination draws a different answer from the service, the same
+way the REST handler test does. No transport dropped a field.
+
+Open: the server-side verify-reference cells need a branch updated from
+a signed CoRIM. No test helper builds one for the offline service
+(pkg/testutil/tpmpolicytest offers only NewOffline and Calls). The proto
+conversion of the verify reference is tested in pkg/api/grpc/pbconv.
+MCP renders the precondition class (no reference signer) as an internal
+error (-32603, the class table in pkg/api/mcp/errors_shared.go), where
+REST answers 409 and gRPC FailedPrecondition. That is the project-wide
+mapping and is left as is.
 
 ## Out of scope
 
