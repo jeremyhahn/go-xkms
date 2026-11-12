@@ -1604,7 +1604,7 @@ admin plane's issuance tenant, separate from the key-management tenant model in
 
 | Type | Fields that matter |
 |---|---|
-| `Tenant` | `ID`, `Name`, `Status` (`active` / `suspended` / `deleted`), `RootCA` (nil = issue under the global CA), `IntermediateCAs`, `DefaultIntermediateCAID`, `Settings` |
+| `Tenant` | `ID`, `Name`, `Status` (internal deleted marker only: `UpdateTenantStatus` and a `ListTenants` status filter return `*admin.UnsupportedFieldError{Field: "status"}` / `admin.ErrTenantStatusUnsupported`, HTTP 400 `urn:trusted-ca:error:tenant-status-unsupported`, because go-qrdb v0.51.0-alpha has no tenant status; `pkg/acme/admin/tenant_service.go`), `RootCA` (nil = issue under the global CA), `IntermediateCAs`, `DefaultIntermediateCAID`, `Settings` |
 | `TenantRootCA` (`:67-95`) | `CommonName`, `SerialNumber`, `KeyID`, `KeyAlgorithm`, validity, `Status` (`active` / `pending-rotation` / `revoked`), `CertificatePEM` |
 | `TenantIntermediateCA` (`:100-145`) | the same, plus `ID`, `ParentType` (`global` / `tenant`), `Purpose`, `ChainPEM` |
 | `TenantSettings` (`:148-183`) | `MaxCertificates`, `MaxAccounts`, `AllowedKeyAlgorithms`, `AllowedChallengeTypes`, `CertificateValidityDays`, `RequireEAB`, `AllowEndorse01`, `AllowEnroll01`, `ComplianceConfig`, `CustomMetadata` |
