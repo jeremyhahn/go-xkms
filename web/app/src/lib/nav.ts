@@ -48,6 +48,7 @@ export const navSections: NavSection[] = [
       { route: "keys", path: "/keys", label: "Keys", icon: "Key", requires: { resource: "keys", action: "list" } },
       { route: "frost", path: "/frost", label: "FROST", icon: "Snowflake", capability: "frost", requires: { resource: "keys", action: "list" } },
       { route: "tpmPolicies", path: "/tpm/policies", label: "TPM Policies", icon: "ShieldCheck", capability: "tpm_policies" },
+      { route: "keyHmac", path: "/keys/hmac", label: "HMAC", icon: "Fingerprint", requires: { resource: "keys", action: "sign" } },
     ],
   },
   {
