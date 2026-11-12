@@ -23,7 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
