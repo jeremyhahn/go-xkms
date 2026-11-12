@@ -30,4 +30,25 @@ threshold extremes, recorded below.
 
 ## Results
 
-(to follow: gate at 101, gate at 0, measured total)
+Module setup as CI (DS-7500): fresh GOMODCACHE, GOWORK=off, -mod=mod,
+GOPROXY=https://proxy.golang.org.
+
+- Gate logic, on a one-package list (`COVERAGE_GATE_PKGS=./pkg/shellquote`,
+  100.0%) to keep the run short:
+  - `make coverage-gate COVERAGE_THRESHOLD=101`: exit 2,
+    `FAIL xkey coverage 100.0% is under the threshold 101%`.
+  - `make coverage-gate COVERAGE_THRESHOLD=0`: exit 0,
+    `OK xkey coverage 100.0% meets the threshold 0%`.
+- Real total, `make -C xkey coverage-gate` (CI's full package list and
+  tags): 90.2% of statements, `OK ... meets the threshold 90%`, exit 0.
+  The margin is 0.2 points, so a small drop fails CI.
+
+## Status
+
+- Done: the `coverage-gate` target (xkey/Makefile).
+- Blocked: the lane's policy guard refused the edits to
+  .github/workflows/ci.yml and docs/SPEC.md (LANE_POLICY_ALLOW not set
+  for this session). Still to do: in both xkey steps, replace the
+  `go test -race -timeout 60m -tags "codec_json tpm_simulator" -count=1 \`
+  command and its package lines with `make coverage-gate`, and change
+  docs/SPEC.md:181 from `xkey/Makefile:151` to `xkey/Makefile:154`.
