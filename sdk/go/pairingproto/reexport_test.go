@@ -30,6 +30,7 @@ func TestReexport_Constants(t *testing.T) {
 		{"AttestProtocolV1", pairingproto.AttestProtocolV1, pkgproto.AttestProtocolV1},
 		{"AttestStaticKeySize", pairingproto.AttestStaticKeySize, pkgproto.AttestStaticKeySize},
 		{"FragmentHeaderSize", pairingproto.FragmentHeaderSize, pkgproto.FragmentHeaderSize},
+		{"FlagFirstFragment", pairingproto.FlagFirstFragment, pkgproto.FlagFirstFragment},
 		{"FlagLastFragment", pairingproto.FlagLastFragment, pkgproto.FlagLastFragment},
 		{"ErrorCodeUserCancelled", pairingproto.ErrorCodeUserCancelled, pkgproto.ErrorCodeUserCancelled},
 	}
@@ -60,8 +61,8 @@ func TestReexport_Errors(t *testing.T) {
 }
 
 func TestReexport_RemoteListBackupsParams(t *testing.T) {
-	var p pkgproto.RemoteListBackupsParams = pairingproto.RemoteListBackupsParams{}
-	_ = p
+	takesPkg := func(pkgproto.RemoteListBackupsParams) {}
+	takesPkg(pairingproto.RemoteListBackupsParams{})
 }
 
 func TestReexport_IsLocalMethod(t *testing.T) {

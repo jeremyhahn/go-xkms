@@ -38,7 +38,8 @@ test files still import pkg/pairingproto:
 ## Symbols sdk/go/pairingproto lacks
 
 - Constants: AttestChannelBindingSize, AttestProtocolV1,
-  AttestStaticKeySize, FragmentHeaderSize, FlagLastFragment,
+  AttestStaticKeySize, FragmentHeaderSize, FlagFirstFragment (ble tag
+  only), FlagLastFragment,
   ErrorCodeUserCancelled, PIVSlotAuthentication
 - Type: RemoteListBackupsParams
 - Functions: ComputeAttestChannelBinding, IsLocalMethod
