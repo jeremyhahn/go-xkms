@@ -33,4 +33,14 @@ becomes an sdk/go addition. Seven xkey test files still import
 - xkey: go test -run FIDO2|CDP|... ./cmd/xkey/cmd/ ./pkg/gui/services/; go test ./pkg/phone/
 - make lint
 
-Results to follow.
+## Results
+
+- sdk/go go test -race ./fido2/keybackend/: ok
+- sdk/go go build ./...: ok
+- xkey go build ./... + go vet (codec tags; integration linux pkcs11 tags): ok
+- xkey go test -race -run FIDO2|CDP|... ./cmd/xkey/cmd/ ./pkg/gui/services/: ok
+- xkey go test -race ./pkg/phone/: ok
+- make lint: ok (0 issues, all modules and tag sets)
+- Done-check grep over xkey for the pkg keybackend import: no hits.
+- gofmt -l lists pre-existing files in xkey/cmd/xkey/cmd (device_*_test.go)
+  and xkey/pkg/phone (13 *_test.go) that this slice does not touch.
