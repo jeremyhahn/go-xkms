@@ -46,4 +46,12 @@ docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build: pass.
+- svelte-auth npm ci, web/app npm ci: pass.
+- vitest test/view3_trust_bundle.test.ts: 5/5 pass.
+- vitest whole web/app suite (NODE_OPTIONS flag): 51 files, 417 tests pass.
+- svelte-check: only the baseline errors (UsersView.svelte:121 and view2_users.test.ts:51, role/roles).
+- vite build: pass.
+- go test -race pkg/api/rest: pass.
+- sdk/go build: pass.
+- make lint: pass (0 issues on every module and tag set).
