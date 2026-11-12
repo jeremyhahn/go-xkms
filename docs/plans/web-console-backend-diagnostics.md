@@ -46,4 +46,11 @@ BackendsView, the System Health view, Go code, sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build (dist restored), svelte-auth and web/app `npm ci`: pass.
+- `vitest run test/view3_backend_diagnostics.test.ts`: 8/8 pass.
+- web/app `npm test` (NODE_OPTIONS=--no-experimental-webstorage): 51 files, 420 tests pass.
+- `npm run check` (svelte-check): 0 errors, 0 warnings.
+- `vite build --outDir /tmp/sujd-dist`: pass.
+- `go test -race ./pkg/api/rest/` (codec tags): ok.
+- `go build ./...` in sdk/go: pass.
+- `make lint`: 0 issues on every module and tag set.
