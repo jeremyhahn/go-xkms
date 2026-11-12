@@ -35,11 +35,13 @@ type (
 	AddCertificateOptions = truststore.AddCertificateOptions
 	CertMetadata          = truststore.CertMetadata
 	CertPurpose           = truststore.CertPurpose
-	FileStore             = truststore.FileStore
-	FileStoreConfig       = truststore.FileStoreConfig
-	ImportResult          = truststore.ImportResult
-	OSCertStore           = truststore.OSCertStore
-	TrustStore            = truststore.TrustStore
+	// DAOStore is the persisted trust-root store on a qrdb DAO.
+	DAOStore        = truststore.DAOStore
+	FileStore       = truststore.FileStore
+	FileStoreConfig = truststore.FileStoreConfig
+	ImportResult    = truststore.ImportResult
+	OSCertStore     = truststore.OSCertStore
+	TrustStore      = truststore.TrustStore
 )
 
 var (
@@ -50,9 +52,11 @@ var (
 	IsValidPurpose         = truststore.IsValidPurpose
 	LoadEmbeddedRoots      = truststore.LoadEmbeddedRoots
 	NewBackendStore        = truststore.NewBackendStore
-	NewFileStore           = truststore.NewFileStore
-	NewOSCertStore         = truststore.NewOSCertStore
-	ParsePurpose           = truststore.ParsePurpose
+	// NewDAOStore opens a DAOStore on a qrdb DAO factory.
+	NewDAOStore    = truststore.NewDAOStore
+	NewFileStore   = truststore.NewFileStore
+	NewOSCertStore = truststore.NewOSCertStore
+	ParsePurpose   = truststore.ParsePurpose
 
 	ErrCertificateExists   = truststore.ErrCertificateExists
 	ErrCertificateNotFound = truststore.ErrCertificateNotFound
