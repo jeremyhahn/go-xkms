@@ -22,6 +22,7 @@ export type RouteName =
   | "login"
   | "register"
   | "backends"
+  | "sshKeyImport"
   | "keys"
   | "certificates"
   | "ca"
@@ -52,6 +53,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/login": "login",
   "/register": "register",
   "/backends": "backends",
+  "/ssh/import": "sshKeyImport",
   "/keys": "keys",
   "/certs": "certificates",
   "/certificates": "certificates",

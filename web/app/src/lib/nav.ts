@@ -60,6 +60,7 @@ export const navSections: NavSection[] = [
   {
     heading: "Security",
     items: [
+      { route: "sshKeyImport", path: "/ssh/import", label: "SSH Key Import", icon: "TerminalSquare", capability: "ssh", requires: { resource: "ssh", action: "write" } },
       { route: "pin", path: "/pin", label: "PIN", icon: "KeyRound", requires: { resource: "pin", action: "read" } },
       { route: "piv", path: "/piv", label: "PIV", icon: "CreditCard", requires: { resource: "piv", action: "read" } },
       { route: "ssh", path: "/ssh", label: "SSH", icon: "TerminalSquare", capability: "ssh", requires: { resource: "ssh", action: "read" } },

@@ -9,6 +9,7 @@
   import RegisterView from "$views/RegisterView.svelte";
   import DashboardView from "$views/DashboardView.svelte";
   import BackendsView from "$views/BackendsView.svelte";
+  import SshKeyImportView from "$views/SshKeyImportView.svelte";
   import SettingsView from "$views/SettingsView.svelte";
   import KeysView from "$views/KeysView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
@@ -48,6 +49,7 @@
       <DashboardView />
     {:else if routerStore.name === "backends"}
       <BackendsView />
+    {:else if routerStore.name === "sshKeyImport"}<SshKeyImportView />
     {:else if routerStore.name === "keys"}
       <KeysView />
     {:else if routerStore.name === "certificates"}
