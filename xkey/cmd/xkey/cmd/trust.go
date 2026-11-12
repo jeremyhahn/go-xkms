@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -381,6 +382,9 @@ func openTrustStore() (*truststore.FileStore, error) {
 
 // runTrustList executes the trust list command.
 func runTrustList(cmd *cobra.Command, args []string) (err error) {
+	if resolveXKMSdURL() != "" {
+		return runTrustListXKMSd(cmd)
+	}
 	out := cmd.OutOrStdout()
 	store, err := openTrustStore()
 	if err != nil {
@@ -527,6 +531,9 @@ func runTrustRemove(cmd *cobra.Command, args []string) (err error) {
 func runTrustShow(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
+	if resolveXKMSdURL() != "" {
+		return runTrustShowXKMSd(cmd, fingerprint)
+	}
 
 	store, err := openTrustStore()
 	if err != nil {
@@ -614,6 +621,109 @@ func runTrustShow(cmd *cobra.Command, args []string) (err error) {
 		_, _ = fmt.Fprintf(out, "URIs:           %s\n", strings.Join(uris, ", "))
 	}
 
+	return nil
+}
+
+// trustCommandContext returns the command's context, or a background context
+// when the command runs outside Execute.
+func trustCommandContext(cmd *cobra.Command) context.Context {
+	if ctx := cmd.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
+// trustRootDate formats an RFC 3339 timestamp from the server as a date,
+// keeping the raw value when it does not parse.
+func trustRootDate(value string) string {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return value
+	}
+	return parsed.Format(time.DateOnly)
+}
+
+// runTrustListXKMSd lists the server's trust roots through TrustRootList.
+// A server error is returned; the local store is never read instead.
+func runTrustListXKMSd(cmd *cobra.Command) (err error) {
+	client, err := connectXKMSdClient(cmd)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	resp, err := client.TrustRootList(trustCommandContext(cmd), &transport.TrustRootListRequest{})
+	if err != nil {
+		return fmt.Errorf("TrustRootList: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	if len(resp.Roots) == 0 {
+		_, _ = fmt.Fprintln(out, "No trusted certificates found.")
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(out, "Trusted Certificates (%d):\n\n", len(resp.Roots))
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintf(w, "FINGERPRINT\tSUBJECT\tPURPOSE\tSOURCE\tALGORITHM\tNOT BEFORE\tNOT AFTER\n")
+	for _, root := range resp.Roots {
+		displayFP := root.Fingerprint
+		if len(displayFP) > 16 {
+			displayFP = displayFP[:16] + "..."
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			displayFP,
+			root.Subject,
+			root.Purpose,
+			root.Source,
+			root.Algorithm,
+			trustRootDate(root.NotBefore),
+			trustRootDate(root.NotAfter),
+		)
+	}
+	return w.Flush()
+}
+
+// runTrustShowXKMSd prints one of the server's trust roots through
+// TrustRootGet. A server error is returned; the local store is never read
+// instead.
+func runTrustShowXKMSd(cmd *cobra.Command, fingerprint string) (err error) {
+	client, err := connectXKMSdClient(cmd)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	root, err := client.TrustRootGet(trustCommandContext(cmd), &transport.TrustRootRequest{Fingerprint: fingerprint})
+	if err != nil {
+		return fmt.Errorf("TrustRootGet: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "Trusted Certificate Details\n")
+	_, _ = fmt.Fprintf(out, "===========================\n\n")
+	_, _ = fmt.Fprintf(out, "Subject:        %s\n", root.Subject)
+	_, _ = fmt.Fprintf(out, "Issuer:         %s\n", root.Issuer)
+	_, _ = fmt.Fprintf(out, "Algorithm:      %s\n", root.Algorithm)
+	_, _ = fmt.Fprintf(out, "Not Before:     %s\n", root.NotBefore)
+	_, _ = fmt.Fprintf(out, "Not After:      %s\n", root.NotAfter)
+	_, _ = fmt.Fprintf(out, "Fingerprint:    %s\n", root.Fingerprint)
+	_, _ = fmt.Fprintf(out, "Purpose:        %s\n", root.Purpose)
+	if root.Source != "" {
+		_, _ = fmt.Fprintf(out, "Source:         %s\n", root.Source)
+	}
+	if root.AddedAt != "" {
+		_, _ = fmt.Fprintf(out, "Added At:       %s\n", root.AddedAt)
+	}
 	return nil
 }
 
