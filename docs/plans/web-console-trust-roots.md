@@ -37,4 +37,16 @@ flag line and its test, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- go test -run TestCapabilityFlags ./pkg/api/rest/: pass.
+- sdk/ts npm ci + build: pass (tracked sdk/ts/dist restored, not committed).
+- sdk/ts/svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_trust_roots.test.ts: 9/9 pass (first run caught a test
+  fixture whose issuer equalled its subject; made distinct in feat(web)).
+- web/app npm test (NODE_OPTIONS=--no-experimental-webstorage): 51 files,
+  421 tests pass.
+- svelte-check: 0 errors, 0 warnings.
+- vite build to /tmp/suiw-dist: pass.
+- go test -race (codec tags) ./pkg/api/rest/: pass.
+- sdk/go go build ./...: pass.
+- make lint: pass (0 issues on every tag set).
