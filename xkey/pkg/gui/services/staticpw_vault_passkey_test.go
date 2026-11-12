@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest/vaultservice"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
@@ -52,7 +51,7 @@ func newPasskeyVault(t *testing.T, key *vaultSimKey) *passkeyVault {
 	t.Helper()
 	tr, err := embedded.New(vaultservice.New(t).Service)
 	require.NoError(t, err)
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "alice", TenantID: vaultservice.Tenant})
+	ctx := xkms.QRDBWithIdentity(context.Background(), &xkms.QRDBIdentity{Subject: "alice", TenantID: vaultservice.Tenant})
 
 	svc := NewStaticPasswordService(newTestPasswordStore(t, xkms.NewStorageMemory()))
 	svc.SetContext(ctx)
