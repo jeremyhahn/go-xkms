@@ -34,3 +34,11 @@ renew, revoke) in CLI and GUI, a thin caller of `pkg/acme/client` through
 - dist rebuild, wailsjs binding changes (no bound signature changes).
 
 ## Results
+
+- npm ci, `npm run check -- --fail-on-warnings`: pass (0 errors, 0 warnings).
+- `npx vitest run src/views/ACME.test.ts`: pass (9 tests); `npm test`: pass.
+- `npx vite build --outDir /tmp/xkey-frontend-dist`: pass; no change under dist/ or wailsjs/.
+- xkey `go build ./...`: pass; cmd/xkey/cmd tests (codec tags): pass.
+- pkg/gui/services `-run ACME` (production codec_json): pass, incl. the CSR path test.
+- `make check-wailsjs`: pass (bindings match); `make lint`: pass (0 issues).
+- CSR loader fold done: `services.LoadACMECSR` serves CLI and GUI.
