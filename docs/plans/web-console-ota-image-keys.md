@@ -43,4 +43,12 @@ docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build: pass (tracked sdk/ts/dist restored after).
+- svelte-auth npm ci: pass; web/app npm ci: pass.
+- vitest test/view3_ota_image_keys.test.ts: pass (11 tests).
+- web/app npm test (NODE_OPTIONS=--no-experimental-webstorage): pass (51 files, 423 tests).
+- svelte-check: pass (0 errors, 0 warnings).
+- vite build (--outDir /tmp/suiz-dist): pass.
+- go test -race pkg/api/rest (codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: pass (0 issues).
