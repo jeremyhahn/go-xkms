@@ -603,21 +603,23 @@ func SealingCommands() []CommandDefinition {
 // "tpm policy" verb group, served on every transport. Every command but
 // tpm-policy-create depends on the "it-tpm-policy" policy that command
 // creates, so they carry RequiresSetup like the sealing workflow's
-// unseal/can-seal above.
+// unseal/can-seal above. The policy has a current and a next branch, as the
+// row's image-update flow uses, and verify expects both to match and be
+// approved.
 func PolicyCommands() []CommandDefinition {
 	return []CommandDefinition{
 		{
 			Name:           "tpm-policy-create",
 			Category:       CategoryPolicy,
 			Command:        []string{"tpm", "policy", "create"},
-			Description:    "Create a TPM policy over the live PCR values",
+			Description:    "Create a two-branch TPM policy (current, next) over the live PCR values",
 			RequiresServer: true,
 			RequiredArgs: []ArgDefinition{
 				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
 			},
 			OptionalArgs: []ArgDefinition{
-				{Flag: "bank", Value: "sha256", Description: "PCR bank"},
-				{Flag: "pcrs", Value: "23", Description: "Comma-separated PCR indices"},
+				{Flag: "branch", Value: "name=current;pcr=sha256:23", Description: "Current branch"},
+				{Flag: "branch", Value: "name=next;pcr=sha256:23", Description: "Next branch"},
 			},
 			ExpectedOutputContains: []string{"it-tpm-policy"},
 		},
@@ -651,6 +653,10 @@ func PolicyCommands() []CommandDefinition {
 			RequiresSetup:  true,
 			RequiredArgs: []ArgDefinition{
 				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
+			},
+			ExpectedOutputContains: []string{
+				"Branch current: PCRs match, approved: true",
+				"Branch next: PCRs match, approved: true",
 			},
 		},
 		{
