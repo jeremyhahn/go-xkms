@@ -55,7 +55,48 @@ verifies its COSE_Sign1 signature against a `reference-signer` endorsement.
   `ErrDeleteAttestationReferenceValuesFailed` or
   `ErrInvalidReferenceValuesFlags` (`cmd/xkmsctl/errors.go`).
 
-The appraise verbs have no `xkmsctl` surface yet.
+## `xkmsctl attestation appraise`
+
+`xkmsctl attestation appraise`, in `cmd/xkmsctl/attestation_appraise.go`,
+sends TPM quote evidence to the sdk/go `Client` verb
+`AppraiseAttestationQuote` through `runClientCall` and prints the
+attestation result. It needs `attestation_verifier:verify`. The CLI does not
+parse the quote or the certificate: xkmsd does.
+
+```
+xkmsctl attestation appraise --reference-values <name> \
+  --ak-cert <pem file> --quote <file> --signature <file> \
+  --nonce <hex> --pcr <index>=<hex> [--pcr <index>=<hex> ...] \
+  [--event-log <file>]
+```
+
+| Flag | Value |
+|---|---|
+| `--reference-values` | Name of the stored reference values to appraise against (required). |
+| `--ak-cert` | Attestation-key certificate PEM file, leaf first, intermediates after (required). |
+| `--quote` | Marshaled TPMS_ATTEST file (required). |
+| `--signature` | The attestation key's signature over the quote (required). |
+| `--nonce` | The qualifying data the quote carries, hex (required). |
+| `--pcr` | A quoted PCR value, `<index>=<hex>` (at least one required). |
+| `--event-log` | TCG crypto-agile event log file (optional). |
+
+- `--pcr` is repeatable and also takes a comma-separated list
+  (`--pcr 0=<hex>,7=<hex>`). The index is 0-23 and each index is given
+  once; the value is non-empty hex.
+- Every input is checked before any call: a missing flag, an unreadable or
+  empty file, a nonce that is not hex or a malformed `--pcr` is refused with
+  `ErrInvalidAppraiseFlags` or `ErrReadDataFileFailed`.
+- Text output prints the verdict, the baseline (reference values, manifest
+  ID, signer, baseline source, appraisal time) and one line per check with
+  its outcome (`pass`, `forged`, `absent`, `skipped`) and reason; `-o json`
+  prints the result as JSON.
+- Exit rule: the command exits 0 only when the result is verified. Otherwise
+  it prints the result, then exits non-zero with `ErrAttestationNotVerified`,
+  adding "cryptographic failure: evidence present and wrong" when
+  `CryptographicFailure` is set (a forged check, as opposed to missing
+  evidence). A provisioning script can gate on the exit status.
+- A failed call carries `ErrAppraiseAttestationQuoteFailed`
+  (`cmd/xkmsctl/errors.go`).
 
 `pkg/attestation`'s `Verifier`/`VerifyInvariants` still run server-side,
 automatically, whenever a CSR carries attestation fields
