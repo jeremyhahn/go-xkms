@@ -1,0 +1,1 @@
+- **Web console Seal view (#1443)** — a Seal screen at `#/seal` in Keys & Crypto (shown to identities with `keys:encrypt`) seals text with a backend key or a TPM policy through `POST /api/v1/seal`, after checking `GET /api/v1/seal/capability`, shows the seal result as JSON to copy, and unseals that JSON back to the plaintext through `POST /api/v1/unseal`.
