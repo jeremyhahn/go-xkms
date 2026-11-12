@@ -46,7 +46,13 @@ No new resource or action string.
 
 ## Results
 
-Results to follow.
+- Proto regenerated with `make proto` (protoc 36.2, protoc-gen-go v1.36.12,
+  protoc-gen-go-grpc v1.6.2).
+- `go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack"` on the
+  packages above: pass.
+- `cd sdk/go && go build ./...`: pass.
+- `make lint`: pass (0 issues in every module and tag set).
+- Left: the QUIC transport, sdk/go and compose wiring.
 
 ## Out of scope
 
