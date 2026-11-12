@@ -40,4 +40,13 @@ roles editing, UsersView, Go code, sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build: pass (tracked sdk/ts/dist restored after).
+- sdk/ts/svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_user_detail.test.ts: pass (7 tests).
+- vitest whole web/app suite (NODE_OPTIONS=--no-experimental-webstorage): pass (51 files, 419 tests).
+- svelte-check: baseline only, run against a fresh sdk/ts build (UsersView.svelte:121 and test/view2_users.test.ts:51, role vs roles); the stale tracked dist has `role` and flags this view's `roles` instead.
+- vite build: pass.
+- go test -race ./pkg/api/rest/: pass.
+- sdk/go go build ./...: pass.
+- make lint: pass (0 issues).
