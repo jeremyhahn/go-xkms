@@ -16,7 +16,7 @@ no client logic of its own.
 |---|---|---|
 | `account register\|update\|deactivate` | Create and manage the ACME account | Implemented (CLI) |
 | `enroll` | Enroll the local TPM through `enroll-01`, `endorse-01` or `device-attest-01`; writes the IDevID, IAK and chain as PEM | Implemented |
-| `endorse` | Obtain a certificate through the `endorse-01` challenge | Planned |
+| `endorse` | Obtain an EK certificate for the local TPM through `endorse-01` (`--ip` required); writes the PEM certificate only, to `--out` or stdout | Implemented |
 | `renew` | Renew an issued certificate (`--cert`, `--domain`); writes the PEM certificate only | Implemented |
 | `revoke` | Revoke an issued certificate (`--cert`, `--reason` RFC 5280 name or number) | Implemented (CLI) |
 
@@ -26,7 +26,7 @@ account key; never printed), `--trusted-root` (repeatable) and
 The server finds the account from the account key (RFC 8555 7.3.1), so the
 verbs keep no local account state.
 
-Code: `xkey/cmd/xkey/cmd/acme.go`, `acme_account.go`, `acme_revoke.go`.
+Code: `xkey/cmd/xkey/cmd/acme.go`, `acme_account.go`, `acme_revoke.go`, `acme_endorse.go`.
 
 ## Call path
 
