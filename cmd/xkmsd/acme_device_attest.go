@@ -74,9 +74,10 @@ func buildDeviceAttestVerifier(cfg config.ACMEChallengesConfig) (acmesdk.ACMEDev
 		TPMRoots:  tpmRoots,
 		DICERoots: diceRoots,
 		DICE: acmesdk.ACMEDICEPolicy{
-			RequireDeviceSignedLeaf: cfg.DeviceAttest.DICERequireDeviceSignedLeaf,
-			RequireMeasurement:      cfg.DeviceAttest.DICERequireMeasurement,
-			RequireTcbInfo:          cfg.DeviceAttest.DICERequireTCBInfo,
+			RequireDeviceSignedLeaf:     cfg.DeviceAttest.DICERequireDeviceSignedLeaf,
+			RequireMeasurement:          cfg.DeviceAttest.DICERequireMeasurement,
+			RequireTcbInfo:              cfg.DeviceAttest.DICERequireTCBInfo,
+			RequireApplicationReference: cfg.DeviceAttest.DICERequireApplicationReference,
 		},
 	})
 	if err != nil {

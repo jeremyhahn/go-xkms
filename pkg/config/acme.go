@@ -849,6 +849,11 @@ type ACMEDeviceAttestConfig struct {
 	// DICERequireTCBInfo demands the alias certificate carry a DiceTcbInfo
 	// extension, which is where the operational flags live.
 	DICERequireTCBInfo bool `yaml:"dice_require_tcb_info"`
+
+	// DICERequireApplicationReference refuses at finalize a DICE device whose
+	// provisioning record registers no application reference; a registered
+	// reference is always compared.
+	DICERequireApplicationReference bool `yaml:"dice_require_application_reference"`
 }
 
 // HasAnchors reports whether at least one trust anchor file is configured.
