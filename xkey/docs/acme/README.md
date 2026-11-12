@@ -1,11 +1,11 @@
 # ACME Client Namespace
 
-> **Status: PARTIAL** · Feature: `acme` · Module: `go-xkms/xkey` · Built: `account`, `endorse`, `enroll`, `renew`, `revoke` (CLI), GUI service and view (`account`, `renew`, `revoke`); planned: GUI `enroll`/`endorse`
+> **Status: COMPLETE** · Feature: `acme` · Module: `go-xkms/xkey` · Built: `account`, `endorse`, `enroll`, `renew`, `revoke` in the CLI and in the GUI service and view
 > Scope: the `xkey acme` namespace; the ACME client itself is [acme-issuance](../../../docs/acme-issuance/).
 
 ## Purpose
 
-`xkey acme` will put ACME certificate issuance beside xkey's TPM, seal,
+`xkey acme` puts ACME certificate issuance beside xkey's TPM, seal,
 platform-trust and device verbs, in the CLI and the GUI alike. It is a front
 end only: the ACME client is one library, `pkg/acme/client`, and xkey carries
 no client logic of its own.
@@ -15,9 +15,9 @@ no client logic of its own.
 | Verb | Purpose | State |
 |---|---|---|
 | `account register\|update\|deactivate` | Create and manage the ACME account | Implemented (CLI, GUI) |
-| `enroll` | Enroll the local TPM through `enroll-01`, `endorse-01` or `device-attest-01`; writes the IDevID, IAK and chain as PEM | Implemented |
-| `endorse` | Obtain an EK certificate for the local TPM through `endorse-01` (`--ip` required); writes the PEM certificate only, to `--out` or stdout | Implemented |
-| `renew` | Renew an issued certificate (`--cert`, `--domain`); writes the PEM certificate only | Implemented |
+| `enroll` | Enroll the local TPM through `enroll-01`, `endorse-01` or `device-attest-01`; writes the IDevID, IAK and chain as PEM | Implemented (CLI, GUI) |
+| `endorse` | Obtain an EK certificate for the local TPM through `endorse-01` (`--ip` required); writes the PEM certificate only, to `--out` or stdout | Implemented (CLI, GUI) |
+| `renew` | Renew an issued certificate (`--cert`, `--domain`); writes the PEM certificate only | Implemented (CLI, GUI) |
 | `revoke` | Revoke an issued certificate (`--cert`, `--reason` RFC 5280 name or number) | Implemented (CLI, GUI) |
 
 Shared flags: `--directory` (ACME directory URL), `--account-key` (PEM
@@ -49,4 +49,8 @@ deactivate, revoke and renew, on the client factory the CLI shares
 (`xkey/frontend/src/views/ACME.svelte`, nav entry "ACME") calls that service
 for account register, update contacts and deactivate (after a confirm
 dialog), revoke and renew; it handles paths only, never key material. GUI
-`enroll` and `endorse` (through the GUI's TPM) are planned. See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).
+`enroll` and `endorse` are implemented: `ACMEService.EnrollDevice` and
+`EndorseDevice` run on the GUI's shared `TPMAccessor` (wired in
+`xkey/pkg/gui/app.go` through `NewACMETPMSource`, which releases the accessor
+and never closes the TPM), and the view's Device enrollment card calls them.
+See the `acme` row in [docs/SPEC.md](../../../docs/SPEC.md#xkey).
