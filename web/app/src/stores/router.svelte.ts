@@ -23,6 +23,7 @@ export type RouteName =
   | "register"
   | "backends"
   | "keys"
+  | "frostSigning"
   | "certificates"
   | "ca"
   | "tenants"
@@ -48,6 +49,7 @@ export interface Route {
 // (none yet in this phase) would be matched separately below.
 const staticRoutes: Record<string, RouteName> = {
   "/": "dashboard",
+  "/frost/sign": "frostSigning",
   "/dashboard": "dashboard",
   "/login": "login",
   "/register": "register",
