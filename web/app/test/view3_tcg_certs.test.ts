@@ -137,7 +137,7 @@ describe("TcgCertsView", () => {
     expect(await screen.findByText("ak-serial-7")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Download PEM" }));
     expect(downloadText).toHaveBeenCalledTimes(1);
-    expect(downloadText.mock.calls[0][1]).toContain("-----BEGIN CERTIFICATE-----");
+    expect(downloadText).toHaveBeenCalledWith(expect.any(String), expect.stringContaining("-----BEGIN CERTIFICATE-----"));
   });
 
   it("signs a Base64 TCG CSR and offers both certificates for download", async () => {
@@ -161,8 +161,8 @@ describe("TcgCertsView", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Download IAK" }));
     await fireEvent.click(screen.getByRole("button", { name: "Download IDevID" }));
     expect(downloadText).toHaveBeenCalledTimes(2);
-    expect(downloadText.mock.calls[0][1]).toBe("SUFLZGVy");
-    expect(downloadText.mock.calls[1][1]).toBe("SURldklEZGVy");
+    expect(downloadText).toHaveBeenNthCalledWith(1, expect.any(String), "SUFLZGVy", "text/plain");
+    expect(downloadText).toHaveBeenNthCalledWith(2, expect.any(String), "SURldklEZGVy", "text/plain");
   });
 
   it("rejects a CSR that is neither PEM nor Base64 without a call", async () => {
