@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
