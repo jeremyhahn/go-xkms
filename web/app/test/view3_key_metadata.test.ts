@@ -106,8 +106,8 @@ describe("KeyMetadataView", () => {
     await fireEvent.input(screen.getByDisplayValue("a"), { target: { value: "b" } });
     await fireEvent.click(screen.getByRole("button", { name: "Delete tag old" }));
     await fireEvent.click(screen.getByRole("button", { name: "+ Add tag" }));
-    await fireEvent.input(screen.getByLabelText("Tag key 3"), { target: { value: "env" } });
-    await fireEvent.input(screen.getByLabelText("Tag value 3"), { target: { value: "prod" } });
+    await fireEvent.input(screen.getByLabelText("Tag key 2"), { target: { value: "env" } });
+    await fireEvent.input(screen.getByLabelText("Tag value 2"), { target: { value: "prod" } });
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
