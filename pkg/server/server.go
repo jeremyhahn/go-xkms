@@ -48,6 +48,8 @@ import (
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
@@ -1041,7 +1043,22 @@ func (s *Server) composedStores() *compose.Stores {
 	} else {
 		stores.Invite = invite
 	}
+	if verdicts, err := s.verdictStore(); err != nil {
+		s.logger.Warn("Attestation verdict store is off", "error", err)
+	} else {
+		stores.Verdicts = verdicts
+	}
 	return stores
+}
+
+// verdictStore builds the continuous-attestation verdict store on the
+// datastore's attestation database.
+func (s *Server) verdictStore() (*continuous.Store, error) {
+	daos, err := s.daoFactory(appraisal.DatabaseName)
+	if err != nil {
+		return nil, err
+	}
+	return compose.BuildVerdictStore(daos)
 }
 
 // setupLogger configures the logger based on config

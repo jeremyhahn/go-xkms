@@ -19,6 +19,8 @@ import (
 	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
@@ -168,6 +170,9 @@ type Stores struct {
 	// TrustRoots is the platform trust-root store.
 	TrustRoots *truststore.DAOStore
 
+	// Verdicts is the continuous-attestation verdict store.
+	Verdicts *continuous.Store
+
 	// Disabled holds one *FeatureDisabledError or *FeatureBuildError per
 	// feature Build left off.
 	Disabled []error
@@ -178,7 +183,7 @@ type Stores struct {
 // each on its datastore and sets d.DAOs to the factory serving them before
 // Build; a root that opens none leaves those features off.
 func Databases(d Deps) []string {
-	databases := []string{keyversion.DatabaseName, keypolicy.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName}
+	databases := []string{keyversion.DatabaseName, keypolicy.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName, appraisal.DatabaseName}
 	if d.CA != nil {
 		databases = append(databases, certstore.DatabaseName)
 	}
@@ -286,6 +291,12 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		})
 	}
 
+	if b.need(FeatureVerdicts, d.DAOs != nil, "DAO factory") {
+		st.Verdicts = built(b, FeatureVerdicts, func() (*continuous.Store, error) {
+			return BuildVerdictStore(d.DAOs)
+		})
+	}
+
 	if b.need(FeatureOIDCCredentials, d.BarrierRegistry != nil, "barrier registry") &&
 		b.need(FeatureOIDCCredentials, d.Leases != nil, "qrdb coordination") {
 		st.OIDCCredentials = built(b, FeatureOIDCCredentials, func() (*credential.Service, error) {
@@ -337,6 +348,10 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 	}
 	if st.TrustRoots != nil {
 		svc.SetTrustRootStore(st.TrustRoots)
+	}
+	if st.Verdicts != nil {
+		// No engine is composed yet, so ReattestDevice stays not configured.
+		svc.SetContinuousAttestation(nil, st.Verdicts)
 	}
 	if st.OIDCCredentials != nil {
 		svc.SetOIDCCredentialService(st.OIDCCredentials)
