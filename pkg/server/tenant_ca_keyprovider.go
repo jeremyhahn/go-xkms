@@ -225,6 +225,7 @@ func (s *Server) tenantCAKeyProviderOptions() []qrdbnode.NodeOption {
 	}
 	f := newTenantCAKeyFactory()
 	f.bindResolver(s.tenantCAKeyBackend)
+	s.tenantCAKeys = f
 	return []qrdbnode.NodeOption{qrdbnode.WithCertKeyProviderFactory(f)}
 }
 

@@ -306,7 +306,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 			s.barrier = registry.SystemBarrier()
 		}
 		if svcNode := node.Services(); svcNode != nil {
-			s.tenantService = svcNode.Tenant
+			s.adoptTenantService(svcNode.Tenant)
 			s.tenantStores = svcNode.StoreResolver
 		}
 		s.logger.Info("adopted the qrdb node barrier (single barrier; data plane encrypted at rest)")
