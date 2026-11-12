@@ -21,24 +21,9 @@ import (
 	"os"
 
 	sdkacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/spf13/cobra"
 )
-
-// loadCSR reads a certificate signing request from a PEM or DER file and
-// returns its DER bytes.
-func loadCSR(path string) ([]byte, error) {
-	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path
-	if err != nil {
-		return nil, fmt.Errorf("acme: csr %s: %w", path, err)
-	}
-	if block, _ := pem.Decode(data); block != nil {
-		if block.Type != "CERTIFICATE REQUEST" && block.Type != "NEW CERTIFICATE REQUEST" {
-			return nil, fmt.Errorf("acme: %s holds no PEM certificate request", path)
-		}
-		return block.Bytes, nil
-	}
-	return data, nil
-}
 
 // writeCertificatesPEM writes each certificate as a PEM CERTIFICATE block.
 func writeCertificatesPEM(w io.Writer, ders ...[]byte) error {
@@ -93,7 +78,7 @@ material is ever written.`,
 				ChallengeType: challenge,
 			}
 			if csrFile != "" {
-				if req.CSR, err = loadCSR(csrFile); err != nil {
+				if req.CSR, err = services.LoadACMECSR(csrFile); err != nil {
 					return err
 				}
 			}

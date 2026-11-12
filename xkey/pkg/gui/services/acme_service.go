@@ -233,7 +233,7 @@ func (s *ACMEService) RenewCertificate(conn ACMEConnection, req ACMERenewRequest
 		ChallengeType: req.Challenge,
 	}
 	if req.CSRPath != "" {
-		if certReq.CSR, err = loadACMECSR(req.CSRPath); err != nil {
+		if certReq.CSR, err = LoadACMECSR(req.CSRPath); err != nil {
 			return "", err
 		}
 	}
@@ -249,19 +249,4 @@ func (s *ACMEService) RenewCertificate(conn ACMEConnection, req ACMERenewRequest
 		return "", err
 	}
 	return out, nil
-}
-
-// loadACMECSR reads a PEM or DER certificate signing request.
-func loadACMECSR(path string) ([]byte, error) {
-	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path
-	if err != nil {
-		return nil, fmt.Errorf("acme: csr %s: %w", path, err)
-	}
-	if block, _ := pem.Decode(data); block != nil {
-		if block.Type != "CERTIFICATE REQUEST" && block.Type != "NEW CERTIFICATE REQUEST" {
-			return nil, fmt.Errorf("acme: %s holds no PEM certificate request", path)
-		}
-		return block.Bytes, nil
-	}
-	return data, nil
 }

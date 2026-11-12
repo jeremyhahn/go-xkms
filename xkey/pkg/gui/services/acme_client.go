@@ -160,3 +160,19 @@ func LoadCertificatePEM(path string) (*x509.Certificate, error) {
 	}
 	return cert, nil
 }
+
+// LoadACMECSR reads a certificate signing request from a PEM or DER file
+// and returns its DER bytes, for xkey acme renew and the GUI service.
+func LoadACMECSR(path string) ([]byte, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path
+	if err != nil {
+		return nil, fmt.Errorf("acme: csr %s: %w", path, err)
+	}
+	if block, _ := pem.Decode(data); block != nil {
+		if block.Type != "CERTIFICATE REQUEST" && block.Type != "NEW CERTIFICATE REQUEST" {
+			return nil, fmt.Errorf("acme: %s holds no PEM certificate request", path)
+		}
+		return block.Bytes, nil
+	}
+	return data, nil
+}
