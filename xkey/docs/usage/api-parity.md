@@ -31,8 +31,8 @@ go-xkms reaches its key store through five client transports:
 | Sealing | `Seal`, `Unseal`, `CanSeal` |
 | In-process only | `Type`, `KeyProvider`, `CertStorage`, `SignerStore`, `Close` |
 
-Symmetric keys use the separate `types.SymmetricKeyProvider` interface
-(`pkg/types/types.go:2112`): `GenerateSymmetricKey`, `GetSymmetricKey` and
+Symmetric keys use the separate `SymmetricKeyProvider` interface
+(`sdk/go/types.go:113`): `GenerateSymmetricKey`, `GetSymmetricKey` and
 `SymmetricEncrypter`. No transport has its own symmetric operations. A
 symmetric key is generated through the generic generate-key operation, which
 switches to the backend's `SymmetricKeyProvider` when the request names a
