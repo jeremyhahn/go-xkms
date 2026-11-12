@@ -25,4 +25,9 @@ On the three teardown lines (ci.yml:1619, :1721, :1748), set
 
 ## Results
 
-Results to follow.
+- actionlint on ci.yml: pass, no findings.
+- compose config check: not run; docker is not installed in the lane
+  container (`docker: command not found`). The GO_IMAGE expression itself
+  yields a non-empty value from scripts/tool-pins.sh. CI's Integration job
+  exercises the teardown.
+- The three teardown lines (ci.yml:1619, :1721, :1748) all set GO_IMAGE.
