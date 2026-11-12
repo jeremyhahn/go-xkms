@@ -41,12 +41,10 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	pkgca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -98,12 +96,12 @@ func testXKMSdQuietLogger() *slog.Logger {
 func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 	t.Helper()
 
-	swBackend, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
+	swBackend, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
 
 	backend, err := pkgxkms.New(&pkgxkms.BackendConfig{
 		Backend:     swBackend,
-		CertStorage: storage.NewMemory(),
+		CertStorage: xkms.NewStorageMemory(),
 	})
 	require.NoError(t, err)
 
@@ -121,7 +119,7 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 		BackendForStore: func(string, xkms.StoreType) (pkgxkms.Backend, error) {
 			return backend, nil
 		},
-		RevocationStore: storage.NewMemory(),
+		RevocationStore: xkms.NewStorageMemory(),
 		CertStore:       certStore,
 	})
 	require.NoError(t, err)
@@ -294,11 +292,11 @@ func startTestXKMSdREST(t *testing.T) (baseURL, spkiPin string) {
 	pin, err := spki.ComputePin(leaf)
 	require.NoError(t, err)
 
-	swBackend, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
+	swBackend, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
 	backend, err := pkgxkms.New(&pkgxkms.BackendConfig{
 		Backend:     swBackend,
-		CertStorage: storage.NewMemory(),
+		CertStorage: xkms.NewStorageMemory(),
 	})
 	require.NoError(t, err)
 
