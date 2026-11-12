@@ -42,4 +42,16 @@ HMAC, encrypt/decrypt, sign/verify, Go code, sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build: pass (tracked sdk/ts/dist restored after).
+- svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_crypto_tools.test.ts: pass, 10 tests.
+- vitest whole web/app suite (NODE_OPTIONS=--no-experimental-webstorage): pass, 51 files, 422 tests.
+- svelte-check: pass, 0 errors (the UsersView baseline error did not show).
+- vite build (out of tree): pass.
+- go test -race pkg/api/rest (codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: pass (actionlint, golangci-lint 0 issues on every module and tag set).
+- Departure from the plan: the first feat commit put the nav line after the
+  closing bracket of navSections (svelte-check caught it); a second feat
+  commit moved it after TPM Policies, so there are two feat(web) commits.
