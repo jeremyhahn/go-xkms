@@ -2405,6 +2405,26 @@ func TestGRPC_ListTenants_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestGRPC_ListTenants_StatusUnsupported proves the gRPC list path answers
+// the tenant-status refusal as InvalidArgument, not Internal.
+func TestGRPC_ListTenants_StatusUnsupported(t *testing.T) {
+	mockTenant := &mockTenantService{
+		listTenantsErr: admin.TenantStatusUnsupported(),
+	}
+	server := NewAdminServiceServer(&mockAdminService{}, mockTenant, newTestLogger())
+	grpcServer := server.(*adminServiceServer)
+
+	_, err := grpcServer.ListTenants(context.Background(), &adminv1.ListTenantsRequest{Status: "suspended"})
+
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("not a gRPC status: %v", err)
+	}
+	if st.Code() != codes.InvalidArgument {
+		t.Fatalf("code = %s, want InvalidArgument", st.Code())
+	}
+}
+
 func TestGRPC_CreateEAB_Error(t *testing.T) {
 	mockTenant := &mockTenantService{
 		createEABErr: errors.New("failed to create EAB"),
