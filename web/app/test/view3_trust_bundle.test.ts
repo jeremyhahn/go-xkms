@@ -22,7 +22,9 @@ vi.mock("../src/stores/toast.svelte.ts", () => ({
 }));
 
 const downloadText = vi.fn<(filename: string, text: string, mime?: string) => void>();
-vi.mock("../src/lib/pem.ts", () => ({ downloadText }));
+vi.mock("../src/lib/pem.ts", () => ({
+  downloadText: (filename: string, text: string, mime?: string) => downloadText(filename, text, mime),
+}));
 
 import TrustBundleView from "../src/views/TrustBundleView.svelte";
 
