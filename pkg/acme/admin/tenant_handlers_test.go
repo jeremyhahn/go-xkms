@@ -362,10 +362,10 @@ func TestUpdateTenant_InternalError(t *testing.T) {
 	}
 }
 
-func TestUpdateTenantStatus_Success(t *testing.T) {
+func TestUpdateTenantStatus_Unsupported(t *testing.T) {
 	service := &mockTenantService{
 		updateTenantStatusFunc: func(ctx context.Context, tenantID string, status string) error {
-			return nil
+			return &UnsupportedFieldError{Field: "status", Reason: tenantStatusUnsupportedReason}
 		},
 	}
 	handlers := NewTenantHandlers(service, slog.Default())
@@ -374,13 +374,15 @@ func TestUpdateTenantStatus_Success(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/status", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
 	req = addUserToRequest(req, createAdminUser("tenant-1"))
-	req = addUserToRequest(req, createAdminUser("tenant-1"))
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantStatus(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(ProblemTypeTenantStatusUnsupported)) {
+		t.Errorf("problem type %q missing from body %s", ProblemTypeTenantStatusUnsupported, w.Body.String())
 	}
 }
 

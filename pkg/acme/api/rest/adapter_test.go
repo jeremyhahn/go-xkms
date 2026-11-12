@@ -592,7 +592,6 @@ func TestListTenants(t *testing.T) {
 			request: &admin.ListTenantsRequest{
 				Page:    1,
 				PerPage: 10,
-				Status:  "active",
 			},
 			wantQuery:  "page=1&page_size=10&status=active",
 			statusCode: http.StatusOK,

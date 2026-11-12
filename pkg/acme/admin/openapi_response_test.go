@@ -395,16 +395,18 @@ func TestOpenAPIResponses_Tenants(t *testing.T) {
 		requireResponseMatchesSpec(t, router, http.MethodPut, "/api/v1/tenants/acme-corp", w)
 	})
 
-	t.Run("status_update_success", func(t *testing.T) {
+	t.Run("status_update_unsupported", func(t *testing.T) {
 		h := NewTenantHandlers(&mockTenantService{
-			updateTenantStatusFunc: func(context.Context, string, string) error { return nil },
+			updateTenantStatusFunc: func(context.Context, string, string) error {
+				return &UnsupportedFieldError{Field: "status", Reason: tenantStatusUnsupportedReason}
+			},
 		}, logger)
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/acme-corp/status", bytes.NewBufferString(`{"status":"suspended"}`))
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
 		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.UpdateTenantStatus(w, req)
-		require.Equal(t, http.StatusOK, w.Code)
+		require.Equal(t, http.StatusBadRequest, w.Code)
 		requireResponseMatchesSpec(t, router, http.MethodPut, "/api/v1/tenants/acme-corp/status", w)
 	})
 }
