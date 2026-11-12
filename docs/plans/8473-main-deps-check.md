@@ -11,3 +11,8 @@
   - make vuln (after bump, mcp-go v1.5.0): FAIL, GO-2026-6911 unchanged.
   - make modverify (after bump): PASS. make lint: PASS.
 - dk8473b: re-run after #2071 failed deps-check at 12:00Z 11-12, results to follow
+  - make deps-check (147c13538): FAIL, only go-truststrap v0.6.0-alpha -> v0.7.1-alpha (root, sdk/go), now 7+ days old. All other drift is under 7 days (go-jose v4.1.9 at 6 days crosses next).
+  - go get go-truststrap@v0.7.1-alpha: build FAIL, undefined: enclave.ByteAccess (pulls go-enclave v0.10.0-alpha; replace holds v0.8.0-alpha for qrdb v0.51.0-alpha; #1995 frozen).
+  - Fix: `// held:` comment naming that failure on the go-truststrap require in root and sdk/go go.mod; no bump.
+  - make deps-check (after): PASS. Builds of root, sdk/go, xkey, web/desktop with -mod=readonly: PASS. make lint: PASS.
+  - Note: make deps-check under -mod=mod adds /go.mod lines to go.sum as a side effect; they are not committed.
