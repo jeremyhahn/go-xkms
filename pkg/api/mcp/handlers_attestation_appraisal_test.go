@@ -29,7 +29,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -157,9 +156,11 @@ func TestAttestationAppraisalTools_WithoutAnAppraiser(t *testing.T) {
 // TestAttestationAppraisalTools_RefusedWithoutThePair refuses a caller that
 // lacks the tool's resource:action pair before dispatch.
 func TestAttestationAppraisalTools_RefusedWithoutThePair(t *testing.T) {
+	svc := setupTestXKMS(t)
+	defer cleanupXKMS()
 	for method, perm := range appraisalMethods {
 		rbac := newFakeRBAC()
-		server := newRBACServer(t, &xkms.XKMSService{}, rbac)
+		server := newRBACServer(t, svc, rbac)
 		resp := call(server, authedCtx(), method)
 		require.NotNil(t, resp.Error, method)
 		assert.Equal(t, ErrCodeForbidden, resp.Error.Code, method)
