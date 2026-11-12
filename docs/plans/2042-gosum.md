@@ -20,4 +20,13 @@ GOFLAGS=-mod=mod, GOPROXY=https://proxy.golang.org, GOSUMDB=sum.golang.org.
 
 ## Results
 
-Results to follow.
+- `go list -deps -test -tags "codec_cbor codec_json codec_msgpack
+  integration tpm2 tpm_simulator" ./...`: no go.sum change.
+- `go build ./...`: root go.sum +177 lines, 0 removed or changed. All are
+  `/go.mod` hash lines for modules in the build graph (cloud.google.com/go/*,
+  go-openapi/swag/*, go-git, charmbracelet, swaggo, gorm, ...). Committed
+  as build(deps).
+- `make lint`: passes (0 issues on all modules and tag sets), no further
+  go.sum change.
+- No checksum finding: no quicraft or go-luks2 line changed. sdk/go,
+  xkey and web/desktop go.sum unchanged.
