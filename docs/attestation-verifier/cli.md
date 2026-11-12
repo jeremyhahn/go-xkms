@@ -25,7 +25,37 @@ response as JSON. The CLI does not parse the PEM: xkmsd validates it.
   `ErrListAttestationEndorsementsFailed` or
   `ErrDeleteAttestationEndorsementFailed` (`cmd/xkmsctl/errors.go`).
 
-Reference values and the appraise verbs have no `xkmsctl` surface yet.
+## `xkmsctl attestation reference-values`
+
+The tenant's reference values, the signed CoRIM manifests the Verifier
+appraises evidence against, are managed with four verbs in
+`cmd/xkmsctl/attestation_reference_values.go`. Each calls the sdk/go
+`Client` verb of the same name (`PutAttestationReferenceValues`,
+`GetAttestationReferenceValues`, `ListAttestationReferenceValues`,
+`DeleteAttestationReferenceValues`) through `runClientCall`; `-o json`
+prints the response as JSON. The CLI does not parse the CoRIM: xkmsd
+verifies its COSE_Sign1 signature against a `reference-signer` endorsement.
+
+| Verb | Usage | Permission |
+|---|---|---|
+| put | `xkmsctl attestation reference-values put <name> --corim <signed corim file> [--repository <ref>]` | `attestation_reference_values:create` |
+| get | `xkmsctl attestation reference-values get <name>` | `attestation_reference_values:get` |
+| list | `xkmsctl attestation reference-values list` | `attestation_reference_values:list` |
+| delete | `xkmsctl attestation reference-values delete <name>` | `attestation_reference_values:delete` |
+
+- `--corim` is required on `put`; a missing flag, an unreadable file or an
+  empty file is refused before a call. `--repository` is optional and is
+  stored with the record.
+- In text output `get` and `list` print one line per record: the name,
+  manifest ID, profile, PCR indices and not-after time; the CoRIM bytes are
+  printed only with `-o json`.
+- Failures carry `ErrPutAttestationReferenceValuesFailed`,
+  `ErrGetAttestationReferenceValuesFailed`,
+  `ErrListAttestationReferenceValuesFailed`,
+  `ErrDeleteAttestationReferenceValuesFailed` or
+  `ErrInvalidReferenceValuesFlags` (`cmd/xkmsctl/errors.go`).
+
+The appraise verbs have no `xkmsctl` surface yet.
 
 `pkg/attestation`'s `Verifier`/`VerifyInvariants` still run server-side,
 automatically, whenever a CSR carries attestation fields
