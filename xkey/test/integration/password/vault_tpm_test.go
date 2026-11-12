@@ -30,7 +30,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/localtpm"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
@@ -136,8 +135,8 @@ func provisionSWTPM(address string) error {
 }
 
 // fileStores opens the policy service's stores as xkey and xkmsctl do.
-func fileStores(dir string) (storage.Backend, error) {
-	return storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: dir})
+func fileStores(dir string) (xkms.StorageBackend, error) {
+	return xkms.StorageOpenEngine(xkms.StorageEngineConfig{Kind: xkms.StorageEngineFile, Path: dir})
 }
 
 // createTPMKey creates EC P-256 encryption key keyID under the platform
