@@ -25,8 +25,8 @@ server tests, and fixes any transport that drops a field.
 | pkg/api/transport/unix | pass | pass | pass |
 | pkg/api/transport/mcp | pass | pass | pass |
 | pkg/api/transport/quic | pass | pass | pass |
-| pkg/api/grpc (server) | pass | pass | open |
-| pkg/api/mcp (server) | pass | pass | open |
+| pkg/api/grpc (server) | pass | pass | pass, results to follow (pkg/server/tpm_policy_simulator_test.go, simulator) |
+| pkg/api/mcp (server) | pass | pass | open (see below) |
 
 Cell values: pass (the test passed as written), fixed (a fix commit was
 needed after the test commit), or open (not tested in this slice).
@@ -46,6 +46,12 @@ MCP renders the precondition class (no reference signer) as an internal
 error (-32603, the class table in pkg/api/mcp/errors_shared.go), where
 REST answers 409 and gRPC FailedPrecondition. That is the project-wide
 mapping and is left as is.
+
+The gRPC server verify cell is proved over the TPM simulator in
+pkg/server/tpm_policy_simulator_test.go (lane stpmpb, plan
+docs/plans/tpm-policies-verify-reference.md). The MCP server verify cell
+stays open: pkg/api/mcp's tests have no simulator-backed XKMSService, and
+MCP serves the same XKMSService call that test proves.
 
 ## Out of scope
 
