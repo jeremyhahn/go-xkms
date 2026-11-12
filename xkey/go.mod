@@ -20,7 +20,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.17
 	github.com/aws/aws-sdk-go-v2/service/kms v1.62.5
 	github.com/flynn/noise v1.1.0
-	github.com/fxamacker/cbor/v2 v2.10.0
+	github.com/fxamacker/cbor/v2 v2.9.6 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/godbus/dbus/v5 v5.2.4
@@ -29,7 +29,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha // held: go-enclave frozen at v0.8.0 (DS-7715)
-	github.com/jeremyhahn/go-luks2 v1.0.1-rc.4
+	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // held: in-house, moves only to a tag Infra verifies (ruling 390); v0.9+ go-enclave needed, frozen (DS-7715)
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha // held: v0.58.2-alpha needs a go-enclave beyond v0.8.0-alpha, and the go-enclave replace holds v0.8.0-alpha; lift with that replace
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
@@ -40,18 +40,18 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/quic-go/quic-go v0.65.0
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.1.0
+	github.com/spf13/pflag v1.0.10 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
 	github.com/tobischo/gokeepasslib/v3 v3.7.1
-	github.com/wailsapp/wails/v2 v2.17.1
+	github.com/wailsapp/wails/v2 v2.17.0 // held: owner freeze 2026-11-08 (ruling 390)
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
 	google.golang.org/grpc v1.85.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.62.0
-	tinygo.org/x/bluetooth v0.17.0
+	tinygo.org/x/bluetooth v0.16.0 // held: owner freeze 2026-11-08 (ruling 390)
 )
 
 require (
@@ -61,7 +61,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.3.1 // indirect
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	cloud.google.com/go/iam v1.14.0 // indirect
-	cloud.google.com/go/kms v1.36.1 // indirect
+	cloud.google.com/go/kms v1.35.0 // indirect
 	cloud.google.com/go/longrunning v1.3.0 // indirect
 	cloud.google.com/go/monitoring v1.30.0 // indirect
 	cloud.google.com/go/storage v1.64.0 // indirect
@@ -71,7 +71,7 @@ require (
 	github.com/Azure/azure-pipeline-go v0.2.3 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.13.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage v1.8.1 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.1 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/internal v1.2.0 // indirect
 	github.com/Azure/azure-storage-blob-go v0.15.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.10.1 // indirect
@@ -202,7 +202,7 @@ require (
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/lestrrat-go/strftime v1.2.0 // indirect
 	github.com/lxn/win v0.0.0-20210218163916-a377121e959e // indirect
-	github.com/mark3labs/mcp-go v1.5.0 // indirect
+	github.com/mark3labs/mcp-go v1.3.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-ieproxy v0.0.12 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

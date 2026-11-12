@@ -3,12 +3,12 @@ module github.com/jeremyhahn/go-xkms
 go 1.27.4
 
 require (
-	cloud.google.com/go/kms v1.36.1
+	cloud.google.com/go/kms v1.35.0 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.24.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.15.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns v1.2.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.5.0
-	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.1
+	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.0 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/aws/aws-sdk-go-v2 v1.47.8
 	github.com/aws/aws-sdk-go-v2/config v1.33.17
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.17
@@ -19,7 +19,7 @@ require (
 	github.com/cloudflare/circl v1.6.5
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/flynn/noise v1.1.0
-	github.com/fxamacker/cbor/v2 v2.10.0
+	github.com/fxamacker/cbor/v2 v2.9.6 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-jose/go-jose/v4 v4.1.9
@@ -36,14 +36,14 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha // held: go-enclave frozen at v0.8.0 (DS-7715)
 	github.com/jeremyhahn/go-frost v0.3.1-alpha
-	github.com/jeremyhahn/go-luks2 v1.0.1-rc.4
+	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // held: in-house, moves only to a tag Infra verifies (ruling 390); v0.9+ go-enclave needed, frozen (DS-7715)
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha // held: v0.58.2-alpha needs a go-enclave beyond v0.8.0-alpha, and the go-enclave replace holds v0.8.0-alpha; lift with that replace
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha // held: v0.58.2-alpha needs a go-enclave beyond v0.8.0-alpha, and the go-enclave replace holds v0.8.0-alpha; lift with that replace
-	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: v0.7.1-alpha needs go-enclave v0.10.0-alpha, and the go-enclave replace holds v0.8.0-alpha; lift with that replace
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: in-house, moves only to a tag Infra verifies (ruling 390); v0.9+ go-enclave needed, frozen (DS-7715)
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
 	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha
 	github.com/kevinburke/ssh_config v1.6.0
-	github.com/mark3labs/mcp-go v1.5.0
+	github.com/mark3labs/mcp-go v1.3.0 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/miekg/dns v1.1.73
 	github.com/miekg/pkcs11 v1.1.2
 	github.com/ovh/kmip-go v0.9.2
@@ -51,18 +51,18 @@ require (
 	github.com/prometheus/client_model v0.6.3
 	github.com/quic-go/quic-go v0.65.0
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.1.0
+	github.com/spf13/pflag v1.0.10 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
 	github.com/veraison/corim v1.1.2
 	github.com/veraison/go-cose v1.3.0
 	github.com/veraison/swid v1.1.1-0.20230911094910-8ffdd07a22ca
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	github.com/wailsapp/wails/v2 v2.17.1
+	github.com/wailsapp/wails/v2 v2.17.0 // held: owner freeze 2026-11-08 (ruling 390)
 	github.com/weppos/publicsuffix-go v0.50.4-0.20261018191641-fa5685825dd4
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
-	github.com/zmap/zcrypto v0.0.0-20261025225231-4cf7949d2321
-	github.com/zmap/zlint/v3 v3.7.3
+	github.com/zmap/zcrypto v0.0.0-20260906180147-3ed30b1e9340 // held: owner freeze 2026-11-08 (ruling 390)
+	github.com/zmap/zlint/v3 v3.7.2 // held: owner freeze 2026-11-08 (ruling 390)
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.38.0
