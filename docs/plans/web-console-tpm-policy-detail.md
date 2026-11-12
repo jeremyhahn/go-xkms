@@ -45,4 +45,12 @@ docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build (dist restored after): pass.
+- svelte-auth and web/app npm ci: pass.
+- vitest test/view3_tpm_policy_detail.test.ts: pass, 10 tests.
+- vitest whole web/app suite (NODE_OPTIONS=--no-experimental-webstorage): pass, 51 files, 422 tests.
+- svelte-check: pass, 0 errors, 0 warnings.
+- vite build: pass.
+- go test -race ./pkg/api/rest/ (codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: pass, 0 issues.
