@@ -1,0 +1,1 @@
+ci: `make coverage` sets `GOMEMLIMIT` to 5GiB (was 10GiB): the limit is per test process and `-p=2` runs two, so the two race test binaries plus the race detector's shadow memory fit the 16 GB GitHub-hosted runner the Devcontainer image job runs on (run 42477398170 went silent after `pkg/acme/auth` and was cancelled at its 240-minute limit).
