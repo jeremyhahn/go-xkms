@@ -63,8 +63,13 @@ func TestClassifyCertificateForwards(t *testing.T) {
 
 func TestCertMetadataFields(t *testing.T) {
 	meta := truststore.CertMetadata{Purpose: truststore.PurposeBootstrapCA}
-	var pkgMeta pkgtruststore.CertMetadata = meta
-	if pkgMeta.Purpose != pkgtruststore.PurposeBootstrapCA {
-		t.Fatalf("Purpose = %q", pkgMeta.Purpose)
+	if got := pkgPurpose(meta); got != pkgtruststore.PurposeBootstrapCA {
+		t.Fatalf("Purpose = %q", got)
 	}
+}
+
+// pkgPurpose takes the pkg type, so passing an SDK CertMetadata compiles only
+// when the SDK name is an alias.
+func pkgPurpose(meta pkgtruststore.CertMetadata) pkgtruststore.CertPurpose {
+	return meta.Purpose
 }
