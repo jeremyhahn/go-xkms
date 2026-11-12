@@ -38,7 +38,14 @@ the unseal. The node starts in `initializeQRDBStorage` (server.go:701), but the
 key backends the factory uses are only ready after `initializeBackends`
 (server.go:749). The pass therefore runs in New, right before `runFirstBoot`,
 which is also after the node is unsealed. That adds a one-call edit to
-server.go.
+server.go (plus the `tenantCAKeys` field).
+
+Slice 1 bound the factory's backend resolver at node start. The node's
+trust-pool refresh goroutine then read `s.backends` while New was still
+writing it: a data race under -race in
+TestCredentialBarrierStrategy_RoundTripsAcrossRestart. The factory is now
+left unbound at node start (logins see the factory's unbound error, as they
+did before the backends existed), and the boot pass binds it.
 
 ## Out of scope
 
@@ -47,7 +54,9 @@ cmd/xkmsd; go.mod/go.sum.
 
 ## Landing order
 
-Slice 1 and this slice must land together: slice 1 alone breaks tenant logins.
+Slice 1 and this slice must land together, in one PR: slice 1 alone breaks
+tenant logins and races at startup. The head signer slice comes after
+the go-qrdb pin moves past v0.51.
 
 ## Results
 
