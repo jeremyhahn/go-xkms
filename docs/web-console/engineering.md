@@ -98,7 +98,7 @@ it in a goroutine. Typed error: `LaunchError{Reason, Err}`.
   permission), and a
   `capabilities` map from `capabilityFlags()` (`webauthn`, `piv_login`,
   `rbac`, `ca`, `tenants`, `passwords`, `platform`,
-  `tpm_policies`, `oidc_credentials`, `cluster`, `ssh`, `frost`, `factors`).
+  `tpm_policies`, `oidc_credentials`, `cluster`, `ssh`, `frost`, `factors`, `trust_roots`).
 - `POST /api/v1/auth/login/piv`, `POST /api/v1/auth/refresh`,
   `GET /api/v1/auth/validate`, `POST /api/v1/auth/logout`.
 
