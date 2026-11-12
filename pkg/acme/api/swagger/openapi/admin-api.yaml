@@ -123,8 +123,11 @@ paths:
         - Tenants
       summary: Update tenant status
       description: |
-        Updates the status of a tenant (active, suspended, or deleted).
-        Requires super-admin role.
+        Refused: the pinned go-qrdb v0.51.0-alpha has no tenant status, so any
+        status answers 400 with problem type
+        urn:trusted-ca:error:tenant-status-unsupported and the tenant record is
+        not changed. The 200 response applies once go-qrdb carries a tenant
+        status. Requires super-admin role.
       operationId: updateTenantStatus
       parameters:
         - $ref: '#/components/parameters/TenantIdParam'
