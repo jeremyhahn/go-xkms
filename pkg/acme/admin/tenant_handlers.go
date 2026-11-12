@@ -173,6 +173,11 @@ func (h *TenantHandlers) UpdateTenantStatus(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := h.service.UpdateTenantStatus(ctx, tenantID, req.Status); err != nil {
+		var unsupported *UnsupportedFieldError
+		if errors.As(err, &unsupported) {
+			writeProblem(w, http.StatusBadRequest, ProblemTypeTenantStatusUnsupported, unsupported.Error())
+			return
+		}
 		if errors.Is(err, ErrTenantNotFound) {
 			writeTenantNotFound(w)
 			return

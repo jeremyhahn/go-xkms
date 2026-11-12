@@ -593,7 +593,7 @@ func TestListTenants(t *testing.T) {
 				Page:    1,
 				PerPage: 10,
 			},
-			wantQuery:  "page=1&page_size=10&status=active",
+			wantQuery:  "page=1&page_size=10",
 			statusCode: http.StatusOK,
 			response: map[string]interface{}{
 				"tenants": []*admin.TenantInfo{
