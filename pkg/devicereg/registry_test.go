@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -352,6 +354,99 @@ func TestValidateID(t *testing.T) {
 	r := newTestRegistry(t)
 	if _, err := r.Get(context.Background(), "acme", ".."); !errors.Is(err, ErrInvalidID) {
 		t.Fatalf("Get with bad ID = %v", err)
+	}
+}
+
+// barrierKV holds the first write of each of two writers until both have
+// reached it, so both pairs pass any read before either writes.
+type barrierKV struct {
+	*qrdbsdk.MemoryKVStore
+	arrivals atomic.Int32
+	writers  sync.WaitGroup
+}
+
+func newBarrierKV() *barrierKV {
+	kv := &barrierKV{MemoryKVStore: qrdbsdk.NewMemoryKVStore()}
+	kv.writers.Add(2)
+	return kv
+}
+
+func (b *barrierKV) arrive() {
+	if b.arrivals.Add(1) <= 2 {
+		b.writers.Done()
+		b.writers.Wait()
+	}
+}
+
+func (b *barrierKV) Put(ctx context.Context, key string, value []byte) error {
+	b.arrive()
+	return b.MemoryKVStore.Put(ctx, key, value)
+}
+
+func (b *barrierKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	b.arrive()
+	return b.MemoryKVStore.PutIfAbsent(ctx, key, value)
+}
+
+func TestPairConcurrentAcrossRegistries(t *testing.T) {
+	ctx := context.Background()
+	kv := newBarrierKV()
+	var regs [2]*Registry
+	for i := range regs {
+		r, err := NewRegistry(dao.NewStoreFactory(kv))
+		if err != nil {
+			t.Fatal(err)
+		}
+		regs[i] = r
+	}
+	names := [2]string{"first", "second"}
+	var errs [2]error
+	var wg sync.WaitGroup
+	for i := range regs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			d := testDevice("d1")
+			d.Name = names[i]
+			errs[i] = regs[i].Pair(ctx, "acme", d)
+		}(i)
+	}
+	wg.Wait()
+	winner := -1
+	for i, err := range errs {
+		switch {
+		case err == nil && winner == -1:
+			winner = i
+		case errors.Is(err, ErrDeviceExists):
+		default:
+			t.Fatalf("Pair results = %v, %v; want one nil and one ErrDeviceExists", errs[0], errs[1])
+		}
+	}
+	if winner == -1 {
+		t.Fatalf("Pair results = %v, %v; want one success", errs[0], errs[1])
+	}
+	got, err := regs[0].Get(ctx, "acme", "d1")
+	if err != nil || got.Name != names[winner] {
+		t.Fatalf("Get = %+v, %v; want the winner %q", got, err, names[winner])
+	}
+}
+
+// nonAtomicKV hides the memory store's conditional writes.
+type nonAtomicKV struct{ qrdbsdk.KVStore }
+
+func TestPairRefusesNonAtomicStore(t *testing.T) {
+	ctx := context.Background()
+	r, err := NewRegistry(dao.NewStoreFactory(nonAtomicKV{qrdbsdk.NewMemoryKVStore()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var storeErr *StoreError
+	err = r.Pair(ctx, "acme", testDevice("d1"))
+	if !errors.As(err, &storeErr) || storeErr.Op != "pair" || !errors.Is(err, qrdbsdk.ErrKVAtomicWriteUnsupported) {
+		t.Fatalf("Pair on a non-atomic store = %v; want a pair StoreError matching ErrKVAtomicWriteUnsupported", err)
+	}
+	if _, err := r.Get(ctx, "acme", "d1"); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("Get after a refused pair = %v; want ErrDeviceNotFound", err)
 	}
 }
 
