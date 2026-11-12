@@ -48,4 +48,14 @@ web/desktop, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts `npm ci` + `npm run build`: pass (rebuilt tracked dist/ restored, not committed).
+- sdk/ts/svelte-auth `npm ci`: pass.
+- web/app `npm ci`: pass.
+- vitest test/view3_cert_import.test.ts: pass (9 tests).
+- web/app `npm test` with `NODE_OPTIONS=--no-experimental-webstorage`: pass (51 files, 421 tests).
+- `npm run check`: baseline only (UsersView.svelte:121 and view2_users.test.ts:51, role/roles).
+- vite build to /tmp/suih-dist: pass.
+- `go test -race` ./pkg/api/rest/ (codec tags): pass.
+- sdk/go `go build ./...`: pass.
+- `make lint`: pass.
+- Note: the feat commit for the view carries a `test(web)` subject (a reused message file); no amend under lane rules.
