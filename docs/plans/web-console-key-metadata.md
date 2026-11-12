@@ -44,4 +44,15 @@ versions, KeysView, Go code, sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass (tracked sdk/ts/dist restored afterwards).
+- sdk/ts/svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_key_metadata.test.ts: pass, 9 tests.
+- web/app npm test (NODE_OPTIONS=--no-experimental-webstorage): pass, 51 files, 421 tests.
+- svelte-check: pass, 0 errors, 0 warnings.
+- vite build to /tmp: pass.
+- go test -race pkg/api/rest (codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: pass, 0 issues.
+- Departure from the brief: diffMetadata omits an emptied name or description,
+  because the server reads an empty value as "unchanged".
