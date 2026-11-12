@@ -47,6 +47,13 @@ server has the appraisal handlers wired (as `hasSigningKeys` does).
 gRPC, Unix, QUIC, USB and MCP: a later slice. No proto change, and no new
 resource or action string.
 
+## Remaining transports
+
+SPEC.md:43 still lists gRPC, Unix, QUIC, USB and MCP for these 8 verbs. The
+brief counted 9 verbs; the service has 8.
+
 ## Results
 
-To follow.
+- go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/api/rest/... ./pkg/api/transport/... ./pkg/xkms/...: pass (14 packages ok).
+- go build ./... in sdk/go: pass.
+- make lint: pass (0 issues on every tag set and module).
