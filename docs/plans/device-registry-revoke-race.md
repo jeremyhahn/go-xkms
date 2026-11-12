@@ -45,3 +45,5 @@ doc's promise to keep the first revocation time is broken.
 - Any dependency change.
 
 ## Results
+- `go test -count=3 -race -tags "codec_cbor codec_json codec_msgpack" ./pkg/devicereg/...`: pass (the three new tests failed before the fix).
+- `make lint`: pass (0 issues in every module and tag set).
