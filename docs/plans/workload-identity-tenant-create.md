@@ -39,4 +39,9 @@ trust-domain name, before go-qrdb is called.
 
 ## Results
 
-Results to follow.
+- `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/spiffe/... ./pkg/acme/admin/... ./pkg/acme/api/...`: pass.
+- `make lint`: pass (0 issues on every module and tag set, actionlint clean).
+- No existing test used a now-invalid tenant ID; none changed.
+- Cluster-trust-domain refusal: not in. `TenantAwareAdminService` holds no
+  cluster trust domain, and this slice does not plumb one in; the refusal
+  stays at signing (`ErrTenantIsClusterTrustDomain`, pkg/spiffe).
