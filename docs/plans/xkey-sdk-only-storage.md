@@ -42,4 +42,14 @@ and `TestStorageCompareCapabilities_MemoryBackend`).
 
 ## Results
 
-Results to follow.
+- done-check after the refactor: no xkey .go file imports pkg/storage or pkg/backend/software.
+- sdk/go `go test -race -run TestStorageCompare .`: ok.
+- sdk/go `go build ./...`: ok.
+- xkey `go build ./...` + vet (cmd/xkey/cmd, pkg/gui/services, test/integration/password with integration tag): ok (first try hit a proxy stream error on modernc.org/libc v1.79.0; the rerun passed).
+- xkey `go test -race -run 'SSH|Vault|StaticPW' ./pkg/gui/services/`: ok.
+- xkey `go test -race -run 'Vault|RunCA' ./cmd/xkey/cmd/`: ok.
+- `make lint`: ok, 0 issues on every module and tag set.
+
+Note: ssh_connect_service_test.go `wedgedStore` now embeds `xkmssdk.StorageBackend`,
+so its promoted field is named `StorageBackend` (was `Backend`).
+`gofmt -l xkey/cmd/xkey/cmd` also lists four device_* test files this lane did not touch.
