@@ -36,3 +36,10 @@ failing test commit.
 Proto definitions, docs/SPEC.md, the GUI view.
 
 ## Results
+
+- Simulator test, `-tags "codec_cbor codec_json codec_msgpack tpm_simulator" -run TestTPMPolicy ./pkg/server/`: pass (MCP server cell: pass).
+- xkmsctl, `-run TestTPMPolicy ./cmd/xkmsctl/`: pass.
+- xkey, `-run TestTPMPolicy ./cmd/xkey/cmd/`: failed on the Reference line (the fake dropped the Reference on verify); fixed in xkey/internal/tpmpolicyfake/fake.go, then pass.
+- `go build ./...`: pass.
+- `go test ./pkg/api/mcp/... ./pkg/api/grpc/...`: pass.
+- `make lint`: pass (0 issues on every module and tag set).
