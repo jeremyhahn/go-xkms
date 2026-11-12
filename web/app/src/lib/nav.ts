@@ -73,6 +73,7 @@ export const navSections: NavSection[] = [
     items: [
       { route: "users", path: "/users", label: "Users", icon: "Users", requires: { resource: "users", action: "list" } },
       { route: "tenants", path: "/tenants", label: "Tenants", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "list" } },
+      { route: "tenantDetail", path: "/tenants/detail", label: "Tenant Detail", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "read" } },
     ],
   },
   {
