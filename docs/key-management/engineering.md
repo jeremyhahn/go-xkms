@@ -689,11 +689,26 @@ wrapped in `ErrValidation`, so `errors.Is` reaches the sentinel:
   `ErrSignOTAImageFailed` (`cmd/xkmsctl/errors.go:838`, `:842`, `:846`)
   and exits 1.
 
+**Permissions.** OTA activate and confirm are go-qrdb's permissions
+`ota:activate` and `ota:confirm`, not go-xkms's. The pinned
+`github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha` registers both and
+grants them to the built-in Admin role only, in go-qrdb's
+`pkg/permission/builtin_role_grants.go` (`registerAdminGrants`). Neither is
+a role of its own, and `pkg/auth/permissions.go` declares no OTA resource,
+action or role. `TestOTAImageKeys_QrdbGrantsOTAPermissionsToAdmin`
+(`pkg/xkms/ota_image_keys_qrdb_grant_test.go`) parses both through
+`qrdbsdk.ParsePermission`, asserts `HasPermissionRoleGrant` for
+`PermissionRoleAdmin`, and asserts that Operator, User and Auditor do not
+hold them. A qrdb bump that drops a grant fails there.
+`TestOTAImageKeys_AuthDeclaresNoOTAVocabulary` fails if `pkg/auth` starts
+declaring an OTA name.
+
 **Tests.**
 
 | Layer | Tests |
 |---|---|
 | Service | `pkg/xkms/ota_image_keys_test.go:35-200` |
+| go-qrdb grants | `pkg/xkms/ota_image_keys_qrdb_grant_test.go`: Admin holds `ota:activate` and `ota:confirm`, Operator, User and Auditor do not; `pkg/auth` has no OTA name |
 | REST | `pkg/api/rest/handlers_ota_image_test.go:67-159`: 201/400/404 |
 | gRPC | `pkg/api/grpc/service_ota_image_test.go:48-160`: `InvalidArgument`, `NotFound`, `Unavailable` |
 | MCP | `pkg/api/mcp/handlers_ota_image_test.go:71-173` |
