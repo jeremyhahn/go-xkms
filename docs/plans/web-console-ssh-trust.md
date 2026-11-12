@@ -57,4 +57,12 @@ fixed here.
 
 ## Results
 
-Results to follow.
+- sdk/ts `npm ci && npm run build`: pass (the build rewrites the tracked sdk/ts/dist; restored, nothing committed).
+- web/app `npm ci`: pass.
+- `npx vitest run test/view3_ssh_trust.test.ts`: 13/13 pass.
+- `npm test`: pass apart from baseline (store_theme_extra and theme localStorage tests; view1_login and view2_register svelte-auth tests).
+- `npm run check`: 0 errors once sdk/ts/svelte-auth has `npm ci`; without it, the svelte-auth module errors and UsersView.svelte:121 role/roles (baseline).
+- `npx vite build`: pass once sdk/ts/svelte-auth has `npm ci` (without it, rollup cannot resolve `@go-xkms/sdk` from svelte-auth/src/provider.ts).
+- `go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack" ./pkg/api/rest/`: pass.
+- `cd sdk/go && go build ./...`: pass.
+- `make lint`: pass.
