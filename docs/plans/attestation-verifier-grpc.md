@@ -49,7 +49,20 @@ AppraiseAttestationQuoteRequest/Response, AttestationResult.
 
 ## Results
 
-Results to follow.
+- go test (grpc, pbconv, transport/grpc, transport/unix, api/unix, apimodule): pass, at feat 2ef6f7964.
+- cd sdk/go && go build ./...: pass.
+- make lint: pass (actionlint, then golangci-lint 0 issues on every module and tag set).
+
+Generated with protoc 36.2 (libprotoc 36.2), protoc-gen-go v1.36.12 and
+protoc-gen-go-grpc v1.6.2 via make proto.
+
+Notes:
+
+- The appraisal error table now has three copies: REST, MCP and gRPC
+  (pkg/api/grpc/service_attestation_appraisal.go:40-51). Moving it into
+  pkg/api/apierrors, as SigningKeySentinelClasses already is, is a follow-up.
+- The Unix socket serves the same gRPC Service (pkg/api/unix/grpc_server.go:338),
+  so it needs no handler of its own.
 
 ## Out of scope (remaining)
 

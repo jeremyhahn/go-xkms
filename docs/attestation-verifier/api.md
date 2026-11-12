@@ -88,7 +88,7 @@ The classes come from `apierrors.SigningKeySentinelClasses`
 ## Endorsements, reference values and quote appraisal
 
 The appraisal verbs of `XKMSService` (`pkg/xkms/servicer_attestation.go`)
-are served over REST, QUIC, MCP and the embedded transport. Routes are declared at
+are served over REST, QUIC, MCP, gRPC, the Unix socket and the embedded transport. Routes are declared at
 `pkg/api/rest/routes.go:483-491`, handled in
 `pkg/api/rest/handlers_attestation_appraisal.go:92-155` and called through
 `pkg/api/rest/wire/attestation_appraisal.go:27-30`. sdk/go reaches them from
@@ -101,18 +101,47 @@ routes the tools in `pkg/api/mcp/server.go:543-550`, handles them in
 
 | Method and path | Verb | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `PUT /api/v1/attestation/endorsements` | `PutAttestationEndorsement` | yes | later slice | same as REST | `attestation.endorsement.put` | yes | `attestation_endorsements:create` |
-| `GET /api/v1/attestation/endorsements?kind=` | `ListAttestationEndorsements` | yes | later slice | same as REST | `attestation.endorsement.list` | yes | `attestation_endorsements:list` |
-| `DELETE /api/v1/attestation/endorsements?name=` | `DeleteAttestationEndorsement` | yes | later slice | same as REST | `attestation.endorsement.delete` | yes | `attestation_endorsements:delete` |
-| `PUT /api/v1/attestation/reference-values` | `PutAttestationReferenceValues` | yes | later slice | same as REST | `attestation.reference_values.put` | yes | `attestation_reference_values:create` |
-| `GET /api/v1/attestation/reference-values` | `ListAttestationReferenceValues` | yes | later slice | same as REST | `attestation.reference_values.list` | yes | `attestation_reference_values:list` |
-| `GET /api/v1/attestation/reference-values/entry?name=` | `GetAttestationReferenceValues` | yes | later slice | same as REST | `attestation.reference_values.get` | yes | `attestation_reference_values:get` |
-| `DELETE /api/v1/attestation/reference-values/entry?name=` | `DeleteAttestationReferenceValues` | yes | later slice | same as REST | `attestation.reference_values.delete` | yes | `attestation_reference_values:delete` |
-| `POST /api/v1/attestation/appraise` | `AppraiseAttestationQuote` | yes | later slice | same as REST | `attestation.appraise` | yes | `attestation_verifier:verify` |
+| `PUT /api/v1/attestation/endorsements` | `PutAttestationEndorsement` | yes | yes | same as REST | `attestation.endorsement.put` | yes | `attestation_endorsements:create` |
+| `GET /api/v1/attestation/endorsements?kind=` | `ListAttestationEndorsements` | yes | yes | same as REST | `attestation.endorsement.list` | yes | `attestation_endorsements:list` |
+| `DELETE /api/v1/attestation/endorsements?name=` | `DeleteAttestationEndorsement` | yes | yes | same as REST | `attestation.endorsement.delete` | yes | `attestation_endorsements:delete` |
+| `PUT /api/v1/attestation/reference-values` | `PutAttestationReferenceValues` | yes | yes | same as REST | `attestation.reference_values.put` | yes | `attestation_reference_values:create` |
+| `GET /api/v1/attestation/reference-values` | `ListAttestationReferenceValues` | yes | yes | same as REST | `attestation.reference_values.list` | yes | `attestation_reference_values:list` |
+| `GET /api/v1/attestation/reference-values/entry?name=` | `GetAttestationReferenceValues` | yes | yes | same as REST | `attestation.reference_values.get` | yes | `attestation_reference_values:get` |
+| `DELETE /api/v1/attestation/reference-values/entry?name=` | `DeleteAttestationReferenceValues` | yes | yes | same as REST | `attestation.reference_values.delete` | yes | `attestation_reference_values:delete` |
+| `POST /api/v1/attestation/appraise` | `AppraiseAttestationQuote` | yes | yes | same as REST | `attestation.appraise` | yes | `attestation_verifier:verify` |
 
 An MCP delete returns its request; the MCP error codes follow the same
-classes (`pkg/api/mcp/handlers_attestation_appraisal.go:34-45`). gRPC, Unix
-and USB are a later slice.
+classes (`pkg/api/mcp/handlers_attestation_appraisal.go:34-45`). USB is a
+later slice.
+
+### gRPC and the Unix socket
+
+The gRPC RPCs are declared at `pkg/api/grpc/proto/xkmsv1/xkms.proto:1032-1071`,
+each with a `qrdb.v1.permission` option equal to the Auth column above. The
+`Service` serves them at `pkg/api/grpc/service_attestation_appraisal.go:78-191`
+and classifies errors with its copy of the table below
+(`pkg/api/grpc/service_attestation_appraisal.go:40-51`). The Unix socket
+registers the same `Service` (`pkg/api/unix/grpc_server.go:338`). The gRPC and
+Unix transports call the RPCs through `pbconv.AttestationAppraisalClient`
+(`pkg/api/grpc/pbconv/attestation_appraisal.go:294`), from
+`pkg/api/transport/grpc/transport_attestation_appraisal.go:27-110` and
+`pkg/api/transport/unix/transport_attestation_appraisal.go:27-110`.
+
+| RPC | Request | Response | Permission |
+| --- | --- | --- | --- |
+| `PutAttestationEndorsement` | `PutAttestationEndorsementRequest` | `AttestationEndorsement` | `attestation_endorsements:create` |
+| `ListAttestationEndorsements` | `ListAttestationEndorsementsRequest` | `ListAttestationEndorsementsResponse` | `attestation_endorsements:list` |
+| `DeleteAttestationEndorsement` | `DeleteAttestationEndorsementRequest` | `DeleteAttestationEndorsementResponse` | `attestation_endorsements:delete` |
+| `PutAttestationReferenceValues` | `PutAttestationReferenceValuesRequest` | `AttestationReferenceValues` | `attestation_reference_values:create` |
+| `GetAttestationReferenceValues` | `GetAttestationReferenceValuesRequest` | `AttestationReferenceValues` | `attestation_reference_values:get` |
+| `ListAttestationReferenceValues` | `ListAttestationReferenceValuesRequest` | `ListAttestationReferenceValuesResponse` | `attestation_reference_values:list` |
+| `DeleteAttestationReferenceValues` | `DeleteAttestationReferenceValuesRequest` | `DeleteAttestationReferenceValuesResponse` | `attestation_reference_values:delete` |
+| `AppraiseAttestationQuote` | `AppraiseAttestationQuoteRequest` | `AttestationResult` | `attestation_verifier:verify` |
+
+The error classes map to gRPC codes: Unavailable to `Unavailable`,
+InvalidArgument to `InvalidArgument`, NotFound to `NotFound`; an error the
+table does not classify is `Internal`, and a caller without the permission
+gets `PermissionDenied`.
 
 Every call is scoped to the caller's tenant. A route is served only when the
 server is built with an `XKMSService`; a service without an Appraiser answers
