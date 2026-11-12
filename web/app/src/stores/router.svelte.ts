@@ -20,6 +20,7 @@
 export type RouteName =
   | "dashboard"
   | "login"
+  | "tenantEntitlements"
   | "register"
   | "backends"
   | "keys"
@@ -50,6 +51,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/": "dashboard",
   "/dashboard": "dashboard",
   "/login": "login",
+  "/tenants/entitlements": "tenantEntitlements",
   "/register": "register",
   "/backends": "backends",
   "/keys": "keys",

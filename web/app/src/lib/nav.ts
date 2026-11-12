@@ -79,6 +79,7 @@ export const navSections: NavSection[] = [
     heading: "Settings",
     items: [
       { route: "settings", path: "/settings", label: "Settings", icon: "Settings" },
+      { route: "tenantEntitlements", path: "/tenants/entitlements", label: "Tenant Entitlements", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "set_entitlements" } },
     ],
   },
 ];
