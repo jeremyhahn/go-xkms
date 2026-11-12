@@ -45,4 +45,13 @@ exists in go-xkms), an appraiser wired in xkmsd (xkmsd never calls
 
 ## Results
 
-Results to follow.
+- go test -race (codec tags) ./pkg/compose/: ok.
+- go test -race (codec tags) ./pkg/server/: ok.
+- go build ./... (root): ok.
+- go build ./... (sdk/go): ok.
+- make lint: 0 issues on every module and tag set.
+
+Departure: `TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons`
+(pkg/compose/restored_test.go) lists every feature's reason, so it gained
+`FeatureVerdicts` in the feat commit. In pkg/server the store build is a
+small `verdictStore` helper called from `composedStores`.
