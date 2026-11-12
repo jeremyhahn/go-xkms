@@ -47,3 +47,7 @@ No request carries a tenant: the server uses `callerTenant(ctx)`.
   client transports' `verdicts()` accessor plus three methods, and the
   sdk/go/transport aliases (`Client` unchanged).
 - Left: compose and server wiring of `SetContinuousAttestation` (next slice).
+- go test -race (wire, quic, rest; codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: pass (0 issues on every module and tag set).
+- git status --porcelain: empty before this commit.
