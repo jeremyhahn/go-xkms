@@ -16,3 +16,8 @@
 - make deps-check (887b2c450, go-jose v4.1.9, x/oauth2 v0.38.0, x/sys v0.50.0, kin-openapi v0.153.0, sqlite v1.62.0, go-truststrap held in go.mod and sdk/go/go.mod): PASS.
 - go build ./... with -mod=readonly in root, xkey, sdk/go, web/desktop: PASS.
 - make lint: FAIL, staticcheck SA1019: go-jose v4.1.9 deprecates ParseSigned (pkg/acme/server/handlers/key_change.go:100, service.go:1249, tenant_auth.go:70) and ParseEncrypted (pkg/encoding/jwe/jwe.go:373). Needs a .go change (ParseSignedJSON/Compact, ParseEncryptedJSON/Compact) or a go-jose hold at v4.1.6.
+- Slice 2 fix (4f8045e7b, tests first in c2e5ff550): ACME sites use jose.ParseSignedJSON (RFC 8555 section 6.2 flattened JSON; a compact JWS is now rejected), jwe.Decrypt uses jose.ParseEncryptedCompact.
+- go test -tags codec_json ./pkg/acme/... ./pkg/encoding/jwe/: PASS except 5 TestDeviceAttestDICE* in pkg/acme/client, which need the tfwsim-atecc608a binary (make tfwsim-atecc608a or TFWSIM_DIR), not built in the lane; environmental, unrelated.
+- make lint: PASS (0 issues, all modules and tag sets).
+- scripts/deps-check.sh: exit 0 (go-truststrap held).
+- go build ./... with -mod=readonly in root, xkey, sdk/go, web/desktop: PASS.
