@@ -44,4 +44,17 @@ build, make lint.
 
 ## Results
 
-Results to follow.
+- sdk/ts `npm ci && npm run build`: pass (dist output not committed).
+- sdk/ts/svelte-auth `npm ci`: pass.
+- web/app `npm ci`: pass.
+- vitest test/view3_frost_key_import.test.ts: 8 of 8 pass.
+- web/app `npm test` (NODE_OPTIONS=--no-experimental-webstorage): 51 files, 420 tests pass.
+- `npm run check`: 2 errors, both baseline role/roles (src/views/UsersView.svelte:121,
+  test/view2_users.test.ts:51); none in this lane's files.
+- `vite build`: pass.
+- `go test -race` ./pkg/api/rest/ (codec tags): pass.
+- sdk/go `go build ./...`: pass.
+- `make lint`: actionlint and the four default-tag golangci-lint passes report 0
+  issues; the full-tag pass on `.` fails with typecheck errors inside the module
+  cache (first: cloudflare/circl@v1.6.5 sign/internal/dilithium/poly.go:79:3,
+  after missing /gocache entries). No Go file is touched by this lane.
