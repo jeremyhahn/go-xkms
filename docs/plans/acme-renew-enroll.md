@@ -1,43 +1,49 @@
-# xkey acme renew and enroll (row acme, issue #2085, lane sacmed)
+# Plan: xkey acme renew and enroll (row acme, issue #2085, lane sacmee)
 
 ## Objective
 
-Add the next two verbs of the `xkey acme` namespace as thin callers of
-pkg/acme/client through sdk/go, on the existing `acmeClient` interface and
-the `sdkacme.NewACMEClient` constructor built by the account/revoke slice.
+Add the next two verbs of the `xkey acme` namespace, as thin callers of the
+ACME client through sdk/go (`sdkacme`), on the existing `acmeClient`
+interface and `sdkacme.NewACMEClient` constructor built for account and
+revoke.
 
 ## Commands
 
-- `xkey acme renew --cert <pem file> --domain <name> [--domain ...] --out <file>`
-  - parses the old certificate (PEM) before the client is built;
-  - calls `RenewCertificate(ctx, oldCert *x509.Certificate, req *sdkacme.ACMECertificateRequest)`;
-  - writes the renewed certificate chain as PEM; the private key is never
-    written or printed.
-- `xkey acme enroll --challenge enroll-01|device-attest-01 [--ip <addr>]`
-  - validates the challenge type and requires `--ip` for enroll-01 before
-    the client is called; device-attest-01 needs no `--ip`;
-  - calls `EnrollDevice(ctx, *sdkacme.ACMEEnrollmentConfig)` and prints the
-    result summary (no key material).
-
-## TPM module for enroll
-
-Taken from an existing sdk/go surface only (sdk/go/acme re-exports
-ACMETPMModule; adapter ACMEXKMSTPMAdapter or the xkey TPM wiring). If no
-sdk/go surface reaches it without a pkg/ import, the gap is named here.
+- `xkey acme renew --cert <file> --domain <name> [--csr <file>]
+  [--challenge <type>] [--authz-type dns|ip|permanent-identifier]
+  [--out <file>]`
+  - reads the old certificate (`os.ReadFile` + `parsePEMCertificate`),
+    builds an `sdkacme.ACMECertificateRequest` (AuthzType, AuthzValue,
+    ChallengeType, CSR as DER) and calls
+    `RenewCertificate(ctx, oldCert, req)`.
+  - writes the renewed certificate as PEM (`CERTIFICATE` block) to --out or
+    stdout; never key material.
+- `xkey acme enroll --challenge enroll-01|endorse-01|device-attest-01
+  [--ip <addr>] [--port 8080] [--listen-host <h>] [--common-name <cn>]
+  [--pcr 0,1,..] [--timeout 30s] [--tpm-device <path>] [--tpm-simulator]
+  [--data-dir <dir>] [--out-dir <dir>]`
+  - checks the challenge name and that --ip is set (unless
+    device-attest-01) before the client is called.
+  - builds an `sdkacme.ACMEEnrollmentConfig` and calls
+    `EnrollDevice(ctx, cfg)`; writes IAK, IDevID and chain as PEM.
+  - TPM module: `openTPMWithKeyStore` (sdk/go/localtpm via the xkey TPM
+    wiring) then `sdkacme.NewACMEXKMSTPMAdapter(dev.TPM(), dev.Keys())`,
+    behind a package var so the test injects a stub `ACMETPMModule`.
 
 ## Slices (this lane)
 
-1. Test commit: cobra tests against the fake client (renew request and PEM
-   output, enroll config mapping, input errors before the client, no key
-   material in output).
-2. Feat commit: acme_renew.go, acme_enroll.go, interface methods and
-   registration in acme.go.
-3. Docs commit: xkey/docs/acme/README.md marks renew and enroll implemented.
+1. Test commit: cobra tests on the fake client (renew request and PEM
+   output, enroll config, device-attest-01 without --ip, failures before
+   the client for missing/unparsable cert, unknown challenge, missing --ip,
+   no key material printed).
+2. Feat commit: acme_renew.go, acme_enroll.go, interface + registration.
+3. Docs commit: xkey/docs/acme/README.md marks renew and enroll.
 
 ## Out of scope
 
-`xkey acme endorse`, the GUI, any change to account and revoke, pkg/acme/client.
+`xkey acme endorse`, the GUI, any change to pkg/acme/client, account and
+revoke.
 
 ## Results
 
-(filled at the end of the lane)
+(filled at the end)
