@@ -204,6 +204,15 @@ xkey trust uninstall 3fa1…
 application on the machine — browsers included — trusts the certificate
 afterwards, not just xkey. `uninstall` reverses it, and removing xkey does not.
 
+**Against a server.** With an xkmsd endpoint configured, `install` takes the
+certificate from the server's trust-root store (`TrustRootGet`), checks that
+its fingerprint is the one given, and installs it under the same
+`xkey-<first 16 hex digits>` label. An unknown fingerprint fails with
+`ErrTrustInstallFailed`, the error naming `TrustRootGet`. No installed flag is recorded,
+locally or on the server, and the local store is never opened. `uninstall`
+removes the OS trust store entry under that label and reads neither store, so
+it also cleans up a root the server no longer holds.
+
 ## A first-run sequence
 
 ```
