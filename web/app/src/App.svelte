@@ -19,6 +19,7 @@
   import PasswordsView from "$views/PasswordsView.svelte";
   import OidcCredentialsView from "$views/OidcCredentialsView.svelte";
   import PlatformView from "$views/PlatformView.svelte";
+  import BootCredentialsView from "$views/BootCredentialsView.svelte";
   import PivView from "$views/PivView.svelte";
   import CaView from "$views/CaView.svelte";
   import SshView from "$views/SshView.svelte";
@@ -74,6 +75,7 @@
       <OidcCredentialsView />
     {:else if routerStore.name === "platform"}
       <PlatformView />
+    {:else if routerStore.name === "bootCredentials"}<BootCredentialsView />
     {:else if routerStore.name === "settings"}
       <SettingsView />
     {:else if routerStore.name === "login" || routerStore.name === "register"}
