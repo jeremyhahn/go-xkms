@@ -15,6 +15,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -45,7 +46,7 @@ func (h *handlers) updateTenantStatus(w http.ResponseWriter, r *http.Request) {
 			writeErrorResponse(w, http.StatusNotFound, "NOT_FOUND", "tenant not found")
 			return
 		}
-		if sdkerrors.IsInvalidInput(err) {
+		if errors.Is(err, sdkadmin.ErrTenantStatusUnsupported) || sdkerrors.IsInvalidInput(err) {
 			writeErrorResponse(w, http.StatusBadRequest, "TENANT_STATUS_UNSUPPORTED", "tenant status is not supported")
 			return
 		}

@@ -124,6 +124,8 @@ type UpdateTenantRequest struct {
 }
 
 // UpdateTenantStatusRequest contains parameters for updating a tenant's status.
+// The admin client refuses the set with ErrTenantStatusUnsupported until
+// go-qrdb carries a tenant status.
 type UpdateTenantStatusRequest struct {
 	Status string `json:"status"`
 }
@@ -152,9 +154,11 @@ type UpdateIntermediateCAStatusRequest struct {
 
 // ListTenantsRequest contains parameters for listing tenants.
 type ListTenantsRequest struct {
-	Page    int    `json:"page,omitempty"`
-	PerPage int    `json:"per_page,omitempty"`
-	Status  string `json:"status,omitempty"`
+	Page    int `json:"page,omitempty"`
+	PerPage int `json:"per_page,omitempty"`
+	// Status filters by tenant status; a non-empty value is refused with
+	// ErrTenantStatusUnsupported until go-qrdb carries a tenant status.
+	Status string `json:"status,omitempty"`
 }
 
 // ListTenantsResponse contains the response from listing tenants.
