@@ -67,6 +67,7 @@ acme:
       dice_require_device_signed_leaf: true
       dice_require_measurement: true
       dice_require_tcb_info: true
+      dice_require_application_reference: true
 `))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -79,17 +80,19 @@ acme:
 		t.Error("device_attest01 did not load")
 	}
 	want := ACMEDeviceAttestConfig{
-		TPMRoots:                    []string{"/etc/xkms/tpm-root.pem"},
-		DICERoots:                   []string{"/etc/xkms/dice-root.pem", "/etc/xkms/dice-root-2.pem"},
-		DICERequireDeviceSignedLeaf: true,
-		DICERequireMeasurement:      true,
-		DICERequireTCBInfo:          true,
+		TPMRoots:                        []string{"/etc/xkms/tpm-root.pem"},
+		DICERoots:                       []string{"/etc/xkms/dice-root.pem", "/etc/xkms/dice-root-2.pem"},
+		DICERequireDeviceSignedLeaf:     true,
+		DICERequireMeasurement:          true,
+		DICERequireTCBInfo:              true,
+		DICERequireApplicationReference: true,
 	}
 	if len(got.DeviceAttest.TPMRoots) != 1 || got.DeviceAttest.TPMRoots[0] != want.TPMRoots[0] ||
 		len(got.DeviceAttest.DICERoots) != 2 || got.DeviceAttest.DICERoots[1] != want.DICERoots[1] ||
 		got.DeviceAttest.DICERequireDeviceSignedLeaf != want.DICERequireDeviceSignedLeaf ||
 		got.DeviceAttest.DICERequireMeasurement != want.DICERequireMeasurement ||
-		got.DeviceAttest.DICERequireTCBInfo != want.DICERequireTCBInfo {
+		got.DeviceAttest.DICERequireTCBInfo != want.DICERequireTCBInfo ||
+		got.DeviceAttest.DICERequireApplicationReference != want.DICERequireApplicationReference {
 		t.Fatalf("DeviceAttest = %+v, want %+v", got.DeviceAttest, want)
 	}
 }
