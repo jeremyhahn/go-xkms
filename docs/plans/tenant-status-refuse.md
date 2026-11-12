@@ -37,3 +37,7 @@ Main pins go-qrdb v0.51.0-alpha, whose pkg/tenant has no status.
 ## Checks
 
 - `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/acme/admin/... ./pkg/acme/api/...`: pass.
+- `make lint`: pass (0 issues on all modules and tag sets). A first run with
+  GOMODCACHE=/tmp/gomod failed with two typecheck errors on missing
+  /gocache files (the lint cache, not the code); the rerun in the default
+  environment passed.
