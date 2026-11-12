@@ -20,6 +20,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -300,6 +301,11 @@ directory and runs the appropriate update command:
   - RHEL/Fedora:   /etc/pki/ca-trust/source/anchors/ + update-ca-trust
   - Arch Linux:    /etc/ca-certificates/trust-source/anchors/ + update-ca-trust
 
+With an xkmsd endpoint configured, the certificate is fetched from the
+server's trust-root store (TrustRootGet), its fingerprint is checked against
+the one given, and it is installed into the OS trust store; the local xKey
+trust store is neither opened nor written.
+
 This command typically requires root/sudo privileges.
 
 Arguments:
@@ -321,6 +327,10 @@ var trustUninstallCmd = &cobra.Command{
 This removes the certificate file from the OS-specific CA directory and
 refreshes the system trust store. The certificate remains in xKey's
 trust store but is no longer trusted system-wide.
+
+With an xkmsd endpoint configured, only the OS trust store entry is removed:
+neither the server nor the local xKey trust store is read, so a root the
+server no longer holds can still be removed from the host.
 
 This command typically requires root/sudo privileges.
 
@@ -832,6 +842,75 @@ func runTrustClassifyXKMSd(cmd *cobra.Command, fingerprint string, purpose trust
 	return nil
 }
 
+// osTrustLabel is the OS trust store label of a root: "xkey-" and the first
+// 16 hex digits of its fingerprint.
+func osTrustLabel(fingerprint string) string {
+	if len(fingerprint) > 16 {
+		fingerprint = fingerprint[:16]
+	}
+	return "xkey-" + fingerprint
+}
+
+// runTrustInstallXKMSd installs a root of the xkmsd trust-root store into
+// the OS trust store. The certificate comes from TrustRootGet and must carry
+// the requested fingerprint; the local store is neither opened nor written.
+func runTrustInstallXKMSd(cmd *cobra.Command, fingerprint string) (err error) {
+	client, err := connectXKMSdClient(cmd)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	root, err := client.TrustRootGet(trustCommandContext(cmd), &transport.TrustRootRequest{Fingerprint: fingerprint})
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustInstallFailed, Cause: fmt.Errorf("TrustRootGet: %w", err)}
+	}
+
+	block, _ := pem.Decode([]byte(root.PEM))
+	if block == nil || block.Type != "CERTIFICATE" {
+		return &DetailError{Err: ErrTrustInstallFailed, Detail: fmt.Sprintf(": server root %s has no CERTIFICATE PEM block", fingerprint)}
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return &DetailError{Err: ErrTrustInstallFailed, Detail: fmt.Sprintf(": server root %s: %v", fingerprint, err)}
+	}
+	if got := truststore.Fingerprint(cert); got != fingerprint {
+		return &DetailError{Err: ErrTrustInstallFailed, Detail: fmt.Sprintf(": server returned certificate %s for %s", got, fingerprint)}
+	}
+
+	osCertStore, err := newOSCertStore()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustInstallFailed, Cause: err}
+	}
+	label := osTrustLabel(fingerprint)
+	if err := osCertStore.Install(cert, label); err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustInstallFailed, Cause: err}
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Certificate %s installed to OS trust store as %s\n", fingerprint, label)
+	return nil
+}
+
+// runTrustUninstallXKMSd removes a root's OS trust store entry in server
+// mode. It reads neither the server nor the local store, so a root the
+// server no longer holds can still be removed from the host.
+func runTrustUninstallXKMSd(cmd *cobra.Command, fingerprint string) error {
+	osCertStore, err := newOSCertStore()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustUninstallFailed, Cause: err}
+	}
+	if err := osCertStore.Remove(osTrustLabel(fingerprint)); err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustUninstallFailed, Cause: err}
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Certificate %s removed from OS trust store\n", fingerprint)
+	return nil
+}
+
 // runTrustClassify executes the trust classify command to reclassify a
 // certificate's purpose in the trust store.
 func runTrustClassify(cmd *cobra.Command, args []string) (err error) {
@@ -878,6 +957,9 @@ var newOSCertStore = truststore.NewOSCertStore
 func runTrustInstall(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
+	if resolveXKMSdURL() != "" {
+		return runTrustInstallXKMSd(cmd, fingerprint)
+	}
 
 	store, err := openTrustStore()
 	if err != nil {
@@ -912,8 +994,7 @@ func runTrustInstall(cmd *cobra.Command, args []string) (err error) {
 		return &SentinelCauseError{Sentinel: ErrTrustInstallFailed, Cause: err}
 	}
 
-	// Use truncated fingerprint as label for the OS file.
-	label := "xkey-" + fingerprint[:16]
+	label := osTrustLabel(fingerprint)
 
 	if err := osCertStore.Install(cert, label); err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustInstallFailed, Cause: err}
@@ -932,6 +1013,9 @@ func runTrustInstall(cmd *cobra.Command, args []string) (err error) {
 func runTrustUninstall(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
+	if resolveXKMSdURL() != "" {
+		return runTrustUninstallXKMSd(cmd, fingerprint)
+	}
 
 	store, err := openTrustStore()
 	if err != nil {
@@ -958,7 +1042,7 @@ func runTrustUninstall(cmd *cobra.Command, args []string) (err error) {
 		return &SentinelCauseError{Sentinel: ErrTrustUninstallFailed, Cause: err}
 	}
 
-	label := "xkey-" + fingerprint[:16]
+	label := osTrustLabel(fingerprint)
 
 	if err := osCertStore.Remove(label); err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustUninstallFailed, Cause: err}
