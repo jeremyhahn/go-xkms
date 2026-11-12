@@ -39,3 +39,12 @@ Makefile GOMODAUTH block back to main's two lines:
    "caller-supplied GOPRIVATE" section, which passes with main's Makefile.
 2. make test-scripts: fails at Makefile:1115 on the same 3 gomodauth checks.
 3. make lint: pass (0 issues in every module and tag set).
+
+## Results after the test fix (fci2075c)
+
+The three secret checks in test/scripts/gomodauth.test.sh are back to
+main's `export GOPRIVATE=github.com/jeremyhahn/*`; #2043's
+"caller-supplied GOPRIVATE" section is kept.
+
+1. gomodauth.test.sh: 243 passed, 0 failed.
+2. make test-scripts: pass (rc=0, "Shell script tests passed").
