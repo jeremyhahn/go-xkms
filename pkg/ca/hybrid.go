@@ -87,13 +87,19 @@ func (e *HybridVerificationError) Error() string {
 //  5. Re-create the certificate with the classical key (final version with all extensions)
 //
 // Parameters:
-//   - template: The certificate template
+//   - tenantID: The tenant a leaf certificate is issued to. A leaf template
+//     (IsCA false) is stamped with it as Subject-OU[0] through StampTenant,
+//     replacing any OU the template names; an empty tenant on a leaf is
+//     refused with ErrTenantRequired. A CA template keeps its subject (CA
+//     hierarchy certificates are exempt) and may pass an empty tenant.
+//   - template: The certificate template (never modified)
 //   - parent: The issuer certificate (for self-signed, pass template)
 //   - classicalKey: The classical signing key (ECDSA, RSA, or Ed25519)
 //   - quantumKey: The ML-DSA signing key
 //
 // Returns the DER-encoded hybrid certificate or an error.
 func CreateHybridCertificate(
+	tenantID string,
 	template, parent *x509.Certificate,
 	classicalKey crypto.Signer,
 	quantumKey *quantum.MLDSAPrivateKey,
@@ -136,6 +142,15 @@ func CreateHybridCertificate(
 	workingTemplate := *template
 	workingTemplate.ExtraExtensions = make([]pkix.Extension, len(template.ExtraExtensions), len(template.ExtraExtensions)+3)
 	copy(workingTemplate.ExtraExtensions, template.ExtraExtensions)
+
+	// A leaf names its tenant as Subject-OU[0]; CA certificates are exempt.
+	if !workingTemplate.IsCA {
+		subject, raw, err := StampTenant(tenantID, workingTemplate.Subject, workingTemplate.RawSubject)
+		if err != nil {
+			return nil, &HybridCertError{Op: "create", Err: err}
+		}
+		workingTemplate.Subject, workingTemplate.RawSubject = subject, raw
+	}
 
 	// Add the quantum alt public key and algorithm extensions
 	workingTemplate.ExtraExtensions = append(workingTemplate.ExtraExtensions, altPubKeyExt, altSigAlgExt)
