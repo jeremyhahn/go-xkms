@@ -14,6 +14,7 @@
 package deviceattest01
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -724,7 +725,7 @@ func TestVerifyPossessionCSRSignature(t *testing.T) {
 		digest := sha256.Sum256(cri)
 		signature, err := ecdsa.SignASN1(rand.Reader, f.key, digest[:])
 		require.NoError(t, err)
-		require.NoError(t, f.verified.VerifyPossessionCSR(assembled(t, cri, signature), f.order))
+		require.NoError(t, f.verified.VerifyPossessionCSR(assembled(t, cri, signature), f.order, mustHex(t, vectorApplicationEvidence)))
 	})
 	t.Run("a signature over anything else is refused", func(t *testing.T) {
 		digest := sha256.Sum256([]byte("some other message"))
