@@ -25,7 +25,7 @@ import (
 // The trusted-firmware alias certificate's measurements claim (the
 // device-attest-01 possession vector) and the application evidence it holds.
 const (
-	tfwMeasurements = "81821901025855a50050bcc710071a6653c1967ef0d3d5ede421016374667702a21" +
+	tfwMeasurements = "81821901025854a50050bcc710071a6653c1967ef0d3d5ede421016374667702a21" +
 		"81f6374667718210103a111a20782015820ba7816bf8f01cfea414140de5dae2223b00361a3961" +
 		"77a9cb410ff61f20015ad1818636170700c00"
 	tfwApplicationEvidence = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
