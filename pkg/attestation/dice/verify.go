@@ -16,6 +16,7 @@ package dice
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/asn1"
@@ -48,6 +49,14 @@ type VerifyOptions struct {
 	// when ExpectedUeid is not set, for a caller that intends to record the
 	// identifier rather than match it.
 	RequireUeid bool
+
+	// ApplicationReference, when set, is the 32-byte application evidence
+	// the caller registered for the device: the leaf's measurements claim
+	// (273) must be the application evidence shape (ApplicationEvidence)
+	// and carry exactly these bytes, or Verify refuses the chain with
+	// ErrApplicationEvidenceMismatch. Nil leaves the claim unchecked; any
+	// length other than 32 is ErrInvalidApplicationReference.
+	ApplicationReference []byte
 
 	// RequireMeasurement demands that the leaf's DiceTcbInfo carry at least
 	// one FWID. Without one the certificate attests an identity while saying
@@ -171,6 +180,9 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 	if opts == nil {
 		return nil, ErrNilVerifyOptions
 	}
+	if opts.ApplicationReference != nil && len(opts.ApplicationReference) != sha256.Size {
+		return nil, ErrInvalidApplicationReference
+	}
 	if len(chain) == 0 {
 		return nil, ErrEmptyChain
 	}
@@ -235,6 +247,9 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := verifyApplicationReference(claims, opts.ApplicationReference); err != nil {
+		return nil, err
+	}
 
 	flags := OperationalFlags{}
 	if info != nil && info.Flags != nil {
@@ -259,6 +274,30 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 	}
 
 	return &Evidence{TcbInfo: info, Claims: claims, Ueid: ueid, Flags: flags, RootType: rootType}, nil
+}
+
+// verifyApplicationReference holds the leaf's measurements claim to the
+// registered application evidence, in constant time. A nil reference checks
+// nothing.
+func verifyApplicationReference(claims *ClaimsSet, reference []byte) error {
+	if reference == nil {
+		return nil
+	}
+	var measurements []byte
+	if claims != nil {
+		measurements = claims.Other[ClaimMeasurements]
+	}
+	if measurements == nil {
+		return &errs.Detail{Err: ErrApplicationEvidenceMismatch, Detail: "the leaf carries no measurements claim"}
+	}
+	evidence, err := ApplicationEvidence(measurements)
+	if err != nil {
+		return err
+	}
+	if subtle.ConstantTimeCompare(evidence, reference) != 1 {
+		return ErrApplicationEvidenceMismatch
+	}
+	return nil
 }
 
 // verifyDeviceKeys enforces the ECDSA P-256 constraint on the certificates the
