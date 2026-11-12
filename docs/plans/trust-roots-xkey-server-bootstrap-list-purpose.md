@@ -33,4 +33,10 @@ Row: trust-roots (docs/SPEC.md:136), epic #1545, lane strotf (slice 6).
 
 - Trust tests with -race, xkey build + vet, sdk/go build, make lint.
 
-Results to follow.
+## Results
+
+- Trust tests (-race, codec tags, ./cmd/xkey/cmd/): pass; the five new tests failed on the base first.
+- xkey go build ./... and go vet ./cmd/xkey/cmd/...: pass.
+- sdk/go go build ./...: pass.
+- make lint: pass (0 issues in every module and tag set).
+- Note: xkmsd test sockets overflow the unix path limit under the lanecache TMPDIR; the runs used a short /tmp symlink to that same directory.
