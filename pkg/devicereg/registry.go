@@ -16,7 +16,6 @@ package devicereg
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -108,8 +107,9 @@ func (e *entity) EntityID() uint64 { return e.ID }
 func (e *entity) SetEntityID(id uint64) { e.ID = id }
 
 // Registry is the tenant-scoped paired-device registry. It is safe for
-// concurrent use; Pair and Revoke are serialised so that a concurrent pair
-// of one ID in one registry cannot overwrite the other.
+// concurrent use, also across processes on one store: Pair creates a record
+// with the store's atomic conditional put, so of two concurrent pairs of one
+// ID exactly one wins. Revoke is serialised within one registry.
 type Registry struct {
 	mu      sync.Mutex
 	records qrdbsdk.GenericDAO[*entity]
@@ -130,7 +130,9 @@ func NewRegistry(daos *qrdbsdk.DAOFactory) (*Registry, error) {
 
 // Pair records device in tenant. It refuses a nil device, a device with no
 // identity key or already revoked, and an ID the tenant already holds
-// (ErrDeviceExists), active or revoked.
+// (ErrDeviceExists), active or revoked. The create is atomic in the store
+// (SaveIfAbsent); a store without atomic writes is refused with a
+// StoreError matching qrdbsdk.ErrKVAtomicWriteUnsupported.
 func (r *Registry) Pair(ctx context.Context, tenant string, device *Device) error {
 	if device == nil || len(device.IdentityKey) == 0 || device.RevokedAt != nil {
 		return fmt.Errorf("%w: a pair needs an unrevoked device with an identity key", ErrInvalidDevice)
@@ -139,19 +141,14 @@ func (r *Registry) Pair(ctx context.Context, tenant string, device *Device) erro
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	_, err = r.load(ctx, "pair", key, device.ID)
-	if err == nil {
-		return fmt.Errorf("%w: %q", ErrDeviceExists, device.ID)
-	}
-	if !errors.Is(err, ErrDeviceNotFound) {
-		return err
-	}
 	record := *device
 	record.IdentityKey = bytes.Clone(device.IdentityKey)
-	if err := r.records.Save(ctx, &entity{Key: key, Device: record}); err != nil {
+	stored, err := r.records.SaveIfAbsent(ctx, &entity{Key: key, Device: record})
+	if err != nil {
 		return &StoreError{Op: "pair", ID: device.ID, Err: err}
+	}
+	if !stored {
+		return fmt.Errorf("%w: %q", ErrDeviceExists, device.ID)
 	}
 	return nil
 }

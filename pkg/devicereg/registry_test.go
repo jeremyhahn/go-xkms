@@ -468,12 +468,13 @@ func TestStoreFailures(t *testing.T) {
 	if _, err := r.List(ctx, "acme"); !errors.As(err, &storeErr) {
 		t.Fatalf("List on a failing store = %v; want a *StoreError", err)
 	}
-	if err := r.Pair(ctx, "acme", testDevice("d2")); !errors.As(err, &storeErr) {
-		t.Fatalf("Pair on a failing read = %v; want a *StoreError", err)
+	// Pair does not read: the conditional put decides.
+	if err := r.Pair(ctx, "acme", testDevice("d2")); err != nil {
+		t.Fatalf("Pair on a failing read = %v; want nil", err)
 	}
 	kv.failReads = false
 	kv.failWrites = true
-	if err := r.Pair(ctx, "acme", testDevice("d2")); !errors.As(err, &storeErr) || storeErr.Op != "pair" {
+	if err := r.Pair(ctx, "acme", testDevice("d3")); !errors.As(err, &storeErr) || storeErr.Op != "pair" {
 		t.Fatalf("Pair on a failing write = %v; want a *StoreError", err)
 	}
 	if err := r.Revoke(ctx, "acme", "d1", pairedAt); !errors.As(err, &storeErr) || storeErr.Op != "revoke" {
