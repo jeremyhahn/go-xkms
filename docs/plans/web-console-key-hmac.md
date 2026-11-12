@@ -39,4 +39,13 @@ sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass (tracked sdk/ts/dist restored).
+- sdk/ts/svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_key_hmac.test.ts: pass (10 tests).
+- vitest whole web/app suite: pass (51 files, 422 tests; the view1/view2 svelte-auth baseline tests pass with svelte-auth installed).
+- npm run check (svelte-check): pass, 0 errors (the UsersView.svelte:121 baseline did not show).
+- vite build: pass.
+- go test -race pkg/api/rest: pass.
+- sdk/go go build ./...: pass.
+- make lint: pass.
