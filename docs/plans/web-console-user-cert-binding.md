@@ -44,4 +44,12 @@ make lint.
 
 ## Results
 
-Results to follow.
+- sdk/ts build, svelte-auth npm ci, web/app npm ci: pass (sdk/ts dist/ restored, not committed).
+- vitest test/view3_user_cert_binding.test.ts: pass (7 tests).
+- vitest whole web/app suite (NODE_OPTIONS=--no-experimental-webstorage): pass (51 files, 419 tests); store_nav.test.ts unchanged.
+- svelte-check: baseline only (UsersView.svelte:121 and test/view2_users.test.ts:51, role/roles).
+- vite build: pass.
+- go test -race pkg/api/rest: pass.
+- sdk/go go build: pass.
+- make lint: pass.
+- Note: the feat commit carries the test commit's subject by mistake (message file not rewritten); its content is the view, route, App dispatch and nav line.
