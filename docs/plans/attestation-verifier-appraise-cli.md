@@ -53,4 +53,15 @@ sdk/go, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- `go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack" ./cmd/xkmsctl/`: pass, the six
+  new tests included. With TMPDIR under `.git/lanecache` five unix-socket tests
+  (cluster_bearer_test.go:82 first) fail on `bind: invalid argument`, a socket
+  path over the length limit; with a short TMPDIR the package passes.
+- `go build ./...` at the root: pass.
+- `cd sdk/go && go build ./...`: pass.
+- `make lint`: pass, 0 issues in every module and tag set.
+
+Departure: `--pcr` is a custom flag value (repeatable, or comma-separated),
+not a `StringArray`. The tests' reset helper sets every flag back to its
+default text, which leaves a `StringArray` holding `[]`; an empty Set clears
+the custom value.
