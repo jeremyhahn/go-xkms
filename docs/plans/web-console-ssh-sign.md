@@ -38,4 +38,13 @@ an interactive SSH console, SshView.svelte, Go code, sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass (sdk/ts/dist restored).
+- svelte-auth npm ci: pass. web/app npm ci: pass.
+- vitest test/view3_ssh_sign.test.ts: pass (8 tests).
+- web/app npm test: pass (51 files, 420 tests).
+- npm run check (svelte-check): pass, 0 errors.
+- vite build: pass.
+- go test -race pkg/api/rest (codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: not run to completion; the typecheck of pkg/api/grpc hit "no space left
+  on device" (lane disk /dev/sdc1 at 99%, 3.4G free); a disk failure, not a lint finding.
