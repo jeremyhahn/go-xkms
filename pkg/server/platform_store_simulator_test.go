@@ -241,7 +241,7 @@ func TestInitializePlatformStore_TPM2ReusesNodeSealFlip(t *testing.T) {
 	// simulator handle -- go-tpm-tools' simulator.Get() is a single global
 	// process-wide lock) the way an assertion positioned before this defer
 	// once did, hanging every later simulator-backed test in the package.
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	if s != nil {
 		defer func() { _ = s.Shutdown() }()
 	}
