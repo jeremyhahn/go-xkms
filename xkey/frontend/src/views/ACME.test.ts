@@ -17,6 +17,12 @@ function installMock() {
     DeactivateAccount: vi.fn().mockResolvedValue({ uri: 'https://ca.test/acct/1', status: 'deactivated', contacts: [] }),
     RevokeCertificate: vi.fn().mockResolvedValue(undefined),
     RenewCertificate: vi.fn().mockResolvedValue('-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n'),
+    EnrollDevice: vi.fn().mockResolvedValue({
+      idevidPem: '-----BEGIN CERTIFICATE-----\nIDEVID\n-----END CERTIFICATE-----\n',
+      iakPem: '-----BEGIN CERTIFICATE-----\nIAK\n-----END CERTIFICATE-----\n',
+      chainPem: '-----BEGIN CERTIFICATE-----\nCHAIN\n-----END CERTIFICATE-----\n',
+    }),
+    EndorseDevice: vi.fn().mockResolvedValue('-----BEGIN CERTIFICATE-----\nEK\n-----END CERTIFICATE-----\n'),
   };
   (window as any).go = {
     services: {
@@ -153,5 +159,76 @@ describe('ACME view', () => {
   it('shows no backend connection without the Wails runtime', () => {
     const view = render(ACME);
     expect(view.getByRole('alert')).toHaveTextContent('No backend connection');
+  });
+
+  it('enrolls the device and shows the three certificates', async () => {
+    const acme = installMock();
+    const view = render(ACME);
+    await fillConnection(view);
+    await fireEvent.input(view.getByLabelText('IP address'), { target: { value: '192.0.2.10' } });
+    await fireEvent.input(view.getByLabelText('Port'), { target: { value: '9090' } });
+    await fireEvent.input(view.getByLabelText('Listen host'), { target: { value: '0.0.0.0' } });
+    await fireEvent.input(view.getByLabelText('Common name'), { target: { value: 'device-1' } });
+    await fireEvent.click(view.getByRole('button', { name: 'Enroll' }));
+    await waitFor(() => expect(acme.EnrollDevice).toHaveBeenCalledTimes(1));
+    expect(acme.EnrollDevice).toHaveBeenCalledWith(conn, {
+      challenge: 'enroll-01', ipAddress: '192.0.2.10', port: 9090, listenHost: '0.0.0.0',
+      commonName: 'device-1', pcrs: [], timeoutSeconds: 0,
+    });
+    await waitFor(() =>
+      expect((view.getByLabelText('IDevID certificate') as HTMLTextAreaElement).value).toContain('IDEVID'));
+    expect((view.getByLabelText('IAK certificate') as HTMLTextAreaElement).value).toContain('IAK');
+    expect((view.getByLabelText('Chain') as HTMLTextAreaElement).value).toContain('CHAIN');
+  });
+
+  it('enrolls with device-attest-01 and PCRs without an IP address', async () => {
+    const acme = installMock();
+    const view = render(ACME);
+    await fillConnection(view);
+    await fireEvent.change(view.getByLabelText('Device challenge'), { target: { value: 'device-attest-01' } });
+    await fireEvent.input(view.getByLabelText('PCRs'), { target: { value: '0, 1, , 7' } });
+    const enroll = view.getByRole('button', { name: 'Enroll' });
+    expect(enroll).not.toBeDisabled();
+    await fireEvent.click(enroll);
+    await waitFor(() => expect(acme.EnrollDevice).toHaveBeenCalledTimes(1));
+    expect(acme.EnrollDevice.mock.calls[0][1]).toMatchObject({ challenge: 'device-attest-01', ipAddress: '', pcrs: [0, 1, 7] });
+  });
+
+  it('keeps Enroll and Request EK certificate disabled without an IP address', async () => {
+    const acme = installMock();
+    const view = render(ACME);
+    await fillConnection(view);
+    const enroll = view.getByRole('button', { name: 'Enroll' });
+    const endorse = view.getByRole('button', { name: 'Request EK certificate' });
+    expect(enroll).toBeDisabled();
+    expect(endorse).toBeDisabled();
+    await fireEvent.click(enroll);
+    await fireEvent.click(endorse);
+    expect(acme.EnrollDevice).not.toHaveBeenCalled();
+    expect(acme.EndorseDevice).not.toHaveBeenCalled();
+  });
+
+  it('requests the EK certificate and shows it', async () => {
+    const acme = installMock();
+    const view = render(ACME);
+    await fillConnection(view);
+    await fireEvent.input(view.getByLabelText('IP address'), { target: { value: '192.0.2.10' } });
+    await fireEvent.click(view.getByRole('button', { name: 'Request EK certificate' }));
+    await waitFor(() => expect(acme.EndorseDevice).toHaveBeenCalledTimes(1));
+    expect(acme.EndorseDevice.mock.calls[0][0]).toEqual(conn);
+    expect(acme.EndorseDevice.mock.calls[0][1]).toMatchObject({ ipAddress: '192.0.2.10' });
+    await waitFor(() =>
+      expect((view.getByLabelText('EK certificate') as HTMLTextAreaElement).value).toContain('EK'));
+  });
+
+  it('shows a rejected EK request as an alert and no certificate', async () => {
+    const acme = installMock();
+    acme.EndorseDevice.mockRejectedValue(new Error('endorse failed'));
+    const view = render(ACME);
+    await fillConnection(view);
+    await fireEvent.input(view.getByLabelText('IP address'), { target: { value: '192.0.2.10' } });
+    await fireEvent.click(view.getByRole('button', { name: 'Request EK certificate' }));
+    await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('endorse failed'));
+    expect(view.queryByLabelText('EK certificate')).not.toBeInTheDocument();
   });
 });
