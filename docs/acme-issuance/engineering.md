@@ -1887,13 +1887,20 @@ acme:
       dice_require_device_signed_leaf: true   # secure-element profiles
       dice_require_measurement: true          # DiceTcbInfo must carry an FWID
       dice_require_tcb_info: true             # DiceTcbInfo must be present
+      dice_require_application_reference: true  # finalize needs a registered 32-byte reference
 ```
 
 `tpm_roots` are the CAs that vouch for AIK certificates (a manufacturer
 attestation CA, a privacy CA, or this deployment's own CA); `dice_roots` are the
 anchors of DICE alias chains. A certificate listed in `tpm_roots` anchors a
 chain whether or not it is self-signed, so when an AIK is issued by an
-intermediate, list that intermediate.
+intermediate, list that intermediate. A DICE device whose provisioning record
+registers no application reference is admitted by default; with
+`dice_require_application_reference` (`DICERequireApplicationReference`,
+pkg/config/acme.go:856) finalize refuses it as badCSR, and a registered
+reference is always compared against the possession request's 32-byte
+application evidence (`RegisteredApplicationReference`,
+pkg/acme/challenges/device-attest-01/registry.go:189).
 
 The xkmsd ACME listener (`acme.tls`, `ACMEConfig` / `ACMETLSConfig`,
 `pkg/config/acme.go`) always uses its own dedicated TLS certificate/key pair;
