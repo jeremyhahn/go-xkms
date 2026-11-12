@@ -31,3 +31,8 @@ Move xkey audit events into go-qrdb's audit store through sdk/go instead of
 the local `xkey/pkg/audit/dao_store.go` store. Results to follow.
 
 ## Results
+
+- 2026-11-12 root `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/xkms/...`: pass.
+- 2026-11-12 xkey `go test -count=1` with the Makefile TEST_TAGS (production codec_json tpm_simulator pkcs11 webkit2_41 + objstore tags) `./pkg/gui/services/... ./pkg/gui/`: pass (without the tags, the DAO-backed tests fail: codec json not built in).
+- 2026-11-12 `cd xkey && go build ./...`: pass.
+- 2026-11-12 `make lint`: pass, 0 issues in every module and tag set.
