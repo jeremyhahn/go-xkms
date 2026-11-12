@@ -361,3 +361,101 @@ func TestTrustClassifyXKMSd_BadPurpose(t *testing.T) {
 
 	requireLocalTrustStoreUntouched(t)
 }
+
+func TestTrustInstallXKMSd_InstallsServerRoot(t *testing.T) {
+	fake := c704cOS(t, nil)
+	fingerprint := startTrustXKMSd(t)
+	label := "xkey-" + fingerprint[:16]
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, runTrustInstall(cmd, []string{"  " + strings.ToUpper(fingerprint) + " "}))
+
+	cert, ok := fake.installed[label]
+	require.True(t, ok, "no OS store entry under %s", label)
+	require.Equal(t, fingerprint, sdktruststore.Fingerprint(cert))
+	require.Equal(t, "strotb server root", cert.Subject.CommonName)
+	require.Contains(t, buf.String(), "Certificate "+fingerprint+" installed to OS trust store as "+label)
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustInstallXKMSd_UnknownFingerprint(t *testing.T) {
+	fake := c704cOS(t, nil)
+	startTrustXKMSd(t)
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	err := runTrustInstall(cmd, []string{strings.Repeat("ab", 32)})
+	require.ErrorIs(t, err, ErrTrustInstallFailed)
+	require.Contains(t, err.Error(), "TrustRootGet")
+	require.Empty(t, fake.installed)
+	require.Empty(t, buf.String())
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustInstallXKMSd_OSStoreFails(t *testing.T) {
+	fake := c704cOS(t, nil)
+	fake.installErr = sdktruststore.ErrPermissionDenied
+	fingerprint := startTrustXKMSd(t)
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	err := runTrustInstall(cmd, []string{fingerprint})
+	require.ErrorIs(t, err, ErrTrustInstallFailed)
+	require.ErrorIs(t, err, sdktruststore.ErrPermissionDenied)
+	require.Empty(t, fake.installed)
+	require.Empty(t, buf.String())
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustUninstallXKMSd_RemovesOSEntry(t *testing.T) {
+	fake := c704cOS(t, nil)
+	fingerprint := startTrustXKMSd(t)
+
+	var installOut bytes.Buffer
+	installCmd := &cobra.Command{}
+	installCmd.SetOut(&installOut)
+	require.NoError(t, runTrustInstall(installCmd, []string{fingerprint}))
+	require.Contains(t, fake.installed, "xkey-"+fingerprint[:16])
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, runTrustUninstall(cmd, []string{fingerprint}))
+	require.Empty(t, fake.installed)
+	require.Contains(t, buf.String(), "Certificate "+fingerprint+" removed from OS trust store")
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustUninstallXKMSd_RootGoneFromServer(t *testing.T) {
+	fake := c704cOS(t, nil)
+	fingerprint := startTrustXKMSd(t)
+
+	var installOut bytes.Buffer
+	installCmd := &cobra.Command{}
+	installCmd.SetOut(&installOut)
+	require.NoError(t, runTrustInstall(installCmd, []string{fingerprint}))
+
+	var removeOut bytes.Buffer
+	removeCmd := &cobra.Command{}
+	removeCmd.SetOut(&removeOut)
+	require.NoError(t, runTrustRemove(removeCmd, []string{fingerprint}))
+	_, err := getServerTrustRoot(t, fingerprint)
+	require.Error(t, err)
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, runTrustUninstall(cmd, []string{fingerprint}))
+	require.Empty(t, fake.installed)
+	require.Contains(t, buf.String(), "Certificate "+fingerprint+" removed from OS trust store")
+
+	requireLocalTrustStoreUntouched(t)
+}
