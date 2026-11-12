@@ -21,6 +21,7 @@
   import PlatformView from "$views/PlatformView.svelte";
   import PivView from "$views/PivView.svelte";
   import CaView from "$views/CaView.svelte";
+  import TcgCertsView from "$views/TcgCertsView.svelte";
   import SshView from "$views/SshView.svelte";
   import FrostView from "$views/FrostView.svelte";
 
@@ -54,6 +55,7 @@
       <CertificatesView />
     {:else if routerStore.name === "ca"}
       <CaView />
+    {:else if routerStore.name === "caTcg"}<TcgCertsView />
     {:else if routerStore.name === "pin"}
       <PinView />
     {:else if routerStore.name === "piv"}
