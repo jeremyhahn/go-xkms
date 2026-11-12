@@ -18,8 +18,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // The attestation.endorsement.*, attestation.reference_values.* and
@@ -28,21 +26,6 @@ import (
 // fields of the transport request -- and delegates to XKMSService, which
 // binds the call to the caller's tenant; they gate on the same
 // resource:action pair as the REST routes (pkg/api/rest/routes.go).
-
-// appraisalSentinelClasses classifies the appraisal service's errors, as the
-// REST handlers do (pkg/api/rest/handlers_attestation_appraisal.go).
-var appraisalSentinelClasses = []apierrors.SentinelClass{
-	{Sentinel: xkms.ErrNotConfigured, Class: apierrors.ClassUnavailable},
-	{Sentinel: appraisal.ErrNilRequest, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidName, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidTenant, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidRepository, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrEndorsementInvalid, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrReferenceValuesRejected, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidAKIntermediate, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrRecordNotFound, Class: apierrors.ClassNotFound},
-	{Sentinel: appraisal.ErrStoreUnavailable, Class: apierrors.ClassUnavailable},
-}
 
 // attestationAppraisalCall decodes the params into a P, calls the service and
 // maps its error through the appraisal classification.
@@ -54,7 +37,7 @@ func attestationAppraisalCall[P, R any](s *Server, ctx context.Context, req *JSO
 // *KeyOpError.
 func mapAttestationAppraisalError(err error, operation string) error {
 	return mapClassifiedError(err, operation, func(err error) (apierrors.Class, bool) {
-		return apierrors.ClassOf(appraisalSentinelClasses, err)
+		return apierrors.AttestationAppraisalClassOf(err)
 	})
 }
 

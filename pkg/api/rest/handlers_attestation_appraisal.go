@@ -21,7 +21,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // AttestationAppraisalHandlers serves the attestation Verifier API
@@ -38,38 +37,16 @@ func NewAttestationAppraisalHandlers(servicer transport.AttestationAppraisalServ
 	return &AttestationAppraisalHandlers{servicer: servicer}
 }
 
-// appraisalSentinelClasses classifies the errors of the appraisal verbs. A
-// server without an Appraiser has nothing to answer with; a request the
-// Appraiser cannot use, or evidence it refuses, is the caller's fault. The
-// appraisal's typed errors wrap these sentinels.
-var appraisalSentinelClasses = []apierrors.SentinelClass{
-	{Sentinel: xkms.ErrNotConfigured, Class: apierrors.ClassUnavailable},
-	{Sentinel: appraisal.ErrNilRequest, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidName, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidTenant, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidRepository, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrEndorsementInvalid, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrReferenceValuesRejected, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidAKIntermediate, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrRecordNotFound, Class: apierrors.ClassNotFound},
-	{Sentinel: appraisal.ErrStoreUnavailable, Class: apierrors.ClassUnavailable},
-}
-
-// appraisalClassOf classifies an error of the appraisal verbs.
-func appraisalClassOf(err error) (apierrors.Class, bool) {
-	return apierrors.ClassOf(appraisalSentinelClasses, err)
-}
-
 // respondAppraisal writes resp with status, or the response of err
-// classified through appraisalClassOf.
+// classified through apierrors.AttestationAppraisalClassOf.
 func respondAppraisal[R any](w http.ResponseWriter, resp R, err error, status int) {
-	respondClassified(w, resp, err, status, appraisalClassOf)
+	respondClassified(w, resp, err, status, apierrors.AttestationAppraisalClassOf)
 }
 
 // respondAppraisalDeleted writes 204, or the response of err.
 func respondAppraisalDeleted(w http.ResponseWriter, err error) {
 	if err != nil {
-		writeClassifiedError(w, err, appraisalClassOf)
+		writeClassifiedError(w, err, apierrors.AttestationAppraisalClassOf)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

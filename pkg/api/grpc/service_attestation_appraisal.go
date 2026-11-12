@@ -34,22 +34,6 @@ import (
 // pair the REST and MCP routes gate on, and delegates to XKMSService, which
 // binds the call to the caller's tenant.
 
-// appraisalSentinelClasses classifies the appraisal service's errors, as the
-// REST and MCP handlers do (pkg/api/rest/handlers_attestation_appraisal.go,
-// pkg/api/mcp/handlers_attestation_appraisal.go).
-var appraisalSentinelClasses = []apierrors.SentinelClass{
-	{Sentinel: xkms.ErrNotConfigured, Class: apierrors.ClassUnavailable},
-	{Sentinel: appraisal.ErrNilRequest, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidName, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidTenant, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidRepository, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrEndorsementInvalid, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrReferenceValuesRejected, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrInvalidAKIntermediate, Class: apierrors.ClassInvalidArgument},
-	{Sentinel: appraisal.ErrRecordNotFound, Class: apierrors.ClassNotFound},
-	{Sentinel: appraisal.ErrStoreUnavailable, Class: apierrors.ClassUnavailable},
-}
-
 // attestationAppraisalCall runs call on the service, once the RPC has
 // authorized its permission, and maps its error through the appraisal
 // classification.
@@ -68,7 +52,7 @@ func attestationAppraisalCall[R any](s *Service, call func(*xkms.XKMSService) (R
 // mapAttestationAppraisalError converts an appraisal error into a gRPC
 // status error. Anything the table does not classify is an internal fault.
 func mapAttestationAppraisalError(err error) error {
-	if class, ok := apierrors.ClassOf(appraisalSentinelClasses, err); ok {
+	if class, ok := apierrors.AttestationAppraisalClassOf(err); ok {
 		return status.Error(grpcCodeForClass(class), err.Error())
 	}
 	return status.Error(codes.Internal, err.Error())
