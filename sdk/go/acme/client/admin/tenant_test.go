@@ -299,6 +299,16 @@ func TestTenantClient_List(t *testing.T) {
 		}
 	})
 
+	t.Run("status filter refused without a request", func(t *testing.T) {
+		c := newTenantClient(refusingTransport(t))
+
+		result, err := c.List(context.Background(), &ListTenantsRequest{Status: "active"})
+		if result != nil {
+			t.Errorf("expected nil result, got %+v", result)
+		}
+		assertTenantStatusRefused(t, err)
+	})
+
 	t.Run("nil request defaults", func(t *testing.T) {
 		mt := newMockTransportWithResponse(map[string]interface{}{
 			"tenants": []map[string]interface{}{},
