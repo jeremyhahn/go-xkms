@@ -95,6 +95,48 @@ func TestCoverageRunsAsShardsThenOneThreshold(t *testing.T) {
 	}
 }
 
+// TestHostedCoverageJobsBoundMemoryAt8g guards the Codex P1 on #2042: the
+// workflow-level IN_IMAGE_MEMORY is 24g for the bigdisk pool, and the
+// coverage jobs on github.com's hosted runners (less memory) must not
+// inherit it, or in-toolchain-image.sh starts the container with
+// --memory=24g. Each job sets 8g on github.com and keeps the workflow value
+// elsewhere.
+func TestHostedCoverageJobsBoundMemoryAt8g(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	var wf struct {
+		Env  map[string]string `yaml:"env"`
+		Jobs map[string]struct {
+			Env map[string]string `yaml:"env"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatalf("parse workflow: %v", err)
+	}
+	workflowExpr := strings.TrimSpace(wf.Env["IN_IMAGE_MEMORY"])
+	workflowExpr = strings.TrimSuffix(strings.TrimPrefix(workflowExpr, "${{"), "}}")
+	workflowExpr = strings.TrimSpace(workflowExpr)
+	for _, name := range []string{"coverage", "coverage-threshold"} {
+		job, ok := wf.Jobs[name]
+		if !ok {
+			t.Fatalf("ci.yml has no %s job", name)
+		}
+		v, ok := job.Env["IN_IMAGE_MEMORY"]
+		if !ok {
+			t.Errorf("%s job does not set IN_IMAGE_MEMORY; it inherits the workflow's 24g on hosted runners", name)
+			continue
+		}
+		if !strings.Contains(v, "github.server_url == 'https://github.com'") || !strings.Contains(v, "'8g'") {
+			t.Errorf("%s job IN_IMAGE_MEMORY = %q, want 8g when github.server_url == 'https://github.com'", name, v)
+		}
+		if !strings.Contains(v, "env.IN_IMAGE_MEMORY") && (workflowExpr == "" || !strings.Contains(v, workflowExpr)) {
+			t.Errorf("%s job IN_IMAGE_MEMORY = %q, want the workflow value (%q) off github.com", name, v, workflowExpr)
+		}
+	}
+}
+
 // inToolchainImage runs every CI stage in a disposable container that gets a
 // copy of the checkout and is removed on exit.
 const inToolchainImage = "../../scripts/in-toolchain-image.sh"
