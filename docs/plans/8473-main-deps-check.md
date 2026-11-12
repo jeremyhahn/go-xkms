@@ -10,3 +10,4 @@
   - make deps-check (after bump): FAIL, only github.com/jeremyhahn/go-truststrap v0.6.0-alpha -> v0.7.1-alpha (root, sdk/go). Outside cause: v0.7.1-alpha needs go-enclave v0.10.0-alpha (undefined: enclave.ByteAccess under the v0.8.0-alpha replace), and go-enclave is held at v0.8.0-alpha for go-qrdb v0.51.0-alpha; the qrdb/enclave bump (#1995) is frozen.
   - make vuln (after bump, mcp-go v1.5.0): FAIL, GO-2026-6911 unchanged.
   - make modverify (after bump): PASS. make lint: PASS.
+- dk8473b: re-run after #2071 failed deps-check at 12:00Z 11-12, results to follow
