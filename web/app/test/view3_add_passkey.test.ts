@@ -29,10 +29,17 @@ vi.mock("../src/stores/toast.svelte.ts", () => ({
   },
 }));
 
-const parsedOptions = { challenge: new Uint8Array([1, 2, 3]) };
-const encoded = { id: "cred-1", rawId: "cred-1", type: "public-key", response: {} };
-const parseCreationOptions = vi.fn((_raw: unknown) => parsedOptions);
-const encodeAttestationResponse = vi.fn((_cred: unknown) => encoded);
+// vi.mock factories are hoisted above the imports, so the bridge mocks are too.
+const { parsedOptions, encoded, parseCreationOptions, encodeAttestationResponse } = vi.hoisted(() => {
+  const parsedOptions = { challenge: new Uint8Array([1, 2, 3]) };
+  const encoded = { id: "cred-1", rawId: "cred-1", type: "public-key", response: {} };
+  return {
+    parsedOptions,
+    encoded,
+    parseCreationOptions: vi.fn((_raw: unknown) => parsedOptions),
+    encodeAttestationResponse: vi.fn((_cred: unknown) => encoded),
+  };
+});
 
 vi.mock("@go-xkms/sdk", async (importOriginal) => {
   const real = await importOriginal<Record<string, unknown>>();
