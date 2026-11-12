@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nssdb"
 	"github.com/stretchr/testify/assert"
