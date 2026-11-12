@@ -21,6 +21,7 @@ import (
 	"github.com/gorilla/mux"
 
 	sdkadmin "github.com/jeremyhahn/go-xkms/sdk/go/acme/client/admin"
+	sdkerrors "github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
 )
 
 // updateTenantStatus handles PUT /api/v1/tenants/{id}/status.
@@ -42,6 +43,10 @@ func (h *handlers) updateTenantStatus(w http.ResponseWriter, r *http.Request) {
 		var notFound *sdkadmin.TenantNotFoundError
 		if isErrorType(err, &notFound) {
 			writeErrorResponse(w, http.StatusNotFound, "NOT_FOUND", "tenant not found")
+			return
+		}
+		if sdkerrors.IsInvalidInput(err) {
+			writeErrorResponse(w, http.StatusBadRequest, "TENANT_STATUS_UNSUPPORTED", "tenant status is not supported")
 			return
 		}
 		h.logger.Error("failed to update tenant status",

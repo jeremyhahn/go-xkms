@@ -646,7 +646,7 @@ func (a *Adapter) GetOrder(_ context.Context, _ uint64, _ uint64) (*admin.OrderI
 
 // UpdateTenantStatus updates a tenant's status.
 func (a *Adapter) UpdateTenantStatus(_ context.Context, _ string, _ string) error {
-	return admin.ErrRESTOnly
+	return admin.TenantStatusUnsupported()
 }
 
 // CreateTenantRootCA creates a root CA for a tenant.
