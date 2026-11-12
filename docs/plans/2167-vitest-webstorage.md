@@ -32,3 +32,15 @@ vitest ^1.6. Both accept `poolOptions.{forks,threads}.execArgv`.
 The CI image, package.json and lock files, NODE_OPTIONS in go-xkms.env.
 
 ## Results
+
+Node v26.10.0, NODE_OPTIONS unset, `npm ci --silent` per package.
+
+| Package | New test before fix | After fix | Suite after fix |
+|---|---|---|---|
+| sdk/ts/svelte-auth (vitest ^2) | FAIL (localStorage undefined) | pass | test:coverage 112/112, thresholds met |
+| web/app (vitest ^2) | FAIL | pass | test:coverage 413/413 (51 files), thresholds met |
+| xkey/frontend (vitest ^1.6) | FAIL | pass | npm test 89/89 (11 files) |
+
+xkey/frontend's default pool accepted the execArgv; no `pool: 'forks'` needed.
+Before the fix the brief records 90/111 svelte-auth tests failing at
+`window.localStorage.clear()`.
