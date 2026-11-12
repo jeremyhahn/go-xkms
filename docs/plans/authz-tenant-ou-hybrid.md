@@ -31,4 +31,12 @@ empty tenant. The caller's template is never modified.
 
 ## Results
 
-Results to follow.
+- Hybrid leaves stamped at pkg/ca/hybrid.go:145-152 (test commit before the
+  fix commit); engineering.md lists the hybrid path as stamped and the
+  attestation CSR (attestation.go:183-186) as exempt.
+- `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/ca/...
+  ./pkg/certsubject/...`: pass.
+- `make lint` (root, all modules and tag sets): pass, 0 issues.
+- Every path in SPEC.md:72's "does not carry it today" list is now stamped
+  or exempt with a reason, so the coordinator can set the row (docs/SPEC.md
+  not edited by this lane).
