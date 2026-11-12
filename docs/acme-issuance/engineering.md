@@ -1604,7 +1604,7 @@ admin plane's issuance tenant, separate from the key-management tenant model in
 
 | Type | Fields that matter |
 |---|---|
-| `Tenant` | `ID`, `Name`, `Status` (`active` / `suspended` / `deleted`), `RootCA` (nil = issue under the global CA), `IntermediateCAs`, `DefaultIntermediateCAID`, `Settings` |
+| `Tenant` | `ID`, `Name`, `Status` (internal `deleted` marker only: a caller cannot set a status or filter by one; `UpdateTenantStatus` and a `ListTenants` status filter return `*UnsupportedFieldError{Field: "status"}` (`errors.Is` `ErrTenantStatusUnsupported`), answered REST 400 `urn:trusted-ca:error:tenant-status-unsupported` and gRPC InvalidArgument, until go-qrdb carries a tenant status), `RootCA` (nil = issue under the global CA), `IntermediateCAs`, `DefaultIntermediateCAID`, `Settings` |
 | `TenantRootCA` (`:67-95`) | `CommonName`, `SerialNumber`, `KeyID`, `KeyAlgorithm`, validity, `Status` (`active` / `pending-rotation` / `revoked`), `CertificatePEM` |
 | `TenantIntermediateCA` (`:100-145`) | the same, plus `ID`, `ParentType` (`global` / `tenant`), `Purpose`, `ChainPEM` |
 | `TenantSettings` (`:148-183`) | `MaxCertificates`, `MaxAccounts`, `AllowedKeyAlgorithms`, `AllowedChallengeTypes`, `CertificateValidityDays`, `RequireEAB`, `AllowEndorse01`, `AllowEnroll01`, `ComplianceConfig`, `CustomMetadata` |

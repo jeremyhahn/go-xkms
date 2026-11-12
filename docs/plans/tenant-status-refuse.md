@@ -26,6 +26,14 @@ Main pins go-qrdb v0.51.0-alpha, whose pkg/tenant has no status.
 - Bump to a go-qrdb release that carries `tenant.Status` (dependency lane,
   owner freeze). docs/SPEC.md is not edited.
 
+## Slice (lane stenstd): transports
+
+4. Test commit: the REST status handler hands every value to the service and
+   answers 400 `urn:trusted-ca:error:tenant-status-unsupported`; the gRPC list
+   path answers the refusal as InvalidArgument (via `IsValidationError`).
+5. Fix commit: the handler no longer judges the status value itself.
+6. Docs: engineering.md tenant row; changelog entry.
+
 ## Checks
 
-Results to follow.
+- `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/acme/admin/... ./pkg/acme/api/...`: pass.
