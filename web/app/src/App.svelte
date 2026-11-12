@@ -8,6 +8,7 @@
   import LoginView from "$views/LoginView.svelte";
   import RegisterView from "$views/RegisterView.svelte";
   import DashboardView from "$views/DashboardView.svelte";
+  import TrustBundleView from "$views/TrustBundleView.svelte";
   import BackendsView from "$views/BackendsView.svelte";
   import SettingsView from "$views/SettingsView.svelte";
   import KeysView from "$views/KeysView.svelte";
@@ -46,6 +47,7 @@
   <AppShell>
     {#if routerStore.name === "dashboard"}
       <DashboardView />
+    {:else if routerStore.name === "trustBundle"}<TrustBundleView />
     {:else if routerStore.name === "backends"}
       <BackendsView />
     {:else if routerStore.name === "keys"}
