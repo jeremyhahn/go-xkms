@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest/vaultservice"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
@@ -407,5 +406,5 @@ func TestNewVaultAuthenticator_UsesTheWebAuthnEnumerator(t *testing.T) {
 	require.NoError(t, err)
 	defer pin.Destroy()
 	_, err = vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, RelyingPartyID: vaulttest.RelyingParty})
-	assert.ErrorIs(t, err, pkgfido2.ErrNoDeviceFound)
+	assert.ErrorIs(t, err, fido2.ErrNoDeviceFound)
 }
