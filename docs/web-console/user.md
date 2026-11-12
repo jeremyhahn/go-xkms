@@ -132,7 +132,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Section | Screen | Route |
 |---|---|---|
 | Overview | Dashboard, Backends | `#/dashboard`, `#/backends` |
-| Keys & Crypto | Keys, FROST, TPM Policies | `#/keys`, `#/frost`, `#/tpm/policies` |
+| Keys & Crypto | Keys, FROST, TPM Policies, Rewrap | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/rewrap` |
 | Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
