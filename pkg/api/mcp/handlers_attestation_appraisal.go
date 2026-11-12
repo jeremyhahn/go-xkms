@@ -36,9 +36,7 @@ func attestationAppraisalCall[P, R any](s *Server, ctx context.Context, req *JSO
 // mapAttestationAppraisalError converts an appraisal API error into a
 // *KeyOpError.
 func mapAttestationAppraisalError(err error, operation string) error {
-	return mapClassifiedError(err, operation, func(err error) (apierrors.Class, bool) {
-		return apierrors.AttestationAppraisalClassOf(err)
-	})
+	return mapClassifiedError(err, operation, apierrors.AttestationAppraisalClassOf)
 }
 
 // handleAttestationEndorsementPut stores a trust anchor.
