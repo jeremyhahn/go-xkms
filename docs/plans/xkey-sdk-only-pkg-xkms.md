@@ -31,4 +31,12 @@ files still import `github.com/jeremyhahn/go-xkms/pkg/xkms` (as `pkgxkms`):
 - sdk/go TestReexport_ test, sdk/go build, xkey build + vet, the cmd and
   gui/services test runs, make lint.
 
-Results to follow.
+## Results
+
+- sdk/go `go test -race -run TestReexport_ .`: pass.
+- sdk/go `go build ./...`: pass.
+- xkey `go build ./...` + `go vet` on cmd/xkey/cmd and pkg/gui/services: pass.
+- xkey cmd tests (PasswordVault|VaultPKCS11Token|LoginPKCS11Backend|SoftwarePIV|XKMSd): pass.
+- xkey gui/services tests (KeyFactor|BrowserBridge|ConsoleOriginAllowed): pass.
+- `make lint`: pass (0 issues on every module and tag set).
+- No xkey file imports pkg/xkms any more; gofmt reported nothing on the edited files.
