@@ -845,6 +845,22 @@ var (
 	// image".
 	ErrSignOTAImageFailed = errors.New("failed to sign the OTA image")
 
+	// ErrPutAttestationEndorsementFailed is the sentinel error "failed to put
+	// the attestation endorsement".
+	ErrPutAttestationEndorsementFailed = errors.New("failed to put the attestation endorsement")
+
+	// ErrListAttestationEndorsementsFailed is the sentinel error "failed to
+	// list the attestation endorsements".
+	ErrListAttestationEndorsementsFailed = errors.New("failed to list the attestation endorsements")
+
+	// ErrDeleteAttestationEndorsementFailed is the sentinel error "failed to
+	// delete the attestation endorsement".
+	ErrDeleteAttestationEndorsementFailed = errors.New("failed to delete the attestation endorsement")
+
+	// ErrInvalidEndorsementFlags is the sentinel error "invalid attestation
+	// endorsement flags".
+	ErrInvalidEndorsementFlags = errors.New("invalid attestation endorsement flags")
+
 	// ErrChangeKeyVersionFailed is the sentinel error "failed to change the
 	// key version".
 	ErrChangeKeyVersionFailed = errors.New("failed to change the key version")
