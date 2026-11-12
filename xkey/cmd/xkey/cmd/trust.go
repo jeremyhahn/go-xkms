@@ -272,6 +272,11 @@ Available purposes:
   idevid-issuer     CA certificates that issue IDevID certificates
   synced            Received from a paired device by sync; anchors nothing
 
+With an xkmsd endpoint configured, classify changes the server's trust-root
+store, never the local one. The server reclassifies a root only to synced
+(quarantine), so --purpose synced is the only purpose accepted there; to give
+a server root another purpose, remove it and add it again with --purpose.
+
 Examples:
   # Classify a certificate as a TPM manufacturer CA
   xkey trust classify a1b2c3d4e5f6... --purpose tpm-manufacturer
@@ -796,6 +801,37 @@ func runTrustRemoveXKMSd(cmd *cobra.Command, fingerprint string) (err error) {
 	return nil
 }
 
+// runTrustClassifyXKMSd reclassifies a root in the xkmsd trust-root store.
+// The server offers one reclassification, quarantine to synced; any other
+// purpose is refused without a call and without touching the local store.
+func runTrustClassifyXKMSd(cmd *cobra.Command, fingerprint string, purpose truststore.CertPurpose) (err error) {
+	if purpose != truststore.PurposeSynced {
+		return &DetailError{
+			Err: ErrTrustClassifyFailed,
+			Detail: fmt.Sprintf(": xkmsd reclassifies a root only to %s, by quarantine; to make it %s, remove it and add it again with --purpose %s",
+				truststore.PurposeSynced, purpose, purpose),
+		}
+	}
+
+	client, err := connectXKMSdClient(cmd)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	root, err := client.TrustRootQuarantine(trustCommandContext(cmd), &transport.TrustRootRequest{Fingerprint: fingerprint})
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustClassifyFailed, Cause: fmt.Errorf("TrustRootQuarantine: %w", err)}
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Certificate %s classified as %s\n", fingerprint, root.Purpose)
+	return nil
+}
+
 // runTrustClassify executes the trust classify command to reclassify a
 // certificate's purpose in the trust store.
 func runTrustClassify(cmd *cobra.Command, args []string) (err error) {
@@ -809,6 +845,10 @@ func runTrustClassify(cmd *cobra.Command, args []string) (err error) {
 	purpose, err := truststore.ParsePurpose(purposeStr)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustClassifyFailed, Cause: err}
+	}
+
+	if resolveXKMSdURL() != "" {
+		return runTrustClassifyXKMSd(cmd, fingerprint, purpose)
 	}
 
 	store, err := openTrustStore()
