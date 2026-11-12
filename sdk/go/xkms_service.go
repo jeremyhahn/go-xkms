@@ -132,6 +132,9 @@ var InitializePIV = pkgxkms.InitializePIV
 // XKMSResetPIV factory-resets the PIV manager state.
 var XKMSResetPIV = pkgxkms.ResetPIV
 
+// PivSlotCN returns the certificate common name the PIV manager uses for a slot.
+var PivSlotCN = pkgxkms.PivSlotCN
+
 // SetPIVBackendResolver sets the resolver used to locate PIV backends.
 var SetPIVBackendResolver = pkgxkms.SetPIVBackendResolver
 
