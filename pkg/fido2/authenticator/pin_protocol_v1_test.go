@@ -15,9 +15,12 @@ package authenticator
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -473,20 +476,32 @@ func TestPINProtocolV1_Decapsulate_InvalidCiphertext(t *testing.T) {
 func TestPINProtocolV1_Decapsulate_InvalidPadding(t *testing.T) {
 	authenticator, _ := setupKeyExchange(t)
 
-	// Create a ciphertext that decrypts to data with invalid padding
-	// We do this by encrypting valid data and then corrupting the last block
-	plaintext := []byte("test data for invalid padding test!")
-	ciphertext, err := authenticator.Encapsulate(plaintext)
-	if err != nil {
-		t.Fatalf("Encapsulate failed: %v", err)
+	// Each block is invalid PKCS7 by construction. It is encrypted with the
+	// shared secret and a zero IV, as Encapsulate does, so Decapsulate
+	// decrypts back to exactly these bytes on every run.
+	tests := []struct {
+		name  string
+		block []byte
+	}{
+		{"padding zero", append(bytes.Repeat([]byte{0xAA}, 15), 0x00)},
+		{"padding above block size", append(bytes.Repeat([]byte{0xAA}, 15), 0x11)},
+		{"mismatched padding bytes", append(bytes.Repeat([]byte{0xAA}, 14), 0x01, 0x02)},
 	}
 
-	// Corrupt the last byte of ciphertext to cause padding error
-	ciphertext[len(ciphertext)-1] ^= 0xFF
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			block, err := aes.NewCipher(authenticator.sharedSecret)
+			if err != nil {
+				t.Fatalf("aes.NewCipher failed: %v", err)
+			}
+			ciphertext := make([]byte, len(tt.block))
+			cipher.NewCBCEncrypter(block, make([]byte, aes.BlockSize)).CryptBlocks(ciphertext, tt.block)
 
-	_, err = authenticator.Decapsulate(ciphertext)
-	if err != ErrInvalidPKCS7Padding {
-		t.Errorf("expected ErrInvalidPKCS7Padding, got %v", err)
+			_, err = authenticator.Decapsulate(ciphertext)
+			if !errors.Is(err, ErrInvalidPKCS7Padding) {
+				t.Errorf("expected ErrInvalidPKCS7Padding, got %v", err)
+			}
+		})
 	}
 }
 
