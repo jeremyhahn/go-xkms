@@ -37,4 +37,13 @@ sdk/go build, make lint.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass (tracked sdk/ts/dist restored).
+- sdk/ts/svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_key_rewrap.test.ts: pass, 8 tests.
+- web/app npm test (NODE_OPTIONS=--no-experimental-webstorage): pass, 51 files, 420 tests; store_nav.test.ts unchanged.
+- svelte-check: pass, 0 errors (after the test reads the clipboard call with optional chaining).
+- vite build to /tmp/sujg-dist: pass.
+- go test -race pkg/api/rest (codec tags): pass.
+- sdk/go go build ./...: pass.
+- make lint: pass.
