@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -106,12 +105,16 @@ func (e *entity) EntityID() uint64 { return e.ID }
 // SetEntityID implements the qrdb entity interface.
 func (e *entity) SetEntityID(id uint64) { e.ID = id }
 
+// maxRevokeAttempts bounds Revoke's compare-and-swap retries; go-qrdb's own
+// compare-and-swap loop uses the same bound.
+const maxRevokeAttempts = 8
+
 // Registry is the tenant-scoped paired-device registry. It is safe for
 // concurrent use, also across processes on one store: Pair creates a record
 // with the store's atomic conditional put, so of two concurrent pairs of one
-// ID exactly one wins. Revoke is serialised within one registry.
+// ID exactly one wins. Revoke writes with the store's compare-and-swap, so of
+// two concurrent revokes of one device exactly one writes.
 type Registry struct {
-	mu      sync.Mutex
 	records qrdbsdk.GenericDAO[*entity]
 }
 
@@ -195,6 +198,10 @@ func (r *Registry) List(ctx context.Context, tenant string) ([]*Device, error) {
 
 // Revoke marks tenant's device id revoked at at and keeps the record. A
 // device already revoked keeps its first revocation time; the call succeeds.
+// The write is a compare-and-swap against the record read, retried on a lost
+// swap up to maxRevokeAttempts times, then a StoreError matching
+// ErrRevokeConflict. A store without atomic writes is refused with a
+// StoreError matching qrdbsdk.ErrKVAtomicWriteUnsupported.
 func (r *Registry) Revoke(ctx context.Context, tenant, id string, at time.Time) error {
 	if at.IsZero() {
 		return fmt.Errorf("%w: a revoke needs a time", ErrInvalidDevice)
@@ -203,20 +210,25 @@ func (r *Registry) Revoke(ctx context.Context, tenant, id string, at time.Time) 
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	stored, err := r.load(ctx, "revoke", key, id)
-	if err != nil {
-		return err
+	for range maxRevokeAttempts {
+		stored, err := r.load(ctx, "revoke", key, id)
+		if err != nil {
+			return err
+		}
+		if !stored.Device.Active() {
+			return nil
+		}
+		next := *stored
+		next.Device.RevokedAt = &at
+		swapped, err := r.records.CompareAndSwap(ctx, stored, &next)
+		if err != nil {
+			return &StoreError{Op: "revoke", ID: id, Err: err}
+		}
+		if swapped {
+			return nil
+		}
 	}
-	if !stored.Device.Active() {
-		return nil
-	}
-	stored.Device.RevokedAt = &at
-	if err := r.records.Save(ctx, stored); err != nil {
-		return &StoreError{Op: "revoke", ID: id, Err: err}
-	}
-	return nil
+	return &StoreError{Op: "revoke", ID: id, Err: ErrRevokeConflict}
 }
 
 // IsActive reports whether tenant's device id is paired and not revoked. An
