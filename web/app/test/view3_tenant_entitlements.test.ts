@@ -42,6 +42,7 @@ const tenants: ListTenantsResponse = {
     { id: "t-acme", name: "acme", sealed: false },
     { id: "t-beta", sealed: false },
   ],
+  pagination: { page: 1, page_size: 50, total: 2, has_more: false },
 };
 
 function tenantInfo(entitlements?: UpdateTenantEntitlementsResponse["tenant"]["entitlements"]): UpdateTenantEntitlementsResponse {
