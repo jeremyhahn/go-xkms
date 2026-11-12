@@ -35,7 +35,13 @@ operator quarantines stays unquarantined on the server.
 - sdk/go `go build ./...`
 - `make lint` at the root
 
-Results to follow.
+Results (2026-11-12, on the feat and docs commits):
+
+- Trust tests with -race (xkey ./cmd/xkey/cmd/): pass; the three server-mode
+  tests other than BadPurpose failed on the base as expected.
+- xkey build and vet: pass.
+- sdk/go build: pass.
+- make lint: pass (0 issues in every module and tag set).
 
 ## Later slices
 
