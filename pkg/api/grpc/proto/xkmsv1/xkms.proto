@@ -1024,6 +1024,25 @@ service KeystoreService {
     option (qrdb.v1.permission) = "attestation_signing_keys:get";
   }
 
+  // ==================== Continuous Attestation Verdicts ====================
+  // The verdicts the continuous attestation engine reaches for a device,
+  // always in the caller's tenant (go-xkms#2088).
+
+  // ListAttestationVerdicts returns a device's verdicts, oldest first.
+  rpc ListAttestationVerdicts(AttestationVerdictRequest) returns (ListAttestationVerdictsResponse) {
+    option (qrdb.v1.permission) = "attestation_verdicts:list";
+  }
+
+  // GetLatestAttestationVerdict returns a device's newest verdict.
+  rpc GetLatestAttestationVerdict(AttestationVerdictRequest) returns (AttestationVerdict) {
+    option (qrdb.v1.permission) = "attestation_verdicts:get";
+  }
+
+  // ReattestDevice re-attests a device now and returns the verdict.
+  rpc ReattestDevice(AttestationVerdictRequest) returns (AttestationVerdict) {
+    option (qrdb.v1.permission) = "attestation_verdicts:create";
+  }
+
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
@@ -4609,6 +4628,50 @@ message SigningKeyResolution {
   // default is true when no binding names the repository, so the key is
   // the tenant's release key.
   bool default = 4;
+}
+
+// ==================== Continuous Attestation Verdicts ====================
+
+// AttestationVerdictRequest names the device of a verdict verb. The tenant
+// is always the caller's.
+message AttestationVerdictRequest {
+  string device_id = 1;
+}
+
+// AppraisalCheck is one check of an appraisal.
+message AppraisalCheck {
+  string name = 1;
+  // outcome is the check's outcome, as pkg/attestation/appraisal names it.
+  string outcome = 2;
+  string reason = 3;
+}
+
+// AttestationResult is the appraisal a verdict carries.
+message AttestationResult {
+  bool verified = 1;
+  bool cryptographic_failure = 2;
+  repeated AppraisalCheck checks = 3;
+  string reference_values = 4;
+  string manifest_id = 5;
+  string signer = 6;
+  string baseline_source = 7;
+  google.protobuf.Timestamp appraised_at = 8;
+}
+
+// AttestationVerdict is one re-attestation verdict.
+message AttestationVerdict {
+  string tenant = 1;
+  string device_id = 2;
+  AttestationResult result = 3;
+  bool verified = 4;
+  google.protobuf.Timestamp at = 5;
+  // cause names why the verdict is not verified; empty when it is.
+  string cause = 6;
+}
+
+// ListAttestationVerdictsResponse carries a device's verdicts, oldest first.
+message ListAttestationVerdictsResponse {
+  repeated AttestationVerdict verdicts = 1;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================
