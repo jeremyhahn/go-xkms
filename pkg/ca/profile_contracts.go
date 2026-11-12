@@ -20,6 +20,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/certsubject"
+
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -96,7 +98,7 @@ var (
 
 	// ErrInvalidRawSubject reports a SignOptions.RawSubject that is not a
 	// DER-encoded RDNSequence.
-	ErrInvalidRawSubject = errors.New("ca: raw subject is not a DER-encoded distinguished name")
+	ErrInvalidRawSubject = certsubject.ErrInvalidRawSubject
 
 	// ErrInvalidSAN reports a caller-supplied subject alternative name that
 	// does not parse, or a name of a type the profile does not permit.
