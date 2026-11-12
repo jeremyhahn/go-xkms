@@ -46,4 +46,11 @@ SshView, SshTrustView, key generation, signing, Go code, sdk/ts, SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build, svelte-auth and web/app `npm ci`: pass (the sdk/ts build rewrites the tracked sdk/ts/dist; restored, not committed).
+- vitest test/view3_ssh_key_import.test.ts: 6/6 pass.
+- vitest whole web/app suite (NODE_OPTIONS=--no-experimental-webstorage): 51 files, 418 tests pass.
+- svelte-check: only the baseline role/roles errors (src/views/UsersView.svelte:121, test/view2_users.test.ts:51).
+- vite build: pass.
+- go test -race pkg/api/rest: pass.
+- sdk/go build: pass.
+- make lint: pass, 0 issues.
