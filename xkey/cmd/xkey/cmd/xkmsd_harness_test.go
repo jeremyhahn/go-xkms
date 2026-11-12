@@ -46,7 +46,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
-	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -88,18 +87,18 @@ func testXKMSdQuietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// newTestXKMSService builds a real *pkgxkms.XKMSService backed by a real,
+// newTestXKMSService builds a real *xkms.XKMSService backed by a real,
 // initialized TrustedCA (software key backend, in-memory storage) — the same
 // construction pkg/ca/service_adapter_test.go:setupTestCA uses internally,
 // reassembled here from the same exported production constructors because
 // setupTestCA itself lives in a _test.go file pkg/ca does not export.
-func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
+func newTestXKMSService(t *testing.T) *xkms.XKMSService {
 	t.Helper()
 
 	swBackend, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
 
-	backend, err := pkgxkms.New(&pkgxkms.BackendConfig{
+	backend, err := xkms.NewServiceBackend(&xkms.ServiceBackendConfig{
 		Backend:     swBackend,
 		CertStorage: xkms.NewStorageMemory(),
 	})
@@ -116,7 +115,7 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 	caIface, err := pkgca.NewFromMultiIdentityConfig(&pkgca.MultiIdentityParams{
 		Config:   config,
 		KeyStore: backend,
-		BackendForStore: func(string, xkms.StoreType) (pkgxkms.Backend, error) {
+		BackendForStore: func(string, xkms.StoreType) (xkms.ServiceBackend, error) {
 			return backend, nil
 		},
 		RevocationStore: xkms.NewStorageMemory(),
@@ -128,7 +127,7 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 	caProvider, ok := caIface.(provider.CA)
 	require.True(t, ok, "test CA must implement provider.CA, same as pkg/server's production wiring")
 
-	svc := &pkgxkms.XKMSService{}
+	svc := &xkms.XKMSService{}
 	svc.SetCA(caProvider)
 	return svc
 }
@@ -150,7 +149,7 @@ func startTestXKMSd(t *testing.T) (address string, cleanup func()) {
 
 // startTestXKMSdService is startTestXKMSd over a caller-built service, for a
 // test that wires a subsystem into it first.
-func startTestXKMSdService(t *testing.T, svc *pkgxkms.XKMSService) (address string, cleanup func()) {
+func startTestXKMSdService(t *testing.T, svc *xkms.XKMSService) (address string, cleanup func()) {
 	t.Helper()
 
 	serverTLS := newTestXKMSdTLS(t)
@@ -294,7 +293,7 @@ func startTestXKMSdREST(t *testing.T) (baseURL, spkiPin string) {
 
 	swBackend, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
-	backend, err := pkgxkms.New(&pkgxkms.BackendConfig{
+	backend, err := xkms.NewServiceBackend(&xkms.ServiceBackendConfig{
 		Backend:     swBackend,
 		CertStorage: xkms.NewStorageMemory(),
 	})
@@ -305,7 +304,7 @@ func startTestXKMSdREST(t *testing.T) (baseURL, spkiPin string) {
 
 	srv, err := restapi.NewServer(&restapi.Config{
 		Authenticator: testOperatorAuthenticator{},
-		Backends:      map[string]pkgxkms.Backend{"software": backend},
+		Backends:      map[string]xkms.ServiceBackend{"software": backend},
 		XKMSService:   svc,
 		CA:            svc,
 		Listener:      listener,

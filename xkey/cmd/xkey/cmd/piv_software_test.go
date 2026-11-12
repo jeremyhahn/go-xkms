@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
@@ -52,7 +51,7 @@ func withSoftwarePIVKeyStore(t *testing.T) string {
 // xkey process starts without them.
 func newPIVProcess() {
 	xkms.Reset()
-	pkgxkms.ResetPIV()
+	xkms.XKMSResetPIV()
 }
 
 // TestSoftwarePIV_KeyOutlivesTheProcess generates a software PIV key, then,

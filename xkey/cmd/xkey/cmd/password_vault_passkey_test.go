@@ -28,7 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest/vaultservice"
-	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -58,7 +58,7 @@ func useVaultSimKey(t *testing.T, key *vaultSimKey) *int {
 // every call carries her identity, as an authenticating transport attaches
 // it.
 type vaultServerClient struct {
-	svc *pkgxkms.XKMSService
+	svc *xkms.XKMSService
 }
 
 func (c *vaultServerClient) ctx(ctx context.Context) context.Context {
