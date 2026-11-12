@@ -49,4 +49,12 @@ sdk/ts, xkey, web/desktop, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts `npm ci` + `npm run build`: pass (the rebuilt, tracked sdk/ts/dist differed from the committed one; restored, not committed).
+- sdk/ts/svelte-auth `npm ci`: pass.
+- web/app `npm ci`: pass.
+- `vitest run test/view3_pin_setup.test.ts`: 8/8 pass.
+- `npm test` (NODE_OPTIONS=--no-experimental-webstorage): 51 files, 420 tests pass.
+- `npm run check`: only the baseline errors, UsersView.svelte:121 and view2_users.test.ts:51 (role/roles).
+- `vite build`: pass.
+- `go test -race ./pkg/api/rest/` (codec tags): pass.
+- sdk/go `go build ./...`: pass.
