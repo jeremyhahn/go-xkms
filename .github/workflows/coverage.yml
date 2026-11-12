@@ -14,7 +14,7 @@ on:
 #
 # `stable` is prohibited portfolio-wide (devops.md): an unpinned toolchain
 # moved a green head to red under ci.yml once already, which is why that
-# workflow pins 1.27.3. This now matches it.
+# workflow pins 1.27.4. This now matches it.
 #
 # GOPROXY/GOSUMDB overrides removed, per the same ci-template v1.1 prohibition
 # ci.yml records: the runners inject GOPRIVATE, which already exempts
@@ -23,7 +23,7 @@ on:
 # dependency, and a pinned GOPROXY breaks the build whenever an upstream
 # re-points a tag.
 env:
-  GO_VERSION: '1.27.3'
+  GO_VERSION: '1.27.4'
   COVERAGE_THRESHOLD: 90
 
 jobs:
