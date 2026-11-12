@@ -29,4 +29,15 @@ sdk/go/qrdb_identity_reexport_test.go `TestReexport_QRDBIdentity` pins that
 
 ## Checks
 
-Results to follow.
+Module setup as CI (DS-7500). All on the lane tip:
+
+- sdk/go `go test -race -run TestReexport_`: pass (first try hit a
+  proxy.golang.org stream INTERNAL_ERROR, rerun clean).
+- sdk/go `go build ./...`: pass.
+- xkey `go build ./...` + `go vet` cmd/xkey/cmd, pkg/gui/services: pass.
+- xkey cmd tests `-run 'PasswordVault|Passkey|XKMSd'`: pass.
+- xkey gui/services tests `-run 'StaticPW|Passkey'`: pass.
+- root `make lint`: pass (0 issues in all modules and tag sets).
+- gofmt -l on the edited files: clean, no pre-existing findings.
+- No xkey .go file imports pkg/auth; api-parity.md no longer names
+  `types.SymmetricKeyProvider`.
