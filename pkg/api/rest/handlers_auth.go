@@ -689,6 +689,7 @@ func (s *Server) capabilityFlags() map[string]bool {
 		"ssh":              s.sshHandlers != nil,
 		"frost":            frostEnabled,
 		"cluster":          s.xkmsService != nil && s.xkmsService.Clustered(),
+		"trust_roots":      s.trustRootHandlers != nil,
 	}
 }
 
