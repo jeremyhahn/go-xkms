@@ -495,17 +495,19 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
   - the xkmsd bootstrap listener certificate the system tenant, and a persisted
     one without it is regenerated (`ensureBootstrapCert`,
     `pkg/server/unified_tls.go:267`);
+  - a hybrid (classical + ML-DSA) leaf certificate the caller's `tenantID`,
+    stamped on the working copy before the first signature, and an empty
+    tenant is refused with `ErrTenantRequired` (`CreateHybridCertificate`,
+    `pkg/ca/hybrid.go:145-152`); a hybrid CA template keeps its subject;
   - ACME issuance is in [acme-issuance](../acme-issuance/engineering.md#invariants).
 
   Not stamped: CA hierarchy certificates (roots, intermediates, subordinate
   CAs, per-tenant ACME roots), whose subject names the CA; the TCG LAK, whose
   subject must be empty; and the FIDO2 attestation profile, which rewrites the
-  subject to WebAuthn §8.2.1's fixed OU after the tenant is required.
-
-  Still open (SPEC `authz-tenant-ou` stays planned): `CreateHybridCertificate`
-  (`pkg/ca/hybrid.go:95`), which signs the caller's template and has no
-  production caller, and the virtual-authenticator attestation certificate
-  (`pkg/fido2/authenticator/attestation.go:184`).
+  subject to WebAuthn §8.2.1's fixed OU after the tenant is required; and the
+  virtual-authenticator attestation CSR
+  (`pkg/fido2/authenticator/attestation.go:183-186`), whose Subject-OU WebAuthn
+  Level 2 §8.2.1 fixes to `AttestationCertificateOU`, as for the FIDO2 profile.
 - **Certificate storage is confined to the caller's tenant** (go-xkms#1228).
   The `XKMSService` certificate methods resolve the backend with
   `resolveTenantBackend` (`pkg/xkms/servicer_cert.go:29-284`), so a tenant's
