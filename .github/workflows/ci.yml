@@ -1617,7 +1617,7 @@ jobs:
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/gomodauth.env"
-          GO_QUICRAFT_IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$IT_PROJECT" down --volumes || true
+          GO_IMAGE="$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")" GO_QUICRAFT_IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$IT_PROJECT" down --volumes || true
           [ -z "${IT_LEASE:-}" ] || docker rm "$IT_LEASE" >/dev/null || true
       # >>> CUSTOMIZE (go-xkms)
       # The suite's stacks are <IT_PROJECT>-<suite> projects, so the
@@ -1719,7 +1719,7 @@ jobs:
             echo "soak iteration $i"
             rc=0
             make "$SOAK_TARGET" MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$p" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS" || rc=$?
-            GO_QUICRAFT_IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$p" down --volumes || true
+            GO_IMAGE="$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")" GO_QUICRAFT_IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$p" down --volumes || true
             if [ "$rc" -ne 0 ]; then
               echo "::error::soak iteration $i failed (exit $rc)"
               exit "$rc"
@@ -1746,7 +1746,7 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/gomodauth.env"
           if [ -s "$RUNNER_TEMP/soak-project" ]; then
-            GO_QUICRAFT_IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$(cat "$RUNNER_TEMP/soak-project")" down --volumes || true
+            GO_IMAGE="$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")" GO_QUICRAFT_IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$(cat "$RUNNER_TEMP/soak-project")" down --volumes || true
           fi
           rm -f "$RUNNER_TEMP/soak-project"
           [ -z "${IT_LEASE:-}" ] || docker rm "$IT_LEASE" >/dev/null || true
