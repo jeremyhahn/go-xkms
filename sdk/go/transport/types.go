@@ -367,6 +367,21 @@ type ListSigningKeyBindingsResponse = pkgtransport.ListSigningKeyBindingsRespons
 type DeleteSigningKeyBindingRequest = pkgtransport.DeleteSigningKeyBindingRequest
 type ResolveSigningKeyRequest = pkgtransport.ResolveSigningKeyRequest
 type SigningKeyResolution = pkgtransport.SigningKeyResolution
+
+// Attestation appraisal types (the verifier's endorsements, reference
+// values and quote appraisal).
+type AttestationEndorsement = pkgtransport.AttestationEndorsement
+type PutAttestationEndorsementRequest = pkgtransport.PutAttestationEndorsementRequest
+type ListAttestationEndorsementsRequest = pkgtransport.ListAttestationEndorsementsRequest
+type ListAttestationEndorsementsResponse = pkgtransport.ListAttestationEndorsementsResponse
+type DeleteAttestationEndorsementRequest = pkgtransport.DeleteAttestationEndorsementRequest
+type AttestationReferenceValues = pkgtransport.AttestationReferenceValues
+type PutAttestationReferenceValuesRequest = pkgtransport.PutAttestationReferenceValuesRequest
+type GetAttestationReferenceValuesRequest = pkgtransport.GetAttestationReferenceValuesRequest
+type ListAttestationReferenceValuesResponse = pkgtransport.ListAttestationReferenceValuesResponse
+type DeleteAttestationReferenceValuesRequest = pkgtransport.DeleteAttestationReferenceValuesRequest
+type AppraiseAttestationQuoteRequest = pkgtransport.AppraiseAttestationQuoteRequest
+type AttestationResult = pkgtransport.AttestationResult
 type OIDCDeviceLogin = pkgtransport.OIDCDeviceLogin
 type OIDCAccessToken = pkgtransport.OIDCAccessToken
 
