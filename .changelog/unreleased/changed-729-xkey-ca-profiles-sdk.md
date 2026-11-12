@@ -1,0 +1,1 @@
+- **xkey's CA profile tests reach the profile registry through sdk/go.** sdk/go re-exports `ErrProfileNotFound` and `ErrInvalidProfile` from pkg/ca.
