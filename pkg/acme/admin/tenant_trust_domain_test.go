@@ -70,3 +70,25 @@ func TestCreateTenant_AcceptsTrustDomainID(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateTenant_RefusesClusterTrustDomain(t *testing.T) {
+	fake := newFakeTenantServicer()
+	svc := mustTenantAwareAdminService(t, nil, nil, nil, slog.Default(), "1.0.0")
+	svc.SetTenantService(fake)
+
+	// Without a cluster trust domain the equality check is skipped.
+	_, err := svc.CreateTenant(context.Background(), CreateTenantRequest{ID: "cluster.example", Name: "Tenant"})
+	require.NoError(t, err)
+
+	svc.SetClusterTrustDomain("cluster.example")
+	fake = newFakeTenantServicer()
+	svc.SetTenantService(fake)
+	_, err = svc.CreateTenant(context.Background(), CreateTenantRequest{ID: "cluster.example", Name: "Tenant"})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, caerrors.Malformed), "want an input error, got %v", err)
+	assert.ErrorIs(t, err, spiffe.ErrTenantIsClusterTrustDomain)
+	assert.Empty(t, fake.tenants, "go-qrdb CreateTenant must not be called on a refusal")
+
+	_, err = svc.CreateTenant(context.Background(), CreateTenantRequest{ID: "acme", Name: "Tenant"})
+	require.NoError(t, err)
+}
