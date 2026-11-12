@@ -36,4 +36,12 @@ still import pkg/fido2, pkg/fido2/uhid or pkg/fido2/virtualdevice:
 
 ## Results
 
-Results to follow.
+Done-check grep over xkey prints nothing after the refactor commits.
+
+- sdk/go go test -race -run TestReexport_ ./fido2/ ./fido2/uhid/: pass
+- sdk/go go build ./...: pass
+- xkey go build ./... + go vet (codec tags; integration linux for test/integration/uhid): pass
+- xkey go test -race ./pkg/keyboard/ ./pkg/gadget/: pass
+- xkey go test -race -run 'Passkey|FIDO2Device|VirtualDevice' ./cmd/xkey/cmd/ ./pkg/gui/services/: pass
+- make lint: pass (0 issues in every module and tag set)
+- test/integration/uhid needs /dev/uhid: vetted only.
