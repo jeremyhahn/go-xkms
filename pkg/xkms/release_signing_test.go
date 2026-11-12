@@ -17,13 +17,16 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/veraison/corim/corim"
+	"github.com/veraison/go-cose"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
@@ -131,4 +134,31 @@ func TestSignReleaseCoRIM_NotConfigured(t *testing.T) {
 	svc := &XKMSService{}
 	_, err := svc.SignReleaseCoRIM(context.Background(), &SignReleaseCoRIMRequest{Repository: "acme/app"})
 	require.Error(t, err)
+}
+
+func TestCoseAlgorithm(t *testing.T) {
+	for _, tc := range []struct {
+		curve elliptic.Curve
+		want  cose.Algorithm
+	}{
+		{elliptic.P256(), cose.AlgorithmES256},
+		{elliptic.P384(), cose.AlgorithmES384},
+		{elliptic.P521(), cose.AlgorithmES512},
+	} {
+		k, err := ecdsa.GenerateKey(tc.curve, rand.Reader)
+		require.NoError(t, err)
+		got, err := coseAlgorithm(k.Public())
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, got)
+	}
+	edPub, _, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	got, err := coseAlgorithm(edPub)
+	require.NoError(t, err)
+	assert.Equal(t, cose.AlgorithmEdDSA, got)
+	got, err = coseAlgorithm(&rsa.PublicKey{})
+	require.NoError(t, err)
+	assert.Equal(t, cose.AlgorithmPS256, got)
+	_, err = coseAlgorithm(struct{}{})
+	require.ErrorIs(t, err, refvalue.ErrUnsupportedKey)
 }
