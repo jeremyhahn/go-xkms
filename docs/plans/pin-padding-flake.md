@@ -28,3 +28,4 @@ Each case asserts `errors.Is(err, ErrInvalidPKCS7Padding)`.
 The V2 test (pin_protocol_v2_test.go:549) is deterministic; no production change.
 
 ## Result
+- go test -count=200 -run TestPINProtocolV1 (codec tags): pass; make lint: pass (0 issues; first run hit missing shared /gocache entries in web/desktop, clean with a private GOCACHE).
