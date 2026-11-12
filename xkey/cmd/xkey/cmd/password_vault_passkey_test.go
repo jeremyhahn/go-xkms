@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest/vaultservice"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -62,7 +61,7 @@ type vaultServerClient struct {
 }
 
 func (c *vaultServerClient) ctx(ctx context.Context) context.Context {
-	return auth.WithIdentity(ctx, &auth.Identity{Subject: "alice", TenantID: vaultservice.Tenant})
+	return xkms.QRDBWithIdentity(ctx, &xkms.QRDBIdentity{Subject: "alice", TenantID: vaultservice.Tenant})
 }
 
 func (c *vaultServerClient) Connect(context.Context) error { return nil }

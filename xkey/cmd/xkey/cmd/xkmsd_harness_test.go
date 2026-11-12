@@ -40,7 +40,6 @@ import (
 	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	pkgca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
@@ -61,12 +60,12 @@ import (
 // production authenticator that does this without a real credential.
 type testOperatorAuthenticator struct{}
 
-func (testOperatorAuthenticator) AuthenticateHTTP(*http.Request) (*auth.Identity, error) {
-	return &auth.Identity{Subject: "xkey-harness-operator", TenantID: "system", Roles: []string{"operator"}}, nil
+func (testOperatorAuthenticator) AuthenticateHTTP(*http.Request) (*xkms.QRDBIdentity, error) {
+	return &xkms.QRDBIdentity{Subject: "xkey-harness-operator", TenantID: "system", Roles: []string{"operator"}}, nil
 }
 
-func (testOperatorAuthenticator) AuthenticateGRPC(context.Context, metadata.MD) (*auth.Identity, error) {
-	return &auth.Identity{Subject: "xkey-harness-operator", TenantID: "system", Roles: []string{"operator"}}, nil
+func (testOperatorAuthenticator) AuthenticateGRPC(context.Context, metadata.MD) (*xkms.QRDBIdentity, error) {
+	return &xkms.QRDBIdentity{Subject: "xkey-harness-operator", TenantID: "system", Roles: []string{"operator"}}, nil
 }
 
 func (testOperatorAuthenticator) Name() string { return "xkey-test-operator" }
@@ -236,7 +235,7 @@ func testOperatorUnaryInterceptor(ctx context.Context, req any, _ *grpc.UnarySer
 	if err != nil {
 		return nil, err
 	}
-	return handler(auth.WithIdentity(ctx, identity), req)
+	return handler(xkms.QRDBWithIdentity(ctx, identity), req)
 }
 
 // testOperatorStreamInterceptor is testOperatorUnaryInterceptor for streams.
@@ -245,7 +244,7 @@ func testOperatorStreamInterceptor(srv any, ss grpc.ServerStream, _ *grpc.Stream
 	if err != nil {
 		return err
 	}
-	return handler(srv, &identityServerStream{ServerStream: ss, ctx: auth.WithIdentity(ss.Context(), identity)})
+	return handler(srv, &identityServerStream{ServerStream: ss, ctx: xkms.QRDBWithIdentity(ss.Context(), identity)})
 }
 
 // identityServerStream carries the authenticated identity in its context.
