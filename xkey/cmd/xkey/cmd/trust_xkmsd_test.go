@@ -299,3 +299,65 @@ func TestTrustAddXKMSd_NotConfigured(t *testing.T) {
 
 	requireLocalTrustStoreUntouched(t)
 }
+
+func TestTrustClassifyXKMSd_QuarantinesServerRoot(t *testing.T) {
+	fingerprint := startTrustXKMSd(t)
+
+	var buf bytes.Buffer
+	cmd := newTrustAddTestCommand(t, &buf, "synced", "")
+	require.NoError(t, runTrustClassify(cmd, []string{"  " + strings.ToUpper(fingerprint) + " "}))
+	require.Contains(t, buf.String(), "Certificate "+fingerprint+" classified as synced")
+
+	root, err := getServerTrustRoot(t, fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, "synced", string(root.Purpose))
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustClassifyXKMSd_RefusesOtherPurpose(t *testing.T) {
+	fingerprint := startTrustXKMSd(t)
+	before, err := getServerTrustRoot(t, fingerprint)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	err = runTrustClassify(newTrustAddTestCommand(t, &buf, "user-ca", ""), []string{fingerprint})
+	require.ErrorIs(t, err, ErrTrustClassifyFailed)
+	require.Contains(t, err.Error(), "synced")
+	require.Empty(t, buf.String())
+
+	after, err := getServerTrustRoot(t, fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, before.Purpose, after.Purpose)
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustClassifyXKMSd_UnknownFingerprint(t *testing.T) {
+	startTrustXKMSd(t)
+
+	var buf bytes.Buffer
+	err := runTrustClassify(newTrustAddTestCommand(t, &buf, "synced", ""), []string{strings.Repeat("ab", 32)})
+	require.ErrorIs(t, err, ErrTrustClassifyFailed)
+	require.Contains(t, err.Error(), "TrustRootQuarantine")
+	require.Empty(t, buf.String())
+
+	requireLocalTrustStoreUntouched(t)
+}
+
+func TestTrustClassifyXKMSd_BadPurpose(t *testing.T) {
+	fingerprint := startTrustXKMSd(t)
+	before, err := getServerTrustRoot(t, fingerprint)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	err = runTrustClassify(newTrustAddTestCommand(t, &buf, "nope", ""), []string{fingerprint})
+	require.ErrorIs(t, err, ErrTrustClassifyFailed)
+	require.Empty(t, buf.String())
+
+	after, err := getServerTrustRoot(t, fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, before.Purpose, after.Purpose)
+
+	requireLocalTrustStoreUntouched(t)
+}
