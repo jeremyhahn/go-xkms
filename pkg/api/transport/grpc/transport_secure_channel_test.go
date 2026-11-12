@@ -230,6 +230,26 @@ func TestSignImage_GuardChecksTheDialedTargetNotTheConfigAddress(t *testing.T) {
 	assert.Zero(t, rec.calls.Load(), "the registry credential is never sent")
 }
 
+// A TLS reconnect that fails in grpc.NewClient leaves the established
+// plaintext client in place, so the guard must still classify that client by
+// the channel it was dialed with, not by the failed attempt's settings.
+func TestSignImage_GuardKeepsThePlaintextStateAfterAFailedReconnect(t *testing.T) {
+	guardOn(t)
+	tr, rec := connectPlaintextThenFlip(t)
+	tr.config.AllowInsecureTransport = true
+	tr.config.Address = "dns:///%zz"
+
+	require.Error(t, tr.Connect(context.Background()), "an unparseable target fails in grpc.NewClient")
+	tr.config.AllowInsecureTransport = false
+
+	_, err := tr.SignImage(context.Background(), &transport.SignImageRequest{
+		Reference: "registry.example/app:1",
+		Registry:  &transport.ImageRegistryCredentials{Username: "ci", Password: types.SecretBytes("hunter2")},
+	})
+	require.ErrorIs(t, err, transport.ErrInsecureTransport, "the live client is still the plaintext one")
+	assert.Zero(t, rec.calls.Load(), "the registry credential is never sent")
+}
+
 func TestRequireSecureTarget_LeaderChecksTheEstablishedChannelNotTheConfig(t *testing.T) {
 	guardOn(t)
 	tr, _ := connectPlaintextThenFlip(t)

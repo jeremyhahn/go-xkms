@@ -199,11 +199,6 @@ func (t *Transport) Connect(ctx context.Context) error {
 	if err := cfg.RequireSecureChannel("grpc", plaintext && !transport.IsUnixEndpoint(cfg.Address)); err != nil {
 		return err
 	}
-	t.credsOpt = credsOpt
-	t.dialed = true
-	t.plaintextChannel = plaintext
-	t.dialedTarget = cfg.Address
-
 	opts := []grpc.DialOption{
 		credsOpt,
 		grpc.WithChainUnaryInterceptor(t.notLeaderInterceptor),
@@ -211,11 +206,18 @@ func (t *Transport) Connect(ctx context.Context) error {
 	opts = append(opts, grpcauth.DialOptions(cfg.JWTToken)...)
 
 	// Connect to the server
-	conn, err := grpc.NewClient(t.dialedTarget, opts...)
+	conn, err := grpc.NewClient(cfg.Address, opts...)
 	if err != nil {
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
+	// The client and the security state the guard reads are published
+	// together, only once the new client exists: a failed reconnect leaves
+	// the established client classified by the channel it was dialed with.
+	t.credsOpt = credsOpt
+	t.dialed = true
+	t.plaintextChannel = plaintext
+	t.dialedTarget = cfg.Address
 	t.conn = conn
 	t.client = pb.NewKeystoreServiceClient(conn)
 
