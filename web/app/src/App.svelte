@@ -11,6 +11,7 @@
   import BackendsView from "$views/BackendsView.svelte";
   import SettingsView from "$views/SettingsView.svelte";
   import KeysView from "$views/KeysView.svelte";
+  import KeyRewrapView from "$views/KeyRewrapView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
   import PinView from "$views/PinView.svelte";
   import TpmPoliciesView from "$views/TpmPoliciesView.svelte";
@@ -66,6 +67,7 @@
       <UsersView />
     {:else if routerStore.name === "frost"}
       <FrostView />
+    {:else if routerStore.name === "keyRewrap"}<KeyRewrapView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
     {:else if routerStore.name === "passwords"}

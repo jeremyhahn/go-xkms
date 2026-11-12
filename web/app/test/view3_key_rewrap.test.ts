@@ -121,7 +121,7 @@ describe("KeyRewrapView", () => {
     const copy = await screen.findByRole("button", { name: "Copy as JSON" });
     await fireEvent.click(copy);
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(writeText.mock.calls[0][0] as string)).toEqual(response.wrapped);
+    expect(JSON.parse(writeText.mock.calls[0]?.[0] as string)).toEqual(response.wrapped);
   });
 
   it("keeps Rewrap disabled until backend, key ID and ciphertext are set", async () => {
