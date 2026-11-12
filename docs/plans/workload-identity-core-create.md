@@ -38,4 +38,5 @@ go-qrdb's own create path (needs the v0.58.2-alpha bump, frozen); docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/xkms/... ./pkg/spiffe/... ./pkg/acme/admin/... ./cmd/xkmsd/...`: pass; no existing test needed a new tenant ID.
+- `make lint`: pass (0 issues on every module and tag set).
