@@ -14,6 +14,7 @@
   import CertificatesView from "$views/CertificatesView.svelte";
   import PinView from "$views/PinView.svelte";
   import TpmPoliciesView from "$views/TpmPoliciesView.svelte";
+  import TpmKeyPolicyView from "$views/TpmKeyPolicyView.svelte";
   import UsersView from "$views/UsersView.svelte";
   import TenantsView from "$views/TenantsView.svelte";
   import PasswordsView from "$views/PasswordsView.svelte";
@@ -62,6 +63,7 @@
       <SshView />
     {:else if routerStore.name === "tpmPolicies"}
       <TpmPoliciesView />
+    {:else if routerStore.name === "tpmKeyPolicy"}<TpmKeyPolicyView />
     {:else if routerStore.name === "users"}
       <UsersView />
     {:else if routerStore.name === "frost"}
