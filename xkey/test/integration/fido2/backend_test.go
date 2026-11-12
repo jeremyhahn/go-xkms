@@ -35,9 +35,9 @@ import (
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -26,6 +26,12 @@ const (
 	JSONRPCVersion = pairingproto.JSONRPCVersion
 	MinMTU         = pairingproto.MinMTU
 
+	FlagFirstFragment  = pairingproto.FlagFirstFragment
+	FlagLastFragment   = pairingproto.FlagLastFragment
+	FragmentHeaderSize = pairingproto.FragmentHeaderSize
+
+	PIVSlotAuthentication = pairingproto.PIVSlotAuthentication
+
 	AttestationFormatAndroidKey = pairingproto.AttestationFormatAndroidKey
 
 	SecurityLevelSoftware  = pairingproto.SecurityLevelSoftware
@@ -49,10 +55,13 @@ const (
 // Live attestation challenge.
 const (
 	AttestChannelBindingDomain       = pairingproto.AttestChannelBindingDomain
+	AttestChannelBindingSize         = pairingproto.AttestChannelBindingSize
 	AttestFingerprintSize            = pairingproto.AttestFingerprintSize
 	AttestGenesisChallenge           = pairingproto.AttestGenesisChallenge
 	AttestNonceSize                  = pairingproto.AttestNonceSize
+	AttestProtocolV1                 = pairingproto.AttestProtocolV1
 	AttestProtocolV2                 = pairingproto.AttestProtocolV2
+	AttestStaticKeySize              = pairingproto.AttestStaticKeySize
 	AttestPurposePair                = pairingproto.AttestPurposePair
 	AttestPurposeReattest            = pairingproto.AttestPurposeReattest
 	AttestPurposeVerifyUser          = pairingproto.AttestPurposeVerifyUser
@@ -168,6 +177,7 @@ const (
 	ErrorCodeSyncRemoteUnavail    = pairingproto.ErrorCodeSyncRemoteUnavail
 	ErrorCodeSyncVersionMismatch  = pairingproto.ErrorCodeSyncVersionMismatch
 	ErrorCodeUnsupportedAlg       = pairingproto.ErrorCodeUnsupportedAlg
+	ErrorCodeUserCancelled        = pairingproto.ErrorCodeUserCancelled
 )
 
 // Envelope, transport, framing and error types.
@@ -283,6 +293,7 @@ type (
 	RemoteImportSharedKeyResult           = pairingproto.RemoteImportSharedKeyResult
 	RemoteKeyInfo                         = pairingproto.RemoteKeyInfo
 	RemoteListBackendsResult              = pairingproto.RemoteListBackendsResult
+	RemoteListBackupsParams               = pairingproto.RemoteListBackupsParams
 	RemoteListKeysParams                  = pairingproto.RemoteListKeysParams
 	RemoteListKeysResult                  = pairingproto.RemoteListKeysResult
 	RemoteOATHAddParams                   = pairingproto.RemoteOATHAddParams
@@ -327,6 +338,7 @@ var (
 	EncodeErrorResponse = pairingproto.EncodeErrorResponse
 	EncodeRequest       = pairingproto.EncodeRequest
 	EncodeResponse      = pairingproto.EncodeResponse
+	IsLocalMethod       = pairingproto.IsLocalMethod
 	MapRPCError         = pairingproto.MapRPCError
 	NewFragmenter       = pairingproto.NewFragmenter
 	NewReassembler      = pairingproto.NewReassembler
@@ -336,6 +348,7 @@ var (
 	AttestChannelBinding                   = pairingproto.AttestChannelBinding
 	AttestedKeyFingerprint                 = pairingproto.AttestedKeyFingerprint
 	BuildAttestTranscript                  = pairingproto.BuildAttestTranscript
+	ComputeAttestChannelBinding            = pairingproto.ComputeAttestChannelBinding
 	VerifyAttestChallengeSignature         = pairingproto.VerifyAttestChallengeSignature
 	VerifyGenesisChallenge                 = pairingproto.VerifyGenesisChallenge
 	VerifyUserVerificationGenesisChallenge = pairingproto.VerifyUserVerificationGenesisChallenge
@@ -350,7 +363,10 @@ func DecodeResult[T any](resp *Response) (*T, error) {
 
 // Protocol errors.
 var (
+	ErrAttestGenesisChallenge           = pairingproto.ErrAttestGenesisChallenge
 	ErrAttestProtocolDowngrade          = pairingproto.ErrAttestProtocolDowngrade
+	ErrAttestSignatureInvalid           = pairingproto.ErrAttestSignatureInvalid
+	ErrAttestSignatureMissing           = pairingproto.ErrAttestSignatureMissing
 	ErrUserVerificationGenesisChallenge = pairingproto.ErrUserVerificationGenesisChallenge
 	ErrAttestationFailed                = pairingproto.ErrAttestationFailed
 	ErrAttestationNotSupported          = pairingproto.ErrAttestationNotSupported

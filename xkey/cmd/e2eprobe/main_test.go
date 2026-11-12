@@ -35,8 +35,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 )

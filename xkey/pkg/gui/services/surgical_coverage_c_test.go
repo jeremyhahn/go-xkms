@@ -31,8 +31,8 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"

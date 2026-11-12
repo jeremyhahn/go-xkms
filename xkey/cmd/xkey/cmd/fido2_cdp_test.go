@@ -25,8 +25,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/cdp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

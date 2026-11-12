@@ -11,7 +11,7 @@ can hold certificates themselves.
 ## Service API
 
 Each function takes a `context.Context` first. It addresses the key either by
-`*types.KeyAttributes` or, in the `ByID` form, by a key ID string
+`*xkmssdk.KeyAttributes` or, in the `ByID` form, by a key ID string
 (`backend:type:algo:keyname`, see [API parity](api-parity.md#xkmsservice)).
 
 | Function | `ByID` form | Description |
@@ -38,7 +38,7 @@ import (
     "crypto/x509"
     "net/http"
 
-    "github.com/jeremyhahn/go-xkms/pkg/types"
+    xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
     "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -51,9 +51,9 @@ if err := xkms.AutoInitialize(&xkms.AutoConfig{}); err != nil {
 }
 defer xkms.Close()
 
-attrs := &types.KeyAttributes{
+attrs := &xkmssdk.KeyAttributes{
     CN:        "api.example.com",
-    StoreType: types.BackendType("software"),
+    StoreType: xkmssdk.BackendType("software"),
 }
 
 if err := xkms.SaveCertificate(ctx, attrs, cert); err != nil {

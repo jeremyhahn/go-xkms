@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"

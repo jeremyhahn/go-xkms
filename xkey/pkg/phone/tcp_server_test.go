@@ -27,7 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
 // staticKeyAlive returns nil while key still holds its private scalar, and

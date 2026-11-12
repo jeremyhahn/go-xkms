@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/stretchr/testify/assert"
 )

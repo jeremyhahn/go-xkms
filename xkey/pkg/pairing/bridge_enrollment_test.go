@@ -28,9 +28,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -47,8 +47,8 @@ import (
 type fakeEnroller struct {
 	ekCert     *x509.Certificate
 	ekCertErr  error
-	iak        *types.KeyAttributes
-	idevid     *types.KeyAttributes
+	iak        *xkms.KeyAttributes
+	idevid     *xkms.KeyAttributes
 	csr        tpm2.TCG_CSR_IDEVID
 	csrErr     error
 	props      *tpm2.PropertiesFixed
@@ -61,14 +61,14 @@ func (f *fakeEnroller) EKCertificate() (*x509.Certificate, error) {
 	return f.ekCert, f.ekCertErr
 }
 
-func (f *fakeEnroller) IAKAttributes() (*types.KeyAttributes, error) { return f.iak, nil }
+func (f *fakeEnroller) IAKAttributes() (*xkms.KeyAttributes, error) { return f.iak, nil }
 
-func (f *fakeEnroller) IDevIDAttributes() (*types.KeyAttributes, error) { return f.idevid, nil }
+func (f *fakeEnroller) IDevIDAttributes() (*xkms.KeyAttributes, error) { return f.idevid, nil }
 
 func (f *fakeEnroller) CreateTCG_CSR_IDEVID(
 	_ *x509.Certificate,
-	_ *types.KeyAttributes,
-	_ *types.KeyAttributes) (tpm2.TCG_CSR_IDEVID, error) {
+	_ *xkms.KeyAttributes,
+	_ *xkms.KeyAttributes) (tpm2.TCG_CSR_IDEVID, error) {
 	return f.csr, f.csrErr
 }
 
@@ -89,7 +89,7 @@ var _ TPMEnroller = (*fakeEnroller)(nil)
 
 // fakeKeyAttributes returns key attributes carrying a non-empty TPM2B_PUBLIC,
 // which is what the handlers read out as the IAK / IDevID public area.
-func fakeKeyAttributes(t *testing.T) *types.KeyAttributes {
+func fakeKeyAttributes(t *testing.T) *xkms.KeyAttributes {
 	t.Helper()
 
 	unique := gotpm2.TPM2BPublicKeyRSA{Buffer: make([]byte, 256)}
@@ -104,8 +104,8 @@ func fakeKeyAttributes(t *testing.T) *types.KeyAttributes {
 		Unique:     gotpm2.NewTPMUPublicID(gotpm2.TPMAlgRSA, &unique),
 	}
 
-	return &types.KeyAttributes{
-		TPMAttributes: &types.TPMAttributes{
+	return &xkms.KeyAttributes{
+		TPMAttributes: &xkms.TPMAttributes{
 			Public:  public,
 			BPublic: gotpm2.New2B(public),
 		},

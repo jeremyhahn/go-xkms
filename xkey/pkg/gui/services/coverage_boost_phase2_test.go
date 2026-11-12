@@ -28,7 +28,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 	"github.com/stretchr/testify/assert"

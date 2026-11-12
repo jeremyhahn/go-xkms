@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 )
 
 const fido2TestBarrierPassword = "fido2-barrier-password"

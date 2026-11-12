@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nssdb"

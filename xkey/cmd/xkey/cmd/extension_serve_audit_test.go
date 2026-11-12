@@ -19,8 +19,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/stretchr/testify/require"

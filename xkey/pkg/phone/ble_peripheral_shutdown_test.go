@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
 // shrinkPeripheralTimeout makes the connection join bounded by something a

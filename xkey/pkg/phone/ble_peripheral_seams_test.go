@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // TestBLEPeripheral_RegisterConnection_RefusesWhenClosed pins the refusal

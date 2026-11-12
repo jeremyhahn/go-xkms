@@ -83,7 +83,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-xkms/pkg/types"
+    xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
     "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -100,11 +100,11 @@ func main() {
     defer xkms.Close()
 
     // Generate a key
-    key, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
+    key, err := xkms.GenerateKey(ctx, &xkmssdk.KeyAttributes{
         CN:            "my-signing-key",
         Backend:       "software",
         KeyAlgorithm:  x509.ECDSA,
-        ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+        ECCAttributes: &xkmssdk.ECCAttributes{Curve: elliptic.P256()},
     })
     if err != nil {
         log.Fatal(err)
@@ -176,7 +176,7 @@ import (
 
     "github.com/jeremyhahn/go-xkms/pkg/backend/software"
     "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-    "github.com/jeremyhahn/go-xkms/pkg/types"
+    xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
     "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -219,11 +219,11 @@ func main() {
     defer xkms.Close()
 
     // The service API is identical to Pattern A
-    if _, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
+    if _, err := xkms.GenerateKey(ctx, &xkmssdk.KeyAttributes{
         CN:            "my-key",
         Backend:       "software",
         KeyAlgorithm:  x509.ECDSA,
-        ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+        ECCAttributes: &xkmssdk.ECCAttributes{Curve: elliptic.P256()},
     }); err != nil {
         log.Fatal(err)
     }
@@ -378,8 +378,8 @@ helpers takes a `context.Context` first.
 | Function | Description |
 |----------|-------------|
 | `GenerateSymmetricKey(ctx, backend, attrs)` | Generate a symmetric key |
-| `Encrypt(ctx, kid, data, opts)` | Encrypt; returns `*types.EncryptedData` |
-| `Decrypt(ctx, kid, encrypted, opts)` | Decrypt a `*types.EncryptedData` |
+| `Encrypt(ctx, kid, data, opts)` | Encrypt; returns `*xkmssdk.EncryptedData` |
+| `Decrypt(ctx, kid, encrypted, opts)` | Decrypt a `*xkmssdk.EncryptedData` |
 
 ### Certificate Operations
 
@@ -449,23 +449,23 @@ Per-backend capabilities are in [crypto-backends](../../../docs/crypto-backends/
 
 ```go
 // ECDSA key
-ecKey, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
+ecKey, err := xkms.GenerateKey(ctx, &xkmssdk.KeyAttributes{
     CN:            "ec-signing-key",
     Backend:       "software",
     KeyAlgorithm:  x509.ECDSA,
-    ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+    ECCAttributes: &xkmssdk.ECCAttributes{Curve: elliptic.P256()},
 })
 
 // RSA key
-rsaKey, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
+rsaKey, err := xkms.GenerateKey(ctx, &xkmssdk.KeyAttributes{
     CN:            "rsa-encryption-key",
     Backend:       "software",
     KeyAlgorithm:  x509.RSA,
-    RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+    RSAAttributes: &xkmssdk.RSAAttributes{KeySize: 2048},
 })
 
 // Ed25519 key
-edKey, err := xkms.GenerateKey(ctx, &types.KeyAttributes{
+edKey, err := xkms.GenerateKey(ctx, &xkmssdk.KeyAttributes{
     CN:           "ed25519-signing-key",
     Backend:      "software",
     KeyAlgorithm: x509.Ed25519,
@@ -496,23 +496,23 @@ softwareKeys, err := xkms.ListKeys(ctx, "software")
 ## Symmetric Encryption
 
 ```go
-symKey, err := xkms.GenerateSymmetricKey(ctx, "software", &types.KeyAttributes{
+symKey, err := xkms.GenerateSymmetricKey(ctx, "software", &xkmssdk.KeyAttributes{
     CN:                 "my-encryption-key",
     Backend:            "software",
-    KeyType:            types.KeyTypeEncryption,
-    SymmetricAlgorithm: types.SymmetricAES256GCM,
+    KeyType:            xkmssdk.KeyTypeEncryption,
+    SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
 })
 
-encrypted, err := xkms.Encrypt(ctx, "software:::my-encryption-key", plaintext, &types.EncryptOptions{
+encrypted, err := xkms.Encrypt(ctx, "software:::my-encryption-key", plaintext, &xkmssdk.EncryptOptions{
     AdditionalData: []byte("context"),
 })
 
-decrypted, err := xkms.Decrypt(ctx, "software:::my-encryption-key", encrypted, &types.DecryptOptions{
+decrypted, err := xkms.Decrypt(ctx, "software:::my-encryption-key", encrypted, &xkmssdk.DecryptOptions{
     AdditionalData: []byte("context"),
 })
 ```
 
-`types.SymmetricAES256GCM` is `pkg/types/types.go:477`; AES-128 and AES-192
+`xkmssdk.SymmetricAES256GCM` is `pkg/types/types.go:477`; AES-128 and AES-192
 GCM have sibling constants.
 
 ## Testing

@@ -27,7 +27,7 @@ import (
 	"time"
 
 	gotpm2 "github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/stretchr/testify/assert"
