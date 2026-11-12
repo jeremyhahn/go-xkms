@@ -40,6 +40,7 @@ type acmeClient interface {
 	RevokeCertificate(ctx context.Context, cert *x509.Certificate, reason acme.CRLReasonCode) error
 	RenewCertificate(ctx context.Context, oldCert *x509.Certificate, req *sdkacme.ACMECertificateRequest) (*x509.Certificate, error)
 	EnrollDevice(ctx context.Context, config *sdkacme.ACMEEnrollmentConfig) (*sdkacme.ACMEEnrollmentResult, error)
+	RequestEndorsementKeyCertificate(ctx context.Context, config *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error)
 	Close() error
 }
 
@@ -120,6 +121,7 @@ is the source of truth, so no local account state is kept.`,
 	c.AddCommand(newACMERevokeCmd(flags))
 	c.AddCommand(newACMERenewCmd(flags))
 	c.AddCommand(newACMEEnrollCmd(flags))
+	c.AddCommand(newACMEEndorseCmd(flags))
 	return c
 }
 
