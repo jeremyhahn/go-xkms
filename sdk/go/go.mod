@@ -7,7 +7,7 @@ require (
 	github.com/google/go-tpm v0.9.8
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
-	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: v0.7.1-alpha fails to build (undefined: enclave.ByteAccess) under the go-enclave v0.8.0-alpha replace; needs the frozen qrdb/enclave bump #1995
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
 	github.com/mark3labs/mcp-go v1.5.0
 	github.com/quic-go/quic-go v0.65.0
