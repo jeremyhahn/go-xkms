@@ -63,3 +63,7 @@ pkg/attestation/verifier.go, the device registry, sdk/go, docs/SPEC.md.
   pkg/backend/avr/attestation.go:223.
 - Left: the acme-issuance lane's device-attest-01 finalize match, and a
   reference held by the device registry rather than one per backend config.
+- Run: go test -race ./pkg/backend/avr/... ./pkg/attestation/dice/...: pass.
+- Run: sdk/go go build ./...: pass.
+- Run: make lint: first run timed out at 540 s in golangci-lint (web/desktop);
+  rerun pass, 0 issues in every module and tag set.
