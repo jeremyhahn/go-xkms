@@ -50,4 +50,13 @@ docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts build: pass (tracked dist restored).
+- svelte-auth npm ci: pass. web/app npm ci: pass.
+- vitest test/view3_key_access_policy.test.ts: pass (13 tests).
+- vitest whole web/app suite: pass (51 files, 425 tests); no baseline failures seen.
+- svelte-check: pass, 0 errors, after typing the confirm spy (the
+  UsersView baseline error was not reported).
+- vite build: pass.
+- go test -race ./pkg/api/rest/: pass.
+- sdk/go go build ./...: pass.
+- make lint: pass.
