@@ -25,4 +25,8 @@ pkg/oidc and xkey `TokenClaims` types.
 
 ## Results
 
-Results to follow.
+- test commit, before the refactor: `TestTokenClaimsCarryNoPermissions` fails on both NotContains asserts (expected).
+- `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/acme/...` after the refactor: all pass except 5 DICE e2e tests in pkg/acme/client (`device_attest_dice_e2e_test.go:274`, `:299`, `:313`, `:329`, `:346`): `tfwsim-atecc608a` not built in the module cache. That is an environment gap independent of this change (they need `make tfwsim-atecc608a`), and main d55b1b73c7 has the same failure.
+- `go build ./...`: pass.
+- `make lint`: pass (0 issues across all modules and tag sets).
+- SPEC row 73 not set: docs/SPEC.md is a protected path in this lane (policy-guard, no LANE_POLICY_ALLOW). Proposed row text is in the lane report.
