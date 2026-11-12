@@ -39,4 +39,9 @@ Compose wiring with a real EvidenceSource, gRPC, MCP, sdk/go re-export
 
 ## Results
 
-Results to follow.
+- `go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack" ./pkg/attestation/continuous/... ./pkg/xkms/... ./pkg/api/rest/... ./pkg/apimodule/... ./pkg/auth/...`: pass (9 packages).
+- `make lint`: pass, 0 issues on every module and tag set.
+- Departures from the file map, needed by the repository's guard tests:
+  internal/authzscan/authzscan.go (constant table), pkg/api/rest/authz_golden_test.go
+  (wire contract) and pkg/apimodule/module_grants_test.go (`restOnlyPermissions`,
+  until gRPC and MCP serve the verbs). The routes live under `/api/v1`.
