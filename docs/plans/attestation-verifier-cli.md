@@ -44,4 +44,14 @@ Reference values (put/list/delete) and the appraise verbs in xkmsctl.
 
 ## Results
 
-Results to follow.
+- `go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack" ./cmd/xkmsctl/`: pass (the five new tests pass).
+- `go build ./...` at the root: pass.
+- `go build ./...` in sdk/go: pass.
+- `make lint`: actionlint passes; golangci-lint fails with 67 typecheck
+  findings, all in the module cache's
+  `github.com/cloudflare/circl@v1.6.5/sign/internal/dilithium/poly.go`
+  (first: poly.go:12:3 "cannot index p (variable of type *Poly)"). None is
+  in this repository; this slice changes no go.mod or go.sum, so the
+  finding comes with the base's dependency set, not this diff.
+- Deviation: a fourth sentinel, `ErrInvalidEndorsementFlags`, carries the
+  put/list flag refusals (bad kind, not exactly one of --cert/--public-key).
