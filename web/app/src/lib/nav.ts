@@ -82,3 +82,4 @@ export const navSections: NavSection[] = [
     ],
   },
 ];
+      { route: "cryptoTools", path: "/tools/crypto", label: "Random & Hash", icon: "Sparkles", requires: { resource: "keys", action: "verify" } },
