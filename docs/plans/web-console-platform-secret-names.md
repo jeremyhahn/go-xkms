@@ -38,4 +38,11 @@ check, vite build, `go test -race ./pkg/api/rest/`, sdk/go build, make lint.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass; svelte-auth npm ci: pass; web/app npm ci: pass.
+- vitest test/view3_platform_secret_names.test.ts: pass (5 tests).
+- vitest whole web/app suite (NODE_OPTIONS=--no-experimental-webstorage): pass; store_nav.test.ts needed no change.
+- npm run check: baseline only (UsersView.svelte:121 and its twin test/view2_users.test.ts:51, role/roles).
+- vite build: pass.
+- go test -race ./pkg/api/rest/ (codec tags): pass (first try hit a proxy stream error while downloading a module; the retry passed).
+- sdk/go go build ./...: pass.
+- make lint: pass on the second run. The first run failed only in the raft tag pass, on typecheck of the third-party module cockroachdb/pebble v2.1.7 ("could not load export data" from the lane's /gocache); no Go file is touched here.
