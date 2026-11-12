@@ -345,3 +345,81 @@ func TestNewEngine_RefusesIncompleteConfig(t *testing.T) {
 		}
 	}
 }
+
+// nilSource returns no evidence and no error.
+type nilSource struct{}
+
+func (nilSource) Collect(context.Context, string, string, []byte) (*appraisal.AppraiseQuoteRequest, error) {
+	return nil, nil
+}
+
+// absentAppraiser reports evidence absent, not forged.
+type absentAppraiser struct{}
+
+func (absentAppraiser) AppraiseQuote(context.Context, string, *appraisal.AppraiseQuoteRequest) (*appraisal.AttestationResult, error) {
+	return &appraisal.AttestationResult{}, nil
+}
+
+func TestEngine_NoEvidenceAndAbsentEvidenceAreUnverified(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	for name, cfg := range map[string]Config{
+		"no evidence":     {Source: nilSource{}},
+		"absent evidence": {Appraiser: absentAppraiser{}},
+	} {
+		v, err := newEngine(t, w, cfg).Reattest(ctx, w.tenant, "dev-1")
+		if err != nil {
+			t.Fatalf("%s: Reattest: %v", name, err)
+		}
+		if v.Verified || v.Cause == "" {
+			t.Fatalf("%s: verdict = %+v, want unverified with a cause", name, v)
+		}
+	}
+}
+
+func TestEngine_RunReturnsAPassError(t *testing.T) {
+	w := newWorld(t)
+	ticker := &fakeTicker{ch: make(chan time.Time, 1)}
+	engine := newEngine(t, w, Config{
+		Inventory: failingInventory{failOn: "tenants"},
+		Interval:  time.Minute,
+		NewTicker: func(time.Duration) Ticker { return ticker },
+	})
+	ticker.ch <- time.Now()
+	if err := engine.Run(context.Background()); err == nil || errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v, want the inventory failure", err)
+	}
+}
+
+func TestEngine_PassStopsOnAReattestError(t *testing.T) {
+	w := newWorld(t)
+	engine := newEngine(t, w, Config{Inventory: staticInventory{"acme": {"bad device"}}, Interval: time.Minute})
+	var ie *InputError
+	if err := engine.Pass(context.Background()); !errors.As(err, &ie) {
+		t.Fatalf("Pass = %v, want the device ID *InputError", err)
+	}
+}
+
+func TestEngine_RunOnTheDefaultTicker(t *testing.T) {
+	w := newWorld(t)
+	pub := newRecordingPublisher(64)
+	engine := newEngine(t, w, Config{
+		Inventory:  staticInventory{"acme": {"dev-1"}},
+		Interval:   time.Millisecond,
+		Publishers: []Publisher{pub},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- engine.Run(ctx) }()
+	if v := <-pub.ch; v.DeviceID != "dev-1" || !v.Verified {
+		t.Fatalf("verdict = %+v, want dev-1 verified", v)
+	}
+	cancel()
+	go func() {
+		for range pub.ch {
+		}
+	}()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v, want context.Canceled", err)
+	}
+}

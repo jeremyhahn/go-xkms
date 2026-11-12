@@ -3,6 +3,7 @@ package continuous
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +97,15 @@ func TestStore_RefusesInvalidInput(t *testing.T) {
 	}
 	if _, err := store.ListVerdicts(ctx, "", "dev-1"); err == nil {
 		t.Fatal("empty tenant listed")
+	}
+	if _, err := store.ListVerdicts(ctx, "acme", strings.Repeat("d", maxDeviceIDLen+1)); err == nil {
+		t.Fatal("over-long device ID accepted")
+	}
+	if _, err := store.ListVerdicts(ctx, "acme", "dev\x01"); err == nil {
+		t.Fatal("device ID with a control character accepted")
+	}
+	if _, err := store.ListVerdicts(ctx, "a/b", "dev-1"); err == nil {
+		t.Fatal("tenant with a slash accepted")
 	}
 }
 
