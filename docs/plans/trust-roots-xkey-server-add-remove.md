@@ -45,4 +45,10 @@ classify, install, uninstall and a `--purpose` flag on list.
 
 ## Results
 
-Results to follow.
+- trust tests (-race, codec tags, -run Trust): pass, the five new and strotb's three included.
+- whole xkey cmd package (-race): one run failed on TestExtensionServe_ReopensAnExistingPassphraseBarrier
+  and TestExtensionServeCmd_BarrierMode_IPCConnectivity (extension_serve_test.go:507, timed out waiting
+  for IPC socket, under 1-3 s storage syncs); both pass when rerun alone. Not trust code.
+- xkey go build ./... and go vet ./cmd/xkey/cmd/: pass.
+- sdk/go go build ./...: pass.
+- make lint: pass, 0 issues.
