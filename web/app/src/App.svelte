@@ -13,6 +13,7 @@
   import KeysView from "$views/KeysView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
   import PinView from "$views/PinView.svelte";
+  import PinSetupView from "$views/PinSetupView.svelte";
   import TpmPoliciesView from "$views/TpmPoliciesView.svelte";
   import UsersView from "$views/UsersView.svelte";
   import TenantsView from "$views/TenantsView.svelte";
@@ -56,6 +57,7 @@
       <CaView />
     {:else if routerStore.name === "pin"}
       <PinView />
+    {:else if routerStore.name === "pinSetup"}<PinSetupView />
     {:else if routerStore.name === "piv"}
       <PivView />
     {:else if routerStore.name === "ssh"}

@@ -27,6 +27,7 @@ export type RouteName =
   | "ca"
   | "tenants"
   | "pin"
+  | "pinSetup"
   | "piv"
   | "ssh"
   | "passwords"
@@ -58,6 +59,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/ca": "ca",
   "/tenants": "tenants",
   "/pin": "pin",
+  "/pin/setup": "pinSetup",
   "/piv": "piv",
   "/ssh": "ssh",
   "/passwords": "passwords",
