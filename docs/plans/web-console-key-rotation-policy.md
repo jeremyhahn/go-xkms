@@ -51,4 +51,13 @@ code, sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts `npm ci` + `npm run build`: pass (tracked sdk/ts/dist restored).
+- sdk/ts/svelte-auth `npm ci`: pass.
+- web/app `npm ci`: pass.
+- vitest test/view3_key_rotation_policy.test.ts: pass, 13 tests.
+- web/app `npm test` (NODE_OPTIONS=--no-experimental-webstorage): pass, 51 files, 425 tests.
+- `npm run check` (svelte-check): pass, 0 errors, 0 warnings.
+- `vite build` to /tmp: pass.
+- `go test -race` ./pkg/api/rest/ (codec tags): pass.
+- sdk/go `go build ./...`: pass.
+- `make lint`: pass, 0 issues.
