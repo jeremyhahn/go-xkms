@@ -149,19 +149,23 @@ answer the binding question.
 
 Which of these is required is open for the owner to rule on.
 
-**Hook: none yet.** A backend registered with `RegisterExternalBackend`
-(`pkg/xkms/registry_external.go:54`, SPEC backend-registry) has no call that
-hands go-xkms device evidence. The backend contract's only attestation
-capability, `types.AttestingKeyProvider.AttestKey`
-(`pkg/types/types.go:1936`), attests one key. The device's DICE claims
-arrive in `dice.Evidence` (`pkg/attestation/dice/verify.go:114`), which has no
-submodule field: its `Claims.Other` (`:125`) only holds the claims go-xkms
-does not model.
-
-The planned row adds one optional capability interface to the backend
-contract, in the `AttestingKeyProvider` pattern. It embeds `KeyProvider` and
-adds one method, `AttestSecurityEvents(ctx, nonce)`, which returns the
-record's Claims-Set, or `ErrNotSupported` when the backend keeps no record.
+**Hook.** A backend registered with `RegisterExternalBackend`
+(`pkg/xkms/registry_external.go:54`, SPEC backend-registry) hands go-xkms the
+record through one optional capability on the backend contract,
+`types.SecurityEventProvider` (`pkg/types/types.go:1960`), in the
+`types.AttestingKeyProvider` pattern (`pkg/types/types.go:1936`). It embeds
+`KeyProvider` and adds one method, `AttestSecurityEvents(ctx, nonce)`, which
+returns the record's encoded Claims-Set, or `ErrNotSupported` when the backend
+keeps no record. No backend implements it yet. The format is
+`pkg/attestation/securityevent`: the claim key `ClaimKey`
+(`pkg/attestation/securityevent/claims.go:28`, -71765, CWT private use, go-xkms's
+own until EAT registers one), `Encode` (`:97`) and `Decode` (`:115`), which
+accepts only the core deterministic encoding `{ClaimKey: {1: count, 2:
+dropped, 3: [{1: at, 2: kind, 3: what, 4: result}, ...]}}` and refuses every
+other input with a typed error. The device's DICE claims still arrive in
+`dice.Evidence` (`pkg/attestation/dice/verify.go:114`), which has no submodule
+field: its `Claims.Other` (`:125`) only holds the claims go-xkms does not
+model.
 The nonce is the Verifier's `eat_nonce` under (b) and (c), and is unused
 under (a). Which of these applies is still the owner's ruling.
 

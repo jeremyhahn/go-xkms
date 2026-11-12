@@ -1953,6 +1953,25 @@ type AttestingKeyProvider interface {
 	AttestKey(ctx context.Context, attrs *KeyAttributes, nonce []byte) (interface{}, error)
 }
 
+// SecurityEventProvider is an optional capability for backends that keep a
+// device security-event (tamper-response) record (SPEC row
+// device-security-event-evidence, docs/attestation-evidence/architecture.md).
+// Check for it with a type assertion, as for AttestingKeyProvider.
+type SecurityEventProvider interface {
+	KeyProvider
+
+	// AttestSecurityEvents returns the device's security-event record as
+	// its encoded Claims-Set, in the format of
+	// pkg/attestation/securityevent (Decode reads it).
+	//
+	// nonce is the Verifier's challenge. How the record is bound to it and
+	// to the device is not yet decided; a backend that does not bind the
+	// record ignores it.
+	//
+	// Returns ErrNotSupported when the backend keeps no record.
+	AttestSecurityEvents(ctx context.Context, nonce []byte) ([]byte, error)
+}
+
 // SymmetricKey represents a symmetric encryption key.
 // This is the symmetric analog to crypto.PrivateKey for asymmetric operations.
 type SymmetricKey interface {
