@@ -136,7 +136,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
-| Settings | Settings | `#/settings` |
+| Settings | Secret Names, Settings | `#/platform/secrets`, `#/settings` |
 
 Every nav entry is gated twice: an RBAC gate hides an entry the identity
 has no permission for, and a capability gate hides one the deployment never
