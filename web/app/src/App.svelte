@@ -7,6 +7,7 @@
   import PlaceholderView from "$components/PlaceholderView.svelte";
   import LoginView from "$views/LoginView.svelte";
   import RegisterView from "$views/RegisterView.svelte";
+  import PlatformSecretNamesView from "$views/PlatformSecretNamesView.svelte";
   import DashboardView from "$views/DashboardView.svelte";
   import BackendsView from "$views/BackendsView.svelte";
   import SettingsView from "$views/SettingsView.svelte";
@@ -76,6 +77,7 @@
       <PlatformView />
     {:else if routerStore.name === "settings"}
       <SettingsView />
+    {:else if routerStore.name === "platformSecretNames"}<PlatformSecretNamesView />
     {:else if routerStore.name === "login" || routerStore.name === "register"}
       <!-- Already authenticated; send credential screens to the dashboard. -->
       {(navigateTo("/dashboard"), "")}

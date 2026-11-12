@@ -21,6 +21,7 @@ export type RouteName =
   | "dashboard"
   | "login"
   | "register"
+  | "platformSecretNames"
   | "backends"
   | "keys"
   | "certificates"
@@ -67,6 +68,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/users": "users",
   "/frost": "frost",
   "/settings": "settings",
+  "/platform/secrets": "platformSecretNames",
 };
 
 export function parseHash(hash: string): Route {
