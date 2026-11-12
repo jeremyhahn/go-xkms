@@ -42,4 +42,5 @@ behaviour.
 
 ## Results
 
-(filled in after the build, test and lint run)
+xkey go build + go test (codec tags) ./cmd/xkey/cmd/... pass; sdk/go go build passes; make lint passes (0 issues on every module and tag set).
+The TPM module source was already shared (openACMETPMModuleFunc), so acme_enroll.go needed no change; the fake client lives in acme_test.go.
