@@ -25,6 +25,9 @@ func (tpm *TPM2) sealKeyInternal(
 	backend store.KeyBackend,
 	overwrite bool) (*tpm2.CreateResponse, error) {
 
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
+
 	if keyAttrs.Parent == nil {
 		return nil, store.ErrInvalidParentAttributes
 	}
@@ -239,6 +242,9 @@ func (tpm *TPM2) unsealKeyInternal(
 	keyAttrs *types.KeyAttributes,
 	backend store.KeyBackend) ([]byte, error) {
 
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
+
 	if keyAttrs.Parent == nil {
 		return nil, store.ErrInvalidParentAttributes
 	}
@@ -345,6 +351,9 @@ func (tpm *TPM2) unsealFromBlobs(
 	keyAttrs *types.KeyAttributes,
 	backend store.KeyBackend,
 	tpmPublic, tpmPrivate []byte) ([]byte, error) {
+
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
 
 	if keyAttrs.Parent == nil {
 		return nil, store.ErrInvalidParentAttributes
