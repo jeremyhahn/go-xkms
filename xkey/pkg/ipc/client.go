@@ -40,11 +40,30 @@ type Client struct {
 }
 
 // NewClient creates a new IPC client targeting the given socket path.
-func NewClient(socketPath string) *Client {
-	return &Client{
+func NewClient(socketPath string, opts ...ClientOption) *Client {
+	c := &Client{
 		socketPath: socketPath,
 		timeout:    DefaultTimeout,
 		trusted:    trustedUIDs(),
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// ClientOption configures a Client built by NewClient.
+type ClientOption func(*Client)
+
+// WithTimeout sets the deadline of each request (dial, write and read) to d
+// in place of DefaultTimeout. A request whose handler does real work, such
+// as an unlock that runs the PIN KDF on a loaded host, may need longer. A d
+// of zero or less keeps DefaultTimeout.
+func WithTimeout(d time.Duration) ClientOption {
+	return func(c *Client) {
+		if d > 0 {
+			c.timeout = d
+		}
 	}
 }
 

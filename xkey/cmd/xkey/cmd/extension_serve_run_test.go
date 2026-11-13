@@ -59,8 +59,23 @@ func serveRunCmd(t *testing.T, socketPath string, noBarrier bool) *cobra.Command
 // startServe runs cmd until its socket appears and returns a client for it
 // together with a stop function. Stopping cancels the run and requires a
 // clean exit; it is idempotent and also runs at cleanup.
+// serveTestClientTimeout is the IPC deadline of the serve tests' client.
+const serveTestClientTimeout = 30 * time.Second
+
 func startServe(t *testing.T, cmd *cobra.Command, socketPath string) (*ipc.Client, func()) {
 	t.Helper()
+	// serve signals once its socket accepts a dial; barrier unseal under
+	// -race on a loaded runner has no fixed bound, so there is no wall-clock
+	// deadline here: go test -timeout bounds the wait (CA m2545).
+	listening := make(chan struct{}, 1)
+	prev := serveListening
+	serveListening = func(path string) {
+		if path == socketPath {
+			listening <- struct{}{}
+		}
+	}
+	t.Cleanup(func() { serveListening = prev })
+
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- cmd.ExecuteContext(ctx) }()
@@ -83,29 +98,60 @@ func startServe(t *testing.T, cmd *cobra.Command, socketPath string) (*ipc.Clien
 	}
 	t.Cleanup(stop)
 
-	// Wait for a dial to succeed, not for the socket file to appear:
-	// net.Listen binds (creating the file) before it listens, and a dial in
-	// between is refused.
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if conn, err := net.Dial("unix", socketPath); err == nil {
-			require.NoError(t, conn.Close())
-			break
-		}
-		select {
-		case err := <-done:
-			exited = true
-			t.Fatalf("serve exited before listening: %v", err)
-		case <-time.After(20 * time.Millisecond):
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("serve never opened its socket")
-		}
+	select {
+	case <-listening:
+	case err := <-done:
+		exited = true
+		t.Fatalf("serve exited before listening: %v", err)
 	}
 
-	client := ipc.NewClient(socketPath)
+	// A correct-PIN unlock runs the PIN KDF and, with a barrier, the barrier
+	// unseal: about 0.2 s alone under -race, but past the 5 s DefaultTimeout
+	// on a loaded CI runner (DS-8384). The deadline fits that, not production.
+	client := ipc.NewClient(socketPath, ipc.WithTimeout(serveTestClientTimeout))
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	return client, stop
+}
+
+// TestExtensionServe_ListeningHookFiresOnceTheSocketAccepts proves serve
+// calls serveListening with its socket path once, and only once a dial to
+// that socket succeeds: the ready signal the serve tests wait on in place of
+// a fixed deadline (CA m2545).
+func TestExtensionServe_ListeningHookFiresOnceTheSocketAccepts(t *testing.T) {
+	isolateServeHome(t)
+	socketPath := filepath.Join(privateTempDir(t), "serve.sock")
+
+	type call struct {
+		path    string
+		dialErr error
+	}
+	calls := make(chan call, 2)
+	prev := serveListening
+	serveListening = func(path string) {
+		conn, err := net.Dial("unix", path)
+		if err == nil {
+			err = conn.Close()
+		}
+		calls <- call{path: path, dialErr: err}
+	}
+	t.Cleanup(func() { serveListening = prev })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- serveRunCmd(t, socketPath, true).ExecuteContext(ctx) }()
+
+	select {
+	case got := <-calls:
+		assert.Equal(t, socketPath, got.path)
+		require.NoError(t, got.dialErr, "the socket must accept a dial when serveListening runs")
+	case err := <-done:
+		cancel()
+		t.Fatalf("serve exited before signalling it listens: %v", err)
+	}
+
+	cancel()
+	require.NoError(t, <-done, "serve should stop cleanly")
+	assert.Empty(t, calls, "serveListening must fire once")
 }
 
 // requireLockState asserts the lock state the running daemon reports.
