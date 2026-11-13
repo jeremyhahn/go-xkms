@@ -53,6 +53,16 @@ URL, ExpiresAt}`) is populated exactly once, by `CreateUser`, for an account
 with an email login key; every other caller of `GetUserResponse` leaves it
 nil.
 
+Minting an invitation is decided by go-qrdb's `users:invite`
+(`qrdbsdk.PermissionUsersInvite`), not by `users:create`: the transports gate
+`CreateUser` on `users:create`, and `CreateUser` then asks
+`AuthorizeCaller` for `users:invite` before it creates an email-login-key
+account (`pkg/xkms/servicer_user.go`). A caller holding `users:create` alone
+gets go-qrdb's `*qrdbsdk.PermissionDeniedError` and no account is created. The
+bootstrap path (`WithoutEmailLoginKey`) mints no invitation and needs only
+`users:create`; with no authorizer wired (RBAC disabled) every request is
+allowed.
+
 ### `pkg/webauthn` (relying party)
 
 ```go
