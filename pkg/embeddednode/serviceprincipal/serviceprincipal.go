@@ -117,3 +117,40 @@ func RegisterCeremonyGrant() {
 		qrdbsdk.RegisterPermissionRoleGrant(Name, ceremonyGrant...)
 	})
 }
+
+// webauthnGrant is what the principal additionally holds when xkmsd builds
+// its WebAuthn relying party over the embedded node: the relying party's
+// user store (pkg/webauthn qrdbUserStore) runs as the principal, since a
+// sign-up's registration/begin is anonymous (#2541).
+//
+//   - users:read -- the GetByEmail probe at registration begin and the
+//     user lookups of login and registration finish.
+//   - users:create -- creating the signing-up user.
+//   - users:update -- recording the user's WebAuthn identity.
+//   - users:delete -- rolling a failed registration back.
+//
+// It is registered only by RegisterWebAuthnGrant, so a node without the
+// WebAuthn service never holds it.
+var webauthnGrant = []qrdbsdk.Permission{
+	"users:read",
+	"users:create",
+	"users:update",
+	"users:delete",
+}
+
+var registerWebAuthnOnce sync.Once
+
+// WebAuthnGrant returns a copy of the permissions RegisterWebAuthnGrant adds.
+func WebAuthnGrant() []qrdbsdk.Permission {
+	return append([]qrdbsdk.Permission(nil), webauthnGrant...)
+}
+
+// RegisterWebAuthnGrant adds the WebAuthn user store's permissions to the
+// principal, once per process. The server calls it when it builds the
+// WebAuthn service over the embedded node; go-qrdb honours the grant from
+// the next Node.ServiceContext on.
+func RegisterWebAuthnGrant() {
+	registerWebAuthnOnce.Do(func() {
+		qrdbsdk.RegisterPermissionRoleGrant(Name, webauthnGrant...)
+	})
+}

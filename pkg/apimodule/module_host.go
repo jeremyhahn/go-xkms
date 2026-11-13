@@ -108,6 +108,7 @@ func (m *Module) restServer() (*rest.Server, error) {
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
+		hc.WebAuthnCallContext = m.serviceContext
 	}
 
 	srv, err := rest.NewHostServer(context.Background(), hc)

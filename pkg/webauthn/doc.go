@@ -35,9 +35,10 @@
 // datastore's DAO factory; NewQRDBUserStoreAdapter returns the paired stores:
 //
 //	users, creds, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-//	    Users:      qrdbClient.Users(),
-//	    DAOFactory: daoFactory,
-//	    TenantID:   "system",
+//	    Users:       qrdbClient.Users(),
+//	    DAOFactory:  daoFactory,
+//	    TenantID:    "system",
+//	    CallContext: node.ServiceContext, // run as the node, not the anonymous caller
 //	})
 //
 //	svc, err := webauthn.NewService(webauthn.ServiceParams{
