@@ -88,3 +88,8 @@ the allowance. The row stays in progress: the acme-issuance match is open.
 - Stale verify.go citations in the same row after slice 1 (1-based on f378cbe60):
   `verify.go:139` -> `:148` (Evidence.RootType), `:229` -> `:241`
   (`RootTypeFromPaths(paths)`), `:512` -> `:551` (`verifyRootTypePermitted`).
+- 2026-11-13: lane-place --queue re-staged the same brief four times from
+  a1fe3704d without LANE_POLICY_ALLOW; each resume ends with no change. The
+  row needs a launch with LANE_POLICY_ALLOW covering docs/SPEC.md (or the
+  coordinator applying the text above), and the acme-issuance reference match
+  before it can ship.
