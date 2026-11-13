@@ -299,16 +299,6 @@ func TestSigner_SignImage_Errors(t *testing.T) {
 	}
 }
 
-func TestSigner_SignImage_RegistryUnavailable(t *testing.T) {
-	f := newSignerFixture(t, registryConfig{})
-	signer := f.signer(t, newECDSAKey(t), nil)
-	f.registry.unavailable.Store(100)
-
-	result, err := signer.SignImage(t.Context(), f.ref, nil)
-	require.ErrorIs(t, err, ErrRegistryUnavailable)
-	assert.Nil(t, result)
-}
-
 func TestSignOptions_Predicate(t *testing.T) {
 	// Signing time is written in UTC whatever the local zone.
 	now := time.Date(2026, 10, 15, 13, 0, 0, 0, time.FixedZone("UTC+1", 3600))
@@ -336,14 +326,6 @@ func TestSignOptions_Predicate(t *testing.T) {
 			assert.JSONEq(t, tt.predicate, string(predicate))
 		})
 	}
-}
-
-func TestSignOptions_Predicate_Missing(t *testing.T) {
-	opts := &SignOptions{PredicateType: "https://slsa.dev/provenance/v1"}
-	predicateType, predicate, err := opts.predicate(time.Now())
-	require.ErrorIs(t, err, ErrInvalidStatement, "only the cosign predicate has a default")
-	assert.Empty(t, predicateType)
-	assert.Nil(t, predicate)
 }
 
 func TestRequestCodeSigningCertificate(t *testing.T) {

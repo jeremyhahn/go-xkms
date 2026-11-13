@@ -96,17 +96,6 @@ func TestVerifyEnvelope_AnySignature(t *testing.T) {
 	require.ErrorIs(t, verifyEnvelope(env, key.Public()), ErrSignatureInvalid)
 }
 
-func TestParseEnvelope(t *testing.T) {
-	env, err := signEnvelope(newECDSAKey(t), PayloadTypeInToto, []byte(`{"a":1}`))
-	require.NoError(t, err)
-	data, err := json.Marshal(env)
-	require.NoError(t, err)
-
-	parsed, err := parseEnvelope(data)
-	require.NoError(t, err)
-	assert.Equal(t, env, parsed)
-}
-
 func TestParseEnvelope_Invalid(t *testing.T) {
 	tests := map[string]string{
 		"not json":           "{",

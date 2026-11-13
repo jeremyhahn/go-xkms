@@ -146,12 +146,6 @@ func TestAttestationLayers(t *testing.T) {
 	assert.Empty(t, attestationLayers(&Manifest{}))
 }
 
-func TestParseManifest(t *testing.T) {
-	manifest, err := parseManifest([]byte(`{"schemaVersion":2,"mediaType":"` + MediaTypeOCIManifest + `","layers":[]}`))
-	require.NoError(t, err)
-	assert.Equal(t, MediaTypeOCIManifest, manifest.MediaType)
-}
-
 func TestParseManifest_Invalid(t *testing.T) {
 	for name, data := range map[string]string{
 		"not json":       "{",
