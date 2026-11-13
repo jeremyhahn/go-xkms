@@ -1191,12 +1191,20 @@ race: agsim
 
 .PHONY: coverage
 ## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
-# GOMEMLIMIT and -p=2 bound the suite's memory: under -race the Argon2-heavy
-# REST/MCP packages exhaust a runner's memory without them. Under CI the suite
-# must leave the tree as it found it (#454). The per-package report is
-# advisory (#704).
-coverage: export GOMEMLIMIT := 10GiB
-coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=2)
+# GOMEMLIMIT and -p=1 bound the suite's memory: under -race the Argon2-heavy
+# REST/MCP packages exhaust a runner's memory without them. GOMEMLIMIT is per
+# test process, and the race detector's shadow memory is outside it. CI runs
+# this target in scripts/in-toolchain-image.sh's sibling container, capped at
+# 8g with swap off on a hosted runner, so it was measured in a 4-CPU, 8g,
+# swap-off cgroup: with -p=2 the pkg/fido2/authenticator test binary was
+# OOM-killed (cgroup oom_kill 1, 23 min); with -p=1 the suite passed in 19 min,
+# with a 4.9 GiB peak RSS (getrusage, that binary) and no OOM kill, the cgroup
+# reaching its 8 GiB limit only through reclaimable page cache. That cgroup
+# also held about 1.7 GiB of other processes, so CI has more headroom. Under CI
+# the suite must leave the tree as it found it (#454). The per-package report
+# is advisory (#704).
+coverage: export GOMEMLIMIT := 5GiB
+coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=1)
 coverage: test
 	@total=$$($(GO) tool cover -func=$(COVERAGE_FILE) | awk '/^total:/ {print $$3}' | tr -d %); \
 	echo "Total coverage: $${total}%"; \
