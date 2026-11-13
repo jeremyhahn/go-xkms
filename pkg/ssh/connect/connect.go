@@ -623,14 +623,14 @@ const workDirPattern = "xkey-ssh-"
 // enough that the agent socket under it always fits sun_path.
 const shortWorkDirBase = "/tmp"
 
+// geteuid is os.Geteuid, a seam so tests can stand in for another user.
+var geteuid = os.Geteuid
+
 // defaultWorkDirBase picks the base directory of a default work dir: the
 // usual temp dir when the agent socket under it fits sun_path, else
 // $XDG_RUNTIME_DIR when it is a usable private directory that fits, else
 // /tmp. MkdirTemp still makes the work dir itself 0700 and owned by this
 // process, so the choice of base never weakens the socket's protection.
-// geteuid is os.Geteuid, a seam so tests can stand in for another user.
-var geteuid = os.Geteuid
-
 func defaultWorkDirBase() string {
 	if fitsSunPath(os.TempDir()) {
 		return ""
@@ -650,17 +650,48 @@ func fitsSunPath(base string) bool {
 }
 
 // isPrivateDir reports whether dir is a 0700 directory owned by the
-// effective user. Writability is not enough: root may write any 0700
-// directory, and if it inherited an unprivileged user's XDG_RUNTIME_DIR that
-// user could rename the session dir and redirect UserKnownHostsFile and
-// SSH_AUTH_SOCK. Root therefore gets no exception.
+// effective user that nobody else can swap out. Writability is not enough:
+// root may write any 0700 directory, and if it inherited an unprivileged
+// user's XDG_RUNTIME_DIR that user could rename the session dir and
+// redirect UserKnownHostsFile and SSH_AUTH_SOCK. Root therefore gets no
+// exception. For the same reason no component of dir may be a symlink
+// (its owner could repoint it after this check), and every ancestor must
+// be owned by root or the effective user and be writable by nobody else
+// unless it is sticky, as /tmp is.
 func isPrivateDir(dir string) bool {
-	info, err := os.Stat(dir)
+	dir = filepath.Clean(dir)
+	if resolved, err := filepath.EvalSymlinks(dir); err != nil || resolved != dir {
+		return false
+	}
+	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return false
 	}
-	uid, ok := dirOwner(info)
-	return ok && uid == geteuid()
+	if uid, ok := dirOwner(info); !ok || uid != geteuid() {
+		return false
+	}
+	for parent := filepath.Dir(dir); ; parent = filepath.Dir(parent) {
+		if !isSafeAncestor(parent) {
+			return false
+		}
+		if parent == filepath.Dir(parent) {
+			return true
+		}
+	}
+}
+
+// isSafeAncestor reports whether only root or the effective user can
+// rename entries in dir: it is owned by one of them and is not group- or
+// other-writable unless the sticky bit is set.
+func isSafeAncestor(dir string) bool {
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	if uid, ok := dirOwner(info); !ok || (uid != 0 && uid != geteuid()) {
+		return false
+	}
+	return info.Mode().Perm()&0o022 == 0 || info.Mode()&os.ModeSticky != 0
 }
 
 func cleanupDir(remove func(string) error, owns bool, dir string) error {
