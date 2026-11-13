@@ -52,6 +52,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -329,6 +330,7 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	if cfg.CORS.Enabled && len(cfg.CORS.AllowedOrigins) > 0 {
 		qcfg.CORS = qrdbsdk.DaemonCORSConfig{
 			AllowedOrigins: append([]string(nil), cfg.CORS.AllowedOrigins...),
+			AllowedHeaders: rest.CORSAllowedHeaders(),
 			MaxAge:         cfg.CORS.MaxAgeSeconds,
 		}
 	}
