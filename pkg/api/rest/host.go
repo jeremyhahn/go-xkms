@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
@@ -220,6 +221,13 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
 		refreshStore = token.BindRefreshStore(qs, p.CallContext)
+		// Bound to the node's service principal, the refresh recheck reads
+		// the user record as the principal, whichever login flow minted the
+		// session: it needs the principal's refresh grant (users:read), not
+		// only the WebAuthn one.
+		if p.CallContext != nil {
+			serviceprincipal.RegisterRefreshGrant()
+		}
 		userResolver = token.BindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()

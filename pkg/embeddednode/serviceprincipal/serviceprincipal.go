@@ -154,3 +154,34 @@ func RegisterWebAuthnGrant() {
 		qrdbsdk.RegisterPermissionRoleGrant(Name, webauthnGrant...)
 	})
 }
+
+// refreshGrant is what the principal additionally holds when the session
+// token issuer re-checks a refresh token's subject over the embedded node
+// (rest.BuildTokenIssuer binds auth.QRDBUserResolver to the principal's
+// call context): the recheck runs as the principal for every login flow
+// that mints a session, PIV/mTLS as well as WebAuthn.
+//
+//   - users:read -- the GetUserByUsername recheck of Issuer.Refresh.
+//
+// It is registered only by RegisterRefreshGrant, so a node without a bound
+// refresh resolver never holds it.
+var refreshGrant = []qrdbsdk.Permission{
+	"users:read",
+}
+
+var registerRefreshOnce sync.Once
+
+// RefreshGrant returns a copy of the permissions RegisterRefreshGrant adds.
+func RefreshGrant() []qrdbsdk.Permission {
+	return append([]qrdbsdk.Permission(nil), refreshGrant...)
+}
+
+// RegisterRefreshGrant adds the session refresh recheck's permissions to the
+// principal, once per process. The token issuer calls it when it binds its
+// user resolver to the principal; go-qrdb honours the grant from the next
+// Node.ServiceContext on.
+func RegisterRefreshGrant() {
+	registerRefreshOnce.Do(func() {
+		qrdbsdk.RegisterPermissionRoleGrant(Name, refreshGrant...)
+	})
+}
