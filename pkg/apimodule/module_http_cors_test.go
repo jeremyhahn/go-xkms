@@ -26,6 +26,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/testutil/qrdbdharness"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
@@ -170,14 +171,14 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 	cfg.Server.Host = "127.0.0.1"
 	cfg.Server.AdminPort = ports[0]
 
-	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, []qrdbsdk.ServerOption{
-		qrdbsdk.WithServerTLS(&tls.Config{
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, []qrdbserver.ServerOption{
+		qrdbserver.WithServerTLS(&tls.Config{
 			Certificates: []tls.Certificate{serverCert},
 			ClientCAs:    ca.Pool,
 			ClientAuth:   tls.VerifyClientCertIfGiven,
 			MinVersion:   tls.VersionTLS13,
 		}),
-		qrdbsdk.WithModule(m),
+		qrdbserver.WithModule(m),
 	}, serviceprincipal.Option())
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, node.Close()) })

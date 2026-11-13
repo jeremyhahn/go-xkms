@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 )
@@ -76,7 +77,7 @@ func WithRESTServer(resolve RESTResolver) Option {
 // than once in the table (availability variants, e.g. the CA bundle
 // endpoint's full-CA and bootstrap-only forms) register once, choosing the
 // enabled variant at request time.
-func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
+func (m *Module) RegisterHTTP(r *qrdbserver.ModuleHTTPRegistrar) {
 	type routeKey struct{ method, pattern string }
 	variants := map[routeKey][]rest.RouteSpec{}
 	var order []routeKey
@@ -253,7 +254,7 @@ func (m *Module) lazyPreflightHandler() http.HandlerFunc {
 // Compile-time proof the module implements qrdb's authentication fallback:
 // the unified server consults it when its own authenticators produce no
 // identity for a request on an xkms route.
-var _ qrdbsdk.ModuleAuthFallback = (*Module)(nil)
+var _ qrdbserver.ModuleAuthFallback = (*Module)(nil)
 
 // AuthenticateHTTP authenticates a request with xkms's session-vehicle
 // chain (the JWT pairs the FIDO2/PIV login ceremonies mint, plus mTLS).

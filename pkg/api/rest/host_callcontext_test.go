@@ -30,6 +30,7 @@ import (
 	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/testutil/qrdbdharness"
 	"github.com/stretchr/testify/require"
 
@@ -220,13 +221,13 @@ func TestNewHostServer_PasskeyAccessTokenNamesTheAccount(t *testing.T) {
 // apimodule.Module does (apimodule imports this package, so it cannot be
 // used here).
 type keysProbeModule struct {
-	qrdbsdk.BaseModule
+	qrdbserver.BaseModule
 	srv atomic.Pointer[Server]
 }
 
 func (*keysProbeModule) Name() string { return "xkms-keys-probe" }
 
-func (p *keysProbeModule) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
+func (p *keysProbeModule) RegisterHTTP(r *qrdbserver.ModuleHTTPRegistrar) {
 	r.Handle(http.MethodGet, "/api/v1/keys", qrdbsdk.Permission("keys:read"),
 		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 }
@@ -241,7 +242,7 @@ func (p *keysProbeModule) AuthenticateHTTP(r *http.Request) (*qrdbsdk.Identity, 
 
 // newEnforcingRESTNode is newEnforcingNode serving REST over TLS with mod
 // mounted; get sends GET /api/v1/keys with a bearer and returns the status.
-func newEnforcingRESTNode(t *testing.T, mod qrdbsdk.ServiceModule) (*qrdbnode.Node, func(bearer string) int) {
+func newEnforcingRESTNode(t *testing.T, mod qrdbserver.ServiceModule) (*qrdbnode.Node, func(bearer string) int) {
 	t.Helper()
 	certDir := t.TempDir()
 	ca, err := qrdbdharness.NewCA(certDir)
@@ -265,12 +266,12 @@ func newEnforcingRESTNode(t *testing.T, mod qrdbsdk.ServiceModule) (*qrdbnode.No
 	cfg.Server.Host = "127.0.0.1"
 	cfg.Server.AdminPort = ports[0]
 
-	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, []qrdbsdk.ServerOption{
-		qrdbsdk.WithServerTLS(&tls.Config{
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, []qrdbserver.ServerOption{
+		qrdbserver.WithServerTLS(&tls.Config{
 			Certificates: []tls.Certificate{serverCert},
 			MinVersion:   tls.VersionTLS13,
 		}),
-		qrdbsdk.WithModule(mod),
+		qrdbserver.WithModule(mod),
 	}, serviceprincipal.Option())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, node.Close()) })

@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
@@ -154,9 +154,9 @@ func TestNodeSealFlip_PassphraseEngagesFlipAndBlocksForOperator(t *testing.T) {
 			defer func() { _ = result.server.Shutdown() }()
 		}
 		require.Error(t, result.err, "New must not complete boot without an operator unseal")
-		var canceled *qrdbsdk.SealedWindowCanceledError
+		var canceled *qrdbserver.SealedWindowCanceledError
 		assert.True(t, errors.As(result.err, &canceled),
-			"error must unwrap to *qrdbsdk.SealedWindowCanceledError (timeout), got %v", result.err)
+			"error must unwrap to *qrdbserver.SealedWindowCanceledError (timeout), got %v", result.err)
 	case <-time.After(15 * time.Second):
 		t.Fatal("New must return once the sealed-window timeout elapses, not hang")
 	}
