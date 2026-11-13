@@ -329,9 +329,10 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	// node's auth chain answers for a module route carries the policy too.
 	if cfg.CORS.Enabled && len(cfg.CORS.AllowedOrigins) > 0 {
 		qcfg.CORS = qrdbsdk.DaemonCORSConfig{
-			AllowedOrigins: append([]string(nil), cfg.CORS.AllowedOrigins...),
-			AllowedHeaders: rest.CORSAllowedHeaders(),
-			MaxAge:         cfg.CORS.MaxAgeSeconds,
+			AllowedOrigins:   append([]string(nil), cfg.CORS.AllowedOrigins...),
+			AllowedHeaders:   rest.CORSAllowedHeaders(),
+			AllowCredentials: cfg.CORS.AllowCredentials,
+			MaxAge:           cfg.CORS.MaxAgeSeconds,
 		}
 	}
 
