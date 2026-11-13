@@ -183,8 +183,10 @@ func TestClock_IndependentClients(t *testing.T) {
 	limiter, _ := newClocked(t, &Config{Enabled: true, RequestsPerMinute: 60, Burst: 2})
 
 	for _, c := range []string{"client-1", "client-2"} {
-		if !limiter.Allow(c) || !limiter.Allow(c) {
-			t.Fatalf("%s refused inside its burst", c)
+		for i := 0; i < 2; i++ {
+			if !limiter.Allow(c) {
+				t.Fatalf("%s: request %d refused inside its burst", c, i+1)
+			}
 		}
 		if limiter.Allow(c) {
 			t.Fatalf("%s allowed past its burst", c)
