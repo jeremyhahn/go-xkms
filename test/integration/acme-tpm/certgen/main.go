@@ -44,12 +44,77 @@ func main() {
 	keyPath := flag.String("key", "", "output path for the PEM-encoded private key (required)")
 	commonName := flag.String("cn", "localhost", "certificate common name and primary DNS SAN")
 	validDays := flag.Int("days", 1, "certificate validity, in days")
+	caCertPath := flag.String("ca-cert", "", "optional output path for the swtpm test EK root CA certificate (needs -ca-key)")
+	caKeyPath := flag.String("ca-key", "", "optional output path for the swtpm test EK root CA private key (needs -ca-cert)")
 	flag.Parse()
 
 	if err := run(*certPath, *keyPath, *commonName, *validDays); err != nil {
 		fmt.Fprintf(os.Stderr, "certgen: %v\n", err)
 		os.Exit(1)
 	}
+	if (*caCertPath == "") != (*caKeyPath == "") {
+		fmt.Fprintln(os.Stderr, "certgen: -ca-cert and -ca-key must be set together")
+		os.Exit(1)
+	}
+	if *caCertPath != "" {
+		if err := writeCA(*caCertPath, *caKeyPath, ekRootCommonName, *validDays); err != nil {
+			fmt.Fprintf(os.Stderr, "certgen: %v\n", err)
+			os.Exit(1)
+		}
+	}
+}
+
+// ekRootCommonName is the subject CN of the swtpm test EK root CA. The
+// acme-server trusts the certificate (config.acme-tpm.yaml,
+// ca.tcg-config.trust-anchors.external_root_paths) and the test container
+// signs every swtpm EK certificate with the key (swtpm_helper_test.go,
+// swtpmTestEKIssuer); both read the pair from the acme-data volume.
+const ekRootCommonName = "swtpm Test EK CA"
+
+// writeCA writes a self-signed ECDSA P-256 CA certificate (subject
+// O=swtpm-test, CN=commonName; KeyUsage CertSign|CRLSign and BasicConstraints
+// CA:TRUE, both critical) to certPath and its SEC 1 "EC PRIVATE KEY" to
+// keyPath (mode 0600).
+func writeCA(certPath, keyPath, commonName string, days int) error {
+	if certPath == "" || keyPath == "" {
+		return fmt.Errorf("CA certificate and key paths are required")
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate CA key: %w", err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate CA serial: %w", err)
+	}
+
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{Organization: []string{"swtpm-test"}, CommonName: commonName},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Duration(days) * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return fmt.Errorf("create CA certificate: %w", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return fmt.Errorf("marshal CA key: %w", err)
+	}
+
+	if err := writePEM(certPath, "CERTIFICATE", der, 0o644); err != nil {
+		return fmt.Errorf("write CA certificate: %w", err)
+	}
+	if err := writePEM(keyPath, "EC PRIVATE KEY", keyDER, 0o600); err != nil {
+		return fmt.Errorf("write CA key: %w", err)
+	}
+	return nil
 }
 
 func run(certPath, keyPath, commonName string, validDays int) error {

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Go toolchain 1.27.4 for GO-2026-6859, `net/http` (#2058).** govulncheck reports GO-2026-6859 in the go1.27.3 standard library, fixed in go1.27.4 (2026-11-02). The `go` line of `go.mod`, `sdk/go`, `web/desktop` and `xkey`, every workflow `GO_VERSION`, every `golang:` builder and test image tag, the Go tarball downloads in `xkey`, and the digest-pinned `GO_IMAGE` (`scripts/tool-pins.sh`, `Dockerfile.cli`, `release.yml` `GO_IMAGE_DIGEST`, now the `golang:1.27.4-bookworm` index `sha256:4fa7c968…`) move to 1.27.4. No dependency or code change.
+- **No committed swtpm test EK root key (#1903).** The acme-tpm integration lane no longer commits `test/integration/acme-tpm/testdata/swtpm-test-ek-root.{crt,key}`. The acme-server container generates a throwaway ECDSA P-256 EK root CA (O=swtpm-test, CN=swtpm Test EK CA) at start with `certgen -ca-cert/-ca-key` into `/data/ek-root` on the `acme-data` volume; xkmsd trusts the certificate from there and the test container reads the pair from the same read-only volume (`SWTPM_TEST_EK_ROOT_DIR`, default `/data/ek-root`).
 
 ## [0.64.0-alpha] - 2026-10-25
 
