@@ -661,8 +661,14 @@ type CAChainImporter interface {
 	ImportDistributionCRLs(cert *x509.Certificate) error
 
 	// ImportIssuingCAs recursively imports issuing CA certificates from the
-	// certificate's AuthorityInformationAccess (AIA) extension.
+	// certificate's AuthorityInformationAccess (AIA) extension into the CA's
+	// shared stores. It is for system-scope callers only.
 	ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) error
+
+	// ImportIssuingCAsInto walks the AIA chain as ImportIssuingCAs does but
+	// imports into store only, the caller's (tenant's) certificate store,
+	// never the CA's shared stores (go-quicbaas#1993).
+	ImportIssuingCAsInto(ctx context.Context, cert *x509.Certificate, store certstore.CertStore) error
 }
 
 // CACrossSigner stores and retrieves cross-signed certificates, implementing
