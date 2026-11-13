@@ -53,12 +53,31 @@ func callerCtx(tenantID string) context.Context {
 		UserID:   "admin@" + tenantID,
 		Username: "admin@" + tenantID,
 		TenantID: tenantID,
-		Roles:    []string{qrdbsdk.RoleNameAdmin},
+		// Identity.Roles carries role IDs (as the qrdb login claims do), and
+		// go-qrdb v0.58 resolves them in the identity's tenant. The grant
+		// rule (#1278) makes a role writer hold what it grants: the kv
+		// permissions the tests write into roles are the Operator's.
+		Roles: []string{
+			qrdbsdk.SystemRoleID(qrdbsdk.NormalizeTenantID(tenantID), qrdbsdk.RoleNameAdmin),
+			qrdbsdk.SystemRoleID(qrdbsdk.NormalizeTenantID(tenantID), qrdbsdk.RoleNameOperator),
+		},
 	})
 }
 
 // platformCtx returns a context carrying an administrator of the reserved
 // system tenant: the platform scope that may address every tenant.
+// seedCtx returns the fixture's seeding context for tenantID: an admin-plane
+// user bound to the tenant that carries no qrdb principal, which go-qrdb v0.58
+// treats as system work (role.NewGrantGuard). The grant rule (#1278) lets a
+// principal grant only what it holds in the role's tenant, and the fixture
+// roles carry kv:get, a self-scoped Operator permission.
+func seedCtx(tenantID string) context.Context {
+	user := &AuthenticatedUser{UserID: "seed@" + tenantID, Username: "seed@" + tenantID, TenantID: tenantID}
+	ctx := context.WithValue(context.Background(), ContextKeyUser, user)
+	ctx = context.WithValue(ctx, ContextKeyTenantID, tenantID)
+	return qrdbsdk.ContextWithTenant(ctx, qrdbsdk.NormalizeTenantID(tenantID))
+}
+
 func platformCtx() context.Context {
 	return callerCtx(qrdbsdk.SystemTenantID)
 }
@@ -91,15 +110,24 @@ func newBindingFixture(t *testing.T) *bindingFixture {
 	ctx := platformCtx()
 	f := &bindingFixture{svc: svc}
 
+	_, err := svc.qrdbService.Roles().ReconcileBuiltInRoles(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID),
+		&db.ReconcileRolesRequest{TenantID: qrdbsdk.SystemTenantID})
+	require.NoError(t, err)
 	for _, id := range []string{boundTenantA, boundTenantB} {
 		_, err := svc.CreateTenant(ctx, CreateTenantRequest{ID: id, Name: id})
 		require.NoError(t, err)
 	}
-
-	var err error
-	f.roleA, err = svc.CreateTenantRole(ctx, boundTenantA, &db.CreateRoleRequest{Name: "role-a", Permissions: []string{"kv:get"}})
+	// The fake tenant service seeds no built-in roles in the qrdb role store,
+	// and go-qrdb v0.58 resolves a role writer's roles in its own tenant. The
+	// callers that write roles are the platform admin and tenant-a's; tenant-b
+	// stays unseeded so its role list is exactly the fixture's role-b.
+	_, err = svc.qrdbService.Roles().ReconcileBuiltInRoles(qrdbsdk.ContextWithTenant(ctx, boundTenantA),
+		&db.ReconcileRolesRequest{TenantID: boundTenantA})
 	require.NoError(t, err)
-	f.roleB, err = svc.CreateTenantRole(ctx, boundTenantB, &db.CreateRoleRequest{Name: "role-b", Permissions: []string{"kv:get"}})
+
+	f.roleA, err = svc.CreateTenantRole(seedCtx(boundTenantA), boundTenantA, &db.CreateRoleRequest{Name: "role-a", Permissions: []string{"kv:get"}})
+	require.NoError(t, err)
+	f.roleB, err = svc.CreateTenantRole(seedCtx(boundTenantB), boundTenantB, &db.CreateRoleRequest{Name: "role-b", Permissions: []string{"kv:get"}})
 	require.NoError(t, err)
 	f.userA, err = svc.CreateTenantUser(ctx, boundTenantA, &db.CreateUserRequest{Username: "user-a", Name: "User A", Email: "user-a@example.com"})
 	require.NoError(t, err)
