@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -70,5 +71,53 @@ func TestSealer_SealUnseal_ConcurrentUse(t *testing.T) {
 	close(errCh)
 	for err := range errCh {
 		require.NoError(t, err)
+	}
+}
+
+// TestSealer_SealUnseal_PlatformPasswordUncached seals and unseals an object
+// whose password is an uncached PlatformPassword: its Bytes unseals another
+// object on the same TPM. That nested unseal must not run under the lock the
+// outer seal or unseal holds, or the call never returns.
+func TestSealer_SealUnseal_PlatformPasswordUncached(t *testing.T) {
+	h := newSimHarness(t, nil)
+	ctx := context.Background()
+
+	// The object holding the platform password, sealed under its own password.
+	innerPassword := mustPassword(t, []byte("inner-password"))
+	_, err := h.TPM.SealKey(sealedKeyAttrs(t, h, "platform-password-inner", false, innerPassword), h.Backend, false)
+	require.NoError(t, err)
+
+	newPlatformPassword := func() types.Password {
+		return NewPlatformPassword(h.Logger, h.TPM,
+			sealedKeyAttrs(t, h, "platform-password-inner", false, innerPassword), h.Backend)
+	}
+	sealAttrs := sealedKeyAttrs(t, h, "platform-password-outer", false, newPlatformPassword())
+	openAttrs := sealedKeyAttrs(t, h, "platform-password-outer", false, newPlatformPassword())
+	plaintext := []byte("sealed-under-a-platform-password")
+
+	type result struct {
+		got []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		sealed, err := h.TPM.Seal(ctx, plaintext, &types.SealOptions{KeyAttributes: sealAttrs})
+		if err != nil {
+			done <- result{err: fmt.Errorf("Seal: %w", err)}
+			return
+		}
+		got, err := h.TPM.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: openAttrs})
+		if err != nil {
+			err = fmt.Errorf("Unseal: %w", err)
+		}
+		done <- result{got: got, err: err}
+	}()
+
+	select {
+	case r := <-done:
+		require.NoError(t, r.err)
+		require.Equal(t, plaintext, r.got)
+	case <-time.After(60 * time.Second):
+		t.Fatal("Seal/Unseal with an uncached PlatformPassword did not return within 60s (deadlock on the seal lock)")
 	}
 }
