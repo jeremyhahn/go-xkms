@@ -43,8 +43,7 @@ func TestReexport_TestHelpers(t *testing.T) {
 		})
 	}
 
-	var key *VaultSimulatedKey = vaulttest.NewSimulatedKey("1234")
-	require.NotNil(t, key)
+	require.IsType(t, (*VaultSimulatedKey)(nil), vaulttest.NewSimulatedKey("1234"))
 	require.Equal(t, vaulttest.RelyingParty, VaultRelyingParty)
 	require.Equal(t, vaultservice.Tenant, VaultTenant)
 }
