@@ -627,30 +627,6 @@ func TestGetOrder_SendsAccountID(t *testing.T) {
 	})
 }
 
-// TestDecodeResponses_TruncatedBody covers the read-failure branch of both
-// decoders. The server promises more bytes than it delivers and aborts the
-// connection, so io.ReadAll fails — the adapter must report that rather than
-// treat the partial body as a successful empty response.
-func TestDecodeResponses_TruncatedBody(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Length", "512")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":1`))
-		// Abort mid-body so the client sees an unexpected EOF.
-		panic(http.ErrAbortHandler)
-	}))
-	t.Cleanup(srv.Close)
-	a := newAdapterFor(t, srv)
-
-	if _, err := a.GetOrder(context.Background(), 7, 42); err == nil {
-		t.Error("decodeResponse accepted a truncated response body")
-	}
-	if _, _, err := a.ListOrders(context.Background(), &admin.ListOrdersRequest{Page: 1, PerPage: 10}); err == nil {
-		t.Error("decodeListResponse accepted a truncated response body")
-	}
-}
-
 // TestDoRequest_UnreachableServer verifies transport failures surface as
 // errors on every call shape (typed result, list result, and no result)
 // instead of yielding a zero value the caller would treat as real data.

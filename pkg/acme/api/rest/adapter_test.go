@@ -19,8 +19,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -119,42 +117,6 @@ func TestNewAdapter(t *testing.T) {
 				t.Errorf("expected authToken %q, got %q", tt.config.AuthToken, adapter.authToken)
 			}
 		})
-	}
-}
-
-// TestNewAdapterWithValidTLSCerts tests NewAdapter with valid TLS certificate files.
-func TestNewAdapterWithValidTLSCerts(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Create test CA certificate
-	caCertPath := filepath.Join(tempDir, "ca.pem")
-	caCertPEM := `-----BEGIN CERTIFICATE-----
-MIIBkTCB+wIJAKHBfpGgSJHKMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnRl
-c3RjYTAeFw0yNTAxMDEwMDAwMDBaFw0yNjAxMDEwMDAwMDBaMBExDzANBgNVBAMM
-BnRlc3RjYTBcMA0GCSqGSIb3DQEBAQUAA0sAMEgCQQC7k1+zEAq3r8XYzjQwFJDV
-KNyKPiLPLHfzZNMl8qe4w5dKqWzL8IqPqjm4lVnUqMmVVqBqkNnGpKNqQpQGEZxN
-AgMBAAGjUDBOMB0GA1UdDgQWBBQfH3bNDwOGPJVN2h3TKJZzAJVwDjAfBgNVHSME
-GDAWgBQfH3bNDwOGPJVN2h3TKJZzAJVwDjAMBgNVHRMEBTADAQH/MA0GCSqGSIb3
-DQEBCwUAA0EA
------END CERTIFICATE-----`
-	if err := os.WriteFile(caCertPath, []byte(caCertPEM), 0600); err != nil {
-		t.Fatalf("failed to write CA cert: %v", err)
-	}
-
-	config := &api.AdapterConfig{
-		BaseURL: "https://localhost:8443",
-		TLSConfig: &api.TLSConfig{
-			CAFile: caCertPath,
-		},
-	}
-
-	adapter, err := NewAdapter(config)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if adapter == nil {
-		t.Fatal("expected adapter, got nil")
 	}
 }
 
@@ -2858,11 +2820,18 @@ func TestDoRequestMarshalError(t *testing.T) {
 
 // TestDoRequestContextCancellation tests that doRequest respects context cancellation.
 func TestDoRequestContextCancellation(t *testing.T) {
+	// The handler answers only once the client has given up (or the test ends),
+	// so the request outlives the client's deadline.
+	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(5 * time.Second)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
+	defer close(release)
 
 	adapter, err := NewAdapter(&api.AdapterConfig{BaseURL: server.URL})
 	if err != nil {
@@ -2907,30 +2876,6 @@ func TestDoRequestWithoutAuthToken(t *testing.T) {
 	}
 }
 
-// TestDecodeResponseInvalidJSON tests decodeResponse with invalid JSON.
-func TestDecodeResponseInvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("invalid json{"))
-	}))
-	defer server.Close()
-
-	adapter, err := NewAdapter(&api.AdapterConfig{BaseURL: server.URL})
-	if err != nil {
-		t.Fatalf("unexpected error creating adapter: %v", err)
-	}
-
-	_, err = adapter.GetStatus(context.Background())
-	if err == nil {
-		t.Error("expected error for invalid JSON, got nil")
-	}
-}
-
-// TestInterfaceCompliance verifies that Adapter implements AdminAdapter.
-func TestInterfaceCompliance(t *testing.T) {
-	var _ api.AdminAdapter = (*Adapter)(nil)
-}
-
 // TestAdapterHeadersSet verifies that Content-Type and Accept headers are set correctly.
 func TestAdapterHeadersSet(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2953,30 +2898,6 @@ func TestAdapterHeadersSet(t *testing.T) {
 	_, err = adapter.GetStatus(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// TestDoRequestWithNilBody verifies requests work with nil body.
-func TestDoRequestWithNilBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(&admin.CAStatus{Identity: "test"})
-	}))
-	defer server.Close()
-
-	adapter, err := NewAdapter(&api.AdapterConfig{BaseURL: server.URL})
-	if err != nil {
-		t.Fatalf("unexpected error creating adapter: %v", err)
-	}
-
-	resp, err := adapter.doRequest(context.Background(), http.MethodGet, "/test", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected status 200, got %d", resp.StatusCode)
 	}
 }
 
@@ -3364,24 +3285,6 @@ func TestGetStatsDoRequestError(t *testing.T) {
 	}
 }
 
-// TestDecodeResponseWithNilTarget tests decodeResponse with nil target.
-func TestDecodeResponseWithNilTarget(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-
-	adapter, err := NewAdapter(&api.AdapterConfig{BaseURL: server.URL})
-	if err != nil {
-		t.Fatalf("unexpected error creating adapter: %v", err)
-	}
-
-	err = adapter.DeleteTenant(context.Background(), "tenant-1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 // TestDecodeListResponseErrorPaths tests decodeListResponse error paths.
 func TestDecodeListResponseErrorPaths(t *testing.T) {
 	tests := []struct {
@@ -3452,138 +3355,6 @@ func TestDecodeListResponseErrorPaths(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-// TestDecodeResponseDirectAPIResponse tests decodeResponse with direct API response format.
-func TestDecodeResponseDirectAPIResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		// Return data directly without envelope wrapper
-		response := &admin.CAStatus{
-			Identity:    "test-ca",
-			Initialized: true,
-			Version:     "1.0.0",
-		}
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	adapter, err := NewAdapter(&api.AdapterConfig{BaseURL: server.URL})
-	if err != nil {
-		t.Fatalf("unexpected error creating adapter: %v", err)
-	}
-
-	status, err := adapter.GetStatus(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if status.Identity != "test-ca" {
-		t.Errorf("expected identity 'test-ca', got %q", status.Identity)
-	}
-}
-
-// TestDecodeResponseDirectFormat tests decodeResponse with direct response format.
-func TestDecodeResponseDirectFormat(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		// Return a direct (non-wrapped) response
-		response := &admin.CAStatus{
-			Identity:    "direct-ca",
-			Initialized: true,
-			Version:     "2.0.0",
-		}
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	adapter, err := NewAdapter(&api.AdapterConfig{BaseURL: server.URL})
-	if err != nil {
-		t.Fatalf("unexpected error creating adapter: %v", err)
-	}
-
-	status, err := adapter.GetStatus(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if status.Identity != "direct-ca" {
-		t.Errorf("expected identity 'direct-ca', got %q", status.Identity)
-	}
-}
-
-// TestDecodeListResponseWithPagination tests decodeListResponse with paginated response.
-func TestDecodeListResponseWithPagination(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		response := map[string]interface{}{
-			"items": []*admin.AccountInfo{
-				{ID: 1, Status: "valid"},
-			},
-			"total":    1,
-			"page":     1,
-			"per_page": 10,
-		}
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	adapter, err := NewAdapter(&api.AdapterConfig{BaseURL: server.URL})
-	if err != nil {
-		t.Fatalf("unexpected error creating adapter: %v", err)
-	}
-
-	accounts, pagination, err := adapter.ListAccounts(context.Background(), &admin.ListAccountsRequest{Page: 1, PerPage: 10})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(accounts) != 1 {
-		t.Errorf("expected 1 account, got %d", len(accounts))
-	}
-
-	if pagination == nil {
-		t.Fatal("expected non-nil pagination")
-	}
-	if pagination.Total != 1 {
-		t.Errorf("expected total 1, got %d", pagination.Total)
-	}
-}
-
-// TestDecodeListResponseEmptyItems tests decodeListResponse with empty items.
-func TestDecodeListResponseEmptyItems(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		response := map[string]interface{}{
-			"items":    []*admin.AccountInfo{},
-			"total":    0,
-			"page":     1,
-			"per_page": 10,
-		}
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	adapter, err := NewAdapter(&api.AdapterConfig{BaseURL: server.URL})
-	if err != nil {
-		t.Fatalf("unexpected error creating adapter: %v", err)
-	}
-
-	accounts, pagination, err := adapter.ListAccounts(context.Background(), &admin.ListAccountsRequest{Page: 1, PerPage: 10})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(accounts) != 0 {
-		t.Errorf("expected 0 accounts, got %d", len(accounts))
-	}
-
-	if pagination == nil {
-		t.Fatal("expected non-nil pagination")
-	}
-	if pagination.Total != 0 {
-		t.Errorf("expected total 0, got %d", pagination.Total)
 	}
 }
 

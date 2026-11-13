@@ -1,0 +1,1 @@
+acme: the `pkg/acme/api/rest` adapter's tests drop 10 that repeat a path and an assertion a kept test already makes, or run no package code (#1794), and the context-cancellation test's handler waits for the client to give up instead of sleeping five seconds; coverage is unchanged at 99.4%.
