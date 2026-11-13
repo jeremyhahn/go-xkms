@@ -319,29 +319,29 @@ TPM evidence against a tenant's endorsements and signed reference values, and
 returns an attestation result. It moved here from go-quicbaas (#1608), and
 go-quicbaas now re-exports it.
 
-- **Store.** `NewStore` (`pkg/attestation/appraisal/store.go:74`) keeps
+- **Store.** `NewStore` (`pkg/attestation/appraisal/store.go:82`) keeps
   endorsements and reference values in the qrdb DAO database `attestation`,
   keyed by tenant. A tenant that names no record scope is `ErrInvalidTenant`.
 - **Endorsements.** An endorsement is an `ak-root` (a CA the AK certificate
   must chain to) or a `reference-signer` (a CA or pinned key a signed CoRIM
   must verify under). They are managed with `PutEndorsement`,
   `ListEndorsements` and `DeleteEndorsement`
-  (`pkg/attestation/appraisal/verifier.go:264`, `:317`, `:348`).
-- **Reference values.** `PutReferenceValues` (`verifier.go:359`) stores a
+  (`pkg/attestation/appraisal/verifier.go:274`, `:327`, `:358`).
+- **Reference values.** `PutReferenceValues` (`verifier.go:369`) stores a
   signed CoRIM only if a stored reference-signer verifies it; otherwise it
   returns `ErrReferenceValuesRejected`. `GetReferenceValues`,
-  `ListReferenceValues` and `DeleteReferenceValues` (`verifier.go:478`,
-  `:487`, `:500`) read and remove them.
-- **Quote appraisal.** `AppraiseQuote` (`verifier.go:512`) runs four checks:
+  `ListReferenceValues` and `DeleteReferenceValues` (`verifier.go:494`,
+  `:503`, `:516`) read and remove them.
+- **Quote appraisal.** `AppraiseQuote` (`verifier.go:528`) runs four checks:
   the AK certificate, the quote, the event log and the baseline. Each check
   reports `pass`, `forged`, `absent` or `skipped`. The result is verified only
   if every check that ran passed and none was absent.
-- **Hosts and containers.** `AppraiseHost` (`pkg/attestation/appraisal/host.go:140`)
+- **Hosts and containers.** `AppraiseHost` (`pkg/attestation/appraisal/host.go:146`)
   refuses a host whose quoted PCRs diverge from the reference values, with a
   `*HostAppraisalError` that unwraps to `ErrHostNotVerified`, and also to
   `ErrPCRMismatch` when PCRs diverged. It also refuses PCR reads that do not
   reproduce the quoted digest (`ErrQuoteNotBound`). `AppraiseContainer`
-  (`pkg/attestation/appraisal/container.go:68`) applies the same checks to a
+  (`pkg/attestation/appraisal/container.go:74`) applies the same checks to a
   container launch's evidence. go-xkms has no container runtime; the embedder
   that launches the container calls these with the tenant directly.
 - **Service layer.** `XKMSService` holds the Appraiser in a subsystem
