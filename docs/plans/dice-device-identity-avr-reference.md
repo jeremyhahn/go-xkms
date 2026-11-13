@@ -67,3 +67,24 @@ pkg/attestation/verifier.go, the device registry, sdk/go, docs/SPEC.md.
 - Run: sdk/go go build ./...: pass.
 - Run: make lint: first run timed out at 540 s in golangci-lint (web/desktop);
   rerun pass, 0 issues in every module and tag set.
+
+## Slice 3: SPEC.md row text (blocked: protected path)
+
+docs/SPEC.md is protected by the lane policy guard and this lane has no
+LANE_POLICY_ALLOW for it, so the row text is proposed here for whoever holds
+the allowance. The row stays in progress: the acme-issuance match is open.
+
+- Replace the row's last sentence ("Open: the reference match of
+  acme-issuance; nothing matches the 32 bytes against a registered reference
+  yet.", docs/SPEC.md:90) with:
+  "`dice.Verify` matches the 32 bytes in constant time when its caller sets
+  `VerifyOptions.ApplicationReference` (`pkg/attestation/dice/verify.go:59`,
+  `:282`), refusing a differing one with `ErrApplicationEvidenceMismatch`; the
+  AVR backend sets it from the operator's `attestation.application_reference`
+  (`pkg/backend/avr/attestation.go:61`, `:223`) and refuses a reference that
+  is not 32 bytes at `NewBackend` (`backend.go:196`). Open: the reference
+  match of acme-issuance (device-attest-01 and finalize hold no registered
+  reference yet)."
+- Stale verify.go citations in the same row after slice 1 (1-based on f378cbe60):
+  `verify.go:139` -> `:148` (Evidence.RootType), `:229` -> `:241`
+  (`RootTypeFromPaths(paths)`), `:512` -> `:551` (`verifyRootTypePermitted`).
