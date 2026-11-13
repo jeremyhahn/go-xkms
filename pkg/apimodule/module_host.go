@@ -129,6 +129,36 @@ func (m *Module) restServer() (*rest.Server, error) {
 	return srv, nil
 }
 
+// DaemonCORS maps a go-xkms REST CORS policy onto the go-qrdb node's
+// DaemonConfig.CORS. go-qrdb wraps its unified REST handler in that policy
+// OUTSIDE its auth middleware, so the 401/403 the auth chain answers for a
+// module route still carries Access-Control-Allow-Origin; the per-route
+// wrapper RegisterHTTP applies only reaches requests auth admitted. A nil
+// policy (CORS off) maps to the zero config, which turns qrdb's CORS off.
+// Allow-Credentials has no go-qrdb field; the per-route wrapper keeps
+// sending it on the responses auth admits.
+func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
+	if o == nil || len(o.AllowedOrigins) == 0 {
+		return qrdbsdk.DaemonCORSConfig{}
+	}
+	return qrdbsdk.DaemonCORSConfig{
+		AllowedOrigins: append([]string(nil), o.AllowedOrigins...),
+		MaxAge:         o.MaxAgeSeconds,
+	}
+}
+
+// NodeCORS returns the module's REST CORS policy as the embedding node's
+// DaemonConfig.CORS. The host that builds the node sets cfg.CORS from it
+// before NewStandaloneNode / NewClusterNode, so the node's outer CORS layer
+// and the module's routes answer with one policy.
+func (m *Module) NodeCORS() (qrdbsdk.DaemonCORSConfig, error) {
+	srv, err := m.restServer()
+	if err != nil || srv == nil {
+		return qrdbsdk.DaemonCORSConfig{}, err
+	}
+	return DaemonCORS(srv.CORSOptions()), nil
+}
+
 // selfBuilds reports whether the module composes its own surfaces from host
 // inputs (no WithRESTServer). A module bound to a host-supplied REST server
 // (xkmsd) serves what that host composed and never composes stores itself.

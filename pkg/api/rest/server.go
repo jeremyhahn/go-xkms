@@ -507,6 +507,18 @@ func (s *Server) CORSMiddleware() func(http.Handler) http.Handler {
 	return NewCORSMiddleware(s.cors)
 }
 
+// CORSOptions returns the server's configured CORS policy, or nil when CORS
+// is off. A host that serves these routes on another server (the go-qrdb
+// unified server) hands the same policy to that server's outer CORS layer.
+func (s *Server) CORSOptions() *CORSOptions {
+	if s.cors == nil {
+		return nil
+	}
+	o := *s.cors
+	o.AllowedOrigins = append([]string(nil), s.cors.AllowedOrigins...)
+	return &o
+}
+
 // setupRouter configures the chi router with all routes and middleware.
 func (s *Server) setupRouter() *chi.Mux {
 	r := chi.NewRouter()

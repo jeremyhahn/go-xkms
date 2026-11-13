@@ -323,6 +323,16 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	// rejects a SAN under a foreign trust domain.
 	qcfg.Auth.ClusterTrustDomain = TrustDomain(cfg)
 
+	// go-qrdb wraps the unified REST handler in DaemonConfig.CORS outside
+	// its auth middleware: with go-xkms's CORS policy there, a 401/403 the
+	// node's auth chain answers for a module route carries the policy too.
+	if cfg.CORS.Enabled && len(cfg.CORS.AllowedOrigins) > 0 {
+		qcfg.CORS = qrdbsdk.DaemonCORSConfig{
+			AllowedOrigins: append([]string(nil), cfg.CORS.AllowedOrigins...),
+			MaxAge:         cfg.CORS.MaxAgeSeconds,
+		}
+	}
+
 	qcfg.Raft.DataDir = cfg.Datastore.Path
 
 	// Engine selects the local qrdb database backend directly from the

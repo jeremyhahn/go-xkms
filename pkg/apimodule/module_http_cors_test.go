@@ -125,12 +125,6 @@ func TestRegisterHTTP_AppliesTheConfiguredCORSPolicy(t *testing.T) {
 // refusal must still carry the configured CORS policy, or a cross-origin
 // browser sees a network error instead of the 401 or 403.
 func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
-	// BLOCKED on go-qrdb: v0.51.0-alpha gives a ServiceModule or a composer
-	// no seam outside its REST auth middleware (no handler wrapper option;
-	// rest.WithCORS is not reachable through the node, and DaemonConfig.CORS
-	// leaves these refusals without the header). Remove the skip with the
-	// go-qrdb release that adds one.
-	t.Skip("blocked: go-qrdb v0.51.0-alpha has no CORS seam outside its auth middleware")
 	const allowed = "https://rp.example"
 
 	srv, err := rest.NewServer(&rest.Config{
@@ -170,6 +164,11 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 	cfg.Seal.Enabled = false
 	cfg.Server.Host = "127.0.0.1"
 	cfg.Server.AdminPort = ports[0]
+	// The node's outer CORS layer (outside go-qrdb's auth middleware) takes
+	// the module's policy, so refusals carry it.
+	cfg.CORS, err = m.NodeCORS()
+	require.NoError(t, err)
+	require.Equal(t, []string{allowed}, cfg.CORS.AllowedOrigins)
 
 	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, []qrdbserver.ServerOption{
 		qrdbserver.WithServerTLS(&tls.Config{
