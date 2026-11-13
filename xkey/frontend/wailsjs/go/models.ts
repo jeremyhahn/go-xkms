@@ -878,6 +878,100 @@ export namespace seal {
 
 export namespace services {
 	
+	export class ACMEAccountInfo {
+	    uri: string;
+	    status: string;
+	    contacts: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMEAccountInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uri = source["uri"];
+	        this.status = source["status"];
+	        this.contacts = source["contacts"];
+	    }
+	}
+	export class ACMEConnection {
+	    directoryUrl: string;
+	    accountKeyPath: string;
+	    trustedRootPaths: string[];
+	    systemRoots: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMEConnection(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.directoryUrl = source["directoryUrl"];
+	        this.accountKeyPath = source["accountKeyPath"];
+	        this.trustedRootPaths = source["trustedRootPaths"];
+	        this.systemRoots = source["systemRoots"];
+	    }
+	}
+	export class ACMEEnrollRequest {
+	    challenge: string;
+	    ipAddress: string;
+	    port: number;
+	    listenHost: string;
+	    commonName: string;
+	    pcrs: number[];
+	    timeoutSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMEEnrollRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.challenge = source["challenge"];
+	        this.ipAddress = source["ipAddress"];
+	        this.port = source["port"];
+	        this.listenHost = source["listenHost"];
+	        this.commonName = source["commonName"];
+	        this.pcrs = source["pcrs"];
+	        this.timeoutSeconds = source["timeoutSeconds"];
+	    }
+	}
+	export class ACMEEnrollmentInfo {
+	    idevidPem: string;
+	    iakPem: string;
+	    chainPem: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMEEnrollmentInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.idevidPem = source["idevidPem"];
+	        this.iakPem = source["iakPem"];
+	        this.chainPem = source["chainPem"];
+	    }
+	}
+	export class ACMERenewRequest {
+	    certPath: string;
+	    domain: string;
+	    authzType: string;
+	    challenge: string;
+	    csrPath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ACMERenewRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.certPath = source["certPath"];
+	        this.domain = source["domain"];
+	        this.authzType = source["authzType"];
+	        this.challenge = source["challenge"];
+	        this.csrPath = source["csrPath"];
+	    }
+	}
 	export class AddFactorRequest {
 	    type: string;
 	    label: string;

@@ -26,7 +26,7 @@
     mdiWrenchOutline, mdiMenu, mdiWeatherSunny, mdiWeatherNight,
     mdiThemeLightDark, mdiKey, mdiChevronLeft, mdiLanConnect, mdiLockOutline,
     mdiShieldLockOutline, mdiOpenInApp, mdiCertificate, mdiConsoleLine, mdiWeb,
-    mdiSsh
+    mdiSsh, mdiShieldKey
   } from '$lib/utils/icons';
   import { isServerConnected } from '$lib/stores/connection';
 
@@ -59,6 +59,7 @@
   import APIExplorer from './views/APIExplorer.svelte';
   import Browser from './views/Browser.svelte';
   import SSH from './views/SSH.svelte';
+  import ACME from './views/ACME.svelte';
 
   interface NavItem {
     id: string;
@@ -75,6 +76,7 @@
     { id: 'ssh', label: 'SSH', icon: mdiSsh, section: 'applications' },
     { id: 'trust-store', label: 'Trust Store', icon: mdiShieldLockOutline, section: 'store' },
     { id: 'certificates', label: 'Certificates', icon: mdiCertificate, section: 'store' },
+    { id: 'acme', label: 'ACME', icon: mdiShieldKey, section: 'store' },
     { id: 'fido2', label: 'FIDO2', icon: mdiShieldCheckOutline, section: 'applications' },
     { id: 'oath', label: 'OATH', icon: mdiNumeric, section: 'applications' },
     { id: 'piv', label: 'PIV', icon: mdiCreditCardOutline, section: 'applications' },
@@ -460,6 +462,8 @@
         <TrustStore />
       {:else if view === 'certificates'}
         <Certificates />
+      {:else if view === 'acme'}
+        <ACME />
       {:else if view === 'api-explorer'}
         <APIExplorer />
       {:else if view === 'browser'}
