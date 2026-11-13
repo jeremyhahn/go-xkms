@@ -372,11 +372,20 @@ type restSigner struct {
 func (s *restSigner) PublicKey() gossh.PublicKey { return s.pub }
 
 // Sign forwards the digest to the server and returns the assembled
-// *ssh.Signature.
-func (s *restSigner) Sign(_ io.Reader, data []byte) (*gossh.Signature, error) {
+// *ssh.Signature in the key's default signature algorithm.
+func (s *restSigner) Sign(rand io.Reader, data []byte) (*gossh.Signature, error) {
+	return s.SignWithAlgorithm(rand, data, "")
+}
+
+// SignWithAlgorithm implements ssh.AlgorithmSigner: it forwards the digest
+// and the signature algorithm (RFC 8332 §3, e.g. rsa-sha2-256 for an RSA
+// key) to the server, which signs with that algorithm. An empty algorithm
+// keeps the key's default. The rand parameter is ignored — signing is
+// performed server-side.
+func (s *restSigner) SignWithAlgorithm(_ io.Reader, data []byte, algorithm string) (*gossh.Signature, error) {
 	path := fmt.Sprintf("/keys/%s/%s/%s/sign",
 		url.PathEscape(s.scope), url.PathEscape(s.owner), url.PathEscape(s.name))
-	req := restSignRequest{Digest: data}
+	req := restSignRequest{Digest: data, Algorithm: algorithm}
 	body, err := s.c.do(context.Background(), http.MethodPost, path, req)
 	if err != nil {
 		return nil, err
@@ -585,12 +594,13 @@ func (s *restSessionClient) Dial(ctx context.Context, req SessionDialRequest) (S
 
 // Ensure the interface wiring is compile-time checked.
 var (
-	_ Client               = (*restClient)(nil)
-	_ KeysClient           = (*restKeysClient)(nil)
-	_ KnownHostsClient     = (*restKnownHostsClient)(nil)
-	_ AuthorizedKeysClient = (*restAuthorizedKeysClient)(nil)
-	_ SessionClient        = (*restSessionClient)(nil)
-	_ gossh.Signer         = (*restSigner)(nil)
+	_ Client                = (*restClient)(nil)
+	_ KeysClient            = (*restKeysClient)(nil)
+	_ KnownHostsClient      = (*restKnownHostsClient)(nil)
+	_ AuthorizedKeysClient  = (*restAuthorizedKeysClient)(nil)
+	_ SessionClient         = (*restSessionClient)(nil)
+	_ gossh.Signer          = (*restSigner)(nil)
+	_ gossh.AlgorithmSigner = (*restSigner)(nil)
 )
 
 // Ensure errors referenced above are not accidentally dropped.

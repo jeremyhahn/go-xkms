@@ -39,6 +39,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
+	pkgsshkeys "github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -216,7 +217,12 @@ func (s *Server) handleSSHKeysSign(ctx context.Context, req *JSONRPCRequest) (in
 	if err != nil {
 		return nil, mapSSHError(err)
 	}
-	sig, err := signer.Sign(rand.Reader, params.Digest)
+	// A named algorithm signs through ssh.AlgorithmSigner (RFC 8332 §3); a
+	// refused one is the caller's error, not the server's.
+	sig, err := pkgsshkeys.SignWithAlgorithm(signer, rand.Reader, params.Digest, params.Algorithm)
+	if pkgsshkeys.IsSignatureAlgorithmRefusal(err) {
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
+	}
 	if err != nil {
 		return nil, mapSSHError(err)
 	}
