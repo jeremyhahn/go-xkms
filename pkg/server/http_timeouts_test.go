@@ -49,7 +49,7 @@ func TestServer_StartMetrics_HasHardenedTimeouts(t *testing.T) {
 	cfg.Metrics.Enabled = true
 	cfg.Metrics.Path = "/metrics"
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	srv.SetMetricsListener(newTestMetricsListener(t))
 

@@ -52,7 +52,7 @@ func TestCredentialBarrierStrategy_RoundTripsAcrossRestart(t *testing.T) {
 	credValue := []byte("s3cr3t-user-pin")
 
 	// First boot: store the credential through the barrier-backed service.
-	first, err := New(cfg)
+	first, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, first.CredentialService())
 	require.Equal(t, "barrier", first.CredentialService().Strategy())
@@ -71,7 +71,7 @@ func TestCredentialBarrierStrategy_RoundTripsAcrossRestart(t *testing.T) {
 	// therefore the same Storage.Path) is handed to a second New(), exactly
 	// as an operator restarting xkmsd would.
 	xkms.Reset()
-	second, err := New(cfg)
+	second, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = second.Shutdown() }()
 

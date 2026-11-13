@@ -63,7 +63,7 @@ func TestServer_CA_NilByDefault(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -75,7 +75,7 @@ func TestServer_Backend_NilForMissingName(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -87,7 +87,7 @@ func TestServer_Backend_NotNilForSoftware(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -99,7 +99,7 @@ func TestServer_Logger_NotNil(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -111,7 +111,7 @@ func TestServer_CreateStorage_ACME_Accessor(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -129,7 +129,7 @@ func TestServer_FactorRegistry_NotNil(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
