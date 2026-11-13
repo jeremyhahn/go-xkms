@@ -67,3 +67,38 @@ func TestStart_DefaultWorkDirFitsSunPathUnderALongTMPDIR(t *testing.T) {
 		t.Errorf("owned work dir should be removed on Stop, stat err = %v", serr)
 	}
 }
+
+func TestDefaultWorkDirBase_PrefersAPrivateXDGRuntimeDir(t *testing.T) {
+	// t.TempDir() under this test's name is itself too long to fit, so the
+	// short directories come straight from /tmp.
+	shortDir := func() string {
+		dir, err := os.MkdirTemp(shortWorkDirBase, "xk-")
+		if err != nil {
+			t.Fatalf("mkdir short dir: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		return dir
+	}
+	shortTmp := shortDir()
+	xdg := shortDir()
+	if err := os.Chmod(xdg, 0o700); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Setenv("TMPDIR", longTempDir(t))
+	t.Setenv("XDG_RUNTIME_DIR", xdg)
+	if got := defaultWorkDirBase(); got != xdg {
+		t.Errorf("defaultWorkDirBase() = %q, want the private XDG_RUNTIME_DIR %q", got, xdg)
+	}
+
+	if err := os.Chmod(xdg, 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if got := defaultWorkDirBase(); got != shortWorkDirBase {
+		t.Errorf("defaultWorkDirBase() with a 0755 XDG_RUNTIME_DIR = %q, want %q", got, shortWorkDirBase)
+	}
+
+	t.Setenv("TMPDIR", shortTmp)
+	if got := defaultWorkDirBase(); got != "" {
+		t.Errorf("defaultWorkDirBase() with a short TMPDIR = %q, want the default temp dir", got)
+	}
+}

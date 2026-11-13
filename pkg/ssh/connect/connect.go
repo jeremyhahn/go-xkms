@@ -193,7 +193,7 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 	workDir := req.WorkDir
 	ownsWorkDir := false
 	if workDir == "" {
-		dir, err := os.MkdirTemp("", "xkey-ssh-")
+		dir, err := os.MkdirTemp(defaultWorkDirBase(), workDirPattern)
 		if err != nil {
 			return nil, &LaunchError{Op: "tempdir", Err: err}
 		}
@@ -609,6 +609,59 @@ var removeAll = os.RemoveAll
 // cleanupDir removes the work dir with remove, only when this package created
 // it. The caller passes the seam it read, so a background reaper uses the one
 // in force when it started.
+// maxSocketPathLen is the longest agent socket path a default work dir may
+// produce. AF_UNIX's sun_path buffer is 108 bytes on Linux and 104 on macOS,
+// each including the trailing NUL; staying under 104 is safe on both, so a
+// long TMPDIR fails over to a short base instead of failing bind(2) with
+// EINVAL (the same limit xkey/pkg/ipc applies to its own sockets).
+const maxSocketPathLen = 103
+
+// workDirPattern is the os.MkdirTemp pattern of a default work dir.
+const workDirPattern = "xkey-ssh-"
+
+// shortWorkDirBase is the last-resort base for a default work dir: short
+// enough that the agent socket under it always fits sun_path.
+const shortWorkDirBase = "/tmp"
+
+// defaultWorkDirBase picks the base directory of a default work dir: the
+// usual temp dir when the agent socket under it fits sun_path, else
+// $XDG_RUNTIME_DIR when it is a usable private directory that fits, else
+// /tmp. MkdirTemp still makes the work dir itself 0700 and owned by this
+// process, so the choice of base never weakens the socket's protection.
+func defaultWorkDirBase() string {
+	if fitsSunPath(os.TempDir()) {
+		return ""
+	}
+	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" && filepath.IsAbs(xdg) && fitsSunPath(xdg) && isPrivateDir(xdg) {
+		return xdg
+	}
+	return shortWorkDirBase
+}
+
+// fitsSunPath reports whether an agent socket in a default work dir under
+// base stays within maxSocketPathLen. The placeholder stands in for the
+// random suffix MkdirTemp appends (at most 20 decimal digits).
+func fitsSunPath(base string) bool {
+	probe := filepath.Join(base, workDirPattern+"00000000000000000000")
+	return len(sshagent.SocketPath(probe)) <= maxSocketPathLen
+}
+
+// isPrivateDir reports whether dir is a directory with mode 0700 that this
+// process can write to. A 0700 directory grants write access to its owner
+// alone, so writability stands in, portably, for "owned by this user" (root
+// aside, who may write anywhere and gains nothing from the check).
+func isPrivateDir(dir string) bool {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return false
+	}
+	probe, err := os.MkdirTemp(dir, workDirPattern)
+	if err != nil {
+		return false
+	}
+	return os.Remove(probe) == nil
+}
+
 func cleanupDir(remove func(string) error, owns bool, dir string) error {
 	if owns && dir != "" {
 		return remove(dir)
