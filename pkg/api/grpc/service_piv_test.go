@@ -111,27 +111,6 @@ func TestListPIVSlots_MissingBackend(t *testing.T) {
 	}
 }
 
-func TestListPIVSlots_BackendNotFound(t *testing.T) {
-	cleanup := setupPIVTest(t)
-	defer cleanup()
-
-	svc := newPIVTestService()
-	_, err := svc.ListPIVSlots(context.Background(), &pb.ListPIVSlotsRequest{
-		Backend: "nonexistent",
-	})
-	if err == nil {
-		t.Fatal("expected error for nonexistent backend")
-	}
-
-	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status error, got: %v", err)
-	}
-	if st.Code() != codes.NotFound {
-		t.Fatalf("expected NotFound, got: %v", st.Code())
-	}
-}
-
 func TestGetPIVCertificate_MissingBackend(t *testing.T) {
 	svc := newPIVTestService()
 	_, err := svc.GetPIVCertificate(context.Background(), &pb.GetPIVCertificateRequest{
@@ -284,33 +263,6 @@ func TestDeletePIVCertificate_MissingSlot(t *testing.T) {
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Fatalf("expected InvalidArgument, got: %v", st.Code())
-	}
-}
-
-func TestGeneratePIVKey_Success(t *testing.T) {
-	cleanup := setupPIVTest(t)
-	defer cleanup()
-
-	svc := newPIVTestService()
-	resp, err := svc.GeneratePIVKey(context.Background(), &pb.GeneratePIVKeyRequest{
-		Backend: "software",
-		Slot:    "9a",
-		Subject: "Test Key",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if resp.Slot != "9a" {
-		t.Fatalf("expected slot 9a, got: %s", resp.Slot)
-	}
-	if len(resp.Certificate) == 0 {
-		t.Fatal("expected non-empty certificate")
-	}
-	if len(resp.PublicKey) == 0 {
-		t.Fatal("expected non-empty public key")
 	}
 }
 
@@ -656,62 +608,6 @@ func TestMapPIVError_NilError(t *testing.T) {
 	result := mapPIVError(nil, "test")
 	if result != nil {
 		t.Fatalf("expected nil, got: %v", result)
-	}
-}
-
-func TestMapPIVError_KnownErrors(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		wantCode codes.Code
-	}{
-		{
-			name:     "not initialized",
-			err:      xkms.ErrPIVNotInitialized,
-			wantCode: codes.FailedPrecondition,
-		},
-		{
-			name:     "backend not found",
-			err:      xkms.ErrPIVBackendNotFound,
-			wantCode: codes.NotFound,
-		},
-		{
-			name:     "invalid algorithm",
-			err:      xkms.ErrPIVInvalidAlgorithm,
-			wantCode: codes.InvalidArgument,
-		},
-		{
-			name:     "invalid slot",
-			err:      xkms.ErrPIVInvalidSlot,
-			wantCode: codes.InvalidArgument,
-		},
-		{
-			name:     "invalid format",
-			err:      xkms.ErrPIVInvalidFormat,
-			wantCode: codes.InvalidArgument,
-		},
-		{
-			name:     "key not found",
-			err:      xkms.ErrPIVKeyNotFound,
-			wantCode: codes.NotFound,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := mapPIVError(tt.err, "test operation")
-			if result == nil {
-				t.Fatal("expected non-nil error")
-			}
-
-			st, ok := status.FromError(result)
-			if !ok {
-				t.Fatalf("expected gRPC status error, got: %v", result)
-			}
-			if st.Code() != tt.wantCode {
-				t.Fatalf("expected code %v, got: %v", tt.wantCode, st.Code())
-			}
-		})
 	}
 }
 

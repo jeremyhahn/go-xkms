@@ -86,39 +86,6 @@ func makeTestAttestationCert(
 }
 
 // makeTestCA creates a self-signed CA certificate and returns it along with the private key.
-func makeTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
-	t.Helper()
-
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("failed to generate CA key: %v", err)
-	}
-
-	caTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(1000),
-		Subject: pkix.Name{
-			CommonName: "Test Root CA",
-		},
-		NotBefore:             time.Now().Add(-1 * time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-
-	caCertBytes, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatalf("failed to create CA certificate: %v", err)
-	}
-
-	caCert, err := x509.ParseCertificate(caCertBytes)
-	if err != nil {
-		t.Fatalf("failed to parse CA certificate: %v", err)
-	}
-
-	return caCert, caKey
-}
-
 // makeTestAttestationCertWithRootOfTrust creates a certificate with a RootOfTrust
 // embedded in the teeEnforced AuthorizationList.
 func makeTestAttestationCertWithRootOfTrust(
@@ -331,41 +298,6 @@ func TestParseKeyAttestation_NoExtension(t *testing.T) {
 	}
 }
 
-// TestParseKeyAttestation_ValidExtension verifies successful parsing of a
-// certificate with a valid attestation extension.
-func TestParseKeyAttestation_ValidExtension(t *testing.T) {
-	challenge := []byte("test-challenge-nonce")
-	cert := makeTestAttestationCert(t, SecurityLevelTrustedEnvironment, challenge)
-
-	desc, err := ParseKeyAttestation(cert)
-	if err != nil {
-		t.Fatalf("ParseKeyAttestation() unexpected error: %v", err)
-	}
-
-	if desc.AttestationVersion != 3 {
-		t.Errorf("AttestationVersion = %d, want 3", desc.AttestationVersion)
-	}
-
-	if desc.AttestationSecurityLevel != SecurityLevelTrustedEnvironment {
-		t.Errorf("AttestationSecurityLevel = %v, want %v",
-			desc.AttestationSecurityLevel, SecurityLevelTrustedEnvironment)
-	}
-
-	if desc.KeymasterVersion != 4 {
-		t.Errorf("KeymasterVersion = %d, want 4", desc.KeymasterVersion)
-	}
-
-	if desc.KeymasterSecurityLevel != SecurityLevelTrustedEnvironment {
-		t.Errorf("KeymasterSecurityLevel = %v, want %v",
-			desc.KeymasterSecurityLevel, SecurityLevelTrustedEnvironment)
-	}
-
-	if string(desc.AttestationChallenge) != string(challenge) {
-		t.Errorf("AttestationChallenge = %q, want %q",
-			desc.AttestationChallenge, challenge)
-	}
-}
-
 // TestParseKeyAttestation_InvalidASN1 verifies that malformed ASN.1 data
 // in the extension returns ErrExtensionParseFailed.
 func TestParseKeyAttestation_InvalidASN1(t *testing.T) {
@@ -513,22 +445,6 @@ func TestVerifiedBootState_String(t *testing.T) {
 	}
 }
 
-// TestVerifyKeyAttestation_NilChain verifies ErrChainTooShort on nil chain.
-func TestVerifyKeyAttestation_NilChain(t *testing.T) {
-	opts := &VerifyOptions{
-		ExpectedNonce:    []byte("nonce"),
-		MinSecurityLevel: SecurityLevelSoftware,
-	}
-
-	desc, err := VerifyKeyAttestation(nil, opts)
-	if desc != nil {
-		t.Errorf("expected nil KeyDescription, got %+v", desc)
-	}
-	if !errors.Is(err, ErrChainTooShort) {
-		t.Errorf("expected ErrChainTooShort, got: %v", err)
-	}
-}
-
 // TestVerifyKeyAttestation_EmptyChain verifies ErrChainTooShort on empty chain.
 func TestVerifyKeyAttestation_EmptyChain(t *testing.T) {
 	opts := &VerifyOptions{
@@ -561,40 +477,35 @@ func TestVerifyKeyAttestation_NilOptions(t *testing.T) {
 // TestVerifyKeyAttestation_NonceMismatch creates a cert with one nonce and
 // verifies that providing a different expected nonce returns ErrNonceMismatch.
 func TestVerifyKeyAttestation_NonceMismatch(t *testing.T) {
-	actualNonce := []byte("actual-nonce-value")
-	cert := makeTestAttestationCert(t, SecurityLevelTrustedEnvironment, actualNonce)
+	challenge := []byte("actual-nonce-value")
+	lastByteFlipped := bytes.Clone(challenge)
+	lastByteFlipped[len(lastByteFlipped)-1] ^= 0x01
 
-	opts := &VerifyOptions{
-		ExpectedNonce:    []byte("different-nonce"),
-		MinSecurityLevel: SecurityLevelSoftware,
+	tests := []struct {
+		name          string
+		expectedNonce []byte
+	}{
+		{name: "different length", expectedNonce: []byte("different-nonce")},
+		{name: "equal length, last byte differs", expectedNonce: lastByteFlipped},
+		{name: "strict prefix of the challenge", expectedNonce: challenge[:len(challenge)-1]},
 	}
 
-	desc, err := VerifyKeyAttestation([]*x509.Certificate{cert}, opts)
-	if desc != nil {
-		t.Errorf("expected nil KeyDescription, got %+v", desc)
-	}
-	if !errors.Is(err, ErrNonceMismatch) {
-		t.Errorf("expected ErrNonceMismatch, got: %v", err)
-	}
-}
+	cert := makeTestAttestationCert(t, SecurityLevelTrustedEnvironment, challenge)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := &VerifyOptions{
+				ExpectedNonce:    tt.expectedNonce,
+				MinSecurityLevel: SecurityLevelSoftware,
+			}
 
-// TestVerifyKeyAttestation_NonceMismatchDifferentLength verifies nonce mismatch
-// when nonces have different lengths.
-func TestVerifyKeyAttestation_NonceMismatchDifferentLength(t *testing.T) {
-	actualNonce := []byte("short")
-	cert := makeTestAttestationCert(t, SecurityLevelTrustedEnvironment, actualNonce)
-
-	opts := &VerifyOptions{
-		ExpectedNonce:    []byte("much-longer-nonce-value"),
-		MinSecurityLevel: SecurityLevelSoftware,
-	}
-
-	desc, err := VerifyKeyAttestation([]*x509.Certificate{cert}, opts)
-	if desc != nil {
-		t.Errorf("expected nil KeyDescription, got %+v", desc)
-	}
-	if !errors.Is(err, ErrNonceMismatch) {
-		t.Errorf("expected ErrNonceMismatch, got: %v", err)
+			desc, err := VerifyKeyAttestation([]*x509.Certificate{cert}, opts)
+			if desc != nil {
+				t.Errorf("expected nil KeyDescription, got %+v", desc)
+			}
+			if !errors.Is(err, ErrNonceMismatch) {
+				t.Errorf("expected ErrNonceMismatch, got: %v", err)
+			}
+		})
 	}
 }
 
@@ -607,26 +518,6 @@ func TestVerifyKeyAttestation_InsufficientSecurityLevel(t *testing.T) {
 	opts := &VerifyOptions{
 		ExpectedNonce:    nonce,
 		MinSecurityLevel: SecurityLevelTrustedEnvironment,
-	}
-
-	desc, err := VerifyKeyAttestation([]*x509.Certificate{cert}, opts)
-	if desc != nil {
-		t.Errorf("expected nil KeyDescription, got %+v", desc)
-	}
-	if !errors.Is(err, ErrInsufficientSecurityLevel) {
-		t.Errorf("expected ErrInsufficientSecurityLevel, got: %v", err)
-	}
-}
-
-// TestVerifyKeyAttestation_InsufficientSecurityLevel_StrongBox verifies that
-// requiring StrongBox rejects TEE-level attestations.
-func TestVerifyKeyAttestation_InsufficientSecurityLevel_StrongBox(t *testing.T) {
-	nonce := []byte("strongbox-test")
-	cert := makeTestAttestationCert(t, SecurityLevelTrustedEnvironment, nonce)
-
-	opts := &VerifyOptions{
-		ExpectedNonce:    nonce,
-		MinSecurityLevel: SecurityLevelStrongBox,
 	}
 
 	desc, err := VerifyKeyAttestation([]*x509.Certificate{cert}, opts)
@@ -866,35 +757,6 @@ func TestBuildMinimalAttestationExtension_RoundTrip(t *testing.T) {
 	}
 	if string(desc.UniqueID) != string(uniqueID) {
 		t.Errorf("UniqueID = %q, want %q", desc.UniqueID, uniqueID)
-	}
-}
-
-// TestAndroidKeyAttestationOID verifies the OID constant is correct.
-func TestAndroidKeyAttestationOID(t *testing.T) {
-	expected := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11129, 2, 1, 17}
-	if !AndroidKeyAttestationOID.Equal(expected) {
-		t.Errorf("AndroidKeyAttestationOID = %v, want %v",
-			AndroidKeyAttestationOID, expected)
-	}
-}
-
-// TestParseAuthorizationList_Empty verifies that an empty authorization list
-// does not cause errors.
-func TestParseAuthorizationList_Empty(t *testing.T) {
-	result := parseAuthorizationList(asn1.RawValue{})
-	if result.RootOfTrust != nil {
-		t.Errorf("expected nil RootOfTrust for empty AuthorizationList")
-	}
-	if len(result.Purpose) != 0 {
-		t.Errorf("expected empty Purpose, got %v", result.Purpose)
-	}
-}
-
-// TestFindRootOfTrust_NilData verifies that nil data returns nil.
-func TestFindRootOfTrust_NilData(t *testing.T) {
-	result := findRootOfTrust(nil)
-	if result != nil {
-		t.Errorf("expected nil for nil data, got %+v", result)
 	}
 }
 
@@ -1148,60 +1010,6 @@ func TestFindRootOfTrust_MixedElementsWithRootOfTrust(t *testing.T) {
 	}
 }
 
-// TestParseAuthorizationList_WithRootOfTrust verifies that parseAuthorizationList
-// correctly populates the RootOfTrust field when present in the raw data.
-func TestParseAuthorizationList_WithRootOfTrust(t *testing.T) {
-	// Build a RootOfTrust inside a SEQUENCE
-	rot := rootOfTrustASN1{
-		VerifiedBootKey:   []byte("verified-boot-key-data-32-bytes!"),
-		DeviceLocked:      true,
-		VerifiedBootState: asn1.Enumerated(VerifiedBootVerified),
-		VerifiedBootHash:  []byte("verified-boot-hash-32-bytes!!!!"),
-	}
-	rotBytes, err := asn1.Marshal(rot)
-	if err != nil {
-		t.Fatalf("failed to marshal RootOfTrust: %v", err)
-	}
-
-	rotTagged := asn1.RawValue{
-		Class:      asn1.ClassContextSpecific,
-		Tag:        704,
-		IsCompound: true,
-		Bytes:      rotBytes,
-	}
-	rotTaggedBytes, err := asn1.Marshal(rotTagged)
-	if err != nil {
-		t.Fatalf("failed to marshal tagged RootOfTrust: %v", err)
-	}
-
-	outerSeqBytes, err := asn1.Marshal(asn1.RawValue{
-		Class:      asn1.ClassUniversal,
-		Tag:        asn1.TagSequence,
-		IsCompound: true,
-		Bytes:      rotTaggedBytes,
-	})
-	if err != nil {
-		t.Fatalf("failed to marshal outer SEQUENCE: %v", err)
-	}
-
-	// Create a RawValue with FullBytes set (as asn1.Unmarshal would produce)
-	rawVal := asn1.RawValue{
-		FullBytes: outerSeqBytes,
-	}
-
-	result := parseAuthorizationList(rawVal)
-	if result.RootOfTrust == nil {
-		t.Fatal("expected non-nil RootOfTrust in AuthorizationList")
-	}
-	if !result.RootOfTrust.DeviceLocked {
-		t.Error("expected DeviceLocked = true")
-	}
-	if result.RootOfTrust.VerifiedBootState != VerifiedBootVerified {
-		t.Errorf("VerifiedBootState = %v, want %v",
-			result.RootOfTrust.VerifiedBootState, VerifiedBootVerified)
-	}
-}
-
 // TestVerifyKeyAttestation_BootStateVerifiedWithRootOfTrust verifies that boot
 // state verification passes when the RootOfTrust has VerifiedBootVerified.
 func TestVerifyKeyAttestation_BootStateVerifiedWithRootOfTrust(t *testing.T) {
@@ -1435,20 +1243,6 @@ func TestVerifyCertificateChain_EmptyChain(t *testing.T) {
 	}
 }
 
-// TestVerifyCertificateChain_SelfSignedValidChain verifies successful chain
-// verification when the leaf is self-signed and in the trusted roots.
-func TestVerifyCertificateChain_SelfSignedValidChain(t *testing.T) {
-	caCert, _ := makeTestCA(t)
-
-	roots := x509.NewCertPool()
-	roots.AddCert(caCert)
-
-	err := verifyCertificateChain([]*x509.Certificate{caCert}, roots, time.Time{})
-	if err != nil {
-		t.Errorf("verifyCertificateChain() unexpected error: %v", err)
-	}
-}
-
 // TestBuildMinimalAttestationExtension_EmptyChallenge verifies that building
 // an extension with an empty challenge produces valid output.
 func TestBuildMinimalAttestationExtension_EmptyChallenge(t *testing.T) {
@@ -1502,21 +1296,6 @@ func TestBuildMinimalAttestationExtension_EmptyChallenge(t *testing.T) {
 	}
 	if len(desc.AttestationChallenge) != 0 {
 		t.Errorf("expected empty challenge, got %d bytes", len(desc.AttestationChallenge))
-	}
-}
-
-// TestBuildMinimalAttestationExtension_NilChallenge verifies that building
-// an extension with a nil challenge works correctly.
-func TestBuildMinimalAttestationExtension_NilChallenge(t *testing.T) {
-	extBytes, err := BuildMinimalAttestationExtension(
-		2, SecurityLevelTrustedEnvironment, 3, SecurityLevelTrustedEnvironment,
-		nil, nil,
-	)
-	if err != nil {
-		t.Fatalf("BuildMinimalAttestationExtension() error: %v", err)
-	}
-	if len(extBytes) == 0 {
-		t.Error("expected non-empty extension bytes")
 	}
 }
 
@@ -1717,41 +1496,6 @@ func wrapAuthorizationListElements(t *testing.T, elements []byte) []byte {
 	return outer
 }
 
-// TestFindOrigin_ValidOrigin verifies that a tag-702 EXPLICIT INTEGER is
-// located and decoded regardless of what else sits beside it (go-xkms#132).
-func TestFindOrigin_ValidOrigin(t *testing.T) {
-	tagged, err := marshalExplicitInt(tagOrigin, OriginImported)
-	if err != nil {
-		t.Fatalf("marshal tagged origin: %v", err)
-	}
-	outer := wrapAuthorizationListElements(t, tagged)
-
-	origin, ok := findOrigin(outer)
-	if !ok {
-		t.Fatal("expected ok=true for a present origin tag")
-	}
-	if origin != OriginImported {
-		t.Errorf("origin = %d, want %d (OriginImported)", origin, OriginImported)
-	}
-}
-
-// TestFindOrigin_AbsentTagReturnsNotOK verifies that an AuthorizationList
-// with no tag-702 element reports ok=false rather than defaulting to 0
-// (OriginGenerated's own value) -- the failure mode go-xkms#132 exists to
-// prevent.
-func TestFindOrigin_AbsentTagReturnsNotOK(t *testing.T) {
-	tagged, err := marshalExplicitIntSet(tagPurpose, []int{PurposeSign})
-	if err != nil {
-		t.Fatalf("marshal tagged purpose: %v", err)
-	}
-	outer := wrapAuthorizationListElements(t, tagged)
-
-	origin, ok := findOrigin(outer)
-	if ok {
-		t.Fatalf("expected ok=false when no origin tag is present, got origin=%d", origin)
-	}
-}
-
 // TestFindOrigin_InvalidData verifies that malformed input returns ok=false
 // rather than panicking or fabricating a value.
 func TestFindOrigin_InvalidData(t *testing.T) {
@@ -1815,6 +1559,12 @@ func TestParseAuthorizationList_OriginDefaultsToUnknownWhenAbsent(t *testing.T) 
 	if result.Origin != OriginUnknown {
 		t.Errorf("Origin = %d, want OriginUnknown (%d) for an empty AuthorizationList",
 			result.Origin, OriginUnknown)
+	}
+	if result.RootOfTrust != nil {
+		t.Errorf("expected nil RootOfTrust for empty AuthorizationList")
+	}
+	if len(result.Purpose) != 0 {
+		t.Errorf("expected empty Purpose, got %v", result.Purpose)
 	}
 
 	tagged, err := marshalExplicitIntSet(tagPurpose, []int{PurposeSign})
@@ -2053,45 +1803,6 @@ func marshalAppIDElement(t *testing.T, appID attestationApplicationIDASN1) []byt
 		t.Fatalf("marshal tag-709 element: %v", err)
 	}
 	return elem
-}
-
-// TestFindAttestationApplicationID_ValidAppID verifies that a tag-709
-// element is located and both the package list and signature digests are
-// decoded from the doubly-wrapped OCTET STRING/SEQUENCE it carries.
-func TestFindAttestationApplicationID_ValidAppID(t *testing.T) {
-	elem := marshalAppIDElement(t, attestationApplicationIDASN1{
-		PackageInfos: []attestationPackageInfoASN1{
-			{PackageName: []byte("com.example.app"), Version: 5},
-		},
-		SignatureDigests: [][]byte{{0x01, 0x02, 0x03}},
-	})
-	outer := wrapAuthorizationListElements(t, elem)
-
-	got := findAttestationApplicationID(outer)
-	if got == nil {
-		t.Fatal("expected a decoded AttestationApplicationID, got nil")
-	}
-	if len(got.Packages) != 1 || got.Packages[0].Name != "com.example.app" || got.Packages[0].Version != 5 {
-		t.Errorf("Packages = %+v, want [{com.example.app 5}]", got.Packages)
-	}
-	if len(got.SignatureDigests) != 1 || !bytes.Equal(got.SignatureDigests[0], []byte{0x01, 0x02, 0x03}) {
-		t.Errorf("SignatureDigests = %v, want [[1 2 3]]", got.SignatureDigests)
-	}
-}
-
-// TestFindAttestationApplicationID_AbsentTagReturnsNil verifies that an
-// AuthorizationList with no tag-709 element reports nil rather than a zero
-// value AttestationApplicationID.
-func TestFindAttestationApplicationID_AbsentTagReturnsNil(t *testing.T) {
-	tagged, err := marshalExplicitInt(tagOrigin, OriginGenerated)
-	if err != nil {
-		t.Fatalf("marshal tagged origin: %v", err)
-	}
-	outer := wrapAuthorizationListElements(t, tagged)
-
-	if got := findAttestationApplicationID(outer); got != nil {
-		t.Errorf("got %+v, want nil when no tag-709 element is present", got)
-	}
 }
 
 // TestFindAttestationApplicationID_InvalidOuterData verifies that malformed

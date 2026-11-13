@@ -87,28 +87,6 @@ func TestOpaqueDigest_UnavailableHash(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidHashFunction)
 }
 
-// TestPublicKeysEqual_RSAMismatchType covers the RSA branch where b is not *rsa.PublicKey.
-func TestPublicKeysEqual_RSAMismatchType(t *testing.T) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	assert.False(t, publicKeysEqual(&rsaKey.PublicKey, &ecKey.PublicKey))
-}
-
-// TestPublicKeysEqual_ECDSAMismatchType covers the ECDSA branch where b is not *ecdsa.PublicKey.
-func TestPublicKeysEqual_ECDSAMismatchType(t *testing.T) {
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	assert.False(t, publicKeysEqual(&ecKey.PublicKey, &rsaKey.PublicKey))
-}
-
 // noEqualKey is a private key that does NOT implement Equal(crypto.PrivateKey).
 type noEqualKey struct {
 	pub crypto.PublicKey

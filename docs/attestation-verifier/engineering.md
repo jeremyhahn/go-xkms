@@ -270,9 +270,9 @@ each intermediate, into `AppraiseQuoteRequest.AKCertificatePEM`, so an AK
 issued by an intermediate chains to a root-only endorsement. A nil entry is
 `ErrInvalidAKIntermediate` / `*AKIntermediateError` (`errors.go:91`, `:96`),
 re-exported by `sdk/go` as `ErrAttestationInvalidAKIntermediate` /
-`AttestationAKIntermediateError`. Tests:
-`TestAppraiser_AppraiseHostAKIntermediates` and
-`TestAppraiser_AppraiseContainerAKIntermediates`.
+`AttestationAKIntermediateError`. Test:
+`TestAppraiser_AppraiseContainerAKIntermediates`; host and container evidence
+share `akChainPEM`, so it covers both.
 
 ## Consumers
 

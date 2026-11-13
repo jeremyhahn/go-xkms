@@ -1,0 +1,1 @@
+- **`pkg/auth/token` test audit (#1794)**: four tests are gone. Each one repeated a path another kept test covers, or covered and asserted nothing the others do not: `TestQRDBRefreshStore_Save_RevokedFamilyIsWithdrawn`, `TestMemoryRefreshStore_ErrorPaths`, `TestMemoryRefreshStore_ExpiryIsRevocation` and `TestNewQRDBRefreshStore_AcceptsGuardedKV`. Coverage is unchanged at 90.3%.

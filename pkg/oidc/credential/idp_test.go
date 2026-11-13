@@ -51,6 +51,7 @@ type fakeIdP struct {
 	deviceGranted bool
 	deviceError   string // OAuth error code every device poll answers, when set
 	devicePolls   int
+	refuseDevice  string        // OAuth error code device authorization is refused with, when set
 	refreshGate   chan struct{} // when set, a refresh waits for it to close
 }
 
@@ -99,6 +100,13 @@ func (f *fakeIdP) serve(w http.ResponseWriter, r *http.Request) {
 			"device_authorization_endpoint": f.URL() + "/device",
 		})
 	case "/device":
+		f.mu.Lock()
+		refusal := f.refuseDevice
+		f.mu.Unlock()
+		if refusal != "" {
+			f.reply(w, http.StatusBadRequest, map[string]string{"error": refusal})
+			return
+		}
 		f.reply(w, http.StatusOK, map[string]any{
 			"device_code": "dev-1", "user_code": "USER-CODE",
 			"verification_uri": f.URL() + "/activate", "expires_in": 600, "interval": 1,

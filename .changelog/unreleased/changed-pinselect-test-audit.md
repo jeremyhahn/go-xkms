@@ -1,0 +1,1 @@
+- **Tests: `pkg/pinselect` test audit (#1794)** — seven tests that repeated another test's path and assertions were removed. Each behaviour now has one test, at the `Resolve` layer where that layer reaches it; coverage is unchanged at 94.4%.

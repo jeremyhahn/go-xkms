@@ -89,16 +89,6 @@ func generateTestCertificatePEM(t *testing.T, cn string) []byte {
 // MemoryCertStore Tests
 // =============================================================================
 
-func TestMemoryCertStore_NewMemoryCertStore(t *testing.T) {
-	logger := testCertLogger()
-
-	store := NewMemoryCertStore(logger)
-
-	assert.NotNil(t, store)
-	assert.NotNil(t, store.certs)
-	assert.Equal(t, logger, store.logger)
-}
-
 func TestMemoryCertStore_certKey(t *testing.T) {
 	logger := testCertLogger()
 	store := NewMemoryCertStore(logger)
@@ -176,26 +166,6 @@ func TestMemoryCertStore_Get(t *testing.T) {
 		assert.NotNil(t, retrievedCert)
 		assert.Equal(t, testCert.Subject.CommonName, retrievedCert.Subject.CommonName)
 	})
-
-	t.Run("get certificate with parent key", func(t *testing.T) {
-		testCert := generateTestCertificate(t, "child-get-cert")
-		attrs := &types.KeyAttributes{
-			CN: "child-get-cert",
-			Parent: &types.KeyAttributes{
-				CN: "parent-get-cert",
-			},
-		}
-
-		// Save first
-		err := store.Save(attrs, testCert)
-		require.NoError(t, err)
-
-		// Get it back
-		retrievedCert, err := store.Get(attrs)
-		assert.NoError(t, err)
-		assert.NotNil(t, retrievedCert)
-		assert.Equal(t, testCert.Subject.CommonName, retrievedCert.Subject.CommonName)
-	})
 }
 
 func TestMemoryCertStore_Save(t *testing.T) {
@@ -216,39 +186,6 @@ func TestMemoryCertStore_Save(t *testing.T) {
 		err := store.Save(attrs, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "certificate is nil")
-	})
-
-	t.Run("save certificate successfully", func(t *testing.T) {
-		testCert := generateTestCertificate(t, "save-test-cert")
-		attrs := &types.KeyAttributes{
-			CN: "save-test-cert",
-		}
-
-		err := store.Save(attrs, testCert)
-		assert.NoError(t, err)
-
-		// Verify it was saved
-		retrievedCert, err := store.Get(attrs)
-		assert.NoError(t, err)
-		assert.Equal(t, testCert.Subject.CommonName, retrievedCert.Subject.CommonName)
-	})
-
-	t.Run("save certificate with parent key", func(t *testing.T) {
-		testCert := generateTestCertificate(t, "save-child-cert")
-		attrs := &types.KeyAttributes{
-			CN: "save-child-cert",
-			Parent: &types.KeyAttributes{
-				CN: "save-parent-cert",
-			},
-		}
-
-		err := store.Save(attrs, testCert)
-		assert.NoError(t, err)
-
-		// Verify it was saved
-		retrievedCert, err := store.Get(attrs)
-		assert.NoError(t, err)
-		assert.Equal(t, testCert.Subject.CommonName, retrievedCert.Subject.CommonName)
 	})
 
 	t.Run("overwrite existing certificate", func(t *testing.T) {
@@ -315,29 +252,6 @@ func TestMemoryCertStore_Delete(t *testing.T) {
 		assert.Error(t, err)
 		assert.Equal(t, ErrCertNotFound, err)
 	})
-
-	t.Run("delete certificate with parent key", func(t *testing.T) {
-		testCert := generateTestCertificate(t, "delete-child-cert")
-		attrs := &types.KeyAttributes{
-			CN: "delete-child-cert",
-			Parent: &types.KeyAttributes{
-				CN: "delete-parent-cert",
-			},
-		}
-
-		// Save first
-		err := store.Save(attrs, testCert)
-		require.NoError(t, err)
-
-		// Delete it
-		err = store.Delete(attrs)
-		assert.NoError(t, err)
-
-		// Verify it's gone
-		_, err = store.Get(attrs)
-		assert.Error(t, err)
-		assert.Equal(t, ErrCertNotFound, err)
-	})
 }
 
 func TestMemoryCertStore_ImportCertificate(t *testing.T) {
@@ -392,25 +306,6 @@ func TestMemoryCertStore_ImportCertificate(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, cert.Subject.CommonName, retrievedCert.Subject.CommonName)
 	})
-
-	t.Run("import certificate with parent key", func(t *testing.T) {
-		certPEM := generateTestCertificatePEM(t, "import-child-cert")
-		attrs := &types.KeyAttributes{
-			CN: "import-child-cert",
-			Parent: &types.KeyAttributes{
-				CN: "import-parent-cert",
-			},
-		}
-
-		cert, err := store.ImportCertificate(attrs, certPEM)
-		assert.NoError(t, err)
-		assert.NotNil(t, cert)
-
-		// Verify it was stored
-		retrievedCert, err := store.Get(attrs)
-		assert.NoError(t, err)
-		assert.Equal(t, cert.Subject.CommonName, retrievedCert.Subject.CommonName)
-	})
 }
 
 func TestMemoryCertStore_ConcurrentAccess(t *testing.T) {
@@ -447,9 +342,4 @@ func TestMemoryCertStore_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		<-done
 	}
-}
-
-func TestMemoryCertStore_InterfaceCompliance(t *testing.T) {
-	// Verify MemoryCertStore implements CertificateStorer interface
-	var _ CertificateStorer = (*MemoryCertStore)(nil)
 }

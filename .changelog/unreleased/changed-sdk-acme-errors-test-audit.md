@@ -1,0 +1,1 @@
+- **`sdk/go/acme/errors` test audit (#1794)** — removed the tests that repeat a kept path or assert only struct fields and constants: one test per behaviour remains, with every RFC 8555 §6.7 type string, HTTP status, parse, classification and `errors.Is`/`errors.As`/`Unwrap` relation still pinned. No production change.

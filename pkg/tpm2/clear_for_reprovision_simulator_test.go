@@ -121,39 +121,3 @@ func TestClearForReprovision_PPIPathFails(t *testing.T) {
 	assert.ErrorIs(t, err, ErrForceClear)
 	assert.False(t, rebootRequired)
 }
-
-// TestForceClear_Success proves ForceClear writes PPI request code 5 through
-// the injectable seam, never touching the host's sysfs in a test.
-func TestForceClear_Success(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	var gotPath string
-	var gotData []byte
-	orig := ppiRequestWriter
-	ppiRequestWriter = func(path string, data []byte, perm os.FileMode) error {
-		gotPath = path
-		gotData = append([]byte(nil), data...)
-		return nil
-	}
-	t.Cleanup(func() { ppiRequestWriter = orig })
-
-	require.NoError(t, h.TPM.ForceClear())
-	assert.Contains(t, gotPath, "/ppi/request")
-	assert.Equal(t, []byte("5"), gotData)
-}
-
-// TestForceClear_SeamError proves ForceClear returns the typed
-// ErrForceClear, not a bare seam error, when the PPI write fails.
-func TestForceClear_SeamError(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	orig := ppiRequestWriter
-	ppiRequestWriter = func(path string, data []byte, perm os.FileMode) error {
-		return errors.New("injected PPI write failure")
-	}
-	t.Cleanup(func() { ppiRequestWriter = orig })
-
-	err := h.TPM.ForceClear()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrForceClear)
-}

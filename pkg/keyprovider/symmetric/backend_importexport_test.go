@@ -591,6 +591,68 @@ func TestExportKeyToErrors(t *testing.T) {
 	assert.ErrorIs(t, err, backend.ErrKeyNotExportable)
 }
 
+// TestExportKeyTo_Refusals proves each refusal ExportKeyTo makes once the
+// caller's arguments are present returns its typed error and no material.
+func TestExportKeyTo_Refusals(t *testing.T) {
+	ctx := context.Background()
+	src := createTestBackend(t)
+	defer func() { _ = src.Close() }()
+	dst := createTestBackend(t)
+	defer func() { _ = dst.Close() }()
+
+	stored := &types.KeyAttributes{
+		CN:                 "export-to-refusals",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         true,
+	}
+	_, err := src.GenerateSymmetricKey(ctx, stored)
+	require.NoError(t, err)
+	dstParams, err := dst.GetImportParameters(ctx, stored, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	require.NoError(t, err)
+
+	withCN := func(cn string) *types.KeyAttributes {
+		attrs := *stored
+		attrs.CN = cn
+		return &attrs
+	}
+	asymmetric := &types.KeyAttributes{
+		CN:           "export-to-ed25519",
+		KeyType:      backend.KEY_TYPE_SECRET,
+		StoreType:    backend.STORE_SW,
+		KeyAlgorithm: x509.Ed25519,
+		Exportable:   true,
+	}
+
+	tests := []struct {
+		name   string
+		attrs  *types.KeyAttributes
+		params *backend.ImportParameters
+		want   error
+	}{
+		{"attributes fail validation", withCN(""), dstParams, backend.ErrInvalidAttributes},
+		{"asymmetric attributes", asymmetric, dstParams, backend.ErrInvalidAlgorithm},
+		{"key not stored", withCN("export-to-absent"), dstParams, backend.ErrKeyNotFound},
+		{"destination key is not RSA", stored, &backend.ImportParameters{Algorithm: backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256}, backend.ErrInvalidKeyType},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrapped, err := src.ExportKeyTo(ctx, tt.attrs, tt.params)
+			assert.ErrorIs(t, err, tt.want)
+			assert.Nil(t, wrapped)
+		})
+	}
+
+	t.Run("backend closed", func(t *testing.T) {
+		closed := createTestBackend(t)
+		require.NoError(t, closed.Close())
+		wrapped, err := closed.ExportKeyTo(ctx, stored, dstParams)
+		assert.ErrorIs(t, err, ErrStorageClosed)
+		assert.Nil(t, wrapped)
+	})
+}
+
 // TestImportExportRoundTrip tests the complete import/export workflow.
 func TestImportExportRoundTrip(t *testing.T) {
 	// Create source backend

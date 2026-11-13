@@ -77,5 +77,5 @@ func newVaultKeyProvider(config map[string]interface{}) (types.KeyProvider, erro
 		vaultConfig.TLSKeyFile = keyFile
 	}
 
-	return vault.NewBackend(vaultConfig)
+	return keyProvider(vault.NewBackend(vaultConfig))
 }

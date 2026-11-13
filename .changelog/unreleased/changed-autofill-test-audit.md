@@ -1,0 +1,1 @@
+Tests: `pkg/autofill` keeps one test per behaviour (#1794). Duplicate rate-limiter, verifier flag, COSE-key parse and auth-data length tests are removed, each repeating a kept test's path; coverage holds at 96.6%.

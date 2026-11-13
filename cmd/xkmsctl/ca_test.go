@@ -656,23 +656,6 @@ func (m *mockCAClient) ListUserCredentials(_ context.Context, _ string) (*transp
 // CA Command Structure Tests
 // =============================================================================
 
-func TestCACmd_Exists(t *testing.T) {
-	assert.NotNil(t, caCmd)
-	assert.Equal(t, "ca", caCmd.Use)
-	assert.NotEmpty(t, caCmd.Short)
-}
-
-func TestCACmd_HasSubcommands(t *testing.T) {
-	expected := []string{"bundle", "certificate", "sign-csr", "issue", "revoke", "crl", "status", "tcg"}
-	found := make(map[string]bool)
-	for _, cmd := range caCmd.Commands() {
-		found[cmd.Name()] = true
-	}
-	for _, name := range expected {
-		assert.True(t, found[name], "expected subcommand %q not found", name)
-	}
-}
-
 func TestCASignCSRCmd_RequiredFlags(t *testing.T) {
 	f := caSignCSRCmd.Flags().Lookup("csr")
 	require.NotNil(t, f)
@@ -696,26 +679,6 @@ func TestCAStatusCmd_RequiredFlags(t *testing.T) {
 // =============================================================================
 // splitAndTrimCA tests
 // =============================================================================
-
-func TestSplitAndTrimCA_Basic(t *testing.T) {
-	tests := []struct {
-		name   string
-		input  string
-		expect []string
-	}{
-		{"single", "DNS:example.com", []string{"DNS:example.com"}},
-		{"multiple", "DNS:a.com, DNS:b.com, IP:1.2.3.4", []string{"DNS:a.com", "DNS:b.com", "IP:1.2.3.4"}},
-		{"empty parts", "a,,b,", []string{"a", "b"}},
-		{"whitespace only", " , , ", []string{}},
-		{"empty string", "", []string{}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := splitAndTrimCA(tt.input)
-			assert.Equal(t, tt.expect, result)
-		})
-	}
-}
 
 // =============================================================================
 // Helper to set up CA tests
@@ -763,22 +726,6 @@ func TestGetCABundle_TextOutput_Success(t *testing.T) {
 	buf.ReadFrom(r)
 
 	assert.Contains(t, buf.String(), "BEGIN CERTIFICATE")
-}
-
-func TestGetCABundle_ClientError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(_ *Config) (client.Client, error) {
-		return nil, errors.New("client creation failed")
-	}
-	origConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = origConfig }()
-
-	exitCode := captureExit(t, func() {
-		getCABundle(cfg)
-	})
-	assert.Equal(t, 1, exitCode)
 }
 
 func TestGetCABundle_ConnectError(t *testing.T) {
@@ -857,24 +804,6 @@ func TestGetCACertificate_JSONOutput_Success(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "CN=Test CA")
 	assert.Contains(t, output, "serial_number")
-}
-
-func TestGetCACertificate_ClientError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(_ *Config) (client.Client, error) {
-		return nil, errors.New("fail")
-	}
-	origConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = origConfig }()
-
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-	exitCode := captureExit(t, func() {
-		getCACertificate(cfg, printer)
-	})
-	assert.Equal(t, 1, exitCode)
 }
 
 func TestGetCACertificate_ConnectError(t *testing.T) {
@@ -966,59 +895,6 @@ func TestSignCSR_JSONOutput_Success(t *testing.T) {
 	signCSR(cfg, printer)
 	assert.Contains(t, buf.String(), "serial_number")
 	assert.Contains(t, buf.String(), "chain_pem")
-}
-
-func TestSignCSR_WriteToFile(t *testing.T) {
-	mc := newMockCAClient()
-	mc.signCSRResp = &transport.SignCSRResponse{
-		CertificatePEM: []byte("signed-cert-pem"),
-		SerialNumber:   "DD",
-	}
-	cfg, _ := setupCATest(t, mc, "text")
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-
-	tmpDir := t.TempDir()
-	csrFile := filepath.Join(tmpDir, "test.csr")
-	require.NoError(t, os.WriteFile(csrFile, []byte("csr"), 0644))
-	outFile := filepath.Join(tmpDir, "out.pem")
-
-	oldCSRFile := caCSRFile
-	caCSRFile = csrFile
-	oldOutput := caOutputFile
-	caOutputFile = outFile
-	defer func() { caCSRFile = oldCSRFile; caOutputFile = oldOutput }()
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	signCSR(cfg, printer)
-
-	w.Close()
-	os.Stdout = old
-	var stdoutBuf bytes.Buffer
-	stdoutBuf.ReadFrom(r)
-
-	data, err := os.ReadFile(outFile)
-	require.NoError(t, err)
-	assert.Equal(t, "signed-cert-pem", string(data))
-}
-
-func TestSignCSR_MissingCSRFile(t *testing.T) {
-	mc := newMockCAClient()
-	cfg, _ := setupCATest(t, mc, "text")
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-
-	oldCSRFile := caCSRFile
-	caCSRFile = "/nonexistent/file.csr"
-	defer func() { caCSRFile = oldCSRFile }()
-
-	exitCode := captureExit(t, func() {
-		signCSR(cfg, printer)
-	})
-	assert.Equal(t, 1, exitCode)
 }
 
 func TestSignCSR_ClientError(t *testing.T) {
@@ -1151,46 +1027,6 @@ func TestIssueCACertificate_JSONOutput_Success(t *testing.T) {
 	assert.Contains(t, output, "private_key_pem")
 }
 
-func TestIssueCACertificate_WriteToFile(t *testing.T) {
-	mc := newMockCAClient()
-	mc.issueResp = &transport.IssueCertificateResponse{
-		CertificatePEM: []byte("cert-data"),
-		PrivateKeyPEM:  []byte("key-data"),
-		SerialNumber:   "11",
-	}
-	cfg, _ := setupCATest(t, mc, "text")
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-
-	tmpDir := t.TempDir()
-	outFile := filepath.Join(tmpDir, "cert.pem")
-
-	oldSANs := caSANs
-	caSANs = ""
-	oldOutput := caOutputFile
-	caOutputFile = outFile
-	defer func() { caSANs = oldSANs; caOutputFile = oldOutput }()
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	issueCACertificate(cfg, printer)
-
-	w.Close()
-	os.Stdout = old
-	var stdoutBuf bytes.Buffer
-	stdoutBuf.ReadFrom(r)
-
-	certData, err := os.ReadFile(outFile)
-	require.NoError(t, err)
-	assert.Equal(t, "cert-data", string(certData))
-
-	keyData, err := os.ReadFile(outFile + ".key")
-	require.NoError(t, err)
-	assert.Equal(t, "key-data", string(keyData))
-}
-
 func TestIssueCACertificate_JSONOutput_WithOutputFile(t *testing.T) {
 	mc := newMockCAClient()
 	mc.issueResp = &transport.IssueCertificateResponse{
@@ -1249,28 +1085,6 @@ func TestIssueCACertificate_TextOutput_WithOutputFile(t *testing.T) {
 	stdoutBuf.ReadFrom(r)
 
 	assert.Contains(t, stdoutBuf.String(), "Private Key:")
-}
-
-func TestIssueCACertificate_ClientError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(_ *Config) (client.Client, error) {
-		return nil, errors.New("fail")
-	}
-	origConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = origConfig }()
-
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-	oldSANs := caSANs
-	caSANs = ""
-	defer func() { caSANs = oldSANs }()
-
-	exitCode := captureExit(t, func() {
-		issueCACertificate(cfg, printer)
-	})
-	assert.Equal(t, 1, exitCode)
 }
 
 func TestIssueCACertificate_ConnectError(t *testing.T) {
@@ -1340,24 +1154,6 @@ func TestRevokeCACertificate_NoMessage(t *testing.T) {
 
 	revokeCACertificate(cfg, printer)
 	assert.Contains(t, buf.String(), "AABB")
-}
-
-func TestRevokeCACertificate_ClientError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(_ *Config) (client.Client, error) {
-		return nil, errors.New("fail")
-	}
-	origConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = origConfig }()
-
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-	exitCode := captureExit(t, func() {
-		revokeCACertificate(cfg, printer)
-	})
-	assert.Equal(t, 1, exitCode)
 }
 
 func TestRevokeCACertificate_ConnectError(t *testing.T) {
@@ -1444,22 +1240,6 @@ func TestGenerateCRL_WriteToFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "crl-pem-data", string(data))
 	assert.Contains(t, stdoutBuf.String(), "CRL written to")
-}
-
-func TestGenerateCRL_ClientError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(_ *Config) (client.Client, error) {
-		return nil, errors.New("fail")
-	}
-	origConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = origConfig }()
-
-	exitCode := captureExit(t, func() {
-		generateCRL(cfg)
-	})
-	assert.Equal(t, 1, exitCode)
 }
 
 func TestGenerateCRL_ConnectError(t *testing.T) {
@@ -1584,24 +1364,6 @@ func TestCheckRevocationStatus_NotRevoked_JSON(t *testing.T) {
 	assert.NotContains(t, output, "reason")
 }
 
-func TestCheckRevocationStatus_ClientError(t *testing.T) {
-	cfg := NewConfig()
-	cfg.OutputFormat = "text"
-	cfg.ClientFactory = func(_ *Config) (client.Client, error) {
-		return nil, errors.New("fail")
-	}
-	origConfig := globalConfig
-	globalConfig = cfg
-	defer func() { globalConfig = origConfig }()
-
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-	exitCode := captureExit(t, func() {
-		checkRevocationStatus(cfg, printer)
-	})
-	assert.Equal(t, 1, exitCode)
-}
-
 func TestCheckRevocationStatus_ConnectError(t *testing.T) {
 	mc := newMockCAClient()
 	mc.connectErr = errors.New("connect fail")
@@ -1631,34 +1393,6 @@ func TestCheckRevocationStatus_APIError(t *testing.T) {
 // =============================================================================
 // CA Command integration tests (via cobra Execute)
 // =============================================================================
-
-func TestCABundleCmd_ExecutesRun(t *testing.T) {
-	mc := newMockCAClient()
-	mc.caBundle = &transport.GetCABundleResponse{
-		BundlePEM: []byte("bundle-pem"),
-	}
-	cfg, _ := setupCATest(t, mc, "text")
-	_ = cfg
-
-	// Verify the command has a Run function
-	assert.NotNil(t, caBundleCmd.Run)
-}
-
-func TestCACertificateCmd_ExecutesRun(t *testing.T) {
-	assert.NotNil(t, caCertificateCmd.Run)
-}
-
-func TestCACRLCmd_ExecutesRun(t *testing.T) {
-	assert.NotNil(t, caCRLCmd.Run)
-}
-
-func TestCARevokeCmd_ExecutesRun(t *testing.T) {
-	assert.NotNil(t, caRevokeCmd.Run)
-}
-
-func TestCAStatusCmd_ExecutesRun(t *testing.T) {
-	assert.NotNil(t, caStatusCmd.Run)
-}
 
 // =============================================================================
 // Cobra command execution tests

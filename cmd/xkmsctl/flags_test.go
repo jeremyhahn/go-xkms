@@ -15,7 +15,6 @@ package main
 
 import (
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -37,45 +36,6 @@ func newFlagReaderTestCmd() *cobra.Command {
 	cmd.Flags().IntSlice("is", []int{1, 2}, "")
 	cmd.Flags().StringArray("sa", []string{"a,b"}, "")
 	return cmd
-}
-
-func TestFlagReader_Success(t *testing.T) {
-	cmd := newFlagReaderTestCmd()
-	fr := newFlagReader(cmd)
-
-	if got := fr.String("s"); got != "sval" {
-		t.Errorf("String: got %q, want %q", got, "sval")
-	}
-	if got := fr.Bool("b"); got != true {
-		t.Errorf("Bool: got %v, want true", got)
-	}
-	if got := fr.Int("i"); got != 7 {
-		t.Errorf("Int: got %d, want 7", got)
-	}
-	if got := fr.Int64("i64"); got != 64 {
-		t.Errorf("Int64: got %d, want 64", got)
-	}
-	if got := fr.Uint("u"); got != 8 {
-		t.Errorf("Uint: got %d, want 8", got)
-	}
-	if got := fr.Uint32("u32"); got != 32 {
-		t.Errorf("Uint32: got %d, want 32", got)
-	}
-	if got := fr.Duration("d"); got != 5*time.Second {
-		t.Errorf("Duration: got %v, want 5s", got)
-	}
-	if got := fr.StringSlice("ss"); len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Errorf("StringSlice: got %v, want [a b]", got)
-	}
-	if got := fr.IntSlice("is"); len(got) != 2 || got[0] != 1 || got[1] != 2 {
-		t.Errorf("IntSlice: got %v, want [1 2]", got)
-	}
-	if got := fr.StringArray("sa"); len(got) != 1 || got[0] != "a,b" {
-		t.Errorf("StringArray: got %v, want [a,b] whole", got)
-	}
-	if err := fr.Err(); err != nil {
-		t.Fatalf("Err: got %v, want nil", err)
-	}
 }
 
 func TestFlagReader_UnknownFlagRecordsTypedError(t *testing.T) {
@@ -151,20 +111,6 @@ func TestFlagReader_ErrShortCircuits(t *testing.T) {
 	fr.Bool("another-missing")
 	if fr.Err() != first {
 		t.Error("Err: a later read overwrote the first recorded error")
-	}
-}
-
-func TestFlagReadError_Error(t *testing.T) {
-	cause := errors.New("boom")
-	err := &FlagReadError{Command: "key generate", Flag: "key-type", Kind: "string", Cause: cause}
-	got := err.Error()
-	for _, want := range []string{"key generate", "key-type", "string", "boom"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("Error() = %q, want it to contain %q", got, want)
-		}
-	}
-	if !errors.Is(err, cause) {
-		t.Error("errors.Is: err does not unwrap to cause")
 	}
 }
 

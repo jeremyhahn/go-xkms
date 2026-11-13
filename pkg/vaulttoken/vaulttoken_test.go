@@ -296,3 +296,58 @@ type brokenToken struct{ vaultkey.Token }
 func (b brokenToken) DeriveKeyECDH(context.Context, []byte, *types.KDFParams) ([]byte, error) {
 	return make([]byte, vaultkey.SecretLength), nil
 }
+
+// foreignKeyToken is a token whose public key is not a type x509 can
+// encode, as a backend answering with a key no factor can use does.
+type foreignKeyToken struct{ vaultkey.Token }
+
+func (foreignKeyToken) Public() crypto.PublicKey { return struct{}{} }
+
+// TestKeyFactor_UnusablePublicKey proves a token whose public key cannot be
+// encoded is refused by every entry point, with nothing produced.
+func TestKeyFactor_UnusablePublicKey(t *testing.T) {
+	ctx := context.Background()
+	b := newSoftwareBackend(t)
+	newKey(t, b, "vault-key", false, false)
+	ref := transport.PasswordVaultKeyRef{Backend: "software", KeyID: "vault-key"}
+	key, err := Resolve(ctx, backends{"software": b}.lookup, FactorTPM, ref)
+	require.NoError(t, err)
+	tok := foreignKeyToken{key.Token}
+
+	cred, err := EnrollCredential(FactorTPM, &Key{Token: tok, Ref: ref}, "label")
+	var keyErr *KeyError
+	require.ErrorAs(t, err, &keyErr)
+	assert.Equal(t, ref, keyErr.Ref)
+	assert.ErrorContains(t, err, "vaulttoken: key vault-key in software: ")
+	assert.Empty(t, cred)
+
+	assert.ErrorIs(t, SelfTest(ctx, tok), vaultkey.ErrUnsupportedKey)
+
+	cred, err = UnlockCredential(ctx, tok, []transport.PasswordVaultFactor{{Factor: FactorTPM}})
+	assert.ErrorIs(t, err, vaultkey.ErrInvalidPublicKey)
+	assert.Empty(t, cred)
+}
+
+// TestErrors_KeepTheirCause proves each wrapping error names what failed and
+// still matches its cause with errors.Is.
+func TestErrors_KeepTheirCause(t *testing.T) {
+	ctx := context.Background()
+	b := newSoftwareBackend(t)
+	newKey(t, b, "ok", false, false)
+	lookup := backends{"software": b}.lookup
+
+	_, err := Resolve(ctx, lookup, FactorTPM, transport.PasswordVaultKeyRef{Backend: "hsm", KeyID: "ok"})
+	assert.ErrorIs(t, err, errNoBackend)
+	assert.EqualError(t, err, "vaulttoken: backend hsm: "+errNoBackend.Error())
+
+	cause := errors.New("no such key")
+	keyErr := &KeyError{Ref: transport.PasswordVaultKeyRef{Backend: "software", KeyID: "absent"}, Err: cause}
+	assert.ErrorIs(t, keyErr, cause)
+	assert.EqualError(t, keyErr, "vaulttoken: key absent in software: no such key")
+
+	key, err := Resolve(ctx, lookup, FactorTPM, transport.PasswordVaultKeyRef{Backend: "software", KeyID: "ok"})
+	require.NoError(t, err)
+	err = SelfTest(ctx, brokenToken{key.Token})
+	assert.ErrorIs(t, err, vaultkey.ErrWrongKey)
+	assert.EqualError(t, err, "vaulttoken: the token cannot open a secret sealed to its key: "+vaultkey.ErrWrongKey.Error())
+}

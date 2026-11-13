@@ -1,0 +1,1 @@
+encoding/jwe: the package's tests test each behaviour by one path (#1794): eight tests that repeated a path a kept test already asserts are removed, and the nil-plaintext message check moves into `TestEncryptionErrors`; coverage stays at 92.8%.

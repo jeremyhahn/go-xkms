@@ -89,17 +89,6 @@ func TestKeySignCmd_Run(t *testing.T) {
 	})
 }
 
-func TestKeyVerifyCmd_Run(t *testing.T) {
-	mock := &mockKeyClient{verifyResp: &client.VerifyResponse{Valid: true}}
-	withGlobalConfig(t, newKeyRunConfig("text", mock))
-	out := captureStdout(t, func() {
-		keyVerifyCmd.Run(keyVerifyCmd, []string{"k1", "hello", "c2ln"})
-	})
-	if !strings.Contains(out, "valid") {
-		t.Errorf("expected valid message, got: %q", out)
-	}
-}
-
 func TestKeyVerifyCmd_BadSignatureBase64(t *testing.T) {
 	mock := &mockKeyClient{}
 	withGlobalConfig(t, newKeyRunConfig("text", mock))
@@ -186,17 +175,6 @@ func TestKeyEncryptAsymCmd_Run(t *testing.T) {
 	})
 }
 
-func TestKeyRotateCmd_Run(t *testing.T) {
-	mock := &mockKeyClient{rotateKeyResp: &client.RotateKeyResponse{}}
-	withGlobalConfig(t, newKeyRunConfig("text", mock))
-	out := captureStdout(t, func() {
-		keyRotateCmd.Run(keyRotateCmd, []string{"k1"})
-	})
-	if !strings.Contains(out, "rotated") {
-		t.Errorf("expected rotated message, got: %q", out)
-	}
-}
-
 func TestKeyCopyCmd_Run_DefaultDest(t *testing.T) {
 	mock := &mockKeyClient{copyKeyResp: &client.CopyKeyResponse{}}
 	withGlobalConfig(t, newKeyRunConfig("text", mock))
@@ -217,18 +195,6 @@ func TestKeyCopyCmd_Run_ExplicitDest(t *testing.T) {
 	if !strings.Contains(out, "k2") {
 		t.Errorf("expected dest key id in output, got: %q", out)
 	}
-}
-
-func TestKeyGetImportParamsCmd_Run_Print(t *testing.T) {
-	mock := &mockKeyClient{getImportParamsResp: &client.GetImportParametersResponse{
-		WrappingPublicKey: []byte("pubkey"),
-	}}
-	withGlobalConfig(t, newKeyRunConfig("text", mock))
-	cmd := keyGetImportParamsCmd
-	_ = cmd.Flags().Set("output", "")
-	captureStdout(t, func() {
-		cmd.Run(cmd, []string{"k1"})
-	})
 }
 
 func TestKeyGetImportParamsCmd_Run_ToFile(t *testing.T) {
@@ -345,52 +311,6 @@ func TestKeyImportCmd_ExportabilityFlags(t *testing.T) {
 			t.Errorf("Exportable = %v, want nil so the server applies its default", *mock.importKeyReq.Exportable)
 		}
 	})
-}
-
-func TestKeyImportCmd_Success(t *testing.T) {
-	mock := &mockKeyClient{importKeyResp: &client.ImportKeyResponse{}}
-	withGlobalConfig(t, newKeyRunConfig("text", mock))
-
-	wrapped := backend.WrappedKeyMaterial{WrappedKey: []byte("wrapped-bytes"), Algorithm: "RSAES_OAEP_SHA_256"}
-	data, err := json.Marshal(wrapped)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := filepath.Join(t.TempDir(), "wrapped.json")
-	if err := os.WriteFile(p, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	// --key-type names the algorithm of the material inside the wrapper. The
-	// server cannot infer it from ciphertext, so the command requires it.
-	if err := keyImportCmd.Flags().Set("key-type", "rsa"); err != nil {
-		t.Fatal(err)
-	}
-	if err := keyImportCmd.Flags().Set("key-size", "2048"); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = keyImportCmd.Flags().Set("key-type", "")
-		_ = keyImportCmd.Flags().Set("key-size", "0")
-	})
-
-	out := captureStdout(t, func() {
-		keyImportCmd.Run(keyImportCmd, []string{"k1", p})
-	})
-	if !strings.Contains(out, "Successfully imported") {
-		t.Errorf("expected success message, got: %q", out)
-	}
-	if mock.importKeyReq == nil {
-		t.Fatal("ImportKey was never called")
-	}
-	if mock.importKeyReq.KeyType != "rsa" {
-		t.Errorf("KeyType = %q, want %q -- the algorithm must reach the server, "+
-			"or the imported key is stored with none and no later operation can resolve it",
-			mock.importKeyReq.KeyType, "rsa")
-	}
-	if mock.importKeyReq.KeySize != 2048 {
-		t.Errorf("KeySize = %d, want 2048", mock.importKeyReq.KeySize)
-	}
 }
 
 // TestKeyImportCmd_MissingKeyTypeIsRefused pins the requirement rather than the
@@ -610,5 +530,51 @@ func TestKeyUnwrapCmd_Success(t *testing.T) {
 	}
 	if _, err := os.Stat(outFile); err != nil {
 		t.Errorf("expected unwrapped file to be written: %v", err)
+	}
+}
+
+func TestKeyImportCmd_Success(t *testing.T) {
+	mock := &mockKeyClient{importKeyResp: &client.ImportKeyResponse{}}
+	withGlobalConfig(t, newKeyRunConfig("text", mock))
+
+	wrapped := backend.WrappedKeyMaterial{WrappedKey: []byte("wrapped-bytes"), Algorithm: "RSAES_OAEP_SHA_256"}
+	data, err := json.Marshal(wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "wrapped.json")
+	if err := os.WriteFile(p, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// --key-type names the algorithm of the material inside the wrapper. The
+	// server cannot infer it from ciphertext, so the command requires it.
+	if err := keyImportCmd.Flags().Set("key-type", "rsa"); err != nil {
+		t.Fatal(err)
+	}
+	if err := keyImportCmd.Flags().Set("key-size", "2048"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = keyImportCmd.Flags().Set("key-type", "")
+		_ = keyImportCmd.Flags().Set("key-size", "0")
+	})
+
+	out := captureStdout(t, func() {
+		keyImportCmd.Run(keyImportCmd, []string{"k1", p})
+	})
+	if !strings.Contains(out, "Successfully imported") {
+		t.Errorf("expected success message, got: %q", out)
+	}
+	if mock.importKeyReq == nil {
+		t.Fatal("ImportKey was never called")
+	}
+	if mock.importKeyReq.KeyType != "rsa" {
+		t.Errorf("KeyType = %q, want %q -- the algorithm must reach the server, "+
+			"or the imported key is stored with none and no later operation can resolve it",
+			mock.importKeyReq.KeyType, "rsa")
+	}
+	if mock.importKeyReq.KeySize != 2048 {
+		t.Errorf("KeySize = %d, want 2048", mock.importKeyReq.KeySize)
 	}
 }

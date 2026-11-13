@@ -53,7 +53,8 @@ func TestSigningKeyClassOf(t *testing.T) {
 // nil, are not classified.
 func TestSigningKeyClassOf_Unclassified(t *testing.T) {
 	for _, err := range []error{nil, errors.New("disk full"), xkms.ErrKeyNotFound} {
-		_, ok := SigningKeyClassOf(err)
+		got, ok := SigningKeyClassOf(err)
 		assert.False(t, ok, "%v", err)
+		assert.Equal(t, ClassInternal, got, "%v", err)
 	}
 }

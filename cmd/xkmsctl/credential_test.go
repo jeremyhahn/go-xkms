@@ -21,36 +21,6 @@ import (
 	"testing"
 )
 
-func TestCredentialCmd_SubcommandRegistration(t *testing.T) {
-	subcommands := credentialCmd.Commands()
-	expected := map[string]bool{
-		"submit":   false,
-		"strategy": false,
-	}
-
-	for _, cmd := range subcommands {
-		if _, ok := expected[cmd.Name()]; ok {
-			expected[cmd.Name()] = true
-		}
-	}
-
-	for name, found := range expected {
-		if !found {
-			t.Errorf("expected subcommand %q not found on credentialCmd", name)
-		}
-	}
-}
-
-func TestCredentialSubmitCmd_Flags(t *testing.T) {
-	flags := []string{"name", "value"}
-	for _, name := range flags {
-		f := credentialSubmitCmd.Flags().Lookup(name)
-		if f == nil {
-			t.Errorf("expected flag --%s on credential submit command", name)
-		}
-	}
-}
-
 func TestRunCredentialSubmit_NoServer(t *testing.T) {
 	oldConfig := globalConfig
 	defer func() { globalConfig = oldConfig }()

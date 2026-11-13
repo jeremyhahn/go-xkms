@@ -53,3 +53,27 @@ func TestBuildGCPKMSNodeSealBackend_RequiresBackendsGCPKMS(t *testing.T) {
 	require.ErrorAs(t, err, &nodeErr)
 	require.Nil(t, provider)
 }
+
+// TestBuildGCPKMSNodeSealBackend_RefusesAnInvalidBackendsGCPKMS proves a
+// backends.gcpkms section the GCP Cloud KMS backend cannot be built from
+// refuses the node seal with the backend's typed error and no provider.
+func TestBuildGCPKMSNodeSealBackend_RefusesAnInvalidBackendsGCPKMS(t *testing.T) {
+	tests := []struct {
+		name   string
+		gcpCfg *config.GCPKMSConfig
+		want   error
+	}{
+		{name: "missing project", gcpCfg: &config.GCPKMSConfig{Location: "us-central1", KeyRing: "node-seal"}, want: gcpkms.ErrInvalidProjectID},
+		{name: "missing location", gcpCfg: &config.GCPKMSConfig{ProjectID: "project-a", KeyRing: "node-seal"}, want: gcpkms.ErrInvalidLocationID},
+		{name: "missing key ring", gcpCfg: &config.GCPKMSConfig{ProjectID: "project-a", Location: "us-central1"}, want: gcpkms.ErrInvalidKeyRingID},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Backends: config.BackendsConfig{GCPKMS: tt.gcpCfg}}
+
+			provider, err := buildGCPKMSNodeSealBackend(context.Background(), cfg, storage.NewMemory(), testLogger())
+			require.ErrorIs(t, err, tt.want)
+			require.Nil(t, provider)
+		})
+	}
+}

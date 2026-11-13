@@ -29,29 +29,6 @@ func generateTestRSAKey(t *testing.T) *rsa.PrivateKey {
 	return key
 }
 
-// TestNewSealedRSAKey_Success verifies a sealed key round-trips: the
-// public key is available immediately, and Use recovers the same private
-// key the caller sealed.
-func TestNewSealedRSAKey_Success(t *testing.T) {
-	priv := generateTestRSAKey(t)
-
-	sealed, err := NewSealedRSAKey(t.Context(), priv)
-	require.NoError(t, err)
-	defer sealed.Destroy()
-
-	require.NotNil(t, sealed.PublicKey())
-	assert.Equal(t, priv.N, sealed.PublicKey().N)
-
-	var recovered *rsa.PrivateKey
-	err = sealed.Use(t.Context(), func(k *rsa.PrivateKey) error {
-		recovered = k
-		return nil
-	})
-	require.NoError(t, err)
-	require.NotNil(t, recovered)
-	assert.Equal(t, priv.D, recovered.D)
-}
-
 // TestNewSealedRSAKey_NilPrivateKey verifies NewSealedRSAKey rejects a nil
 // key rather than sealing a zero-value DER blob that would fail on every
 // later Use.

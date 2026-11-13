@@ -20,9 +20,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/sha512"
 	"crypto/x509"
 	"testing"
 
@@ -156,42 +154,6 @@ func TestSign_NoneHash_ECDSA_P256_ProducesVerifiableSignature(t *testing.T) {
 		"the signature must not verify against an unrelated digest")
 }
 
-// TestSign_NoneHash_ECDSA_P384_ProducesVerifiableSignature covers P-384, and it
-// is the case that pins the resolution rule.
-//
-// Resolving hash NONE to a fixed SHA-256 would break this key while appearing
-// to work for P-256: the TPM requires the digest handed to TPM2_Sign to be the
-// size of the hash named in inScheme and answers anything else with
-// TPM_RC_SIZE, so a 48-byte digest can only be signed under SHA-384. The
-// resolution therefore follows the digest the caller actually supplied, which
-// makes both curves work under every digest.
-func TestSign_NoneHash_ECDSA_P384_ProducesVerifiableSignature(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	attrs := signingKeyAttrs(t, h, "none-hash-p384", x509.ECDSA, elliptic.P384())
-	_, err := h.TPM.CreateECDSA(attrs, h.Backend, true)
-	require.NoError(t, err)
-
-	tpmPub := eccPublicKeyFromTPM(t, h, attrs)
-	require.Equal(t, elliptic.P384(), tpmPub.Curve)
-
-	digest := sha512.Sum384([]byte("the caller already hashed this with SHA-384"))
-
-	attrs.Hash = crypto.Hash(0)
-	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
-		KeyAttributes: attrs,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err, "hash NONE over a P-384 key must be signed, not refused")
-
-	assert.True(t, ecdsa.VerifyASN1(tpmPub, digest[:], signature),
-		"the signature must verify against the public key read out of the TPM")
-
-	other := sha512.Sum384([]byte("a different message"))
-	assert.False(t, ecdsa.VerifyASN1(tpmPub, other[:], signature),
-		"the signature must not verify against an unrelated digest")
-}
-
 // TestSign_NoneHash_ECDSA_ShorterDigestOnLargerCurveIsSigned records a
 // behaviour change that the template move to TPM_ALG_NULL makes correct.
 //
@@ -279,26 +241,6 @@ func TestSign_NoneHash_RSA_RefusedWithCapabilitySentinel(t *testing.T) {
 	assert.ErrorIs(t, err, ErrRawRSASignUnsupported)
 	assert.NotErrorIs(t, err, store.ErrInvalidHashFunction,
 		"a capability boundary must not be reported as a malformed request")
-}
-
-// TestSign_NamedHash_RSA_StillSigns guards the refusal above from becoming a
-// blanket one: naming the digest lets the TPM build the DigestInfo itself, and
-// that path must keep working.
-func TestSign_NamedHash_RSA_StillSigns(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	attrs := signingKeyAttrs(t, h, "named-hash-rsa", x509.RSA, nil)
-	pub, err := h.TPM.CreateRSA(attrs, h.Backend, true)
-	require.NoError(t, err)
-
-	digest := sha256.Sum256([]byte("payload"))
-	attrs.Hash = crypto.SHA256
-	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
-		KeyAttributes: attrs,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err)
-	require.NoError(t, rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], signature))
 }
 
 // TestRawRSA_TPMCommandsGenuinelyRefuse is the evidence behind

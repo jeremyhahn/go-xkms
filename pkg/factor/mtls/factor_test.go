@@ -14,6 +14,7 @@
 package mtls
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -126,14 +127,11 @@ func selfSignedCert(t *testing.T, signer crypto.Signer, pub crypto.PublicKey, no
 // Tests
 // ---------------------------------------------------------------------------
 
-func TestMTLSFactor_Name(t *testing.T) {
-	if got := New(Config{}).Name(); got != FactorName {
-		t.Fatalf("Name() = %q, want %q", got, FactorName)
-	}
-}
-
 func TestMTLSFactor_NewDefaults(t *testing.T) {
 	f := New(Config{})
+	if got := f.Name(); got != FactorName {
+		t.Fatalf("Name() = %q, want %q", got, FactorName)
+	}
 	if f.cfg.ChallengeTTLSeconds != defaultChallengeTTLSeconds {
 		t.Fatalf("ChallengeTTLSeconds = %d, want %d", f.cfg.ChallengeTTLSeconds, defaultChallengeTTLSeconds)
 	}
@@ -469,26 +467,6 @@ func TestMTLSFactor_Verify_RejectsCorruptEnrolledKey(t *testing.T) {
 	}
 }
 
-func TestMTLSFactor_Verify_RejectsTamperedNonce(t *testing.T) {
-	ctx := context.Background()
-	f := New(Config{})
-	kp := ecdsaKeyPair(t, time.Now().Add(24*time.Hour))
-	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
-		UserID:       "u1",
-		MethodParams: map[string]any{"cert_pem": kp.certPEM},
-	})
-	challenge, _ := f.Challenge(ctx, enrollment)
-
-	// Sign the original nonce, then tamper so the signature no longer matches.
-	sig := kp.sign(challengemsg.Message(challenge))
-	challenge.Nonce[0] ^= 0xFF
-
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sig}); !errors.As(err, &failed) {
-		t.Fatalf("Verify(tampered nonce) err = %v, want VerificationFailedError", err)
-	}
-}
-
 // TestMTLSFactor_Verify_BindsTheChallengeMessage pins the proof to go-qrdb's
 // challenge message (#1684): a signature over the message for the challenge's
 // own ID, purpose and nonce verifies, while the old proof over the bare nonce
@@ -522,9 +500,12 @@ func TestMTLSFactor_Verify_BindsTheChallengeMessage(t *testing.T) {
 				t.Fatalf("Verify(challenge message) = %v, want nil", err)
 			}
 
+			otherNonce := bytes.Clone(challenge.Nonce)
+			otherNonce[0] ^= 0xFF
 			refused := map[string][]byte{
 				"bare nonce":    kp.sign(challenge.Nonce),
 				"other purpose": kp.sign(qrdbsdk.QuorumChallengeMessage(challenge.ChallengeID, "quorum:b", challenge.Nonce)),
+				"other nonce":   kp.sign(qrdbsdk.QuorumChallengeMessage(challenge.ChallengeID, "quorum:a", otherNonce)),
 			}
 			for proof, sig := range refused {
 				var failed *qrdbsdk.AuthFactorVerificationFailedError
@@ -566,12 +547,6 @@ func TestMTLSFactor_Verify_RejectsEmptyNonce(t *testing.T) {
 // parseCertPEM unit tests
 // ---------------------------------------------------------------------------
 
-func TestParseCertPEM_RejectsEmptyInput(t *testing.T) {
-	if _, err := parseCertPEM(nil); err == nil {
-		t.Fatal("expected error for nil input")
-	}
-}
-
 func TestParseCertPEM_RejectsNonCertBlock(t *testing.T) {
 	data := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: []byte{0x01}})
 	if _, err := parseCertPEM(data); err == nil {
@@ -582,15 +557,6 @@ func TestParseCertPEM_RejectsNonCertBlock(t *testing.T) {
 // ---------------------------------------------------------------------------
 // verifyECDSA unit tests (helper coverage)
 // ---------------------------------------------------------------------------
-
-func TestVerifyECDSA_RejectsGarbageASN1(t *testing.T) {
-	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	err := verifyECDSA(&priv.PublicKey, []byte("digest"), []byte("not-asn1"))
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	if !errors.As(err, &failed) {
-		t.Fatalf("verifyECDSA(bad asn1) err = %v, want VerificationFailedError", err)
-	}
-}
 
 func TestVerifyECDSA_RejectsNonPositiveComponents(t *testing.T) {
 	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

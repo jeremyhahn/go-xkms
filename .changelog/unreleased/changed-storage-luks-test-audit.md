@@ -1,0 +1,1 @@
+- **`pkg/storage/luks` tests audited.** The five locked-volume verb refusals are one table test, and three tests that repeated another test's path and assertions are removed (`TestNewBackend`, `TestLock_VolumeLockFails`, `TestBackend_CompareAndDelete_AfterLock`); coverage is unchanged (#1794).

@@ -15,7 +15,6 @@ package console
 
 import (
 	"bufio"
-	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -78,16 +77,6 @@ func TestErrorTypes(t *testing.T) {
 	wce := &WriteClosedError{}
 	if wce.Error() == "" {
 		t.Fatal("WriteClosedError.Error empty")
-	}
-}
-
-// TestDial_InputGuards covers the nil Signer / nil KnownHosts guards without a
-// live server.
-func TestDial_InputGuards(t *testing.T) {
-	_, err := Dial(context.Background(), DialRequest{}, Config{})
-	var ie *InputError
-	if !errors.As(err, &ie) || ie.Field != "Signer" {
-		t.Fatalf("expected Signer InputError, got %v", err)
 	}
 }
 

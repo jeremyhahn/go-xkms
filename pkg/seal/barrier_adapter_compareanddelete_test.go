@@ -143,6 +143,42 @@ func TestGuardedStorageBackend_SwapUnsupportedIsRefused(t *testing.T) {
 	assert.ErrorIs(t, err, storage.ErrCompareAndSwapUnsupported)
 }
 
+// A base without conditional-delete or fenced-create support is refused with
+// the matching unsupported sentinel, and nothing is reported as done.
+func TestGuardedStorageBackend_ConditionalWritesUnsupportedAreRefused(t *testing.T) {
+	g := guardedStorageBackend{noSwapBackend{storage.NewMemory()}}
+	tests := []struct {
+		name    string
+		call    func() (bool, error)
+		wantErr error
+	}{
+		{
+			name:    "compare-and-delete",
+			call:    func() (bool, error) { return g.CompareAndDelete(context.Background(), "k", []byte("a")) },
+			wantErr: storage.ErrCompareAndDeleteUnsupported,
+		},
+		{
+			name:    "fenced create",
+			call:    func() (bool, error) { return g.PutIfAllAbsent(context.Background(), "k", []byte("a"), "fence") },
+			wantErr: storage.ErrFencedCreateUnsupported,
+		},
+		{
+			name: "tenant metadata fenced create",
+			call: func() (bool, error) {
+				return tenantMetadataStore{fakeBackendGet{}}.PutIfAllAbsent(context.Background(), "k", []byte("a"))
+			},
+			wantErr: storage.ErrFencedCreateUnsupported,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			done, err := tt.call()
+			require.ErrorIs(t, err, tt.wantErr)
+			assert.False(t, done)
+		})
+	}
+}
+
 // noSwapBackend hides its base's optional capabilities.
 type noSwapBackend struct{ storage.Backend }
 

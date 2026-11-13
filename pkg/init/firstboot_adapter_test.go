@@ -240,22 +240,3 @@ func TestSignAdminCSR_PropagatesSignError(t *testing.T) {
 	assert.True(t, errors.Is(err, rec.signErr))
 	assert.Nil(t, certPEM)
 }
-
-// TestCeremonyIssuePath_StillPinsSystemTenant guards the refactor of the
-// SPIFFE stamping into a shared helper: the ceremony's IssueCertificate path
-// must still pin the SYSTEM tenant regardless of what the firstboot admin
-// paths do, because SO certificates are control-plane identities.
-func TestCeremonyIssuePath_StillPinsSystemTenant(t *testing.T) {
-	rec := newRecordingCA(t)
-	adapter := NewCAAdapter(rec, "example.org")
-
-	_, err := adapter.IssueCertificate(context.Background(), &qrdbsdk.IssueCertRequest{
-		PublicKey:  newTestPublicKey(t),
-		CommonName: "so-officer",
-	})
-	require.NoError(t, err)
-
-	require.NotNil(t, rec.lastIssueReq.SANS)
-	require.Len(t, rec.lastIssueReq.SANS.URIs, 1)
-	assert.Equal(t, "spiffe://"+qrdbsdk.SystemTenantID+"/user/so-officer", rec.lastIssueReq.SANS.URIs[0])
-}

@@ -242,23 +242,6 @@ func newUserGRPCService(t *testing.T) (*Service, *grpcFakeUserClient) {
 
 // --- CreateUser ---
 
-func TestServiceCreateUser_Success(t *testing.T) {
-	svc, _ := newUserGRPCService(t)
-	resp, err := svc.CreateUser(context.Background(), &pb.CreateUserRequest{
-		Username: "alice", Email: "alice@example.com", Role: "operator", DisplayName: "Alice",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "alice", resp.User.Username)
-	assert.Equal(t, "alice@example.com", resp.User.Email)
-	// An email-login-key account is created PENDING, not active: it holds no
-	// credential yet and activates only through invite redemption
-	// (go-xkms#1294 part B). CreateUser mints the one-time activation
-	// invitation in the same call.
-	assert.False(t, resp.User.Enabled)
-	require.NotNil(t, resp.Invite)
-	assert.NotEmpty(t, resp.Invite.Token)
-}
-
 func TestServiceCreateUser_MissingUsername(t *testing.T) {
 	svc, _ := newUserGRPCService(t)
 	_, err := svc.CreateUser(context.Background(), &pb.CreateUserRequest{Email: "a@example.com"})
@@ -365,16 +348,6 @@ func TestServiceEnableUser_Success(t *testing.T) {
 	resp, err := svc.EnableUser(context.Background(), &pb.EnableUserRequest{Username: "alice"})
 	require.NoError(t, err)
 	assert.True(t, resp.User.Enabled)
-}
-
-func TestServiceDisableUser_Success(t *testing.T) {
-	svc, _ := newUserGRPCService(t)
-	_, err := svc.CreateUser(context.Background(), &pb.CreateUserRequest{Username: "alice", Email: "a@example.com"})
-	require.NoError(t, err)
-
-	resp, err := svc.DisableUser(context.Background(), &pb.DisableUserRequest{Username: "alice"})
-	require.NoError(t, err)
-	assert.False(t, resp.User.Enabled)
 }
 
 func TestServiceSetUserEnabled_MissingUsername(t *testing.T) {

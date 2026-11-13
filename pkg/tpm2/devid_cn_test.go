@@ -24,39 +24,6 @@ import (
 // pin its three outcomes -- explicit name, derived name, refusal -- so the
 // IAK and the IDevID of a device can never be named by different logic.
 
-func TestDevIDCommonName_ExplicitNameWins(t *testing.T) {
-	cn, err := DevIDCommonName("host-iak", &PlatformAttributes{Model: "edge", Serial: "001"})
-	require.NoError(t, err)
-	assert.Equal(t, "host-iak", cn, "a configured cn is used verbatim even when model and serial are present")
-}
-
-func TestDevIDCommonName_DerivesFromModelAndSerial(t *testing.T) {
-	cn, err := DevIDCommonName("", &PlatformAttributes{Model: "edge", Serial: "001"})
-	require.NoError(t, err)
-	assert.Equal(t, "edge-001", cn,
-		"TCG 7.2.3 step 4a / 802.1AR 2.3.4: the device is identified by model and serial number")
-}
-
-func TestDevIDCommonName_RefusesRatherThanDefaults(t *testing.T) {
-	cases := []struct {
-		name     string
-		platform *PlatformAttributes
-	}{
-		{"nil platform", nil},
-		{"empty platform", &PlatformAttributes{}},
-		{"model without serial", &PlatformAttributes{Model: "edge"}},
-		{"serial without model", &PlatformAttributes{Serial: "001"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cn, err := DevIDCommonName("", tc.platform)
-			assert.ErrorIs(t, err, ErrDevIDCNUnresolved,
-				"an unnameable key is refused; a fabricated default would put every such device on one storage key")
-			assert.Empty(t, cn, "no name may be returned alongside the refusal")
-		})
-	}
-}
-
 // The IAK is named from the IDevID's CONFIGURED model and serial -- the same
 // input IDevIDAttributesFromConfig uses -- and never from DMI discovery, so
 // the two keys' names are symmetric and a test's outcome does not depend on

@@ -14,13 +14,10 @@
 package agent
 
 import (
-	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
-	"net"
 	"testing"
-	"time"
 
 	"golang.org/x/crypto/ssh"
 	sshagent "golang.org/x/crypto/ssh/agent"
@@ -52,76 +49,6 @@ func newRSASigner(t *testing.T) ssh.Signer {
 	return s
 }
 
-// serveTestAgent starts the agent on a temp socket and returns a connected
-// agent client plus a cleanup func.
-func serveTestAgent(t *testing.T, signers ...ssh.Signer) (sshagent.ExtendedAgent, func()) {
-	t.Helper()
-	sock := SocketPath(privateDir(t))
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = Serve(ctx, sock, New(signers...)) }()
-
-	// Wait for the socket to come up.
-	var conn net.Conn
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		c, err := net.Dial("unix", sock)
-		if err == nil {
-			conn = c
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if conn == nil {
-		cancel()
-		t.Fatal("agent socket never came up")
-	}
-	return sshagent.NewClient(conn), func() { _ = conn.Close(); cancel() }
-}
-
-func TestAgent_ListAndSign(t *testing.T) {
-	signer := newEd25519Signer(t)
-	client, cleanup := serveTestAgent(t, signer)
-	defer cleanup()
-
-	keys, err := client.List()
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(keys) != 1 {
-		t.Fatalf("expected 1 key, got %d", len(keys))
-	}
-	if keys[0].Type() != signer.PublicKey().Type() {
-		t.Fatalf("key type mismatch: %s vs %s", keys[0].Type(), signer.PublicKey().Type())
-	}
-
-	msg := []byte("authenticate me")
-	sig, err := client.Sign(signer.PublicKey(), msg)
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	if err := signer.PublicKey().Verify(msg, sig); err != nil {
-		t.Fatalf("signature did not verify: %v", err)
-	}
-}
-
-func TestAgent_RSASignWithFlags(t *testing.T) {
-	signer := newRSASigner(t)
-	client, cleanup := serveTestAgent(t, signer)
-	defer cleanup()
-
-	msg := []byte("rsa-sha2 please")
-	sig, err := client.SignWithFlags(signer.PublicKey(), msg, sshagent.SignatureFlagRsaSha256)
-	if err != nil {
-		t.Fatalf("SignWithFlags: %v", err)
-	}
-	if sig.Format != ssh.KeyAlgoRSASHA256 {
-		t.Fatalf("expected rsa-sha2-256 signature, got %s", sig.Format)
-	}
-	if err := signer.PublicKey().Verify(msg, sig); err != nil {
-		t.Fatalf("rsa-sha2-256 signature did not verify: %v", err)
-	}
-}
-
 func TestAgent_ReadOnly(t *testing.T) {
 	a := New(newEd25519Signer(t))
 	if err := a.Add(sshagent.AddedKey{}); err != ErrUnsupported {
@@ -132,6 +59,15 @@ func TestAgent_ReadOnly(t *testing.T) {
 	}
 	if err := a.Lock(nil); err != ErrUnsupported {
 		t.Fatalf("Lock should be unsupported, got %v", err)
+	}
+	if err := a.Remove(nil); err != ErrUnsupported {
+		t.Fatalf("Remove should be unsupported, got %v", err)
+	}
+	if err := a.Unlock(nil); err != ErrUnsupported {
+		t.Fatalf("Unlock should be unsupported, got %v", err)
+	}
+	if _, err := a.Extension("some@ext", nil); err == nil {
+		t.Fatal("Extension should be unsupported")
 	}
 }
 

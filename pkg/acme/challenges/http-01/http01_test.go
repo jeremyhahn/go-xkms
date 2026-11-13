@@ -35,98 +35,6 @@ func loopbackClient() *validation.Client {
 	return validation.NewClient(validation.Config{AllowPrivateTargets: true})
 }
 
-func TestVerify_Success(t *testing.T) {
-	expectedKeyAuth := "test-token.test-thumbprint"
-
-	// Create a test HTTP server that serves the expected key authorization
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, wellKnownChallengePath) {
-			t.Errorf("Expected path to start with %s, got %s", wellKnownChallengePath, r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, expectedKeyAuth)
-	}))
-	defer ts.Close()
-
-	// Parse the test server URL to get host and port
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-	if err != nil {
-		t.Fatalf("Failed to parse test server URL: %v", err)
-	}
-
-	client := loopbackClient()
-
-	err = Verify(client, host, port, "test-token", expectedKeyAuth)
-	if err != nil {
-		t.Errorf("Verify() failed: %v", err)
-	}
-}
-
-func TestVerify_KeyAuthMismatch(t *testing.T) {
-	expectedKeyAuth := "test-token.test-thumbprint"
-	wrongKeyAuth := "wrong-token.wrong-thumbprint"
-
-	// Create a test HTTP server that serves the wrong key authorization
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, wrongKeyAuth)
-	}))
-	defer ts.Close()
-
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-	if err != nil {
-		t.Fatalf("Failed to parse test server URL: %v", err)
-	}
-
-	client := loopbackClient()
-
-	err = Verify(client, host, port, "test-token", expectedKeyAuth)
-	if err == nil {
-		t.Error("Verify() should have failed with key authorization mismatch")
-	}
-	if !strings.Contains(err.Error(), "key authorization mismatch") {
-		t.Errorf("Expected 'key authorization mismatch' error, got: %v", err)
-	}
-}
-
-func TestVerify_HTTPError(t *testing.T) {
-	expectedKeyAuth := "test-token.test-thumbprint"
-
-	// Create a test HTTP server that returns an error status
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = fmt.Fprint(w, "Not Found")
-	}))
-	defer ts.Close()
-
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-	if err != nil {
-		t.Fatalf("Failed to parse test server URL: %v", err)
-	}
-
-	client := loopbackClient()
-
-	err = Verify(client, host, port, "test-token", expectedKeyAuth)
-	if err == nil {
-		t.Error("Verify() should have failed with HTTP error")
-	}
-	if !strings.Contains(err.Error(), "unexpected HTTP status") {
-		t.Errorf("Expected 'unexpected HTTP status' error, got: %v", err)
-	}
-}
-
-func TestVerify_NetworkError(t *testing.T) {
-	client := loopbackClient()
-
-	// Use an invalid host/port combination to trigger a network error
-	err := Verify(client, "invalid-host-that-does-not-exist", "9999", "test-token", "test-keyauth")
-	if err == nil {
-		t.Error("Verify() should have failed with network error")
-	}
-}
-
 func TestVerify_WithWhitespace(t *testing.T) {
 	expectedKeyAuth := "test-token.test-thumbprint"
 
@@ -351,8 +259,8 @@ func TestVerify_HTTPStatusCodes(t *testing.T) {
 
 			err = Verify(client, host, port, "test-token", expectedKeyAuth)
 
-			if tc.shouldFail && err == nil {
-				t.Error("Expected Verify to fail but it succeeded")
+			if tc.shouldFail && (err == nil || !strings.Contains(err.Error(), "unexpected HTTP status")) {
+				t.Errorf("Verify() error = %v, want an 'unexpected HTTP status' error", err)
 			}
 			if !tc.shouldFail && err != nil {
 				t.Errorf("Expected Verify to succeed but got error: %v", err)
@@ -415,35 +323,6 @@ func TestVerify_EmptyResponse(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "key authorization mismatch") {
 		t.Errorf("Expected key authorization mismatch error, got: %v", err)
-	}
-}
-
-func TestChallengeHandlerHTTPx_RequestLogging(t *testing.T) {
-	keyAuth := "test-key-authorization-logging"
-	handler := challengeHandlerHTTPx(keyAuth)
-
-	req := httptest.NewRequest(http.MethodGet, wellKnownChallengePath+"test-token", nil)
-	req.RemoteAddr = "192.168.1.100:12345"
-	req.Header.Set("HOST", "example.com")
-
-	w := httptest.NewRecorder()
-
-	handler(w, req)
-
-	resp := w.Result()
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("Failed to read response: %v", err)
-	}
-
-	if string(body) != keyAuth {
-		t.Errorf("Expected body %q, got %q", keyAuth, string(body))
 	}
 }
 

@@ -161,18 +161,6 @@ func TestAdminEnrollmentParams_FIDO2RequiresALocalCeremony(t *testing.T) {
 	}
 }
 
-// TestAdminEnrollmentParams_FIDO2RequiresARelyingParty pins the refusal to
-// guess an RP ID. A credential enrolled against the wrong one verifies at
-// enrollment and fails at every subsequent login.
-func TestAdminEnrollmentParams_FIDO2RequiresARelyingParty(t *testing.T) {
-	params := NewAdminEnrollmentParams(AdminEnrollmentContext{Username: "administrator"})
-
-	_, err := params(context.Background(), qrdbsdk.FactorFIDO2)
-	if !errors.Is(err, ErrPasskeyRPIDRequired) && !errors.Is(err, ErrNoLocalFIDO2Ceremony) {
-		t.Fatalf("params(fido2) = %v, want a refusal naming the missing input", err)
-	}
-}
-
 // TestAdminEnrollmentParams_FIDO2RequiresARelyingPartyWithRealCeremony
 // isolates the RP ID check from the "no local ceremony" one above: with an
 // actual (hardware-free) LocalCeremony wired in, the missing RP ID must still

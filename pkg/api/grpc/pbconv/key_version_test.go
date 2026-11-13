@@ -162,16 +162,3 @@ func TestKeyVersionClient_Errors(t *testing.T) {
 		})
 	}
 }
-
-// TestSealKeyVersion_RoundTrip proves the sealing key version travels with a
-// seal's response and back on the matching unseal.
-func TestSealKeyVersion_RoundTrip(t *testing.T) {
-	sealed, err := SealResponseFromProto(SealResponseToProto(&transport.SealResponse{Backend: "software", Ciphertext: []byte("c"), KeyVersion: 4}))
-	require.NoError(t, err)
-	assert.Equal(t, uint32(4), sealed.KeyVersion)
-
-	unseal, err := UnsealRequestFromProto(UnsealRequestToProto(&transport.UnsealRequest{Backend: "software", Ciphertext: []byte("c"), KeyVersion: 4}), "acme")
-	require.NoError(t, err)
-	assert.Equal(t, uint32(4), unseal.KeyVersion)
-	assert.Equal(t, "acme", unseal.TenantID)
-}

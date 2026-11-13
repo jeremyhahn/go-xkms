@@ -137,14 +137,6 @@ func TestDevidPolicyNVDataSize(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
 }
 
-// TestDevIDPolicyNVPublic_UnsupportedNameAlg proves the refusal from
-// DevIDPolicyNVIndex propagates out of DevIDPolicyNVPublic unchanged for a
-// hash algorithm the specification defines no Policy NV Index template for.
-func TestDevIDPolicyNVPublic_UnsupportedNameAlg(t *testing.T) {
-	_, err := DevIDPolicyNVPublic(DevIDKeySigning, tpm2.TPMAlgSHA1)
-	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
-}
-
 // TestDevIDPolicyNVName_UnsupportedNameAlg proves DevIDPolicyNVName refuses
 // the same unsupported algorithm DevIDPolicyNVPublic does, rather than
 // computing a Name over a zero-value public area.

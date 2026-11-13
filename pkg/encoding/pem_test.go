@@ -136,6 +136,28 @@ func TestEncodePrivateKeyPEM_RSA(t *testing.T) {
 			t.Fatal("Decoded key doesn't match original")
 		}
 	})
+
+	// An empty, non-nil password round-trips like no password.
+	t.Run("EmptyPassword", func(t *testing.T) {
+		pemData, err := EncodePrivateKeyPEM(privateKey, x509.RSA, []byte{})
+		if err != nil {
+			t.Fatalf("EncodePrivateKeyPEM failed: %v", err)
+		}
+
+		decoded, err := DecodePrivateKeyPEM(pemData, []byte{})
+		if err != nil {
+			t.Fatalf("DecodePrivateKeyPEM failed: %v", err)
+		}
+
+		decodedRSA, ok := decoded.(*rsa.PrivateKey)
+		if !ok {
+			t.Fatal("Decoded key is not *rsa.PrivateKey")
+		}
+
+		if decodedRSA.N.Cmp(privateKey.N) != 0 {
+			t.Fatal("Decoded key doesn't match original")
+		}
+	})
 }
 
 func TestEncodePrivateKeyPEM_ECDSA(t *testing.T) {
@@ -355,7 +377,7 @@ func TestEncodePublicKeyPEM(t *testing.T) {
 			t.Fatal("Decoded key is not *rsa.PublicKey")
 		}
 
-		if decodedRSA.N.Cmp(privateKey.N) != 0 {
+		if decodedRSA.N.Cmp(privateKey.N) != 0 || decodedRSA.E != privateKey.E {
 			t.Fatal("Decoded public key doesn't match original")
 		}
 	})
@@ -480,56 +502,6 @@ func TestEncodeCertificatePEM(t *testing.T) {
 			t.Fatal("Decoded certificate doesn't match original")
 		}
 	})
-
-	// Test ECDSA certificate
-	t.Run("ECDSACertificate", func(t *testing.T) {
-		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatalf("Failed to generate ECDSA key: %v", err)
-		}
-
-		cert := generateTestCertificate(t, privateKey)
-
-		pemData, err := EncodeCertificatePEM(cert)
-		if err != nil {
-			t.Fatalf("EncodeCertificatePEM failed: %v", err)
-		}
-
-		// Decode and verify
-		decoded, err := DecodeCertificatePEM(pemData)
-		if err != nil {
-			t.Fatalf("DecodeCertificatePEM failed: %v", err)
-		}
-
-		if decoded.Subject.CommonName != cert.Subject.CommonName {
-			t.Fatal("Decoded certificate doesn't match original")
-		}
-	})
-
-	// Test Ed25519 certificate
-	t.Run("Ed25519Certificate", func(t *testing.T) {
-		_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatalf("Failed to generate Ed25519 key: %v", err)
-		}
-
-		cert := generateTestCertificate(t, privateKey)
-
-		pemData, err := EncodeCertificatePEM(cert)
-		if err != nil {
-			t.Fatalf("EncodeCertificatePEM failed: %v", err)
-		}
-
-		// Decode and verify
-		decoded, err := DecodeCertificatePEM(pemData)
-		if err != nil {
-			t.Fatalf("DecodeCertificatePEM failed: %v", err)
-		}
-
-		if decoded.Subject.CommonName != cert.Subject.CommonName {
-			t.Fatal("Decoded certificate doesn't match original")
-		}
-	})
 }
 
 func TestEncodeCertificatePEM_Errors(t *testing.T) {
@@ -612,30 +584,6 @@ func TestEncodeCertificateChainPEM(t *testing.T) {
 			if decoded[i].Subject.CommonName != certs[i].Subject.CommonName {
 				t.Fatalf("Certificate %d doesn't match original", i)
 			}
-		}
-	})
-
-	t.Run("SingleCertificateInChain", func(t *testing.T) {
-		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatalf("Failed to generate RSA key: %v", err)
-		}
-
-		cert := generateTestCertificate(t, privateKey)
-		certs := []*x509.Certificate{cert}
-
-		pemData, err := EncodeCertificateChainPEM(certs)
-		if err != nil {
-			t.Fatalf("EncodeCertificateChainPEM failed: %v", err)
-		}
-
-		decoded, err := DecodeCertificateChainPEM(pemData)
-		if err != nil {
-			t.Fatalf("DecodeCertificateChainPEM failed: %v", err)
-		}
-
-		if len(decoded) != 1 {
-			t.Fatalf("Expected 1 certificate, got %d", len(decoded))
 		}
 	})
 }
@@ -781,59 +729,4 @@ func TestGetPEMBlockType(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestContainsHelper(t *testing.T) {
-	t.Run("ContainsSubstring", func(t *testing.T) {
-		if !contains("hello world", "world") {
-			t.Fatal("Expected to find 'world' in 'hello world'")
-		}
-		if !contains("hello world", "hello") {
-			t.Fatal("Expected to find 'hello' in 'hello world'")
-		}
-		if !contains("test", "test") {
-			t.Fatal("Expected to find 'test' in 'test'")
-		}
-	})
-
-	t.Run("DoesNotContainSubstring", func(t *testing.T) {
-		if contains("hello world", "goodbye") {
-			t.Fatal("Should not find 'goodbye' in 'hello world'")
-		}
-		if contains("test", "testing") {
-			t.Fatal("Should not find 'testing' in 'test'")
-		}
-	})
-
-	t.Run("EmptyStrings", func(t *testing.T) {
-		if contains("", "test") {
-			t.Fatal("Empty string should not contain 'test'")
-		}
-		if !contains("test", "") {
-			t.Fatal("Any string contains empty substring")
-		}
-	})
-}
-
-func TestIndexOfHelper(t *testing.T) {
-	t.Run("FindSubstring", func(t *testing.T) {
-		if indexOf("hello world", "world") != 6 {
-			t.Fatal("Expected index 6 for 'world' in 'hello world'")
-		}
-		if indexOf("hello world", "hello") != 0 {
-			t.Fatal("Expected index 0 for 'hello' in 'hello world'")
-		}
-	})
-
-	t.Run("SubstringNotFound", func(t *testing.T) {
-		if indexOf("hello world", "goodbye") != -1 {
-			t.Fatal("Expected -1 when substring not found")
-		}
-	})
-
-	t.Run("EmptySubstring", func(t *testing.T) {
-		if indexOf("hello", "") != 0 {
-			t.Fatal("Expected 0 for empty substring")
-		}
-	})
 }

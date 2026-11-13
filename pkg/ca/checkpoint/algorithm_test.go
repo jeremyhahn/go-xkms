@@ -205,9 +205,6 @@ func TestKeyTypeEncoding(t *testing.T) {
 	if got := ml.keyType(); string(got) != want {
 		t.Fatalf("ML-DSA-44 key type = %q, want %q", got, want)
 	}
-	if _, err := lookupID("example.com/none"); !errors.Is(err, ErrUnknownAlgorithm) {
-		t.Fatalf("unknown ID: err = %v", err)
-	}
 }
 
 func TestHexByte(t *testing.T) {

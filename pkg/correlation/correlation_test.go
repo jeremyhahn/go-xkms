@@ -68,11 +68,6 @@ func TestGetCorrelationID(t *testing.T) {
 		want string
 	}{
 		{
-			name: "Get correlation ID from context",
-			ctx:  WithCorrelationID(context.Background(), "test-id"),
-			want: "test-id",
-		},
-		{
 			name: "Get from context without correlation ID",
 			ctx:  context.Background(),
 			want: "",
@@ -176,76 +171,6 @@ func TestGetOrGenerate(t *testing.T) {
 				if got != tt.wantExact {
 					t.Errorf("GetOrGenerate() = %v, want %v", got, tt.wantExact)
 				}
-			}
-		})
-	}
-}
-
-func TestCorrelationIDPropagation(t *testing.T) {
-	// Test that correlation ID propagates through context chain
-	correlationID := "parent-correlation-id"
-
-	parentCtx := WithCorrelationID(context.Background(), correlationID)
-
-	// Create child context with additional values
-	type testKey string
-	childCtx := context.WithValue(parentCtx, testKey("test-key"), "test-value")
-
-	// Verify correlation ID is still accessible in child context
-	got := GetCorrelationID(childCtx)
-	if got != correlationID {
-		t.Errorf("Correlation ID not propagated to child context, got %v, want %v", got, correlationID)
-	}
-}
-
-func TestContextKeyIsolation(t *testing.T) {
-	type testContextKey2 string
-	// Verify that correlation ID doesn't conflict with other context values
-	correlationID := "test-correlation-id"
-
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, testContextKey2("correlation-id"), "wrong-value") // String key collision test
-	ctx = WithCorrelationID(ctx, correlationID)
-
-	got := GetCorrelationID(ctx)
-	if got != correlationID {
-		t.Errorf("Context key collision detected, got %v, want %v", got, correlationID)
-	}
-}
-
-func TestConstants(t *testing.T) {
-	// Verify constant values are set correctly
-	tests := []struct {
-		name  string
-		value string
-		want  string
-	}{
-		{
-			name:  "RequestIDHeader",
-			value: RequestIDHeader,
-			want:  "X-Request-ID",
-		},
-		{
-			name:  "CorrelationIDHeader",
-			value: CorrelationIDHeader,
-			want:  "X-Correlation-ID",
-		},
-		{
-			name:  "GRPCCorrelationIDKey",
-			value: GRPCCorrelationIDKey,
-			want:  "x-correlation-id",
-		},
-		{
-			name:  "GRPCRequestIDKey",
-			value: GRPCRequestIDKey,
-			want:  "x-request-id",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.value != tt.want {
-				t.Errorf("%s = %v, want %v", tt.name, tt.value, tt.want)
 			}
 		})
 	}

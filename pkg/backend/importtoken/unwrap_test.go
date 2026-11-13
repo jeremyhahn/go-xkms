@@ -80,12 +80,16 @@ func TestUnwrap_RoundTrip(t *testing.T) {
 			priv := generateTestRSAKey(t)
 			sealed, err := NewSealedRSAKey(t.Context(), priv)
 			require.NoError(t, err)
-			defer sealed.Destroy()
+			require.NotNil(t, sealed.PublicKey())
+			assert.Equal(t, priv.N, sealed.PublicKey().N)
+			// Entry.Unwrap is the upper layer over the package-level Unwrap.
+			entry := &Entry{Key: sealed, Algorithm: algorithm}
+			defer entry.Destroy()
 
 			keyMaterial := []byte("0123456789abcdef0123456789abcdef")
 			wrapped := wrapForAlgorithm(t, algorithm, &priv.PublicKey, keyMaterial)
 
-			unwrapped, err := Unwrap(t.Context(), sealed, algorithm, algorithm, wrapped)
+			unwrapped, err := entry.Unwrap(t.Context(), algorithm, wrapped)
 			require.NoError(t, err)
 			assert.Equal(t, keyMaterial, unwrapped)
 		})
@@ -159,23 +163,6 @@ func TestEntry_Unwrap_NilReceiver(t *testing.T) {
 	require.Error(t, err)
 	var unavailable *UnavailableError
 	assert.True(t, errors.As(err, &unavailable))
-}
-
-// TestEntry_Unwrap_RoundTrip verifies Entry.Unwrap delegates to Unwrap with
-// its own Key and Algorithm.
-func TestEntry_Unwrap_RoundTrip(t *testing.T) {
-	priv := generateTestRSAKey(t)
-	sealed, err := NewSealedRSAKey(t.Context(), priv)
-	require.NoError(t, err)
-	entry := &Entry{Key: sealed, Algorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256}
-	defer entry.Destroy()
-
-	keyMaterial := []byte("0123456789abcdef0123456789abcdef")
-	wrapped := wrapForAlgorithm(t, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, &priv.PublicKey, keyMaterial)
-
-	unwrapped, err := entry.Unwrap(t.Context(), backend.WrappingAlgorithmRSAES_OAEP_SHA_256, wrapped)
-	require.NoError(t, err)
-	assert.Equal(t, keyMaterial, unwrapped)
 }
 
 // TestEntry_Destroy_NilReceiver verifies Destroy tolerates a nil receiver.

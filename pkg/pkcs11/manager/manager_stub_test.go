@@ -102,24 +102,6 @@ func TestStubManager_DisabledErrorTellsUserHowToFix(t *testing.T) {
 		"the disabled error must name the build tag the operator needs")
 }
 
-// TestStubManager_EnumerationIsEmptyNotNilPanic verifies the read-only
-// enumeration calls degrade to empty results rather than erroring. Callers
-// range over these without checking an error, so they must be safe to iterate.
-func TestStubManager_EnumerationIsEmptyNotNilPanic(t *testing.T) {
-	mgr := New()
-
-	assert.Empty(t, mgr.ListModules())
-	assert.Empty(t, mgr.ListTokens())
-	assert.Empty(t, mgr.ListConnections())
-
-	for range mgr.ListModules() {
-		t.Fatal("stub manager must not report any module")
-	}
-	for range mgr.ListTokens() {
-		t.Fatal("stub manager must not report any token")
-	}
-}
-
 // TestStubManager_CloseIsIdempotent verifies Close never errors and may be
 // called repeatedly. Shutdown paths call Close from a defer and from an
 // explicit teardown, so a second call must not fail.
