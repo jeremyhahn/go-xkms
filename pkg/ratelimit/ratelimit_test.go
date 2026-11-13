@@ -59,8 +59,7 @@ func TestAllow(t *testing.T) {
 		Burst:             5,
 	}
 
-	limiter := New(config)
-	defer limiter.Stop()
+	limiter, clk := newClocked(t, config)
 
 	clientID := "test-client"
 
@@ -76,8 +75,8 @@ func TestAllow(t *testing.T) {
 		t.Error("Request should be denied after burst exhausted")
 	}
 
-	// Wait for 1 second, 1 token should be available
-	time.Sleep(1 * time.Second)
+	// After 1 second, 1 token should be available
+	clk.Advance(1 * time.Second)
 	if !limiter.Allow(clientID) {
 		t.Error("Request should be allowed after waiting")
 	}
@@ -132,12 +131,10 @@ func TestCleanup(t *testing.T) {
 	config := &Config{
 		Enabled:           true,
 		RequestsPerMinute: 60,
-		CleanupInterval:   100 * time.Millisecond,
 		MaxIdle:           200 * time.Millisecond,
 	}
 
-	limiter := New(config)
-	defer limiter.Stop()
+	limiter, clk := newClocked(t, config)
 
 	// Create a limiter entry
 	limiter.Allow("test-client")
@@ -149,8 +146,9 @@ func TestCleanup(t *testing.T) {
 	}
 	limiter.mu.RUnlock()
 
-	// Wait for cleanup
-	time.Sleep(400 * time.Millisecond)
+	// Pass MaxIdle and run the cleanup pass
+	clk.Advance(400 * time.Millisecond)
+	limiter.cleanup()
 
 	// Check it was cleaned up
 	limiter.mu.RLock()
