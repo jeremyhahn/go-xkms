@@ -518,6 +518,24 @@ var (
 	// platform firmware can undefine it and ReplaceEKCert leaves it in place.
 	ErrEKCertPlatformIndex = errors.New("tpm: ek certificate NV index is platform-created and cannot be replaced")
 
+	// ErrEKCertKeyType reports that the configured EK cert-handle is a TCG
+	// EK Credential Profile index but the EK's key type has no certificate
+	// index in that profile, so its certificate has no defined home there.
+	ErrEKCertKeyType = errors.New("tpm: the EK key type has no TCG EK certificate NV index")
+
+	// ErrNVCertIndexMismatch reports that the certificate NV index already
+	// exists with attributes, a name algorithm or an authPolicy other than
+	// the ones a certificate index is defined with. Nothing is written to it
+	// and it is not undefined: the caller undefines it, or configures another
+	// cert-handle.
+	ErrNVCertIndexMismatch = errors.New("tpm: certificate NV index exists with different attributes")
+
+	// ErrNVCertHierarchyAuth reports that the TPM rejected the hierarchy
+	// authorization for a certificate NV_DefineSpace, NV_Write or
+	// NV_UndefineSpace: the Owner hierarchy has an authorization value (the
+	// SO PIN) and the one supplied does not match it.
+	ErrNVCertHierarchyAuth = errors.New("tpm: the hierarchy rejected the certificate NV write: supply its authorization (the SO PIN)")
+
 	// ErrEKTemplateUnsupported reports that the NV EK certificate's key
 	// matches no TCG EK Credential Profile low-range template (RSA-2048,
 	// ECC NIST P-256), so its EK cannot be recreated transiently.

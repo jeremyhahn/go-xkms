@@ -846,7 +846,7 @@ func TestRunIDevIDCreate_ForceReplacesExisting(t *testing.T) {
 	sim := withProvisionedSimulatorTPM(t)
 	idevidPub := sim.withIDevID(t)
 	cert := issueTestCert(t, sim.caCert, sim.caKey, "xkey-001", idevidPub)
-	require.NoError(t, sim.tpm.ProvisionIDevIDCert(cert))
+	require.NoError(t, sim.tpm.ProvisionIDevIDCert(nil, cert))
 	_, err := sim.tpm.IDevIDCertificate()
 	require.NoError(t, err)
 

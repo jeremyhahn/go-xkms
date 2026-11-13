@@ -38,3 +38,27 @@ func TestErrTPMAuthFailed_DoesNotMatchOtherTPMErrors(t *testing.T) {
 		t.Fatalf("errors.Is(%v, ErrTPMAuthFailed) = true, want false", wrapped)
 	}
 }
+
+// TestErrTPMNVCert_ReexportsLibraryErrors pins the sdk re-exports of the
+// TPM NV certificate errors (#1725): a caller of sdk/go matches them with
+// errors.Is without importing pkg/tpm2.
+func TestErrTPMNVCert_ReexportsLibraryErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		sdk  error
+		lib  error
+	}{
+		{"ErrTPMNVCertTooLarge", ErrTPMNVCertTooLarge, tpm2.ErrNVCertTooLarge},
+		{"ErrTPMNVCertIndexMismatch", ErrTPMNVCertIndexMismatch, tpm2.ErrNVCertIndexMismatch},
+		{"ErrTPMNVCertHierarchyAuth", ErrTPMNVCertHierarchyAuth, tpm2.ErrNVCertHierarchyAuth},
+		{"ErrTPMEKCertKeyType", ErrTPMEKCertKeyType, tpm2.ErrEKCertKeyType},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := errors.Join(errVerifyPIN, tc.lib)
+			if !errors.Is(wrapped, tc.sdk) {
+				t.Fatalf("errors.Is(%v, %s) = false, want true", wrapped, tc.name)
+			}
+		})
+	}
+}
