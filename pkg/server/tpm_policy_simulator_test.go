@@ -18,16 +18,25 @@ package server
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
+	"os"
+	"path/filepath"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
@@ -42,11 +51,28 @@ const policyPCR = 23
 // XKMSService, whose TPM policy service is built and installed.
 func newTPMPolicyServer(t *testing.T) *xkms.XKMSService {
 	t.Helper()
+	return newTPMPolicyServerWith(t, &config.TPM2Config{Enabled: true, UseSimulator: true})
+}
+
+// newReferenceTPMPolicyServer starts xkmsd over the TPM simulator with
+// backends.tpm2.reference_signer pinned to signer's public key.
+func newReferenceTPMPolicyServer(t *testing.T, signer *ecdsa.PrivateKey) *xkms.XKMSService {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(&signer.PublicKey)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "reference-signer.pem")
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0o600))
+	return newTPMPolicyServerWith(t, &config.TPM2Config{Enabled: true, UseSimulator: true, ReferenceSigner: &config.ReferenceSignerConfig{PublicKey: path}})
+}
+
+// newTPMPolicyServerWith starts xkmsd with the tpm2 backend config.
+func newTPMPolicyServerWith(t *testing.T, tpm2 *config.TPM2Config) *xkms.XKMSService {
+	t.Helper()
 	xkms.Reset()
 	t.Cleanup(xkms.Reset)
 
 	cfg := createMinimalConfig(t)
-	cfg.Backends.TPM2 = &config.TPM2Config{Enabled: true, UseSimulator: true}
+	cfg.Backends.TPM2 = tpm2
 	cfg.CA = testFirstBootCAConfig()
 	server, err := New(cfg)
 	require.NoError(t, err)
@@ -161,6 +187,133 @@ func TestTPMPolicy_EndToEnd(t *testing.T) {
 	require.NoError(t, svc.DeleteKey(sys, "tpm2", "boot-signer-a"))
 	require.NoError(t, svc.DeleteKey(sys, "tpm2", "boot-signer-b"))
 	require.NoError(t, svc.TPMPolicyDelete(sys, &transport.TPMPolicyDeleteRequest{Name: "boot"}), "the unused policy deletes")
+}
+
+// TestTPMPolicy_VerifyReportsReference drives a signed reference manifest
+// through xkmsd's reference_signer config, the XKMSService, the gRPC server
+// and the MCP server, and reads the branch Reference back from verify on each.
+func TestTPMPolicy_VerifyReportsReference(t *testing.T) {
+	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	svc := newReferenceTPMPolicyServer(t, signer)
+	sys := identityCtx(qrdbsdk.SystemTenantID)
+	grpcSvc := grpcinternal.NewService(nil, nil, svc)
+	mcpSrv, err := mcp.NewServer(&mcp.Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
+	require.NoError(t, err)
+	mcpParams := func(v any) json.RawMessage {
+		raw, err := json.Marshal(v)
+		require.NoError(t, err)
+		return raw
+	}
+
+	final := sha256.Sum256([]byte("next boot"))
+	pcrs := map[uint32][]byte{policyPCR: final[:]}
+	corim, err := appraisaltest.SignCoRIM(pcrs, signer, nil)
+	require.NoError(t, err)
+	forged, err := appraisaltest.SignCoRIM(pcrs, other, nil)
+	require.NoError(t, err)
+
+	branch := func(name string) transport.TPMPolicyBranch {
+		return transport.TPMPolicyBranch{Name: name, Conditions: transport.TPMPolicyPCRBranch("sha256", []uint{policyPCR}).Conditions}
+	}
+	_, err = svc.TPMPolicyCreate(sys, &transport.TPMPolicyCreateRequest{Name: "boot", Branches: []transport.TPMPolicyBranch{branch("current"), branch("next")}})
+	require.NoError(t, err)
+
+	// A manifest signed by another key is refused on both paths.
+	_, err = svc.TPMPolicyUpdate(sys, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: forged})
+	require.Error(t, err, "the XKMSService refuses a manifest the pinned signer did not sign")
+	_, err = grpcSvc.TPMPolicyUpdate(sys, &pb.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: forged})
+	require.Error(t, err, "the gRPC server refuses a manifest the pinned signer did not sign")
+	_, err = mcpSrv.InvokeMethod(sys, "tpm.policy.update", mcpParams(transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: forged}))
+	var keyOpErr *mcp.KeyOpError
+	require.ErrorAs(t, err, &keyOpErr, "the MCP server refuses a manifest the pinned signer did not sign")
+	before, err := svc.TPMPolicyVerify(sys, &transport.TPMPolicyRequest{Name: "boot"})
+	require.NoError(t, err)
+	for _, b := range before.Branches {
+		assert.Nil(t, b.Reference, "a refused update leaves branch %q without a reference", b.Name)
+	}
+
+	updated, err := svc.TPMPolicyUpdate(sys, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: corim})
+	require.NoError(t, err)
+	digest := sha256.Sum256(corim)
+	var ref *transport.TPMPolicyReference
+	for _, b := range updated.Branches {
+		switch b.Name {
+		case "current":
+			assert.Nil(t, b.Reference, "the branch not updated carries no reference")
+		case "next":
+			ref = b.Reference
+		}
+	}
+	require.NotNil(t, ref, "the updated branch carries its reference")
+	assert.Equal(t, digest[:], ref.Digest)
+
+	verified, err := svc.TPMPolicyVerify(sys, &transport.TPMPolicyRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.False(t, verified.Match, "the policy matches only if every branch does")
+	assert.True(t, verified.Approved)
+	require.Len(t, verified.Branches, 2)
+	for _, b := range verified.Branches {
+		assert.True(t, b.Approved, "branch %q", b.Name)
+		switch b.Name {
+		case "current":
+			assert.True(t, b.Match)
+			assert.Nil(t, b.Reference)
+		case "next":
+			assert.False(t, b.Match)
+			assert.Equal(t, []uint{policyPCR}, b.Mismatched)
+			assert.Equal(t, ref, b.Reference)
+		default:
+			t.Fatalf("unexpected branch %q", b.Name)
+		}
+	}
+
+	_, err = grpcSvc.TPMPolicyUpdate(sys, &pb.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: corim})
+	require.NoError(t, err, "the gRPC server updates the branch from the same manifest")
+	got, err := grpcSvc.TPMPolicyVerify(sys, &pb.TPMPolicyRequest{Name: "boot"})
+	require.NoError(t, err)
+	require.Len(t, got.GetBranches(), 2)
+	for _, b := range got.GetBranches() {
+		assert.True(t, b.GetApproved(), "branch %q", b.GetName())
+		switch b.GetName() {
+		case "current":
+			assert.True(t, b.GetMatch())
+			assert.Nil(t, b.GetReference())
+		case "next":
+			assert.False(t, b.GetMatch())
+			assert.Equal(t, []uint32{policyPCR}, b.GetMismatched())
+			require.NotNil(t, b.GetReference(), "the gRPC server reports the reference")
+			assert.Equal(t, digest[:], b.GetReference().GetDigest())
+		default:
+			t.Fatalf("unexpected branch %q", b.GetName())
+		}
+	}
+
+	_, err = mcpSrv.InvokeMethod(sys, "tpm.policy.update", mcpParams(transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: corim}))
+	require.NoError(t, err, "the MCP server updates the branch from the same manifest")
+	result, err := mcpSrv.InvokeMethod(sys, "tpm.policy.verify", mcpParams(transport.TPMPolicyRequest{Name: "boot"}))
+	require.NoError(t, err)
+	var mcpVerified transport.TPMPolicyVerifyResponse
+	require.NoError(t, json.Unmarshal(mcpParams(result), &mcpVerified), "the MCP result decodes off the wire")
+	require.Len(t, mcpVerified.Branches, 2)
+	for _, b := range mcpVerified.Branches {
+		assert.True(t, b.Approved, "branch %q", b.Name)
+		switch b.Name {
+		case "current":
+			assert.True(t, b.Match)
+			assert.Nil(t, b.Reference)
+		case "next":
+			assert.False(t, b.Match)
+			assert.Equal(t, []uint{policyPCR}, b.Mismatched)
+			require.NotNil(t, b.Reference, "the MCP server reports the reference")
+			assert.Equal(t, digest[:], b.Reference.Digest)
+		default:
+			t.Fatalf("unexpected branch %q", b.Name)
+		}
+	}
 }
 
 // anyKeyHasCN reports whether a listed key's ID ends in cn.

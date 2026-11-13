@@ -123,6 +123,37 @@ func TestTPMPolicyRPCs_MapErrors(t *testing.T) {
 	}
 }
 
+// TestTPMPolicyRPCs_CarryBranchAndReferenceValues proves the update RPC
+// hands the branch and its reference values to the service: each
+// combination draws the service's own answer, which a dropped field would
+// change (a dropped branch re-captures from the live PCRs, which the
+// offline service cannot reach, Internal; dropped
+// reference values leave a branch without them, InvalidArgument). The
+// offline service has no reference signer, so signed values stop at
+// FailedPrecondition, as on REST.
+func TestTPMPolicyRPCs_CarryBranchAndReferenceValues(t *testing.T) {
+	s, _ := newTPMPolicyGRPC(t)
+	ctx := platformScopeCtx("acme")
+	corim := []byte{0xd2, 0x84, 0x43, 0xa1, 0x01, 0x26}
+
+	tests := []struct {
+		name string
+		req  *pb.TPMPolicyUpdateRequest
+		code codes.Code
+	}{
+		{"no branch re-captures", &pb.TPMPolicyUpdateRequest{Name: "boot"}, codes.Internal},
+		{"branch without reference values", &pb.TPMPolicyUpdateRequest{Name: "boot", Branch: "next"}, codes.InvalidArgument},
+		{"reference values without a branch", &pb.TPMPolicyUpdateRequest{Name: "boot", ReferenceValues: corim}, codes.InvalidArgument},
+		{"branch and reference values without a signer", &pb.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: corim}, codes.FailedPrecondition},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.TPMPolicyUpdate(ctx, tt.req)
+			assert.Equal(t, tt.code, status.Code(err), "%v", err)
+		})
+	}
+}
+
 // TestTPMPolicyRPCs_TenantModeLifecycle proves the system caller reads and
 // changes a tenant's mode, after which the tenant's policy RPCs refuse with
 // FailedPrecondition.

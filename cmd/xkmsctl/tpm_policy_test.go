@@ -330,6 +330,15 @@ func TestTPMPolicyVerifyCmd(t *testing.T) {
 	assert.Equal(t, 1, code, "a PCR mismatch fails the command")
 	assert.Contains(t, out, "PCRs [7] differ")
 
+	out, code = runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{
+		Name: "boot", Approved: true, Branches: []client.TPMPolicyBranchVerification{{
+			Name: "next", Mismatched: []uint{7}, Approved: true,
+			Reference: &client.TPMPolicyReference{ID: "boot-image-v2", Signer: "Example Provider", Digest: []byte{0xab, 0xcd}},
+		}},
+	}}, tpmPolicyVerifyCmd, []string{"boot"}, nil)
+	assert.Equal(t, 1, code, "a PCR mismatch fails the command")
+	assert.Contains(t, out, "Reference: boot-image-v2 signed by Example Provider, sha256 abcd", "verify prints the branch reference")
+
 	_, code = runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{Name: "boot", Match: true}},
 		tpmPolicyVerifyCmd, []string{"boot"}, nil)
 	assert.Equal(t, 1, code, "an unapproved policy fails the command")
