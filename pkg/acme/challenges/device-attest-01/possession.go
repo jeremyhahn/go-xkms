@@ -126,6 +126,11 @@ var (
 	// ErrPossessionCSRMalformed, when a possession set's measurements claim
 	// (273) is not the one shape that carries the application evidence.
 	ErrPossessionMeasurementsShape = errors.New("device-attest-01: the measurements claim is not the application evidence shape")
+
+	// ErrPossessionApplicationEvidenceMismatch is a possession request whose
+	// application evidence is not the reference registered for the device,
+	// or a device the policy requires a reference for that has none.
+	ErrPossessionApplicationEvidenceMismatch = errors.New("device-attest-01: the possession request application evidence is not the device's registered reference")
 )
 
 // PossessionRequest is what a possession certificate request states.
@@ -702,17 +707,20 @@ func possessionClaims(extensions []pkix.Extension) (*dice.ClaimsSet, error) {
 	return nil, &errs.Detail{Err: ErrPossessionCSRMalformed, Detail: "no UCCS evidence extension"}
 }
 
-// VerifyPossessionCSR runs the four finalize checks a DICE device's
+// VerifyPossessionCSR runs the five finalize checks a DICE device's
 // possession request must pass, each refusing with its own error:
 //
 //  1. the request signature verifies       ErrPossessionSignatureInvalid
 //  2. its key is the attested key           ErrPossessionKeyMismatch
 //  3. its nonce is this order's challenge   ErrPossessionNonceMismatch
 //  4. its identifiers are the order's       ErrPossessionIdentifierMismatch
+//  5. its application evidence is           ErrPossessionApplicationEvidenceMismatch
+//     applicationReference, the device's registered reference
+//     (VerifiedAttestation.ApplicationReference); nil skips only this check
 //
 // A request that is not the possession template at all is
 // ErrPossessionCSRMalformed, and none of the checks run.
-func (v *VerifiedAttestation) VerifyPossessionCSR(csr *x509.CertificateRequest, orderIdentifiers []entities.ACMEIdentifier) error {
+func (v *VerifiedAttestation) VerifyPossessionCSR(csr *x509.CertificateRequest, orderIdentifiers []entities.ACMEIdentifier, applicationReference []byte) error {
 	if v == nil {
 		return ErrNoVerifiedAttestation
 	}
@@ -742,6 +750,12 @@ func (v *VerifiedAttestation) VerifyPossessionCSR(csr *x509.CertificateRequest, 
 			Err:    ErrPossessionIdentifierMismatch,
 			Detail: "the request names only " + request.Identifier().Type + " " + request.Identifier().Value,
 		}
+	}
+	// A nil reference is a device the registry's policy admits without one
+	// (VerifiedAttestation.ApplicationReference); any other value, of any
+	// length, must be exactly the request's evidence.
+	if applicationReference != nil && subtle.ConstantTimeCompare(request.ApplicationEvidence, applicationReference) != 1 {
+		return ErrPossessionApplicationEvidenceMismatch
 	}
 	return nil
 }

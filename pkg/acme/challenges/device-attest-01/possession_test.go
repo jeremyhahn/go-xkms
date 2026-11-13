@@ -14,6 +14,7 @@
 package deviceattest01
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -663,8 +664,56 @@ func TestVerifyPossessionCSRAcceptsTheDevicesRequest(t *testing.T) {
 	f := newPossessionFixture(t)
 	csr := possessionRequest(t, f.key, f.claims, diceKeyAuth)
 
-	require.NoError(t, f.verified.VerifyPossessionCSR(csr, f.order))
+	require.NoError(t, f.verified.VerifyPossessionCSR(csr, f.order, mustHex(t, vectorApplicationEvidence)))
 	require.NoError(t, f.verified.BindCSRKey(csr), "a possession request also passes the alias binding")
+}
+
+// The fifth finalize check matches the request's application evidence,
+// read from trusted-firmware's own CoSWID (vectorCoswid), against the
+// reference registered for the device. A nil reference is a device the
+// registry's policy admits without one (DICEPolicy.RequireApplicationReference
+// off); VerifiedAttestation.ApplicationReference refuses it otherwise.
+func TestVerifyPossessionCSRApplicationEvidence(t *testing.T) {
+	f := newPossessionFixture(t)
+	evidence := mustHex(t, vectorApplicationEvidence)
+	offByOne := bytes.Clone(evidence)
+	offByOne[len(offByOne)-1] ^= 0x01
+
+	for name, tc := range map[string]struct {
+		reference []byte
+		want      error
+	}{
+		"the registered reference": {evidence, nil},
+		"a reference one byte off": {offByOne, ErrPossessionApplicationEvidenceMismatch},
+		"no reference registered":  {nil, nil},
+		"an empty reference":       {[]byte{}, ErrPossessionApplicationEvidenceMismatch},
+		"a 31-byte reference":      {evidence[:31], ErrPossessionApplicationEvidenceMismatch},
+		"a 33-byte reference":      {append(bytes.Clone(evidence), 0x00), ErrPossessionApplicationEvidenceMismatch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			csr := possessionRequest(t, f.key, f.claims, diceKeyAuth)
+			err := f.verified.VerifyPossessionCSR(csr, f.order, tc.reference)
+			if tc.want == nil {
+				require.NoError(t, err)
+				return
+			}
+			assert.ErrorIs(t, err, tc.want)
+		})
+	}
+
+	t.Run("another firmware's evidence is refused under the registered reference", func(t *testing.T) {
+		another := mustHex(t, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+		claims := vectorClaimsWith(t, func(other map[int64][]byte) {
+			file := vectorFile(t)
+			file[7] = []any{1, another}
+			coswid := vectorCoswid(t)
+			coswid[3] = map[int64]any{17: file}
+			other[dice.ClaimMeasurements] = measurementsOf(t, coswid)
+		})
+		csr := possessionRequest(t, f.key, claims, diceKeyAuth)
+		assert.ErrorIs(t, f.verified.VerifyPossessionCSR(csr, f.order, evidence), ErrPossessionApplicationEvidenceMismatch)
+		require.NoError(t, f.verified.VerifyPossessionCSR(csr, f.order, another))
+	})
 }
 
 func TestVerifyPossessionCSRSignature(t *testing.T) {
@@ -676,13 +725,13 @@ func TestVerifyPossessionCSRSignature(t *testing.T) {
 		digest := sha256.Sum256(cri)
 		signature, err := ecdsa.SignASN1(rand.Reader, f.key, digest[:])
 		require.NoError(t, err)
-		require.NoError(t, f.verified.VerifyPossessionCSR(assembled(t, cri, signature), f.order))
+		require.NoError(t, f.verified.VerifyPossessionCSR(assembled(t, cri, signature), f.order, mustHex(t, vectorApplicationEvidence)))
 	})
 	t.Run("a signature over anything else is refused", func(t *testing.T) {
 		digest := sha256.Sum256([]byte("some other message"))
 		signature, err := ecdsa.SignASN1(rand.Reader, f.key, digest[:])
 		require.NoError(t, err)
-		err = f.verified.VerifyPossessionCSR(assembled(t, cri, signature), f.order)
+		err = f.verified.VerifyPossessionCSR(assembled(t, cri, signature), f.order, mustHex(t, vectorApplicationEvidence))
 		assert.ErrorIs(t, err, ErrPossessionSignatureInvalid)
 	})
 }
@@ -700,12 +749,12 @@ func TestVerifyPossessionCSRKey(t *testing.T) {
 	f := newPossessionFixture(t)
 
 	t.Run("the attested key is accepted", func(t *testing.T) {
-		require.NoError(t, f.verified.VerifyPossessionCSR(possessionRequest(t, f.key, f.claims, diceKeyAuth), f.order))
+		require.NoError(t, f.verified.VerifyPossessionCSR(possessionRequest(t, f.key, f.claims, diceKeyAuth), f.order, mustHex(t, vectorApplicationEvidence)))
 	})
 	t.Run("any other key is refused", func(t *testing.T) {
 		software, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
-		err = f.verified.VerifyPossessionCSR(possessionRequest(t, software, f.claims, diceKeyAuth), f.order)
+		err = f.verified.VerifyPossessionCSR(possessionRequest(t, software, f.claims, diceKeyAuth), f.order, mustHex(t, vectorApplicationEvidence))
 		assert.ErrorIs(t, err, ErrPossessionKeyMismatch)
 	})
 }
@@ -714,11 +763,11 @@ func TestVerifyPossessionCSRNonce(t *testing.T) {
 	f := newPossessionFixture(t)
 
 	t.Run("this order's challenge is accepted", func(t *testing.T) {
-		require.NoError(t, f.verified.VerifyPossessionCSR(possessionRequest(t, f.key, f.claims, diceKeyAuth), f.order))
+		require.NoError(t, f.verified.VerifyPossessionCSR(possessionRequest(t, f.key, f.claims, diceKeyAuth), f.order, mustHex(t, vectorApplicationEvidence)))
 	})
 	t.Run("a request signed for another order is refused", func(t *testing.T) {
 		replayed := possessionRequest(t, f.key, f.claims, "another-token.another-thumbprint")
-		assert.ErrorIs(t, f.verified.VerifyPossessionCSR(replayed, f.order), ErrPossessionNonceMismatch)
+		assert.ErrorIs(t, f.verified.VerifyPossessionCSR(replayed, f.order, mustHex(t, vectorApplicationEvidence)), ErrPossessionNonceMismatch)
 	})
 }
 
@@ -727,7 +776,7 @@ func TestVerifyPossessionCSRIdentifiers(t *testing.T) {
 	csr := possessionRequest(t, f.key, f.claims, diceKeyAuth)
 
 	t.Run("the order's one identifier is accepted", func(t *testing.T) {
-		require.NoError(t, f.verified.VerifyPossessionCSR(csr, f.order))
+		require.NoError(t, f.verified.VerifyPossessionCSR(csr, f.order, mustHex(t, vectorApplicationEvidence)))
 	})
 
 	refused := map[string][]entities.ACMEIdentifier{
@@ -739,7 +788,7 @@ func TestVerifyPossessionCSRIdentifiers(t *testing.T) {
 	}
 	for name, order := range refused {
 		t.Run(name, func(t *testing.T) {
-			assert.ErrorIs(t, f.verified.VerifyPossessionCSR(csr, order), ErrPossessionIdentifierMismatch)
+			assert.ErrorIs(t, f.verified.VerifyPossessionCSR(csr, order, mustHex(t, vectorApplicationEvidence)), ErrPossessionIdentifierMismatch)
 		})
 	}
 }
@@ -750,17 +799,17 @@ func TestVerifyPossessionCSRRefusesWhatItCannotCheck(t *testing.T) {
 
 	t.Run("no verified attestation", func(t *testing.T) {
 		var missing *VerifiedAttestation
-		assert.ErrorIs(t, missing.VerifyPossessionCSR(csr, f.order), ErrNoVerifiedAttestation)
+		assert.ErrorIs(t, missing.VerifyPossessionCSR(csr, f.order, mustHex(t, vectorApplicationEvidence)), ErrNoVerifiedAttestation)
 	})
 	t.Run("a tpm attestation", func(t *testing.T) {
 		tpm := &VerifiedAttestation{Format: FormatTPM, KeyAuthorization: diceKeyAuth, LeafDER: f.verified.LeafDER}
-		assert.ErrorIs(t, tpm.VerifyPossessionCSR(csr, f.order), ErrKeyBindingUnavailable)
+		assert.ErrorIs(t, tpm.VerifyPossessionCSR(csr, f.order, mustHex(t, vectorApplicationEvidence)), ErrKeyBindingUnavailable)
 	})
 	t.Run("no leaf", func(t *testing.T) {
 		bare := &VerifiedAttestation{Format: FormatDICE, KeyAuthorization: diceKeyAuth}
-		assert.ErrorIs(t, bare.VerifyPossessionCSR(csr, f.order), ErrKeyBindingUnavailable)
+		assert.ErrorIs(t, bare.VerifyPossessionCSR(csr, f.order, mustHex(t, vectorApplicationEvidence)), ErrKeyBindingUnavailable)
 	})
 	t.Run("an ordinary certificate request", func(t *testing.T) {
-		assert.ErrorIs(t, f.verified.VerifyPossessionCSR(csrFor(t, f.key), f.order), ErrPossessionCSRMalformed)
+		assert.ErrorIs(t, f.verified.VerifyPossessionCSR(csrFor(t, f.key), f.order, mustHex(t, vectorApplicationEvidence)), ErrPossessionCSRMalformed)
 	})
 }

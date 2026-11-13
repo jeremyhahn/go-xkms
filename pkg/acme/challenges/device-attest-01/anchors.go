@@ -107,7 +107,17 @@ type ProvisionedDevice struct {
 	// TrustAnchors.DICERoots, name the same UEID, and have signed the alias
 	// certificate.
 	DeviceIDCertificate []byte
+
+	// ApplicationReference is the 32-byte application evidence registered
+	// for the device: the value the possession request's measurements must
+	// carry at finalize (VerifiedAttestation.VerifyPossessionCSR). A record
+	// whose reference is set with any other length is refused.
+	ApplicationReference []byte
 }
+
+// ApplicationReferenceSize is the length of a registered application
+// reference: the 32-byte hash-entry value the possession request carries.
+const ApplicationReferenceSize = 32
 
 // DICEPolicy is the policy a DICE alias certificate must meet. Each field is a
 // requirement of dice.VerifyOptions; the zero value is the strictest operational
@@ -128,6 +138,12 @@ type DICEPolicy struct {
 	// RequireTcbInfo demands a DiceTcbInfo extension on the leaf
 	// (dice.VerifyOptions.RequireTcbInfo).
 	RequireTcbInfo bool
+
+	// RequireApplicationReference refuses at finalize a device whose
+	// provisioning record registers no ApplicationReference. Off, such a
+	// device is admitted without the application evidence comparison; a
+	// registered reference is always compared.
+	RequireApplicationReference bool
 
 	// PermittedFlags are the operational states tolerated; none by default.
 	PermittedFlags dice.OperationalFlags

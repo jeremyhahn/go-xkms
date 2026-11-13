@@ -1,0 +1,6 @@
+Slice (lane sacmeia, row acme-issuance SPEC.md:41): device-attest-01 finalize matches the possession request's 32-byte application evidence against the reference registered on the provisioned device.
+Checks: ProvisionedDevice.ApplicationReference is exactly 32 bytes when set; VerifyPossessionCSR refuses a mismatch (constant-time compare) with ErrPossessionApplicationEvidenceMismatch; table tests for match, one-byte mismatch, missing reference, wrong-length reference.
+Unregistered device: gated on DICEPolicy.RequireApplicationReference (refuse when set; admit without the comparison when off, the default), because TestDeviceAttestDICEEnrollsTheRealFirmware (pkg/acme/client/device_attest_dice_e2e_test.go:85) registers no reference and must still enroll. Tests: TestApplicationReference (registry_test.go:73), TestVerifyPossessionCSRApplicationEvidence (possession_test.go:675).
+Result: go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/acme/challenges/device-attest-01/... ./pkg/acme/server/handlers/... — pass (ok, ok).
+Result: make lint — pass (0 issues in every module and tag set, actionlint pass).
+Result: go test -run DeviceAttest ./pkg/acme/client/ — compiles; the 5 DICE e2e tests stop at device_attest_dice_e2e_test.go:274 because the tfwsim-atecc608a binary is not built in this container (CI builds it).

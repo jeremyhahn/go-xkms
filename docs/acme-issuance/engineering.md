@@ -836,7 +836,7 @@ critical `tcg-dice-UCCS-evidence` carrying the alias claims
 `bindDeviceAttestationKey` runs `VerifyPossessionCSR` for every `dice` record
 before `BindCSRKey` (`pkg/acme/server/handlers/device_attest.go:228-235`).
 `ParsePossessionCSR` (`possession.go:318`) refuses anything the template would
-not have written, then four checks run, each its own `badCSR` cause:
+not have written, then five checks run, each its own `badCSR` cause:
 
 | Check | Error | Where |
 |---|---|---|
@@ -844,6 +844,22 @@ not have written, then four checks run, each its own `badCSR` cause:
 | the SubjectPublicKeyInfo is byte-equal to the attested leaf's | `ErrPossessionKeyMismatch` | `possession.go:389` |
 | the UCCS nonce is SHA-256 of this order's key authorization | `ErrPossessionNonceMismatch` | `possession.go:392` |
 | the request's identifiers are exactly the order's | `ErrPossessionIdentifierMismatch` | `possession.go:395` |
+| the 32-byte application evidence equals the device's registered reference (constant-time) | `ErrPossessionApplicationEvidenceMismatch` | `possession.go:756` |
+
+The reference is the provisioning record's `ApplicationReference`
+(`anchors.go:114`), 32 bytes when set; a record carrying any other length is
+`ErrProvisioningRecordInvalid` (`registry.go:178`). The handler re-reads it from
+the registry before the checks (`VerifiedAttestation.ApplicationReference`,
+`registry.go:353`, through `TrustAnchorVerifier.RegisteredApplicationReference`,
+`registry.go:188`; called at `handlers/device_attest.go:229`). A device
+registered without a reference is refused with
+`ErrPossessionApplicationEvidenceMismatch` under
+`DICEPolicy.RequireApplicationReference` (`anchors.go:145`) and admitted without
+the comparison when the option is off, the default, because the end-to-end
+enrollment of the real firmware registers none
+(`pkg/acme/client/device_attest_dice_e2e_test.go:85`). Tests:
+`TestVerifyPossessionCSRApplicationEvidence` (`possession_test.go:675`) and
+`TestApplicationReference` (`registry_test.go:73`).
 
 `BindCSRKey` (`binding.go:153`) then refuses, as `ErrKeyBindingUnavailable`
 ("no attested SPKI"), a record without `AttestedSPKI`, the key the device
