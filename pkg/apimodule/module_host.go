@@ -21,6 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -109,6 +110,13 @@ func (m *Module) restServer() (*rest.Server, error) {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
 		hc.WebAuthnCallContext = m.serviceContext
+		// The user store runs as the node's service principal here, as it
+		// does in xkmsd (Server.initializeWebAuthnService); the principal's
+		// base grant holds no user permission, so it gains the user store's
+		// users CRUD on this construction path too.
+		if m.serviceContext != nil {
+			serviceprincipal.RegisterWebAuthnGrant()
+		}
 	}
 
 	srv, err := rest.NewHostServer(context.Background(), hc)
