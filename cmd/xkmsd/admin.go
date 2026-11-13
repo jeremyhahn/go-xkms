@@ -161,7 +161,7 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	// read under the deployment's own trust domain, and its thumbprint is
 	// looked up in that tenant only, so a tenant user authenticates in its
 	// own tenant (go-xkms#1240).
-	mtlsConfig := &auth.MTLSConfig{UserStore: srv.QRDBUserStore()}
+	mtlsConfig := &auth.MTLSConfig{UserStore: srv.QRDBUserStore(), TrustDomain: srv.TrustDomain()}
 	authHandler := admin.NewMTLSAuthHandler(auth.NewMTLSAuthenticator(mtlsConfig), srv.TrustDomain())
 
 	// The unified server authorizes every route against its own permission

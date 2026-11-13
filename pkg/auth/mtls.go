@@ -99,6 +99,31 @@ type MTLSAuthenticator struct {
 
 	// userStore is an optional store for mapping certificate fingerprints to users
 	userStore UserStore
+
+	// trustDomain is the cluster SPIFFE trust domain handed to
+	// qrdbsdk.TenantFromClientCert.
+	trustDomain string
+}
+
+// CertificateTenantMismatchError reports that the user a client certificate
+// is bound to belongs to a tenant other than the one the certificate names.
+// The caller is refused rather than admitted with that user's roles. It
+// unwraps to ErrUnauthenticated.
+type CertificateTenantMismatchError struct {
+	// CertificateTenantID is the normalized tenant the certificate names.
+	CertificateTenantID string
+	// UserTenantID is the tenant of the user the certificate is bound to.
+	UserTenantID string
+}
+
+// Error describes the mismatch.
+func (e *CertificateTenantMismatchError) Error() string {
+	return "mtls: certificate names tenant " + e.CertificateTenantID + " but its user belongs to tenant " + e.UserTenantID
+}
+
+// Unwrap returns ErrUnauthenticated: no identity was established.
+func (e *CertificateTenantMismatchError) Unwrap() error {
+	return ErrUnauthenticated
 }
 
 // MTLSConfig configures the mTLS authenticator.
@@ -122,6 +147,13 @@ type MTLSConfig struct {
 	// fail closed: with a store configured, no identity is ever derived from
 	// certificate fields.
 	UserStore UserStore
+
+	// TrustDomain is the cluster SPIFFE trust domain the deployment's CA
+	// issues under, passed to qrdbsdk.TenantFromClientCert: a certificate
+	// that names a tenant (it carries a Subject OU) names it only when its
+	// first OU and its SPIFFE SAN trust domain agree, and no tenant may be
+	// the cluster trust domain. Empty skips only the cluster checks.
+	TrustDomain string
 }
 
 // Compile-time interface check
@@ -145,6 +177,7 @@ func NewMTLSAuthenticator(config *MTLSConfig) *MTLSAuthenticator {
 		extractMetadata: config.ExtractMetadata,
 		extractSubject:  config.ExtractSubject,
 		userStore:       config.UserStore,
+		trustDomain:     config.TrustDomain,
 	}
 }
 
@@ -209,7 +242,26 @@ func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certif
 	if a.userStore != nil {
 		return a.userIdentity(ctx, cert)
 	}
-	return a.certIdentity(cert), nil
+	return a.certIdentity(cert)
+}
+
+// certTenant returns the tenant a client certificate names, by qrdb's own
+// certificate-to-tenant rule (qrdbsdk.TenantFromClientCert) under the
+// configured trust domain, normalized as qrdb's middleware does. A
+// certificate with no Subject OU claims no tenant: claimed is false and
+// the tenant is empty. A certificate with an OU that the rule refuses (no
+// agreeing SPIFFE SAN, a foreign or ambiguous trust domain) returns the
+// rule's *qrdbsdk.ClientCertificateTenantError, which matches
+// qrdbsdk.ErrInvalidClientCertificate.
+func (a *MTLSAuthenticator) certTenant(cert *x509.Certificate) (tenantID string, claimed bool, err error) {
+	if len(cert.Subject.OrganizationalUnit) == 0 {
+		return "", false, nil
+	}
+	tenantID, err = qrdbsdk.TenantFromClientCert(cert, a.trustDomain)
+	if err != nil {
+		return "", true, err
+	}
+	return qrdbsdk.NormalizeTenantID(tenantID), true, nil
 }
 
 // userIdentity resolves the client certificate to its bound user through the
@@ -247,6 +299,15 @@ func (a *MTLSAuthenticator) userIdentity(ctx context.Context, cert *x509.Certifi
 	if err := qrdbsdk.CheckAuthMethod(&qrdbsdk.User{Username: user.Username, TenantID: user.TenantID, AuthMethods: user.AuthMethods}, a.Name()); err != nil {
 		return nil, err
 	}
+	// A certificate that names a tenant authenticates only a user of that
+	// tenant, as the ACME admin resolver requires (pkg/acme/admin).
+	certTenant, claimed, err := a.certTenant(cert)
+	if err != nil {
+		return nil, err
+	}
+	if claimed && qrdbsdk.NormalizeTenantID(user.TenantID) != certTenant {
+		return nil, &CertificateTenantMismatchError{CertificateTenantID: certTenant, UserTenantID: user.TenantID}
+	}
 
 	identity := &Identity{
 		Subject:  user.Username,
@@ -270,24 +331,26 @@ func (a *MTLSAuthenticator) userIdentity(ctx context.Context, cert *x509.Certifi
 }
 
 // certIdentity builds a certificate-only identity for an authenticator with no
-// UserStore: Subject from the configured extractor, TenantID from the first
-// OU, and no roles.
-func (a *MTLSAuthenticator) certIdentity(cert *x509.Certificate) *Identity {
+// UserStore: Subject from the configured extractor, TenantID from certTenant
+// (qrdbsdk.TenantFromClientCert), and no roles. A certificate the tenant
+// rule refuses is refused.
+func (a *MTLSAuthenticator) certIdentity(cert *x509.Certificate) (*Identity, error) {
+	tenantID, _, err := a.certTenant(cert)
+	if err != nil {
+		return nil, err
+	}
 	identity := &Identity{
 		Subject:  a.extractSubject(cert),
 		Metadata: a.certMetadataMap(cert),
 	}
 
-	// Extract tenant from first OU if present
-	if len(cert.Subject.OrganizationalUnit) > 0 {
-		identity.TenantID = cert.Subject.OrganizationalUnit[0]
-	}
+	identity.TenantID = tenantID
 
 	identity.Metadata["auth_method"] = qrdbsdk.MethodMTLS
 	identity.Metadata["cert_serial"] = cert.SerialNumber.String()
 	identity.Metadata["cert_issuer"] = cert.Issuer.String()
 
-	return identity
+	return identity, nil
 }
 
 // certMetadataMap converts the configured certificate metadata extractor's
