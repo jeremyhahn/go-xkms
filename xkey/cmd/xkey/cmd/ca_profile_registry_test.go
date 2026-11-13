@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,7 +68,7 @@ func TestCAIssueHelpProfilesAreRegistered(t *testing.T) {
 	names := helpProfileNames(caIssueCmd.Long)
 	require.NotEmpty(t, names, "ca issue help must advertise at least one profile")
 
-	registry := ca.NewDefaultProfileRegistry()
+	registry := xkms.NewDefaultProfileRegistry()
 	for _, name := range names {
 		profile, err := registry.Get(name)
 		require.NoError(t, err, "profile %q is advertised by ca issue but not registered", name)
@@ -80,7 +80,7 @@ func TestCAIssueHelpProfilesAreRegistered(t *testing.T) {
 // requests on the user's behalf without a flag to the same registry, so a
 // default that drifts from the registry fails here rather than at the CA.
 func TestCertProfileDefaultsAreRegistered(t *testing.T) {
-	registry := ca.NewDefaultProfileRegistry()
+	registry := xkms.NewDefaultProfileRegistry()
 
 	for _, name := range []string{agent.CertProfileDefault, defaultCertProfile} {
 		profile, err := registry.Get(name)
