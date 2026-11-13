@@ -18,6 +18,7 @@ env:
 
 jobs:
   lint:
+    timeout-minutes: 60
     name: Lint
     runs-on: ubuntu-latest
     steps:
@@ -46,6 +47,7 @@ jobs:
           version: v2.14.0
 
   unit-tests:
+    timeout-minutes: 60
     name: Unit Tests
     # Bigdisk runners on Gitea (Infra m1227, DS-3705): this job builds the
     # test image (`make docker-build`) and runs the whole unit suite in it,
@@ -72,6 +74,7 @@ jobs:
           fail_ci_if_error: false
 
   integration-tests:
+    timeout-minutes: 120
     name: Integration Tests
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: unit-tests
@@ -95,6 +98,7 @@ jobs:
             *.log
 
   docker-compose-tests:
+    timeout-minutes: 120
     name: Docker Compose Tests
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: lint
@@ -116,6 +120,7 @@ jobs:
         run: make compose-clean
 
   build-multi-arch:
+    timeout-minutes: 120
     name: Multi-Architecture Build
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests]
