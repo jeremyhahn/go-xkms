@@ -339,17 +339,19 @@ func (m *wireMessage) isResponse() bool {
 }
 
 // answers reports whether the message's wire ID is the request's ID. IDs
-// compare as compact JSON, so the number 1 and the string "1" differ.
+// compare by JSON value: 1, 1.0 and 1e0 match, the string "1" does not.
 func (m *wireMessage) answers(id mcp.RequestId) bool {
-	want, err := json.Marshal(id)
-	if err != nil {
+	if len(m.ID) == 0 || id.IsNil() {
 		return false
 	}
-	var got, wantCompact bytes.Buffer
-	if json.Compact(&got, m.ID) != nil || json.Compact(&wantCompact, want) != nil {
+	// Compare by value, not by spelling: mcp-go's RequestId canonicalises an
+	// integral number however it is written (1, 1.0, 1e0), and keeps a string
+	// id distinct from a number with the same digits.
+	var got mcp.RequestId
+	if err := json.Unmarshal(m.ID, &got); err != nil || got.IsNil() {
 		return false
 	}
-	return bytes.Equal(got.Bytes(), wantCompact.Bytes())
+	return got.String() == id.String()
 }
 
 // response converts the message to mcp-go's response type, keeping the wire
