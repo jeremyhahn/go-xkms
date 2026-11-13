@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/autofill"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
@@ -75,8 +74,8 @@ func setDistinctFieldValue(t *testing.T, fv reflect.Value, name string, seed int
 	case reflect.Pointer:
 		if fv.Type() == reflect.TypeOf((*xkms.AutoFillPolicy)(nil)) {
 			fv.Set(reflect.ValueOf(&xkms.AutoFillPolicy{
-				FillMode:              autofill.FillModeAutoFill,
-				TOTPPolicy:            autofill.TOTPPolicyAuto,
+				FillMode:              xkms.FillModeAutoFill,
+				TOTPPolicy:            xkms.TOTPPolicyAuto,
 				SessionTimeoutSec:     seed,
 				RequireAuthentication: seed%2 == 0,
 				AllowedDomains:        []string{fmt.Sprintf("allowed-%d.example", seed)},
