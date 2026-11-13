@@ -237,7 +237,13 @@ func (h *SSHHandlers) handleSign(w http.ResponseWriter, r *http.Request) {
 	}
 	defer closer()
 
-	sig, err := signer.Sign(rand.Reader, req.Digest)
+	// A named algorithm signs through ssh.AlgorithmSigner (RFC 8332 §3); a
+	// refused one is the caller's error, not the server's.
+	sig, err := pkgkeys.SignWithAlgorithm(signer, rand.Reader, req.Digest, req.Algorithm)
+	if pkgkeys.IsSignatureAlgorithmRefusal(err) {
+		writeSSHError(w, &SSHBadBodyError{Err: err})
+		return
+	}
 	if err != nil {
 		writeSSHError(w, err)
 		return
@@ -494,6 +500,9 @@ func (p *buffersProvider) Passphrase(_ context.Context, _ string) (*secure.Buffe
 // POST /keys/.../sign. Digest is the raw bytes to sign.
 type restSignRequestDTO struct {
 	Digest []byte `json:"digest"`
+	// Algorithm is the SSH signature algorithm (RFC 8332 §3); empty keeps
+	// the key's default.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 // restSignResponseDTO mirrors *ssh.Signature.
