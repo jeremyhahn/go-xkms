@@ -22,8 +22,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
@@ -331,4 +333,78 @@ func (m *wireMessage) response(id mcp.RequestId) *mcptransport.JSONRPCResponse {
 		Result:  m.Result,
 		Error:   m.Error,
 	}
+}
+
+// methodNotificationInitialized is the notification a client sends once the
+// initialize exchange has succeeded.
+const methodNotificationInitialized = "notifications/initialized"
+
+// streamSession is an MCP client session over streamableHTTP: the initialize
+// handshake and tools/call. It replaces mcp-go's client.Client, whose calls
+// reach mcp-go's transport.StreamableHTTP (GO-2026-6911), and implements
+// Session.
+type streamSession struct {
+	transport *streamableHTTP
+	nextID    atomic.Int64
+}
+
+var _ Session = (*streamSession)(nil)
+
+// request sends one JSON-RPC request and returns its result, or the
+// server's JSON-RPC error as a Go error.
+func (s *streamSession) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	resp, err := s.transport.SendRequest(ctx, mcptransport.JSONRPCRequest{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      mcp.NewRequestId(s.nextID.Add(1)),
+		Method:  method,
+		Params:  params,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, resp.Error.AsError()
+	}
+	return resp.Result, nil
+}
+
+// initialize runs the MCP handshake: the initialize request, a check that
+// the server chose a protocol version this client knows, and the
+// initialized notification. The negotiated version goes on every later
+// request.
+func (s *streamSession) initialize(ctx context.Context, info mcp.Implementation) error {
+	raw, err := s.request(ctx, string(mcp.MethodInitialize), mcp.InitializeParams{
+		ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+		ClientInfo:      info,
+		Capabilities:    mcp.ClientCapabilities{},
+	})
+	if err != nil {
+		return err
+	}
+	var result mcp.InitializeResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fmt.Errorf("mcp initialize: decode result: %w", err)
+	}
+	if !slices.Contains(mcp.ValidProtocolVersions, result.ProtocolVersion) {
+		return fmt.Errorf("mcp initialize: unsupported protocol version %q", result.ProtocolVersion)
+	}
+	s.transport.SetProtocolVersion(result.ProtocolVersion)
+	return s.transport.SendNotification(ctx, mcp.JSONRPCNotification{
+		JSONRPC:      mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{Method: methodNotificationInitialized},
+	})
+}
+
+// CallTool implements Session: one tools/call request.
+func (s *streamSession) CallTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	raw, err := s.request(ctx, string(mcp.MethodToolsCall), request.Params)
+	if err != nil {
+		return nil, err
+	}
+	return mcp.ParseCallToolResult(&raw)
+}
+
+// Close implements Session: it ends the server session.
+func (s *streamSession) Close() error {
+	return s.transport.Close()
 }
