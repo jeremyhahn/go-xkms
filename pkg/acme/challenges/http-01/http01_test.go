@@ -14,10 +14,12 @@
 package http01
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -314,6 +316,47 @@ func TestChallengeHandlerHTTPx_WriteError(t *testing.T) {
 	w := &failingWriter{}
 
 	handler(w, req)
+}
+
+// TestChallengeHandlerHTTPx_LogsKeyAuthLength pins that the handler logs the
+// key authorization's length, never its value, on both the Debug (served) and
+// Error (write failed) paths (CA m2544: a 32 MiB value made a 33 MB log line
+// that stalled the runner's step output).
+func TestChallengeHandlerHTTPx_LogsKeyAuthLength(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	const keyAuth = "secret-key-auth-value"
+	handler := challengeHandlerHTTPx(keyAuth)
+	wantLen := fmt.Sprintf(`"key-authorization-length":%d`, len(keyAuth))
+
+	for _, tc := range []struct {
+		name string
+		w    http.ResponseWriter
+		msg  string
+	}{
+		{"served", httptest.NewRecorder(), "Served key authorization"},
+		{"write error", &failingWriter{}, "Failed to write response for key authorization"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf.Reset()
+			req := httptest.NewRequest(http.MethodGet, wellKnownChallengePath+"test-token", nil)
+			handler(tc.w, req)
+
+			out := buf.String()
+			if !strings.Contains(out, tc.msg) {
+				t.Fatalf("log has no %q entry: %s", tc.msg, out)
+			}
+			if !strings.Contains(out, wantLen) {
+				t.Errorf("log lacks %s: %s", wantLen, out)
+			}
+			if strings.Contains(out, keyAuth) {
+				t.Errorf("log carries the key authorization value: %s", out)
+			}
+		})
+	}
 }
 
 func TestVerify_HTTPStatusCodes(t *testing.T) {

@@ -52,8 +52,8 @@ type mockTCGCA struct {
 	lakCertDER []byte
 	lakCertErr error
 
-	// tenant records the tenantID the last EK, AK, IDevID or enrollment
-	// call was asked to stamp.
+	// tenant records the tenantID the last EK, AK, IDevID, enrollment or
+	// LAK call was asked to stamp.
 	tenant string
 }
 
@@ -84,7 +84,9 @@ func (m *mockTCGCA) IssueLAKCertificateRaw(
 	certifyInfo, signature []byte,
 	signatureAlgorithm x509.SignatureAlgorithm,
 	lakPublicArea, nonce []byte,
+	tenantID string,
 ) ([]byte, error) {
+	m.tenant = tenantID
 	return m.lakCertDER, m.lakCertErr
 }
 

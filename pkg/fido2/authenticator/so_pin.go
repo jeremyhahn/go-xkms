@@ -16,6 +16,7 @@ package authenticator
 import (
 	"crypto/rand"
 	"errors"
+	"sync"
 	"sync/atomic"
 
 	"golang.org/x/crypto/argon2"
@@ -109,6 +110,10 @@ type SOPINManager struct {
 
 	// IsSet indicates whether an SO PIN has been configured.
 	IsSet bool
+
+	// deriveMu serializes the Argon2id derivations, so concurrent callers
+	// hold one Memory-sized buffer at a time, not one each.
+	deriveMu sync.Mutex
 }
 
 // NewSOPINManager creates a new SOPINManager with default Argon2id parameters.
@@ -125,6 +130,13 @@ func NewSOPINManager() *SOPINManager {
 	return m
 }
 
+// argon2IDKey is the Argon2id derivation used by SOPINManager.DeriveKey and
+// KeyManager.deriveUMK. It is argon2.IDKey in production; the package's
+// TestMain replaces it with a low-memory wrapper so the race-instrumented
+// test binary fits its memory limit (CA m2540). Stored parameters are never
+// changed by the seam.
+var argon2IDKey = argon2.IDKey
+
 // DeriveKey derives a 32-byte Storage Master Key (SMK) from the provided PIN
 // using Argon2id with the manager's configured parameters.
 //
@@ -138,7 +150,10 @@ func (m *SOPINManager) DeriveKey(pin string) []byte {
 		return nil
 	}
 
-	return argon2.IDKey(
+	m.deriveMu.Lock()
+	defer m.deriveMu.Unlock()
+
+	return argon2IDKey(
 		[]byte(pin),
 		m.Salt,
 		m.Iterations,

@@ -157,6 +157,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 - **hsm-device-protocol** — xkmsd-to-HSM-device wire protocol, FRDM-IMX95-PRO first — [#1521](../../issues/1521) — open
 - **hsm-self-defence** — lockdown or key wipe as predetermined HSM device responses — [SPEC](docs/SPEC.md#features) — open
+- **cross-domain-key-lock** — the A55-side xkmsd locks its ELE key store on an authenticated M7 request — [#1750](../../issues/1750) — open
 - **media-signing** — multi-signer photo and video signing — [xkey/docs/roadmap/media.md](xkey/docs/roadmap/media.md) — open
 - **piv-i** — PIV-I profiles on FIPS-validated hardware — [xkey/docs/roadmap/piv.md](xkey/docs/roadmap/piv.md) — open
 - **browser-mode** — the GUI as a WebAuthn-authenticated web app — [xkey/docs/roadmap/web.md](xkey/docs/roadmap/web.md) — open
