@@ -27,6 +27,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
+
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
@@ -80,7 +82,7 @@ func TestDefaultSocketPath_EnvSocketOverridesEverything(t *testing.T) {
 
 func TestDefaultSocketPath_WithXKEYHomeDerivesInstanceSocket(t *testing.T) {
 	clearInstanceEnv(t)
-	home := shortTempDir(t)
+	home := testsupport.SocketDir(t)
 	t.Setenv(xhome.EnvHome, home)
 	// XDG_RUNTIME_DIR must be ignored once XKEY_HOME is the authority.
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())

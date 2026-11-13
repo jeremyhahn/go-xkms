@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 // foreignUIDs stands in for "the directory belongs to another user". A test
@@ -194,7 +196,7 @@ func TestReclaimSocket_RefusesNonSocket(t *testing.T) {
 }
 
 func TestReclaimSocket_RefusesInsecureDirectory(t *testing.T) {
-	dir := shortTempDir(t)
+	dir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	sockPath := filepath.Join(dir, "xkey.sock")
 	staleSocket(t, sockPath)
