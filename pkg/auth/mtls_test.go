@@ -784,7 +784,9 @@ func TestMTLSAuthenticator_TenantID_FromUserStore(t *testing.T) {
 }
 
 func TestMTLSAuthenticator_TenantID_FromOU(t *testing.T) {
-	// When no UserStore is configured, the first OU from the cert is used as TenantID.
+	// An OU is not a tenant on its own: qrdbsdk.TenantFromClientCert names a
+	// tenant only when the first OU and a SPIFFE SAN agree, so an OU-only
+	// certificate is refused rather than read as tenant-from-ou.
 	cert := &x509.Certificate{
 		Subject: pkix.Name{
 			CommonName:         "ou-client",
@@ -805,12 +807,9 @@ func TestMTLSAuthenticator_TenantID_FromOU(t *testing.T) {
 	}
 
 	identity, err := auth.AuthenticateHTTP(req)
-	require.NoError(t, err)
-	require.NotNil(t, identity)
-
-	assert.Equal(t, "ou-client", identity.Subject)
-	assert.Equal(t, "tenant-from-ou", identity.TenantID)
-	assert.False(t, IsCrossTenant(identity))
+	require.Error(t, err)
+	assert.Nil(t, identity)
+	assert.ErrorIs(t, err, qrdbsdk.ErrInvalidClientCertificate)
 }
 
 func TestMTLSAuthenticator_TenantID_NoOU(t *testing.T) {

@@ -1,0 +1,139 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package auth
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"errors"
+	"math/big"
+	"net/http"
+	"net/url"
+	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// tenantCert builds a client certificate with the given Subject OUs and
+// URI SANs, the two fields qrdb's certificate-to-tenant rule reads.
+func tenantCert(t *testing.T, ous []string, uris ...string) *x509.Certificate {
+	t.Helper()
+	cert := &x509.Certificate{
+		Subject: pkix.Name{
+			CommonName:         "tenant-client",
+			OrganizationalUnit: ous,
+		},
+		SerialNumber: big.NewInt(4242),
+		Raw:          []byte("tenant-client-raw"),
+	}
+	for _, raw := range uris {
+		u, err := url.Parse(raw)
+		require.NoError(t, err)
+		cert.URIs = append(cert.URIs, u)
+	}
+	return cert
+}
+
+func tenantRequest(cert *x509.Certificate) *http.Request {
+	return &http.Request{
+		TLS:        &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}},
+		RemoteAddr: "10.0.0.20:443",
+	}
+}
+
+// TestMTLSAuthenticator_CertificateTenant_QRDBRule covers the
+// certificate-only path: the tenant is the one qrdbsdk.TenantFromClientCert
+// names, and a certificate it refuses is refused.
+func TestMTLSAuthenticator_CertificateTenant_QRDBRule(t *testing.T) {
+	tests := []struct {
+		name        string
+		trustDomain string
+		ous         []string
+		uris        []string
+		wantTenant  string
+		wantRefused bool
+	}{
+		{name: "OU and SPIFFE SAN agree", ous: []string{"acme"}, uris: []string{"spiffe://acme/user/alice"}, wantTenant: "acme"},
+		{name: "OU and SPIFFE SAN agree under the cluster trust domain", trustDomain: "cluster.local", ous: []string{"acme"}, uris: []string{"spiffe://acme/user/alice"}, wantTenant: "acme"},
+		{name: "SPIFFE SAN names a different tenant from the OU", ous: []string{"acme"}, uris: []string{"spiffe://other/user/alice"}, wantRefused: true},
+		{name: "OU without a SPIFFE SAN", ous: []string{"acme", "second"}, wantRefused: true},
+		{name: "tenant is the cluster trust domain", trustDomain: "cluster.local", ous: []string{"cluster.local"}, uris: []string{"spiffe://cluster.local/svc/node"}, wantRefused: true},
+		{name: "SANs under two trust domains", ous: []string{"acme"}, uris: []string{"spiffe://acme/user/alice", "spiffe://other/user/alice"}, wantRefused: true},
+		{name: "certificate claims no tenant", wantTenant: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := NewMTLSAuthenticator(&MTLSConfig{TrustDomain: tt.trustDomain})
+			identity, err := a.AuthenticateHTTP(tenantRequest(tenantCert(t, tt.ous, tt.uris...)))
+			if tt.wantRefused {
+				require.Error(t, err)
+				assert.Nil(t, identity)
+				assert.True(t, errors.Is(err, qrdbsdk.ErrInvalidClientCertificate), "error %v must match qrdbsdk.ErrInvalidClientCertificate", err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, identity)
+			assert.Equal(t, "tenant-client", identity.Subject)
+			assert.Equal(t, tt.wantTenant, identity.TenantID)
+		})
+	}
+}
+
+// TestMTLSAuthenticator_BoundUserTenant_QRDBRule covers the bound-user path:
+// a certificate that names a tenant resolves only to a user of that tenant.
+func TestMTLSAuthenticator_BoundUserTenant_QRDBRule(t *testing.T) {
+	tests := []struct {
+		name         string
+		userTenant   string
+		ous          []string
+		uris         []string
+		wantTenant   string
+		wantMismatch bool
+		wantInvalid  bool
+	}{
+		{name: "user in the certificate's tenant", userTenant: "acme", ous: []string{"acme"}, uris: []string{"spiffe://acme/user/alice"}, wantTenant: "acme"},
+		{name: "user in another tenant", userTenant: "other", ous: []string{"acme"}, uris: []string{"spiffe://acme/user/alice"}, wantMismatch: true},
+		{name: "certificate the rule refuses", userTenant: "acme", ous: []string{"acme"}, wantInvalid: true},
+		{name: "certificate claims no tenant", userTenant: "acme", wantTenant: "acme"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &mockUserStore{user: MTLSUser{Username: "alice", TenantID: tt.userTenant, Enabled: true}}
+			a := NewMTLSAuthenticator(&MTLSConfig{UserStore: store})
+			identity, err := a.AuthenticateHTTP(tenantRequest(tenantCert(t, tt.ous, tt.uris...)))
+			switch {
+			case tt.wantMismatch:
+				require.Error(t, err)
+				assert.Nil(t, identity)
+				var mismatch *CertificateTenantMismatchError
+				require.True(t, errors.As(err, &mismatch), "error %v must be a *CertificateTenantMismatchError", err)
+				assert.Equal(t, "acme", mismatch.CertificateTenantID)
+				assert.Equal(t, tt.userTenant, mismatch.UserTenantID)
+				assert.True(t, errors.Is(err, ErrUnauthenticated))
+			case tt.wantInvalid:
+				require.Error(t, err)
+				assert.Nil(t, identity)
+				assert.True(t, errors.Is(err, qrdbsdk.ErrInvalidClientCertificate), "error %v must match qrdbsdk.ErrInvalidClientCertificate", err)
+			default:
+				require.NoError(t, err)
+				require.NotNil(t, identity)
+				assert.Equal(t, "alice", identity.Subject)
+				assert.Equal(t, tt.wantTenant, identity.TenantID)
+			}
+		})
+	}
+}
