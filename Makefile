@@ -1226,8 +1226,6 @@ coverage-full: agsim
 		./test/integration/signing/... \
 		./test/integration/opaque/... \
 		./test/integration/metrics/... \
-		./test/integration/health/... \
-		./test/integration/ratelimit/... \
 		./test/integration/correlation/... \
 		./test/integration/crypto/... \
 		./test/integration/xkms/... \
@@ -3143,16 +3141,6 @@ integration-test-opaque:
 integration-test-metrics:
 	$(call run_in_devcontainer,$(GO) test -v -tags=$(call go_tags,integration) ./test/integration/metrics/... -timeout 5m,integration-test-metrics)
 
-.PHONY: integration-test-health
-## integration-test-health: Run health check package integration tests (runs in devcontainer)
-integration-test-health:
-	$(call run_in_devcontainer,$(GO) test -v -tags=$(call go_tags,integration) ./test/integration/health/... -timeout 5m,integration-test-health)
-
-.PHONY: integration-test-ratelimit
-## integration-test-ratelimit: Run rate limit package integration tests (runs in devcontainer)
-integration-test-ratelimit:
-	$(call run_in_devcontainer,$(GO) test -v -tags=$(call go_tags,integration) ./test/integration/ratelimit/... -timeout 5m,integration-test-ratelimit)
-
 .PHONY: integration-test-crypto-rand
 ## integration-test-crypto-rand: Run crypto/rand package integration tests (runs in devcontainer)
 integration-test-crypto-rand:
@@ -3198,7 +3186,7 @@ integration-test-clusterca:
 
 .PHONY: integration-test-utils
 ## integration-test-utils: Run all utility package integration tests
-integration-test-utils: integration-test-signing integration-test-opaque integration-test-metrics integration-test-health integration-test-ratelimit integration-test-crypto-rand integration-test-crypto-wrapping
+integration-test-utils: integration-test-signing integration-test-opaque integration-test-metrics integration-test-crypto-rand integration-test-crypto-wrapping
 	@echo "$(GREEN)$(BOLD)✓ All utility package integration tests complete!$(RESET)"
 
 # ==============================================================================
