@@ -20,7 +20,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // errNotifyWrite is the transport failure injected by captureWriter.
