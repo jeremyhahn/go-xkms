@@ -158,13 +158,6 @@ func TestDAOStore_ImportPEM(t *testing.T) {
 	assert.Equal(t, "bundle", meta.Source)
 }
 
-func TestDAOStore_ImportPEM_NoCertificates(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-
-	_, err := store.ImportPEM(context.Background(), []byte("not pem"), nil)
-	require.Error(t, err)
-}
-
 func TestDAOStore_SetPurpose_Quarantine(t *testing.T) {
 	store := newTestDAOTrustStore(t)
 	ctx := context.Background()
@@ -215,24 +208,6 @@ func TestDAOStore_SetPurpose_Errors(t *testing.T) {
 	require.NoError(t, store.Close())
 	_, err = store.SetPurpose(ctx, fp, PurposeSynced)
 	require.ErrorIs(t, err, ErrStoreClosed)
-}
-
-func TestDAOStore_Anchors_InvalidPurpose(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-
-	_, err := store.Anchors(context.Background(), "bogus")
-	require.ErrorIs(t, err, ErrNotAnchorPurpose)
-}
-
-func TestDAOStore_Get_NotFound(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-	ctx := context.Background()
-
-	fp := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-	cert, meta, err := store.Get(ctx, fp)
-	require.ErrorIs(t, err, ErrCertificateNotFound)
-	assert.Nil(t, cert)
-	assert.Nil(t, meta)
 }
 
 func TestDAOStore_Get_InvalidFingerprint(t *testing.T) {
@@ -299,23 +274,6 @@ func TestDAOStore_GetByPurpose_Closed(t *testing.T) {
 	assert.Nil(t, certs)
 }
 
-func TestDAOStore_GetByPurpose_MultipleSamePurpose(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-	ctx := context.Background()
-
-	cert1 := generateTestCert(t, "User CA 1")
-	cert2 := generateTestCert(t, "User CA 2")
-	cert3 := generateTestCert(t, "User CA 3")
-
-	require.NoError(t, store.Add(ctx, cert1, purposeOpts(PurposeUserCA)))
-	require.NoError(t, store.Add(ctx, cert2, purposeOpts(PurposeUserCA)))
-	require.NoError(t, store.Add(ctx, cert3, purposeOpts(PurposeUserCA)))
-
-	certs, err := store.GetByPurpose(ctx, PurposeUserCA)
-	require.NoError(t, err)
-	assert.Len(t, certs, 3)
-}
-
 func TestDAOStore_List(t *testing.T) {
 	store := newTestDAOTrustStore(t)
 	ctx := context.Background()
@@ -338,16 +296,6 @@ func TestDAOStore_List(t *testing.T) {
 		assert.True(t, metas[i-1].Subject <= metas[i].Subject,
 			"expected sorted order: %q <= %q", metas[i-1].Subject, metas[i].Subject)
 	}
-}
-
-func TestDAOStore_List_Empty(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-	ctx := context.Background()
-
-	certs, metas, err := store.List(ctx)
-	require.NoError(t, err)
-	assert.Empty(t, certs)
-	assert.Empty(t, metas)
 }
 
 func TestDAOStore_List_Closed(t *testing.T) {

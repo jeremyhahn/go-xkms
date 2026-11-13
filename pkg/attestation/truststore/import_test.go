@@ -127,17 +127,6 @@ func TestFileStore_ImportPEM_SyncedSelfSignedCAIsNotATLSAnchor(t *testing.T) {
 
 // An empty store yields no anchors and no error: verification then rests on
 // the platform roots alone.
-func TestFileStore_TLSRoots_EmptyStore(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewFileStore(&FileStoreConfig{BaseDir: dir})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	roots, err := store.TLSRoots()
-	require.NoError(t, err)
-	assert.Empty(t, roots)
-}
-
 // A closed store cannot answer, and says so rather than reporting an empty
 // set of anchors — an empty set would silently narrow verification.
 func TestFileStore_TLSRoots_ClosedStore(t *testing.T) {

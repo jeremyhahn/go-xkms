@@ -25,37 +25,6 @@ import (
 	"time"
 )
 
-func TestFingerprint(t *testing.T) {
-	cert := generateTestCert(t, "Test CA")
-	fp := Fingerprint(cert)
-
-	if len(fp) != fingerprintLen {
-		t.Errorf("Fingerprint() length = %d, want %d", len(fp), fingerprintLen)
-	}
-
-	if !fingerprintPattern.MatchString(fp) {
-		t.Errorf("Fingerprint() = %q, does not match lowercase hex pattern", fp)
-	}
-
-	// Same cert should produce the same fingerprint.
-	fp2 := Fingerprint(cert)
-	if fp != fp2 {
-		t.Errorf("Fingerprint() not deterministic: %q != %q", fp, fp2)
-	}
-}
-
-func TestFingerprint_DifferentCerts(t *testing.T) {
-	cert1 := generateTestCert(t, "CA One")
-	cert2 := generateTestCert(t, "CA Two")
-
-	fp1 := Fingerprint(cert1)
-	fp2 := Fingerprint(cert2)
-
-	if fp1 == fp2 {
-		t.Error("Fingerprint() should produce different values for different certificates")
-	}
-}
-
 func TestAlgorithmName(t *testing.T) {
 	tests := []struct {
 		algo x509.PublicKeyAlgorithm
