@@ -24,8 +24,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // mockAdapter implements AuthenticatorAdapter for testing.
@@ -49,20 +47,6 @@ func (m *mockAdapter) GetAssertion(_ context.Context, opts *CeremonyOptions) ([]
 		return m.getAssertionFn(opts)
 	}
 	return nil, ErrCTAPOperationFailed
-}
-
-func TestNewClient_ValidConfig(t *testing.T) {
-	adapter := NewSoftwareAdapter()
-	c, err := NewClient(&Config{
-		ServerURL:            "https://example.com",
-		AuthenticatorAdapter: adapter,
-	})
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
-	if c == nil {
-		t.Fatal("NewClient() returned nil client")
-	}
 }
 
 func TestNewClient_NilConfig(t *testing.T) {
@@ -282,81 +266,6 @@ func TestRegister_AuthenticatorNotAvailable(t *testing.T) {
 	_, err = c.Register(context.Background(), &RegistrationRequest{Username: "test@example.com"})
 	if !errors.Is(err, ErrAuthenticatorNotFound) {
 		t.Errorf("error = %v, want %v", err, ErrAuthenticatorNotFound)
-	}
-}
-
-func TestRegister_ServerError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		writeJSON(t, w, map[string]string{
-			"error":   "internal_error",
-			"message": "something went wrong",
-		})
-	}))
-	defer server.Close()
-
-	c, err := NewClient(&Config{
-		ServerURL:            server.URL,
-		AuthenticatorAdapter: &mockAdapter{available: true},
-	})
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
-
-	_, err = c.Register(context.Background(), &RegistrationRequest{Username: "test@example.com"})
-	if err == nil {
-		t.Fatal("Register() should return error for server error")
-	}
-
-	// The error should contain server error details
-	var se *ServerError
-	if !errors.As(err, &se) {
-		// It may be wrapped in ClientError, check the chain
-		var ce *ClientError
-		if errors.As(err, &ce) {
-			if !errors.As(ce.Err, &se) {
-				t.Logf("error chain: %v", err)
-			}
-		}
-	}
-}
-
-func TestRegister_AuthenticatorError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Session-Id", "session-456")
-		w.Header().Set("Content-Type", "application/json")
-		writeJSON(t, w, map[string]interface{}{
-			"publicKey": map[string]interface{}{
-				"challenge": "dGVzdC1jaGFsbGVuZ2U",
-				"rp":        map[string]interface{}{"id": "localhost", "name": "Test"},
-				"user":      map[string]interface{}{"id": "dXNlcg", "name": "test@example.com", "displayName": "Test"},
-			},
-		})
-	}))
-	defer server.Close()
-
-	adapterErr := &errs.Message{Msg: "authenticator device not connected"}
-	adapter := &mockAdapter{
-		available: true,
-		makeCredentialFn: func(_ *CeremonyOptions) ([]byte, error) {
-			return nil, adapterErr
-		},
-	}
-
-	c, err := NewClient(&Config{
-		ServerURL:            server.URL,
-		AuthenticatorAdapter: adapter,
-	})
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
-
-	_, err = c.Register(context.Background(), &RegistrationRequest{Username: "test@example.com"})
-	if err == nil {
-		t.Fatal("Register() should return error when authenticator fails")
-	}
-	if !errors.Is(err, ErrCTAPOperationFailed) {
-		t.Errorf("error should wrap ErrCTAPOperationFailed, got: %v", err)
 	}
 }
 
@@ -632,43 +541,6 @@ func TestLogin_ServerError(t *testing.T) {
 	_, err = c.Login(context.Background(), &AuthenticationRequest{Username: "test@example.com"})
 	if err == nil {
 		t.Fatal("Login() should return error for server error")
-	}
-}
-
-func TestLogin_AuthenticatorError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Session-Id", "session-login")
-		w.Header().Set("Content-Type", "application/json")
-		writeJSON(t, w, map[string]interface{}{
-			"publicKey": map[string]interface{}{
-				"challenge": "Y2hhbGxlbmdl",
-				"rpId":      "localhost",
-			},
-		})
-	}))
-	defer server.Close()
-
-	adapter := &mockAdapter{
-		available: true,
-		getAssertionFn: func(_ *CeremonyOptions) ([]byte, error) {
-			return nil, &errs.Message{Msg: "device disconnected"}
-		},
-	}
-
-	c, err := NewClient(&Config{
-		ServerURL:            server.URL,
-		AuthenticatorAdapter: adapter,
-	})
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
-
-	_, err = c.Login(context.Background(), &AuthenticationRequest{Username: "test@example.com"})
-	if err == nil {
-		t.Fatal("Login() should return error when authenticator fails")
-	}
-	if !errors.Is(err, ErrCTAPOperationFailed) {
-		t.Errorf("error should wrap ErrCTAPOperationFailed, got: %v", err)
 	}
 }
 

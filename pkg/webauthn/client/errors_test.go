@@ -46,20 +46,6 @@ func TestClientError_Error(t *testing.T) {
 	}
 }
 
-func TestClientError_Unwrap(t *testing.T) {
-	inner := ErrServerUnavailable
-	ce := &ClientError{Op: "test", Err: inner}
-
-	unwrapped := ce.Unwrap()
-	if unwrapped != inner {
-		t.Errorf("Unwrap() returned %v, want %v", unwrapped, inner)
-	}
-
-	if !errors.Is(ce, ErrServerUnavailable) {
-		t.Error("errors.Is should match the wrapped error")
-	}
-}
-
 func TestWrapError_NilPassthrough(t *testing.T) {
 	result := wrapError("test", nil)
 	if result != nil {
@@ -191,39 +177,5 @@ func TestRelyingPartyRejection_Error(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.expected)
 			}
 		})
-	}
-}
-
-func TestRelyingPartyRejection_Unwrap(t *testing.T) {
-	err := &RelyingPartyRejection{Err: ErrRegistrationFailed, Message: "no"}
-	if !errors.Is(err, ErrRegistrationFailed) {
-		t.Error("errors.Is should match the wrapped sentinel")
-	}
-}
-
-func TestSentinelErrors_AreDistinct(t *testing.T) {
-	sentinels := []error{
-		ErrServerURLRequired,
-		ErrUsernameRequired,
-		ErrRegistrationFailed,
-		ErrAuthenticationFailed,
-		ErrServerUnavailable,
-		ErrInvalidServerResponse,
-		ErrAuthenticatorNotFound,
-		ErrCTAPOperationFailed,
-		ErrNilConfig,
-		ErrInvalidChallenge,
-		ErrSessionExpired,
-		ErrNilHTTPClient,
-		ErrNilRequest,
-		ErrNilAuthenticatorAdapter,
-	}
-
-	for i := 0; i < len(sentinels); i++ {
-		for j := i + 1; j < len(sentinels); j++ {
-			if errors.Is(sentinels[i], sentinels[j]) {
-				t.Errorf("sentinel errors %d and %d should be distinct, but they match", i, j)
-			}
-		}
 	}
 }

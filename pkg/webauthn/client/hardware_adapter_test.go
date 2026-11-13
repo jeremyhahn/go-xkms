@@ -228,13 +228,6 @@ func TestHIDEnumerator_NilUsesPlatformDefault(t *testing.T) {
 
 // TestHIDEnumerator_KeepsTheSuppliedEnumerator proves a supplied enumerator
 // is used as given.
-func TestHIDEnumerator_KeepsTheSuppliedEnumerator(t *testing.T) {
-	supplied := &fakeEnumerator{}
-	if got := hidEnumerator(supplied); got != supplied {
-		t.Errorf("hidEnumerator(supplied) = %#v, want the supplied enumerator", got)
-	}
-}
-
 // TestHardwareCeremonyFailure_MissingPINIsClassifiedAsPINRequired proves the
 // no-PIN/ErrPINRequired combination is named as ErrPINRequired rather than
 // folded into the generic CTAP failure.

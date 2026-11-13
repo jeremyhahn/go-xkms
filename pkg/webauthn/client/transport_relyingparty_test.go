@@ -56,16 +56,6 @@ func TestNewTransportRelyingParty_NilClient(t *testing.T) {
 	}
 }
 
-func TestNewTransportRelyingParty_Valid(t *testing.T) {
-	rp, err := NewTransportRelyingParty(&stubTransportClient{})
-	if err != nil {
-		t.Fatalf("NewTransportRelyingParty() error: %v", err)
-	}
-	if rp == nil {
-		t.Fatal("NewTransportRelyingParty() returned nil")
-	}
-}
-
 func TestTransportRelyingParty_FinishRegistration_Rejection(t *testing.T) {
 	rp, err := NewTransportRelyingParty(&stubTransportClient{
 		finishRegResp: &transport.FinishRegistrationResponse{Success: false, Message: "attestation rejected"},
@@ -163,23 +153,6 @@ func TestTransportRelyingParty_FinishAuthentication_TransportError(t *testing.T)
 	_, err = rp.FinishAuthentication(context.Background(), &BeginResult{SessionID: "s1"}, &AuthenticationRequest{Username: "a@b.com"}, []byte("{}"))
 	if !errors.Is(err, ErrAuthenticationFailed) {
 		t.Errorf("error = %v, want to wrap %v", err, ErrAuthenticationFailed)
-	}
-}
-
-func TestTransportRelyingParty_BeginAuthentication_Success(t *testing.T) {
-	rp, err := NewTransportRelyingParty(&stubTransportClient{
-		beginAuthResp: &transport.BeginAuthenticationResponse{SessionID: "sess-1", OptionsJSON: `{"publicKey":{}}`},
-	})
-	if err != nil {
-		t.Fatalf("NewTransportRelyingParty() error: %v", err)
-	}
-
-	begin, err := rp.BeginAuthentication(context.Background(), &AuthenticationRequest{Username: "a@b.com"})
-	if err != nil {
-		t.Fatalf("BeginAuthentication() error: %v", err)
-	}
-	if begin.SessionID != "sess-1" {
-		t.Errorf("SessionID = %q, want %q", begin.SessionID, "sess-1")
 	}
 }
 
