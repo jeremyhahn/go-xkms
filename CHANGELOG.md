@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **SSH connect agent socket under a long `TMPDIR` (DS-8765).** `pkg/ssh/connect` failed with `bind: invalid argument` when `<TMPDIR>/xkey-ssh-<rand>/agent.sock` overflowed AF_UNIX's sun_path; the default work dir now falls back to a private `$XDG_RUNTIME_DIR` or `/tmp` when the socket would not fit. The xkey CLI tests keep their socket paths short the same way.
+
 ### Security
 
 - **Go toolchain 1.27.4 for GO-2026-6859, `net/http` (#2058).** govulncheck reports GO-2026-6859 in the go1.27.3 standard library, fixed in go1.27.4 (2026-11-02). The `go` line of `go.mod`, `sdk/go`, `web/desktop` and `xkey`, every workflow `GO_VERSION`, every `golang:` builder and test image tag, the Go tarball downloads in `xkey`, and the digest-pinned `GO_IMAGE` (`scripts/tool-pins.sh`, `Dockerfile.cli`, `release.yml` `GO_IMAGE_DIGEST`, now the `golang:1.27.4-bookworm` index `sha256:4fa7c968…`) move to 1.27.4. No dependency or code change.

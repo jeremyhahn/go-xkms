@@ -678,7 +678,7 @@ func TestConnectXKMSdClient_NoURLConfigured(t *testing.T) {
 func TestConnectXKMSdClient_UnreachableServer(t *testing.T) {
 	isolateXKMSdEndpoint(t)
 
-	xkmsdURL = "unix://" + filepath.Join(t.TempDir(), "absent.sock")
+	xkmsdURL = "unix://" + filepath.Join(privateTempDir(t), "absent.sock")
 
 	client, err := connectXKMSdClient(nil)
 	assert.Nil(t, client)
