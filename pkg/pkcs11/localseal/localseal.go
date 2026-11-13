@@ -97,6 +97,16 @@ func (c *Controller) Seal() error {
 	return c.barrier.Seal()
 }
 
+// destroyCreds destroys the secret seal.CredentialsFor derived. An empty
+// passphrase derives no secret (ChangePassword refuses it), so there is
+// nothing to destroy.
+func destroyCreds(c seal.Credentials) error {
+	if c.Secret == nil {
+		return nil
+	}
+	return c.Secret.Destroy()
+}
+
 // Rekey re-wraps the barrier's root key under the new user PIN (qrdb's cheap
 // ChangePassword — no data is re-encrypted). It preserves the seal state: a
 // barrier sealed on entry (a public-session C_SetPIN) is resealed on exit, so
@@ -130,7 +140,7 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 	if credErr != nil {
 		return credErr
 	}
-	defer func() { err = errors.Join(err, oldCreds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCreds(oldCreds)) }()
 
 	wasSealed := c.barrier.IsSealed()
 	if wasSealed {
@@ -152,7 +162,7 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		}
 		return credErr
 	}
-	defer func() { err = errors.Join(err, newCreds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCreds(newCreds)) }()
 	if changeErr := c.barrier.ChangePassword(ctx, oldCreds, newCreds); changeErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {

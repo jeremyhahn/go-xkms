@@ -87,9 +87,9 @@ var tenantRouteCases = []routeCase{
 	{"delete EAB", http.MethodDelete, "/api/v1/tenants/t1/eab/kid1", auth.ResourceACMEEAB, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
 
 	{"list roles", http.MethodGet, "/api/v1/tenants/t1/roles", auth.ResourceRoles, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
-	{"create role", http.MethodPost, "/api/v1/tenants/t1/roles", auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{"create role", http.MethodPost, "/api/v1/tenants/t1/roles", auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameOperator}, // go-qrdb v0.58 (#1278): the tenant Admin holds roles:create/update
 	{"get role", http.MethodGet, "/api/v1/tenants/t1/roles/r1", auth.ResourceRoles, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
-	{"update role", http.MethodPut, "/api/v1/tenants/t1/roles/r1", auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{"update role", http.MethodPut, "/api/v1/tenants/t1/roles/r1", auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameOperator}, // go-qrdb v0.58 (#1278): the tenant Admin holds roles:create/update
 	{"delete role", http.MethodDelete, "/api/v1/tenants/t1/roles/r1", auth.ResourceRoles, auth.ActionDelete, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
 
 	{"list users", http.MethodGet, "/api/v1/tenants/t1/users", auth.ResourceUsers, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},

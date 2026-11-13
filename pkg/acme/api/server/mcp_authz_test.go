@@ -89,9 +89,9 @@ var mcpAuthzCases = []mcpAuthzCase{
 	{"admin.deleteEAB", auth.ResourceACMEEAB, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
 	{"admin.listEABs", auth.ResourceACMEEAB, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 
-	{"admin.createRole", auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{"admin.createRole", auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameOperator}, // go-qrdb v0.58 (#1278): the tenant Admin holds roles:create/update
 	{"admin.getRole", auth.ResourceRoles, auth.ActionRead, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
-	{"admin.updateRole", auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{"admin.updateRole", auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameOperator}, // go-qrdb v0.58 (#1278): the tenant Admin holds roles:create/update
 	{"admin.deleteRole", auth.ResourceRoles, auth.ActionDelete, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
 	{"admin.listRoles", auth.ResourceRoles, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
 
