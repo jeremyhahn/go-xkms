@@ -42,7 +42,7 @@ func TestNodeBarrier_TenantCreateGetList(t *testing.T) {
 		Strategy: "none",
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
