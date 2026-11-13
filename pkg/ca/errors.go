@@ -5,7 +5,11 @@
 // punctuation.
 package ca
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/certsubject"
+)
 
 // Initialization errors indicate issues with CA lifecycle management.
 var (
@@ -376,7 +380,7 @@ var (
 	// Every certificate the CA issues carries its tenant as the subject's
 	// first organizational unit; the system tenant's own certificates name
 	// qrdbsdk.SystemTenantID.
-	ErrTenantRequired = errors.New("ca: certificate request names no tenant")
+	ErrTenantRequired = certsubject.ErrTenantRequired
 
 	// ErrTCGNetworkZoneEmpty indicates an empty network zone was provided.
 	ErrTCGNetworkZoneEmpty = errors.New("ca: network zone must not be empty")

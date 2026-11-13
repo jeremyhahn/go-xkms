@@ -29,6 +29,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/certsubject"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -814,7 +815,7 @@ func GeneratePIVKey(ctx context.Context, req *transport.GeneratePIVKeyRequest) (
 	}
 
 	// Self-signed — create cert and store it.
-	resp, ssErr := pivGenerateSelfSigned(req, slot, signer, pubKeyPEM, subject)
+	resp, ssErr := pivGenerateSelfSigned(ctx, req, slot, signer, pubKeyPEM, subject)
 	if ssErr != nil {
 		slog.Error("PIV generate key failed",
 			"slot", req.Slot, "algorithm", req.Algorithm, "backend", req.Backend,
@@ -892,13 +893,20 @@ func SelfSignExistingPIVKey(ctx context.Context, backend, slotStr, commonName st
 		subject.CommonName = pivcert.SlotName(slot)
 	}
 
-	return buildAndStoreSelfSigned(backend, slot, signer, subject, validityDays)
+	return buildAndStoreSelfSigned(ctx, backend, slot, signer, subject, validityDays)
 }
 
 // buildAndStoreSelfSigned factors the cert-template + CreateCertificate +
 // store logic out of pivGenerateSelfSigned so it can be shared with the
 // "self-sign existing key" path.
-func buildAndStoreSelfSigned(backend string, slot pivcert.PIVSlot, signer crypto.Signer, subject pkix.Name, validityDays int) (string, error) {
+func buildAndStoreSelfSigned(ctx context.Context, backend string, slot pivcert.PIVSlot, signer crypto.Signer, subject pkix.Name, validityDays int) (string, error) {
+	// The certificate names the caller's tenant as OU[0], never an
+	// organizational unit the request chose: an mTLS login reads the tenant
+	// from it (qrdbsdk.TenantFromClientCert).
+	subject, _, err := certsubject.StampTenant(callerTenant(ctx), subject, nil)
+	if err != nil {
+		return "", err
+	}
 	store, err := pivStore(backend)
 	if err != nil {
 		return "", err
@@ -949,6 +957,7 @@ func buildAndStoreSelfSigned(backend string, slot pivcert.PIVSlot, signer crypto
 // SelfSignExistingPIVKey so the two entry points can never drift onto
 // different certificate shapes for the same slot.
 func pivGenerateSelfSigned(
+	ctx context.Context,
 	req *transport.GeneratePIVKeyRequest,
 	slot pivcert.PIVSlot,
 	signer crypto.Signer,
@@ -956,7 +965,7 @@ func pivGenerateSelfSigned(
 	subject pkix.Name,
 ) (*transport.GeneratePIVKeyResponse, error) {
 
-	certPEM, err := buildAndStoreSelfSigned(req.Backend, slot, signer, subject, req.ValidityDays)
+	certPEM, err := buildAndStoreSelfSigned(ctx, req.Backend, slot, signer, subject, req.ValidityDays)
 	if err != nil {
 		return nil, err
 	}
