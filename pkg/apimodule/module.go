@@ -12,12 +12,12 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package apimodule registers go-xkms's hardware crypto + identity plane into
-// go-qrdb's unified multi-protocol server as a qrdbsdk.ServiceModule (the
+// go-qrdb's unified multi-protocol server as a qrdbserver.ServiceModule (the
 // Phase 3 seam of plans/unified-api-server-2026-08-14.md). The stack-wide
 // convention is one module per provider project, named after the project:
 // go-xkms exports this Module ("xkms"); go-quicbaas and go-trusted-platform
 // export their own, and any daemon hosting an embedded qrdb node composes the
-// modules it needs via qrdbsdk.WithModule.
+// modules it needs via qrdbserver.WithModule.
 //
 // Module carries the WHOLESALE KeystoreService gRPC surface — the same
 // pb.KeystoreServiceServer implementation every legacy transport drives — so
@@ -47,6 +47,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
@@ -328,7 +329,7 @@ func WithVTPM(cfg *vtpm.Config) Option {
 // pkg/server, which composes the service and tears it down — the module only
 // exposes it and must not double-manage those resources.
 type Module struct {
-	qrdbsdk.BaseModule
+	qrdbserver.BaseModule
 
 	resolve           ServiceResolver
 	resolveSSH        SSHClientResolver
@@ -398,7 +399,7 @@ type Module struct {
 }
 
 // Compile-time interface check.
-var _ qrdbsdk.ServiceModule = (*Module)(nil)
+var _ qrdbserver.ServiceModule = (*Module)(nil)
 
 // NewModule builds go-xkms's ServiceModule around the XKMSService resolver.
 // A nil resolver is a composition error and fails construction.
