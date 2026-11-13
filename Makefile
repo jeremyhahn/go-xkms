@@ -1191,20 +1191,123 @@ race: agsim
 
 .PHONY: coverage
 ## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
-# GOMEMLIMIT and -p=2 bound the suite's memory: under -race the Argon2-heavy
-# REST/MCP packages exhaust a runner's memory without them. Under CI the suite
-# must leave the tree as it found it (#454). The per-package report is
-# advisory (#704).
-coverage: export GOMEMLIMIT := 10GiB
-coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=2)
+# GOMEMLIMIT and -p=1 bound the suite's memory: under -race the Argon2-heavy
+# REST/MCP packages exhaust a runner's memory without them. GOMEMLIMIT is per
+# test process, and the race detector's shadow memory is outside it. CI runs
+# this target in scripts/in-toolchain-image.sh's sibling container, capped at
+# 8g with swap off on a hosted runner, so it was measured in a 4-CPU, 8g,
+# swap-off cgroup: with -p=2 the pkg/fido2/authenticator test binary was
+# OOM-killed (cgroup oom_kill 1, 23 min); with -p=1 the suite passed in 19 min,
+# with a 4.9 GiB peak RSS (getrusage, that binary) and no OOM kill, the cgroup
+# reaching its 8 GiB limit only through reclaimable page cache. That cgroup
+# also held about 1.7 GiB of other processes, so CI has more headroom. Under CI
+# the suite must leave the tree as it found it (#454). The per-package report
+# is advisory (#704).
+coverage: export GOMEMLIMIT := 5GiB
+coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=1)
 coverage: test
+	@$(MAKE) --no-print-directory coverage-gate
+
+# coverage-gate: the threshold, the dirty-tree check (#454) and the advisory
+# per-package report (#704) on $(COVERAGE_FILE), shared by coverage and
+# coverage-merge. COVERAGE_REPORT= skips the report (the coverage-merge tests
+# in internal/buildgates; it would start the tagged coverage lanes).
+COVERAGE_REPORT ?= coverage-threshold-report
+.PHONY: coverage-gate
+coverage-gate:
 	@total=$$($(GO) tool cover -func=$(COVERAGE_FILE) | awk '/^total:/ {print $$3}' | tr -d %); \
 	echo "Total coverage: $${total}%"; \
 	awk -v c="$$total" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { if (c + 0 < t + 0) { print "coverage below " t "%"; exit 1 } }'
 	@if [ -n "$$CI" ] && [ -n "$$(git status --porcelain)" ]; then \
-		git status --porcelain; echo "make coverage left the tree dirty (#454)"; exit 1; \
+		git status --porcelain; echo "the unit suite left the tree dirty (#454)"; exit 1; \
 	fi
-	@$(MAKE) --no-print-directory coverage-threshold-report || echo "per-package report is non-blocking (#704)"
+	@$(if $(COVERAGE_REPORT),$(MAKE) --no-print-directory $(COVERAGE_REPORT) || echo "per-package report is non-blocking (#704)")
+
+# coverage-shard and coverage-merge (DS-8139, CA m2406(2)): make coverage
+# never finished on a GitHub-hosted runner, so CI runs the unit suite as
+# SHARDS jobs. Shard SHARD tests every SHARDS-th package of test-go's sorted
+# list (round robin) with test-go's flags into $(COVERAGE_DIR)/shard-$(SHARD).out.
+# make test's other parts (shell, !frost, pkcs11, web, wailsjs) run as two
+# extras shards, SHARD=extras-nofrost and SHARD=extras-other (make
+# coverage-extras, the parts in COVERAGE_EXTRAS_$(SHARD)): in shard 1 they made
+# it run 85+ min against 22-27 for the others (#2042). On 4 pinned CPUs
+# test-nofrost took 564 s and the rest 379 s, shard 1's slice 695 s. None
+# writes a Go profile, so the extras jobs export none. coverage-merge joins the shard profiles into $(COVERAGE_FILE)
+# and runs coverage-gate. GOMEMLIMIT stays below the hosted 8g container.
+# The shards keep make coverage's single-process bound, -p=1 (#2042 Codex P1):
+# sharding cuts the package count, not the memory two binaries need at once.
+SHARD ?= 1
+SHARDS ?= 1
+# make test's parts beside test-go, each in one extras shard (coverage-extras).
+COVERAGE_EXTRAS_extras-nofrost := test-nofrost
+COVERAGE_EXTRAS_extras-other := test-scripts test-pkcs11 test-web check-wailsjs
+
+.PHONY: coverage-shard-pkgs coverage-shard coverage-extras coverage-merge
+## coverage-shard-pkgs: Print shard SHARD of SHARDS of test-go's package list
+coverage-shard-pkgs:
+	@go list -e $(UNIT_TEST_SCOPE) 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)" | LC_ALL=C sort | \
+		awk -v s="$(SHARD)" -v n="$(SHARDS)" '(NR - 1) % n == s - 1'
+
+## coverage-shard: Run unit test shard SHARD of SHARDS with coverage (CI's test stage)
+coverage-shard: export XKMS_DENY_HARDWARE_TPM := 1
+coverage-shard: export GOMEMLIMIT := 5GiB
+coverage-shard: export GOFLAGS := $(strip $(GOFLAGS) -p=1)
+ifneq ($(filter extras-%,$(SHARD)),)
+coverage-shard: coverage-extras
+else
+coverage-shard: check-insecure-tls agsim
+	@echo "$(CYAN)$(BOLD)→ Running unit test shard $(SHARD)/$(SHARDS)...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@bash -c 'set -o pipefail; \
+	pkgs=$$($(MAKE) -s --no-print-directory coverage-shard-pkgs); \
+	if [ -z "$$pkgs" ]; then echo "$(RED)✗ shard $(SHARD)/$(SHARDS) has no packages$(RESET)"; exit 1; fi; \
+	echo "shard $(SHARD)/$(SHARDS): $$(echo "$$pkgs" | wc -l) packages"; \
+	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/shard-$(SHARD).out -covermode=atomic $$pkgs \
+		2>&1 | tee $(COVERAGE_DIR)/shard-$(SHARD).log; \
+	EXIT_CODE=$${PIPESTATUS[0]}; \
+	if [ $$EXIT_CODE -ne 0 ]; then \
+		echo "$(RED)$(BOLD)✗ Unit test shard $(SHARD)/$(SHARDS) failed with exit code $$EXIT_CODE$(RESET)"; \
+		grep -E "FAIL|panic" $(COVERAGE_DIR)/shard-$(SHARD).log | head -20; \
+		exit $$EXIT_CODE; \
+	fi'
+	@if [ -n "$$CI" ] && [ -n "$$(git status --porcelain)" ]; then \
+		git status --porcelain; echo "unit test shard $(SHARD)/$(SHARDS) left the tree dirty (#454)"; exit 1; \
+	fi
+	@echo "$(GREEN)$(BOLD)✓ Unit test shard $(SHARD)/$(SHARDS) passed$(RESET)"
+endif
+
+## coverage-extras: Run extras shard SHARD (extras-nofrost or extras-other) of make test's other parts
+coverage-extras: export XKMS_DENY_HARDWARE_TPM := 1
+coverage-extras: export GOMEMLIMIT := 5GiB
+coverage-extras: export GOFLAGS := $(strip $(GOFLAGS) -p=1)
+coverage-extras:
+	@if [ -z "$(COVERAGE_EXTRAS_$(SHARD))" ]; then echo "$(RED)✗ SHARD=$(SHARD) is not an extras shard (extras-nofrost, extras-other)$(RESET)"; exit 1; fi
+	@echo "$(CYAN)$(BOLD)→ Running extras shard $(SHARD): $(COVERAGE_EXTRAS_$(SHARD))...$(RESET)"
+	@for t in $(COVERAGE_EXTRAS_$(SHARD)); do $(MAKE) --no-print-directory $$t || exit 1; done
+	@if [ -n "$$CI" ] && [ -n "$$(git status --porcelain)" ]; then \
+		git status --porcelain; echo "extras shard $(SHARD) left the tree dirty (#454)"; exit 1; \
+	fi
+	@echo "$(GREEN)$(BOLD)✓ Extras shard $(SHARD) passed$(RESET)"
+
+## coverage-merge: Merge the shard profiles into COVERAGE_FILE, then the threshold
+coverage-merge:
+	@profiles=$$(find $(COVERAGE_DIR) -name 'shard-*.out' | LC_ALL=C sort); \
+	if [ -z "$$profiles" ]; then echo "$(RED)✗ no shard profiles in $(COVERAGE_DIR)$(RESET)"; exit 1; fi; \
+	for i in $$(seq 1 $(SHARDS)); do \
+		n=$$(find $(COVERAGE_DIR) -name "shard-$$i.out" | wc -l); \
+		if [ "$$n" -ne 1 ]; then echo "$(RED)✗ coverage-merge: shard $$i of $(SHARDS): $$n profiles$(RESET)"; exit 1; fi; \
+	done; \
+	for f in $$profiles; do \
+		case "$$(head -n 1 "$$f")" in "mode: "*) ;; *) echo "$(RED)✗ $$f has no mode line$(RESET)"; exit 1 ;; esac; \
+	done; \
+	modes=$$(head -q -n 1 $$profiles | sort -u); \
+	if [ "$$(echo "$$modes" | wc -l)" -ne 1 ] || [ "$${modes#mode: }" = "$$modes" ]; then \
+		echo "$(RED)✗ shard profiles disagree on mode: $$modes$(RESET)"; exit 1; \
+	fi; \
+	{ echo "$$modes"; for f in $$profiles; do tail -n +2 "$$f"; done; } > $(COVERAGE_FILE).tmp; \
+	mv $(COVERAGE_FILE).tmp $(COVERAGE_FILE); \
+	echo "Merged $$(echo "$$profiles" | wc -l) shard profiles into $(COVERAGE_FILE)"
+	@$(MAKE) --no-print-directory coverage-gate
 
 .PHONY: coverage-full
 ## coverage-full: Generate comprehensive coverage report (unit + integration tests)
