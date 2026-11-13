@@ -23,6 +23,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"sync/atomic"
 	"testing"
 
@@ -144,6 +146,57 @@ func TestNewHostServer_RefreshResolvesOnTheCallContext(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+}
+
+// refreshWithoutWebAuthnChild marks the child process
+// TestBuildTokenIssuer_RefreshWithoutWebAuthn re-executes itself in.
+const refreshWithoutWebAuthnChild = "GO_XKMS_TEST_REFRESH_WITHOUT_WEBAUTHN"
+
+// TestBuildTokenIssuer_RefreshWithoutWebAuthn proves a PIV/mTLS-only daemon
+// (no WebAuthn service, so no WebAuthn grant) refreshes a session it minted
+// over an enforcing embedded node: the bound user resolver's recheck runs as
+// the service principal and needs users:read on its own. The principal's
+// grants are process-wide and cannot be withdrawn, so the test runs in a
+// fresh child process in which nothing registered the WebAuthn grant.
+func TestBuildTokenIssuer_RefreshWithoutWebAuthn(t *testing.T) {
+	if os.Getenv(refreshWithoutWebAuthnChild) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestBuildTokenIssuer_RefreshWithoutWebAuthn$", "-test.count=1")
+		cmd.Env = append(os.Environ(), refreshWithoutWebAuthnChild+"=1")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "child process:\n%s", out)
+		require.Contains(t, string(out), "PASS", "child process:\n%s", out)
+		return
+	}
+
+	node := newEnforcingNode(t)
+	require.False(t, qrdbsdk.HasPermissionRoleGrant(serviceprincipal.Name, "users:create"),
+		"the WebAuthn grant must not be registered in this process")
+
+	_, err := node.UserService().CreateUser(context.Background(), &qrdbuser.CreateUserRequest{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Name:     "Alice",
+	})
+	require.NoError(t, err)
+
+	issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
+		Backend:     xkmsmocks.NewMockKeyStore(),
+		BackendName: "test",
+		QRDBClient:  node.Client(),
+		CallContext: node.ServiceContext,
+	})
+	require.NoError(t, err)
+
+	pair, err := issuer.Mint(context.Background(), &auth.Identity{
+		Subject:  "alice",
+		TenantID: DefaultWebAuthnTenant,
+		Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUsername},
+	})
+	require.NoError(t, err)
+
+	refreshed, err := issuer.Refresh(context.Background(), pair.RefreshToken)
+	require.NoError(t, err)
+	require.NotEmpty(t, refreshed.AccessToken)
 }
 
 // TestNewHostServer_PasskeyAccessTokenNamesTheAccount covers Codex P1 (3):
