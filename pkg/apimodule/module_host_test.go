@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
@@ -195,6 +196,54 @@ func TestModule_SelfBuiltSurfaceServesRealWebAuthnCeremony(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp, "BeginRegistration must return real ceremony options, not a stub")
+}
+
+// TestModule_SelfBuiltSurfaceRegistersOnAnEnforcingNode drives the
+// self-built module host over an authentication-enforcing node, as a host
+// embedding the module wires it (serviceprincipal.Option(),
+// WithServiceContext(node.ServiceContext), WithWebAuthnConfig). The fixture
+// registers no WebAuthn grant itself: the module-host construction path must
+// give the service principal the user store's permissions, or
+// registration/begin fails users:read authorization and answers 500.
+func TestModule_SelfBuiltSurfaceRegistersOnAnEnforcingNode(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "test",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+
+	node := barriertest.NewPrincipalNode(t)
+	allow := true
+	m, err := NewModule(func() *xkms.XKMSService { return svc },
+		WithQRDBClient(node.Client),
+		WithServiceContext(node.ServiceContext),
+		WithWebAuthnConfig(&config.WebAuthnConfig{
+			RPID:                    "example.com",
+			AllowPublicRegistration: &allow,
+		}))
+	require.NoError(t, err)
+
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+
+	var begin http.HandlerFunc
+	for _, rec := range *recs {
+		if rec.method == "POST" && rec.pattern == "/api/v1/webauthn/registration/begin" {
+			begin = rec.handler
+		}
+	}
+	require.NotNil(t, begin, "webauthn registration/begin must be registered")
+
+	body, _ := json.Marshal(map[string]string{"email": "alice@example.com", "display_name": "Alice"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	begin(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
 
 // TestModule_SelfBuiltSurfaceAuthenticatesJWT proves the module's
