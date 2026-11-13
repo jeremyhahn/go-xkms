@@ -37,7 +37,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/userverify"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -47,6 +49,21 @@ import (
 const (
 	BackendTypePhone xkms.BackendType = xkms.BackendTypePhone
 )
+
+// VerifyUserAuthenticatorName is the RP name VerifyUser sends when the
+// token it gates is not scoped to a relying party: the user is then
+// verifying to the authenticator itself (ruling 180).
+const VerifyUserAuthenticatorName = "xkey"
+
+// verifyUserTimeout bounds one VerifyUser exchange. The authenticator holds
+// its command lock across the exchange, so a phone that never answers would
+// otherwise block every later CTAP command. It is the challenge's own
+// lifetime, userverify.ChallengeLifetime: an answer arriving later is refused
+// as expired anyway.
+//
+// A var rather than a const so tests can exercise the timeout branch without
+// spending the production window on it. Nothing else writes it.
+var verifyUserTimeout = userverify.ChallengeLifetime
 
 // BLE configuration constants.
 const (
@@ -157,6 +174,14 @@ type PhoneKeyBackendConfig struct {
 	// established; channelBinding is that session's attestation channel
 	// binding.
 	LiveAttest pairingproto.LiveAttestFunc
+
+	// VerifyUser runs the local.verifyUser exchange behind the backend's
+	// VerifyUser method (ruling 167): the phone signs a fresh challenge with
+	// its user-verification key, which only a biometric match unlocks, and
+	// the function judges the answer. It is injected for the same reason as
+	// LiveAttest. Nil refuses every VerifyUser with
+	// ErrUserVerifierUnavailable.
+	VerifyUser pairingproto.VerifyUserFunc
 }
 
 // DefaultPhoneKeyBackendConfig returns default configuration.
@@ -743,6 +768,87 @@ func (b *PhoneKeyBackend) proveLiveness(ctx context.Context) error {
 	}
 
 	return b.cfg.LiveAttest(ctx, exchange, binding)
+}
+
+// VerifyUser implements keybackend.UserVerifier (ruling 167): it asks the
+// connected phone to prove a biometric match with its user-verification key
+// over the established session, and returns nil only when cfg.VerifyUser
+// accepts the answer. The authenticator calls it before minting a
+// pinUvAuthToken through getPinUvAuthTokenUsingUvWithPermissions.
+//
+// rpName is the relying party the token is requested for, sent in the
+// request and bound into the signed transcript (ruling 180). A request
+// with no RP — a permission that is not RP-scoped, such as credential
+// management — names the authenticator itself, VerifyUserAuthenticatorName.
+//
+// A call that reached no decision about the user wraps
+// keybackend.ErrUserVerificationUnavailable, so the authenticator spends no
+// uvRetries on it (CTAP 2.1 §6.5.5.7.3): no verifier, no session, an
+// exchange the phone never answered — a lost connection or a timeout — a
+// trust that could not be loaded, so no prompt was sent, or a revocation
+// status list that could not be read, so the answer was never judged. A
+// prompt the user dismissed on the phone wraps
+// keybackend.ErrUserVerificationCancelled, which spends none either. Any
+// other refused answer is returned as the verifier gave it.
+func (b *PhoneKeyBackend) VerifyUser(ctx context.Context, rpName string) error {
+	if b.cfg.VerifyUser == nil {
+		b.log.Error("user verification was requested but no verifier was supplied")
+		return userVerificationUnavailable(ErrUserVerifierUnavailable)
+	}
+	if !b.connected.Load() {
+		return userVerificationUnavailable(ErrNotConnected)
+	}
+
+	// The lease keeps the session alive while its channel binding is read;
+	// the exchange itself goes through SendRequest, which takes its own.
+	_, session, release, ok := b.acquireSession()
+	if !ok {
+		return userVerificationUnavailable(ErrNotConnected)
+	}
+	defer release()
+
+	binding, err := pairingproto.AttestChannelBinding(session)
+	if err != nil {
+		return userVerificationUnavailable(err)
+	}
+	if rpName == "" {
+		rpName = VerifyUserAuthenticatorName
+	}
+	// Derived from the caller's context, so its cancellation still ends the
+	// exchange early.
+	ctx, cancel := context.WithTimeout(ctx, verifyUserTimeout)
+	defer cancel()
+	err = b.cfg.VerifyUser(ctx, b.verifyUserExchange, binding, rpName)
+	if errors.Is(err, xkms.ErrAndroidStatusListUnavailable) ||
+		errors.Is(err, attestation.ErrUserVerificationTrustUnavailable) {
+		return userVerificationUnavailable(err)
+	}
+	// A phone's refusal is typed by its code, so the caller can tell a
+	// cancelled prompt from a lockout or a missing pairing (#1712).
+	var rpcErr *pairingproto.RPCError
+	if errors.As(err, &rpcErr) {
+		err = &SentinelCauseError{Sentinel: pairingproto.MapVerifyUserRPCError(rpcErr), Cause: err}
+	}
+	if errors.Is(err, pairingproto.ErrUserCancelled) {
+		return &keybackend.SentinelCauseError{Sentinel: keybackend.ErrUserVerificationCancelled, Cause: err}
+	}
+	return err
+}
+
+// verifyUserExchange is SendRequest for the verify-user exchange. A request
+// the phone never answered is marked unavailable: the user was not refused.
+func (b *PhoneKeyBackend) verifyUserExchange(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+	resp, err := b.SendRequest(ctx, req)
+	if err != nil {
+		return nil, userVerificationUnavailable(err)
+	}
+	return resp, nil
+}
+
+// userVerificationUnavailable marks cause as a user verification that
+// reached no decision (keybackend.ErrUserVerificationUnavailable).
+func userVerificationUnavailable(cause error) error {
+	return &keybackend.SentinelCauseError{Sentinel: keybackend.ErrUserVerificationUnavailable, Cause: cause}
 }
 
 // EnableBidirectional starts bidirectional JSON-RPC routing using the
@@ -1603,4 +1709,7 @@ func (b *PhoneKeyBackend) Notifier() notify.Notifier {
 }
 
 // Ensure PhoneKeyBackend implements FIDO2KeyBackend.
-var _ keybackend.FIDO2KeyBackend = (*PhoneKeyBackend)(nil)
+var (
+	_ keybackend.FIDO2KeyBackend = (*PhoneKeyBackend)(nil)
+	_ keybackend.UserVerifier    = (*PhoneKeyBackend)(nil)
+)

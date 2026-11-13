@@ -151,6 +151,30 @@ type AuthorizationList struct {
 	// EcCurve is the elliptic curve identifier for EC keys.
 	EcCurve int
 
+	// NoAuthRequired is true when the list carries noAuthRequired (tag
+	// 503): the key may be used without any user authentication.
+	NoAuthRequired bool
+
+	// UserAuthType is the userAuthType bit mask (tag 504), UserAuthType*
+	// values OR-ed together. UserAuthTypeNone when the list carries no
+	// claim.
+	UserAuthType int
+
+	// AuthTimeout is the authTimeout (tag 505) in seconds, meaningful only
+	// when HasAuthTimeout is true. An absent authTimeout on a key that
+	// requires authentication means every use needs a fresh authentication;
+	// a present one, of any value, means an authentication unlocks the key
+	// for that long. HasAuthTimeout is set by the tag's presence alone, so a
+	// value that fails to parse still reads as a timeout claim rather than as
+	// per-use authentication.
+	AuthTimeout    int
+	HasAuthTimeout bool
+
+	// AllowWhileOnBody is true when the list carries allowWhileOnBody (tag
+	// 506): the key stays usable after its timeout while the device is on
+	// the user's body.
+	AllowWhileOnBody bool
+
 	// Origin indicates how the key was created (tag 702), one of the
 	// Origin* constants. It is OriginUnknown when the list carried no
 	// origin claim at all, never the bare zero value -- OriginGenerated is
@@ -267,6 +291,15 @@ type VerifyOptions struct {
 	// to reason about a chain at a fixed instant — auditing evidence captured
 	// earlier, or testing against a chain whose validity window has passed.
 	CurrentTime time.Time
+
+	// Revocation, when set, checks every certificate of the presented and
+	// the verified chain against the attestation certificate revocation
+	// status list (docs/references/android-key-attestation.md §Certificate
+	// revocation status list). A listed certificate fails with a
+	// *RevokedCertificateError; a list the source cannot supply fails with
+	// ErrStatusListUnavailable. Nil skips the check, which only callers
+	// that do not decide trust (parsing, tests) should do.
+	Revocation StatusListSource
 }
 
 // keyDescriptionASN1 is the raw ASN.1 structure for parsing the top-level
@@ -371,9 +404,19 @@ func ParseKeyAttestation(cert *x509.Certificate) (*KeyDescription, error) {
 // that are difficult to parse generically, so we extract only the fields
 // we need.
 // Context-specific tag numbers inside an AuthorizationList, from the Android
-// KeyMint attestation schema.
+// KeyMint attestation schema (Android Key Attestation, "Attestation
+// extension": the KeyDescription / AuthorizationList ASN.1 schema).
 const (
-	tagPurpose                  = 1
+	tagPurpose = 1
+
+	// The user-authentication fields: noAuthRequired [503] EXPLICIT NULL,
+	// userAuthType [504] EXPLICIT INTEGER, authTimeout [505] EXPLICIT
+	// INTEGER, allowWhileOnBody [506] EXPLICIT NULL.
+	tagNoAuthRequired   = 503
+	tagUserAuthType     = 504
+	tagAuthTimeout      = 505
+	tagAllowWhileOnBody = 506
+
 	tagOrigin                   = 702
 	tagRootOfTrust              = 704
 	tagAttestationApplicationID = 709
@@ -402,6 +445,22 @@ const (
 	// is OriginGenerated's value, and a claim that was never made must not
 	// read as a claim of GENERATED.
 	OriginUnknown = 3
+)
+
+// User-authentication types, the HardwareAuthenticatorType bit mask a key's
+// userAuthType (tag 504) carries: which kinds of user authentication may
+// unlock the key.
+const (
+	// UserAuthTypeNone is the value an AuthorizationList reads as when it
+	// carries no userAuthType claim: no authenticator is bound to the key.
+	UserAuthTypeNone = 0
+
+	// UserAuthTypePassword is the device credential: PIN, pattern or
+	// password (AUTH_DEVICE_CREDENTIAL).
+	UserAuthTypePassword = 1
+
+	// UserAuthTypeFingerprint is a Class 3 biometric (AUTH_BIOMETRIC_STRONG).
+	UserAuthTypeFingerprint = 2
 )
 
 // Well-known key-purpose values (KeyMint tag PURPOSE / keymaster_purpose_t).
@@ -513,6 +572,16 @@ func parseAuthorizationList(rawVal asn1.RawValue) AuthorizationList {
 
 	authList.Purpose = findPurpose(rawVal.FullBytes)
 
+	authList.NoAuthRequired = hasTag(rawVal.FullBytes, tagNoAuthRequired)
+	if authType, ok := findInt(rawVal.FullBytes, tagUserAuthType); ok {
+		authList.UserAuthType = authType
+	}
+	if timeout, ok := findInt(rawVal.FullBytes, tagAuthTimeout); ok {
+		authList.AuthTimeout = timeout
+	}
+	authList.HasAuthTimeout = hasTag(rawVal.FullBytes, tagAuthTimeout)
+	authList.AllowWhileOnBody = hasTag(rawVal.FullBytes, tagAllowWhileOnBody)
+
 	return authList
 }
 
@@ -522,10 +591,18 @@ func parseAuthorizationList(rawVal asn1.RawValue) AuthorizationList {
 // does not decode; the caller must treat that as "no claim", never as
 // OriginGenerated, because zero is also OriginGenerated's value.
 func findOrigin(data []byte) (origin int, ok bool) {
+	return findInt(data, tagOrigin)
+}
+
+// findTagged returns the element of the AuthorizationList SEQUENCE in data
+// that carries the context-specific tag, and whether there is one. Each
+// field is located by its own tag, independent of the others' presence,
+// position or parseability.
+func findTagged(data []byte, tag int) (asn1.RawValue, bool) {
 	var outer asn1.RawValue
 	rest, err := asn1.Unmarshal(data, &outer)
 	if err != nil || len(rest) > 0 {
-		return 0, false
+		return asn1.RawValue{}, false
 	}
 
 	remaining := outer.Bytes
@@ -535,18 +612,33 @@ func findOrigin(data []byte) (origin int, ok bool) {
 		if err != nil {
 			break
 		}
-		if elem.Class != asn1.ClassContextSpecific || elem.Tag != tagOrigin {
-			continue
+		if elem.Class == asn1.ClassContextSpecific && elem.Tag == tag {
+			return elem, true
 		}
-
-		var value int
-		if _, unmarshalErr := asn1.Unmarshal(elem.Bytes, &value); unmarshalErr != nil {
-			return 0, false
-		}
-		return value, true
 	}
 
-	return 0, false
+	return asn1.RawValue{}, false
+}
+
+// findInt extracts an [tag] EXPLICIT INTEGER from an AuthorizationList. ok is
+// false when the tag is absent or its content is not an INTEGER.
+func findInt(data []byte, tag int) (value int, ok bool) {
+	elem, found := findTagged(data, tag)
+	if !found {
+		return 0, false
+	}
+	if _, err := asn1.Unmarshal(elem.Bytes, &value); err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+// hasTag reports whether an AuthorizationList carries the tag at all. It
+// reads the [tag] EXPLICIT NULL flags (noAuthRequired, allowWhileOnBody),
+// whose presence is the claim.
+func hasTag(data []byte, tag int) bool {
+	_, found := findTagged(data, tag)
+	return found
 }
 
 // findPurpose walks the AuthorizationList for tag 1 and decodes the EXPLICIT
@@ -554,31 +646,16 @@ func findOrigin(data []byte) (origin int, ok bool) {
 // perform with the key (go-xkms#132). Returns nil if the tag is absent or
 // does not decode.
 func findPurpose(data []byte) []int {
-	var outer asn1.RawValue
-	rest, err := asn1.Unmarshal(data, &outer)
-	if err != nil || len(rest) > 0 {
+	elem, found := findTagged(data, tagPurpose)
+	if !found {
 		return nil
 	}
 
-	remaining := outer.Bytes
-	for len(remaining) > 0 {
-		var elem asn1.RawValue
-		remaining, err = asn1.Unmarshal(remaining, &elem)
-		if err != nil {
-			break
-		}
-		if elem.Class != asn1.ClassContextSpecific || elem.Tag != tagPurpose {
-			continue
-		}
-
-		var purposes []int
-		if _, unmarshalErr := asn1.UnmarshalWithParams(elem.Bytes, &purposes, "set"); unmarshalErr != nil {
-			return nil
-		}
-		return purposes
+	var purposes []int
+	if _, err := asn1.UnmarshalWithParams(elem.Bytes, &purposes, "set"); err != nil {
+		return nil
 	}
-
-	return nil
+	return purposes
 }
 
 // findRootOfTrust attempts to locate and parse a RootOfTrust SEQUENCE
@@ -655,9 +732,21 @@ func VerifyKeyAttestation(chain []*x509.Certificate, opts *VerifyOptions) (*KeyD
 	}
 
 	// Verify the certificate chain against trusted roots if provided
+	var verified [][]*x509.Certificate
 	if opts.TrustedRoots != nil {
-		if err := verifyCertificateChain(chain, opts.TrustedRoots, opts.CurrentTime); err != nil {
+		var err error
+		verified, err = verifyCertificateChain(chain, opts.TrustedRoots, opts.CurrentTime)
+		if err != nil {
 			return nil, &errs.Detail{Err: ErrChainVerificationFailed, Detail: fmt.Sprintf("%v", err)}
+		}
+	}
+
+	// Check each certificate's revocation status: the presented chain and
+	// every chain it verified to, so the trust anchor is checked as well
+	// (§Retrieve and verify a hardware-backed key pair, step 4).
+	if opts.Revocation != nil {
+		if err := CheckRevocation(opts.Revocation, append(verified, chain)...); err != nil {
+			return nil, err
 		}
 	}
 
@@ -696,9 +785,9 @@ func VerifyKeyAttestation(chain []*x509.Certificate, opts *VerifyOptions) (*KeyD
 // verifyCertificateChain verifies the certificate chain against the provided
 // trusted root certificate pool, as of now. A zero now is passed through to
 // crypto/x509, which substitutes the current time.
-func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool, now time.Time) error {
+func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool, now time.Time) ([][]*x509.Certificate, error) {
 	if len(chain) == 0 {
-		return ErrChainTooShort
+		return nil, ErrChainTooShort
 	}
 
 	leaf := chain[0]
@@ -716,11 +805,7 @@ func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool, now
 		CurrentTime:   now,
 	}
 
-	if _, err := leaf.Verify(verifyOpts); err != nil {
-		return err
-	}
-
-	return nil
+	return leaf.Verify(verifyOpts)
 }
 
 // AttestationExtensionOptions carries the teeEnforced AuthorizationList
@@ -747,6 +832,24 @@ type AttestationExtensionOptions struct {
 	// Purpose is teeEnforced's key-purpose claim, encoded as tag 1 when
 	// non-empty. A nil or empty slice omits the tag.
 	Purpose []int
+
+	// NoAuthRequired encodes teeEnforced's noAuthRequired (tag 503) when
+	// true; SoftwareNoAuthRequired encodes it in softwareEnforced.
+	NoAuthRequired         bool
+	SoftwareNoAuthRequired bool
+
+	// UserAuthType is teeEnforced's userAuthType (tag 504), encoded when
+	// non-zero.
+	UserAuthType int
+
+	// AuthTimeout is teeEnforced's authTimeout (tag 505) in seconds, encoded
+	// only when HasAuthTimeout is true.
+	AuthTimeout    int
+	HasAuthTimeout bool
+
+	// AllowWhileOnBody encodes teeEnforced's allowWhileOnBody (tag 506) when
+	// true.
+	AllowWhileOnBody bool
 
 	// ApplicationID is the attestationApplicationId, encoded as tag 709 in
 	// softwareEnforced -- where the Keystore daemon writes it -- when
@@ -802,6 +905,17 @@ func marshalExplicitInt(tag, value int) ([]byte, error) {
 		Tag:        tag,
 		IsCompound: true,
 		Bytes:      body,
+	})
+}
+
+// marshalExplicitNull encodes a [tag] EXPLICIT NULL, the form of the
+// AuthorizationList's flag fields (noAuthRequired, allowWhileOnBody).
+func marshalExplicitNull(tag int) ([]byte, error) {
+	return asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tag,
+		IsCompound: true,
+		Bytes:      asn1.NullBytes,
 	})
 }
 
@@ -864,13 +978,45 @@ func BuildAttestationExtensionWithOptions(
 
 	var teeEnforced bytes.Buffer
 
-	// Ordered to match the schema's own field order (tags 1, 702, 704), not
-	// that findOrigin/findPurpose/findRootOfTrust care: each looks up its own
+	// Ordered to match the schema's own field order (tags 1, 503-506, 702,
+	// 704), not that the parser cares: each field is looked up by its own
 	// tag independent of position.
 	if len(opts.Purpose) > 0 {
 		tagged, err := marshalExplicitIntSet(tagPurpose, opts.Purpose)
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "android: failed to marshal purpose", Err: err}
+		}
+		teeEnforced.Write(tagged)
+	}
+
+	if opts.NoAuthRequired {
+		tagged, err := marshalExplicitNull(tagNoAuthRequired)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal noAuthRequired", Err: err}
+		}
+		teeEnforced.Write(tagged)
+	}
+
+	if opts.UserAuthType != UserAuthTypeNone {
+		tagged, err := marshalExplicitInt(tagUserAuthType, opts.UserAuthType)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal userAuthType", Err: err}
+		}
+		teeEnforced.Write(tagged)
+	}
+
+	if opts.HasAuthTimeout {
+		tagged, err := marshalExplicitInt(tagAuthTimeout, opts.AuthTimeout)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal authTimeout", Err: err}
+		}
+		teeEnforced.Write(tagged)
+	}
+
+	if opts.AllowWhileOnBody {
+		tagged, err := marshalExplicitNull(tagAllowWhileOnBody)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal allowWhileOnBody", Err: err}
 		}
 		teeEnforced.Write(tagged)
 	}
@@ -908,17 +1054,24 @@ func BuildAttestationExtensionWithOptions(
 		teeEnforced.Write(tagged)
 	}
 
-	var softwareEnforced []byte
+	var softwareEnforced bytes.Buffer
+	if opts.SoftwareNoAuthRequired {
+		tagged, err := marshalExplicitNull(tagNoAuthRequired)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal software noAuthRequired", Err: err}
+		}
+		softwareEnforced.Write(tagged)
+	}
 	if opts.ApplicationID != nil {
 		tagged, err := marshalApplicationID(opts.ApplicationID)
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "android: failed to marshal attestation application id", Err: err}
 		}
-		softwareEnforced = tagged
+		softwareEnforced.Write(tagged)
 	}
 
 	return buildAttestationExtension(version, attestSecLevel, kmVersion, kmSecLevel,
-		challenge, uniqueID, softwareEnforced, teeEnforced.Bytes())
+		challenge, uniqueID, softwareEnforced.Bytes(), teeEnforced.Bytes())
 }
 
 // BuildMinimalAttestationExtension builds a KeyDescription extension whose
