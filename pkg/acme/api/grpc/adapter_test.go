@@ -551,6 +551,35 @@ func TestListTenants_Success(t *testing.T) {
 	assert.Equal(t, 2, pagination.Total)
 }
 
+func TestListTenants_StatusFilterRefused(t *testing.T) {
+	mockClient := &mockAdminServiceClient{
+		listTenantsFunc: func(ctx context.Context, in *pb.ListTenantsRequest, opts ...grpc.CallOption) (*pb.ListTenantsResponse, error) {
+			t.Fatal("ListTenants RPC must not be sent for a status filter")
+			return nil, nil
+		},
+	}
+
+	adapter := newTestAdapter(mockClient, "")
+	tenants, pagination, err := adapter.ListTenants(context.Background(), &admin.ListTenantsRequest{Status: "active"})
+
+	assert.Nil(t, tenants)
+	assert.Nil(t, pagination)
+	require.ErrorIs(t, err, admin.ErrTenantStatusUnsupported)
+	var ufe *admin.UnsupportedFieldError
+	require.ErrorAs(t, err, &ufe)
+	assert.Equal(t, "status", ufe.Field)
+}
+
+func TestUpdateTenantStatus_Refused(t *testing.T) {
+	adapter := newTestAdapter(&mockAdminServiceClient{}, "")
+	err := adapter.UpdateTenantStatus(context.Background(), "tenant-1", "suspended")
+
+	require.ErrorIs(t, err, admin.ErrTenantStatusUnsupported)
+	var ufe *admin.UnsupportedFieldError
+	require.ErrorAs(t, err, &ufe)
+	assert.Equal(t, "status", ufe.Field)
+}
+
 func TestListTenants_Error(t *testing.T) {
 	mockClient := &mockAdminServiceClient{
 		listTenantsFunc: func(ctx context.Context, in *pb.ListTenantsRequest, opts ...grpc.CallOption) (*pb.ListTenantsResponse, error) {

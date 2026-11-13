@@ -784,6 +784,32 @@ func TestAdapterDoRequest(t *testing.T) {
 }
 
 // TestTenantOperations tests tenant-related adapter methods.
+// TestListTenants_StatusFilterRefused: the tenant status filter is refused
+// with the typed error before any request is sent (SPEC.md:129).
+func TestListTenants_StatusFilterRefused(t *testing.T) {
+	a := &Adapter{}
+	_, _, err := a.ListTenants(context.Background(), &admin.ListTenantsRequest{Page: 1, PerPage: 10, Status: "suspended"})
+	if !errors.Is(err, admin.ErrTenantStatusUnsupported) {
+		t.Fatalf("error %v is not ErrTenantStatusUnsupported", err)
+	}
+	var ufe *admin.UnsupportedFieldError
+	if !errors.As(err, &ufe) || ufe.Field != "status" {
+		t.Fatalf("error %v is not an UnsupportedFieldError for status", err)
+	}
+}
+
+func TestUpdateTenantStatus_Refused(t *testing.T) {
+	a := &Adapter{}
+	err := a.UpdateTenantStatus(context.Background(), "tenant-1", "suspended")
+	if !errors.Is(err, admin.ErrTenantStatusUnsupported) {
+		t.Fatalf("error %v is not ErrTenantStatusUnsupported", err)
+	}
+	var ufe *admin.UnsupportedFieldError
+	if !errors.As(err, &ufe) || ufe.Field != "status" {
+		t.Fatalf("error %v is not an UnsupportedFieldError for status", err)
+	}
+}
+
 func TestTenantOperations(t *testing.T) {
 	ctx := context.Background()
 

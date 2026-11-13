@@ -14,6 +14,7 @@
 package admin
 
 import (
+	stderrors "errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
@@ -30,6 +31,22 @@ func TestTypedErrors(t *testing.T) {
 		}
 		// Verify it implements error interface
 		var _ error = err
+	})
+
+	t.Run("TenantStatusUnsupportedError", func(t *testing.T) {
+		err := NewTenantStatusUnsupported("test.op")
+		if err.Code != errors.CodeInvalidInput {
+			t.Errorf("expected CodeInvalidInput, got %v", err.Code)
+		}
+		if err.Op != "test.op" {
+			t.Errorf("expected op test.op, got %s", err.Op)
+		}
+		if err.Field != "status" {
+			t.Errorf("expected field status, got %q", err.Field)
+		}
+		if !stderrors.Is(err, ErrTenantStatusUnsupported) {
+			t.Error("expected match with ErrTenantStatusUnsupported")
+		}
 	})
 
 	t.Run("TenantAlreadyExistsError", func(t *testing.T) {

@@ -496,47 +496,16 @@ func (s *TenantAwareAdminService) updateTenantQRDB(ctx context.Context, tenantID
 }
 
 // UpdateTenantStatus updates a tenant's status.
-func (s *TenantAwareAdminService) UpdateTenantStatus(ctx context.Context, tenantID string, status string) error {
+func (s *TenantAwareAdminService) UpdateTenantStatus(ctx context.Context, tenantID string, _ string) error {
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
 	}
 	if err := admitTenant(ctx, "update tenant status", tenantID); err != nil {
 		return err
 	}
-	if status == "" {
-		return wrapInputError("status", "status is required")
-	}
-
-	validStatuses := map[string]bool{
-		entities.TenantStatusActive:    true,
-		entities.TenantStatusSuspended: true,
-		entities.TenantStatusDeleted:   true,
-	}
-	if !validStatuses[status] {
-		return wrapInputError("status", "invalid status: must be active, suspended, or deleted")
-	}
-
-	// Update tenant status: Get -> mutate -> Save
-	if s.tenantDAO != nil {
-		tenant, err := s.tenantDAO.Get(ctx, entities.StringToEntityID(tenantID))
-		if err != nil {
-			if isNotFoundError(err) {
-				return ErrTenantNotFound
-			}
-			return caerrors.StorageFailureError("admin: failed to get tenant for status update: %s", err)
-		}
-		tenant.Status = status
-		tenant.UpdatedAt = time.Now()
-		if err := s.tenantDAO.Save(ctx, tenant); err != nil {
-			return caerrors.StorageFailureError("admin: failed to update tenant status: %s", err)
-		}
-	}
-
-	s.logger.Info("tenant status updated",
-		slog.String("id", tenantID),
-		slog.String("status", status))
-
-	return nil
+	// SPEC.md:129: the status is a go-qrdb tenant field the pinned go-qrdb
+	// does not carry; refuse it before any storage read.
+	return TenantStatusUnsupported()
 }
 
 // DeleteTenant deletes a tenant and all associated resources, delegating
@@ -585,6 +554,9 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 // tenant for a cross-tenant caller, only its own tenant for a tenant-scoped
 // one. The pagination total counts only what the caller may see.
 func (s *TenantAwareAdminService) ListTenants(ctx context.Context, req ListTenantsRequest) ([]*TenantInfo, *Pagination, error) {
+	if req.Status != "" {
+		return nil, nil, TenantStatusUnsupported()
+	}
 	// Set defaults
 	if req.Page < 1 {
 		req.Page = 1
@@ -637,9 +609,7 @@ func (s *TenantAwareAdminService) listTenantsQRDB(ctx context.Context, req ListT
 				info.UpdatedAt = qt.UpdatedAt
 			}
 		}
-		if req.Status == "" || info.Status == req.Status {
-			infos = append(infos, info)
-		}
+		infos = append(infos, info)
 	}
 
 	sort.Slice(infos, func(i, j int) bool {

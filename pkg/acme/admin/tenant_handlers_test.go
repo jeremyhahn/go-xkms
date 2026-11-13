@@ -362,10 +362,10 @@ func TestUpdateTenant_InternalError(t *testing.T) {
 	}
 }
 
-func TestUpdateTenantStatus_Success(t *testing.T) {
+func TestUpdateTenantStatus_Unsupported(t *testing.T) {
 	service := &mockTenantService{
 		updateTenantStatusFunc: func(ctx context.Context, tenantID string, status string) error {
-			return nil
+			return &UnsupportedFieldError{Field: "status", Reason: tenantStatusUnsupportedReason}
 		},
 	}
 	handlers := NewTenantHandlers(service, slog.Default())
@@ -374,30 +374,49 @@ func TestUpdateTenantStatus_Success(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/status", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
 	req = addUserToRequest(req, createAdminUser("tenant-1"))
-	req = addUserToRequest(req, createAdminUser("tenant-1"))
-	w := httptest.NewRecorder()
-
-	handlers.UpdateTenantStatus(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
-func TestUpdateTenantStatus_InvalidStatus(t *testing.T) {
-	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
-
-	body := `{"status": "invalid"}`
-	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/status", bytes.NewBufferString(body))
-	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
-	req = addUserToRequest(req, createAdminUser("tenant-1"))
-	req = addUserToRequest(req, createAdminUser("tenant-1"))
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantStatus(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(ProblemTypeTenantStatusUnsupported)) {
+		t.Errorf("problem type %q missing from body %s", ProblemTypeTenantStatusUnsupported, w.Body.String())
+	}
+}
+
+// TestUpdateTenantStatus_AnyValueRefusedByService proves the handler does
+// not judge the status value itself: every value reaches the service
+// refusal and is answered with the stable tenant-status problem type.
+func TestUpdateTenantStatus_AnyValueRefusedByService(t *testing.T) {
+	for _, value := range []string{"invalid", "active", "deleted"} {
+		var got string
+		service := &mockTenantService{
+			updateTenantStatusFunc: func(ctx context.Context, tenantID string, status string) error {
+				got = status
+				return TenantStatusUnsupported()
+			},
+		}
+		handlers := NewTenantHandlers(service, slog.Default())
+
+		body := `{"status": "` + value + `"}`
+		req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/status", bytes.NewBufferString(body))
+		req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+		req = addUserToRequest(req, createAdminUser("tenant-1"))
+		w := httptest.NewRecorder()
+
+		handlers.UpdateTenantStatus(w, req)
+
+		if got != value {
+			t.Errorf("%s: service saw status %q", value, got)
+		}
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected status %d, got %d", value, http.StatusBadRequest, w.Code)
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte(ProblemTypeTenantStatusUnsupported)) {
+			t.Errorf("%s: problem type %q missing from body %s", value, ProblemTypeTenantStatusUnsupported, w.Body.String())
+		}
 	}
 }
 

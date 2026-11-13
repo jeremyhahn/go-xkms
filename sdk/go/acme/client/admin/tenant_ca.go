@@ -42,7 +42,8 @@ type TenantCAClient interface {
 	// UpdateIntermediateCAStatus updates an intermediate CA's status.
 	UpdateIntermediateCAStatus(ctx context.Context, tenantID string, caID string, status string) error
 
-	// UpdateTenantStatus updates a tenant's status (enable/disable).
+	// UpdateTenantStatus is refused with ErrTenantStatusUnsupported, and sends
+	// no request, until go-qrdb carries a tenant status (SPEC.md:129).
 	UpdateTenantStatus(ctx context.Context, tenantID string, status string) error
 }
 
@@ -88,12 +89,6 @@ type intermediateCARequest struct {
 type updateIntermediateCAStatusTransportRequest struct {
 	TenantID string `json:"tenantId"`
 	CAID     string `json:"caId"`
-	Status   string `json:"status"`
-}
-
-// updateTenantStatusTransportRequest wraps the tenant ID and status.
-type updateTenantStatusTransportRequest struct {
-	TenantID string `json:"tenantId"`
 	Status   string `json:"status"`
 }
 
@@ -230,17 +225,9 @@ func (c *tenantCAClient) UpdateIntermediateCAStatus(ctx context.Context, tenantI
 	return err
 }
 
-func (c *tenantCAClient) UpdateTenantStatus(ctx context.Context, tenantID string, status string) error {
+func (c *tenantCAClient) UpdateTenantStatus(_ context.Context, tenantID string, _ string) error {
 	if tenantID == "" {
 		return errors.NewInvalidInput("admin.tenant.ca.UpdateTenantStatus", "tenant ID cannot be empty")
 	}
-	if status == "" {
-		return errors.NewInvalidInput("admin.tenant.ca.UpdateTenantStatus", "status cannot be empty")
-	}
-
-	_, err := c.transport.Request(ctx, tenantService, "updateStatus", &updateTenantStatusTransportRequest{
-		TenantID: tenantID,
-		Status:   status,
-	})
-	return err
+	return NewTenantStatusUnsupported("admin.tenant.ca.UpdateTenantStatus")
 }
