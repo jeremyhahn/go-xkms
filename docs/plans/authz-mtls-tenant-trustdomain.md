@@ -54,12 +54,21 @@ be refused, along with every other bound-user test on testutil certificates.
 REST/gRPC/server mTLS callers using certificates without a SPIFFE tenant SAN
 would stop authenticating.
 
-Open decision for the coordinator/owner, one of:
+### Slice 2 (resumed): decision taken, built
 
-1. Strict: adopt the qrdb rule on both paths (as pkg/acme/admin does), and
-   allow edits to pkg/auth/mtls_test.go and pkg/testutil certificate helpers
-   (tenant SPIFFE SAN + OU), plus whatever integration fixtures issue
-   tenant-less client certificates.
-2. Scoped: apply the rule only on the bound-user path (refuse a user/cert
-   tenant mismatch only when the certificate names a tenant), leaving the
-   certificate-only path's OU behaviour for a later row.
+Built the reversible middle: the rule decides the tenant whenever the
+certificate claims one (it carries a Subject OU, the field read by hand
+before); a certificate with no OU claims no tenant, as before, so testutil
+and SVID-only certificates keep working. OU-only and OU/SAN-mismatch
+certificates are now refused (TenantID_FromOU updated to expect it). The
+bound-user path refuses a user of another tenant with
+auth.CertificateTenantMismatchError; pkg/acme/admin aliases that type. The
+server (three sites) and cmd/xkmsd/admin.go pass TrustDomain().
+
+- go build ./...: pass. go vet pkg/auth, pkg/acme/admin, pkg/server, cmd/xkmsd: pass.
+- go test pkg/auth/...: new cases fail on the test commit (build), pass on the fix.
+- go test pkg/api/rest/..., pkg/config/..., cmd/xkmsd/..., pkg/server, pkg/acme/admin/...: pass.
+- go test pkg/acme/client: only the 5 TestDeviceAttestDICE* fail (tfwsim-atecc608a
+  binary not built in the lane; unrelated).
+- docs/SPEC.md row 58 not changed: the lane's policy guard refuses the path
+  (LANE_POLICY_ALLOW not set).
