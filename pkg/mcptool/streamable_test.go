@@ -173,6 +173,11 @@ func TestStreamableHTTP_ResponsesCarryTheRequestID(t *testing.T) {
 
 	accepted := map[string]http.HandlerFunc{
 		"json matching id": jsonBody(`{"jsonrpc":"2.0","id":1,"result":{"which":"right"}}`),
+		// JSON-RPC ids compare by value, not by spelling: 1, 1.0 and 1e0 are
+		// the same number.
+		"json id spelled 1.0":   jsonBody(`{"jsonrpc":"2.0","id":1.0,"result":{"which":"right"}}`),
+		"json id spelled 1e0":   jsonBody(`{"jsonrpc":"2.0","id":1e0,"result":{"which":"right"}}`),
+		"stream id spelled 1.0": eventStream(`{"jsonrpc":"2.0","id":2,"result":{"which":"other"}}`, `{"jsonrpc":"2.0","id":1.0,"result":{"which":"right"}}`),
 		"stream skips unrelated responses": eventStream(
 			`{"jsonrpc":"2.0","id":2,"result":{"which":"other"}}`,
 			`{"jsonrpc":"2.0","result":{"which":"other"}}`,
