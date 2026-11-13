@@ -177,3 +177,35 @@ func TestCeremonyGrant_IsLeastPrivilegeCopy(t *testing.T) {
 	got[0] = "admin:*"
 	assert.NotEqual(t, got[0], CeremonyGrant()[0], "CeremonyGrant returns a copy")
 }
+
+// TestRegisterWebAuthnGrant_AuthorizesUserLookup is #2541's second layer: a
+// running xkmsd's WebAuthn user store looks a sign-up's user up as the
+// service principal, which go-qrdb refused with "cannot read on users".
+func TestRegisterWebAuthnGrant_AuthorizesUserLookup(t *testing.T) {
+	node := newNode(t, Option())
+	RegisterWebAuthnGrant()
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+
+	_, err = node.Client().Users().GetUserByEmail(ctx, "system", "nobody@example.com")
+	require.Error(t, err)
+	var denied *qrdbsdk.PermissionDeniedError
+	assert.NotErrorAs(t, err, &denied)
+}
+
+func TestWebAuthnGrant_IsUsersCRUDCopy(t *testing.T) {
+	base := Grant()
+	RegisterWebAuthnGrant()
+
+	got := WebAuthnGrant()
+	assert.ElementsMatch(t, []qrdbsdk.Permission{
+		"users:read", "users:create", "users:update", "users:delete",
+	}, got)
+	assert.Equal(t, base, Grant(), "registering the WebAuthn grant leaves the base grant unchanged")
+	for _, p := range got {
+		assert.NotContains(t, Grant(), p, "the base grant never holds a WebAuthn permission")
+	}
+
+	got[0] = "users:*"
+	assert.NotEqual(t, got[0], WebAuthnGrant()[0], "WebAuthnGrant returns a copy")
+}

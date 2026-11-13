@@ -237,6 +237,18 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 		identity.Metadata["username"] = username
 	}
 
+	// A passkey login mints its subject as the account's base64 WebAuthn
+	// handle (sub_kind=user_handle). Bind it back to the account, so the
+	// identity carries UserID and the RBAC layer finds the account's grants.
+	// A handle that encodes no account id stays unbound: it names no
+	// account, so it holds no account's grants.
+	if kind, _ := claims[SubjectKindMetadataKey].(string); kind == SubjectKindUserHandle {
+		identity.Metadata[SubjectKindMetadataKey] = kind
+		if userID, ok := decodeWebAuthnHandle(sub); ok {
+			identity.BindUser(userID, identity.Metadata["username"])
+		}
+	}
+
 	// Extract name if present
 	if name, ok := claims["name"].(string); ok {
 		identity.Metadata["display_name"] = name
