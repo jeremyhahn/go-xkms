@@ -67,6 +67,12 @@ type streamableHTTP struct {
 	protocolVersion string
 	onNotification  func(mcp.JSONRPCNotification)
 	closed          bool
+
+	// life is the transport's lifetime: every request runs under a context
+	// derived from it, and Close cancels it, so Close ends a request whose
+	// response is blocked instead of leaving it to the caller's deadline.
+	life context.Context
+	stop context.CancelFunc
 }
 
 var _ mcptransport.HTTPConnection = (*streamableHTTP)(nil)
@@ -78,7 +84,10 @@ func newStreamableHTTP(endpoint string, rt http.RoundTripper, headers map[string
 	for k, v := range headers {
 		copied[k] = v
 	}
+	life, stop := context.WithCancel(context.Background())
 	return &streamableHTTP{
+		life:     life,
+		stop:     stop,
 		endpoint: endpoint,
 		http: &http.Client{
 			Transport: rt,
@@ -96,8 +105,35 @@ func (s *streamableHTTP) Start(context.Context) error {
 	return nil
 }
 
+// requestContext derives a request's context from ctx and the transport's
+// lifetime: it ends when either does. The returned cancel releases it.
+func (s *streamableHTTP) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	reqCtx, cancel := context.WithCancel(ctx)
+	unhook := context.AfterFunc(s.life, cancel)
+	return reqCtx, func() {
+		unhook()
+		cancel()
+	}
+}
+
+// closedErr marks err as errTransportClosed when Close ended the request.
+func (s *streamableHTTP) closedErr(err error) error {
+	if err == nil || s.life.Err() == nil || errors.Is(err, errTransportClosed) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", errTransportClosed, err)
+}
+
 // SendRequest posts one JSON-RPC request and returns the server's response.
+// Close ends it with errTransportClosed, even while the response is blocked.
 func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
+	ctx, cancel := s.requestContext(ctx)
+	defer cancel()
+	resp, err := s.sendRequest(ctx, request)
+	return resp, s.closedErr(err)
+}
+
+func (s *streamableHTTP) sendRequest(ctx context.Context, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
 	resp, err := s.post(ctx, request, request.Header)
 	if err != nil {
 		return nil, err
@@ -140,9 +176,11 @@ func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.J
 // SendNotification posts one JSON-RPC notification; the server accepts it
 // without a response body.
 func (s *streamableHTTP) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
+	ctx, cancel := s.requestContext(ctx)
+	defer cancel()
 	resp, err := s.post(ctx, notification, nil)
 	if err != nil {
-		return err
+		return s.closedErr(err)
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 	_ = resp.Body.Close()
@@ -174,8 +212,8 @@ func (s *streamableHTTP) GetSessionId() string {
 	return s.sessionID
 }
 
-// Close ends the server session, when there is one, and refuses later sends.
-// It is safe to call more than once.
+// Close cancels every request in flight, ends the server session, when there
+// is one, and refuses later sends. It is safe to call more than once.
 func (s *streamableHTTP) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -185,6 +223,7 @@ func (s *streamableHTTP) Close() error {
 	s.closed = true
 	sessionID := s.sessionID
 	s.mu.Unlock()
+	s.stop()
 
 	if sessionID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
