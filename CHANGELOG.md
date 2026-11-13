@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A UHID round trip now covers the Linux hidraw report-ID byte (#2052).** `TestLinuxHIDDevice_UHIDRoundTrip` (`pkg/fido2`) creates a virtual authenticator through `/dev/uhid` and drives `LinuxHIDDevice` through the real hidraw node the kernel makes for it. It uses a channel ID whose first byte is 0x00 and checks that every output report the kernel delivers starts with report ID 0x00 and then the full 64-byte CTAP HID frame. The fix itself is #1790 (8a1357515e). Before that fix, hidraw took a channel ID's leading 0x00 as the report number and the frame lost a byte. The Integration job runs the test as root and fails if `/dev/uhid` is missing. When the container's `/dev` has no file for the new hidraw node, the test makes one with `mknod` from the sysfs `major:minor`. The exported FIDO2 API is unchanged. go-trusted-platform gets the fix through go-quicbaas with the first go-xkms tag at or after 8a1357515e.
+
 ## [0.64.0-alpha] - 2026-10-25
 
 ### Security
