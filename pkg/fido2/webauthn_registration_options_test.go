@@ -283,7 +283,7 @@ func TestRegisterWebAuthn_ResidentKeyReachesAuthenticator(t *testing.T) {
 			}
 
 			rk, ok := mockDev.sim.makeCredentialOptions["rk"].(bool)
-			if tt.wantRK && !(ok && rk) {
+			if tt.wantRK && (!ok || !rk) {
 				t.Fatalf("MakeCredential options %v: want rk=true", mockDev.sim.makeCredentialOptions)
 			}
 			if !tt.wantRK && ok && rk {
