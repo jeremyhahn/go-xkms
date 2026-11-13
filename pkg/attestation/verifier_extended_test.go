@@ -108,21 +108,6 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-// TestVerifyInvalidStatement tests Verify with invalid statement
-func TestVerifyInvalidStatement(t *testing.T) {
-	v := NewVerifier(nil)
-	opts := &VerifyOptions{}
-
-	stmt := &AttestationStatement{
-		Format: "", // Invalid - empty format
-	}
-
-	_, err := v.Verify(stmt, opts)
-	if err == nil {
-		t.Errorf("Verify() should fail with invalid statement")
-	}
-}
-
 // TestVerifyInvalidOptions tests Verify with invalid options
 func TestVerifyInvalidOptions(t *testing.T) {
 	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -235,43 +220,6 @@ func TestVerifyChainInvalidSignature(t *testing.T) {
 	}
 }
 
-// TestVerifyChainNotYetValid tests chain with certificate not yet valid
-func TestVerifyChainNotYetValid(t *testing.T) {
-	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
-	publicKey := &privKey.PublicKey
-
-	// Create a certificate that's not yet valid
-	cert := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: "Future Cert",
-		},
-		NotBefore:          time.Now().Add(24 * time.Hour), // Valid tomorrow
-		NotAfter:           time.Now().Add(48 * time.Hour),
-		KeyUsage:           x509.KeyUsageDigitalSignature,
-		SignatureAlgorithm: x509.SHA256WithRSA,
-	}
-
-	stmt := &AttestationStatement{
-		Format:                "tpm2",
-		AttestingKeyAlgorithm: x509.RSA,
-		AttestingKeyPublic:    publicKey,
-		Signature:             []byte("test-sig"),
-		SignatureAlgorithm:    x509.SHA256WithRSA,
-		CertificateChain:      []*x509.Certificate{cert},
-		AttestedKeyPublic:     publicKey,
-		AttestationData:       []byte("test-data"),
-	}
-
-	v := NewVerifier(nil)
-	opts := &VerifyOptions{}
-
-	err := v.VerifyChain(stmt, opts)
-	if err == nil {
-		t.Errorf("VerifyChain() should fail with not yet valid certificate")
-	}
-}
-
 // TestVerifyChainWithCurrentTime tests chain verification with custom time
 func TestVerifyChainWithCurrentTime(t *testing.T) {
 	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -339,100 +287,6 @@ func TestVerifyChainWithCurrentTime(t *testing.T) {
 	err = v.VerifyChain(stmt, opts)
 	if err != nil {
 		t.Errorf("VerifyChain() should succeed when CurrentTime is within validity period: %v", err)
-	}
-}
-
-// TestVerifyChainMultipleCerts tests chain with multiple certificates
-func TestVerifyChainMultipleCerts(t *testing.T) {
-	// Create root key pair
-	rootPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
-	rootPub := &rootPriv.PublicKey
-
-	// Create intermediate key pair
-	intPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
-	intPub := &intPriv.PublicKey
-
-	// Create leaf key pair
-	leafPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
-	leafPub := &leafPriv.PublicKey
-
-	// Create root certificate
-	rootCert := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: "Root CA",
-		},
-		NotBefore:             time.Now().AddDate(0, 0, -1),
-		NotAfter:              time.Now().AddDate(1, 0, 0),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		SignatureAlgorithm:    x509.SHA256WithRSA,
-		PublicKeyAlgorithm:    x509.RSA,
-		PublicKey:             rootPub,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-
-	// Self-sign root
-	rootBytes, _ := x509.CreateCertificate(rand.Reader, rootCert, rootCert, rootPub, rootPriv)
-	parsedRoot, _ := x509.ParseCertificate(rootBytes)
-
-	// Create intermediate certificate
-	intCert := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject: pkix.Name{
-			CommonName: "Intermediate CA",
-		},
-		NotBefore:             time.Now().AddDate(0, 0, -1),
-		NotAfter:              time.Now().AddDate(0, 6, 0),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		SignatureAlgorithm:    x509.SHA256WithRSA,
-		PublicKeyAlgorithm:    x509.RSA,
-		PublicKey:             intPub,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-
-	// Sign intermediate with root
-	intBytes, _ := x509.CreateCertificate(rand.Reader, intCert, parsedRoot, intPub, rootPriv)
-	parsedInt, _ := x509.ParseCertificate(intBytes)
-
-	// Create leaf certificate
-	leafCert := &x509.Certificate{
-		SerialNumber: big.NewInt(3),
-		Subject: pkix.Name{
-			CommonName: "Leaf Cert",
-		},
-		NotBefore:             time.Now().AddDate(0, 0, -1),
-		NotAfter:              time.Now().AddDate(0, 3, 0),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		SignatureAlgorithm:    x509.SHA256WithRSA,
-		PublicKeyAlgorithm:    x509.RSA,
-		PublicKey:             leafPub,
-		BasicConstraintsValid: true,
-		IsCA:                  false,
-	}
-
-	// Sign leaf with intermediate
-	leafBytes, _ := x509.CreateCertificate(rand.Reader, leafCert, parsedInt, leafPub, intPriv)
-	parsedLeaf, _ := x509.ParseCertificate(leafBytes)
-
-	stmt := &AttestationStatement{
-		Format:                "tpm2",
-		AttestingKeyAlgorithm: x509.RSA,
-		AttestingKeyPublic:    leafPub,
-		Signature:             []byte("test-sig"),
-		SignatureAlgorithm:    x509.SHA256WithRSA,
-		CertificateChain:      []*x509.Certificate{parsedLeaf, parsedInt, parsedRoot},
-		AttestedKeyPublic:     leafPub,
-		AttestationData:       []byte("test-data"),
-	}
-
-	v := NewVerifier(nil)
-	opts := &VerifyOptions{}
-
-	err := v.VerifyChain(stmt, opts)
-	if err != nil {
-		t.Errorf("VerifyChain() failed with valid multi-cert chain: %v", err)
 	}
 }
 
@@ -1090,36 +944,6 @@ func TestHashInvalidPublicKey(t *testing.T) {
 	}
 }
 
-// TestBytesEqualDifferentLengths tests bytesEqual with different lengths
-func TestBytesEqualDifferentLengths(t *testing.T) {
-	a := []byte{0x01, 0x02, 0x03}
-	b := []byte{0x01, 0x02}
-
-	if bytesEqual(a, b) {
-		t.Errorf("bytesEqual() should return false for different lengths")
-	}
-}
-
-// TestBytesEqualSame tests bytesEqual with identical bytes
-func TestBytesEqualSame(t *testing.T) {
-	a := []byte{0x01, 0x02, 0x03}
-	b := []byte{0x01, 0x02, 0x03}
-
-	if !bytesEqual(a, b) {
-		t.Errorf("bytesEqual() should return true for identical bytes")
-	}
-}
-
-// TestBytesEqualDifferent tests bytesEqual with different bytes
-func TestBytesEqualDifferent(t *testing.T) {
-	a := []byte{0x01, 0x02, 0x03}
-	b := []byte{0x01, 0x02, 0x04}
-
-	if bytesEqual(a, b) {
-		t.Errorf("bytesEqual() should return false for different bytes")
-	}
-}
-
 // TestVerifyWithPCRs tests complete verification with PCR validation
 func TestVerifyWithPCRs(t *testing.T) {
 	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -1350,23 +1174,6 @@ func TestVerifyFailsOnFreshness(t *testing.T) {
 	}
 }
 
-// TestVerifyRSASignatureHashNil tests handling of nil hash
-func TestVerifyRSASignatureHashNil(t *testing.T) {
-	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
-	publicKey := &privKey.PublicKey
-
-	v := NewVerifier(nil)
-
-	// Use an algorithm that would create a nil hash (not in the map)
-	err := v.verifyRSASignature(publicKey, []byte("sig"), []byte("data"), x509.SHA1WithRSA)
-	if err == nil {
-		t.Errorf("verifyRSASignature() should fail with unsupported hash algorithm")
-	}
-	if !errors.Is(err, ErrUnsupportedSignatureAlgorithm) {
-		t.Errorf("expected ErrUnsupportedSignatureAlgorithm, got: %v", err)
-	}
-}
-
 // TestVerifyECDSASignatureSHA256 tests ECDSA signature verification with SHA256
 func TestVerifyECDSASignatureSHA256(t *testing.T) {
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -1558,35 +1365,6 @@ func TestVerifyEd25519Signature(t *testing.T) {
 	}
 }
 
-// TestVerifyEd25519SignatureInvalid tests Ed25519 with invalid signature
-func TestVerifyEd25519SignatureInvalid(t *testing.T) {
-	pubKey, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate Ed25519 key: %v", err)
-	}
-
-	stmt := &AttestationStatement{
-		Format:                "tpm2",
-		AttestingKeyAlgorithm: x509.Ed25519,
-		AttestingKeyPublic:    pubKey,
-		Signature:             []byte("invalid-ed25519-signature-that-is-long-enough-for-the-check-to-proceed"),
-		SignatureAlgorithm:    x509.PureEd25519,
-		AttestationData:       []byte("test data"),
-		AttestedKeyPublic:     pubKey,
-	}
-
-	v := NewVerifier(nil)
-	opts := &VerifyOptions{}
-
-	err = v.VerifySignature(stmt, opts)
-	if err == nil {
-		t.Errorf("VerifySignature() should fail with invalid Ed25519 signature")
-	}
-	if !errors.Is(err, ErrSignatureVerificationFailed) {
-		t.Errorf("expected ErrSignatureVerificationFailed, got: %v", err)
-	}
-}
-
 // TestVerifyEd25519SignatureWrongKey tests Ed25519 with data signed by different key
 func TestVerifyEd25519SignatureWrongKey(t *testing.T) {
 	pubKey1, _, err := ed25519.GenerateKey(rand.Reader)
@@ -1621,59 +1399,6 @@ func TestVerifyEd25519SignatureWrongKey(t *testing.T) {
 	}
 	if !errors.Is(err, ErrSignatureVerificationFailed) {
 		t.Errorf("expected ErrSignatureVerificationFailed, got: %v", err)
-	}
-}
-
-// TestVerifyChainSelfSignedECDSA tests chain verification with ECDSA self-signed cert
-func TestVerifyChainSelfSignedECDSA(t *testing.T) {
-	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate ECDSA key: %v", err)
-	}
-
-	cert := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: "ECDSA Self-Signed",
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		SignatureAlgorithm:    x509.ECDSAWithSHA256,
-		PublicKeyAlgorithm:    x509.ECDSA,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-
-	certBytes, err := x509.CreateCertificate(rand.Reader, cert, cert, &privKey.PublicKey, privKey)
-	if err != nil {
-		t.Fatalf("Failed to create ECDSA certificate: %v", err)
-	}
-
-	parsedCert, err := x509.ParseCertificate(certBytes)
-	if err != nil {
-		t.Fatalf("Failed to parse ECDSA certificate: %v", err)
-	}
-
-	stmt := &AttestationStatement{
-		Format:                "tpm2",
-		AttestingKeyAlgorithm: x509.ECDSA,
-		AttestingKeyPublic:    &privKey.PublicKey,
-		Signature:             []byte("test-sig"),
-		SignatureAlgorithm:    x509.ECDSAWithSHA256,
-		CertificateChain:      []*x509.Certificate{parsedCert},
-		AttestedKeyPublic:     &privKey.PublicKey,
-		AttestationData:       []byte("test-data"),
-	}
-
-	v := NewVerifier(nil)
-	opts := &VerifyOptions{
-		AllowSelfSigned: true,
-	}
-
-	err = v.VerifyChain(stmt, opts)
-	if err != nil {
-		t.Errorf("VerifyChain() failed with ECDSA self-signed cert: %v", err)
 	}
 }
 

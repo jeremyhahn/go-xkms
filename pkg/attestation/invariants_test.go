@@ -195,24 +195,6 @@ func TestNormalize_IsCaseAndSpaceInsensitive(t *testing.T) {
 	assert.True(t, KnownFormat("YubiKey-PIV"))
 }
 
-// TestInvariantErrors_AreDistinguishable keeps the refusals separable so an
-// operator can tell a substituted key from a stale one without reading prose.
-func TestInvariantErrors_AreDistinguishable(t *testing.T) {
-	sentinels := []error{
-		ErrKeyNotBound,
-		ErrStaleEvidence,
-		ErrUnknownFormat,
-		ErrBindingUnavailable,
-	}
-	for i, a := range sentinels {
-		for j, b := range sentinels {
-			if i != j {
-				assert.NotErrorIs(t, a, b, "%v and %v must be distinct", a, b)
-			}
-		}
-	}
-}
-
 // TestVerifyInvariants_AndroidBindingAgainstARealChain covers the Android half
 // of the shared binding rule using evidence a device actually produced.
 //

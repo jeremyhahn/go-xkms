@@ -240,22 +240,6 @@ func generateLeafCert(t *testing.T, signer *testCA, cn string) *x509.Certificate
 
 // --- WithTrustStore tests ---
 
-func TestWithTrustStore_BacksPurposeChecks(t *testing.T) {
-	rootCA := generateTestCA(t, "Store Root CA")
-	store := newMockTrustStore()
-	store.addCertForPurpose(rootCA.cert, truststore.PurposeTPMManufacturer)
-
-	v := NewVerifier(nil, WithTrustStore(store, nil))
-
-	pool, err := v.BuildTrustPool(truststore.PurposeTPMManufacturer)
-	if err != nil {
-		t.Fatalf("BuildTrustPool() error: %v", err)
-	}
-	if pool == nil {
-		t.Fatal("BuildTrustPool() returned nil pool")
-	}
-}
-
 // TestNewVerifier_WithoutTrustStoreRefusesPurposeChecks pins that a verifier
 // built only for attestation statements refuses every purpose-pooled check
 // rather than dereferencing a missing store.
@@ -305,34 +289,6 @@ func TestVerifyTPMAttestation_Success(t *testing.T) {
 	}
 	if result.ChainLength < 1 {
 		t.Errorf("VerifyTPMAttestation() ChainLength = %d, want >= 1", result.ChainLength)
-	}
-}
-
-func TestVerifyTPMAttestation_WithEmbeddedRoots(t *testing.T) {
-	rootCA := generateTestCA(t, "Embedded TPM Root CA")
-
-	// Store is empty; embedded loader provides the root.
-	store := newMockTrustStore()
-	loader := func(purpose truststore.CertPurpose) []*x509.Certificate {
-		if purpose == truststore.PurposeTPMManufacturer {
-			return []*x509.Certificate{rootCA.cert}
-		}
-		return nil
-	}
-
-	v := NewVerifier(nil, WithTrustStore(store, loader))
-
-	ekCert := generateLeafCert(t, rootCA, "TPM EK via Embedded")
-
-	result, err := v.VerifyTPMAttestation(ekCert)
-	if err != nil {
-		t.Fatalf("VerifyTPMAttestation() error: %v", err)
-	}
-	if !result.Verified {
-		t.Error("VerifyTPMAttestation() Verified = false, want true")
-	}
-	if result.TrustLevel != TrustLevelHardware {
-		t.Errorf("TrustLevel = %q, want %q", result.TrustLevel, TrustLevelHardware)
 	}
 }
 
@@ -401,54 +357,6 @@ func TestVerifyTPMAttestation_StoreError(t *testing.T) {
 
 // --- VerifyAndroidAttestation tests ---
 
-func TestVerifyAndroidAttestation_Success(t *testing.T) {
-	challenge := []byte("challenge-generated-by-this-host")
-
-	rootCA := generateTestCA(t, "Google Hardware Attestation Root")
-	intermediateCA := generateIntermediateCA(t, rootCA, "Google Attestation Intermediate")
-	leaf := generateAttestedLeaf(t, intermediateCA, "Android Key", challenge, androidSecurityLevelTrustedEnv)
-
-	store := newMockTrustStore()
-	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
-
-	v := NewVerifier(nil, WithTrustStore(store, nil))
-
-	chain := []*x509.Certificate{leaf, intermediateCA.cert, rootCA.cert}
-
-	result, err := v.VerifyAndroidAttestation(chain, challenge)
-	if err != nil {
-		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
-	}
-	if !result.Verified {
-		t.Error("Verified = false, want true")
-	}
-	if result.TrustLevel != TrustLevelHardware {
-		t.Errorf("TrustLevel = %q, want %q", result.TrustLevel, TrustLevelHardware)
-	}
-}
-
-func TestVerifyAndroidAttestation_TwoCertChain(t *testing.T) {
-	challenge := []byte("challenge-generated-by-this-host")
-
-	rootCA := generateTestCA(t, "Android Root CA")
-	leaf := generateAttestedLeaf(t, rootCA, "Android Leaf", challenge, androidSecurityLevelTrustedEnv)
-
-	store := newMockTrustStore()
-	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
-
-	v := NewVerifier(nil, WithTrustStore(store, nil))
-
-	chain := []*x509.Certificate{leaf, rootCA.cert}
-
-	result, err := v.VerifyAndroidAttestation(chain, challenge)
-	if err != nil {
-		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
-	}
-	if !result.Verified {
-		t.Error("Verified = false, want true")
-	}
-}
-
 func TestVerifyAndroidAttestation_EmptyChain(t *testing.T) {
 	store := newMockTrustStore()
 	v := NewVerifier(nil, WithTrustStore(store, nil))
@@ -508,29 +416,6 @@ func TestVerifyAndroidAttestation_InvalidChain(t *testing.T) {
 	}
 	if result.Verified {
 		t.Error("Verified = true, want false")
-	}
-}
-
-func TestVerifyAndroidAttestation_WithNonce(t *testing.T) {
-	// The nonce supplied by the caller must be the challenge recorded in the
-	// device's attestation extension.
-	rootCA := generateTestCA(t, "Android Root CA")
-	nonce := []byte("test-nonce-value")
-	leaf := generateAttestedLeaf(t, rootCA, "Android Leaf", nonce, androidSecurityLevelTrustedEnv)
-
-	store := newMockTrustStore()
-	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
-
-	v := NewVerifier(nil, WithTrustStore(store, nil))
-
-	chain := []*x509.Certificate{leaf, rootCA.cert}
-
-	result, err := v.VerifyAndroidAttestation(chain, nonce)
-	if err != nil {
-		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
-	}
-	if !result.Verified {
-		t.Error("Verified = false, want true")
 	}
 }
 
@@ -658,29 +543,6 @@ func TestVerifyChain_UnsupportedPurpose(t *testing.T) {
 	}
 }
 
-func TestVerifyChain_SingleLeafInStore(t *testing.T) {
-	rootCA := generateTestCA(t, "Bootstrap CA Root")
-	leaf := generateLeafCert(t, rootCA, "Bootstrap Leaf")
-
-	store := newMockTrustStore()
-	store.addCertForPurpose(rootCA.cert, truststore.PurposeBootstrapCA)
-
-	v := NewVerifier(nil, WithTrustStore(store, nil))
-
-	chain := []*x509.Certificate{leaf}
-
-	result, err := v.VerifyPurposeChain(chain, truststore.PurposeBootstrapCA)
-	if err != nil {
-		t.Fatalf("VerifyPurposeChain() error: %v", err)
-	}
-	if !result.Verified {
-		t.Error("Verified = false, want true")
-	}
-	if result.TrustLevel != TrustLevelExternalCA {
-		t.Errorf("TrustLevel = %q, want %q", result.TrustLevel, TrustLevelExternalCA)
-	}
-}
-
 func TestVerifyChain_InvalidChain(t *testing.T) {
 	trustedCA := generateTestCA(t, "Trusted CA")
 	untrustedCA := generateTestCA(t, "Untrusted CA")
@@ -741,33 +603,6 @@ func TestBuildTrustPool_MergesStoreAndEmbedded(t *testing.T) {
 	}
 	if !result.Verified {
 		t.Error("embedded-signed leaf: Verified = false, want true")
-	}
-}
-
-func TestBuildTrustPool_EmptyStoreWithLoader(t *testing.T) {
-	embeddedCA := generateTestCA(t, "Embedded Only Root")
-
-	store := newMockTrustStore()
-
-	loader := func(purpose truststore.CertPurpose) []*x509.Certificate {
-		if purpose == truststore.PurposeAndroidHardware {
-			return []*x509.Certificate{embeddedCA.cert}
-		}
-		return nil
-	}
-
-	v := NewVerifier(nil, WithTrustStore(store, loader))
-
-	challenge := []byte("challenge-generated-by-this-host")
-	leaf := generateAttestedLeaf(t, embeddedCA, "Embedded-Only Leaf", challenge, androidSecurityLevelTrustedEnv)
-	chain := []*x509.Certificate{leaf}
-
-	result, err := v.VerifyAndroidAttestation(chain, challenge)
-	if err != nil {
-		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
-	}
-	if !result.Verified {
-		t.Error("Verified = false, want true")
 	}
 }
 

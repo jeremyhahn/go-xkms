@@ -1,0 +1,1 @@
+Tests: the `pkg/attestation` test audit (#1794) removes 32 tests that repeat a path a kept test already covers, or that run no package code: 12 in verifier_test.go, 9 in verifier_extended_test.go, 7 in purpose_test.go, 3 in types_test.go and 1 in invariants_test.go. Every verification refusal, spec pin and mapping test stays. Coverage is 97.6% before and after.

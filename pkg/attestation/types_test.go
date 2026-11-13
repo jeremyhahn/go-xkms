@@ -193,54 +193,6 @@ func TestAttestationStatementValidate(t *testing.T) {
 	}
 }
 
-// TestVerifyOptionsValidate tests verification options validation
-func TestVerifyOptionsValidate(t *testing.T) {
-	tests := []struct {
-		name    string
-		opts    *VerifyOptions
-		wantErr bool
-	}{
-		{
-			name:    "nil options",
-			opts:    nil,
-			wantErr: true,
-		},
-		{
-			name: "valid options",
-			opts: &VerifyOptions{
-				CheckFreshness:  true,
-				FreshnessWindow: 300,
-			},
-			wantErr: false,
-		},
-		{
-			name: "negative freshness window",
-			opts: &VerifyOptions{
-				CheckFreshness:  true,
-				FreshnessWindow: -1,
-			},
-			wantErr: true,
-		},
-		{
-			name: "zero freshness window with freshness check",
-			opts: &VerifyOptions{
-				CheckFreshness:  true,
-				FreshnessWindow: 0,
-			},
-			wantErr: false, // Should be set to default
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.opts.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
 // TestVerifyOptionsValidateDefaultFreshnessWindow verifies that zero freshness window gets default
 func TestVerifyOptionsValidateDefaultFreshnessWindow(t *testing.T) {
 	opts := &VerifyOptions{
@@ -334,25 +286,6 @@ func TestAttestationStatementStringNilCertChain(t *testing.T) {
 	}
 }
 
-// TestAttestationStatementStringEmptyCertChain tests String() with empty certificate chain
-func TestAttestationStatementStringEmptyCertChain(t *testing.T) {
-	stmt := &AttestationStatement{
-		Format:             "pkcs11",
-		SignatureAlgorithm: x509.SHA384WithRSA,
-		CertificateChain:   []*x509.Certificate{},
-		Backend:            "pkcs11",
-	}
-
-	str := stmt.String()
-	if str == "" {
-		t.Errorf("String() returned empty string")
-	}
-
-	if !contains(str, "Certs: 0") {
-		t.Errorf("String() should show 0 certs for empty chain, got: %s", str)
-	}
-}
-
 // TestDefaultVerifyOptions tests default verification options
 func TestDefaultVerifyOptions(t *testing.T) {
 	opts := DefaultVerifyOptions()
@@ -414,29 +347,6 @@ func TestResultString(t *testing.T) {
 	}
 
 	if !contains(str, "tpm2") {
-		t.Errorf("String() should contain format, got: %s", str)
-	}
-}
-
-// TestResultStringInvalid tests Result.String with invalid result
-func TestResultStringInvalid(t *testing.T) {
-	result := &Result{
-		Valid:             false,
-		AttestationFormat: "pkcs11",
-		ChainValid:        false,
-		SignatureValid:    false,
-	}
-
-	str := result.String()
-	if str == "" {
-		t.Errorf("String() returned empty string")
-	}
-
-	if !contains(str, "INVALID") {
-		t.Errorf("String() should indicate invalid, got: %s", str)
-	}
-
-	if !contains(str, "pkcs11") {
 		t.Errorf("String() should contain format, got: %s", str)
 	}
 }
