@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **Integration test inventory (#1607 slice a).** `docs/testing/integration-inventory.md` lists the 48 `test/integration` directories by layer (CLI E2E, direct client, service, store, DAO, other), citing the `file:line` that decides each one, with a slice (b) verdict for each: keep, move to a unit suite, rewrite as CLI E2E, or remove. It also lists all 47 integration `time.Sleep` calls with duration and purpose, and notes that `test/integration/api` is not CLI-only. Docs only.
+
 ### Security
 
 - **Go toolchain 1.27.4 for GO-2026-6859, `net/http` (#2058).** govulncheck reports GO-2026-6859 in the go1.27.3 standard library, fixed in go1.27.4 (2026-11-02). The `go` line of `go.mod`, `sdk/go`, `web/desktop` and `xkey`, every workflow `GO_VERSION`, every `golang:` builder and test image tag, the Go tarball downloads in `xkey`, and the digest-pinned `GO_IMAGE` (`scripts/tool-pins.sh`, `Dockerfile.cli`, `release.yml` `GO_IMAGE_DIGEST`, now the `golang:1.27.4-bookworm` index `sha256:4fa7c968…`) move to 1.27.4. No dependency or code change.
