@@ -840,6 +840,10 @@ func (e *errorUserStore) GetByEmail(ctx context.Context, email string) (pkgwebau
 	return e.UserStore.GetByEmail(ctx, email)
 }
 
+func (e *errorUserStore) GetByUsername(ctx context.Context, username string) (pkgwebauthn.User, error) {
+	return e.UserStore.GetByUsername(ctx, username)
+}
+
 func (e *errorUserStore) Create(ctx context.Context, email, displayName string) (pkgwebauthn.User, error) {
 	if e.createErr != nil {
 		return nil, e.createErr
