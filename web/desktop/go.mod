@@ -137,8 +137,8 @@ require (
 	github.com/jeremyhahn/go-enclave v0.11.1-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.3.1-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.9.1-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.58.3-alpha // indirect
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.58.3-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.58.4-alpha // indirect
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.58.4-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.24.3-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.7.1-alpha // indirect
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha // indirect

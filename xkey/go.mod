@@ -30,7 +30,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jeremyhahn/go-enclave v0.11.1-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.2-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.58.3-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.58.4-alpha
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
@@ -162,7 +162,7 @@ require (
 	github.com/jeremyhahn/go-codec v1.5.1-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.3.1-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.9.1-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.58.3-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.58.4-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.24.3-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.7.1-alpha // indirect
 	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha // indirect

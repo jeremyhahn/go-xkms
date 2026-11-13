@@ -37,8 +37,8 @@ require (
 	github.com/jeremyhahn/go-enclave v0.11.1-alpha
 	github.com/jeremyhahn/go-frost v0.3.1-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.2-alpha
-	github.com/jeremyhahn/go-qrdb v0.58.3-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.58.3-alpha
+	github.com/jeremyhahn/go-qrdb v0.58.4-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.58.4-alpha
 	github.com/jeremyhahn/go-truststrap v0.7.1-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
 	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha
