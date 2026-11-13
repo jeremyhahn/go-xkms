@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -54,8 +55,10 @@ func TestBuildClusterACMEOptions_Defaults(t *testing.T) {
 		t.Fatalf("buildClusterCAOptions: %v", err)
 	}
 
-	if opts.TrustDomain != defaultRaftTrustDomain {
-		t.Errorf("TrustDomain = %q, want %q", opts.TrustDomain, defaultRaftTrustDomain)
+	// The one cluster trust domain (trust-domain-grammar row): the raft
+	// provisioner has no default of its own.
+	if want := embeddednode.TrustDomain(s.config); opts.TrustDomain != want {
+		t.Errorf("TrustDomain = %q, want embeddednode.TrustDomain %q", opts.TrustDomain, want)
 	}
 	if opts.ACME == nil {
 		t.Fatal("ACME options are nil")
@@ -148,8 +151,8 @@ func TestBuildClusterACMEOptions_ExplicitOverrides(t *testing.T) {
 		t.Fatalf("buildClusterCAOptions: %v", err)
 	}
 
-	if opts.TrustDomain != "prod.cluster" {
-		t.Errorf("TrustDomain = %q, want prod.cluster", opts.TrustDomain)
+	if opts.TrustDomain != "prod.cluster" || opts.TrustDomain != embeddednode.TrustDomain(s.config) {
+		t.Errorf("TrustDomain = %q, want prod.cluster (embeddednode.TrustDomain)", opts.TrustDomain)
 	}
 	if opts.KeyBackend != "tpm2" {
 		t.Errorf("KeyBackend = %q, want tpm2", opts.KeyBackend)

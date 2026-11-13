@@ -48,6 +48,7 @@ import (
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
 )
@@ -592,12 +593,8 @@ func buildClusterPreSignHooks(cfg *config.Config) (*handlers.OrderPreSignHookReg
 	if err != nil {
 		return nil, err
 	}
-	trustDomain := cfg.Cluster.RaftEnrollment.TrustDomain
-	if trustDomain == "" {
-		trustDomain = defaultClusterTrustDomain
-	}
 	registry := handlers.NewOrderPreSignHookRegistry()
-	registry.Register(handlers.NewClusterNodeURISANHook(trustDomain, members))
+	registry.Register(handlers.NewClusterNodeURISANHook(clusterACMETrustDomain(cfg), members))
 	return registry, nil
 }
 
@@ -636,10 +633,13 @@ func clusterNoncePrefix(cfg *config.Config) string {
 	return acmenonce.DerivePrefix(strconv.FormatUint(cfg.Cluster.NodeID, 10), noncePrefixSalt)
 }
 
-// defaultClusterTrustDomain mirrors pkg/server's defaultRaftTrustDomain so the
-// ACME server stamps the same SPIFFE trust domain the node provisioner uses
-// when the operator leaves cluster.raft_enrollment.trust_domain unset.
-const defaultClusterTrustDomain = "xkms.cluster"
+// clusterACMETrustDomain is the SPIFFE trust domain the ACME server stamps
+// into cluster node certificates: the one cluster trust domain,
+// embeddednode.TrustDomain, which the node provisioner and the embedded
+// go-qrdb node (Auth.ClusterTrustDomain) use too.
+func clusterACMETrustDomain(cfg *config.Config) string {
+	return embeddednode.TrustDomain(cfg)
+}
 
 // buildACMERouter mounts the ACME REST handlers on a gorilla/mux router
 // under the given directory path prefix. The route layout follows
