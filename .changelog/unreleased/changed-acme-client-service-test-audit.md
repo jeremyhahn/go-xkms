@@ -1,0 +1,1 @@
+Tests: `pkg/acme/client/service` drops 59 of its 265 tests that covered no statement and asserted nothing a kept test does not (coverage unchanged in the tpm_simulator and codec-only builds), and two sleeps standing in for synchronisation: the challenge server binds before `Start` returns, and the context-cancel orchestrator test now waits on the renewal goroutine (#1794).

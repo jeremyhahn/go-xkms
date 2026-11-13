@@ -102,99 +102,6 @@ func TestAccountManager_Add_InvalidConfig_NilConfig(t *testing.T) {
 	assert.Contains(t, target.Reason, "nil")
 }
 
-// TestAccountManager_Add_InvalidConfig_MissingDirectory verifies that an account
-// without a DirectoryURL is rejected.
-func TestAccountManager_Add_InvalidConfig_MissingDirectory(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger())
-	ctx := context.Background()
-
-	acctCfg := validAccountConfig()
-	acctCfg.DirectoryURL = ""
-	err := am.Add(ctx, "no-dir", acctCfg)
-	var target ErrInvalidAccountConfig
-	require.True(t, errors.As(err, &target))
-	assert.Contains(t, target.Reason, "directory URL")
-}
-
-// TestAccountManager_Add_InvalidConfig_MissingEmail verifies that an account
-// without an Email is rejected.
-func TestAccountManager_Add_InvalidConfig_MissingEmail(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger())
-	ctx := context.Background()
-
-	acctCfg := validAccountConfig()
-	acctCfg.Email = ""
-	err := am.Add(ctx, "no-email", acctCfg)
-	var target ErrInvalidAccountConfig
-	require.True(t, errors.As(err, &target))
-	assert.Contains(t, target.Reason, "email")
-}
-
-// TestAccountManager_Add_InvalidConfig_NilKey verifies that an account
-// with a nil Key config is rejected.
-func TestAccountManager_Add_InvalidConfig_NilKey(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger())
-	ctx := context.Background()
-
-	acctCfg := validAccountConfig()
-	acctCfg.Key = nil
-	err := am.Add(ctx, "no-key", acctCfg)
-	var target ErrInvalidAccountConfig
-	require.True(t, errors.As(err, &target))
-	assert.Contains(t, target.Reason, "key configuration")
-}
-
-// TestAccountManager_Add_InvalidConfig_MissingAlgorithm verifies that an account
-// with a KeyConfig missing the Algorithm field is rejected.
-func TestAccountManager_Add_InvalidConfig_MissingAlgorithm(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger())
-	ctx := context.Background()
-
-	acctCfg := validAccountConfig()
-	acctCfg.Key.Algorithm = ""
-	err := am.Add(ctx, "no-algo", acctCfg)
-	var target ErrInvalidAccountConfig
-	require.True(t, errors.As(err, &target))
-	assert.Contains(t, target.Reason, "key algorithm")
-}
-
-// TestAccountManager_Add_InvalidConfig_MissingStore verifies that an account
-// with a KeyConfig missing the Store field is rejected.
-func TestAccountManager_Add_InvalidConfig_MissingStore(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger())
-	ctx := context.Background()
-
-	acctCfg := validAccountConfig()
-	acctCfg.Key.Store = ""
-	err := am.Add(ctx, "no-store", acctCfg)
-	var target ErrInvalidAccountConfig
-	require.True(t, errors.As(err, &target))
-	assert.Contains(t, target.Reason, "key store")
-}
-
-// TestAccountManager_Remove_Success verifies that removing an existing account
-// succeeds and a subsequent Get returns ErrAccountNotFound.
-func TestAccountManager_Remove_Success(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger())
-	ctx := context.Background()
-
-	err := am.Add(ctx, "staging", validAccountConfig())
-	require.NoError(t, err)
-
-	err = am.Remove(ctx, "staging")
-	require.NoError(t, err)
-
-	_, err = am.Get("staging")
-	var target ErrAccountNotFound
-	require.True(t, errors.As(err, &target))
-}
-
 // TestAccountManager_Remove_NotFound verifies that removing a non-existent
 // account returns ErrAccountNotFound.
 func TestAccountManager_Remove_NotFound(t *testing.T) {
@@ -227,22 +134,6 @@ func TestAccountManager_Remove_ReferencedByCert(t *testing.T) {
 	assert.Contains(t, target.Reason, "referenced by certificate specs")
 }
 
-// TestAccountManager_Get_Success verifies that Get returns the same config
-// pointer that was added.
-func TestAccountManager_Get_Success(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger())
-	ctx := context.Background()
-
-	acctCfg := validAccountConfig()
-	err := am.Add(ctx, "main", acctCfg)
-	require.NoError(t, err)
-
-	got, err := am.Get("main")
-	require.NoError(t, err)
-	assert.Same(t, acctCfg, got)
-}
-
 // TestAccountManager_Get_NotFound verifies that Get returns ErrAccountNotFound
 // for a non-existent account name.
 func TestAccountManager_Get_NotFound(t *testing.T) {
@@ -253,16 +144,6 @@ func TestAccountManager_Get_NotFound(t *testing.T) {
 	var target ErrAccountNotFound
 	require.True(t, errors.As(err, &target))
 	assert.Equal(t, "ghost", target.Name)
-}
-
-// TestAccountManager_List_Empty verifies that List returns an empty map when
-// no accounts have been configured.
-func TestAccountManager_List_Empty(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger())
-
-	accounts := am.List()
-	assert.Empty(t, accounts)
 }
 
 // TestAccountManager_List_Multiple verifies that List returns all added accounts.
@@ -283,22 +164,6 @@ func TestAccountManager_List_Multiple(t *testing.T) {
 	assert.Len(t, accounts, 2)
 	assert.Contains(t, accounts, "alpha")
 	assert.Contains(t, accounts, "beta")
-}
-
-// TestGenerateSigner_ECDSA_P256 verifies that ECDSA with P-256 curve produces
-// a valid *ecdsa.PrivateKey on the correct curve.
-func TestGenerateSigner_ECDSA_P256(t *testing.T) {
-	keyCfg := &KeyConfig{
-		Algorithm: "ECDSA",
-		Store:     "software",
-		ECC:       &ECCConfig{Curve: "P-256"},
-	}
-	signer, err := generateSigner(keyCfg)
-	require.NoError(t, err)
-
-	key, ok := signer.(*ecdsa.PrivateKey)
-	require.True(t, ok, "expected *ecdsa.PrivateKey")
-	assert.Equal(t, elliptic.P256(), key.Curve)
 }
 
 // TestGenerateSigner_ECDSA_P384 verifies that ECDSA with P-384 curve produces
@@ -459,22 +324,6 @@ func TestGenerateSigner_ECDSA_InvalidCurve(t *testing.T) {
 	require.True(t, errors.As(err, &target))
 	assert.Equal(t, "ECDSA", target.Algorithm)
 	assert.Contains(t, target.Error(), "unsupported curve")
-}
-
-// TestValidateAccountConfig_Valid verifies that a fully populated config
-// passes validation without error.
-func TestValidateAccountConfig_Valid(t *testing.T) {
-	err := validateAccountConfig("test", validAccountConfig())
-	assert.NoError(t, err)
-}
-
-// TestValidateAccountConfig_Nil verifies that a nil config returns
-// ErrInvalidAccountConfig.
-func TestValidateAccountConfig_Nil(t *testing.T) {
-	err := validateAccountConfig("test", nil)
-	var target ErrInvalidAccountConfig
-	require.True(t, errors.As(err, &target))
-	assert.Contains(t, target.Reason, "nil")
 }
 
 // TestValidateAccountConfig_MissingFields uses a table-driven approach to

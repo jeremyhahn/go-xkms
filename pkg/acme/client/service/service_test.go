@@ -38,14 +38,6 @@ func TestNewService(t *testing.T) {
 	assert.Equal(t, cfg, svc.Config())
 }
 
-// TestNewService_DefaultConfig verifies NewService works with default config.
-func TestNewService_DefaultConfig(t *testing.T) {
-	cfg := DefaultConfig()
-	svc, err := NewService(cfg, testLogger())
-	require.NoError(t, err)
-	require.NotNil(t, svc)
-}
-
 // TestService_Accounts verifies the Accounts accessor returns the account manager.
 func TestService_Accounts(t *testing.T) {
 	cfg := DefaultConfig()
@@ -105,21 +97,6 @@ func TestService_Devices(t *testing.T) {
 	devices := dm.List("")
 	assert.Len(t, devices, 1)
 	assert.Contains(t, devices, "node-1")
-}
-
-// TestService_StartStopRenewal verifies the renewal lifecycle methods.
-func TestService_StartStopRenewal(t *testing.T) {
-	cfg := DefaultConfig()
-	svc, err := NewService(cfg, testLogger())
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	err = svc.StartRenewal(ctx)
-	require.NoError(t, err)
-
-	err = svc.StopRenewal()
-	require.NoError(t, err)
 }
 
 // TestService_StartRenewalTwice verifies that starting renewal twice fails.

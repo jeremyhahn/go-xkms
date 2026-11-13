@@ -356,10 +356,3 @@ func TestErrInvalidEKCertificatePEM(t *testing.T) {
 	assert.Contains(t, err.Error(), `"edge-01"`)
 	assert.Contains(t, err.Error(), "not a valid PEM-encoded certificate")
 }
-
-// Verify errors.Is works correctly for wrapped error types.
-func TestErrWrapping_ErrorsIs(t *testing.T) {
-	target := errors.New("target")
-	wrapped := ErrSDKClientCreation{Err: target}
-	assert.True(t, errors.Is(wrapped, target))
-}

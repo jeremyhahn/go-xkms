@@ -15,12 +15,9 @@ package service
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -58,18 +55,6 @@ func testCertificateManager(cfg *Config) CertificateManager {
 	return NewCertificateManager(cfg, am, deployer, logger)
 }
 
-// TestNewCertificateManager verifies the constructor returns a non-nil
-// CertificateManager with the provided configuration.
-func TestNewCertificateManager(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Accounts["test-ca"] = validAccountConfig()
-	cfg.Certificates["web"] = testCertSpec("test-ca")
-
-	cm := testCertificateManager(cfg)
-
-	require.NotNil(t, cm)
-}
-
 // TestCertificateManager_List_All verifies that List with an empty filter
 // returns all configured certificate specs.
 func TestCertificateManager_List_All(t *testing.T) {
@@ -103,19 +88,6 @@ func TestCertificateManager_List_FilterByAccount(t *testing.T) {
 	assert.Contains(t, result, "web")
 	assert.Contains(t, result, "mail")
 	assert.NotContains(t, result, "api")
-}
-
-// TestCertificateManager_List_FilterNoMatch verifies that List returns an
-// empty map when the filter matches no account.
-func TestCertificateManager_List_FilterNoMatch(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Accounts["test-ca"] = validAccountConfig()
-	cfg.Certificates["web"] = testCertSpec("test-ca")
-
-	cm := testCertificateManager(cfg)
-	result := cm.List("nonexistent-account")
-
-	assert.Empty(t, result)
 }
 
 // TestCertificateManager_Show_NotFound verifies that Show returns
@@ -169,42 +141,6 @@ func TestCertificateManager_Renew_SpecNotFound(t *testing.T) {
 	assert.Equal(t, "unknown-cert", target.Name)
 }
 
-// TestCertificateManager_Revoke_NotManaged verifies that Revoke returns
-// ErrNoIssuedCertificate when the spec exists in the configuration but no
-// certificate has been issued for it.
-func TestCertificateManager_Revoke_NotManaged(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Accounts["test-ca"] = validAccountConfig()
-	cfg.Certificates["web"] = testCertSpec("test-ca")
-
-	cm := testCertificateManager(cfg)
-	err := cm.Revoke(context.Background(), "web", 0)
-
-	require.Error(t, err)
-
-	var target ErrNoIssuedCertificate
-	require.True(t, errors.As(err, &target))
-	assert.Equal(t, "web", target.Name)
-}
-
-// TestCertificateManager_Deploy_NotManaged verifies that Deploy returns
-// ErrNoIssuedCertificate when the spec exists in the configuration but no
-// certificate has been issued for it.
-func TestCertificateManager_Deploy_NotManaged(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Accounts["test-ca"] = validAccountConfig()
-	cfg.Certificates["web"] = testCertSpec("test-ca")
-
-	cm := testCertificateManager(cfg)
-	err := cm.Deploy(context.Background(), "web")
-
-	require.Error(t, err)
-
-	var target ErrNoIssuedCertificate
-	require.True(t, errors.As(err, &target))
-	assert.Equal(t, "web", target.Name)
-}
-
 // TestRequest_NilSpecKey_ReturnsTypedError verifies that Request returns a
 // typed ErrMissingKeyConfig error (and does not panic) when the certificate
 // spec has no Key configuration block.
@@ -230,25 +166,6 @@ func TestRequest_NilSpecKey_ReturnsTypedError(t *testing.T) {
 	var target ErrMissingKeyConfig
 	require.True(t, errors.As(err, &target))
 	assert.Equal(t, "web", target.Context)
-}
-
-// TestGenerateSigner_NilKeyConfig_ReturnsTypedError verifies that the private
-// generateSigner helper returns ErrMissingKeyConfig rather than panicking when
-// passed a nil *KeyConfig.
-func TestGenerateSigner_NilKeyConfig_ReturnsTypedError(t *testing.T) {
-	var (
-		signer crypto.Signer
-		err    error
-	)
-	require.NotPanics(t, func() {
-		signer, err = generateSigner(nil)
-	})
-	assert.Nil(t, signer)
-	require.Error(t, err)
-
-	var target ErrMissingKeyConfig
-	require.True(t, errors.As(err, &target))
-	assert.NotEmpty(t, target.Context)
 }
 
 // TestRevoke_SpecWithoutIssuedCert_ReturnsNoIssuedCertificate verifies that
@@ -371,34 +288,6 @@ func newCertTestManager(t *testing.T, cfg *Config) CertificateManager {
 
 	deployer := NewDeployer(logger)
 	return NewCertificateManager(cfg, am, deployer, logger)
-}
-
-// TestFakeACMEDirectory_RegisterAccount_Idempotent proves
-// testutil.FakeACMEDirectory implements RFC 8555 §7.3.1's newAccount
-// semantics for a key that already has an account: the second request
-// returns the existing account rather than an error. client.RegisterAccount
-// turns the fake's 200 response into its ErrAccountAlreadyExists success
-// path, so both calls here must return the same account URI (go-xkms#988).
-func TestFakeACMEDirectory_RegisterAccount_Idempotent(t *testing.T) {
-	fakeCert, _ := selfSignedCert(t, "example.com", 24*time.Hour)
-	server := testutil.NewFakeACMEDirectory(t, []string{"http-01"}, [][]byte{fakeCert.Raw})
-	cfg := certTestAccountAndSpec(server.DirectoryURL())
-
-	logger := testLogger()
-	am := NewAccountManager(cfg, logger).(*accountManager)
-	am.factories.Store("acct", newMemoryFactory(t))
-
-	acmeClient, err := am.Client(context.Background(), "acct")
-	require.NoError(t, err)
-
-	first, err := acmeClient.RegisterAccount()
-	require.NoError(t, err)
-	require.NotNil(t, first)
-
-	second, err := acmeClient.RegisterAccount()
-	require.NoError(t, err)
-	require.NotNil(t, second)
-	assert.Equal(t, first.URI, second.URI)
 }
 
 // TestCertificateManager_Request_Success drives Request end to end against
@@ -705,36 +594,6 @@ func TestEncodeCertPEM(t *testing.T) {
 // PEM block from an ECDSA private key.
 func TestEncodeKeyPEM_ECDSA(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	pemBytes, err := encodeKeyPEM(key)
-	require.NoError(t, err)
-	require.NotEmpty(t, pemBytes)
-
-	assert.True(t, strings.HasPrefix(string(pemBytes), "-----BEGIN PRIVATE KEY-----"),
-		"PEM output must start with PRIVATE KEY header")
-	assert.Contains(t, string(pemBytes), "-----END PRIVATE KEY-----")
-}
-
-// TestEncodeKeyPEM_RSA verifies that encodeKeyPEM produces a valid PKCS8
-// PEM block from an RSA private key.
-func TestEncodeKeyPEM_RSA(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	pemBytes, err := encodeKeyPEM(key)
-	require.NoError(t, err)
-	require.NotEmpty(t, pemBytes)
-
-	assert.True(t, strings.HasPrefix(string(pemBytes), "-----BEGIN PRIVATE KEY-----"),
-		"PEM output must start with PRIVATE KEY header")
-	assert.Contains(t, string(pemBytes), "-----END PRIVATE KEY-----")
-}
-
-// TestEncodeKeyPEM_Ed25519 verifies that encodeKeyPEM produces a valid PKCS8
-// PEM block from an Ed25519 private key.
-func TestEncodeKeyPEM_Ed25519(t *testing.T) {
-	_, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 
 	pemBytes, err := encodeKeyPEM(key)

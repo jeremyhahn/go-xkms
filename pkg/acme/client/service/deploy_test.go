@@ -34,35 +34,6 @@ func testKeyPEM() []byte {
 
 // testLogger is defined in challenge_test.go
 
-func TestNewDeployer(t *testing.T) {
-	deployer := NewDeployer(testLogger())
-	require.NotNil(t, deployer)
-	assert.NotNil(t, deployer.logger)
-}
-
-func TestDeployer_Deploy_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	certPath := filepath.Join(tmpDir, "cert.pem")
-	keyPath := filepath.Join(tmpDir, "key.pem")
-
-	deployer := NewDeployer(testLogger())
-	cfg := &DeployConfig{
-		CertPath: certPath,
-		KeyPath:  keyPath,
-	}
-
-	err := deployer.Deploy(context.Background(), testCertPEM(), testKeyPEM(), cfg)
-	require.NoError(t, err)
-
-	certData, err := os.ReadFile(certPath)
-	require.NoError(t, err)
-	assert.Equal(t, testCertPEM(), certData)
-
-	keyData, err := os.ReadFile(keyPath)
-	require.NoError(t, err)
-	assert.Equal(t, testKeyPEM(), keyData)
-}
-
 func TestDeployer_Deploy_WithPostHook(t *testing.T) {
 	tmpDir := t.TempDir()
 	certPath := filepath.Join(tmpDir, "cert.pem")

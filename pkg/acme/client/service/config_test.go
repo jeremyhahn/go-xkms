@@ -52,58 +52,6 @@ func validTestConfigWithCert() *Config {
 	return cfg
 }
 
-// TestDefaultConfig_MultiAccountFields verifies that DefaultConfig returns
-// non-nil multi-account fields with expected default values for the new
-// configuration model (storage, XKMS, logging, challenge, maps).
-func TestDefaultConfig_MultiAccountFields(t *testing.T) {
-	cfg := DefaultConfig()
-	require.NotNil(t, cfg)
-
-	// Storage
-	assert.Equal(t, "filesystem", cfg.Storage.Backend)
-	require.NotNil(t, cfg.Storage.Options)
-	assert.Contains(t, cfg.Storage.Options, "path")
-
-	// XKMS
-	assert.Equal(t, "software", cfg.XKMS.Backend)
-	require.NotNil(t, cfg.XKMS.Options)
-	assert.Contains(t, cfg.XKMS.Options, "path")
-
-	// Logging
-	assert.Equal(t, "info", cfg.Logging.Level)
-	assert.Equal(t, "json", cfg.Logging.Format)
-	assert.Equal(t, "stdout", cfg.Logging.Output)
-
-	// Challenge
-	assert.Equal(t, "80", cfg.Challenge.HTTP01.Port)
-	assert.Equal(t, 300, cfg.Challenge.DNS01.TTL)
-
-	// Accounts and Certificates maps
-	require.NotNil(t, cfg.Accounts)
-	assert.Empty(t, cfg.Accounts)
-	require.NotNil(t, cfg.Certificates)
-	assert.Empty(t, cfg.Certificates)
-}
-
-// TestDefaultConfig_NotNilFields verifies that all returned config sections
-// have non-zero values where expected.
-func TestDefaultConfig_NotNilFields(t *testing.T) {
-	cfg := DefaultConfig()
-	require.NotNil(t, cfg)
-
-	assert.NotEmpty(t, cfg.Storage.Backend)
-	assert.NotEmpty(t, cfg.Storage.Options)
-	assert.NotEmpty(t, cfg.XKMS.Backend)
-	assert.NotEmpty(t, cfg.XKMS.Options)
-	assert.NotEmpty(t, cfg.Logging.Level)
-	assert.NotEmpty(t, cfg.Logging.Format)
-	assert.NotEmpty(t, cfg.Logging.Output)
-	assert.NotEmpty(t, cfg.Challenge.HTTP01.Port)
-	assert.NotZero(t, cfg.Challenge.DNS01.TTL)
-	assert.NotNil(t, cfg.Accounts)
-	assert.NotNil(t, cfg.Certificates)
-}
-
 // TestConfig_Validate_Success verifies that a valid config with one account
 // and one certificate spec passes validation without error.
 func TestConfig_Validate_Success(t *testing.T) {
@@ -332,16 +280,6 @@ func TestConfig_Validate_CertMissingKey(t *testing.T) {
 	assert.Contains(t, validationErr.Reason, "key configuration")
 }
 
-// TestConfig_Validate_NoCertificates verifies that a config with accounts
-// but no certificates is valid since certificates are optional.
-func TestConfig_Validate_NoCertificates(t *testing.T) {
-	cfg := validTestConfig()
-	assert.Empty(t, cfg.Certificates)
-
-	err := cfg.Validate()
-	assert.NoError(t, err)
-}
-
 // TestInitLogger_StderrOutput verifies that InitLogger with stderr output
 // returns a non-nil logger.
 func TestInitLogger_StderrOutput(t *testing.T) {
@@ -349,17 +287,6 @@ func TestInitLogger_StderrOutput(t *testing.T) {
 		Level:  "warn",
 		Format: "json",
 		Output: "stderr",
-	})
-	require.NotNil(t, logger)
-}
-
-// TestInitLogger_InvalidLevel verifies that InitLogger with an invalid
-// level defaults to info and returns a non-nil logger.
-func TestInitLogger_InvalidLevel(t *testing.T) {
-	logger := InitLogger(LoggingConfig{
-		Level:  "bogus-level",
-		Format: "json",
-		Output: "stdout",
 	})
 	require.NotNil(t, logger)
 }

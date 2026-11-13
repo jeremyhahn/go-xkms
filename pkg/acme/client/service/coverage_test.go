@@ -17,10 +17,8 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -31,7 +29,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -149,27 +146,6 @@ func TestStorageFactory_InvalidBackend(t *testing.T) {
 	assert.True(t, errors.As(err, &sfErr))
 }
 
-// TestStorageFactory_CacheHit verifies that StorageFactory returns the same
-// factory instance on a second call (cache-hit path).
-func TestStorageFactory_CacheHit(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger()).(*accountManager)
-	ctx := context.Background()
-	require.NoError(t, am.Add(ctx, "prod", validAccountConfig()))
-
-	// Pre-populate the cache.
-	factory := newMemoryFactory(t)
-	am.factories.Store("prod", factory)
-
-	got1, err := am.StorageFactory("prod")
-	require.NoError(t, err)
-	assert.Same(t, factory, got1)
-
-	got2, err := am.StorageFactory("prod")
-	require.NoError(t, err)
-	assert.Same(t, factory, got2)
-}
-
 // ==========================================================================
 // AccountManager.Client — path coverage
 // ==========================================================================
@@ -217,43 +193,9 @@ func TestClient_WithInjectedFactory(t *testing.T) {
 	assert.Same(t, c, c2)
 }
 
-// TestClient_MissingKey verifies Client returns ErrMissingKeyConfig when
-// the account's key configuration is nil.
-func TestClient_MissingKey(t *testing.T) {
-	cfg := testConfig()
-	acctCfg := validAccountConfig()
-	acctCfg.Key = nil
-	cfg.Accounts["no-key"] = acctCfg
-	am := NewAccountManager(cfg, testLogger())
-	_, err := am.Client(context.Background(), "no-key")
-	require.Error(t, err)
-	var target ErrMissingKeyConfig
-	assert.True(t, errors.As(err, &target))
-}
-
 // ==========================================================================
 // AccountManager.Remove — cached-client path
 // ==========================================================================
-
-// TestRemove_WithCachedEntry verifies Remove cleans up a cached entry
-// (placeholder value, since we cannot build a live client in unit tests).
-func TestRemove_WithCachedEntry(t *testing.T) {
-	cfg := testConfig()
-	am := NewAccountManager(cfg, testLogger()).(*accountManager)
-	ctx := context.Background()
-
-	require.NoError(t, am.Add(ctx, "cached", validAccountConfig()))
-	// Store a non-client value to exercise the LoadAndDelete path without
-	// triggering the type-assertion branch that would call Close.
-	am.clients.Store("cached", (*interface{})(nil))
-
-	err := am.Remove(ctx, "cached")
-	require.NoError(t, err)
-
-	_, getErr := am.Get("cached")
-	var notFound ErrAccountNotFound
-	assert.True(t, errors.As(getErr, &notFound))
-}
 
 // TestRemove_WithCachedFactory verifies Remove deletes a cached factory entry.
 func TestRemove_WithCachedFactory(t *testing.T) {
@@ -300,31 +242,6 @@ func TestDeploy_NilDeployConfig(t *testing.T) {
 	require.Error(t, err)
 	var deployErr ErrDeployFailed
 	assert.True(t, errors.As(err, &deployErr))
-}
-
-// TestShow_ManagedCert verifies Show returns the stored ManagedCertInfo.
-func TestShow_ManagedCert(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Accounts["test-ca"] = validAccountConfig()
-	spec := testCertSpec("test-ca")
-	cfg.Certificates["web"] = spec
-
-	cm := testCertificateManager(cfg).(*certificateManager)
-	cert, _ := selfSignedCert(t, "show-test", time.Hour)
-
-	info := &ManagedCertInfo{
-		Name:        "web",
-		Spec:        spec,
-		Certificate: cert,
-		CertPEM:     encodeCertPEM(cert),
-		IssuedAt:    cert.NotBefore,
-		ExpiresAt:   cert.NotAfter,
-	}
-	cm.managed.Store("web", info)
-
-	got, err := cm.Show("web")
-	require.NoError(t, err)
-	assert.Equal(t, "web", got.Name)
 }
 
 // ==========================================================================
@@ -510,53 +427,11 @@ func TestDeploy_DeployerFailure(t *testing.T) {
 // ChallengeServer — handleChallenge token-mismatch path
 // ==========================================================================
 
-// TestChallengeServer_HandleChallenge_TokenMismatch verifies a mismatched
-// token returns 404.
-func TestChallengeServer_HandleChallenge_TokenMismatch(t *testing.T) {
-	cs := NewChallengeServer("", "0", "expected-token", "keyauth", testLogger())
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/.well-known/acme-challenge/wrong-token", nil)
-	cs.handleChallenge(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// TestChallengeServer_HandleChallenge_TokenMatch verifies correct token
-// returns 200 with the key authorization.
-func TestChallengeServer_HandleChallenge_TokenMatch(t *testing.T) {
-	cs := NewChallengeServer("", "0", "my-token", "my-keyauth", testLogger())
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/.well-known/acme-challenge/my-token", nil)
-	cs.handleChallenge(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "my-keyauth", w.Body.String())
-}
-
 // TestChallengeServer_Shutdown_NoServer verifies Shutdown is safe when no
 // HTTP server was ever started.
 func TestChallengeServer_Shutdown_NoServer(t *testing.T) {
 	cs := NewChallengeServer("", "0", "tok", "key", testLogger())
 	cs.Shutdown() // must not panic
-}
-
-// ==========================================================================
-// buildCSR — URI parse error path
-// ==========================================================================
-
-// TestBuildCSR_WithInvalidURI verifies buildCSR returns ErrCSRCreation
-// wrapping ErrInvalidURI when a URI SAN cannot be parsed.
-func TestBuildCSR_WithInvalidURI(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	spec := &CertificateSpec{
-		Subject: SubjectConfig{CN: "service.local"},
-		SANs:    SANsConfig{URI: []string{"://not-valid-uri::bad"}},
-	}
-
-	_, err = buildCSR(spec, key)
-	require.Error(t, err)
-	var csrErr ErrCSRCreation
-	assert.True(t, errors.As(err, &csrErr))
 }
 
 // ==========================================================================
@@ -588,16 +463,6 @@ func TestDeployer_KeyMkdirError(t *testing.T) {
 	assert.True(t, errors.As(err, &deployErr))
 }
 
-// TestEncodeKeyPEM_P384 verifies encodeKeyPEM works for P-384 keys.
-func TestEncodeKeyPEM_P384(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-	require.NoError(t, err)
-
-	pem, err := encodeKeyPEM(key)
-	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(string(pem), "-----BEGIN PRIVATE KEY-----"))
-}
-
 // unknownSigner is a crypto.Signer type that x509.MarshalPKCS8PrivateKey
 // does not know how to marshal, causing it to return an error.
 type unknownSigner struct{}
@@ -618,35 +483,6 @@ func TestEncodeKeyPEM_UnmarshalableType(t *testing.T) {
 	require.Error(t, err)
 	var keyErr ErrKeyEncoding
 	assert.True(t, errors.As(err, &keyErr))
-}
-
-// ==========================================================================
-// generateSigner — RSA and ED25519 paths
-// ==========================================================================
-
-// TestGenerateSigner_RSA verifies generateSigner returns an *rsa.PrivateKey for
-// an RSA KeyConfig.
-func TestGenerateSigner_RSA(t *testing.T) {
-	cfg := &KeyConfig{
-		Algorithm: "RSA",
-		RSA:       &RSAConfig{KeySize: 2048},
-	}
-	signer, err := generateSigner(cfg)
-	require.NoError(t, err)
-	_, ok := signer.(*rsa.PrivateKey)
-	assert.True(t, ok)
-}
-
-// TestGenerateSigner_ED25519 verifies generateSigner returns an ed25519.PrivateKey
-// for an ED25519 KeyConfig.
-func TestGenerateSigner_ED25519(t *testing.T) {
-	cfg := &KeyConfig{
-		Algorithm: "ED25519",
-	}
-	signer, err := generateSigner(cfg)
-	require.NoError(t, err)
-	_, ok := signer.(ed25519.PrivateKey)
-	assert.True(t, ok)
 }
 
 // ==========================================================================
@@ -717,12 +553,6 @@ func TestRemove_WithRealClient(t *testing.T) {
 // TestInitLogger_TextFormat verifies InitLogger creates a text-handler logger.
 func TestInitLogger_TextFormat(t *testing.T) {
 	logger := InitLogger(LoggingConfig{Format: "text", Level: "debug", Output: "stdout"})
-	require.NotNil(t, logger)
-}
-
-// TestInitLogger_JSONFormat verifies InitLogger creates a JSON-handler logger (default).
-func TestInitLogger_JSONFormat(t *testing.T) {
-	logger := InitLogger(LoggingConfig{Format: "json", Level: "warn", Output: "stderr"})
 	require.NotNil(t, logger)
 }
 
@@ -901,82 +731,6 @@ func TestDeploy_KeyWriteFileError(t *testing.T) {
 	require.Error(t, err)
 	var deployErr ErrDeployFailed
 	assert.True(t, errors.As(err, &deployErr))
-}
-
-// ==========================================================================
-// Revoke — CertSpecNotFound path (cert in config, not yet managed)
-// ==========================================================================
-
-// TestRevoke_SpecExistsButNotManaged verifies Revoke returns ErrNoIssuedCertificate
-// when the cert spec is registered but Request has never been called.
-func TestRevoke_SpecExistsButNotManaged(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Accounts["test-ca"] = validAccountConfig()
-	spec := testCertSpec("test-ca")
-	cfg.Certificates["web"] = spec
-
-	cm := testCertificateManager(cfg).(*certificateManager)
-	err := cm.Revoke(context.Background(), "web", 0)
-	require.Error(t, err)
-	var target ErrNoIssuedCertificate
-	assert.True(t, errors.As(err, &target))
-}
-
-// TestRevoke_SpecNotFound verifies Revoke returns ErrCertSpecNotFound when
-// the named certificate does not exist in configuration.
-func TestRevoke_SpecNotFound(t *testing.T) {
-	cfg := DefaultConfig()
-	cm := testCertificateManager(cfg).(*certificateManager)
-	err := cm.Revoke(context.Background(), "nonexistent", 0)
-	require.Error(t, err)
-	var target ErrCertSpecNotFound
-	assert.True(t, errors.As(err, &target))
-}
-
-// ==========================================================================
-// Request — ErrCertSpecNotFound and ErrMissingKeyConfig paths
-// ==========================================================================
-
-// TestRequest_SpecNotFound verifies Request returns ErrCertSpecNotFound for an
-// unknown certificate name.
-func TestRequest_SpecNotFound(t *testing.T) {
-	cfg := DefaultConfig()
-	cm := testCertificateManager(cfg).(*certificateManager)
-	_, err := cm.Request(context.Background(), "ghost")
-	require.Error(t, err)
-	var target ErrCertSpecNotFound
-	assert.True(t, errors.As(err, &target))
-}
-
-// TestRequest_MissingKeyConfig verifies Request returns ErrMissingKeyConfig when
-// the certificate spec has a nil Key.
-func TestRequest_MissingKeyConfig(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Accounts["test-ca"] = validAccountConfig()
-	spec := testCertSpec("test-ca")
-	spec.Key = nil
-	cfg.Certificates["no-key"] = spec
-
-	cm := testCertificateManager(cfg).(*certificateManager)
-	_, err := cm.Request(context.Background(), "no-key")
-	require.Error(t, err)
-	var target ErrMissingKeyConfig
-	assert.True(t, errors.As(err, &target))
-}
-
-// ==========================================================================
-// Renew — ErrCertSpecNotFound path
-// ==========================================================================
-
-// TestRenew_SpecNotFound verifies Renew returns ErrCertSpecNotFound for an
-// unknown certificate name.
-func TestRenew_SpecNotFound(t *testing.T) {
-	cfg := DefaultConfig()
-	cm := testCertificateManager(cfg).(*certificateManager)
-	_, err := cm.Renew(context.Background(), "ghost")
-	require.Error(t, err)
-	var target ErrCertSpecNotFound
-	assert.True(t, errors.As(err, &target))
 }
 
 // ==========================================================================

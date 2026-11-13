@@ -18,42 +18,10 @@ import (
 	"errors"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// TestNewRenewalOrchestrator verifies the constructor returns a non-nil orchestrator.
-func TestNewRenewalOrchestrator(t *testing.T) {
-	cfg := DefaultConfig()
-	am := NewAccountManager(cfg, testLogger())
-	deployer := NewDeployer(testLogger())
-	cm := NewCertificateManager(cfg, am, deployer, testLogger())
-
-	ro := NewRenewalOrchestrator(cfg, cm, testLogger())
-	require.NotNil(t, ro)
-	assert.False(t, ro.Running())
-}
-
-// TestRenewalOrchestrator_StartStop verifies the start/stop lifecycle.
-func TestRenewalOrchestrator_StartStop(t *testing.T) {
-	cfg := DefaultConfig()
-	am := NewAccountManager(cfg, testLogger())
-	deployer := NewDeployer(testLogger())
-	cm := NewCertificateManager(cfg, am, deployer, testLogger())
-	ro := NewRenewalOrchestrator(cfg, cm, testLogger())
-
-	ctx := context.Background()
-
-	err := ro.Start(ctx)
-	require.NoError(t, err)
-	assert.True(t, ro.Running())
-
-	err = ro.Stop()
-	require.NoError(t, err)
-	assert.False(t, ro.Running())
-}
 
 // TestRenewalOrchestrator_StartAlreadyRunning verifies that starting an
 // already-running orchestrator returns an ErrValidation.
@@ -76,19 +44,6 @@ func TestRenewalOrchestrator_StartAlreadyRunning(t *testing.T) {
 	var validErr *ErrValidation
 	assert.True(t, errors.As(err, &validErr))
 	assert.Equal(t, "orchestrator", validErr.Field)
-}
-
-// TestRenewalOrchestrator_StopWhenNotRunning verifies that Stop is idempotent.
-func TestRenewalOrchestrator_StopWhenNotRunning(t *testing.T) {
-	cfg := DefaultConfig()
-	am := NewAccountManager(cfg, testLogger())
-	deployer := NewDeployer(testLogger())
-	cm := NewCertificateManager(cfg, am, deployer, testLogger())
-	ro := NewRenewalOrchestrator(cfg, cm, testLogger())
-
-	err := ro.Stop()
-	require.NoError(t, err)
-	assert.False(t, ro.Running())
 }
 
 // TestRenewalOrchestrator_ConcurrentStop is a regression test for #1271: Stop
@@ -140,25 +95,13 @@ func TestRenewalOrchestrator_StopOnContextCancel(t *testing.T) {
 	assert.True(t, ro.Running())
 
 	cancel()
-	// Give the goroutine time to notice the cancellation
-	time.Sleep(50 * time.Millisecond)
+	// Stop has not closed stopChan, so the goroutine can only exit through
+	// ctx.Done; waiting on it proves the cancellation path ran.
+	ro.wg.Wait()
 	// The goroutine has exited but running flag is still true until Stop() is called.
 	// Stop should still work cleanly.
 	err = ro.Stop()
 	require.NoError(t, err)
-}
-
-// TestRenewalOrchestrator_CheckAndRenew_NoCerts verifies CheckAndRenew returns
-// no results when there are no certificates configured.
-func TestRenewalOrchestrator_CheckAndRenew_NoCerts(t *testing.T) {
-	cfg := DefaultConfig()
-	am := NewAccountManager(cfg, testLogger())
-	deployer := NewDeployer(testLogger())
-	cm := NewCertificateManager(cfg, am, deployer, testLogger())
-	ro := NewRenewalOrchestrator(cfg, cm, testLogger())
-
-	results := ro.CheckAndRenew(context.Background())
-	assert.Empty(t, results)
 }
 
 // TestRenewalOrchestrator_CheckAndRenew_NoAutoRenew verifies CheckAndRenew

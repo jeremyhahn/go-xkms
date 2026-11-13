@@ -25,7 +25,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,41 +82,6 @@ func TestNewChallengeServer(t *testing.T) {
 	assert.Nil(t, cs.server, "server must be nil before Start is called")
 }
 
-// TestNewChallengeServer_EmptyFields verifies construction with empty values.
-func TestNewChallengeServer_EmptyFields(t *testing.T) {
-	cs := NewChallengeServer("", "", "", "", testLogger())
-
-	require.NotNil(t, cs)
-	assert.Empty(t, cs.token)
-	assert.Empty(t, cs.keyAuth)
-	assert.Empty(t, cs.port)
-}
-
-// TestChallengeServer_StartAndShutdown verifies the server starts on a free
-// port and shuts down cleanly.
-func TestChallengeServer_StartAndShutdown(t *testing.T) {
-	cs := NewChallengeServer("", "0", "tok", "keyauth", testLogger())
-
-	err := cs.Start()
-	require.NoError(t, err)
-	require.NotNil(t, cs.server)
-
-	// Shut down and verify idempotent shutdown
-	cs.Shutdown()
-	cs.Shutdown() // second call must be a no-op
-}
-
-// TestChallengeServer_Start_PortInUse verifies that Start returns an error
-// when the port is already bound.
-func TestChallengeServer_Start_PortInUse(t *testing.T) {
-	port := occupyPort(t)
-
-	cs := NewChallengeServer("", port, "tok", "ka", testLogger())
-	err := cs.Start()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to listen")
-}
-
 // TestChallengeServer_HandleChallenge_Success verifies that the server
 // responds with the key authorization for a matching token request.
 func TestChallengeServer_HandleChallenge_Success(t *testing.T) {
@@ -156,35 +120,6 @@ func TestChallengeServer_HandleChallenge_WrongToken(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
-// TestChallengeServer_ShutdownWithoutStart verifies that calling Shutdown
-// on a server that was never started does not panic.
-func TestChallengeServer_ShutdownWithoutStart(t *testing.T) {
-	cs := NewChallengeServer("", "0", "tok", "ka", testLogger())
-	// Must not panic
-	cs.Shutdown()
-}
-
-// TestWriteHTTP01TokenFile_Success verifies that the token file is written
-// to the correct path under the webroot.
-func TestWriteHTTP01TokenFile_Success(t *testing.T) {
-	webroot := t.TempDir()
-	token := "test-token-xyz"
-	keyAuth := "test-token-xyz.thumbprint"
-
-	err := WriteHTTP01TokenFile(webroot, token, keyAuth, testLogger())
-	require.NoError(t, err)
-
-	tokenPath := filepath.Join(webroot, ".well-known", "acme-challenge", token)
-	content, err := os.ReadFile(tokenPath)
-	require.NoError(t, err)
-	assert.Equal(t, keyAuth, string(content))
-
-	// Verify directory permissions
-	info, err := os.Stat(filepath.Join(webroot, ".well-known", "acme-challenge"))
-	require.NoError(t, err)
-	assert.True(t, info.IsDir())
-}
-
 // TestWriteHTTP01TokenFile_InvalidWebroot verifies that an error is returned
 // when the webroot path is not writable.
 func TestWriteHTTP01TokenFile_InvalidWebroot(t *testing.T) {
@@ -215,13 +150,6 @@ func TestCleanupHTTP01TokenFile_Success(t *testing.T) {
 // webroot is a no-op and does not panic.
 func TestCleanupHTTP01TokenFile_EmptyWebroot(t *testing.T) {
 	CleanupHTTP01TokenFile("", "tok", testLogger())
-}
-
-// TestCleanupHTTP01TokenFile_NonExistentFile verifies cleanup of a file that
-// does not exist completes without error.
-func TestCleanupHTTP01TokenFile_NonExistentFile(t *testing.T) {
-	webroot := t.TempDir()
-	CleanupHTTP01TokenFile(webroot, "no-such-token", testLogger())
 }
 
 // TestValidateHTTP01Token verifies that RFC 8555 Section 8.3 token format
@@ -283,21 +211,6 @@ func TestWriteHTTP01TokenFile_InvalidToken(t *testing.T) {
 	}
 }
 
-// TestWriteHTTP01TokenFile_ValidToken verifies that a well-formed base64url
-// token is still accepted and written under the webroot.
-func TestWriteHTTP01TokenFile_ValidToken(t *testing.T) {
-	webroot := t.TempDir()
-	token := "gvOUcHiVIxNQ1mMFj4KMJfl3n0dp2v-6qN3TttMOsm0"
-	keyAuth := token + ".thumbprint"
-
-	require.NoError(t, WriteHTTP01TokenFile(webroot, token, keyAuth, testLogger()))
-
-	tokenPath := filepath.Join(webroot, ".well-known", "acme-challenge", token)
-	content, err := os.ReadFile(tokenPath)
-	require.NoError(t, err)
-	assert.Equal(t, keyAuth, string(content))
-}
-
 // TestCleanupHTTP01TokenFile_InvalidToken verifies that CleanupHTTP01TokenFile
 // refuses a path traversal token and never touches anything outside webroot.
 func TestCleanupHTTP01TokenFile_InvalidToken(t *testing.T) {
@@ -327,32 +240,6 @@ func TestComputeDNS01Response(t *testing.T) {
 	assert.Equal(t, expected, result)
 }
 
-// TestComputeDNS01Response_EmptyInput verifies the response for an empty
-// key authorization string.
-func TestComputeDNS01Response_EmptyInput(t *testing.T) {
-	result := ComputeDNS01Response("")
-	hash := sha256.Sum256([]byte(""))
-	expected := base64.RawURLEncoding.EncodeToString(hash[:])
-	assert.Equal(t, expected, result)
-}
-
-// TestSetupHTTP01Challenge_ServerMode verifies that SetupHTTP01Challenge starts
-// an HTTP server when no webroot is configured.
-func TestSetupHTTP01Challenge_ServerMode(t *testing.T) {
-	config := &Config{
-		Challenge: ChallengeConfig{
-			HTTP01: HTTP01Config{
-				Port: "0",
-			},
-		},
-	}
-
-	server, err := SetupHTTP01Challenge(config, testLogger(), "tok", "ka")
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer server.Shutdown()
-}
-
 // TestSetupHTTP01Challenge_WebrootMode verifies that SetupHTTP01Challenge
 // writes the token file when a webroot is configured.
 func TestSetupHTTP01Challenge_WebrootMode(t *testing.T) {
@@ -373,27 +260,6 @@ func TestSetupHTTP01Challenge_WebrootMode(t *testing.T) {
 	content, err := os.ReadFile(tokenPath)
 	require.NoError(t, err)
 	assert.Equal(t, "ka", string(content))
-}
-
-// TestSetupHTTP01Challenge_DefaultPort verifies that the default port 80 is
-// used when no port is specified (expects failure since port 80 requires root).
-func TestSetupHTTP01Challenge_DefaultPort(t *testing.T) {
-	config := &Config{
-		Challenge: ChallengeConfig{
-			HTTP01: HTTP01Config{},
-		},
-	}
-
-	// Port 80 typically requires root, so this should fail in non-root tests
-	server, err := SetupHTTP01Challenge(config, testLogger(), "tok", "ka")
-	if err != nil {
-		var setupErr ErrChallengeSetupFailed
-		assert.ErrorAs(t, err, &setupErr)
-		assert.Equal(t, "http-01", setupErr.ChallengeType)
-	} else {
-		require.NotNil(t, server)
-		server.Shutdown()
-	}
 }
 
 // TestSetupHTTP01Challenge_PortInUse verifies that SetupHTTP01Challenge returns
@@ -689,19 +555,6 @@ func TestBuildDNS01ProviderConfig_CloudDNS(t *testing.T) {
 	assert.Equal(t, int64(45), cloudDNSConfig.TTL)
 }
 
-// TestBuildDNS01ProviderConfig_UnsupportedProvider verifies the fail-fast
-// typed error for a provider name this project does not implement.
-func TestBuildDNS01ProviderConfig_UnsupportedProvider(t *testing.T) {
-	cfg := DNS01Config{Provider: "unknown-dns-provider"}
-
-	_, err := buildDNS01ProviderConfig(cfg)
-	require.Error(t, err)
-
-	var unsupportedErr ErrUnsupportedDNSProvider
-	require.ErrorAs(t, err, &unsupportedErr)
-	assert.Equal(t, "unknown-dns-provider", unsupportedErr.Provider)
-}
-
 // TestChallengeServer_ConcurrentRequests verifies the server handles
 // concurrent requests correctly.
 func TestChallengeServer_ConcurrentRequests(t *testing.T) {
@@ -711,9 +564,6 @@ func TestChallengeServer_ConcurrentRequests(t *testing.T) {
 	cs := NewChallengeServer("", "0", token, keyAuth, testLogger())
 	port := challengeServerPort(t, cs)
 	defer cs.Shutdown()
-
-	// Allow server to fully start
-	time.Sleep(10 * time.Millisecond)
 
 	done := make(chan struct{}, 10)
 	for i := 0; i < 10; i++ {
