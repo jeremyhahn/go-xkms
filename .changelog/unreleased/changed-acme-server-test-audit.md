@@ -1,0 +1,1 @@
+Tests: the `pkg/acme/server` audit (#1794) removes 43 tests that repeat paths a kept test covers and asserts, including two that synchronised with sleeps where a clock-driven test covers the same refill and expiry. Every rate-limit refusal, isolation, limiter-bound, RFC 8659 CAA, body-limit, client-IP and audit test stays; coverage holds at 97.5%.

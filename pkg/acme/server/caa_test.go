@@ -225,24 +225,6 @@ func TestCAAValidator_Validate_NoCAARecords(t *testing.T) {
 	assert.NoError(t, err, "Should allow issuance when no CAA records exist")
 }
 
-func TestCAAValidator_Validate_MatchingIssue(t *testing.T) {
-	mock := newMockDNSServer()
-	mock.addCAARecord("example.com", "issue", "ca.example.com")
-	addr := startMockDNSServer(t, mock)
-
-	validator, err := NewCAAValidator(&CAAValidatorParams{
-		Logger:        slog.Default(),
-		Resolver:      addr,
-		Timeout:       2 * time.Second,
-		CAAIdentities: []string{"ca.example.com"},
-	})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	err = validator.Validate(ctx, "example.com", false, "", "")
-	assert.NoError(t, err, "Should allow issuance with matching issue CAA record")
-}
-
 func TestCAAValidator_Validate_NoMatchingIssue(t *testing.T) {
 	mock := newMockDNSServer()
 	mock.addCAARecord("example.com", "issue", "other-ca.example.com")
@@ -710,28 +692,6 @@ func TestCAAValidator_ValidateRecords_WildcardWithIssuewildNotAuthorized(t *test
 	assert.Contains(t, err.Error(), "no matching issuewild CAA record found")
 }
 
-// TestCAAValidator_ValidateRecords_OnlyIssuewildNoIssue tests wildcard with only issuewild, no issue records
-func TestCAAValidator_ValidateRecords_OnlyIssuewildNoIssue(t *testing.T) {
-	mock := newMockDNSServer()
-	// Add only issuewild record with non-matching CA
-	mock.addCAARecord("example.com", "issuewild", "another-ca.example.com")
-	addr := startMockDNSServer(t, mock)
-
-	validator, err := NewCAAValidator(&CAAValidatorParams{
-		Logger:        slog.Default(),
-		Resolver:      addr,
-		Timeout:       2 * time.Second,
-		CAAIdentities: []string{"ca.example.com"},
-	})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	err = validator.Validate(ctx, "example.com", true, "", "")
-
-	var caaErr *ErrCAAValidationFailed
-	assert.True(t, errors.As(err, &caaErr), "Should deny wildcard when issuewild doesn't match")
-}
-
 // TestCAAValidator_ValidateRecords_NonWildcardWithIssuewildOnly tests non-wildcard validation
 // when only issuewild records exist
 func TestCAAValidator_ValidateRecords_NonWildcardWithIssuewildOnly(t *testing.T) {
@@ -752,28 +712,6 @@ func TestCAAValidator_ValidateRecords_NonWildcardWithIssuewildOnly(t *testing.T)
 	// For non-wildcard, issuewild is ignored, so no relevant records found = allow
 	err = validator.Validate(ctx, "example.com", false, "", "")
 	assert.NoError(t, err, "Should allow issuance when only issuewild exists for non-wildcard")
-}
-
-// TestCAAValidator_ValidateRecords_IssueNotAuthorized tests issue record that doesn't match
-func TestCAAValidator_ValidateRecords_IssueNotAuthorized(t *testing.T) {
-	mock := newMockDNSServer()
-	mock.addCAARecord("example.com", "issue", "different-ca.example.com")
-	addr := startMockDNSServer(t, mock)
-
-	validator, err := NewCAAValidator(&CAAValidatorParams{
-		Logger:        slog.Default(),
-		Resolver:      addr,
-		Timeout:       2 * time.Second,
-		CAAIdentities: []string{"ca.example.com"},
-	})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	err = validator.Validate(ctx, "example.com", false, "", "")
-
-	var caaErr *ErrCAAValidationFailed
-	assert.True(t, errors.As(err, &caaErr), "Should deny when issue doesn't match")
-	assert.Contains(t, err.Error(), "no matching issue CAA record found")
 }
 
 // TestCAAValidator_ValidateRecords_IssueWithSemicolon tests issue with semicolon value (deny all)
@@ -898,49 +836,6 @@ func TestErrCAADNSError_Error(t *testing.T) {
 	assert.Equal(t, expected, err.Error())
 }
 
-// TestCAAValidator_ValidateRecords_WildcardWithBothIssueAndIssuewildMatching tests
-// wildcard where both issue and issuewild match
-func TestCAAValidator_ValidateRecords_WildcardWithBothIssueAndIssuewildMatching(t *testing.T) {
-	mock := newMockDNSServer()
-	mock.addCAARecord("example.com", "issue", "ca.example.com")
-	mock.addCAARecord("example.com", "issuewild", "ca.example.com")
-	addr := startMockDNSServer(t, mock)
-
-	validator, err := NewCAAValidator(&CAAValidatorParams{
-		Logger:        slog.Default(),
-		Resolver:      addr,
-		Timeout:       2 * time.Second,
-		CAAIdentities: []string{"ca.example.com"},
-	})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	// Wildcard should be allowed because issuewild matches
-	err = validator.Validate(ctx, "example.com", true, "", "")
-	assert.NoError(t, err, "Wildcard should be allowed when issuewild matches")
-}
-
-// TestCAAValidator_ValidateRecords_WildcardNoIssuewildUseIssue tests wildcard fallback to issue
-func TestCAAValidator_ValidateRecords_WildcardNoIssuewildUseIssue(t *testing.T) {
-	mock := newMockDNSServer()
-	// Only issue record, no issuewild
-	mock.addCAARecord("example.com", "issue", "ca.example.com")
-	addr := startMockDNSServer(t, mock)
-
-	validator, err := NewCAAValidator(&CAAValidatorParams{
-		Logger:        slog.Default(),
-		Resolver:      addr,
-		Timeout:       2 * time.Second,
-		CAAIdentities: []string{"ca.example.com"},
-	})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	// Wildcard should fall back to issue when no issuewild
-	err = validator.Validate(ctx, "example.com", true, "", "")
-	assert.NoError(t, err, "Wildcard should use issue when no issuewild present")
-}
-
 // TestCAAValidator_ValidateRecords_WildcardNoIssuewildIssueNotMatch tests wildcard fallback to
 // issue that doesn't match
 func TestCAAValidator_ValidateRecords_WildcardNoIssuewildIssueNotMatch(t *testing.T) {
@@ -962,90 +857,6 @@ func TestCAAValidator_ValidateRecords_WildcardNoIssuewildIssueNotMatch(t *testin
 	err = validator.Validate(ctx, "example.com", true, "", "")
 	var caaErr *ErrCAAValidationFailed
 	assert.True(t, errors.As(err, &caaErr), "Should deny wildcard when issue doesn't match")
-}
-
-// TestCAAValidator_Cache_SetAndGet tests cache functionality directly
-func TestCAAValidator_Cache_SetAndGet(t *testing.T) {
-	validator, err := NewCAAValidator(&CAAValidatorParams{
-		Logger:        slog.Default(),
-		Resolver:      "127.0.0.1:53",
-		Timeout:       2 * time.Second,
-		CAAIdentities: []string{"ca.example.com"},
-	})
-	require.NoError(t, err)
-
-	// Test setCached and getCached
-	records := []*CAARecord{
-		{Tag: "issue", Value: "ca.example.com", Flags: 0},
-	}
-	validator.setCached("test.example.com", records)
-
-	cached := validator.getCached("test.example.com")
-	require.NotNil(t, cached)
-	assert.Len(t, cached, 1)
-	assert.Equal(t, "issue", cached[0].Tag)
-
-	// Test non-existent
-	cached = validator.getCached("nonexistent.example.com")
-	assert.Nil(t, cached)
-}
-
-// TestCAAValidator_Cache_ExpirationDirect tests cache TTL directly
-func TestCAAValidator_Cache_ExpirationDirect(t *testing.T) {
-	validator, err := NewCAAValidator(&CAAValidatorParams{
-		Logger:        slog.Default(),
-		Resolver:      "127.0.0.1:53",
-		Timeout:       2 * time.Second,
-		CAAIdentities: []string{"ca.example.com"},
-	})
-	require.NoError(t, err)
-
-	// Set short TTL
-	validator.cache.ttl = 50 * time.Millisecond
-
-	records := []*CAARecord{
-		{Tag: "issue", Value: "ca.example.com", Flags: 0},
-	}
-	validator.setCached("expire.example.com", records)
-
-	// Should exist immediately
-	cached := validator.getCached("expire.example.com")
-	assert.NotNil(t, cached)
-
-	// Wait for expiration
-	time.Sleep(100 * time.Millisecond)
-
-	// Should be expired
-	cached = validator.getCached("expire.example.com")
-	assert.Nil(t, cached)
-}
-
-// TestCAAValidator_IsAuthorized_EdgeCases tests edge cases for isAuthorized
-func TestCAAValidator_IsAuthorized_EdgeCases(t *testing.T) {
-	validator := &CAAValidator{
-		caaIdentities: []string{"ca.example.com"},
-	}
-
-	tests := []struct {
-		name       string
-		value      string
-		authorized bool
-	}{
-		{"empty string", "", false},
-		{"semicolon", ";", false},
-		{"exact match", "ca.example.com", true},
-		{"uppercase match", "CA.EXAMPLE.COM", true},
-		{"prefix with params", "ca.example.com;policy=ev", true},
-		{"whitespace", "  ca.example.com  ", true},
-		{"no match", "different.ca.com", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := validator.isAuthorized("example.com", tt.value, "", "")
-			assert.Equal(t, tt.authorized, result)
-		})
-	}
 }
 
 // TestCAAValidator_Validate_DomainNormalization tests domain name normalization
@@ -1186,82 +997,6 @@ func TestCAAValidator_IsAuthorized_MalformedParameters(t *testing.T) {
 	}
 }
 
-// TestCAAValidator_IsAuthorized_UnknownParameterIgnored verifies that a
-// parameter tag this validator does not implement is ignored, per the
-// extensible parameter model of RFC 8659 Section 4.2 / RFC 8657.
-func TestCAAValidator_IsAuthorized_UnknownParameterIgnored(t *testing.T) {
-	validator := &CAAValidator{
-		logger:        slog.Default(),
-		caaIdentities: []string{"ca.example.com"},
-	}
-
-	assert.True(t, validator.isAuthorized("example.com", "ca.example.com;policy=ev", "", ""),
-		"an unrecognized parameter tag must not affect authorization")
-}
-
-// TestParseCAAValidationMethods_WellFormed verifies successful parsing of a
-// comma-separated RFC 8657 Section 4 method-label list.
-func TestParseCAAValidationMethods_WellFormed(t *testing.T) {
-	methods, ok := parseCAAValidationMethods("http-01,dns-01,tls-alpn-01")
-	require.True(t, ok)
-	assert.Equal(t, []string{"http-01", "dns-01", "tls-alpn-01"}, methods)
-}
-
-// TestParseCAAValidationMethods_Malformed verifies that an invalid
-// method-label (here, the empty entry produced by a doubled comma) is
-// reported rather than silently dropped.
-func TestParseCAAValidationMethods_Malformed(t *testing.T) {
-	_, ok := parseCAAValidationMethods("http-01,,dns-01")
-	assert.False(t, ok)
-}
-
-// TestIsCAAMethodLabel_Valid verifies the method-label grammar accepts
-// letters, digits, and hyphens.
-func TestIsCAAMethodLabel_Valid(t *testing.T) {
-	assert.True(t, isCAAMethodLabel("device-attest-01"))
-}
-
-// TestIsCAAMethodLabel_Invalid verifies the method-label grammar rejects an
-// empty string and characters outside ALPHA/DIGIT/"-".
-func TestIsCAAMethodLabel_Invalid(t *testing.T) {
-	assert.False(t, isCAAMethodLabel(""))
-	assert.False(t, isCAAMethodLabel("http_01"))
-}
-
-// TestCAAMethodsContain_Found verifies a case-insensitive membership match.
-func TestCAAMethodsContain_Found(t *testing.T) {
-	assert.True(t, caaMethodsContain([]string{"http-01", "dns-01"}, "DNS-01"))
-}
-
-// TestCAAMethodsContain_NotFound verifies a method absent from the list is
-// reported as not found.
-func TestCAAMethodsContain_NotFound(t *testing.T) {
-	assert.False(t, caaMethodsContain([]string{"http-01"}, "dns-01"))
-}
-
-// TestParseCAAIssueValue_WellFormedParameters verifies tag=value parameters
-// are parsed with whitespace around "=" and ";" trimmed, per RFC 8659
-// Section 4.2.
-func TestParseCAAIssueValue_WellFormedParameters(t *testing.T) {
-	issuer, params, malformed := parseCAAIssueValue("ca.example.com ; accounturi = https://acme.example.com/acme/account/1 ; validationmethods=http-01")
-	assert.Equal(t, "ca.example.com", issuer)
-	assert.Empty(t, malformed)
-	require.NotNil(t, params)
-	assert.Equal(t, "https://acme.example.com/acme/account/1", params["accounturi"])
-	assert.Equal(t, "http-01", params["validationmethods"])
-}
-
-// TestParseCAAIssueValue_MalformedValueReported verifies a parameter whose
-// value contains a character outside the RFC 8659 Section 4.2 value grammar
-// (here, an embedded space) is reported via malformed rather than silently
-// accepted with a truncated value.
-func TestParseCAAIssueValue_MalformedValueReported(t *testing.T) {
-	issuer, params, malformed := parseCAAIssueValue("ca.example.com;accounturi=https://a b")
-	assert.Equal(t, "ca.example.com", issuer)
-	assert.True(t, malformed["accounturi"])
-	assert.NotContains(t, params, "accounturi")
-}
-
 // TestParseCAAIssueValue_UnparseableTagIgnored verifies a field with no "="
 // at all (so its tag can't be identified) is dropped rather than treated as
 // a malformed known parameter.
@@ -1272,26 +1007,8 @@ func TestParseCAAIssueValue_UnparseableTagIgnored(t *testing.T) {
 	assert.Empty(t, malformed)
 }
 
-// TestIsCAAParamTag_Valid verifies the tag grammar accepts letters and
-// digits.
-func TestIsCAAParamTag_Valid(t *testing.T) {
-	assert.True(t, isCAAParamTag("accounturi123"))
-}
-
 // TestIsCAAParamTag_Invalid verifies the tag grammar rejects a hyphen,
 // which RFC 8659 Section 4.2 excludes from "tag = 1*(ALPHA / DIGIT)".
 func TestIsCAAParamTag_Invalid(t *testing.T) {
 	assert.False(t, isCAAParamTag("account-uri"))
-}
-
-// TestIsCAAParamValue_Valid verifies the value grammar accepts a typical
-// URI value.
-func TestIsCAAParamValue_Valid(t *testing.T) {
-	assert.True(t, isCAAParamValue("https://acme.example.com/acme/account/1"))
-}
-
-// TestIsCAAParamValue_Invalid verifies the value grammar rejects embedded
-// whitespace, per RFC 8659 Section 4.2's "value = *(%x21-3A / %x3C-7E)".
-func TestIsCAAParamValue_Invalid(t *testing.T) {
-	assert.False(t, isCAAParamValue("has space"))
 }

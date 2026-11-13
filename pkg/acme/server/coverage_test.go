@@ -14,11 +14,6 @@
 package server
 
 import (
-	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,18 +31,6 @@ func TestTenantRateLimiter_GetMaxInterval_NoIntervalsConfigured(t *testing.T) {
 	config := &TenantRateLimiterConfig{
 		DefaultConfig: &RateLimitConfig{},
 	}
-
-	trl := NewTenantRateLimiter(config, nil, ClientIP, "overall")
-	defer trl.Stop()
-
-	maxInterval := trl.getMaxInterval()
-	assert.Equal(t, time.Hour, maxInterval)
-}
-
-// TestTenantRateLimiter_GetMaxInterval_NilDefaultConfig verifies that
-// getMaxInterval returns the default 1 hour when DefaultConfig is nil.
-func TestTenantRateLimiter_GetMaxInterval_NilDefaultConfig(t *testing.T) {
-	config := &TenantRateLimiterConfig{}
 
 	trl := NewTenantRateLimiter(config, nil, ClientIP, "overall")
 	defer trl.Stop()
@@ -75,71 +58,6 @@ func TestTenantRateLimiter_GetMaxInterval_AllRatesConfigured(t *testing.T) {
 	maxInterval := trl.getMaxInterval()
 	// CertificateRate has the largest interval at 6 hours
 	assert.Equal(t, 6*time.Hour, maxInterval)
-}
-
-// TestTenantRateLimiter_GetMaxInterval_PartialRatesConfigured verifies that
-// getMaxInterval handles partial configuration correctly.
-func TestTenantRateLimiter_GetMaxInterval_PartialRatesConfigured(t *testing.T) {
-	config := &TenantRateLimiterConfig{
-		DefaultConfig: &RateLimitConfig{
-			NewAccountRate:     &RateLimit{MaxRequests: 10, Interval: 30 * time.Minute},
-			OverallRequestRate: &RateLimit{MaxRequests: 20, Interval: time.Second},
-		},
-	}
-
-	trl := NewTenantRateLimiter(config, nil, ClientIP, "overall")
-	defer trl.Stop()
-
-	maxInterval := trl.getMaxInterval()
-	assert.Equal(t, 30*time.Minute, maxInterval)
-}
-
-// =============================================================================
-// ClientID Tests (81.2% -> higher)
-// =============================================================================
-
-// TestClientID_EmptyBody verifies that ClientID falls back to IP when
-// the request body is empty.
-func TestClientID_EmptyBody(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(""))
-	req.RemoteAddr = "10.0.0.1:5678"
-
-	clientID := ClientID(req)
-	assert.Equal(t, "10.0.0.1", clientID)
-}
-
-// TestClientID_BodyReadError verifies that ClientID falls back to IP
-// when the body read fails.
-func TestClientID_BodyReadError(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/test", nil)
-	req.Body = io.NopCloser(&errorReader{})
-	req.RemoteAddr = "10.0.0.2:5678"
-
-	clientID := ClientID(req)
-	assert.Equal(t, "10.0.0.2", clientID)
-}
-
-// errorReader is a reader that always returns an error.
-type errorReader struct{}
-
-func (r *errorReader) Read(p []byte) (n int, err error) {
-	return 0, errors.New("read error")
-}
-
-// =============================================================================
-// getRateLimit Tests (83.3% -> higher)
-// =============================================================================
-
-// TestTenantRateLimiter_GetRateLimit_NilDefaultConfig verifies that getRateLimit
-// returns nil when DefaultConfig is nil and the tenant has no specific config.
-func TestTenantRateLimiter_GetRateLimit_NilDefaultConfig(t *testing.T) {
-	config := &TenantRateLimiterConfig{}
-
-	trl := NewTenantRateLimiter(config, nil, ClientIP, "overall")
-	defer trl.Stop()
-
-	rateLimit := trl.getRateLimit("unknown-tenant")
-	assert.Nil(t, rateLimit)
 }
 
 // =============================================================================

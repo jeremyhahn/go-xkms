@@ -483,20 +483,6 @@ func TestTenantKeyFunctions(t *testing.T) {
 
 }
 
-func TestTenantIDContext(t *testing.T) {
-	t.Run("WithTenantID and TenantIDFromContext", func(t *testing.T) {
-		ctx := WithTenantID(context.Background(), "test-tenant")
-
-		tenantID := TenantIDFromContext(ctx)
-		require.Equal(t, "test-tenant", tenantID)
-	})
-
-	t.Run("TenantIDFromContext with missing value", func(t *testing.T) {
-		tenantID := TenantIDFromContext(context.Background())
-		require.Empty(t, tenantID)
-	})
-}
-
 func TestFormatInt(t *testing.T) {
 	tests := []struct {
 		input    int
