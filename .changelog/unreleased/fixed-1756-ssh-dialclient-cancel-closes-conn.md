@@ -1,0 +1,1 @@
+ssh/session: `DialClient` closes the connection as soon as its context ends during the SSH handshake and returns a `TimeoutError` wrapping the context error, instead of holding the socket open until the handshake `Timeout` when the context is cancelled without (or before) a deadline. It never returns a client whose socket the cancellation closed (#1756).
