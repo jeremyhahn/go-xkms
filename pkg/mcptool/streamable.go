@@ -126,7 +126,10 @@ func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.J
 		if !msg.isResponse() {
 			return nil, fmt.Errorf("mcp request %s: server body is not a JSON-RPC response", request.Method)
 		}
-		return msg.response(request.ID), nil
+		if !msg.answers(request.ID) {
+			return nil, fmt.Errorf("mcp request %s: response id %s does not match request id %s", request.Method, msg.ID, request.ID.String())
+		}
+		return msg.response()
 	case contentTypeEventFeed:
 		return s.readEventStream(body, request)
 	default:
@@ -293,7 +296,15 @@ func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) *mcptransp
 		return nil
 	}
 	if msg.isResponse() {
-		return msg.response(id)
+		if !msg.answers(id) {
+			// A response to another request: not this request's result.
+			return nil
+		}
+		resp, err := msg.response()
+		if err != nil {
+			return nil
+		}
+		return resp
 	}
 	if msg.Method != "" && msg.ID == nil {
 		var notification mcp.JSONRPCNotification
@@ -319,20 +330,41 @@ type wireMessage struct {
 	Error   *mcp.JSONRPCErrorDetails `json:"error,omitempty"`
 }
 
-// isResponse reports whether the message is a result or an error.
+// isResponse reports whether the message is a result or an error with an ID;
+// a response with a missing or null ID answers no request.
 func (m *wireMessage) isResponse() bool {
-	return m.Method == "" && (m.Result != nil || m.Error != nil)
+	id := bytes.TrimSpace(m.ID)
+	hasID := len(id) > 0 && !bytes.Equal(id, []byte("null"))
+	return m.Method == "" && hasID && (m.Result != nil || m.Error != nil)
 }
 
-// response converts the message to mcp-go's response type. One POST carries
-// one request, so the response takes that request's id.
-func (m *wireMessage) response(id mcp.RequestId) *mcptransport.JSONRPCResponse {
+// answers reports whether the message's wire ID is the request's ID. IDs
+// compare as compact JSON, so the number 1 and the string "1" differ.
+func (m *wireMessage) answers(id mcp.RequestId) bool {
+	want, err := json.Marshal(id)
+	if err != nil {
+		return false
+	}
+	var got, wantCompact bytes.Buffer
+	if json.Compact(&got, m.ID) != nil || json.Compact(&wantCompact, want) != nil {
+		return false
+	}
+	return bytes.Equal(got.Bytes(), wantCompact.Bytes())
+}
+
+// response converts the message to mcp-go's response type, keeping the wire
+// ID it arrived with. Callers check answers first.
+func (m *wireMessage) response() (*mcptransport.JSONRPCResponse, error) {
+	var id mcp.RequestId
+	if err := json.Unmarshal(m.ID, &id); err != nil {
+		return nil, fmt.Errorf("decode response id: %w", err)
+	}
 	return &mcptransport.JSONRPCResponse{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      id,
 		Result:  m.Result,
 		Error:   m.Error,
-	}
+	}, nil
 }
 
 // methodNotificationInitialized is the notification a client sends once the
