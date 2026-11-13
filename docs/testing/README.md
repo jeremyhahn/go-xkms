@@ -44,6 +44,7 @@ rule falls through to a pattern rule that runs `test/integration/<dir>`
 
 - [Docker Testing](docker-testing.md) - Using Docker for isolated integration tests
 - [Integration Tests](integration-tests.md) - Writing and running integration tests
+- [Integration Inventory](integration-inventory.md) - Every test/integration directory by layer, every sleep, slice (b) verdicts (#1607)
 - [Live-Backend E2E](live-e2e.md) - Playwright against a real xkey app and xkms-server
 - [Parity Matrix](parity-matrix.md) - GUI / CLI / xkmsctl operations and their live-test status
 

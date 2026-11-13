@@ -45,6 +45,10 @@ type Limiter struct {
 
 	// maxClients caps the number of tracked clients (see Config.MaxClients).
 	maxClients int
+
+	// now is the clock for token refill and idle cleanup; time.Now unless a
+	// test injects its own.
+	now func() time.Time
 }
 
 // DefaultMaxClients is the number of distinct clients a Limiter tracks when
@@ -130,6 +134,7 @@ func New(config *Config) *Limiter {
 		maxIdle:         maxIdle,
 		stopCleanup:     make(chan struct{}),
 		maxClients:      maxClients,
+		now:             time.Now,
 	}
 
 	if config.Enabled {
@@ -155,7 +160,7 @@ func (l *Limiter) getLimiter(clientID string) (*rate.Limiter, error) {
 		l.limiters[clientID] = limiter
 	}
 
-	l.lastSeen[clientID] = time.Now()
+	l.lastSeen[clientID] = l.now()
 	return limiter, nil
 }
 
@@ -171,7 +176,7 @@ func (l *Limiter) Allow(clientID string) bool {
 	if err != nil {
 		return false
 	}
-	return limiter.Allow()
+	return limiter.AllowN(l.now(), 1)
 }
 
 // Wait blocks until the rate limit allows the request.
@@ -209,7 +214,7 @@ func (l *Limiter) cleanup() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	now := time.Now()
+	now := l.now()
 	for clientID, lastSeen := range l.lastSeen {
 		if now.Sub(lastSeen) > l.maxIdle {
 			delete(l.limiters, clientID)
