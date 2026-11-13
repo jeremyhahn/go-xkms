@@ -16,13 +16,13 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
 
@@ -357,13 +357,11 @@ func noDaemonSocket(t *testing.T) string {
 	return privateTempDir(t) + "/absent.sock"
 }
 
-// privateTempDir returns a fresh temporary directory with mode 0700, for
-// tests that bind or dial an xkey IPC socket inside it. The IPC server and
-// client refuse a socket directory with group or other permission bits, and
-// t.TempDir creates its directory 0777 &^ umask.
+// privateTempDir returns a fresh short mode-0700 directory for tests that
+// bind or dial an xkey IPC socket inside it (testsupport.SocketDir: the IPC
+// server and client refuse a group- or world-accessible socket directory, and
+// a socket under t.TempDir passes sun_path under a long TMPDIR).
 func privateTempDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0o700))
-	return dir
+	return testsupport.SocketDir(t)
 }

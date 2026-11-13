@@ -48,7 +48,7 @@ func c704cKnownHostsFile(t *testing.T, args []string) string {
 func c704cSSHKeyConnect(t *testing.T) func(target string) error {
 	t.Helper()
 	withEmbeddedSSHStore(t)
-	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("TMPDIR", privateTempDir(t))
 	gen, _ := sshTestCmd(t)
 	setSSHFlags(t, gen, map[string]string{
 		"scope": "user", "owner": "alice", "name": "laptop", "type": "ed25519",

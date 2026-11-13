@@ -187,7 +187,7 @@ func TestDial_ReturnsVerifiedConnection(t *testing.T) {
 }
 
 func TestDial_RefusesInsecureDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	sockPath := filepath.Join(dir, "xkey.sock")
 	accepted := countingListener(t, sockPath)
