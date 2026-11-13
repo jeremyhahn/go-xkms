@@ -1,0 +1,1 @@
+- **CI: the Integration job runs as a matrix of suite-group shards** — six shards (api, webauthn, pkcs11, tpm2, cli, sdk), each with its own `IT_PROJECT`, together run every prerequisite of `make integration-test`, so the job's wall time is its longest shard, not the 110+ min serial suite (#1922, DS-7888, ruling 386).

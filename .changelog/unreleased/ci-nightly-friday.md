@@ -1,0 +1,1 @@
+- **The nightly full tier runs on Friday night only.** The `ci.yml` schedule is now `0 5 * * 6` (Saturday 05:00 UTC, the end of this project's Friday night in the CA m1919 rotation), in place of a run every night (#1928).

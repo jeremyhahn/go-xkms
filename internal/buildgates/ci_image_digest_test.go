@@ -36,9 +36,10 @@ const (
 	// outputs the producer's outputs name.
 	publishStep = "publish"
 	resolveStep = "resolve"
-	// producerRunsOn puts ci-images on the release runner for a push to main
-	// and on the pull-request pool otherwise.
-	producerRunsOn   = "${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}"
+	// producerRunsOn puts ci-images on the bigdisk-docker pool (ruling 442)
+	// for a push to main and a same-repository pull request, and on
+	// ubuntu-latest for every other event, a fork's pull request among them.
+	producerRunsOn   = `${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}`
 	digestRefPattern = `^[^@ ]+@sha256:[0-9a-f]{64}$`
 	// consumerFloor is the number of jobs in ci.yml that run a stage in the
 	// toolchain image; a parse that finds fewer has stopped seeing them.
@@ -457,7 +458,7 @@ env:
   CI_REGISTRY_OWNER: ${{ github.server_url != 'https://github.com' && vars.CI_REGISTRY_OWNER || '' }}
 jobs:
   ci-images:
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write
@@ -549,6 +550,9 @@ func TestCIImageDigest_CanFail(t *testing.T) {
 		{"images under another namespace", ownerCond, "${{ github.server_url != 'https://github.com' && 'jeremyhahn' || '' }}", "workflow: CI_REGISTRY_OWNER is"},
 		{"producer missing", "  ci-images:\n", "  images:\n", "ci-images: no such job"},
 		{"producer on the pull-request pool", producerRunsOn, "bigdisk", "ci-images: runs on"},
+		{"producer on the Docker-free pool", `"bigdisk-docker"`, `"bigdisk"`, "ci-images: runs on"},
+		{"producer on the release runner", producerRunsOn, "${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}", "ci-images: runs on"},
+		{"producer for a fork's pull request", " && github.event.pull_request.head.repo.full_name == github.repository", "", "ci-images: runs on"},
 		{"producer cannot push", "packages: write", "packages: read", "no packages: write"},
 		{"publish on a pull request", "if: ${{ env.CI_PUBLISH == 'true' }}", "if: ${{ env.CI_PUBLISH == 'true' || github.event_name == 'pull_request' }}", "publishes outside a push to main"},
 		{"publish under a negation", "if: ${{ env.CI_PUBLISH == 'true' }}", "if: ${{ !(env.CI_PUBLISH == 'true') }}", "no step publishes the toolchain image"},

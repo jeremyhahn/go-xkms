@@ -283,13 +283,19 @@ GITEA_INSTEADOF_KEY = url.http://x:$(FORGE_MODULE_TOKEN)@$(GITEA_HOST)/jeremyhah
 # A required `${GITEA_HOST:?...}` cannot serve here: compose evaluates it when
 # the file is LOADED, so it fails a public checkout before any service starts,
 # which is the opposite of the public-resolution path this exists to provide.
+#
+# GOPRIVATE has no default: github.com/jeremyhahn/* resolves from
+# proxy.golang.org and is verified against sum.golang.org like any other
+# module, so a tag moved upstream fails the go.sum check instead of being
+# fetched direct. GOMODAUTH_GOPRIVATE carries the caller's GOPRIVATE only when
+# the caller set one.
 ifneq ($(GIT_CONFIG_KEY_0),)
-GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
 else ifneq ($(and $(FORGE_MODULE_TOKEN),$(GITEA_HOST)),)
-GOMODAUTH_GOPRIVATE := github.com/jeremyhahn/*
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GITEA_INSTEADOF_KEY)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := https://github.com/jeremyhahn/
@@ -480,6 +486,12 @@ TEST_FLAGS_FIPS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,
 # excluded by every other test lane, which always carries frost (go-xkms#1249).
 TEST_TAGS_NOFROST := $(filter-out frost,$(TEST_TAGS))
 TEST_FLAGS_NOFROST := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
+# make coverage's flags: TEST_FLAGS and TEST_FLAGS_NOFROST without -race
+# (#2023). The race detector's CPU and memory cost kept the Coverage job from
+# finishing on a 4-vCPU hosted runner; ci.yml's Race Detector job, which runs on
+# every ready PR and which CI Gate requires, carries -race.
+COVERAGE_TEST_FLAGS := -v -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS))"
+COVERAGE_TEST_FLAGS_NOFROST := -v -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS_NOFROST))"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 # Where `make agsim` puts the trusted-firmware host simulators. Exported so every
 # go test the Makefile runs finds them (sdk/go/tfwsim reads TFWSIM_DIR).
@@ -726,13 +738,13 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping test-web$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/sdk...$(RESET)"
-	@cd $(SDK_TS_DIR) && npm ci --silent && npm run test:coverage
+	@cd $(SDK_TS_DIR) && npm ci --silent --fetch-timeout=60000 --fetch-retries=2 && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/svelte-auth...$(RESET)"
-	@cd $(SVELTE_AUTH_DIR) && npm ci --silent && npm run test:coverage
+	@cd $(SVELTE_AUTH_DIR) && npm ci --silent --fetch-timeout=60000 --fetch-retries=2 && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing web/app...$(RESET)"
-	@cd $(WEB_APP_DIR) && npm ci --silent && npm run check && npm run test:coverage
+	@cd $(WEB_APP_DIR) && npm ci --silent --fetch-timeout=60000 --fetch-retries=2 && npm run check && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing the xKey GUI frontend...$(RESET)"
-	@cd $(XKEY_FRONTEND_DIR) && npm ci --silent && npm run check -- --fail-on-warnings && npm test
+	@cd $(XKEY_FRONTEND_DIR) && npm ci --silent --fetch-timeout=60000 --fetch-retries=2 && npm run check -- --fail-on-warnings && npm test
 	@echo "$(GREEN)✓ web UI tests passed$(RESET)"
 endif
 
@@ -1098,6 +1110,7 @@ test-scripts:
 	@bash test/scripts/socket-probe.test.sh
 	@bash test/scripts/start-test-xkmsd.test.sh
 	@bash test/scripts/xkms-server-diagnostics.test.sh
+	@bash test/scripts/webauthn-browser-suite.test.sh
 	@bash test/scripts/check-public-literals.test.sh
 	@bash test/scripts/build-agsim.test.sh
 	@bash test/scripts/check-test-helpers.test.sh
@@ -1183,21 +1196,64 @@ test-all: test test-importexport
 
 .PHONY: race
 ## race: Run tests with race detector on all backends (matches GitHub Actions)
+# Its tags hold all of TEST_TAGS (tpm_simulator, frost): make coverage runs
+# without -race (#2023), so this is the only -race run of those tests.
+race: export XKMS_DENY_HARDWARE_TPM := 1
 race: agsim
 	@echo "$(CYAN)$(BOLD)→ Running race detector tests with all backends...$(RESET)"
-	@CGO_ENABLED=1 $(GO) test -race -tags="$(call go_tags,pkcs8$(comma)awskms$(comma)gcpkms$(comma)azurekv$(comma)pkcs11$(comma)vault$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)" ./... || \
+	@CGO_ENABLED=1 $(GO) test -race -tags="$(call go_tags,pkcs8$(comma)awskms$(comma)gcpkms$(comma)azurekv$(comma)pkcs11$(comma)vault$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack$(comma)tpm_simulator$(comma)frost)" ./... || \
 		(echo "$(RED)$(BOLD)✗ Race detector found issues$(RESET)" && exit 1)
 	@echo "$(GREEN)$(BOLD)✓ Race detector tests passed!$(RESET)"
 
+.PHONY: race-nofrost
+## race-nofrost: Run the !frost stub-build unit tests (test-nofrost's packages)
+## under the race detector; make coverage runs that lane without -race (#2023)
+race-nofrost: export XKMS_DENY_HARDWARE_TPM := 1
+race-nofrost: agsim
+	@echo "$(CYAN)$(BOLD)→ Running !frost stub race detector tests...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS_NOFROST) ./pkg/api/rest/... ./pkg/api/mcp/... ./pkg/api/grpc/... ./pkg/server/...
+	@echo "$(GREEN)$(BOLD)✓ !frost stub race detector tests passed!$(RESET)"
+
+# Packages holding a file built only without a backend tag (pkcs8, awskms,
+# gcpkms, azurekv, pkcs11, vault). make race and the race job carry all of those
+# tags, so these files run under -race only through race-stubs (#2023).
+# internal/buildgates fails when the list and the tree disagree.
+RACE_STUB_PKGS := ./pkg/crypto/rand/ ./pkg/pivcert/pkcs11/ ./pkg/pkcs11/manager/ ./pkg/pkcs11strategy/ ./pkg/server/ ./pkg/xkms/
+
+.PHONY: race-stubs
+## race-stubs: Run the backend-stub builds (RACE_STUB_PKGS) with TEST_TAGS, no
+## backend tags, under the race detector; make race carries every backend tag
+race-stubs: export XKMS_DENY_HARDWARE_TPM := 1
+race-stubs: agsim
+	@echo "$(CYAN)$(BOLD)→ Running backend-stub race detector tests...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) $(RACE_STUB_PKGS)
+	@echo "$(GREEN)$(BOLD)✓ Backend-stub race detector tests passed!$(RESET)"
+
 .PHONY: coverage
 ## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
-# GOMEMLIMIT and -p=2 bound the suite's memory: under -race the Argon2-heavy
-# REST/MCP packages exhaust a runner's memory without them. Under CI the suite
-# must leave the tree as it found it (#454). The per-package report is
-# advisory (#704).
+# It runs test's lanes, but its go test runs without -race (COVERAGE_TEST_FLAGS):
+# under -race at -p=2 the suite never finished inside the Coverage job's 180
+# minutes on a 4-vCPU hosted runner (#2023); the PR-tier Race Detector job runs -race.
+# -p=4 matches that runner's vCPUs; GOMEMLIMIT bounds the Argon2-heavy REST/MCP
+# packages. Under CI the suite must leave the tree as it found it (#454). The
+# per-package report is advisory (#704).
 coverage: export GOMEMLIMIT := 10GiB
-coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=2)
-coverage: test
+coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=4)
+coverage: export XKMS_DENY_HARDWARE_TPM := 1
+coverage: check-insecure-tls agsim
+	@$(MAKE) --no-print-directory test-scripts
+	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@bash -c 'set -o pipefail; \
+	$(GO) test $(COVERAGE_TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
+		$$(go list -e $(UNIT_TEST_SCOPE) 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)") \
+		2>&1 | tee $(COVERAGE_DIR)/test.log' || \
+		{ grep -E "FAIL|panic" $(COVERAGE_DIR)/test.log | head -20; exit 1; }
+	@$(MAKE) --no-print-directory coverage-report
+	@$(MAKE) --no-print-directory test-nofrost TEST_FLAGS_NOFROST='$(COVERAGE_TEST_FLAGS_NOFROST)'
+	@$(MAKE) --no-print-directory test-pkcs11
+	@$(MAKE) --no-print-directory test-web
+	@$(MAKE) --no-print-directory check-wailsjs
 	@total=$$($(GO) tool cover -func=$(COVERAGE_FILE) | awk '/^total:/ {print $$3}' | tr -d %); \
 	echo "Total coverage: $${total}%"; \
 	awk -v c="$$total" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { if (c + 0 < t + 0) { print "coverage below " t "%"; exit 1 } }'
@@ -2606,7 +2662,7 @@ integration-test-webauthn: integration-test-webauthn-browser
 ## integration-test-webauthn-browser: Drive Chrome's CDP virtual authenticator against the REAL xkmsd WebAuthn RP (in the devcontainer, which carries Node and Chromium's libraries)
 integration-test-webauthn-browser:
 	@echo "$(CYAN)$(BOLD)→ Chrome virtual authenticator → real RP (/api/v1/webauthn/*)$(RESET)"
-	$(call run_in_devcontainer,mkdir -p $(BIN_DIR) && CGO_ENABLED=1 $(GO) build -buildvcs=false -tags='$(call go_tags,pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/ && cd test/integration/webauthn-browser && npm ci --no-fund --no-audit && npx playwright install chromium chromium-headless-shell && XKMSD_BIN=../../../$(BIN_DIR)/xkmsd npx playwright test,integration-test-webauthn-browser)
+	$(call run_in_devcontainer,mkdir -p $(BIN_DIR) && CGO_ENABLED=1 $(GO) build -buildvcs=false -tags='$(call go_tags,pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/ && cd test/integration/webauthn-browser && npm ci --no-fund --no-audit && npx playwright install chromium chromium-headless-shell && XKMSD_BIN=../../../$(BIN_DIR)/xkmsd bash ./run-suite.sh,integration-test-webauthn-browser)
 
 # Comma for use in function calls (Make escapes commas in function args)
 comma := ,

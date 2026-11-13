@@ -1,0 +1,7 @@
+- Merge main d55b1b73c7 into ci/1923-devcontainer-split: keep main's v1.34.1 job structure (preflight, one image job, verdict if: lines, runs-on routing), drop the #1923 six-job split, carry #2023's race tier (coverage without -race, race on every ready PR, CI Gate race at pr).
+- Checks: actionlint .github/workflows/ci.yml; go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./internal/buildgates/...; make lint.
+- Results to follow.
+- Run 1, merge: ci.yml taken whole from main d55b1b73c7, then #2023's race tier re-applied (header tier note, coverage comment, race comment and if:, race step comment, name, tpm_simulator tag, XKMS_DENY_HARDWARE_TPM and the race-nofrost/race-stubs lanes on the hosted and native steps, CI Gate race at pr); no split job left.
+- Run 2, actionlint .github/workflows/ci.yml: pass.
+- Run 3, buildgates: TestCIImageDigest_RevertedConsumerFails failed (ci_image_digest_test.go:448, it named the dropped lint job); after the test fix, pass.
+- Run 4, make lint: pass (0 issues on every module and tag set).

@@ -1,0 +1,7 @@
+- Merge main d55b1b73c7 into ci/1922-integration-shards (CA m2565): main's v1.34.1 CI file, with #2022's six-shard Integration matrix under main's needs/if/runs-on.
+- Checks: actionlint on .github/workflows/ci.yml; go test of ./internal/buildgates/... with codec_cbor codec_json codec_msgpack; make lint.
+- Results to follow.
+- Merge c5b7fea46e: parents 75b0ca9889 and d55b1b73c7; header keeps main's block plus #2022's #1922 line; Integration keeps main's needs/if/runs-on with #2022's per-shard timeout and six-shard matrix.
+- actionlint v1.7.12 (on PATH) on .github/workflows/ci.yml: pass.
+- go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./internal/buildgates/...: pass.
+- make lint: pass (0 issues in every module and tag set).
