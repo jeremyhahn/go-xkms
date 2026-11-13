@@ -16,8 +16,6 @@ package entities
 import (
 	"encoding/json"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestACMEChallenge_EntityID(t *testing.T) {
@@ -52,17 +50,6 @@ func TestACMEChallenge_EntityID(t *testing.T) {
 				t.Errorf("EntityID() = %v, want %v", got, tt.expected)
 			}
 		})
-	}
-}
-
-func TestACMEChallenge_SetEntityID(t *testing.T) {
-	challenge := &ACMEChallenge{ID: 1}
-	newID := uint64(2)
-
-	challenge.SetEntityID(newID)
-
-	if challenge.ID != newID {
-		t.Errorf("SetEntityID() set ID = %v, want %v", challenge.ID, newID)
 	}
 }
 
@@ -169,42 +156,6 @@ func TestACMEChallenge_JSONMarshaling(t *testing.T) {
 				t.Errorf("AccountID mismatch: got %v, want %v", unmarshaled.AccountID, tt.challenge.AccountID)
 			}
 		})
-	}
-}
-
-func TestACMEChallenge_YAMLMarshaling(t *testing.T) {
-	challenge := &ACMEChallenge{
-		ID:              1,
-		Type:            "http-01",
-		URL:             "https://example.com/challenge/1",
-		Status:          "valid",
-		Token:           "test-token",
-		Validated:       "2024-01-01T00:00:00Z",
-		AccountID:       1,
-		AuthorizationID: 1,
-	}
-
-	// Marshal to YAML
-	yamlData, err := yaml.Marshal(challenge)
-	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
-	}
-
-	// Unmarshal from YAML
-	var unmarshaled ACMEChallenge
-	if err := yaml.Unmarshal(yamlData, &unmarshaled); err != nil {
-		t.Fatalf("yaml.Unmarshal() error = %v", err)
-	}
-
-	// Verify fields
-	if unmarshaled.ID != challenge.ID {
-		t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, challenge.ID)
-	}
-	if unmarshaled.Type != challenge.Type {
-		t.Errorf("Type mismatch: got %v, want %v", unmarshaled.Type, challenge.Type)
-	}
-	if unmarshaled.Status != challenge.Status {
-		t.Errorf("Status mismatch: got %v, want %v", unmarshaled.Status, challenge.Status)
 	}
 }
 

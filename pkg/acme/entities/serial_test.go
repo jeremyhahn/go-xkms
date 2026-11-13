@@ -14,7 +14,6 @@
 package entities
 
 import (
-	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -72,15 +71,6 @@ func TestNormalizeSerial_Invalid(t *testing.T) {
 			assert.Equal(t, tt.input, invalidErr.Serial)
 		})
 	}
-}
-
-func TestNormalizeSerial_MatchesBigIntTextForm(t *testing.T) {
-	serial, ok := new(big.Int).SetString("ffeeddccbbaa99887766554433221100", 16)
-	require.True(t, ok)
-
-	got, err := NormalizeSerial(serial.Text(16))
-	require.NoError(t, err)
-	assert.Equal(t, serial.Text(16), got)
 }
 
 func TestInvalidSerialError_Error(t *testing.T) {

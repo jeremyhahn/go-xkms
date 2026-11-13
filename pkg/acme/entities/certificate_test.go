@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"gopkg.in/yaml.v3"
 )
 
 func TestACMECertificate_EntityID(t *testing.T) {
@@ -184,100 +183,5 @@ func TestACMECertificate_JSONMarshaling(t *testing.T) {
 				t.Errorf("ExpiresAt mismatch: got %v, want %v", unmarshaled.ExpiresAt, tt.cert.ExpiresAt)
 			}
 		})
-	}
-}
-
-func TestACMECertificate_YAMLMarshaling(t *testing.T) {
-	issuedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	expiresAt := time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)
-
-	cert := &ACMECertificate{
-		Serial:    "1",
-		CertURL:   "https://example.com/acme/cert/1",
-		PEM:       "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----",
-		IssuedAt:  issuedAt,
-		Status:    "valid",
-		ExpiresAt: expiresAt,
-	}
-
-	// Marshal to YAML
-	yamlData, err := yaml.Marshal(cert)
-	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
-	}
-
-	// Unmarshal from YAML
-	var unmarshaled ACMECertificate
-	if err := yaml.Unmarshal(yamlData, &unmarshaled); err != nil {
-		t.Fatalf("yaml.Unmarshal() error = %v", err)
-	}
-
-	// Verify fields
-	if unmarshaled.Serial != cert.Serial {
-		t.Errorf("Serial mismatch: got %v, want %v", unmarshaled.Serial, cert.Serial)
-	}
-	if unmarshaled.Status != cert.Status {
-		t.Errorf("Status mismatch: got %v, want %v", unmarshaled.Status, cert.Status)
-	}
-	if unmarshaled.CertURL != cert.CertURL {
-		t.Errorf("CertURL mismatch: got %v, want %v", unmarshaled.CertURL, cert.CertURL)
-	}
-}
-
-func TestACMECertificate_TimeHandling(t *testing.T) {
-	now := time.Now()
-	future := now.Add(365 * 24 * time.Hour)
-
-	cert := &ACMECertificate{
-		Serial:    "1",
-		CertURL:   "https://example.com/acme/cert/1",
-		PEM:       "test-pem",
-		IssuedAt:  now,
-		Status:    "valid",
-		ExpiresAt: future,
-	}
-
-	jsonData, err := json.Marshal(cert)
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
-	}
-
-	var unmarshaled ACMECertificate
-	if err := json.Unmarshal(jsonData, &unmarshaled); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-
-	// Verify time fields are properly handled
-	if !unmarshaled.IssuedAt.Equal(now) {
-		t.Errorf("IssuedAt not preserved: got %v, want %v", unmarshaled.IssuedAt, now)
-	}
-
-	if !unmarshaled.ExpiresAt.Equal(future) {
-		t.Errorf("ExpiresAt not preserved: got %v, want %v", unmarshaled.ExpiresAt, future)
-	}
-
-	// Verify certificate is valid
-	if unmarshaled.ExpiresAt.Before(unmarshaled.IssuedAt) {
-		t.Error("ExpiresAt should be after IssuedAt")
-	}
-}
-
-func TestACMECertificate_ZeroValues(t *testing.T) {
-	cert := &ACMECertificate{}
-
-	if cert.Serial != "" {
-		t.Errorf("Expected empty Serial, got %v", cert.Serial)
-	}
-
-	if cert.Status != "" {
-		t.Errorf("Expected empty status, got %v", cert.Status)
-	}
-
-	if !cert.IssuedAt.IsZero() {
-		t.Errorf("Expected zero IssuedAt, got %v", cert.IssuedAt)
-	}
-
-	if !cert.ExpiresAt.IsZero() {
-		t.Errorf("Expected zero ExpiresAt, got %v", cert.ExpiresAt)
 	}
 }

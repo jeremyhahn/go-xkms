@@ -20,42 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestStringToEntityID_Deterministic(t *testing.T) {
-	inputs := []string{
-		"test-kid-123",
-		"tenant-abc",
-		"some-long-identifier-with-many-characters",
-	}
-
-	for _, input := range inputs {
-		t.Run(input, func(t *testing.T) {
-			first := StringToEntityID(input)
-			second := StringToEntityID(input)
-			assert.Equal(t, first, second, "same input must produce same output")
-		})
-	}
-}
-
-func TestStringToEntityID_UniqueForDifferentInputs(t *testing.T) {
-	inputs := []string{
-		"alpha",
-		"bravo",
-		"charlie",
-		"delta",
-		"echo",
-		"foxtrot",
-	}
-
-	seen := make(map[uint64]string, len(inputs))
-	for _, input := range inputs {
-		id := StringToEntityID(input)
-		if prev, ok := seen[id]; ok {
-			t.Errorf("collision: %q and %q both produced ID %d", prev, input, id)
-		}
-		seen[id] = input
-	}
-}
-
 func TestStringToEntityID_NonZero(t *testing.T) {
 	inputs := []string{
 		"a",

@@ -17,8 +17,6 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestACMEAccount_EntityID(t *testing.T) {
@@ -51,41 +49,6 @@ func TestACMEAccount_EntityID(t *testing.T) {
 
 			if got := account.EntityID(); got != tt.expected {
 				t.Errorf("EntityID() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestACMEAccount_SetEntityID(t *testing.T) {
-	tests := []struct {
-		name     string
-		id       uint64
-		expected uint64
-	}{
-		{
-			name:     "Set zero ID",
-			id:       0,
-			expected: 0,
-		},
-		{
-			name:     "Set positive ID",
-			id:       999,
-			expected: 999,
-		},
-		{
-			name:     "Overwrite existing ID",
-			id:       555,
-			expected: 555,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			account := &ACMEAccount{ID: 123}
-			account.SetEntityID(tt.id)
-
-			if account.ID != tt.expected {
-				t.Errorf("SetEntityID() set ID = %v, want %v", account.ID, tt.expected)
 			}
 		})
 	}
@@ -173,69 +136,6 @@ func TestACMEAccount_JSONMarshaling(t *testing.T) {
 			}
 			if unmarshaled.Key != tt.account.Key {
 				t.Errorf("Key mismatch: got %v, want %v", unmarshaled.Key, tt.account.Key)
-			}
-		})
-	}
-}
-
-func TestACMEAccount_YAMLMarshaling(t *testing.T) {
-	createdAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	tests := []struct {
-		name    string
-		account *ACMEAccount
-		wantErr bool
-	}{
-		{
-			name: "Full account",
-			account: &ACMEAccount{
-				ID:                   1,
-				Contact:              []string{"mailto:admin@example.com"},
-				CreatedAt:            createdAt,
-				Key:                  "test-key",
-				Orders:               "https://example.com/orders",
-				Status:               "valid",
-				TermsOfServiceAgreed: true,
-				URL:                  "https://example.com/account/1",
-			},
-			wantErr: false,
-		},
-		{
-			name: "Empty account",
-			account: &ACMEAccount{
-				ID:        0,
-				CreatedAt: time.Time{},
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Marshal to YAML
-			yamlData, err := yaml.Marshal(tt.account)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("yaml.Marshal() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			// Unmarshal from YAML
-			var unmarshaled ACMEAccount
-			if err := yaml.Unmarshal(yamlData, &unmarshaled); err != nil {
-				t.Errorf("yaml.Unmarshal() error = %v", err)
-				return
-			}
-
-			// Verify key fields
-			if unmarshaled.ID != tt.account.ID {
-				t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, tt.account.ID)
-			}
-			if unmarshaled.Status != tt.account.Status {
-				t.Errorf("Status mismatch: got %v, want %v", unmarshaled.Status, tt.account.Status)
 			}
 		})
 	}

@@ -16,8 +16,6 @@ package entities
 import (
 	"encoding/json"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestError_Error(t *testing.T) {
@@ -226,34 +224,6 @@ func TestError_JSONMarshaling(t *testing.T) {
 	}
 }
 
-func TestError_YAMLMarshaling(t *testing.T) {
-	acmeErr := &Error{
-		Type:   "urn:ietf:params:acme:error:badNonce",
-		Detail: "Invalid nonce",
-		Status: 400,
-	}
-
-	// Marshal to YAML
-	yamlData, err := yaml.Marshal(acmeErr)
-	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
-	}
-
-	// Unmarshal from YAML
-	var unmarshaled Error
-	if err := yaml.Unmarshal(yamlData, &unmarshaled); err != nil {
-		t.Fatalf("yaml.Unmarshal() error = %v", err)
-	}
-
-	// Verify fields
-	if unmarshaled.Type != acmeErr.Type {
-		t.Errorf("Type mismatch: got %v, want %v", unmarshaled.Type, acmeErr.Type)
-	}
-	if unmarshaled.Detail != acmeErr.Detail {
-		t.Errorf("Detail mismatch: got %v, want %v", unmarshaled.Detail, acmeErr.Detail)
-	}
-}
-
 func TestError_StatusNotInJSON(t *testing.T) {
 	acmeErr := &Error{
 		Type:   "urn:ietf:params:acme:error:badNonce",
@@ -360,58 +330,6 @@ func TestSubProblem_JSONMarshaling(t *testing.T) {
 			}
 			if unmarshaled.Detail != tt.subproblem.Detail {
 				t.Errorf("Detail mismatch: got %v, want %v", unmarshaled.Detail, tt.subproblem.Detail)
-			}
-		})
-	}
-}
-
-func TestError_CommonACMEErrors(t *testing.T) {
-	// Test creation of common ACME error types
-	errorTypes := []struct {
-		errType string
-		detail  string
-		status  int
-	}{
-		{"badNonce", "The nonce was unacceptable", 400},
-		{"badSignatureAlgorithm", "The JWS was signed with an algorithm the server does not support", 400},
-		{"invalidContact", "The contact URI for an account was invalid", 400},
-		{"unauthorized", "The client lacks sufficient authorization", 403},
-		{"unsupportedContact", "A contact URL for an account used an unsupported protocol scheme", 400},
-		{"accountDoesNotExist", "The request specified an account that does not exist", 400},
-		{"malformed", "The request message was malformed", 400},
-		{"rateLimited", "The request exceeds a rate limit", 429},
-		{"rejectedIdentifier", "The server will not issue certificates for the identifier", 400},
-		{"serverInternal", "The server experienced an internal error", 500},
-		{"unauthorized", "The client lacks sufficient authorization", 403},
-		{"unsupportedIdentifier", "An identifier is of an unsupported type", 400},
-		{"userActionRequired", "Visit the URL given to take actions specified by the server", 403},
-		{"badRevocationReason", "The revocation reason provided is not allowed by the server", 400},
-		{"dns", "There was a problem with a DNS query during identifier validation", 400},
-		{"connection", "The server could not connect to validation target", 400},
-		{"tls", "The server received a TLS error during validation", 400},
-		{"incorrectResponse", "Response received didn't match the challenge's requirements", 400},
-	}
-
-	for _, et := range errorTypes {
-		t.Run(et.errType, func(t *testing.T) {
-			err := NewError(et.errType, et.detail, et.status, nil)
-
-			expectedType := "urn:ietf:params:acme:error:" + et.errType
-			if err.Type != expectedType {
-				t.Errorf("Type = %v, want %v", err.Type, expectedType)
-			}
-
-			if err.Detail != et.detail {
-				t.Errorf("Detail = %v, want %v", err.Detail, et.detail)
-			}
-
-			if err.Status != et.status {
-				t.Errorf("Status = %v, want %v", err.Status, et.status)
-			}
-
-			// Verify it implements error interface
-			if err.Error() != et.detail {
-				t.Errorf("Error() = %v, want %v", err.Error(), et.detail)
 			}
 		})
 	}

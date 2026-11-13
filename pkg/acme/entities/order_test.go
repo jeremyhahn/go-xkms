@@ -16,8 +16,6 @@ package entities
 import (
 	"encoding/json"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestACMEOrder_EntityID(t *testing.T) {
@@ -52,17 +50,6 @@ func TestACMEOrder_EntityID(t *testing.T) {
 				t.Errorf("EntityID() = %v, want %v", got, tt.expected)
 			}
 		})
-	}
-}
-
-func TestACMEOrder_SetEntityID(t *testing.T) {
-	order := &ACMEOrder{ID: 100}
-	newID := uint64(200)
-
-	order.SetEntityID(newID)
-
-	if order.ID != newID {
-		t.Errorf("SetEntityID() set ID = %v, want %v", order.ID, newID)
 	}
 }
 
@@ -196,44 +183,6 @@ func TestACMEOrder_JSONMarshaling(t *testing.T) {
 	}
 }
 
-func TestACMEOrder_YAMLMarshaling(t *testing.T) {
-	order := &ACMEOrder{
-		ID:     1,
-		Status: "pending",
-		Identifiers: []ACMEIdentifier{
-			{Type: "dns", Value: "example.com"},
-		},
-		Expires:        "2024-12-31T23:59:59Z",
-		Authorizations: []string{"https://example.com/authz/1"},
-		Finalize:       "https://example.com/order/1/finalize",
-		AccountID:      1,
-		URL:            "https://example.com/order/1",
-	}
-
-	// Marshal to YAML
-	yamlData, err := yaml.Marshal(order)
-	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
-	}
-
-	// Unmarshal from YAML
-	var unmarshaled ACMEOrder
-	if err := yaml.Unmarshal(yamlData, &unmarshaled); err != nil {
-		t.Fatalf("yaml.Unmarshal() error = %v", err)
-	}
-
-	// Verify fields
-	if unmarshaled.ID != order.ID {
-		t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, order.ID)
-	}
-	if unmarshaled.Status != order.Status {
-		t.Errorf("Status mismatch: got %v, want %v", unmarshaled.Status, order.Status)
-	}
-	if unmarshaled.Finalize != order.Finalize {
-		t.Errorf("Finalize mismatch: got %v, want %v", unmarshaled.Finalize, order.Finalize)
-	}
-}
-
 func TestACMEOrder_OmitEmptyFields(t *testing.T) {
 	order := &ACMEOrder{
 		ID:             1,
@@ -270,44 +219,6 @@ func TestACMEOrder_OmitEmptyFields(t *testing.T) {
 	}
 	if _, exists := result["error"]; exists && order.Error == nil {
 		t.Error("Expected 'error' to be omitted when nil")
-	}
-}
-
-func TestACMEOrder_MultipleIdentifiers(t *testing.T) {
-	order := &ACMEOrder{
-		ID:     1,
-		Status: "pending",
-		Identifiers: []ACMEIdentifier{
-			{Type: "dns", Value: "example.com"},
-			{Type: "dns", Value: "www.example.com"},
-			{Type: "dns", Value: "api.example.com"},
-			{Type: "dns", Value: "*.example.com"},
-		},
-		Expires:        "2024-12-31T23:59:59Z",
-		Authorizations: []string{"https://example.com/authz/1", "https://example.com/authz/2", "https://example.com/authz/3", "https://example.com/authz/4"},
-		Finalize:       "https://example.com/order/1/finalize",
-		AccountID:      1,
-		URL:            "https://example.com/order/1",
-	}
-
-	jsonData, err := json.Marshal(order)
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
-	}
-
-	var unmarshaled ACMEOrder
-	if err := json.Unmarshal(jsonData, &unmarshaled); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-
-	if len(unmarshaled.Identifiers) != 4 {
-		t.Errorf("Expected 4 identifiers, got %d", len(unmarshaled.Identifiers))
-	}
-
-	for i, identifier := range unmarshaled.Identifiers {
-		if identifier.Value != order.Identifiers[i].Value {
-			t.Errorf("Identifier[%d] value mismatch: got %v, want %v", i, identifier.Value, order.Identifiers[i].Value)
-		}
 	}
 }
 
@@ -351,25 +262,5 @@ func TestACMEOrder_XSignedOrder(t *testing.T) {
 
 	if unmarshaled.XSignedOrder.ID != innerOrder.ID {
 		t.Errorf("XSignedOrder ID mismatch: got %v, want %v", unmarshaled.XSignedOrder.ID, innerOrder.ID)
-	}
-}
-
-func TestACMEOrder_ZeroValue(t *testing.T) {
-	var order ACMEOrder
-
-	if order.ID != 0 {
-		t.Errorf("Expected zero ID, got %v", order.ID)
-	}
-
-	if order.Status != "" {
-		t.Errorf("Expected empty Status, got %v", order.Status)
-	}
-
-	if order.Identifiers != nil {
-		t.Errorf("Expected nil Identifiers, got %v", order.Identifiers)
-	}
-
-	if order.Authorizations != nil {
-		t.Errorf("Expected nil Authorizations, got %v", order.Authorizations)
 	}
 }

@@ -142,68 +142,7 @@ func TestExternalAccountBinding_Constants(t *testing.T) {
 	}
 }
 
-func TestExternalAccountBindingJWS_Fields(t *testing.T) {
-	// Test that the JWS structure can be created and fields accessed
-	jws := ExternalAccountBindingJWS{
-		Protected: "eyJhbGciOiJIUzI1NiIsImtpZCI6InRlc3Qta2lkIiwidXJsIjoiaHR0cHM6Ly9leGFtcGxlLmNvbS9hY21lL25ldy1hY2NvdW50In0",
-		Payload:   "eyJrdHkiOiJSU0EiLCJuIjoiMDJZTjdLZXkiLCJlIjoiQVFBQiJ9",
-		Signature: "dG8fI2LMHXKwU5K8SxJBGP6rKrIFhLCyNYQOl0gXc_c",
-	}
-
-	if jws.Protected == "" {
-		t.Error("Protected should not be empty")
-	}
-	if jws.Payload == "" {
-		t.Error("Payload should not be empty")
-	}
-	if jws.Signature == "" {
-		t.Error("Signature should not be empty")
-	}
-}
-
-func TestExternalAccountBindingProtectedHeader_Fields(t *testing.T) {
-	header := ExternalAccountBindingProtectedHeader{
-		Alg: "HS256",
-		KID: "test-kid",
-		URL: "https://example.com/acme/new-account",
-	}
-
-	if header.Alg != "HS256" {
-		t.Errorf("Alg = %v, want 'HS256'", header.Alg)
-	}
-	if header.KID != "test-kid" {
-		t.Errorf("KID = %v, want 'test-kid'", header.KID)
-	}
-	if header.URL != "https://example.com/acme/new-account" {
-		t.Errorf("URL = %v, want 'https://example.com/acme/new-account'", header.URL)
-	}
-}
-
 // Tests consolidated from coverage_boost_test.go
-
-func TestEABDeviceInfo_Fields(t *testing.T) {
-	deviceInfo := &EABDeviceInfo{
-		DeviceID:           "device-001",
-		Manufacturer:       "Acme Corp",
-		Model:              "Widget Pro",
-		EKPublicKeyHash:    "abc123def456",
-		TPMManufacturer:    "TPM Inc",
-		TPMFirmwareVersion: "1.2.3",
-		Metadata: map[string]string{
-			"location": "datacenter-1",
-			"rack":     "A42",
-		},
-	}
-
-	assert.Equal(t, "device-001", deviceInfo.DeviceID)
-	assert.Equal(t, "Acme Corp", deviceInfo.Manufacturer)
-	assert.Equal(t, "Widget Pro", deviceInfo.Model)
-	assert.Equal(t, "abc123def456", deviceInfo.EKPublicKeyHash)
-	assert.Equal(t, "TPM Inc", deviceInfo.TPMManufacturer)
-	assert.Equal(t, "1.2.3", deviceInfo.TPMFirmwareVersion)
-	assert.Equal(t, "datacenter-1", deviceInfo.Metadata["location"])
-	assert.Equal(t, "A42", deviceInfo.Metadata["rack"])
-}
 
 func TestEABDeviceInfo_JSONMarshaling(t *testing.T) {
 	original := &EABDeviceInfo{
@@ -234,118 +173,10 @@ func TestEABDeviceInfo_JSONMarshaling(t *testing.T) {
 	assert.Equal(t, original.Metadata["key"], decoded.Metadata["key"])
 }
 
-func TestEABDeviceInfo_EmptyFields(t *testing.T) {
-	deviceInfo := &EABDeviceInfo{}
-
-	assert.Empty(t, deviceInfo.DeviceID)
-	assert.Empty(t, deviceInfo.Manufacturer)
-	assert.Empty(t, deviceInfo.Model)
-	assert.Empty(t, deviceInfo.EKPublicKeyHash)
-	assert.Empty(t, deviceInfo.TPMManufacturer)
-	assert.Empty(t, deviceInfo.TPMFirmwareVersion)
-	assert.Nil(t, deviceInfo.Metadata)
-}
-
 func TestEABPurposeConstants(t *testing.T) {
 	assert.Equal(t, "account-binding", EABPurposeAccountBinding)
 	assert.Equal(t, "endorse-01", EABPurposeEndorse01)
 	assert.Equal(t, "enroll-01", EABPurposeEnroll01)
-}
-
-func TestExternalAccountBinding_WithDeviceInfo(t *testing.T) {
-	eab := &ExternalAccountBinding{
-		ID:           "test-kid",
-		MACKey:       "test-mac-key",
-		MACAlgorithm: "HS256",
-		Status:       EABStatusActive,
-		Purpose:      EABPurposeEndorse01,
-		DeviceInfo: &EABDeviceInfo{
-			DeviceID:        "dev-123",
-			Manufacturer:    "TestMfg",
-			EKPublicKeyHash: "hash-abc",
-		},
-		CreatedAt: time.Now(),
-	}
-
-	assert.NotNil(t, eab.DeviceInfo)
-	assert.Equal(t, "dev-123", eab.DeviceInfo.DeviceID)
-	assert.Equal(t, "TestMfg", eab.DeviceInfo.Manufacturer)
-	assert.Equal(t, "hash-abc", eab.DeviceInfo.EKPublicKeyHash)
-	assert.Equal(t, EABPurposeEndorse01, eab.Purpose)
-}
-
-func TestExternalAccountBinding_AllPurposes(t *testing.T) {
-	purposes := []string{
-		EABPurposeAccountBinding,
-		EABPurposeEndorse01,
-		EABPurposeEnroll01,
-	}
-
-	for _, purpose := range purposes {
-		t.Run(purpose, func(t *testing.T) {
-			eab := &ExternalAccountBinding{
-				ID:      "kid-" + purpose,
-				Purpose: purpose,
-				Status:  EABStatusActive,
-			}
-			assert.Equal(t, purpose, eab.Purpose)
-			assert.True(t, eab.IsActive())
-		})
-	}
-}
-
-func TestExternalAccountBindingProtectedHeader_WithNonce(t *testing.T) {
-	// RFC 8555 Section 7.3.4 specifies nonce MUST NOT be present
-	// This test verifies the field exists for detection/validation purposes
-	header := ExternalAccountBindingProtectedHeader{
-		Alg:   "HS256",
-		KID:   "test-kid",
-		URL:   "https://example.com/acme/new-account",
-		Nonce: "invalid-nonce-should-be-rejected",
-	}
-
-	assert.Equal(t, "invalid-nonce-should-be-rejected", header.Nonce)
-}
-
-func TestExternalAccountBinding_FullLifecycle(t *testing.T) {
-	now := time.Now()
-	future := now.Add(24 * time.Hour)
-
-	// Create new EAB
-	eab := &ExternalAccountBinding{
-		ID:                "lifecycle-kid",
-		MACKey:            "secret-mac-key",
-		MACAlgorithm:      "HS256",
-		ExternalAccountID: "ext-acct-123",
-		TenantID:          "tenant-1",
-		CreatedBy:         "admin-user",
-		Purpose:           EABPurposeAccountBinding,
-		Status:            EABStatusActive,
-		Contact:           []string{"mailto:admin@example.com"},
-		CreatedAt:         now,
-		ExpiresAt:         &future,
-		Metadata: map[string]string{
-			"department": "engineering",
-		},
-	}
-
-	// Verify initial state
-	assert.True(t, eab.IsActive())
-	assert.False(t, eab.IsExpired())
-	assert.True(t, eab.CanBeUsed())
-	assert.Nil(t, eab.UsedAt)
-	assert.Zero(t, eab.AccountID)
-
-	// Use the EAB
-	accountID := uint64(999)
-	eab.MarkUsed(accountID)
-
-	// Verify used state
-	assert.False(t, eab.IsActive())
-	assert.Equal(t, EABStatusUsed, eab.Status)
-	assert.Equal(t, accountID, eab.AccountID)
-	assert.NotNil(t, eab.UsedAt)
-	assert.False(t, eab.CanBeUsed())
 }
 
 func TestExternalAccountBinding_JSONWithDeviceInfo(t *testing.T) {

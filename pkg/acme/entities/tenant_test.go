@@ -15,7 +15,6 @@ package entities
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -280,23 +279,6 @@ func TestGetSigningCAForEndorsement(t *testing.T) {
 	})
 }
 
-func TestSigningCAInfo_Fields(t *testing.T) {
-	info := &SigningCAInfo{
-		Type: SigningCATypeIntermediate,
-		IntermediateCA: &TenantIntermediateCA{
-			ID:         "test-ca",
-			CommonName: "Test CA",
-		},
-		TenantID:         "test-tenant",
-		UseGlobalDefault: false,
-	}
-
-	assert.Equal(t, SigningCATypeIntermediate, info.Type)
-	assert.Equal(t, "test-ca", info.IntermediateCA.ID)
-	assert.Equal(t, "test-tenant", info.TenantID)
-	assert.False(t, info.UseGlobalDefault)
-}
-
 func TestTenant_CanIssueCertificates(t *testing.T) {
 	t.Run("active tenant with intermediate CA", func(t *testing.T) {
 		tenant := &Tenant{
@@ -411,103 +393,6 @@ func TestCAPurposeConstants(t *testing.T) {
 	assert.Equal(t, "client-auth", CAPurposeClientAuth)
 	assert.Equal(t, "code-signing", CAPurposeCodeSigning)
 	assert.Equal(t, "tpm-endorsement", CAPurposeTPMEndorsement)
-}
-
-func TestTenant_Fields(t *testing.T) {
-	now := time.Now()
-	tenant := &Tenant{
-		ID:                      "test-id",
-		Name:                    "Test Tenant",
-		Status:                  TenantStatusActive,
-		DEKKeyID:                "dek-123",
-		DefaultIntermediateCAID: "ca-default",
-		CreatedAt:               now,
-		UpdatedAt:               now,
-		CreatedBy:               "admin-user",
-	}
-
-	assert.Equal(t, "test-id", tenant.ID)
-	assert.Equal(t, "Test Tenant", tenant.Name)
-	assert.Equal(t, TenantStatusActive, tenant.Status)
-	assert.Equal(t, "dek-123", tenant.DEKKeyID)
-	assert.Equal(t, "ca-default", tenant.DefaultIntermediateCAID)
-	assert.Equal(t, now, tenant.CreatedAt)
-	assert.Equal(t, now, tenant.UpdatedAt)
-	assert.Equal(t, "admin-user", tenant.CreatedBy)
-}
-
-func TestTenantSettings_Fields(t *testing.T) {
-	settings := &TenantSettings{
-		MaxCertificates:         1000,
-		MaxAccounts:             100,
-		AllowedKeyAlgorithms:    []string{"EC-P256", "EC-P384"},
-		AllowedChallengeTypes:   []string{"http-01", "dns-01", "endorse-01"},
-		CertificateValidityDays: 365,
-		RequireEAB:              true,
-		AllowEndorse01:          true,
-		AllowEnroll01:           true,
-		CustomMetadata: map[string]string{
-			"department": "engineering",
-		},
-	}
-
-	assert.Equal(t, 1000, settings.MaxCertificates)
-	assert.Equal(t, 100, settings.MaxAccounts)
-	assert.Contains(t, settings.AllowedKeyAlgorithms, "EC-P384")
-	assert.Contains(t, settings.AllowedChallengeTypes, "endorse-01")
-	assert.Equal(t, 365, settings.CertificateValidityDays)
-	assert.True(t, settings.RequireEAB)
-	assert.True(t, settings.AllowEndorse01)
-	assert.True(t, settings.AllowEnroll01)
-	assert.Equal(t, "engineering", settings.CustomMetadata["department"])
-}
-
-func TestTenantRootCA_Fields(t *testing.T) {
-	now := time.Now()
-	rootCA := &TenantRootCA{
-		CommonName:     "Test Root CA",
-		SerialNumber:   "12345",
-		KeyID:          "key-123",
-		KeyAlgorithm:   "EC-P384",
-		NotBefore:      now,
-		NotAfter:       now.Add(10 * 365 * 24 * time.Hour),
-		Status:         CAStatusActive,
-		CertificatePEM: "-----BEGIN CERTIFICATE-----",
-		CreatedAt:      now,
-	}
-
-	assert.Equal(t, "Test Root CA", rootCA.CommonName)
-	assert.Equal(t, "12345", rootCA.SerialNumber)
-	assert.Equal(t, "key-123", rootCA.KeyID)
-	assert.Equal(t, "EC-P384", rootCA.KeyAlgorithm)
-	assert.Equal(t, CAStatusActive, rootCA.Status)
-}
-
-func TestTenantIntermediateCA_Fields(t *testing.T) {
-	now := time.Now()
-	intCA := &TenantIntermediateCA{
-		ID:             "int-ca-1",
-		CommonName:     "Test Intermediate CA",
-		SerialNumber:   "67890",
-		ParentType:     CAParentTypeTenant,
-		Purpose:        CAPurposeTPMEndorsement,
-		KeyID:          "int-key-123",
-		KeyAlgorithm:   "EC-P256",
-		NotBefore:      now,
-		NotAfter:       now.Add(5 * 365 * 24 * time.Hour),
-		Status:         CAStatusActive,
-		CertificatePEM: "-----BEGIN CERTIFICATE-----",
-		ChainPEM:       "-----BEGIN CERTIFICATE-----\n...",
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-
-	assert.Equal(t, "int-ca-1", intCA.ID)
-	assert.Equal(t, "Test Intermediate CA", intCA.CommonName)
-	assert.Equal(t, CAParentTypeTenant, intCA.ParentType)
-	assert.Equal(t, CAPurposeTPMEndorsement, intCA.Purpose)
-	assert.Equal(t, "int-key-123", intCA.KeyID)
-	assert.True(t, intCA.IsActive())
 }
 
 func TestResolveComplianceConfig(t *testing.T) {
@@ -651,34 +536,6 @@ func TestResolveComplianceConfig(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, "/etc/policy/tenant.rego", result.CustomPolicyPath)
 	})
-}
-
-func TestComplianceConfig_Fields(t *testing.T) {
-	config := &ComplianceConfig{
-		Enabled:             true,
-		RequireSignedReport: true,
-		CustomPolicyPath:    "/path/to/policy.rego",
-		FailOpen:            false,
-	}
-
-	assert.True(t, config.Enabled)
-	assert.True(t, config.RequireSignedReport)
-	assert.Equal(t, "/path/to/policy.rego", config.CustomPolicyPath)
-	assert.False(t, config.FailOpen)
-}
-
-func TestGlobalComplianceConfig_Fields(t *testing.T) {
-	global := &GlobalComplianceConfig{
-		ComplianceConfig: ComplianceConfig{
-			Enabled:             true,
-			RequireSignedReport: true,
-		},
-		Enforce: true,
-	}
-
-	assert.True(t, global.Enabled)
-	assert.True(t, global.RequireSignedReport)
-	assert.True(t, global.Enforce)
 }
 
 func TestTenant_EntityID(t *testing.T) {

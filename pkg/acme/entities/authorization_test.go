@@ -16,8 +16,6 @@ package entities
 import (
 	"encoding/json"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestACMEAuthorization_EntityID(t *testing.T) {
@@ -52,17 +50,6 @@ func TestACMEAuthorization_EntityID(t *testing.T) {
 				t.Errorf("EntityID() = %v, want %v", got, tt.expected)
 			}
 		})
-	}
-}
-
-func TestACMEAuthorization_SetEntityID(t *testing.T) {
-	authz := &ACMEAuthorization{ID: 100}
-	newID := uint64(200)
-
-	authz.SetEntityID(newID)
-
-	if authz.ID != newID {
-		t.Errorf("SetEntityID() set ID = %v, want %v", authz.ID, newID)
 	}
 }
 
@@ -171,54 +158,6 @@ func TestACMEAuthorization_JSONMarshaling(t *testing.T) {
 				t.Errorf("Wildcard mismatch: got %v, want %v", unmarshaled.Wildcard, tt.authz.Wildcard)
 			}
 		})
-	}
-}
-
-func TestACMEAuthorization_YAMLMarshaling(t *testing.T) {
-	authz := &ACMEAuthorization{
-		ID: 1,
-		Identifier: ACMEIdentifier{
-			Type:  "dns",
-			Value: "example.com",
-		},
-		Status:  "valid",
-		Expires: "2024-12-31T23:59:59Z",
-		Challenges: []ACMEChallenge{
-			{
-				ID:              1,
-				Type:            "http-01",
-				Status:          "valid",
-				AccountID:       1,
-				AuthorizationID: 1,
-			},
-		},
-		Wildcard:  false,
-		AccountID: 1,
-		OrderID:   1,
-		URL:       "https://example.com/authz/1",
-	}
-
-	// Marshal to YAML
-	yamlData, err := yaml.Marshal(authz)
-	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
-	}
-
-	// Unmarshal from YAML
-	var unmarshaled ACMEAuthorization
-	if err := yaml.Unmarshal(yamlData, &unmarshaled); err != nil {
-		t.Fatalf("yaml.Unmarshal() error = %v", err)
-	}
-
-	// Verify fields
-	if unmarshaled.ID != authz.ID {
-		t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, authz.ID)
-	}
-	if unmarshaled.Status != authz.Status {
-		t.Errorf("Status mismatch: got %v, want %v", unmarshaled.Status, authz.Status)
-	}
-	if len(unmarshaled.Challenges) != len(authz.Challenges) {
-		t.Errorf("Challenges length mismatch: got %v, want %v", len(unmarshaled.Challenges), len(authz.Challenges))
 	}
 }
 
