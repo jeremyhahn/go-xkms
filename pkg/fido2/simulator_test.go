@@ -116,6 +116,11 @@ type authenticatorSim struct {
 	// failPINRetries makes the simulator refuse getPINRetries, modelling an
 	// authenticator that will not report the counter.
 	failPINRetries bool
+
+	// makeCredentialOptions records the CTAP2 options map (0x07) of the
+	// last MakeCredential request, so a test can see what the platform
+	// asked the authenticator for, such as "rk".
+	makeCredentialOptions map[interface{}]interface{}
 }
 
 // defaultSimPINRetries is the CTAP 2.1 initial PIN retry budget.
@@ -294,6 +299,12 @@ func (s *authenticatorSim) getPINToken(req map[int]interface{}) ([]byte, error) 
 // A simulator with no PIN set authorizes everything, which is what every
 // test that predates PIN support relies on.
 func (s *authenticatorSim) authorizeMakeCredential(request []byte) byte {
+	if req, err := simDecodeRequest(request); err == nil {
+		if options, ok := req[0x07].(map[interface{}]interface{}); ok {
+			s.makeCredentialOptions = options
+		}
+	}
+
 	if s.pin == "" {
 		return StatusOK
 	}
