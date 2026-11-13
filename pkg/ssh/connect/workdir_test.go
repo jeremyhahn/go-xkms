@@ -102,3 +102,28 @@ func TestDefaultWorkDirBase_PrefersAPrivateXDGRuntimeDir(t *testing.T) {
 		t.Errorf("defaultWorkDirBase() with a short TMPDIR = %q, want the default temp dir", got)
 	}
 }
+
+func TestDefaultWorkDirBase_RefusesAnXDGRuntimeDirOwnedByAnotherUser(t *testing.T) {
+	xdg, err := os.MkdirTemp(shortWorkDirBase, "xk-")
+	if err != nil {
+		t.Fatalf("mkdir short dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(xdg) })
+	if err := os.Chmod(xdg, 0o700); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Setenv("TMPDIR", longTempDir(t))
+	t.Setenv("XDG_RUNTIME_DIR", xdg)
+
+	// Run as a different effective user from the directory's owner: root
+	// that inherited an unprivileged user's XDG_RUNTIME_DIR can write the
+	// 0700 directory, but its owner could still swap the session's files.
+	otherUID := os.Geteuid() + 1
+	orig := geteuid
+	geteuid = func() int { return otherUID }
+	t.Cleanup(func() { geteuid = orig })
+
+	if got := defaultWorkDirBase(); got != shortWorkDirBase {
+		t.Errorf("defaultWorkDirBase() with an XDG_RUNTIME_DIR owned by another user = %q, want %q", got, shortWorkDirBase)
+	}
+}

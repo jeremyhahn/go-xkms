@@ -628,6 +628,9 @@ const shortWorkDirBase = "/tmp"
 // $XDG_RUNTIME_DIR when it is a usable private directory that fits, else
 // /tmp. MkdirTemp still makes the work dir itself 0700 and owned by this
 // process, so the choice of base never weakens the socket's protection.
+// geteuid is os.Geteuid, a seam so tests can stand in for another user.
+var geteuid = os.Geteuid
+
 func defaultWorkDirBase() string {
 	if fitsSunPath(os.TempDir()) {
 		return ""
