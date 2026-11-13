@@ -15,10 +15,12 @@ package mcptool
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -92,6 +94,81 @@ func TestStreamableHTTP_EventStreamSessionAndClose(t *testing.T) {
 
 	_, err = tr.SendRequest(context.Background(), initRequest())
 	assert.ErrorIs(t, err, errTransportClosed)
+}
+
+// TestStreamableHTTP_CloseCancelsBlockedRequests: Close ends a request whose
+// response is blocked, both before the headers arrive and in the middle of an
+// event stream. The call returns promptly with errTransportClosed, and the
+// connection is torn down, so the server handler sees its request end too:
+// nothing is left waiting on the server.
+func TestStreamableHTTP_CloseCancelsBlockedRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stream bool
+	}{
+		{name: "before headers"},
+		{name: "mid event stream", stream: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entered := make(chan struct{})
+			released := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				// A drained body lets the server watch the connection, so
+				// r.Context ends when the client drops it.
+				_, _ = io.Copy(io.Discard, r.Body)
+				if tc.stream {
+					w.Header().Set("Content-Type", contentTypeEventFeed)
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(": waiting\n\n"))
+					w.(http.Flusher).Flush()
+				}
+				close(entered)
+				<-r.Context().Done()
+				close(released)
+			}))
+			// Dropping the connections first lets a failing run end instead of
+			// waiting on the blocked handler.
+			defer func() { srv.CloseClientConnections(); srv.Close() }()
+
+			tr := newStreamableHTTP(srv.URL, http.DefaultTransport, nil)
+			errc := make(chan error, 1)
+			go func() {
+				_, err := tr.SendRequest(context.Background(), initRequest())
+				errc <- err
+			}()
+
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the request never reached the server")
+			}
+			closed := make(chan error, 1)
+			go func() { closed <- tr.Close() }()
+			select {
+			case err := <-closed:
+				require.NoError(t, err)
+			case <-time.After(2 * time.Second):
+				t.Fatal("Close blocked behind the in-flight request")
+			}
+
+			select {
+			case err := <-errc:
+				require.Error(t, err)
+				assert.ErrorIs(t, err, errTransportClosed)
+			case <-time.After(2 * time.Second):
+				t.Fatal("the blocked request outlived Close")
+			}
+			select {
+			case <-released:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the server handler still holds the request after Close")
+			}
+		})
+	}
 }
 
 func TestStreamableHTTP_RejectsBadResponses(t *testing.T) {
