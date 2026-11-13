@@ -94,11 +94,22 @@ func (s *Server) LoggingMiddleware() func(http.Handler) http.Handler {
 	}
 }
 
-// corsAllowHeaders lists the request headers a cross-origin browser may send.
+// corsAllowedHeaders lists the request headers a cross-origin browser may send.
 // The WebAuthn RP correlates its begin/finish ceremonies through the
 // X-Session-Id request header, so it must be permitted or the preflight for
 // /api/v1/webauthn/*/finish fails.
-const corsAllowHeaders = "Content-Type, Authorization, " + webauthnhttp.HeaderSessionID
+var corsAllowedHeaders = []string{"Content-Type", "Authorization", webauthnhttp.HeaderSessionID}
+
+// corsAllowHeaders is corsAllowedHeaders as an Access-Control-Allow-Headers value.
+var corsAllowHeaders = strings.Join(corsAllowedHeaders, ", ")
+
+// CORSAllowedHeaders returns a copy of the request headers the REST CORS
+// policy allows. An outer CORS layer that answers preflights before
+// CORSMiddleware runs (go-qrdb's, in the unified server) must allow the same
+// list, or browsers reject cross-origin JSON, bearer and WebAuthn requests.
+func CORSAllowedHeaders() []string {
+	return append([]string(nil), corsAllowedHeaders...)
+}
 
 // corsExposeHeaders lists the response headers a cross-origin browser may read.
 // The WebAuthn RP returns the session correlation identifier on its begin

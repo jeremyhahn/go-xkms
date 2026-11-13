@@ -143,6 +143,7 @@ func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
 	}
 	return qrdbsdk.DaemonCORSConfig{
 		AllowedOrigins: append([]string(nil), o.AllowedOrigins...),
+		AllowedHeaders: rest.CORSAllowedHeaders(),
 		MaxAge:         o.MaxAgeSeconds,
 	}
 }
