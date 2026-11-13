@@ -127,6 +127,79 @@ func TestStreamableHTTP_RejectsBadResponses(t *testing.T) {
 	}
 }
 
+// TestStreamableHTTP_ResponsesCarryTheRequestID pins response correlation: a
+// JSON-RPC response is the request's result only when its wire ID matches
+// the request's ID. A JSON body with a mismatched, missing or null ID is an
+// error; on an event stream an unrelated response is skipped, and a stream
+// with no matching response is an error.
+func TestStreamableHTTP_ResponsesCarryTheRequestID(t *testing.T) {
+	jsonBody := func(body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		}
+	}
+	eventStream := func(bodies ...string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			for _, body := range bodies {
+				_, _ = w.Write([]byte("data: " + body + "\n\n"))
+			}
+		}
+	}
+	send := func(t *testing.T, handler http.HandlerFunc, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
+		t.Helper()
+		srv := httptest.NewServer(handler)
+		defer srv.Close()
+		return newStreamableHTTP(srv.URL, http.DefaultTransport, nil).SendRequest(context.Background(), request)
+	}
+
+	rejected := map[string]http.HandlerFunc{
+		"json mismatched id":   jsonBody(`{"jsonrpc":"2.0","id":2,"result":{"which":"other"}}`),
+		"json missing id":      jsonBody(`{"jsonrpc":"2.0","result":{"which":"other"}}`),
+		"json null id":         jsonBody(`{"jsonrpc":"2.0","id":null,"result":{"which":"other"}}`),
+		"json string for int":  jsonBody(`{"jsonrpc":"2.0","id":"1","result":{"which":"other"}}`),
+		"stream mismatched id": eventStream(`{"jsonrpc":"2.0","id":2,"result":{"which":"other"}}`),
+		"stream missing id":    eventStream(`{"jsonrpc":"2.0","result":{"which":"other"}}`),
+		"stream null id":       eventStream(`{"jsonrpc":"2.0","id":null,"result":{"which":"other"}}`),
+	}
+	for name, handler := range rejected {
+		t.Run(name, func(t *testing.T) {
+			resp, err := send(t, handler, initRequest())
+			assert.Error(t, err)
+			assert.Nil(t, resp)
+		})
+	}
+
+	accepted := map[string]http.HandlerFunc{
+		"json matching id": jsonBody(`{"jsonrpc":"2.0","id":1,"result":{"which":"right"}}`),
+		"stream skips unrelated responses": eventStream(
+			`{"jsonrpc":"2.0","id":2,"result":{"which":"other"}}`,
+			`{"jsonrpc":"2.0","result":{"which":"other"}}`,
+			`{"jsonrpc":"2.0","id":null,"result":{"which":"other"}}`,
+			`{"jsonrpc":"2.0","id":1,"result":{"which":"right"}}`,
+		),
+	}
+	for name, handler := range accepted {
+		t.Run(name, func(t *testing.T) {
+			resp, err := send(t, handler, initRequest())
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"which":"right"}`, string(resp.Result))
+			id, err := resp.ID.MarshalJSON()
+			require.NoError(t, err)
+			assert.Equal(t, "1", string(id))
+		})
+	}
+
+	t.Run("string id matches", func(t *testing.T) {
+		request := initRequest()
+		request.ID = mcp.NewRequestId("req-7")
+		resp, err := send(t, jsonBody(`{"jsonrpc":"2.0","id":"req-7","result":{"which":"right"}}`), request)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"which":"right"}`, string(resp.Result))
+	})
+}
+
 func TestStreamableHTTP_NotificationErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
