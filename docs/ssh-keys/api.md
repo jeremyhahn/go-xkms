@@ -178,3 +178,17 @@ binding. A multi-tenant server wraps the DAO factory and backends in
 `tenancy.New(tenancy.Options{DAOs, Resolver, Permissions})`
 (`pkg/ssh/tenancy/client.go:81-139`), exactly as `ensureSSHClient` does
 inside the daemon (see architecture.md).
+
+### Migrating the pre-DAO stores
+
+`sdkssh.MigrateLegacyStores(ctx, legacy, daos) (MigrateReport, error)`
+(`sdk/go/client/ssh/stores.go:82`) moves the records the pre-DAO stores kept
+in a sealed-KV `storage.Backend` into the DAO catalogs, for keys,
+known_hosts and authorized_keys here and for sessions and profiles (see
+`../ssh-sessions/api.md`). The consumer calls it at store open, with the
+backend the old stores used and before `NewStores` serves requests.
+`MigrateReport` counts `Migrated`, `Skipped` and `Failed` records. The call
+is idempotent: once everything has moved, a second call reports zero. A
+record that fails stays in the old backend and comes back as a
+`*MigrateRecordError` (`Path`, `Op`, `Err`) inside a
+`*MigrateRecordsFailedError`, beside the counts; the next call retries it.

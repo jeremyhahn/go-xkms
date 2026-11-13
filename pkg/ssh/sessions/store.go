@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -151,6 +152,31 @@ func (s *DAOStore) Delete(id string) error {
 	}
 	if err := s.records.Delete(context.Background(), r); err != nil {
 		return &errs.Joined{Lead: ErrStorage, Detail: "delete " + id, Cause: err}
+	}
+	return nil
+}
+
+// ImportLegacy upserts a session the pre-DAO sealed-KV store wrote under
+// ssh/sessions/<id>: data is its JSON. The session keeps its ID and
+// timestamps, so importing it twice is harmless. It is the per-record step
+// of the SSH store migrator (pkg/ssh/migrate). A record that does not decode,
+// names another ID or fails validation is an ErrLegacyRecord.
+func (s *DAOStore) ImportLegacy(ctx context.Context, id string, data []byte) error {
+	if s.closed.Load() {
+		return ErrStoreClosed
+	}
+	var sess Session
+	if err := json.Unmarshal(data, &sess); err != nil {
+		return &errs.Joined{Lead: ErrLegacyRecord, Detail: id, Cause: err}
+	}
+	if sess.ID != id {
+		return &errs.Detail{Err: ErrLegacyRecord, Detail: id + " holds session " + sess.ID}
+	}
+	if err := sess.Validate(); err != nil {
+		return &errs.Joined{Lead: ErrLegacyRecord, Detail: id, Cause: err}
+	}
+	if err := s.records.Save(ctx, &record{Key: id, Session: sess}); err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "import " + id, Cause: err}
 	}
 	return nil
 }
