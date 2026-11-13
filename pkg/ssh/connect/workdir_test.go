@@ -127,3 +127,83 @@ func TestDefaultWorkDirBase_RefusesAnXDGRuntimeDirOwnedByAnotherUser(t *testing.
 		t.Errorf("defaultWorkDirBase() with an XDG_RUNTIME_DIR owned by another user = %q, want %q", got, shortWorkDirBase)
 	}
 }
+
+// shortTempDir returns a 0700 directory straight under /tmp, removed in
+// t.Cleanup: t.TempDir() under these test names is too long to fit.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp(shortWorkDirBase, "xk-")
+	if err != nil {
+		t.Fatalf("mkdir short dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	return dir
+}
+
+func TestDefaultWorkDirBase_RefusesASymlinkedXDGRuntimeDir(t *testing.T) {
+	root := shortTempDir(t)
+	target := filepath.Join(root, "d")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Setenv("TMPDIR", longTempDir(t))
+
+	// The target alone is acceptable, so only the symlink can refuse it.
+	t.Setenv("XDG_RUNTIME_DIR", target)
+	if got := defaultWorkDirBase(); got != target {
+		t.Fatalf("defaultWorkDirBase() with the real dir = %q, want %q", got, target)
+	}
+
+	// Whoever owns a symlink can repoint it after the check and swap the
+	// session's known_hosts, so neither a symlinked leaf nor a symlinked
+	// ancestor is trusted.
+	leaf := filepath.Join(root, "l")
+	if err := os.Symlink(target, leaf); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", leaf)
+	if got := defaultWorkDirBase(); got != shortWorkDirBase {
+		t.Errorf("defaultWorkDirBase() with a symlinked XDG_RUNTIME_DIR = %q, want %q", got, shortWorkDirBase)
+	}
+
+	inner := filepath.Join(target, "x")
+	if err := os.Mkdir(inner, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(leaf, "x"))
+	if got := defaultWorkDirBase(); got != shortWorkDirBase {
+		t.Errorf("defaultWorkDirBase() with a symlinked ancestor = %q, want %q", got, shortWorkDirBase)
+	}
+}
+
+func TestDefaultWorkDirBase_RefusesAnXDGRuntimeDirUnderAWritableParent(t *testing.T) {
+	parent := shortTempDir(t)
+	xdg := filepath.Join(parent, "d")
+	if err := os.Mkdir(xdg, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Setenv("TMPDIR", longTempDir(t))
+	t.Setenv("XDG_RUNTIME_DIR", xdg)
+
+	// Anyone who can write the parent can rename the leaf away and put
+	// their own directory in its place.
+	for _, mode := range []os.FileMode{0o777, 0o770, 0o702} {
+		if err := os.Chmod(parent, mode); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		if got := defaultWorkDirBase(); got != shortWorkDirBase {
+			t.Errorf("defaultWorkDirBase() under a %o parent = %q, want %q", mode, got, shortWorkDirBase)
+		}
+	}
+
+	// The sticky bit stops others from renaming the leaf, as on /tmp.
+	if err := os.Chmod(parent, 0o777|os.ModeSticky); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if got := defaultWorkDirBase(); got != xdg {
+		t.Errorf("defaultWorkDirBase() under a sticky parent = %q, want %q", got, xdg)
+	}
+}
