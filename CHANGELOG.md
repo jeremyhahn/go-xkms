@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+
+- **`test/integration/health` retired and `test/integration/ratelimit` moved to the `pkg/ratelimit` unit suite (#1607 slice b).** The health suite tested only the go-qrdb sdk HealthChecker, so it is removed. The rate limiter cases now live in `pkg/ratelimit/clock_test.go` and advance an injected clock (an unexported `now` field on `Limiter`, `time.Now` by default, used for refill and idle cleanup) instead of its six `time.Sleep` calls; the existing `TestAllow` and `TestCleanup` lose their sleeps too. The `integration-test-health` and `integration-test-ratelimit` Makefile targets are gone.
+
 ### Documentation
 
 - **Integration test inventory (#1607 slice a).** `docs/testing/integration-inventory.md` lists the 48 `test/integration` directories by layer (CLI E2E, direct client, service, store, DAO, other), citing the `file:line` that decides each one, with a slice (b) verdict for each: keep, move to a unit suite, rewrite as CLI E2E, or remove. It also lists all 47 integration `time.Sleep` calls with duration and purpose, and notes that `test/integration/api` is not CLI-only. Docs only.
