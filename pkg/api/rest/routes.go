@@ -478,6 +478,18 @@ func Routes() []RouteSpec {
 	permIf("GET", "/attestation/signing-keys/binding", auth.ResourceAttestationSigningKeys, auth.ActionGet, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.GetHandler })
 	permIf("DELETE", "/attestation/signing-keys/binding", auth.ResourceAttestationSigningKeys, auth.ActionBind, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.DeleteHandler })
 	permIf("GET", "/attestation/signing-keys/resolve", auth.ResourceAttestationSigningKeys, auth.ActionGet, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.ResolveHandler })
+	// The attestation Verifier (go-xkms#1660): a tenant's endorsements and
+	// reference values, and quote appraisal. Served only when the server
+	// wires the appraisal handlers.
+	hasAppraiser := func(s *Server) bool { return s.attestationAppraisalHandlers != nil }
+	permIf("PUT", "/attestation/endorsements", auth.ResourceAttestationEndorsements, auth.ActionCreate, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.PutEndorsementHandler })
+	permIf("GET", "/attestation/endorsements", auth.ResourceAttestationEndorsements, auth.ActionList, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.ListEndorsementsHandler })
+	permIf("DELETE", "/attestation/endorsements", auth.ResourceAttestationEndorsements, auth.ActionDelete, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.DeleteEndorsementHandler })
+	permIf("PUT", "/attestation/reference-values", auth.ResourceAttestationReferenceValues, auth.ActionCreate, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.PutReferenceValuesHandler })
+	permIf("GET", "/attestation/reference-values", auth.ResourceAttestationReferenceValues, auth.ActionList, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.ListReferenceValuesHandler })
+	permIf("GET", "/attestation/reference-values/entry", auth.ResourceAttestationReferenceValues, auth.ActionGet, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.GetReferenceValuesHandler })
+	permIf("DELETE", "/attestation/reference-values/entry", auth.ResourceAttestationReferenceValues, auth.ActionDelete, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.DeleteReferenceValuesHandler })
+	permIf("POST", "/attestation/appraise", auth.ResourceAttestationVerifier, auth.ActionVerify, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.AppraiseHandler })
 
 	// --- Server-side OIDC credentials (pkg/oidc/credential).
 	// oidc_credentials:* is an xkms-owned permission family

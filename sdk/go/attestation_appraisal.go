@@ -14,6 +14,10 @@
 package xkms
 
 import (
+	"errors"
+	"fmt"
+
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 )
 
@@ -28,6 +32,26 @@ import (
 // The service verbs scope every call to the caller's tenant. An embedder
 // that appraises in-process, such as a container runtime, calls the
 // Appraiser with the tenant directly.
+
+// AttestationAppraisalService is a server's attestation Verifier: the verbs
+// above, called over a Client's transport and scoped to the caller's tenant.
+// NewAttestationVerifier is the in-process X.509 chain verifier; this is the
+// remote one.
+type AttestationAppraisalService = pkgtransport.AttestationAppraisalService
+
+// ErrAttestationAppraisalUnsupported is returned by AttestationAppraisal
+// when the client's transport does not carry the Verifier calls. The REST
+// and embedded transports carry them.
+var ErrAttestationAppraisalUnsupported = fmt.Errorf("xkms: the transport does not carry the attestation Verifier: %w", errors.ErrUnsupported)
+
+// AttestationAppraisal returns the attestation Verifier calls of c.
+func AttestationAppraisal(c Client) (AttestationAppraisalService, error) {
+	s, ok := c.(AttestationAppraisalService)
+	if !ok {
+		return nil, ErrAttestationAppraisalUnsupported
+	}
+	return s, nil
+}
 
 // AttestationAppraiser appraises TPM quotes, hosts and containers against a
 // tenant's endorsements and reference values.

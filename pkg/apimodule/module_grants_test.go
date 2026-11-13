@@ -45,7 +45,19 @@ import (
 // and MCP collapsed both operations into the coarser keys:write. All three
 // transports now gate them on keys:update, so it is no longer REST-only —
 // grpcAndMCPPermissionPairs below finds it too.
-var restOnlyPermissions = map[string]struct{}{}
+//
+// The attestation Verifier pairs are REST-only because row 1660 serves them
+// over REST and the embedded transport only; gRPC and MCP are a later slice.
+var restOnlyPermissions = map[string]struct{}{
+	auth.ResourceAttestationEndorsements + ":" + auth.ActionCreate:    {}, // row 1660: REST + embedded only; gRPC/MCP later
+	auth.ResourceAttestationEndorsements + ":" + auth.ActionDelete:    {}, // row 1660: REST + embedded only; gRPC/MCP later
+	auth.ResourceAttestationEndorsements + ":" + auth.ActionList:      {}, // row 1660: REST + embedded only; gRPC/MCP later
+	auth.ResourceAttestationReferenceValues + ":" + auth.ActionCreate: {}, // row 1660: REST + embedded only; gRPC/MCP later
+	auth.ResourceAttestationReferenceValues + ":" + auth.ActionDelete: {}, // row 1660: REST + embedded only; gRPC/MCP later
+	auth.ResourceAttestationReferenceValues + ":" + auth.ActionGet:    {}, // row 1660: REST + embedded only; gRPC/MCP later
+	auth.ResourceAttestationReferenceValues + ":" + auth.ActionList:   {}, // row 1660: REST + embedded only; gRPC/MCP later
+	auth.ResourceAttestationVerifier + ":" + auth.ActionVerify:        {}, // row 1660: REST + embedded only; gRPC/MCP later
+}
 
 // restPermissionPairs returns every resource:action pair the REST route table
 // gates on, sorted and de-duplicated.

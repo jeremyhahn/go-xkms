@@ -8,8 +8,9 @@ Transport shapes:
 ## Not a transport of its own
 
 `pkg/attestation` has no REST route, gRPC method, QUIC handler or MCP tool
-(its `appraisal` subpackage's signing-key verbs do; see
-[below](#repository-signing-keys)).
+(its `appraisal` subpackage's signing-key and appraisal verbs do; see
+[below](#repository-signing-keys) and
+[the appraisal section](#endorsements-reference-values-and-quote-appraisal)).
 It runs inside the handler for one existing capability — `SignCSR` — gating
 whether that call succeeds, not exposing a new one. The route itself is
 documented in [`../certificate-authority/api.md`](../certificate-authority/api.md):
@@ -83,6 +84,40 @@ the release key `release-signing`.
 
 The classes come from `apierrors.SigningKeySentinelClasses`
 (`pkg/api/apierrors/tables.go:330`).
+
+## Endorsements, reference values and quote appraisal
+
+The appraisal verbs of `XKMSService` (`pkg/xkms/servicer_attestation.go`)
+are served over REST and the embedded transport. Routes are declared at
+`pkg/api/rest/routes.go:483-491`, handled in
+`pkg/api/rest/handlers_attestation_appraisal.go:92-155` and called through
+`pkg/api/rest/wire/attestation_appraisal.go:27-30`. sdk/go reaches them from
+any `Client` with `AttestationAppraisal(c)` (`sdk/go/attestation_appraisal.go:48`).
+
+| Method and path | Verb | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `PUT /api/v1/attestation/endorsements` | `PutAttestationEndorsement` | yes | later slice | later slice | later slice | yes | `attestation_endorsements:create` |
+| `GET /api/v1/attestation/endorsements?kind=` | `ListAttestationEndorsements` | yes | later slice | later slice | later slice | yes | `attestation_endorsements:list` |
+| `DELETE /api/v1/attestation/endorsements?name=` | `DeleteAttestationEndorsement` | yes | later slice | later slice | later slice | yes | `attestation_endorsements:delete` |
+| `PUT /api/v1/attestation/reference-values` | `PutAttestationReferenceValues` | yes | later slice | later slice | later slice | yes | `attestation_reference_values:create` |
+| `GET /api/v1/attestation/reference-values` | `ListAttestationReferenceValues` | yes | later slice | later slice | later slice | yes | `attestation_reference_values:list` |
+| `GET /api/v1/attestation/reference-values/entry?name=` | `GetAttestationReferenceValues` | yes | later slice | later slice | later slice | yes | `attestation_reference_values:get` |
+| `DELETE /api/v1/attestation/reference-values/entry?name=` | `DeleteAttestationReferenceValues` | yes | later slice | later slice | later slice | yes | `attestation_reference_values:delete` |
+| `POST /api/v1/attestation/appraise` | `AppraiseAttestationQuote` | yes | later slice | later slice | later slice | yes | `attestation_verifier:verify` |
+
+Every call is scoped to the caller's tenant. A route is served only when the
+server is built with an `XKMSService`; a service without an Appraiser answers
+503. Deletes answer 204. An appraisal of evidence that does not verify is a
+200 with `verified: false` and the failed checks, not an error.
+
+| Error (`pkg/attestation/appraisal`) | Class | HTTP |
+| --- | --- | --- |
+| `xkms.ErrNotConfigured`, `ErrStoreUnavailable` | Unavailable | 503 |
+| `ErrNilRequest`, `ErrInvalidName`, `ErrInvalidTenant`, `ErrInvalidRepository`, `ErrEndorsementInvalid`, `ErrReferenceValuesRejected`, `ErrInvalidAKIntermediate` | InvalidArgument | 400 |
+| `ErrRecordNotFound` | NotFound | 404 |
+
+The table is `appraisalSentinelClasses`
+(`pkg/api/rest/handlers_attestation_appraisal.go:45-56`).
 
 ## Host and container evidence (embedded)
 

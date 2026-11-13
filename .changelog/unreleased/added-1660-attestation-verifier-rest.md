@@ -1,0 +1,1 @@
+- **Attestation Verifier over REST and the embedded transport.** The eight appraisal verbs (endorsements, reference values, quote appraisal) are served under `/api/v1/attestation/`, each gated by its existing permission, and sdk/go reaches them from a client with `AttestationAppraisal`. gRPC, Unix, QUIC, USB and MCP follow in a later slice.
