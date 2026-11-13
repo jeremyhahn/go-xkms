@@ -50,11 +50,27 @@ login verifies under, and no tenant may be that trust domain.
   `auth.TenantPrincipalURIs` (`pkg/auth/mtls.go:324`) issues the same form
   (`pkg/spiffe/spiffe.go:21`). The CA's output resolves through that rule
   (`TestSignCSR_TenantResolvesThroughQRDBRule`).
-- **go-qrdb tenant IDs (open).** go-qrdb's tenant-ID rules do not yet hold a
-  tenant ID to the trust-domain grammar: v0.51.0-alpha refuses only control
-  bytes, `/` and `\` on create (`ValidateTenantIDShape`,
-  `pkg/tenant/reserved.go:132`, `:41`). A tenant whose ID is not a trust-domain
-  name can be created, and go-xkms refuses its SVID before signing.
+- **go-qrdb tenant IDs (open on go-qrdb).** Both go-xkms tenant-create paths
+  refuse an ID that is not a trust-domain name with `spiffe.ValidateTrustDomain`
+  (`pkg/spiffe/workload.go:280`), and an ID equal to the cluster trust domain
+  (`spiffe.ErrTenantIsClusterTrustDomain`), before go-qrdb is called: the core
+  lifecycle that owns /api/v1/tenants on every transport,
+  `XKMSService.CreateTenantDetail` (`pkg/xkms/servicer_tenant.go:104`, `:108`;
+  `TestCreateTenantDetail_RefusesNonTrustDomainID`), and the ACME admin path,
+  `TenantAwareAdminService.CreateTenant`
+  (`pkg/acme/admin/tenant_service.go:222`, `:226`), as a malformed input error
+  on field `id` (`TestCreateTenant_RefusesNonTrustDomainID`,
+  `TestCreateTenant_RefusesClusterTrustDomain`). The admin service learns the
+  cluster trust domain through `SetClusterTrustDomain`
+  (`pkg/acme/admin/tenant_service.go:131`), wired from `Server.TrustDomain()`
+  in `cmd/xkmsd/admin.go:142`; the core path reads `SPIFFETrustDomain()`.
+  With no trust domain set the equality check is skipped.
+  go-qrdb's own create path is still open: v0.51.0-alpha refuses only control
+  bytes, `/` and `\` (`ValidateTenantIDShape`, `pkg/tenant/reserved.go:132`,
+  `:41`), so a tenant created directly in go-qrdb can still hold a
+  non-trust-domain ID; go-xkms refuses its SVID before signing. v0.58.2-alpha
+  adds `ValidateTenantIDTrustDomain` (`pkg/tenant/reserved.go:146`), which
+  comes with the go-qrdb bump.
 - **go-quicbaas** receives SVIDs and verifies them against the tenant's bundle.
 
 ## ACME issuance
