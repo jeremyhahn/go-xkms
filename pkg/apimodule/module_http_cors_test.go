@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
@@ -42,6 +43,20 @@ func corsHeaderNames(h http.Header) []string {
 	for name := range h {
 		if strings.HasPrefix(name, "Access-Control-") {
 			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// corsAllowedHeaderList splits Access-Control-Allow-Headers values into
+// canonical header names.
+func corsAllowedHeaderList(values []string) []string {
+	var names []string
+	for _, v := range values {
+		for _, name := range strings.Split(v, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				names = append(names, http.CanonicalHeaderKey(name))
+			}
 		}
 	}
 	return names
@@ -215,4 +230,23 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 	resp := send(client(strangerCert), "")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	assert.Equal(t, allowed, resp.Header.Get("Access-Control-Allow-Origin"), "403")
+
+	// A browser preflight for a JSON request carrying a bearer and the
+	// WebAuthn session header: the node's outer CORS layer answers it, and
+	// must allow every header the REST policy allows.
+	requested := []string{"Content-Type", "Authorization", webauthnhttp.HeaderSessionID}
+	req, err := http.NewRequest(http.MethodOptions, "https://"+node.Server().RESTAddr()+"/api/v1/webauthn/login/finish", nil)
+	require.NoError(t, err)
+	req.Header.Set("Origin", allowed)
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", strings.Join(requested, ", "))
+	resp, err = client().Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Less(t, resp.StatusCode, 300, "preflight status")
+	assert.Equal(t, allowed, resp.Header.Get("Access-Control-Allow-Origin"), "preflight")
+	allowedHeaders := corsAllowedHeaderList(resp.Header.Values("Access-Control-Allow-Headers"))
+	for _, h := range requested {
+		assert.Contains(t, allowedHeaders, http.CanonicalHeaderKey(h), "preflight must allow %s", h)
+	}
 }
