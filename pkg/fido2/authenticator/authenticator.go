@@ -1119,6 +1119,8 @@ func errorToStatus(err error) byte {
 		return StatusNoCredentials
 	case errors.Is(err, ErrUVBlocked):
 		return StatusUVBlocked
+	case errors.Is(err, ErrUVInvalid):
+		return StatusUVInvalid
 	case errors.Is(err, ErrLargeBlobsGetSetConflict):
 		return StatusInvalidParameter
 	// CTAP 2.1 §6.10.2 maps a missing offset or a missing length to
