@@ -498,7 +498,7 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
   - a hybrid (classical + ML-DSA) leaf certificate the caller's `tenantID`,
     stamped on the working copy before the first signature, and an empty
     tenant is refused with `ErrTenantRequired` (`CreateHybridCertificate`,
-    `pkg/ca/hybrid.go:145-152`); a hybrid CA template keeps its subject;
+    `pkg/ca/hybrid.go:146-153`); a hybrid CA template keeps its subject;
   - ACME issuance is in [acme-issuance](../acme-issuance/engineering.md#invariants).
 
   Not stamped: CA hierarchy certificates (roots, intermediates, subordinate
