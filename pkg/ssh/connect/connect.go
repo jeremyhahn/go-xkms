@@ -649,20 +649,18 @@ func fitsSunPath(base string) bool {
 	return len(sshagent.SocketPath(probe)) <= maxSocketPathLen
 }
 
-// isPrivateDir reports whether dir is a directory with mode 0700 that this
-// process can write to. A 0700 directory grants write access to its owner
-// alone, so writability stands in, portably, for "owned by this user" (root
-// aside, who may write anywhere and gains nothing from the check).
+// isPrivateDir reports whether dir is a 0700 directory owned by the
+// effective user. Writability is not enough: root may write any 0700
+// directory, and if it inherited an unprivileged user's XDG_RUNTIME_DIR that
+// user could rename the session dir and redirect UserKnownHostsFile and
+// SSH_AUTH_SOCK. Root therefore gets no exception.
 func isPrivateDir(dir string) bool {
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return false
 	}
-	probe, err := os.MkdirTemp(dir, workDirPattern)
-	if err != nil {
-		return false
-	}
-	return os.Remove(probe) == nil
+	uid, ok := dirOwner(info)
+	return ok && uid == geteuid()
 }
 
 func cleanupDir(remove func(string) error, owns bool, dir string) error {
