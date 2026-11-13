@@ -104,7 +104,8 @@ var ErrScopeRefused = scope.ErrRefused
 type ScopeUnauthenticatedError = scope.UnauthenticatedError
 
 // ScopeCrossTenantError refuses a caller addressing another tenant, the
-// system tenant's callers included. It matches ErrScopeRefused.
+// system tenant's callers included. It matches ErrScopeRefused and wraps
+// go-qrdb's CrossTenantDeniedError (the OwnTenant rule).
 type ScopeCrossTenantError = scope.CrossTenantError
 
 // ScopeCrossUserError refuses a caller addressing a personal object it does
