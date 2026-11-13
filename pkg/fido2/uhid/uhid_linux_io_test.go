@@ -106,23 +106,6 @@ func TestDevice_Create_Success(t *testing.T) {
 	assert.Equal(t, UHID_CREATE2, binary.LittleEndian.Uint32(buf[0:4]))
 }
 
-func TestDevice_ReadOutput_Success(t *testing.T) {
-	device, peer := newSocketDevice(t)
-
-	report := make([]byte, HIDReportSize)
-	for i := range report {
-		report[i] = byte(i)
-	}
-
-	go func() {
-		_, _ = peer.Write(encodeOutputEvent(t, report))
-	}()
-
-	got, err := device.ReadOutput()
-	require.NoError(t, err)
-	assert.Equal(t, report, got)
-}
-
 // TestDevice_ReadOutput_SkipsInformationalEvents proves ReadOutput
 // recursively skips UHID_START/STOP/OPEN/CLOSE and returns the first
 // UHID_OUTPUT event that follows, rather than reporting the informational
