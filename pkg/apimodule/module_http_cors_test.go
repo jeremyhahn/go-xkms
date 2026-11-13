@@ -145,7 +145,10 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 	srv, err := rest.NewServer(&rest.Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends:      map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
-		CORS:          &rest.CORSOptions{AllowedOrigins: []string{allowed}},
+		// A credentialed policy: the browser sends its bearer or cookie
+		// cross-origin and reads the answer only with
+		// Access-Control-Allow-Credentials: true.
+		CORS: &rest.CORSOptions{AllowedOrigins: []string{allowed}, AllowCredentials: true},
 	})
 	require.NoError(t, err)
 	m, err := NewModule(func() *xkms.XKMSService { return nil },
@@ -184,6 +187,7 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 	cfg.CORS, err = m.NodeCORS()
 	require.NoError(t, err)
 	require.Equal(t, []string{allowed}, cfg.CORS.AllowedOrigins)
+	assert.True(t, cfg.CORS.AllowCredentials, "the node's CORS layer carries the credentials flag")
 
 	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, []qrdbserver.ServerOption{
 		qrdbserver.WithServerTLS(&tls.Config{
@@ -224,12 +228,15 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 		assert.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden}, resp.StatusCode,
 			"bearer %q", bearer)
 		assert.Equal(t, allowed, resp.Header.Get("Access-Control-Allow-Origin"), "refusal, bearer %q", bearer)
+		assert.Equal(t, "true", resp.Header.Get("Access-Control-Allow-Credentials"),
+			"credentialed refusal, bearer %q", bearer)
 	}
 
 	// An authenticated caller without keys:read: 403 with the policy.
 	resp := send(client(strangerCert), "")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	assert.Equal(t, allowed, resp.Header.Get("Access-Control-Allow-Origin"), "403")
+	assert.Equal(t, "true", resp.Header.Get("Access-Control-Allow-Credentials"), "credentialed 403")
 
 	// A browser preflight for a JSON request carrying a bearer and the
 	// WebAuthn session header: the node's outer CORS layer answers it, and
@@ -245,6 +252,7 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 	_ = resp.Body.Close()
 	assert.Less(t, resp.StatusCode, 300, "preflight status")
 	assert.Equal(t, allowed, resp.Header.Get("Access-Control-Allow-Origin"), "preflight")
+	assert.Equal(t, "true", resp.Header.Get("Access-Control-Allow-Credentials"), "credentialed preflight")
 	allowedHeaders := corsAllowedHeaderList(resp.Header.Values("Access-Control-Allow-Headers"))
 	for _, h := range requested {
 		assert.Contains(t, allowedHeaders, http.CanonicalHeaderKey(h), "preflight must allow %s", h)

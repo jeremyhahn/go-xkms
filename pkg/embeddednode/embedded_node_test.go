@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/factor"
 )
@@ -156,6 +157,27 @@ func TestEmbeddedNodeStorageConfig_PinsSPIFFETrustDomain(t *testing.T) {
 	}}
 	qcfg = EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{})
 	assert.Equal(t, "example.org", qcfg.Auth.ClusterTrustDomain)
+}
+
+// TestEmbeddedNodeStorageConfig_CarriesTheCORSPolicy: go-qrdb's outer CORS
+// layer answers preflights and auth refusals before the REST router's
+// CORSMiddleware runs, so it carries the whole configured policy: origins,
+// the REST policy's request headers and the credentials flag.
+func TestEmbeddedNodeStorageConfig_CarriesTheCORSPolicy(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.CORS.Enabled = true
+	cfg.CORS.AllowedOrigins = []string{"https://rp.example"}
+	cfg.CORS.AllowCredentials = true
+	cfg.CORS.MaxAgeSeconds = 600
+
+	qcfg := EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{})
+	require.Equal(t, []string{"https://rp.example"}, qcfg.CORS.AllowedOrigins)
+	require.Equal(t, rest.CORSAllowedHeaders(), qcfg.CORS.AllowedHeaders)
+	require.True(t, qcfg.CORS.AllowCredentials)
+	require.Equal(t, 600, qcfg.CORS.MaxAge)
+
+	cfg.CORS.AllowCredentials = false
+	require.False(t, EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{}).CORS.AllowCredentials)
 }
 
 // TestOpenEmbeddedNode_OverridesFactorRegistryAndAuditSink proves that a
