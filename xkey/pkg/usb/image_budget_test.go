@@ -20,8 +20,8 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/enclavetest"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // admitPassphraseCopy hands go-luks2 a frozen copy of the passphrase and
@@ -55,7 +55,7 @@ func TestAdmitPassphraseCopy_CopiesAndFreezes(t *testing.T) {
 // refused with the budget's typed error: it is admitted, never made outside
 // the budget.
 func TestAdmitPassphraseCopy_RefusedByProcessBudget(t *testing.T) {
-	if !enclavetest.RunWithBudget(t, int64(os.Getpagesize())) {
+	if !xkmstest.RunWithEnclaveBudget(t, int64(os.Getpagesize())) {
 		return
 	}
 

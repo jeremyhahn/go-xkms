@@ -20,23 +20,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest/vaultservice"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/vaultpasskey"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
-// vaultSimKey is the shared simulated security key (vaulttest.SimulatedKey).
-type vaultSimKey = vaulttest.SimulatedKey
+// vaultSimKey is the shared simulated security key (xkmstest.VaultSimulatedKey).
+type vaultSimKey = xkmstest.VaultSimulatedKey
 
-func newVaultSimKey(pin string) *vaultSimKey { return vaulttest.NewSimulatedKey(pin) }
+func newVaultSimKey(pin string) *vaultSimKey { return xkmstest.NewVaultSimulatedKey(pin) }
 
 // useVaultSimKey makes the passkey verbs drive key and counts how often they
 // open it.
@@ -60,7 +58,7 @@ type vaultServerClient struct {
 }
 
 func (c *vaultServerClient) ctx(ctx context.Context) context.Context {
-	return xkms.QRDBWithIdentity(ctx, &xkms.QRDBIdentity{Subject: "alice", TenantID: vaultservice.Tenant})
+	return xkms.QRDBWithIdentity(ctx, &xkms.QRDBIdentity{Subject: "alice", TenantID: xkmstest.VaultTenant})
 }
 
 func (c *vaultServerClient) Connect(context.Context) error { return nil }
@@ -110,7 +108,7 @@ func newVaultServerClient(t *testing.T) *vaultServerClient {
 	t.Setenv("XKEY_VAULT_PASSPHRASE", "")
 	t.Setenv("XKEY_VAULT_RECOVERY_CODE", "")
 	t.Setenv(pinEnvVar, "")
-	client := &vaultServerClient{svc: vaultservice.New(t).Service}
+	client := &vaultServerClient{svc: xkmstest.NewVaultService(t).Service}
 	original := passwordClientFactory
 	passwordClientFactory = func() (PasswordStoreClientService, error) { return client, nil }
 	t.Cleanup(func() { passwordClientFactory = original })
@@ -387,7 +385,7 @@ func TestWithVaultAuthenticator_CloseFailureDiscardsTheSecret(t *testing.T) {
 	require.NoError(t, err)
 	defer pin.Destroy()
 	cred, err := withVaultAuthenticator(new(bytes.Buffer), vaultPasskeyEnrollPrompt, func(a vaultpasskey.Authenticator) (transport.PasswordVaultCredential, error) {
-		return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, RelyingPartyID: vaulttest.RelyingParty})
+		return vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, RelyingPartyID: xkmstest.VaultRelyingParty})
 	})
 	assert.ErrorIs(t, err, errVaultKeyClose)
 	assert.Empty(t, cred.Secret, "a failed close returns no secret")
@@ -405,6 +403,6 @@ func TestNewVaultAuthenticator_UsesTheWebAuthnEnumerator(t *testing.T) {
 	pin, err := secure.NewSecret(t.Context(), []byte("123456"))
 	require.NoError(t, err)
 	defer pin.Destroy()
-	_, err = vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, RelyingPartyID: vaulttest.RelyingParty})
+	_, err = vaultpasskey.Enroll(a, vaultpasskey.Options{PIN: pin, RelyingPartyID: xkmstest.VaultRelyingParty})
 	assert.ErrorIs(t, err, fido2.ErrNoDeviceFound)
 }
