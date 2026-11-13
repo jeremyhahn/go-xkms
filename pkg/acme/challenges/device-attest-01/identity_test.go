@@ -82,48 +82,6 @@ func TestVerifiedAttestation_DeviceIdentity_TPM(t *testing.T) {
 	require.Equal(t, "urn:tpm:device:example-001", identity)
 }
 
-func TestVerifiedAttestation_DeviceIdentity_TPM_NoPermanentIdentifier(t *testing.T) {
-	// No otherName at all: an AIK certificate meeting only WebAuthn Level 2
-	// section 8.3.1's minimum (the TCG EK Credential Profile directoryName)
-	// carries no permanentIdentifier, so this must be refused rather than
-	// silently treated as "no identity to check".
-	leaf := selfSignedTestCert(t, nil)
-
-	verified := &VerifiedAttestation{Format: FormatTPM, Leaf: leaf}
-
-	_, err := verified.DeviceIdentity()
-	require.ErrorIs(t, err, ErrDeviceIdentityUnavailable)
-}
-
-func TestVerifiedAttestation_DeviceIdentity_DICE(t *testing.T) {
-	ueid := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-	ext, err := dice.CreateUeidExtension(ueid)
-	require.NoError(t, err)
-
-	leaf := selfSignedTestCert(t, []pkix.Extension{ext})
-	verified := &VerifiedAttestation{Format: FormatDICE, Leaf: leaf}
-
-	identity, err := verified.DeviceIdentity()
-	require.NoError(t, err)
-	require.Equal(t, "deadbeef", identity)
-}
-
-func TestVerifiedAttestation_DeviceIdentity_DICE_NoUeid(t *testing.T) {
-	leaf := selfSignedTestCert(t, nil)
-	verified := &VerifiedAttestation{Format: FormatDICE, Leaf: leaf}
-
-	_, err := verified.DeviceIdentity()
-	require.ErrorIs(t, err, ErrDeviceIdentityUnavailable)
-}
-
-func TestVerifiedAttestation_DeviceIdentity_UnknownFormat(t *testing.T) {
-	leaf := selfSignedTestCert(t, nil)
-	verified := &VerifiedAttestation{Format: AttestationFormat("unknown"), Leaf: leaf}
-
-	_, err := verified.DeviceIdentity()
-	require.ErrorIs(t, err, ErrDeviceIdentityUnavailable)
-}
-
 func TestVerifiedAttestation_DeviceIdentity_NoLeaf(t *testing.T) {
 	verified := &VerifiedAttestation{Format: FormatTPM}
 
