@@ -14,6 +14,8 @@
 package apimodule
 
 import (
+	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,8 +24,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/testutil/qrdbdharness"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
@@ -109,4 +116,97 @@ func TestRegisterHTTP_AppliesTheConfiguredCORSPolicy(t *testing.T) {
 	assert.Empty(t, corsHeaderNames(w.Header()))
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	assert.Empty(t, w.Body.String())
+}
+
+// TestUnifiedServer_CORSOnAuthRefusals drives the real go-qrdb unified
+// server the module is mounted on: its authentication and authorization
+// middleware refuses a request before any module route handler runs, and the
+// refusal must still carry the configured CORS policy, or a cross-origin
+// browser sees a network error instead of the 401 or 403.
+func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
+	const allowed = "https://rp.example"
+
+	srv, err := rest.NewServer(&rest.Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Backends:      map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
+		CORS:          &rest.CORSOptions{AllowedOrigins: []string{allowed}},
+	})
+	require.NoError(t, err)
+	m, err := NewModule(func() *xkms.XKMSService { return nil },
+		WithRESTServer(func() *rest.Server { return srv }))
+	require.NoError(t, err)
+
+	certDir := t.TempDir()
+	ca, err := qrdbdharness.NewCA(certDir)
+	require.NoError(t, err)
+	serverKP, err := ca.Issue(certDir, qrdbdharness.WithSubject("node", ""), qrdbdharness.WithServerAuth())
+	require.NoError(t, err)
+	serverCert, err := serverKP.TLSCertificate()
+	require.NoError(t, err)
+	// A certificate the CA issued but no account is bound to: authenticated
+	// transport, no permission.
+	strangerKP, err := ca.Issue(certDir, qrdbdharness.WithSubject("stranger", ""))
+	require.NoError(t, err)
+	strangerCert, err := strangerKP.TLSCertificate()
+	require.NoError(t, err)
+	ports, err := qrdbdharness.ReserveTCPPorts(1)
+	require.NoError(t, err)
+
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = true
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+	cfg.Server.Host = "127.0.0.1"
+	cfg.Server.AdminPort = ports[0]
+
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, []qrdbsdk.ServerOption{
+		qrdbsdk.WithServerTLS(&tls.Config{
+			Certificates: []tls.Certificate{serverCert},
+			ClientCAs:    ca.Pool,
+			ClientAuth:   tls.VerifyClientCertIfGiven,
+			MinVersion:   tls.VersionTLS13,
+		}),
+		qrdbsdk.WithModule(m),
+	}, serviceprincipal.Option())
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, node.Close()) })
+
+	client := func(certs ...tls.Certificate) *http.Client {
+		return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			RootCAs:      ca.Pool,
+			Certificates: certs,
+			MinVersion:   tls.VersionTLS13,
+		}}}
+	}
+	send := func(c *http.Client, bearer string) *http.Response {
+		req, err := http.NewRequest(http.MethodGet, "https://"+node.Server().RESTAddr()+"/api/v1/keys", nil)
+		require.NoError(t, err)
+		req.Header.Set("Origin", allowed)
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		resp, err := c.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		return resp
+	}
+
+	// No credential, and an invalid bearer: the auth chain refuses (go-qrdb
+	// answers an anonymous caller 401 or 403), with the policy.
+	for _, bearer := range []string{"", "expired.or.forged"} {
+		resp := send(client(), bearer)
+		assert.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden}, resp.StatusCode,
+			"bearer %q", bearer)
+		assert.Equal(t, allowed, resp.Header.Get("Access-Control-Allow-Origin"), "refusal, bearer %q", bearer)
+	}
+
+	// An authenticated caller without keys:read: 403 with the policy.
+	resp := send(client(strangerCert), "")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Equal(t, allowed, resp.Header.Get("Access-Control-Allow-Origin"), "403")
 }
