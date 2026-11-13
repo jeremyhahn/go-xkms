@@ -380,6 +380,12 @@ const methodNotificationInitialized = "notifications/initialized"
 type streamSession struct {
 	transport *streamableHTTP
 	nextID    atomic.Int64
+	// version is the stateless (2026-07-28 or later) protocol version a
+	// server/discover negotiated; every request then carries it, the client
+	// identity and its capabilities in _meta. It is empty in a legacy session
+	// opened with the initialize handshake.
+	version string
+	info    mcp.Implementation
 }
 
 var _ Session = (*streamSession)(nil)
@@ -387,12 +393,34 @@ var _ Session = (*streamSession)(nil)
 // request sends one JSON-RPC request and returns its result, or the
 // server's JSON-RPC error as a Go error.
 func (s *streamSession) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	resp, err := s.transport.SendRequest(ctx, mcptransport.JSONRPCRequest{
+	return s.send(ctx, method, params, s.version)
+}
+
+// send sends one request. A non-empty version makes it a stateless
+// (2026-07-28 or later) request: the protocol version, the client identity
+// and its capabilities go in the params' _meta, and the Mcp-Protocol-Version,
+// Mcp-Method and Mcp-Name headers mirror the body.
+func (s *streamSession) send(ctx context.Context, method string, params any, version string) (json.RawMessage, error) {
+	request := mcptransport.JSONRPCRequest{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(s.nextID.Add(1)),
 		Method:  method,
 		Params:  params,
-	})
+	}
+	if version != "" {
+		raw, err := withRequestMeta(params, version, s.info)
+		if err != nil {
+			return nil, fmt.Errorf("mcp request %s: %w", method, err)
+		}
+		request.Params = raw
+		request.Header = http.Header{}
+		request.Header.Set(headerProtocolVersion, version)
+		request.Header.Set(mcp.HeaderMethod, method)
+		if name, ok := mcp.ExtractHeaderName(mcp.MCPMethod(method), raw); ok {
+			request.Header.Set(mcp.HeaderName, name)
+		}
+	}
+	resp, err := s.transport.SendRequest(ctx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -402,13 +430,84 @@ func (s *streamSession) request(ctx context.Context, method string, params any) 
 	return resp.Result, nil
 }
 
-// initialize runs the MCP handshake: the initialize request, a check that
-// the server chose a protocol version this client knows, and the
-// initialized notification. The negotiated version goes on every later
-// request.
+// withRequestMeta returns params as a JSON object whose _meta carries the
+// stateless protocol's per-request metadata, keeping any _meta field params
+// already set.
+func withRequestMeta(params any, version string, info mcp.Implementation) (json.RawMessage, error) {
+	fields := map[string]json.RawMessage{}
+	if params != nil {
+		data, err := json.Marshal(params)
+		if err != nil {
+			return nil, fmt.Errorf("encode params: %w", err)
+		}
+		if string(data) != "null" {
+			if err := json.Unmarshal(data, &fields); err != nil {
+				return nil, fmt.Errorf("params are not a JSON object: %w", err)
+			}
+		}
+	}
+	meta := map[string]any{}
+	if existing, ok := fields["_meta"]; ok && string(existing) != "null" {
+		if err := json.Unmarshal(existing, &meta); err != nil {
+			return nil, fmt.Errorf("params _meta is not a JSON object: %w", err)
+		}
+	}
+	meta[mcp.MetaKeyProtocolVersion] = version
+	meta[mcp.MetaKeyClientInfo] = info
+	meta[mcp.MetaKeyClientCapabilities] = mcp.ClientCapabilities{}
+	encoded, err := json.Marshal(meta)
+	if err != nil {
+		return nil, fmt.Errorf("encode _meta: %w", err)
+	}
+	fields["_meta"] = encoded
+	return json.Marshal(fields)
+}
+
+// initialize opens the session. It first asks server/discover for the
+// server's protocol versions; when both sides share a stateless (2026-07-28
+// or later) version, there is no handshake and every request carries that
+// version, the client identity and its capabilities in _meta. A server that
+// does not answer server/discover, or offers only legacy versions, gets the
+// legacy handshake: the initialize request, a check that the server chose a
+// protocol version this client knows, and the initialized notification. The
+// negotiated version goes on every later request.
 func (s *streamSession) initialize(ctx context.Context, info mcp.Implementation) error {
+	s.info = info
+	version, discoverErr := s.discover(ctx)
+	switch {
+	case discoverErr == nil && mcp.IsModernProtocol(version):
+		s.version = version
+		s.transport.SetProtocolVersion(version)
+		return nil
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case errors.Is(discoverErr, ErrRedirectRefused):
+		return discoverErr
+	}
+	return s.initializeLegacy(ctx)
+}
+
+// discover sends server/discover as a stateless request at this client's
+// latest protocol version and returns the newest version both sides support,
+// or "" when they share none.
+func (s *streamSession) discover(ctx context.Context) (string, error) {
+	raw, err := s.send(ctx, string(mcp.MethodServerDiscover), mcp.DiscoverParams{}, mcp.LATEST_PROTOCOL_VERSION)
+	if err != nil {
+		return "", err
+	}
+	var result mcp.DiscoverResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("mcp server/discover: decode result: %w", err)
+	}
+	return mcp.NegotiateMutuallySupportedVersion(result.SupportedVersions), nil
+}
+
+// initializeLegacy runs the initialize handshake of the protocol versions
+// before 2026-07-28.
+func (s *streamSession) initializeLegacy(ctx context.Context) error {
+	info := s.info
 	raw, err := s.request(ctx, string(mcp.MethodInitialize), mcp.InitializeParams{
-		ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+		ProtocolVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 		ClientInfo:      info,
 		Capabilities:    mcp.ClientCapabilities{},
 	})
