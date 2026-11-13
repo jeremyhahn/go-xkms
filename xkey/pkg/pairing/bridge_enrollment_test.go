@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -49,11 +48,11 @@ type fakeEnroller struct {
 	ekCertErr  error
 	iak        *xkms.KeyAttributes
 	idevid     *xkms.KeyAttributes
-	csr        tpm2.TCG_CSR_IDEVID
+	csr        xkms.TCG_CSR_IDEVID
 	csrErr     error
-	props      *tpm2.PropertiesFixed
+	props      *xkms.PropertiesFixed
 	secret     []byte
-	quote      tpm2.Quote
+	quote      xkms.Quote
 	activateIn [][]byte
 }
 
@@ -68,7 +67,7 @@ func (f *fakeEnroller) IDevIDAttributes() (*xkms.KeyAttributes, error) { return 
 func (f *fakeEnroller) CreateTCG_CSR_IDEVID(
 	_ *x509.Certificate,
 	_ *xkms.KeyAttributes,
-	_ *xkms.KeyAttributes) (tpm2.TCG_CSR_IDEVID, error) {
+	_ *xkms.KeyAttributes) (xkms.TCG_CSR_IDEVID, error) {
 	return f.csr, f.csrErr
 }
 
@@ -77,9 +76,9 @@ func (f *fakeEnroller) ActivateCredential(credentialBlob, encryptedSecret []byte
 	return f.secret, nil
 }
 
-func (f *fakeEnroller) Quote(_ []uint, _ []byte) (tpm2.Quote, error) { return f.quote, nil }
+func (f *fakeEnroller) Quote(_ []uint, _ []byte) (xkms.Quote, error) { return f.quote, nil }
 
-func (f *fakeEnroller) FixedProperties() (*tpm2.PropertiesFixed, error) { return f.props, nil }
+func (f *fakeEnroller) FixedProperties() (*xkms.PropertiesFixed, error) { return f.props, nil }
 
 func (f *fakeEnroller) ProvisionIAKCert(_ *x509.Certificate) error { return nil }
 
@@ -142,7 +141,7 @@ func newFakeEnroller(t *testing.T) *fakeEnroller {
 		ekCert: fakeCertificate(t),
 		iak:    fakeKeyAttributes(t),
 		idevid: fakeKeyAttributes(t),
-		props:  &tpm2.PropertiesFixed{Manufacturer: "ATT"},
+		props:  &xkms.PropertiesFixed{Manufacturer: "ATT"},
 		secret: []byte("recovered-secret"),
 	}
 }

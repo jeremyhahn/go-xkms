@@ -29,11 +29,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/localtpm"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // tpmPolicyPCR is the PCR the named-policy test selects: an application PCR
@@ -82,7 +80,7 @@ func ownerNVIndexes(t *testing.T, device string) map[gotpm2.TPMHandle]bool {
 	require.NoError(t, errors.Join(err, d.Close()))
 	indexes := map[gotpm2.TPMHandle]bool{}
 	for _, nv := range props.NVIndexes {
-		if nv.Handle >= tpm2.NVOwnerIndexFirst && nv.Handle <= tpm2.NVOwnerIndexLast {
+		if nv.Handle >= xkms.TPMNVOwnerIndexFirst && nv.Handle <= xkms.TPMNVOwnerIndexLast {
 			indexes[nv.Handle] = true
 		}
 	}
@@ -100,7 +98,7 @@ func undefineNewNVIndexes(t *testing.T, device string, before map[gotpm2.TPMHand
 	require.True(t, ok, "the TPM undefines NV indexes")
 	if err == nil {
 		for _, nv := range props.NVIndexes {
-			if nv.Handle >= tpm2.NVOwnerIndexFirst && nv.Handle <= tpm2.NVOwnerIndexLast && !before[nv.Handle] {
+			if nv.Handle >= xkms.TPMNVOwnerIndexFirst && nv.Handle <= xkms.TPMNVOwnerIndexLast && !before[nv.Handle] {
 				err = errors.Join(err, undefiner.UndefineNVIndex(nv.Handle, nil))
 			}
 		}
@@ -116,18 +114,18 @@ func provisionSWTPM(address string) error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	factory, err := store.NewStorageFactory(logger, dir)
+	factory, err := xkms.NewTPMStorageFactory(logger, dir)
 	if err != nil {
 		return err
 	}
-	cfg := tpm2.DefaultConfig
+	cfg := xkms.DefaultTPMConfig
 	cfg.CommandAddress = address
-	tpm, err := tpm2.NewTPM2(&tpm2.Params{Logger: logger, Config: &cfg, Backend: factory.KeyBackend()})
+	tpm, err := xkms.NewTPM2(&xkms.TPMParams{Logger: logger, Config: &cfg, Backend: factory.KeyBackend()})
 	switch {
-	case errors.Is(err, tpm2.ErrNotInitialized) && tpm != nil:
-		err = tpm2.ProvisionFresh(tpm, &cfg)
+	case errors.Is(err, xkms.ErrTPMNotInitialized) && tpm != nil:
+		err = xkms.ProvisionTPMFresh(tpm, &cfg)
 	case err == nil:
-		err = tpm2test.EnrollPlatformSRK(tpm, &cfg)
+		err = xkmstest.EnrollPlatformSRK(tpm, &cfg)
 	default:
 		return errors.Join(err, factory.Close())
 	}
