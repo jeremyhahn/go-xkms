@@ -98,6 +98,12 @@ var (
 	// provenance, so the attestation is rejected rather than accepted.
 	ErrNoTrustAnchors = errors.New("attestation: no trust anchors configured")
 
+	// ErrNoRevocationSource indicates an Android device key was verified
+	// with no attestation certificate revocation status list configured.
+	// The check is required (docs/references/android-key-attestation.md
+	// §Certificate revocation status list), so verification fails closed.
+	ErrNoRevocationSource = errors.New("attestation: no android attestation status list configured")
+
 	// ErrChainNotAnchored indicates the certificate chain is internally
 	// consistent but does not terminate at any configured trust anchor. This is
 	// the error returned for an attacker-supplied, self-consistent chain.

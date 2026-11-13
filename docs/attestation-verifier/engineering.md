@@ -197,25 +197,67 @@ surface never exposes one that does that silently.
   on that case.
 - Run a single package: `go test ./pkg/attestation/...`.
 
+## Attestation Verifier transports
+
+The eight Verifier verbs are `transport.AttestationAppraisalService`
+(`pkg/api/transport/types_attestation_appraisal.go:26`). Every client
+transport implements them; USB returns `ErrNotSupported`. The servers are
+REST (`pkg/api/rest/handlers_attestation_appraisal.go`), gRPC
+(`pkg/api/grpc/service_attestation_appraisal.go`) and MCP
+(`pkg/api/mcp/handlers_attestation_appraisal.go`). Each delegates to
+`XKMSService`, which takes the tenant from the caller's identity, and maps
+errors through `apierrors.AttestationAppraisalClassOf`
+(`pkg/api/apierrors/attestation_appraisal.go:44`).
+
+Invariants:
+
+- A tenant's records are invisible to another tenant, and a quote appraised
+  by another tenant does not verify against them.
+- A server with no Appraiser answers every verb unavailable (REST 503, MCP
+  `ErrCodeServiceUnavailable`).
+- Each verb has one permission, the same on every transport. The REST and MCP
+  golden tables and `pkg/api/authz_consistency_test` pin it. All
+  eight are self-scoped (`pkg/apimodule/module_scopes.go`).
+
+Tests:
+
+- `pkg/api/{rest,mcp}/handlers_attestation_appraisal_test.go` and
+  `pkg/api/grpc/service_attestation_appraisal_test.go`: a genuine quote
+  verifies against stored endorsements and reference values, tenant
+  isolation, error mapping, and the no-Appraiser answer. The REST test also
+  drives the wire client.
+- Each transport's `transport_attestation_appraisal_test.go`: the client
+  round trip and error mapping.
+- `pkg/testutil/appraisaltest`: one call per verb, shared by the transport
+  tests.
+- `sdk/ts/src/attestationAppraisal.test.ts`: the TypeScript wire contract.
+
 ## Repository signing keys
 
 `pkg/attestation/appraisal` (`signing_keys.go`, #1697):
 
 | Symbol | Kind | Where |
 |---|---|---|
-| `ReleaseSigningKeyID` | const `"release-signing"` | `signing_keys.go:31` |
-| `SigningKeyBinding`, `SigningKeyResolution` | types | `signing_keys.go:44`, `:89` |
-| `ValidateRepository` | func | `signing_keys.go:101` |
-| `Appraiser.SetSigningKeyBinding` / `GetSigningKeyBinding` / `ListSigningKeyBindings` / `DeleteSigningKeyBinding` / `ResolveSigningKey` | methods | `signing_keys.go:125`–`:178` |
-| `SigningKeySource`, `WithSigningKeySource` | interface, option | `signing_keys.go:195`, `:202` |
-| `Appraiser.RepositorySigningKey`, `Appraiser.TenantSigningKeys` | methods | `signing_keys.go:208`, `:226` |
-| `XKMSService.SigningPublicKey` | method (a `SigningKeySource`) | `pkg/xkms/servicer_signing_keys.go:136` |
+| `ReleaseSigningKeyID` | const `"release-signing"` | `signing_keys.go:30` |
+| `SigningKeyBinding`, `SigningKeyResolution` | types | `signing_keys.go:43`, `:88` |
+| `SignCoRIMRequest`, `SignedCoRIM` | types | `signing_keys.go:101`, `:120` |
+| `ValidateRepository` | func | `signing_keys.go:129` |
+| `Appraiser.SetSigningKeyBinding` / `GetSigningKeyBinding` / `ListSigningKeyBindings` / `DeleteSigningKeyBinding` / `ResolveSigningKey` | methods | `signing_keys.go:153`–`:206` |
+| `SigningKeySource`, `WithSigningKeySource` | interface, option | `signing_keys.go:223`, `:230` |
+| `Appraiser.RepositorySigningKey`, `Appraiser.TenantSigningKeys` | methods | `signing_keys.go:236`, `:254` |
+| `XKMSService.SigningPublicKey` | method (a `SigningKeySource`) | `pkg/xkms/servicer_signing_keys.go:158` |
+| `XKMSService.SignCoRIM` | method | `pkg/xkms/servicer_signing_keys.go:219` |
+| `refvalue.Sign`, `refvalue.Meta` | func, type | `pkg/attestation/refvalue/sign.go:69`, `:40` |
+| `refvalue.ErrSignerKey` / `ErrMeta` / `ErrSign` | errors | `pkg/attestation/refvalue/errors.go:66`, `:70`, `:74` |
 | `image.SigningKeyResolver`, `VerifierConfig.SigningKeys` | interface, field | `pkg/image/verifier.go:68`, `:62` |
 
 `sdk/go` re-exports these under an `Attestation` prefix
-(`sdk/go/attestation_appraisal.go:46`–`:130`, `:182`–`:204`), plus
-`ImageSigningKeyResolver` and `ErrImageSigningKeyMismatch`
-(`sdk/go/image.go:101`, `:181`).
+(`sdk/go/attestation_appraisal.go:47`–`:134`, `:186`–`:208`), among them
+`SignAttestationCoRIMRequest` and `SignedAttestationCoRIM` (`:122`, `:124`),
+plus `ImageSigningKeyResolver` and `ErrImageSigningKeyMismatch`
+(`sdk/go/image.go:101`, `:181`). `sdk/go/evidence` re-exports the CoRIM
+signer as `SignCoRIM`, `CoRIMMeta` and `ErrCoRIMSignerKey` / `ErrCoRIMMeta` /
+`ErrCoRIMSign` (`sdk/go/evidence/refvalue.go:58`, `:62`, `:76`–`:78`).
 
 Invariants:
 

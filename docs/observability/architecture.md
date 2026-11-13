@@ -169,7 +169,7 @@ transports that have no such middleware.
 
 **QUIC and MCP are not xkms listeners in the shipped topology.** Network
 serving runs through go-qrdb's embedded unified multi-protocol server: xkms
-registers its capability as a `qrdbsdk.ServiceModule`
+registers its capability as a `qrdbserver.ServiceModule`
 (`pkg/apimodule/module.go`), and `RegisterGRPC`/`RegisterHTTP`/`RegisterMCP`/
 `RegisterQUIC` attach method handlers to a server go-qrdb constructs, owns,
 and accepts connections on. `go-qrdb/pkg/apimodule.ServiceModule` (the

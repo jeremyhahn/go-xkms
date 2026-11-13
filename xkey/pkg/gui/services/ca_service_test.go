@@ -54,6 +54,10 @@ type mockCAClient struct {
 	// it.
 	transport.SigningKeyService
 
+	// AttestationAppraisalService completes transport.Client; these tests
+	// never call it.
+	transport.AttestationAppraisalService
+
 	getCACertificateResp  *transport.GetCACertificateResponse
 	getCACertificateErr   error
 	issueCertificateResp  *transport.IssueCertificateResponse
@@ -176,6 +180,9 @@ func (m *mockCAClient) RotateOTAImageKey(_ context.Context, _ *transport.OTAImag
 func (m *mockCAClient) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }
+func (m *mockCAClient) ExportOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
 func (m *mockCAClient) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, nil
 }
@@ -272,6 +279,25 @@ func (m *mockCAClient) ActivateInvitePIV(_ context.Context, _ *transport.Activat
 // CA-specific methods that the mock implements.
 func (m *mockCAClient) GetCABundle(_ context.Context, _ *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	return m.getCABundleResp, m.getCABundleErr
+}
+
+func (m *mockCAClient) GetTransparencyLogHead(_ context.Context, _ *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) GetTransparencyLogEntry(_ context.Context, _ *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) GetTransparencyLogInclusionProof(_ context.Context, _ *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, nil
+}
+func (m *mockCAClient) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, nil
 }
 func (m *mockCAClient) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	return m.getCACertificateResp, m.getCACertificateErr

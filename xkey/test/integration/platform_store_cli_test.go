@@ -119,13 +119,14 @@ func TestPlatformStoreCLI_Status_URLFromEnvironment(t *testing.T) {
 }
 
 // TestPlatformStoreCLI_Status_ConnectionRefused verifies the REST transport
-// is selected for http:// URLs and reports the refused TCP connection.
+// is selected for https:// URLs and reports the refused TCP connection. An
+// http:// URL is refused before dialing (ruling 152).
 func TestPlatformStoreCLI_Status_ConnectionRefused(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	isolatePlatformStoreEnv(t)
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
-		"platform-store", "status", "--xkmsd-url", "http://127.0.0.1:1")
+		"platform-store", "status", "--xkmsd-url", "https://127.0.0.1:1")
 
 	assert.Contains(t, errOutput, "platform-store: failed to connect to xkmsd")
 	assert.Contains(t, errOutput, "connection refused")

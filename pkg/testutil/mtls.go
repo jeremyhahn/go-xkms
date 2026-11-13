@@ -15,10 +15,16 @@ package testutil
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"math/big"
 	"net"
+	"net/url"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -80,4 +86,47 @@ func MutualTLSState() (state *tls.ConnectionState, err error) {
 
 	serverState := server.ConnectionState()
 	return &serverState, nil
+}
+
+// VerifiedClientState returns the TLS state of a server connection whose
+// client presented a certificate, issued by a fresh test CA, carrying uris
+// as its URI SANs, and verified it: the shape a mutual TLS handshake leaves
+// for a caller identified by a SPIFFE ID.
+func VerifiedClientState(uris ...string) (*tls.ConnectionState, error) {
+	ca, err := GenerateTestCA()
+	if err != nil {
+		return nil, err
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to generate key", Err: err}
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "caller"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	for _, s := range uris {
+		u, err := url.Parse(s)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to parse URI SAN", Err: err}
+		}
+		template.URIs = append(template.URIs, u)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, ca.Cert, &key.PublicKey, ca.Key)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create certificate", Err: err}
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
+	}
+	return &tls.ConnectionState{
+		HandshakeComplete: true,
+		PeerCertificates:  []*x509.Certificate{leaf},
+		VerifiedChains:    [][]*x509.Certificate{{leaf, ca.Cert}},
+	}, nil
 }

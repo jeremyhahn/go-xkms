@@ -44,7 +44,14 @@ var (
 	ErrNotSupported = errors.New("operation not supported by this protocol")
 	// ErrConnectionFailed is returned when a connection fails.
 	ErrConnectionFailed = errors.New("connection failed")
+	// ErrTooManyRedirects is returned when a request is redirected more than
+	// maxRedirects times.
+	ErrTooManyRedirects = errors.New("too many redirects")
 )
+
+// maxRedirects is the redirect limit of the HTTP client, the same limit the
+// net/http default policy applies.
+const maxRedirects = 10
 
 // ErrMalformedLeaderAddress indicates the leader API address advertised in
 // the X-XKMS-Leader-API-Address header of a 421 Misdirected Request response
@@ -103,10 +110,41 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 	// Remove trailing slash
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
-	return &Transport{
+	t := &Transport{
 		config:  cfg,
 		baseURL: baseURL,
-	}, nil
+	}
+	if err := t.requireSecureChannel(); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// requireSecureChannel refuses any base URL that is not https:// unless the
+// configuration opts out (ruling 152): the REST client dials TCP only, and
+// over http:// the bearer token, headers and every PIN, password and
+// registry credential a request carries would cross the network in the
+// clear.
+func (t *Transport) requireSecureChannel() error {
+	return t.requireSecureURL(t.baseURL)
+}
+
+// requireSecureURL applies the secure-channel guard to one request URL: any
+// URL that is not https:// is refused unless the configuration opts out.
+func (t *Transport) requireSecureURL(rawURL string) error {
+	return t.config.RequireSecureChannel("rest", !strings.HasPrefix(rawURL, "https://"))
+}
+
+// checkRedirect is the HTTP client's redirect policy. A 307 or 308 replays
+// the request body, and a same-host redirect keeps the Authorization header,
+// so every redirect target passes the same secure-channel guard as the base
+// URL: an https endpoint cannot bounce a credential onto plaintext (ruling
+// 152). It keeps the net/http default limit of ten redirects.
+func (t *Transport) checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return ErrTooManyRedirects
+	}
+	return t.requireSecureURL(req.URL.String())
 }
 
 // Connect establishes a connection to the xkms server via REST.
@@ -157,7 +195,8 @@ func (t *Transport) Connect(ctx context.Context) error {
 	}
 
 	t.httpClient = &http.Client{
-		Transport: httpTransport,
+		Transport:     httpTransport,
+		CheckRedirect: t.checkRedirect,
 	}
 
 	// Test connection with health check
@@ -1050,6 +1089,28 @@ func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSig
 	}
 
 	var resp transport.SignResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// ExportOTAImageKey returns the public half of the current version of a
+// board's OTA image-signing key.
+func (t *Transport) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	path := fmt.Sprintf("/api/v1/ota-image-keys/%s/export", url.PathEscape(req.BoardID))
+	body := map[string]interface{}{
+		"backend":   req.Backend,
+		"algorithm": req.Algorithm,
+	}
+
+	data, err := t.DoRawRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.ExportOTAImageKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}

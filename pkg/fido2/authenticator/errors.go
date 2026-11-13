@@ -105,6 +105,10 @@ var ErrUserVerificationRequired = errors.New("authenticator: user verification r
 // ErrUVBlocked indicates user verification has been blocked due to too many failed attempts.
 var ErrUVBlocked = errors.New("authenticator: UV blocked")
 
+// ErrUVInvalid indicates the built-in user verification did not verify the
+// user (CTAP2_ERR_UV_INVALID, CTAP 2.1 §6.5.5.7.3).
+var ErrUVInvalid = errors.New("authenticator: user verification failed")
+
 // ErrStorageError indicates an error occurred while accessing credential storage.
 var ErrStorageError = errors.New("authenticator: storage error")
 

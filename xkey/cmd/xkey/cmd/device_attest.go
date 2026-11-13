@@ -36,6 +36,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/truststore"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 )
 
 // Device attest errors.
@@ -272,9 +273,17 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 			fmt.Printf("  Trust Sources:       Google Hardware Attestation + %d local certificate(s)\n", len(xkeyCerts))
 		}
 
+		// Ruling 180: every chain certificate is checked against the
+		// attestation status list; a list that cannot be had fails closed.
+		revocation, revErr := attestation.RevocationSource(unifiedConfigOrDefault().Phone)
+		if revErr != nil {
+			return &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: revErr}
+		}
+
 		verifyOpts := &xkms.AndroidVerifyOptions{
 			TrustedRoots:  rootPool,
 			ExpectedNonce: nonce,
+			Revocation:    revocation,
 		}
 
 		desc, err := xkms.VerifyAndroidKeyAttestation(chain, verifyOpts)

@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -49,18 +48,24 @@ type SignerConfig struct {
 	// Timestamper, when set, adds an RFC 3161 timestamp over every
 	// envelope.
 	Timestamper Timestamper
+
+	// TransparencyLog, when set, records every signature as an image-signed
+	// entry before it is pushed. A failed append fails the signing: no
+	// attestation is pushed or returned. Nil records nothing.
+	TransparencyLog TransparencyLog
 }
 
 // Signer signs container images: it attests an image digest in a DSSE
 // envelope over an in-toto statement and pushes it to the image's
 // registry.
 type Signer struct {
-	signer         crypto.Signer
-	certificate    *x509.Certificate
-	certificatePEM []byte
-	chainPEM       []byte
-	registry       RegistryClient
-	timestamper    Timestamper
+	signer          crypto.Signer
+	certificate     *x509.Certificate
+	certificatePEM  []byte
+	chainPEM        []byte
+	registry        RegistryClient
+	timestamper     Timestamper
+	transparencyLog TransparencyLog
 }
 
 // SignOptions shapes the statement an image is attested with.
@@ -91,10 +96,20 @@ type SignResult struct {
 	Push *PushResult
 }
 
-// CertificateIssuer issues certificates from CSRs; TrustedCA's issuer
-// (ca.CAIssuer) satisfies it.
+// ProfileCodeSigning is the registry name of TrustedCA's code-signing
+// profile (ca.ProfileNameCodeSigning), under which
+// RequestCodeSigningCertificate asks for a certificate. pkg/image names it
+// itself rather than importing pkg/ca, which imports pkg/xkms, so that the
+// service can sign images with pkg/image.
+const ProfileCodeSigning = "code-signing"
+
+// CertificateIssuer issues certificates from CSRs without storing them.
+// TrustedCA (*ca.CA) satisfies it. The certificate is named after a
+// caller-chosen repository and travels with the signature, so it is never
+// stored where it could replace another certificate of that name. A zero
+// validityDays takes the profile's default lifetime.
 type CertificateIssuer interface {
-	SignCSR(ctx context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error)
+	SignCSRUnstored(ctx context.Context, csrPEM []byte, profile string, validityDays int, tenantID string) (*x509.Certificate, error)
 }
 
 // NewSigner returns a Signer for cfg. The certificate must certify the
@@ -125,18 +140,20 @@ func NewSigner(cfg *SignerConfig) (*Signer, error) {
 		}
 	}
 	return &Signer{
-		signer:         cfg.Signer,
-		certificate:    cfg.Certificate,
-		certificatePEM: certificatePEM,
-		chainPEM:       chainPEM,
-		registry:       cfg.Registry,
-		timestamper:    cfg.Timestamper,
+		signer:          cfg.Signer,
+		certificate:     cfg.Certificate,
+		certificatePEM:  certificatePEM,
+		chainPEM:        chainPEM,
+		registry:        cfg.Registry,
+		timestamper:     cfg.Timestamper,
+		transparencyLog: cfg.TransparencyLog,
 	}, nil
 }
 
 // SignImage resolves ref to its manifest digest, signs an in-toto
 // statement with that digest as subject into a DSSE envelope, timestamps
-// the envelope when the Signer has a Timestamper, and pushes it as an OCI
+// the envelope when the Signer has a Timestamper, records it in the
+// Signer's transparency log when it has one, and pushes it as an OCI
 // 1.1 referrer and to the image's cosign ".att" tag. opts may be nil.
 func (s *Signer) SignImage(ctx context.Context, ref string, opts *SignOptions) (*SignResult, error) {
 	reference, err := ParseReference(ref)
@@ -183,6 +200,9 @@ func (s *Signer) SignImage(ctx context.Context, ref string, opts *SignOptions) (
 			return nil, err
 		}
 	}
+	if err := s.appendImageSigned(ctx, subject.Digest, envelope); err != nil {
+		return nil, err
+	}
 	push, err := s.registry.PushAttestation(ctx, pinned, subject, &Attestation{
 		Envelope:      envelope,
 		PredicateType: predicateType,
@@ -227,7 +247,7 @@ func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer
 		return nil, ErrSignerRequired
 	}
 	if strings.TrimSpace(tenantID) == "" {
-		return nil, ca.ErrTenantRequired
+		return nil, ErrTenantRequired
 	}
 	if strings.TrimSpace(commonName) == "" {
 		return nil, ErrCommonNameRequired
@@ -241,7 +261,7 @@ func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: encoding.PEMTypeCertificateRequest, Bytes: der})
 
-	certificate, err := issuer.SignCSR(ctx, csrPEM, &ca.SignOptions{TenantID: tenantID, Profile: ca.ProfileNameCodeSigning})
+	certificate, err := issuer.SignCSRUnstored(ctx, csrPEM, ProfileCodeSigning, 0, tenantID)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrCertificateRequestFailed, Cause: err}
 	}

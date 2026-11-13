@@ -130,7 +130,7 @@ type RouteSpec struct {
 // hostRoutePatterns are the routes a qrdb host's REST server serves itself,
 // so a module never registers them: /health, its node health, and
 // /v1/ca/bootstrap, first-contact trust, which it serves from the bundle the
-// host supplies (qrdbsdk.WithBootstrapCABundle -- xkmsd passes its CA
+// host supplies (qrdbserver.WithBootstrapCABundle -- xkmsd passes its CA
 // bundle).
 var hostRoutePatterns = map[string]bool{
 	"/health":          true,
@@ -196,6 +196,8 @@ func Routes() []RouteSpec {
 	perm("POST", "/ota-image-keys/{board}", auth.ResourceKeys, auth.ActionCreate, func(s *Server) http.HandlerFunc { return s.handlers.CreateOTAImageKeyHandler })
 	perm("POST", "/ota-image-keys/{board}/rotate", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.RotateOTAImageKeyHandler })
 	permBulk("POST", "/ota-image-keys/{board}/sign", auth.ResourceKeys, auth.ActionSign, func(s *Server) http.HandlerFunc { return s.handlers.SignOTAImageHandler })
+	// Exporting a board key reads its public half, so the get permission applies.
+	perm("POST", "/ota-image-keys/{board}/export", auth.ResourceKeys, auth.ActionGet, func(s *Server) http.HandlerFunc { return s.handlers.ExportOTAImageKeyHandler })
 	// Key versions: listing reads like listing keys; enabling and disabling
 	// versions is rotation lifecycle management; retiring destroys a
 	// version's key material, as deleting a key does.
@@ -466,6 +468,29 @@ func Routes() []RouteSpec {
 	permIf("DELETE", "/trust-roots/{fingerprint}", auth.ResourceTrustRoots, auth.ActionDelete, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.RemoveHandler })
 	permIf("POST", "/trust-roots/{fingerprint}/quarantine", auth.ResourceTrustRoots, auth.ActionUpdate, hasTrustRoots, func(s *Server) http.HandlerFunc { return s.trustRootHandlers.QuarantineHandler })
 
+	// --- Attestation Verifier (go-xkms#1608). attestation_endorsements:*,
+	// attestation_reference_values:* and attestation_verifier:verify are
+	// xkms-owned permission families whose tenancy scope
+	// pkg/apimodule/module_scopes.go declares; the service binds each call to
+	// the caller's tenant. ---
+	hasAppraisal := func(s *Server) bool { return s.attestationAppraisalHandlers != nil }
+	permIf("PUT", "/attestation/endorsements", auth.ResourceAttestationEndorsements, auth.ActionCreate, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.PutEndorsementHandler })
+	permIf("GET", "/attestation/endorsements", auth.ResourceAttestationEndorsements, auth.ActionList, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.ListEndorsementsHandler })
+	permIf("DELETE", "/attestation/endorsements/{name}", auth.ResourceAttestationEndorsements, auth.ActionDelete, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.DeleteEndorsementHandler })
+	permIf("PUT", "/attestation/reference-values", auth.ResourceAttestationReferenceValues, auth.ActionCreate, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.PutReferenceValuesHandler })
+	permIf("GET", "/attestation/reference-values", auth.ResourceAttestationReferenceValues, auth.ActionList, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.ListReferenceValuesHandler })
+	permIf("GET", "/attestation/reference-values/{name}", auth.ResourceAttestationReferenceValues, auth.ActionGet, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.GetReferenceValuesHandler })
+	permIf("DELETE", "/attestation/reference-values/{name}", auth.ResourceAttestationReferenceValues, auth.ActionDelete, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.DeleteReferenceValuesHandler })
+	permIf("POST", "/attestation/appraise", auth.ResourceAttestationVerifier, auth.ActionVerify, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.AppraiseQuoteHandler })
+
+	// CA transparency log reads (docs/transparency-log).
+	hasTransparencyLog := func(s *Server) bool { return s.transparencyLogHandlers != nil }
+	permIf("GET", "/ca/transparency-log/head", auth.ResourceVlog, auth.ActionHead, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.HeadHandler })
+	permIf("GET", "/ca/transparency-log/entries/{index}", auth.ResourceVlog, auth.ActionGet, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.EntryHandler })
+	permIf("GET", "/ca/transparency-log/proofs/inclusion", auth.ResourceVlog, auth.ActionProof, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.InclusionProofHandler })
+	permIf("GET", "/ca/transparency-log/proofs/consistency", auth.ResourceVlog, auth.ActionProof, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.ConsistencyProofHandler })
+	permIf("POST", "/ca/transparency-log/entries", auth.ResourceVlog, auth.ActionAppend, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.AppendExternalHandler })
+
 	// --- Repository signing keys (go-xkms#1697). attestation_signing_keys:*
 	// is an xkms-owned permission family whose tenancy scope
 	// pkg/apimodule/module_scopes.go declares; the service binds each call to
@@ -478,6 +503,8 @@ func Routes() []RouteSpec {
 	permIf("GET", "/attestation/signing-keys/binding", auth.ResourceAttestationSigningKeys, auth.ActionGet, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.GetHandler })
 	permIf("DELETE", "/attestation/signing-keys/binding", auth.ResourceAttestationSigningKeys, auth.ActionBind, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.DeleteHandler })
 	permIf("GET", "/attestation/signing-keys/resolve", auth.ResourceAttestationSigningKeys, auth.ActionGet, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.ResolveHandler })
+	permIf("POST", "/attestation/signing-keys/sign-corim", auth.ResourceAttestationSigningKeys, auth.ActionSign, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.SignCoRIMHandler })
+	permIf("POST", "/attestation/signing-keys/sign-image", auth.ResourceAttestationSigningKeys, auth.ActionSign, hasSigningKeys, func(s *Server) http.HandlerFunc { return s.signingKeyHandlers.SignImageHandler })
 
 	// --- Server-side OIDC credentials (pkg/oidc/credential).
 	// oidc_credentials:* is an xkms-owned permission family

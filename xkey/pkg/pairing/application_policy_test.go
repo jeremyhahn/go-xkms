@@ -97,6 +97,8 @@ func TestApplicationPolicy_RefusesEveryApplicationWhenUnconfigured(t *testing.T)
 
 	_, _, err := policy.Match(attestedApp(t, testPackage, appPolicyDigest))
 	assert.ErrorIs(t, err, ErrApplicationPolicyUnconfigured)
+	assert.ErrorIs(t, err, xkms.ErrAndroidNilApplicationMatcher,
+		"the library's sentinel is the one contract for an unconfigured policy (#1721)")
 	assert.False(t, errors.Is(err, ErrApplicationDenied),
 		"an unconfigured policy is a setup problem, not a verdict on the device")
 }

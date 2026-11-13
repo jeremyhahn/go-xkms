@@ -38,7 +38,7 @@ type SealingStrategy = qrdbsdk.SealingStrategy
 type SymmetricEncrypter = qrdbsdk.SymmetricEncrypter
 
 // Credentials holds authentication material for seal/unseal operations. The
-// secret lives in protected memory (*enclave.SealedEnclave), not a []byte.
+// secret lives in protected memory (enclave.Sealed), not a []byte.
 // Build one with CredentialsFor (borrowed material: request fields, config
 // values) or NewCredentials (owned material: consumes and wipes the source
 // slice). The zero value means "no credentials supplied".
@@ -53,6 +53,18 @@ var NewCredentials = qrdbsdk.NewCredentials
 // caller's slice intact. An empty secret yields the zero Credentials ("no
 // credentials supplied") rather than an error.
 var CredentialsFor = qrdbsdk.CredentialsFor
+
+// DestroyCredentials destroys a credential's protected secret once the seal or
+// unseal it was built for has returned. It is nil-safe: the zero Credentials
+// CredentialsFor yields for an empty secret carries no secret, and Secret is a
+// go-enclave Sealed interface, so calling Destroy on it directly would panic.
+// go-qrdb's pkg/seal has the same helper; its SDK does not re-export it.
+func DestroyCredentials(creds Credentials) error {
+	if creds.Secret == nil {
+		return nil
+	}
+	return creds.Secret.Destroy()
+}
 
 // MustCredentials is NewCredentials for fixtures; it panics where
 // NewCredentials would return an error.

@@ -74,7 +74,7 @@ func loadProductionTrust(t *testing.T) *xkms.AndroidDeviceTrust {
 
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: t.TempDir()})
 	require.NoError(t, err)
-	trust, err := attestation.LoadTrust(store, realChainApplications)
+	trust, err := attestation.LoadTrust(store, realChainApplications, &xkms.AndroidStatusList{})
 	require.NoError(t, err)
 	return trust
 }

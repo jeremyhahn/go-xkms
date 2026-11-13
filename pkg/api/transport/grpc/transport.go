@@ -61,6 +61,16 @@ type Transport struct {
 	// credentials the caller's original connection presents: the caller's own
 	// identity must reach the leader, never a delegated one.
 	credsOpt grpc.DialOption
+
+	// dialed and plaintextChannel record, from Connect's credentials
+	// decision, whether the channel it established is plaintext. The
+	// secure-channel guard reads them once set, since the caller may change
+	// TLSEnabled on its Config after Connect without changing the channel.
+	// dialedTarget is the address Connect dialed, for the same reason: the
+	// caller may change Address after Connect without changing the channel.
+	dialed           bool
+	plaintextChannel bool
+	dialedTarget     string
 }
 
 // New creates a new gRPC transport with the given options.
@@ -69,10 +79,7 @@ func New(opts ...transport.Option) (*Transport, error) {
 	if err := transport.ApplyOptions(cfg, opts...); err != nil {
 		return nil, err
 	}
-
-	return &Transport{
-		config: cfg,
-	}, nil
+	return NewWithConfig(cfg)
 }
 
 // NewWithConfig creates a new gRPC transport with the given configuration.
@@ -81,30 +88,60 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 		cfg = transport.DefaultConfig()
 	}
 
-	return &Transport{
+	t := &Transport{
 		config: cfg,
-	}, nil
+	}
+	if err := t.requireSecureChannel(); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
-// transportCredentialsOption builds the grpc.DialOption carrying this
-// transport's configured transport credentials (TLS, possibly mTLS, or
+// requireSecureChannel refuses a TLS-disabled dial target other than a unix
+// socket unless the configuration opts out (ruling 152): gRPC without TLS
+// dials with insecure credentials, so the bearer token and every PIN,
+// password and registry credential a request carries would cross the
+// network in the clear.
+func (t *Transport) requireSecureChannel() error {
+	if t.dialed {
+		return t.requireSecureTarget(t.dialedTarget)
+	}
+	return t.requireSecureTarget(t.config.Address)
+}
+
+// requireSecureTarget applies the secure-channel guard to one dial target:
+// the configured address or a leader the server advertises. With TLS
+// disabled, only a unix target passes without the opt-out. After Connect,
+// TLS is judged from the channel Connect established, not from the Config;
+// the opt-out is still read at call time.
+func (t *Transport) requireSecureTarget(target string) error {
+	tlsEnabled := t.config.TLSEnabled
+	if t.dialed {
+		tlsEnabled = !t.plaintextChannel
+	}
+	plaintext := !tlsEnabled && !transport.IsUnixEndpoint(target)
+	return t.config.RequireSecureChannel("grpc", plaintext)
+}
+
+// transportCredentialsOption builds the grpc.DialOption carrying cfg's
+// transport credentials (TLS, possibly mTLS, or
 // insecure). It is used both for the primary connection and, via credsOpt, to
 // redial a redirected leader with the identical credentials.
-func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
-	if !t.config.TLSEnabled {
+func transportCredentialsOption(cfg *transport.Config) (opt grpc.DialOption, plaintext bool, err error) {
+	if !cfg.TLSEnabled {
 		// TLSEnabled=false is the caller's own explicit transport.Config choice.
-		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), true, nil // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
 	}
 
 	// A caller-built tls.Config (transport.WithTLSConfig: a CA bundle held
 	// in memory, hardware-backed mTLS, pinning) is used as given; without
 	// one, the configuration is built from the file paths below.
-	if t.config.TLSConfig != nil {
-		tlsConfig := t.config.TLSConfig.Clone()
+	if cfg.TLSConfig != nil {
+		tlsConfig := cfg.TLSConfig.Clone()
 		if tlsConfig.MinVersion < tls.VersionTLS13 {
 			tlsConfig.MinVersion = tls.VersionTLS13
 		}
-		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
+		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), false, nil
 	}
 
 	tlsConfig := &tls.Config{
@@ -112,32 +149,32 @@ func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 	}
 
 	// Load CA certificate if specified
-	if t.config.TLSCAFile != "" {
-		caCert, err := os.ReadFile(t.config.TLSCAFile)
+	if cfg.TLSCAFile != "" {
+		caCert, err := os.ReadFile(cfg.TLSCAFile)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to read CA certificate", Err: err}
+			return nil, false, &errs.Wrapped{Msg: "failed to read CA certificate", Err: err}
 		}
 		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, &errs.Message{Msg: "failed to parse CA certificate"}
+			return nil, false, &errs.Message{Msg: "failed to parse CA certificate"}
 		}
 		tlsConfig.RootCAs = caCertPool
 	}
 
 	// Load client certificate if specified (mTLS)
-	if t.config.TLSCertFile != "" && t.config.TLSKeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(t.config.TLSCertFile, t.config.TLSKeyFile)
+	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
+			return nil, false, &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
 		}
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 
-	if t.config.SPKIPin != "" {
-		tlsConfig = spki.PinTLSConfig(tlsConfig, t.config.SPKIPin)
+	if cfg.SPKIPin != "" {
+		tlsConfig = spki.PinTLSConfig(tlsConfig, cfg.SPKIPin)
 	}
 
-	return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
+	return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), false, nil
 }
 
 // authDialOptions returns the dial options that authenticate every RPC: the
@@ -152,20 +189,29 @@ func (t *Transport) authDialOptions() []grpc.DialOption {
 
 // Connect establishes a connection to the xkms server via gRPC.
 func (t *Transport) Connect(ctx context.Context) error {
-	credsOpt, err := t.transportCredentialsOption()
+	// NewWithConfig keeps the caller's *Config, which may have changed since
+	// it passed the guard: read it once, and dial and guard that snapshot.
+	cfg := *t.config
+	credsOpt, plaintext, err := transportCredentialsOption(&cfg)
 	if err != nil {
 		return err
 	}
+	if err := cfg.RequireSecureChannel("grpc", plaintext && !transport.IsUnixEndpoint(cfg.Address)); err != nil {
+		return err
+	}
 	t.credsOpt = credsOpt
+	t.dialed = true
+	t.plaintextChannel = plaintext
+	t.dialedTarget = cfg.Address
 
 	opts := []grpc.DialOption{
 		credsOpt,
 		grpc.WithChainUnaryInterceptor(t.notLeaderInterceptor),
 	}
-	opts = append(opts, t.authDialOptions()...)
+	opts = append(opts, grpcauth.DialOptions(cfg.JWTToken)...)
 
 	// Connect to the server
-	conn, err := grpc.NewClient(t.config.Address, opts...)
+	conn, err := grpc.NewClient(t.dialedTarget, opts...)
 	if err != nil {
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -748,6 +794,32 @@ func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSig
 	return &transport.SignResponse{
 		Signature:  resp.Signature,
 		KeyVersion: resp.KeyVersion,
+	}, nil
+}
+
+// ExportOTAImageKey returns the public half of the current version of a
+// board's OTA image-signing key.
+func (t *Transport) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.ExportOTAImageKey(ctx, &pb.OTAImageKeyRequest{
+		BoardId:   req.BoardID,
+		Backend:   req.Backend,
+		Algorithm: req.Algorithm,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.ExportOTAImageKeyResponse{
+		BoardID:    resp.BoardId,
+		KeyID:      resp.KeyId,
+		KeyVersion: resp.KeyVersion,
+		Algorithm:  resp.Algorithm,
+		PublicKey:  resp.PublicKey,
+		COSEKey:    resp.CoseKey,
 	}, nil
 }
 

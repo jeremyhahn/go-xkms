@@ -21,10 +21,13 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/image"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
@@ -142,6 +145,16 @@ var TrustRootSentinelClasses = []SentinelClass{
 	// tenant-scoped caller is refused with xkms.TenantBindingError, which
 	// unwraps to go-qrdb's unknown-tenant sentinel.
 	{qrdbsdk.ErrTenantMissing, ClassNotFound},
+}
+
+// TransparencyLogSentinelClasses classifies the errors of the CA
+// transparency log's verbs, for every transport that serves them.
+var TransparencyLogSentinelClasses = []SentinelClass{
+	{xkms.ErrTransparencyLogNotConfigured, ClassUnavailable},
+	{xkms.ErrTransparencyLogRange, ClassInvalidArgument},
+	{xkms.ErrTransparencyLogNoCallerSPIFFEID, ClassUnauthenticated},
+	{tlog.ErrInvalidEntry, ClassInvalidArgument},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
 }
 
 // PINSentinelClasses classifies the go-qrdb PIN backend domain errors
@@ -326,7 +339,9 @@ func PeerAttestationClassOf(err error) (Class, bool) {
 // has nothing to answer with; a binding change by a caller without
 // attestation_signing_keys:bind is refused below the gate too. The
 // appraisal's typed errors (RepositoryError, SigningKeyError) wrap these
-// sentinels, so this one table classifies them.
+// sentinels, so this one table classifies them; xkms.CoRIMSignError wraps
+// the refvalue sentinels SignCoRIM fails with, and xkms.ImageSignError the
+// pkg/image sentinels SignImage fails with.
 var SigningKeySentinelClasses = []SentinelClass{
 	{xkms.ErrNotConfigured, ClassUnavailable},
 	{xkms.ErrSigningKeyForbidden, ClassPermissionDenied},
@@ -336,10 +351,37 @@ var SigningKeySentinelClasses = []SentinelClass{
 	{appraisal.ErrInvalidTenant, ClassInvalidArgument},
 	{appraisal.ErrRecordNotFound, ClassNotFound},
 	{appraisal.ErrStoreUnavailable, ClassUnavailable},
+	// SignCoRIM: the CoRIM or corim-meta the caller sent is invalid; the
+	// key the repository resolves to is absent or of a type a signed CoRIM
+	// cannot carry, which the tenant fixes by provisioning or rebinding.
+	{refvalue.ErrMalformed, ClassInvalidArgument},
+	{refvalue.ErrMeta, ClassInvalidArgument},
+	{refvalue.ErrSignerKey, ClassFailedPrecondition},
+	{xkms.ErrKeyNotFound, ClassFailedPrecondition},
+	// SignImage, through xkms.ImageSignError: the reference, predicate or
+	// registry credentials the caller sent are invalid; the image is absent
+	// from the registry; the registry is down. The system tenant has no
+	// release key, and a registry that refuses the caller's credentials or
+	// a key type DSSE cannot carry is fixed by the tenant.
+	{xkms.ErrSystemTenantImageSigning, ClassFailedPrecondition},
+	{image.ErrInvalidReference, ClassInvalidArgument},
+	{image.ErrInvalidDigest, ClassInvalidArgument},
+	{image.ErrInvalidStatement, ClassInvalidArgument},
+	{image.ErrRegistryCredentials, ClassInvalidArgument},
+	{image.ErrManifestNotFound, ClassNotFound},
+	{image.ErrRegistryUnavailable, ClassUnavailable},
+	{image.ErrRegistryRequest, ClassFailedPrecondition},
+	{image.ErrRegistryAuth, ClassFailedPrecondition},
+	{image.ErrUnsupportedKey, ClassFailedPrecondition},
 }
 
 // SigningKeyClassOf classifies an error of the repository signing-key verbs.
+// SignCoRIM and SignImage admit the key as Sign does, so a policy denial or a
+// disabled or revoked key keeps the class KeyPolicyClassOf gives it.
 func SigningKeyClassOf(err error) (Class, bool) {
+	if class, ok := KeyPolicyClassOf(err); ok {
+		return class, true
+	}
 	return ClassOf(SigningKeySentinelClasses, err)
 }
 

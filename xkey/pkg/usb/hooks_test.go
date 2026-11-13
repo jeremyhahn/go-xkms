@@ -39,8 +39,8 @@ type savedHooks struct {
 	getEUID            func() int
 	luksSetupLoop      func(context.Context, string) (string, error)
 	luksDetachLoop     func(context.Context, string) error
-	luksFormat         func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error
-	luksUnlock         func(context.Context, string, *enclave.MemoryEnclave, string) (*dmcrypt.Mapping, error)
+	luksFormat         func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error
+	luksUnlock         func(context.Context, string, enclave.ByteAccess, string) (*dmcrypt.Mapping, error)
 	luksMakeFilesystem func(context.Context, string, filesystem.Type, filesystem.MakeParams) error
 	luksLock           func(context.Context, string) error
 	luksIsUnlocked     func(context.Context, string) bool
@@ -94,8 +94,8 @@ func mockAllCommandsSuccess(t *testing.T) {
 	execCommand = func(name string, args ...string) error { return nil }
 	luksSetupLoopDevice = func(_ context.Context, file string) (string, error) { return "/dev/loop99", nil }
 	luksDetachLoopDevice = func(_ context.Context, device string) error { return nil }
-	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
-	luksUnlock = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+	luksFormat = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error { return nil }
+	luksUnlock = func(_ context.Context, _ string, _ enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 		return &dmcrypt.Mapping{Name: name}, nil
 	}
 	luksMakeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error { return nil }

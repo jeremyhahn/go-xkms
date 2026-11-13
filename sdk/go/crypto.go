@@ -32,8 +32,9 @@ import (
 // These allow SDK consumers to split and reconstruct secrets without importing
 // the internal shamir package directly.
 type (
-	// ShamirShare represents a single share in a Shamir secret sharing scheme.
-	ShamirShare = qrdbsdk.ShamirShare
+	// ShamirProtectedShare is a single share in a Shamir secret sharing
+	// scheme, its share bytes held in a go-enclave handle.
+	ShamirProtectedShare = qrdbsdk.ShamirProtectedShare
 )
 
 // Shamir secret sharing functions.
@@ -365,12 +366,12 @@ var (
 // Secure memory utilities.
 //
 // go-xkms holds no locked-memory implementation of its own: raw key bytes
-// live in go-enclave MemoryEnclaves, admitted via its Allocator. SDK
-// consumers that need MemoryEnclave, Allocator or WipeAll import
+// live in go-enclave ByteAccess enclaves, admitted via its Allocator. SDK
+// consumers that need ByteAccess, Allocator or WipeAll import
 // "github.com/jeremyhahn/go-enclave" directly — it is already a public
 // dependency of this module, not an internal package this SDK needs to
 // hide. SecureMemZero remains re-exported because it is a plain wipe
-// helper existing consumers call without a MemoryEnclave in hand.
+// helper existing consumers call without a ByteAccess enclave in hand.
 // ---------------------------------------------------------------------------
 
 // SecureMemZero overwrites the byte slice with zeros. This is used to clear

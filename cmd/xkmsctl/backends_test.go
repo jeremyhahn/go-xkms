@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -232,6 +233,10 @@ func TestConvertBackendInfoToCapabilities_ZeroValue(t *testing.T) {
 
 // mockBackendsClient is a mock client for testing backend operations
 type mockBackendsClient struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	listBackendsResp *client.ListBackendsResponse
 	listBackendsErr  error
 	getBackendResp   *client.BackendInfo
@@ -332,6 +337,10 @@ func (m *mockBackendsClient) RotateOTAImageKey(ctx context.Context, req *client.
 }
 
 func (m *mockBackendsClient) SignOTAImage(ctx context.Context, req *client.OTAImageSignRequest) (*client.SignResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) ExportOTAImageKey(ctx context.Context, req *client.OTAImageKeyRequest) (*client.ExportOTAImageKeyResponse, error) {
 	return nil, nil
 }
 
@@ -437,6 +446,26 @@ func (m *mockBackendsClient) AttestKey(ctx context.Context, req *transport.Attes
 }
 
 func (m *mockBackendsClient) GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) GetTransparencyLogHead(ctx context.Context, req *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) GetTransparencyLogEntry(ctx context.Context, req *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) GetTransparencyLogInclusionProof(ctx context.Context, req *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) GetTransparencyLogConsistencyProof(ctx context.Context, req *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
 	return nil, nil
 }
 
@@ -1186,5 +1215,12 @@ func (*mockBackendsClient) DeleteSigningKeyBinding(context.Context, *transport.D
 	return nil
 }
 func (*mockBackendsClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*mockBackendsClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}
+
+func (*mockBackendsClient) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
 	return nil, nil
 }

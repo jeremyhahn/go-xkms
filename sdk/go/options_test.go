@@ -19,10 +19,16 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 )
 
 // mockService implements XKMSServicer for testing.
-type mockService struct{}
+type mockService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+}
 
 func (m *mockService) Health(ctx context.Context) (string, string, error) {
 	return "healthy", "1.0.0", nil
@@ -113,6 +119,10 @@ func (m *mockService) RotateOTAImageKey(ctx context.Context, req *OTAImageKeyReq
 }
 
 func (m *mockService) SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ExportOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error) {
 	return nil, nil
 }
 
@@ -219,6 +229,26 @@ func (m *mockService) DeriveKeyECDH(ctx context.Context, req *DeriveKeyECDHReque
 }
 
 func (m *mockService) GetCABundle(ctx context.Context, req *GetCABundleRequest) (*GetCABundleResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetTransparencyLogHead(ctx context.Context, req *GetTransparencyLogHeadRequest) (*GetTransparencyLogHeadResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetTransparencyLogEntry(ctx context.Context, req *GetTransparencyLogEntryRequest) (*GetTransparencyLogEntryResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetTransparencyLogInclusionProof(ctx context.Context, req *GetTransparencyLogInclusionProofRequest) (*GetTransparencyLogInclusionProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetTransparencyLogConsistencyProof(ctx context.Context, req *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) AppendTransparencyLogExternal(ctx context.Context, req *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error) {
 	return nil, nil
 }
 
@@ -1548,5 +1578,12 @@ func (*mockService) DeleteSigningKeyBinding(context.Context, *DeleteAttestationS
 	return nil
 }
 func (*mockService) ResolveSigningKey(context.Context, *ResolveAttestationSigningKeyRequest) (*AttestationSigningKeyResolution, error) {
+	return nil, nil
+}
+func (*mockService) SignCoRIM(context.Context, *SignAttestationCoRIMRequest) (*SignedAttestationCoRIM, error) {
+	return nil, nil
+}
+
+func (*mockService) SignImage(context.Context, *SignAttestationImageRequest) (*SignedAttestationImage, error) {
 	return nil, nil
 }

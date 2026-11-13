@@ -125,7 +125,7 @@ func TestServerCmds_AuthRegister_UnreachableServer(t *testing.T) {
 	isolateServerCmdEnv(t)
 
 	errOutput := RunXKeyExpectFailure(t, binary, "",
-		"auth", "register", "--server", "http://127.0.0.1:1", "--username", "tester")
+		"auth", "register", "--server", "https://127.0.0.1:1", "--username", "tester")
 
 	assert.Contains(t, errOutput, "auth: failed to connect to server")
 	assert.NotContains(t, errOutput, "not yet implemented")
@@ -197,14 +197,14 @@ func TestServerCmds_CAInfo_UnreachableServer(t *testing.T) {
 	assert.NotContains(t, errOutput, "ca: client not initialized")
 }
 
-// TestServerCmds_CABundle_ConnectionRefused verifies that an http:// URL
+// TestServerCmds_CABundle_ConnectionRefused verifies that an https:// URL
 // selects the REST transport and reports the refused TCP connection.
 func TestServerCmds_CABundle_ConnectionRefused(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	isolateServerCmdEnv(t)
 
 	errOutput := RunXKeyExpectFailure(t, binary, "", "ca", "bundle",
-		"--xkmsd-url", "http://127.0.0.1:1")
+		"--xkmsd-url", "https://127.0.0.1:1")
 
 	assert.Contains(t, errOutput, "ca: failed to get CA bundle")
 	assert.Contains(t, errOutput, "connection refused")

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,6 +23,10 @@ var errMock = errors.New("mock error")
 // embedded transport delegation pattern. Every method returns a
 // deterministic response or errMock based on the shouldFail field.
 type mockService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	shouldFail bool
 }
 
@@ -114,6 +119,13 @@ func (m *mockService) SignOTAImage(_ context.Context, _ *transport.OTAImageSignR
 		return nil, errMock
 	}
 	return &transport.SignResponse{Signature: []byte("sig"), KeyVersion: 2}, nil
+}
+
+func (m *mockService) ExportOTAImageKey(_ context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.ExportOTAImageKeyResponse{BoardID: req.BoardID, KeyID: "ota-image-" + req.BoardID, KeyVersion: 2, PublicKey: make([]byte, 64)}, nil
 }
 
 func (m *mockService) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
@@ -359,6 +371,41 @@ func (m *mockService) GetCABundle(_ context.Context, _ *transport.GetCABundleReq
 		return nil, errMock
 	}
 	return &transport.GetCABundleResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogHead(_ context.Context, _ *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogHeadResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogEntry(_ context.Context, _ *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogEntryResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogInclusionProof(_ context.Context, _ *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogInclusionProofResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogConsistencyProofResponse{}, nil
+}
+
+func (m *mockService) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.AppendTransparencyLogExternalResponse{}, nil
 }
 
 func (m *mockService) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {

@@ -26,7 +26,7 @@
 package xkms
 
 import (
-	qrdb "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdb "github.com/jeremyhahn/go-qrdb/sdk/go/cluster"
 )
 
 // ==========================================================================

@@ -46,12 +46,14 @@ type XKMSServicer interface {
 	PIVServicer
 	FIDO2Servicer
 	CAServicer
+	TransparencyLogServicer
 	TCGCAServicer
 	PINServicer
 	UserServicer
 	PasswordServicer
 	SealStoreServicer
 	TPMPolicyServicer
+	AttestationAppraisalServicer
 	SigningKeyServicer
 	TrustRootServicer
 	OIDCCredentialServicer
@@ -121,6 +123,7 @@ type KeyServicer interface {
 	CreateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*GenerateKeyResponse, error)
 	RotateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*RotateKeyResponse, error)
 	SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error)
+	ExportOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error)
 	GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error)
 	CopyKey(ctx context.Context, req *CopyKeyRequest) (*CopyKeyResponse, error)
 	ExportKeyMaterial(ctx context.Context, req *ExportKeyMaterialRequest) (*ExportKeyMaterialResponse, error)
@@ -217,6 +220,16 @@ type CAServicer interface {
 	RevokeCertificate(ctx context.Context, req *RevokeCertificateRequest) (*RevokeCertificateResponse, error)
 	GenerateCRL(ctx context.Context, req *GenerateCRLRequest) (*GenerateCRLResponse, error)
 	IsRevoked(ctx context.Context, req *IsRevokedRequest) (*IsRevokedResponse, error)
+}
+
+// TransparencyLogServicer handles the read verbs of the CA's transparency
+// log: its signed tree head, its entries and its RFC 9162 proofs.
+type TransparencyLogServicer interface {
+	GetTransparencyLogHead(ctx context.Context, req *GetTransparencyLogHeadRequest) (*GetTransparencyLogHeadResponse, error)
+	GetTransparencyLogEntry(ctx context.Context, req *GetTransparencyLogEntryRequest) (*GetTransparencyLogEntryResponse, error)
+	GetTransparencyLogInclusionProof(ctx context.Context, req *GetTransparencyLogInclusionProofRequest) (*GetTransparencyLogInclusionProofResponse, error)
+	GetTransparencyLogConsistencyProof(ctx context.Context, req *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error)
+	AppendTransparencyLogExternal(ctx context.Context, req *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error)
 }
 
 // TCGCAServicer handles TCG-specific Certificate Authority operations.

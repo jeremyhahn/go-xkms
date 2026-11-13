@@ -65,6 +65,8 @@ CI: the Security Scan job's timeout is 30 minutes, since gosec takes 9 to 15 min
 
 ### Fixed
 
+- **The Android attestation status list is fetched over HTTPS only (#1958)** — `NewHTTPStatusList` refuses an `http://` URL with `ErrInvalidStatusListURL`, and a redirect from the HTTPS list to a non-https target fails the fetch closed. `phone.AttestationConfig.StatusListClient` (code only, not configuration) sets the HTTP client the list is fetched with.
+
 - **Host and container appraisal keep AK intermediates.** `HostEvidence` and `ContainerEvidence` gain `AKIntermediates`, which `AppraiseHost` forwards after the AK certificate, so an attestation key issued by an intermediate CA now chains to a tenant's root-only `ak-root` endorsement instead of failing as forged. A nil intermediate is refused with `ErrInvalidAKIntermediate` (`sdk/go`: `ErrAttestationInvalidAKIntermediate`). (#1608)
 
 - **Make targets read `GO_BUILD_TAGS`.** `make lint|build|coverage|security|integration-test GO_BUILD_TAGS='a b'`, as ci-template calls them, now adds those tags to every `-tags` / `--build-tags` list the target already uses (comma-joined, duplicates dropped; gosec and govulncheck gain `-tags`), so tag-gated code is compiled, linted and covered in CI. One join, `scripts/go-build-tags.mk`, shared by the root Makefile and `xkey/Makefile`; an empty or unset `GO_BUILD_TAGS` leaves every command line unchanged. `test/scripts/go-build-tags.test.sh` (run by `make test-scripts`) checks it. (#1603)

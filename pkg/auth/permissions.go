@@ -151,7 +151,9 @@ const (
 	// per-repository signing-key bindings (pkg/attestation/appraisal):
 	// naming the key that signs one of the caller's tenant's repositories in
 	// place of the tenant release key, reading, listing and resolving them.
-	// Changing a binding is attestation_signing_keys:bind (ActionBind).
+	// Changing a binding is attestation_signing_keys:bind (ActionBind);
+	// signing a repository's CoRIM reference values with the key it
+	// resolves to is attestation_signing_keys:sign (ActionSign).
 	ResourceAttestationSigningKeys = "attestation_signing_keys"
 
 	// ResourceTrust is the platform trust plane's write verbs that act
@@ -172,6 +174,15 @@ const (
 	// reaches only its own tenant's backups — so this resource carries no
 	// local xkms scoping declaration (pkg/apimodule/module_scopes.go).
 	ResourceBackup = "backup"
+
+	// ResourceVlog is the CA transparency log: its signed tree head
+	// (vlog:head), its entries (vlog:get), its inclusion and consistency
+	// proofs (vlog:proof) and the external append (vlog:append). Mirrors
+	// go-qrdb's verifiable-log permission family verbatim, whose built-in
+	// admin, operator, user and auditor roles hold the three reads and whose
+	// admin, operator and user roles hold vlog:append, so the resource
+	// carries no local xkms scoping declaration.
+	ResourceVlog = "vlog"
 
 	// Key actions.
 	ActionSign    = "sign"
@@ -335,4 +346,13 @@ const (
 	// from backup:create/backup:read. Mirrors go-qrdb permission.BackupRestore
 	// verbatim.
 	ActionRestore = "restore"
+
+	// Transparency log read actions (ResourceVlog). ActionHead reads the
+	// signed tree head; ActionProof reads an inclusion or consistency proof.
+	// Reading an entry is vlog:get (ActionGet). ActionAppend appends an
+	// external entry. Mirrors go-qrdb's permission.VlogHead,
+	// permission.VlogProof and permission.VlogAppend verbatim.
+	ActionHead   = "head"
+	ActionProof  = "proof"
+	ActionAppend = "append"
 )

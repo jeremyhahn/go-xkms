@@ -598,6 +598,7 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.createOTAImageKey":     "keys:create",
 	"xkms.rotateOTAImageKey":     "keys:rotate",
 	"xkms.signOTAImage":          "keys:sign",
+	"xkms.exportOTAImageKey":     "keys:get",
 	"xkms.listKeyVersions":       "keys:list",
 	"xkms.enableKeyVersion":      "keys:rotate",
 	"xkms.disableKeyVersion":     "keys:rotate",
@@ -737,6 +738,12 @@ var goldenMethodPermissions = map[string]string{
 	"trust.root.quarantine": "trust_roots:update",
 	"trust.root.remove":     "trust_roots:delete",
 
+	"xkms.ca.transparency-log.head":              "vlog:head",
+	"xkms.ca.transparency-log.entry":             "vlog:get",
+	"xkms.ca.transparency-log.inclusion-proof":   "vlog:proof",
+	"xkms.ca.transparency-log.consistency-proof": "vlog:proof",
+	"xkms.ca.transparency-log.append":            "vlog:append",
+
 	// Server-side OIDC credentials — pkg/api/grpc's OIDCCredential* RPCs.
 	"oidc.credential.create":       "oidc_credentials:create",
 	"oidc.credential.import":       "oidc_credentials:update",
@@ -749,11 +756,22 @@ var goldenMethodPermissions = map[string]string{
 	"oidc.credential.device.poll":  "oidc_credentials:update",
 
 	// Repository signing keys (go-xkms#1697).
-	"attestation.signing_key.set":     "attestation_signing_keys:bind",
-	"attestation.signing_key.get":     "attestation_signing_keys:get",
-	"attestation.signing_key.list":    "attestation_signing_keys:list",
-	"attestation.signing_key.delete":  "attestation_signing_keys:bind",
-	"attestation.signing_key.resolve": "attestation_signing_keys:get",
+	"attestation.signing_key.set":        "attestation_signing_keys:bind",
+	"attestation.signing_key.get":        "attestation_signing_keys:get",
+	"attestation.signing_key.list":       "attestation_signing_keys:list",
+	"attestation.signing_key.delete":     "attestation_signing_keys:bind",
+	"attestation.signing_key.resolve":    "attestation_signing_keys:get",
+	"attestation.signing_key.sign_corim": "attestation_signing_keys:sign",
+	"attestation.signing_key.sign_image": "attestation_signing_keys:sign",
+
+	"attestation.endorsement.put":         "attestation_endorsements:create",
+	"attestation.endorsement.list":        "attestation_endorsements:list",
+	"attestation.endorsement.delete":      "attestation_endorsements:delete",
+	"attestation.reference_values.put":    "attestation_reference_values:create",
+	"attestation.reference_values.get":    "attestation_reference_values:get",
+	"attestation.reference_values.list":   "attestation_reference_values:list",
+	"attestation.reference_values.delete": "attestation_reference_values:delete",
+	"attestation.quote.appraise":          "attestation_verifier:verify",
 
 	// Attested-caller evidence.
 	"peer.attestation.challenge": "peer_attestation:challenge",
@@ -858,13 +876,17 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceBarrier: {}, auth.ResourceCeremony: {},
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
-		auth.ResourceTPMPolicy:              {},
-		auth.ResourceOIDCCredentials:        {},
-		auth.ResourceAttestationSigningKeys: {},
-		auth.ResourceTrustRoots:             {},
-		auth.ResourcePeerAttestation:        {},
-		auth.ResourcePIN:                    {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
+		auth.ResourceTPMPolicy:                  {},
+		auth.ResourceOIDCCredentials:            {},
+		auth.ResourceAttestationSigningKeys:     {},
+		auth.ResourceAttestationEndorsements:    {},
+		auth.ResourceAttestationReferenceValues: {},
+		auth.ResourceAttestationVerifier:        {},
+		auth.ResourceTrustRoots:                 {},
+		auth.ResourcePeerAttestation:            {},
+		auth.ResourcePIN:                        {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
 		auth.ResourceUsers: {}, auth.ResourceBackup: {},
+		auth.ResourceVlog: {},
 	}
 
 	for method, perm := range registeredPermissions() {
