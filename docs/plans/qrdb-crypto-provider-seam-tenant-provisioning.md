@@ -58,6 +58,35 @@ Slice 1 and this slice must land together, in one PR: slice 1 alone breaks
 tenant logins and races at startup. The head signer slice comes after
 the go-qrdb pin moves past v0.51.
 
+## SPEC row update (pending)
+
+docs/SPEC.md:117 still says go-xkms does not pass `WithCertKeyProviderFactory`.
+The lane policy guard refuses docs/SPEC.md without LANE_POLICY_ALLOW, so the
+row text was not changed. Replace, in the row's acceptance, the clause from
+"`node.WithSealStrategy` (`pkg/embeddednode/embedded_node.go:219`, through
+`qrdb_node.go:248`); the pinned ..." through "which go-xkms does not pass." with:
+
+> `node.WithSealStrategy` (`pkg/embeddednode/embedded_node.go:219`, through `qrdb_node.go:248`), and `node.WithCertKeyProviderFactory` (`tenantCAKeyProviderOptions`, `pkg/server/tenant_ca_keyprovider.go:222`, appended at `qrdb_node.go:267` under the same cluster-CA condition). Through it each tenant's login CA key (Key B) is a P-256 key in the tenant-scoped default backend (`tenantCAKeyFactory.ProviderForTenant` `:87`, `EnsureTenant` `:140`), not a key go-qrdb mints in software. Every tenant has that key: the tenant service the node hands out is wrapped at `qrdb_node.go:309` so `CreateTenant` provisions it and deletes the tenant again on failure (`pkg/server/tenant_ca_provisioning.go:49`, `TenantProvisionError`), and a boot pass (`provisionTenantCAKeys` `:77`, run from `New` at `pkg/server/server.go:897`, after the key backends exist) provisions every tenant, the system tenant included, or stops startup. The pinned `sdk/go/node` also offers `WithDEKProvider`, `WithKeyDeliveryDecrypter`, `WithVolumeKeyProvider` and `WithVolumeProvider`, which go-xkms does not pass yet.
+
+The row stays in progress: go-qrdb still owes the head-signer seam (item 144).
+
+## Remaining seams (each needs a design decision)
+
+The pinned go-qrdb v0.51.0-alpha `sdk/go/node` seams that go-xkms does not fill:
+
+- `WithDEKProvider(dek.Provider)` replaces the software tenant DEK keyring.
+  On a node that already has software DEKs, the swap needs a migration path,
+  or the tenant data keys already there become unreadable. Needs a custody
+  and migration ruling first.
+- `WithKeyDeliveryDecrypter(keydelivery.Decrypter)`: clustered nodes only;
+  dec must be the Raft certificate's key, held on a device through an
+  `ecdh.KeyExchanger`. It depends on the Raft mTLS key moving to a backend.
+- `WithVolumeKeyProvider(volume.KeyProvider)` replaces the HKDF-from-barrier-root
+  derivation of Lockable volume Unlock keys. Swapping it on existing volumes
+  makes them unopenable without a re-key.
+- `WithVolumeProvider(volume.Provider)` is storage (luks2 pools), not crypto.
+  It belongs to the volume row, not this one.
+
 ## Results
 
 - `go test -count=1 -race -timeout 75m -tags "codec_cbor codec_json codec_msgpack" ./pkg/server/...`: pass (pkg/server 528 s; credentials, loopback pass). The run hits go test's default 10m bound under -race, so it needs the Makefile's UNIT_TEST_TIMEOUT.
