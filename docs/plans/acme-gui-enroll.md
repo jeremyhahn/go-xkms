@@ -37,7 +37,7 @@ CLI changes, xkey/frontend/dist rebuild, pkg/acme/client, sdk/go.
 
 - npm ci, npm run check --fail-on-warnings, vitest ACME.test.ts (14), npm test (102), vite build to /tmp: pass.
 - go build ./... and go test -tags "production codec_json" -run ACME ./pkg/gui/services/: pass.
-- go test ./cmd/xkey/cmd/... (codec_cbor codec_json codec_msgpack): timed out at 10 min in the unrelated TestPINCommands_AddressTheWizardDataDirectory (blocked in fsync on the loaded lane disk); -run ACME on the same package: pass.
+- cd xkey && TMPDIR=/tmp go test -count=1 -timeout 9m30s -tags 'codec_cbor codec_json codec_msgpack' ./cmd/xkey/cmd/...: pass (ok in 86.9s, 2026-11-14). An earlier run had timed out at 10 min in the unrelated TestPINCommands_AddressTheWizardDataDirectory, blocked in fsync while the lane disk was loaded; it does not reproduce.
 - make check-wailsjs: pass (bindings match the Go services).
 - make lint: pass (0 issues).
 - Port: sdkacme.ACMEEnrollmentConfig.Port is a string, so the service formats a positive port and leaves zero to the client default.
