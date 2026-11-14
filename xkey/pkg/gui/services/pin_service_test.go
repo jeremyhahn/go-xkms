@@ -708,6 +708,7 @@ func TestPINService_ChangeUserPIN_IndependentBarrierPasswordLeftAlone(t *testing
 	svc := newTestPINService(backend)
 	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
 	require.NoError(t, barrierSvc.Initialize("independent-master-password", "passphrase"))
+	barrierSvc.SetIndependentPassword(true)
 	svc.SetBarrierService(barrierSvc)
 
 	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
@@ -768,11 +769,10 @@ func (f *faultyBarrierStore) CompareAndSwap(ctx context.Context, key string, exp
 
 func (f *faultyBarrierStore) Close() error { return nil }
 
-// A barrier rewrap that fails for any reason other than a definitive
-// credential mismatch is not an independent barrier password: the error is
-// returned and the PIN backend is never asked to change the PIN, so a
-// PIN-bound barrier and the PIN cannot diverge.
-func TestPINService_ChangeUserPIN_BarrierStoreFailureLeavesPINUnchanged(t *testing.T) {
+// A storage failure while the PIN-bound barrier is rewrapped is reported as
+// ErrBarrierResealFailed after the PIN backend has changed the PIN, the order
+// main uses.
+func TestPINService_ChangeUserPIN_BarrierStoreFailureReturnsResealFailed(t *testing.T) {
 	backend := &mockPINBackend{
 		strategy:   qrdbsdk.PINStrategySoftware,
 		userPINSet: true,
@@ -792,14 +792,35 @@ func TestPINService_ChangeUserPIN_BarrierStoreFailureLeavesPINUnchanged(t *testi
 	err := svc.ChangeUserPIN("old-pin", "new-pin")
 	require.Error(t, err, "a failed barrier rewrap must not report success")
 	assert.ErrorIs(t, err, ErrBarrierResealFailed)
-	assert.ErrorIs(t, err, store.err, "the barrier's own failure is returned")
-	assert.Zero(t, backend.changeUserCalls.Load(), "the PIN backend must not change the PIN when the barrier rewrap failed")
+	assert.Equal(t, int32(1), backend.changeUserCalls.Load(), "the PIN backend changes the PIN before the barrier is rewrapped")
+}
 
-	// The barrier is still bound to the current PIN: once the store recovers
-	// the same change goes through, rewrapping it and changing the PIN.
-	store.failSwaps.Store(false)
+// A hardware-sealed barrier (TPM2) does not hold the PIN as a passphrase: a
+// PIN change succeeds and no barrier password change is attempted. Every
+// guarded write to the barrier store fails, so any rewrap attempt would
+// surface as ErrBarrierResealFailed.
+func TestPINService_ChangeUserPIN_HardwareBarrierNotRewrapped(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+	store := &faultyBarrierStore{
+		StorageBackend: xkms.NewStorageMemory(),
+		err:            errors.New("barrier store guarded write attempted"),
+	}
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	barrierSvc.SetContext(context.Background())
+	barrierSvc.SetBaseBackendFactory(func(string) (xkms.StorageBackend, error) { return store, nil })
+	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return &mockSealer{canSeal: true} })
+	require.NoError(t, barrierSvc.Initialize("old-pin", string(xkms.StrategyTPM2)))
+	require.True(t, barrierSvc.IsUnsealed())
+	svc.SetBarrierService(barrierSvc)
+
+	store.failSwaps.Store(true)
 	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
 	assert.Equal(t, int32(1), backend.changeUserCalls.Load())
+	assert.True(t, barrierSvc.IsUnsealed())
 }
 
 func TestPINService_SetBarrierService_NilSafe(t *testing.T) {

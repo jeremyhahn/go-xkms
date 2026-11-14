@@ -606,6 +606,17 @@ func TestBarrierService_Unseal_EmptyPassword_RejectedNotWrongPassword(t *testing
 	assert.False(t, svc2.IsUnsealed())
 }
 
+// A TPM2-sealed barrier has no passphrase to rewrap: ChangePassword is a
+// no-op and the barrier stays unsealed.
+func TestBarrierService_ChangePassword_HardwareStrategyNoOp(t *testing.T) {
+	svc := newTestBarrierService(t)
+	svc.SetContext(context.Background())
+	svc.SetTPMSealerFunc(func() xkms.Sealer { return &mockSealer{canSeal: true} })
+	require.NoError(t, svc.Initialize("", string(xkms.StrategyTPM2)))
+	require.NoError(t, svc.ChangePassword("oldpass", "newpass"))
+	assert.True(t, svc.IsUnsealed())
+}
+
 func TestBarrierService_ChangePassword_NotInitialized(t *testing.T) {
 	svc := newTestBarrierService(t)
 	err := svc.ChangePassword("oldpass", "newpass")
