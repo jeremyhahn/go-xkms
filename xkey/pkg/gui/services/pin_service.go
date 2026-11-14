@@ -375,7 +375,41 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 
 	s.log.Debug("ChangeUserPIN: attempting PIN change", "strategy", svc.Strategy())
 
+	// The barrier follows the PIN only when the PIN is its credential: the
+	// wizard may have sealed it under an independent master password
+	// (UseUserPinAsMaster=false), which a PIN change leaves alone. The
+	// rewrap runs before the PIN backend commits, so the barrier itself
+	// proves whether it is PIN-bound: an initialized, unsealed barrier
+	// refuses a rewrap only when the current PIN is not its credential. A
+	// PIN change that then fails restores it: both credentials change, or
+	// neither does.
+	bsvc := s.barrierSvc.Load()
+	pinBound := false
+	if bsvc != nil {
+		switch err := bsvc.ChangePassword(currentUserPIN, newUserPIN); {
+		case err == nil:
+			pinBound = true
+		case bsvc.IsInitialized() && bsvc.IsUnsealed():
+			s.log.Debug("ChangeUserPIN: barrier sealed under an independent password; left unchanged")
+		default:
+			s.log.Error("ChangeUserPIN: barrier re-seal failed; PIN left unchanged", "error", err)
+			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+				"operation": "barrier_reseal",
+				"type":      "user_pin",
+			}); auditErr != nil {
+				return auditErr
+			}
+			return ErrBarrierResealFailed
+		}
+	}
+
 	if err := svc.ChangeUserPIN(currentUserPIN, newUserPIN); err != nil {
+		if pinBound {
+			if rbErr := bsvc.ChangePassword(newUserPIN, currentUserPIN); rbErr != nil {
+				s.log.Error("ChangeUserPIN: barrier rollback failed", "error", rbErr)
+				err = errors.Join(err, ErrBarrierResealFailed, rbErr)
+			}
+		}
 		s.log.Warn("ChangeUserPIN: failed", "strategy", svc.Strategy(), "error", err)
 		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 			"operation": "change",
@@ -394,19 +428,7 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 		return auditErr
 	}
 
-	// Re-seal the barrier root key with the new password so that
-	// the next unseal after restart uses the updated credential.
-	if bsvc := s.barrierSvc.Load(); bsvc != nil {
-		if err := bsvc.ChangePassword(currentUserPIN, newUserPIN); err != nil {
-			s.log.Error("ChangeUserPIN: barrier re-seal failed", "error", err)
-			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
-				"operation": "barrier_reseal",
-				"type":      "user_pin",
-			}); auditErr != nil {
-				return auditErr
-			}
-			return ErrBarrierResealFailed
-		}
+	if pinBound {
 		s.log.Info("ChangeUserPIN: barrier re-sealed with new PIN")
 	}
 	return nil
