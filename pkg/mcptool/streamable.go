@@ -41,6 +41,9 @@ const (
 	maxResponseBytes = 32 << 20
 	// closeTimeout bounds the DELETE that ends the session on Close.
 	closeTimeout = 5 * time.Second
+	// discoverProbeTimeout bounds the server/discover probe on its own,
+	// separate from the caller's context, as the pinned mcp-go does.
+	discoverProbeTimeout = 5 * time.Second
 )
 
 // ErrRedirectRefused is returned when the MCP server answers with a redirect.
@@ -519,6 +522,8 @@ func (s *streamSession) initialize(ctx context.Context, info mcp.Implementation)
 		s.transport.SetProtocolVersion(version)
 		return nil
 	case ctx.Err() != nil:
+		// Only the caller's own context ends the open here; the probe's
+		// bound expiring is a legacy server's silence and falls through.
 		return ctx.Err()
 	case errors.Is(discoverErr, ErrRedirectRefused):
 		return discoverErr
@@ -529,7 +534,14 @@ func (s *streamSession) initialize(ctx context.Context, info mcp.Implementation)
 // discover sends server/discover as a stateless request at this client's
 // latest protocol version and returns the newest version both sides support,
 // or "" when they share none.
+//
+// The probe runs under its own child context bounded by discoverProbeTimeout,
+// as the pinned mcp-go negotiation bounds it: a legacy server that ignores
+// server/discover, or holds its stream open, must not hang a caller with no
+// deadline or spend a caller's deadline before the legacy initialize runs.
 func (s *streamSession) discover(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, discoverProbeTimeout)
+	defer cancel()
 	raw, err := s.send(ctx, string(mcp.MethodServerDiscover), mcp.DiscoverParams{}, mcp.LATEST_PROTOCOL_VERSION)
 	if err != nil {
 		return "", err
