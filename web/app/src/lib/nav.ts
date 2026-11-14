@@ -43,6 +43,7 @@ export const navSections: NavSection[] = [
       { route: "trustBundle", path: "/trust/bundle", label: "Trust Bundle", icon: "ShieldCheck" },
       { route: "backends", path: "/backends", label: "Backends", icon: "Server", requires: { resource: "backends", action: "list" } },
       { route: "systemHealth", path: "/system/health", label: "System Health", icon: "Network" },
+      { route: "backendDiagnostics", path: "/backends/diagnostics", label: "Backend Diagnostics", icon: "Server", requires: { resource: "backends", action: "read" } },
     ],
   },
   {

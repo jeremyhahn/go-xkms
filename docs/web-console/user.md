@@ -137,6 +137,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Overview | Dashboard, Backends, System Health | `#/dashboard`, `#/backends`, `#/system/health` |
 | Overview | Dashboard, Trust Bundle, Backends | `#/dashboard`, `#/trust/bundle`, `#/backends` |
 | Overview | FROST Signing, Dashboard, Backends | `#/frost/sign`, `#/dashboard`, `#/backends` |
+| Overview | Dashboard, Backends, Backend Diagnostics | `#/dashboard`, `#/backends`, `#/backends/diagnostics` |
 | Keys & Crypto | Keys, FROST, TPM Policies | `#/keys`, `#/frost`, `#/tpm/policies` |
 | Keys & Crypto | Keys, FROST, TPM Key Policy, TPM Policies | `#/keys`, `#/frost`, `#/tpm/key-policy`, `#/tpm/policies` |
 | Keys & Crypto | FROST Key Import, Keys, FROST, TPM Policies | `#/frost/import`, `#/keys`, `#/frost`, `#/tpm/policies` |
