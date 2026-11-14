@@ -64,6 +64,7 @@ export const navSections: NavSection[] = [
     items: [
       { route: "pin", path: "/pin", label: "PIN", icon: "KeyRound", requires: { resource: "pin", action: "read" } },
       { route: "piv", path: "/piv", label: "PIV", icon: "CreditCard", requires: { resource: "piv", action: "read" } },
+      { route: "pivSlots", path: "/piv/slots", label: "PIV Slots", icon: "FileBadge", requires: { resource: "piv", action: "read" } },
       { route: "ssh", path: "/ssh", label: "SSH", icon: "TerminalSquare", capability: "ssh", requires: { resource: "ssh", action: "read" } },
       { route: "sshTrust", path: "/ssh/trust", label: "SSH Trust", icon: "Fingerprint", capability: "ssh", requires: { resource: "ssh", action: "read" } },
       { route: "passwords", path: "/passwords", label: "Passwords", icon: "Vault", capability: "passwords", requires: { resource: "passwords", action: "read" } },
