@@ -105,7 +105,7 @@ events, 16 algorithms.
 
 ## Device security-event record
 
-SPEC row `device-security-event-evidence` (planned, #1765). An HSM device's
+SPEC row `device-security-event-evidence` (#1817, from #1765). An HSM device's
 tamper-response record (trusted-firmware#50, A6) is RFC 9334 Evidence about
 its Attesting Environment (§8.1). go-xkms owns the format and its check.
 
@@ -147,25 +147,41 @@ answer the binding question.
 - **(c) Inline submodule in signed evidence.** The same, with the record
   inside the signed token as a Claims-Set submodule (RFC 9711 §4.2.18.1).
 
-Which of these is required is open for the owner to rule on.
+**Ruled: (b)** (owner ruling 7dbbb72, item 181). The record is bound as a
+Detached Submodule Digest inside the device-signed EAT evidence over the
+Verifier's nonce, and the record travels beside the envelope. Putting the
+digest in the signed evidence is trusted-firmware's change (trusted-firmware#335).
+go-xkms's side is `pkg/attestation/securityevent/digest.go`: `DetachedDigest`
+(`:89`) builds the `[alg, digest]` array over the Claims-Set bytes as they are
+(SHA-256, SHA-384 or SHA-512, by COSE Algorithms integer or name), and
+`VerifyDetached` (`:102`) checks a record against the digest taken from
+evidence whose signature and `eat_nonce` the caller has already verified. It
+compares in constant time and only then decodes the record. A record whose
+digest does not match is refused with `ErrDigestMismatch`. A malformed array
+is refused with `ErrMalformedDigest`, and any other algorithm with
+`ErrUnsupportedAlgorithm`.
 
-**Hook: none yet.** A backend registered with `RegisterExternalBackend`
-(`pkg/xkms/registry_external.go:54`, SPEC backend-registry) has no call that
-hands go-xkms device evidence. The backend contract's only attestation
-capability, `types.AttestingKeyProvider.AttestKey`
-(`pkg/types/types.go:1936`), attests one key. The device's DICE claims
-arrive in `dice.Evidence` (`pkg/attestation/dice/verify.go:114`), which has no
-submodule field: its `Claims.Other` (`:125`) only holds the claims go-xkms
-does not model.
+**Hook.** A backend registered with `RegisterExternalBackend`
+(`pkg/xkms/registry_external.go:54`, SPEC backend-registry) hands go-xkms the
+record through one optional capability on the backend contract,
+`types.SecurityEventProvider` (`pkg/types/types.go:1960`), in the
+`types.AttestingKeyProvider` pattern (`pkg/types/types.go:1936`). It embeds
+`KeyProvider` and adds one method, `AttestSecurityEvents(ctx, nonce)`, which
+returns the record's encoded Claims-Set, or `ErrNotSupported` when the backend
+keeps no record. No backend implements it yet. The format is
+`pkg/attestation/securityevent`: the claim key `ClaimKey`
+(`pkg/attestation/securityevent/claims.go:28`, -71765, CWT private use, go-xkms's
+own until EAT registers one), `Encode` (`:97`) and `Decode` (`:115`), which
+accepts only the core deterministic encoding `{ClaimKey: {1: count, 2:
+dropped, 3: [{1: at, 2: kind, 3: what, 4: result}, ...]}}` and refuses every
+other input with a typed error. The device's DICE claims still arrive in
+`dice.Evidence` (`pkg/attestation/dice/verify.go:114`), which has no submodule
+field: its `Claims.Other` (`:125`) only holds the claims go-xkms does not
+model.
+The nonce is the Verifier's `eat_nonce`, which the device's signed evidence
+carries next to the record's digest.
 
-The planned row adds one optional capability interface to the backend
-contract, in the `AttestingKeyProvider` pattern. It embeds `KeyProvider` and
-adds one method, `AttestSecurityEvents(ctx, nonce)`, which returns the
-record's Claims-Set, or `ErrNotSupported` when the backend keeps no record.
-The nonce is the Verifier's `eat_nonce` under (b) and (c), and is unused
-under (a). Which of these applies is still the owner's ruling.
-
-**Recommendation (not a decision): (b).** A tamper record is worth having
+**Why (b).** A tamper record is worth having
 only if a compromised host cannot hide or rewrite it. Under (a) the record
 is the adapter's word (RFC 9781 §4). (b) binds it to the device's key and
 the Verifier's nonce, and adds only a digest to the signed evidence. (c)
