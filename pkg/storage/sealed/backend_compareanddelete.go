@@ -117,11 +117,15 @@ func unsealAndCompare(
 // claim it still holds.
 func compareInEnclave(
 	ctx context.Context,
-	enc *enclave.MemoryEnclave,
+	enc enclave.ByteAccess,
 	u types.UnsealerInto,
 	sealed *types.SealedData,
 	expected []byte,
 ) (bool, error) {
+	if enc == nil {
+		// No enclave is an unreadable one: fail closed, as a destroyed one does.
+		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: enclave.ErrEnclaveDestroyed}
+	}
 	matched := false
 
 	// Captured separately so the two failure classes stay distinguishable after

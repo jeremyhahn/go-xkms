@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 )
 
@@ -52,6 +53,21 @@ func (s *Server) initializeTokenIssuer() error {
 
 	accessTTL, refreshTTL := s.sessionTTLs()
 
+	// Over the embedded node the refresh store runs as the node's service
+	// principal (its base grant holds the kv permissions it uses): a login
+	// that mints a pair may be anonymous, as a WebAuthn sign-up is (#2541).
+	// The refresh recheck reads the account through the node's user service
+	// in the refresh token's own tenant: the service principal belongs to
+	// the system tenant, and qrdb refuses it any other tenant's account.
+	var (
+		callContext token.CallContext
+		userLookup  auth.ServiceUserLookup
+	)
+	if s.qrdbNode != nil {
+		callContext = s.qrdbNode.ServiceContext
+		userLookup = nodeRefreshUsers{node: s.qrdbNode}
+	}
+
 	issuer, err := rest.BuildTokenIssuer(s.ctx, rest.TokenIssuerParams{
 		Backend:      backend,
 		BackendName:  s.defaultBackendName,
@@ -61,6 +77,8 @@ func (s *Server) initializeTokenIssuer() error {
 		AccessTTL:    accessTTL,
 		RefreshTTL:   refreshTTL,
 		QRDBClient:   s.qrdbClient,
+		CallContext:  callContext,
+		UserLookup:   userLookup,
 		Logger:       s.logger,
 		Retry:        retryNotLeader,
 	})

@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -55,6 +56,12 @@ type Record struct {
 
 	// Subject is the identity the token refreshes.
 	Subject string `json:"subject"`
+
+	// TenantID is the tenant of the account the token refreshes, normalized
+	// (the system tenant for an unbound identity). Subjects are unique only
+	// within a tenant, and every tenant's records share one namespace, so a
+	// subject-wide revocation matches on (TenantID, Subject).
+	TenantID string `json:"tenant_id"`
 
 	// ExpiresAt is the refresh token's absolute expiry (Unix seconds).
 	ExpiresAt int64 `json:"expires_at"`
@@ -104,12 +111,18 @@ type RefreshStore interface {
 	RevokeFamily(ctx context.Context, family string) error
 
 	// RevokeBySubject revokes every family whose Record.Subject equals
-	// subject, exactly as RevokeFamily revokes one -- so a user-lifecycle
+	// subject in tenant tenantID (normalized, as Record.TenantID is), exactly
+	// as RevokeFamily revokes one -- so a user-lifecycle
 	// change (disable, delete) ends every session the account holds, no
 	// matter which login flow minted it. It is idempotent: a subject with no
 	// live family is a no-op success, matching RevokeFamily's own logout
 	// semantics.
-	RevokeBySubject(ctx context.Context, subject string) error
+	RevokeBySubject(ctx context.Context, tenantID, subject string) error
+}
+
+// subjectMatches reports whether rec belongs to subject in tenantID.
+func (rec *Record) subjectMatches(tenantID, subject string) bool {
+	return rec.Subject == subject && qrdbsdk.NormalizeTenantID(rec.TenantID) == qrdbsdk.NormalizeTenantID(tenantID)
 }
 
 // refreshKey builds the KV key for a record.
@@ -206,13 +219,13 @@ func (s *MemoryRefreshStore) RevokeFamily(_ context.Context, family string) erro
 }
 
 // RevokeBySubject implements RefreshStore.
-func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, tenantID, subject string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	families := make(map[string]struct{})
 	for _, rec := range s.records {
-		if rec.Subject == subject {
+		if rec.subjectMatches(tenantID, subject) {
 			families[rec.Family] = struct{}{}
 		}
 	}
@@ -436,7 +449,7 @@ func (s *QRDBRefreshStore) RevokeFamily(ctx context.Context, family string) erro
 // have to stay consistent with RevokeFamily's own delete-by-prefix sweep,
 // and a lifecycle change is rare enough next to a refresh that the scan's
 // cost is the right place to pay it.
-func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, tenantID, subject string) error {
 	entries, err := s.kv.Scan(ctx, refreshPrefix)
 	if err != nil {
 		return &StoreError{Op: "scan", Err: err}
@@ -448,7 +461,7 @@ func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) 
 		if err := json.Unmarshal(data, &rec); err != nil {
 			return &StoreError{Op: "decode", Err: err}
 		}
-		if rec.Subject == subject {
+		if rec.subjectMatches(tenantID, subject) {
 			families[rec.Family] = struct{}{}
 		}
 	}

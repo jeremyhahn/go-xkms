@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -355,6 +356,12 @@ type TPM2 struct {
 	ssrkAttrs      *types.KeyAttributes
 	tracker        types.AEADSafetyTracker
 	transport      transport.TPM
+	// sealMu serializes the seal and unseal operations. Each one is a
+	// sequence of TPM commands (salted sessions, Create/Load, Unseal, Flush)
+	// that must not interleave with another's: a concurrent caller could
+	// flush a handle or session the first is still using, and the TPM then
+	// refuses the salted session start (TPM_RC_VALUE).
+	sealMu sync.Mutex
 	TrustedPlatformModule
 }
 

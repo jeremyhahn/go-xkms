@@ -56,8 +56,6 @@ import (
 	"os"
 	"strings"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -211,12 +209,21 @@ func WithErrorClassifier(classify ErrorClassifier) ClientOption {
 	return func(c *Client) { c.classify = classify }
 }
 
+// Session is the tool-call surface of an established MCP session: what Call
+// and Close need from it. Connect builds this package's own session over its
+// streamable HTTP transport; an mcp-go *client.Client (for example an
+// in-process test client) satisfies it too, for NewClientWithSession.
+type Session interface {
+	CallTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	Close() error
+}
+
 // Client is a session against the unified qrdb MCP server's Streamable HTTP
-// tool-call surface. It owns the underlying mcp-go client and connection
-// state; Call is the sole request path once Connect succeeds.
+// tool-call surface. It owns the underlying session and connection state;
+// Call is the sole request path once Connect succeeds.
 type Client struct {
 	config    *transport.Config
-	client    *mcpclient.Client
+	client    Session
 	connected bool
 	classify  ErrorClassifier
 }
@@ -233,13 +240,13 @@ func NewClient(cfg *transport.Config, opts ...ClientOption) *Client {
 	return c
 }
 
-// NewClientWithSession wraps an already-started mcp-go client (one whose
-// Start/Initialize the caller has already run, e.g.
-// mcpclient.NewInProcessClient for an in-process test) as a Client in the
+// NewClientWithSession wraps an already-initialized session (for example an
+// mcp-go client.NewInProcessClient whose Start/Initialize an in-process test
+// has already run) as a Client in the
 // connected state, skipping Connect's HTTP dial and MCP handshake. This is a
 // deliberate escape hatch for exactly that scenario, not a general
 // constructor: production callers use NewClient and Connect.
-func NewClientWithSession(cfg *transport.Config, session *mcpclient.Client, opts ...ClientOption) *Client {
+func NewClientWithSession(cfg *transport.Config, session Session, opts ...ClientOption) *Client {
 	c := NewClient(cfg, opts...)
 	c.client = session
 	c.connected = true
@@ -269,38 +276,21 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	baseURL := scheme + addr + endpointPath
 
-	httpClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+	// Our own streamable HTTP transport and session, not mcp-go's client: the
+	// transport never follows a redirect, so a Location header cannot send
+	// the request or the bearer token to another origin, and no call reaches
+	// mcp-go's client.Client or transport.StreamableHTTP (GO-2026-6911).
+	session := &streamSession{
+		transport: newStreamableHTTP(baseURL, &http.Transport{TLSClientConfig: tlsConfig}, c.requestHeaders()),
 	}
-
-	httpOpts := []mcptransport.StreamableHTTPCOption{mcptransport.WithHTTPBasicClient(httpClient)}
-	if headers := c.requestHeaders(); len(headers) > 0 {
-		httpOpts = append(httpOpts, mcptransport.WithHTTPHeaders(headers))
-	}
-	mcpClient, err := mcpclient.NewStreamableHttpClient(baseURL, httpOpts...)
-	if err != nil {
-		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	if startErr := mcpClient.Start(ctx); startErr != nil {
-		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", startErr)}
-	}
-
-	initReq := mcp.InitializeRequest{
-		Params: mcp.InitializeParams{
-			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			ClientInfo:      mcp.Implementation{Name: clientName, Version: clientVersion},
-			Capabilities:    mcp.ClientCapabilities{},
-		},
-	}
-	if _, initErr := mcpClient.Initialize(ctx, initReq); initErr != nil {
-		if closeErr := mcpClient.Close(); closeErr != nil {
+	if initErr := session.initialize(ctx, mcp.Implementation{Name: clientName, Version: clientVersion}); initErr != nil {
+		if closeErr := session.Close(); closeErr != nil {
 			return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("initialize failed: %v (close error: %v)", initErr, closeErr)}
 		}
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("initialize failed: %v", initErr)}
 	}
 
-	c.client = mcpClient
+	c.client = session
 	c.connected = true
 	return nil
 }
@@ -371,7 +361,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Conn returns the underlying mcp-go client, or nil for a nil *Client.
+// Conn returns the underlying Session, or nil for a nil *Client.
 func (c *Client) Conn() interface{} {
 	if c == nil {
 		return nil

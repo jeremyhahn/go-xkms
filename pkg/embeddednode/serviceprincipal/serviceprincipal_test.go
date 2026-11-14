@@ -177,3 +177,71 @@ func TestCeremonyGrant_IsLeastPrivilegeCopy(t *testing.T) {
 	got[0] = "admin:*"
 	assert.NotEqual(t, got[0], CeremonyGrant()[0], "CeremonyGrant returns a copy")
 }
+
+// TestRegisterWebAuthnGrant_AuthorizesUserLookup is #2541's second layer: a
+// running xkmsd's WebAuthn user store looks a sign-up's user up as the
+// service principal, which go-qrdb refused with "cannot read on users".
+func TestRegisterWebAuthnGrant_AuthorizesUserLookup(t *testing.T) {
+	node := newNode(t, Option())
+	RegisterWebAuthnGrant()
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+
+	_, err = node.Client().Users().GetUserByEmail(ctx, "system", "nobody@example.com")
+	require.Error(t, err)
+	var denied *qrdbsdk.PermissionDeniedError
+	assert.NotErrorAs(t, err, &denied)
+}
+
+// TestRefreshGrant_IsUsersReadOnly pins the refresh grant to the one
+// permission a session refresh's user recheck exercises.
+func TestRefreshGrant_IsUsersReadOnly(t *testing.T) {
+	assert.Equal(t, []qrdbsdk.Permission{"users:read"}, RefreshGrant())
+	g := RefreshGrant()
+	g[0] = "users:delete"
+	assert.Equal(t, []qrdbsdk.Permission{"users:read"}, RefreshGrant(), "RefreshGrant returns a copy")
+}
+
+// TestRegisterRefreshGrant_AuthorizesUserLookup: once the refresh grant is
+// registered, the principal's user lookup by username (the refresh recheck,
+// auth.QRDBUserResolver) is authorized.
+func TestRegisterRefreshGrant_AuthorizesUserLookup(t *testing.T) {
+	node := newNode(t, Option())
+	RegisterRefreshGrant()
+	RegisterRefreshGrant()
+	assert.True(t, qrdbsdk.HasPermissionRoleGrant(Name, "users:read"))
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+
+	_, err = node.Client().Users().GetUserByUsername(ctx, "system", "nobody")
+	require.Error(t, err)
+	var denied *qrdbsdk.PermissionDeniedError
+	assert.NotErrorAs(t, err, &denied)
+}
+
+// TestWebAuthnGrant_HoldsNoUsersCreate is CA ruling 602: the principal never
+// creates a user for the WebAuthn store, so an anonymous registration/begin
+// over an enforcing node cannot persist an account (go-xkms #2202).
+func TestWebAuthnGrant_HoldsNoUsersCreate(t *testing.T) {
+	RegisterWebAuthnGrant()
+	assert.NotContains(t, WebAuthnGrant(), qrdbsdk.Permission("users:create"))
+	assert.False(t, qrdbsdk.HasPermissionRoleGrant(Name, "users:create"),
+		"no grant this package registers holds users:create")
+}
+
+func TestWebAuthnGrant_IsUsersCopy(t *testing.T) {
+	base := Grant()
+	RegisterWebAuthnGrant()
+
+	got := WebAuthnGrant()
+	assert.ElementsMatch(t, []qrdbsdk.Permission{
+		"users:read", "users:update", "users:delete",
+	}, got)
+	assert.Equal(t, base, Grant(), "registering the WebAuthn grant leaves the base grant unchanged")
+	for _, p := range got {
+		assert.NotContains(t, Grant(), p, "the base grant never holds a WebAuthn permission")
+	}
+
+	got[0] = "users:*"
+	assert.NotEqual(t, got[0], WebAuthnGrant()[0], "WebAuthnGrant returns a copy")
+}

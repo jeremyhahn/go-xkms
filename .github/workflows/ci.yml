@@ -575,7 +575,7 @@ on:
     # >>> CUSTOMIZE (go-xkms)
     # Gitea fires label_updated, not labeled; synchronize re-runs on a push.
     # Adding ci:full takes effect on the next push or a workflow_dispatch.
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
     # <<< CUSTOMIZE
   workflow_dispatch:                    # re-fire a whole workflow; also the
                                         # only retry when a run was never
@@ -1193,8 +1193,8 @@ jobs:
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make gosec GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
       # v1.26.1 (Company Agent m1128 (9)): a docs-only PR skips make coverage, so
-      # it runs the releasability test alone; any other run gets it from make
-      # coverage.
+      # it runs the releasability test alone; any other run gets it from the
+      # coverage shards (DS-8139).
       - name: Releasability test (docs-only PR)
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.RELEASABILITY_TEST != '' && needs.preflight.outputs.docs_only == 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "go test -count=1 -tags '$GO_BUILD_TAGS' $RELEASABILITY_TEST"
@@ -1218,20 +1218,8 @@ jobs:
         # <<< CUSTOMIZE
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make build GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
-      # The test stage (m601 (c)): make coverage runs the whole unit suite with
-      # -race (make test's flags), the PR tier's unit test and race checks in
-      # one run (v1.23), and fails when total coverage is below
-      # COVERAGE_THRESHOLD (testing-guidelines.md), so the suite runs once.
-      # Tags matter here too: without them tag-gated packages are neither
-      # tested nor counted. The integration stage is its own job below.
-      - name: make coverage (unit tests and the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
-        # >>> CUSTOMIZE (go-xkms)
-        # test-web runs `npm ci` against the npm registry.
-        env:
-          IN_IMAGE_NETWORK: bridge
-        # <<< CUSTOMIZE
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+      # The test stage (m601 (c)) is the coverage and coverage-threshold jobs
+      # below (DS-8139).
 
       # make security: gosec, govulncheck, go mod verify (devops.md §8), with
       # trivy fs per the phase (§8a). The target owns gosec's flags and its
@@ -1304,6 +1292,145 @@ jobs:
         run: |
           rm -f it-image.tar
           scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" "${IT_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+  # >>> CUSTOMIZE (go-xkms, DS-8139, CA m2406(2))
+  # The test stage: make coverage in the image job never finished on
+  # ubuntu-latest (cancelled at the 4 h limit at -p=2 and at -p=1), so the unit
+  # suite runs as six package shards plus two extras entries (make test's
+  # other parts, #2042), each its own job and bound, and
+  # coverage-threshold merges their profiles and applies COVERAGE_THRESHOLD
+  # once. Tags matter: without them tag-gated packages are neither tested nor
+  # counted. A docs-only PR skips the steps, as in the image job.
+  # The shards are github.com-only (DS-8194): the profiles travel as artifacts,
+  # and the Gitea v3 artifact steps are gone (DS-8159). Elsewhere each shard is
+  # a green job that runs no test and coverage-threshold runs the whole suite.
+  coverage:
+    name: Coverage shard ${{ matrix.shard }}/6
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [preflight, ci-images]
+    if: ${{ needs.preflight.outputs.verdict == 'run' }}
+    timeout-minutes: 90       # CUSTOMIZE (go-xkms, DS-8139): one sixth of the unit suite under -race
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+        # make test's parts beside test-go (make coverage-extras, #2042): in
+        # shard 1 they made it the one 85+ min job. test-nofrost alone is the
+        # longest (564 s on 4 CPUs of the lane node, the rest 379 s, shard 1's
+        # slice 695 s). They write no profile.
+        include:
+          - shard: extras-nofrost
+          - shard: extras-other
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+      # Hosted runner on github.com has less than 24g: bound the container at 8g (Codex P1 on #2042).
+      IN_IMAGE_MEMORY: ${{ github.server_url == 'https://github.com' && '8g' || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '24g' || '') }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Take the toolchain image
+        if: ${{ needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+
+      # test-web runs `npm ci` against the npm registry (shard extras-other).
+      - name: make coverage-shard
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        env:
+          IN_IMAGE_NETWORK: bridge
+          IN_IMAGE_EXPORT: ${{ !startsWith(matrix.shard, 'extras-') && format('build/coverage/shard-{0}.out', matrix.shard) || '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard SHARD=${{ matrix.shard }} SHARDS=6 GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+
+      - name: Upload the shard profile (GitHub)
+        if: ${{ success() && !startsWith(matrix.shard, 'extras-') && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: build/coverage/shard-${{ matrix.shard }}.out
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Tear down
+        if: always()
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}"
+
+  # Merges the six shard profiles and runs the threshold, the dirty-tree check
+  # and the advisory per-package report, which runs the tpm2-simulator,
+  # pkcs11-tagged and FIPS coverage lanes (make coverage-merge). Off
+  # github.com no profile reaches this job (DS-8159), so it runs the whole
+  # make coverage, the suite and the threshold, as the image job did (DS-8194).
+  coverage-threshold:
+    name: Coverage threshold
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [preflight, ci-images, coverage]
+    if: ${{ needs.preflight.outputs.verdict == 'run' }}
+    timeout-minutes: 240      # CUSTOMIZE (go-xkms, DS-8139, DS-8194): on github.com the merge, threshold and per-package report need minutes; elsewhere the whole suite needs the image job's bound
+    permissions:
+      contents: read
+      packages: read
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+      # Hosted runner on github.com has less than 24g: bound the container at 8g (Codex P1 on #2042).
+      IN_IMAGE_MEMORY: ${{ github.server_url == 'https://github.com' && '8g' || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '24g' || '') }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Take the toolchain image
+        if: ${{ needs.preflight.outputs.docs_only != 'true' }}
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+
+      - name: Download the shard profiles (GitHub)
+        if: ${{ needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          pattern: coverage-shard-*
+          merge-multiple: true
+          path: build/coverage
+
+      - name: make coverage (the whole suite and the threshold, not github.com)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' && github.server_url != 'https://github.com' }}
+        env:
+          IN_IMAGE_NETWORK: bridge
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      - name: make coverage-merge (the threshold)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge SHARDS=6 GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      - name: Tear down
+        if: always()
+        run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}"
+  # <<< CUSTOMIZE
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and
@@ -2385,8 +2512,19 @@ jobs:
   # race: the race detector over every backend, FROST included, on SoftHSM
   # with a token at slot 0 and the trusted-firmware simulators (sdk/go/tfwsim;
   # a missing binary FAILS that test). -p 2 because under -race the
-  # password-vault packages (pkg/api/mcp, pkg/api/rest) each peak near 7 GB,
-  # and eight in parallel OOM-killed the job (#1389). The PR tier's race
+  # password-vault packages (pkg/api/mcp, pkg/api/rest) once peaked near 7 GB
+  # each, and eight in parallel OOM-killed the job (#1389). GOMEMLIMIT=3GiB
+  # because on a hosted runner scripts/in-toolchain-image.sh caps the
+  # container at 8g, swap off: two test processes at 3GiB each fit with room
+  # for the race detector's shadow memory, which is outside the limit, and the
+  # build. 10GiB, above the container, never made the GC work before the OOM
+  # killer took pkg/fido2/authenticator (DS-7814). Measured under this job's
+  # tags in a 4-CPU, 8g, swap-off cgroup (2026-11-08), peak RSS per test
+  # binary: pkg/fido2/authenticator 2.77 GiB, pkg/api/rest 1.65, pkg/api/mcp
+  # 1.37; -p 2 over ./pkg/fido2/... ./pkg/api/... passed with no OOM kill.
+  # pkg/fido2/authenticator, the largest, runs alone in its own step with
+  # -p 1 -parallel 2 and is excluded from the all-backends step (DS-7817).
+  # The PR tier's race
   # check is make coverage (make test runs -race); this job adds the backend
   # tag set and stays full tier.
   # Routing (m2475): a push to main and a pull_request from this repository
@@ -2461,6 +2599,7 @@ jobs:
         env:
           IN_IMAGE_NETWORK: bridge
         run: |
+          # shellcheck disable=SC2016 # expands in the toolchain container
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
             mkdir -p /tmp/softhsm2/tokens
@@ -2469,8 +2608,31 @@ jobs:
             softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234
             export TFWSIM_DIR=/src/build/agsim
             make agsim
-            GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
-              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+            tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost"
+            go list -tags="$tags" ./... > /tmp/race-all.txt
+            grep -vx "github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator" /tmp/race-all.txt > /tmp/race-pkgs.txt
+            GOMEMLIMIT=3GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
+              -tags="$tags" $(cat /tmp/race-pkgs.txt)
+          '
+
+      # pkg/fido2/authenticator alone, after the all-backends step, which
+      # excludes it: its key manager tests derive SO PIN Argon2id keys from
+      # concurrent goroutines and peaked at 2.77 GiB under -race even after
+      # the floor-cost fix (DS-7814 OOM-killed it at 4.05 GiB a test beside
+      # another package in the 8g container). Alone, with -p 1 -parallel 2,
+      # it cannot share the container with another test binary (DS-7817).
+      # The exclusion above names its import path: keep the two in sync if
+      # the package moves or is renamed.
+      - name: Race detector, pkg/fido2/authenticator (-p 1, -parallel 2, toolchain image)
+        if: runner.environment == 'github-hosted'
+        env:
+          IN_IMAGE_NETWORK: bridge
+        run: |
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
+            set -e
+            GOMEMLIMIT=3GiB GOMAXPROCS=8 go test -race -p 1 -parallel 2 -timeout 75m \
+              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" \
+              ./pkg/fido2/authenticator
           '
 
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
@@ -2617,7 +2779,7 @@ jobs:
     timeout-minutes: 5        # v1.30
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
-    needs: [preflight, image, lint-gates, integration, soak, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
+    needs: [preflight, image, coverage, coverage-threshold, lint-gates, integration, soak, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
     steps:
       - name: Fail closed on any non-success
         env:
@@ -2682,6 +2844,8 @@ jobs:
           check preflight   "${{ needs.preflight.result }}" pr
           check image       "${{ needs.image.result }}" pr
           check lint-gates  "${{ needs.lint-gates.result }}" scoped
+          check coverage    "${{ needs.coverage.result }}" pr
+          check coverage-threshold "${{ needs.coverage-threshold.result }}" pr
           check integration "${{ needs.integration.result }}" full
           check soak        "${{ needs.soak.result }}" nightly
           # >>> CUSTOMIZE (go-xkms)

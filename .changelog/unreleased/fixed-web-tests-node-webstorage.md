@@ -1,0 +1,1 @@
+test: the svelte-auth and web/app vitest workers run with `--no-experimental-webstorage` where Node knows the flag: Node 25 and later define a global `localStorage` that is unusable without `--localstorage-file` and shadows jsdom's, so under the CI container's Node v26.10.0 every test that read `window.localStorage` failed and `make test-web` (and `make coverage`) stopped.

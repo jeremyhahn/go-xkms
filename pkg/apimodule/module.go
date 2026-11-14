@@ -12,12 +12,12 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package apimodule registers go-xkms's hardware crypto + identity plane into
-// go-qrdb's unified multi-protocol server as a qrdbsdk.ServiceModule (the
+// go-qrdb's unified multi-protocol server as a qrdbserver.ServiceModule (the
 // Phase 3 seam of plans/unified-api-server-2026-08-14.md). The stack-wide
 // convention is one module per provider project, named after the project:
 // go-xkms exports this Module ("xkms"); go-quicbaas and go-trusted-platform
 // export their own, and any daemon hosting an embedded qrdb node composes the
-// modules it needs via qrdbsdk.WithModule.
+// modules it needs via qrdbserver.WithModule.
 //
 // Module carries the WHOLESALE KeystoreService gRPC surface — the same
 // pb.KeystoreServiceServer implementation every legacy transport drives — so
@@ -47,11 +47,13 @@ import (
 	"google.golang.org/grpc/status"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -141,6 +143,21 @@ func WithQRDBClient(resolve QRDBClientResolver) Option {
 func WithServiceContext(bind qrdbstorage.CallContext) Option {
 	return func(m *Module) {
 		m.serviceContext = bind
+	}
+}
+
+// UserLookupResolver returns the host's embedded node user service
+// (Node.UserService), or nil while the node is not serving.
+type UserLookupResolver func() auth.ServiceUserLookup
+
+// WithUserLookup wires the host's user-service resolver: the self-built REST
+// surface's refresh recheck reads the account through it in the refresh
+// token's own tenant (rest.HostConfig.UserLookup), as xkmsd's does. Absent
+// one, the recheck reads through the qrdb client under the service context
+// and resolves only accounts in the service principal's tenant.
+func WithUserLookup(resolve UserLookupResolver) Option {
+	return func(m *Module) {
+		m.resolveUserLookup = resolve
 	}
 }
 
@@ -256,7 +273,7 @@ func WithTenantStores(resolve TenantStoresResolver) Option {
 }
 
 // WithPINBackend supplies the host's PIN backend (the one its qrdb node was
-// built with, qrdbsdk.WithPINBackend). Its user PIN opens a tenant's
+// built with, qrdbserver.WithPINBackend). Its user PIN opens a tenant's
 // Password Manager session (/api/v1/password-vault/unlock), so without it tenant
 // password stores stay locked; it also backs the /api/v1/pin/* routes.
 func WithPINBackend(pin qrdbsdk.PINBackend) Option {
@@ -328,7 +345,7 @@ func WithVTPM(cfg *vtpm.Config) Option {
 // pkg/server, which composes the service and tears it down — the module only
 // exposes it and must not double-manage those resources.
 type Module struct {
-	qrdbsdk.BaseModule
+	qrdbserver.BaseModule
 
 	resolve           ServiceResolver
 	resolveSSH        SSHClientResolver
@@ -339,6 +356,10 @@ type Module struct {
 	// serviceContext is WithServiceContext's binder, applied to every
 	// datastore the module opens (openDatastore).
 	serviceContext qrdbstorage.CallContext
+
+	// resolveUserLookup is WithUserLookup's resolver, read when the
+	// self-built REST surface is constructed.
+	resolveUserLookup UserLookupResolver
 
 	// Host composition inputs (module_host.go): the dependencies the module
 	// builds its store-backed features from when it self-builds.
@@ -398,7 +419,7 @@ type Module struct {
 }
 
 // Compile-time interface check.
-var _ qrdbsdk.ServiceModule = (*Module)(nil)
+var _ qrdbserver.ServiceModule = (*Module)(nil)
 
 // NewModule builds go-xkms's ServiceModule around the XKMSService resolver.
 // A nil resolver is a composition error and fails construction.

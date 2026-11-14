@@ -42,6 +42,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/aeadnonce"
@@ -58,6 +59,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
@@ -464,11 +466,11 @@ type Server struct {
 	// extraModules holds additional qrdb ServiceModules to register on the
 	// embedded node's unified server alongside xkms's own module (the "xkms"
 	// ModuleName in pkg/apimodule). Set via WithExtraModules; consumed by
-	// initEmbeddedQRDBNode, which appends them into the same qrdbsdk.WithModule
+	// initEmbeddedQRDBNode, which appends them into the same qrdbserver.WithModule
 	// option list as xkmsModule. A composing binary (e.g. cmd/xkmsd mounting
 	// the admin surface) supplies its own ServiceModule this way instead of
 	// xkms hosting a second embedded node.
-	extraModules []qrdbsdk.ServiceModule
+	extraModules []qrdbserver.ServiceModule
 
 	// attestedCallerPolicy is the embedder's attested-caller gate policy, set
 	// via WithAttestedCallerPolicy. attestation.peer_gate decides whether a
@@ -577,11 +579,11 @@ func WithAuthenticatorDecorator(fn func(auth.Authenticator) auth.Authenticator) 
 // node's unified server, alongside xkms's own "xkms" module. It is additive:
 // the composing binary supplies modules built against its own resolvers (for
 // example an admin-surface module mounted on the unified mTLS listener), and
-// initEmbeddedQRDBNode appends them into the same qrdbsdk.WithModule option
+// initEmbeddedQRDBNode appends them into the same qrdbserver.WithModule option
 // list it builds for the xkms module. Registering a module under a name that
 // collides with an existing one fails node construction, exactly as
-// qrdbsdk.WithModule does for any other duplicate.
-func WithExtraModules(mods ...qrdbsdk.ServiceModule) Option {
+// qrdbserver.WithModule does for any other duplicate.
+func WithExtraModules(mods ...qrdbserver.ServiceModule) Option {
 	return func(s *Server) { s.extraModules = append(s.extraModules, mods...) }
 }
 
@@ -1523,7 +1525,7 @@ func (s *Server) initializeWebAuthnService() error {
 
 	s.logger.Info("Initializing WebAuthn service...")
 
-	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
+	params := rest.WebAuthnServiceParams{
 		Config:      s.webauthnConfig,
 		QRDBClient:  ds.Client(),
 		DAOFactory:  ds.DAOFactory(),
@@ -1531,7 +1533,20 @@ func (s *Server) initializeWebAuthnService() error {
 		TokenIssuer: s.tokenIssuer,
 		Logger:      s.logger,
 		AuditLogger: s.auditLogger,
-	})
+	}
+	// The relying party's user store is xkms's own persistence, as the
+	// DAOs are: over the embedded node it runs as the node's service
+	// principal, since a WebAuthn login is anonymous (#2541). The
+	// principal's base grant holds no user permission, so it gains the user
+	// store's users read/update/delete here, only when WebAuthn is built over
+	// the node. It gains no users:create (CA ruling 602): anonymous public
+	// registration is refused with 403 pending the owner's decision
+	// (go-xkms #2202).
+	if s.qrdbNode != nil {
+		serviceprincipal.RegisterWebAuthnGrant()
+		params.CallContext = s.qrdbNode.ServiceContext
+	}
+	svc, err := rest.BuildWebAuthnService(params)
 	if err != nil {
 		return &ErrServiceInit{Service: "webauthn service", Err: err}
 	}
@@ -1658,6 +1673,32 @@ func (n nodeCertUsers) UserByCertThumbprint(ctx context.Context, thumbprint stri
 		return nil, ErrQRDBNodeNotServing
 	}
 	return users.UserByCertThumbprint(ctx, thumbprint)
+}
+
+// nodeRefreshUsers is the refresh recheck's account lookup over the embedded
+// node's user service (auth.ServiceUserLookup). It reads the service per
+// call, so a node that publishes its data plane after the issuer is built
+// (an unseal) still serves the lookup.
+type nodeRefreshUsers struct {
+	node *qrdbnode.Node
+}
+
+// GetUser implements auth.ServiceUserLookup.
+func (n nodeRefreshUsers) GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.GetUser(ctx, id)
+}
+
+// GetUserByUsername implements auth.ServiceUserLookup.
+func (n nodeRefreshUsers) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.GetUserByUsername(ctx, tenantID, username)
 }
 
 // initializeKeyVersionStore builds the key-version record store through

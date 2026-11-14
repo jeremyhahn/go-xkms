@@ -28,6 +28,11 @@ func (tpm *TPM2) sealKeyInternal(
 	if keyAttrs.Parent == nil {
 		return nil, store.ErrInvalidParentAttributes
 	}
+	keyAttrs, unlock, lockErr := tpm.lockSeal(keyAttrs)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlock()
 
 	var session tpm2.Session
 	var closer func() error
@@ -221,6 +226,63 @@ func (tpm *TPM2) sealKeyInternal(
 // keyAttrs describes would be bound to neither a policy nor a non-empty
 // password. Its USER role would then answer an empty password, so anyone able
 // to load it could unseal it.
+// lockSeal takes sealMu for one seal or unseal of keyAttrs and returns the
+// attributes the operation must use, with the function that ends it.
+//
+// A TPM-backed password (PlatformPassword) unseals another object on this
+// TPM when it is read, which takes sealMu itself. The object's and its
+// parent's passwords are therefore resolved here, before the lock, into
+// in-memory passwords on a copy of keyAttrs; the operation reads only those.
+// The returned function releases the lock, clears the resolved passwords and
+// writes back to keyAttrs whatever the operation recorded on the copy, with
+// keyAttrs' own Password and Parent left as they were.
+func (tpm *TPM2) lockSeal(keyAttrs *types.KeyAttributes) (*types.KeyAttributes, func(), error) {
+	local := *keyAttrs
+	var resolved []types.Password
+	resolve := func(p types.Password) (types.Password, error) {
+		pp, ok := p.(*PlatformPassword)
+		if !ok {
+			return p, nil
+		}
+		secret := pp.Bytes()
+		defer enclave.Wipe(secret)
+		rp, err := types.NewPassword(secret)
+		if err != nil {
+			return nil, err
+		}
+		resolved = append(resolved, rp)
+		return rp, nil
+	}
+	clearResolved := func() {
+		for _, rp := range resolved {
+			rp.Clear()
+		}
+	}
+
+	var err error
+	if local.Password, err = resolve(keyAttrs.Password); err != nil {
+		clearResolved()
+		return nil, nil, err
+	}
+	if keyAttrs.Parent != nil {
+		parent := *keyAttrs.Parent
+		if parent.Password, err = resolve(parent.Password); err != nil {
+			clearResolved()
+			return nil, nil, err
+		}
+		local.Parent = &parent
+	}
+
+	tpm.sealMu.Lock()
+	return &local, func() {
+		tpm.sealMu.Unlock()
+		clearResolved()
+		local.Password = keyAttrs.Password
+		local.Parent = keyAttrs.Parent
+		*keyAttrs = local
+	}, nil
+}
+
 func requireSealProtection(keyAttrs *types.KeyAttributes) error {
 	if keyAttrs.TPMPolicy != "" || keyAuthValue(keyAttrs) != nil {
 		return nil
@@ -242,6 +304,11 @@ func (tpm *TPM2) unsealKeyInternal(
 	if keyAttrs.Parent == nil {
 		return nil, store.ErrInvalidParentAttributes
 	}
+	keyAttrs, unlock, lockErr := tpm.lockSeal(keyAttrs)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlock()
 
 	var session tpm2.Session
 	var closer func() error
@@ -349,6 +416,11 @@ func (tpm *TPM2) unsealFromBlobs(
 	if keyAttrs.Parent == nil {
 		return nil, store.ErrInvalidParentAttributes
 	}
+	keyAttrs, unlock, lockErr := tpm.lockSeal(keyAttrs)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlock()
 
 	var session tpm2.Session
 	var closer func() error

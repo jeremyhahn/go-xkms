@@ -58,6 +58,27 @@ func (s tenantMetadataStore) PutIfAllAbsent(ctx context.Context, key string, val
 	return fc.PutIfAllAbsent(ctx, key, value, fences...)
 }
 
+// metadataSwapper is the compare-and-swap go-qrdb's TenantService commits a
+// tenant update with (kvstore.AtomicKVStore's shape).
+type metadataSwapper interface {
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
+}
+
+// CompareAndSwap forwards the guarded update go-qrdb v0.58's TenantService
+// commits a tenant record with: the new record only while the stored one is
+// still the record it read, so an update built on a stale read cannot undo a
+// status change committed in between. The system barrier compares the
+// decrypted value and hands the ciphertext guard to its base -- the xkms
+// backend under guardedStorageBackend. A store without the capability
+// reports storage.ErrCompareAndSwapUnsupported; there is no blind write.
+func (s tenantMetadataStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	cas, ok := s.StorageBackend.(metadataSwapper)
+	if !ok {
+		return false, storage.ErrCompareAndSwapUnsupported
+	}
+	return cas.CompareAndSwap(ctx, key, expected, next)
+}
+
 // guardedStorageBackend adapts an xkms storage.Backend to go-qrdb's
 // StorageBackend, whose contract (go-quicraft's seal.StorageBackend) requires
 // CompareAndDelete as a MANDATORY method.

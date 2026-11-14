@@ -189,6 +189,10 @@ func (m *restMockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrd
 	return nil, errRestMockUnused
 }
 
+func (m *restMockRoleClient) ReconcileBuiltInRolesAllTenants(context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
+	return nil, errRestMockUnused
+}
+
 // restSingleStoreResolver resolves every tenant to the same backing
 // KVStore — enough for a unit test's invite store, which does not exercise
 // per-tenant routing or barrier isolation.

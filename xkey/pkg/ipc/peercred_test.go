@@ -29,6 +29,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 // dialPair returns both ends of a real Unix socket connection bound in a
@@ -133,7 +135,7 @@ func countingListener(t *testing.T, sockPath string) *atomic.Int32 {
 }
 
 func TestClient_RefusesWideSocketDirectoryBeforeSendingPIN(t *testing.T) {
-	dir := shortTempDir(t)
+	dir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	sockPath := filepath.Join(dir, "xkey.sock")
 	accepted := countingListener(t, sockPath)
@@ -185,7 +187,7 @@ func TestDial_ReturnsVerifiedConnection(t *testing.T) {
 }
 
 func TestDial_RefusesInsecureDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	sockPath := filepath.Join(dir, "xkey.sock")
 	accepted := countingListener(t, sockPath)

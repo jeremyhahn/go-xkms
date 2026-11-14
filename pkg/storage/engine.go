@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
 // EngineError wraps a failure returned by the underlying go-qrdb storage
@@ -58,7 +59,7 @@ func mapErr(op, key string, err error) error {
 	return &EngineError{Op: op, Key: key, Err: err}
 }
 
-// engineBackend adapts a go-qrdb raw storage engine (qrdbsdk.Storage) to the
+// engineBackend adapts a go-qrdb raw storage engine (qrdbstorage.Storage) to the
 // xkms Backend interface. It is the single bridge through which xkms local
 // persistence reaches a go-qrdb engine, so the concrete engine — file,
 // PebbleDB, or memory — is selectable at construction time without changing
@@ -66,7 +67,7 @@ func mapErr(op, key string, err error) error {
 // per key, identical to xkms's historical on-disk format, so adopting it
 // requires no data migration.
 type engineBackend struct {
-	eng qrdbsdk.Storage
+	eng qrdbstorage.Storage
 
 	// writeMu serializes EVERY write this backend performs — the unconditional
 	// Put and Delete as well as the guarded PutIfAbsent, CompareAndSwap and
@@ -90,7 +91,7 @@ var _ CompareAndDeleter = (*engineBackend)(nil)
 var _ FencedCreator = (*engineBackend)(nil)
 
 // NewEngineBackend wraps a go-qrdb storage engine as an xkms Backend.
-func NewEngineBackend(eng qrdbsdk.Storage) Backend {
+func NewEngineBackend(eng qrdbstorage.Storage) Backend {
 	return &engineBackend{eng: eng}
 }
 
@@ -400,7 +401,7 @@ func OpenEngine(cfg EngineConfig) (Backend, error) {
 		if cfg.Path == "" {
 			return nil, ErrEnginePathRequired
 		}
-		eng, err := qrdbsdk.NewFileStorage(cfg.Path)
+		eng, err := qrdbstorage.NewFileStorage(cfg.Path)
 		if err != nil {
 			return nil, &EngineError{Op: "open-file", Key: cfg.Path, Err: err}
 		}
@@ -410,21 +411,21 @@ func OpenEngine(cfg EngineConfig) (Backend, error) {
 		if cfg.Path == "" {
 			return nil, ErrEnginePathRequired
 		}
-		eng, err := qrdbsdk.NewPebbleStorage(qrdbsdk.DefaultPebbleConfig(cfg.Path))
+		eng, err := qrdbstorage.NewPebbleStorage(qrdbstorage.DefaultPebbleConfig(cfg.Path))
 		if err != nil {
 			return nil, &EngineError{Op: "open-pebble", Key: cfg.Path, Err: err}
 		}
 		return NewEngineBackend(eng), nil
 
 	case EngineMemory:
-		return NewEngineBackend(qrdbsdk.NewMemoryStorage()), nil
+		return NewEngineBackend(qrdbstorage.NewMemoryStorage()), nil
 
 	case EngineObjstore:
 		provider := cfg.Provider
 		if provider == "" {
 			provider = "local"
 		}
-		eng, err := qrdbsdk.NewObjStoreStorage(provider, cfg.Options)
+		eng, err := qrdbstorage.NewObjStoreStorage(provider, cfg.Options)
 		if err != nil {
 			return nil, &EngineError{Op: "open-objstore", Key: provider, Err: err}
 		}

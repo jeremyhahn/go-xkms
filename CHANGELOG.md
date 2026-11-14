@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Go toolchain 1.27.4 for GO-2026-6859, `net/http` (#2058).** govulncheck reports GO-2026-6859 in the go1.27.3 standard library, fixed in go1.27.4 (2026-11-02). The `go` line of `go.mod`, `sdk/go`, `web/desktop` and `xkey`, every workflow `GO_VERSION`, every `golang:` builder and test image tag, the Go tarball downloads in `xkey`, and the digest-pinned `GO_IMAGE` (`scripts/tool-pins.sh`, `Dockerfile.cli`, `release.yml` `GO_IMAGE_DIGEST`, now the `golang:1.27.4-bookworm` index `sha256:4fa7c968…`) move to 1.27.4. No dependency or code change.
 
+### Fixed
+
+- **WebAuthn sign-up no longer fails with a 500 at `registration/begin` (#2541).** The qrdb-backed WebAuthn user store looked users up on the HTTP request's context, so an anonymous browser sign-up reached the embedded qrdb with no principal (`qrdb/auth: unauthenticated`). `QRDBUserStoreOptions.CallContext` (and `WebAuthnServiceParams.CallContext`, `HostConfig.WebAuthnCallContext`) now binds every user and credential call to the node's service principal, as the feature DAOs already run; both the server and the API module host pass `Node.ServiceContext`. Over xkmsd's embedded node the service principal gains a WebAuthn grant (`users:read/create/update/delete`, `serviceprincipal.RegisterWebAuthnGrant`, registered only when the WebAuthn service is built), and the token issuer's qrdb refresh store runs on the same service context (`token.BindRefreshStore`, `TokenIssuerParams.CallContext`), so an anonymous login can persist its refresh token. No endpoint changes its authentication.
+
 ## [0.64.0-alpha] - 2026-10-25
 
 ### Security

@@ -77,7 +77,7 @@ func (c *Controller) Unseal(passphrase []byte) (err error) {
 	if credErr != nil {
 		return credErr
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCreds(creds)) }()
 
 	if initErr := c.barrier.Initialize(ctx, creds); initErr != nil && !isAlreadyInitialized(initErr) {
 		return initErr
@@ -95,6 +95,16 @@ func (c *Controller) Seal() error {
 		return nil
 	}
 	return c.barrier.Seal()
+}
+
+// destroyCreds destroys the secret seal.CredentialsFor derived. An empty
+// passphrase derives no secret (ChangePassword refuses it), so there is
+// nothing to destroy.
+func destroyCreds(c seal.Credentials) error {
+	if c.Secret == nil {
+		return nil
+	}
+	return c.Secret.Destroy()
 }
 
 // Rekey re-wraps the barrier's root key under the new user PIN (qrdb's cheap
@@ -123,13 +133,17 @@ func (c *Controller) Seal() error {
 func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 	ctx := context.Background()
 
+	// oldCreds both unseals a sealed barrier and proves the current PIN to
+	// ChangePassword, which checks it against the persisted root-key blob
+	// even when the barrier is already unsealed.
+	oldCreds, credErr := seal.CredentialsFor(ctx, oldPassphrase)
+	if credErr != nil {
+		return credErr
+	}
+	defer func() { err = errors.Join(err, destroyCreds(oldCreds)) }()
+
 	wasSealed := c.barrier.IsSealed()
 	if wasSealed {
-		oldCreds, credErr := seal.CredentialsFor(ctx, oldPassphrase)
-		if credErr != nil {
-			return credErr
-		}
-		defer func() { err = errors.Join(err, oldCreds.Secret.Destroy()) }()
 		unsealErr := c.barrier.Unseal(ctx, oldCreds)
 		if isUninitialized(unsealErr) {
 			return nil // no barrier yet; first login will key it to the new PIN
@@ -148,8 +162,8 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		}
 		return credErr
 	}
-	defer func() { err = errors.Join(err, newCreds.Secret.Destroy()) }()
-	if changeErr := c.barrier.ChangePassword(ctx, newCreds); changeErr != nil {
+	defer func() { err = errors.Join(err, destroyCreds(newCreds)) }()
+	if changeErr := c.barrier.ChangePassword(ctx, oldCreds, newCreds); changeErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {
 				return errors.Join(changeErr, sealErr)

@@ -59,7 +59,37 @@ const (
 // import would cycle, and the interface is implemented here rather than
 // declared.
 type QRDBUserResolver struct {
-	users qrdbtransport.UserClient
+	users   qrdbtransport.UserClient
+	service ServiceUserLookup
+}
+
+// ServiceUserLookup is go-qrdb's server-side user lookup: the user service
+// an embedded node exposes (Node.UserService). It reads in the tenant the
+// context names without authorizing a caller.
+type ServiceUserLookup interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error)
+	GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error)
+}
+
+// refreshAccount is the part of a user record the refresh recheck reads,
+// whichever lookup produced it.
+type refreshAccount struct {
+	tenantID  string
+	username  string
+	name      string
+	email     string
+	lifecycle string
+	roleIDs   []string
+}
+
+// NewQRDBServiceUserResolver resolves refresh subjects through an embedded
+// node's user service, in the tenant the refresh token carries. Over an
+// embedded node this is the resolver to use: the node's service principal
+// belongs to the system tenant, and qrdb's strict tenant isolation refuses a
+// client lookup of another tenant's account, so a refresh for any account
+// outside the system tenant would fail its recheck.
+func NewQRDBServiceUserResolver(users ServiceUserLookup) *QRDBUserResolver {
+	return &QRDBUserResolver{service: users}
 }
 
 // NewQRDBUserResolver wires the qrdb user client into a QRDBUserResolver.
@@ -84,29 +114,37 @@ func (r *QRDBUserResolver) ResolveUser(ctx context.Context, id *Identity) (*Iden
 		return nil, ErrRefreshSubjectNotFound
 	}
 
-	u, err := r.lookup(ctx, id)
+	var (
+		u   *refreshAccount
+		err error
+	)
+	if r.service != nil {
+		u, err = r.lookupInTenant(ctx, id)
+	} else {
+		u, err = r.lookup(ctx, id)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if u.Lifecycle != string(qrdbsdk.LifecycleActive) {
+	if u.lifecycle != string(qrdbsdk.LifecycleActive) {
 		return nil, ErrUserDisabled
 	}
 
 	fresh := &Identity{
 		Subject:  id.Subject,
-		TenantID: u.TenantID,
+		TenantID: u.tenantID,
 		Metadata: make(map[string]string, len(id.Metadata)+2),
 	}
 	for k, v := range id.Metadata {
 		fresh.Metadata[k] = v
 	}
-	if len(u.RoleIDs) > 0 {
-		fresh.Roles = append([]string(nil), u.RoleIDs...)
+	if len(u.roleIDs) > 0 {
+		fresh.Roles = append([]string(nil), u.roleIDs...)
 	}
-	fresh.Metadata["username"] = u.Username
-	fresh.Metadata["display_name"] = u.Name
-	if u.Email != "" {
-		fresh.Metadata["email"] = u.Email
+	fresh.Metadata["username"] = u.username
+	fresh.Metadata["display_name"] = u.name
+	if u.email != "" {
+		fresh.Metadata["email"] = u.email
 	} else {
 		delete(fresh.Metadata, "email")
 	}
@@ -118,37 +156,91 @@ func (r *QRDBUserResolver) ResolveUser(ctx context.Context, id *Identity) (*Iden
 // a subject declared "username" is looked up ONLY by GetUserByUsername, and
 // a not-found there is refused outright, never reinterpreted as a user
 // handle that might happen to decode to a different, live account.
-func (r *QRDBUserResolver) lookup(ctx context.Context, id *Identity) (*qrdbtransport.User, error) {
+func (r *QRDBUserResolver) lookup(ctx context.Context, id *Identity) (*refreshAccount, error) {
 	var notFound *qrdbsdk.UserNotFoundError
 
+	var (
+		u   *qrdbtransport.User
+		err error
+	)
 	switch id.Metadata[SubjectKindMetadataKey] {
 	case SubjectKindUsername:
-		u, err := r.users.GetUserByUsername(ctx, id.TenantID, id.Subject)
-		if err != nil {
-			if errors.As(err, &notFound) {
-				return nil, ErrRefreshSubjectNotFound
-			}
-			return nil, &RefreshUserLookupError{Err: err}
-		}
-		return u, nil
+		u, err = r.users.GetUserByUsername(ctx, id.TenantID, id.Subject)
 
 	case SubjectKindUserHandle:
 		uid, ok := decodeWebAuthnHandle(id.Subject)
 		if !ok {
 			return nil, ErrRefreshSubjectNotFound
 		}
-		u, err := r.users.GetUser(ctx, uid)
-		if err != nil {
-			if errors.As(err, &notFound) {
-				return nil, ErrRefreshSubjectNotFound
-			}
-			return nil, &RefreshUserLookupError{Err: err}
-		}
-		return u, nil
+		u, err = r.users.GetUser(ctx, uid)
 
 	default:
 		return nil, &RefreshSubjectKindError{Kind: id.Metadata[SubjectKindMetadataKey]}
 	}
+	if err != nil {
+		if errors.As(err, &notFound) {
+			return nil, ErrRefreshSubjectNotFound
+		}
+		return nil, &RefreshUserLookupError{Err: err}
+	}
+	return &refreshAccount{
+		tenantID:  u.TenantID,
+		username:  u.Username,
+		name:      u.Name,
+		email:     u.Email,
+		lifecycle: u.Lifecycle,
+		roleIDs:   u.RoleIDs,
+	}, nil
+}
+
+// lookupInTenant resolves the subject through the node's user service, in
+// the tenant the refresh token carries (the system tenant when it carries
+// none). A user ID that resolves to an account of another tenant is not
+// this token's subject.
+func (r *QRDBUserResolver) lookupInTenant(ctx context.Context, id *Identity) (*refreshAccount, error) {
+	var notFound *qrdbsdk.UserNotFoundError
+
+	tenantID := id.TenantID
+	if tenantID == "" {
+		tenantID = qrdbsdk.SystemTenantID
+	}
+	ctx = qrdbsdk.ContextWithTenant(ctx, tenantID)
+
+	var (
+		u   *qrdbsdk.User
+		err error
+	)
+	switch id.Metadata[SubjectKindMetadataKey] {
+	case SubjectKindUsername:
+		u, err = r.service.GetUserByUsername(ctx, tenantID, id.Subject)
+
+	case SubjectKindUserHandle:
+		uid, ok := decodeWebAuthnHandle(id.Subject)
+		if !ok {
+			return nil, ErrRefreshSubjectNotFound
+		}
+		u, err = r.service.GetUser(ctx, uid)
+
+	default:
+		return nil, &RefreshSubjectKindError{Kind: id.Metadata[SubjectKindMetadataKey]}
+	}
+	if err != nil {
+		if errors.As(err, &notFound) {
+			return nil, ErrRefreshSubjectNotFound
+		}
+		return nil, &RefreshUserLookupError{Err: err}
+	}
+	if u == nil || qrdbsdk.NormalizeTenantID(u.TenantID) != qrdbsdk.NormalizeTenantID(tenantID) {
+		return nil, ErrRefreshSubjectNotFound
+	}
+	return &refreshAccount{
+		tenantID:  u.TenantID,
+		username:  u.Username,
+		name:      u.Name,
+		email:     u.Email,
+		lifecycle: string(u.Lifecycle),
+		roleIDs:   u.RoleIDs,
+	}, nil
 }
 
 // decodeWebAuthnHandle decodes a refresh-token subject as the base64url,

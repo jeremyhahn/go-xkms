@@ -584,7 +584,7 @@ func TestRevokeBySubject_RevokesEveryFamilyForSubjectAndNoOther(t *testing.T) {
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			}))
 
-			require.NoError(t, store.RevokeBySubject(ctx, "alice"))
+			require.NoError(t, store.RevokeBySubject(ctx, "", "alice"))
 
 			got1, err := store.Get(ctx, "fam-alice-1", "jti-1")
 			require.NoError(t, err)
@@ -615,7 +615,7 @@ func TestRevokeBySubject_NoFamiliesIsANoop(t *testing.T) {
 	for _, tc := range refreshStoreCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			store := tc.newStore(t)
-			require.NoError(t, store.RevokeBySubject(context.Background(), "nobody"))
+			require.NoError(t, store.RevokeBySubject(context.Background(), "", "nobody"))
 		})
 	}
 }
@@ -632,11 +632,43 @@ func TestRevokeBySubject_IssuerIntegration(t *testing.T) {
 			pair, err := issuer.Mint(ctx, testIdentity())
 			require.NoError(t, err)
 
-			require.NoError(t, issuer.RevokeBySubject(ctx, testIdentity().Subject))
+			require.NoError(t, issuer.RevokeBySubject(ctx, testIdentity().TenantID, testIdentity().Subject))
 
 			_, err = issuer.Refresh(ctx, pair.RefreshToken)
 			var revokedErr *RefreshRevokedError
 			assert.ErrorAs(t, err, &revokedErr)
+		})
+	}
+}
+
+// Every tenant's sessions share one record namespace, and account names are
+// unique only within a tenant: revoking system/alice must leave acme/alice's
+// sessions alone.
+func TestRevokeBySubject_LeavesAnotherTenantsNamesakeSessions(t *testing.T) {
+	for _, tc := range refreshStoreCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			issuer := newIssuerWithStore(t, tc.newStore(t))
+
+			systemAlice := testIdentity()
+			systemAlice.Subject = "alice"
+			systemAlice.TenantID = "default"
+			acmeAlice := testIdentity()
+			acmeAlice.Subject = "alice"
+			acmeAlice.TenantID = "acme"
+
+			systemPair, err := issuer.Mint(ctx, systemAlice)
+			require.NoError(t, err)
+			acmePair, err := issuer.Mint(ctx, acmeAlice)
+			require.NoError(t, err)
+
+			require.NoError(t, issuer.RevokeBySubject(ctx, "default", "alice"))
+
+			_, err = issuer.Refresh(ctx, systemPair.RefreshToken)
+			var revokedErr *RefreshRevokedError
+			require.ErrorAs(t, err, &revokedErr, "the revoked account's session ends")
+			_, err = issuer.Refresh(ctx, acmePair.RefreshToken)
+			require.NoError(t, err, "acme's alice keeps her session")
 		})
 	}
 }

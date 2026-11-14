@@ -21,6 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -104,10 +105,21 @@ func (m *Module) restServer() (*rest.Server, error) {
 			return nil, &HostBuildError{Err: err}
 		}
 		hc.DAOFactory = ds.DAOFactory()
+		if m.resolveUserLookup != nil {
+			hc.UserLookup = m.resolveUserLookup()
+		}
 	}
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
+		hc.WebAuthnCallContext = m.serviceContext
+		// The user store runs as the node's service principal here, as it
+		// does in xkmsd (Server.initializeWebAuthnService); the principal's
+		// base grant holds no user permission, so it gains the user store's
+		// users CRUD on this construction path too.
+		if m.serviceContext != nil {
+			serviceprincipal.RegisterWebAuthnGrant()
+		}
 	}
 
 	srv, err := rest.NewHostServer(context.Background(), hc)
@@ -118,6 +130,47 @@ func (m *Module) restServer() (*rest.Server, error) {
 		srv = m.selfREST.Load()
 	}
 	return srv, nil
+}
+
+// DaemonCORS maps a go-xkms REST CORS policy onto the go-qrdb node's
+// DaemonConfig.CORS. go-qrdb wraps its unified REST handler in that policy
+// OUTSIDE its auth middleware, so the 401/403 the auth chain answers for a
+// module route still carries Access-Control-Allow-Origin; the per-route
+// wrapper RegisterHTTP applies only reaches requests auth admitted. A nil
+// policy (CORS off) maps to the zero config, which turns qrdb's CORS off.
+// Allow-Credentials has no go-qrdb field; the per-route wrapper keeps
+// sending it on the responses auth admits.
+func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
+	if o == nil || len(o.AllowedOrigins) == 0 {
+		return qrdbsdk.DaemonCORSConfig{}
+	}
+	return qrdbsdk.DaemonCORSConfig{
+		AllowedOrigins:   append([]string(nil), o.AllowedOrigins...),
+		AllowedHeaders:   rest.CORSAllowedHeaders(),
+		AllowCredentials: o.AllowCredentials,
+		MaxAge:           o.MaxAgeSeconds,
+	}
+}
+
+// NodeCORS returns the module's REST CORS policy as the embedding node's
+// DaemonConfig.CORS. The host that builds the node sets cfg.CORS from it
+// before NewStandaloneNode / NewClusterNode, so the node's outer CORS layer
+// and the module's routes answer with one policy.
+//
+// It reads configuration only. A host-supplied server reports its own policy;
+// a self-built surface carries no CORS policy, so the zero config is returned
+// without building the surface. Building it here, before the node client is
+// published, would cache stores without persistence and a server without
+// WebAuthn or the session store.
+func (m *Module) NodeCORS() (qrdbsdk.DaemonCORSConfig, error) {
+	if m.resolveREST == nil {
+		return qrdbsdk.DaemonCORSConfig{}, nil
+	}
+	srv := m.resolveREST()
+	if srv == nil {
+		return qrdbsdk.DaemonCORSConfig{}, nil
+	}
+	return DaemonCORS(srv.CORSOptions()), nil
 }
 
 // selfBuilds reports whether the module composes its own surfaces from host
