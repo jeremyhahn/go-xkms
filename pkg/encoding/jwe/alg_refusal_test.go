@@ -31,7 +31,28 @@ const (
 		"4n9e5-v9TWI6B6kB.i0vB18ykgg.1YxbvJtTIAOvkWktJGdqWw"
 	pbes2JWE = "eyJhbGciOiJQQkVTMi1IUzI1NitBMTI4S1ciLCJlbmMiOiJBMTI4R0NNIiwicDJjIjoxMDAwLCJwMnMiOiJ4NkE0Wi10Tlh4TVVkZGpnTUZLSEpBIn0." +
 		"z1FxvbbL5jYss6Y9xD4PEfPi1gLsoTlg.PEyIZc4FFWP7jL4G.T96V4VqAug.vI_W_4-M5UPJQResQfmrGQ"
+
+	// jsonJWE is a valid JSON-serialized JWE under allowed algorithms (A128KW,
+	// A128GCM, plaintext "refused") for jsonJWEKey. Decrypt only takes the
+	// compact serialization, so it must refuse this at the parse step.
+	jsonJWE = `{"protected":"eyJhbGciOiJBMTI4S1ciLCJlbmMiOiJBMTI4R0NNIn0",` +
+		`"encrypted_key":"___1Qz4rthOwQf0HJUqgGEw36eHK_ewV","iv":"yi82a9oZFRd1X81Q",` +
+		`"ciphertext":"jh1zQGh5uw","tag":"HD5nbyR8ws5vqHNNW_HIFw"}`
+	jsonJWEKey = "0123456789abcdef"
 )
+
+// TestDecrypt_RefusesTheJSONSerialization proves that Decrypt refuses a
+// JSON-serialized JWE at the parse step even when its algorithms are allowed
+// and the caller holds the right key.
+func TestDecrypt_RefusesTheJSONSerialization(t *testing.T) {
+	_, err := NewDecrypter().Decrypt(jsonJWE, []byte(jsonJWEKey))
+	if err == nil {
+		t.Fatal("Decrypt accepted a JSON-serialized JWE")
+	}
+	if !strings.Contains(err.Error(), "failed to parse JWE") {
+		t.Fatalf("Decrypt refused the JSON JWE at the wrong step: %v", err)
+	}
+}
 
 // TestDecrypt_RefusesAKeyAlgorithmOutsideTheAllowList proves that Decrypt's
 // parse step refuses a well-formed JWE whose "alg" is not in its key
