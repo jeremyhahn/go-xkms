@@ -165,6 +165,29 @@ func TestDefaultWorkDirBase_RefusesASymlinkedXDGRuntimeDir(t *testing.T) {
 	}
 }
 
+func TestDefaultWorkDirBase_RefusesAnUncleanXDGRuntimeDirThroughASymlink(t *testing.T) {
+	root := shortTempDir(t)
+	private := filepath.Join(root, "p")
+	other := filepath.Join(root, "o")
+	for _, dir := range []string{private, other, filepath.Join(other, "s"), filepath.Join(other, "p")} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	link := filepath.Join(root, "l")
+	if err := os.Symlink(filepath.Join(other, "s"), link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	t.Setenv("TMPDIR", longTempDir(t))
+
+	// Lexically <root>/l/../p is the trusted <root>/p, but the kernel
+	// follows l first and lands in <root>/o/p, inside the other tree.
+	t.Setenv("XDG_RUNTIME_DIR", link+"/../p")
+	if got := defaultWorkDirBase(); got != shortWorkDirBase {
+		t.Errorf("defaultWorkDirBase() with an unclean XDG_RUNTIME_DIR through a symlink = %q, want %q", got, shortWorkDirBase)
+	}
+}
+
 func TestDefaultWorkDirBase_RefusesAnXDGRuntimeDirUnderAWritableParent(t *testing.T) {
 	parent := shortTempDir(t)
 	xdg := filepath.Join(parent, "d")
