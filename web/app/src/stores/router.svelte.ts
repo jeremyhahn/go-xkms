@@ -25,6 +25,7 @@ export type RouteName =
   | "keys"
   | "keyVersions"
   | "certificates"
+  | "certImport"
   | "ca"
   | "tenants"
   | "tenantTpm"
@@ -64,6 +65,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/keys/versions": "keyVersions",
   "/certs": "certificates",
   "/certificates": "certificates",
+  "/certs/import": "certImport",
   "/ca": "ca",
   "/tenants": "tenants",
   "/tenants/tpm": "tenantTpm",
