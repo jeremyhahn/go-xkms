@@ -57,3 +57,10 @@ cites the tenant step (`ownTenant` calling `qrdbsdk.OwnTenant`, and
 file:line and names the owner/ServiceAccess half as blocked on the go-qrdb
 object-owner ABAC decision above. No code change; checks: go test of
 ./pkg/scope/... and make lint.
+
+## Slice 3: upstream re-check
+
+sdk/go v0.58.3-alpha and v0.58.4-alpha (latest on the proxy, 2026-11-14)
+add `SystemRoleIDs`, `TenantFromCert` and `DelegationPolicy` (tenant cert
+delegation, #1186) beyond v0.58.2-alpha: no object-owner ABAC decision. The
+owner and ServiceAccess half stays blocked; the row stays in progress.
