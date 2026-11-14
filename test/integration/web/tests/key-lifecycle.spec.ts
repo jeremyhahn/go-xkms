@@ -16,8 +16,9 @@
  * through the browser against the live server — the software backend does
  * real ECDSA P-256 key generation and signing, not a stub.
  *
- * NOTE: this assumes a freshly self-registered operator (see
- * support/operator.ts) holds keys:create / keys:sign / keys:delete. That is
+ * NOTE: this assumes a freshly admin-provisioned operator (see
+ * support/passkeyAccount.ts; anonymous sign-up is refused under ruling 602)
+ * holds keys:create / keys:sign / keys:delete. That is
  * the expected default for the first-boot-adjacent RBAC role, but has not
  * been verified against a running daemon from this sandbox (which cannot
  * bind listening ports) — if the operator's default role turns out to be
@@ -29,11 +30,12 @@
 
 import { test, expect } from '@playwright/test';
 import { installVirtualAuthenticator } from './support/virtualAuthenticator.ts';
-import { registerOperator, uniqueOperator } from './support/operator.ts';
+import { $!1uniqueOperator } from './support/operator.ts';
+import { provisionOperator } from './support/passkeyAccount.ts';
 
 test('generates, signs, and deletes a key through the console', async ({ page }) => {
   await installVirtualAuthenticator(page);
-  await registerOperator(page, uniqueOperator('keys'));
+  await provisionOperator(page, uniqueOperator('keys'));
 
   const keyId = `e2e-key-${Date.now()}`;
 
