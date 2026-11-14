@@ -173,6 +173,14 @@ func NewService(params ServiceParams) (*Service, error) {
 // credential through this unauthenticated entry point is the hole
 // go-xkms#1294 part B closes. Before that ruling this method enrolled such
 // an account's first passkey with no proof of possession at all.
+//
+// Over an enforcing embedded node anonymous public registration is refused
+// (CA ruling 602): the store's service principal holds no users:create, so
+// the implicit Create is denied and this method answers
+// ErrRegistrationRefused (HTTP 403) having persisted nothing. It stays
+// refused pending the owner's decision on a pending-account lifecycle
+// (go-xkms #2202), because a Create here makes a durable account before any
+// credential is verified.
 func (s *Service) BeginRegistration(ctx context.Context, email, displayName string) (*protocol.CredentialCreation, string, error) {
 	if !s.configured {
 		return nil, "", ErrNotConfigured
@@ -191,6 +199,13 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 	}
 	user, err := s.users.Create(ctx, email, displayName)
 	if err != nil {
+		// Over an enforcing embedded node the store's principal holds no
+		// users:create (CA ruling 602, go-xkms #2202): the refusal is the
+		// documented registration refusal, never a server fault.
+		var denied *qrdbsdk.PermissionDeniedError
+		if errors.As(err, &denied) {
+			return nil, "", ErrRegistrationRefused
+		}
 		return nil, "", WrapError("create user", err)
 	}
 

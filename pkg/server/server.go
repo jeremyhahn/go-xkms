@@ -1536,9 +1536,12 @@ func (s *Server) initializeWebAuthnService() error {
 	}
 	// The relying party's user store is xkms's own persistence, as the
 	// DAOs are: over the embedded node it runs as the node's service
-	// principal, since a sign-up's registration/begin is anonymous (#2541).
-	// The principal's base grant holds no user permission, so it gains the
-	// user store's users CRUD here, only when WebAuthn is built over the node.
+	// principal, since a WebAuthn login is anonymous (#2541). The
+	// principal's base grant holds no user permission, so it gains the user
+	// store's users read/update/delete here, only when WebAuthn is built over
+	// the node. It gains no users:create (CA ruling 602): anonymous public
+	// registration is refused with 403 pending the owner's decision
+	// (go-xkms #2202).
 	if s.qrdbNode != nil {
 		serviceprincipal.RegisterWebAuthnGrant()
 		params.CallContext = s.qrdbNode.ServiceContext
