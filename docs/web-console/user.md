@@ -133,7 +133,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 |---|---|---|
 | Overview | Dashboard, Trust Bundle, Backends, System Health | `#/dashboard`, `#/trust/bundle`, `#/backends`, `#/system/health` |
 | Keys & Crypto | Keys, Key Versions, FROST, TPM Key Policy, TPM Policies, Seal | `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/key-policy`, `#/tpm/policies`, `#/seal` |
-| Certificates & CA | Certificates, Import Certificate, Certificate Authority | `#/certs`, `#/certs/import`, `#/ca` |
+| Certificates & CA | Certificates, Import Certificate, Certificate Authority, TCG Certificates | `#/certs`, `#/certs/import`, `#/ca`, `#/ca/tcg` |
 | Security | PIN, PIN Setup, PIV, PIV Slots, SSH, SSH Trust, Passwords, Password Access Mode, OIDC Credentials, Platform Secrets, Boot Credentials | `#/pin`, `#/pin/setup`, `#/piv`, `#/piv/slots`, `#/ssh`, `#/ssh/trust`, `#/passwords`, `#/passwords/access-mode`, `#/oidc/credentials`, `#/platform`, `#/credentials/boot` |
 | Identity & Access | Users, Tenants, Tenant TPM | `#/users`, `#/tenants`, `#/tenants/tpm` |
 | Settings | Settings | `#/settings` |

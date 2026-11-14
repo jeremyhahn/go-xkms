@@ -30,6 +30,7 @@
   import PivView from "$views/PivView.svelte";
   import PivSlotsView from "$views/PivSlotsView.svelte";
   import CaView from "$views/CaView.svelte";
+  import TcgCertsView from "$views/TcgCertsView.svelte";
   import SshView from "$views/SshView.svelte";
   import SshTrustView from "$views/SshTrustView.svelte";
   import FrostView from "$views/FrostView.svelte";
@@ -69,6 +70,7 @@
     {:else if routerStore.name === "certImport"}<CertImportView />
     {:else if routerStore.name === "ca"}
       <CaView />
+    {:else if routerStore.name === "caTcg"}<TcgCertsView />
     {:else if routerStore.name === "pin"}
       <PinView />
     {:else if routerStore.name === "pinSetup"}<PinSetupView />
