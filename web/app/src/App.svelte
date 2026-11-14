@@ -21,6 +21,7 @@
   import TenantsView from "$views/TenantsView.svelte";
   import TenantTpmView from "$views/TenantTpmView.svelte";
   import PasswordsView from "$views/PasswordsView.svelte";
+  import PasswordAccessModeView from "$views/PasswordAccessModeView.svelte";
   import OidcCredentialsView from "$views/OidcCredentialsView.svelte";
   import SigningKeysView from "$views/SigningKeysView.svelte";
   import PlatformView from "$views/PlatformView.svelte";
@@ -86,6 +87,7 @@
     {:else if routerStore.name === "tenantTpm"}<TenantTpmView />
     {:else if routerStore.name === "passwords"}
       <PasswordsView />
+    {:else if routerStore.name === "passwordAccessMode"}<PasswordAccessModeView />
     {:else if routerStore.name === "oidcCredentials"}
       <OidcCredentialsView />
     {:else if routerStore.name === "signingKeys"}

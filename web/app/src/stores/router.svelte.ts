@@ -36,6 +36,7 @@ export type RouteName =
   | "ssh"
   | "sshTrust"
   | "passwords"
+  | "passwordAccessMode"
   | "oidcCredentials"
   | "signingKeys"
   | "platform"
@@ -76,6 +77,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/ssh": "ssh",
   "/ssh/trust": "sshTrust",
   "/passwords": "passwords",
+  "/passwords/access-mode": "passwordAccessMode",
   "/oidc/credentials": "oidcCredentials",
   "/attestation/signing-keys": "signingKeys",
   "/platform": "platform",
