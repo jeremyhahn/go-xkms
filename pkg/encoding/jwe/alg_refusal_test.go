@@ -15,53 +15,40 @@ package jwe
 
 import (
 	"crypto/rand"
-	"crypto/rsa"
 	"strings"
 	"testing"
 
 	jose "github.com/go-jose/go-jose/v4"
 )
 
-// compactJWE encrypts plaintext with go-jose directly, so the test can use a
-// key algorithm that NewEncrypter would never produce.
-func compactJWE(t *testing.T, alg jose.KeyAlgorithm, key interface{}) string {
-	t.Helper()
-	enc, err := jose.NewEncrypter(jose.A128GCM, jose.Recipient{Algorithm: alg, Key: key}, nil)
-	if err != nil {
-		t.Fatalf("NewEncrypter(%s): %v", alg, err)
-	}
-	obj, err := enc.Encrypt([]byte("refused"))
-	if err != nil {
-		t.Fatalf("Encrypt(%s): %v", alg, err)
-	}
-	s, err := obj.CompactSerialize()
-	if err != nil {
-		t.Fatalf("CompactSerialize(%s): %v", alg, err)
-	}
-	return s
-}
+// Fixed compact JWEs (enc A128GCM, plaintext "refused") whose "alg" is outside
+// Decrypt's key algorithm allow-list. They are constants so the refusal is
+// tested without encrypting under RSA1_5 or PBES2, which GODEBUG=fips140=only
+// refuses before the parser is ever reached.
+const (
+	rsa15JWE = "eyJhbGciOiJSU0ExXzUiLCJlbmMiOiJBMTI4R0NNIn0." +
+		"P4uiPnEDDuGTa7cVcNkrqyHfiGo3guptzNnaP2yDXGphLULWMXlZxvU_wrwFQZOR_yYf33Q1irdqR6IgfuinCgDG9lBjWBwdq7JrinT9tQIZDcLtdxXRBKU-z2mYiRMQz9AUKTYSFOGkkj4n6Stjx5l30DCju4ahR78hHqB5bSNSk8fJbTz2WAAoQUsw_zP1vO3En5aDqONMvNmfdezWLTP-i1MKavZBn1GbF8YaB3y3DLpe_3qJShG6kBh1A0OCvDJtFrJp1KvZsMUGK8b5CQrEw7NSlsKMVB2BPvXMTxMqjuRfcG6bfIfLDUAkeLQgIlV1JtpxFmFYpg1I0Am3WQ." +
+		"4n9e5-v9TWI6B6kB.i0vB18ykgg.1YxbvJtTIAOvkWktJGdqWw"
+	pbes2JWE = "eyJhbGciOiJQQkVTMi1IUzI1NitBMTI4S1ciLCJlbmMiOiJBMTI4R0NNIiwicDJjIjoxMDAwLCJwMnMiOiJ4NkE0Wi10Tlh4TVVkZGpnTUZLSEpBIn0." +
+		"z1FxvbbL5jYss6Y9xD4PEfPi1gLsoTlg.PEyIZc4FFWP7jL4G.T96V4VqAug.vI_W_4-M5UPJQResQfmrGQ"
+)
 
 // TestDecrypt_RefusesAKeyAlgorithmOutsideTheAllowList proves that Decrypt's
 // parse step refuses a well-formed JWE whose "alg" is not in its key
-// algorithm allow-list, even when the caller holds the right key.
+// algorithm allow-list, before any key is used.
 func TestDecrypt_RefusesAKeyAlgorithmOutsideTheAllowList(t *testing.T) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("GenerateKey: %v", err)
-	}
 	password := []byte("correct horse battery staple")
 
 	cases := []struct {
-		name    string
-		jwe     string
-		decrypt interface{}
+		name string
+		jwe  string
 	}{
-		{"RSA1_5", compactJWE(t, jose.RSA1_5, &rsaKey.PublicKey), rsaKey},
-		{"PBES2-HS256+A128KW", compactJWE(t, jose.PBES2_HS256_A128KW, password), password},
+		{"RSA1_5", rsa15JWE},
+		{"PBES2-HS256+A128KW", pbes2JWE},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := NewDecrypter().Decrypt(tc.jwe, tc.decrypt)
+			_, err := NewDecrypter().Decrypt(tc.jwe, password)
 			if err == nil {
 				t.Fatalf("Decrypt accepted a JWE with alg %s", tc.name)
 			}
@@ -76,7 +63,21 @@ func TestDecrypt_RefusesAKeyAlgorithmOutsideTheAllowList(t *testing.T) {
 		if _, err := rand.Read(kek); err != nil {
 			t.Fatalf("rand.Read: %v", err)
 		}
-		got, err := NewDecrypter().Decrypt(compactJWE(t, jose.A128KW, kek), kek)
+		compact, ok := requireJWE(t, func() (string, error) {
+			enc, err := jose.NewEncrypter(jose.A128GCM, jose.Recipient{Algorithm: jose.A128KW, Key: kek}, nil)
+			if err != nil {
+				return "", err
+			}
+			obj, err := enc.Encrypt([]byte("refused"))
+			if err != nil {
+				return "", err
+			}
+			return obj.CompactSerialize()
+		})
+		if !ok {
+			return
+		}
+		got, err := NewDecrypter().Decrypt(compact, kek)
 		if err != nil {
 			t.Fatalf("Decrypt refused an allowed alg: %v", err)
 		}
