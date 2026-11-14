@@ -47,7 +47,9 @@ type PasswordServicer interface {
 }
 
 // passwordCaller returns the tenant scope name and subject a password request
-// is served for, and false when ctx carries no identity.
+// is served for, and false when ctx carries no identity. The subject is
+// auth.PolicySubject's: a passkey caller's vault and entries stay under its
+// handle after go-qrdb binds the request to its account.
 //
 // A system-tenant identity is served from the system tenant's own store,
 // with shared entries and per-user personal entries like any tenant's; only
@@ -58,7 +60,7 @@ func passwordCaller(ctx context.Context) (tenantID, subject string, ok bool) {
 	if identity == nil {
 		return "", "", false
 	}
-	return scope.TenantName(identity.TenantID), identity.Subject, true
+	return scope.TenantName(identity.TenantID), auth.PolicySubject(identity), true
 }
 
 // resolvePasswordStore returns the password store the caller sees: with a
@@ -123,7 +125,7 @@ func (s *XKMSService) checkSharedPasswordOwnership(ctx context.Context, pw *stat
 		return staticpw.ErrNotOwner
 	}
 	// Owner can always modify their own shared passwords.
-	if identity.Subject == pw.OwnerID {
+	if auth.PolicySubject(identity) == pw.OwnerID {
 		return nil
 	}
 	if s.roles == nil {

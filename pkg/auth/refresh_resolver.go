@@ -51,6 +51,28 @@ const (
 	SubjectKindUserHandle = "user_handle"
 )
 
+// PasskeyHandleMetadataKey is the Identity.Metadata key under which the JWT
+// authenticator keeps a passkey token's signed subject, the account's base64
+// WebAuthn handle. go-qrdb's AuthMiddleware binds every request to its
+// account (Identity.BindUser), which rewrites Subject to the account id but
+// leaves Metadata alone, so the handle survives binding here.
+const PasskeyHandleMetadataKey = "passkey_handle"
+
+// PolicySubject returns the principal name persisted references hold for id:
+// the passkey handle when id authenticated with a passkey token, otherwise
+// its Subject. Key-policy principals, key-policy owners and the personal
+// password vault were written under the handle a passkey identity carried
+// before account binding, so they keep resolving after it. A nil id has none.
+func PolicySubject(id *Identity) string {
+	if id == nil {
+		return ""
+	}
+	if handle := id.Metadata[PasskeyHandleMetadataKey]; handle != "" {
+		return handle
+	}
+	return id.Subject
+}
+
 // QRDBUserResolver re-resolves the CURRENT state of the user behind a
 // refresh token at refresh time, straight from the qrdb user client -- the
 // same source MTLSAuthenticator.userIdentity reads for an mTLS login
