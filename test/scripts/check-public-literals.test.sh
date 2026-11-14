@@ -165,6 +165,20 @@ track "$NEWLINE"
 gate "$RULES" "$NEWLINE" >/dev/null
 eq "a match in a file whose name holds a newline fails the gate" "1" "$?"
 
+# --- an invalid UTF-8 byte never hides a match -------------------------------
+# git grep -I picks a file with no NUL, but in a UTF-8 locale GNU grep calls a
+# matched line holding an invalid byte binary and prints no numbered line: the
+# scan must still read it as text and fail.
+section "a match in a file with an invalid UTF-8 byte"
+BADUTF8="$WORK/badutf8"
+mkdir -p "$BADUTF8"
+printf 'first line\nlab address\xff: 198.51.100.11\n' > "$BADUTF8/bad.txt"
+track "$BADUTF8"
+OUT=$(LC_ALL=C.UTF-8 gate "$RULES" "$BADUTF8"); RC=$?
+eq "a match beside an invalid byte fails the gate" "1" "$RC"
+eq "the finding carries path:line" "1" "$(grep -cx 'bad.txt:2' <<<"$OUT")"
+eq "the finding omits the matched text" "0" "$(grep -c 'lab address' <<<"$OUT")"
+
 # --- the rule files must be written, or the gate fails closed --------------------
 # A rule that never reaches its file would be a rule never applied: a clean
 # report on a dirty tree.
