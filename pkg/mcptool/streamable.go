@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"slices"
 	"strings"
@@ -155,7 +156,13 @@ func (s *streamableHTTP) sendRequest(ctx context.Context, request mcptransport.J
 	}
 
 	body := io.LimitReader(resp.Body, maxResponseBytes)
-	mediaType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	// Media types compare case-insensitively and parameters such as
+	// charset do not change them (RFC 9110 section 8.3.1); ParseMediaType
+	// drops the parameters and returns the type in lower case.
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, fmt.Errorf("mcp request %s: parse content type: %w", request.Method, err)
+	}
 	switch mediaType {
 	case contentTypeJSON:
 		var msg wireMessage
