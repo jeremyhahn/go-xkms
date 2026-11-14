@@ -131,54 +131,12 @@ tenants. The dashboard shows whether the deployment is clustered.
 
 | Section | Screen | Route |
 |---|---|---|
-| Overview | Dashboard, Backends | `#/dashboard`, `#/backends` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Seal | `#/keys`, `#/frost`, `#/tpm/policies`, `#/seal` |
-| Keys & Crypto | Keys, Key Versions, FROST, TPM Policies | `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/policies` |
-| Overview | Dashboard, Backends, System Health | `#/dashboard`, `#/backends`, `#/system/health` |
-| Overview | Dashboard, Trust Bundle, Backends | `#/dashboard`, `#/trust/bundle`, `#/backends` |
-| Overview | FROST Signing, Dashboard, Backends | `#/frost/sign`, `#/dashboard`, `#/backends` |
-| Overview | Dashboard, Backends, Backend Diagnostics | `#/dashboard`, `#/backends`, `#/backends/diagnostics` |
-| Keys & Crypto | Keys, FROST, TPM Policies | `#/keys`, `#/frost`, `#/tpm/policies` |
-| Keys & Crypto | Keys, FROST, TPM Key Policy, TPM Policies | `#/keys`, `#/frost`, `#/tpm/key-policy`, `#/tpm/policies` |
-| Keys & Crypto | FROST Key Import, Keys, FROST, TPM Policies | `#/frost/import`, `#/keys`, `#/frost`, `#/tpm/policies` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Key Safety | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/safety` |
-| Keys & Crypto | Keys, FROST, TPM Policies, OTA Image Keys | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/ota` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Random & Hash | `#/keys`, `#/frost`, `#/tpm/policies`, `#/tools/crypto` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Key Access Policy | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/access-policy` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Rotation Policy | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/rotation-policy` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Key Metadata | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/metadata` |
-| Keys & Crypto | Keys, FROST, TPM Policies, HMAC | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/hmac` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Rewrap | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/rewrap` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Data Keys | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/data-keys` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Batch Crypto | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/batch` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Public Keys | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/public-key` |
-| Keys & Crypto | Keys, FROST, TPM Policies, Key Lifecycle | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/lifecycle` |
-| Keys & Crypto | Keys, FROST, TPM Policies, TPM Policy Detail | `#/keys`, `#/frost`, `#/tpm/policies`, `#/tpm/policies/detail` |
-| Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
-| Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Signing Keys, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/attestation/signing-keys`, `#/platform` |
-| Security | PIN, PIV, SSH, SSH Trust, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/ssh/trust`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Security | PIN, PIV, PIV Slots, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/piv/slots`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Security | PIN, PIN Setup, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/pin/setup`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Certificates & CA | Certificates, Import Certificate, Certificate Authority | `#/certs`, `#/certs/import`, `#/ca` |
-| Certificates & CA | Certificates, Certificate Authority, TCG Certificates | `#/certs`, `#/ca`, `#/ca/tcg` |
-| Certificates & CA | Certificate Binding, Certificates, Certificate Authority | `#/users/cert-bindings`, `#/certs`, `#/ca` |
-| Certificates & CA | Certificates, Certificate Authority, Trust Roots | `#/certs`, `#/ca`, `#/trust/roots` |
-| Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Security | PIN, PIV, SSH, Passwords, Password Access Mode, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/passwords/access-mode`, `#/oidc/credentials`, `#/platform` |
-| Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets, Boot Credentials | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform`, `#/credentials/boot` |
-| Security | SSH Key Import, PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/ssh/import`, `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets, Bootstrap Keys | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform`, `#/bootstrap/keys` |
-| Security | PIN, PIV, SSH, SSH Sign, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/ssh/sign`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
-| Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Identity & Access | Users, Tenants, Tenant TPM | `#/users`, `#/tenants`, `#/tenants/tpm` |
-| Identity & Access | Users, Add Passkey, Tenants | `#/users`, `#/account/passkeys`, `#/tenants` |
-| Identity & Access | Tenant Quotas, Users, Tenants | `#/tenants/quotas`, `#/users`, `#/tenants` |
-| Identity & Access | Users, Tenants, Tenant Detail | `#/users`, `#/tenants`, `#/tenants/detail` |
-| Identity & Access | Users, User Detail, Tenants | `#/users`, `#/users/detail`, `#/tenants` |
-| Settings | Settings | `#/settings` |
-| Settings | Secret Names, Settings | `#/platform/secrets`, `#/settings` |
-| Settings | Settings, Tenant Entitlements | `#/settings`, `#/tenants/entitlements` |
+| Overview | FROST Signing, Dashboard, Trust Bundle, Backends, System Health, Backend Diagnostics | `#/frost/sign`, `#/dashboard`, `#/trust/bundle`, `#/backends`, `#/system/health`, `#/backends/diagnostics` |
+| Keys & Crypto | FROST Key Import, Keys, Key Versions, FROST, TPM Key Policy, TPM Policies, Seal, Key Safety, OTA Image Keys, Random & Hash, Key Access Policy, Rotation Policy, Key Metadata, HMAC, Rewrap, Data Keys, Batch Crypto, Public Keys, Key Lifecycle, TPM Policy Detail | `#/frost/import`, `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/key-policy`, `#/tpm/policies`, `#/seal`, `#/keys/safety`, `#/keys/ota`, `#/tools/crypto`, `#/keys/access-policy`, `#/keys/rotation-policy`, `#/keys/metadata`, `#/keys/hmac`, `#/keys/rewrap`, `#/keys/data-keys`, `#/keys/batch`, `#/keys/public-key`, `#/keys/lifecycle`, `#/tpm/policies/detail` |
+| Certificates & CA | Certificate Binding, Certificates, Import Certificate, Certificate Authority, TCG Certificates, Trust Roots | `#/users/cert-bindings`, `#/certs`, `#/certs/import`, `#/ca`, `#/ca/tcg`, `#/trust/roots` |
+| Security | SSH Key Import, PIN, PIN Setup, PIV, PIV Slots, SSH, SSH Trust, SSH Sign, Passwords, Password Access Mode, OIDC Credentials, Signing Keys, Platform Secrets, Boot Credentials, Bootstrap Keys | `#/ssh/import`, `#/pin`, `#/pin/setup`, `#/piv`, `#/piv/slots`, `#/ssh`, `#/ssh/trust`, `#/ssh/sign`, `#/passwords`, `#/passwords/access-mode`, `#/oidc/credentials`, `#/attestation/signing-keys`, `#/platform`, `#/credentials/boot`, `#/bootstrap/keys` |
+| Identity & Access | Tenant Quotas, Users, Add Passkey, User Detail, Tenants, Tenant TPM, Tenant Detail | `#/tenants/quotas`, `#/users`, `#/account/passkeys`, `#/users/detail`, `#/tenants`, `#/tenants/tpm`, `#/tenants/detail` |
+| Settings | Secret Names, Settings, Tenant Entitlements | `#/platform/secrets`, `#/settings`, `#/tenants/entitlements` |
 
 Every nav entry is gated twice: an RBAC gate hides an entry the identity
 has no permission for, and a capability gate hides one the deployment never
