@@ -51,3 +51,5 @@ Lane stpmpc, module setup as CI (DS-7500):
 - `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/api/grpc/... ./pkg/tpm2/policy/...`: pass.
 - `make lint`: pass (0 issues on every module and tag set).
 - No Reference was dropped on either path; no fix commit was needed.
+- The policy-level Match is false while one branch ("next") mismatches: it is
+  the AND of the branches.
