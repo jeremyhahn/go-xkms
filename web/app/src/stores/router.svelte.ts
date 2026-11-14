@@ -67,6 +67,7 @@ export type RouteName =
   | "keyHmac"
   | "bootstrapKeys"
   | "keyRewrap"
+  | "wrappedDataKey"
   | "settings"
   | "frostKeyImport"
   | "not-found";
@@ -131,6 +132,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/keys/hmac": "keyHmac",
   "/bootstrap/keys": "bootstrapKeys",
   "/keys/rewrap": "keyRewrap",
+  "/keys/data-keys": "wrappedDataKey",
   "/settings": "settings",
   "/platform/secrets": "platformSecretNames",
 };
