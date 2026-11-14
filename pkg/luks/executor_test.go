@@ -82,8 +82,8 @@ func stubLoopSeams(t *testing.T) *fakeLoop {
 	dev := &fakeLoop{}
 	setupLoopDevice = func(context.Context, string) (loopDevice, error) { return dev, nil }
 	findLoopDeviceFn = func(context.Context, string) (loopDevice, error) { return dev, nil }
-	formatLUKS = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
-	unlockLUKS = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+	formatLUKS = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error { return nil }
+	unlockLUKS = func(_ context.Context, _ string, _ enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 		return &dmcrypt.Mapping{Name: name}, nil
 	}
 	lockLUKS = func(context.Context, string) error { return nil }
@@ -237,7 +237,7 @@ func TestLibExecutor_Create_SetupLoopDeviceFails(t *testing.T) {
 func TestLibExecutor_Create_FormatFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
 	dev := stubLoopSeams(t)
-	formatLUKS = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
+	formatLUKS = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error {
 		return errors.New("format rejected")
 	}
 
@@ -261,7 +261,7 @@ func TestLibExecutor_Create_FormatFails_JoinsCleanupError(t *testing.T) {
 
 	detachErr := errors.New("detach failed")
 	dev.err = detachErr
-	formatLUKS = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
+	formatLUKS = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error {
 		return errors.New("format rejected")
 	}
 
@@ -277,7 +277,7 @@ func TestLibExecutor_Create_FormatFails_JoinsCleanupError(t *testing.T) {
 func TestLibExecutor_Create_UnlockFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
 	dev := stubLoopSeams(t)
-	unlockLUKS = func(context.Context, string, *enclave.MemoryEnclave, string) (*dmcrypt.Mapping, error) {
+	unlockLUKS = func(context.Context, string, enclave.ByteAccess, string) (*dmcrypt.Mapping, error) {
 		return nil, errors.New("wrong key")
 	}
 
@@ -366,7 +366,7 @@ func TestLibExecutor_Create_Success(t *testing.T) {
 
 	var formatDevice string
 	var params luks2.FormatParams
-	formatLUKS = func(_ context.Context, device string, pass *enclave.MemoryEnclave, p luks2.FormatParams) error {
+	formatLUKS = func(_ context.Context, device string, pass enclave.ByteAccess, p luks2.FormatParams) error {
 		formatDevice, params = device, p
 		return pass.WithBytes(func(b []byte) error {
 			assert.Equal(t, "passphrase", string(b))
@@ -374,7 +374,7 @@ func TestLibExecutor_Create_Success(t *testing.T) {
 		})
 	}
 	var unlockDevice string
-	unlockLUKS = func(_ context.Context, device string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+	unlockLUKS = func(_ context.Context, device string, _ enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 		unlockDevice = device
 		return &dmcrypt.Mapping{Name: name}, nil
 	}
@@ -485,7 +485,7 @@ func TestLibExecutor_Unlock_SetupLoopDeviceFails(t *testing.T) {
 func TestLibExecutor_Unlock_UnlockFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
 	dev := stubLoopSeams(t)
-	unlockLUKS = func(context.Context, string, *enclave.MemoryEnclave, string) (*dmcrypt.Mapping, error) {
+	unlockLUKS = func(context.Context, string, enclave.ByteAccess, string) (*dmcrypt.Mapping, error) {
 		return nil, errors.New("wrong passphrase")
 	}
 
@@ -507,7 +507,7 @@ func TestLibExecutor_Unlock_Success(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
 	dev := stubLoopSeams(t)
 	var unlockDevice, unlockName string
-	unlockLUKS = func(_ context.Context, device string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+	unlockLUKS = func(_ context.Context, device string, _ enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 		unlockDevice, unlockName = device, name
 		return &dmcrypt.Mapping{Name: name}, nil
 	}

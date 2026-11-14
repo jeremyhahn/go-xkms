@@ -155,7 +155,7 @@ func writeP256KeyFile(outputFile string, key *bootstrap.P256StaticKey) (err erro
 // keyAllocator returns the process allocator that key-material enclaves are
 // admitted through. Every library in the process shares it, so together they
 // stay within the one RLIMIT_MEMLOCK ceiling.
-func keyAllocator() (*enclave.Allocator, error) {
+func keyAllocator() (enclave.Allocator, error) {
 	alloc, err := enclave.ProcessAllocator()
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrProtectedKeyBufferFailed, Err: err}
@@ -165,7 +165,7 @@ func keyAllocator() (*enclave.Allocator, error) {
 
 // destroyKeyEnclave wipes and releases buf. A failure means key material may
 // still be resident, so it is returned rather than discarded.
-func destroyKeyEnclave(buf *enclave.MemoryEnclave) error {
+func destroyKeyEnclave(buf enclave.ByteAccess) error {
 	if err := buf.Destroy(); err != nil {
 		return &WrappedError{Sentinel: ErrProtectedKeyBufferFailed, Err: err}
 	}

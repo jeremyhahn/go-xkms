@@ -305,7 +305,7 @@ type memoryStorage struct {
 // backend such as:
 //   - Database (PostgreSQL, SQLite)
 //   - Key-value store (etcd, Consul)
-//   - A go-qrdb storage engine (qrdbsdk.Storage)
+//   - A go-qrdb storage engine (qrdbstorage.Storage)
 func NewMemoryStorage() Storage {
 	return &memoryStorage{
 		serials: make(map[string]bool),

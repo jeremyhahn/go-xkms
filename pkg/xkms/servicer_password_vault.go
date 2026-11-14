@@ -166,7 +166,11 @@ func (s *XKMSService) PasswordVaultEnroll(ctx context.Context, req *transport.Pa
 	if err != nil {
 		return nil, err
 	}
-	defer cred.Secret.Destroy()
+	defer func() {
+		if cred.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			cred.Secret.Destroy()
+		}
+	}()
 	res, err := manager.EnrollFactor(ctx, tenantID, subject, cred)
 	if err != nil {
 		return nil, err
@@ -189,7 +193,11 @@ func (s *XKMSService) PasswordVaultRotate(ctx context.Context, req *transport.Pa
 	if err != nil {
 		return nil, err
 	}
-	defer cred.Secret.Destroy()
+	defer func() {
+		if cred.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			cred.Secret.Destroy()
+		}
+	}()
 	res, err := manager.RotateFactor(ctx, tenantID, subject, req.FactorID, cred)
 	if err != nil {
 		return nil, err
@@ -226,7 +234,11 @@ func (s *XKMSService) PasswordVaultRecover(ctx context.Context, req *transport.P
 	if err != nil {
 		return nil, err
 	}
-	defer cred.Secret.Destroy()
+	defer func() {
+		if cred.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			cred.Secret.Destroy()
+		}
+	}()
 	code := []byte(req.RecoveryCode)
 	defer clear(code)
 	res, err := manager.RecoverVault(ctx, tenantID, subject, code, cred)

@@ -182,8 +182,10 @@ func (d *Daemon) resolveUnlockPrompt(info *PromptInfo) *dbus.Error {
 	}
 
 	unsealErr := d.barrier.Unseal(d.ctx, creds)
-	if destroyErr := creds.Secret.Destroy(); destroyErr != nil {
-		d.logger.Warn("failed to wipe unlock credentials", slog.String("error", destroyErr.Error()))
+	if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+		if destroyErr := creds.Secret.Destroy(); destroyErr != nil {
+			d.logger.Warn("failed to wipe unlock credentials", slog.String("error", destroyErr.Error()))
+		}
 	}
 	if unsealErr != nil {
 		auditErr := d.logSecretServiceEvent(audit.OpSecretServiceUnlock, false, unsealErr, nil)

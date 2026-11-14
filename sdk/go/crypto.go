@@ -28,14 +28,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
-// Shamir secret sharing types and functions re-exported via go-qrdb/sdk/go.
-// These allow SDK consumers to split and reconstruct secrets without importing
-// the internal shamir package directly.
-type (
-	// ShamirShare represents a single share in a Shamir secret sharing scheme.
-	ShamirShare = qrdbsdk.ShamirShare
-)
-
 // Shamir secret sharing functions.
 var (
 	// ShamirVerifyShare checks if a share is valid and consistent with other shares.

@@ -331,7 +331,7 @@ func TestPartitionAndFormat_LUKSFormatFails(t *testing.T) {
 	defer restore()
 	mockAllCommandsSuccess(t)
 
-	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
+	luksFormat = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error {
 		return errors.New("luks format failed")
 	}
 
@@ -535,8 +535,8 @@ func TestFormatLUKS_Success(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
-	luksUnlock = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+	luksFormat = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error { return nil }
+	luksUnlock = func(_ context.Context, _ string, _ enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 		return &dmcrypt.Mapping{Name: name}, nil
 	}
 	luksMakeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error { return nil }
@@ -551,7 +551,7 @@ func TestFormatLUKS_FormatFails(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
+	luksFormat = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error {
 		return errors.New("format failed")
 	}
 
@@ -569,8 +569,8 @@ func TestFormatLUKS_UnlockFails(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
-	luksUnlock = func(context.Context, string, *enclave.MemoryEnclave, string) (*dmcrypt.Mapping, error) {
+	luksFormat = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error { return nil }
+	luksUnlock = func(context.Context, string, enclave.ByteAccess, string) (*dmcrypt.Mapping, error) {
 		return nil, errors.New("unlock failed")
 	}
 
@@ -599,7 +599,7 @@ func TestCreateImage_KeyringUnavailable(t *testing.T) {
 		return nil
 	}
 	formatCalled := false
-	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error {
+	luksFormat = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error {
 		formatCalled = true
 		return nil
 	}
@@ -631,8 +631,8 @@ func TestFormatLUKS_MakeFilesystemFails(t *testing.T) {
 	defer restore()
 
 	lockCalled := false
-	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
-	luksUnlock = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+	luksFormat = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error { return nil }
+	luksUnlock = func(_ context.Context, _ string, _ enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 		return &dmcrypt.Mapping{Name: name}, nil
 	}
 	luksMakeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error {
@@ -658,8 +658,8 @@ func TestFormatLUKS_LockFails(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
-	luksFormat = func(context.Context, string, *enclave.MemoryEnclave, luks2.FormatParams) error { return nil }
-	luksUnlock = func(_ context.Context, _ string, _ *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+	luksFormat = func(context.Context, string, enclave.ByteAccess, luks2.FormatParams) error { return nil }
+	luksUnlock = func(_ context.Context, _ string, _ enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 		return &dmcrypt.Mapping{Name: name}, nil
 	}
 	luksMakeFilesystem = func(context.Context, string, filesystem.Type, filesystem.MakeParams) error { return nil }
@@ -1649,12 +1649,12 @@ func TestFormatLUKS_PassphraseForwarded(t *testing.T) {
 	// hooks compare its contents while they hold it.
 	want := []byte("my-secret-passphrase")
 	var formatMatched, unlockMatched bool
-	luksFormat = func(_ context.Context, _ string, pass *enclave.MemoryEnclave, _ luks2.FormatParams) error {
+	luksFormat = func(_ context.Context, _ string, pass enclave.ByteAccess, _ luks2.FormatParams) error {
 		var err error
 		formatMatched, err = pass.EqualTo(want)
 		return err
 	}
-	luksUnlock = func(_ context.Context, _ string, pass *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+	luksUnlock = func(_ context.Context, _ string, pass enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 		var err error
 		unlockMatched, err = pass.EqualTo(want)
 		if err != nil {

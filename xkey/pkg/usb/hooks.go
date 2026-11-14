@@ -103,7 +103,7 @@ func detachLoopDevice(ctx context.Context, path string) error {
 }
 
 // formatVolume writes a new LUKS2 header to device, protected by pass.
-func formatVolume(ctx context.Context, device string, pass *enclave.MemoryEnclave, params luks2.FormatParams) error {
+func formatVolume(ctx context.Context, device string, pass enclave.ByteAccess, params luks2.FormatParams) error {
 	volume, err := luks2.Open(ctx, device)
 	if err != nil {
 		return err
@@ -115,7 +115,7 @@ func formatVolume(ctx context.Context, device string, pass *enclave.MemoryEnclav
 // it under name. The volume key never leaves go-luks2: it is destroyed as
 // soon as the mapping exists, and a mapping whose volume could not be
 // released is torn down again rather than reported half-done.
-func activateVolume(ctx context.Context, device string, pass *enclave.MemoryEnclave, name string) (*dmcrypt.Mapping, error) {
+func activateVolume(ctx context.Context, device string, pass enclave.ByteAccess, name string) (*dmcrypt.Mapping, error) {
 	volume, err := luks2.Open(ctx, device)
 	if err != nil {
 		return nil, err

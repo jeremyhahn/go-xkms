@@ -584,7 +584,7 @@ func TestBarrierService_Unseal_TransparentInitWhenNoRootKey(t *testing.T) {
 func TestBarrierService_ChangePassword_Success(t *testing.T) {
 	svc := newTestBarrierService(t)
 	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
-	require.NoError(t, svc.ChangePassword("newpass"))
+	require.NoError(t, svc.ChangePassword("oldpass", "newpass"))
 }
 
 func TestBarrierService_Unseal_EmptyPassword_RejectedNotWrongPassword(t *testing.T) {
@@ -608,7 +608,7 @@ func TestBarrierService_Unseal_EmptyPassword_RejectedNotWrongPassword(t *testing
 
 func TestBarrierService_ChangePassword_NotInitialized(t *testing.T) {
 	svc := newTestBarrierService(t)
-	err := svc.ChangePassword("newpass")
+	err := svc.ChangePassword("oldpass", "newpass")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBarrierNotInitialized)
 }
@@ -616,7 +616,7 @@ func TestBarrierService_ChangePassword_NotInitialized(t *testing.T) {
 func TestBarrierService_ChangePassword_RoundTrip(t *testing.T) {
 	svc := newTestBarrierService(t)
 	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
-	require.NoError(t, svc.ChangePassword("newpass"))
+	require.NoError(t, svc.ChangePassword("oldpass", "newpass"))
 	require.NoError(t, svc.Seal())
 
 	// Must unseal from scratch - new BarrierService uses same configDir
@@ -624,4 +624,19 @@ func TestBarrierService_ChangePassword_RoundTrip(t *testing.T) {
 	err := svc2.Unseal("newpass", "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc2.IsUnsealed())
+}
+
+func TestBarrierService_ChangePassword_HardwareStrategyEmptyPasswords(t *testing.T) {
+	// A hardware strategy takes no passphrase: both passwords are empty, so
+	// CredentialsFor yields the zero Credentials with a nil Secret. The
+	// deferred destroys must skip a nil Secret rather than panic.
+	svc := NewBarrierService(t.TempDir(), slog.Default())
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
+		return &mockSealer{canSeal: true}
+	})
+	require.NoError(t, svc.Initialize("", string(xkms.StrategyTPM2)))
+	// ChangePassword is a no-op for a hardware strategy (see its doc comment).
+	require.NotPanics(t, func() {
+		require.NoError(t, svc.ChangePassword("", ""))
+	})
 }

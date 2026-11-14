@@ -39,7 +39,7 @@ func TestPermissionScopeResolverReadsDeclaredScopes(t *testing.T) {
 	}{
 		{"self-scoped built-in", qrdbsdk.Permission("keys:get"), qrdbsdk.PermissionScopeSelf},
 		{"tenant-only built-in", qrdbsdk.Permission("tenant_barrier:init"), qrdbsdk.PermissionScopeTenantOnly},
-		{"cross-scoped built-in", qrdbsdk.Permission("credentials:submit"), qrdbsdk.PermissionScopeCross},
+		{"cross-scoped built-in", qrdbsdk.Permission("tenants:list:cross"), qrdbsdk.PermissionScopeCross},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

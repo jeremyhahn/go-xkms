@@ -19,6 +19,7 @@ import (
 	"slices"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 )
 
 // AdminModuleName is the unique ServiceModule name go-xkms's ACME admin
@@ -109,7 +110,7 @@ func WithAdminWebUI(uiPrefix string, fsys fs.FS, redirectRoot bool) AdminModuleO
 // be registered on xkmsd's separate public ACME protocol listener
 // (cmd/xkmsd/acme.go), which serves only RFC 8555 traffic.
 type AdminModule struct {
-	qrdbsdk.BaseModule
+	qrdbserver.BaseModule
 
 	resolveRouter AdminRouterResolver
 	routes        []AdminRoute
@@ -158,7 +159,7 @@ func (m *AdminModule) Name() string { return AdminModuleName }
 // unified server authorizes every request before the resolved router serves
 // it, and, when WithAdminWebUI configured one, the public admin SPA under its
 // own prefix.
-func (m *AdminModule) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
+func (m *AdminModule) RegisterHTTP(r *qrdbserver.ModuleHTTPRegistrar) {
 	h := m.lazyAPIHandler()
 	for _, rt := range m.routes {
 		r.Handle(rt.Method, rt.Path, rt.mountPermission(), h)

@@ -8,7 +8,7 @@ import {context} from '../models';
 
 export function BestStrategy():Promise<services.BarrierStrategyInfo>;
 
-export function ChangePassword(arg1:string):Promise<void>;
+export function ChangePassword(arg1:string,arg2:string):Promise<void>;
 
 export function GetBackend():Promise<storage.Backend>;
 

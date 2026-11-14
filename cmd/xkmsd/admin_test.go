@@ -23,11 +23,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 )
 
-// capturedModuleRoute records one qrdbsdk.ModuleHTTPRegistrar registration,
+// capturedModuleRoute records one qrdbserver.ModuleHTTPRegistrar registration,
 // mirroring pkg/apimodule's own test helper (unexported there, so cmd/xkmsd
 // keeps a small copy rather than reaching into another package's test file).
 type capturedModuleRoute struct {
@@ -37,9 +38,9 @@ type capturedModuleRoute struct {
 	handler         http.HandlerFunc
 }
 
-func newCaptureModuleRegistrar() (*qrdbsdk.ModuleHTTPRegistrar, *[]capturedModuleRoute) {
+func newCaptureModuleRegistrar() (*qrdbserver.ModuleHTTPRegistrar, *[]capturedModuleRoute) {
 	var recs []capturedModuleRoute
-	r := qrdbsdk.NewModuleHTTPRegistrar(chi.NewRouter(),
+	r := qrdbserver.NewModuleHTTPRegistrar(chi.NewRouter(),
 		func(method, pattern string, perm qrdbsdk.Permission, h http.HandlerFunc) {
 			recs = append(recs, capturedModuleRoute{method: method, pattern: pattern, perm: perm, handler: h})
 		},
@@ -97,7 +98,7 @@ func TestAdminModule_LazyResolverBranches(t *testing.T) {
 // route, under that route's own permission and never public, plus the SPA
 // prefix (adminUIPrefix), when mounted on the unified server's module
 // registrar — the same registrar pkg/server/qrdb_node.go feeds every
-// registered qrdbsdk.WithModule module, including this one via
+// registered qrdbserver.WithModule module, including this one via
 // server.WithExtraModules.
 func TestAdminModule_ReachableOnUnifiedListener(t *testing.T) {
 	m, err := newAdminModule()

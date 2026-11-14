@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,7 +43,7 @@ import (
 func setupCAWithIntermediateAndObjectStore(t *testing.T) *CA {
 	t.Helper()
 	ca := setupTestCAWithRealIntermediate(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 	return ca
 }
 

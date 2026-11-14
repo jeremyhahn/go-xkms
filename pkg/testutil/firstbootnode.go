@@ -22,6 +22,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 )
 
 // ErrFirstBootServicesUnavailable is returned by NewFirstBootNode when the
@@ -49,7 +50,7 @@ type FirstBootNode struct {
 // t.Cleanup. opts reach the node as its server options, so a test can inject
 // the same seams production wires (an audit sink, for one). It never touches
 // the host outside t.TempDir.
-func NewFirstBootNode(t testing.TB, opts ...qrdbsdk.ServerOption) (*FirstBootNode, error) {
+func NewFirstBootNode(t testing.TB, opts ...qrdbserver.ServerOption) (*FirstBootNode, error) {
 	t.Helper()
 	ctx := context.Background()
 

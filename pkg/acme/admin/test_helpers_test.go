@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
@@ -198,7 +199,7 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 		BackendForStore: singleBackendFactory(keyStore),
 		RevocationStore: xkmsstorage.NewMemory(),
 		CertStore:       certStore,
-		ObjectStore:     qrdbsdk.NewMemoryStorage(),
+		ObjectStore:     qrdbstorage.NewMemoryStorage(),
 	})
 	require.NoError(t, err)
 	testCA, ok := intermediate.(ca.TCGCA)
