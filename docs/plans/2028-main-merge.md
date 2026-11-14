@@ -11,3 +11,4 @@
 - cf2028b check-public-literals.test.sh: 48 passed, 0 failed.
 - cf2028b buildgates (codec tags): ok.
 - cf2028b make lint: pass, 0 issues.
+- Superseded by docs/plans/11.md slice 2 (Codex P1 on a77f8f575): the in-house default kept by cf2028b and the ${GITEA_HOST:+...} compose fallback are removed; GOPRIVATE is the caller's in every credential branch.

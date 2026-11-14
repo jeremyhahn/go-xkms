@@ -284,18 +284,16 @@ GITEA_INSTEADOF_KEY = url.http://x:$(FORGE_MODULE_TOKEN)@$(GITEA_HOST)/jeremyhah
 # the file is LOADED, so it fails a public checkout before any service starts,
 # which is the opposite of the public-resolution path this exists to provide.
 #
-# GOPRIVATE is the caller's when it is set. With a credential source and no
-# caller GOPRIVATE, it defaults to github.com/jeremyhahn/* as on main, which the
-# compose files read through GOMODAUTH_GOPRIVATE (#2057). With no credentials it
-# is only the caller's, so a public checkout adds no in-house name (DS-7983).
-GOMODAUTH_GOPRIVATE_DEFAULT := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
+# GOPRIVATE is always the caller's, in every branch: a credential source never
+# adds an in-house default, so first-party modules resolve through the public
+# proxy and checksum database unless the caller opts out (DS-7983).
 ifneq ($(GIT_CONFIG_KEY_0),)
-GOMODAUTH_GOPRIVATE := $(GOMODAUTH_GOPRIVATE_DEFAULT)
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
 else ifneq ($(and $(FORGE_MODULE_TOKEN),$(GITEA_HOST)),)
-GOMODAUTH_GOPRIVATE := $(GOMODAUTH_GOPRIVATE_DEFAULT)
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GITEA_INSTEADOF_KEY)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := https://github.com/jeremyhahn/
