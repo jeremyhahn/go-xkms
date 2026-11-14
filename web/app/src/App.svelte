@@ -8,6 +8,7 @@
   import PlaceholderView from "$components/PlaceholderView.svelte";
   import TenantEntitlementsView from "$views/TenantEntitlementsView.svelte";
   import LoginView from "$views/LoginView.svelte";
+  import UserCertBindingView from "$views/UserCertBindingView.svelte";
   import RegisterView from "$views/RegisterView.svelte";
   import PlatformSecretNamesView from "$views/PlatformSecretNamesView.svelte";
   import DashboardView from "$views/DashboardView.svelte";
@@ -87,6 +88,7 @@
     {:else if routerStore.name === "piv"}
       <PivView />
     {:else if routerStore.name === "pivSlots"}<PivSlotsView />
+    {:else if routerStore.name === "userCertBinding"}<UserCertBindingView />
     {:else if routerStore.name === "ssh"}
       <SshView />
     {:else if routerStore.name === "sshTrust"}<SshTrustView />
