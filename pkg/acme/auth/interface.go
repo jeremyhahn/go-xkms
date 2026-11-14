@@ -20,17 +20,16 @@ import (
 
 // TokenClaims represents the claims extracted from a validated authentication token.
 type TokenClaims struct {
-	UserID      string    `json:"user_id"`
-	Username    string    `json:"username"`
-	Email       string    `json:"email"`
-	TenantID    string    `json:"tenant_id"`
-	Roles       []string  `json:"roles"`
-	Groups      []string  `json:"groups"`
-	Permissions []string  `json:"permissions"`
-	SessionID   string    `json:"session_id"`
-	IssuedAt    time.Time `json:"issued_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	Valid       bool      `json:"valid"`
+	UserID    string    `json:"user_id"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	TenantID  string    `json:"tenant_id"`
+	Roles     []string  `json:"roles"`
+	Groups    []string  `json:"groups"`
+	SessionID string    `json:"session_id"`
+	IssuedAt  time.Time `json:"issued_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Valid     bool      `json:"valid"`
 }
 
 // Client defines the interface for authentication operations.

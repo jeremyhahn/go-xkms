@@ -481,8 +481,11 @@ func TestPINProtocolV1_Decapsulate_InvalidPadding(t *testing.T) {
 		t.Fatalf("Encapsulate failed: %v", err)
 	}
 
-	// Corrupt the last byte of ciphertext to cause padding error
-	ciphertext[len(ciphertext)-1] ^= 0xFF
+	// In CBC, flipping bits in the second-to-last ciphertext block flips the
+	// same bits of the last plaintext block. XOR its last byte with the pad
+	// byte so the decrypted pad byte becomes 0, which is always invalid.
+	padByte := byte(aesBlockSize - len(plaintext)%aesBlockSize)
+	ciphertext[len(ciphertext)-aesBlockSize-1] ^= padByte
 
 	_, err = authenticator.Decapsulate(ciphertext)
 	if err != ErrInvalidPKCS7Padding {
