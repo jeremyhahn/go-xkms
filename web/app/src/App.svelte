@@ -3,6 +3,7 @@
   import { routerStore, navigateTo } from "$stores/router.svelte.ts";
   import { sessionStore, loadSession } from "$stores/session.svelte.ts";
   import AppShell from "$components/AppShell.svelte";
+  import FrostSigningView from "$views/FrostSigningView.svelte";
   import ToastContainer from "$components/ToastContainer.svelte";
   import PlaceholderView from "$components/PlaceholderView.svelte";
   import TenantEntitlementsView from "$views/TenantEntitlementsView.svelte";
@@ -73,6 +74,7 @@
     {:else if routerStore.name === "keys"}
       <KeysView />
     {:else if routerStore.name === "keyVersions"}<KeyVersionsView />
+    {:else if routerStore.name === "frostSigning"}<FrostSigningView />
     {:else if routerStore.name === "certificates"}
       <CertificatesView />
     {:else if routerStore.name === "certImport"}<CertImportView />
