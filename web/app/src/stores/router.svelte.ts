@@ -65,6 +65,7 @@ export type RouteName =
   | "keyMetadata"
   | "backendDiagnostics"
   | "keyHmac"
+  | "bootstrapKeys"
   | "settings"
   | "frostKeyImport"
   | "not-found";
@@ -127,6 +128,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/keys/metadata": "keyMetadata",
   "/backends/diagnostics": "backendDiagnostics",
   "/keys/hmac": "keyHmac",
+  "/bootstrap/keys": "bootstrapKeys",
   "/settings": "settings",
   "/platform/secrets": "platformSecretNames",
 };

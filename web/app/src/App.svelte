@@ -28,6 +28,7 @@
   import KeyMetadataView from "$views/KeyMetadataView.svelte";
   import BackendDiagnosticsView from "$views/BackendDiagnosticsView.svelte";
   import KeyHmacView from "$views/KeyHmacView.svelte";
+  import BootstrapKeysView from "$views/BootstrapKeysView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
   import CertImportView from "$views/CertImportView.svelte";
   import PinView from "$views/PinView.svelte";
@@ -121,6 +122,7 @@
     {:else if routerStore.name === "keyMetadata"}<KeyMetadataView />
     {:else if routerStore.name === "backendDiagnostics"}<BackendDiagnosticsView />
     {:else if routerStore.name === "keyHmac"}<KeyHmacView />
+    {:else if routerStore.name === "bootstrapKeys"}<BootstrapKeysView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
     {:else if routerStore.name === "tenantTpm"}<TenantTpmView />

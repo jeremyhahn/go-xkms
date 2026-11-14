@@ -92,6 +92,7 @@ export const navSections: NavSection[] = [
       { route: "signingKeys", path: "/attestation/signing-keys", label: "Signing Keys", icon: "KeyRound", requires: { resource: "attestation_signing_keys", action: "list" } },
       { route: "platform", path: "/platform", label: "Platform Secrets", icon: "FolderLock", capability: "platform" },
       { route: "bootCredentials", path: "/credentials/boot", label: "Boot Credentials", icon: "KeyRound", requires: { resource: "credentials", action: "strategy" } },
+      { route: "bootstrapKeys", path: "/bootstrap/keys", label: "Bootstrap Keys", icon: "Network", requires: { resource: "bootstrap", action: "read" } },
     ],
   },
   {
