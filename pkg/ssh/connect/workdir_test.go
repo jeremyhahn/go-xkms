@@ -120,7 +120,13 @@ func shortTempDir(t *testing.T) string {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	return dir
+	// On macOS /tmp is a symlink to /private/tmp; isPrivateDir refuses a
+	// path through a symlink, so hand back the resolved path.
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("resolve short dir: %v", err)
+	}
+	return resolved
 }
 
 func TestDefaultWorkDirBase_RefusesASymlinkedXDGRuntimeDir(t *testing.T) {
