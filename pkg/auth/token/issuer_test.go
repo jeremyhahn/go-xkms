@@ -356,43 +356,6 @@ func TestMemoryRefreshStore_Lifecycle(t *testing.T) {
 	assert.Nil(t, got)
 }
 
-func TestMemoryRefreshStore_ErrorPaths(t *testing.T) {
-	store := NewMemoryRefreshStore()
-	ctx := context.Background()
-
-	var nilErr *NilInputError
-	assert.ErrorAs(t, store.Save(ctx, nil), &nilErr)
-
-	// Missing records are nil, not errors (fail closed = treated as revoked).
-	got, err := store.Get(ctx, "no-such-family", "no-such-jti")
-	require.NoError(t, err)
-	assert.Nil(t, got)
-
-	// Rotating what is not there must fail closed. Reporting success would let
-	// a refresh mint a successor against a record the store never had.
-	var revoked *RefreshRevokedError
-	assert.ErrorAs(t, store.MarkRotated(ctx, "no-such-family", "no-such-jti"), &revoked)
-
-	// Revoking the non-existent stays a no-op: logout is idempotent.
-	assert.NoError(t, store.RevokeFamily(ctx, "no-such-family"))
-}
-
-func TestMemoryRefreshStore_ExpiryIsRevocation(t *testing.T) {
-	store := NewMemoryRefreshStore()
-	ctx := context.Background()
-
-	require.NoError(t, store.Save(ctx, &Record{
-		JTI:       "jti-old",
-		Family:    "fam-old",
-		Subject:   "user-123",
-		ExpiresAt: time.Now().Add(-time.Minute).Unix(),
-	}))
-
-	got, err := store.Get(ctx, "fam-old", "jti-old")
-	require.NoError(t, err)
-	assert.Nil(t, got, "expired records must read as absent")
-}
-
 // TestMint_CarriesAttestLevelClaimAndRefreshPreservesIt proves the PIV
 // login's attestation level rides on both tokens and survives a rotation, so
 // an unattested login stays representable for the token's whole lineage; a

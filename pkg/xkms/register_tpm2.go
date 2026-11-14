@@ -74,5 +74,5 @@ func newTPM2KeyProvider(config map[string]interface{}) (types.KeyProvider, error
 		tpmConfig.SimulatorPort = port
 	}
 
-	return tpm2backend.NewBackend(tpmConfig)
+	return keyProvider(tpm2backend.NewBackend(tpmConfig))
 }

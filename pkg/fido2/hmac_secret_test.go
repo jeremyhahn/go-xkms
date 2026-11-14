@@ -38,29 +38,6 @@ func TestNewHMACSecretExtension(t *testing.T) {
 	assert.NotNil(t, hmacExt)
 }
 
-func TestNewHMACSecretExtension_NotSupported(t *testing.T) {
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	config := DefaultConfig
-
-	ctapDev, err := NewCTAPHIDDevice(mockDev, &config)
-	require.NoError(t, err)
-	defer func() { _ = ctapDev.Close() }()
-
-	// Create auth without getting info (so no extensions)
-	auth := &Authenticator{
-		device: ctapDev,
-		config: &config,
-		info: &DeviceInfo{
-			Extensions: []string{}, // No hmac-secret
-		},
-	}
-
-	hmacExt, err := NewHMACSecretExtension(auth)
-	assert.Error(t, err)
-	assert.Nil(t, hmacExt)
-	assert.ErrorIs(t, err, ErrUnsupportedExtension)
-}
-
 func TestHMACSecretExtension_EnrollCredential(t *testing.T) {
 	mockDev := NewMockHIDDevice("/dev/hidraw0")
 	config := DefaultConfig
@@ -233,52 +210,6 @@ func TestGenerateDerivedKey_Uniqueness(t *testing.T) {
 	assert.NotEqual(t, key1, key2, "different secrets should produce different keys")
 }
 
-func TestVerifyHMACSecret(t *testing.T) {
-	tests := []struct {
-		name        string
-		secret      []byte
-		expectError bool
-	}{
-		{
-			name:        "valid 32-byte secret",
-			secret:      make([]byte, 32),
-			expectError: false,
-		},
-		{
-			name:        "valid 64-byte secret",
-			secret:      make([]byte, 64),
-			expectError: false,
-		},
-		{
-			name:        "invalid length",
-			secret:      make([]byte, 16),
-			expectError: true,
-		},
-		{
-			name:        "empty secret",
-			secret:      []byte{},
-			expectError: true,
-		},
-		{
-			name:        "nil secret",
-			secret:      nil,
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := VerifyHMACSecret(tt.secret)
-
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestParseAuthDataExtensions(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -424,32 +355,6 @@ func TestHMACSecretExtension_FullFlow(t *testing.T) {
 	assert.Equal(t, derivedKey, derivedKey2)
 }
 
-func TestHMACSecretOutput(t *testing.T) {
-	output := &HMACSecretOutput{
-		Output: make([]byte, 32),
-	}
-
-	assert.Equal(t, 32, len(output.Output))
-}
-
-func TestAuthenticationResult_Flags(t *testing.T) {
-	result := &AuthenticationResult{
-		HMACSecret:     make([]byte, 32),
-		SignCount:      5,
-		UserPresent:    true,
-		UserVerified:   false,
-		BackupEligible: false,
-		BackupState:    false,
-		Signature:      make([]byte, 64),
-		AuthData:       make([]byte, 37),
-	}
-
-	assert.True(t, result.UserPresent)
-	assert.False(t, result.UserVerified)
-	assert.False(t, result.BackupEligible)
-	assert.Equal(t, uint32(5), result.SignCount)
-}
-
 func TestHMACSecretExtension_DeriveSecret_WithCustomChallenge(t *testing.T) {
 	mockDev := NewMockHIDDevice("/dev/hidraw0")
 	config := DefaultConfig
@@ -482,52 +387,6 @@ func TestHMACSecretExtension_DeriveSecret_WithCustomChallenge(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.NotEmpty(t, result.HMACSecret)
-}
-
-func TestGenerateDerivedKey_Deterministic(t *testing.T) {
-	secret := make([]byte, 32)
-	for i := range secret {
-		secret[i] = byte(i)
-	}
-
-	// Generate multiple times
-	key1, err := GenerateDerivedKey(secret)
-	require.NoError(t, err)
-
-	key2, err := GenerateDerivedKey(secret)
-	require.NoError(t, err)
-
-	key3, err := GenerateDerivedKey(secret)
-	require.NoError(t, err)
-
-	// All should be identical
-	assert.Equal(t, key1, key2)
-	assert.Equal(t, key2, key3)
-}
-
-func TestGenerateDerivedKey_DifferentInputs(t *testing.T) {
-	secret1 := make([]byte, 32)
-	secret2 := make([]byte, 32)
-	secret3 := make([]byte, 32)
-
-	// Make them different
-	secret1[0] = 0x01
-	secret2[0] = 0x02
-	secret3[0] = 0x03
-
-	key1, err := GenerateDerivedKey(secret1)
-	require.NoError(t, err)
-
-	key2, err := GenerateDerivedKey(secret2)
-	require.NoError(t, err)
-
-	key3, err := GenerateDerivedKey(secret3)
-	require.NoError(t, err)
-
-	// All should be different
-	assert.NotEqual(t, key1, key2)
-	assert.NotEqual(t, key2, key3)
-	assert.NotEqual(t, key1, key3)
 }
 
 func TestVerifyHMACSecret_AllCases(t *testing.T) {

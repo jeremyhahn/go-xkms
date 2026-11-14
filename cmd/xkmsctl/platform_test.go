@@ -143,11 +143,3 @@ func TestPlatformPutCmd_MissingFile(t *testing.T) {
 		t.Errorf("expected exit code 1 for missing secret file, got %d", code)
 	}
 }
-
-func TestPlatformCmd_Registered(t *testing.T) {
-	for _, verb := range []string{"put", "get", "delete", "list", "reseal", "status"} {
-		if _, _, err := rootCmd.Find([]string{"platform", verb}); err != nil {
-			t.Errorf("platform %s missing: %v", verb, err)
-		}
-	}
-}

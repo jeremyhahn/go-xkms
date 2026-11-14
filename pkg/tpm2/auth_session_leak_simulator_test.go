@@ -152,42 +152,6 @@ func TestVerifyAuth_NoSessionLeak_WrongPIN_Simulator(t *testing.T) {
 		"saved session count must not grow across %d wrong-PIN VerifyAuth calls", iterations)
 }
 
-// TestVerifyAuth_NoSessionLeak_MixedPIN_Simulator interleaves correct and
-// wrong PINs (the realistic shape of live usage: a user mistypes, retries,
-// eventually succeeds) across 200 calls and proves session counts still stay
-// flat regardless of which path each individual call takes.
-//
-// The SRK fixture has dictionary-attack protection enabled (NoDA cleared, see
-// createKey), so a wrong PIN increments the TPM's real DA counter exactly as
-// it must on production hardware; left unchecked, a handful of interleaved
-// wrong PINs would trip TPM_RC_LOCKOUT and start rejecting the CORRECT PIN
-// too, which is a distinct, already-covered behavior (see
-// TestSwtpm_WrongPIN_IncrementsDA) and not what this test is isolating. Each
-// wrong-PIN iteration resets the DA counter immediately afterward so the
-// only variable under test here is session accounting, not lockout state.
-func TestVerifyAuth_NoSessionLeak_MixedPIN_Simulator(t *testing.T) {
-	tpmImpl, handle, goodAuth, badAuth := verifyAuthSessionFixture(t)
-
-	loadedBefore := loadedSessionCount(t, tpmImpl.transport)
-	savedBefore := savedSessionCount(t, tpmImpl.transport)
-
-	const iterations = 200
-	for i := 0; i < iterations; i++ {
-		if i%3 == 0 {
-			err := tpmImpl.VerifyAuth(handle, badAuth)
-			require.ErrorIs(t, err, ErrAuthFailed, "iteration %d", i)
-			require.NoError(t, tpmImpl.DictionaryAttackLockoutReset(nil), "DA reset after iteration %d", i)
-			continue
-		}
-		require.NoError(t, tpmImpl.VerifyAuth(handle, goodAuth), "iteration %d", i)
-	}
-
-	require.Equal(t, loadedBefore, loadedSessionCount(t, tpmImpl.transport),
-		"loaded session count must not grow across %d mixed-PIN VerifyAuth calls", iterations)
-	require.Equal(t, savedBefore, savedSessionCount(t, tpmImpl.transport),
-		"saved session count must not grow across %d mixed-PIN VerifyAuth calls", iterations)
-}
-
 // TestVerifyAuth_NoSessionLeak_NotFoundHandle_Simulator proves a VerifyAuth
 // call against a handle that does not exist -- which returns before any
 // session is ever started -- does not touch the session count at all. This

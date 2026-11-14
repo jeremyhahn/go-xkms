@@ -241,19 +241,3 @@ func TestSignImageRequestFromProto_SharesThePassword(t *testing.T) {
 	req.Registry.Password.Wipe()
 	assert.Equal(t, make([]byte, len("registry-password")), msg.GetRegistry().GetPassword())
 }
-
-// TestSigningKeyRequests_FromProto proves the server side reads every field
-// of a signing-key request, and reads an absent message as an empty
-// request, which the service then refuses as an invalid repository.
-func TestSigningKeyRequests_FromProto(t *testing.T) {
-	set := SetSigningKeyBindingRequestFromProto(&pb.SetSigningKeyBindingRequest{Repository: "acme/app", KeyId: "app-release", Backend: "pkcs8"})
-	assert.Equal(t, &transport.SetSigningKeyBindingRequest{Repository: "acme/app", KeyID: "app-release", Backend: "pkcs8"}, set)
-	assert.Equal(t, "acme/app", GetSigningKeyBindingRequestFromProto(&pb.GetSigningKeyBindingRequest{Repository: "acme/app"}).Repository)
-	assert.Equal(t, "acme/app", DeleteSigningKeyBindingRequestFromProto(&pb.DeleteSigningKeyBindingRequest{Repository: "acme/app"}).Repository)
-	assert.Equal(t, "acme/app", ResolveSigningKeyRequestFromProto(&pb.ResolveSigningKeyRequest{Repository: "acme/app"}).Repository)
-
-	assert.Equal(t, &transport.SetSigningKeyBindingRequest{}, SetSigningKeyBindingRequestFromProto(nil))
-	assert.Empty(t, GetSigningKeyBindingRequestFromProto(nil).Repository)
-	assert.Empty(t, DeleteSigningKeyBindingRequestFromProto(nil).Repository)
-	assert.Empty(t, ResolveSigningKeyRequestFromProto(nil).Repository)
-}

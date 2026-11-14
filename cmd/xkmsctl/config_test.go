@@ -331,116 +331,11 @@ func TestConfig_CreateClientWithTLS_MCPS(t *testing.T) {
 	}
 }
 
-func TestHasPrefix(t *testing.T) {
-	tests := []struct {
-		s      string
-		prefix string
-		want   bool
-	}{
-		{"http://localhost", "http://", true},
-		{"https://localhost", "http://", false},
-		{"grpc://localhost", "grpc://", true},
-		{"", "http://", false},
-		{"h", "http://", false},
-	}
-
-	for _, tt := range tests {
-		if got := hasPrefix(tt.s, tt.prefix); got != tt.want {
-			t.Errorf("hasPrefix(%q, %q) = %v, want %v", tt.s, tt.prefix, got, tt.want)
-		}
-	}
-}
-
-func TestTrimPrefix(t *testing.T) {
-	tests := []struct {
-		s      string
-		prefix string
-		want   string
-	}{
-		{"http://localhost", "http://", "localhost"},
-		{"https://localhost", "http://", "https://localhost"},
-		{"grpc://localhost", "grpc://", "localhost"},
-		{"", "http://", ""},
-	}
-
-	for _, tt := range tests {
-		if got := trimPrefix(tt.s, tt.prefix); got != tt.want {
-			t.Errorf("trimPrefix(%q, %q) = %v, want %v", tt.s, tt.prefix, got, tt.want)
-		}
-	}
-}
-
 func TestDefaultUnixSocketPath(t *testing.T) {
 	// Verify the client's default path matches what we expect
 	if client.DefaultUnixSocketPath != "xkms-data/xkms.sock" {
 		t.Errorf("DefaultUnixSocketPath = %v, want xkms-data/xkms.sock",
 			client.DefaultUnixSocketPath)
-	}
-}
-
-func TestConfig_Fields(t *testing.T) {
-	cfg := &Config{
-		ConfigFile:       "/path/to/config.yaml",
-		Backend:          "software",
-		KeyDir:           "/path/to/keys",
-		OutputFormat:     "json",
-		Verbose:          true,
-		Protocol:         "embedded",
-		Server:           "http://localhost:8443",
-		TLSCert:          "/path/to/cert.pem",
-		TLSKey:           "/path/to/key.pem",
-		TLSCACert:        "/path/to/ca.pem",
-		JWTToken:         "test-token",
-		TPM2Device:       "/dev/tpmrm0",
-		TPM2UseSimulator: true,
-		TPM2SRKHandle:    0x81000001,
-		TPM2EKHandle:     0x81010001,
-	}
-
-	if cfg.ConfigFile != "/path/to/config.yaml" {
-		t.Error("ConfigFile not set correctly")
-	}
-	if cfg.Backend != "software" {
-		t.Error("Backend not set correctly")
-	}
-	if cfg.KeyDir != "/path/to/keys" {
-		t.Error("KeyDir not set correctly")
-	}
-	if cfg.OutputFormat != "json" {
-		t.Error("OutputFormat not set correctly")
-	}
-	if !cfg.Verbose {
-		t.Error("Verbose not set correctly")
-	}
-	if cfg.Protocol != "embedded" {
-		t.Error("Protocol not set correctly")
-	}
-	if cfg.Server != "http://localhost:8443" {
-		t.Error("Server not set correctly")
-	}
-	if cfg.TLSCert != "/path/to/cert.pem" {
-		t.Error("TLSCert not set correctly")
-	}
-	if cfg.TLSKey != "/path/to/key.pem" {
-		t.Error("TLSKey not set correctly")
-	}
-	if cfg.TLSCACert != "/path/to/ca.pem" {
-		t.Error("TLSCACert not set correctly")
-	}
-	if cfg.JWTToken != "test-token" {
-		t.Error("JWTToken not set correctly")
-	}
-	if cfg.TPM2Device != "/dev/tpmrm0" {
-		t.Error("TPM2Device not set correctly")
-	}
-	if !cfg.TPM2UseSimulator {
-		t.Error("TPM2UseSimulator not set correctly")
-	}
-	if cfg.TPM2SRKHandle != 0x81000001 {
-		t.Error("TPM2SRKHandle not set correctly")
-	}
-	if cfg.TPM2EKHandle != 0x81010001 {
-		t.Error("TPM2EKHandle not set correctly")
 	}
 }
 
@@ -563,59 +458,6 @@ func TestConfig_CreateClientFromProtocol_WithCustomServer(t *testing.T) {
 // createXKMSService tests
 // ============================================================================
 
-func TestConfig_createXKMSService_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg := NewConfig()
-	cfg.KeyDir = tmpDir
-	cfg.Backend = "software"
-
-	// Reset xkms service before test
-	xkms.Reset()
-
-	svc, err := cfg.createXKMSService()
-	if err != nil {
-		t.Fatalf("createXKMSService() returned error: %v", err)
-	}
-	if svc == nil {
-		t.Fatal("createXKMSService() returned nil service")
-	}
-
-	// Clean up
-	xkms.Reset()
-}
-
-func TestConfig_createXKMSService_InvalidKeyDir(t *testing.T) {
-	cfg := NewConfig()
-	cfg.KeyDir = "/dev/null/invalid/keydir"
-	cfg.Backend = "software"
-
-	// Reset xkms service before test
-	xkms.Reset()
-	defer xkms.Reset()
-
-	_, err := cfg.createXKMSService()
-	if err == nil {
-		t.Fatal("createXKMSService() should return error for invalid KeyDir")
-	}
-}
-
-func TestConfig_createXKMSService_InvalidCertPath(t *testing.T) {
-	cfg := NewConfig()
-	// Set KeyDir to a path where we can't create the certs subdirectory
-	cfg.KeyDir = "/dev/null"
-	cfg.Backend = "software"
-
-	// Reset xkms service before test
-	xkms.Reset()
-	defer xkms.Reset()
-
-	_, err := cfg.createXKMSService()
-	if err == nil {
-		t.Fatal("createXKMSService() should return error for invalid cert path")
-	}
-}
-
 func TestConfig_createXKMSService_ResetsPreviousService(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -683,14 +525,6 @@ func TestConfig_createXKMSService_DifferentBackendNames(t *testing.T) {
 				t.Fatal("createXKMSService() returned nil service")
 			}
 		})
-	}
-}
-
-func TestConfig_HIDDeviceEnumerator_ReturnsTheInjectedEnumerator(t *testing.T) {
-	injected := noHIDEnumerator{}
-	cfg := &Config{HIDEnumerator: injected}
-	if got := cfg.HIDDeviceEnumerator(); got != injected {
-		t.Errorf("HIDDeviceEnumerator() = %#v, want the injected %#v", got, injected)
 	}
 }
 

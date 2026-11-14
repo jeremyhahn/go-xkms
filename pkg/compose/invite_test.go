@@ -50,17 +50,6 @@ func TestBuildInviteStore_NilStorageFactory(t *testing.T) {
 	assert.Equal(t, FeatureInvite, nilDep.Feature)
 }
 
-func TestBuildInviteStore_OpenFailure(t *testing.T) {
-	open := func(name string) (storage.Backend, error) {
-		return nil, assert.AnError
-	}
-	_, err := BuildInviteStore(open)
-	require.Error(t, err)
-	var buildErr *FeatureBuildError
-	require.ErrorAs(t, err, &buildErr)
-	assert.Equal(t, FeatureInvite, buildErr.Feature)
-}
-
 func TestTenantPrefixedInviteStore_CreateLookupRedeem(t *testing.T) {
 	s := newTestInviteStore(t)
 	ctx := context.Background()

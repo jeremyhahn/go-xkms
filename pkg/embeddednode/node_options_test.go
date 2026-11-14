@@ -88,26 +88,6 @@ func TestClusterOptions_PeerList(t *testing.T) {
 	})
 }
 
-// TestOptions_Validate_RejectsIncompleteOptions verifies each required field
-// is enforced with its own sentinel, so a misconfigured embedder gets a
-// precise error instead of a nil dereference inside go-qrdb.
-func TestOptions_Validate_RejectsIncompleteOptions(t *testing.T) {
-	t.Run("nil options", func(t *testing.T) {
-		var opts *NodeOptions
-		assert.ErrorIs(t, opts.validate(), ErrNilNodeOptions)
-	})
-
-	t.Run("nil qrdb config", func(t *testing.T) {
-		opts := &NodeOptions{Logger: testLogger()}
-		assert.ErrorIs(t, opts.validate(), ErrNilQRDBConfig)
-	})
-
-	t.Run("nil logger", func(t *testing.T) {
-		opts := &NodeOptions{QRDB: newTestQRDBConfig()}
-		assert.ErrorIs(t, opts.validate(), ErrNilLogger)
-	})
-}
-
 // TestNewNode_RejectsInvalidOptions verifies NewNode validates before doing
 // any work, on both the standalone and clustered builds.
 func TestNewNode_RejectsInvalidOptions(t *testing.T) {
@@ -116,6 +96,13 @@ func TestNewNode_RejectsInvalidOptions(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, res)
 		assert.ErrorIs(t, err, ErrNilNodeOptions)
+	})
+
+	t.Run("nil qrdb config", func(t *testing.T) {
+		res, err := NewNode(t.Context(), &NodeOptions{Logger: testLogger()})
+		require.Error(t, err)
+		assert.Nil(t, res)
+		assert.ErrorIs(t, err, ErrNilQRDBConfig)
 	})
 
 	t.Run("nil logger", func(t *testing.T) {

@@ -1,0 +1,1 @@
+acme: the Google Cloud DNS provider's tests (`pkg/acme/challenges/dns-01/providers/clouddns`) test each behaviour once, at the layer that reaches it: duplicate config, credential, Present, CleanUp, wait and zone-discovery tests and the placeholders that asserted nothing are gone, and the zone-discovery timeout test waits on its context instead of sleeping (#1794).

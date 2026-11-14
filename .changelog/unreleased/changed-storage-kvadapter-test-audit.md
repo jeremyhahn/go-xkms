@@ -1,0 +1,1 @@
+Tests: `pkg/storage/kvadapter`'s suite tests each behaviour by one path (#1794). One table test now pins every index refusal (both sentinels, the typed Op and Name, nil results), and the tests that repeated another kept test's path are gone; coverage stays at 100%.

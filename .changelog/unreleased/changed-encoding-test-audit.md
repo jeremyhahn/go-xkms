@@ -1,0 +1,1 @@
+Tests: `pkg/encoding` tests each behaviour by one path (#1794). The edge-case round trips, the unencrypted PKCS#8 and PKIX round trips the PEM tests repeat, the duplicate wrong-password, certificate and chain cases, and the substring-helper tests are removed; the empty-password PEM round trip and the RSA exponent check move into the kept tests. Coverage is unchanged at 91.9%.

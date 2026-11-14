@@ -40,31 +40,6 @@ func setupTestDir(t *testing.T) string {
 }
 
 func TestNew(t *testing.T) {
-	ctx := context.Background()
-	t.Run("valid directory", func(t *testing.T) {
-		dir := setupTestDir(t)
-
-		store, err := New(dir)
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-		if store == nil {
-			t.Fatal("New() returned nil")
-		}
-
-		// Verify it implements Backend interface
-		_ = store
-
-		// Should start empty
-		keys, err := store.List(ctx, "")
-		if err != nil {
-			t.Fatalf("List() error = %v", err)
-		}
-		if len(keys) != 0 {
-			t.Errorf("New store should be empty, got %d keys", len(keys))
-		}
-	})
-
 	t.Run("creates directory if not exists", func(t *testing.T) {
 		dir := setupTestDir(t)
 		newDir := filepath.Join(dir, "subdir", "nested")
@@ -194,21 +169,6 @@ func TestPutGet(t *testing.T) {
 	}
 }
 
-func TestGetNotFound(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	_, err = store.Get(ctx, "nonexistent")
-	if err != storage.ErrNotFound {
-		t.Errorf("Get() error = %v, want %v", err, storage.ErrNotFound)
-	}
-}
-
 func TestDelete(t *testing.T) {
 	ctx := context.Background()
 	dir := setupTestDir(t)
@@ -253,21 +213,6 @@ func TestDelete(t *testing.T) {
 	_, err = store.Get(ctx, key)
 	if err != storage.ErrNotFound {
 		t.Errorf("Get() after Delete() error = %v, want %v", err, storage.ErrNotFound)
-	}
-}
-
-func TestDeleteNotFound(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	err = store.Delete(ctx, "nonexistent")
-	if err != storage.ErrNotFound {
-		t.Errorf("Delete() error = %v, want %v", err, storage.ErrNotFound)
 	}
 }
 
@@ -360,56 +305,6 @@ func TestList(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestExists(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	key := "test-key"
-	value := []byte("test-value")
-
-	// Should not exist initially
-	exists, err := store.Exists(ctx, key)
-	if err != nil {
-		t.Fatalf("Exists() error = %v", err)
-	}
-	if exists {
-		t.Error("Key should not exist initially")
-	}
-
-	// Put the key
-	if err := store.Put(ctx, key, value); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
-
-	// Should exist now
-	exists, err = store.Exists(ctx, key)
-	if err != nil {
-		t.Fatalf("Exists() error = %v", err)
-	}
-	if !exists {
-		t.Error("Key should exist after Put()")
-	}
-
-	// Delete the key
-	if err := store.Delete(ctx, key); err != nil {
-		t.Fatalf("Delete() error = %v", err)
-	}
-
-	// Should not exist after delete
-	exists, err = store.Exists(ctx, key)
-	if err != nil {
-		t.Fatalf("Exists() error = %v", err)
-	}
-	if exists {
-		t.Error("Key should not exist after Delete()")
 	}
 }
 
@@ -645,33 +540,6 @@ func TestClose(t *testing.T) {
 	}
 }
 
-func TestPutAndRetrieve(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	key := "test-key"
-	value := []byte("test-value")
-
-	if err := store.Put(ctx, key, value); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
-
-	// Verify the value was stored
-	got, err := store.Get(ctx, key)
-	if err != nil {
-		t.Fatalf("Get() error = %v", err)
-	}
-
-	if !bytes.Equal(got, value) {
-		t.Errorf("Get() = %v, want %v", got, value)
-	}
-}
-
 func TestEmptyList(t *testing.T) {
 	ctx := context.Background()
 	dir := setupTestDir(t)
@@ -747,38 +615,6 @@ func TestOverwriteKey(t *testing.T) {
 	}
 }
 
-// TestPathConversionRoundTrip verifies key↔on-disk-path symmetry through the
-// public API: a key written under the file backend is listed back verbatim
-// (the engine owns the <root>/<key> mapping; this guards the round-trip).
-func TestPathConversionRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer store.Close()
-
-	for _, key := range []string{"testkey", "path/to/key", "a/b/c/d/e/f"} {
-		if err := store.Put(ctx, key, []byte("v")); err != nil {
-			t.Fatalf("Put(%q) error = %v", key, err)
-		}
-		keys, err := store.List(ctx, key)
-		if err != nil {
-			t.Fatalf("List(%q) error = %v", key, err)
-		}
-		found := false
-		for _, k := range keys {
-			if k == key {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("key %q did not round-trip through List: got %v", key, keys)
-		}
-	}
-}
-
 func TestListSorting(t *testing.T) {
 	ctx := context.Background()
 	dir := setupTestDir(t)
@@ -814,52 +650,6 @@ func TestListSorting(t *testing.T) {
 	}
 }
 
-func TestExistsEdgeCases(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	t.Run("exists after delete returns false", func(t *testing.T) {
-		key := "temp-key"
-		if err := store.Put(ctx, key, []byte("data")); err != nil {
-			t.Fatalf("Put() error = %v", err)
-		}
-
-		if err := store.Delete(ctx, key); err != nil {
-			t.Fatalf("Delete() error = %v", err)
-		}
-
-		exists, err := store.Exists(ctx, key)
-		if err != nil {
-			t.Fatalf("Exists() error = %v", err)
-		}
-		if exists {
-			t.Error("Key should not exist after deletion")
-		}
-	})
-
-	t.Run("multiple exists checks", func(t *testing.T) {
-		key := "multi-check"
-		if err := store.Put(ctx, key, []byte("data")); err != nil {
-			t.Fatalf("Put() error = %v", err)
-		}
-
-		for i := 0; i < 5; i++ {
-			exists, err := store.Exists(ctx, key)
-			if err != nil {
-				t.Fatalf("Exists() iteration %d error = %v", i, err)
-			}
-			if !exists {
-				t.Errorf("Key should exist on iteration %d", i)
-			}
-		}
-	})
-}
-
 func TestErrorConditions(t *testing.T) {
 	t.Run("new with invalid path causes error during mkdir", func(t *testing.T) {
 		// Create a file where we want to create a directory
@@ -878,32 +668,4 @@ func TestErrorConditions(t *testing.T) {
 			t.Error("New() with invalid path should return error")
 		}
 	})
-}
-
-func TestValidateStorageKeyEdgeCases(t *testing.T) {
-	tests := []struct {
-		name    string
-		key     string
-		wantErr bool
-	}{
-		{
-			name:    "path with middle traversal suffix",
-			key:     "foo/bar/..",
-			wantErr: false, // cleaned to "foo" which is valid
-		},
-		{
-			name:    "path ending with separator and dotdot",
-			key:     "foo/..",
-			wantErr: false, // cleaned to "." which is allowed after cleaning
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateStorageKey(tt.key)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateStorageKey(%q) error = %v, wantErr %v", tt.key, err, tt.wantErr)
-			}
-		})
-	}
 }

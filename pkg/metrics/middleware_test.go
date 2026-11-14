@@ -25,41 +25,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestHTTPMiddleware(t *testing.T) {
-	Enable()
-
-	// Reset metrics
-	HTTPRequestsTotal.Reset()
-	HTTPRequestDuration.Reset()
-	ActiveConnections.Reset()
-
-	// Create a test handler
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	})
-
-	// Wrap with middleware
-	wrappedHandler := HTTPMiddleware(handler)
-
-	// Create test request
-	req := httptest.NewRequest("GET", "/test", nil)
-	rec := httptest.NewRecorder()
-
-	// Execute request
-	wrappedHandler.ServeHTTP(rec, req)
-
-	// Verify response
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", rec.Code)
-	}
-
-	// Verify metrics were recorded (basic check - can't easily verify exact counts)
-	// The middleware should have incremented and decremented connections
-	// and recorded the request
-	time.Sleep(10 * time.Millisecond) // Give time for async operations
-}
-
 func TestHTTPMiddlewareStatusCodes(t *testing.T) {
 	Enable()
 
@@ -195,8 +160,6 @@ func TestGRPCUnaryServerInterceptor(t *testing.T) {
 	if resp != "response" {
 		t.Errorf("Expected response 'response', got %v", resp)
 	}
-
-	time.Sleep(10 * time.Millisecond)
 }
 
 func TestGRPCUnaryServerInterceptorWithError(t *testing.T) {
@@ -252,36 +215,6 @@ func TestGRPCUnaryServerInterceptorWhenDisabled(t *testing.T) {
 
 type mockServerStream struct {
 	grpc.ServerStream
-}
-
-func TestGRPCStreamServerInterceptor(t *testing.T) {
-	Enable()
-
-	// Reset metrics
-	GRPCRequestsTotal.Reset()
-	ActiveConnections.Reset()
-
-	interceptor := GRPCStreamServerInterceptor()
-
-	// Create mock handler
-	handler := func(srv interface{}, stream grpc.ServerStream) error {
-		return nil
-	}
-
-	// Create mock info
-	info := &grpc.StreamServerInfo{
-		FullMethod: "/test.Service/StreamMethod",
-	}
-
-	// Call interceptor
-	err := interceptor(nil, &mockServerStream{}, info, handler)
-
-	// Verify no error
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	time.Sleep(10 * time.Millisecond)
 }
 
 func TestGRPCStreamServerInterceptorWithError(t *testing.T) {
@@ -351,18 +284,6 @@ func TestConnectionTrackerWhenDisabled(t *testing.T) {
 	}
 
 	tracker.Close()
-}
-
-func TestProtocolConstants(t *testing.T) {
-	protocols := []string{
-		ProtocolHTTP, ProtocolGRPC, ProtocolQUIC, ProtocolMCP,
-	}
-
-	for _, protocol := range protocols {
-		if protocol == "" {
-			t.Error("Protocol constant is empty")
-		}
-	}
 }
 
 func BenchmarkHTTPMiddleware(b *testing.B) {

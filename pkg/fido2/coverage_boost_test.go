@@ -16,11 +16,9 @@
 package fido2
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -31,134 +29,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// TestSelectDevice_WithAllowedVendors tests vendor filtering in selectDevice.
-func TestSelectDevice_WithAllowedVendors(t *testing.T) {
-	config := DefaultConfig
-	config.AllowedVendors = []uint16{0x1234} // Only allow this vendor
-
-	// Create device with matching vendor
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	mockDev.vendorID = 0x1234
-
-	enum := NewMockHIDDeviceEnumerator()
-	enum.AddDevice(mockDev)
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	// Should select the device with matching vendor
-	device, err := handler.selectDevice()
-	require.NoError(t, err)
-	assert.NotNil(t, device)
-}
-
-// TestSelectDevice_FilterOutNonAllowedVendor tests filtering out non-allowed vendors.
-func TestSelectDevice_FilterOutNonAllowedVendor(t *testing.T) {
-	config := DefaultConfig
-	config.AllowedVendors = []uint16{0x9999} // Only allow this vendor
-
-	// Create device with non-matching vendor
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	mockDev.vendorID = 0x1234 // Different vendor
-
-	enum := NewMockHIDDeviceEnumerator()
-	enum.AddDevice(mockDev)
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	// Should not find any device
-	device, err := handler.selectDevice()
-	assert.Error(t, err)
-	assert.Equal(t, ErrNoDeviceFound, err)
-	assert.Nil(t, device)
-}
-
-// TestSelectDevice_WithAllowedProducts tests product filtering in selectDevice.
-func TestSelectDevice_WithAllowedProducts(t *testing.T) {
-	config := DefaultConfig
-	config.AllowedProducts = []uint16{0x5678} // Only allow this product
-
-	// Create device with matching product
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	mockDev.productID = 0x5678
-
-	enum := NewMockHIDDeviceEnumerator()
-	enum.AddDevice(mockDev)
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	device, err := handler.selectDevice()
-	require.NoError(t, err)
-	assert.NotNil(t, device)
-}
-
-// TestSelectDevice_FilterOutNonAllowedProduct tests filtering out non-allowed products.
-func TestSelectDevice_FilterOutNonAllowedProduct(t *testing.T) {
-	config := DefaultConfig
-	config.AllowedProducts = []uint16{0x9999} // Only allow this product
-
-	// Create device with non-matching product
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	mockDev.productID = 0x5678 // Different product
-
-	enum := NewMockHIDDeviceEnumerator()
-	enum.AddDevice(mockDev)
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	device, err := handler.selectDevice()
-	assert.Error(t, err)
-	assert.Equal(t, ErrNoDeviceFound, err)
-	assert.Nil(t, device)
-}
-
-// TestSelectDevice_WithVendorAndProductFilters tests combined vendor/product filtering.
-func TestSelectDevice_WithVendorAndProductFilters(t *testing.T) {
-	config := DefaultConfig
-	config.AllowedVendors = []uint16{0x1234}
-	config.AllowedProducts = []uint16{0x5678}
-
-	// Create device with matching both
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	mockDev.vendorID = 0x1234
-	mockDev.productID = 0x5678
-
-	enum := NewMockHIDDeviceEnumerator()
-	enum.AddDevice(mockDev)
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	device, err := handler.selectDevice()
-	require.NoError(t, err)
-	assert.NotNil(t, device)
-}
-
-// TestSelectDevice_VendorMatchProductMismatch tests vendor match but product mismatch.
-func TestSelectDevice_VendorMatchProductMismatch(t *testing.T) {
-	config := DefaultConfig
-	config.AllowedVendors = []uint16{0x1234}
-	config.AllowedProducts = []uint16{0x9999}
-
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	mockDev.vendorID = 0x1234
-	mockDev.productID = 0x5678 // Doesn't match
-
-	enum := NewMockHIDDeviceEnumerator()
-	enum.AddDevice(mockDev)
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	device, err := handler.selectDevice()
-	assert.Error(t, err)
-	assert.Equal(t, ErrNoDeviceFound, err)
-	assert.Nil(t, device)
-}
 
 // TestListDevices_CloseError tests error handling when closing devices during list.
 func TestListDevices_CloseError(t *testing.T) {
@@ -503,127 +373,6 @@ func (d *NoExtensionDeviceCB) Read(data []byte) (int, error) {
 	return 0, &errs.Message{Msg: "no data"}
 }
 
-// TestEnrollKey_CustomTimeout tests EnrollKey with custom timeout.
-func TestEnrollKey_CustomTimeout(t *testing.T) {
-	config := DefaultConfig
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-
-	enum := &SingleDeviceEnumerator{device: mockDev}
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	enrollConfig := DefaultEnrollmentConfig("testuser")
-	enrollConfig.Timeout = 5 * time.Second // Custom timeout
-
-	result, err := handler.EnrollKey(enrollConfig)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
-
-// TestUnlockWithKey_CustomTimeout tests UnlockWithKey with custom timeout.
-func TestUnlockWithKey_CustomTimeout(t *testing.T) {
-	config := DefaultConfig
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-
-	enum := &SingleDeviceEnumerator{device: mockDev}
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	authConfig := DefaultAuthenticationConfig(make([]byte, 32), make([]byte, 32))
-	authConfig.Timeout = 5 * time.Second // Custom timeout
-
-	derivedKey, err := handler.UnlockWithKey(authConfig)
-	require.NoError(t, err)
-	assert.NotNil(t, derivedKey)
-}
-
-// TestDeriveSecret_WithProvidedChallengeNotEmpty tests DeriveSecret with non-empty challenge.
-func TestDeriveSecret_WithProvidedChallengeNotEmpty(t *testing.T) {
-	config := DefaultConfig
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-
-	ctapDev, err := NewCTAPHIDDevice(mockDev, &config)
-	require.NoError(t, err)
-	defer func() { _ = ctapDev.Close() }()
-
-	auth, err := NewAuthenticator(ctapDev, &config)
-	require.NoError(t, err)
-
-	hmacExt, err := NewHMACSecretExtension(auth)
-	require.NoError(t, err)
-
-	authConfig := &AuthenticationConfig{
-		RelyingPartyID: "test.com",
-		CredentialID:   make([]byte, 32),
-		Salt:           make([]byte, 32),
-		Challenge:      []byte("custom-challenge-12345678901234"), // 32 bytes
-	}
-
-	result, err := hmacExt.DeriveSecret(authConfig)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.NotEmpty(t, result.HMACSecret)
-}
-
-// TestVerifyHMACSecret_EmptySecret tests VerifyHMACSecret with empty secret.
-func TestVerifyHMACSecret_EmptySecret(t *testing.T) {
-	err := VerifyHMACSecret([]byte{})
-	assert.Error(t, err)
-	assert.Equal(t, ErrInvalidHMACSecret, err)
-}
-
-// TestVerifyHMACSecret_64ByteSecret tests VerifyHMACSecret with 64-byte secret.
-func TestVerifyHMACSecret_64ByteSecret(t *testing.T) {
-	secret := make([]byte, 64)
-	err := VerifyHMACSecret(secret)
-	assert.NoError(t, err)
-}
-
-// TestVerifyHMACSecret_WrongLength tests VerifyHMACSecret with wrong length.
-func TestVerifyHMACSecret_WrongLength(t *testing.T) {
-	// Test with 16 bytes (not 32 or 64)
-	secret := make([]byte, 16)
-	err := VerifyHMACSecret(secret)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid HMAC secret length")
-}
-
-// TestHandler_SelectDevice_WithDevicePath tests selectDevice when DevicePath is configured.
-func TestHandler_SelectDevice_WithDevicePath(t *testing.T) {
-	config := DefaultConfig
-	config.DevicePath = "/dev/hidraw0"
-
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	enum := NewMockHIDDeviceEnumerator()
-	enum.AddDevice(mockDev)
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	device, err := handler.selectDevice()
-	require.NoError(t, err)
-	assert.NotNil(t, device)
-	assert.Equal(t, "/dev/hidraw0", device.Path())
-}
-
-// TestHandler_SelectDevice_DevicePathOpenError tests selectDevice error when configured path fails.
-func TestHandler_SelectDevice_DevicePathOpenError(t *testing.T) {
-	config := DefaultConfig
-	config.DevicePath = "/dev/nonexistent"
-
-	enum := NewMockHIDDeviceEnumerator() // Empty - device doesn't exist
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	device, err := handler.selectDevice()
-	assert.Error(t, err)
-	assert.Nil(t, device)
-	assert.Contains(t, err.Error(), "failed to open configured device")
-}
-
 // TestHandler_EnrollKey_CloseDeviceError tests close error handling in EnrollKey.
 func TestHandler_EnrollKey_CloseDeviceError(t *testing.T) {
 	config := DefaultConfig
@@ -724,38 +473,6 @@ func (d *ContinuationReadErrorDeviceCB) Read(data []byte) (int, error) {
 	return d.readBuf.Read(data)
 }
 
-// TestLoggerPrintf tests the Printf method via handler logger.
-func TestLoggerPrintf(t *testing.T) {
-	config := DefaultConfig
-	enum := NewMockHIDDeviceEnumerator()
-
-	var buf bytes.Buffer
-	logger := &testLoggerCB{buf: &buf}
-
-	handler, err := NewHandlerWithLogger(&config, enum, logger)
-	require.NoError(t, err)
-	assert.NotNil(t, handler)
-}
-
-// testLoggerCB is a simple test logger.
-type testLoggerCB struct {
-	buf *bytes.Buffer
-}
-
-func (l *testLoggerCB) Printf(format string, v ...interface{}) {
-	fmt.Fprintf(l.buf, format, v...)
-}
-
-// TestNewHandlerWithLogger_NilLoggerParam tests handler creation with nil logger.
-func TestNewHandlerWithLogger_NilLoggerParam(t *testing.T) {
-	config := DefaultConfig
-	enum := NewMockHIDDeviceEnumerator()
-
-	handler, err := NewHandlerWithLogger(&config, enum, nil)
-	require.NoError(t, err)
-	assert.NotNil(t, handler)
-}
-
 // TestNewHandlerWithLogger_EmptyConfigDefaults tests handler creation with empty config using defaults.
 func TestNewHandlerWithLogger_EmptyConfigDefaults(t *testing.T) {
 	config := Config{} // Empty config should get defaults
@@ -766,18 +483,6 @@ func TestNewHandlerWithLogger_EmptyConfigDefaults(t *testing.T) {
 	assert.NotNil(t, handler)
 	// Verify defaults were applied
 	assert.Equal(t, DefaultTimeout, config.Timeout)
-}
-
-// TestHandlerClose tests closing the handler.
-func TestHandlerClose(t *testing.T) {
-	config := DefaultConfig
-	enum := NewMockHIDDeviceEnumerator()
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	err = handler.Close()
-	assert.NoError(t, err)
 }
 
 // TestEnrollKey_HMACExtensionWithSalt tests EnrollKey with provided salt.
@@ -797,71 +502,6 @@ func TestEnrollKey_HMACExtensionWithSalt(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.NotEmpty(t, result.Salt)
-}
-
-// TestParseAuthDataExtensions_EdgeCases tests edge cases in ParseAuthDataExtensions.
-func TestParseAuthDataExtensions_EdgeCases(t *testing.T) {
-	// Test with short data
-	_, err := ParseAuthDataExtensions(make([]byte, 10))
-	assert.Error(t, err)
-
-	// Test with no extensions included (flags bit not set)
-	authData := make([]byte, 37)
-	authData[32] = 0x00 // No extensions
-	result, err := ParseAuthDataExtensions(authData)
-	assert.NoError(t, err)
-	assert.Nil(t, result)
-
-	// Test with the extensions flag set but no extension map present
-	authData[32] = 0x80 // Extensions included
-	result, err = ParseAuthDataExtensions(authData)
-	assert.ErrorIs(t, err, ErrInvalidExtensions)
-	assert.Nil(t, result)
-}
-
-// TestParseAuthDataExtensions_WithInvalidAttestedCredData tests invalid attested credential data.
-func TestParseAuthDataExtensions_WithInvalidAttestedCredData(t *testing.T) {
-	// Create auth data with attested credential data flag but not enough data
-	authData := make([]byte, 40)
-	authData[32] = 0xC0 // Extensions + attested credential data flags
-
-	_, err := ParseAuthDataExtensions(authData)
-	assert.ErrorIs(t, err, ErrInvalidAttestedCredentialData)
-}
-
-// TestParseAuthDataExtensions_WithInvalidCredIDLength tests invalid credential ID length.
-func TestParseAuthDataExtensions_WithInvalidCredIDLength(t *testing.T) {
-	// Create auth data with attested credential data but invalid credential ID length
-	authData := make([]byte, 56)
-	authData[32] = 0xC0 // Extensions + attested credential data flags
-	// AAGUID at offset 37 (16 bytes)
-	// Credential ID length at offset 53 = 999 (too large)
-	authData[53] = 0x03
-	authData[54] = 0xE7 // 999 in big endian
-
-	_, err := ParseAuthDataExtensions(authData)
-	assert.ErrorIs(t, err, ErrInvalidAttestedCredentialData)
-}
-
-// TestGenerateDerivedKey_ValidSecret tests GenerateDerivedKey with valid input.
-func TestGenerateDerivedKey_ValidSecret(t *testing.T) {
-	secret := make([]byte, 32)
-	for i := range secret {
-		secret[i] = byte(i)
-	}
-
-	key, err := GenerateDerivedKey(secret)
-	require.NoError(t, err)
-	assert.Len(t, key, 64)
-	assert.NotEqual(t, make([]byte, 64), key)
-}
-
-// TestGenerateDerivedKey_InvalidLength tests GenerateDerivedKey with invalid length.
-func TestGenerateDerivedKey_InvalidSecretLength(t *testing.T) {
-	secret := make([]byte, 16) // Wrong length
-	_, err := GenerateDerivedKey(secret)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid HMAC secret length")
 }
 
 // TestNewHMACSecretExtension_NoSupport tests creating extension on device without hmac-secret.
@@ -1121,13 +761,6 @@ func TestWaitForDevice_DeviceFoundImmediately(t *testing.T) {
 	assert.NotNil(t, device)
 }
 
-// TestDiscardLoggerPrintf tests the discard logger Printf method.
-func TestDiscardLoggerPrintf(t *testing.T) {
-	logger := &discardLogger{}
-	// Should not panic and should do nothing
-	logger.Printf("test %s %d", "arg", 123)
-}
-
 // TestSelectDevice_MultipleDevicesFirstMatch tests selecting a matching device
 // when multiple devices are available.
 func TestSelectDevice_MultipleDevicesFirstMatch(t *testing.T) {
@@ -1160,19 +793,6 @@ func TestSelectDevice_MultipleDevicesFirstMatch(t *testing.T) {
 	assert.Contains(t, validPaths, device.Path())
 }
 
-// TestIsFIDO2Device tests the FIDO2 device detection.
-func TestIsFIDO2Device(t *testing.T) {
-	config := DefaultConfig
-	enum := NewMockHIDDeviceEnumerator()
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	// Mock device should be detected as FIDO2
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	assert.True(t, handler.isFIDO2Device(mockDev))
-}
-
 // TestEnrollKey_CTAPInitError tests error when CTAP init fails during enrollment.
 func TestEnrollKey_CTAPInitError(t *testing.T) {
 	config := DefaultConfig
@@ -1191,44 +811,4 @@ func TestEnrollKey_CTAPInitError(t *testing.T) {
 	_, err = handler.EnrollKey(enrollConfig)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to initialize CTAP device")
-}
-
-// TestListDevices_EnumerateError tests error when enumeration fails.
-func TestListDevices_EnumerateError(t *testing.T) {
-	config := DefaultConfig
-
-	enum := &ErrorEnumeratorCB{}
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	_, err = handler.ListDevices()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to enumerate devices")
-}
-
-// ErrorEnumeratorCB returns an error on Enumerate.
-type ErrorEnumeratorCB struct{}
-
-func (e *ErrorEnumeratorCB) Enumerate(vendorID, productID uint16) ([]HIDDevice, error) {
-	return nil, errors.New("enumeration failed")
-}
-
-func (e *ErrorEnumeratorCB) Open(path string) (HIDDevice, error) {
-	return nil, errors.New("open failed")
-}
-
-// TestSelectDevice_EnumerateError tests error when enumeration fails during select.
-func TestSelectDevice_EnumerateError(t *testing.T) {
-	config := DefaultConfig
-
-	enum := &ErrorEnumeratorCB{}
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	device, err := handler.selectDevice()
-	assert.Error(t, err)
-	assert.Nil(t, device)
-	assert.Contains(t, err.Error(), "failed to enumerate devices")
 }

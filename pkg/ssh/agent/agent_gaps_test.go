@@ -15,7 +15,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net"
 	"os"
@@ -30,27 +29,6 @@ import (
 	"golang.org/x/crypto/ssh"
 	sshagent "golang.org/x/crypto/ssh/agent"
 )
-
-// TestItoa covers the int→string helper across single-digit, multi-digit, and
-// zero.
-func TestItoa(t *testing.T) {
-	cases := map[int]string{0: "0", 5: "5", 9: "9", 10: "10", 11: "11", 123: "123"}
-	for in, want := range cases {
-		assert.Equalf(t, want, itoa(in), "itoa(%d)", in)
-	}
-}
-
-// TestAgent_ReadOnlyExtras covers the remaining read-only rejections (Remove,
-// Unlock) and the unsupported Extension.
-func TestAgent_ReadOnlyExtras(t *testing.T) {
-	a := New(newEd25519Signer(t))
-
-	require.ErrorIs(t, a.Remove(nil), ErrUnsupported)
-	require.ErrorIs(t, a.Unlock(nil), ErrUnsupported)
-
-	_, err := a.Extension("some@ext", nil)
-	require.Error(t, err, "Extension must be unsupported")
-}
 
 // TestAgent_Signers verifies the raw signer list is returned.
 func TestAgent_Signers(t *testing.T) {
@@ -76,16 +54,6 @@ func TestAgent_ListLabels(t *testing.T) {
 	require.Len(t, keys, 12)
 	assert.True(t, strings.HasPrefix(keys[11].Comment, "xkey-"))
 	assert.Equal(t, "xkey-11", keys[11].Comment)
-}
-
-// TestAgent_SignWithFlags512 exercises the RSA-SHA-512 flag branch.
-func TestAgent_SignWithFlags512(t *testing.T) {
-	rsa := newRSASigner(t)
-	a := New(rsa)
-	sig, err := a.SignWithFlags(rsa.PublicKey(), []byte("payload"), sshagent.SignatureFlagRsaSha512)
-	require.NoError(t, err)
-	require.NotNil(t, sig)
-	assert.Contains(t, sig.Format, "512")
 }
 
 // TestAgent_ServeListenError exercises the Serve() error path: a socket whose
@@ -209,20 +177,4 @@ func TestBytesEqual(t *testing.T) {
 	assert.False(t, bytesEqual([]byte("abc"), []byte("ab")), "length mismatch")
 	assert.False(t, bytesEqual([]byte("abc"), []byte("abd")), "content mismatch")
 	assert.True(t, bytesEqual(nil, nil))
-}
-
-// TestErrorTypes covers Error() and Unwrap() on the wrapped error types.
-func TestErrorTypes(t *testing.T) {
-	inner := errors.New("boom")
-
-	unknown := &UnknownKeyError{Format: "ssh-ed25519"}
-	assert.Contains(t, unknown.Error(), "ssh-ed25519")
-
-	le := &ListenError{Err: inner}
-	assert.Contains(t, le.Error(), "listen")
-	assert.ErrorIs(t, le, inner)
-
-	ae := &AcceptError{Err: inner}
-	assert.Contains(t, ae.Error(), "accept")
-	assert.ErrorIs(t, ae, inner)
 }

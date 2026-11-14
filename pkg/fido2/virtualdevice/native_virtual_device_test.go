@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/pkg/fido2/uhid"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -106,26 +105,6 @@ func TestNativeVirtualDevice_CreateWithConfig(t *testing.T) {
 	aaguid := auth.AAGUID()
 	if aaguid != config.AAGUID {
 		t.Errorf("AAGUID mismatch: got %v, want %v", aaguid, config.AAGUID)
-	}
-}
-
-// TestNativeVirtualDevice_CreateWithStorage tests device creation with custom storage.
-func TestNativeVirtualDevice_CreateWithStorage(t *testing.T) {
-	storage := authenticator.NewMemoryStorage()
-	config := &NativeVirtualDeviceConfig{
-		Storage: storage,
-	}
-
-	device, err := NewNativeVirtualDevice(config)
-	if err != nil {
-		t.Fatalf("failed to create device: %v", err)
-	}
-	defer func() { _ = device.Close() }()
-
-	// Verify storage is being used
-	auth := device.Authenticator()
-	if auth == nil {
-		t.Fatal("Authenticator() returned nil")
 	}
 }
 
@@ -387,51 +366,6 @@ func TestNativeVirtualDevice_Close(t *testing.T) {
 	err = device.Close()
 	if err != nil {
 		t.Fatalf("second Close failed: %v", err)
-	}
-}
-
-// TestNativeVirtualDevice_HIDDevice tests HIDDevice interface compliance.
-func TestNativeVirtualDevice_HIDDevice(t *testing.T) {
-	device, err := NewNativeVirtualDevice(nil)
-	if err != nil {
-		t.Fatalf("failed to create device: %v", err)
-	}
-	defer func() { _ = device.Close() }()
-
-	// Verify all HIDDevice methods
-	var hid xkms.FIDO2HIDDevice = device
-
-	if hid.Path() == "" {
-		t.Error("Path() empty")
-	}
-	if hid.VendorID() == 0 {
-		t.Error("VendorID() is 0")
-	}
-	if hid.ProductID() == 0 {
-		t.Error("ProductID() is 0")
-	}
-	if hid.Product() == "" {
-		t.Error("Product() empty")
-	}
-	if hid.Manufacturer() == "" {
-		t.Error("Manufacturer() empty")
-	}
-	if hid.SerialNumber() == "" {
-		t.Error("SerialNumber() empty")
-	}
-}
-
-// TestNativeVirtualDevice_Authenticator tests Authenticator accessor.
-func TestNativeVirtualDevice_Authenticator(t *testing.T) {
-	device, err := NewNativeVirtualDevice(nil)
-	if err != nil {
-		t.Fatalf("failed to create device: %v", err)
-	}
-	defer func() { _ = device.Close() }()
-
-	auth := device.Authenticator()
-	if auth == nil {
-		t.Error("Authenticator() returned nil")
 	}
 }
 

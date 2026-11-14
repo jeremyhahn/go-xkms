@@ -368,43 +368,6 @@ func (d *EmptyResponseDeviceFC) Read(data []byte) (int, error) {
 	return 0, &errs.Message{Msg: "no data"}
 }
 
-// Tests for readResponseSync with incomplete first packet - covers device.go:220-221
-func TestReadResponseSync_IncompleteFirstPacket_FC(t *testing.T) {
-	config := DefaultConfig
-	mockDev := &IncompletePacketDeviceFC{
-		MockHIDDevice: NewMockHIDDevice("/dev/hidraw0"),
-	}
-
-	_, err := NewCTAPHIDDevice(mockDev, &config)
-	assert.Error(t, err) // Should fail because packet is incomplete
-}
-
-// IncompletePacketDeviceFC returns incomplete packets
-type IncompletePacketDeviceFC struct {
-	*MockHIDDevice
-}
-
-func (d *IncompletePacketDeviceFC) Write(data []byte) (int, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	// Write short response (less than HIDPacketSize)
-	d.readBuf.Write(make([]byte, 32)) // Only 32 bytes
-
-	return len(data), nil
-}
-
-func (d *IncompletePacketDeviceFC) Read(data []byte) (int, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if d.readBuf.Len() > 0 {
-		return d.readBuf.Read(data)
-	}
-
-	return 0, &errs.Message{Msg: "no data"}
-}
-
 // Tests for readResponseSync channel ID mismatch - covers device.go:226-227
 func TestReadResponseSync_CIDMismatch_FC(t *testing.T) {
 	config := DefaultConfig

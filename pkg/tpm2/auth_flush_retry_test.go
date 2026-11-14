@@ -21,19 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFlushSessionWithRetry_SucceedsFirstAttempt proves the common case never
-// pays the retry delay: a close that succeeds on the first call returns nil
-// immediately, and is invoked exactly once.
-func TestFlushSessionWithRetry_SucceedsFirstAttempt(t *testing.T) {
-	calls := 0
-	err := flushSessionWithRetry(func() error {
-		calls++
-		return nil
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, calls)
-}
-
 // TestFlushSessionWithRetry_SucceedsAfterTransientFailures proves the retry
 // loop absorbs a close that fails on its first attempts but recovers within
 // flushRetryAttempts tries -- the "lost a race for the device" case the

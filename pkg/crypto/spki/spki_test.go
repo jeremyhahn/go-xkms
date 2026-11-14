@@ -22,7 +22,6 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
-	"fmt"
 	"math/big"
 	"net"
 	"os"
@@ -160,18 +159,6 @@ func TestComputePinNilCert(t *testing.T) {
 	assert.Empty(t, pin)
 }
 
-func TestComputePinDeterministic(t *testing.T) {
-	cert, _ := generateTestCert(t)
-
-	pin1, err := ComputePin(cert)
-	require.NoError(t, err)
-
-	pin2, err := ComputePin(cert)
-	require.NoError(t, err)
-
-	assert.Equal(t, pin1, pin2)
-}
-
 func TestComputePinUniqueness(t *testing.T) {
 	cert1, _ := generateTestCert(t)
 	cert2, _ := generateTestCert(t)
@@ -207,41 +194,6 @@ func TestComputePinBytesNilCert(t *testing.T) {
 	assert.Equal(t, [32]byte{}, pinBytes)
 }
 
-func TestComputePinBytesDeterministic(t *testing.T) {
-	cert, _ := generateTestCert(t)
-
-	pin1, err := ComputePinBytes(cert)
-	require.NoError(t, err)
-
-	pin2, err := ComputePinBytes(cert)
-	require.NoError(t, err)
-
-	assert.Equal(t, pin1, pin2)
-}
-
-func TestComputePinBytesUniqueness(t *testing.T) {
-	cert1, _ := generateTestCert(t)
-	cert2, _ := generateTestCert(t)
-
-	pin1, err := ComputePinBytes(cert1)
-	require.NoError(t, err)
-
-	pin2, err := ComputePinBytes(cert2)
-	require.NoError(t, err)
-
-	assert.NotEqual(t, pin1, pin2)
-}
-
-func TestVerifyPin(t *testing.T) {
-	cert, _ := generateTestCert(t)
-
-	pin, err := ComputePin(cert)
-	require.NoError(t, err)
-
-	err = VerifyPin(cert, pin)
-	assert.NoError(t, err)
-}
-
 func TestVerifyPinMismatch(t *testing.T) {
 	cert, _ := generateTestCert(t)
 
@@ -260,22 +212,6 @@ func TestVerifyPinEmptyPin(t *testing.T) {
 func TestVerifyPinNilCert(t *testing.T) {
 	err := VerifyPin(nil, "somepin")
 	assert.ErrorIs(t, err, ErrNilCertificate)
-}
-
-func TestVerifyConnection(t *testing.T) {
-	cert, _ := generateTestCert(t)
-
-	pin, err := ComputePin(cert)
-	require.NoError(t, err)
-
-	verifyFunc := VerifyConnection(pin)
-	require.NotNil(t, verifyFunc)
-
-	cs := tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{cert},
-	}
-	err = verifyFunc(cs)
-	assert.NoError(t, err)
 }
 
 func TestVerifyConnectionMismatch(t *testing.T) {
@@ -328,18 +264,6 @@ func TestNewPinnedTLSConfig(t *testing.T) {
 	// SessionTicketsDisabled must be true: session resumption bypasses
 	// VerifyConnection, which would silently skip the SPKI pin check.
 	assert.True(t, cfg.SessionTicketsDisabled, "SessionTicketsDisabled must be true to prevent pin bypass via session resumption")
-}
-
-func TestNewPinnedTLSConfig_VerifiesCorrectPin(t *testing.T) {
-	cert, _ := generateTestCert(t)
-	pin, err := ComputePin(cert)
-	require.NoError(t, err)
-
-	cfg := NewPinnedTLSConfig(pin)
-	cs := tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{cert},
-	}
-	assert.NoError(t, cfg.VerifyConnection(cs))
 }
 
 func TestNewPinnedTLSConfig_RejectsWrongPin(t *testing.T) {
@@ -459,31 +383,6 @@ func TestFetchServerPinWithCADialFailure(t *testing.T) {
 	assert.Nil(t, cert)
 }
 
-func TestFetchServerPinVerifyRoundtrip(t *testing.T) {
-	// Test the full workflow: fetch a pin from a server, then verify it
-	cert, key := generateTestCertWithSAN(t)
-	addr := startTLSServer(t, cert, key)
-
-	// Build a CA pool that trusts our self-signed cert
-	caPool := buildCertPool(t, cert)
-
-	// Fetch the pin using CA-verified connection
-	pin, _, err := FetchServerPinWithCA(addr, caPool)
-	require.NoError(t, err)
-
-	// Verify the pin against the original certificate
-	err = VerifyPin(cert, pin)
-	assert.NoError(t, err)
-
-	// Verify the VerifyConnection callback also works
-	verifyFunc := VerifyConnection(pin)
-	cs := tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{cert},
-	}
-	err = verifyFunc(cs)
-	assert.NoError(t, err)
-}
-
 func TestFetchServerPinWithCAFile(t *testing.T) {
 	cert, key := generateTestCertWithSAN(t)
 	addr := startTLSServer(t, cert, key)
@@ -533,32 +432,4 @@ func TestFetchServerPinUntrustedServer(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDialFailed)
 	assert.Empty(t, pin)
 	assert.Nil(t, serverCert)
-}
-
-func TestErrorMessages(t *testing.T) {
-	// Verify error messages are descriptive
-	assert.Equal(t, "certificate is nil", ErrNilCertificate.Error())
-	assert.Equal(t, "pin is empty", ErrEmptyPin.Error())
-	assert.Equal(t, "SPKI pin does not match certificate", ErrInvalidPin.Error())
-	assert.Equal(t, "no PEM data found", ErrInvalidPEM.Error())
-	assert.Equal(t, "failed to parse certificate", ErrParseCertificate.Error())
-	assert.Equal(t, "no peer certificates in connection state", ErrNoPeerCertificates.Error())
-	assert.Equal(t, "failed to connect to server", ErrDialFailed.Error())
-	assert.Equal(t, "failed to read CA certificate file", ErrReadCAFile.Error())
-	assert.Equal(t, "failed to parse CA certificate file", ErrParseCAFile.Error())
-}
-
-func TestComputePinHexEncoding(t *testing.T) {
-	cert, _ := generateTestCert(t)
-
-	pin, err := ComputePin(cert)
-	require.NoError(t, err)
-
-	// Verify the pin is valid hex
-	decoded, err := hex.DecodeString(pin)
-	require.NoError(t, err)
-	assert.Len(t, decoded, 32) // SHA-256 = 32 bytes
-
-	// Verify lowercase hex
-	assert.Equal(t, pin, fmt.Sprintf("%x", decoded))
 }

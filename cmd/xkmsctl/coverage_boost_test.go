@@ -229,91 +229,13 @@ func TestBootstrapLogger_VerboseMode(t *testing.T) {
 	require.NotNil(t, logger)
 }
 
-func TestBootstrapLogger_NilConfig(t *testing.T) {
-	oldConfig := globalConfig
-	defer func() { globalConfig = oldConfig }()
-
-	globalConfig = nil
-	logger := bootstrapLogger()
-	require.NotNil(t, logger)
-}
-
 // =============================================================================
 // loadEnrollmentCert - missing branches (66.7%)
 // =============================================================================
 
-func TestLoadEnrollmentCert_CertFile(t *testing.T) {
-	// Create a self-signed cert
-	certPEM := createTestCertPEM(t)
-	tmpFile := filepath.Join(t.TempDir(), "test.pem")
-	require.NoError(t, os.WriteFile(tmpFile, certPEM, 0600))
-
-	cmd := &cobra.Command{}
-	cmd.Flags().String("cert-file", tmpFile, "")
-	cfg := NewConfig()
-
-	cert, err := loadEnrollmentCert(cmd, cfg)
-	require.NoError(t, err)
-	require.NotNil(t, cert)
-}
-
-func TestLoadEnrollmentCert_NeitherCertNorPKCS11(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().String("cert-file", "", "")
-	cfg := NewConfig()
-
-	_, err := loadEnrollmentCert(cmd, cfg)
-	require.ErrorIs(t, err, ErrNoCertificateSource)
-}
-
-func TestLoadEnrollmentCert_InvalidCertFile(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().String("cert-file", "/nonexistent/path/cert.pem", "")
-	cfg := NewConfig()
-
-	_, err := loadEnrollmentCert(cmd, cfg)
-	require.Error(t, err)
-}
-
 // =============================================================================
 // generateNoiseKey - output to file branch (71.4%)
 // =============================================================================
-
-func TestGenerateNoiseKey_ToFile(t *testing.T) {
-	origExit := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = origExit }()
-
-	outputFile := filepath.Join(t.TempDir(), "noise.key")
-	if !noiseKeygenOutsideFIPS(t, outputFile, func() { generateNoiseKey(outputFile) }) {
-		return
-	}
-	generateNoiseKey(outputFile)
-
-	data, err := os.ReadFile(outputFile)
-	require.NoError(t, err)
-	assert.NotEmpty(t, data)
-}
-
-func TestGenerateNoiseKey_ToStdout(t *testing.T) {
-	origExit := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = origExit }()
-
-	// Just verify it doesn't panic
-	generateNoiseKey("")
-}
-
-func TestGenerateNoiseKey_WriteError(t *testing.T) {
-	origExit := exitFunc
-	exitCalled := false
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = origExit }()
-
-	// Write to a path that doesn't exist (directory not writable)
-	generateNoiseKey("/nonexistent/dir/noise.key")
-	assert.True(t, exitCalled)
-}
 
 // =============================================================================
 // PIV connect error paths (72.2% for pivGetCertificate, pivStoreCertificate, pivImportCertificate)
@@ -333,22 +255,6 @@ func TestPIVGetCertificate_ConnectError(t *testing.T) {
 	cfg := &Config{
 		ClientFactory: func(cfg *Config) (client.Client, error) {
 			return mockClient, nil
-		},
-	}
-	pivGetCertificate(cfg, printer, "9a", "pem")
-}
-
-func TestPIVGetCertificate_ClientCreateError(t *testing.T) {
-	origExit := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = origExit }()
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return nil, errors.New("factory error")
 		},
 	}
 	pivGetCertificate(cfg, printer, "9a", "pem")
@@ -447,22 +353,6 @@ func TestTenantDelete_ConnectError(t *testing.T) {
 	tenantDelete(cfg, printer, "acme")
 }
 
-func TestTenantDelete_ClientFactoryError(t *testing.T) {
-	origExit := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = origExit }()
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-	cfg := &Config{
-		OutputFormat: "text",
-		ClientFactory: func(c *Config) (client.Client, error) {
-			return nil, errors.New("factory failed")
-		},
-	}
-	tenantDelete(cfg, printer, "acme")
-}
-
 func TestTenantList_ConnectError(t *testing.T) {
 	origExit := exitFunc
 	exitFunc = func(code int) {}
@@ -504,16 +394,6 @@ func TestTenantShow_ConnectError(t *testing.T) {
 // =============================================================================
 // writeTCGCSROutput - write error paths (77.8%)
 // =============================================================================
-
-func TestWriteTCGCSROutput_IAKWriteError(t *testing.T) {
-	// Use a directory path that will fail (file with same name as dir)
-	tmpDir := t.TempDir()
-	blockingFile := filepath.Join(tmpDir, "output")
-	require.NoError(t, os.WriteFile(blockingFile, []byte("block"), 0600))
-
-	err := writeTCGCSROutput(blockingFile+"/subdir", []byte("iak"), []byte("idevid"))
-	require.Error(t, err)
-}
 
 // =============================================================================
 // writeEnrollmentOutput - missing blob and secret write error paths (76.5%)

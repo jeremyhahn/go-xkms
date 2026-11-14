@@ -40,6 +40,55 @@ func TestTPM2Strategy_SealUnseal(t *testing.T) {
 	assert.Equal(t, rootKey, recovered)
 }
 
+// TestTPM2Strategy_CredentialsBecomeObjectPassword pins that a supplied
+// credential secret reaches the TPM sealer as the sealed object's password,
+// on both seal and unseal.
+func TestTPM2Strategy_CredentialsBecomeObjectPassword(t *testing.T) {
+	sealer := &mockSealer{canSeal: true}
+	strategy := NewTPM2Strategy(sealer, nil)
+	rootKey := []byte("0123456789abcdef0123456789abcdef")
+	creds, err := CredentialsFor(t.Context(), []byte("tpm-object-auth"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
+
+	sealed, err := strategy.SealRootKey(t.Context(), rootKey, creds)
+	require.NoError(t, err)
+	require.NotNil(t, sealer.lastSealOpts)
+	assert.Equal(t, []byte("tpm-object-auth"), sealer.lastSealOpts.Password.Bytes())
+
+	recovered, err := strategy.UnsealRootKey(t.Context(), sealed, creds)
+	require.NoError(t, err)
+	assert.Equal(t, rootKey, recovered)
+	require.NotNil(t, sealer.lastUnsealOpts)
+	assert.Equal(t, []byte("tpm-object-auth"), sealer.lastUnsealOpts.Password.Bytes())
+}
+
+// TestTPM2Strategy_DestroyedCredentialsRefused pins that a credential secret
+// that can no longer be opened fails seal and unseal before the TPM sealer
+// is reached, with no partial result.
+func TestTPM2Strategy_DestroyedCredentialsRefused(t *testing.T) {
+	sealer := &mockSealer{canSeal: true}
+	strategy := NewTPM2Strategy(sealer, nil)
+	rootKey := []byte("0123456789abcdef0123456789abcdef")
+	sealed, err := strategy.SealRootKey(t.Context(), rootKey, Credentials{})
+	require.NoError(t, err)
+	sealer.lastData = nil
+
+	creds, err := CredentialsFor(t.Context(), []byte("tpm-object-auth"))
+	require.NoError(t, err)
+	creds.Secret.Destroy()
+
+	resealed, err := strategy.SealRootKey(t.Context(), rootKey, creds)
+	require.Error(t, err)
+	assert.Nil(t, resealed)
+	assert.Nil(t, sealer.lastData, "the sealer must not be reached")
+
+	recovered, err := strategy.UnsealRootKey(t.Context(), sealed, creds)
+	require.Error(t, err)
+	assert.Nil(t, recovered)
+	assert.Nil(t, sealer.lastUnsealOpts, "the unsealer must not be reached")
+}
+
 func TestTPM2Strategy_Available_NilSealer(t *testing.T) {
 	strategy := NewTPM2Strategy(nil, nil)
 	assert.False(t, strategy.Available())

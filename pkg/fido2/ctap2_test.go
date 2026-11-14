@@ -507,46 +507,6 @@ func TestAuthenticator_GetAssertion_WithoutOptions(t *testing.T) {
 	require.NotNil(t, resp)
 }
 
-func TestCreateClientDataHash_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name      string
-		challenge []byte
-	}{
-		{
-			name:      "empty challenge",
-			challenge: []byte{},
-		},
-		{
-			name:      "single byte",
-			challenge: []byte{0x42},
-		},
-		{
-			name:      "large challenge",
-			challenge: make([]byte, 1024),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			hash := CreateClientDataHash(tt.challenge)
-			assert.Equal(t, 32, len(hash))
-		})
-	}
-}
-
-func TestDefaultPublicKeyCredentialParameters_Coverage(t *testing.T) {
-	params := DefaultPublicKeyCredentialParameters()
-
-	require.NotEmpty(t, params)
-	assert.GreaterOrEqual(t, len(params), 3)
-
-	// Verify all parameters have correct type
-	for _, param := range params {
-		assert.Equal(t, "public-key", param.Type)
-		assert.NotEqual(t, 0, param.Alg)
-	}
-}
-
 func TestAuthenticator_MakeCredential_ResponseParsing(t *testing.T) {
 	mockDev := NewMockHIDDevice("/dev/hidraw0")
 	config := DefaultConfig

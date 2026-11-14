@@ -99,23 +99,6 @@ func TestNewHandler_DefaultConfig(t *testing.T) {
 	}
 }
 
-func TestNewHandler_CustomConfig(t *testing.T) {
-	h := NewHandler(&Config{
-		BasePath:    "/api-docs",
-		Title:       "Custom Title",
-		DefaultSpec: "admin-api",
-	})
-	if h.basePath != "/api-docs" {
-		t.Errorf("expected basePath /api-docs, got %s", h.basePath)
-	}
-	if h.defaultSpec != "admin-api" {
-		t.Errorf("expected defaultSpec admin-api, got %s", h.defaultSpec)
-	}
-	if h.title != "Custom Title" {
-		t.Errorf("expected Custom Title, got %s", h.title)
-	}
-}
-
 func TestNewHandler_WithLogger(t *testing.T) {
 	logger := slog.Default()
 	h := NewHandler(&Config{
@@ -203,7 +186,6 @@ func TestSwaggerUIHandler_SpecQueryParam(t *testing.T) {
 		expectedActive string
 	}{
 		{"default_acme", "", "acme-api"},
-		{"explicit_acme", "acme-api", "acme-api"},
 		{"admin_api", "admin-api", "admin-api"},
 	}
 
@@ -231,59 +213,22 @@ func TestSwaggerUIHandler_SpecQueryParam(t *testing.T) {
 	}
 }
 
-func TestSwaggerUIHandler_WithLogger(t *testing.T) {
-	logger := slog.Default()
-	h := NewHandler(&Config{
-		Logger: logger,
-	})
-	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
-	rec := httptest.NewRecorder()
+func TestSwaggerUIHandler_TemplateError(t *testing.T) {
+	for name, h := range map[string]*Handler{
+		"no_logger":   NewHandler(nil),
+		"with_logger": NewHandler(&Config{Logger: discardLogger()}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+			w := newFailingResponseWriter()
 
-	h.SwaggerUIHandler(rec, req)
+			// A failing writer makes the template execution fail.
+			h.SwaggerUIHandler(w, req)
 
-	resp := rec.Result()
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected status 200, got %d", resp.StatusCode)
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-	bodyStr := string(body)
-
-	if !strings.Contains(bodyStr, "swagger-ui") {
-		t.Error("expected body to contain swagger-ui")
-	}
-}
-
-func TestSwaggerUIHandler_TemplateError_NoLogger(t *testing.T) {
-	h := NewHandler(nil)
-	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
-	w := newFailingResponseWriter()
-
-	// This should trigger the error path when the template fails to write
-	h.SwaggerUIHandler(w, req)
-
-	// The error handler sets a 500 status code
-	if w.statusCode != http.StatusInternalServerError {
-		t.Errorf("expected status 500, got %d", w.statusCode)
-	}
-}
-
-func TestSwaggerUIHandler_TemplateError_WithLogger(t *testing.T) {
-	logger := slog.Default()
-	h := NewHandler(&Config{
-		Logger: logger,
-	})
-	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
-	w := newFailingResponseWriter()
-
-	// This should trigger the error path with logging when the template fails to write
-	h.SwaggerUIHandler(w, req)
-
-	// The error handler sets a 500 status code
-	if w.statusCode != http.StatusInternalServerError {
-		t.Errorf("expected status 500, got %d", w.statusCode)
+			if w.statusCode != http.StatusInternalServerError {
+				t.Errorf("expected status 500, got %d", w.statusCode)
+			}
+		})
 	}
 }
 
@@ -334,17 +279,22 @@ func TestInitializerHandler_RendersSelectedSpec(t *testing.T) {
 }
 
 func TestInitializerHandler_UnknownSpecNotFound(t *testing.T) {
-	h := NewHandler(&Config{DefaultSpec: "acme-api"})
+	for name, h := range map[string]*Handler{
+		"no_logger":   NewHandler(&Config{DefaultSpec: "acme-api"}),
+		"with_logger": NewHandler(&Config{DefaultSpec: "acme-api", Logger: discardLogger()}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, spec := range []string{"missing", `x";alert(1);//`, "../acme-api"} {
+				req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js?spec="+url.QueryEscape(spec), nil)
+				rec := httptest.NewRecorder()
 
-	for _, spec := range []string{"missing", `x";alert(1);//`, "../acme-api"} {
-		req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js?spec="+url.QueryEscape(spec), nil)
-		rec := httptest.NewRecorder()
+				h.InitializerHandler(rec, req)
 
-		h.InitializerHandler(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("spec %q: expected status 404, got %d", spec, rec.Code)
-		}
+				if rec.Code != http.StatusNotFound {
+					t.Errorf("spec %q: expected status 404, got %d", spec, rec.Code)
+				}
+			}
+		})
 	}
 }
 
@@ -357,19 +307,25 @@ func TestSpecURLs_MatchEmbeddedSpecs(t *testing.T) {
 }
 
 func TestInitializerHandler_TemplateError(t *testing.T) {
-	h := NewHandler(nil)
-	req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js", nil)
-	w := newFailingResponseWriter()
+	for name, h := range map[string]*Handler{
+		"no_logger":   NewHandler(nil),
+		"with_logger": NewHandler(&Config{Logger: discardLogger()}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js", nil)
+			w := newFailingResponseWriter()
 
-	h.InitializerHandler(w, req)
+			h.InitializerHandler(w, req)
 
-	if w.statusCode != http.StatusInternalServerError {
-		t.Errorf("expected status 500, got %d", w.statusCode)
+			if w.statusCode != http.StatusInternalServerError {
+				t.Errorf("expected status 500, got %d", w.statusCode)
+			}
+		})
 	}
 }
 
 func TestAssetHandler_ServesVendoredCSS(t *testing.T) {
-	h := NewHandler(nil)
+	h := NewHandler(&Config{Logger: discardLogger()})
 	req := httptest.NewRequest(http.MethodGet, "/docs/swagger-ui.css", nil)
 	rec := httptest.NewRecorder()
 
@@ -469,43 +425,24 @@ func TestOpenAPISpecHandler_ACMESpec(t *testing.T) {
 	}
 }
 
-func TestOpenAPISpecHandler_AdminSpec(t *testing.T) {
-	h := NewHandler(nil)
-	req := httptest.NewRequest(http.MethodGet, "/openapi/admin-api.yaml", nil)
-	rec := httptest.NewRecorder()
-
-	h.OpenAPISpecHandler(rec, req)
-
-	resp := rec.Result()
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected status 200, got %d", resp.StatusCode)
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-	bodyStr := string(body)
-
-	if !strings.Contains(bodyStr, "openapi: 3.1.0") {
-		t.Error("expected body to contain openapi version")
-	}
-	if !strings.Contains(bodyStr, "Admin API") {
-		t.Error("expected body to contain Admin API")
-	}
-}
-
 func TestOpenAPISpecHandler_NotFound(t *testing.T) {
-	h := NewHandler(nil)
-	req := httptest.NewRequest(http.MethodGet, "/openapi/nonexistent.yaml", nil)
-	rec := httptest.NewRecorder()
+	for name, h := range map[string]*Handler{
+		"no_logger":   NewHandler(nil),
+		"with_logger": NewHandler(&Config{Logger: discardLogger()}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/openapi/nonexistent.yaml", nil)
+			rec := httptest.NewRecorder()
 
-	h.OpenAPISpecHandler(rec, req)
+			h.OpenAPISpecHandler(rec, req)
 
-	resp := rec.Result()
-	defer func() { _ = resp.Body.Close() }()
+			resp := rec.Result()
+			defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("expected status 404, got %d", resp.StatusCode)
+			if resp.StatusCode != http.StatusNotFound {
+				t.Errorf("expected status 404, got %d", resp.StatusCode)
+			}
+		})
 	}
 }
 
@@ -527,61 +464,12 @@ func TestOpenAPISpecHandler_NoWildcardCORS(t *testing.T) {
 	}
 }
 
-func TestOpenAPISpecHandler_WithLogger(t *testing.T) {
-	logger := slog.Default()
-	h := NewHandler(&Config{
-		Logger: logger,
-	})
-	req := httptest.NewRequest(http.MethodGet, "/openapi/acme-api.yaml", nil)
-	rec := httptest.NewRecorder()
-
-	h.OpenAPISpecHandler(rec, req)
-
-	resp := rec.Result()
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected status 200, got %d", resp.StatusCode)
-	}
-}
-
-func TestOpenAPISpecHandler_NotFound_WithLogger(t *testing.T) {
-	logger := slog.Default()
-	h := NewHandler(&Config{
-		Logger: logger,
-	})
-	req := httptest.NewRequest(http.MethodGet, "/openapi/nonexistent.yaml", nil)
-	rec := httptest.NewRecorder()
-
-	h.OpenAPISpecHandler(rec, req)
-
-	resp := rec.Result()
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("expected status 404, got %d", resp.StatusCode)
-	}
-}
-
 func TestRegisterMux(t *testing.T) {
 	h := NewHandler(&Config{
 		BasePath: "/docs",
 	})
 	serveMux := http.NewServeMux()
 	h.RegisterMux(serveMux)
-
-	t.Run("base_path", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/docs", nil)
-		rec := httptest.NewRecorder()
-		serveMux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("expected status 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Header().Get("Content-Type"), "text/html") {
-			t.Errorf("expected text/html content type, got %s", rec.Header().Get("Content-Type"))
-		}
-	})
 
 	t.Run("base_path_trailing_slash", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/docs/", nil)
@@ -600,29 +488,6 @@ func TestRegisterMux(t *testing.T) {
 
 		if rec.Code != http.StatusOK {
 			t.Errorf("expected status 200, got %d", rec.Code)
-		}
-	})
-
-	t.Run("initializer_script", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js", nil)
-		rec := httptest.NewRecorder()
-		serveMux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("expected status 200, got %d", rec.Code)
-		}
-	})
-
-	t.Run("openapi_spec", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/openapi/acme-api.yaml", nil)
-		rec := httptest.NewRecorder()
-		serveMux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("expected status 200, got %d", rec.Code)
-		}
-		if ct := rec.Header().Get("Content-Type"); ct != "application/yaml" {
-			t.Errorf("expected application/yaml, got %s", ct)
 		}
 	})
 }
@@ -809,44 +674,9 @@ func TestErrAssetLoad_Error(t *testing.T) {
 // TestInitializerHandler_UnknownSpecNotFound_WithLogger exercises the same
 // unknown-spec 404 path as TestInitializerHandler_UnknownSpecNotFound, but
 // with a logger attached so the warning branch runs too.
-func TestInitializerHandler_UnknownSpecNotFound_WithLogger(t *testing.T) {
-	h := NewHandler(&Config{Logger: discardLogger()})
-	req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js?spec=missing", nil)
-	rec := httptest.NewRecorder()
-
-	h.InitializerHandler(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected status 404, got %d", rec.Code)
-	}
-}
-
 // TestInitializerHandler_TemplateError_WithLogger exercises the template
 // rendering failure branch with a logger attached, mirroring
 // TestInitializerHandler_TemplateError but confirming the logger.Error call
 // does not itself panic or otherwise disrupt the 500 response.
-func TestInitializerHandler_TemplateError_WithLogger(t *testing.T) {
-	h := NewHandler(&Config{Logger: discardLogger()})
-	req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js", nil)
-	w := newFailingResponseWriter()
-
-	h.InitializerHandler(w, req)
-
-	if w.statusCode != http.StatusInternalServerError {
-		t.Errorf("expected status 500, got %d", w.statusCode)
-	}
-}
-
 // TestAssetHandler_WithLogger exercises AssetHandler's debug-logging branch,
 // which the logger-less tests above never reach.
-func TestAssetHandler_WithLogger(t *testing.T) {
-	h := NewHandler(&Config{Logger: discardLogger()})
-	req := httptest.NewRequest(http.MethodGet, "/docs/swagger-ui.css", nil)
-	rec := httptest.NewRecorder()
-
-	h.AssetHandler(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected status 200, got %d", rec.Code)
-	}
-}

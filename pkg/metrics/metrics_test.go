@@ -71,20 +71,52 @@ func TestRecordOperation(t *testing.T) {
 	}
 }
 
-func TestRecordOperationWhenDisabled(t *testing.T) {
+func TestRecordersWhenDisabled(t *testing.T) {
+	tests := []struct {
+		name      string
+		collector interface {
+			prometheus.Collector
+			Reset()
+		}
+		record func()
+	}{
+		{"operation", OperationsTotal, func() { RecordOperation(OpGenerate, "pkcs8", StatusSuccess, 0.5) }},
+		{"error", ErrorsTotal, func() { RecordError(OpGet, "pkcs8", "key_not_found") }},
+		{"http", HTTPRequestsTotal, func() { RecordHTTPRequest("GET", "200", 0.05) }},
+		{"grpc", GRPCRequestsTotal, func() { RecordGRPCRequest("/test.Method", "OK", 0.1) }},
+		{"active connections", ActiveConnections, func() {
+			IncrementActiveConnections(ProtocolHTTP)
+			DecrementActiveConnections(ProtocolHTTP)
+		}},
+		{"keys total", KeysTotal, func() { SetKeysTotal("pkcs8", 10) }},
+		{"keys adjust", KeysTotal, func() {
+			IncrementKeysTotal("pkcs8")
+			DecrementKeysTotal("pkcs8")
+		}},
+		{"certs total", CertsTotal, func() { SetCertsTotal("pkcs8", 5) }},
+		{"certs adjust", CertsTotal, func() {
+			IncrementCertsTotal("pkcs8")
+			DecrementCertsTotal("pkcs8")
+		}},
+		{"backend health", BackendHealthy, func() {
+			SetBackendHealth("pkcs8", true)
+			SetBackendHealth("pkcs8", false)
+		}},
+	}
+
 	Disable()
 	defer Enable()
 
-	// Reset counters
-	OperationsTotal.Reset()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.collector.Reset()
+			tt.record()
 
-	// Record operation while disabled
-	RecordOperation(OpGenerate, "pkcs8", StatusSuccess, 0.5)
-
-	// Verify nothing was recorded
-	count := testutil.CollectAndCount(OperationsTotal)
-	if count != 0 {
-		t.Errorf("Expected 0 operations when disabled, got %d", count)
+			count := testutil.CollectAndCount(tt.collector)
+			if count != 0 {
+				t.Errorf("Expected nothing recorded when disabled, got %d series", count)
+			}
+		})
 	}
 }
 
@@ -110,23 +142,6 @@ func TestRecordError(t *testing.T) {
 	count = testutil.CollectAndCount(ErrorsTotal)
 	if count != 2 {
 		t.Errorf("Expected 2 errors recorded, got %d", count)
-	}
-}
-
-func TestRecordErrorWhenDisabled(t *testing.T) {
-	Disable()
-	defer Enable()
-
-	// Reset counters
-	ErrorsTotal.Reset()
-
-	// Record error while disabled
-	RecordError(OpGet, "pkcs8", "key_not_found")
-
-	// Verify nothing was recorded
-	count := testutil.CollectAndCount(ErrorsTotal)
-	if count != 0 {
-		t.Errorf("Expected 0 errors when disabled, got %d", count)
 	}
 }
 
@@ -235,6 +250,45 @@ func TestSetCertsTotal(t *testing.T) {
 	}
 }
 
+// TestAdjustStoredTotals pins the increment and decrement helpers of the
+// stored-key and stored-certificate gauges: each moves only its own backend's
+// series by exactly one from the value last set.
+func TestAdjustStoredTotals(t *testing.T) {
+	tests := []struct {
+		name      string
+		gauge     *prometheus.GaugeVec
+		set       func(backend string, count float64)
+		increment func(backend string)
+		decrement func(backend string)
+	}{
+		{"keys", KeysTotal, SetKeysTotal, IncrementKeysTotal, DecrementKeysTotal},
+		{"certs", CertsTotal, SetCertsTotal, IncrementCertsTotal, DecrementCertsTotal},
+	}
+
+	Enable()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.gauge.Reset()
+			tt.set("pkcs8", 10)
+			tt.set("tpm2", 3)
+
+			tt.increment("pkcs8")
+			tt.increment("pkcs8")
+			if got := testutil.ToFloat64(tt.gauge.WithLabelValues("pkcs8")); got != 12 {
+				t.Errorf("after two increments: got %v, want 12", got)
+			}
+
+			tt.decrement("pkcs8")
+			if got := testutil.ToFloat64(tt.gauge.WithLabelValues("pkcs8")); got != 11 {
+				t.Errorf("after a decrement: got %v, want 11", got)
+			}
+			if got := testutil.ToFloat64(tt.gauge.WithLabelValues("tpm2")); got != 3 {
+				t.Errorf("other backend moved: got %v, want 3", got)
+			}
+		})
+	}
+}
+
 func TestSetBackendHealth(t *testing.T) {
 	Enable()
 
@@ -257,76 +311,9 @@ func TestSetBackendHealth(t *testing.T) {
 	SetBackendHealth("test", false)
 }
 
-func TestOperationConstants(t *testing.T) {
-	// Verify operation constants are defined
-	operations := []string{
-		OpGenerate, OpStore, OpGet, OpDelete, OpList,
-		OpSign, OpVerify, OpEncrypt, OpDecrypt,
-		OpExport, OpImport, OpRotate, OpHealthCheck,
-		OpIssueCert, OpRevokeCert, OpGenerateCRL,
-	}
-
-	for _, op := range operations {
-		if op == "" {
-			t.Error("Operation constant is empty")
-		}
-	}
-}
-
-func TestStatusConstants(t *testing.T) {
-	// Verify status constants are defined
-	if StatusSuccess == "" {
-		t.Error("StatusSuccess constant is empty")
-	}
-	if StatusError == "" {
-		t.Error("StatusError constant is empty")
-	}
-}
-
-func TestLabelConstants(t *testing.T) {
-	// Verify label constants are defined
-	labels := []string{
-		LabelOperation, LabelBackend, LabelStatus,
-		LabelErrorType, LabelProtocol, LabelMethod, LabelStatusCode,
-	}
-
-	for _, label := range labels {
-		if label == "" {
-			t.Error("Label constant is empty")
-		}
-	}
-}
-
 func TestMetricsNamespace(t *testing.T) {
-	if Namespace == "" {
-		t.Error("Namespace constant is empty")
-	}
 	if Namespace != "xkms" {
 		t.Errorf("Expected namespace 'xkms', got '%s'", Namespace)
-	}
-}
-
-func TestResourceGauges(t *testing.T) {
-	Enable()
-
-	// Verify all resource gauges can be set without panicking
-	Goroutines.Set(100)
-	MemoryAllocBytes.Set(1024 * 1024)
-	MemorySysBytes.Set(10 * 1024 * 1024)
-	GCPauseTotalSeconds.Set(0.5)
-	ServerUptime.Set(3600)
-
-	// Verify gauges are collecting
-	collectors := []prometheus.Collector{
-		Goroutines, MemoryAllocBytes, MemorySysBytes,
-		GCPauseTotalSeconds, ServerUptime,
-	}
-
-	for _, collector := range collectors {
-		count := testutil.CollectAndCount(collector)
-		if count == 0 {
-			t.Errorf("Expected gauge %v to be collecting", collector)
-		}
 	}
 }
 
@@ -395,54 +382,4 @@ func BenchmarkIncrementActiveConnections(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		IncrementActiveConnections(ProtocolHTTP)
 	}
-}
-
-func TestActiveConnectionsWhenDisabled(t *testing.T) {
-	Disable()
-	defer Enable()
-
-	// These should not panic when disabled
-	IncrementActiveConnections(ProtocolHTTP)
-	DecrementActiveConnections(ProtocolHTTP)
-}
-
-func TestSetKeysTotalWhenDisabled(t *testing.T) {
-	Disable()
-	defer Enable()
-
-	// Should not panic when disabled
-	SetKeysTotal("pkcs8", 10)
-}
-
-func TestSetCertsTotalWhenDisabled(t *testing.T) {
-	Disable()
-	defer Enable()
-
-	// Should not panic when disabled
-	SetCertsTotal("pkcs8", 5)
-}
-
-func TestSetBackendHealthWhenDisabled(t *testing.T) {
-	Disable()
-	defer Enable()
-
-	// Should not panic when disabled
-	SetBackendHealth("pkcs8", true)
-	SetBackendHealth("pkcs8", false)
-}
-
-func TestRecordHTTPRequestWhenDisabled(t *testing.T) {
-	Disable()
-	defer Enable()
-
-	// Should not panic when disabled
-	RecordHTTPRequest("GET", "200", 0.05)
-}
-
-func TestRecordGRPCRequestWhenDisabled(t *testing.T) {
-	Disable()
-	defer Enable()
-
-	// Should not panic when disabled
-	RecordGRPCRequest("/test.Method", "OK", 0.1)
 }

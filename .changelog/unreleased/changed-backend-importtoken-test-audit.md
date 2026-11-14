@@ -1,0 +1,1 @@
+backend/importtoken: the test audit (#1794) drops three tests that repeated another's path: `TestUnwrap_RoundTrip` now drives `Entry.Unwrap` for every wrapping algorithm and checks the sealed key's public half, replacing `TestEntry_Unwrap_RoundTrip` and `TestNewSealedRSAKey_Success`; `TestStore_TakeConsumesToken` covers `TestStore_TakeUnknownToken`'s refusal.

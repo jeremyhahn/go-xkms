@@ -153,35 +153,3 @@ func TestTokenAdapterRevokeTokenNoFunc(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "revoke function not configured")
 }
-
-func TestTokenAdapterInterfaceCompliance(t *testing.T) {
-	var client Client = NewTokenAdapter()
-	assert.NotNil(t, client)
-}
-
-func TestTokenAdapterAllOptions(t *testing.T) {
-	adapter := NewTokenAdapter(
-		WithValidateFunc(func(_ context.Context, _ string) (*TokenClaims, error) {
-			return &TokenClaims{UserID: "all-opts"}, nil
-		}),
-		WithRefreshFunc(func(_ context.Context, _ string) (string, error) {
-			return "refreshed", nil
-		}),
-		WithRevokeFunc(func(_ context.Context, _ string) error {
-			return nil
-		}),
-	)
-
-	ctx := context.Background()
-
-	claims, err := adapter.ValidateToken(ctx, "t")
-	require.NoError(t, err)
-	assert.Equal(t, "all-opts", claims.UserID)
-
-	newToken, err := adapter.RefreshToken(ctx, "t")
-	require.NoError(t, err)
-	assert.Equal(t, "refreshed", newToken)
-
-	err = adapter.RevokeToken(ctx, "t")
-	require.NoError(t, err)
-}

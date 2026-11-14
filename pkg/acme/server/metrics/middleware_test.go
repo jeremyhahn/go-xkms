@@ -291,66 +291,18 @@ func TestExtractEndpoint(t *testing.T) {
 			path:     "/acme////",
 			expected: "unknown",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractEndpoint(tt.path)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestResponseWriterCapture(t *testing.T) {
-	t.Run("captures status code", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		rw := &responseWriter{
-			ResponseWriter: rec,
-			statusCode:     http.StatusOK,
-		}
-
-		rw.WriteHeader(http.StatusCreated)
-		assert.Equal(t, http.StatusCreated, rw.statusCode)
-		assert.Equal(t, http.StatusCreated, rec.Code)
-	})
-
-	t.Run("defaults to 200", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		rw := &responseWriter{
-			ResponseWriter: rec,
-			statusCode:     http.StatusOK,
-		}
-
-		// Write without explicitly setting status
-		_, _ = rw.Write([]byte("test"))
-		assert.Equal(t, http.StatusOK, rw.statusCode)
-	})
-}
-
-// TestExtractEndpointEdgeCases tests additional edge cases for extractEndpoint
-func TestExtractEndpointEdgeCases(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected string
-	}{
 		{
-			name:     "all empty parts after split",
-			path:     "////",
+			name:     "only numeric ID after acme prefix and empty parts",
+			path:     "/acme///123///",
 			expected: "unknown",
 		},
 		{
-			name:     "single slash only",
-			path:     "/",
-			expected: "unknown",
+			name:     "acme stripped only as the first part",
+			path:     "/123/acme/456/order/789",
+			expected: "acme-order",
 		},
 		{
-			name:     "numeric with non-numeric in parts",
-			path:     "/123/abc/456",
-			expected: "abc",
-		},
-		{
-			name:     "very large number",
+			name:     "largest uint64 ID",
 			path:     "/acme/order/18446744073709551615",
 			expected: "order",
 		},
@@ -370,91 +322,9 @@ func TestExtractEndpointEdgeCases(t *testing.T) {
 			expected: "order-550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
-			name:     "path with spaces (url encoded)",
+			name:     "url-encoded characters pass through",
 			path:     "/acme/order%20test",
 			expected: "order%20test",
-		},
-		{
-			name:     "path starting with numeric",
-			path:     "/123/acme/456/order/789",
-			expected: "acme-order",
-		},
-		{
-			name:     "only empty strings after acme",
-			path:     "/acme/",
-			expected: "unknown",
-		},
-		{
-			name:     "single non-numeric part",
-			path:     "/test",
-			expected: "test",
-		},
-		{
-			name:     "hexadecimal number string",
-			path:     "/acme/0x123",
-			expected: "0x123",
-		},
-		{
-			name:     "float-like string",
-			path:     "/acme/order/123.456",
-			expected: "order-123.456",
-		},
-		{
-			name:     "very long path",
-			path:     "/acme/a/1/b/2/c/3/d/4/e/5/f/6/g/7/h",
-			expected: "a-b-c-d-e-f-g-h",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractEndpoint(tt.path)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestExtractEndpointCompleteCoverage tests additional edge cases to achieve 100% coverage
-func TestExtractEndpointCompleteCoverage(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected string
-	}{
-		{
-			name:     "only numeric after removing empty parts",
-			path:     "///123///",
-			expected: "123",
-		},
-		{
-			name:     "only numeric with acme prefix and empty parts",
-			path:     "/acme///123///",
-			expected: "unknown", // After removing acme and empty parts, no valid parts remain
-		},
-		{
-			name:     "multiple numeric IDs with empty parts",
-			path:     "/123//456//789/",
-			expected: "123",
-		},
-		{
-			name:     "acme prefix with only empty parts following",
-			path:     "/acme//////",
-			expected: "unknown",
-		},
-		{
-			name:     "only empty parts between slashes",
-			path:     "/////",
-			expected: "unknown",
-		},
-		{
-			name:     "acme with single numeric ID no empty parts",
-			path:     "/acme/999",
-			expected: "999",
-		},
-		{
-			name:     "non-acme single numeric",
-			path:     "/777",
-			expected: "777",
 		},
 	}
 
@@ -498,54 +368,6 @@ func TestMiddlewareConcurrency(t *testing.T) {
 	// Verify metrics were recorded correctly
 	value := getCounterValue(t, requestsTotal, "new-account", "200")
 	assert.GreaterOrEqual(t, value, float64(concurrency*requestsPerGoroutine))
-}
-
-// TestMiddlewareWithMultipleStatusCodes tests middleware with various HTTP status codes
-func TestMiddlewareWithMultipleStatusCodes(t *testing.T) {
-	Init()
-
-	statusCodes := []int{
-		http.StatusOK,
-		http.StatusCreated,
-		http.StatusAccepted,
-		http.StatusNoContent,
-		http.StatusBadRequest,
-		http.StatusUnauthorized,
-		http.StatusForbidden,
-		http.StatusNotFound,
-		http.StatusMethodNotAllowed,
-		http.StatusConflict,
-		http.StatusInternalServerError,
-		http.StatusNotImplemented,
-		http.StatusBadGateway,
-		http.StatusServiceUnavailable,
-	}
-
-	for _, status := range statusCodes {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(status)
-			})
-
-			wrapped := Middleware(handler)
-			req := httptest.NewRequest("POST", "/acme/test", nil)
-			rec := httptest.NewRecorder()
-
-			wrapped.ServeHTTP(rec, req)
-
-			assert.Equal(t, status, rec.Code)
-
-			// Verify error metrics for 4xx and 5xx
-			if status >= 400 {
-				errorType := "client_error"
-				if status >= 500 {
-					errorType = "server_error"
-				}
-				value := getCounterValueSingle(t, errorsTotal, errorType)
-				assert.Greater(t, value, float64(0))
-			}
-		})
-	}
 }
 
 // TestResponseWriterMultipleWriteHeaders tests that status code wrapper behavior
@@ -593,125 +415,4 @@ func TestMiddlewareWithPanicRecovery(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestExtractEndpointConsistency verifies extractEndpoint returns consistent results
-func TestExtractEndpointConsistency(t *testing.T) {
-	paths := []string{
-		"/acme/new-account",
-		"/acme/account/123",
-		"/acme/order/456/finalize",
-	}
-
-	for _, path := range paths {
-		t.Run(path, func(t *testing.T) {
-			// Call multiple times and verify consistency
-			results := make(map[string]int)
-			for i := 0; i < 100; i++ {
-				result := extractEndpoint(path)
-				results[result]++
-			}
-			// Should have exactly one unique result
-			assert.Equal(t, 1, len(results))
-		})
-	}
-}
-
-// TestResponseWriterWriteWithoutExplicitHeader tests implicit 200 status
-func TestResponseWriterWriteWithoutExplicitHeader(t *testing.T) {
-	rec := httptest.NewRecorder()
-	rw := &responseWriter{
-		ResponseWriter: rec,
-		statusCode:     http.StatusOK,
-	}
-
-	// Write without calling WriteHeader explicitly
-	n, err := rw.Write([]byte("test data"))
-	require.NoError(t, err)
-	assert.Equal(t, 9, n)
-	assert.Equal(t, http.StatusOK, rw.statusCode)
-	assert.Equal(t, "test data", rec.Body.String())
-}
-
-// TestResponseWriterHeader tests that the Header method works correctly
-func TestResponseWriterHeader(t *testing.T) {
-	rec := httptest.NewRecorder()
-	rw := &responseWriter{
-		ResponseWriter: rec,
-		statusCode:     http.StatusOK,
-	}
-
-	// Test that we can access and modify headers
-	rw.Header().Set("Content-Type", "application/json")
-	rw.Header().Set("X-Custom-Header", "test-value")
-
-	assert.Equal(t, "application/json", rw.Header().Get("Content-Type"))
-	assert.Equal(t, "test-value", rw.Header().Get("X-Custom-Header"))
-}
-
-// TestMiddlewareWithDifferentHTTPMethods tests middleware with various HTTP methods
-func TestMiddlewareWithDifferentHTTPMethods(t *testing.T) {
-	Init()
-
-	methods := []string{
-		http.MethodGet,
-		http.MethodPost,
-		http.MethodPut,
-		http.MethodPatch,
-		http.MethodDelete,
-		http.MethodHead,
-		http.MethodOptions,
-	}
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrapped := Middleware(handler)
-
-	for _, method := range methods {
-		t.Run(method, func(t *testing.T) {
-			req := httptest.NewRequest(method, "/acme/test", nil)
-			rec := httptest.NewRecorder()
-
-			wrapped.ServeHTTP(rec, req)
-
-			assert.Equal(t, http.StatusOK, rec.Code)
-		})
-	}
-}
-
 // TestExtractEndpointWithSpecialCharacters tests paths with special characters
-func TestExtractEndpointWithSpecialCharacters(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected string
-	}{
-		{
-			name:     "path with underscore",
-			path:     "/acme/new_account",
-			expected: "new_account",
-		},
-		{
-			name:     "path with hyphen",
-			path:     "/acme/new-account",
-			expected: "new-account",
-		},
-		{
-			name:     "path with dot",
-			path:     "/acme/v2.0/account",
-			expected: "v2.0-account",
-		},
-		{
-			name:     "path with plus",
-			path:     "/acme/tls+alpn",
-			expected: "tls+alpn",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractEndpoint(tt.path)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}

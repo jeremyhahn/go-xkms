@@ -65,5 +65,5 @@ func newAWSKMSKeyProvider(config map[string]interface{}) (types.KeyProvider, err
 		awsConfig.KeyID = keyID
 	}
 
-	return awskms.NewBackend(awsConfig)
+	return keyProvider(awskms.NewBackend(awsConfig))
 }

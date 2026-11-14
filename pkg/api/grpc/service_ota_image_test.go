@@ -174,24 +174,6 @@ func TestOTAImageKeyRPCs_InvalidArgument(t *testing.T) {
 	}
 }
 
-func TestOTAImageKeyRPCs_UnknownBoardKey(t *testing.T) {
-	s, _ := crossTenantService(t)
-
-	_, err := s.RotateOTAImageKey(tenantCtx(crossTenantA), &pb.OTAImageKeyRequest{
-		BoardId: otaTestBoard, Backend: crossTenantSource,
-	})
-	assert.Equal(t, codes.NotFound, status.Code(err))
-
-	_, err = s.CreateOTAImageKey(tenantCtx(crossTenantA), &pb.OTAImageKeyRequest{
-		BoardId: otaTestBoard, Backend: crossTenantSource,
-	})
-	require.NoError(t, err)
-	_, err = s.ExportOTAImageKey(tenantCtx(crossTenantB), &pb.OTAImageKeyRequest{
-		BoardId: otaTestBoard, Backend: crossTenantSource,
-	})
-	assert.Equal(t, codes.NotFound, status.Code(err), "another tenant's board key is not found")
-}
-
 func TestOTAImageKeyRPCs_NotInitialized(t *testing.T) {
 	s := NewService(nil, nil, nil)
 	ctx := tenantCtx(crossTenantA)

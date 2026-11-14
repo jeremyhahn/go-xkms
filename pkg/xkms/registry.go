@@ -189,6 +189,16 @@ func RegisterBackendFactory(name BackendType, factory BackendFactory) {
 	storeCopyOnWrite(&backendFactories, name, factory)
 }
 
+// keyProvider returns a backend constructor's result as a types.KeyProvider.
+// On error it returns a nil interface rather than one holding the
+// constructor's nil pointer, which a caller's kp != nil check would accept.
+func keyProvider[T types.KeyProvider](kp T, err error) (types.KeyProvider, error) {
+	if err != nil {
+		return nil, err
+	}
+	return kp, nil
+}
+
 // GetBackendFactory returns the factory function for the specified backend type.
 // Returns the factory and true if found, or nil and false if no factory is
 // registered for the given backend type.

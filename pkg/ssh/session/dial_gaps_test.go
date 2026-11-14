@@ -149,13 +149,6 @@ type closeFailure struct{}
 
 func (closeFailure) Error() string { return "close failed" }
 
-func TestCloseAfterFailedHandshake_DropsErrClosed(t *testing.T) {
-	conn := closeFailConn{err: &net.OpError{Op: "close", Net: "tcp", Err: net.ErrClosed}}
-	if err := closeAfterFailedHandshake(conn); err != nil {
-		t.Fatalf("closeAfterFailedHandshake returned %v, want nil for net.ErrClosed", err)
-	}
-}
-
 func TestCloseAfterFailedHandshake_ReturnsOtherCloseErrors(t *testing.T) {
 	conn := closeFailConn{err: &net.OpError{Op: "close", Net: "tcp", Err: closeFailure{}}}
 	err := closeAfterFailedHandshake(conn)

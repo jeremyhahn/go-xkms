@@ -251,8 +251,3 @@ func TestMemoryClientConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 }
-
-func TestMemoryClientInterfaceCompliance(t *testing.T) {
-	var client Client = NewMemoryClient()
-	assert.NotNil(t, client)
-}

@@ -1,0 +1,1 @@
+- **`pkg/escrow/kmip` coverage back over the 90% floor (#1794)** — a table test makes the in-process KMIP server refuse Locate and asserts that `RecoverKey` by key ID and `ListEscrowed` return the typed escrow error with no partial result. No production change.

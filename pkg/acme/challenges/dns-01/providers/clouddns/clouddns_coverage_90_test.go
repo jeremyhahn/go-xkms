@@ -350,53 +350,6 @@ func TestCleanUpWithQuotedValues(t *testing.T) {
 
 // TestWaitForChangeWithGetChangeError tests waitForChange error handling
 // when GetChange returns an error.
-func TestWaitForChangeWithGetChangeError(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("returns error when GetChange fails on first call", func(t *testing.T) {
-		mock := &mockCloudDNSClient{
-			getChangeFunc: func(ctx context.Context, project, zone, changeID string) (*dns.Change, error) {
-				return nil, errors.New("API unavailable")
-			},
-		}
-
-		cfg := Config{
-			Project:            "my-project",
-			HostedZoneName:     "my-zone",
-			PropagationTimeout: 100 * time.Millisecond,
-			PollingInterval:    20 * time.Millisecond,
-		}
-		provider := NewWithClientAndConfig(mock, cfg)
-
-		err := provider.waitForChange(ctx, "my-zone", "change-123")
-		require.Error(t, err)
-	})
-
-	t.Run("returns error when GetChange fails intermittently", func(t *testing.T) {
-		callCount := 0
-		mock := &mockCloudDNSClient{
-			getChangeFunc: func(ctx context.Context, project, zone, changeID string) (*dns.Change, error) {
-				callCount++
-				if callCount%2 == 0 {
-					return nil, errors.New("intermittent error")
-				}
-				return &dns.Change{Id: changeID, Status: "pending"}, nil
-			},
-		}
-
-		cfg := Config{
-			Project:            "my-project",
-			HostedZoneName:     "my-zone",
-			PropagationTimeout: 100 * time.Millisecond,
-			PollingInterval:    20 * time.Millisecond,
-		}
-		provider := NewWithClientAndConfig(mock, cfg)
-
-		err := provider.waitForChange(ctx, "my-zone", "change-123")
-		require.Error(t, err)
-	})
-}
-
 // TestNewWithInvalidServiceAccountJSON tests New with various invalid
 // service account JSON formats.
 func TestNewWithInvalidServiceAccountJSON(t *testing.T) {
@@ -407,11 +360,6 @@ func TestNewWithInvalidServiceAccountJSON(t *testing.T) {
 		saJSON  []byte
 		wantErr string
 	}{
-		{
-			name:    "completely invalid JSON",
-			saJSON:  []byte(`{not json at all}`),
-			wantErr: "create client",
-		},
 		{
 			name:    "empty JSON object",
 			saJSON:  []byte(`{}`),
@@ -555,54 +503,6 @@ func TestProviderErrorWrapping(t *testing.T) {
 
 // TestNewFromEnvWithEnvironmentVariables tests NewFromEnv with various
 // environment variable combinations.
-func TestNewFromEnvWithEnvironmentVariables(t *testing.T) {
-	ctx := context.Background()
-
-	clearEnv := func() {
-		os.Unsetenv(envProject)
-		os.Unsetenv(envServiceAccountFile)
-		os.Unsetenv(envZoneName)
-		os.Unsetenv(envPropagationTimeout)
-		os.Unsetenv(envPollingInterval)
-		os.Unsetenv(envTTL)
-		os.Unsetenv(envGoogleAppCredential)
-	}
-
-	t.Run("reads custom TTL from environment", func(t *testing.T) {
-		clearEnv()
-		defer clearEnv()
-
-		tmpDir := t.TempDir()
-		saFile := filepath.Join(tmpDir, "sa.json")
-		saContent := []byte(`{
-			"type": "service_account",
-			"project_id": "test-project",
-			"private_key_id": "key123",
-			"private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBALRiMLAHudeSA2mO=\n-----END RSA PRIVATE KEY-----\n",
-			"client_email": "test@test.iam.gserviceaccount.com",
-			"client_id": "123456789",
-			"auth_uri": "https://accounts.google.com/o/oauth2/auth",
-			"token_uri": "https://oauth2.googleapis.com/token"
-		}`)
-		err := os.WriteFile(saFile, saContent, 0600)
-		require.NoError(t, err)
-
-		os.Setenv(envProject, "test-project")
-		os.Setenv(envServiceAccountFile, saFile)
-		os.Setenv(envTTL, "300")
-		os.Setenv(envPropagationTimeout, "60s")
-		os.Setenv(envPollingInterval, "5s")
-		os.Setenv(envZoneName, "custom-zone")
-
-		// This exercises the env variable parsing paths
-		provider, err := NewFromEnv(ctx)
-		if err == nil {
-			assert.NotNil(t, provider)
-			// Would need to expose fields to verify values
-		}
-	})
-}
-
 // TestContextCancellation tests that operations respect context cancellation.
 func TestContextCancellation(t *testing.T) {
 	t.Run("Present respects context cancellation during wait", func(t *testing.T) {
@@ -633,19 +533,6 @@ func TestContextCancellation(t *testing.T) {
 
 		err := provider.Present(ctx, "example.com", "_acme-challenge.example.com.", "token")
 		require.Error(t, err)
-	})
-
-	t.Run("CleanUp completes even with no records to delete", func(t *testing.T) {
-		mock := &mockCloudDNSClient{
-			getResourceRecordSetsFunc: func(ctx context.Context, project, zone, name, rrtype string) ([]*dns.ResourceRecordSet, error) {
-				return []*dns.ResourceRecordSet{}, nil
-			},
-		}
-
-		provider := NewWithClient(mock, "my-project", "my-zone", nil)
-
-		err := provider.CleanUp(context.Background(), "example.com", "_acme-challenge.example.com.", "token")
-		assert.NoError(t, err)
 	})
 }
 

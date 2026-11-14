@@ -171,12 +171,6 @@ func TestFrostGetKey_AfterImport(t *testing.T) {
 	assert.Equal(t, genResp.GroupPublicKey, resp.Key.GroupPublicKey)
 }
 
-func TestFrostGetKey_NotFound(t *testing.T) {
-	svc := NewService(nil, nil, setupFrostXKMS(t))
-	_, err := svc.FrostGetKey(context.Background(), &pb.FrostGetKeyRequest{KeyId: "missing"})
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
 // TestFrostListKeys_AfterImport proves FrostListKeys reports an imported key
 // with its group public key resolved, and that the default page limit (no
 // offset/limit supplied) is applied rather than leaving the slice empty.

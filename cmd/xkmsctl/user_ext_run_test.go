@@ -19,9 +19,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	client "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 var errUserExtBoom = errors.New("boom")
@@ -41,20 +38,6 @@ func (m *mockUserExtClient) BindUserCert(_ context.Context, username, thumbprint
 	m.gotBindUsername = username
 	m.gotBindThumbprint = thumbprint
 	return m.bindErr
-}
-
-func TestUserUpdateCmd_EnableSuccess(t *testing.T) {
-	resetCmdFlags(t, userUpdateCmd)
-	t.Cleanup(func() { resetCmdFlags(t, userUpdateCmd) })
-	mock := &mockUserClient{getUserResp: &transport.GetUserResponse{User: transport.UserInfo{
-		Username: "alice", Enabled: true,
-	}}}
-	withGlobalConfig(t, newUserTestConfig("text", mock))
-	_ = userUpdateCmd.Flags().Set("enable", "true")
-
-	captureStdout(t, func() {
-		userUpdateCmd.Run(userUpdateCmd, []string{"alice"})
-	})
 }
 
 func TestUserUpdateCmd_RequiresExactlyOneFlag(t *testing.T) {
@@ -85,27 +68,6 @@ func TestUserUpdateCmd_DisableError(t *testing.T) {
 	}
 }
 
-func TestUserBindCertCmd_Success(t *testing.T) {
-	resetCmdFlags(t, userBindCertCmd)
-	t.Cleanup(func() { resetCmdFlags(t, userBindCertCmd) })
-	mock := &mockUserExtClient{}
-	withGlobalConfig(t, &Config{
-		OutputFormat: "text",
-		ClientFactory: func(*Config) (client.Client, error) {
-			return mock, nil
-		},
-	})
-	_ = userBindCertCmd.Flags().Set("thumbprint", "9f3a")
-
-	captureStdout(t, func() {
-		userBindCertCmd.Run(userBindCertCmd, []string{"alice"})
-	})
-	if mock.gotBindUsername != "alice" || mock.gotBindThumbprint != "9f3a" {
-		t.Errorf("BindUserCert args mismatch: user=%q thumbprint=%q",
-			mock.gotBindUsername, mock.gotBindThumbprint)
-	}
-}
-
 func TestUserBindCertCmd_RequiresSource(t *testing.T) {
 	resetCmdFlags(t, userBindCertCmd)
 	t.Cleanup(func() { resetCmdFlags(t, userBindCertCmd) })
@@ -117,25 +79,5 @@ func TestUserBindCertCmd_RequiresSource(t *testing.T) {
 	})
 	if code != 1 {
 		t.Errorf("expected exit code 1 without a cert source, got %d", code)
-	}
-}
-
-func TestUserBindCertCmd_Error(t *testing.T) {
-	resetCmdFlags(t, userBindCertCmd)
-	t.Cleanup(func() { resetCmdFlags(t, userBindCertCmd) })
-	mock := &mockUserExtClient{bindErr: errUserExtBoom}
-	withGlobalConfig(t, &Config{
-		OutputFormat: "text",
-		ClientFactory: func(*Config) (client.Client, error) {
-			return mock, nil
-		},
-	})
-	_ = userBindCertCmd.Flags().Set("thumbprint", "9f3a")
-
-	code := captureExit(t, func() {
-		userBindCertCmd.Run(userBindCertCmd, []string{"alice"})
-	})
-	if code != 1 {
-		t.Errorf("expected exit code 1 on bind failure, got %d", code)
 	}
 }

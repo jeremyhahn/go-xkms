@@ -445,17 +445,6 @@ func newAdminCreateCmdCopy() *cobra.Command {
 	return cmd
 }
 
-func TestAdminCreateCmd_UnsupportedMethod_RunE(t *testing.T) {
-	withGlobalConfig(t, newUserErrorConfig("text"))
-	cmd := newAdminCreateCmdCopy()
-	_ = cmd.Flags().Set("method", "bluetooth")
-
-	err := adminCreateCmd.RunE(cmd, []string{"root"})
-	if !errors.Is(err, ErrUnsupportedAuthMethod) {
-		t.Fatalf("want ErrUnsupportedAuthMethod, got %v", err)
-	}
-}
-
 func TestAdminCreateCmd_FIDO2DispatchError(t *testing.T) {
 	withGlobalConfig(t, newUserErrorConfig("text"))
 	cmd := newAdminCreateCmdCopy()

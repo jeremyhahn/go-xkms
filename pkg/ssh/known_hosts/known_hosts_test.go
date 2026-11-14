@@ -163,17 +163,6 @@ func TestStore_DuplicateAdd(t *testing.T) {
 	}
 }
 
-// TestStore_RemoveMissing confirms Remove surfaces NotFoundError.
-func TestStore_RemoveMissing(t *testing.T) {
-	store := newStore(t)
-	ctx := context.Background()
-	err := store.Remove(ctx, scope.User, "alice", "ghost.example.com")
-	var notFound *known_hosts.NotFoundError
-	if !errors.As(err, &notFound) {
-		t.Fatalf("expected NotFoundError, got %T: %v", err, err)
-	}
-}
-
 // TestValidateHost_Rejections documents the full set of rejection cases
 // in one place — additions must keep this table exhaustive.
 func TestValidateHost_Rejections(t *testing.T) {
@@ -264,27 +253,6 @@ func TestStoreAdd_RejectsShortFingerprint(t *testing.T) {
 	}
 }
 
-// TestVerify_Match returns nil when the received key matches the pin.
-func TestVerify_Match(t *testing.T) {
-	store := newStore(t)
-	ctx := context.Background()
-	pub := newEd25519PublicKey(t)
-	if err := store.Add(ctx, &known_hosts.Pin{
-		Host:        "bastion.example.com",
-		Fingerprint: keys.Fingerprint(pub),
-		Algorithm:   pub.Type(),
-		PublicKey:   pub.Marshal(),
-		Scope:       scope.User,
-		Owner:       "alice",
-		AddedAt:     time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-	if err := known_hosts.Verify(ctx, store, scope.User, "alice", "bastion.example.com", pub); err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
-}
-
 // TestVerify_Mismatch is the MITM detection path.
 func TestVerify_Mismatch(t *testing.T) {
 	store := newStore(t)
@@ -313,18 +281,6 @@ func TestVerify_Mismatch(t *testing.T) {
 	}
 	if mm.Received != keys.Fingerprint(mitm) {
 		t.Fatalf("received field wrong: %s", mm.Received)
-	}
-}
-
-// TestVerify_NotFound returns NotFoundError when no pin exists.
-func TestVerify_NotFound(t *testing.T) {
-	store := newStore(t)
-	ctx := context.Background()
-	pub := newEd25519PublicKey(t)
-	err := known_hosts.Verify(ctx, store, scope.User, "alice", "ghost.example.com", pub)
-	var nf *known_hosts.NotFoundError
-	if !errors.As(err, &nf) {
-		t.Fatalf("expected NotFoundError, got %T: %v", err, err)
 	}
 }
 

@@ -125,28 +125,3 @@ func TestMiddleware_OpenRetryAfterFloorsAtOneSecond(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Equal(t, "1", rec.Header().Get("Retry-After"))
 }
-
-// TestMiddleware_HalfOpenProbeCloses verifies the full cycle: a failure
-// opens the breaker, the next request (ResetTimeout 0) is admitted as a
-// half-open probe, and a successful probe closes the breaker again.
-func TestMiddleware_HalfOpenProbeCloses(t *testing.T) {
-	cb := middlewareTestBreaker("mw-half-open")
-	status := http.StatusInternalServerError
-	handler := Middleware(cb)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(status)
-	}))
-
-	// First request fails and opens the breaker.
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	require.Equal(t, StateOpen, cb.State())
-
-	// Second request: ResetTimeout 0 admits it as a half-open probe. Make it
-	// succeed so the probe demonstrates recovery.
-	status = http.StatusOK
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, StateClosed, cb.State())
-}

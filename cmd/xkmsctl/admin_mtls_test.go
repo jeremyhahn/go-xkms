@@ -138,28 +138,6 @@ func reissueTestCertForKey(t *testing.T, key *ecdsa.PrivateKey) (string, *x509.C
 // admin create --method flag tests
 // ============================================================================
 
-func TestAdminCreateCmd_HasMethodFlag(t *testing.T) {
-	flags := adminCreateCmd.Flags()
-	methodFlag := flags.Lookup("method")
-	if methodFlag == nil {
-		t.Fatal("expected flag 'method' on adminCreateCmd")
-	}
-	if methodFlag.DefValue != "fido2" {
-		t.Errorf("method default = %v, want fido2", methodFlag.DefValue)
-	}
-}
-
-func TestAdminCreateCmd_HasCertFileFlag(t *testing.T) {
-	flags := adminCreateCmd.Flags()
-	certFileFlag := flags.Lookup("cert-file")
-	if certFileFlag == nil {
-		t.Fatal("expected flag 'cert-file' on adminCreateCmd")
-	}
-	if certFileFlag.DefValue != "" {
-		t.Errorf("cert-file default = %v, want empty", certFileFlag.DefValue)
-	}
-}
-
 func TestAdminCreateCmd_UnsupportedMethod(t *testing.T) {
 	tmpDir := newTestStorageDir(t)
 
@@ -480,64 +458,6 @@ func TestAdminCreate_MTLS_PKCS11Error(t *testing.T) {
 // loadCertFromFile unit tests
 // ============================================================================
 
-func TestLoadCertFromFile_Success(t *testing.T) {
-	certPath, expectedCert := generateTestCert(t)
-
-	cert, err := loadCertFromFile(certPath)
-	if err != nil {
-		t.Fatalf("loadCertFromFile failed: %v", err)
-	}
-
-	if cert.Subject.CommonName != expectedCert.Subject.CommonName {
-		t.Errorf("CN mismatch: got %s, want %s",
-			cert.Subject.CommonName, expectedCert.Subject.CommonName)
-	}
-}
-
-func TestLoadCertFromFile_FileNotFound(t *testing.T) {
-	_, err := loadCertFromFile("/nonexistent/cert.pem")
-	if err == nil {
-		t.Fatal("expected error for nonexistent file")
-	}
-	if !errors.Is(err, ErrCertFileRead) {
-		t.Errorf("expected ErrCertFileRead, got: %v", err)
-	}
-}
-
-func TestLoadCertFromFile_NoPEMBlock(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "empty.pem")
-	if err := os.WriteFile(path, []byte("not pem data"), 0600); err != nil {
-		t.Fatalf("failed to write file: %v", err)
-	}
-
-	_, err := loadCertFromFile(path)
-	if err == nil {
-		t.Fatal("expected error for non-PEM data")
-	}
-	if !errors.Is(err, ErrCertFileParse) {
-		t.Errorf("expected ErrCertFileParse, got: %v", err)
-	}
-}
-
-func TestLoadCertFromFile_InvalidDER(t *testing.T) {
-	pemData := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: []byte("invalid DER"),
-	})
-	path := filepath.Join(t.TempDir(), "bad.pem")
-	if err := os.WriteFile(path, pemData, 0600); err != nil {
-		t.Fatalf("failed to write file: %v", err)
-	}
-
-	_, err := loadCertFromFile(path)
-	if err == nil {
-		t.Fatal("expected error for invalid DER")
-	}
-	if !errors.Is(err, ErrCertFileParse) {
-		t.Errorf("expected ErrCertFileParse, got: %v", err)
-	}
-}
-
 // ============================================================================
 // loadEnrollmentCert unit tests
 // ============================================================================
@@ -576,106 +496,18 @@ func TestLoadEnrollmentCert_PKCS11Fallback(t *testing.T) {
 	}
 }
 
-func TestLoadEnrollmentCert_NoCertSource(t *testing.T) {
-	cmd := &cobra.Command{Use: "test"}
-	cmd.Flags().String("cert-file", "", "")
-
-	cfg := &Config{}
-
-	_, err := loadEnrollmentCert(cmd, cfg)
-	if err == nil {
-		t.Fatal("expected error for no cert source")
-	}
-	if !errors.Is(err, ErrNoCertificateSource) {
-		t.Errorf("expected ErrNoCertificateSource, got: %v", err)
-	}
-}
-
 // ============================================================================
 // PKCS#11 persistent flag tests
 // ============================================================================
-
-func TestRootCmd_PKCS11Flags(t *testing.T) {
-	flags := rootCmd.PersistentFlags()
-
-	tests := []struct {
-		name     string
-		defValue string
-	}{
-		{"pkcs11-module", ""},
-		{"pkcs11-slot", "0"},
-		{"pkcs11-pin", ""},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			flag := flags.Lookup(tc.name)
-			if flag == nil {
-				t.Fatalf("expected persistent flag %q not found", tc.name)
-			}
-			if flag.DefValue != tc.defValue {
-				t.Errorf("%s default = %v, want %v", tc.name, flag.DefValue, tc.defValue)
-			}
-		})
-	}
-}
 
 // ============================================================================
 // Config PKCS#11 field tests
 // ============================================================================
 
-func TestConfig_PKCS11Fields(t *testing.T) {
-	cfg := NewConfig()
-	if cfg.PKCS11Module != "" {
-		t.Errorf("PKCS11Module should default to empty, got: %s", cfg.PKCS11Module)
-	}
-	if cfg.PKCS11Slot != 0 {
-		t.Errorf("PKCS11Slot should default to 0, got: %d", cfg.PKCS11Slot)
-	}
-	if cfg.PKCS11PIN != nil {
-		t.Errorf("PKCS11PIN should default to nil, got: %v", cfg.PKCS11PIN)
-	}
-	if cfg.AuthMethod != "" {
-		t.Errorf("AuthMethod should default to empty, got: %s", cfg.AuthMethod)
-	}
-}
-
 // ============================================================================
 // Error type tests
 // ============================================================================
 
-func TestErrors_AreDistinct(t *testing.T) {
-	errs := []error{
-		ErrUnsupportedAuthMethod,
-		ErrNoCertificateSource,
-		ErrCertFileRead,
-		ErrCertFileParse,
-	}
-
-	for i := range errs {
-		for j := range errs {
-			if i != j && errors.Is(errs[i], errs[j]) {
-				t.Errorf("errors should be distinct: %v and %v", errs[i], errs[j])
-			}
-		}
-	}
-}
-
 // ============================================================================
 // Map-based dispatch handler table test
 // ============================================================================
-
-func TestAdminCreateHandlers_HasExpectedMethods(t *testing.T) {
-	expected := []string{"fido2", "mtls"}
-	for _, method := range expected {
-		if _, ok := adminCreateHandlers[method]; !ok {
-			t.Errorf("expected handler for method %q in adminCreateHandlers", method)
-		}
-	}
-}
-
-func TestAdminCreateHandlers_UnknownMethodNotPresent(t *testing.T) {
-	if _, ok := adminCreateHandlers["unknown"]; ok {
-		t.Error("did not expect handler for 'unknown' method")
-	}
-}

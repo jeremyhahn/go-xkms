@@ -1,0 +1,1 @@
+- **The FIDO2 factor's refusal paths are pinned by tests.** Each malformed `origins` or `require_user_verification` enrollment value is refused with a typed `EnrollmentInvalidError` and no enrollment, and each local-ceremony device-selection refusal names the selector flag, the unmatched hint and the attached devices; `pkg/factor/fido2` coverage rises from 89.4% to 96.6% (#1794).

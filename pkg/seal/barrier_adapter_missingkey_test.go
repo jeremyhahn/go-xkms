@@ -40,6 +40,7 @@ func TestGuardedStorageBackend_GetAbsentKeyMatchesBothNotFoundSentinels(t *testi
 	var missing *MissingKeyError
 	require.True(t, errors.As(err, &missing))
 	assert.Equal(t, "absent", missing.Key)
+	assert.Equal(t, missing.Err.Error(), err.Error(), "the message is the backend's own")
 }
 
 // TestGuardedStorageBackend_GetPresentKeyAndOtherErrorsPassThrough proves the

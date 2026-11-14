@@ -63,16 +63,3 @@ func TestProvisionDevIDPlatformDelegation_DefineFault(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrDevIDDelegation)
 }
-
-// TestProvisionDevIDPlatformDelegation_Succeeds pins the ordinary path: all
-// three steps (define, compute the platform delegation, write it) succeed
-// together and leave the index holding the platform Delegation Policy.
-func TestProvisionDevIDPlatformDelegation_Succeeds(t *testing.T) {
-	h := newDelegationHarness(t, nil)
-
-	err := h.TPM.provisionDevIDPlatformDelegation(DevIDKeySigning, tpm2.TPMAlgSHA256, h.HierarchyAuth)
-	require.NoError(t, err)
-
-	public, _, _ := h.readPolicyNV(t, DevIDKeySigning)
-	assert.True(t, public.Attributes.Written, "the platform delegation must have been written into the index")
-}

@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -139,214 +138,6 @@ func (m *mockKeyClient) UnwrapKey(_ context.Context, req *client.UnwrapKeyReques
 	return m.unwrapKeyResp, m.unwrapKeyErr
 }
 
-func TestKeyCmd_Exists(t *testing.T) {
-	if keyCmd == nil {
-		t.Fatal("keyCmd should not be nil")
-	}
-}
-
-func TestKeyCmd_Properties(t *testing.T) {
-	if keyCmd.Use != "key" {
-		t.Errorf("keyCmd.Use = %v, want key", keyCmd.Use)
-	}
-
-	if keyCmd.Short == "" {
-		t.Error("keyCmd.Short should not be empty")
-	}
-}
-
-func TestKeyCmd_HasSubcommands(t *testing.T) {
-	subcommands := keyCmd.Commands()
-
-	expectedCmds := []string{
-		"generate",
-		"list",
-		"get",
-		"delete",
-		"sign",
-		"rotate",
-		"encrypt",
-		"decrypt",
-		"import",
-		"export",
-		"copy",
-		"verify",
-		"encrypt-asym",
-		"get-import-params",
-		"wrap",
-		"unwrap",
-	}
-	foundCmds := make(map[string]bool)
-
-	for _, cmd := range subcommands {
-		foundCmds[cmd.Name()] = true
-	}
-
-	for _, expected := range expectedCmds {
-		if !foundCmds[expected] {
-			t.Errorf("expected subcommand %q not found", expected)
-		}
-	}
-}
-
-func TestKeyGenerateCmd_Exists(t *testing.T) {
-	if keyGenerateCmd == nil {
-		t.Fatal("keyGenerateCmd should not be nil")
-	}
-}
-
-func TestKeyGenerateCmd_Properties(t *testing.T) {
-	if keyGenerateCmd.Use != "generate <key-id>" {
-		t.Errorf("keyGenerateCmd.Use = %v, want 'generate <key-id>'", keyGenerateCmd.Use)
-	}
-}
-
-func TestKeyListCmd_Exists(t *testing.T) {
-	if keyListCmd == nil {
-		t.Fatal("keyListCmd should not be nil")
-	}
-}
-
-func TestKeyGetCmd_Exists(t *testing.T) {
-	if keyGetCmd == nil {
-		t.Fatal("keyGetCmd should not be nil")
-	}
-}
-
-func TestKeyDeleteCmd_Exists(t *testing.T) {
-	if keyDeleteCmd == nil {
-		t.Fatal("keyDeleteCmd should not be nil")
-	}
-}
-
-func TestKeySignCmd_Exists(t *testing.T) {
-	if keySignCmd == nil {
-		t.Fatal("keySignCmd should not be nil")
-	}
-}
-
-func TestKeyRotateCmd_Exists(t *testing.T) {
-	if keyRotateCmd == nil {
-		t.Fatal("keyRotateCmd should not be nil")
-	}
-}
-
-func TestKeyEncryptCmd_Exists(t *testing.T) {
-	if keyEncryptCmd == nil {
-		t.Fatal("keyEncryptCmd should not be nil")
-	}
-}
-
-func TestKeyDecryptCmd_Exists(t *testing.T) {
-	if keyDecryptCmd == nil {
-		t.Fatal("keyDecryptCmd should not be nil")
-	}
-}
-
-func TestKeyImportCmd_Exists(t *testing.T) {
-	if keyImportCmd == nil {
-		t.Fatal("keyImportCmd should not be nil")
-	}
-}
-
-func TestKeyExportCmd_Exists(t *testing.T) {
-	if keyExportCmd == nil {
-		t.Fatal("keyExportCmd should not be nil")
-	}
-}
-
-func TestKeyCopyCmd_Exists(t *testing.T) {
-	if keyCopyCmd == nil {
-		t.Fatal("keyCopyCmd should not be nil")
-	}
-}
-
-func TestKeyVerifyCmd_Exists(t *testing.T) {
-	if keyVerifyCmd == nil {
-		t.Fatal("keyVerifyCmd should not be nil")
-	}
-}
-
-func TestKeyEncryptAsymCmd_Exists(t *testing.T) {
-	if keyEncryptAsymCmd == nil {
-		t.Fatal("keyEncryptAsymCmd should not be nil")
-	}
-}
-
-func TestKeyGetImportParamsCmd_Exists(t *testing.T) {
-	if keyGetImportParamsCmd == nil {
-		t.Fatal("keyGetImportParamsCmd should not be nil")
-	}
-}
-
-func TestKeyWrapCmd_Exists(t *testing.T) {
-	if keyWrapCmd == nil {
-		t.Fatal("keyWrapCmd should not be nil")
-	}
-}
-
-func TestKeyUnwrapCmd_Exists(t *testing.T) {
-	if keyUnwrapCmd == nil {
-		t.Fatal("keyUnwrapCmd should not be nil")
-	}
-}
-
-// Test generateKey function
-func TestGenerateKey_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		generateKeyResp: &client.GenerateKeyResponse{
-			KeyID:   "test-key",
-			KeyType: "rsa",
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	generateKey(cfg, printer, "test-key", "tls", keyGenOptions{Algorithm: "", KeyAlgorithm: "rsa", KeySize: 2048, Curve: "", Exportable: false, Sensitive: false})
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully generated") {
-		t.Errorf("generateKey output should contain success message, got: %s", output)
-	}
-}
-
-func TestGenerateKey_SymmetricKey(t *testing.T) {
-	mockClient := &mockKeyClient{
-		generateKeyResp: &client.GenerateKeyResponse{
-			KeyID:   "sym-key",
-			KeyType: "symmetric",
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	generateKey(cfg, printer, "sym-key", "symmetric", keyGenOptions{Algorithm: "aes-256-gcm", KeyAlgorithm: "", KeySize: 256, Curve: "", Exportable: false, Sensitive: false})
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully generated") {
-		t.Errorf("generateKey output should contain success message, got: %s", output)
-	}
-	if mockClient.generateKeyReq == nil || mockClient.generateKeyReq.Algorithm != "aes-256-gcm" {
-		t.Errorf("expected Algorithm %q, got %+v", "aes-256-gcm", mockClient.generateKeyReq)
-	}
-}
-
 // TestGenerateKey_SymmetricKeyDefaultAlgorithm verifies a symmetric key
 // requested without an explicit --algorithm still sends a non-empty
 // Algorithm ("symmetric"): the server now requires the field, so the client
@@ -441,35 +232,6 @@ func TestGenerateKey_GenerateError(t *testing.T) {
 	generateKey(cfg, printer, "test-key", "tls", keyGenOptions{Algorithm: "", KeyAlgorithm: "rsa", KeySize: 2048, Curve: "", Exportable: false, Sensitive: false})
 }
 
-// Test listKeys function
-func TestListKeys_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		listKeysResp: &client.ListKeysResponse{
-			Keys: []client.KeyInfo{
-				{KeyID: "key1", KeyType: "tls"},
-				{KeyID: "key2", KeyType: "signing"},
-			},
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	listKeys(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "key1") {
-		t.Errorf("listKeys output should contain 'key1', got: %s", output)
-	}
-}
-
 func TestListKeys_ClientCreateError(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -560,35 +322,6 @@ func TestListKeys_AllFormats(t *testing.T) {
 				t.Errorf("listKeys with %s format should produce output", format)
 			}
 		})
-	}
-}
-
-// Test getKey function
-func TestGetKey_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		getKeyResp: &client.GetKeyResponse{
-			KeyInfo: client.KeyInfo{
-				KeyID:   "test-key",
-				KeyType: "tls",
-			},
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	getKey(cfg, printer, "test-key")
-
-	output := buf.String()
-	if !strings.Contains(output, "test-key") {
-		t.Errorf("getKey output should contain 'test-key', got: %s", output)
 	}
 }
 
@@ -686,33 +419,6 @@ func TestGetKey_AllFormats(t *testing.T) {
 	}
 }
 
-// Test deleteKey function
-func TestDeleteKey_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		deleteKeyResp: &client.DeleteKeyResponse{
-			Success: true,
-			Message: "Key deleted",
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	deleteKey(cfg, printer, "test-key")
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully deleted") {
-		t.Errorf("deleteKey output should contain success message, got: %s", output)
-	}
-}
-
 func TestDeleteKey_SuccessFalse(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -799,34 +505,6 @@ func TestDeleteKey_DeleteError(t *testing.T) {
 	deleteKey(cfg, printer, "test-key")
 }
 
-// Test sign function
-func TestSign_Success(t *testing.T) {
-	signature := []byte("test-signature")
-	mockClient := &mockKeyClient{
-		signResp: &client.SignResponse{
-			Signature: signature,
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	sign(cfg, printer, "test-key", "test data", "sha256")
-
-	output := buf.String()
-	expectedSig := base64.StdEncoding.EncodeToString(signature)
-	if !strings.Contains(output, expectedSig) {
-		t.Errorf("sign output should contain base64 signature, got: %s", output)
-	}
-}
-
 func TestSign_ClientCreateError(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -888,34 +566,6 @@ func TestSign_SignError(t *testing.T) {
 	sign(cfg, printer, "test-key", "test data", "sha256")
 }
 
-// Test verify function
-func TestVerify_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		verifyResp: &client.VerifyResponse{
-			Valid:   true,
-			Message: "Signature valid",
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	sigBase64 := base64.StdEncoding.EncodeToString([]byte("test-signature"))
-	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256", 0)
-
-	output := buf.String()
-	if !strings.Contains(output, "valid") {
-		t.Errorf("verify output should contain valid message, got: %s", output)
-	}
-}
-
 func TestVerify_Invalid(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -940,26 +590,6 @@ func TestVerify_Invalid(t *testing.T) {
 
 	sigBase64 := base64.StdEncoding.EncodeToString([]byte("bad-signature"))
 	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256", 0)
-}
-
-func TestVerify_DecodeError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mockClient := &mockKeyClient{}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	verify(cfg, printer, "test-key", "test data", "invalid-base64!!!", "sha256", 0)
 }
 
 func TestVerify_ClientCreateError(t *testing.T) {
@@ -1026,64 +656,6 @@ func TestVerify_VerifyError(t *testing.T) {
 	verify(cfg, printer, "test-key", "test data", sigBase64, "sha256", 0)
 }
 
-// Test encrypt function
-func TestEncrypt_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		encryptResp: &client.EncryptResponse{
-			Ciphertext: []byte("encrypted-data"),
-			Nonce:      []byte("nonce-data"),
-			Tag:        []byte("tag-data"),
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	encrypt(cfg, printer, "test-key", "plaintext", "")
-
-	output := buf.String()
-	if buf.Len() == 0 {
-		t.Error("encrypt should produce output")
-	}
-	// JSON output should contain ciphertext
-	if !strings.Contains(output, "ciphertext") && !strings.Contains(output, "Ciphertext") {
-		t.Errorf("encrypt output should contain ciphertext, got: %s", output)
-	}
-}
-
-func TestEncrypt_WithAAD(t *testing.T) {
-	mockClient := &mockKeyClient{
-		encryptResp: &client.EncryptResponse{
-			Ciphertext: []byte("encrypted-data"),
-			Nonce:      []byte("nonce-data"),
-			Tag:        []byte("tag-data"),
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	encrypt(cfg, printer, "test-key", "plaintext", "additional-data")
-
-	if buf.Len() == 0 {
-		t.Error("encrypt with AAD should produce output")
-	}
-}
-
 func TestEncrypt_ClientCreateError(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -1145,59 +717,6 @@ func TestEncrypt_EncryptError(t *testing.T) {
 	encrypt(cfg, printer, "test-key", "plaintext", "")
 }
 
-// Test decrypt function
-func TestDecrypt_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		decryptResp: &client.DecryptResponse{
-			Plaintext: []byte("decrypted-data"),
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "", 0)
-
-	if buf.Len() == 0 {
-		t.Error("decrypt should produce output")
-	}
-}
-
-func TestDecrypt_WithAADNonceTag(t *testing.T) {
-	mockClient := &mockKeyClient{
-		decryptResp: &client.DecryptResponse{
-			Plaintext: []byte("decrypted-data"),
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
-	nonceBase64 := base64.StdEncoding.EncodeToString([]byte("nonce"))
-	tagBase64 := base64.StdEncoding.EncodeToString([]byte("tag"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "aad", nonceBase64, tagBase64, 0)
-
-	if buf.Len() == 0 {
-		t.Error("decrypt with AAD/nonce/tag should produce output")
-	}
-}
-
 func TestDecrypt_CiphertextDecodeError(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -1216,49 +735,6 @@ func TestDecrypt_CiphertextDecodeError(t *testing.T) {
 	}
 
 	decrypt(cfg, printer, "test-key", "invalid-base64!!!", "", "", "", 0)
-}
-
-func TestDecrypt_NonceDecodeError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mockClient := &mockKeyClient{}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "invalid-base64!!!", "", 0)
-}
-
-func TestDecrypt_TagDecodeError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mockClient := &mockKeyClient{}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	ciphertextBase64 := base64.StdEncoding.EncodeToString([]byte("encrypted"))
-	nonceBase64 := base64.StdEncoding.EncodeToString([]byte("nonce"))
-	decrypt(cfg, printer, "test-key", ciphertextBase64, "", nonceBase64, "invalid-base64!!!", 0)
 }
 
 func TestDecrypt_ClientCreateError(t *testing.T) {
@@ -1325,31 +801,6 @@ func TestDecrypt_DecryptError(t *testing.T) {
 	decrypt(cfg, printer, "test-key", ciphertextBase64, "", "", "", 0)
 }
 
-// Test encryptAsym function
-func TestEncryptAsym_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		encryptAsymResp: &client.EncryptAsymResponse{
-			Ciphertext: []byte("encrypted-data"),
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	encryptAsym(cfg, printer, "test-key", "plaintext", "sha256")
-
-	if buf.Len() == 0 {
-		t.Error("encryptAsym should produce output")
-	}
-}
-
 func TestEncryptAsym_ClientCreateError(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -1411,33 +862,6 @@ func TestEncryptAsym_EncryptError(t *testing.T) {
 	encryptAsym(cfg, printer, "test-key", "plaintext", "sha256")
 }
 
-// Test rotateKey function
-func TestRotateKey_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		rotateKeyResp: &client.RotateKeyResponse{
-			KeyID:   "test-key",
-			Success: true,
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	rotateKey(cfg, printer, "test-key")
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully rotated") {
-		t.Errorf("rotateKey output should contain success message, got: %s", output)
-	}
-}
-
 func TestRotateKey_ClientCreateError(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -1476,59 +900,6 @@ func TestRotateKey_ConnectError(t *testing.T) {
 	}
 
 	rotateKey(cfg, printer, "test-key")
-}
-
-func TestRotateKey_RotateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mockClient := &mockKeyClient{
-		rotateKeyErr: errors.New("rotate failed"),
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	rotateKey(cfg, printer, "test-key")
-}
-
-// Test importKey function
-func TestImportKey_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		importKeyResp: &client.ImportKeyResponse{
-			KeyID:   "test-key",
-			Success: true,
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey: []byte("wrapped-key-data"),
-		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-	}
-
-	importKey(cfg, printer, "test-key", wrapped, importKeySpec{keyType: "rsa", keySize: 2048})
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully imported") {
-		t.Errorf("importKey output should contain success message, got: %s", output)
-	}
 }
 
 func TestImportKey_ClientCreateError(t *testing.T) {
@@ -1605,41 +976,6 @@ func TestImportKey_ImportError(t *testing.T) {
 	}
 
 	importKey(cfg, printer, "test-key", wrapped, importKeySpec{keyType: "rsa", keySize: 2048})
-}
-
-// Test exportKey function
-func TestExportKey_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		exportKeyResp: &client.ExportKeyResponse{
-			WrappedKeyMaterial: []byte("wrapped-key-data"),
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	// Create temp file for output
-	tmpDir := t.TempDir()
-	outputFile := filepath.Join(tmpDir, "exported-key.json")
-
-	exportKey(cfg, printer, "test-key", outputFile, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
-
-	// Verify file was created
-	if _, err := os.Stat(outputFile); os.IsNotExist(err) {
-		t.Error("export key should create output file")
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully exported") {
-		t.Errorf("exportKey output should contain success message, got: %s", output)
-	}
 }
 
 func TestExportKey_ClientCreateError(t *testing.T) {
@@ -1737,33 +1073,6 @@ func TestExportKey_WriteFileError(t *testing.T) {
 	exportKey(cfg, printer, "test-key", "/nonexistent/path/file.json", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 }
 
-// Test copyKey function
-func TestCopyKey_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		copyKeyResp: &client.CopyKeyResponse{
-			KeyID:   "test-key-copy",
-			Success: true,
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	copyKey(cfg, printer, "test-key", "test-key-copy", "pkcs11", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully copied") {
-		t.Errorf("copyKey output should contain success message, got: %s", output)
-	}
-}
-
 func TestCopyKey_ClientCreateError(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -1845,65 +1154,6 @@ func TestGetImportParams_Success(t *testing.T) {
 	}
 
 	getImportParams(cfg, printer, "test-key", "tls", "rsa", 2048, "", backend.WrappingAlgorithmRSAES_OAEP_SHA_256, "")
-
-	if buf.Len() == 0 {
-		t.Error("getImportParams should produce output")
-	}
-}
-
-func TestGetImportParams_WithOutputFile(t *testing.T) {
-	mockClient := &mockKeyClient{
-		getImportParamsResp: &client.GetImportParametersResponse{
-			WrappingPublicKey: []byte("public-key-data"),
-			ExpiresAt:         "2025-12-31T23:59:59Z",
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	tmpDir := t.TempDir()
-	outputFile := filepath.Join(tmpDir, "import-params.json")
-
-	getImportParams(cfg, printer, "test-key", "tls", "rsa", 2048, "", backend.WrappingAlgorithmRSAES_OAEP_SHA_256, outputFile)
-
-	// Verify file was created
-	if _, err := os.Stat(outputFile); os.IsNotExist(err) {
-		t.Error("getImportParams should create output file")
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "Import parameters saved") {
-		t.Errorf("getImportParams with file output should contain saved message, got: %s", output)
-	}
-}
-
-func TestGetImportParams_WithKeyAlgorithm(t *testing.T) {
-	mockClient := &mockKeyClient{
-		getImportParamsResp: &client.GetImportParametersResponse{
-			WrappingPublicKey: []byte("public-key-data"),
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	// Test with key algorithm (should take precedence)
-	getImportParams(cfg, printer, "test-key", "", "ecdsa", 0, "P-256", backend.WrappingAlgorithmRSAES_OAEP_SHA_256, "")
 
 	if buf.Len() == 0 {
 		t.Error("getImportParams should produce output")
@@ -2178,49 +1428,6 @@ func TestWrapKey_WriteFileError(t *testing.T) {
 	wrapKey(cfg, printer, []byte("key-material"), params, "/nonexistent/path/file.json")
 }
 
-// Test unwrapKey function
-func TestUnwrapKey_Success(t *testing.T) {
-	mockClient := &mockKeyClient{
-		unwrapKeyResp: &client.UnwrapKeyResponse{
-			KeyMaterial: []byte("unwrapped-key"),
-		},
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	cfg := &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
-			return mockClient, nil
-		},
-	}
-
-	tmpDir := t.TempDir()
-	outputFile := filepath.Join(tmpDir, "unwrapped-key.bin")
-
-	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey: []byte("wrapped-key"),
-		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-	}
-
-	params := &backend.ImportParameters{
-		Algorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-	}
-
-	unwrapKey(cfg, printer, wrapped, params, outputFile)
-
-	// Verify file was created
-	if _, err := os.Stat(outputFile); os.IsNotExist(err) {
-		t.Error("unwrapKey should create output file")
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "Successfully unwrapped") {
-		t.Errorf("unwrapKey output should contain success message, got: %s", output)
-	}
-}
-
 func TestUnwrapKey_ClientCreateError(t *testing.T) {
 	originalExitFunc := exitFunc
 	exitFunc = func(code int) {}
@@ -2352,30 +1559,6 @@ func TestUnwrapKey_WriteFileError(t *testing.T) {
 	unwrapKey(cfg, printer, wrapped, params, "/nonexistent/path/file.bin")
 }
 
-// Test buildKeyAttributesFromFlags helper
-func TestBuildKeyAttributesFromFlags_RSA(t *testing.T) {
-	attrs, err := buildKeyAttributesFromFlags("test-key", "tls", "rsa", 2048, "", false)
-	if err != nil {
-		t.Fatalf("buildKeyAttributesFromFlags returned error: %v", err)
-	}
-
-	if attrs.CN != "test-key" {
-		t.Errorf("CN = %v, want test-key", attrs.CN)
-	}
-	if attrs.KeyAlgorithm != x509.RSA {
-		t.Errorf("KeyAlgorithm = %v, want RSA", attrs.KeyAlgorithm)
-	}
-	if attrs.RSAAttributes == nil {
-		t.Error("RSAAttributes should not be nil for RSA key")
-	}
-	if attrs.RSAAttributes.KeySize != 2048 {
-		t.Errorf("RSAAttributes.KeySize = %v, want 2048", attrs.RSAAttributes.KeySize)
-	}
-	if attrs.Exportable {
-		t.Error("Exportable should be false when not specified")
-	}
-}
-
 func TestBuildKeyAttributesFromFlags_RSA_Exportable(t *testing.T) {
 	attrs, err := buildKeyAttributesFromFlags("test-key", "tls", "rsa", 2048, "", true)
 	if err != nil {
@@ -2384,34 +1567,6 @@ func TestBuildKeyAttributesFromFlags_RSA_Exportable(t *testing.T) {
 
 	if !attrs.Exportable {
 		t.Error("Exportable should be true when specified")
-	}
-}
-
-func TestBuildKeyAttributesFromFlags_ECDSA(t *testing.T) {
-	attrs, err := buildKeyAttributesFromFlags("test-key", "signing", "ecdsa", 0, "P-256", false)
-	if err != nil {
-		t.Fatalf("buildKeyAttributesFromFlags returned error: %v", err)
-	}
-
-	if attrs.KeyAlgorithm != x509.ECDSA {
-		t.Errorf("KeyAlgorithm = %v, want ECDSA", attrs.KeyAlgorithm)
-	}
-	if attrs.ECCAttributes == nil {
-		t.Error("ECCAttributes should not be nil for ECDSA key")
-	}
-	if attrs.KeyType != types.KeyTypeSigning {
-		t.Errorf("KeyType = %v, want KeyTypeSigning", attrs.KeyType)
-	}
-}
-
-func TestBuildKeyAttributesFromFlags_ECDSA_P384(t *testing.T) {
-	attrs, err := buildKeyAttributesFromFlags("test-key", "signing", "ecdsa", 0, "P-384", false)
-	if err != nil {
-		t.Fatalf("buildKeyAttributesFromFlags returned error: %v", err)
-	}
-
-	if attrs.ECCAttributes == nil {
-		t.Error("ECCAttributes should not be nil for ECDSA key")
 	}
 }
 
@@ -2462,33 +1617,6 @@ func TestBuildKeyAttributesFromFlags_InvalidCurve(t *testing.T) {
 	_, err := buildKeyAttributesFromFlags("test-key", "signing", "ecdsa", 0, "invalid-curve", false)
 	if err == nil {
 		t.Error("buildKeyAttributesFromFlags should return error for invalid curve")
-	}
-}
-
-func TestBuildKeyAttributesFromFlags_AllKeyTypes(t *testing.T) {
-	keyTypes := []string{"tls", "signing", "encryption", "ca"}
-
-	for _, kt := range keyTypes {
-		t.Run(kt, func(t *testing.T) {
-			attrs, err := buildKeyAttributesFromFlags("test-key", kt, "rsa", 2048, "", false)
-			if err != nil {
-				t.Errorf("buildKeyAttributesFromFlags(%s) returned error: %v", kt, err)
-			}
-			if attrs == nil {
-				t.Errorf("buildKeyAttributesFromFlags(%s) returned nil attrs", kt)
-			}
-		})
-	}
-}
-
-func TestBuildKeyAttributesFromFlags_RSA_4096(t *testing.T) {
-	attrs, err := buildKeyAttributesFromFlags("test-key", "tls", "rsa", 4096, "", false)
-	if err != nil {
-		t.Fatalf("buildKeyAttributesFromFlags returned error: %v", err)
-	}
-
-	if attrs.RSAAttributes.KeySize != 4096 {
-		t.Errorf("RSAAttributes.KeySize = %v, want 4096", attrs.RSAAttributes.KeySize)
 	}
 }
 
@@ -2554,17 +1682,6 @@ func TestBuildSymmetricKeyAttributes_InvalidKeySize(t *testing.T) {
 	}
 }
 
-func TestBuildSymmetricKeyAttributes_WithAlgorithm(t *testing.T) {
-	attrs, err := buildSymmetricKeyAttributes("test-key", string(types.SymmetricAES256GCM), 0)
-	if err != nil {
-		t.Fatalf("buildSymmetricKeyAttributes returned error: %v", err)
-	}
-
-	if attrs.SymmetricAlgorithm != types.SymmetricAES256GCM {
-		t.Errorf("SymmetricAlgorithm = %v, want AES-256-GCM", attrs.SymmetricAlgorithm)
-	}
-}
-
 func TestBuildSymmetricKeyAttributes_InvalidAlgorithm(t *testing.T) {
 	_, err := buildSymmetricKeyAttributes("test-key", "invalid-algorithm", 0)
 	if err == nil {
@@ -2586,302 +1703,6 @@ func TestIsSymmetricAlgorithm_Valid(t *testing.T) {
 				t.Errorf("isSymmetricAlgorithm(%s) = false, want true", alg)
 			}
 		})
-	}
-}
-
-func TestIsSymmetricAlgorithm_Invalid(t *testing.T) {
-	invalidAlgorithms := []string{
-		"rsa",
-		"ecdsa",
-		"ed25519",
-		"invalid",
-		"",
-	}
-
-	for _, alg := range invalidAlgorithms {
-		t.Run(alg, func(t *testing.T) {
-			if isSymmetricAlgorithm(alg) {
-				t.Errorf("isSymmetricAlgorithm(%s) = true, want false", alg)
-			}
-		})
-	}
-}
-
-// Test command flags
-func TestKeyGenerateCmd_HasFlags(t *testing.T) {
-	flags := keyGenerateCmd.Flags()
-
-	expectedFlags := []string{
-		"key-type",
-		"algorithm",
-		"key-algorithm",
-		"key-size",
-		"curve",
-		"exportable",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keyGenerateCmd", flag)
-		}
-	}
-}
-
-func TestKeySignCmd_HasFlags(t *testing.T) {
-	flags := keySignCmd.Flags()
-
-	expectedFlags := []string{
-		"hash",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keySignCmd", flag)
-		}
-	}
-}
-
-func TestKeyVerifyCmd_HasFlags(t *testing.T) {
-	flags := keyVerifyCmd.Flags()
-
-	expectedFlags := []string{
-		"hash",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keyVerifyCmd", flag)
-		}
-	}
-}
-
-func TestKeyEncryptCmd_HasFlags(t *testing.T) {
-	flags := keyEncryptCmd.Flags()
-
-	expectedFlags := []string{
-		"aad",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keyEncryptCmd", flag)
-		}
-	}
-}
-
-func TestKeyDecryptCmd_HasFlags(t *testing.T) {
-	flags := keyDecryptCmd.Flags()
-
-	expectedFlags := []string{
-		"aad",
-		"nonce",
-		"tag",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keyDecryptCmd", flag)
-		}
-	}
-}
-
-func TestKeyImportCmd_HasFlags(t *testing.T) {
-	flags := keyImportCmd.Flags()
-
-	expectedFlags := []string{
-		"key-type",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keyImportCmd", flag)
-		}
-	}
-}
-
-func TestKeyExportCmd_HasFlags(t *testing.T) {
-	flags := keyExportCmd.Flags()
-
-	expectedFlags := []string{
-		"algorithm",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keyExportCmd", flag)
-		}
-	}
-}
-
-func TestKeyCopyCmd_HasFlags(t *testing.T) {
-	flags := keyCopyCmd.Flags()
-
-	expectedFlags := []string{
-		"dest-backend",
-		"dest-keydir",
-		"algorithm",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keyCopyCmd", flag)
-		}
-	}
-
-	// The copy takes its algorithm, size, curve, hash and partition from the
-	// source key (XKMSService.CopyKey); these flags were removed rather than
-	// left as dead input the service always ignored (go-xkms#1223).
-	removedFlags := []string{"key-type", "key-algorithm", "key-size", "curve"}
-	for _, flag := range removedFlags {
-		if flags.Lookup(flag) != nil {
-			t.Errorf("flag %q should have been removed from keyCopyCmd", flag)
-		}
-	}
-}
-
-func TestKeyGetImportParamsCmd_HasFlags(t *testing.T) {
-	flags := keyGetImportParamsCmd.Flags()
-
-	expectedFlags := []string{
-		"key-type",
-		"key-algorithm",
-		"key-size",
-		"curve",
-		"algorithm",
-		"output",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keyGetImportParamsCmd", flag)
-		}
-	}
-}
-
-func TestKeyEncryptAsymCmd_HasFlags(t *testing.T) {
-	flags := keyEncryptAsymCmd.Flags()
-
-	expectedFlags := []string{
-		"hash",
-	}
-
-	for _, flag := range expectedFlags {
-		if flags.Lookup(flag) == nil {
-			t.Errorf("expected flag %q not found on keyEncryptAsymCmd", flag)
-		}
-	}
-}
-
-// Test keyImportCmd file reading (integration with keyImportCmd Run function)
-func TestKeyImportCmd_FileReadError(t *testing.T) {
-	// This tests the Run function of keyImportCmd when file doesn't exist
-	// We can't easily test the full Run function without running the command
-	// But we can verify the file reading logic path exists
-	tmpDir := t.TempDir()
-	nonExistentFile := filepath.Join(tmpDir, "nonexistent.json")
-
-	// Try to read the file (simulating what the Run function does)
-	_, err := os.ReadFile(filepath.Clean(nonExistentFile))
-	if err == nil {
-		t.Error("reading non-existent file should return error")
-	}
-}
-
-func TestKeyImportCmd_FileUnmarshalError(t *testing.T) {
-	// Test file with invalid JSON
-	tmpDir := t.TempDir()
-	invalidFile := filepath.Join(tmpDir, "invalid.json")
-	if err := os.WriteFile(invalidFile, []byte("not valid json"), 0600); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Clean(invalidFile))
-	if err != nil {
-		t.Fatalf("failed to read test file: %v", err)
-	}
-
-	var wrapped backend.WrappedKeyMaterial
-	err = json.Unmarshal(data, &wrapped)
-	if err == nil {
-		t.Error("unmarshaling invalid JSON should return error")
-	}
-}
-
-// Test keyWrapCmd file operations
-func TestKeyWrapCmd_FileOperations(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create test key material file
-	keyMaterialFile := filepath.Join(tmpDir, "key.bin")
-	if err := os.WriteFile(keyMaterialFile, []byte("test-key-material"), 0600); err != nil {
-		t.Fatalf("failed to create key material file: %v", err)
-	}
-
-	// Create test params file
-	params := backend.ImportParameters{
-		WrappingPublicKey: []byte("public-key"),
-		Algorithm:         backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-	}
-	paramsData, err := json.Marshal(params)
-	if err != nil {
-		t.Fatalf("failed to marshal params: %v", err)
-	}
-	paramsFile := filepath.Join(tmpDir, "params.json")
-	if err := os.WriteFile(paramsFile, paramsData, 0600); err != nil {
-		t.Fatalf("failed to create params file: %v", err)
-	}
-
-	// Verify files can be read
-	keyData, err := os.ReadFile(filepath.Clean(keyMaterialFile))
-	if err != nil {
-		t.Fatalf("failed to read key material: %v", err)
-	}
-	if string(keyData) != "test-key-material" {
-		t.Errorf("key material = %v, want test-key-material", string(keyData))
-	}
-
-	paramsReadData, err := os.ReadFile(filepath.Clean(paramsFile))
-	if err != nil {
-		t.Fatalf("failed to read params: %v", err)
-	}
-
-	var readParams backend.ImportParameters
-	if err := json.Unmarshal(paramsReadData, &readParams); err != nil {
-		t.Fatalf("failed to unmarshal params: %v", err)
-	}
-}
-
-// Test keyUnwrapCmd file operations
-func TestKeyUnwrapCmd_FileOperations(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create wrapped key file
-	wrapped := backend.WrappedKeyMaterial{
-		WrappedKey: []byte("wrapped-key-data"),
-		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-	}
-	wrappedData, err := json.Marshal(wrapped)
-	if err != nil {
-		t.Fatalf("failed to marshal wrapped key: %v", err)
-	}
-	wrappedFile := filepath.Join(tmpDir, "wrapped.json")
-	if err := os.WriteFile(wrappedFile, wrappedData, 0600); err != nil {
-		t.Fatalf("failed to create wrapped key file: %v", err)
-	}
-
-	// Verify file can be read and unmarshaled
-	readData, err := os.ReadFile(filepath.Clean(wrappedFile))
-	if err != nil {
-		t.Fatalf("failed to read wrapped key: %v", err)
-	}
-
-	var readWrapped backend.WrappedKeyMaterial
-	if err := json.Unmarshal(readData, &readWrapped); err != nil {
-		t.Fatalf("failed to unmarshal wrapped key: %v", err)
-	}
-
-	if string(readWrapped.WrappedKey) != "wrapped-key-data" {
-		t.Errorf("wrapped key = %v, want wrapped-key-data", string(readWrapped.WrappedKey))
 	}
 }
 

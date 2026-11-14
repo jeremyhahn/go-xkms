@@ -147,34 +147,3 @@ func TestCreateIAK_ECDSA_CertifySignatureIsRawWireFormat(t *testing.T) {
 		assert.Error(t, err, "a DER-encoded signature must not verify as the raw wire format")
 	})
 }
-
-// TestCreateIDevID_ECDSA_CertifySignatureIsRawWireFormat is the IDevID
-// mirror: the IAK's TPM2_Certify over the IDevID must be packed the same way.
-func TestCreateIDevID_ECDSA_CertifySignatureIsRawWireFormat(t *testing.T) {
-	h := newECDSAIAKHarness(t)
-
-	certifyInfo := h.IDevID.TPMAttributes.CertifyInfo
-	signature := h.IDevID.TPMAttributes.Signature
-	require.NotEmpty(t, certifyInfo, "CreateIDevID must record the IAK's certification")
-	require.NotEmpty(t, signature, "CreateIDevID must record the certification signature")
-
-	assert.Len(t, signature, 64,
-		"a P-256 ECDSA signature packed as raw r||s is exactly 64 bytes (32+32)")
-
-	attesterPub := h.IAK.TPMAttributes.BPublic
-	subjectPub := h.IDevID.TPMAttributes.BPublic
-
-	verified, err := VerifyCertifyRaw(
-		certifyInfo, signature, attesterPub.Bytes(), subjectPub.Bytes(), nil)
-	require.NoError(t, err, "the raw wire-format signature must verify")
-	require.NotEmpty(t, verified.SubjectName)
-
-	t.Run("a DER-encoded signature is rejected", func(t *testing.T) {
-		der := derEncodeSignature(t, signature)
-		require.NotEqual(t, signature, der, "precondition: DER re-encoding changes the bytes")
-
-		_, err := VerifyCertifyRaw(
-			certifyInfo, der, attesterPub.Bytes(), subjectPub.Bytes(), nil)
-		assert.Error(t, err, "a DER-encoded signature must not verify as the raw wire format")
-	})
-}

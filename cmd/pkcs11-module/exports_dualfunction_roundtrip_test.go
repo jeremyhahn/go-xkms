@@ -73,6 +73,33 @@ func dualUpdateViaC(t *testing.T, fn any, session module.SessionHandle, in []byt
 	return outBuf[:fillLen.Elem().Uint()], rv
 }
 
+// requireDualUpdateLengthQuery makes the PKCS#11 v3.2 §5.2 length query (a
+// NULL output buffer) against one of the dual-function updates on an active
+// operation pair, and fails unless it answers CKR_OK with a zero length. The
+// caller's later real update then proves the query consumed none of in.
+func requireDualUpdateLengthQuery(t *testing.T, fn any, session module.SessionHandle, in []byte) {
+	t.Helper()
+	fv := reflect.ValueOf(fn)
+	ft := fv.Type()
+
+	outLen := reflect.New(ft.In(4).Elem())
+	outLen.Elem().SetUint(12345)
+	out := fv.Call([]reflect.Value{
+		scalarOf(ft, 0, uint64(session)),
+		setBufferPtr(in, ft, 1),
+		scalarOf(ft, 2, uint64(len(in))),
+		setBufferPtr(nil, ft, 3),
+		outLen,
+	})
+	runtime.KeepAlive(in)
+	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_OK {
+		t.Fatalf("length query = %s, want CKR_OK", rv)
+	}
+	if got := outLen.Elem().Uint(); got != 0 {
+		t.Fatalf("length query reported %d bytes, want 0 (the update buffers until *Final)", got)
+	}
+}
+
 // digestFinalViaC drives C_DigestFinal's two-call idiom.
 func digestFinalViaC(t *testing.T, session module.SessionHandle) ([]byte, module.CK_RV) {
 	t.Helper()
@@ -128,6 +155,7 @@ func TestDigestEncryptUpdate_RoundTrip(t *testing.T) {
 	}
 
 	plaintext := []byte("digest-and-encrypt-this-plaintext-together")
+	requireDualUpdateLengthQuery(t, C_DigestEncryptUpdate, session, plaintext)
 	out, rv := dualUpdateViaC(t, C_DigestEncryptUpdate, session, plaintext)
 	if rv != module.CKR_OK {
 		t.Fatalf("C_DigestEncryptUpdate = %s, want CKR_OK", rv)
@@ -201,6 +229,7 @@ func TestDecryptDigestUpdate_RoundTrip(t *testing.T) {
 		t.Fatalf("C_DigestInit = %s, want CKR_OK", rv)
 	}
 
+	requireDualUpdateLengthQuery(t, C_DecryptDigestUpdate, session, ciphertext)
 	out, rv := dualUpdateViaC(t, C_DecryptDigestUpdate, session, ciphertext)
 	if rv != module.CKR_OK {
 		t.Fatalf("C_DecryptDigestUpdate = %s, want CKR_OK", rv)
@@ -242,6 +271,7 @@ func TestSignEncryptUpdate_RoundTrip(t *testing.T) {
 	}
 
 	plaintext := []byte("sign-and-encrypt-this-plaintext-together")
+	requireDualUpdateLengthQuery(t, C_SignEncryptUpdate, session, plaintext)
 	out, rv := dualUpdateViaC(t, C_SignEncryptUpdate, session, plaintext)
 	if rv != module.CKR_OK {
 		t.Fatalf("C_SignEncryptUpdate = %s, want CKR_OK", rv)
@@ -309,6 +339,7 @@ func TestDecryptVerifyUpdate_RoundTrip(t *testing.T) {
 		t.Fatalf("C_VerifyInit = %s, want CKR_OK", rv)
 	}
 
+	requireDualUpdateLengthQuery(t, C_DecryptVerifyUpdate, session, ciphertext)
 	out, rv := dualUpdateViaC(t, C_DecryptVerifyUpdate, session, ciphertext)
 	if rv != module.CKR_OK {
 		t.Fatalf("C_DecryptVerifyUpdate = %s, want CKR_OK", rv)

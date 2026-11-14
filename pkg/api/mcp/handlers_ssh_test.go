@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -119,76 +118,6 @@ func TestSSHKeys_GenerateGetListExportDelete(t *testing.T) {
 	assert.Error(t, err, "deleted key must not be retrievable")
 }
 
-// TestSSHKeys_ListWithoutParams proves the list handlers tolerate an omitted
-// params object (the documented "list everything" shape).
-func TestSSHKeys_ListWithoutParams(t *testing.T) {
-	server := newSSHServer(t)
-	ctx := context.Background()
-
-	generateSSHKey(t, server, "laptop")
-
-	result, err := server.handleSSHKeysList(ctx, &JSONRPCRequest{JSONRPC: "2.0", Method: "ssh.keys.list", ID: 1})
-	require.NoError(t, err)
-	assert.Len(t, result.(SSHKeyListResult).Items, 1)
-}
-
-// TestSSHList_MalformedParamsRejected proves that malformed JSON params on
-// the SSH list handlers are reported as Invalid params rather than silently
-// treated as an omitted (list-everything) request (#701).
-func TestSSHList_MalformedParamsRejected(t *testing.T) {
-	server := newSSHServer(t)
-	ctx := context.Background()
-
-	handlers := map[string]func(context.Context, *JSONRPCRequest) (interface{}, error){
-		"ssh.keys.list":           server.handleSSHKeysList,
-		"ssh.knownHosts.list":     server.handleSSHKnownHostsList,
-		"ssh.authorizedKeys.list": server.handleSSHAuthorizedKeysList,
-	}
-
-	for method, handler := range handlers {
-		t.Run(method, func(t *testing.T) {
-			_, err := handler(ctx, &JSONRPCRequest{
-				JSONRPC: "2.0",
-				Method:  method,
-				Params:  json.RawMessage(`{"scope": 123}`),
-				ID:      1,
-			})
-
-			require.Error(t, err)
-			var keyOp *KeyOpError
-			require.True(t, errors.As(err, &keyOp), "%s: %T is not a KeyOpError", method, err)
-			assert.Equal(t, ErrCodeInvalidParams, keyOp.Code)
-			var invalid *SSHInvalidParamsError
-			assert.ErrorAs(t, err, &invalid, "%s must report a typed invalid-params error", method)
-		})
-	}
-}
-
-// TestSSHKeys_Sign proves ssh.keys.sign produces a signature that verifies
-// against the key's public half.
-func TestSSHKeys_Sign(t *testing.T) {
-	server := newSSHServer(t)
-	ctx := context.Background()
-
-	key := generateSSHKey(t, server, "signing-key")
-
-	digest := sha256.Sum256([]byte("payload"))
-	result, err := server.handleSSHKeysSign(ctx, sshRequest(t, "ssh.keys.sign",
-		SSHSignParams{Scope: "user", Owner: "alice", Name: "signing-key", Digest: digest[:]}))
-	require.NoError(t, err)
-
-	sig := result.(SSHSignResult)
-	require.NotEmpty(t, sig.Blob)
-
-	pub, _, _, _, err := gossh.ParseAuthorizedKey([]byte(key.PublicKey))
-	require.NoError(t, err)
-	require.NoError(t, pub.Verify(digest[:], &gossh.Signature{
-		Format: sig.Format,
-		Blob:   sig.Blob,
-		Rest:   sig.Rest,
-	}))
-}
-
 // TestSSHKeys_SignRejectsEmptyDigest proves the handler refuses to sign
 // nothing rather than passing an empty digest to the enclave signer.
 func TestSSHKeys_SignRejectsEmptyDigest(t *testing.T) {
@@ -204,18 +133,6 @@ func TestSSHKeys_SignRejectsEmptyDigest(t *testing.T) {
 	var opErr *KeyOpError
 	require.ErrorAs(t, err, &opErr)
 	assert.Equal(t, ErrCodeInvalidParams, opErr.Code)
-}
-
-// TestSSHKeys_SignUnknownKey proves a signer lookup failure surfaces as an
-// error instead of a nil-signer panic.
-func TestSSHKeys_SignUnknownKey(t *testing.T) {
-	server := newSSHServer(t)
-
-	digest := sha256.Sum256([]byte("payload"))
-	_, err := server.handleSSHKeysSign(context.Background(), sshRequest(t, "ssh.keys.sign",
-		SSHSignParams{Scope: "user", Owner: "alice", Name: "absent", Digest: digest[:]}))
-
-	assert.Error(t, err)
 }
 
 // TestSSHKeys_Import round-trips an OpenSSH private key through
@@ -556,46 +473,6 @@ func TestSSHAuthorizedKeys_VerifyNoEntries(t *testing.T) {
 	require.ErrorAs(t, err, &notFound)
 }
 
-// TestSSH_InvalidParams proves every SSH handler that decodes a params object
-// rejects malformed JSON with a typed SSHInvalidParamsError instead of
-// operating on a zero-valued request.
-func TestSSH_InvalidParams(t *testing.T) {
-	server := newSSHServer(t)
-	ctx := context.Background()
-
-	handlers := map[string]func(context.Context, *JSONRPCRequest) (interface{}, error){
-		"ssh.keys.generate":         server.handleSSHKeysGenerate,
-		"ssh.keys.import":           server.handleSSHKeysImport,
-		"ssh.keys.get":              server.handleSSHKeysGet,
-		"ssh.keys.delete":           server.handleSSHKeysDelete,
-		"ssh.keys.export":           server.handleSSHKeysExport,
-		"ssh.keys.sign":             server.handleSSHKeysSign,
-		"ssh.knownHosts.add":        server.handleSSHKnownHostsAdd,
-		"ssh.knownHosts.remove":     server.handleSSHKnownHostsRemove,
-		"ssh.knownHosts.verify":     server.handleSSHKnownHostsVerify,
-		"ssh.authorizedKeys.add":    server.handleSSHAuthorizedKeysAdd,
-		"ssh.authorizedKeys.get":    server.handleSSHAuthorizedKeysGet,
-		"ssh.authorizedKeys.remove": server.handleSSHAuthorizedKeysRemove,
-		"ssh.authorizedKeys.emit":   server.handleSSHAuthorizedKeysEmit,
-		"ssh.authorizedKeys.verify": server.handleSSHAuthorizedKeysVerify,
-	}
-
-	for method, handler := range handlers {
-		t.Run(method, func(t *testing.T) {
-			_, err := handler(ctx, &JSONRPCRequest{
-				JSONRPC: "2.0",
-				Method:  method,
-				Params:  json.RawMessage(`"not-an-object"`),
-				ID:      1,
-			})
-
-			require.Error(t, err)
-			var invalid *SSHInvalidParamsError
-			assert.ErrorAs(t, err, &invalid, "%s must report a typed invalid-params error", method)
-		})
-	}
-}
-
 // TestSSH_NotConfigured proves every SSH method reports ErrSSHNotConfigured
 // when the server was built without an SSH client, rather than panicking on a
 // nil sub-client.
@@ -636,22 +513,6 @@ func TestSSHErrors_Messages(t *testing.T) {
 
 	assert.Equal(t, "mcp/ssh: known_host not found: h", (&SSHNotFoundError{Resource: "known_host", Host: "h"}).Error())
 	assert.Equal(t, "mcp/ssh: authorized_key not found", (&SSHNotFoundError{Resource: "authorized_key"}).Error())
-}
-
-// TestSSHStaticPassphraseProvider proves the provider hands back a secure
-// buffer holding exactly the configured bytes.
-func TestSSHStaticPassphraseProvider(t *testing.T) {
-	provider := &sshStaticPassphraseProvider{data: []byte("hunter2")}
-
-	buf, err := provider.Passphrase(context.Background(), "any-key")
-	require.NoError(t, err)
-	require.NotNil(t, buf)
-	defer buf.Destroy()
-
-	require.NoError(t, buf.WithBytes(func(b []byte) error {
-		assert.Equal(t, []byte("hunter2"), b)
-		return nil
-	}))
 }
 
 // TestSSHStaticPassphraseProvider_IndependentCopy proves each call returns a

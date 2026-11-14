@@ -139,18 +139,6 @@ func TestParseAttestation_RoundTrip(t *testing.T) {
 
 // TestParseAttestation_NoExtensions covers an ordinary certificate. It is not
 // an error — it simply is not an attestation.
-func TestParseAttestation_NoExtensions(t *testing.T) {
-	ca := newAttestationCA(t, "Test PIV Attestation Root")
-	cert := issueAttestationCert(t, ca, nil)
-
-	got, err := ParseAttestation(cert)
-	require.NoError(t, err)
-	assert.False(t, got.HasAttestationExtensions())
-	assert.Nil(t, got.FirmwareVersion)
-	assert.Nil(t, got.TouchPolicy)
-	assert.Empty(t, got.Unparseable)
-}
-
 // TestParseAttestation_AbsentIsNotUnparseable is the distinction #206 asks
 // for. A device that reports a serial but no touch policy must not look like
 // one whose touch policy could not be read: the first may be acceptable to a
@@ -328,23 +316,6 @@ func TestParseAttestation_SerialEdgeCases(t *testing.T) {
 
 // TestVerifyAttestation_TrustedChain is the positive case: a chain anchored to
 // a root the caller supplied returns the decoded values.
-func TestVerifyAttestation_TrustedChain(t *testing.T) {
-	ca := newAttestationCA(t, "Test PIV Attestation Root")
-	exts, err := BuildAttestationExtensions(fullAttestation())
-	require.NoError(t, err)
-	leaf := issueAttestationCert(t, ca, exts)
-
-	roots := x509.NewCertPool()
-	roots.AddCert(ca.cert)
-
-	got, err := VerifyAttestation([]*x509.Certificate{leaf}, &AttestationVerifyOptions{
-		TrustedRoots: roots,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, got.TouchPolicy)
-	assert.Equal(t, TouchPolicyAlways, *got.TouchPolicy)
-}
-
 // TestVerifyAttestation_UntrustedRootRejected proves the verifier actually
 // verifies. A verifier that accepts everything passes every positive test ever
 // written, so the negative case is the one that carries the weight: the same
@@ -494,7 +465,9 @@ func TestVerifyAttestation_VerifiedChainWithNoExtensions(t *testing.T) {
 	require.NotNil(t, got)
 	assert.False(t, got.HasAttestationExtensions(),
 		"but it carries no attestation evidence, and the caller must check")
+	assert.Nil(t, got.FirmwareVersion)
 	assert.Nil(t, got.TouchPolicy)
+	assert.Empty(t, got.Unparseable)
 }
 
 // TestBuildAttestationExtensions_Partial covers emitting only what is set, and

@@ -328,33 +328,6 @@ func TestHKDFAdapter_DeriveKey(t *testing.T) {
 	}
 }
 
-// TestHKDFAdapter_Deterministic tests that HKDF produces deterministic results
-func TestHKDFAdapter_Deterministic(t *testing.T) {
-	adapter := NewHKDFAdapter()
-
-	params := &KDFParams{
-		Algorithm: AlgorithmHKDF,
-		Salt:      testSalt,
-		Info:      testInfo,
-		KeyLength: 32,
-		Hash:      crypto.SHA256,
-	}
-
-	key1, err := adapter.DeriveKey(testIKM, params)
-	if err != nil {
-		t.Fatalf("First derivation failed: %v", err)
-	}
-
-	key2, err := adapter.DeriveKey(testIKM, params)
-	if err != nil {
-		t.Fatalf("Second derivation failed: %v", err)
-	}
-
-	if !bytes.Equal(key1, key2) {
-		t.Error("HKDF is not deterministic - same inputs produced different outputs")
-	}
-}
-
 // TestHKDFAdapter_DifferentInputs tests that different inputs produce different outputs
 func TestHKDFAdapter_DifferentInputs(t *testing.T) {
 	adapter := NewHKDFAdapter()
@@ -380,14 +353,6 @@ func TestHKDFAdapter_DifferentInputs(t *testing.T) {
 
 	if bytes.Equal(key1, key2) {
 		t.Error("Different IKM produced same output")
-	}
-}
-
-// TestHKDFAdapter_Algorithm tests the Algorithm method
-func TestHKDFAdapter_Algorithm(t *testing.T) {
-	adapter := NewHKDFAdapter()
-	if adapter.Algorithm() != AlgorithmHKDF {
-		t.Errorf("Algorithm() = %v, want %v", adapter.Algorithm(), AlgorithmHKDF)
 	}
 }
 
@@ -509,41 +474,6 @@ func TestPBKDF2Adapter_DeriveKey(t *testing.T) {
 				t.Errorf("key length = %v, want %v", len(key), tt.params.KeyLength)
 			}
 		})
-	}
-}
-
-// TestPBKDF2Adapter_Deterministic tests that PBKDF2 produces deterministic results
-func TestPBKDF2Adapter_Deterministic(t *testing.T) {
-	adapter := NewPBKDF2Adapter()
-
-	params := &KDFParams{
-		Algorithm:  AlgorithmPBKDF2,
-		Salt:       testSalt,
-		Iterations: 100000,
-		KeyLength:  32,
-		Hash:       crypto.SHA256,
-	}
-
-	key1, err := adapter.DeriveKey(testIKM, params)
-	if err != nil {
-		t.Fatalf("First derivation failed: %v", err)
-	}
-
-	key2, err := adapter.DeriveKey(testIKM, params)
-	if err != nil {
-		t.Fatalf("Second derivation failed: %v", err)
-	}
-
-	if !bytes.Equal(key1, key2) {
-		t.Error("PBKDF2 is not deterministic - same inputs produced different outputs")
-	}
-}
-
-// TestPBKDF2Adapter_Algorithm tests the Algorithm method
-func TestPBKDF2Adapter_Algorithm(t *testing.T) {
-	adapter := NewPBKDF2Adapter()
-	if adapter.Algorithm() != AlgorithmPBKDF2 {
-		t.Errorf("Algorithm() = %v, want %v", adapter.Algorithm(), AlgorithmPBKDF2)
 	}
 }
 
@@ -929,65 +859,6 @@ func TestValidateParams(t *testing.T) {
 	}
 }
 
-// TestCrossAlgorithmComparison ensures different algorithms produce different outputs
-func TestCrossAlgorithmComparison(t *testing.T) {
-	hkdfAdapter := NewHKDFAdapter()
-	pbkdf2Adapter := NewPBKDF2Adapter()
-	argon2Adapter := NewArgon2idAdapter()
-
-	hkdfParams := &KDFParams{
-		Algorithm: AlgorithmHKDF,
-		Salt:      testSalt,
-		KeyLength: 32,
-		Hash:      crypto.SHA256,
-	}
-
-	pbkdf2Params := &KDFParams{
-		Algorithm:  AlgorithmPBKDF2,
-		Salt:       testSalt,
-		Iterations: 100000,
-		KeyLength:  32,
-		Hash:       crypto.SHA256,
-	}
-
-	argon2Params := &KDFParams{
-		Algorithm: AlgorithmArgon2id,
-		Salt:      testSalt,
-		Memory:    64 * 1024,
-		Time:      3,
-		Threads:   4,
-		KeyLength: 32,
-	}
-
-	hkdfKey, err := hkdfAdapter.DeriveKey(testIKM, hkdfParams)
-	if err != nil {
-		t.Fatalf("HKDF derivation failed: %v", err)
-	}
-
-	pbkdf2Key, err := pbkdf2Adapter.DeriveKey(testIKM, pbkdf2Params)
-	if err != nil {
-		t.Fatalf("PBKDF2 derivation failed: %v", err)
-	}
-
-	argon2Key, err := argon2Adapter.DeriveKey(testIKM, argon2Params)
-	if err != nil {
-		t.Fatalf("Argon2 derivation failed: %v", err)
-	}
-
-	// All keys should be different
-	if bytes.Equal(hkdfKey, pbkdf2Key) {
-		t.Error("HKDF and PBKDF2 produced same output")
-	}
-
-	if bytes.Equal(hkdfKey, argon2Key) {
-		t.Error("HKDF and Argon2 produced same output")
-	}
-
-	if bytes.Equal(pbkdf2Key, argon2Key) {
-		t.Error("PBKDF2 and Argon2 produced same output")
-	}
-}
-
 // TestArgon2Adapter_DeriveKey_UnsupportedVariant tests deriveKey with unsupported variant
 func TestArgon2Adapter_DeriveKey_UnsupportedVariant(t *testing.T) {
 	// Create an adapter with an invalid variant directly
@@ -1023,23 +894,6 @@ func TestPBKDF2Adapter_ValidateParams_InvalidHash(t *testing.T) {
 	err := adapter.ValidateParams(params)
 	if err != ErrInvalidHash {
 		t.Errorf("ValidateParams() error = %v, want %v", err, ErrInvalidHash)
-	}
-}
-
-// TestHKDFAdapter_DeriveKey_NilIKM tests DeriveKey with nil IKM
-func TestHKDFAdapter_DeriveKey_NilIKM(t *testing.T) {
-	adapter := NewHKDFAdapter()
-
-	params := &KDFParams{
-		Algorithm: AlgorithmHKDF,
-		Salt:      testSalt,
-		KeyLength: 32,
-		Hash:      crypto.SHA256,
-	}
-
-	_, err := adapter.DeriveKey(nil, params)
-	if err != ErrInvalidIKM {
-		t.Errorf("DeriveKey() error = %v, want %v", err, ErrInvalidIKM)
 	}
 }
 

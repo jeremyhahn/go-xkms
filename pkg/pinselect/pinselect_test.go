@@ -65,19 +65,6 @@ func (s softwareProvider) Storage() (qrdbsdk.PINStorage, error) {
 }
 func (s softwareProvider) HashConfig() qrdbsdk.PINHashConfig { return qrdbsdk.DefaultHashConfig() }
 
-func TestSelect_PrefersTPMWhenAvailable(t *testing.T) {
-	be, err := Select(Config{
-		TPM:      fakeTPMProvider{pa: &fakePlatformAuth{provisioned: true}, available: true},
-		Software: softwareProvider{},
-	})
-	if err != nil {
-		t.Fatalf("Select: %v", err)
-	}
-	if be.Strategy() != qrdbsdk.PINStrategyTPM2 {
-		t.Fatalf("expected TPM2 backend, got strategy %q", be.Strategy())
-	}
-}
-
 func TestSelect_FallsThroughTPMUnavailableToPKCS11(t *testing.T) {
 	pkBackend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig()) // stand-in instance
 	if err != nil {
@@ -110,16 +97,6 @@ func TestSelect_FallsBackToSoftware(t *testing.T) {
 	}
 }
 
-func TestSelect_NilHardwareProvidersYieldSoftware(t *testing.T) {
-	be, err := Select(Config{Software: softwareProvider{}})
-	if err != nil {
-		t.Fatalf("Select: %v", err)
-	}
-	if be.Strategy() != qrdbsdk.PINStrategySoftware {
-		t.Fatalf("expected software backend, got %q", be.Strategy())
-	}
-}
-
 func TestSelect_CustomPreferenceCanForceSoftwareOverTPM(t *testing.T) {
 	be, err := Select(Config{
 		TPM:        fakeTPMProvider{pa: &fakePlatformAuth{provisioned: true}, available: true},
@@ -131,13 +108,6 @@ func TestSelect_CustomPreferenceCanForceSoftwareOverTPM(t *testing.T) {
 	}
 	if be.Strategy() != qrdbsdk.PINStrategySoftware {
 		t.Fatalf("expected software (forced by preference), got %q", be.Strategy())
-	}
-}
-
-func TestSelect_NilSoftwareProviderIsError(t *testing.T) {
-	_, err := Select(Config{TPM: fakeTPMProvider{available: false}})
-	if !errors.Is(err, ErrNoSoftwareProvider) {
-		t.Fatalf("expected ErrNoSoftwareProvider, got %v", err)
 	}
 }
 

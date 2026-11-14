@@ -537,26 +537,6 @@ func TestNewAssertionVerifier_NilCOSEKey(t *testing.T) {
 	}
 }
 
-func TestAssertionVerifier_NoFlagsSet(t *testing.T) {
-	privKey := generateTestKeypair(t)
-	coseKey := encodeCOSEPublicKey(&privKey.PublicKey)
-
-	verifier, err := NewAssertionVerifier(testRPID, coseKey)
-	if err != nil {
-		t.Fatalf("NewAssertionVerifier failed: %v", err)
-	}
-
-	// No flags set at all.
-	authData := buildTestAuthData(testRPID, 0, 1)
-	clientDataHash := sha256.Sum256([]byte("test"))
-	sig := signAssertion(t, privKey, authData, clientDataHash[:])
-
-	err = verifier.Verify(authData, sig, clientDataHash[:])
-	if !errors.Is(err, ErrVerifierMissingUP) {
-		t.Fatalf("expected ErrVerifierMissingUP when no flags set, got: %v", err)
-	}
-}
-
 func TestAssertionVerifier_LargerAuthData(t *testing.T) {
 	// Authenticator data can be longer than 37 bytes (extensions, attested cred data).
 	// The verifier must handle this correctly.
@@ -581,70 +561,6 @@ func TestAssertionVerifier_LargerAuthData(t *testing.T) {
 
 	if err := verifier.Verify(authData, sig, clientDataHash[:]); err != nil {
 		t.Fatalf("Verify with extended authData failed: %v", err)
-	}
-}
-
-func TestParseCOSEPublicKey_ValidKey(t *testing.T) {
-	privKey := generateTestKeypair(t)
-	coseKey := encodeCOSEPublicKey(&privKey.PublicKey)
-
-	pubKey, err := parseCOSEPublicKey(coseKey)
-	if err != nil {
-		t.Fatalf("parseCOSEPublicKey failed: %v", err)
-	}
-
-	if !pubKey.Equal(&privKey.PublicKey) {
-		t.Fatal("parsed public key does not match original")
-	}
-}
-
-func TestParseCOSEPublicKey_ShortCoordinates(t *testing.T) {
-	// Test that coordinates shorter than 32 bytes (with leading zeros stripped)
-	// are handled correctly via left-padding.
-	privKey := generateTestKeypair(t)
-
-	// Extract coordinates from uncompressed point encoding.
-	uncompressed, err := privKey.PublicKey.Bytes()
-	if err != nil {
-		t.Fatalf("failed to encode public key: %v", err)
-	}
-	xBytes := uncompressed[1 : 1+p256CoordLen]
-	yBytes := uncompressed[1+p256CoordLen:]
-
-	// Trim leading zeros if present, then add one leading zero to create a shorter coord.
-	shortX := xBytes
-	if len(shortX) == p256CoordLen && shortX[0] != 0 {
-		// Force a shorter coordinate by stripping one byte.
-		// This may produce a different key, so just test that parsing succeeds
-		// for a known-good key with full-length coords.
-		// Instead, test the padCoordinate function directly.
-		t.Run("padCoordinate", func(t *testing.T) {
-			short := []byte{0x01, 0x02}
-			padded := padCoordinate(short, 32)
-			if len(padded) != 32 {
-				t.Fatalf("expected 32 bytes, got %d", len(padded))
-			}
-			if padded[30] != 0x01 || padded[31] != 0x02 {
-				t.Fatal("padding placed bytes at wrong position")
-			}
-			for i := 0; i < 30; i++ {
-				if padded[i] != 0 {
-					t.Fatalf("expected zero padding at position %d, got %d", i, padded[i])
-				}
-			}
-		})
-		_ = yBytes
-		return
-	}
-
-	// If X coordinate does have leading zeros, test naturally.
-	coseKey := encodeCOSEPublicKey(&privKey.PublicKey)
-	pubKey, err := parseCOSEPublicKey(coseKey)
-	if err != nil {
-		t.Fatalf("parseCOSEPublicKey failed: %v", err)
-	}
-	if !pubKey.Equal(&privKey.PublicKey) {
-		t.Fatal("key mismatch after padding")
 	}
 }
 
@@ -681,35 +597,19 @@ func TestPadCoordinate(t *testing.T) {
 }
 
 func TestParseAuthData(t *testing.T) {
-	t.Run("valid", func(t *testing.T) {
-		authData := buildTestAuthData("test.com", flagUP|flagUV, 42)
-		rpIDHash, flags, count, err := parseAuthData(authData)
-		if err != nil {
-			t.Fatalf("parseAuthData failed: %v", err)
-		}
-		expected := sha256.Sum256([]byte("test.com"))
-		if rpIDHash != expected {
-			t.Fatal("RP ID hash mismatch")
-		}
-		if flags != flagUP|flagUV {
-			t.Fatalf("expected flags %02x, got %02x", flagUP|flagUV, flags)
-		}
-		if count != 42 {
-			t.Fatalf("expected signCount 42, got %d", count)
-		}
-	})
-
-	t.Run("too short", func(t *testing.T) {
-		_, _, _, err := parseAuthData(make([]byte, 36))
-		if !errors.Is(err, ErrVerifierInvalidAuthData) {
-			t.Fatalf("expected ErrVerifierInvalidAuthData, got: %v", err)
-		}
-	})
-
-	t.Run("empty", func(t *testing.T) {
-		_, _, _, err := parseAuthData(nil)
-		if !errors.Is(err, ErrVerifierInvalidAuthData) {
-			t.Fatalf("expected ErrVerifierInvalidAuthData, got: %v", err)
-		}
-	})
+	authData := buildTestAuthData("test.com", flagUP|flagUV, 42)
+	rpIDHash, flags, count, err := parseAuthData(authData)
+	if err != nil {
+		t.Fatalf("parseAuthData failed: %v", err)
+	}
+	expected := sha256.Sum256([]byte("test.com"))
+	if rpIDHash != expected {
+		t.Fatal("RP ID hash mismatch")
+	}
+	if flags != flagUP|flagUV {
+		t.Fatalf("expected flags %02x, got %02x", flagUP|flagUV, flags)
+	}
+	if count != 42 {
+		t.Fatalf("expected signCount 42, got %d", count)
+	}
 }

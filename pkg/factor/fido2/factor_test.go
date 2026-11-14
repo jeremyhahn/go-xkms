@@ -232,12 +232,6 @@ func requireVerificationFailed(t *testing.T, err error) {
 	}
 }
 
-func TestFIDO2Factor_Name(t *testing.T) {
-	if got := New(Config{}).Name(); got != FactorName {
-		t.Fatalf("Name() = %q, want %q", got, FactorName)
-	}
-}
-
 func TestFIDO2Factor_NewDefaults(t *testing.T) {
 	f := New(Config{})
 	if f.cfg.RPID != defaultRPID {

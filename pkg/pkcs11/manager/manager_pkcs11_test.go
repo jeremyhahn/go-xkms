@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/miekg/pkcs11"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -555,4 +556,90 @@ func TestManager_OperationsAfterClose(t *testing.T) {
 	t.Run("Close is idempotent", func(t *testing.T) {
 		require.NoError(t, mgr.Close())
 	})
+}
+
+func TestManager_RegisterModule_RefusesModulesThatDoNotLoad(t *testing.T) {
+	lib := softhsmLibrary(t)
+
+	tests := []struct {
+		name    string
+		path    func(t *testing.T) string
+		wantErr error
+	}{
+		{
+			name: "file that is not a shared library",
+			path: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "not-a-module.so")
+				require.NoError(t, os.WriteFile(path, []byte("not an ELF object"), 0o600))
+				return path
+			},
+			wantErr: ErrModuleLoadFailed,
+		},
+		{
+			name: "module whose C_Initialize fails",
+			path: func(t *testing.T) string {
+				// SoftHSM refuses C_Initialize when its configuration file is missing.
+				t.Setenv("SOFTHSM2_CONF", filepath.Join(t.TempDir(), "missing.conf"))
+				return lib
+			},
+			wantErr: ErrModuleInitFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+			mgr := New(WithLogger(quiet))
+			t.Cleanup(func() { _ = mgr.Close() })
+
+			path := tt.path(t)
+			id, err := mgr.RegisterModule(path, "refused")
+			require.ErrorIs(t, err, tt.wantErr)
+			assert.Empty(t, id)
+			assert.Empty(t, mgr.ListModules(), "a refused module must not be registered")
+			assert.Empty(t, mgr.ListTokens(), "a refused module must not report tokens")
+
+			_, err = mgr.GetModule(DeriveModuleID(path))
+			require.ErrorIs(t, err, ErrModuleNotFound)
+		})
+	}
+}
+
+func TestManager_InitializeToken_RefusesReinitWithWrongSOPIN(t *testing.T) {
+	mgr, moduleID, slotID := newIsolatedManager(t)
+	initToken(t, mgr, moduleID, slotID, "original-label")
+
+	err := mgr.InitializeToken(moduleID, slotID, "hijacked-label", "wrong-so-pin", testUserPIN)
+	require.ErrorIs(t, err, ErrTokenInitFailed)
+
+	require.NoError(t, mgr.TestLogin(moduleID, slotID, testUserPIN),
+		"a refused re-initialization must leave the user PIN intact")
+	for _, token := range mgr.ListTokens() {
+		assert.NotEqual(t, "hijacked-label", token.Label, "a refused re-initialization must not relabel the token")
+	}
+}
+
+func TestManager_ModuleFinalizedUnderneathIsRefused(t *testing.T) {
+	mgr, moduleID, _ := newIsolatedManager(t)
+
+	info, err := mgr.GetModule(moduleID)
+	require.NoError(t, err)
+
+	// Another user of the same library in this process finalizes it, which
+	// leaves the manager's context without an initialized module.
+	other := pkcs11.New(info.LibraryPath)
+	require.NotNil(t, other)
+	t.Cleanup(other.Destroy)
+	require.NoError(t, other.Finalize())
+
+	slots, err := mgr.RefreshSlots(moduleID)
+	require.ErrorIs(t, err, ErrModuleLoadFailed)
+	assert.Nil(t, slots, "a finalized module must not report slots")
+
+	require.ErrorIs(t, mgr.UnregisterModule(moduleID), ErrModuleFinalizeFailed)
+
+	info, err = mgr.GetModule(moduleID)
+	require.NoError(t, err, "a module that failed to finalize stays registered")
+	assert.Equal(t, ModuleStateError, info.State)
+	assert.NotEmpty(t, info.ErrorMsg)
 }

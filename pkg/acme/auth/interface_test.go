@@ -22,37 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTokenClaimsFields(t *testing.T) {
-	now := time.Now().Truncate(time.Second)
-	expires := now.Add(1 * time.Hour)
-
-	claims := &TokenClaims{
-		UserID:      "user-123",
-		Username:    "testuser",
-		Email:       "test@example.com",
-		TenantID:    "tenant-456",
-		Roles:       []string{"admin", "user"},
-		Groups:      []string{"engineering"},
-		Permissions: []string{"read", "write"},
-		SessionID:   "session-789",
-		IssuedAt:    now,
-		ExpiresAt:   expires,
-		Valid:       true,
-	}
-
-	assert.Equal(t, "user-123", claims.UserID)
-	assert.Equal(t, "testuser", claims.Username)
-	assert.Equal(t, "test@example.com", claims.Email)
-	assert.Equal(t, "tenant-456", claims.TenantID)
-	assert.Equal(t, []string{"admin", "user"}, claims.Roles)
-	assert.Equal(t, []string{"engineering"}, claims.Groups)
-	assert.Equal(t, []string{"read", "write"}, claims.Permissions)
-	assert.Equal(t, "session-789", claims.SessionID)
-	assert.Equal(t, now, claims.IssuedAt)
-	assert.Equal(t, expires, claims.ExpiresAt)
-	assert.True(t, claims.Valid)
-}
-
 func TestTokenClaimsJSONSerialization(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	expires := now.Add(1 * time.Hour)
@@ -108,20 +77,4 @@ func TestTokenClaimsJSONFieldNames(t *testing.T) {
 	assert.Equal(t, "uname", raw["username"])
 	_, hasUserID := raw["user_id"]
 	assert.True(t, hasUserID, "JSON should use snake_case field name user_id")
-}
-
-func TestTokenClaimsZeroValue(t *testing.T) {
-	claims := &TokenClaims{}
-
-	assert.Empty(t, claims.UserID)
-	assert.Empty(t, claims.Username)
-	assert.Empty(t, claims.Email)
-	assert.Empty(t, claims.TenantID)
-	assert.Nil(t, claims.Roles)
-	assert.Nil(t, claims.Groups)
-	assert.Nil(t, claims.Permissions)
-	assert.Empty(t, claims.SessionID)
-	assert.True(t, claims.IssuedAt.IsZero())
-	assert.True(t, claims.ExpiresAt.IsZero())
-	assert.False(t, claims.Valid)
 }

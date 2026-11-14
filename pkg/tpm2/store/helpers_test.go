@@ -5,7 +5,6 @@ package store
 
 import (
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -92,23 +91,6 @@ func TestEncodePubKey(t *testing.T) {
 		assert.Equal(t, privateKey.E, rsaPub.E)
 	})
 
-	t.Run("ECDSA public key", func(t *testing.T) {
-		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		require.NoError(t, err)
-
-		encoded, err := EncodePubKey(&privateKey.PublicKey)
-		require.NoError(t, err)
-		assert.NotEmpty(t, encoded)
-
-		// Verify the encoded key can be parsed back
-		parsed, err := x509.ParsePKIXPublicKey(encoded)
-		require.NoError(t, err)
-
-		ecdsaPub, ok := parsed.(*ecdsa.PublicKey)
-		require.True(t, ok)
-		assert.True(t, privateKey.PublicKey.Equal(ecdsaPub))
-	})
-
 	t.Run("nil key returns error", func(t *testing.T) {
 		_, err := EncodePubKey(nil)
 		assert.Error(t, err)
@@ -140,12 +122,6 @@ func TestDecodePEM(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to decode PEM block")
 		var typed *errs.Message
 		assert.True(t, errors.As(err, &typed), "err = %v, want *errs.Message", err)
-	})
-
-	t.Run("empty input", func(t *testing.T) {
-		decoded, err := DecodePEM([]byte{})
-		assert.Error(t, err)
-		assert.Nil(t, decoded)
 	})
 }
 

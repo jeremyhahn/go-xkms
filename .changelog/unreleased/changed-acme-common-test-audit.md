@@ -1,0 +1,1 @@
+Tests: `pkg/acme/common` keeps one test per behaviour: the dynamic-challenge side tables fold into the main Parse, IsDynamic, GetChallengePort and Normalize tables, and the tests that read back struct literals, constants or test-local closures are removed; coverage stays at 93.2% (#1794).

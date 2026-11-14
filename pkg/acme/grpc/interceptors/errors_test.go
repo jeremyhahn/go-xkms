@@ -27,6 +27,7 @@ func TestDeadlineError_Error(t *testing.T) {
 	assert.Equal(t, int64(50), err.Remaining)
 	assert.Equal(t, int64(100), err.RequiredMinimum)
 	assert.Nil(t, err.Cause)
+	assert.Nil(t, err.Unwrap())
 }
 
 func TestDeadlineError_Unwrap(t *testing.T) {
@@ -35,12 +36,6 @@ func TestDeadlineError_Unwrap(t *testing.T) {
 
 	assert.Equal(t, cause, err.Unwrap())
 	assert.True(t, errors.Is(err, cause))
-}
-
-func TestDeadlineError_Unwrap_NilCause(t *testing.T) {
-	err := NewDeadlineError("deadline error", 0, 100, nil)
-
-	assert.Nil(t, err.Unwrap())
 }
 
 func TestSentinelErrors(t *testing.T) {

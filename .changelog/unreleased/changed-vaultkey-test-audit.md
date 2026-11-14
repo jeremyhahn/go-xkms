@@ -1,0 +1,1 @@
+- **`pkg/vaultkey`'s tests are audited: one path per behaviour.** Three tests that repeat a kept test's path are removed and the ed25519 case of `TestSeal_UnsupportedKeys` is trimmed; `TestSealed_ZeroValueEveryMethod` takes over the `SecretTakenError` message assertion. Coverage stays at 93.9% (#1794).

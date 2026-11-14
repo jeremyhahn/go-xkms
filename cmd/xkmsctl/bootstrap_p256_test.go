@@ -96,26 +96,6 @@ func TestP256GenerateKey_RequiresOutputFile(t *testing.T) {
 		"expected the missing-output error specifically, got: %s", stderr)
 }
 
-// TestP256GenerateKey_OutputFile asserts the private key reaches the file and
-// nowhere else, at the right length and mode.
-func TestP256GenerateKey_OutputFile(t *testing.T) {
-	keyFile := filepath.Join(t.TempDir(), "p256.key")
-
-	output := captureStdout(t, func() { generateP256Key(keyFile) })
-
-	assert.Contains(t, output, "Private key written to:")
-	assert.NotContains(t, output, "Private key: ")
-	assert.Contains(t, output, "Public key:")
-
-	data, err := os.ReadFile(keyFile)
-	require.NoError(t, err)
-	assert.Len(t, strings.TrimSpace(string(data)), p256proto.HexKeySize)
-
-	info, err := os.Stat(keyFile)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
-}
-
 // TestP256GenerateKey_RefusesExistingFile covers the permission hole
 // os.WriteFile leaves open, and the identity replacement a silent overwrite
 // would cause: clients pin the responder key, so replacing it breaks them all.
@@ -180,14 +160,6 @@ func publicKeyFromOutput(t *testing.T, output string) string {
 	}
 	t.Fatalf("no public key line in output: %q", output)
 	return ""
-}
-
-// TestP256ShowKey_FromHex covers the inline-hex input path.
-func TestP256ShowKey_FromHex(t *testing.T) {
-	output := captureStdout(t, func() { showP256Key("", newTestP256KeyHex(t)) })
-
-	pub := publicKeyFromOutput(t, output)
-	assert.Len(t, pub, p256proto.PublicKeySize*2)
 }
 
 // TestP256ShowKey_ErrorPaths covers the operator mistakes: naming neither

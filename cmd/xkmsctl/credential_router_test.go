@@ -74,25 +74,6 @@ func newCredentialRouterServer(t *testing.T, submitted ...string) {
 	}
 }
 
-func TestRunCredentialList_RealRouter(t *testing.T) {
-	newCredentialRouterServer(t, "pkcs11-user-pin", "aws-kms-key")
-
-	out := captureStdout(t, func() {
-		if err := runCredentialList(credentialListCmd, nil); err != nil {
-			t.Fatalf("runCredentialList: %v", err)
-		}
-	})
-
-	for _, want := range []string{"pkcs11-user-pin", "aws-kms-key"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("expected %q in output, got: %q", want, out)
-		}
-	}
-	if strings.Contains(out, credentialRouterValue) {
-		t.Errorf("credential list printed a credential value: %q", out)
-	}
-}
-
 func TestRunCredentialList_RealRouterNoCredentials(t *testing.T) {
 	newCredentialRouterServer(t)
 

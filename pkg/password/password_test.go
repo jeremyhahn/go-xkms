@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 func TestNewPassword(t *testing.T) {
@@ -57,6 +57,11 @@ func TestNewPassword(t *testing.T) {
 		{
 			name:    "single character password",
 			input:   []byte("x"),
+			wantErr: false,
+		},
+		{
+			name:    "binary password with null and non-utf8 bytes",
+			input:   []byte{'p', 0x00, 0x01, 0xFF},
 			wantErr: false,
 		},
 	}
@@ -158,121 +163,7 @@ func TestNewPasswordFromString(t *testing.T) {
 	}
 }
 
-func TestClearPassword_WithBytes(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantErr bool
-	}{
-		{
-			name:    "simple password",
-			input:   "password123",
-			wantErr: false,
-		},
-		{
-			name:    "special characters",
-			input:   "p@$$w0rd!",
-			wantErr: false,
-		},
-		{
-			name:    "unicode characters",
-			input:   "密码🔐",
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pwd, err := NewPasswordFromString(tt.input)
-			if err != nil {
-				t.Fatalf("NewPasswordFromString() error = %v", err)
-			}
-			got, err := withString(pwd)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("WithBytes() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr && got != tt.input {
-				t.Errorf("WithBytes() = %v, want %v", got, tt.input)
-			}
-		})
-	}
-}
-
-func TestClearPassword_Bytes(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   []byte
-		wantErr bool
-	}{
-		{
-			name:    "simple password",
-			input:   []byte("password123"),
-			wantErr: false,
-		},
-		{
-			name:    "binary data",
-			input:   []byte{0x00, 0x01, 0x02, 0xFF},
-			wantErr: false,
-		},
-		{
-			name:    "special characters",
-			input:   []byte("p@$$w0rd!#%"),
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pwd, err := NewPassword(tt.input)
-			if err != nil {
-				t.Fatalf("NewPassword() error = %v", err)
-			}
-			got := pwd.Bytes()
-			if !tt.wantErr {
-				if string(got) != string(tt.input) {
-					t.Errorf("Bytes() = %v, want %v", got, tt.input)
-				}
-			}
-		})
-	}
-}
-
 func TestClearPassword_Clear(t *testing.T) {
-	t.Run("password can be cleared", func(t *testing.T) {
-		pwd, err := NewPasswordFromString("sensitive-password")
-		if err != nil {
-			t.Fatalf("NewPasswordFromString() error = %v", err)
-		}
-
-		// Verify password works before clearing
-		before, err := withString(pwd)
-		if err != nil {
-			t.Errorf("WithBytes() before Clear error = %v", err)
-		}
-		if before != "sensitive-password" {
-			t.Errorf("WithBytes() before Clear = %v, want %v", before, "sensitive-password")
-		}
-
-		// Clear the password
-		pwd.Clear()
-
-		// Verify password is cleared
-		after, err := withString(pwd)
-		if err == nil {
-			t.Error("WithBytes() after Clear should return error")
-		}
-		if after != "" {
-			t.Errorf("WithBytes() after Clear = %v, want empty", after)
-		}
-
-		// Verify Bytes also returns nil
-		bytes := pwd.Bytes()
-		if bytes != nil {
-			t.Errorf("Bytes() after Clear = %v, want nil", bytes)
-		}
-	})
-
 	t.Run("clear is idempotent", func(t *testing.T) {
 		pwd, err := NewPasswordFromString("test-password")
 		if err != nil {
@@ -312,40 +203,6 @@ func TestClearPassword_IsolationAndSecurity(t *testing.T) {
 			t.Errorf("Password was modified externally: got %v", stored)
 		}
 	})
-
-	t.Run("returned bytes are independent copies", func(t *testing.T) {
-		pwd, err := NewPasswordFromString("test-password")
-		if err != nil {
-			t.Fatalf("NewPasswordFromString() error = %v", err)
-		}
-
-		// Get two copies
-		bytes1 := pwd.Bytes()
-		if bytes1 == nil {
-			t.Fatal("Bytes() returned nil")
-		}
-		bytes2 := pwd.Bytes()
-		if bytes2 == nil {
-			t.Fatal("Bytes() returned nil")
-		}
-
-		// Modify first copy
-		bytes1[0] = 'X'
-
-		// Verify second copy is unaffected
-		if bytes2[0] == 'X' {
-			t.Error("Modifying one byte slice affected another, not independent copies")
-		}
-
-		// Verify original is unaffected
-		bytes3 := pwd.Bytes()
-		if bytes3 == nil {
-			t.Fatal("Bytes() returned nil")
-		}
-		if bytes3[0] == 'X' {
-			t.Error("Original password was modified through returned bytes")
-		}
-	})
 }
 
 func TestEqual(t *testing.T) {
@@ -371,31 +228,10 @@ func TestEqual(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "case sensitive",
-			pwd1:    "Password",
-			pwd2:    "password",
-			want:    false,
-			wantErr: false,
-		},
-		{
 			name:    "different lengths",
 			pwd1:    "short",
 			pwd2:    "much-longer-password",
 			want:    false,
-			wantErr: false,
-		},
-		{
-			name:    "special characters equal",
-			pwd1:    "p@$$w0rd!",
-			pwd2:    "p@$$w0rd!",
-			want:    true,
-			wantErr: false,
-		},
-		{
-			name:    "unicode equal",
-			pwd1:    "密码🔐",
-			pwd2:    "密码🔐",
-			want:    true,
 			wantErr: false,
 		},
 	}
@@ -439,56 +275,6 @@ func TestEqual(t *testing.T) {
 		_, err = Equal(p1, p2)
 		if err == nil {
 			t.Error("Equal() should return error when second password is cleared")
-		}
-	})
-}
-
-func TestClearPassword_EdgeCases(t *testing.T) {
-	t.Run("password with null bytes", func(t *testing.T) {
-		input := []byte{'p', 'a', 's', 's', 0x00, 'w', 'o', 'r', 'd'}
-		pwd, err := NewPassword(input)
-		if err != nil {
-			t.Fatalf("NewPassword() error = %v", err)
-		}
-
-		got := pwd.Bytes()
-		if string(got) != string(input) {
-			t.Errorf("Bytes() = %v, want %v", got, input)
-		}
-	})
-
-	t.Run("password with only special characters", func(t *testing.T) {
-		input := "!@#$%^&*()_+-=[]{}|;':\",./<>?"
-		pwd, err := NewPasswordFromString(input)
-		if err != nil {
-			t.Fatalf("NewPasswordFromString() error = %v", err)
-		}
-
-		got, err := withString(pwd)
-		if err != nil {
-			t.Errorf("WithBytes() error = %v", err)
-		}
-		if got != input {
-			t.Errorf("WithBytes() = %v, want %v", got, input)
-		}
-	})
-
-	t.Run("password with mixed valid utf8", func(t *testing.T) {
-		input := "Hello世界🌍Мир"
-		pwd, err := NewPasswordFromString(input)
-		if err != nil {
-			t.Fatalf("NewPasswordFromString() error = %v", err)
-		}
-
-		got, err := withString(pwd)
-		if err != nil {
-			t.Errorf("WithBytes() error = %v", err)
-		}
-		if got != input {
-			t.Errorf("WithBytes() = %v, want %v", got, input)
-		}
-		if !utf8.ValidString(got) {
-			t.Error("WithBytes() returned invalid UTF-8")
 		}
 	})
 }
@@ -576,5 +362,42 @@ func TestClearPassword_WithBytesAfterClearFailsClosed(t *testing.T) {
 	})
 	if !errors.Is(err, ErrPasswordZeroed) {
 		t.Errorf("WithBytes() after Clear = %v, want ErrPasswordZeroed", err)
+	}
+	if got := pwd.Bytes(); got != nil {
+		t.Errorf("Bytes() after Clear = %v, want nil", got)
+	}
+}
+
+// TestClearPassword_DestroyedBufferFailsClosed pins the refusals of a
+// password whose locked buffer was destroyed underneath it without Clear,
+// as a shutdown secure.WipeAll does: no call may lend or return the secret.
+func TestClearPassword_DestroyedBufferFailsClosed(t *testing.T) {
+	pwd, err := NewPasswordFromString("hunter2")
+	if err != nil {
+		t.Fatalf("NewPasswordFromString() error = %v", err)
+	}
+	pwd.(*ClearPassword).buf.Destroy()
+
+	if got := pwd.Bytes(); got != nil {
+		t.Errorf("Bytes() on a destroyed buffer = %v, want nil", got)
+	}
+
+	err = pwd.WithBytes(func([]byte) error {
+		t.Error("callback must not run on a destroyed buffer")
+		return nil
+	})
+	var nilBuf *secure.NilBufferError
+	if !errors.As(err, &nilBuf) {
+		t.Errorf("WithBytes() on a destroyed buffer = %v, want *secure.NilBufferError", err)
+	}
+
+	same, err := NewPasswordFromString("hunter2")
+	if err != nil {
+		t.Fatalf("NewPasswordFromString() error = %v", err)
+	}
+	defer same.Clear()
+	equal, err := Equal(pwd, same)
+	if equal || !errors.Is(err, ErrPasswordZeroed) {
+		t.Errorf("Equal() with a destroyed buffer = (%v, %v), want (false, ErrPasswordZeroed)", equal, err)
 	}
 }

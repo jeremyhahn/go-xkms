@@ -1,0 +1,1 @@
+acme: the `pkg/acme/gui/webui` tests keep one path per behaviour (#1794): the duplicate error-string, SPA fallback, root index, asset, directory and missing-index tests go, leaving the shared `pkg/webui` tests to pin the serving rules and this package's tests to pin its `/ui/admin/` prefix, its `dist` root, the API base URL injection and the unusable-asset-root refusal.

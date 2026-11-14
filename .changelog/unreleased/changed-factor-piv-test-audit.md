@@ -1,0 +1,1 @@
+factor/piv: the `pkg/factor/piv` tests test each behaviour by one path (#1794): ten tests that repeated a kept test's branch and assertions, or asserted nothing, are removed; every `Verify` refusal, the decoy enumeration guards, the require-generator refusals and the multi-algorithm table stay, and coverage holds at 93.7%.

@@ -24,7 +24,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/asn1"
 	"math/big"
 	"testing"
 	"time"
@@ -175,36 +174,6 @@ func TestOCSPResponder_CacheHit_B14(t *testing.T) {
 }
 
 // =============================================================================
-// OCSP: HasIntermediate branch in createResponse (ocsp.go line 168)
-// =============================================================================
-
-// TestOCSPResponder_IntermediateCA_B14 exercises the HasIntermediate branch
-// in createResponse (ocsp.go line 168) by using a CA that has a real
-// intermediate certificate.
-func TestOCSPResponder_IntermediateCA_B14(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithRealIntermediate(t)
-	responder := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
-
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "ocsp-intermediate-b14"},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	issuerCert := ca.intermediateCert
-	require.NotNil(t, issuerCert)
-
-	reqBytes, err := CreateOCSPRequest(issued.Certificate, issuerCert, nil)
-	require.NoError(t, err)
-
-	respBytes, err := responder.HandleRequest(context.Background(), reqBytes)
-	require.NoError(t, err)
-	assert.NotEmpty(t, respBytes)
-}
-
-// =============================================================================
 // trust_chain.go — OSTrustStore (lines 125-128)
 // =============================================================================
 
@@ -260,15 +229,6 @@ func TestXSignedIntermediateCertificates_NilCert_B14(t *testing.T) {
 // =============================================================================
 // cross_signing.go — CrossSignedPEM nil attrs and no objectStore (lines 171, 174)
 // =============================================================================
-
-// TestCrossSignedPEM_NilAttrs_B14 exercises the nil-attrs / empty-CN error
-// path (cross_signing.go line 171) in CrossSignedPEM.
-func TestCrossSignedPEM_NilAttrs_B14(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithObjectStore(t)
-	_, err := ca.CrossSignedPEM(nil)
-	assert.Error(t, err)
-}
 
 // TestCrossSignedPEM_NoObjectStore_B14 exercises the no-objectStore error
 // path (cross_signing.go line 173-174) in CrossSignedPEM.
@@ -339,44 +299,6 @@ func TestCertificate_IntermediateMatch_B14(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — Issued: keyStore path when certStore is nil (line 146)
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — CAKeyAttributes: storeType mismatch (line 453)
-// =============================================================================
-
-// TestCAKeyAttributes_StoreTypeMismatch_B14 exercises the storeType mismatch
-// error path in CAKeyAttributes (ca_extensions.go line 453) by requesting a
-// store type that differs from the CA's configured type.
-func TestCAKeyAttributes_StoreTypeMismatch_B14(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// The CA is configured as StoreSoftware. Requesting StoreTPM2 forces mismatch.
-	_, err := ca.CAKeyAttributes(types.StoreTPM2)
-	assert.ErrorIs(t, err, ErrInvalidStoreType)
-}
-
-// =============================================================================
-// profiles.go — baseProfile.Apply: nil template (line 180)
-// =============================================================================
-
-// TestBaseProfileApply_NilTemplate_B14 exercises the nil-template error path
-// in baseProfile.Apply (profiles.go line 180) via the server profile.
-func TestBaseProfileApply_NilTemplate_B14(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	serverProfile, err := ca.profiles.Get("server")
-	require.NoError(t, err)
-	require.NotNil(t, serverProfile, "server profile must be registered")
-	err = serverProfile.Apply(nil, &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "nil-template-b14"},
-	})
-	assert.ErrorIs(t, err, ErrInvalidProfile)
-}
-
-// =============================================================================
 // tls.go — verifyKeyMatchesCertificate: Ed25519 key + non-Ed25519 cert (line 870)
 // =============================================================================
 
@@ -417,65 +339,11 @@ func TestVerifyKeyMatchesCertificate_Ed25519ECDSAMismatch_B14(t *testing.T) {
 // and default algorithm branch (line 345)
 // =============================================================================
 
-// TestVerifyMLDSASignature_BadPublicKeyBytes_B14 exercises the UnmarshalBinary
-// error paths (lines 326, 333, 340) in verifyMLDSASignature by passing garbage
-// bytes for the public key across all three ML-DSA variants.
-func TestVerifyMLDSASignature_BadPublicKeyBytes_B14(t *testing.T) {
-	t.Parallel()
-
-	badPub := []byte("not-a-valid-ml-dsa-public-key-b14")
-	msg := []byte("message")
-	sig := []byte("signature")
-
-	for _, tc := range []struct {
-		algo string
-		line string
-	}{
-		{"ML-DSA-44", "line 326"},
-		{"ML-DSA-65", "line 333"},
-		{"ML-DSA-87", "line 340"},
-	} {
-		tc := tc
-		t.Run(tc.algo, func(t *testing.T) {
-			t.Parallel()
-			ok, err := verifyMLDSASignature(tc.algo, badPub, msg, sig)
-			assert.False(t, ok, "%s: expected false for bad public key bytes", tc.line)
-			assert.Error(t, err, "%s: expected error for bad public key bytes", tc.line)
-		})
-	}
-}
-
 // TestVerifyMLDSASignature_UnknownAlgorithm_B14 exercises the default case
 // (line 345) in verifyMLDSASignature by passing an unknown algorithm string.
 func TestVerifyMLDSASignature_UnknownAlgorithm_B14(t *testing.T) {
 	t.Parallel()
 	ok, err := verifyMLDSASignature("ML-DSA-UNKNOWN-B14", []byte("pub"), []byte("msg"), []byte("sig"))
 	assert.False(t, ok)
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// quantum.go — oidToQuantumAlgorithm: unknown OID error return (line 317)
-// =============================================================================
-
-// TestOIDToQuantumAlgorithm_UnknownOID_B14 exercises the error return in
-// oidToQuantumAlgorithm (quantum.go line 317) by passing an OID not registered
-// for any ML-DSA variant.
-func TestOIDToQuantumAlgorithm_UnknownOID_B14(t *testing.T) {
-	t.Parallel()
-	unknownOID := asn1.ObjectIdentifier{1, 2, 3, 4}
-	_, err := oidToQuantumAlgorithm(unknownOID)
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// quantum.go — quantumAlgorithmOID: unknown algorithm error return (line 305)
-// =============================================================================
-
-// TestQuantumAlgorithmOID_UnknownAlgo_B14 exercises the error return in
-// quantumAlgorithmOID (quantum.go line 305) by passing an unrecognized string.
-func TestQuantumAlgorithmOID_UnknownAlgo_B14(t *testing.T) {
-	t.Parallel()
-	_, err := quantumAlgorithmOID("UNKNOWN-ALGO-B14")
 	assert.Error(t, err)
 }

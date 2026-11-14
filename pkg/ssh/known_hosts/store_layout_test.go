@@ -211,13 +211,3 @@ func TestKHStore_List_FiltersByKind(t *testing.T) {
 		}
 	}
 }
-
-func TestKHStore_Remove_TenantStorageErrors(t *testing.T) {
-	var se *known_hosts.StorageError
-	if err := storeOver(t, khFailingBackend{}).Remove(context.Background(), scope.Tenant, "acme", "bastion.example.com"); !errors.As(err, &se) || se.Op != "delete" {
-		t.Fatalf("Remove over failing backend: want *StorageError{delete}, got %T: %v", err, err)
-	}
-	if err := corruptStore(t).Remove(context.Background(), scope.Tenant, "acme", "bastion.example.com"); !errors.As(err, &se) {
-		t.Fatalf("Remove over corrupt record: want *StorageError, got %T: %v", err, err)
-	}
-}

@@ -1,0 +1,1 @@
+signing/store: the test audit (#1794) removes the entity getter and setter tests, the `Error()` tests whose messages, CNs and causes the failing store calls now assert, and the nil-logger not-found delete test, folded into `TestSignerStore_NilLogger`; coverage is unchanged at 94.7%.

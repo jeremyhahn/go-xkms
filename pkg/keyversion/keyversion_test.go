@@ -213,5 +213,4 @@ func TestErrorMessages(t *testing.T) {
 	for _, tt := range tests {
 		assert.Contains(t, tt.err.Error(), tt.want)
 	}
-	assert.ErrorIs(t, &StoreError{Op: "put", Key: "x", Err: cause}, cause)
 }

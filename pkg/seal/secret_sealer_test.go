@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -118,4 +119,19 @@ func TestSecretSealer_Unseal_NilSealedData(t *testing.T) {
 	_, err = sealer.Unseal(context.Background(), nil, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrSecretSealerNilSealedData)
+}
+
+// A SecretSealer not built by NewSecretSealer holds no data key and refuses
+// both directions instead of sealing under an empty key.
+func TestSecretSealer_ZeroValueRefuses(t *testing.T) {
+	var sealer SecretSealer
+	assert.False(t, sealer.CanSeal())
+
+	sealed, err := sealer.Seal(context.Background(), []byte("payload"), nil)
+	require.ErrorIs(t, err, ErrSecretSealerEmptySecret)
+	assert.Nil(t, sealed)
+
+	plaintext, err := sealer.Unseal(context.Background(), &types.SealedData{}, nil)
+	require.ErrorIs(t, err, ErrSecretSealerEmptySecret)
+	assert.Nil(t, plaintext)
 }

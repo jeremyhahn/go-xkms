@@ -284,39 +284,6 @@ func TestVerifyQuote_CertStoreFallback_RSAPKCS1v15_B17(t *testing.T) {
 }
 
 // =============================================================================
-// tcg.go:709 — EndorsementKeyCertificate EK OID found (2 stmts)
-// =============================================================================
-
-// TestEndorsementKeyCertificate_EKOIDFound_B17 covers tcg.go:709.40,711.9
-// (hasEKOID = true; break). IssueEKCertificate attaches OIDTCGKpEKCertificate
-// to the issued cert; the loop in EndorsementKeyCertificate finds it and
-// sets hasEKOID = true.
-func TestEndorsementKeyCertificate_EKOIDFound_B17(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	ekKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	const cn = "ek-oid-found-b17"
-	req := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: cn},
-		Valid:    1,
-	}
-
-	issuedCert, err := ca.IssueEKCertificate(context.Background(), req, &ekKey.PublicKey)
-	require.NoError(t, err)
-	require.NotNil(t, issuedCert)
-
-	// EndorsementKeyCertificate retrieves the stored cert and checks for the
-	// TCG EK OID extension. IssueEKCertificate added it, so hasEKOID = true.
-	cert, err := ca.EndorsementKeyCertificate(cn)
-	require.NoError(t, err)
-	assert.Equal(t, cn, cert.Subject.CommonName)
-}
-
-// =============================================================================
 // hybrid.go:497 — rebuildTBSWithoutExtension no-extensions path (1 stmt)
 // =============================================================================
 

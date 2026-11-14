@@ -1,0 +1,1 @@
+password: the `pkg/password` tests test each behaviour once: the round-trip, copy-isolation, Clear and Equal tests that repeated another kept test's path are gone, and the binary-input and Bytes-after-Clear assertions moved into the tests that keep them (#1794).

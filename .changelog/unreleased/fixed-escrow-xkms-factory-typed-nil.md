@@ -1,0 +1,1 @@
+Escrow: the `xkms` agent factory now returns a nil `EscrowAgent` when the federation agent cannot be built. Before, it returned a typed-nil `*FederationAgent` inside the interface, so a caller that checked `agent != nil` went on to call methods on a nil receiver (#1794).

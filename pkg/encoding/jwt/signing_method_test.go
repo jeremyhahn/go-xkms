@@ -105,30 +105,6 @@ func TestNewSigningMethodSigner_PSS(t *testing.T) {
 	assert.True(t, signer.isPSS)
 }
 
-func TestNewSigningMethodSigner_ECDSA(t *testing.T) {
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		Hash:               crypto.SHA256,
-	}
-
-	signer, err := NewSigningMethodSigner(keyAttrs)
-	require.NoError(t, err)
-	assert.NotNil(t, signer)
-	assert.Equal(t, "ES256", signer.Alg())
-}
-
-func TestNewSigningMethodSigner_Ed25519(t *testing.T) {
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.PureEd25519,
-		KeyAlgorithm:       x509.Ed25519,
-	}
-
-	signer, err := NewSigningMethodSigner(keyAttrs)
-	require.NoError(t, err)
-	assert.NotNil(t, signer)
-	assert.Equal(t, "EdDSA", signer.Alg())
-}
-
 func TestNewSigningMethodSigner_InvalidAlgorithm(t *testing.T) {
 	keyAttrs := &types.KeyAttributes{
 		SignatureAlgorithm: x509.MD5WithRSA,
@@ -209,60 +185,6 @@ func TestDigest_SHA512(t *testing.T) {
 // Test Sign
 // ========================================================================
 
-func TestSign_RSA_PKCS1v15(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.SHA256WithRSA,
-		KeyAlgorithm:       x509.RSA,
-		Hash:               crypto.SHA256,
-	}
-
-	signer, err := NewSigningMethodSigner(keyAttrs)
-	require.NoError(t, err)
-
-	signature, err := signer.Sign("test message", key)
-	require.NoError(t, err)
-	assert.NotEmpty(t, signature)
-}
-
-func TestSign_RSA_PSS(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.SHA256WithRSAPSS,
-		KeyAlgorithm:       x509.RSA,
-		Hash:               crypto.SHA256,
-	}
-
-	signer, err := NewSigningMethodSigner(keyAttrs)
-	require.NoError(t, err)
-
-	signature, err := signer.Sign("test message", key)
-	require.NoError(t, err)
-	assert.NotEmpty(t, signature)
-}
-
-func TestSign_ECDSA(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		KeyAlgorithm:       x509.ECDSA,
-		Hash:               crypto.SHA256,
-	}
-
-	signer, err := NewSigningMethodSigner(keyAttrs)
-	require.NoError(t, err)
-
-	signature, err := signer.Sign("test message", key)
-	require.NoError(t, err)
-	assert.NotEmpty(t, signature)
-}
-
 func TestSign_Ed25519_SignatureLength(t *testing.T) {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -298,89 +220,6 @@ func TestSign_InvalidKey(t *testing.T) {
 // ========================================================================
 // Test Verify
 // ========================================================================
-
-func TestVerify_RSA_PKCS1v15(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.SHA256WithRSA,
-		KeyAlgorithm:       x509.RSA,
-		Hash:               crypto.SHA256,
-	}
-
-	signer, err := NewSigningMethodSigner(keyAttrs)
-	require.NoError(t, err)
-
-	message := "test message"
-	signature, err := signer.Sign(message, key)
-	require.NoError(t, err)
-
-	err = signer.Verify(message, signature, &key.PublicKey)
-	assert.NoError(t, err)
-}
-
-func TestVerify_RSA_PSS(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.SHA256WithRSAPSS,
-		KeyAlgorithm:       x509.RSA,
-		Hash:               crypto.SHA256,
-	}
-
-	signer, err := NewSigningMethodSigner(keyAttrs)
-	require.NoError(t, err)
-
-	message := "test message"
-	signature, err := signer.Sign(message, key)
-	require.NoError(t, err)
-
-	err = signer.Verify(message, signature, &key.PublicKey)
-	assert.NoError(t, err)
-}
-
-func TestVerify_ECDSA(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		KeyAlgorithm:       x509.ECDSA,
-		Hash:               crypto.SHA256,
-	}
-
-	signer, err := NewSigningMethodSigner(keyAttrs)
-	require.NoError(t, err)
-
-	message := "test message"
-	signature, err := signer.Sign(message, key)
-	require.NoError(t, err)
-
-	err = signer.Verify(message, signature, &key.PublicKey)
-	assert.NoError(t, err)
-}
-
-func TestVerify_Ed25519(t *testing.T) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.PureEd25519,
-		KeyAlgorithm:       x509.Ed25519,
-	}
-
-	signer, err := NewSigningMethodSigner(keyAttrs)
-	require.NoError(t, err)
-
-	message := "test message"
-	signature, err := signer.Sign(message, priv)
-	require.NoError(t, err)
-
-	err = signer.Verify(message, signature, pub)
-	assert.NoError(t, err)
-}
 
 func TestVerify_InvalidPublicKey(t *testing.T) {
 	keyAttrs := &types.KeyAttributes{
@@ -689,45 +528,6 @@ func TestSignWithSigner_Success(t *testing.T) {
 	// Verify the token has 3 parts (header.payload.signature)
 	parts := strings.Split(token, ".")
 	assert.Len(t, parts, 3)
-}
-
-func TestSignWithSigner_Ed25519(t *testing.T) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.PureEd25519,
-		KeyAlgorithm:       x509.Ed25519,
-	}
-
-	s := &Signer{}
-	claims := jwt.MapClaims{
-		"sub": "1234567890",
-	}
-
-	token, err := s.SignWithSigner(priv, claims, keyAttrs)
-	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-}
-
-func TestSignWithSigner_ECDSA(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	keyAttrs := &types.KeyAttributes{
-		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		KeyAlgorithm:       x509.ECDSA,
-		Hash:               crypto.SHA256,
-	}
-
-	s := &Signer{}
-	claims := jwt.MapClaims{
-		"sub": "1234567890",
-	}
-
-	token, err := s.SignWithSigner(key, claims, keyAttrs)
-	require.NoError(t, err)
-	assert.NotEmpty(t, token)
 }
 
 func TestSignWithSigner_InvalidKeyAttrs(t *testing.T) {

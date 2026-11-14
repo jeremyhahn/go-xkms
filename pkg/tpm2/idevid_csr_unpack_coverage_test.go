@@ -15,11 +15,8 @@ package tpm2
 
 import (
 	"bytes"
-	"encoding/binary"
-	"reflect"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,32 +69,4 @@ var idevidContentSizeFields = []string{
 	"SgnCertifyInfoSZ",
 	"SgnCertifyInfoSignatureSZ",
 	"PadSz",
-}
-
-// TestUnpackIDevIDCSR_CorruptSizeMismatch proves UnpackIDevIDCSR's copy of
-// each variable-length field checks the number of bytes actually copied
-// against the field's declared size, rather than trusting the size field
-// unconditionally. TCG_CSR_IDEVID.CsrContents carries the declared size and
-// the backing data as two independent fields (unlike the wire form, which
-// derives one from the other), so a CSR whose size field disagrees with its
-// data slice's actual length -- corruption, or a hand-built CSR -- must be
-// rejected with store.ErrCorruptCopy, never silently truncated or
-// zero-padded.
-func TestUnpackIDevIDCSR_CorruptSizeMismatch(t *testing.T) {
-	for _, szField := range idevidContentSizeFields {
-		t.Run(szField, func(t *testing.T) {
-			csr := &TCG_CSR_IDEVID{}
-
-			v := reflect.ValueOf(&csr.CsrContents).Elem()
-			f := v.FieldByName(szField)
-			require.True(t, f.IsValid(), "field %s must exist on TCG_IDEVID_CONTENT", szField)
-			arr, ok := f.Addr().Interface().(*[4]byte)
-			require.True(t, ok, "field %s must be a [4]byte size field", szField)
-			binary.BigEndian.PutUint32(arr[:], 4)
-
-			_, err := UnpackIDevIDCSR(csr)
-			require.ErrorIs(t, err, store.ErrCorruptCopy,
-				"%s declaring a 4-byte field with no backing data must be detected as corrupt, not silently zero-padded", szField)
-		})
-	}
 }

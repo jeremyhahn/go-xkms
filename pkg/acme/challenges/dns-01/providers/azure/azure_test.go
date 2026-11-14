@@ -210,12 +210,13 @@ func TestNewWithClients(t *testing.T) {
 
 	provider := NewWithClients(recordClient, zoneClient, "rg", "zone.com", nil)
 
-	assert.NotNil(t, provider)
+	var _ providers.ProviderTimeout = provider
 	assert.Equal(t, "rg", provider.resourceGroupName)
 	assert.Equal(t, "zone.com", provider.zoneName)
-	assert.Equal(t, defaultPropagationTimeout, provider.propagationTimeout)
-	assert.Equal(t, defaultPollingInterval, provider.pollingInterval)
-	assert.Equal(t, int64(defaultRecordTTL), provider.ttl)
+	timeout, interval := provider.Timeout()
+	assert.Equal(t, 120*time.Second, timeout)
+	assert.Equal(t, 4*time.Second, interval)
+	assert.Equal(t, int64(60), provider.ttl)
 }
 
 func TestNewWithClientsAndConfig(t *testing.T) {
@@ -229,9 +230,9 @@ func TestNewWithClientsAndConfig(t *testing.T) {
 			180*time.Second, 5*time.Second, 120,
 		)
 
-		assert.NotNil(t, provider)
-		assert.Equal(t, 180*time.Second, provider.propagationTimeout)
-		assert.Equal(t, 5*time.Second, provider.pollingInterval)
+		timeout, interval := provider.Timeout()
+		assert.Equal(t, 180*time.Second, timeout)
+		assert.Equal(t, 5*time.Second, interval)
 		assert.Equal(t, int64(120), provider.ttl)
 	})
 
@@ -260,37 +261,6 @@ func TestNewWithClientsAndConfig(t *testing.T) {
 		assert.Equal(t, defaultPollingInterval, provider.pollingInterval)
 		assert.Equal(t, int64(defaultRecordTTL), provider.ttl)
 	})
-}
-
-func TestTimeout(t *testing.T) {
-	t.Run("default values", func(t *testing.T) {
-		provider := NewWithClients(nil, nil, "rg", "zone.com", nil)
-
-		timeout, interval := provider.Timeout()
-
-		assert.Equal(t, defaultPropagationTimeout, timeout)
-		assert.Equal(t, defaultPollingInterval, interval)
-	})
-
-	t.Run("custom values", func(t *testing.T) {
-		provider := NewWithClientsAndConfig(
-			nil, nil,
-			"rg", "zone.com", nil,
-			300*time.Second, 10*time.Second, 60,
-		)
-
-		timeout, interval := provider.Timeout()
-
-		assert.Equal(t, 300*time.Second, timeout)
-		assert.Equal(t, 10*time.Second, interval)
-	})
-}
-
-func TestProviderTimeoutInterface(t *testing.T) {
-	provider := NewWithClients(nil, nil, "rg", "zone.com", nil)
-
-	// Verify provider implements ProviderTimeout interface
-	var _ providers.ProviderTimeout = provider
 }
 
 func TestPresent(t *testing.T) {
@@ -520,54 +490,25 @@ func TestCleanUp(t *testing.T) {
 }
 
 func TestTrimFQDN(t *testing.T) {
-	provider := NewWithClients(nil, nil, "rg", "example.com", nil)
-
 	tests := []struct {
-		fqdn     string
-		zone     string
-		expected string
+		configuredZone string
+		fqdn           string
+		zone           string
+		expected       string
 	}{
-		{"_acme-challenge.example.com.", "example.com", "_acme-challenge"},
-		{"_acme-challenge.www.example.com.", "example.com", "_acme-challenge.www"},
-		{"test.example.com.", "example.com", "test"},
+		{"example.com", "_acme-challenge.example.com.", "example.com", "_acme-challenge"},
+		{"example.com", "_acme-challenge.www.example.com.", "example.com", "_acme-challenge.www"},
+		{"example.com", "test.example.com.", "example.com", "test"},
+		// Without a configured zone, the zone argument is trimmed.
+		{"", "_acme-challenge.www.example.com.", "example.com", "_acme-challenge.www"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.fqdn, func(t *testing.T) {
-			result := provider.trimFQDN(tt.fqdn, tt.zone)
-			assert.Equal(t, tt.expected, result)
+		t.Run(tt.configuredZone+"/"+tt.fqdn, func(t *testing.T) {
+			provider := NewWithClients(nil, nil, "rg", tt.configuredZone, nil)
+			assert.Equal(t, tt.expected, provider.trimFQDN(tt.fqdn, tt.zone))
 		})
 	}
-}
-
-func TestTrimFQDNWithoutConfiguredZone(t *testing.T) {
-	// Test trimFQDN when zoneName is empty (uses passed zone parameter)
-	provider := NewWithClients(nil, nil, "rg", "", nil)
-
-	tests := []struct {
-		fqdn     string
-		zone     string
-		expected string
-	}{
-		{"_acme-challenge.example.com.", "example.com", "_acme-challenge"},
-		{"_acme-challenge.www.example.com.", "example.com", "_acme-challenge.www"},
-		{"test.example.com.", "example.com", "test"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.fqdn, func(t *testing.T) {
-			result := provider.trimFQDN(tt.fqdn, tt.zone)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestRegistration(t *testing.T) {
-	// Verify provider is registered
-	assert.True(t, providers.Registered(providers.ProviderAzure))
-
-	factory := providers.Get(providers.ProviderAzure)
-	assert.NotNil(t, factory)
 }
 
 func TestFactoryInvalidConfig(t *testing.T) {
@@ -580,6 +521,9 @@ func TestFactoryInvalidConfig(t *testing.T) {
 	_, err := factory(ctx, "invalid")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected azure.Config")
+	var cfgErr *providers.ConfigError
+	require.True(t, errors.As(err, &cfgErr))
+	assert.Equal(t, "azure", cfgErr.Provider)
 }
 
 func TestGetHostedZoneName(t *testing.T) {
@@ -591,25 +535,6 @@ func TestGetHostedZoneName(t *testing.T) {
 		zone, err := provider.getHostedZoneName(ctx, "_acme-challenge.example.com.")
 		require.NoError(t, err)
 		assert.Equal(t, "example.com", zone)
-	})
-
-	t.Run("zone not found in azure", func(t *testing.T) {
-		zoneClient := &mockZonesClient{
-			getFunc: func(ctx context.Context, resourceGroupName, zoneName string, options *armdns.ZonesClientGetOptions) (armdns.ZonesClientGetResponse, error) {
-				return armdns.ZonesClientGetResponse{}, errors.New("not found")
-			},
-		}
-
-		// Clear zone cache to force lookup
-		providers.ClearZoneCache()
-
-		// Add cache entry to simulate DNS lookup
-		// This test would need real DNS lookup without this
-		provider := NewWithClients(nil, zoneClient, "rg", "", nil)
-
-		// Without a configured zone and without DNS resolution, this should fail
-		// In practice, this requires integration testing
-		_ = provider
 	})
 }
 
@@ -624,18 +549,6 @@ func TestGetTXTRecords(t *testing.T) {
 		result := getTXTRecords(rs)
 		assert.Nil(t, result)
 	})
-
-	t.Run("with records", func(t *testing.T) {
-		rs := &armdns.RecordSet{
-			Properties: &armdns.RecordSetProperties{
-				TxtRecords: []*armdns.TxtRecord{
-					{Value: []*string{to.Ptr("value1")}},
-				},
-			},
-		}
-		result := getTXTRecords(rs)
-		assert.Len(t, result, 1)
-	})
 }
 
 func TestSetTXTRecords(t *testing.T) {
@@ -649,24 +562,6 @@ func TestSetTXTRecords(t *testing.T) {
 		assert.NotNil(t, rs.Properties)
 		assert.Len(t, rs.Properties.TxtRecords, 1)
 		assert.Equal(t, int64(120), *rs.Properties.TTL)
-	})
-
-	t.Run("updates existing", func(t *testing.T) {
-		rs := &armdns.RecordSet{
-			Properties: &armdns.RecordSetProperties{
-				TTL: to.Ptr[int64](60),
-				TxtRecords: []*armdns.TxtRecord{
-					{Value: []*string{to.Ptr("old")}},
-				},
-			},
-		}
-		records := []*armdns.TxtRecord{
-			{Value: []*string{to.Ptr("new")}},
-		}
-		setTXTRecords(rs, records, 120)
-
-		assert.Len(t, rs.Properties.TxtRecords, 1)
-		assert.Equal(t, "new", *rs.Properties.TxtRecords[0].Value[0])
 	})
 }
 
@@ -796,13 +691,6 @@ func TestEnvVariableConstants(t *testing.T) {
 	assert.Equal(t, "AZURE_TTL", EnvTTL)
 }
 
-func TestDefaultConstants(t *testing.T) {
-	assert.Equal(t, int64(60), int64(defaultRecordTTL))
-	assert.Equal(t, 120*time.Second, defaultPropagationTimeout)
-	assert.Equal(t, 4*time.Second, defaultPollingInterval)
-	assert.Equal(t, 30*time.Second, defaultHTTPTimeout)
-}
-
 func TestUpdateTXTRecordGetError(t *testing.T) {
 	ctx := context.Background()
 
@@ -875,36 +763,40 @@ func TestUpdateTXTRecordDeleteError(t *testing.T) {
 func TestCleanUpWithEmptyEtag(t *testing.T) {
 	ctx := context.Background()
 
-	// When etag is empty string, delete should not be called
-	existingRecord := armdns.RecordSet{
-		Etag: to.Ptr(""),
-		Properties: &armdns.RecordSetProperties{
-			TTL: to.Ptr[int64](60),
-			TxtRecords: []*armdns.TxtRecord{
-				{Value: []*string{to.Ptr("token-value")}},
-			},
-		},
+	// Without an etag the record cannot be deleted conditionally, so delete is never called.
+	for name, etag := range map[string]*string{"empty": to.Ptr(""), "nil": nil} {
+		t.Run(name, func(t *testing.T) {
+			existingRecord := armdns.RecordSet{
+				Etag: etag,
+				Properties: &armdns.RecordSetProperties{
+					TTL: to.Ptr[int64](60),
+					TxtRecords: []*armdns.TxtRecord{
+						{Value: []*string{to.Ptr("token-value")}},
+					},
+				},
+			}
+
+			deleteCalled := false
+			recordClient := &mockRecordsClient{
+				getFunc: func(ctx context.Context, resourceGroupName, zoneName, relativeRecordSetName string, recordType armdns.RecordType, options *armdns.RecordSetsClientGetOptions) (armdns.RecordSetsClientGetResponse, error) {
+					return armdns.RecordSetsClientGetResponse{
+						RecordSet: existingRecord,
+					}, nil
+				},
+				deleteFunc: func(ctx context.Context, resourceGroupName, zoneName, relativeRecordSetName string, recordType armdns.RecordType, options *armdns.RecordSetsClientDeleteOptions) (armdns.RecordSetsClientDeleteResponse, error) {
+					deleteCalled = true
+					return armdns.RecordSetsClientDeleteResponse{}, nil
+				},
+			}
+			zoneClient := &mockZonesClient{}
+
+			provider := NewWithClients(recordClient, zoneClient, "rg", "example.com", nil)
+
+			err := provider.CleanUp(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
+			require.NoError(t, err)
+			assert.False(t, deleteCalled, "delete should not be called when etag is "+name)
+		})
 	}
-
-	deleteCalled := false
-	recordClient := &mockRecordsClient{
-		getFunc: func(ctx context.Context, resourceGroupName, zoneName, relativeRecordSetName string, recordType armdns.RecordType, options *armdns.RecordSetsClientGetOptions) (armdns.RecordSetsClientGetResponse, error) {
-			return armdns.RecordSetsClientGetResponse{
-				RecordSet: existingRecord,
-			}, nil
-		},
-		deleteFunc: func(ctx context.Context, resourceGroupName, zoneName, relativeRecordSetName string, recordType armdns.RecordType, options *armdns.RecordSetsClientDeleteOptions) (armdns.RecordSetsClientDeleteResponse, error) {
-			deleteCalled = true
-			return armdns.RecordSetsClientDeleteResponse{}, nil
-		},
-	}
-	zoneClient := &mockZonesClient{}
-
-	provider := NewWithClients(recordClient, zoneClient, "rg", "example.com", nil)
-
-	err := provider.CleanUp(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
-	require.NoError(t, err)
-	assert.False(t, deleteCalled, "delete should not be called when etag is empty")
 }
 
 func TestPresentWithEmptyRecordValue(t *testing.T) {
@@ -1190,48 +1082,6 @@ func TestUpdateTXTRecordWithIfMatch(t *testing.T) {
 	assert.Nil(t, capturedOptions.IfNoneMatch)
 }
 
-func TestCleanUpWithNilEtag(t *testing.T) {
-	ctx := context.Background()
-
-	// When etag is nil, delete should not be called
-	existingRecord := armdns.RecordSet{
-		Etag: nil,
-		Properties: &armdns.RecordSetProperties{
-			TTL: to.Ptr[int64](60),
-			TxtRecords: []*armdns.TxtRecord{
-				{Value: []*string{to.Ptr("token-value")}},
-			},
-		},
-	}
-
-	deleteCalled := false
-	recordClient := &mockRecordsClient{
-		getFunc: func(ctx context.Context, resourceGroupName, zoneName, relativeRecordSetName string, recordType armdns.RecordType, options *armdns.RecordSetsClientGetOptions) (armdns.RecordSetsClientGetResponse, error) {
-			return armdns.RecordSetsClientGetResponse{
-				RecordSet: existingRecord,
-			}, nil
-		},
-		deleteFunc: func(ctx context.Context, resourceGroupName, zoneName, relativeRecordSetName string, recordType armdns.RecordType, options *armdns.RecordSetsClientDeleteOptions) (armdns.RecordSetsClientDeleteResponse, error) {
-			deleteCalled = true
-			return armdns.RecordSetsClientDeleteResponse{}, nil
-		},
-	}
-	zoneClient := &mockZonesClient{}
-
-	provider := NewWithClients(recordClient, zoneClient, "rg", "example.com", nil)
-
-	err := provider.CleanUp(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
-	require.NoError(t, err)
-	assert.False(t, deleteCalled, "delete should not be called when etag is nil")
-}
-
-func TestProviderProviderInterface(t *testing.T) {
-	provider := NewWithClients(nil, nil, "rg", "zone.com", nil)
-
-	// Verify provider implements Provider interface
-	var _ providers.Provider = provider
-}
-
 func TestGetCredentialAmbientDisabled(t *testing.T) {
 	// Test that getCredential returns error when ambient is disabled
 	cfg := Config{
@@ -1338,45 +1188,4 @@ func TestNewWithCustomConfigValues(t *testing.T) {
 		assert.Equal(t, 300*time.Second, timeout)
 		assert.Equal(t, 10*time.Second, interval)
 	}
-}
-
-func TestConfigStruct(t *testing.T) {
-	// Test that Config struct fields work correctly
-	cfg := Config{
-		ClientID:                  "client-id",
-		ClientSecret:              "client-secret",
-		TenantID:                  "tenant-id",
-		SubscriptionID:            "subscription-id",
-		ResourceGroupName:         "resource-group",
-		ZoneName:                  "zone.com",
-		Environment:               "AzureCloud",
-		Ambient:                   true,
-		ManagedIdentityClientID:   "mi-client",
-		ManagedIdentityResourceID: "mi-resource",
-		Nameservers:               []string{"8.8.8.8", "8.8.4.4"},
-		PropagationTimeout:        300 * time.Second,
-		PollingInterval:           10 * time.Second,
-		TTL:                       120,
-		HTTPTimeout:               60 * time.Second,
-	}
-
-	assert.Equal(t, "client-id", cfg.ClientID)
-	assert.Equal(t, "client-secret", cfg.ClientSecret)
-	assert.Equal(t, "tenant-id", cfg.TenantID)
-	assert.Equal(t, "subscription-id", cfg.SubscriptionID)
-	assert.Equal(t, "resource-group", cfg.ResourceGroupName)
-	assert.Equal(t, "zone.com", cfg.ZoneName)
-	assert.Equal(t, "AzureCloud", cfg.Environment)
-	assert.True(t, cfg.Ambient)
-	assert.Equal(t, "mi-client", cfg.ManagedIdentityClientID)
-	assert.Equal(t, "mi-resource", cfg.ManagedIdentityResourceID)
-	assert.Equal(t, []string{"8.8.8.8", "8.8.4.4"}, cfg.Nameservers)
-	assert.Equal(t, 300*time.Second, cfg.PropagationTimeout)
-	assert.Equal(t, 10*time.Second, cfg.PollingInterval)
-	assert.Equal(t, int64(120), cfg.TTL)
-	assert.Equal(t, 60*time.Second, cfg.HTTPTimeout)
-}
-
-func TestProviderNameConstant(t *testing.T) {
-	assert.Equal(t, "azure", providerName)
 }

@@ -404,3 +404,52 @@ func TestBuildCloudKMSStrategy_EnsureSealKeyErrorWrapped(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "kms transient failure")
 }
+
+// privateKeyProvider is a types.KeyProvider whose GetKey and GenerateKey
+// return the configured errors, so EnsurePrivateSealKey's check-and-skip
+// branches can each be driven.
+type privateKeyProvider struct {
+	notSealerKeyProvider
+	getErr       error
+	genErr       error
+	genKeyCalled bool
+}
+
+func (p *privateKeyProvider) GetKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return nil, p.getErr
+}
+
+func (p *privateKeyProvider) GenerateKey(_ context.Context, _ *types.KeyAttributes) (crypto.PrivateKey, error) {
+	p.genKeyCalled = true
+	return nil, p.genErr
+}
+
+func TestEnsurePrivateSealKey(t *testing.T) {
+	errGet := errors.New("hsm unreachable")
+	errGen := errors.New("token full")
+	tests := []struct {
+		name         string
+		getErr       error
+		genErr       error
+		wantErr      error
+		wantGenerate bool
+	}{
+		{name: "existing key is reused", getErr: nil, wantGenerate: false},
+		{name: "missing key is generated", getErr: backend.ErrKeyNotFound, wantGenerate: true},
+		{name: "concurrent create is idempotent", getErr: backend.ErrKeyNotFound, genErr: backend.ErrKeyAlreadyExists, wantGenerate: true},
+		{name: "lookup failure propagates without generating", getErr: errGet, wantErr: errGet, wantGenerate: false},
+		{name: "generate failure propagates", getErr: backend.ErrKeyNotFound, genErr: errGen, wantErr: errGen, wantGenerate: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prov := &privateKeyProvider{getErr: tt.getErr, genErr: tt.genErr}
+			err := EnsurePrivateSealKey(context.Background(), prov, SealKeyAttributes(types.StorePKCS11))
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantGenerate, prov.genKeyCalled)
+		})
+	}
+}

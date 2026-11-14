@@ -181,6 +181,26 @@ func TestWebAuthnRegistration_NoPINAuthenticatorNeedsNone(t *testing.T) {
 	}
 }
 
+// TestExtractWebAuthnCredentialID_RefusesMalformedAttestation checks an
+// attestation that is not JSON, or whose rawId is not unpadded base64url
+// (WebAuthn Level 3 §5.1), is refused rather than binding an empty ID.
+func TestExtractWebAuthnCredentialID_RefusesMalformedAttestation(t *testing.T) {
+	for name, att := range map[string]string{
+		"not json":         "{",
+		"padded base64url": `{"rawId":"AQ=="}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			id, err := extractWebAuthnCredentialID([]byte(att))
+			if !errors.Is(err, ErrDecodeCredentialIDFailed) {
+				t.Fatalf("err = %v, want ErrDecodeCredentialIDFailed", err)
+			}
+			if id != nil {
+				t.Errorf("returned a credential ID %x for a refused attestation", id)
+			}
+		})
+	}
+}
+
 // loginAssertionOptionsJSON builds the server's PublicKeyCredentialRequestOptions
 // JSON for a credential previously registered on the virtual authenticator.
 // requireUV models the relying party requesting user verification, which is

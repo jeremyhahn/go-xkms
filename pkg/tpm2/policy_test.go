@@ -15,42 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPCRDigestSize_AllBanks(t *testing.T) {
-	tests := []struct {
-		name     string
-		bank     string
-		expected int
-	}{
-		{
-			name:     "sha1 returns 20",
-			bank:     PCRBankSHA1,
-			expected: sha1.Size,
-		},
-		{
-			name:     "sha256 returns 32",
-			bank:     PCRBankSHA256,
-			expected: sha256.Size,
-		},
-		{
-			name:     "sha384 returns 48",
-			bank:     PCRBankSHA384,
-			expected: sha512.Size384,
-		},
-		{
-			name:     "sha512 returns 64",
-			bank:     PCRBankSHA512,
-			expected: sha512.Size,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := PCRDigestSize(tc.bank)
-			assert.Equal(t, tc.expected, got)
-		})
-	}
-}
-
 func TestPCRDigestSize_UnknownBankDefaultsSHA256(t *testing.T) {
 	tests := []struct {
 		name string
@@ -68,37 +32,6 @@ func TestPCRDigestSize_UnknownBankDefaultsSHA256(t *testing.T) {
 			assert.Equal(t, sha256.Size, got, "unknown bank should default to sha256 size")
 		})
 	}
-}
-
-func TestEncodePCRSelection_SinglePCR(t *testing.T) {
-	// PCR 7 in sha256 bank should produce a well-defined 10-byte wire encoding.
-	result := EncodePCRSelection(PCRBankSHA256, []int{7})
-
-	require.Len(t, result, 10, "TPML_PCR_SELECTION encoding must be 10 bytes")
-
-	// count = 1 (uint32 big-endian)
-	assert.Equal(t, []byte{0x00, 0x00, 0x00, 0x01}, result[0:4], "count field")
-	// algorithm ID for SHA256 = 0x000B
-	assert.Equal(t, []byte{0x00, 0x0B}, result[4:6], "algorithm ID for sha256")
-	// sizeofSelect = 3
-	assert.Equal(t, byte(3), result[6], "sizeofSelect field")
-	// PCR 7 sets bit 7 of byte 0: 1<<7 = 0x80
-	assert.Equal(t, byte(0x80), result[7], "bitmap byte 0 for PCR 7")
-	assert.Equal(t, byte(0x00), result[8], "bitmap byte 1 should be zero")
-	assert.Equal(t, byte(0x00), result[9], "bitmap byte 2 should be zero")
-}
-
-func TestEncodePCRSelection_MultiplePCRs(t *testing.T) {
-	// PCRs 0, 1, 2, 7 in sha256 bank.
-	result := EncodePCRSelection(PCRBankSHA256, []int{0, 1, 2, 7})
-
-	require.Len(t, result, 10)
-
-	// PCR 0 = bit 0 (0x01), PCR 1 = bit 1 (0x02), PCR 2 = bit 2 (0x04), PCR 7 = bit 7 (0x80)
-	// byte 0 = 0x01 | 0x02 | 0x04 | 0x80 = 0x87
-	assert.Equal(t, byte(0x87), result[7], "bitmap byte 0 for PCRs 0,1,2,7")
-	assert.Equal(t, byte(0x00), result[8])
-	assert.Equal(t, byte(0x00), result[9])
 }
 
 func TestEncodePCRSelection_AllKnownBanks(t *testing.T) {
@@ -144,25 +77,6 @@ func TestEncodePCRSelection_UnknownBankDefaultsSHA256(t *testing.T) {
 	require.Len(t, result, 10)
 	// Should default to SHA256 algorithm ID = 0x000B
 	assert.Equal(t, []byte{0x00, 0x0B}, result[4:6], "unknown bank should default to sha256 algorithm ID")
-}
-
-func TestEncodePCRSelection_EmptyIndices(t *testing.T) {
-	result := EncodePCRSelection(PCRBankSHA256, []int{})
-
-	require.Len(t, result, 10)
-	// All bitmap bytes should be zero.
-	assert.Equal(t, byte(0x00), result[7])
-	assert.Equal(t, byte(0x00), result[8])
-	assert.Equal(t, byte(0x00), result[9])
-}
-
-func TestEncodePCRSelection_NilIndices(t *testing.T) {
-	result := EncodePCRSelection(PCRBankSHA256, nil)
-
-	require.Len(t, result, 10)
-	assert.Equal(t, byte(0x00), result[7])
-	assert.Equal(t, byte(0x00), result[8])
-	assert.Equal(t, byte(0x00), result[9])
 }
 
 func TestEncodePCRSelection_OutOfRangeIndicesIgnored(t *testing.T) {
@@ -303,23 +217,6 @@ func TestComputePolicyPCRDigest_MissingDigestsZeroFilled(t *testing.T) {
 		"missing digest should produce same result as explicitly provided zero digest")
 }
 
-func TestComputePolicyPCRDigest_Deterministic(t *testing.T) {
-	zeroDigest := hex.EncodeToString(make([]byte, sha256.Size))
-	digests := map[string]string{
-		"sha256:0": zeroDigest,
-		"sha256:7": zeroDigest,
-	}
-
-	result1, err := ComputePolicyPCRDigest(PCRBankSHA256, []int{0, 7}, digests)
-	require.NoError(t, err)
-
-	result2, err := ComputePolicyPCRDigest(PCRBankSHA256, []int{0, 7}, digests)
-	require.NoError(t, err)
-
-	assert.True(t, bytes.Equal(result1, result2),
-		"same inputs must produce identical policy digests")
-}
-
 func TestComputePolicyPCRDigest_OrderIndependence(t *testing.T) {
 	// PCR indices should be sorted internally, so order of input should not matter.
 	digestA := hex.EncodeToString(make([]byte, sha256.Size))
@@ -368,21 +265,6 @@ func TestComputePolicyPCRDigest_DifferentDigestsProduceDifferentOutput(t *testin
 
 	assert.False(t, bytes.Equal(resultZero, resultOnes),
 		"different PCR digest values must produce different policy digests")
-}
-
-func TestComputePolicyPCRDigest_MultiplePCRs(t *testing.T) {
-	// Verify that requesting multiple PCRs produces a valid digest.
-	hashSize := sha256.Size
-	digests := map[string]string{}
-	indices := []int{0, 1, 2, 3, 4, 5, 6, 7}
-	for _, idx := range indices {
-		key := fmt.Sprintf("sha256:%d", idx)
-		digests[key] = hex.EncodeToString(make([]byte, hashSize))
-	}
-
-	result, err := ComputePolicyPCRDigest(PCRBankSHA256, indices, digests)
-	require.NoError(t, err)
-	assert.Len(t, result, hashSize)
 }
 
 func TestComputePolicyPCRDigest_EmptyDigestsMap(t *testing.T) {

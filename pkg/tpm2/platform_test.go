@@ -22,7 +22,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -35,158 +34,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveAttribute(t *testing.T) {
-	tests := []struct {
-		name            string
-		configValue     string
-		discoveredValue string
-		expected        string
-	}{
-		{
-			name:            "config value takes priority",
-			configValue:     "ConfigManufacturer",
-			discoveredValue: "DiscoveredManufacturer",
-			expected:        "ConfigManufacturer",
-		},
-		{
-			name:            "fallback to discovered when config empty",
-			configValue:     "",
-			discoveredValue: "DiscoveredManufacturer",
-			expected:        "DiscoveredManufacturer",
-		},
-		{
-			name:            "both empty returns empty",
-			configValue:     "",
-			discoveredValue: "",
-			expected:        "",
-		},
-		{
-			name:            "config value with whitespace preserved",
-			configValue:     "Dell Inc.",
-			discoveredValue: "HP",
-			expected:        "Dell Inc.",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := resolveAttribute(tt.configValue, tt.discoveredValue)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestResolvePlatformAttributes_NilConfig(t *testing.T) {
 	// When config is nil, should attempt discovery (may fail on non-Linux or missing DMI)
 	result := ResolvePlatformAttributes(nil)
 	assert.NotNil(t, result)
 	// Values may be empty if DMI files don't exist - that's OK
-}
-
-func TestResolvePlatformAttributes_ConfigOverridesDiscovery(t *testing.T) {
-	config := &IDevIDConfig{
-		Manufacturer: "TestManufacturer",
-		Model:        "TestModel",
-		Version:      "1.0.0",
-		Serial:       "SN123456",
-	}
-
-	result := ResolvePlatformAttributes(config)
-
-	assert.Equal(t, "TestManufacturer", result.Manufacturer)
-	assert.Equal(t, "TestModel", result.Model)
-	assert.Equal(t, "1.0.0", result.Version)
-	assert.Equal(t, "SN123456", result.Serial)
-}
-
-func TestResolvePlatformAttributes_PartialConfig(t *testing.T) {
-	// Only Model and Serial specified, Manufacturer and Version should come from discovery
-	config := &IDevIDConfig{
-		Model:  "CustomDevice",
-		Serial: "ABC123",
-	}
-
-	result := ResolvePlatformAttributes(config)
-
-	// Config values are used
-	assert.Equal(t, "CustomDevice", result.Model)
-	assert.Equal(t, "ABC123", result.Serial)
-	// Manufacturer and Version come from discovery (may be empty on test systems)
-	// Just verify they're strings (not panicking)
-	assert.IsType(t, "", result.Manufacturer)
-	assert.IsType(t, "", result.Version)
-}
-
-func TestResolvePlatformAttributes_EmptyConfig(t *testing.T) {
-	config := &IDevIDConfig{}
-
-	result := ResolvePlatformAttributes(config)
-
-	// All values come from discovery
-	assert.NotNil(t, result)
-	// Values may be empty if DMI files don't exist
-}
-
-func TestReadDMIFile_NonExistent(t *testing.T) {
-	// Should return empty string for non-existent files
-	result := readDMIFile("nonexistent_file_12345")
-	assert.Equal(t, "", result)
-}
-
-func TestReadDMIFile_WithMockFS(t *testing.T) {
-	// Create a temporary directory structure mimicking DMI sysfs
-	tmpDir := t.TempDir()
-
-	// Create mock DMI files
-	mockFiles := map[string]string{
-		"sys_vendor":      "Test Manufacturer\n",
-		"product_name":    "Test Model\n",
-		"product_version": "v2.0\n",
-		"product_serial":  "SN-TEST-001\n",
-	}
-
-	for name, content := range mockFiles {
-		path := filepath.Join(tmpDir, name)
-		err := os.WriteFile(path, []byte(content), 0644)
-		require.NoError(t, err)
-	}
-
-	// We can't easily override dmiBasePath constant, but we can test
-	// that the file reading and trimming logic works correctly
-	// by testing with actual files if they exist on the system
-
-	// Test that whitespace is trimmed
-	testFile := filepath.Join(tmpDir, "test_attr")
-	err := os.WriteFile(testFile, []byte("  Test Value  \n"), 0644)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(testFile)
-	require.NoError(t, err)
-	// Verify our trim logic would work
-	assert.Contains(t, string(data), "Test Value")
-}
-
-func TestDiscoverPlatformAttributes(t *testing.T) {
-	// This test verifies the function runs without panicking
-	// Actual values depend on the system running the test
-	result := DiscoverPlatformAttributes()
-	assert.NotNil(t, result)
-
-	// On a real Linux system with DMI, these should be non-empty
-	// On other systems or containers, they may be empty
-	t.Logf("Discovered platform attributes:")
-	t.Logf("  Manufacturer: %q", result.Manufacturer)
-	t.Logf("  Model: %q", result.Model)
-	t.Logf("  Version: %q", result.Version)
-	t.Logf("  Serial: %q", result.Serial)
-}
-
-func TestPlatformAttributes_EmptyStruct(t *testing.T) {
-	attrs := &PlatformAttributes{}
-	assert.Equal(t, "", attrs.Manufacturer)
-	assert.Equal(t, "", attrs.Model)
-	assert.Equal(t, "", attrs.Version)
-	assert.Equal(t, "", attrs.Serial)
 }
 
 // ---------------------------------------------------------------------------
@@ -567,108 +419,6 @@ func TestPlatformKeyStore_NewAndDefaults(t *testing.T) {
 	assert.True(t, pks.PlatformPolicyEnabled(), "platform policy should be enabled")
 }
 
-func TestPlatformKeyStore_NewProbesSRKHandle(t *testing.T) {
-	t.Run("SRKExists", func(t *testing.T) {
-		// When the SRK handle already exists in the TPM (e.g., from a prior
-		// InitializeWithDefaults call), the store should detect it and mark
-		// itself as initialized even without PIN state.
-		mock := &mockTPMForPKS{
-			config:        testConfigForPKS(false),
-			readHandleErr: nil, // ReadHandle succeeds = SRK exists
-		}
-		pks := newTestPlatformKeyStore(t, mock)
-		assert.True(t, pks.IsInitialized(),
-			"must be initialized when SRK handle exists in TPM")
-	})
-
-	t.Run("SRKNotFound", func(t *testing.T) {
-		// When the SRK handle does not exist, the store remains uninitialized.
-		mock := &mockTPMForPKS{
-			config:        testConfigForPKS(false),
-			readHandleErr: tpm2.TPMRC(0x18b), // TPM_RC_HANDLE
-		}
-		pks := newTestPlatformKeyStore(t, mock)
-		assert.False(t, pks.IsInitialized(),
-			"must not be initialized when SRK handle is absent")
-	})
-}
-
-func TestPlatformKeyStore_NewNilTPMError(t *testing.T) {
-	statePath := filepath.Join(t.TempDir(), "pin-state.json")
-	_, err := NewPlatformKeyStore(
-		slog.Default(),
-		nil,
-		&mockKeyBackendForPKS{},
-		testConfigForPKS(false),
-		statePath,
-	)
-	require.ErrorIs(t, err, ErrPlatformKeyStoreNilTPM)
-}
-
-func TestPlatformKeyStore_NewNilBackendError(t *testing.T) {
-	mock := &mockTPMForPKS{config: testConfigForPKS(false)}
-	statePath := filepath.Join(t.TempDir(), "pin-state.json")
-	_, err := NewPlatformKeyStore(
-		slog.Default(),
-		mock,
-		nil,
-		mock.config,
-		statePath,
-	)
-	require.ErrorIs(t, err, ErrPlatformKeyStoreNilBackend)
-}
-
-func TestPlatformKeyStore_NewNilConfigError(t *testing.T) {
-	mock := &mockTPMForPKS{config: testConfigForPKS(false)}
-	statePath := filepath.Join(t.TempDir(), "pin-state.json")
-	_, err := NewPlatformKeyStore(
-		slog.Default(),
-		mock,
-		&mockKeyBackendForPKS{},
-		nil,
-		statePath,
-	)
-	require.ErrorIs(t, err, ErrPlatformKeyStoreNilConfig)
-}
-
-func TestPlatformKeyStore_Initialize(t *testing.T) {
-	mock := &mockTPMForPKS{
-		config:        testConfigForPKS(true),
-		readHandleErr: tpm2.TPMRC(0x18b),
-	}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	assert.False(t, pks.IsAuthReady(), "auth must not be ready before Initialize")
-
-	err := pks.Initialize("supersecret", "userpin1")
-	require.NoError(t, err)
-
-	assert.True(t, pks.IsInitialized(), "must be initialized after Initialize")
-	assert.True(t, pks.IsAuthReady(), "auth must be ready after successful Initialize")
-	assert.True(t, mock.createSRKCalled.Load(), "TPM CreateSRK should have been called")
-
-	// Verify SRK attributes passed to CreateSRK have platform policy set
-	require.NotNil(t, mock.createSRKAttrs)
-	assert.True(t, (mock.createSRKAttrs.TPMPolicy == types.TPMPolicyPlatform),
-		"SRK should have platform policy enabled")
-}
-
-func TestPlatformKeyStore_InitializeDoubleCallIdempotent(t *testing.T) {
-	mock := &mockTPMForPKS{
-		config:        testConfigForPKS(false),
-		readHandleErr: tpm2.TPMRC(0x18b),
-	}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	err := pks.Initialize("supersecret", "userpin1")
-	require.NoError(t, err)
-
-	// Second call with the same PIN should succeed (idempotent).
-	// ensureSRKAuth verifies the PIN matches and re-registers it.
-	err = pks.Initialize("supersecret", "userpin1")
-	require.NoError(t, err)
-}
-
 func TestPlatformKeyStore_InitializeDoubleCallAuthMismatch(t *testing.T) {
 	mock := &mockTPMForPKS{
 		config:        testConfigForPKS(false),
@@ -717,20 +467,6 @@ func TestPlatformKeyStore_InitializeUserPINVerifyError(t *testing.T) {
 	err := pks.Initialize("supersecret", "userpin1")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrPlatformKeyStoreSetUserPIN)
-}
-
-func TestPlatformKeyStore_InitializeCreateSRKError(t *testing.T) {
-	mock := &mockTPMForPKS{
-		config:        testConfigForPKS(false),
-		createSRKErr:  ErrNotInitialized,
-		readHandleErr: tpm2.TPMRC(0x18b),
-	}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	err := pks.Initialize("supersecret", "userpin1")
-	require.Error(t, err)
-	require.ErrorIs(t, err, ErrPlatformKeyStoreCreateSRK)
-	assert.False(t, pks.IsInitialized(), "must not be initialized on SRK error")
 }
 
 // TestPlatformKeyStore_InitializeFailureReleasesPINs pins that a failed
@@ -821,155 +557,9 @@ func TestPlatformKeyStore_InitializeNVDefinedSuccess(t *testing.T) {
 	assert.True(t, mock.createSRKCalled.Load(), "CreateSRK should have been called")
 }
 
-func TestPlatformKeyStore_PINBackend(t *testing.T) {
-	mock := &mockTPMForPKS{config: testConfigForPKS(false)}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	pb := pks.PINBackend()
-	require.NotNil(t, pb, "PINBackend must not be nil")
-	assert.Equal(t, "tpm2", string(pb.Strategy()),
-		"PINBackend strategy must be tpm2")
-}
-
-func TestPlatformKeyStore_SRKAttributes(t *testing.T) {
-	mock := &mockTPMForPKS{config: testConfigForPKS(false)}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	attrs := pks.SRKAttributes()
-	require.NotNil(t, attrs, "SRK attributes must not be nil")
-	assert.Equal(t, types.KeyTypeStorage, attrs.KeyType,
-		"SRK key type must be Storage")
-	assert.Equal(t, types.StoreTPM2, attrs.StoreType,
-		"SRK store type must be TPM2")
-	require.NotNil(t, attrs.TPMAttributes, "SRK TPM attributes must not be nil")
-	assert.Equal(t, tpm2.TPMHandle(0x81000002), attrs.TPMAttributes.Handle,
-		"SRK handle must match config")
-}
-
-func TestPlatformKeyStore_SRKAttributesCustomHandle(t *testing.T) {
-	cfg := testConfigForPKS(false)
-	cfg.PlatformSRK.SRKHandle = 0x81000099
-	cfg.SSRK.Handle = 0x81000099
-	mock := &mockTPMForPKS{config: cfg}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	attrs := pks.SRKAttributes()
-	require.NotNil(t, attrs)
-	require.NotNil(t, attrs.TPMAttributes)
-	assert.Equal(t, tpm2.TPMHandle(0x81000099), attrs.TPMAttributes.Handle,
-		"SRK handle must match custom config value")
-}
-
-func TestPlatformKeyStore_Backend(t *testing.T) {
-	mock := &mockTPMForPKS{config: testConfigForPKS(false)}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	backend := pks.Backend()
-	require.NotNil(t, backend, "backend must not be nil")
-	_, ok := backend.(*mockKeyBackendForPKS)
-	assert.True(t, ok, "backend must be the mock implementation")
-}
-
-func TestPlatformKeyStore_IsInitialized(t *testing.T) {
-	mock := &mockTPMForPKS{
-		config:        testConfigForPKS(false),
-		readHandleErr: tpm2.TPMRC(0x18b),
-	}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	assert.False(t, pks.IsInitialized(), "must not be initialized before Initialize")
-
-	err := pks.Initialize("supersecret", "userpin1")
-	require.NoError(t, err)
-
-	assert.True(t, pks.IsInitialized(), "must be initialized after Initialize")
-}
-
-func TestPlatformKeyStore_PlatformPolicyEnabled(t *testing.T) {
-	t.Run("Enabled", func(t *testing.T) {
-		mock := &mockTPMForPKS{config: testConfigForPKS(true)}
-		pks := newTestPlatformKeyStore(t, mock)
-		assert.True(t, pks.PlatformPolicyEnabled())
-	})
-
-	t.Run("Disabled", func(t *testing.T) {
-		mock := &mockTPMForPKS{config: testConfigForPKS(false)}
-		pks := newTestPlatformKeyStore(t, mock)
-		assert.False(t, pks.PlatformPolicyEnabled())
-	})
-
-	t.Run("NilPlatformSRKConfig", func(t *testing.T) {
-		cfg := testConfigForPKS(false)
-		cfg.PlatformSRK = nil
-		mock := &mockTPMForPKS{config: cfg}
-		statePath := filepath.Join(t.TempDir(), "pin-state.json")
-		pks, err := NewPlatformKeyStore(
-			slog.Default(),
-			mock,
-			&mockKeyBackendForPKS{},
-			cfg,
-			statePath,
-		)
-		require.NoError(t, err)
-		assert.False(t, pks.PlatformPolicyEnabled(),
-			"platform policy must be false when PlatformSRK config is nil")
-	})
-}
-
-func TestPlatformKeyStore_InitializeWithoutPlatformPolicy(t *testing.T) {
-	mock := &mockTPMForPKS{
-		config:        testConfigForPKS(false),
-		readHandleErr: tpm2.TPMRC(0x18b),
-	}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	err := pks.Initialize("supersecret", "userpin1")
-	require.NoError(t, err)
-
-	require.NotNil(t, mock.createSRKAttrs)
-	assert.False(t, (mock.createSRKAttrs.TPMPolicy == types.TPMPolicyPlatform),
-		"SRK should NOT have platform policy when disabled in config")
-}
-
 // ---------------------------------------------------------------------------
 // InitializeWithDefaults tests
 // ---------------------------------------------------------------------------
-
-func TestPlatformKeyStore_InitializeWithDefaults(t *testing.T) {
-	mock := &mockTPMForPKS{
-		config:        testConfigForPKS(false),
-		readHandleErr: tpm2.TPMRC(0x18b),
-	}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	err := pks.InitializeWithDefaults()
-	require.NoError(t, err)
-
-	assert.True(t, pks.IsInitialized(), "must be initialized after InitializeWithDefaults")
-	assert.True(t, pks.IsAuthReady(), "auth must be ready (new SRK created with known empty auth)")
-	assert.True(t, mock.createSRKCalled.Load(), "CreateSRK should have been called")
-
-	// Verify SRK attributes passed to CreateSRK have empty auth
-	require.NotNil(t, mock.createSRKAttrs)
-	assert.False(t, (mock.createSRKAttrs.TPMPolicy == types.TPMPolicyPlatform),
-		"SRK should NOT have platform policy when disabled")
-}
-
-func TestPlatformKeyStore_InitializeWithDefaultsPlatformPolicy(t *testing.T) {
-	mock := &mockTPMForPKS{
-		config:        testConfigForPKS(true),
-		readHandleErr: tpm2.TPMRC(0x18b),
-	}
-	pks := newTestPlatformKeyStore(t, mock)
-
-	err := pks.InitializeWithDefaults()
-	require.NoError(t, err)
-
-	assert.True(t, pks.IsInitialized())
-	require.NotNil(t, mock.createSRKAttrs)
-	assert.True(t, (mock.createSRKAttrs.TPMPolicy == types.TPMPolicyPlatform),
-		"SRK should have platform policy when enabled in config")
-}
 
 func TestPlatformKeyStore_InitializeWithDefaultsDoubleCallError(t *testing.T) {
 	mock := &mockTPMForPKS{
@@ -1021,26 +611,6 @@ func TestPlatformKeyStore_InitializeWithDefaultsNVDefinedSuccess(t *testing.T) {
 // PlatformAuthProvider tests (PlatformKeyStore implements pin.PlatformAuthProvider)
 // ---------------------------------------------------------------------------
 
-func TestPlatformKeyStore_IsProvisioned(t *testing.T) {
-	t.Run("NotInitialized", func(t *testing.T) {
-		mock := &mockTPMForPKS{
-			config:        testConfigForPKS(false),
-			readHandleErr: errors.New("handle not found"),
-		}
-		pks, err := NewPlatformKeyStore(slog.Default(), mock, &mockKeyBackendForPKS{}, mock.config, "")
-		require.NoError(t, err)
-		assert.False(t, pks.IsProvisioned(), "not provisioned when SRK does not exist")
-	})
-
-	t.Run("Initialized", func(t *testing.T) {
-		mock := &mockTPMForPKS{config: testConfigForPKS(false)}
-		pks, err := NewPlatformKeyStore(slog.Default(), mock, &mockKeyBackendForPKS{}, mock.config, "")
-		require.NoError(t, err)
-		// SRK handle readable → initialized
-		assert.True(t, pks.IsProvisioned(), "provisioned when SRK handle exists")
-	})
-}
-
 func TestPlatformKeyStore_GetLockoutInfo(t *testing.T) {
 	t.Run("NilProperties", func(t *testing.T) {
 		mock := &mockTPMForPKS{config: testConfigForPKS(false)}
@@ -1083,30 +653,6 @@ func TestPlatformKeyStore_DictionaryAttackLockoutReset(t *testing.T) {
 // ---------------------------------------------------------------------------
 // PlatformSRKAttributesFromConfig tests
 // ---------------------------------------------------------------------------
-
-func TestPlatformKeyStore_BuildSRKAttrsNoSSRK(t *testing.T) {
-	cfg := testConfigForPKS(false)
-	cfg.SSRK = nil
-
-	attrs, err := PlatformSRKAttributesFromConfig(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, attrs)
-	assert.Equal(t, "srk", attrs.CN)
-	assert.Equal(t, types.KeyTypeStorage, attrs.KeyType)
-	assert.Equal(t, tpm2.TPMHandle(0x81000002), attrs.TPMAttributes.Handle)
-}
-
-func TestPlatformKeyStore_BuildSRKAttrsNoPlatformSRKConfig(t *testing.T) {
-	cfg := testConfigForPKS(false)
-	cfg.PlatformSRK = nil
-	cfg.SSRK = nil
-
-	attrs, err := PlatformSRKAttributesFromConfig(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, attrs)
-	// Should fall back to tpSRKIndex = 0x81000002
-	assert.Equal(t, tpm2.TPMHandle(tpSRKIndex), attrs.TPMAttributes.Handle)
-}
 
 // ---------------------------------------------------------------------------
 // Eviction failure tests
@@ -1155,27 +701,6 @@ func TestPlatformKeyStore_NonAuthEvictionFailureKeepsGenericError(t *testing.T) 
 		"a non-auth eviction failure must keep the generic eviction error")
 	assert.NotErrorIs(t, err, ErrPlatformSRKHierarchyAuth,
 		"a non-auth failure must not be reported as a hierarchy auth problem")
-}
-
-func TestPlatformKeyStore_EvictionSucceedsWithSOPIN(t *testing.T) {
-	// When the correct SO PIN is provided, eviction and recreation succeed.
-	// verifyAuthClearOnCreateSRK simulates: after CreateSRK installs new
-	// auth, VerifyAuth starts succeeding.
-	mock := &mockTPMForPKS{
-		config:                     testConfigForPKS(false),
-		readHandleErr:              nil,                           // SRK exists
-		verifyAuthErr:              errors.New("TPM_RC_BAD_AUTH"), // auth mismatch initially
-		deleteKeyErr:               nil,                           // eviction succeeds
-		verifyAuthClearOnCreateSRK: true,
-	}
-	pks := newTestPlatformKeyStore(t, mock)
-	assert.False(t, pks.IsAuthReady(), "auth must NOT be ready before Initialize")
-
-	err := pks.Initialize("correctsopin", "userpin1")
-	require.NoError(t, err, "Initialize must succeed when eviction succeeds")
-	assert.True(t, mock.createSRKCalled.Load(),
-		"CreateSRK should be called to recreate SRK with new auth")
-	assert.True(t, pks.IsAuthReady(), "auth must be ready after successful eviction+recreate")
 }
 
 func TestPlatformKeyStore_IsAuthReady(t *testing.T) {

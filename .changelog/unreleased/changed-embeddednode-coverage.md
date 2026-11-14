@@ -1,0 +1,1 @@
+Tests: `pkg/embeddednode` asserts the passphrase and shamir node seals, the TPM2 key directory, the shamir quorum and root key path reaching go-qrdb, the audit file sink, cloud seal key provisioning and its refusals, and an audit or datastore path that cannot be opened (#1794).

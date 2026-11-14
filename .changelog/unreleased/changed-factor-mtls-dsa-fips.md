@@ -1,0 +1,1 @@
+Tests: the `pkg/factor/mtls` DSA certificate tests build their certificate from a fixed DSA test vector instead of generating a key, so under `GODEBUG=fips140=only` they reach their assertions rather than returning early (#1794).

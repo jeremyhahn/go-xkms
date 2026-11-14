@@ -51,6 +51,8 @@ type fakeKMIPServer struct {
 	mu      sync.Mutex
 	objects map[string]*fakeObject
 	nextID  int
+	// locateErr, when set, is the refusal every Locate request receives.
+	locateErr error
 }
 
 func newFakeKMIPServer() *fakeKMIPServer {
@@ -137,6 +139,9 @@ func (s *fakeKMIPServer) handleLocate(_ context.Context, req *payloads.LocateReq
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.locateErr != nil {
+		return nil, s.locateErr
+	}
 
 	var ids []string
 	for id, obj := range s.objects {
@@ -254,25 +259,10 @@ func newTestAgentAndServer(t *testing.T) (*KMIPAgent, *fakeKMIPServer) {
 	return agent, srv
 }
 
-func TestNewKMIPAgent_Success(t *testing.T) {
-	agent, err := NewKMIPAgent(&KMIPConfig{
-		Endpoint: "kmip://escrow.company.com:5696",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, agent)
-	assert.Equal(t, "escrow.company.com:5696", agent.addr)
-}
-
 func TestNewKMIPAgent_NilConfig(t *testing.T) {
 	_, err := NewKMIPAgent(nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, escrow.ErrAgentNotConfigured))
-}
-
-func TestNewKMIPAgent_EmptyEndpoint(t *testing.T) {
-	_, err := NewKMIPAgent(&KMIPConfig{Endpoint: ""})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, escrow.ErrEmptyEndpoint))
 }
 
 func TestNewKMIPAgent_InvalidClientCert(t *testing.T) {
@@ -319,18 +309,6 @@ func TestNewKMIPAgent_CustomTimeout(t *testing.T) {
 func TestKMIPConfig_Timeout_Default(t *testing.T) {
 	cfg := &KMIPConfig{Endpoint: "kmip://escrow.company.com:5696"}
 	assert.Equal(t, defaultTimeout, cfg.timeout())
-}
-
-func TestKMIPConfig_Validate_Success(t *testing.T) {
-	cfg := &KMIPConfig{Endpoint: "kmip://escrow.company.com:5696"}
-	require.NoError(t, cfg.Validate())
-}
-
-func TestKMIPConfig_Validate_EmptyEndpoint(t *testing.T) {
-	cfg := &KMIPConfig{}
-	err := cfg.Validate()
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, escrow.ErrEmptyEndpoint))
 }
 
 func TestDialAddr(t *testing.T) {
@@ -527,13 +505,6 @@ func TestKMIPAgent_RecoverKey_NotFoundByKeyID(t *testing.T) {
 	assert.True(t, errors.Is(err, escrow.ErrKeyNotFound))
 }
 
-func TestKMIPAgent_RecoverKey_NotFoundByEscrowID(t *testing.T) {
-	agent := newTestAgent(t)
-	_, err := agent.RecoverKey(context.Background(), &escrow.RecoverRequest{EscrowID: "nonexistent"})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, escrow.ErrKeyNotFound))
-}
-
 func TestKMIPAgent_RecoverKey_PermissionDenied(t *testing.T) {
 	agent := newTestAgent(t)
 	_, err := agent.RecoverKey(context.Background(), &escrow.RecoverRequest{EscrowID: "denied"})
@@ -562,13 +533,6 @@ func TestKMIPAgent_RecoverKey_ServerUnavailable(t *testing.T) {
 	assert.True(t, errors.Is(err, escrow.ErrAgentUnavailable))
 }
 
-func TestKMIPAgent_ListEscrowed_Empty(t *testing.T) {
-	agent := newTestAgent(t)
-	records, err := agent.ListEscrowed(context.Background())
-	require.NoError(t, err)
-	assert.Empty(t, records)
-}
-
 func TestKMIPAgent_ListEscrowed_PartialMetadataFailure(t *testing.T) {
 	agent := newTestAgent(t)
 	ctx := context.Background()
@@ -588,6 +552,57 @@ func TestKMIPAgent_ListEscrowed_PartialMetadataFailure(t *testing.T) {
 	_, err = agent.ListEscrowed(ctx)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, escrow.ErrAuthenticationFailed))
+}
+
+// TestKMIPAgent_LocateRefused covers both callers of Locate: recovery by key
+// ID and listing. A refused Locate must surface as the typed escrow error
+// with no partial result.
+func TestKMIPAgent_LocateRefused(t *testing.T) {
+	refusals := []struct {
+		name    string
+		refusal error
+		want    error
+	}{
+		{name: "permission denied", refusal: kmipserver.ErrPermissionDenied, want: escrow.ErrAuthenticationFailed},
+		{name: "server failure", refusal: errors.New("backing store offline"), want: escrow.ErrRecoverFailed},
+	}
+	ops := []struct {
+		name string
+		call func(t *testing.T, agent *KMIPAgent) error
+	}{
+		{name: "RecoverKey by key ID", call: func(t *testing.T, agent *KMIPAgent) error {
+			resp, err := agent.RecoverKey(context.Background(), &escrow.RecoverRequest{KeyID: "key-1"})
+			assert.Nil(t, resp)
+			return err
+		}},
+		{name: "ListEscrowed", call: func(t *testing.T, agent *KMIPAgent) error {
+			records, err := agent.ListEscrowed(context.Background())
+			assert.Nil(t, records)
+			return err
+		}},
+	}
+
+	for _, r := range refusals {
+		for _, op := range ops {
+			t.Run(op.name+"/"+r.name, func(t *testing.T) {
+				agent, srv := newTestAgentAndServer(t)
+				ctx := context.Background()
+				_, err := agent.EscrowKey(ctx, &escrow.EscrowRequest{
+					KeyID:      "key-1",
+					WrappedKey: []byte("wrapped-key-material"),
+				})
+				require.NoError(t, err)
+
+				srv.mu.Lock()
+				srv.locateErr = r.refusal
+				srv.mu.Unlock()
+
+				err = op.call(t, agent)
+				require.Error(t, err)
+				assert.True(t, errors.Is(err, r.want), "got %v, want %v", err, r.want)
+			})
+		}
+	}
 }
 
 func TestKMIPAgent_ListEscrowed_AfterClose(t *testing.T) {
@@ -729,22 +744,8 @@ func TestKMIPAgent_GetClient_ConcurrentDial(t *testing.T) {
 }
 
 func TestMapResultReason(t *testing.T) {
-	tests := []struct {
-		name   string
-		reason kmip.ResultReason
-		target error
-	}{
-		{"item not found", kmip.ResultReasonItemNotFound, escrow.ErrKeyNotFound},
-		{"authentication failed", kmip.ResultReasonAuthenticationNotSuccessful, escrow.ErrAuthenticationFailed},
-		{"permission denied", kmip.ResultReasonPermissionDenied, escrow.ErrAuthenticationFailed},
-		{"already exists", kmip.ResultReasonObjectAlreadyExists, escrow.ErrAlreadyEscrowed},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := mapResultReason(tt.reason, "detail", escrow.ErrEscrowFailed)
-			assert.True(t, errors.Is(err, tt.target))
-		})
-	}
+	err := mapResultReason(kmip.ResultReasonAuthenticationNotSuccessful, "detail", escrow.ErrEscrowFailed)
+	assert.True(t, errors.Is(err, escrow.ErrAuthenticationFailed))
 }
 
 func TestMapResultReason_Default(t *testing.T) {

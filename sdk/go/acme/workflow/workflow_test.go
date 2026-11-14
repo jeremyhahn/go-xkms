@@ -209,21 +209,6 @@ func TestNewWorkflow_NilClient(t *testing.T) {
 	}
 }
 
-func TestNewWorkflow_Defaults(t *testing.T) {
-	mc := newMockClient()
-	w := NewWorkflow(mc)
-	if w == nil {
-		t.Fatal("expected non-nil workflow")
-	}
-	impl := w.(*workflow)
-	if impl.pollTimeout != 120*time.Second {
-		t.Errorf("expected default pollTimeout 120s, got %v", impl.pollTimeout)
-	}
-	if impl.pollInterval != 2*time.Second {
-		t.Errorf("expected default pollInterval 2s, got %v", impl.pollInterval)
-	}
-}
-
 func TestNewWorkflow_WithOptions(t *testing.T) {
 	mc := newMockClient()
 	w := NewWorkflow(mc,
@@ -324,8 +309,9 @@ func TestRegister_EmptyEmail(t *testing.T) {
 
 func TestRegister_TransportError(t *testing.T) {
 	mc := newMockClient()
+	cause := errors.NewUnavailable("test", "server unavailable")
 	mc.accountClient.createFunc = func(ctx context.Context, req *account.CreateRequest) (*account.CreateResponse, error) {
-		return nil, errors.NewUnavailable("test", "server unavailable")
+		return nil, cause
 	}
 
 	w := NewWorkflow(mc)
@@ -338,7 +324,10 @@ func TestRegister_TransportError(t *testing.T) {
 	}
 	var regErr *RegistrationError
 	if !unwrapAs(err, &regErr) {
-		t.Errorf("expected RegistrationError, got: %T", err)
+		t.Fatalf("expected RegistrationError, got: %T", err)
+	}
+	if regErr.Unwrap() != cause {
+		t.Error("expected RegistrationError to wrap the transport error")
 	}
 }
 
@@ -361,7 +350,10 @@ func TestRegister_NilAccountResponse(t *testing.T) {
 	}
 	var regErr *RegistrationError
 	if !unwrapAs(err, &regErr) {
-		t.Errorf("expected RegistrationError, got: %T", err)
+		t.Fatalf("expected RegistrationError, got: %T", err)
+	}
+	if regErr.Op != "workflow.Register" {
+		t.Errorf("unexpected op: %s", regErr.Op)
 	}
 }
 
@@ -503,79 +495,44 @@ func TestRequestCertificate_Success(t *testing.T) {
 	}
 }
 
-func TestRequestCertificate_NilRequest(t *testing.T) {
-	mc := newMockClient()
-	w := NewWorkflow(mc)
-	_, err := w.RequestCertificate(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil request")
+func TestRequestCertificate_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *CertificateRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "no domains", req: &CertificateRequest{
+			CSR:              []byte{0x30},
+			ChallengeType:    "http-01",
+			ChallengeHandler: noopHandler,
+		}},
+		{name: "no CSR", req: &CertificateRequest{
+			Domains:          []string{"example.com"},
+			ChallengeType:    "http-01",
+			ChallengeHandler: noopHandler,
+		}},
+		{name: "no challenge type", req: &CertificateRequest{
+			Domains:          []string{"example.com"},
+			CSR:              []byte{0x30},
+			ChallengeHandler: noopHandler,
+		}},
+		{name: "no challenge handler", req: &CertificateRequest{
+			Domains:       []string{"example.com"},
+			CSR:           []byte{0x30},
+			ChallengeType: "http-01",
+		}},
 	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected invalid input error, got: %v", err)
-	}
-}
-
-func TestRequestCertificate_NoDomains(t *testing.T) {
-	mc := newMockClient()
-	w := NewWorkflow(mc)
-	_, err := w.RequestCertificate(context.Background(), &CertificateRequest{
-		CSR:              []byte{0x30},
-		ChallengeType:    "http-01",
-		ChallengeHandler: noopHandler,
-	})
-	if err == nil {
-		t.Fatal("expected error for empty domains")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected invalid input error, got: %v", err)
-	}
-}
-
-func TestRequestCertificate_NoCSR(t *testing.T) {
-	mc := newMockClient()
-	w := NewWorkflow(mc)
-	_, err := w.RequestCertificate(context.Background(), &CertificateRequest{
-		Domains:          []string{"example.com"},
-		ChallengeType:    "http-01",
-		ChallengeHandler: noopHandler,
-	})
-	if err == nil {
-		t.Fatal("expected error for empty CSR")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected invalid input error, got: %v", err)
-	}
-}
-
-func TestRequestCertificate_NoChallengeType(t *testing.T) {
-	mc := newMockClient()
-	w := NewWorkflow(mc)
-	_, err := w.RequestCertificate(context.Background(), &CertificateRequest{
-		Domains:          []string{"example.com"},
-		CSR:              []byte{0x30},
-		ChallengeHandler: noopHandler,
-	})
-	if err == nil {
-		t.Fatal("expected error for empty challenge type")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected invalid input error, got: %v", err)
-	}
-}
-
-func TestRequestCertificate_NoChallengeHandler(t *testing.T) {
-	mc := newMockClient()
-	w := NewWorkflow(mc)
-	_, err := w.RequestCertificate(context.Background(), &CertificateRequest{
-		Domains:       []string{"example.com"},
-		CSR:           []byte{0x30},
-		ChallengeType: "http-01",
-	})
-	if err == nil {
-		t.Fatal("expected error for nil challenge handler")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected invalid input error, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := NewWorkflow(newMockClient())
+			_, err := w.RequestCertificate(context.Background(), tt.req)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !errors.IsInvalidInput(err) {
+				t.Errorf("expected invalid input error, got: %v", err)
+			}
+		})
 	}
 }
 
@@ -625,6 +582,7 @@ func TestRequestCertificate_OrderCreateNilOrder(t *testing.T) {
 
 func TestRequestCertificate_AuthorizationGetError(t *testing.T) {
 	mc := newMockClient()
+	cause := errors.NewInternal("test", "authorization fetch failed")
 	mc.orderClient.createFunc = func(ctx context.Context, req *order.CreateRequest) (*order.CreateResponse, error) {
 		return &order.CreateResponse{
 			Order: &order.Order{
@@ -636,7 +594,7 @@ func TestRequestCertificate_AuthorizationGetError(t *testing.T) {
 		}, nil
 	}
 	mc.authorizationClient.getFunc = func(ctx context.Context, req *authorization.GetRequest) (*authorization.GetResponse, error) {
-		return nil, errors.NewInternal("test", "authorization fetch failed")
+		return nil, cause
 	}
 
 	w := NewWorkflow(mc)
@@ -651,7 +609,10 @@ func TestRequestCertificate_AuthorizationGetError(t *testing.T) {
 	}
 	var authzErr *AuthorizationError
 	if !unwrapAs(err, &authzErr) {
-		t.Errorf("expected AuthorizationError, got: %T", err)
+		t.Fatalf("expected AuthorizationError, got: %T", err)
+	}
+	if authzErr.Unwrap() != cause {
+		t.Error("expected AuthorizationError to wrap the fetch error")
 	}
 }
 
@@ -691,13 +652,16 @@ func TestRequestCertificate_NoChallengeMatch(t *testing.T) {
 	}
 	var noCh *NoChallengeError
 	if !unwrapAs(err, &noCh) {
-		t.Errorf("expected NoChallengeError, got: %T", err)
+		t.Fatalf("expected NoChallengeError, got: %T", err)
 	}
 	if noCh.Domain != "example.com" {
 		t.Errorf("unexpected domain: %s", noCh.Domain)
 	}
 	if noCh.RequestedType != "http-01" {
 		t.Errorf("unexpected requested type: %s", noCh.RequestedType)
+	}
+	if !errors.IsNotFound(noCh.CAError) {
+		t.Error("expected not found error code")
 	}
 }
 
@@ -747,6 +711,7 @@ func TestRequestCertificate_ChallengeHandlerError(t *testing.T) {
 
 func TestRequestCertificate_ChallengeRespondError(t *testing.T) {
 	mc := newMockClient()
+	cause := errors.NewInternal("test", "respond failed")
 	mc.orderClient.createFunc = func(ctx context.Context, req *order.CreateRequest) (*order.CreateResponse, error) {
 		return &order.CreateResponse{
 			Order: &order.Order{
@@ -769,7 +734,7 @@ func TestRequestCertificate_ChallengeRespondError(t *testing.T) {
 		}, nil
 	}
 	mc.challengeClient.respondFunc = func(ctx context.Context, req *challenge.RespondRequest) (*challenge.RespondResponse, error) {
-		return nil, errors.NewInternal("test", "respond failed")
+		return nil, cause
 	}
 
 	w := NewWorkflow(mc)
@@ -784,7 +749,19 @@ func TestRequestCertificate_ChallengeRespondError(t *testing.T) {
 	}
 	var chErr *ChallengeError
 	if !unwrapAs(err, &chErr) {
-		t.Errorf("expected ChallengeError, got: %T", err)
+		t.Fatalf("expected ChallengeError, got: %T", err)
+	}
+	if chErr.Unwrap() != cause {
+		t.Error("expected ChallengeError to wrap the respond error")
+	}
+	if chErr.Domain != "example.com" {
+		t.Errorf("unexpected domain: %s", chErr.Domain)
+	}
+	if chErr.ChallengeType != "http-01" {
+		t.Errorf("unexpected challenge type: %s", chErr.ChallengeType)
+	}
+	if chErr.ChallengeURL != "https://ca.example.com/acme/chall/1" {
+		t.Errorf("unexpected challenge URL: %s", chErr.ChallengeURL)
 	}
 }
 
@@ -838,7 +815,13 @@ func TestRequestCertificate_AuthorizationInvalid(t *testing.T) {
 	}
 	var authzErr *AuthorizationError
 	if !unwrapAs(err, &authzErr) {
-		t.Errorf("expected AuthorizationError, got: %T", err)
+		t.Fatalf("expected AuthorizationError, got: %T", err)
+	}
+	if authzErr.Domain != "example.com" {
+		t.Errorf("unexpected domain: %s", authzErr.Domain)
+	}
+	if authzErr.AuthorizationURL != "https://ca.example.com/acme/authz/1" {
+		t.Errorf("unexpected authz URL: %s", authzErr.AuthorizationURL)
 	}
 }
 
@@ -895,6 +878,7 @@ func TestRequestCertificate_AlreadyValidAuthorization(t *testing.T) {
 
 func TestRequestCertificate_FinalizeError(t *testing.T) {
 	mc := newMockClient()
+	cause := errors.NewACMEOrderNotReady("test", "order not ready")
 	mc.orderClient.createFunc = func(ctx context.Context, req *order.CreateRequest) (*order.CreateResponse, error) {
 		return &order.CreateResponse{
 			Order: &order.Order{
@@ -906,7 +890,7 @@ func TestRequestCertificate_FinalizeError(t *testing.T) {
 		}, nil
 	}
 	mc.orderClient.finalizeFunc = func(ctx context.Context, req *order.FinalizeRequest) (*order.FinalizeResponse, error) {
-		return nil, errors.NewACMEOrderNotReady("test", "order not ready")
+		return nil, cause
 	}
 
 	w := NewWorkflow(mc)
@@ -921,7 +905,13 @@ func TestRequestCertificate_FinalizeError(t *testing.T) {
 	}
 	var finErr *FinalizationError
 	if !unwrapAs(err, &finErr) {
-		t.Errorf("expected FinalizationError, got: %T", err)
+		t.Fatalf("expected FinalizationError, got: %T", err)
+	}
+	if finErr.Unwrap() != cause {
+		t.Error("expected FinalizationError to wrap the finalize error")
+	}
+	if finErr.OrderURL != "https://ca.example.com/acme/order/1" {
+		t.Errorf("unexpected order URL: %s", finErr.OrderURL)
 	}
 }
 
@@ -1173,6 +1163,9 @@ func TestRequestCertificate_ContextCanceled(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for canceled context")
 	}
+	if !errors.IsCanceled(err) {
+		t.Errorf("expected canceled error, got: %v", err)
+	}
 }
 
 func TestRequestCertificate_MultipleDomains(t *testing.T) {
@@ -1385,8 +1378,9 @@ func TestRevokeCertificate_EmptyCertificate(t *testing.T) {
 
 func TestRevokeCertificate_TransportError(t *testing.T) {
 	mc := newMockClient()
+	cause := errors.NewACMEAlreadyRevoked("test", "already revoked")
 	mc.certificateClient.revokeFunc = func(ctx context.Context, req *certificate.RevokeRequest) (*certificate.RevokeResponse, error) {
-		return nil, errors.NewACMEAlreadyRevoked("test", "already revoked")
+		return nil, cause
 	}
 
 	w := NewWorkflow(mc)
@@ -1398,49 +1392,16 @@ func TestRevokeCertificate_TransportError(t *testing.T) {
 	}
 	var revErr *RevocationError
 	if !unwrapAs(err, &revErr) {
-		t.Errorf("expected RevocationError, got: %T", err)
+		t.Fatalf("expected RevocationError, got: %T", err)
+	}
+	if revErr.Unwrap() != cause {
+		t.Error("expected RevocationError to wrap the revoke error")
 	}
 }
 
 // =============================================================================
 // Error Type Tests
 // =============================================================================
-
-func TestErrors_RegistrationError(t *testing.T) {
-	err := NewRegistrationError("test.op", "test message")
-	if err.Error() == "" {
-		t.Error("expected non-empty error string")
-	}
-	if err.Op != "test.op" {
-		t.Errorf("unexpected op: %s", err.Op)
-	}
-}
-
-func TestErrors_WrapRegistrationError(t *testing.T) {
-	cause := errors.NewInternal("inner", "inner error")
-	err := WrapRegistrationError(cause, "test.op", "wrapping")
-	if err.Unwrap() != cause {
-		t.Error("expected wrapped error to match cause")
-	}
-}
-
-func TestErrors_AuthorizationError(t *testing.T) {
-	err := NewAuthorizationError("test.op", "auth failed", "example.com", "https://ca/authz/1")
-	if err.Domain != "example.com" {
-		t.Errorf("unexpected domain: %s", err.Domain)
-	}
-	if err.AuthorizationURL != "https://ca/authz/1" {
-		t.Errorf("unexpected authz URL: %s", err.AuthorizationURL)
-	}
-}
-
-func TestErrors_WrapAuthorizationError(t *testing.T) {
-	cause := errors.NewInternal("inner", "inner error")
-	err := WrapAuthorizationError(cause, "test.op", "wrapping", "example.com", "https://ca/authz/1")
-	if err.Unwrap() != cause {
-		t.Error("expected wrapped error to match cause")
-	}
-}
 
 func TestErrors_ChallengeError(t *testing.T) {
 	err := NewChallengeError("test.op", "challenge failed", "example.com", "http-01", "https://ca/chall/1")
@@ -1452,29 +1413,6 @@ func TestErrors_ChallengeError(t *testing.T) {
 	}
 	if err.ChallengeURL != "https://ca/chall/1" {
 		t.Errorf("unexpected challenge URL: %s", err.ChallengeURL)
-	}
-}
-
-func TestErrors_WrapChallengeError(t *testing.T) {
-	cause := errors.NewInternal("inner", "inner error")
-	err := WrapChallengeError(cause, "test.op", "wrapping", "example.com", "http-01", "https://ca/chall/1")
-	if err.Unwrap() != cause {
-		t.Error("expected wrapped error to match cause")
-	}
-}
-
-func TestErrors_FinalizationError(t *testing.T) {
-	err := NewFinalizationError("test.op", "finalize failed", "https://ca/order/1")
-	if err.OrderURL != "https://ca/order/1" {
-		t.Errorf("unexpected order URL: %s", err.OrderURL)
-	}
-}
-
-func TestErrors_WrapFinalizationError(t *testing.T) {
-	cause := errors.NewInternal("inner", "inner error")
-	err := WrapFinalizationError(cause, "test.op", "wrapping", "https://ca/order/1")
-	if err.Unwrap() != cause {
-		t.Error("expected wrapped error to match cause")
 	}
 }
 
@@ -1498,86 +1436,13 @@ func TestErrors_RevocationError(t *testing.T) {
 	}
 }
 
-func TestErrors_WrapRevocationError(t *testing.T) {
-	cause := errors.NewInternal("inner", "inner error")
-	err := WrapRevocationError(cause, "test.op", "wrapping")
-	if err.Unwrap() != cause {
-		t.Error("expected wrapped error to match cause")
-	}
-}
-
-func TestErrors_NoChallengeError(t *testing.T) {
-	err := NewNoChallengeError("test.op", "example.com", "tls-alpn-01")
-	if err.Domain != "example.com" {
-		t.Errorf("unexpected domain: %s", err.Domain)
-	}
-	if err.RequestedType != "tls-alpn-01" {
-		t.Errorf("unexpected requested type: %s", err.RequestedType)
-	}
-	if !errors.IsNotFound(err.CAError) {
-		t.Error("expected not found error code")
-	}
-}
-
 // =============================================================================
 // ChallengeHandlerFunc Tests
 // =============================================================================
 
-func TestChallengeHandlerFunc_Adapter(t *testing.T) {
-	called := false
-	var handler ChallengeHandler = ChallengeHandlerFunc(func(cType, token, keyAuth, domain string) (func(), error) {
-		called = true
-		if cType != "dns-01" {
-			t.Errorf("unexpected challenge type: %s", cType)
-		}
-		if domain != "example.com" {
-			t.Errorf("unexpected domain: %s", domain)
-		}
-		return func() {}, nil
-	})
-
-	cleanup, err := handler.Setup("dns-01", "token", "keyAuth", "example.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !called {
-		t.Error("expected handler function to be called")
-	}
-	if cleanup == nil {
-		t.Error("expected non-nil cleanup function")
-	}
-}
-
 // =============================================================================
 // Poll Tests
 // =============================================================================
-
-func TestPoll_ImmediateSuccess(t *testing.T) {
-	mc := newMockClient()
-	w := NewWorkflow(mc, WithPollTimeout(5*time.Second), WithPollInterval(10*time.Millisecond))
-	impl := w.(*workflow)
-
-	err := impl.poll(context.Background(), func(ctx context.Context) (bool, error) {
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestPoll_ImmediateError(t *testing.T) {
-	mc := newMockClient()
-	w := NewWorkflow(mc, WithPollTimeout(5*time.Second), WithPollInterval(10*time.Millisecond))
-	impl := w.(*workflow)
-
-	expected := errors.NewInternal("test", "poll error")
-	err := impl.poll(context.Background(), func(ctx context.Context) (bool, error) {
-		return false, expected
-	})
-	if err != expected {
-		t.Errorf("expected poll error, got: %v", err)
-	}
-}
 
 func TestPoll_EventualSuccess(t *testing.T) {
 	mc := newMockClient()
@@ -1594,25 +1459,6 @@ func TestPoll_EventualSuccess(t *testing.T) {
 	}
 	if count < 3 {
 		t.Errorf("expected at least 3 poll attempts, got %d", count)
-	}
-}
-
-func TestPoll_ContextCanceled(t *testing.T) {
-	mc := newMockClient()
-	w := NewWorkflow(mc, WithPollTimeout(5*time.Second), WithPollInterval(10*time.Millisecond))
-	impl := w.(*workflow)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := impl.poll(ctx, func(ctx context.Context) (bool, error) {
-		return false, nil
-	})
-	if err == nil {
-		t.Fatal("expected error for canceled context")
-	}
-	if !errors.IsCanceled(err) {
-		t.Errorf("expected canceled error, got: %v", err)
 	}
 }
 

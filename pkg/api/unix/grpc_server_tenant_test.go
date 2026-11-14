@@ -121,19 +121,3 @@ func TestGRPCServer_TenantInterceptors_WithRegistryPassesThrough(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "healthy", resp.Status)
 }
-
-// TestGRPCServer_TenantInterceptors_NilRegistryPassesThrough proves the Unix
-// listener still serves RPCs when no BarrierRegistry is configured (the
-// default zero value), matching every other transport's "no registry means
-// tenant enforcement disabled" behavior.
-func TestGRPCServer_TenantInterceptors_NilRegistryPassesThrough(t *testing.T) {
-	client, cleanup := startTenantTestGRPCServer(t, nil)
-	defer cleanup()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	resp, err := client.Health(ctx, &pb.HealthRequest{})
-	require.NoError(t, err)
-	require.Equal(t, "healthy", resp.Status)
-}

@@ -42,13 +42,6 @@ func newSealStoreGRPCService(t *testing.T) *Service {
 	return NewService(nil, nil, xkmsSvc)
 }
 
-func TestServiceSealStorePut_Success(t *testing.T) {
-	svc := newSealStoreGRPCService(t)
-	resp, err := svc.SealStorePut(context.Background(), &pb.SealStorePutRequest{Name: "db-password", Secret: []byte("hunter2")})
-	require.NoError(t, err)
-	assert.Equal(t, "db-password", resp.Name)
-}
-
 func TestServiceSealStorePut_MissingName(t *testing.T) {
 	svc := newSealStoreGRPCService(t)
 	_, err := svc.SealStorePut(context.Background(), &pb.SealStorePutRequest{Secret: []byte("x")})
@@ -59,22 +52,6 @@ func TestServiceSealStorePut_Unavailable(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 	_, err := svc.SealStorePut(context.Background(), &pb.SealStorePutRequest{Name: "x", Secret: []byte("y")})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
-func TestServiceSealStoreGet_Success(t *testing.T) {
-	svc := newSealStoreGRPCService(t)
-	_, err := svc.SealStorePut(context.Background(), &pb.SealStorePutRequest{Name: "db-password", Secret: []byte("hunter2")})
-	require.NoError(t, err)
-
-	resp, err := svc.SealStoreGet(context.Background(), &pb.SealStoreGetRequest{Name: "db-password"})
-	require.NoError(t, err)
-	assert.Equal(t, []byte("hunter2"), resp.Secret)
-}
-
-func TestServiceSealStoreGet_NotFound(t *testing.T) {
-	svc := newSealStoreGRPCService(t)
-	_, err := svc.SealStoreGet(context.Background(), &pb.SealStoreGetRequest{Name: "missing"})
-	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestServiceSealStoreGet_MissingName(t *testing.T) {
@@ -111,18 +88,6 @@ func TestServiceSealStoreDelete_Unavailable(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 	_, err := svc.SealStoreDelete(context.Background(), &pb.SealStoreDeleteRequest{Name: "x"})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
-func TestServiceSealStoreList_Success(t *testing.T) {
-	svc := newSealStoreGRPCService(t)
-	_, err := svc.SealStorePut(context.Background(), &pb.SealStorePutRequest{Name: "a", Secret: []byte("1")})
-	require.NoError(t, err)
-	_, err = svc.SealStorePut(context.Background(), &pb.SealStorePutRequest{Name: "b", Secret: []byte("2")})
-	require.NoError(t, err)
-
-	resp, err := svc.SealStoreList(context.Background(), &pb.SealStoreListRequest{})
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"a", "b"}, resp.Names)
 }
 
 func TestServiceSealStoreList_Unavailable(t *testing.T) {

@@ -1,0 +1,1 @@
+Tests: `pkg/api/unix` keeps one test per behaviour (#1794): eleven tests that repeated another test's path and assertions are removed, and the group-writable socket-directory refusal's `Path` field is now asserted through `Start`; coverage stays at 94.2%.

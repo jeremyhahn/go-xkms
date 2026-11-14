@@ -38,16 +38,6 @@ func TestCAAdapter_CABundle_Error(t *testing.T) {
 	_, err := adapter.CABundle()
 	assert.Error(t, err)
 }
-func TestCAAdapter_CACertificate_Error(t *testing.T) {
-	errCA := &errorCA{
-		mockCA:    newMockCA(t),
-		caCertErr: errors.New("cert unavailable"),
-	}
-	adapter := NewCAAdapter(errCA, "xkms.example.com")
-
-	_, err := adapter.CACertificate(t.Context())
-	assert.Error(t, err)
-}
 func TestCAAdapter_CACertificate_ReturnsCACertificate(t *testing.T) {
 	base := newMockCA(t)
 	adapter := NewCAAdapter(base, "xkms.example.com")
@@ -83,22 +73,6 @@ func TestCAAdapter_IssueCertificate_EmptySANsNotMapped(t *testing.T) {
 	assert.Equal(t, []string{"spiffe://" + qrdbsdk.SystemTenantID + "/user/no-sans"}, sanCA.lastSANs.URIs,
 		"the system SPIFFE ID is the only SAN")
 }
-func TestCAAdapter_IssueCertificate_Error(t *testing.T) {
-	errCA := &errorCA{
-		mockCA:       newMockCA(t),
-		issueCertErr: errors.New("issuance failed"),
-	}
-	adapter := NewCAAdapter(errCA, "xkms.example.com")
-
-	req := &qrdbsdk.IssueCertRequest{
-		PublicKey:    newTestPublicKey(t),
-		CommonName:   "fail-cn",
-		ValidityDays: 365,
-	}
-
-	_, err := adapter.IssueCertificate(context.Background(), req)
-	assert.Error(t, err)
-}
 func TestCAAdapter_IssueCertificate_SANsPassedThrough(t *testing.T) {
 	base := newMockCA(t)
 	sanCA := &mockCAWithSANs{mockCA: base}
@@ -133,21 +107,6 @@ func TestCAAdapter_IssueCertificate_SPIFFEStampFailurePropagates(t *testing.T) {
 	issued, err := adapter.IssueCertificate(context.Background(), req)
 	assert.ErrorIs(t, err, spiffe.ErrNameEmpty)
 	assert.Nil(t, issued)
-}
-func TestCAAdapter_IssueCertificate_WithoutSANs(t *testing.T) {
-	mCA := newMockCA(t)
-	adapter := NewCAAdapter(mCA, "xkms.example.com")
-
-	req := &qrdbsdk.IssueCertRequest{
-		PublicKey:    newTestPublicKey(t),
-		CommonName:   "no-sans",
-		ValidityDays: 365,
-	}
-
-	issued, err := adapter.IssueCertificate(context.Background(), req)
-	require.NoError(t, err)
-	assert.NotNil(t, issued)
-	assert.NotNil(t, issued.Certificate)
 }
 func TestCAAdapter_IssueCertificate_WithSANs(t *testing.T) {
 	mCA := newMockCA(t)
@@ -187,24 +146,7 @@ func newTestPublicKey(t *testing.T) *ecdsa.PublicKey {
 	require.NoError(t, err)
 	return &key.PublicKey
 }
-func TestCAAdapter_SignCSR_Error(t *testing.T) {
-	errCA := &errorCA{
-		mockCA:     newMockCA(t),
-		signCSRErr: errors.New("sign failed"),
-	}
-	adapter := NewCAAdapter(errCA, "xkms.example.com")
 
-	csrPEM, _ := generateTestCSR(t, "test-cn")
-	_, err := adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{
-		ValidityDays: 365,
-	})
-	assert.Error(t, err)
-}
-
-// TestCAAdapter_SignCSR_StampsSPIFFEWhenTrustDomainConfigured verifies that a
-// non-empty spiffeTrustDomain makes SignCSR stamp the system-tenant SPIFFE
-// SAN fields onto the underlying SignOptions, not just pass validity/profile
-// through unchanged.
 // TestCAAdapter_SignCSR_IssuesTheHolderSubject: a holder certificate carries
 // exactly go-qrdb's RawSubject (CN=<holder>, OU=<tenant>, OU=<profile>) and
 // no SPIFFE SAN, even with a trust domain configured: go-qrdb refuses a

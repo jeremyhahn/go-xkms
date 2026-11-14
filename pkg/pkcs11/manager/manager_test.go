@@ -16,7 +16,6 @@ package manager
 import (
 	"log/slog"
 	"os"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,24 +37,6 @@ func TestModuleState_String(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.state.String())
-		})
-	}
-}
-
-func TestConnectionID(t *testing.T) {
-	tests := []struct {
-		moduleID string
-		slotID   uint
-		want     string
-	}{
-		{"pkcs11-softhsm", 0, "pkcs11-softhsm:0"},
-		{"pkcs11-softhsm", 1, "pkcs11-softhsm:1"},
-		{"pkcs11-ykcs11", 42, "pkcs11-ykcs11:42"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			assert.Equal(t, tt.want, connectionID(tt.moduleID, tt.slotID))
 		})
 	}
 }
@@ -89,23 +70,6 @@ func TestDeriveModuleID(t *testing.T) {
 	}
 }
 
-func TestProbeModulePaths(t *testing.T) {
-	// This test just verifies the function doesn't panic
-	// Actual results depend on the system
-	paths := ProbeModulePaths()
-	t.Logf("Found %d PKCS#11 modules on %s", len(paths), runtime.GOOS)
-}
-
-func TestProbeModulesWithNames(t *testing.T) {
-	// This test just verifies the function doesn't panic
-	modules := ProbeModulesWithNames()
-	t.Logf("Found %d PKCS#11 modules with names", len(modules))
-
-	for _, m := range modules {
-		t.Logf("  %s: %s", m.DisplayName, m.LibraryPath)
-	}
-}
-
 func TestCommonModulePaths_AllPlatformsHaveEntries(t *testing.T) {
 	// Verify that common platforms have module paths defined
 	for _, platform := range []string{"linux", "darwin", "windows"} {
@@ -133,19 +97,6 @@ func TestSuggestModuleName(t *testing.T) {
 			assert.Equal(t, tt.want, suggestModuleName(tt.path))
 		})
 	}
-}
-
-func TestFileExists(t *testing.T) {
-	// Create a temp file
-	f, err := os.CreateTemp("", "pkcs11-test-*")
-	require.NoError(t, err)
-	tempPath := f.Name()
-	_ = f.Close()
-	defer func() { _ = os.Remove(tempPath) }()
-
-	assert.True(t, fileExists(tempPath), "temp file should exist")
-	assert.False(t, fileExists("/nonexistent/path/to/file.so"), "nonexistent path should not exist")
-	assert.False(t, fileExists(os.TempDir()), "directory should not pass fileExists")
 }
 
 func TestWithLogger(t *testing.T) {
@@ -219,69 +170,6 @@ func TestNew_StubImplementation(t *testing.T) {
 	// Close should always succeed
 	err := mgr.Close()
 	assert.NoError(t, err)
-}
-
-func TestSlotInfo_Fields(t *testing.T) {
-	slot := SlotInfo{
-		SlotID:          0,
-		Label:           "Test Token",
-		Serial:          "ABC123",
-		Manufacturer:    "Test Manufacturer",
-		Model:           "Test Model",
-		TokenPresent:    true,
-		Initialized:     true,
-		HardwareVersion: "1.0",
-		FirmwareVersion: "2.0",
-	}
-
-	assert.Equal(t, uint(0), slot.SlotID)
-	assert.Equal(t, "Test Token", slot.Label)
-	assert.Equal(t, "ABC123", slot.Serial)
-	assert.Equal(t, "Test Manufacturer", slot.Manufacturer)
-	assert.Equal(t, "Test Model", slot.Model)
-	assert.True(t, slot.TokenPresent)
-	assert.True(t, slot.Initialized)
-	assert.Equal(t, "1.0", slot.HardwareVersion)
-	assert.Equal(t, "2.0", slot.FirmwareVersion)
-}
-
-func TestModuleInfo_Fields(t *testing.T) {
-	mod := ModuleInfo{
-		ID:          "pkcs11-softhsm",
-		DisplayName: "SoftHSM2",
-		LibraryPath: "/usr/lib/softhsm/libsofthsm2.so",
-		State:       ModuleStateLoaded,
-		Slots:       []SlotInfo{{SlotID: 0}},
-		ErrorMsg:    "",
-	}
-
-	assert.Equal(t, "pkcs11-softhsm", mod.ID)
-	assert.Equal(t, "SoftHSM2", mod.DisplayName)
-	assert.Equal(t, "/usr/lib/softhsm/libsofthsm2.so", mod.LibraryPath)
-	assert.Equal(t, ModuleStateLoaded, mod.State)
-	assert.Len(t, mod.Slots, 1)
-	assert.Empty(t, mod.ErrorMsg)
-}
-
-func TestTokenInfo_Fields(t *testing.T) {
-	token := TokenInfo{
-		ModuleID:     "pkcs11-softhsm",
-		ModuleName:   "SoftHSM2",
-		SlotID:       0,
-		Label:        "Test Token",
-		Manufacturer: "Test",
-		Model:        "Test",
-		Serial:       "ABC123",
-		Initialized:  true,
-		Connected:    false,
-	}
-
-	assert.Equal(t, "pkcs11-softhsm", token.ModuleID)
-	assert.Equal(t, "SoftHSM2", token.ModuleName)
-	assert.Equal(t, uint(0), token.SlotID)
-	assert.Equal(t, "Test Token", token.Label)
-	assert.True(t, token.Initialized)
-	assert.False(t, token.Connected)
 }
 
 func TestErrors(t *testing.T) {

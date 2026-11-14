@@ -1,0 +1,1 @@
+acme: the `dns-01/providers/route53` tests test each behaviour by one path (#1794): duplicated zone-discovery, registration, factory-refusal, config-validation, `NewFromEnv`, `loadAWSConfig`, TTL, cleanup-discovery and wait-for-change tests, compile-time interface tautologies and an assertion-free timeout test are removed; coverage stays at 96.5%.

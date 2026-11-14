@@ -27,11 +27,15 @@ func init() {
 // importing this package directly (which would cycle, since this package
 // already imports pkg/escrow).
 func newKMIPAgentFromConfig(cfg *escrow.AgentConfig) (escrow.EscrowAgent, error) {
-	return NewKMIPAgent(&KMIPConfig{
+	agent, err := NewKMIPAgent(&KMIPConfig{
 		Endpoint:   cfg.Endpoint,
 		ClientCert: cfg.ClientCert,
 		ClientKey:  cfg.ClientKey,
 		CACert:     cfg.CACert,
 		Timeout:    cfg.Timeout,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return agent, nil
 }

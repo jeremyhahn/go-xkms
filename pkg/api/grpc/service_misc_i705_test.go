@@ -51,17 +51,6 @@ func newSystemPasswordGRPCService(t *testing.T) *Service {
 	return NewService(nil, nil, xkmsSvc)
 }
 
-func TestServicePasswordStoreUnlock_SystemStoreUnsupported(t *testing.T) {
-	// The system-level store has no unlock session (only tenant stores do);
-	// this pins that this is reported as Unimplemented, not silently ignored
-	// or confused with a credential failure.
-	svc := newSystemPasswordGRPCService(t)
-	_, err := svc.PasswordStoreUnlock(context.Background(), &pb.PasswordStoreUnlockRequest{
-		Credential: &pb.PasswordVaultCredential{Factor: "passphrase", Passphrase: "correct horse battery"},
-	})
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
 func TestServicePasswordStoreLock_SystemStoreUnsupported(t *testing.T) {
 	svc := newSystemPasswordGRPCService(t)
 	_, err := svc.PasswordStoreLock(context.Background(), &pb.PasswordStoreLockRequest{})

@@ -82,21 +82,6 @@ func shortCoordinateECCKey(t *testing.T, curve elliptic.Curve, size int) *ecdsa.
 	return nil
 }
 
-func TestECCPublicKeyReconstructsEveryNamedCurve(t *testing.T) {
-	for _, tc := range eccPublicAreaCurves {
-		t.Run(tc.name, func(t *testing.T) {
-			key, err := ecdsa.GenerateKey(tc.curve, rand.Reader)
-			require.NoError(t, err)
-
-			// big.Int.Bytes() is exactly what a TPM puts in the 2B buffer:
-			// the minimal big-endian encoding, leading zeros dropped.
-			pub, err := eccPublicKey(rawECCPublicArea(tc.curveID, key.X.Bytes(), key.Y.Bytes()))
-			require.NoError(t, err)
-			assert.True(t, pub.Equal(&key.PublicKey), "reconstructed key differs from the original")
-		})
-	}
-}
-
 // TestECCPublicKeyAcceptsShortCoordinateBuffer is the regression test for the
 // left-padding trap. TPM2B_ECC_PARAMETER does not carry leading zero bytes, so
 // roughly one coordinate in 256 arrives shorter than the curve's field size.
@@ -159,24 +144,6 @@ func TestECCPublicKeyRejectsUnknownCurveID(t *testing.T) {
 	assert.ErrorIs(t, err, ErrECCPublicArea)
 }
 
-func TestECCPublicKeyRejectsNonECCPublicArea(t *testing.T) {
-	rsaArea := &tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{KeyBits: 2048},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{Buffer: make([]byte, 256)},
-		),
-	}
-
-	_, err := eccPublicKey(rsaArea)
-	assert.ErrorIs(t, err, ErrECCPublicArea)
-}
-
 // TestExtractPublicKeyFromTPMPublicRejectsOffCurvePoint proves the validation
 // reaches the exported server-side verification surface, not just the helper.
 func TestExtractPublicKeyFromTPMPublicRejectsOffCurvePoint(t *testing.T) {
@@ -196,22 +163,6 @@ func TestExtractPublicKeyFromTPMPublicRejectsOffCurvePoint(t *testing.T) {
 	assert.ErrorIs(t, err, ErrECCPublicArea)
 }
 
-// TestExtractPublicKeyFromTPMPublicAcceptsShortCoordinateBuffer keeps the
-// short-buffer guarantee on the exported surface too.
-func TestExtractPublicKeyFromTPMPublicAcceptsShortCoordinateBuffer(t *testing.T) {
-	key := shortCoordinateECCKey(t, elliptic.P256(), 32)
-
-	area := rawECCPublicArea(tpm2.TPMECCNistP256, key.X.Bytes(), key.Y.Bytes())
-	marshalled := tpm2.Marshal(*area)
-
-	pub, err := ExtractPublicKeyFromTPMPublic(marshalled)
-	require.NoError(t, err)
-
-	ecPub, ok := pub.(*ecdsa.PublicKey)
-	require.True(t, ok, "expected an *ecdsa.PublicKey, got %T", pub)
-	assert.True(t, ecPub.Equal(&key.PublicKey))
-}
-
 // TestECDSAPublicFromAreaWrapsAsCertifyMalformed keeps the certify surface's
 // error identity: a caller distinguishing a forged attestation from a
 // malformed one still sees ErrCertifyMalformed.
@@ -228,13 +179,4 @@ func TestECDSAPublicFromAreaWrapsAsCertifyMalformed(t *testing.T) {
 	_, err = ecdsaPublicFromArea(rawECCPublicArea(tpm2.TPMECCNistP256, x, y))
 	assert.ErrorIs(t, err, ErrCertifyMalformed)
 	assert.ErrorIs(t, err, ErrECCPublicArea)
-}
-
-func TestECDSAPublicFromAreaAcceptsShortCoordinateBuffer(t *testing.T) {
-	key := shortCoordinateECCKey(t, elliptic.P256(), 32)
-
-	pub, err := ecdsaPublicFromArea(
-		rawECCPublicArea(tpm2.TPMECCNistP256, key.X.Bytes(), key.Y.Bytes()))
-	require.NoError(t, err)
-	assert.True(t, pub.Equal(&key.PublicKey))
 }

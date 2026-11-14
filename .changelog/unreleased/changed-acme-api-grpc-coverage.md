@@ -1,0 +1,1 @@
+- `pkg/acme/api/grpc`: tests now cover the Unix-socket and TLS dial paths of `NewAdapter` and their refusals, the account operations, user-ID conversion errors and the REST-only refusals, raising the package over the 90% coverage floor (#1794).

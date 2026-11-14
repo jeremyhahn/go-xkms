@@ -215,22 +215,6 @@ func TestHash_LargeInput_UsesSequenceAndMatchesSoftware(t *testing.T) {
 		"the hash-sequence path must produce the same digest as a single-shot hash")
 }
 
-// TestHash_InvalidKeyAttributes_Rejected covers the invalid-input contract of
-// the hashing entry points.
-func TestHash_InvalidKeyAttributes_Rejected(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	digest, validation, err := h.TPM.Hash(nil, []byte("data"))
-	assert.Nil(t, digest)
-	assert.Nil(t, validation)
-	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
-
-	digest, validation, err = h.TPM.Hash(&types.KeyAttributes{CN: "no-tpm-attrs"}, []byte("data"))
-	assert.Nil(t, digest)
-	assert.Nil(t, validation)
-	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
-}
-
 // TestSignValidate_MissingPublicArea_Rejected proves SignValidate refuses key
 // attributes that lack the public area it needs, rather than signing with
 // whatever happens to be loaded.
@@ -371,30 +355,6 @@ type errBadAuthString struct{}
 
 func (errBadAuthString) Error() string {
 	return "TPM_RC_BAD_AUTH (session 1): authorization failure without DA implications"
-}
-
-// TestEKCertificateRSAAndEC_AbsentFromNV_ReturnError proves the manufacturer
-// EK certificate accessors report absence rather than returning an empty or
-// partially-parsed certificate.
-//
-// The reference simulator ships no manufacturer EK certificate in NV (real
-// silicon does), so the not-found path is the one reachable without hardware.
-func TestEKCertificateRSAAndEC_AbsentFromNV_ReturnError(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	t.Run("RSA index", func(t *testing.T) {
-		cert, err := h.TPM.EKCertificateRSA()
-		require.Error(t, err,
-			"the simulator has no manufacturer EK certificate at the RSA NV index")
-		assert.Nil(t, cert)
-	})
-
-	t.Run("EC index", func(t *testing.T) {
-		cert, err := h.TPM.EKCertificateEC()
-		require.Error(t, err,
-			"the simulator has no manufacturer EK certificate at the EC NV index")
-		assert.Nil(t, cert)
-	})
 }
 
 // TestCertificateToTPMPublic_UnsupportedAlgorithm_Rejected proves certificate

@@ -67,11 +67,30 @@ func TestStore_CRUD(t *testing.T) {
 		t.Fatalf("update not persisted: %+v", reread)
 	}
 
-	if err := st.Delete("prod-web"); err != nil {
-		t.Fatalf("Delete: %v", err)
+	// Rename regenerates the ID; the old name no longer resolves.
+	oldID := reread.ID
+	reread.Name = "prod-api"
+	if err := st.Update(reread); err != nil {
+		t.Fatalf("Update(rename): %v", err)
+	}
+	if reread.ID == oldID {
+		t.Fatalf("ID should regenerate on rename")
 	}
 	if _, err := st.Get("prod-web"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old name still resolves: %v", err)
+	}
+
+	if err := st.Delete("prod-api"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := st.Get("prod-api"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+	if err := st.Delete("prod-api"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete(missing): expected ErrNotFound, got %v", err)
+	}
+	if err := st.Update(reread); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Update(missing): expected ErrNotFound, got %v", err)
 	}
 }
 
@@ -138,7 +157,7 @@ func TestStore_Folders(t *testing.T) {
 		{Name: "a", FolderPath: "work", Host: "a"},
 		{Name: "b", FolderPath: "work/prod", Host: "b"},
 		{Name: "c", FolderPath: "work/prod/db", Host: "c"},
-		{Name: "d", FolderPath: "personal", Host: "d"},
+		{Name: "d", FolderPath: "personal/home", Host: "d"},
 	}
 	for _, p := range seed {
 		if err := st.Add(p); err != nil {
@@ -146,15 +165,16 @@ func TestStore_Folders(t *testing.T) {
 		}
 	}
 	// Empty marker folder persists.
-	if err := st.CreateFolder("work/empty"); err != nil {
+	if err := st.CreateFolder("work/prod/empty"); err != nil {
 		t.Fatalf("CreateFolder: %v", err)
 	}
 
+	// Ancestors of a profile's folder ("personal") are listed too.
 	folders, err := st.ListFolders()
 	if err != nil {
 		t.Fatalf("ListFolders: %v", err)
 	}
-	want := map[string]bool{"work": true, "work/prod": true, "work/prod/db": true, "personal": true, "work/empty": true}
+	want := map[string]bool{"work": true, "work/prod": true, "work/prod/db": true, "personal": true, "personal/home": true, "work/prod/empty": true}
 	for _, f := range folders {
 		delete(want, f)
 	}
@@ -173,6 +193,9 @@ func TestStore_Folders(t *testing.T) {
 	}
 
 	// Move.
+	if err := st.MoveToFolder("d", "personal/home"); !errors.Is(err, ErrMoveToSameFolder) {
+		t.Fatalf("MoveToFolder(same): expected ErrMoveToSameFolder, got %v", err)
+	}
 	if err := st.MoveToFolder("d", "archived"); err != nil {
 		t.Fatalf("MoveToFolder: %v", err)
 	}
@@ -180,15 +203,18 @@ func TestStore_Folders(t *testing.T) {
 	if moved.FolderPath != "archived" {
 		t.Fatalf("move failed: %+v", moved)
 	}
+	if err := st.MoveToFolder("does-not-exist", "c"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("MoveToFolder(missing): expected ErrNotFound, got %v", err)
+	}
 
-	// Rename subtree.
+	// Rename subtree: entries and markers both move.
 	if err := st.RenameFolder("work/prod", "work/production"); err != nil {
 		t.Fatalf("RenameFolder: %v", err)
 	}
-	if _, err := st.ListByFolder("work/production"); err != nil {
+	renamed, err := st.ListByFolder("work/production")
+	if err != nil {
 		t.Fatalf("ListByFolder after rename: %v", err)
 	}
-	renamed, _ := st.ListByFolder("work/production")
 	if len(renamed) != 2 {
 		t.Fatalf("rename subtree expected 2 entries, got %d", len(renamed))
 	}
@@ -197,14 +223,22 @@ func TestStore_Folders(t *testing.T) {
 			t.Fatalf("entry not renamed: %+v", p)
 		}
 	}
+	folders, _ = st.ListFolders()
+	if contains(folders, "work/prod") || contains(folders, "work/prod/empty") || !contains(folders, "work/production/empty") {
+		t.Fatalf("markers not renamed: %v", folders)
+	}
 
-	// Delete folder subtree.
+	// Delete folder subtree: entries and markers both gone.
 	if err := st.DeleteFolder("work/production"); err != nil {
 		t.Fatalf("DeleteFolder: %v", err)
 	}
 	left, _ := st.ListByFolder("work/production")
 	if len(left) != 0 {
 		t.Fatalf("DeleteFolder left %d entries", len(left))
+	}
+	folders, _ = st.ListFolders()
+	if contains(folders, "work/production") || contains(folders, "work/production/empty") {
+		t.Fatalf("markers survived DeleteFolder: %v", folders)
 	}
 }
 
@@ -220,7 +254,7 @@ func TestStore_Search(t *testing.T) {
 	if len(res) != 1 || res[0].Name != "bastion" {
 		t.Fatalf("Search(example) = %+v", res)
 	}
-	if all, _ := st.Search(""); len(all) != 2 {
+	if all, _ := st.Search("   "); len(all) != 2 {
 		t.Fatalf("empty search should return all, got %d", len(all))
 	}
 }

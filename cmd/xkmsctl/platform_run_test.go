@@ -30,36 +30,6 @@ import (
 
 var errPlatformRunBoom = errors.New("boom")
 
-func TestPlatformPutCmd_Success(t *testing.T) {
-	resetCmdFlags(t, platformPutCmd)
-	t.Cleanup(func() { resetCmdFlags(t, platformPutCmd) })
-	mock := &mockPlatformClient{}
-	withGlobalConfig(t, newPlatformConfig(mock))
-	_ = platformPutCmd.Flags().Set("value", "s3cret")
-
-	captureStdout(t, func() {
-		platformPutCmd.Run(platformPutCmd, []string{"db-password"})
-	})
-	if mock.gotPutReq == nil || mock.gotPutReq.Name != "db-password" ||
-		string(mock.gotPutReq.Secret) != "s3cret" {
-		t.Errorf("SealStorePut request mismatch: %+v", mock.gotPutReq)
-	}
-}
-
-func TestPlatformPutCmd_Error(t *testing.T) {
-	resetCmdFlags(t, platformPutCmd)
-	t.Cleanup(func() { resetCmdFlags(t, platformPutCmd) })
-	withGlobalConfig(t, newPlatformConfig(&mockPlatformClient{putErr: errPlatformRunBoom}))
-	_ = platformPutCmd.Flags().Set("value", "s3cret")
-
-	code := captureExit(t, func() {
-		platformPutCmd.Run(platformPutCmd, []string{"db-password"})
-	})
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-}
-
 // TestPlatformPutCmd_WipesSecret checks the secret buffer handed to the
 // client is zeroed after put, on success and on the error path (#623).
 func TestPlatformPutCmd_WipesSecret(t *testing.T) {

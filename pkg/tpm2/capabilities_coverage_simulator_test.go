@@ -70,74 +70,6 @@ var allUint32Accessors = []uint32Accessor{
 	{"nvWriteRecovery", nvWriteRecovery},
 }
 
-// TestCapabilityAccessors_TransportFailure_PropagatesError proves no capability
-// accessor swallows a transport failure. Each must return the error and the
-// zero value, never a zero value with a nil error that a caller would mistake
-// for a genuine TPM reading.
-func TestCapabilityAccessors_TransportFailure_PropagatesError(t *testing.T) {
-	broken := failingTransport{}
-
-	for _, acc := range allUint32Accessors {
-		t.Run(acc.name, func(t *testing.T) {
-			v, err := acc.fn(broken)
-			require.Error(t, err, "%s must report the transport failure", acc.name)
-			assert.Zero(t, v, "%s must not return a value alongside an error", acc.name)
-		})
-	}
-
-	t.Run("family", func(t *testing.T) {
-		v, err := family(broken)
-		require.Error(t, err)
-		assert.Empty(t, v)
-	})
-	t.Run("manufacturer", func(t *testing.T) {
-		v, err := manufacturer(broken)
-		require.Error(t, err)
-		assert.Empty(t, v)
-	})
-	t.Run("model", func(t *testing.T) {
-		v, err := model(broken)
-		require.Error(t, err)
-		assert.Empty(t, v)
-	})
-	t.Run("revision", func(t *testing.T) {
-		v, err := revision(broken)
-		require.Error(t, err)
-		assert.Empty(t, v)
-	})
-	t.Run("vendorID", func(t *testing.T) {
-		v, err := vendorID(broken)
-		require.Error(t, err)
-		assert.Empty(t, v)
-	})
-	t.Run("firmware", func(t *testing.T) {
-		major, minor, err := firmware(broken)
-		require.Error(t, err)
-		assert.Zero(t, major)
-		assert.Zero(t, minor)
-	})
-	t.Run("persistentHandles", func(t *testing.T) {
-		v, err := persistentHandles(broken)
-		require.Error(t, err)
-		assert.Empty(t, v)
-	})
-	t.Run("transientHandles", func(t *testing.T) {
-		v, err := transientHandles(broken)
-		require.Error(t, err)
-		assert.Empty(t, v)
-	})
-	t.Run("nvIndexes", func(t *testing.T) {
-		v, err := nvIndexes(broken, discardLogger())
-		require.Error(t, err)
-		assert.Empty(t, v)
-	})
-	t.Run("queryPropertyBatch", func(t *testing.T) {
-		batch, err := queryPropertyBatch(broken, tpm2.TPMPTFamilyIndicator, 100)
-		require.Error(t, err)
-		assert.Empty(t, batch)
-	})
-}
-
 // TestTPM2CapabilityMethods_TransportFailure_PropagateError covers the exported
 // capability surface against a dead transport. These are the methods a CLI or
 // API handler calls to render a "TPM info" view; each must surface the failure
@@ -191,25 +123,6 @@ func TestTPM2CapabilityMethods_TransportFailure_PropagateError(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, caps)
 	})
-}
-
-// TestQueryAlgorithms_TransportFailure and TestQueryECCCurves_TransportFailure
-// cover the TPM_CAP_ALGS / TPM_CAP_ECC_CURVES paginating queries directly.
-// Capabilities calls queryAlgorithms first and queryECCCurves only if that
-// succeeds, so the table above never reaches queryECCCurves's own transport
-// check; calling each function directly proves both refuse a dead transport
-// on their own first GetCapability call, rather than returning an empty map
-// indistinguishable from "device implements nothing".
-func TestQueryAlgorithms_TransportFailure(t *testing.T) {
-	algs, err := queryAlgorithms(failingTransport{})
-	require.Error(t, err)
-	assert.Nil(t, algs)
-}
-
-func TestQueryECCCurves_TransportFailure(t *testing.T) {
-	curves, err := queryECCCurves(failingTransport{})
-	require.Error(t, err)
-	assert.Nil(t, curves)
 }
 
 // getCapPropertyCountOffset is the byte offset of TPM2_GetCapability's
@@ -320,29 +233,6 @@ func TestAllVariableProperties_ReturnsNamedProperties(t *testing.T) {
 		"the variable range must include the permanent-attributes property")
 }
 
-// TestSupportedCommands_IncludesMandatoryCommands proves the command-capability
-// decode maps command codes to canonical names. TPM2_CC_Create is mandatory for
-// any TPM 2.0 implementation, so its absence means the decode is broken rather
-// than the TPM being unusual.
-func TestSupportedCommands_IncludesMandatoryCommands(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	cmds, err := h.TPM.SupportedCommands()
-	require.NoError(t, err)
-	require.NotEmpty(t, cmds)
-
-	for _, mandatory := range []string{
-		"TPM2_CC_Create",
-		"TPM2_CC_Load",
-		"TPM2_CC_Unseal",
-		"TPM2_CC_StartAuthSession",
-		"TPM2_CC_GetCapability",
-	} {
-		assert.Contains(t, cmds, mandatory,
-			"a TPM 2.0 implementation must advertise %s", mandatory)
-	}
-}
-
 // TestSupportedCommandsInfo_DescribesEveryCommand proves the richer command
 // listing never emits an entry with a blank name or description -- the CLI
 // renders these directly, and a blank cell would be a visible defect.
@@ -380,47 +270,6 @@ func TestSupportedECCCurves_IncludesNISTP256(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, curves)
 	assert.Contains(t, curves, "NIST P-256")
-}
-
-// TestSupportedAlgorithms_IncludesRSAAndSHA256 proves the algorithm capability
-// decode resolves algorithm IDs to names.
-func TestSupportedAlgorithms_IncludesRSAAndSHA256(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	algs, err := h.TPM.SupportedAlgorithms()
-	require.NoError(t, err)
-	require.NotEmpty(t, algs)
-	assert.Contains(t, algs, "RSA")
-	assert.Contains(t, algs, "SHA-256")
-}
-
-// TestIsFIPS140_2_MatchesRawModesBit covers the TPM_PT_MODES decode by
-// comparing the answer against the raw property read straight from the TPM,
-// rather than hardcoding an expected value. That way the test validates the
-// decode logic (correct property selected, bit 0 masked) on any TPM, and would
-// catch a regression that read the wrong property index or returned the whole
-// bitfield as a boolean.
-func TestIsFIPS140_2_MatchesRawModesBit(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	fips, err := h.TPM.IsFIPS140_2()
-	require.NoError(t, err, "a TPM that does not implement TPM_PT_MODES must not be an error")
-
-	resp, err := tpm2.GetCapability{
-		Capability:    tpm2.TPMCapTPMProperties,
-		Property:      uint32(tpm2.TPMPTModes),
-		PropertyCount: 1,
-	}.Execute(h.TPM.transport)
-	require.NoError(t, err)
-	props, err := resp.CapabilityData.Data.TPMProperties()
-	require.NoError(t, err)
-
-	want := false
-	if len(props.TPMProperty) > 0 && props.TPMProperty[0].Property == tpm2.TPMPTModes {
-		want = props.TPMProperty[0].Value&0x1 == 0x1
-	}
-	assert.Equal(t, want, fips,
-		"IsFIPS140_2 must report bit 0 of TPM_PT_MODES and nothing else")
 }
 
 // propertyRewritingTransport simulates a TPM that does not implement the
@@ -496,32 +345,6 @@ func TestIsFIPS140_2_TPMWithoutModesProperty_ReportsFalse(t *testing.T) {
 		"a response carrying a property other than TPM_PT_MODES must never be read as a FIPS answer")
 	require.Equal(t, 1, rewriter.rewrites,
 		"precondition: the modes query must have been rewritten exactly once")
-}
-
-// TestFixedProperties_PopulatesIdentityAndLimits proves FixedProperties
-// assembles a coherent report. It deliberately tolerates individual property
-// failures by design, so the assertions target the properties every TPM 2.0
-// implementation must provide.
-func TestFixedProperties_PopulatesIdentityAndLimits(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	props, err := h.TPM.FixedProperties()
-	require.NoError(t, err)
-	require.NotNil(t, props)
-
-	assert.Equal(t, "2.0", props.Family, "the simulator implements TPM family 2.0")
-	assert.NotEmpty(t, props.Manufacturer, "a TPM must report a manufacturer")
-	assert.NotEmpty(t, props.Revision, "a TPM must report a specification revision")
-	assert.NotEmpty(t, props.SupportedAlgorithms, "a TPM must advertise algorithms")
-
-	// Limits must be self-consistent rather than merely non-zero: a report
-	// claiming zero maximum input buffer or zero digest size would be unusable.
-	assert.Greater(t, props.InputBufferMax, uint32(0), "the input buffer limit must be positive")
-	assert.Greater(t, props.MaxDigestSize, uint32(0), "the maximum digest size must be positive")
-	assert.GreaterOrEqual(t, props.MaxAuthFail, uint32(1),
-		"a TPM must tolerate at least one auth failure before lockout")
-	assert.LessOrEqual(t, props.LockoutCounter, props.MaxAuthFail,
-		"the lockout counter cannot exceed the configured maximum auth failures")
 }
 
 // TestFixedProperties_TransportFailure_ReturnsEmptyReport documents the

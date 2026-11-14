@@ -1,0 +1,1 @@
+- **Tests: `pkg/backend` audit** — tests that repeat `pkg/types`' own capability, AEADOptions and sentinel tests, or only set and read struct fields, are removed; each kept behaviour has one test (#1794).

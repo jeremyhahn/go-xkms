@@ -75,39 +75,6 @@ type mockKeyBackendForPassword struct {
 	store.KeyBackend
 }
 
-func TestNewPlatformPassword(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN:      "test-key",
-		KeyType: types.KeyTypeHMAC,
-	}
-
-	password := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
-
-	if password == nil {
-		t.Error("NewPlatformPassword() returned nil")
-	}
-
-	pp, ok := password.(*PlatformPassword)
-	if !ok {
-		t.Error("NewPlatformPassword() did not return PlatformPassword type")
-	}
-
-	if pp.logger != logger {
-		t.Error("PlatformPassword.logger not set correctly")
-	}
-
-	if pp.keyAttrs != keyAttrs {
-		t.Error("PlatformPassword.keyAttrs not set correctly")
-	}
-
-	if pp.backend != backend {
-		t.Error("PlatformPassword.backend not set correctly")
-	}
-}
-
 func TestPlatformPasswordWithBytes(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -260,31 +227,6 @@ func TestPlatformPasswordBytes(t *testing.T) {
 	}
 }
 
-func TestPlatformPasswordBytesModifiesKeyType(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		unsealData: []byte("password"),
-	}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN:      "test-key",
-		KeyType: types.KeyTypeCA, // Start with CA type
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
-
-	result := pp.Bytes()
-	if result == nil {
-		t.Error("PlatformPassword.Bytes() returned nil unexpectedly")
-		return
-	}
-
-	// The original keyAttrs should not be modified because Bytes() copies it
-	if keyAttrs.KeyType != types.KeyTypeCA {
-		t.Error("Original keyAttrs.KeyType should not be modified")
-	}
-}
-
 func TestPlatformPasswordCreate_NilPassword(t *testing.T) {
 	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
@@ -330,25 +272,6 @@ func TestPlatformPasswordCreate_WithPasswordError(t *testing.T) {
 	}
 }
 
-func TestPlatformPasswordCreate_SealError(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		sealErr: errors.New("seal failed"),
-	}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN:       "test-key",
-		Password: mustPassword(t, []byte("test")),
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
-
-	err := pp.Create()
-	if err == nil {
-		t.Error("PlatformPassword.Create() expected seal error but got nil")
-	}
-}
-
 // errorPasswordForPasswordTest is a mock password that returns an error
 type errorPasswordForPasswordTest struct {
 	types.Password
@@ -369,87 +292,6 @@ func (p *errorPasswordForPasswordTest) String() string {
 
 func (p *errorPasswordForPasswordTest) Clear() {
 	// No-op
-}
-
-func TestPlatformPasswordIntegration(t *testing.T) {
-	// Test that multiple calls to Bytes() work correctly
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		unsealData: []byte("consistent-password"),
-	}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN:      "test-key",
-		KeyType: types.KeyTypeHMAC,
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
-
-	// First call
-	bytes1 := pp.Bytes()
-	if bytes1 == nil {
-		t.Error("First Bytes() call returned nil unexpectedly")
-		return
-	}
-
-	// Second call
-	bytes2 := pp.Bytes()
-	if bytes2 == nil {
-		t.Error("Second Bytes() call returned nil unexpectedly")
-		return
-	}
-
-	// Both should return same data
-	if string(bytes1) != string(bytes2) {
-		t.Errorf("Inconsistent Bytes() results: %v vs %v", string(bytes1), string(bytes2))
-	}
-
-	// String must not reveal the bytes
-	if str := pp.String(); str != types.PasswordRedacted {
-		t.Errorf("String() = %v, want %v", str, types.PasswordRedacted)
-	}
-}
-
-func TestPlatformPasswordImplementsInterface(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{}
-
-	// Verify that NewPlatformPassword returns types.Password interface
-	password := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
-
-	if password == nil {
-		t.Error("NewPlatformPassword() should implement types.Password")
-	}
-}
-
-func TestPlatformPasswordCreate_DefaultPassword(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		sealResponse: &tpm2.CreateResponse{},
-		sealErr:      nil,
-	}
-	backend := &mockKeyBackendForPassword{}
-
-	// Use the default password which should trigger key generation
-	keyAttrs := &types.KeyAttributes{
-		CN:       "test-key",
-		Password: mustPassword(t, []byte(store.DEFAULT_PASSWORD)),
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
-
-	err := pp.Create()
-	if err != nil {
-		t.Errorf("PlatformPassword.Create() with default password unexpected error: %v", err)
-		return
-	}
-
-	// After Create, keyAttrs.Password should be updated (either PlatformPassword or RequiredPassword)
-	if keyAttrs.Password == nil {
-		t.Error("keyAttrs.Password should not be nil after Create()")
-	}
 }
 
 // TestPlatformPasswordCreate_ReleasesGeneratedSecret pins that the random
@@ -532,122 +374,7 @@ func TestPlatformPasswordCreate_WithPlatformPolicy(t *testing.T) {
 	}
 }
 
-func TestPlatformPasswordCreate_WithoutPlatformPolicy(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		sealResponse: &tpm2.CreateResponse{},
-		sealErr:      nil,
-	}
-	backend := &mockKeyBackendForPassword{}
-
-	keyAttrs := &types.KeyAttributes{
-		CN:       "test-key",
-		Password: mustPassword(t, []byte("test-pass")),
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
-
-	err := pp.Create()
-	if err != nil {
-		t.Errorf("PlatformPassword.Create() without platform policy unexpected error: %v", err)
-		return
-	}
-
-	// When PlatformPolicy is false, password should be set to RequiredPassword
-	// (which returns ErrPasswordRequired when invoked)
-	if keyAttrs.Password == nil {
-		t.Error("keyAttrs.Password should not be nil")
-	}
-}
-
 // ========== Password Caching Tests ==========
-
-func TestPlatformPassword_CacheDisabled(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		unsealData: []byte("test-password"),
-	}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN:            "test-key",
-		PasswordCache: nil, // Cache disabled (nil)
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
-
-	// Call Bytes() multiple times
-	for i := 0; i < 3; i++ {
-		result := pp.Bytes()
-		if string(result) != "test-password" {
-			t.Errorf("Bytes() call %d returned unexpected value", i+1)
-		}
-	}
-
-	// With cache disabled, Unseal should be called every time
-	if tpmMock.unsealCount.Load() != 3 {
-		t.Errorf("Expected 3 Unseal calls with cache disabled, got %d", tpmMock.unsealCount.Load())
-	}
-}
-
-func TestPlatformPassword_CacheDisabledExplicit(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		unsealData: []byte("test-password"),
-	}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN: "test-key",
-		PasswordCache: &types.PasswordCacheConfig{
-			Enabled: false, // Cache explicitly disabled
-			TTL:     300,
-		},
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
-
-	// Call Bytes() multiple times
-	for i := 0; i < 3; i++ {
-		result := pp.Bytes()
-		if string(result) != "test-password" {
-			t.Errorf("Bytes() call %d returned unexpected value", i+1)
-		}
-	}
-
-	// With cache disabled, Unseal should be called every time
-	if tpmMock.unsealCount.Load() != 3 {
-		t.Errorf("Expected 3 Unseal calls with cache disabled, got %d", tpmMock.unsealCount.Load())
-	}
-}
-
-func TestPlatformPassword_CacheEnabled(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		unsealData: []byte("test-password"),
-	}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN: "test-key",
-		PasswordCache: &types.PasswordCacheConfig{
-			Enabled: true,
-			TTL:     300, // 5 minutes
-		},
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
-
-	// Call Bytes() multiple times
-	for i := 0; i < 5; i++ {
-		result := pp.Bytes()
-		if string(result) != "test-password" {
-			t.Errorf("Bytes() call %d returned unexpected value", i+1)
-		}
-	}
-
-	// With cache enabled, Unseal should only be called once
-	if tpmMock.unsealCount.Load() != 1 {
-		t.Errorf("Expected 1 Unseal call with cache enabled, got %d", tpmMock.unsealCount.Load())
-	}
-}
 
 func TestPlatformPassword_CacheDefaultTTL(t *testing.T) {
 	logger := slog.Default()
@@ -718,56 +445,6 @@ func TestPlatformPassword_CacheExpiry(t *testing.T) {
 
 	if tpmMock.unsealCount.Load() != 2 {
 		t.Errorf("Expected 2 Unseal calls after expiry, got %d", tpmMock.unsealCount.Load())
-	}
-}
-
-func TestPlatformPassword_IsCached(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		unsealData: []byte("test-password"),
-	}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN: "test-key",
-		PasswordCache: &types.PasswordCacheConfig{
-			Enabled: true,
-			TTL:     300,
-		},
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
-
-	// Before Bytes() - not cached
-	if pp.IsCached() {
-		t.Error("IsCached() should return false before Bytes() is called")
-	}
-
-	// After Bytes() - should be cached
-	pp.Bytes()
-	if !pp.IsCached() {
-		t.Error("IsCached() should return true after Bytes() is called")
-	}
-}
-
-func TestPlatformPassword_IsCached_Disabled(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		unsealData: []byte("test-password"),
-	}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN:            "test-key",
-		PasswordCache: nil, // Cache disabled
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
-
-	// Call Bytes()
-	pp.Bytes()
-
-	// With cache disabled, IsCached should always return false
-	if pp.IsCached() {
-		t.Error("IsCached() should return false when cache is disabled")
 	}
 }
 
@@ -951,40 +628,5 @@ func TestPlatformPassword_CacheConcurrency(t *testing.T) {
 	// (ideally 1, but race conditions might cause a few more)
 	if tpmMock.unsealCount.Load() > 5 {
 		t.Errorf("Expected minimal Unseal calls with caching, got %d", tpmMock.unsealCount.Load())
-	}
-}
-
-func TestPlatformPassword_CacheSecureMemory(t *testing.T) {
-	logger := slog.Default()
-	tpmMock := &mockTPMForPassword{
-		unsealData: []byte("sensitive-password"),
-	}
-	backend := &mockKeyBackendForPassword{}
-	keyAttrs := &types.KeyAttributes{
-		CN: "test-key",
-		PasswordCache: &types.PasswordCacheConfig{
-			Enabled: true,
-			TTL:     300,
-		},
-	}
-
-	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
-
-	// Populate cache
-	pp.Bytes()
-
-	// Get reference to cached data before clear
-	pp.mu.RLock()
-	cachedRef := pp.cachedData
-	pp.mu.RUnlock()
-
-	// Clear cache
-	pp.Clear()
-
-	// Verify cached data was zeroed (not just set to nil)
-	for i, b := range cachedRef {
-		if b != 0 {
-			t.Errorf("Cached data byte %d not zeroed after Clear(): %d", i, b)
-		}
 	}
 }

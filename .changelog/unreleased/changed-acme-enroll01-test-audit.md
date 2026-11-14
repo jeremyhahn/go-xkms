@@ -1,0 +1,1 @@
+acme: the `pkg/acme/challenges/enroll-01` tests were audited (#1794): 17 tests that repeated another test's path, or ran only the standard library, were removed, the fixed sleeps went from the tests that stay, and the activation handler's shutdown test now fails if the handler does not shut the server down.

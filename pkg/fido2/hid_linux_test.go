@@ -486,16 +486,6 @@ func TestLinuxHIDDeviceEnumerator_Open_InvalidPath(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to open HID device")
 }
 
-// TestLinuxHIDDevice_ImplementsInterface verifies interface compliance.
-func TestLinuxHIDDevice_ImplementsInterface(t *testing.T) {
-	var _ HIDDevice = (*LinuxHIDDevice)(nil)
-}
-
-// TestLinuxHIDDeviceEnumerator_ImplementsInterface verifies interface compliance.
-func TestLinuxHIDDeviceEnumerator_ImplementsInterface(t *testing.T) {
-	var _ HIDDeviceEnumerator = (*LinuxHIDDeviceEnumerator)(nil)
-}
-
 // TestHIDConstants verifies the IOCTL constants are correctly defined.
 func TestHIDConstants(t *testing.T) {
 	// Verify IOCTL constants match expected values for Linux HID
@@ -653,15 +643,6 @@ func TestLinuxHIDDevice_ReadWithFile(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(testData), n)
 	assert.Equal(t, testData, data[:n])
-}
-
-// TestHidrawDevInfoStruct tests the hidrawDevInfo struct layout.
-func TestHidrawDevInfoStruct(t *testing.T) {
-	// Verify struct size is as expected (8 bytes: uint32 + int16 + int16)
-	info := hidrawDevInfo{}
-	assert.Equal(t, uint32(0), info.bustype)
-	assert.Equal(t, int16(0), info.vendor)
-	assert.Equal(t, int16(0), info.product)
 }
 
 // TestReadSysfsString_EmptyValue tests reading an empty attribute.

@@ -1,0 +1,1 @@
+opaque: tests now sign through the opaque key with RSA-PSS options and verify the result with `rsa.VerifyPSS`, and check that the key store's typed refusal to decrypt with an ECDSA or Ed25519 key reaches the caller of `Decrypt` unchanged (#1794).

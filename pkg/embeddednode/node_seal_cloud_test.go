@@ -20,11 +20,14 @@ import (
 	"crypto/rand"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -293,6 +296,24 @@ func TestResolveCloudNodeSeal_RequiresDatastorePath(t *testing.T) {
 	require.ErrorAs(t, err, &pathErr)
 }
 
+// TestResolveCloudNodeSeal_UnusableMetadataDirFailsClosed proves seal key
+// metadata that cannot be stored refuses the seal before any backend is built.
+func TestResolveCloudNodeSeal_UnusableMetadataDirFailsClosed(t *testing.T) {
+	withCloudNodeSeal(t, seal.StrategyAWSKMS, func(context.Context, *config.Config, storage.Backend, *slog.Logger) (types.KeyProvider, error) {
+		t.Fatal("the backend must not be built without its metadata store")
+		return nil, nil
+	})
+	cfg := cloudNodeSealConfig(t, seal.StrategyAWSKMS)
+	cfg.Datastore.Path = filepath.Join(cfg.Datastore.Path, "file")
+	require.NoError(t, os.WriteFile(cfg.Datastore.Path, nil, 0o600))
+
+	res, err := resolveCloudNodeSeal(context.Background(), cfg, "awskms", testLogger())
+	var nodeErr *NodeSealError
+	require.ErrorAs(t, err, &nodeErr)
+	require.Contains(t, nodeErr.Reason, "seal key metadata")
+	require.False(t, res.Enabled)
+}
+
 // TestResolveCloudNodeSeal_BackendErrorFailsClosed proves a backend that
 // cannot be built is a NodeSealError carrying the cause.
 func TestResolveCloudNodeSeal_BackendErrorFailsClosed(t *testing.T) {
@@ -320,4 +341,83 @@ func withCloudNodeSeal(t *testing.T, id seal.StrategyID, backend cloudNodeSealBa
 		}
 		delete(cloudNodeSeals, id)
 	})
+}
+
+// kmsProvider is an in-process cloud KMS key provider: it seals through
+// kmsSealer, keeps the seal key's existence in memory and records Close. The
+// embedded interface is nil, so a call the seal path must not make panics.
+type kmsProvider struct {
+	types.SymmetricKeyProvider
+	*kmsSealer
+	generated int
+	closed    bool
+}
+
+func (p *kmsProvider) GetSymmetricKey(context.Context, *types.KeyAttributes) (types.SymmetricKey, error) {
+	if p.generated == 0 {
+		return nil, backend.ErrKeyNotFound
+	}
+	return nil, nil
+}
+
+func (p *kmsProvider) GenerateSymmetricKey(context.Context, *types.KeyAttributes) (types.SymmetricKey, error) {
+	p.generated++
+	return nil, nil
+}
+
+func (p *kmsProvider) Close() error {
+	p.closed = true
+	return nil
+}
+
+// closeRecorder is a key provider and metadata store that cannot seal and
+// records whether it was closed.
+type closeRecorder struct {
+	types.KeyProvider
+	storage.Backend
+	closed bool
+}
+
+func (c *closeRecorder) Close() error {
+	c.closed = true
+	return nil
+}
+
+// TestResolveNodeSeal_CloudProvisionsTheSealKeyOnce proves a cloud strategy
+// generates its seal key on first boot, reuses it on the next, and that the
+// resolved seal's Close releases the provider.
+func TestResolveNodeSeal_CloudProvisionsTheSealKeyOnce(t *testing.T) {
+	provider := &kmsProvider{kmsSealer: newKMSSealer(t)}
+	withCloudNodeSeal(t, seal.StrategyAWSKMS, func(context.Context, *config.Config, storage.Backend, *slog.Logger) (types.KeyProvider, error) {
+		return provider, nil
+	})
+	cfg := cloudNodeSealConfig(t, seal.StrategyAWSKMS)
+
+	for boot := 1; boot <= 2; boot++ {
+		provider.closed = false
+		res, err := ResolveNodeSeal(cfg, testLogger())
+		require.NoError(t, err, "boot %d", boot)
+		require.True(t, res.Enabled, "boot %d", boot)
+		require.Equal(t, seal.StrategyAWSKMS, res.Strategy.ID(), "boot %d", boot)
+		require.Equal(t, 1, provider.generated, "boot %d: the seal key is generated once", boot)
+
+		require.NoError(t, res.Close())
+		require.True(t, provider.closed, "boot %d", boot)
+	}
+}
+
+// TestCloudNodeSealFromProvider_NonSealerReleasesEverything proves a provider
+// that cannot seal is a typed refusal that closes both the provider and the
+// seal key metadata store.
+func TestCloudNodeSealFromProvider_NonSealerReleasesEverything(t *testing.T) {
+	provider, metadata := &closeRecorder{}, &closeRecorder{}
+
+	res, err := cloudNodeSealFromProvider(context.Background(), seal.StrategyAWSKMS, types.StoreAWSKMS, provider, metadata)
+	var nodeErr *NodeSealError
+	require.ErrorAs(t, err, &nodeErr)
+	var unavailable *seal.ErrSealBackendUnavailable
+	require.ErrorAs(t, err, &unavailable)
+	require.False(t, res.Enabled)
+	require.True(t, provider.closed, "the provider must be closed")
+	require.True(t, metadata.closed, "the seal key metadata must be closed")
 }

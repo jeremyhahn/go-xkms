@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
@@ -32,6 +31,23 @@ import (
 // by using real DNS lookups for well-known domains.
 func TestGetHostedZoneIDDiscoveryPaths(t *testing.T) {
 	ctx := context.Background()
+
+	t.Run("returns configured zone ID without API call", func(t *testing.T) {
+		listZonesCalled := false
+		mock := &mockRoute53Client{
+			listZonesByNameFunc: func(ctx context.Context, params *route53.ListHostedZonesByNameInput, optFns ...func(*route53.Options)) (*route53.ListHostedZonesByNameOutput, error) {
+				listZonesCalled = true
+				return nil, nil
+			},
+		}
+
+		provider := NewWithClient(mock, "Z123456", nil)
+
+		zoneID, err := provider.getHostedZoneID(ctx, "_acme-challenge.example.com.")
+		require.NoError(t, err)
+		assert.Equal(t, "Z123456", zoneID)
+		assert.False(t, listZonesCalled, "ListHostedZonesByName should not be called when zone ID is configured")
+	})
 
 	t.Run("returns error when ListHostedZonesByName fails after DNS lookup", func(t *testing.T) {
 		providers.ClearZoneCache()
@@ -297,81 +313,7 @@ func TestPresentWithZoneDiscoveryRoute53(t *testing.T) {
 }
 
 // TestCleanUpWithZoneDiscoveryRoute53 tests CleanUp when zone discovery is needed.
-func TestCleanUpWithZoneDiscoveryRoute53(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("discovers zone and removes record", func(t *testing.T) {
-		providers.ClearZoneCache()
-
-		var capturedZoneID string
-		mock := &mockRoute53Client{
-			listZonesByNameFunc: func(ctx context.Context, params *route53.ListHostedZonesByNameInput, optFns ...func(*route53.Options)) (*route53.ListHostedZonesByNameOutput, error) {
-				return &route53.ListHostedZonesByNameOutput{
-					HostedZones: []types.HostedZone{
-						{
-							Id:   aws.String("/hostedzone/GOOGLEZONE"),
-							Name: aws.String("google.com."),
-							Config: &types.HostedZoneConfig{
-								PrivateZone: false,
-							},
-						},
-					},
-				}, nil
-			},
-			changeRecordSetsFunc: func(ctx context.Context, params *route53.ChangeResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error) {
-				capturedZoneID = *params.HostedZoneId
-				return &route53.ChangeResourceRecordSetsOutput{
-					ChangeInfo: &types.ChangeInfo{
-						Id:     aws.String("change-123"),
-						Status: types.ChangeStatusInsync,
-					},
-				}, nil
-			},
-		}
-
-		// Provider without configured zone - will use discovery
-		provider := newDiscoveryProvider(mock, "")
-
-		err := provider.CleanUp(ctx, "google.com", "_acme-challenge.google.com.", "token-value")
-		require.NoError(t, err)
-		assert.Equal(t, "GOOGLEZONE", capturedZoneID)
-	})
-}
-
 // TestZoneDiscoveryWithTimeoutRoute53 tests zone discovery timeout handling.
-func TestZoneDiscoveryWithTimeoutRoute53(t *testing.T) {
-	t.Run("respects context timeout during zone discovery", func(t *testing.T) {
-		providers.ClearZoneCache()
-
-		mock := &mockRoute53Client{
-			listZonesByNameFunc: func(ctx context.Context, params *route53.ListHostedZonesByNameInput, optFns ...func(*route53.Options)) (*route53.ListHostedZonesByNameOutput, error) {
-				// Simulate slow API
-				time.Sleep(100 * time.Millisecond)
-				return &route53.ListHostedZonesByNameOutput{
-					HostedZones: []types.HostedZone{
-						{
-							Id:   aws.String("/hostedzone/TESTZONE"),
-							Name: aws.String("google.com."),
-							Config: &types.HostedZoneConfig{
-								PrivateZone: false,
-							},
-						},
-					},
-				}, nil
-			},
-		}
-
-		provider := newDiscoveryProvider(mock, "")
-
-		// Create a context with short timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-		defer cancel()
-
-		_, err := provider.getHostedZoneID(ctx, "_acme-challenge.google.com.")
-		// May or may not error depending on timing of DNS lookup vs timeout
-		_ = err
-	})
-}
 
 // TestZoneSelectionWithLongerMatch tests that zone discovery selects the longest matching zone.
 func TestZoneSelectionWithLongerMatch(t *testing.T) {

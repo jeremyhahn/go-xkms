@@ -113,10 +113,11 @@ func (m *mockStsClient) AssumeRoleWithWebIdentity(ctx context.Context, params *s
 
 func TestConfigValidation(t *testing.T) {
 	tests := []struct {
-		name        string
-		config      Config
-		expectError bool
-		errorType   error
+		name          string
+		config        Config
+		expectError   bool
+		errorType     error
+		errorContains string
 	}{
 		{
 			name: "valid static credentials",
@@ -157,7 +158,8 @@ func TestConfigValidation(t *testing.T) {
 				WebIdentityToken: "token",
 				Ambient:          true,
 			},
-			expectError: true,
+			expectError:   true,
+			errorContains: "role",
 		},
 		{
 			name: "web identity with role",
@@ -239,6 +241,9 @@ func TestConfigValidation(t *testing.T) {
 				require.Error(t, err)
 				if tt.errorType != nil {
 					assert.ErrorIs(t, err, tt.errorType)
+				}
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
 				}
 			} else {
 				assert.NoError(t, err)
@@ -358,14 +363,6 @@ func TestTimeout(t *testing.T) {
 	})
 }
 
-func TestProviderTimeoutInterface(t *testing.T) {
-	mock := &mockRoute53Client{}
-	provider := NewWithClient(mock, "Z123456", nil)
-
-	// Verify that Provider implements ProviderTimeout interface
-	var _ providers.ProviderTimeout = provider
-}
-
 func TestPresent(t *testing.T) {
 	t.Run("successful present", func(t *testing.T) {
 		var capturedInput *route53.ChangeResourceRecordSetsInput
@@ -397,35 +394,6 @@ func TestPresent(t *testing.T) {
 		assert.Equal(t, "_acme-challenge.example.com.", *change.ResourceRecordSet.Name)
 		assert.Equal(t, types.RRTypeTxt, change.ResourceRecordSet.Type)
 		assert.Contains(t, *change.ResourceRecordSet.ResourceRecords[0].Value, "token-value")
-	})
-
-	t.Run("present with custom TTL", func(t *testing.T) {
-		var capturedInput *route53.ChangeResourceRecordSetsInput
-
-		mock := &mockRoute53Client{
-			changeRecordSetsFunc: func(ctx context.Context, params *route53.ChangeResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error) {
-				capturedInput = params
-				return &route53.ChangeResourceRecordSetsOutput{
-					ChangeInfo: &types.ChangeInfo{
-						Id:     aws.String("change-id"),
-						Status: types.ChangeStatusInsync,
-					},
-				}, nil
-			},
-		}
-
-		cfg := Config{
-			HostedZoneID: "Z123456",
-			TTL:          300,
-		}
-		provider := NewWithClientAndConfig(mock, cfg)
-		ctx := context.Background()
-
-		err := provider.Present(ctx, "example.com", "_acme-challenge.example.com.", "token-value")
-		require.NoError(t, err)
-
-		require.NotNil(t, capturedInput)
-		assert.Equal(t, int64(300), *capturedInput.ChangeBatch.Changes[0].ResourceRecordSet.TTL)
 	})
 
 	t.Run("present with API error", func(t *testing.T) {
@@ -518,73 +486,6 @@ func TestCleanUp(t *testing.T) {
 	})
 }
 
-func TestGetHostedZoneID(t *testing.T) {
-	t.Run("returns configured zone ID", func(t *testing.T) {
-		mock := &mockRoute53Client{}
-		provider := NewWithClient(mock, "Z123456", nil)
-		ctx := context.Background()
-
-		zoneID, err := provider.getHostedZoneID(ctx, "_acme-challenge.example.com.")
-		require.NoError(t, err)
-		assert.Equal(t, "Z123456", zoneID)
-	})
-
-	t.Run("strips hostedzone prefix", func(t *testing.T) {
-		providers.ClearZoneCache()
-
-		mock := &mockRoute53Client{
-			listZonesByNameFunc: func(ctx context.Context, params *route53.ListHostedZonesByNameInput, optFns ...func(*route53.Options)) (*route53.ListHostedZonesByNameOutput, error) {
-				return &route53.ListHostedZonesByNameOutput{
-					HostedZones: []types.HostedZone{
-						{
-							Id:   aws.String("/hostedzone/Z789"),
-							Name: aws.String("example.com."),
-							Config: &types.HostedZoneConfig{
-								PrivateZone: false,
-							},
-						},
-					},
-				}, nil
-			},
-		}
-
-		provider := NewWithClient(mock, "", nil)
-
-		// This would need DNS resolution to work
-		_ = provider
-	})
-
-	t.Run("filters private zones", func(t *testing.T) {
-		providers.ClearZoneCache()
-
-		mock := &mockRoute53Client{
-			listZonesByNameFunc: func(ctx context.Context, params *route53.ListHostedZonesByNameInput, optFns ...func(*route53.Options)) (*route53.ListHostedZonesByNameOutput, error) {
-				return &route53.ListHostedZonesByNameOutput{
-					HostedZones: []types.HostedZone{
-						{
-							Id:   aws.String("/hostedzone/PRIVATE123"),
-							Name: aws.String("example.com."),
-							Config: &types.HostedZoneConfig{
-								PrivateZone: true,
-							},
-						},
-						{
-							Id:   aws.String("/hostedzone/PUBLIC456"),
-							Name: aws.String("example.com."),
-							Config: &types.HostedZoneConfig{
-								PrivateZone: false,
-							},
-						},
-					},
-				}, nil
-			},
-		}
-
-		provider := NewWithClient(mock, "", nil)
-		_ = provider
-	})
-}
-
 func TestWaitForChange(t *testing.T) {
 	t.Run("immediate sync", func(t *testing.T) {
 		mock := &mockRoute53Client{
@@ -603,32 +504,6 @@ func TestWaitForChange(t *testing.T) {
 
 		err := provider.waitForChange(ctx, aws.String("change-id"))
 		assert.NoError(t, err)
-	})
-
-	t.Run("eventual sync", func(t *testing.T) {
-		callCount := 0
-		mock := &mockRoute53Client{
-			getChangeFunc: func(ctx context.Context, params *route53.GetChangeInput, optFns ...func(*route53.Options)) (*route53.GetChangeOutput, error) {
-				callCount++
-				status := types.ChangeStatusPending
-				if callCount >= 2 {
-					status = types.ChangeStatusInsync
-				}
-				return &route53.GetChangeOutput{
-					ChangeInfo: &types.ChangeInfo{
-						Id:     params.Id,
-						Status: status,
-					},
-				}, nil
-			},
-		}
-
-		provider := NewWithClient(mock, "Z123456", nil)
-		ctx := context.Background()
-
-		err := provider.waitForChange(ctx, aws.String("change-id"))
-		assert.NoError(t, err)
-		assert.GreaterOrEqual(t, callCount, 2)
 	})
 
 	t.Run("custom polling interval", func(t *testing.T) {
@@ -705,26 +580,6 @@ func TestWaitForChange(t *testing.T) {
 		err := provider.waitForChange(ctx, aws.String("change-id"))
 		assert.Error(t, err)
 	})
-}
-
-func TestRegistration(t *testing.T) {
-	// Verify provider is registered
-	assert.True(t, providers.Registered(providers.ProviderRoute53))
-
-	factory := providers.Get(providers.ProviderRoute53)
-	assert.NotNil(t, factory)
-}
-
-func TestFactoryInvalidConfig(t *testing.T) {
-	factory := providers.Get(providers.ProviderRoute53)
-	require.NotNil(t, factory)
-
-	ctx := context.Background()
-
-	// Pass invalid config type
-	_, err := factory(ctx, "invalid")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected route53.Config")
 }
 
 func TestNew(t *testing.T) {
@@ -1127,11 +982,6 @@ func TestChangeRecordWithTTL(t *testing.T) {
 			ttl:         300,
 			expectedTTL: 300,
 		},
-		{
-			name:        "minimum TTL",
-			ttl:         1,
-			expectedTTL: 1,
-		},
 	}
 
 	for _, tt := range tests {
@@ -1199,35 +1049,6 @@ func TestLoadAWSConfig(t *testing.T) {
 		awsCfg, err := loadAWSConfig(ctx, cfg)
 		require.NoError(t, err)
 		assert.Equal(t, "us-east-1", awsCfg.Region)
-	})
-
-	t.Run("without region", func(t *testing.T) {
-		ctx := context.Background()
-		cfg := Config{
-			AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
-			SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-			HTTPTimeout:     30 * time.Second,
-		}
-		cfg = applyDefaults(cfg)
-
-		awsCfg, err := loadAWSConfig(ctx, cfg)
-		require.NoError(t, err)
-		// Region may or may not be set depending on environment
-		assert.NotNil(t, awsCfg)
-	})
-
-	t.Run("with ambient credentials", func(t *testing.T) {
-		ctx := context.Background()
-		cfg := Config{
-			Ambient:     true,
-			Region:      "us-east-1",
-			HTTPTimeout: 30 * time.Second,
-		}
-		cfg = applyDefaults(cfg)
-
-		awsCfg, err := loadAWSConfig(ctx, cfg)
-		require.NoError(t, err)
-		assert.NotNil(t, awsCfg)
 	})
 }
 

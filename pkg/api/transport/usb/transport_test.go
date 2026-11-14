@@ -180,14 +180,6 @@ func newPairedTransport(t *testing.T, fake *fakePhone) (*Transport, bool) {
 	return tr, true
 }
 
-func TestNew(t *testing.T) {
-	tr, err := New()
-	require.NoError(t, err)
-	require.NotNil(t, tr)
-	assert.NotNil(t, tr.Config())
-	assert.Equal(t, 30*time.Second, tr.Config().Timeout)
-}
-
 func TestNewWithOptions(t *testing.T) {
 	tr, err := New(func(cfg *transport.Config) error {
 		cfg.Timeout = 5 * time.Second
@@ -329,16 +321,6 @@ func TestCloseNotConnected(t *testing.T) {
 	assert.False(t, tr.connected)
 }
 
-func TestCloseClearsSession(t *testing.T) {
-	tr, ok := newPairedTransport(t, &fakePhone{})
-	if !ok {
-		return
-	}
-	require.NoError(t, tr.Close())
-	assert.False(t, tr.connected)
-	assert.Nil(t, tr.session)
-}
-
 func TestCloseWithPhoneUSBError(t *testing.T) {
 	tr, err := New()
 	require.NoError(t, err)
@@ -382,13 +364,6 @@ func TestConnWithPhoneUSB(t *testing.T) {
 	fake := newFakePhone(true, nil)
 	tr.phoneUSB = fake
 	assert.Equal(t, fake, tr.Conn())
-}
-
-func TestRequestNotConnected(t *testing.T) {
-	tr, err := New()
-	require.NoError(t, err)
-	err = tr.Request(context.Background(), "test", nil, nil)
-	require.ErrorIs(t, err, ErrNotConnected)
 }
 
 // TestRequestWithoutSession proves a request cannot slip out in plaintext on a
@@ -440,42 +415,6 @@ func TestRequestSendsJSONRPCEnvelope(t *testing.T) {
 	assert.Equal(t, "getInfo", seen.Method)
 	assert.NotZero(t, seen.ID)
 	assert.Equal(t, "ok", resp.Status)
-}
-
-func TestRequestNilResponseTarget(t *testing.T) {
-	fake := &fakePhone{
-		handler: func(req *pairingproto.Request) *pairingproto.Response {
-			result, _ := json.Marshal(map[string]bool{"pong": true})
-			return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
-		},
-	}
-	tr, ok := newPairedTransport(t, fake)
-	if !ok {
-		return
-	}
-
-	require.NoError(t, tr.Request(context.Background(), "ping", nil, nil))
-	assert.True(t, tr.connected)
-}
-
-func TestRequestPropagatesRPCError(t *testing.T) {
-	fake := &fakePhone{
-		handler: func(req *pairingproto.Request) *pairingproto.Response {
-			return &pairingproto.Response{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error:   &pairingproto.RPCError{Code: -32601, Message: "Method not supported"},
-			}
-		},
-	}
-	tr, ok := newPairedTransport(t, fake)
-	if !ok {
-		return
-	}
-
-	err := tr.Request(context.Background(), "nope", nil, nil)
-	require.ErrorIs(t, err, ErrRequestFailed)
-	assert.Contains(t, err.Error(), "Method not supported")
 }
 
 func TestRequestSendReceiveError(t *testing.T) {
@@ -639,6 +578,7 @@ func TestPasswordSealStoreOperationsPropagateRPCError(t *testing.T) {
 			err := op.call(context.Background(), tr)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrRequestFailed)
+			assert.Contains(t, err.Error(), "denied")
 		})
 	}
 }
@@ -715,37 +655,4 @@ func TestConnectFailsWithoutUSBDevice(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, transport.ErrConnectionFailed)
 	assert.False(t, tr.connected)
-}
-
-func TestConnectWithCustomTimeout(t *testing.T) {
-	key, ok := requireStaticKey(t)
-	if !ok {
-		return
-	}
-
-	tr, err := New(func(cfg *transport.Config) error {
-		cfg.Timeout = 1 * time.Second
-		return nil
-	})
-	require.NoError(t, err)
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
-
-	err = tr.Connect(context.Background())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, transport.ErrConnectionFailed)
-}
-
-func TestConnectWithZeroTimeout(t *testing.T) {
-	key, ok := requireStaticKey(t)
-	if !ok {
-		return
-	}
-
-	tr, err := NewWithConfig(&transport.Config{Timeout: 0})
-	require.NoError(t, err)
-	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: privateKeyBytes(t, key)})
-
-	err = tr.Connect(context.Background())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, transport.ErrConnectionFailed)
 }

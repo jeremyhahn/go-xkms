@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -232,60 +231,6 @@ func TestMapPasswordError(t *testing.T) {
 
 			if st.Message() != tt.expectedMsg {
 				t.Errorf("expected message %q, got %q", tt.expectedMsg, st.Message())
-			}
-		})
-	}
-}
-
-func TestParseTimestamp(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		wantNil  bool
-		wantTime time.Time
-	}{
-		{
-			name:    "empty string",
-			input:   "",
-			wantNil: true,
-		},
-		{
-			name:     "valid RFC3339",
-			input:    "2025-01-15T10:30:00Z",
-			wantNil:  false,
-			wantTime: time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
-		},
-		{
-			name:    "invalid format",
-			input:   "not-a-timestamp",
-			wantNil: true,
-		},
-		{
-			name:     "RFC3339 with timezone",
-			input:    "2025-03-03T15:00:00-08:00",
-			wantNil:  false,
-			wantTime: time.Date(2025, 3, 3, 23, 0, 0, 0, time.UTC),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := parseTimestamp(tt.input)
-
-			if tt.wantNil {
-				if result != nil {
-					t.Errorf("expected nil, got %v", result)
-				}
-				return
-			}
-
-			if result == nil {
-				t.Fatal("expected non-nil timestamp")
-			}
-
-			resultTime := result.AsTime()
-			if !resultTime.Equal(tt.wantTime) {
-				t.Errorf("expected time %v, got %v", tt.wantTime, resultTime)
 			}
 		})
 	}
@@ -515,24 +460,6 @@ func TestPasswordStoreUnlock_NilRequest(t *testing.T) {
 
 	// PasswordStoreUnlock should accept nil request
 	_, err := svc.PasswordStoreUnlock(ctx, nil)
-
-	// Without xkms initialized, we expect an unavailable error
-	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status error, got %v", err)
-	}
-
-	if st.Code() != codes.Unavailable {
-		t.Errorf("expected code Unavailable, got %v", st.Code())
-	}
-}
-
-func TestPasswordStoreLock_NilRequest(t *testing.T) {
-	svc := NewService(nil, nil, nil)
-	ctx := context.Background()
-
-	// PasswordStoreLock accepts nil request (no parameters)
-	_, err := svc.PasswordStoreLock(ctx, nil)
 
 	// Without xkms initialized, we expect an unavailable error
 	st, ok := status.FromError(err)

@@ -77,27 +77,6 @@ func TestGetHostedZoneZoneDiscoveryPaths(t *testing.T) {
 		assert.Equal(t, providers.ErrZoneNotFound, err)
 	})
 
-	t.Run("selects public zone over private zone", func(t *testing.T) {
-		providers.ClearZoneCache()
-
-		mock := &mockCloudDNSClient{
-			getManagedZonesFunc: func(ctx context.Context, project string) ([]*dns.ManagedZone, error) {
-				// Return both public and private zones for the discovered zone
-				return []*dns.ManagedZone{
-					{Name: "private-zone", DnsName: "google.com.", Visibility: "private"},
-					{Name: "public-zone", DnsName: "google.com.", Visibility: "public"},
-				}, nil
-			},
-		}
-
-		provider := newDiscoveryProvider(mock, "my-project", "")
-
-		zone, err := provider.getHostedZone(ctx, "_acme-challenge.google.com.")
-
-		require.NoError(t, err)
-		assert.Equal(t, "public-zone", zone)
-	})
-
 	t.Run("falls back to first matching zone when no public zones exist", func(t *testing.T) {
 		providers.ClearZoneCache()
 
@@ -283,11 +262,9 @@ func TestZoneDiscoveryWithTimeout(t *testing.T) {
 
 		mock := &mockCloudDNSClient{
 			getManagedZonesFunc: func(ctx context.Context, project string) ([]*dns.ManagedZone, error) {
-				// Simulate slow API
-				time.Sleep(100 * time.Millisecond)
-				return []*dns.ManagedZone{
-					{Name: "test-zone", DnsName: "google.com.", Visibility: "public"},
-				}, nil
+				// A slow API: it answers only when the caller gives up.
+				<-ctx.Done()
+				return nil, ctx.Err()
 			},
 		}
 
@@ -298,7 +275,6 @@ func TestZoneDiscoveryWithTimeout(t *testing.T) {
 		defer cancel()
 
 		_, err := provider.getHostedZone(ctx, "_acme-challenge.google.com.")
-		// May or may not error depending on timing of DNS lookup vs timeout
-		_ = err
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 }

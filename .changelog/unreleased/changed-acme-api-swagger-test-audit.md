@@ -1,0 +1,1 @@
+- **`pkg/acme/api/swagger` test audit (#1794)** — each behaviour is tested by one path: the `_WithLogger` twins run as a `with_logger` case of the not-found, template-error and asset tests, and tests that repeat `TestRegisterMux_IntegrationWithServer` or the server package's `TestAdminOpenAPISpec_Valid` are removed. Coverage is unchanged at 92.0%.

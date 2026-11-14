@@ -14,8 +14,6 @@
 package jwe
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
@@ -23,20 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// TestEncrypt_NilPlaintext verifies that Encrypt returns an error when
-// provided nil plaintext.
-func TestEncrypt_NilPlaintext(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	enc, err := NewEncrypter("RSA-OAEP-256", "A256GCM", &key.PublicKey)
-	require.NoError(t, err)
-
-	_, err = enc.Encrypt(nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "plaintext cannot be nil")
-}
 
 // TestEncryptWithHeader_NilPlaintext verifies that EncryptWithHeader returns
 // an error when provided nil plaintext.
@@ -73,35 +57,6 @@ func TestEncryptWithHeader_EmptyHeaders(t *testing.T) {
 	plain, err := dec.Decrypt(jweStr, key)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("test data"), plain)
-}
-
-// TestEncryptWithHeader_ECDSAKey verifies the ECDSA branch in
-// EncryptWithHeader's switch statement.
-func TestEncryptWithHeader_ECDSAKey(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	enc, err := NewEncrypter("ECDH-ES+A256KW", "A256GCM", &key.PublicKey)
-	require.NoError(t, err)
-
-	jweStr, ok := requireJWE(t, func() (string, error) {
-		return enc.EncryptWithHeader([]byte("ecdh payload"), map[string]interface{}{
-			"kid": "ec-key-1",
-		})
-	})
-	if !ok {
-		return
-	}
-	assert.NotEmpty(t, jweStr)
-
-	kid, err := ExtractKID(jweStr)
-	require.NoError(t, err)
-	assert.Equal(t, "ec-key-1", kid)
-
-	dec := NewDecrypter()
-	plain, err := dec.Decrypt(jweStr, key)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("ecdh payload"), plain)
 }
 
 // TestEncryptWithHeader_SymmetricKey verifies the []byte key branch in

@@ -86,17 +86,6 @@ func startMockIPCServer(t *testing.T, handler func(raw json.RawMessage) []byte) 
 		}
 	}()
 
-	// Wait for the server to be ready.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
 	return sockPath
 }
 
@@ -205,12 +194,16 @@ func TestNewSigner_DefaultSlot(t *testing.T) {
 }
 
 func TestNewSigner_InvalidSlot(t *testing.T) {
-	signer, err := NewSigner(&SignerConfig{
-		SocketPath: "/tmp/nonexistent.sock",
-		Slot:       "invalid",
-	})
-	assert.Nil(t, signer)
-	assert.True(t, errors.Is(err, ErrInvalidSlot))
+	for _, slot := range []string{"invalid", "9f"} {
+		t.Run(slot, func(t *testing.T) {
+			signer, err := NewSigner(&SignerConfig{
+				SocketPath: "/tmp/nonexistent.sock",
+				Slot:       slot,
+			})
+			assert.Nil(t, signer)
+			assert.True(t, errors.Is(err, ErrInvalidSlot))
+		})
+	}
 }
 
 func TestNewSigner_AllValidSlots(t *testing.T) {
@@ -240,21 +233,6 @@ func TestNewSigner_ConnectionFailed(t *testing.T) {
 	})
 	assert.Nil(t, signer)
 	assert.Error(t, err)
-}
-
-func TestSigner_Public(t *testing.T) {
-	certPEM, _ := generateTestCert(t)
-	sockPath := startMockIPCServer(t, certHandler(certPEM))
-
-	signer, err := NewSigner(&SignerConfig{
-		SocketPath: sockPath,
-		Slot:       "9a",
-	})
-	require.NoError(t, err)
-
-	pub := signer.Public()
-	require.NotNil(t, pub)
-	assert.IsType(t, &ecdsa.PublicKey{}, pub)
 }
 
 func TestSigner_Sign_Success(t *testing.T) {
@@ -344,43 +322,6 @@ func TestSigner_Sign_IPCError(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrSignFailed))
 }
 
-func TestSigner_Sign_NilOpts(t *testing.T) {
-	certPEM, _ := generateTestCert(t)
-	sockPath := startMockIPCServer(t, certHandler(certPEM))
-
-	signer, err := NewSigner(&SignerConfig{
-		SocketPath: sockPath,
-		Slot:       "9a",
-	})
-	require.NoError(t, err)
-
-	digest := []byte("test-digest")
-	sig, err := signer.Sign(rand.Reader, digest, nil)
-	require.NoError(t, err)
-	require.NotEmpty(t, sig)
-}
-
-func TestSigner_Sign_VariousHashes(t *testing.T) {
-	certPEM, _ := generateTestCert(t)
-	sockPath := startMockIPCServer(t, certHandler(certPEM))
-
-	signer, err := NewSigner(&SignerConfig{
-		SocketPath: sockPath,
-		Slot:       "9a",
-	})
-	require.NoError(t, err)
-
-	hashes := []crypto.Hash{crypto.SHA256, crypto.SHA384, crypto.SHA512}
-	for _, h := range hashes {
-		t.Run(h.String(), func(t *testing.T) {
-			digest := []byte("test-digest")
-			sig, err := signer.Sign(rand.Reader, digest, h)
-			require.NoError(t, err)
-			require.NotEmpty(t, sig)
-		})
-	}
-}
-
 // TestSignParams covers how Sign describes its input to xkey: a hash in the
 // signer options means the bytes are that digest, so xkey must sign them as
 // is; PSS options carry the padding and salt length; no hash sends the
@@ -435,13 +376,6 @@ func TestSignParams(t *testing.T) {
 	}
 }
 
-// TestSignParams_UnsupportedHash covers a hash xkey has no name for: the
-// signer refuses it instead of sending a digest xkey would mislabel.
-func TestSignParams_UnsupportedHash(t *testing.T) {
-	_, err := signParams([]byte("digest"), crypto.SHA1)
-	require.ErrorIs(t, err, ErrUnsupportedHash)
-}
-
 // TestSigner_Sign_SendsDigestFlag covers the request on the wire: a
 // crypto.Signer receives a digest, so the sign request must say so.
 func TestSigner_Sign_SendsDigestFlag(t *testing.T) {
@@ -481,22 +415,6 @@ func TestSigner_Sign_UnsupportedHash(t *testing.T) {
 
 	_, err = signer.Sign(rand.Reader, make([]byte, 20), crypto.SHA1)
 	require.ErrorIs(t, err, ErrUnsupportedHash)
-}
-
-func TestSigner_Certificate_Success(t *testing.T) {
-	certPEM, _ := generateTestCert(t)
-	sockPath := startMockIPCServer(t, certHandler(certPEM))
-
-	signer, err := NewSigner(&SignerConfig{
-		SocketPath: sockPath,
-		Slot:       "9a",
-	})
-	require.NoError(t, err)
-
-	cert, err := signer.Certificate()
-	require.NoError(t, err)
-	require.NotNil(t, cert)
-	assert.Equal(t, "test-signer", cert.Subject.CommonName)
 }
 
 func TestSigner_Certificate_NotFound(t *testing.T) {
@@ -705,22 +623,6 @@ func TestSigner_Sign_InvalidBase64Signature(t *testing.T) {
 	sig, err := signer.Sign(rand.Reader, []byte("test"), crypto.SHA256)
 	assert.Nil(t, sig)
 	assert.True(t, errors.Is(err, ErrSignFailed))
-}
-
-func TestValidPIVSlots(t *testing.T) {
-	assert.True(t, validPIVSlots["9a"])
-	assert.True(t, validPIVSlots["9c"])
-	assert.True(t, validPIVSlots["9d"])
-	assert.True(t, validPIVSlots["9e"])
-	assert.False(t, validPIVSlots["9f"])
-	assert.False(t, validPIVSlots[""])
-	assert.False(t, validPIVSlots["invalid"])
-}
-
-func TestHashNames(t *testing.T) {
-	assert.Equal(t, "SHA-256", hashNames[crypto.SHA256])
-	assert.Equal(t, "SHA-384", hashNames[crypto.SHA384])
-	assert.Equal(t, "SHA-512", hashNames[crypto.SHA512])
 }
 
 func TestDefaultSocketPath(t *testing.T) {

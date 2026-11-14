@@ -1,0 +1,1 @@
+metrics: the `pkg/metrics` tests pin the exact values the stored-key and stored-certificate gauge increment and decrement helpers leave, and that they record nothing while metrics are disabled, bringing the package to 99.2% coverage (it was 89.9%, under the 90% floor).

@@ -53,19 +53,10 @@ func TestBuildClientConfig_DefaultTimeout(t *testing.T) {
 	if cfg.HostKeyCallback == nil {
 		t.Fatalf("host key callback not set")
 	}
-}
-
-// TestBuildClientConfig_CustomTimeout covers the caller-provided timeout path.
-func TestBuildClientConfig_CustomTimeout(t *testing.T) {
-	signer := testSigner(t)
-	cb := ssh.InsecureIgnoreHostKey()
 
 	want := 42 * time.Second
-	cfg := buildClientConfig(DialRequest{User: "bob", Timeout: want}, signer, cb)
+	cfg = buildClientConfig(DialRequest{User: "bob", Timeout: want}, signer, cb)
 	if cfg.Timeout != want {
 		t.Fatalf("expected %v, got %v", want, cfg.Timeout)
-	}
-	if cfg.User != "bob" {
-		t.Fatalf("user not propagated: %q", cfg.User)
 	}
 }

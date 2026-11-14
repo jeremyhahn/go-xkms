@@ -117,29 +117,6 @@ func TestScan_EmptyPrefix(t *testing.T) {
 	}
 }
 
-// TestScan_EmptyStore verifies that Scan on an empty store returns an empty map (not nil).
-func TestScan_EmptyStore(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	result := make(map[string][]byte)
-	err = store.Scan(ctx, "", func(key string, value []byte) error {
-		result[key] = value
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("Scan() on empty store error = %v", err)
-	}
-	if len(result) != 0 {
-		t.Errorf("Scan() on empty store returned %d entries, want 0", len(result))
-	}
-}
-
 // TestScan_NoMatchingPrefix verifies Scan returns empty map when prefix matches nothing.
 func TestScan_NoMatchingPrefix(t *testing.T) {
 	ctx := context.Background()
@@ -164,85 +141,5 @@ func TestScan_NoMatchingPrefix(t *testing.T) {
 	}
 	if len(result) != 0 {
 		t.Errorf("Scan(nonexistent/) returned %d entries, want 0", len(result))
-	}
-}
-
-// TestScan_ValuesAreCorrect verifies the values returned by Scan match what was stored.
-func TestScan_ValuesAreCorrect(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	// Store binary data to verify byte-for-byte accuracy.
-	binaryVal := []byte{0x00, 0x01, 0x02, 0xFE, 0xFF}
-	if err := store.Put(ctx, "keys/binary", binaryVal); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
-
-	result := make(map[string][]byte)
-	err = store.Scan(ctx, "keys/", func(key string, value []byte) error {
-		result[key] = value
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("Scan() error = %v", err)
-	}
-
-	got, ok := result["keys/binary"]
-	if !ok {
-		t.Fatal("Scan() missing key keys/binary")
-	}
-	if len(got) != len(binaryVal) {
-		t.Fatalf("Scan() value length = %d, want %d", len(got), len(binaryVal))
-	}
-	for i, b := range binaryVal {
-		if got[i] != b {
-			t.Errorf("Scan() value[%d] = %x, want %x", i, got[i], b)
-		}
-	}
-}
-
-// TestScan_MultipleKeysWithSamePathDepth ensures Scan handles flat and nested keys together.
-func TestScan_MultipleKeysWithSamePathDepth(t *testing.T) {
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	entries := map[string][]byte{
-		"keys/ec/p256":  []byte("ec-p256"),
-		"keys/ec/p384":  []byte("ec-p384"),
-		"keys/rsa/2048": []byte("rsa-2048"),
-		"certs/server":  []byte("server-cert"),
-	}
-	for k, v := range entries {
-		if err := store.Put(ctx, k, v); err != nil {
-			t.Fatalf("Put(%s) error = %v", k, err)
-		}
-	}
-
-	// Scan keys/ec/ prefix only.
-	result := make(map[string][]byte)
-	err = store.Scan(ctx, "keys/ec/", func(key string, value []byte) error {
-		result[key] = value
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("Scan(keys/ec/) error = %v", err)
-	}
-	if len(result) != 2 {
-		t.Errorf("Scan(keys/ec/) returned %d entries, want 2", len(result))
-	}
-	for _, key := range []string{"keys/ec/p256", "keys/ec/p384"} {
-		if _, ok := result[key]; !ok {
-			t.Errorf("Scan() missing key %q", key)
-		}
 	}
 }

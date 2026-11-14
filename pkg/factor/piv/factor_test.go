@@ -22,20 +22,17 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	challengemsg "github.com/jeremyhahn/go-xkms/pkg/factor/internal/challenge"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 )
-
-func TestPIVFactor_Name(t *testing.T) {
-	if got := New(Config{}).Name(); got != FactorName {
-		t.Fatalf("Name() = %q, want %q", got, FactorName)
-	}
-}
 
 // TestPIVFactor_Enroll_UsesCanonicalIssuer locks in that Enroll's
 // certificate is issued through pkg/ca.Issuer (buildSelfSignedCert) with
@@ -308,6 +305,9 @@ func TestPIVFactor_EmptyNonceIsRefused(t *testing.T) {
 
 func TestPIVFactor_NewDefaults(t *testing.T) {
 	f := New(Config{})
+	if got := f.Name(); got != FactorName {
+		t.Fatalf("Name() = %q, want %q", got, FactorName)
+	}
 	if f.cfg.DefaultSlot != pivcert.PIVSlotAuthentication {
 		t.Fatalf("default slot = %q, want %q", f.cfg.DefaultSlot, pivcert.PIVSlotAuthentication)
 	}
@@ -320,4 +320,96 @@ func TestPIVFactor_NewDefaults(t *testing.T) {
 	if f.cfg.Generator == nil {
 		t.Fatal("default Generator must not be nil")
 	}
+}
+
+// TestPIVFactor_Challenge_TTLOverride asserts that a positive integer "ttl"
+// in the enrollment metadata sets the challenge lifetime, and that a zero,
+// negative or non-numeric value falls back to Config.ChallengeTTLSeconds.
+func TestPIVFactor_Challenge_TTLOverride(t *testing.T) {
+	const configuredTTL = 7
+	tests := []struct {
+		name string
+		ttl  string
+		want time.Duration
+	}{
+		{name: "valid override", ttl: "30", want: 30 * time.Second},
+		{name: "zero falls back", ttl: "0", want: configuredTTL * time.Second},
+		{name: "negative falls back", ttl: "-5", want: configuredTTL * time.Second},
+		{name: "non-numeric falls back", ttl: "abc", want: configuredTTL * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := New(Config{ChallengeTTLSeconds: configuredTTL})
+			enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+			if err != nil {
+				t.Fatalf("Enroll: %v", err)
+			}
+			enrollment.Metadata["ttl"] = tt.ttl
+
+			before := time.Now()
+			challenge, err := f.Challenge(ctx, enrollment)
+			after := time.Now()
+			if err != nil {
+				t.Fatalf("Challenge: %v", err)
+			}
+			earliest, latest := before.Add(tt.want), after.Add(tt.want)
+			if challenge.ExpiresAt.Before(earliest) || challenge.ExpiresAt.After(latest) {
+				t.Fatalf("ExpiresAt = %v, want within [%v, %v]", challenge.ExpiresAt, earliest, latest)
+			}
+		})
+	}
+}
+
+// TestPIVFactor_Verify_RejectsUnsupportedKeyType asserts that an enrolled
+// public key of a type PIV does not sign with (DSA) is refused rather than
+// treated as a valid signer.
+func TestPIVFactor_Verify_RejectsUnsupportedKeyType(t *testing.T) {
+	der := dsaPublicKeyDER(t)
+	challenge := &qrdbsdk.AuthFactorChallenge{
+		ChallengeID: qrdbsdk.NewAuthFactorChallengeID(),
+		Nonce:       []byte("nonce"),
+		ExpiresAt:   time.Now().Add(time.Minute),
+		MethodData: map[string]any{
+			methodDataEnrolledCert: string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})),
+		},
+	}
+
+	err := New(Config{}).Verify(context.Background(), challenge, &qrdbsdk.AuthFactorResponse{Value: []byte("sig")})
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify(X25519 key) err = %v, want VerificationFailedError", err)
+	}
+	if failed.Reason != "unsupported public key type" {
+		t.Fatalf("Reason = %q, want %q", failed.Reason, "unsupported public key type")
+	}
+}
+
+// dsaPublicKeyDER returns a PKIX SubjectPublicKeyInfo for a DSA key built from
+// small fixed values (RFC 3279 section 2.3.2). x509.ParsePKIXPublicKey yields
+// a *dsa.PublicKey for it, and building it needs no FIPS-restricted primitive.
+func dsaPublicKeyDER(t *testing.T) []byte {
+	t.Helper()
+	params, err := asn1.Marshal(struct{ P, Q, G *big.Int }{big.NewInt(23), big.NewInt(11), big.NewInt(4)})
+	if err != nil {
+		t.Fatalf("marshal DSA parameters: %v", err)
+	}
+	y, err := asn1.Marshal(big.NewInt(8))
+	if err != nil {
+		t.Fatalf("marshal DSA public value: %v", err)
+	}
+	der, err := asn1.Marshal(struct {
+		Algorithm pkix.AlgorithmIdentifier
+		PublicKey asn1.BitString
+	}{
+		Algorithm: pkix.AlgorithmIdentifier{
+			Algorithm:  asn1.ObjectIdentifier{1, 2, 840, 10040, 4, 1},
+			Parameters: asn1.RawValue{FullBytes: params},
+		},
+		PublicKey: asn1.BitString{Bytes: y, BitLength: 8 * len(y)},
+	})
+	if err != nil {
+		t.Fatalf("marshal SubjectPublicKeyInfo: %v", err)
+	}
+	return der
 }

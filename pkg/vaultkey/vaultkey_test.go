@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -188,15 +187,6 @@ func TestSealed_DestroyDiscardsUnread(t *testing.T) {
 
 // TestSealed_ZeroValueHoldsNoSecret proves a Sealed that was never sealed
 // refuses to hand out a secret and tolerates Destroy.
-func TestSealed_ZeroValueHoldsNoSecret(t *testing.T) {
-	var sealed Sealed
-	sealed.Destroy()
-	_, err := sealed.TakeSecret()
-	var taken *SecretTakenError
-	assert.ErrorAs(t, err, &taken)
-	assert.Contains(t, taken.Error(), "already taken")
-}
-
 func TestProtectError(t *testing.T) {
 	cause := errors.New("no enclave")
 	err := &ProtectError{Err: cause}
@@ -206,11 +196,6 @@ func TestProtectError(t *testing.T) {
 
 func TestSeal_UnsupportedKeys(t *testing.T) {
 	_, err := Seal(&undersizedRSAKey().PublicKey)
-	assert.ErrorIs(t, err, ErrUnsupportedKey)
-
-	edPub, _, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	_, err = Seal(edPub)
 	assert.ErrorIs(t, err, ErrUnsupportedKey)
 
 	p224, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)

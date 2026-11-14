@@ -23,35 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPKCS11Cmd_Help(t *testing.T) {
-	// Capture stdout
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	// Reset root command for testing
-	rootCmd.SetArgs([]string{"pkcs11", "--help"})
-	err := rootCmd.Execute()
-
-	// Restore stdout
-	_ = w.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-	output := buf.String()
-
-	assert.NoError(t, err)
-	assert.Contains(t, output, "PKCS#11 token management")
-	assert.Contains(t, output, "probe")
-	assert.Contains(t, output, "register")
-	assert.Contains(t, output, "list-modules")
-	assert.Contains(t, output, "list-tokens")
-	assert.Contains(t, output, "init-token")
-	assert.Contains(t, output, "connect")
-	assert.Contains(t, output, "disconnect")
-}
-
 func TestPKCS11ProbeCmd(t *testing.T) {
 	// Reset root command for testing
 	rootCmd.SetArgs([]string{"pkcs11", "probe"})
@@ -180,28 +151,4 @@ func TestPKCS11Cmd_JSONOutput(t *testing.T) {
 	output = strings.TrimSpace(output)
 	assert.True(t, strings.HasPrefix(output, "[") || output == "null",
 		"Expected JSON array output, got: %s", output)
-}
-
-func TestPKCS11Cmd_Subcommands_Exist(t *testing.T) {
-	// Verify all expected subcommands are registered
-	subcommands := []string{
-		"probe",
-		"register",
-		"list-modules",
-		"list-tokens",
-		"init-token",
-		"connect",
-		"disconnect",
-	}
-
-	for _, name := range subcommands {
-		found := false
-		for _, cmd := range pkcs11Cmd.Commands() {
-			if cmd.Name() == name {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Subcommand %s should be registered", name)
-	}
 }

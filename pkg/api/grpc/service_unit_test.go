@@ -72,13 +72,6 @@ func setupServiceTest(t *testing.T) *Service {
 	return NewService(nil, nil, svc)
 }
 
-func TestNewService(t *testing.T) {
-	service := NewService(nil, nil, nil)
-	if service == nil {
-		t.Fatal("Expected non-nil service")
-	}
-}
-
 func TestService_Health(t *testing.T) {
 	service := setupServiceTest(t)
 	defer xkms.Reset()
@@ -1133,63 +1126,6 @@ func TestService_CertExists(t *testing.T) {
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.CertExists(context.Background(), &pb.CertExistsRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.InvalidArgument {
-			t.Errorf("Expected InvalidArgument, got %v", st.Code())
-		}
-	})
-}
-
-func TestService_SaveCertChain(t *testing.T) {
-	service := setupServiceTest(t)
-	defer xkms.Reset()
-
-	cert := createTestCertificate(t)
-	certPEM := encodeCertToPEM(cert)
-
-	t.Run("saves certificate chain", func(t *testing.T) {
-		resp, err := service.SaveCertChain(context.Background(), &pb.SaveCertChainRequest{
-			KeyId:        "chain-test",
-			CertChainPem: []string{certPEM},
-		})
-		if err != nil {
-			t.Fatalf("SaveCertChain failed: %v", err)
-		}
-
-		if !resp.Success {
-			t.Error("Expected success to be true")
-		}
-	})
-
-	t.Run("returns error for missing key_id", func(t *testing.T) {
-		_, err := service.SaveCertChain(context.Background(), &pb.SaveCertChainRequest{
-			CertChainPem: []string{certPEM},
-		})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.InvalidArgument {
-			t.Errorf("Expected InvalidArgument, got %v", st.Code())
-		}
-	})
-
-	t.Run("returns error for empty chain", func(t *testing.T) {
-		_, err := service.SaveCertChain(context.Background(), &pb.SaveCertChainRequest{
-			KeyId:        "chain-test",
-			CertChainPem: []string{},
-		})
 		if err == nil {
 			t.Fatal("Expected error")
 		}

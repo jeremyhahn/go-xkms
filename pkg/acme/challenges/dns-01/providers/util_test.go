@@ -221,15 +221,9 @@ func TestClearZoneCache(t *testing.T) {
 	// Verify it's gone
 	zoneCacheMu.RLock()
 	_, exists = zoneCache["test.example.com."]
+	assert.Empty(t, zoneCache)
 	zoneCacheMu.RUnlock()
 	assert.False(t, exists)
-}
-
-func TestDefaultNameservers(t *testing.T) {
-	assert.NotEmpty(t, DefaultNameservers)
-	for _, ns := range DefaultNameservers {
-		assert.Contains(t, ns, ":")
-	}
 }
 
 func TestGetNameserversFromConfig(t *testing.T) {
@@ -243,30 +237,6 @@ func TestGetNameserversFromConfig(t *testing.T) {
 		servers := GetNameserversFromConfig("")
 		assert.NotEmpty(t, servers)
 	})
-}
-
-func TestZoneCacheExpiry(t *testing.T) {
-	// Clear cache first
-	ClearZoneCache()
-
-	// Add expired entry
-	zoneCacheMu.Lock()
-	zoneCache["expired.example.com."] = zoneCacheEntry{
-		zone:       "example.com.",
-		expiryTime: time.Now().Add(-time.Hour), // Expired
-	}
-	zoneCacheMu.Unlock()
-
-	// Verify entry exists
-	zoneCacheMu.RLock()
-	entry, exists := zoneCache["expired.example.com."]
-	zoneCacheMu.RUnlock()
-
-	assert.True(t, exists)
-	assert.True(t, time.Now().After(entry.expiryTime), "Entry should be expired")
-
-	// Clean up
-	ClearZoneCache()
 }
 
 // Note: Testing FindZoneByFQDN, DNSQuery, and FollowCNAMEs requires

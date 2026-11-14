@@ -17,51 +17,8 @@
 package ca
 
 import (
-	"context"
-	"errors"
-	"math/big"
 	"testing"
-
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-// errRevocationStoreFault is a non-sentinel storage fault used to exercise
-// putRevocationBlobIfAbsent's error-wrapping branches.
-var errRevocationStoreFault = errors.New("b19: revocation store unavailable")
-
-// faultyPutBackend wraps a real storage.Backend and forces every Put and
-// PutIfAbsent call to fail, letting tests drive
-// putRevocationBlobIfAbsent's revocationStore error branch without a live
-// storage fault. Both methods fail (go-xkms#1131 moved the guarded write to
-// PutIfAbsent) so a test written against either verb still exercises the
-// same fault path.
-type faultyPutBackend struct {
-	storage.Backend
-}
-
-func (f *faultyPutBackend) Put(ctx context.Context, key string, value []byte) error {
-	return errRevocationStoreFault
-}
-
-func (f *faultyPutBackend) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
-	return false, errRevocationStoreFault
-}
-
-// TestPutRevocationBlob_RevocationStoreError_B19 exercises the
-// revocationStore.PutIfAbsent error branch (recordRevocation must surface
-// the fault wrapped in ErrStorageError, not silently swallow it).
-func TestPutRevocationBlob_RevocationStoreError_B19(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.revocationStore = &faultyPutBackend{Backend: storage.NewMemory()}
-
-	err := ca.Revoke(context.Background(), big.NewInt(4242), 0)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrStorageError)
-	assert.Contains(t, err.Error(), errRevocationStoreFault.Error())
-}
 
 // TestMustMarshal_PanicsOnUnsupportedType_B19 exercises mustMarshal's
 // panic-on-marshal-error guard. mustMarshal is only ever called internally

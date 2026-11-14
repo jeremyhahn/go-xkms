@@ -80,26 +80,6 @@ func TestWrapChallengeVerifier_OpenSkipsInnerAndFailsFast(t *testing.T) {
 	assert.False(t, called, "the inner verifier must not run while the breaker is open")
 }
 
-func TestWrapChallengeVerifier_HalfOpenProbeClosesOnSuccess(t *testing.T) {
-	cb := decoratorTestBreaker("verifier-half-open")
-	inner := common.ChallengeVerifierFunc(func(*net.Resolver, common.CertificateAuthority, string, string, string, string) error {
-		return errDependencyFailed
-	})
-	wrapped := WrapChallengeVerifier(cb, inner)
-
-	// First call fails and opens the breaker (MaxFailures 1).
-	require.ErrorIs(t, wrapped(nil, nil, "a", "80", "t", "k"), errDependencyFailed)
-	require.Equal(t, StateOpen, cb.State())
-
-	// Second call: ResetTimeout 0 admits it as a half-open probe.
-	inner2 := common.ChallengeVerifierFunc(func(*net.Resolver, common.CertificateAuthority, string, string, string, string) error {
-		return nil
-	})
-	wrapped2 := WrapChallengeVerifier(cb, inner2)
-	require.NoError(t, wrapped2(nil, nil, "a", "80", "t", "k"))
-	assert.Equal(t, StateClosed, cb.State())
-}
-
 // validationVerifier returns a challenge verifier that fetches the challenge
 // URL through client, the way the http-01 verifier does, and returns the
 // client's error unchanged.

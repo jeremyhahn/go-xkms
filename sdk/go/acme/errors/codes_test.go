@@ -346,46 +346,6 @@ func TestErrorCode_IsACME(t *testing.T) {
 	}
 }
 
-func TestErrorCodeValues(t *testing.T) {
-	// Verify codes are defined in expected order (iota)
-	if CodeUnknown != 0 {
-		t.Errorf("expected CodeUnknown=0, got %d", CodeUnknown)
-	}
-	if CodeInvalidInput != 1 {
-		t.Errorf("expected CodeInvalidInput=1, got %d", CodeInvalidInput)
-	}
-	if CodeNotFound != 2 {
-		t.Errorf("expected CodeNotFound=2, got %d", CodeNotFound)
-	}
-
-	// Verify all codes have unique values
-	codes := []ErrorCode{
-		CodeUnknown, CodeInvalidInput, CodeNotFound, CodeAlreadyExists,
-		CodeUnauthorized, CodeForbidden, CodeConflict, CodePreconditionFailed,
-		CodeRateLimited, CodeInternal, CodeUnavailable, CodeTimeout,
-		CodeCanceled, CodeUnimplemented, CodeResourceExhausted,
-		CodeNotInitialized, CodeConfiguration,
-		CodeConnection, CodeTransport,
-		CodeACMEAccountDoesNotExist, CodeACMEAlreadyRevoked, CodeACMEBadCSR,
-		CodeACMEBadNonce, CodeACMEBadPublicKey, CodeACMEBadRevocationReason,
-		CodeACMEBadSignatureAlgorithm, CodeACMECAA, CodeACMECompound,
-		CodeACMEConnection, CodeACMEDNS, CodeACMEExternalAccountRequired,
-		CodeACMEIncorrectResponse, CodeACMEInvalidContact, CodeACMEMalformed,
-		CodeACMEOrderNotReady, CodeACMERateLimited, CodeACMERejectedIdentifier,
-		CodeACMEServerInternal, CodeACMETLS, CodeACMEUnauthorized,
-		CodeACMEUnsupportedContact, CodeACMEUnsupportedIdentifier,
-		CodeACMEUserActionRequired,
-	}
-
-	seen := make(map[ErrorCode]bool)
-	for _, code := range codes {
-		if seen[code] {
-			t.Errorf("duplicate error code value: %d (%s)", code, code.String())
-		}
-		seen[code] = true
-	}
-}
-
 func TestParseACMEErrorType(t *testing.T) {
 	tests := []struct {
 		urn      string
@@ -441,46 +401,6 @@ func TestParseACMEErrorType_Unknown(t *testing.T) {
 			got := ParseACMEErrorType(urn)
 			if got != CodeUnknown {
 				t.Errorf("ParseACMEErrorType(%q) = %v, expected CodeUnknown", urn, got)
-			}
-		})
-	}
-}
-
-func TestACMECodeRoundTrip(t *testing.T) {
-	// Verify that String() and ParseACMEErrorType() are inverses for ACME codes
-	acmeCodes := []ErrorCode{
-		CodeACMEAccountDoesNotExist,
-		CodeACMEAlreadyRevoked,
-		CodeACMEBadCSR,
-		CodeACMEBadNonce,
-		CodeACMEBadPublicKey,
-		CodeACMEBadRevocationReason,
-		CodeACMEBadSignatureAlgorithm,
-		CodeACMECAA,
-		CodeACMECompound,
-		CodeACMEConnection,
-		CodeACMEDNS,
-		CodeACMEExternalAccountRequired,
-		CodeACMEIncorrectResponse,
-		CodeACMEInvalidContact,
-		CodeACMEMalformed,
-		CodeACMEOrderNotReady,
-		CodeACMERateLimited,
-		CodeACMERejectedIdentifier,
-		CodeACMEServerInternal,
-		CodeACMETLS,
-		CodeACMEUnauthorized,
-		CodeACMEUnsupportedContact,
-		CodeACMEUnsupportedIdentifier,
-		CodeACMEUserActionRequired,
-	}
-
-	for _, code := range acmeCodes {
-		t.Run(code.String(), func(t *testing.T) {
-			urn := code.String()
-			parsed := ParseACMEErrorType(urn)
-			if parsed != code {
-				t.Errorf("round trip failed: %v -> %q -> %v", code, urn, parsed)
 			}
 		})
 	}

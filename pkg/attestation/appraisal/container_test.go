@@ -19,7 +19,6 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
-	"maps"
 	"reflect"
 	"testing"
 
@@ -454,27 +453,6 @@ func TestAppraiser_AppraiseContainer(t *testing.T) {
 		}
 	})
 
-	t.Run("DriftedPCRIsAPCRMismatch", func(t *testing.T) {
-		w := newHostWorld(t)
-		drifted := maps.Clone(w.pcrs)
-		digest := sha256.Sum256([]byte("unexpected boot component"))
-		drifted[7] = digest[:]
-		err := w.app.AppraiseContainer(w.ctx, w.tenant, w.containerEvidence(t, drifted, nonce))
-		if !errors.Is(err, ErrPCRMismatch) || !errors.Is(err, ErrHostNotVerified) {
-			t.Fatalf("error %v does not wrap ErrPCRMismatch and ErrHostNotVerified", err)
-		}
-		var appraisal *HostAppraisalError
-		if !errors.As(err, &appraisal) {
-			t.Fatalf("expected *HostAppraisalError, got %T", err)
-		}
-		if appraisal.Image != "alpine" || appraisal.ReferenceValues != "golden" {
-			t.Errorf("error names %q against %q, want alpine against golden", appraisal.Image, appraisal.ReferenceValues)
-		}
-		if !appraisal.CryptographicFailure {
-			t.Error("a drifted PCR is a cryptographic failure")
-		}
-	})
-
 	t.Run("UnknownReferenceValuesAreNotVerified", func(t *testing.T) {
 		w := newHostWorld(t)
 		ev := w.containerEvidence(t, w.pcrs, nonce)
@@ -492,6 +470,10 @@ func TestAppraiser_AppraiseContainer(t *testing.T) {
 		}
 		if appraisal.CryptographicFailure {
 			t.Error("missing reference values are absent evidence, not a cryptographic failure")
+		}
+		if len(appraisal.Failures) != 1 || appraisal.Failures[0].Outcome != string(AppraisalAbsent) ||
+			len(appraisal.Failures[0].PCRs) != 0 {
+			t.Fatalf("failures = %+v, want one absent baseline with no PCR divergence", appraisal.Failures)
 		}
 	})
 
@@ -517,42 +499,60 @@ func TestAppraiser_AppraiseContainerAKIntermediates(t *testing.T) {
 		}
 	})
 
-	t.Run("MissingIntermediateIsForged", func(t *testing.T) {
-		w := newHostWorld(t)
-		w.issueAKUnderIntermediate(t)
-		err := w.app.AppraiseContainer(w.ctx, w.tenant, w.containerEvidence(t, w.pcrs, nonce))
-		var appraisal *HostAppraisalError
-		if !errors.As(err, &appraisal) || !errors.Is(err, ErrHostNotVerified) {
-			t.Fatalf("error %v, want a *HostAppraisalError wrapping ErrHostNotVerified", err)
-		}
-		if !appraisal.CryptographicFailure || len(appraisal.Failures) == 0 ||
-			appraisal.Failures[0].Check != AppraisalCheckAKCertificate ||
-			appraisal.Failures[0].Outcome != string(AppraisalForged) {
-			t.Fatalf("appraisal = %+v, want a forged AK certificate check", appraisal)
-		}
-	})
+	forged := map[string]func(w *verifierWorld, t *testing.T) []*x509.Certificate{
+		"MissingIntermediateIsForged": func(*verifierWorld, *testing.T) []*x509.Certificate {
+			return nil
+		},
+		"AnotherIntermediateIsForged": func(w *verifierWorld, t *testing.T) []*x509.Certificate {
+			return []*x509.Certificate{w.otherIntermediate(t)}
+		},
+		"UnrelatedCertificateIsForged": func(w *verifierWorld, _ *testing.T) []*x509.Certificate {
+			return []*x509.Certificate{w.signerCert}
+		},
+	}
+	for name, intermediates := range forged {
+		t.Run(name, func(t *testing.T) {
+			w := newHostWorld(t)
+			w.issueAKUnderIntermediate(t)
+			ev := w.containerEvidence(t, w.pcrs, nonce)
+			ev.AKIntermediates = intermediates(w, t)
+			err := w.app.AppraiseContainer(w.ctx, w.tenant, ev)
+			var appraisal *HostAppraisalError
+			if !errors.As(err, &appraisal) || !errors.Is(err, ErrHostNotVerified) {
+				t.Fatalf("error %v, want a *HostAppraisalError wrapping ErrHostNotVerified", err)
+			}
+			if !appraisal.CryptographicFailure || len(appraisal.Failures) == 0 ||
+				appraisal.Failures[0].Check != AppraisalCheckAKCertificate ||
+				appraisal.Failures[0].Outcome != string(AppraisalForged) {
+				t.Fatalf("appraisal = %+v, want a forged AK certificate check", appraisal)
+			}
+		})
+	}
 
-	t.Run("AnotherIntermediateIsForged", func(t *testing.T) {
+	t.Run("IntermediatesWithoutTheLeafAreAbsent", func(t *testing.T) {
 		w := newHostWorld(t)
-		w.issueAKUnderIntermediate(t)
+		intermediate := w.issueAKUnderIntermediate(t)
 		ev := w.containerEvidence(t, w.pcrs, nonce)
-		ev.AKIntermediates = []*x509.Certificate{w.otherIntermediate(t)}
+		ev.AKCertificate = nil
+		ev.AKIntermediates = []*x509.Certificate{intermediate}
 		err := w.app.AppraiseContainer(w.ctx, w.tenant, ev)
 		var appraisal *HostAppraisalError
-		if !errors.As(err, &appraisal) || !appraisal.CryptographicFailure {
-			t.Fatalf("error %v, want a *HostAppraisalError with a cryptographic failure", err)
+		if !errors.As(err, &appraisal) || len(appraisal.Failures) == 0 ||
+			appraisal.Failures[0].Check != AppraisalCheckAKCertificate ||
+			appraisal.Failures[0].Outcome != string(AppraisalAbsent) {
+			t.Fatalf("error %v, want an absent AK certificate check", err)
 		}
 	})
 
 	t.Run("NilIntermediateIsRefused", func(t *testing.T) {
 		w := newHostWorld(t)
-		w.issueAKUnderIntermediate(t)
+		intermediate := w.issueAKUnderIntermediate(t)
 		ev := w.containerEvidence(t, w.pcrs, nonce)
-		ev.AKIntermediates = []*x509.Certificate{nil}
+		ev.AKIntermediates = []*x509.Certificate{intermediate, nil}
 		err := w.app.AppraiseContainer(w.ctx, w.tenant, ev)
 		var nilEntry *AKIntermediateError
-		if !errors.Is(err, ErrInvalidAKIntermediate) || !errors.As(err, &nilEntry) || nilEntry.Index != 0 {
-			t.Fatalf("error %v, want an *AKIntermediateError at index 0", err)
+		if !errors.Is(err, ErrInvalidAKIntermediate) || !errors.As(err, &nilEntry) || nilEntry.Index != 1 {
+			t.Fatalf("error %v, want an *AKIntermediateError at index 1", err)
 		}
 	})
 }

@@ -14,20 +14,14 @@
 package unix
 
 import (
-	"context"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-
-	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/peercred"
 )
 
@@ -110,57 +104,6 @@ func TestPeerCredentialPolicy_Allowed(t *testing.T) {
 	}
 }
 
-// TestGRPCServer_PeerCredential_SameUIDAccepted verifies a connection from
-// this test process's own uid -- the default case for every existing client
-// in this test suite -- is accepted by the accept-time peer-credential
-// check.
-func TestGRPCServer_PeerCredential_SameUIDAccepted(t *testing.T) {
-	socketPath := filepath.Join(privateSocketDir(t), "peercred-same-uid.sock")
-
-	server, err := NewGRPCServer(&GRPCConfig{SocketPath: socketPath})
-	require.NoError(t, err)
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- server.Start() }()
-	waitForGRPCServerReady(t, server, socketPath)
-	defer func() { _ = server.Stop(context.Background()) }()
-
-	conn, err := grpc.NewClient("unix://"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	client := pb.NewKeystoreServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	resp, err := client.Health(ctx, &pb.HealthRequest{})
-	require.NoError(t, err, "a same-uid peer must be accepted by the peer-credential check")
-	assert.Equal(t, "healthy", resp.Status)
-}
-
-// TestValidateSocketDir_RefusesGroupWritableDir verifies a preexisting
-// socket directory writable by group or other is refused before Start ever
-// binds a listener inside it.
-func TestValidateSocketDir_RefusesGroupWritableDir(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0775))
-
-	err := validateSocketDir(dir)
-	require.Error(t, err)
-	var insecureErr *InsecureSocketDirError
-	require.ErrorAs(t, err, &insecureErr)
-	assert.Equal(t, dir, insecureErr.Path)
-}
-
-// TestValidateSocketDir_AcceptsPrivateDir verifies a preexisting socket
-// directory that is privately owned and not group/world writable passes.
-func TestValidateSocketDir_AcceptsPrivateDir(t *testing.T) {
-	dir := privateSocketDir(t)
-	assert.NoError(t, validateSocketDir(dir))
-}
-
 // TestValidateSocketDir_MissingDirOK verifies a socket directory that does
 // not exist yet is not treated as insecure: Start creates it fresh.
 func TestValidateSocketDir_MissingDirOK(t *testing.T) {
@@ -197,5 +140,6 @@ func TestGRPCServer_Start_RefusesGroupWritableSocketDir(t *testing.T) {
 	err = server.Start()
 	require.Error(t, err)
 	var insecureErr *InsecureSocketDirError
-	assert.ErrorAs(t, err, &insecureErr)
+	require.ErrorAs(t, err, &insecureErr)
+	assert.Equal(t, dir, insecureErr.Path)
 }

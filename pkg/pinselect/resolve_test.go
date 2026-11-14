@@ -54,8 +54,11 @@ func TestResolve_FreshDataDirAutoSelectsAndPersists(t *testing.T) {
 func TestResolve_FreshDataDirPersistsTPMWhenAvailable(t *testing.T) {
 	pinDir := t.TempDir()
 
+	// StrategyAuto means exactly what an unset strategy means:
+	// pinselect's hardware-first choice.
 	_, strategy, err := Resolve(ResolveConfig{
-		PINDir: pinDir,
+		PINDir:   pinDir,
+		Strategy: StrategyAuto,
 		Config: Config{
 			TPM:      fakeTPMProvider{pa: &fakePlatformAuth{provisioned: true, authReady: true}, available: true},
 			Software: softwareProvider{},
@@ -438,25 +441,6 @@ func TestResolve_ExplicitStrategyMatchingRecordBuildsIt(t *testing.T) {
 	}
 	if strategy != qrdbsdk.PINStrategyTPM2 || backend.Strategy() != qrdbsdk.PINStrategyTPM2 {
 		t.Fatalf("strategy = %q (backend %q), want tpm2", strategy, backend.Strategy())
-	}
-}
-
-// TestResolve_AutoStrategyIsHardwareFirstSelection proves StrategyAuto means
-// exactly what an unset strategy means: pinselect's hardware-first choice.
-func TestResolve_AutoStrategyIsHardwareFirstSelection(t *testing.T) {
-	_, strategy, err := Resolve(ResolveConfig{
-		PINDir:   t.TempDir(),
-		Strategy: StrategyAuto,
-		Config: Config{
-			TPM:      fakeTPMProvider{pa: &fakePlatformAuth{provisioned: true, authReady: true}, available: true},
-			Software: softwareProvider{},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if strategy != qrdbsdk.PINStrategyTPM2 {
-		t.Fatalf("strategy = %q, want tpm2", strategy)
 	}
 }
 

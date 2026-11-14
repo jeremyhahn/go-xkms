@@ -35,14 +35,6 @@ func newPIVRunConfig(mock *mockPIVClient) *Config {
 	}
 }
 
-func TestPIVListCmd_Run(t *testing.T) {
-	mock := &mockPIVClient{listSlotsResp: &transport.ListPIVSlotsResponse{}}
-	withGlobalConfig(t, newPIVRunConfig(mock))
-	captureStdout(t, func() {
-		pivListCmd.Run(pivListCmd, nil)
-	})
-}
-
 func TestPIVGetCmd_Run(t *testing.T) {
 	mock := &mockPIVClient{getCertResp: &transport.GetPIVCertificateResponse{Slot: "9a", Certificate: []byte("cert-bytes")}}
 	withGlobalConfig(t, newPIVRunConfig(mock))
@@ -100,24 +92,6 @@ func TestPIVDeleteCmd_Run(t *testing.T) {
 	withGlobalConfig(t, newPIVRunConfig(mock))
 	captureStdout(t, func() {
 		pivDeleteCmd.Run(pivDeleteCmd, []string{"9a"})
-	})
-}
-
-func TestPIVGenerateCmd_Run(t *testing.T) {
-	mock := &mockPIVClient{generateKeyResp: &transport.GeneratePIVKeyResponse{
-		Slot: "9a", Certificate: []byte("cert-bytes"), PublicKey: []byte("pub-bytes"),
-	}}
-	withGlobalConfig(t, newPIVRunConfig(mock))
-	cmd := pivGenerateCmd
-	_ = cmd.Flags().Set("algorithm", "ecdsap256")
-	_ = cmd.Flags().Set("subject", "CN=piv-test")
-	t.Cleanup(func() {
-		_ = cmd.Flags().Set("algorithm", "")
-		_ = cmd.Flags().Set("subject", "")
-	})
-
-	captureStdout(t, func() {
-		cmd.Run(cmd, []string{"9a"})
 	})
 }
 

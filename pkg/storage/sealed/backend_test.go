@@ -29,6 +29,8 @@ type mockSealer struct {
 	canSeal   bool
 	sealErr   error
 	unsealErr error
+	// unsealIntoErr fails UnsealInto alone, after PlaintextLen has succeeded.
+	unsealIntoErr error
 }
 
 func (m *mockSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
@@ -85,19 +87,6 @@ func newTestBackend(t *testing.T) *Backend {
 // ---------------------------------------------------------------------------
 // Constructor tests
 // ---------------------------------------------------------------------------
-
-func TestNew_Success(t *testing.T) {
-	inner := storage.NewMemory()
-	sealer := &mockSealer{canSeal: true}
-
-	b, err := New(inner, sealer, nil)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if b == nil {
-		t.Fatal("expected non-nil backend")
-	}
-}
 
 func TestNew_WithSealOptions(t *testing.T) {
 	inner := storage.NewMemory()
@@ -162,26 +151,6 @@ func TestNew_CannotSeal(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Put / Get round-trip tests
 // ---------------------------------------------------------------------------
-
-func TestPutGet_Roundtrip(t *testing.T) {
-	b := newTestBackend(t)
-
-	key := "test/key"
-	value := []byte("hello, sealed world")
-
-	if err := b.Put(context.Background(), key, value); err != nil {
-		t.Fatalf("Put failed: %v", err)
-	}
-
-	got, err := b.Get(context.Background(), key)
-	if err != nil {
-		t.Fatalf("Get failed: %v", err)
-	}
-
-	if string(got) != string(value) {
-		t.Fatalf("roundtrip mismatch: got %q, want %q", got, value)
-	}
-}
 
 func TestPutGet_EmptyValue(t *testing.T) {
 	b := newTestBackend(t)
@@ -257,59 +226,9 @@ func TestPutGet_MultipleKeys(t *testing.T) {
 	}
 }
 
-func TestPut_OverwriteExistingKey(t *testing.T) {
-	b := newTestBackend(t)
-
-	key := "test/overwrite"
-
-	if err := b.Put(context.Background(), key, []byte("original")); err != nil {
-		t.Fatalf("Put original failed: %v", err)
-	}
-
-	if err := b.Put(context.Background(), key, []byte("updated")); err != nil {
-		t.Fatalf("Put updated failed: %v", err)
-	}
-
-	got, err := b.Get(context.Background(), key)
-	if err != nil {
-		t.Fatalf("Get failed: %v", err)
-	}
-	if string(got) != "updated" {
-		t.Fatalf("expected overwritten value, got %q", got)
-	}
-}
-
-func TestPut_SimpleValue(t *testing.T) {
-	b := newTestBackend(t)
-
-	if err := b.Put(context.Background(), "simple-key", []byte("value")); err != nil {
-		t.Fatalf("Put failed: %v", err)
-	}
-
-	got, err := b.Get(context.Background(), "simple-key")
-	if err != nil {
-		t.Fatalf("Get failed: %v", err)
-	}
-	if string(got) != "value" {
-		t.Fatalf("expected %q, got %q", "value", got)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Get error tests
 // ---------------------------------------------------------------------------
-
-func TestGet_NotFound(t *testing.T) {
-	b := newTestBackend(t)
-
-	_, err := b.Get(context.Background(), "nonexistent/key")
-	if err == nil {
-		t.Fatal("expected error for nonexistent key")
-	}
-	if !errors.Is(err, storage.ErrNotFound) {
-		t.Fatalf("expected storage.ErrNotFound, got %v", err)
-	}
-}
 
 func TestGet_UnsealFails(t *testing.T) {
 	inner := storage.NewMemory()
@@ -364,21 +283,129 @@ func TestGet_CorruptedData(t *testing.T) {
 // Put error tests
 // ---------------------------------------------------------------------------
 
-func TestPut_SealFails(t *testing.T) {
-	inner := storage.NewMemory()
-	sealer := &mockSealer{canSeal: true, sealErr: errors.New("seal broken")}
+// TestBackend_Refusals pins each refusal of the sealed backend to its typed
+// error, and checks that a refused call leaves the inner store as it was: a
+// write that could not be sealed stores nothing, and a guarded delete whose
+// stored value cannot be opened deletes nothing.
+func TestBackend_Refusals(t *testing.T) {
+	const key = "key"
+	stored := []byte("stored")
 
-	b, err := New(inner, sealer, nil)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
+	tests := []struct {
+		name string
+		// inner is the store under the backend; nil means a fresh Memory store.
+		inner  storage.Backend
+		sealer *mockSealer
+		// seed is written through a working sealer before the call; nil writes nothing.
+		seed    []byte
+		call    func(ctx context.Context, b *Backend) error
+		wantErr error
+	}{
+		{
+			name:    "Put refuses a value the barrier cannot seal",
+			sealer:  &mockSealer{canSeal: true, sealErr: errors.New("seal broken")},
+			call:    func(ctx context.Context, b *Backend) error { return b.Put(ctx, key, []byte("data")) },
+			wantErr: ErrSealFailed,
+		},
+		{
+			name:   "PutIfAbsent refuses a value the barrier cannot seal",
+			sealer: &mockSealer{canSeal: true, sealErr: errors.New("seal broken")},
+			call: func(ctx context.Context, b *Backend) error {
+				_, err := b.PutIfAbsent(ctx, key, []byte("data"))
+				return err
+			},
+			wantErr: ErrSealFailed,
+		},
+		{
+			name:   "PutIfAllAbsent refuses a value the barrier cannot seal",
+			sealer: &mockSealer{canSeal: true, sealErr: errors.New("seal broken")},
+			call: func(ctx context.Context, b *Backend) error {
+				_, err := b.PutIfAllAbsent(ctx, key, []byte("data"), "fence")
+				return err
+			},
+			wantErr: ErrSealFailed,
+		},
+		{
+			// noCADBackend hides every optional capability of the inner store,
+			// fenced creation included.
+			name:   "PutIfAllAbsent refuses an inner store without fenced creation",
+			inner:  noCADBackend{storage.NewMemory()},
+			sealer: &mockSealer{canSeal: true},
+			call: func(ctx context.Context, b *Backend) error {
+				_, err := b.PutIfAllAbsent(ctx, key, []byte("data"), "fence")
+				return err
+			},
+			wantErr: storage.ErrFencedCreateUnsupported,
+		},
+		{
+			name:   "CompareAndDelete refuses a stored value the barrier cannot open",
+			sealer: &mockSealer{canSeal: true, unsealErr: errors.New("unseal broken")},
+			seed:   stored,
+			call: func(ctx context.Context, b *Backend) error {
+				_, err := b.CompareAndDelete(ctx, key, stored)
+				return err
+			},
+			wantErr: ErrUnsealFailed,
+		},
+		{
+			// An empty plaintext is still authenticated: a tampered envelope must
+			// not "match" an empty guard.
+			name:   "CompareAndDelete refuses an empty stored value that fails authentication",
+			sealer: &mockSealer{canSeal: true, unsealIntoErr: errors.New("tag mismatch")},
+			seed:   []byte{},
+			call: func(ctx context.Context, b *Backend) error {
+				_, err := b.CompareAndDelete(ctx, key, nil)
+				return err
+			},
+			wantErr: ErrUnsealFailed,
+		},
 	}
 
-	err = b.Put(context.Background(), "key", []byte("data"))
-	if err == nil {
-		t.Fatal("expected error when seal fails")
-	}
-	if !errors.Is(err, ErrSealFailed) {
-		t.Fatalf("expected ErrSealFailed, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			inner := tt.inner
+			if inner == nil {
+				inner = storage.NewMemory()
+			}
+
+			var before []byte
+			if tt.seed != nil {
+				seeder, err := New(inner, &mockSealer{canSeal: true}, nil)
+				if err != nil {
+					t.Fatalf("New (seeder) failed: %v", err)
+				}
+				if err := seeder.Put(ctx, key, tt.seed); err != nil {
+					t.Fatalf("seed Put failed: %v", err)
+				}
+				if before, err = inner.Get(ctx, key); err != nil {
+					t.Fatalf("seed Get failed: %v", err)
+				}
+			}
+
+			b, err := New(inner, tt.sealer, nil)
+			if err != nil {
+				t.Fatalf("New failed: %v", err)
+			}
+
+			if err := tt.call(ctx, b); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tt.wantErr)
+			}
+
+			after, err := inner.Get(ctx, key)
+			if before == nil {
+				if !errors.Is(err, storage.ErrNotFound) {
+					t.Fatalf("inner Get after refusal = %q, %v; want ErrNotFound", after, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("inner Get after refusal failed: %v", err)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("stored value changed on refusal: got %q, want %q", after, before)
+			}
+		})
 	}
 }
 
@@ -426,18 +453,6 @@ func TestDelete_Success(t *testing.T) {
 	}
 }
 
-func TestDelete_NotFound(t *testing.T) {
-	b := newTestBackend(t)
-
-	err := b.Delete(context.Background(), "nonexistent")
-	if err == nil {
-		t.Fatal("expected error when deleting nonexistent key")
-	}
-	if !errors.Is(err, storage.ErrNotFound) {
-		t.Fatalf("expected storage.ErrNotFound, got %v", err)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // List tests
 // ---------------------------------------------------------------------------
@@ -458,41 +473,6 @@ func TestList_ReturnsKeys(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Fatalf("expected 3 keys with prefix 'ns/', got %d: %v", len(got), got)
-	}
-}
-
-func TestList_EmptyPrefix(t *testing.T) {
-	b := newTestBackend(t)
-
-	keys := []string{"a", "b", "c"}
-	for _, k := range keys {
-		if err := b.Put(context.Background(), k, []byte("v")); err != nil {
-			t.Fatalf("Put(%q) failed: %v", k, err)
-		}
-	}
-
-	got, err := b.List(context.Background(), "")
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("expected 3 keys, got %d: %v", len(got), got)
-	}
-}
-
-func TestList_NoMatch(t *testing.T) {
-	b := newTestBackend(t)
-
-	if err := b.Put(context.Background(), "key", []byte("v")); err != nil {
-		t.Fatalf("Put failed: %v", err)
-	}
-
-	got, err := b.List(context.Background(), "nonexistent/")
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("expected 0 keys, got %d: %v", len(got), got)
 	}
 }
 
@@ -517,18 +497,6 @@ func TestExists_True(t *testing.T) {
 	}
 }
 
-func TestExists_False(t *testing.T) {
-	b := newTestBackend(t)
-
-	exists, err := b.Exists(context.Background(), "missing/key")
-	if err != nil {
-		t.Fatalf("Exists failed: %v", err)
-	}
-	if exists {
-		t.Fatal("expected key to not exist")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Scan tests
 // ---------------------------------------------------------------------------
@@ -545,6 +513,10 @@ func TestScan_ReturnsDecryptedPairs(t *testing.T) {
 		if err := b.Put(context.Background(), k, v); err != nil {
 			t.Fatalf("Put(%q) failed: %v", k, err)
 		}
+	}
+	// A key outside the prefix must not reach fn.
+	if err := b.Put(context.Background(), "other/key", []byte("outside")); err != nil {
+		t.Fatalf("Put failed: %v", err)
 	}
 
 	got := make(map[string][]byte)
@@ -566,48 +538,6 @@ func TestScan_ReturnsDecryptedPairs(t *testing.T) {
 		if string(v) != string(want) {
 			t.Fatalf("Scan(%q) = %q, want %q", k, v, want)
 		}
-	}
-}
-
-func TestScan_WithPrefixFilter(t *testing.T) {
-	b := newTestBackend(t)
-
-	if err := b.Put(context.Background(), "ns/key", []byte("inside")); err != nil {
-		t.Fatalf("Put failed: %v", err)
-	}
-	if err := b.Put(context.Background(), "other/key", []byte("outside")); err != nil {
-		t.Fatalf("Put failed: %v", err)
-	}
-
-	got := make(map[string][]byte)
-	err := b.Scan(context.Background(), "ns/", func(key string, value []byte) error {
-		got[key] = value
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("Scan failed: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 pair with prefix 'ns/', got %d", len(got))
-	}
-	if string(got["ns/key"]) != "inside" {
-		t.Fatalf("Scan returned wrong value for 'ns/key': %q", got["ns/key"])
-	}
-}
-
-func TestScan_EmptyStore(t *testing.T) {
-	b := newTestBackend(t)
-
-	got := make(map[string][]byte)
-	err := b.Scan(context.Background(), "", func(key string, value []byte) error {
-		got[key] = value
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("Scan on empty store failed: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("expected 0 pairs from empty store, got %d", len(got))
 	}
 }
 
@@ -680,59 +610,9 @@ func TestScan_CorruptedData(t *testing.T) {
 	}
 }
 
-func TestScan_EmptyPrefix_ReturnsAll(t *testing.T) {
-	b := newTestBackend(t)
-
-	entries := map[string][]byte{
-		"a/1": []byte("one"),
-		"b/2": []byte("two"),
-		"c/3": []byte("three"),
-	}
-	for k, v := range entries {
-		if err := b.Put(context.Background(), k, v); err != nil {
-			t.Fatalf("Put(%q) failed: %v", k, err)
-		}
-	}
-
-	got := make(map[string][]byte)
-	err := b.Scan(context.Background(), "", func(key string, value []byte) error {
-		got[key] = value
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("Scan failed: %v", err)
-	}
-	if len(got) != len(entries) {
-		t.Fatalf("expected %d pairs, got %d", len(entries), len(got))
-	}
-	for k, want := range entries {
-		v, ok := got[k]
-		if !ok {
-			t.Fatalf("Scan missing key %q", k)
-		}
-		if string(v) != string(want) {
-			t.Fatalf("Scan(%q) = %q, want %q", k, v, want)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Close tests
 // ---------------------------------------------------------------------------
-
-func TestClose(t *testing.T) {
-	b := newTestBackend(t)
-
-	if err := b.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
-
-	// After close, inner backend should reject operations.
-	_, err := b.Get(context.Background(), "any")
-	if err == nil {
-		t.Fatal("expected error after close")
-	}
-}
 
 func TestClose_Idempotent(t *testing.T) {
 	b := newTestBackend(t)
@@ -749,7 +629,3 @@ func TestClose_Idempotent(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Interface compliance
 // ---------------------------------------------------------------------------
-
-func TestInterfaceCompliance(t *testing.T) {
-	var _ storage.Backend = (*Backend)(nil)
-}

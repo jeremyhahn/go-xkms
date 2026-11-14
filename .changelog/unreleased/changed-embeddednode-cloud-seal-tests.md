@@ -1,0 +1,1 @@
+Tests: `pkg/embeddednode` asserts that the AWS KMS, GCP Cloud KMS, Azure Key Vault and Vault node seals refuse a backend section their backend cannot be built from, with the backend's typed error and no provider (#1794).

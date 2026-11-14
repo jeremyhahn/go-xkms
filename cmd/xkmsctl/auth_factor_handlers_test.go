@@ -329,29 +329,6 @@ func TestXKMSAuthFactorAdd_invalidUserID(t *testing.T) {
 	}
 }
 
-// TestXKMSAuthFactorList_success exercises the canonical list flow.
-func TestXKMSAuthFactorList_success(t *testing.T) {
-	mock, restore := installMockFactory(t)
-	defer restore()
-
-	mock.factors["seed-1"] = &qrdbtransport.AuthFactorRecord{
-		ID:           "seed-1",
-		UserID:       7,
-		Type:         "mtls",
-		Label:        "alice-mtls",
-		Credential:   []byte("creda"),
-		RegisteredAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
-	}
-
-	out, err := runAuthCmd(t, "auth", "factor", "list", "--user", "7")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if !strings.Contains(out, "seed-1") {
-		t.Fatalf("expected factor id in output, got: %q", out)
-	}
-}
-
 // TestXKMSAuthFactorList_missingUser asserts list fails fast when
 // --user is not supplied.
 func TestXKMSAuthFactorList_missingUser(t *testing.T) {
@@ -475,34 +452,6 @@ func TestXKMSAuthFactorRotate_success(t *testing.T) {
 	}
 	if mock.factors["old"].RevokedAt == nil {
 		t.Fatal("expected old factor RevokedAt to be set")
-	}
-}
-
-// TestXKMSAuthLogin_fido2_success exercises the M14 LoginAuthFactor
-// RPC for fido2.
-func TestXKMSAuthLogin_fido2_success(t *testing.T) {
-	mock, restore := installMockFactory(t)
-	defer restore()
-
-	mock.factors["login-1"] = &qrdbtransport.AuthFactorRecord{
-		ID:           "login-1",
-		UserID:       77,
-		Type:         "fido2",
-		Label:        "yk-home",
-		Credential:   []byte{0xde, 0xad, 0xbe, 0xef},
-		RegisteredAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
-	}
-
-	out, err := runAuthCmd(t,
-		"auth", "login",
-		"--method", "fido2",
-		"--credential-hex", "deadbeef",
-	)
-	if err != nil {
-		t.Fatalf("login: %v", err)
-	}
-	if !strings.Contains(out, "User ID:   77") {
-		t.Fatalf("expected resolved user id 77 in output, got: %q", out)
 	}
 }
 

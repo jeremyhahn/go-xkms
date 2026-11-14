@@ -1,0 +1,1 @@
+- **Tests: `pkg/escrow` audited** — seven tests that repeated a kept test's path, or only restated constants, are removed; each behaviour keeps one test (#1794).

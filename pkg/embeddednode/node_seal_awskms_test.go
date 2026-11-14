@@ -149,3 +149,26 @@ func TestBuildAWSKMSNodeSealBackend_RequiresBackendsAWSKMS(t *testing.T) {
 	require.ErrorAs(t, err, &nodeErr)
 	require.Nil(t, provider)
 }
+
+// TestBuildAWSKMSNodeSealBackend_RefusesAnInvalidBackendsAWSKMS proves a
+// backends.awskms section the AWS KMS backend cannot be built from refuses
+// the node seal with the backend's typed error and no provider.
+func TestBuildAWSKMSNodeSealBackend_RefusesAnInvalidBackendsAWSKMS(t *testing.T) {
+	tests := []struct {
+		name   string
+		awsCfg *config.AWSKMSConfig
+		want   error
+	}{
+		{name: "missing region", awsCfg: &config.AWSKMSConfig{KeyID: awsNodeSealKeyID}, want: awskms.ErrInvalidConfig},
+		{name: "malformed region", awsCfg: &config.AWSKMSConfig{Region: "not a region", KeyID: awsNodeSealKeyID}, want: awskms.ErrInvalidRegion},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Backends: config.BackendsConfig{AWSKMS: tt.awsCfg}}
+
+			provider, err := buildAWSKMSNodeSealBackend(context.Background(), cfg, storage.NewMemory(), testLogger())
+			require.ErrorIs(t, err, tt.want)
+			require.Nil(t, provider)
+		})
+	}
+}

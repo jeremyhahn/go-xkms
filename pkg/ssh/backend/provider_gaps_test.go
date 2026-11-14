@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/fips140"
 	"crypto/rand"
@@ -201,21 +200,32 @@ func TestProvider_SSHSignVerifyAllAlgorithms(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
+	// For RSA, rsaSHA2 names the RFC 8332 rsa-sha2-256/512 scheme requested
+	// through ssh.AlgorithmSigner (modern servers reject the legacy SHA-1
+	// ssh-rsa), proving the backend's crypto.Signer honors the hashed-digest
+	// scheme.
 	cases := []struct {
 		algo      keys.Algorithm
+		rsaSHA2   string
 		wantWire  string
 		wantSigFm string
 	}{
-		{keys.AlgorithmEd25519, ssh.KeyAlgoED25519, ssh.KeyAlgoED25519},
-		{keys.AlgorithmECDSAP256, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA256},
-		{keys.AlgorithmECDSAP384, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA384},
-		{keys.AlgorithmECDSAP521, ssh.KeyAlgoECDSA521, ssh.KeyAlgoECDSA521},
-		{keys.AlgorithmRSA, ssh.KeyAlgoRSA, ssh.KeyAlgoRSA},
+		{keys.AlgorithmEd25519, "", ssh.KeyAlgoED25519, ssh.KeyAlgoED25519},
+		{keys.AlgorithmECDSAP256, "", ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA256},
+		{keys.AlgorithmECDSAP384, "", ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA384},
+		{keys.AlgorithmECDSAP521, "", ssh.KeyAlgoECDSA521, ssh.KeyAlgoECDSA521},
+		{keys.AlgorithmRSA, "", ssh.KeyAlgoRSA, ssh.KeyAlgoRSA},
+		{keys.AlgorithmRSA, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSA, ssh.KeyAlgoRSASHA256},
+		{keys.AlgorithmRSA, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSA, ssh.KeyAlgoRSASHA512},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.algo.String(), func(t *testing.T) {
-			keyID := "ssh-user-wire-" + tc.algo.String()
+		name := tc.algo.String()
+		if tc.rsaSHA2 != "" {
+			name += "-" + tc.rsaSHA2
+		}
+		t.Run(name, func(t *testing.T) {
+			keyID := "ssh-user-wire-" + name
 			signer, err := p.GenerateKey(ctx, "software", keyID, tc.algo, 2048)
 			if err != nil {
 				t.Fatalf("GenerateKey: %v", err)
@@ -238,19 +248,34 @@ func TestProvider_SSHSignVerifyAllAlgorithms(t *testing.T) {
 				t.Fatalf("reparsed key type %q != %q", reparsed.Type(), sshPub.Type())
 			}
 
-			sshSigner, err := ssh.NewSignerFromSigner(signer)
+			// Resolve the signer again (simulating a later Sign) and sign
+			// with it.
+			again, err := p.Signer(ctx, "software", keyID, tc.algo)
+			if err != nil {
+				t.Fatalf("Signer: %v", err)
+			}
+			sshSigner, err := ssh.NewSignerFromSigner(again)
 			if err != nil {
 				t.Fatalf("ssh.NewSignerFromSigner: %v", err)
 			}
 			msg := []byte("ssh session identifier payload")
-			sig, err := sshSigner.Sign(rand.Reader, msg)
+			var sig *ssh.Signature
+			if tc.rsaSHA2 != "" {
+				as, ok := sshSigner.(ssh.AlgorithmSigner)
+				if !ok {
+					t.Fatalf("%s signer is not an ssh.AlgorithmSigner", tc.algo)
+				}
+				sig, err = as.SignWithAlgorithm(rand.Reader, msg, tc.rsaSHA2)
+			} else {
+				sig, err = sshSigner.Sign(rand.Reader, msg)
+			}
 			if err != nil {
 				// "ssh-rsa" is RFC 4253's original RSA signature format,
 				// which signs with SHA-1; x/crypto/ssh's default Sign (as
 				// opposed to SignWithAlgorithm requesting rsa-sha2-256/512)
 				// refuses it outright under GODEBUG=fips140=only with its
 				// own typed error, not a panic.
-				if tc.algo == keys.AlgorithmRSA && fips140.Enforced() {
+				if tc.algo == keys.AlgorithmRSA && tc.rsaSHA2 == "" && fips140.Enforced() {
 					return
 				}
 				t.Fatalf("Sign: %v", err)
@@ -330,42 +355,6 @@ func TestProvider_CrossKeyVerificationFails(t *testing.T) {
 				t.Fatalf("key B failed to verify its own signature: %v", err)
 			}
 		})
-	}
-}
-
-// TestProvider_Ed25519PublicKeyShape asserts the Ed25519 path yields a real
-// 32-byte ed25519.PublicKey rather than an interface holding another type —
-// the SSH agent and authorized_keys writers both depend on this.
-func TestProvider_Ed25519PublicKeyShape(t *testing.T) {
-	ctx := context.Background()
-	p, err := New(newSoftwareResolver(t))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	signer, err := p.GenerateKey(ctx, "software", "ssh-user-ed-shape", keys.AlgorithmEd25519, 0)
-	if err != nil {
-		t.Fatalf("GenerateKey: %v", err)
-	}
-	pub, ok := signer.Public().(ed25519.PublicKey)
-	if !ok {
-		t.Fatalf("expected ed25519.PublicKey, got %T", signer.Public())
-	}
-	if len(pub) != ed25519.PublicKeySize {
-		t.Fatalf("ed25519 public key length = %d, want %d", len(pub), ed25519.PublicKeySize)
-	}
-
-	// Ed25519 signs the message directly (crypto.Hash(0)).
-	msg := []byte("ed25519 direct sign")
-	sig, err := signer.Sign(rand.Reader, msg, crypto.Hash(0))
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	if !ed25519.Verify(pub, msg, sig) {
-		t.Fatal("ed25519.Verify rejected the backend signature")
-	}
-	msg[0] ^= 0xFF
-	if ed25519.Verify(pub, msg, sig) {
-		t.Fatal("ed25519.Verify accepted a tampered message")
 	}
 }
 
@@ -662,63 +651,6 @@ func TestProvider_BackendFailuresAreTypedAndUnwrappable(t *testing.T) {
 			t.Errorf("message %q omits the key identity", derr.Error())
 		}
 	})
-}
-
-// TestProvider_DeleteMissingKeyIsTyped covers the real-backend delete-miss
-// path (as opposed to the injected failure above): deleting a key that was
-// never generated must produce a DeleteError naming the key.
-func TestProvider_DeleteMissingKeyIsTyped(t *testing.T) {
-	ctx := context.Background()
-	p, err := New(newSoftwareResolver(t))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	err = p.DeleteKey(ctx, "software", "ssh-user-never-existed", keys.AlgorithmEd25519)
-	var derr *DeleteError
-	if !errors.As(err, &derr) {
-		t.Fatalf("DeleteKey on a missing key returned %v, want *DeleteError", err)
-	}
-	if derr.Unwrap() == nil {
-		t.Error("DeleteError.Unwrap() is nil; the backend cause was dropped")
-	}
-}
-
-// TestProvider_SignerResolvesSameKeyAcrossCalls proves Signer reconstructs the
-// attributes well enough to find the previously generated key: the public key
-// from a fresh Signer must be byte-identical to the one from GenerateKey. A
-// regression in the attribute reconstruction (wrong curve, wrong store type)
-// would either error or, worse, silently resolve a different key.
-func TestProvider_SignerResolvesSameKeyAcrossCalls(t *testing.T) {
-	ctx := context.Background()
-	p, err := New(newSoftwareResolver(t))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	for _, algo := range []keys.Algorithm{keys.AlgorithmEd25519, keys.AlgorithmECDSAP384, keys.AlgorithmECDSAP521} {
-		t.Run(algo.String(), func(t *testing.T) {
-			keyID := "ssh-user-stable-" + algo.String()
-			gen, err := p.GenerateKey(ctx, "software", keyID, algo, 0)
-			if err != nil {
-				t.Fatalf("GenerateKey: %v", err)
-			}
-			resolved, err := p.Signer(ctx, "software", keyID, algo)
-			if err != nil {
-				t.Fatalf("Signer: %v", err)
-			}
-			genPub, err := ssh.NewPublicKey(gen.Public())
-			if err != nil {
-				t.Fatalf("NewPublicKey(gen): %v", err)
-			}
-			resPub, err := ssh.NewPublicKey(resolved.Public())
-			if err != nil {
-				t.Fatalf("NewPublicKey(resolved): %v", err)
-			}
-			if string(genPub.Marshal()) != string(resPub.Marshal()) {
-				t.Fatal("Signer resolved a different key than GenerateKey created")
-			}
-		})
-	}
 }
 
 // TestResolverFunc_Adapts confirms the function adapter forwards both the

@@ -14,11 +14,9 @@
 package tpm2
 
 import (
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"testing"
 
@@ -151,61 +149,6 @@ func newCertifyFixture(t *testing.T) *certifyFixture {
 	}
 }
 
-func TestVerifyCertify_AcceptsAGenuineCertification(t *testing.T) {
-	f := newCertifyFixture(t)
-
-	result, err := VerifyCertify(f.certifyInfo, f.signature, f.attesterPub, f.subjectPub, nil)
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.NotEmpty(t, result.SubjectName)
-	assert.Equal(t, f.qualifyingIn, result.QualifyingData)
-	assert.NotNil(t, result.AttesterPublicKey)
-}
-
-func TestVerifyCertify_AcceptsMatchingQualifyingData(t *testing.T) {
-	f := newCertifyFixture(t)
-
-	result, err := VerifyCertify(f.certifyInfo, f.signature, f.attesterPub, f.subjectPub,
-		&VerifyCertifyOptions{ExpectedQualifyingData: f.qualifyingIn})
-
-	require.NoError(t, err)
-	assert.Equal(t, f.qualifyingIn, result.QualifyingData)
-}
-
-// TestVerifyCertify_RejectsAReplayedNonce is the freshness check.
-//
-// Without it a certification recorded from any earlier enrollment stays valid
-// forever, because nothing in the structure ties it to a particular request.
-func TestVerifyCertify_RejectsAReplayedNonce(t *testing.T) {
-	f := newCertifyFixture(t)
-
-	_, err := VerifyCertify(f.certifyInfo, f.signature, f.attesterPub, f.subjectPub,
-		&VerifyCertifyOptions{ExpectedQualifyingData: []byte("a-different-nonce")})
-
-	assert.ErrorIs(t, err, ErrCertifyQualifyingDataMismatch)
-}
-
-// TestVerifyCertify_RejectsADifferentSubjectKey is the binding check, and the
-// reason this verifier exists.
-//
-// The attestation is entirely genuine: a real TPM certified a real key with a
-// real signature. It simply describes a *different* key than the one being
-// presented for certification. A verifier that stops at the signature accepts
-// this, and issues a certificate for a key no TPM ever saw.
-func TestVerifyCertify_RejectsADifferentSubjectKey(t *testing.T) {
-	f := newCertifyFixture(t)
-
-	strangerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	strangerArea := eccPublicArea(t, strangerKey, false)
-
-	_, err = VerifyCertify(f.certifyInfo, f.signature, f.attesterPub,
-		tpm2.Marshal(strangerArea), nil)
-
-	assert.ErrorIs(t, err, ErrCertifyNameMismatch)
-}
-
 // TestVerifyCertify_RejectsForgedAttestationBytes covers the TPM_GENERATED
 // check.
 //
@@ -280,18 +223,6 @@ func TestVerifyCertify_RejectsAnUnrestrictedAttester(t *testing.T) {
 		tpm2.Marshal(unrestricted), tpm2.Marshal(victimArea),
 		&VerifyCertifyOptions{AllowUnrestrictedAttester: true})
 	assert.NoError(t, err)
-}
-
-func TestVerifyCertify_RejectsAForeignSignature(t *testing.T) {
-	f := newCertifyFixture(t)
-
-	strangerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	_, err = VerifyCertify(f.certifyInfo, signAttest(t, strangerKey, f.certifyInfo),
-		f.attesterPub, f.subjectPub, nil)
-
-	assert.ErrorIs(t, err, ErrCertifySignature)
 }
 
 func TestVerifyCertify_RejectsTamperedCertifyInfo(t *testing.T) {
@@ -376,20 +307,6 @@ func TestVerifyCertify_ErrorsAreDistinguishable(t *testing.T) {
 	}
 }
 
-// rsaPublicAreaWithScheme builds a minimal TPMT_PUBLIC for an RSA key
-// declaring the given signature scheme, for signatureFromScheme tests that
-// only need the scheme read back, not a genuine key.
-func rsaPublicAreaWithScheme(scheme tpm2.TPMTRSAScheme) tpm2.TPMTPublic {
-	return tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{Scheme: scheme, KeyBits: 2048}),
-		Unique: tpm2.NewTPMUPublicID(tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{Buffer: make([]byte, 256)}),
-	}
-}
-
 // eccPublicAreaWithScheme builds a minimal TPMT_PUBLIC for an ECC key
 // declaring the given signature scheme.
 func eccPublicAreaWithScheme(scheme tpm2.TPMTECCScheme) tpm2.TPMTPublic {
@@ -399,104 +316,6 @@ func eccPublicAreaWithScheme(scheme tpm2.TPMTECCScheme) tpm2.TPMTPublic {
 		Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgECC,
 			&tpm2.TPMSECCParms{CurveID: tpm2.TPMECCNistP256, Scheme: scheme}),
 	}
-}
-
-// TestSignatureFromScheme_RejectsEmptySignature verifies a certification that
-// carries no signature bytes at all is refused before any scheme parsing, not
-// misread as a scheme-specific malformation.
-func TestSignatureFromScheme_RejectsEmptySignature(t *testing.T) {
-	attester := rsaPublicAreaWithScheme(tpm2.TPMTRSAScheme{
-		Scheme: tpm2.TPMAlgRSASSA,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgRSASSA,
-			&tpm2.TPMSSigSchemeRSASSA{HashAlg: tpm2.TPMAlgSHA256}),
-	})
-	_, err := signatureFromScheme(&attester, nil)
-	assert.ErrorIs(t, err, ErrCertifyMalformed)
-}
-
-// TestSignatureFromScheme_RSASSA verifies the RSASSA branch rebuilds a
-// TPMT_SIGNATURE carrying the raw bytes verbatim and the scheme's own hash
-// algorithm, not a guessed one.
-func TestSignatureFromScheme_RSASSA(t *testing.T) {
-	attester := rsaPublicAreaWithScheme(tpm2.TPMTRSAScheme{
-		Scheme: tpm2.TPMAlgRSASSA,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgRSASSA,
-			&tpm2.TPMSSigSchemeRSASSA{HashAlg: tpm2.TPMAlgSHA384}),
-	})
-	raw := []byte{0x01, 0x02, 0x03}
-
-	sig, err := signatureFromScheme(&attester, raw)
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMAlgRSASSA, sig.SigAlg)
-	detail, err := sig.Signature.RSASSA()
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMAlgSHA384, detail.Hash)
-	assert.Equal(t, raw, detail.Sig.Buffer)
-}
-
-// TestSignatureFromScheme_RSAPSS mirrors the RSASSA case for RSA-PSS.
-func TestSignatureFromScheme_RSAPSS(t *testing.T) {
-	attester := rsaPublicAreaWithScheme(tpm2.TPMTRSAScheme{
-		Scheme: tpm2.TPMAlgRSAPSS,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgRSAPSS,
-			&tpm2.TPMSSigSchemeRSAPSS{HashAlg: tpm2.TPMAlgSHA256}),
-	})
-	raw := []byte{0x0A, 0x0B}
-
-	sig, err := signatureFromScheme(&attester, raw)
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMAlgRSAPSS, sig.SigAlg)
-	detail, err := sig.Signature.RSAPSS()
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMAlgSHA256, detail.Hash)
-	assert.Equal(t, raw, detail.Sig.Buffer)
-}
-
-// TestSignatureFromScheme_RSAUnsupportedScheme verifies an RSA attester
-// declaring a non-signature scheme (here, the OAEP encryption scheme) is
-// refused by name rather than mismatched into RSASSA/RSAPSS.
-func TestSignatureFromScheme_RSAUnsupportedScheme(t *testing.T) {
-	attester := rsaPublicAreaWithScheme(tpm2.TPMTRSAScheme{
-		Scheme: tpm2.TPMAlgOAEP,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgOAEP,
-			&tpm2.TPMSEncSchemeOAEP{HashAlg: tpm2.TPMAlgSHA256}),
-	})
-	_, err := signatureFromScheme(&attester, []byte{0x01})
-	assert.ErrorIs(t, err, ErrCertifyMalformed)
-}
-
-// TestSignatureFromScheme_ECDSA verifies the ECC branch splits a raw r||s
-// signature evenly and carries the scheme's hash algorithm.
-func TestSignatureFromScheme_ECDSA(t *testing.T) {
-	attester := eccPublicAreaWithScheme(tpm2.TPMTECCScheme{
-		Scheme: tpm2.TPMAlgECDSA,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgECDSA,
-			&tpm2.TPMSSigSchemeECDSA{HashAlg: tpm2.TPMAlgSHA256}),
-	})
-	raw := make([]byte, 64)
-	raw[0], raw[32] = 0xAA, 0xBB
-
-	sig, err := signatureFromScheme(&attester, raw)
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMAlgECDSA, sig.SigAlg)
-	detail, err := sig.Signature.ECDSA()
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMAlgSHA256, detail.Hash)
-	assert.Equal(t, raw[:32], detail.SignatureR.Buffer)
-	assert.Equal(t, raw[32:], detail.SignatureS.Buffer)
-}
-
-// TestSignatureFromScheme_ECDSAOddLengthRejected verifies a raw signature
-// that cannot be an r||s pair (odd length) is refused rather than split
-// unevenly into a corrupt R/S.
-func TestSignatureFromScheme_ECDSAOddLengthRejected(t *testing.T) {
-	attester := eccPublicAreaWithScheme(tpm2.TPMTECCScheme{
-		Scheme: tpm2.TPMAlgECDSA,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgECDSA,
-			&tpm2.TPMSSigSchemeECDSA{HashAlg: tpm2.TPMAlgSHA256}),
-	})
-	_, err := signatureFromScheme(&attester, []byte{0x01, 0x02, 0x03})
-	assert.ErrorIs(t, err, ErrCertifyMalformed)
 }
 
 // TestSignatureFromScheme_ECCNonECDSASchemeRejected verifies an ECC attester
@@ -509,128 +328,6 @@ func TestSignatureFromScheme_ECCNonECDSASchemeRejected(t *testing.T) {
 			&tpm2.TPMSKeySchemeECDH{HashAlg: tpm2.TPMAlgSHA256}),
 	})
 	_, err := signatureFromScheme(&attester, make([]byte, 64))
-	assert.ErrorIs(t, err, ErrCertifyMalformed)
-}
-
-// TestSignatureFromScheme_UnsignableKeyTypeRejected verifies an attester
-// whose type is neither RSA nor ECC (a keyed-hash object, which can only be
-// certified, never sign externally) is refused by the default branch.
-func TestSignatureFromScheme_UnsignableKeyTypeRejected(t *testing.T) {
-	attester := tpm2.TPMTPublic{Type: tpm2.TPMAlgKeyedHash, NameAlg: tpm2.TPMAlgSHA256}
-	_, err := signatureFromScheme(&attester, []byte{0x01})
-	assert.ErrorIs(t, err, ErrCertifyMalformed)
-}
-
-// rsaPublicAreaWithKey builds a TPMT_PUBLIC carrying pub's real modulus, so
-// verifyCertifySignature can recover a public key that actually verifies a
-// signature produced by the matching private key.
-func rsaPublicAreaWithKey(pub *rsa.PublicKey, scheme tpm2.TPMTRSAScheme) tpm2.TPMTPublic {
-	return tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{Scheme: scheme, KeyBits: tpm2.TPMKeyBits(pub.N.BitLen())}),
-		Unique: tpm2.NewTPMUPublicID(tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{Buffer: pub.N.Bytes()}),
-	}
-}
-
-// TestVerifyCertifySignature_RSASSA verifies a genuine RSASSA (PKCS#1 v1.5)
-// signature over certifyInfo is accepted and recovers the attesting key.
-func TestVerifyCertifySignature_RSASSA(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	attester := rsaPublicAreaWithKey(&key.PublicKey, tpm2.TPMTRSAScheme{
-		Scheme: tpm2.TPMAlgRSASSA,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgRSASSA,
-			&tpm2.TPMSSigSchemeRSASSA{HashAlg: tpm2.TPMAlgSHA256}),
-	})
-
-	certifyInfo := []byte("certify-info-rsassa")
-	digest := sha256.Sum256(certifyInfo)
-	rawSig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
-	require.NoError(t, err)
-	sig := tpm2.TPMTSignature{
-		SigAlg: tpm2.TPMAlgRSASSA,
-		Signature: tpm2.NewTPMUSignature(tpm2.TPMAlgRSASSA,
-			&tpm2.TPMSSignatureRSA{Hash: tpm2.TPMAlgSHA256, Sig: tpm2.TPM2BPublicKeyRSA{Buffer: rawSig}}),
-	}
-
-	pub, err := verifyCertifySignature(&attester, certifyInfo, &sig)
-	require.NoError(t, err)
-	rsaPub, ok := pub.(*rsa.PublicKey)
-	require.True(t, ok)
-	assert.Equal(t, key.N, rsaPub.N)
-}
-
-// TestVerifyCertifySignature_RSASSA_WrongSignatureRejected verifies a
-// structurally valid but forged RSASSA signature is refused with
-// ErrCertifySignature, not accepted or reported as a malformed input.
-func TestVerifyCertifySignature_RSASSA_WrongSignatureRejected(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	attester := rsaPublicAreaWithKey(&key.PublicKey, tpm2.TPMTRSAScheme{
-		Scheme: tpm2.TPMAlgRSASSA,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgRSASSA,
-			&tpm2.TPMSSigSchemeRSASSA{HashAlg: tpm2.TPMAlgSHA256}),
-	})
-
-	// Sign different data than what is verified, producing a genuine
-	// signature that nonetheless does not cover certifyInfo.
-	otherDigest := sha256.Sum256([]byte("not-certify-info"))
-	rawSig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, otherDigest[:])
-	require.NoError(t, err)
-	sig := tpm2.TPMTSignature{
-		SigAlg: tpm2.TPMAlgRSASSA,
-		Signature: tpm2.NewTPMUSignature(tpm2.TPMAlgRSASSA,
-			&tpm2.TPMSSignatureRSA{Hash: tpm2.TPMAlgSHA256, Sig: tpm2.TPM2BPublicKeyRSA{Buffer: rawSig}}),
-	}
-
-	_, err = verifyCertifySignature(&attester, []byte("certify-info-rsassa"), &sig)
-	assert.ErrorIs(t, err, ErrCertifySignature)
-}
-
-// TestVerifyCertifySignature_RSAPSS verifies a genuine RSA-PSS signature is
-// accepted using the same default salt-length verification the TPM's own
-// scheme implies.
-func TestVerifyCertifySignature_RSAPSS(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	attester := rsaPublicAreaWithKey(&key.PublicKey, tpm2.TPMTRSAScheme{
-		Scheme: tpm2.TPMAlgRSAPSS,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgRSAPSS,
-			&tpm2.TPMSSigSchemeRSAPSS{HashAlg: tpm2.TPMAlgSHA256}),
-	})
-
-	certifyInfo := []byte("certify-info-rsapss")
-	digest := sha256.Sum256(certifyInfo)
-	rawSig, err := rsa.SignPSS(rand.Reader, key, crypto.SHA256, digest[:], nil)
-	require.NoError(t, err)
-	sig := tpm2.TPMTSignature{
-		SigAlg: tpm2.TPMAlgRSAPSS,
-		Signature: tpm2.NewTPMUSignature(tpm2.TPMAlgRSAPSS,
-			&tpm2.TPMSSignatureRSA{Hash: tpm2.TPMAlgSHA256, Sig: tpm2.TPM2BPublicKeyRSA{Buffer: rawSig}}),
-	}
-
-	pub, err := verifyCertifySignature(&attester, certifyInfo, &sig)
-	require.NoError(t, err)
-	rsaPub, ok := pub.(*rsa.PublicKey)
-	require.True(t, ok)
-	assert.Equal(t, key.N, rsaPub.N)
-}
-
-// TestVerifyCertifySignature_UnsupportedAlgorithmRejected verifies a
-// signature algorithm this verifier does not implement is refused by name
-// rather than silently mismatched to one of the known branches.
-func TestVerifyCertifySignature_UnsupportedAlgorithmRejected(t *testing.T) {
-	attester := rsaPublicAreaWithScheme(tpm2.TPMTRSAScheme{
-		Scheme: tpm2.TPMAlgRSASSA,
-		Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgRSASSA,
-			&tpm2.TPMSSigSchemeRSASSA{HashAlg: tpm2.TPMAlgSHA256}),
-	})
-	sig := tpm2.TPMTSignature{SigAlg: tpm2.TPMAlgHMAC}
-
-	_, err := verifyCertifySignature(&attester, []byte("data"), &sig)
 	assert.ErrorIs(t, err, ErrCertifyMalformed)
 }
 

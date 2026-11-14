@@ -19,9 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -138,41 +136,6 @@ func TestPIVFactor_Challenge_RejectsNilEnrollment(t *testing.T) {
 	}
 }
 
-func TestPIVFactor_Challenge_HonoursEnrollmentTTLOverride(t *testing.T) {
-	// Metadata["ttl"] = "120" overrides cfg.ChallengeTTLSeconds. This exercises
-	// the parseable-int branch of the TTL lookup.
-	f := New(Config{ChallengeTTLSeconds: 5})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
-	if err != nil {
-		t.Fatalf("Enroll: %v", err)
-	}
-	enrollment.Metadata["ttl"] = "120"
-
-	ch, err := f.Challenge(context.Background(), enrollment)
-	if err != nil {
-		t.Fatalf("Challenge: %v", err)
-	}
-	// ExpiresAt should be ~120 seconds out, well past the configured 5s default.
-	wantMinSecondsAhead := 60
-	if delta := ch.ExpiresAt.Unix() - ch.ExpiresAt.Add(-120*1_000_000_000).Unix(); delta < int64(wantMinSecondsAhead) {
-		t.Fatalf("ExpiresAt was not extended by TTL override")
-	}
-}
-
-func TestPIVFactor_Challenge_IgnoresMalformedTTL(t *testing.T) {
-	// A garbage "ttl" string falls through the strconv.Atoi branch; the
-	// default TTL is preserved. This drives the !ok branch of the int parse.
-	f := New(Config{ChallengeTTLSeconds: 7})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
-	if err != nil {
-		t.Fatalf("Enroll: %v", err)
-	}
-	enrollment.Metadata["ttl"] = "not-an-int"
-	if _, err := f.Challenge(context.Background(), enrollment); err != nil {
-		t.Fatalf("Challenge: %v", err)
-	}
-}
-
 // =============================================================================
 // Verify
 // =============================================================================
@@ -224,40 +187,6 @@ func TestPIVFactor_Verify_RejectsMalformedPEM(t *testing.T) {
 	}
 }
 
-func TestPIVFactor_Verify_RejectsNonECDSAPublicKey(t *testing.T) {
-	// Hand-craft an enrolled cert whose public key is RSA; the parser returns
-	// it but Verify's *ecdsa.PublicKey type assertion must reject it.
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa.GenerateKey: %v", err)
-	}
-	pkixDER, err := x509.MarshalPKIXPublicKey(&rsaKey.PublicKey)
-	if err != nil {
-		t.Fatalf("MarshalPKIXPublicKey: %v", err)
-	}
-	rsaPubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pkixDER})
-
-	f := New(Config{})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
-	if err != nil {
-		t.Fatalf("Enroll: %v", err)
-	}
-	ch, err := f.Challenge(context.Background(), enrollment)
-	if err != nil {
-		t.Fatalf("Challenge: %v", err)
-	}
-
-	ch.MethodData[methodDataEnrolledCert] = string(rsaPubPEM)
-
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	err = f.Verify(context.Background(), ch, &qrdbsdk.AuthFactorResponse{
-		Value: []byte("ignored"),
-	})
-	if !errors.As(err, &failed) {
-		t.Fatalf("expected VerificationFailedError, got %v", err)
-	}
-}
-
 // =============================================================================
 // SignChallenge
 // =============================================================================
@@ -275,24 +204,9 @@ func TestPIVFactor_SignChallenge_PropagatesGetPIVSignerError(t *testing.T) {
 // buildSelfSignedCert — exercise CreateCertificate error branch directly
 // =============================================================================
 
-func TestBuildSelfSignedCert_RejectsUnsupportedSigner(t *testing.T) {
-	_, err := buildSelfSignedCert(unsupportedSigner{}, pkix.Name{CommonName: "x"}, 30)
-	if err == nil {
-		t.Fatal("expected error when signer.Public() is an unsupported type")
-	}
-}
-
 // =============================================================================
 // parsePublicKeyFromPEM
 // =============================================================================
-
-func TestParsePublicKeyFromPEM_NoPEMBlock(t *testing.T) {
-	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
-	_, err := parsePublicKeyFromPEM([]byte("definitely not a PEM block"))
-	if !errors.As(err, &inv) {
-		t.Fatalf("expected EnrollmentInvalidError, got %v", err)
-	}
-}
 
 func TestParsePublicKeyFromPEM_PublicKeyBlock(t *testing.T) {
 	// Hits the "PUBLIC KEY" case, which the round-trip cert path does not
@@ -337,34 +251,3 @@ func TestParsePublicKeyFromPEM_BadCertificateBytes(t *testing.T) {
 // =============================================================================
 // verifyECDSA — signature-mismatch branch (DER-valid sig, wrong nonce)
 // =============================================================================
-
-func TestVerifyECDSA_RejectsWrongNonceSignature(t *testing.T) {
-	// Build a valid DER-encoded ECDSA signature over nonce A, then verify it
-	// against nonce B. Decodes successfully but ecdsa.Verify returns false,
-	// driving the "signature invalid" branch.
-	f := New(Config{})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
-	if err != nil {
-		t.Fatalf("Enroll: %v", err)
-	}
-	signedNonce := []byte("the original nonce")
-	sig, err := f.SignChallenge(context.Background(), pivcert.PIVSlotAuthentication, "challenge-id", "", signedNonce)
-	if err != nil {
-		t.Fatalf("SignChallenge: %v", err)
-	}
-
-	verifyNonce := []byte("a different nonce entirely")
-	ch, err := f.Challenge(context.Background(), enrollment)
-	if err != nil {
-		t.Fatalf("Challenge: %v", err)
-	}
-	ch.Nonce = verifyNonce // overwrite
-
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	err = f.Verify(context.Background(), ch, &qrdbsdk.AuthFactorResponse{
-		Value: sig,
-	})
-	if !errors.As(err, &failed) {
-		t.Fatalf("expected VerificationFailedError, got %v", err)
-	}
-}

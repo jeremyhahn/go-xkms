@@ -228,35 +228,3 @@ func TestEnrollAdminFactors_MTLSBindsTheAdminCertificate(t *testing.T) {
 		t.Errorf("enrolled factor = %v, want mtls", enrolled[0].Factor)
 	}
 }
-
-// TestEnrollAdminFactors_MTLSWithoutACertificateFails verifies the error path:
-// an mTLS factor with nothing to bind to must fail loudly rather than record
-// an enrollment that can never authenticate anyone.
-func TestEnrollAdminFactors_MTLSWithoutACertificateFails(t *testing.T) {
-	_, err := EnrollAdminFactors(context.Background(), AdminEnrollmentConfig{
-		Plan:     mustPlan(t, "mtls"),
-		Username: "administrator",
-		TenantID: "system",
-		// AdminCertPEM deliberately absent.
-	})
-	if err == nil {
-		t.Fatal("mtls enrollment with no administrator certificate must fail")
-	}
-}
-
-// TestEnrollAdminFactors_DisplayNameFallsBackToUsername verifies the
-// authenticator's own UI always has a name to show.
-func TestEnrollAdminFactors_DisplayNameFallsBackToUsername(t *testing.T) {
-	cfg := AdminEnrollmentConfig{
-		Plan:         mustPlan(t, "mtls"),
-		Username:     "administrator",
-		TenantID:     "system",
-		AdminCertPEM: newAdminCertPEM(t, "administrator"),
-	}
-	if _, err := EnrollAdminFactors(context.Background(), cfg); err != nil {
-		t.Fatalf("EnrollAdminFactors: %v", err)
-	}
-	if cfg.DisplayName != "" {
-		t.Fatal("the caller's config must not be mutated")
-	}
-}

@@ -1,0 +1,1 @@
+keyversion: the `pkg/keyversion` test audit (#1794) drops `TestErrorMessages`'s `StoreError` unwrap check, which `TestStoreWrapsStoreFailures` already makes on the store's real failure path. Every other test is kept, because each one covers statements or asserts a refusal that no other test does.

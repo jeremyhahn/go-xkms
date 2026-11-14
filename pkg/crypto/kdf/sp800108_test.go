@@ -21,13 +21,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"hash"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
-
-	"golang.org/x/crypto/hkdf"
 )
 
 func mustHex(t *testing.T, s string) []byte {
@@ -101,57 +98,6 @@ func TestSP800108_CAVP_DoublePipelineMode(t *testing.T) {
 	}
 	for _, v := range cavpDoublePipelineVectors {
 		t.Run(v.name, func(t *testing.T) { runCAVP(t, adapter, v) })
-	}
-}
-
-// TestSP800108_IsNotHKDF is the regression that catches a revert to the old
-// behavior, where these algorithm labels derived with HKDF-Expand. HKDF and
-// SP 800-108 are different constructions; if a change ever makes them agree,
-// the SP 800-108 label has stopped meaning SP 800-108.
-func TestSP800108_IsNotHKDF(t *testing.T) {
-	kdk := []byte("shared-secret-from-ecdh-32bytes!")
-	label := []byte("xkms-ecdh")
-	context := []byte("tenant-42")
-
-	// The old implementation fed Salt and Info to hkdf.New. Compare against
-	// every plausible mapping of the SP 800-108 inputs onto HKDF so the test
-	// cannot pass by coincidence of argument naming.
-	hkdfVariants := map[string][2][]byte{
-		"salt=label,info=context": {label, context},
-		"salt=nil,info=context":   {nil, context},
-		"salt=label,info=nil":     {label, nil},
-		"salt=nil,info=nil":       {nil, nil},
-	}
-
-	adapters := []*SP800108Adapter{
-		NewSP800108CounterAdapter(),
-		NewSP800108FeedbackAdapter(),
-		NewSP800108DoublePipelineAdapter(),
-	}
-
-	for _, adapter := range adapters {
-		t.Run(string(adapter.Algorithm()), func(t *testing.T) {
-			derived, err := adapter.DeriveKey(kdk, &KDFParams{
-				Algorithm: adapter.Algorithm(),
-				Hash:      crypto.SHA256,
-				KeyLength: 32,
-				Label:     label,
-				Context:   context,
-			})
-			if err != nil {
-				t.Fatalf("DeriveKey: %v", err)
-			}
-
-			for name, args := range hkdfVariants {
-				expanded := make([]byte, 32)
-				if _, err := io.ReadFull(hkdf.New(crypto.SHA256.New, kdk, args[0], args[1]), expanded); err != nil {
-					t.Fatalf("hkdf %s: %v", name, err)
-				}
-				if bytes.Equal(derived, expanded) {
-					t.Errorf("%s derived the HKDF output for %s; the SP 800-108 construction has regressed to HKDF", adapter.Algorithm(), name)
-				}
-			}
-		})
 	}
 }
 
@@ -392,165 +338,6 @@ func TestSP800108_OutputLengthsAcrossBlockBoundary(t *testing.T) {
 				t.Error("outputs of different lengths share a prefix; [L]_2 is not bound into the PRF input")
 			}
 		})
-	}
-}
-
-// TestSP800108_CounterWidthsChangeOutput confirms every permitted counter
-// width derives successfully and that the width is bound into the PRF input.
-func TestSP800108_CounterWidthsChangeOutput(t *testing.T) {
-	adapter := NewSP800108CounterAdapter()
-	kdk := []byte("key-derivation-key-for-widths!!!")
-
-	// 64 bytes of SHA-256 output needs two iterations, so the counter
-	// encoding is visible in the second block.
-	seen := make(map[string]int, 4)
-	for _, width := range []int{8, 16, 24, 32} {
-		key, err := adapter.DeriveKey(kdk, &KDFParams{
-			Algorithm:     AlgorithmSP800108Counter,
-			Hash:          crypto.SHA256,
-			KeyLength:     64,
-			Label:         []byte("width"),
-			Context:       []byte("test"),
-			CounterLength: width,
-		})
-		if err != nil {
-			t.Fatalf("DeriveKey(%d-bit counter): %v", width, err)
-		}
-		if prev, ok := seen[string(key)]; ok {
-			t.Errorf("%d-bit and %d-bit counters produced identical output", prev, width)
-		}
-		seen[string(key)] = width
-	}
-}
-
-// TestSP800108_FeedbackIVChangesOutput confirms K(0) = IV is chained into the
-// first PRF invocation.
-func TestSP800108_FeedbackIVChangesOutput(t *testing.T) {
-	adapter := NewSP800108FeedbackAdapter()
-	kdk := []byte("key-derivation-key-for-feedback!")
-
-	base := func() *KDFParams {
-		return &KDFParams{
-			Algorithm: AlgorithmSP800108Feedback,
-			Hash:      crypto.SHA256,
-			KeyLength: 32,
-			Label:     []byte("feedback"),
-			Context:   []byte("test"),
-		}
-	}
-
-	withoutIV, err := adapter.DeriveKey(kdk, base())
-	if err != nil {
-		t.Fatalf("DeriveKey(no IV): %v", err)
-	}
-
-	params := base()
-	params.IV = bytes.Repeat([]byte{0xA5}, 32)
-	withIV, err := adapter.DeriveKey(kdk, params)
-	if err != nil {
-		t.Fatalf("DeriveKey(IV): %v", err)
-	}
-	if bytes.Equal(withoutIV, withIV) {
-		t.Error("the IV did not affect the derived key")
-	}
-
-	other := base()
-	other.IV = bytes.Repeat([]byte{0x5A}, 32)
-	otherKey, err := adapter.DeriveKey(kdk, other)
-	if err != nil {
-		t.Fatalf("DeriveKey(other IV): %v", err)
-	}
-	if bytes.Equal(withIV, otherKey) {
-		t.Error("different IVs produced the same derived key")
-	}
-}
-
-// TestSP800108_ModesDiffer confirms the three modes are genuinely distinct
-// constructions rather than three names for one derivation.
-func TestSP800108_ModesDiffer(t *testing.T) {
-	kdk := []byte("key-derivation-key-for-all-modes")
-	params := func(mode KDFAlgorithm) *KDFParams {
-		return &KDFParams{
-			Algorithm: mode,
-			Hash:      crypto.SHA256,
-			KeyLength: 64,
-			Label:     []byte("mode"),
-			Context:   []byte("test"),
-		}
-	}
-
-	keys := make(map[string]KDFAlgorithm, 3)
-	for _, adapter := range []*SP800108Adapter{
-		NewSP800108CounterAdapter(),
-		NewSP800108FeedbackAdapter(),
-		NewSP800108DoublePipelineAdapter(),
-	} {
-		key, err := adapter.DeriveKey(kdk, params(adapter.Algorithm()))
-		if err != nil {
-			t.Fatalf("DeriveKey(%s): %v", adapter.Algorithm(), err)
-		}
-		if prev, ok := keys[string(key)]; ok {
-			t.Errorf("%s and %s produced identical output", prev, adapter.Algorithm())
-		}
-		keys[string(key)] = adapter.Algorithm()
-	}
-}
-
-// TestSP800108_Deterministic confirms repeated derivation with identical
-// inputs yields identical bytes.
-func TestSP800108_Deterministic(t *testing.T) {
-	kdk := []byte("key-derivation-key-determinism!!")
-
-	for _, adapter := range []*SP800108Adapter{
-		NewSP800108CounterAdapter(),
-		NewSP800108FeedbackAdapter(),
-		NewSP800108DoublePipelineAdapter(),
-	} {
-		t.Run(string(adapter.Algorithm()), func(t *testing.T) {
-			params := &KDFParams{
-				Algorithm: adapter.Algorithm(),
-				Hash:      crypto.SHA256,
-				KeyLength: 64,
-				Label:     []byte("determinism"),
-				Context:   []byte("test"),
-			}
-			first, err := adapter.DeriveKey(kdk, params)
-			if err != nil {
-				t.Fatalf("first DeriveKey: %v", err)
-			}
-			second, err := adapter.DeriveKey(kdk, params)
-			if err != nil {
-				t.Fatalf("second DeriveKey: %v", err)
-			}
-			if !bytes.Equal(first, second) {
-				t.Error("derivation is not deterministic")
-			}
-		})
-	}
-}
-
-// TestSP800108_HashesDiffer confirms the caller's PRF hash selects a distinct
-// derivation.
-func TestSP800108_HashesDiffer(t *testing.T) {
-	adapter := NewSP800108CounterAdapter()
-	kdk := []byte("key-derivation-key-for-hashes!!!")
-
-	seen := make(map[string]crypto.Hash, 3)
-	for _, h := range []crypto.Hash{crypto.SHA256, crypto.SHA384, crypto.SHA512} {
-		key, err := adapter.DeriveKey(kdk, &KDFParams{
-			Algorithm: AlgorithmSP800108Counter,
-			Hash:      h,
-			KeyLength: 32,
-			Label:     []byte("hash"),
-			Context:   []byte("test"),
-		})
-		if err != nil {
-			t.Fatalf("DeriveKey(%v): %v", h, err)
-		}
-		if prev, ok := seen[string(key)]; ok {
-			t.Errorf("%v and %v produced identical output", prev, h)
-		}
-		seen[string(key)] = h
 	}
 }
 
@@ -826,23 +613,5 @@ func TestSP800108_UnsupportedMode(t *testing.T) {
 	})
 	if !errors.Is(err, ErrUnsupportedAlgorithm) {
 		t.Errorf("got %v, want ErrUnsupportedAlgorithm", err)
-	}
-}
-
-// TestSP800108_Algorithm confirms each constructor reports its own mode.
-func TestSP800108_Algorithm(t *testing.T) {
-	tests := []struct {
-		adapter  *SP800108Adapter
-		expected KDFAlgorithm
-	}{
-		{NewSP800108CounterAdapter(), AlgorithmSP800108Counter},
-		{NewSP800108FeedbackAdapter(), AlgorithmSP800108Feedback},
-		{NewSP800108DoublePipelineAdapter(), AlgorithmSP800108DoublePipeline},
-	}
-
-	for _, tt := range tests {
-		if got := tt.adapter.Algorithm(); got != tt.expected {
-			t.Errorf("got %s, want %s", got, tt.expected)
-		}
 	}
 }

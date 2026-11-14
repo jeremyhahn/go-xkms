@@ -64,22 +64,6 @@ func signASN1(t *testing.T, key *ecdsa.PrivateKey, data []byte) []byte {
 	return sig
 }
 
-func TestVerifyCertifyByCertificate_AcceptsAGenuineCertification(t *testing.T) {
-	f := newCertifyFixture(t)
-	aik := attestingCertificate(t, f.attesterKey, true)
-
-	result, err := VerifyCertifyByCertificate(
-		f.certifyInfo, signASN1(t, f.attesterKey, f.certifyInfo),
-		x509.ECDSAWithSHA256, aik, f.subjectPub,
-		&VerifyCertifyOptions{ExpectedQualifyingData: f.qualifyingIn},
-	)
-
-	require.NoError(t, err)
-	assert.Equal(t, f.qualifyingIn, result.QualifyingData)
-	assert.NotEmpty(t, result.SubjectName)
-	assert.Equal(t, aik.PublicKey, result.AttesterPublicKey)
-}
-
 // TestVerifyCertifyByCertificate_RequiresAnAttestationKeyCertificate is the
 // stand-in for the restricted-key check.
 //

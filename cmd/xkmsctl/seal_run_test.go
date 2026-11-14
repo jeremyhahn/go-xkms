@@ -63,23 +63,6 @@ func TestSealCmd_Run_FromArg(t *testing.T) {
 	})
 }
 
-func TestSealCmd_Run_FromDataFile(t *testing.T) {
-	resetSealFlags(t)
-	t.Cleanup(func() { resetSealFlags(t) })
-	mock := &mockSealClient{sealResp: &client.SealResponse{Backend: "software", Ciphertext: []byte("ct")}}
-	withGlobalConfig(t, newSealRunConfig(mock))
-
-	p := filepath.Join(t.TempDir(), "data.bin")
-	if err := os.WriteFile(p, []byte("file contents"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	_ = sealCmd.Flags().Set("data-file", p)
-
-	captureStdout(t, func() {
-		sealCmd.Run(sealCmd, nil)
-	})
-}
-
 func TestSealCmd_Run_DataFileNotFound(t *testing.T) {
 	resetSealFlags(t)
 	t.Cleanup(func() { resetSealFlags(t) })
@@ -105,18 +88,6 @@ func TestSealCmd_Run_NoDataProvided(t *testing.T) {
 	if code != 1 {
 		t.Errorf("expected exit code 1, got %d", code)
 	}
-}
-
-func TestUnsealDataCmd_Run_FromArg(t *testing.T) {
-	resetUnsealFlags(t)
-	t.Cleanup(func() { resetUnsealFlags(t) })
-	mock := &mockSealClient{unsealResp: &client.UnsealResponse{Plaintext: []byte("pt")}}
-	withGlobalConfig(t, newSealRunConfig(mock))
-
-	ct := base64.StdEncoding.EncodeToString([]byte("ciphertext"))
-	captureStdout(t, func() {
-		unsealDataCmd.Run(unsealDataCmd, []string{ct})
-	})
 }
 
 func TestUnsealDataCmd_Run_FromFlag(t *testing.T) {

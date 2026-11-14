@@ -54,9 +54,11 @@ func TestNewAzureKVKeyProvider_AllowLocalVaultURLRefusedByDefault(t *testing.T) 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := newAzureKVKeyProvider(tt.config)
+			kp, err := newAzureKVKeyProvider(tt.config)
 			require.Error(t, err)
 			require.ErrorIs(t, err, azurekv.ErrLocalVaultURLNotAllowed)
+			// A refused config yields a nil interface, not one holding a nil pointer.
+			require.True(t, kp == nil, "the factory must return a nil KeyProvider, got %#v", kp)
 		})
 	}
 }

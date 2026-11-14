@@ -21,8 +21,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // TestPasswordUpdate_AllOptionalFields exercises every optional field branch
@@ -67,68 +65,4 @@ func TestPasswordUpdate_AllOptionalFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, newName, got.Entry.Name)
 	assert.Contains(t, updateResp.Message, "updated")
-}
-
-// TestPasswordUpdate_NilRequest exercises the nil request validation.
-func TestPasswordUpdate_NilRequest(t *testing.T) {
-	service := NewService(nil, nil, nil)
-	ctx := context.Background()
-
-	_, err := service.PasswordUpdate(ctx, nil)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-// TestPasswordList_WithEntries exercises PasswordList with entries in the store,
-// covering the response building logic.
-func TestPasswordList_WithEntries(t *testing.T) {
-	service := setupTestWithPasswordStore(t)
-	defer xkms.Reset()
-
-	ctx := context.Background()
-
-	// Add multiple entries to exercise the listing path
-	_, err := service.PasswordAdd(ctx, &pb.PasswordAddRequest{
-		Name: "Entry 1", Username: "u1", Password: "p1",
-	})
-	require.NoError(t, err)
-
-	_, err = service.PasswordAdd(ctx, &pb.PasswordAddRequest{
-		Name: "Entry 2", Username: "u2", Password: "p2",
-	})
-	require.NoError(t, err)
-
-	// List passwords
-	listResp, err := service.PasswordList(ctx, &pb.PasswordListRequest{})
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(listResp.GetPasswords()), 2)
-}
-
-// TestPasswordUpdate_EmptyID exercises the empty ID validation path.
-func TestPasswordUpdate_EmptyID(t *testing.T) {
-	service := setupTestWithPasswordStore(t)
-	defer xkms.Reset()
-
-	ctx := context.Background()
-
-	_, err := service.PasswordUpdate(ctx, &pb.PasswordUpdateRequest{
-		Id: "",
-	})
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-// TestPasswordDelete_NonExistentEntry exercises the not-found error path.
-func TestPasswordDelete_NonExistentEntry(t *testing.T) {
-	service := setupTestWithPasswordStore(t)
-	defer xkms.Reset()
-
-	ctx := context.Background()
-
-	_, err := service.PasswordDelete(ctx, &pb.PasswordDeleteRequest{
-		Id: "non-existent-id",
-	})
-	require.Error(t, err)
 }

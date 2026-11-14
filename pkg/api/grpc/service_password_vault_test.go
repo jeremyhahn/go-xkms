@@ -74,61 +74,6 @@ func unlockVault(svc *Service, ctx context.Context, cred *pb.PasswordVaultCreden
 	return err
 }
 
-func TestPasswordVault_PassphraseLifecycle(t *testing.T) {
-	svc, ctx := newTenantPasswordGRPCService(t)
-
-	status0, err := svc.PasswordVaultStatus(ctx, &pb.PasswordVaultStatusRequest{})
-	require.NoError(t, err)
-	assert.False(t, status0.Initialized)
-	assert.False(t, status0.Unlocked)
-
-	enrolled, err := svc.PasswordVaultEnroll(ctx, &pb.PasswordVaultEnrollRequest{Credential: passphraseCredential(vaultPassphrase)})
-	require.NoError(t, err)
-	assert.NotEmpty(t, enrolled.RecoveryCode, "the first enrollment issues the recovery code")
-	assert.Equal(t, "passphrase", enrolled.Factor.Factor)
-	assert.NotEmpty(t, enrolled.Factor.Id)
-
-	status1, err := svc.PasswordVaultStatus(ctx, &pb.PasswordVaultStatusRequest{})
-	require.NoError(t, err)
-	assert.True(t, status1.Initialized)
-	assert.True(t, status1.Unlocked, "the first enrollment opens the session")
-
-	lockVault(t, svc, ctx)
-	assert.Equal(t, codes.Unauthenticated, status.Code(unlockVault(svc, ctx, passphraseCredential("not the passphrase"))))
-	require.NoError(t, unlockVault(svc, ctx, passphraseCredential(vaultPassphrase)))
-}
-
-func TestPasswordVault_PasskeyEnrollAndUnlock(t *testing.T) {
-	svc, ctx := newTenantPasswordGRPCService(t)
-	passkey := testPasskey("test-user")
-	enrolled := enrollPasskey(t, svc, ctx, passkey)
-	assert.NotEmpty(t, enrolled.RecoveryCode)
-	assert.Equal(t, passkey.CredentialId, enrolled.Factor.CredentialId)
-
-	// Status reports what a client needs to evaluate hmac-secret.
-	vault, err := svc.PasswordVaultStatus(ctx, &pb.PasswordVaultStatusRequest{})
-	require.NoError(t, err)
-	var found bool
-	for _, f := range vault.Factors {
-		if f.Factor == "passkey" {
-			found = true
-			assert.Equal(t, passkey.CredentialId, f.CredentialId)
-			assert.Equal(t, passkey.PrfSalt, f.PrfSalt)
-		}
-	}
-	assert.True(t, found, "the passkey is listed")
-
-	lockVault(t, svc, ctx)
-	wrong := testPasskey("test-user")
-	wrong.Secret = make([]byte, 32)
-	assert.Equal(t, codes.Unauthenticated, status.Code(unlockVault(svc, ctx, wrong)))
-
-	// Unlocking needs only the credential ID and the PRF output.
-	require.NoError(t, unlockVault(svc, ctx, &pb.PasswordVaultCredential{
-		Factor: "passkey", CredentialId: passkey.CredentialId, Secret: passkey.Secret,
-	}))
-}
-
 func TestPasswordVault_EnrollErrors(t *testing.T) {
 	svc, ctx := newTenantPasswordGRPCService(t)
 

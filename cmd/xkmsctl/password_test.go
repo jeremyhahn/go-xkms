@@ -244,14 +244,3 @@ func TestPasswordGetCmd_UserPINFlagRemoved(t *testing.T) {
 		t.Errorf("expected an unknown-flag error, got %q", err)
 	}
 }
-
-func TestPasswordCmd_Registered(t *testing.T) {
-	for _, verb := range []string{
-		"add", "get", "list", "update", "delete",
-		"unlock", "lock", "status", "access-mode", "generate", "vault",
-	} {
-		if _, _, err := rootCmd.Find([]string{"password", verb}); err != nil {
-			t.Errorf("password %s missing: %v", verb, err)
-		}
-	}
-}

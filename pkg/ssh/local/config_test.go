@@ -83,7 +83,8 @@ Host myhost
 
 // TestLoadConfig_MissingFilesAreSkipped verifies an absent path is treated
 // like OpenSSH treats it — as an empty config, not an error — regardless
-// of whether other paths in the list exist.
+// of whether other paths in the list exist. A host no loaded file
+// configures falls back to its alias, port 22, and no user or identities.
 func TestLoadConfig_MissingFilesAreSkipped(t *testing.T) {
 	dir := t.TempDir()
 	present := filepath.Join(dir, "present")
@@ -97,16 +98,8 @@ func TestLoadConfig_MissingFilesAreSkipped(t *testing.T) {
 	if hc.Port != 2200 {
 		t.Errorf("Port = %d, want 2200 from the present file", hc.Port)
 	}
-}
 
-// TestLoadConfig_NoFiles verifies Lookup's fallback defaults when no
-// config files were loaded at all (zero paths, or every path absent).
-func TestLoadConfig_NoFiles(t *testing.T) {
-	cfg, err := local.LoadConfig()
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	hc := cfg.Lookup("anything.example.com")
+	hc = cfg.Lookup("anything.example.com")
 	want := &local.HostConfig{Alias: "anything.example.com", HostName: "anything.example.com", Port: 22}
 	if hc.Alias != want.Alias || hc.HostName != want.HostName || hc.Port != want.Port {
 		t.Fatalf("Lookup fallback = %+v, want %+v", hc, want)
@@ -324,23 +317,6 @@ func TestLoadConfig_OpenFailureNotNotExist(t *testing.T) {
 	badPath := filepath.Join(dir, "bad\x00name")
 
 	_, err := local.LoadConfig(badPath)
-	var parseErr *local.ConfigParseError
-	if !errors.As(err, &parseErr) {
-		t.Fatalf("expected *ConfigParseError, got %T: %v", err, err)
-	}
-}
-
-// TestLoadConfig_DirectoryInsteadOfFile covers the decode-failure branch
-// distinct from the open-failure branch: opening a directory succeeds,
-// but reading from it to decode fails.
-func TestLoadConfig_DirectoryInsteadOfFile(t *testing.T) {
-	dir := t.TempDir()
-	asDir := filepath.Join(dir, "config-is-a-dir")
-	if err := os.Mkdir(asDir, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	_, err := local.LoadConfig(asDir)
 	var parseErr *local.ConfigParseError
 	if !errors.As(err, &parseErr) {
 		t.Fatalf("expected *ConfigParseError, got %T: %v", err, err)

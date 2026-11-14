@@ -160,37 +160,6 @@ func TestRunCredentialList_Success(t *testing.T) {
 	}
 }
 
-// TestRunCredentialList_Empty proves an empty result reads as an explicit
-// statement rather than blank output an operator could misread as a failure.
-func TestRunCredentialList_Empty(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"names":[]}`))
-	}))
-	defer server.Close()
-
-	oldConfig := globalConfig
-	oldFactory := serverHTTPClientFactory
-	defer func() {
-		globalConfig = oldConfig
-		serverHTTPClientFactory = oldFactory
-	}()
-
-	globalConfig = &Config{Server: server.URL, OutputFormat: "text"}
-	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
-		return server.Client(), nil
-	}
-
-	out := captureStdout(t, func() {
-		if err := runCredentialList(credentialListCmd, nil); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-	if !strings.Contains(out, "No credentials submitted") {
-		t.Errorf("expected an explicit empty message, got: %q", out)
-	}
-}
-
 func TestRunCredentialList_RequiresServer(t *testing.T) {
 	oldConfig := globalConfig
 	defer func() { globalConfig = oldConfig }()
@@ -223,17 +192,5 @@ func TestRunCredentialList_MalformedJSONResponse(t *testing.T) {
 
 	if err := runCredentialList(credentialListCmd, nil); !errors.Is(err, ErrHTTPRequestFailed) {
 		t.Fatalf("expected ErrHTTPRequestFailed, got: %v", err)
-	}
-}
-
-func TestCredentialCmd_Registration(t *testing.T) {
-	found := map[string]bool{}
-	for _, c := range credentialCmd.Commands() {
-		found[c.Name()] = true
-	}
-	for _, name := range []string{"submit", "strategy", "list"} {
-		if !found[name] {
-			t.Errorf("expected credential subcommand %q to be registered", name)
-		}
 	}
 }

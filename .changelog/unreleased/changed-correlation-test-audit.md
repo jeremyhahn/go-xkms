@@ -1,0 +1,1 @@
+Tests: `pkg/correlation` drops three tests and one table case that repeated paths kept tests already assert; the wire header names stay pinned by `test/integration/correlation`, and coverage stays at 100% (#1794).

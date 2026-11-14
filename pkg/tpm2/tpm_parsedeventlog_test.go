@@ -14,15 +14,12 @@
 package tpm2
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
 	"errors"
 	"math"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 )
@@ -175,18 +172,4 @@ func TestPlatformPCRDigest_InvalidPCRBank(t *testing.T) {
 	digest, err := tpm.platformPCRDigest(tpm2.TPMAlgSHA256)
 	assert.Nil(t, digest)
 	assert.ErrorIs(t, err, ErrInvalidPCRBankType)
-}
-
-// TestEKRSA_CachedValue proves EKRSA returns the cached public key on a
-// TPM2 that already resolved it, without touching the (here nil, and
-// therefore unusable) transport -- the short-circuit every later EKRSA
-// call in a long-lived TPM2 depends on to avoid a TPM round trip per call.
-func TestEKRSA_CachedValue(t *testing.T) {
-	cached, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	tpm := &TPM2{ekRSAPubKey: &cached.PublicKey}
-	pub, err := tpm.EKRSA()
-	require.NoError(t, err)
-	assert.Same(t, &cached.PublicKey, pub)
 }

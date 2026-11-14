@@ -16,9 +16,6 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"os"
@@ -46,27 +43,6 @@ func writePEMFile(t *testing.T, blockType string, der []byte) string {
 	path := filepath.Join(t.TempDir(), "block.pem")
 	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: der}), 0600))
 	return path
-}
-
-func TestCertIssueCmd_AcceptsSEC1ECKey(t *testing.T) {
-	certPath, _, _, key := writeCAFiles(t)
-	der, err := x509.MarshalECPrivateKey(key.(*ecdsa.PrivateKey))
-	require.NoError(t, err)
-
-	out, code, stderr := issueAs(t, "text", certPath, writePEMFile(t, "EC PRIVATE KEY", der))
-	assert.Equal(t, -1, code, stderr)
-	assert.Contains(t, out, "Issuer: CN=Issuer Test CA")
-}
-
-func TestCertIssueCmd_AcceptsPKCS1RSAKey(t *testing.T) {
-	caCert, caKey, err := generateCA("RSA Issuer CA", "", "", "", "", "", 30, "rsa", 2048)
-	require.NoError(t, err)
-	certPath := writePEMFile(t, "CERTIFICATE", caCert.Raw)
-	keyPath := writePEMFile(t, "RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(caKey.(*rsa.PrivateKey)))
-
-	out, code, stderr := issueAs(t, "text", certPath, keyPath)
-	assert.Equal(t, -1, code, stderr)
-	assert.Contains(t, out, "Issuer: CN=RSA Issuer CA")
 }
 
 func TestCertIssueCmd_RefusesBadCAMaterial(t *testing.T) {

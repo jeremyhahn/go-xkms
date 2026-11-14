@@ -1,0 +1,1 @@
+- **Tests: `pkg/api/rest/wire` audited (#1794)** — each behaviour has one test; the TPM policy `update` route case, which repeats the `branch update` case's path, is removed.

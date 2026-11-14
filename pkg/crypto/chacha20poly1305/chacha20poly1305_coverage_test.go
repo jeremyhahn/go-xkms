@@ -108,3 +108,55 @@ func TestDecryptWrongKeyFails(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "authentication error")
 }
+
+// TestTagSize pins RFC 8439 section 2.5: Poly1305 has no truncated tag, so
+// both directions accept a TagSize of zero (the default) or the full 16
+// bytes and refuse any other size with ErrTagSizeNotSupported and no result.
+func TestTagSize(t *testing.T) {
+	constructors := []struct {
+		name    string
+		require func(*testing.T, []byte) (AEAD, bool)
+	}{
+		{name: "ChaCha20-Poly1305", require: requireCipher},
+		{name: "XChaCha20-Poly1305", require: requireCipherX},
+	}
+	tests := []struct {
+		name    string
+		tagSize int
+		wantErr error
+	}{
+		{name: "default", tagSize: 0},
+		{name: "full tag", tagSize: 16},
+		{name: "truncated tag", tagSize: 12, wantErr: ErrTagSizeNotSupported},
+		{name: "oversized tag", tagSize: 17, wantErr: ErrTagSizeNotSupported},
+		{name: "negative tag", tagSize: -1, wantErr: ErrTagSizeNotSupported},
+	}
+	for _, c := range constructors {
+		key, err := GenerateKey()
+		require.NoError(t, err)
+		cipher, ok := c.require(t, key)
+		if !ok {
+			continue
+		}
+		sealed, err := cipher.Encrypt([]byte("payload"), nil)
+		require.NoError(t, err)
+
+		for _, tt := range tests {
+			t.Run(c.name+"/"+tt.name, func(t *testing.T) {
+				enc, err := cipher.Encrypt([]byte("payload"), &types.EncryptOptions{TagSize: tt.tagSize})
+				dec, decErr := cipher.Decrypt(sealed, &types.DecryptOptions{TagSize: tt.tagSize})
+				if tt.wantErr != nil {
+					assert.ErrorIs(t, err, tt.wantErr)
+					assert.Nil(t, enc)
+					assert.ErrorIs(t, decErr, tt.wantErr)
+					assert.Nil(t, dec)
+					return
+				}
+				require.NoError(t, err)
+				assert.Len(t, enc.Tag, 16)
+				require.NoError(t, decErr)
+				assert.Equal(t, []byte("payload"), dec)
+			})
+		}
+	}
+}

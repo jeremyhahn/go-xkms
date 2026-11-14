@@ -541,29 +541,6 @@ func TestGetSCTListExtension(t *testing.T) {
 	})
 }
 
-func TestWrapUnwrapOctetString(t *testing.T) {
-	testCases := []struct {
-		name string
-		data []byte
-	}{
-		{"empty", []byte{}},
-		{"small", []byte{0x01, 0x02, 0x03}},
-		{"medium", bytes.Repeat([]byte{0xAB}, 100)},
-		{"large", bytes.Repeat([]byte{0xCD}, 300)},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			wrapped := wrapInOctetString(tc.data)
-			assert.Equal(t, byte(0x04), wrapped[0], "should start with OCTET STRING tag")
-
-			unwrapped, err := unwrapOctetString(wrapped)
-			require.NoError(t, err)
-			assert.Equal(t, tc.data, unwrapped)
-		})
-	}
-}
-
 func TestWrapInOctetString(t *testing.T) {
 	t.Run("short form length (< 128)", func(t *testing.T) {
 		data := bytes.Repeat([]byte{0xAB}, 50)

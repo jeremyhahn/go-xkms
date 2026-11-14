@@ -14,6 +14,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -91,16 +92,6 @@ func testRebalancePlan() *qrdbtransport.RebalancePlan {
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
-
-// TestRebalanceCmd_Registered verifies the rebalance group and all four
-// verbs are attached to the root command.
-func TestRebalanceCmd_Registered(t *testing.T) {
-	for _, verb := range []string{"stats", "plan", "execute", "report"} {
-		if _, _, err := rootCmd.Find([]string{"rebalance", verb}); err != nil {
-			t.Errorf("rebalance %s not registered: %v", verb, err)
-		}
-	}
-}
 
 // TestRebalanceStats_ShardFlagDefault verifies rebalance stats carries a
 // --shard flag defaulting to "1".
@@ -183,30 +174,6 @@ func TestRebalanceStats_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 // rebalance plan
 // ---------------------------------------------------------------------------
-
-// TestRebalancePlan_Success verifies plan flags reach the request and the
-// plan renders.
-func TestRebalancePlan_Success(t *testing.T) {
-	fake := &fakeRebalanceClient{plan: testRebalancePlan()}
-	installClusterControlFactory(t, &QRDBControlClient{Cluster: &fakeClusterControl{}, Rebalance: fake})
-
-	out, err := runClusterCmd(t, "rebalance", "plan",
-		"--max-moves", "5", "--dry-run", "--target-balance", "10")
-	if err != nil {
-		t.Fatalf("rebalance plan: %v", err)
-	}
-	if fake.gotPlanReq == nil {
-		t.Fatal("CreateRebalancePlan not called")
-	}
-	if fake.gotPlanReq.MaxMoves != 5 || !fake.gotPlanReq.DryRun || fake.gotPlanReq.TargetBalance != 10 {
-		t.Errorf("plan request = %+v, want MaxMoves=5 DryRun=true TargetBalance=10", fake.gotPlanReq)
-	}
-	for _, want := range []string{"Planned moves:      1", "10.0.0.1:63001", "10.0.0.2:63001"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output missing %q:\n%s", want, out)
-		}
-	}
-}
 
 // TestRebalancePlan_WritesOutFile verifies --out persists a JSON plan
 // that execute can replay.
@@ -407,5 +374,68 @@ func TestRebalanceReport_Error(t *testing.T) {
 	_, err := runClusterCmd(t, "rebalance", "report")
 	if !errors.Is(err, ErrImbalanceReportFailed) {
 		t.Fatalf("expected ErrImbalanceReportFailed, got %v", err)
+	}
+}
+
+// TestRebalancePrinters_EmptyResults pins the text an operator sees when the
+// server has no leader, no moves or no nodes to report: each is an explicit
+// line, never a blank table.
+func TestRebalancePrinters_EmptyResults(t *testing.T) {
+	tests := []struct {
+		name  string
+		print func(p *Printer) error
+		want  []string
+	}{
+		{
+			name:  "shard without leader",
+			print: func(p *Printer) error { return p.PrintShardStats(&qrdbtransport.ShardStatsResponse{ShardID: 4}) },
+			want:  []string{"Shard:    4", "Leader:   unknown"},
+		},
+		{
+			name:  "balanced plan",
+			print: func(p *Printer) error { return p.PrintRebalancePlan(&qrdbtransport.RebalancePlan{}) },
+			want:  []string{"Planned moves:      0", "Cluster is balanced; nothing to move"},
+		},
+		{
+			name:  "report without nodes",
+			print: func(p *Printer) error { return p.PrintImbalanceReport(&qrdbtransport.ImbalanceReport{}) },
+			want:  []string{"Hotspots:        none", "No nodes reported"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := tt.print(NewPrinter(string(OutputFormatText), &buf)); err != nil {
+				t.Fatalf("print: %v", err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(buf.String(), want) {
+					t.Errorf("output missing %q:\n%s", want, buf.String())
+				}
+			}
+		})
+	}
+}
+
+// TestRebalancePrinters_UnknownFormat checks every rebalance printer refuses
+// an output format it does not render, and writes nothing.
+func TestRebalancePrinters_UnknownFormat(t *testing.T) {
+	printers := map[string]func(p *Printer) error{
+		"stats":  func(p *Printer) error { return p.PrintShardStats(&qrdbtransport.ShardStatsResponse{}) },
+		"plan":   func(p *Printer) error { return p.PrintRebalancePlan(&qrdbtransport.RebalancePlan{}) },
+		"result": func(p *Printer) error { return p.PrintRebalanceResult(&qrdbtransport.RebalanceResult{}) },
+		"report": func(p *Printer) error { return p.PrintImbalanceReport(&qrdbtransport.ImbalanceReport{}) },
+	}
+	for name, printFn := range printers {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := printFn(NewPrinter("yaml", &buf))
+			if !errors.Is(err, ErrUnknownOutputFormat) {
+				t.Fatalf("err = %v, want ErrUnknownOutputFormat", err)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("wrote output for a refused format: %q", buf.String())
+			}
+		})
 	}
 }

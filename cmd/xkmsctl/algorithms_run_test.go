@@ -109,9 +109,3 @@ func TestAlgorithmsCmd_Error(t *testing.T) {
 		t.Errorf("expected exit 1, got %d", code)
 	}
 }
-
-func TestAlgorithmsCmd_Registration(t *testing.T) {
-	if _, _, err := rootCmd.Find([]string{"algorithms"}); err != nil {
-		t.Fatalf("expected the algorithms command to be registered: %v", err)
-	}
-}

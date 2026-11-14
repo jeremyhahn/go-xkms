@@ -1,0 +1,1 @@
+- `pkg/ca/checkpoint`: the test audit (#1794) found no duplicate test; it drops the unknown-ID lookup assertion from `TestKeyTypeEncoding`, which `TestNewSignerRefusesInvalidInput` ("unknown algorithm") asserts through `NewSigner`.

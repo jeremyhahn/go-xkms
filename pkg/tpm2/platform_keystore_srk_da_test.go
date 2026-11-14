@@ -22,14 +22,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// TestEnableDAOnSRK_NilAttrs proves enableDAOnSRK tolerates a nil
-// *types.KeyAttributes rather than panicking -- a caller building SRK
-// attributes from a template that failed earlier must be able to no-op
-// through this helper.
-func TestEnableDAOnSRK_NilAttrs(t *testing.T) {
-	assert.NotPanics(t, func() { enableDAOnSRK(nil) })
-}
-
 // TestEnableDAOnSRK_NilTPMAttributes proves enableDAOnSRK no-ops when the
 // attributes carry no TPMAttributes yet, rather than dereferencing a nil
 // Template.

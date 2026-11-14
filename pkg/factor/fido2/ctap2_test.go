@@ -148,17 +148,6 @@ func TestNewLocalCeremony_NilHandlerRefuses(t *testing.T) {
 	}
 }
 
-func TestLocalCeremony_AvailableRequiresAuthenticator(t *testing.T) {
-	c := newLocalCeremony(&fakeDevices{}, &fakeCeremony{}, 0)
-	ok, reason := c.Available(context.Background())
-	if ok {
-		t.Fatal("Available() = true with no authenticator attached")
-	}
-	if reason == "" {
-		t.Error("Available() must explain why it is unavailable")
-	}
-}
-
 func TestLocalCeremony_AvailableWithAuthenticator(t *testing.T) {
 	c := newLocalCeremony(&fakeDevices{devices: []pkgfido2.Device{yubi("1")}}, &fakeCeremony{}, 0)
 	if ok, reason := c.Available(context.Background()); !ok {

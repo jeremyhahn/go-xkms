@@ -163,11 +163,17 @@ func TestNetworkRouter_SameOriginAccepted(t *testing.T) {
 }
 
 func TestNetworkRouter_NoWildcardCORS(t *testing.T) {
+	router := networkRouter(t)
 	req := apiRequest(http.MethodGet, "/api/v1/accounts", nil)
 	req.Header.Set("Origin", serveOrigin)
-	rec := serve(networkRouter(t), req)
+	rec := serve(router, req)
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got == guard.AnyOrigin {
 		t.Error("a network deployment must not send the wildcard CORS header")
+	}
+
+	rec = serve(router, apiRequest(http.MethodGet, "/api/v1/accounts", nil))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("expected no CORS grant for a request without an Origin, got %q", got)
 	}
 }
 

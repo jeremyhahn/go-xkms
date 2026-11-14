@@ -87,38 +87,6 @@ func newKeyExtConfig(mock *mockKeyExtClient) *Config {
 	}
 }
 
-func TestKeyAttestCmd_Success(t *testing.T) {
-	resetCmdFlags(t, keyAttestCmd)
-	t.Cleanup(func() { resetCmdFlags(t, keyAttestCmd) })
-	mock := &mockKeyExtClient{attestResp: &transport.AttestKeyResponse{
-		Format: "tpm2", AttestationData: []byte("quote"), Signature: []byte("sig"),
-	}}
-	withGlobalConfig(t, newKeyExtConfig(mock))
-
-	captureStdout(t, func() {
-		keyAttestCmd.Run(keyAttestCmd, []string{"my-key"})
-	})
-	if mock.gotAttestReq == nil || mock.gotAttestReq.KeyID != "my-key" {
-		t.Fatalf("AttestKey request mismatch: %+v", mock.gotAttestReq)
-	}
-	if len(mock.gotAttestReq.Nonce) != 32 {
-		t.Errorf("expected a generated 32-byte nonce, got %d bytes", len(mock.gotAttestReq.Nonce))
-	}
-}
-
-func TestKeyAttestCmd_Error(t *testing.T) {
-	resetCmdFlags(t, keyAttestCmd)
-	t.Cleanup(func() { resetCmdFlags(t, keyAttestCmd) })
-	withGlobalConfig(t, newKeyExtConfig(&mockKeyExtClient{attestErr: errKeyExtBoom}))
-
-	code := captureExit(t, func() {
-		keyAttestCmd.Run(keyAttestCmd, []string{"my-key"})
-	})
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-}
-
 func TestKeyDeriveECDHCmd_RequiresPeerKey(t *testing.T) {
 	resetCmdFlags(t, keyDeriveECDHCmd)
 	t.Cleanup(func() { resetCmdFlags(t, keyDeriveECDHCmd) })
@@ -129,29 +97,6 @@ func TestKeyDeriveECDHCmd_RequiresPeerKey(t *testing.T) {
 	})
 	if code != 1 {
 		t.Errorf("expected exit code 1 without --peer-key, got %d", code)
-	}
-}
-
-func TestKeyDeriveECDHCmd_Success(t *testing.T) {
-	resetCmdFlags(t, keyDeriveECDHCmd)
-	t.Cleanup(func() { resetCmdFlags(t, keyDeriveECDHCmd) })
-
-	peerFile := filepath.Join(t.TempDir(), "peer.der")
-	if err := os.WriteFile(peerFile, []byte("peer-public-key-bytes"), 0600); err != nil {
-		t.Fatalf("write peer key: %v", err)
-	}
-
-	mock := &mockKeyExtClient{deriveResp: &transport.DeriveKeyECDHResponse{
-		DerivedKey: []byte("derived-key-material"),
-	}}
-	withGlobalConfig(t, newKeyExtConfig(mock))
-	_ = keyDeriveECDHCmd.Flags().Set("peer-key", peerFile)
-
-	captureStdout(t, func() {
-		keyDeriveECDHCmd.Run(keyDeriveECDHCmd, []string{"my-key"})
-	})
-	if mock.gotDeriveReq == nil {
-		t.Fatalf("DeriveKeyECDH was not called")
 	}
 }
 
@@ -219,22 +164,6 @@ func TestKeyUnwrapByIDCmd_Success(t *testing.T) {
 	})
 	if mock.gotUnwrapReq == nil {
 		t.Fatalf("UnwrapKeyByID was not called")
-	}
-}
-
-func TestKeyExportMaterialCmd_Success(t *testing.T) {
-	resetCmdFlags(t, keyExportMaterialCmd)
-	t.Cleanup(func() { resetCmdFlags(t, keyExportMaterialCmd) })
-	mock := &mockKeyExtClient{exportMatResp: &transport.ExportKeyMaterialResponse{
-		KeyMaterial: []byte("raw-key"), KeyType: "aes256-gcm",
-	}}
-	withGlobalConfig(t, newKeyExtConfig(mock))
-
-	captureStdout(t, func() {
-		keyExportMaterialCmd.Run(keyExportMaterialCmd, []string{"my-aes-key"})
-	})
-	if mock.gotExportMatReq == nil || mock.gotExportMatReq.KeyID != "my-aes-key" {
-		t.Fatalf("ExportKeyMaterial request mismatch: %+v", mock.gotExportMatReq)
 	}
 }
 

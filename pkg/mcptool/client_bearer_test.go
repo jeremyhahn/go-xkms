@@ -43,7 +43,8 @@ func TestConnect_SendsBearerToken(t *testing.T) {
 	cfg.Address = srv.Listener.Addr().String()
 	cfg.JWTToken = "tok-xyz"
 	c := NewClient(cfg)
-	require.Error(t, c.Connect(context.Background()), "the server refuses the session")
+	err := c.Connect(context.Background())
+	require.ErrorIs(t, err, ErrConnectionFailed, "the server refuses the session")
 
 	mu.Lock()
 	defer mu.Unlock()

@@ -14,7 +14,6 @@
 package fido2
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -151,41 +150,6 @@ func TestConfig_AllFieldsValidation(t *testing.T) {
 	}
 }
 
-// TestHMACSecretInput_Coverage tests HMAC secret input structure
-func TestHMACSecretInput_Coverage(t *testing.T) {
-	input := HMACSecretInput{
-		KeyAgreement:      map[string]interface{}{"1": 2, "-1": 1},
-		SaltEnc:           make([]byte, 32),
-		SaltAuth:          make([]byte, 16),
-		PinUVAuthProtocol: 1,
-	}
-
-	assert.NotNil(t, input.KeyAgreement)
-	assert.Equal(t, 32, len(input.SaltEnc))
-	assert.Equal(t, 16, len(input.SaltAuth))
-	assert.Equal(t, uint64(1), input.PinUVAuthProtocol)
-}
-
-// TestEnrollmentResult_Coverage tests enrollment result structure
-func TestEnrollmentResult_Coverage(t *testing.T) {
-	result := EnrollmentResult{
-		CredentialID: make([]byte, 32),
-		PublicKey:    make([]byte, 65),
-		AAGUID:       make([]byte, 16),
-		SignCount:    1,
-		RelyingParty: RelyingParty{ID: "test.com", Name: "Test"},
-		User:         User{Name: "test", DisplayName: "Test"},
-		Salt:         make([]byte, 32),
-		Created:      time.Now(),
-	}
-
-	assert.Equal(t, 32, len(result.CredentialID))
-	assert.Equal(t, 65, len(result.PublicKey))
-	assert.Equal(t, 16, len(result.AAGUID))
-	assert.Equal(t, uint32(1), result.SignCount)
-	assert.False(t, result.Created.IsZero())
-}
-
 // Helper types for testing
 
 // ErrorMockHIDDevice is a mock that can fail on write/read
@@ -266,45 +230,6 @@ func TestCTAPHIDConstants_Coverage(t *testing.T) {
 	assert.Equal(t, 0x01, HIDUsage)
 }
 
-// TestAllStatusCodes_Coverage tests all CTAP status code constants
-func TestAllStatusCodes_Coverage(t *testing.T) {
-	assert.Equal(t, 0x00, StatusOK)
-	assert.Equal(t, 0x7F, StatusOtherError)
-	assert.NotEqual(t, StatusOK, StatusInvalidCommand)
-	assert.NotEqual(t, StatusOK, StatusInvalidParameter)
-}
-
-// TestAllCTAPCommands_Coverage tests all CTAP command constants
-func TestAllCTAPCommands_Coverage(t *testing.T) {
-	assert.Equal(t, 0x01, CmdMakeCredential)
-	assert.Equal(t, 0x02, CmdGetAssertion)
-	assert.Equal(t, 0x04, CmdGetInfo)
-	assert.Equal(t, 0x06, CmdClientPIN)
-	assert.Equal(t, 0x07, CmdReset)
-}
-
-// TestDefaultTimeoutConstants_Coverage tests default timeout values
-func TestDefaultTimeoutConstants_Coverage(t *testing.T) {
-	assert.Equal(t, 30*time.Second, DefaultTimeout)
-	assert.Equal(t, 30*time.Second, DefaultUserPresenceTimeout)
-	assert.Equal(t, 3, DefaultRetryCount)
-	assert.Equal(t, 100*time.Millisecond, DefaultRetryDelay)
-}
-
-// TestMockHIDDevice_Reset_Coverage tests the Reset method
-func TestMockHIDDevice_Reset_Coverage(t *testing.T) {
-	dev := NewMockHIDDevice("/dev/hidraw0")
-	_, err := dev.Write([]byte("test data"))
-	require.NoError(t, err)
-	dev.SetResponse(make([]byte, 64))
-	assert.Equal(t, 1, dev.writeCount)
-	assert.NotEmpty(t, dev.responses)
-	dev.Reset()
-	assert.Equal(t, 0, dev.writeCount)
-	assert.Empty(t, dev.responses)
-	assert.False(t, dev.closed)
-}
-
 // TestCreatePackets_LargePayload_Coverage tests packet creation with large payloads
 func TestCreatePackets_LargePayload_Coverage(t *testing.T) {
 	mockDev := NewMockHIDDevice("/dev/hidraw0")
@@ -367,57 +292,6 @@ func (d *IncompleteReadMockDevice) Read(data []byte) (int, error) {
 		return 30, nil
 	}
 	return d.MockHIDDevice.Read(data)
-}
-
-// TestDeviceInfo_AllFields_Coverage tests DeviceInfo with all optional fields
-func TestDeviceInfo_AllFields_Coverage(t *testing.T) {
-	info := &DeviceInfo{
-		Versions:                         []string{"FIDO_2_0", "FIDO_2_1"},
-		Extensions:                       []string{"hmac-secret", "credProtect"},
-		AAGUID:                           make([]byte, 16),
-		Options:                          map[string]bool{"rk": true, "up": true},
-		MaxMsgSize:                       2048,
-		PINProtocols:                     []uint64{1, 2},
-		MaxCredentialCount:               25,
-		MaxCredentialIDLen:               128,
-		Transports:                       []string{"usb", "nfc"},
-		Algorithms:                       []PublicKeyCredentialParameter{{Type: "public-key", Alg: -7}},
-		MaxSerializedLargeBlobArray:      4096,
-		ForcePINChange:                   false,
-		MinPINLength:                     4,
-		FirmwareVersion:                  0x00010002,
-		MaxCredBlobLen:                   32,
-		MaxRPIDsForSetMinPIN:             3,
-		PreferredPlatformUvAttempts:      3,
-		UVModality:                       2,
-		Certifications:                   map[string]interface{}{"FIDO": []interface{}{1}},
-		RemainingDiscoverableCredentials: 100,
-		VendorPrototypeConfigCommands:    []uint64{0x01},
-	}
-
-	assert.Equal(t, 2, len(info.Versions))
-	assert.Equal(t, 2, len(info.Extensions))
-	assert.Equal(t, uint64(2048), info.MaxMsgSize)
-	assert.Equal(t, 2, len(info.PINProtocols))
-}
-
-// TestHandleCTAPError_UnknownError_Coverage tests unknown error code handling
-func TestHandleCTAPError_UnknownError_Coverage(t *testing.T) {
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	config := DefaultConfig
-
-	ctapDev := &CTAPHIDDevice{
-		device: mockDev,
-		config: &config,
-	}
-
-	err := ctapDev.handleCTAPError(0xF5)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "CTAP error: 0xF5")
-
-	err = ctapDev.handleCTAPError(0xE5)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "CTAP error: 0xE5")
 }
 
 // TestSendCBOR_ErrorStatus_Coverage tests CBOR response with error status
@@ -510,80 +384,6 @@ func (d *ReadErrorMockDevice) Read(data []byte) (int, error) {
 	return 0, d.err
 }
 
-// TestMockHIDDevice_ReadAfterClose_Coverage tests read after close
-func TestMockHIDDevice_ReadAfterClose_Coverage(t *testing.T) {
-	dev := NewMockHIDDevice("/dev/hidraw0")
-	err := dev.Close()
-	require.NoError(t, err)
-
-	buf := make([]byte, 64)
-	_, err = dev.Read(buf)
-	assert.Error(t, err)
-}
-
-// TestReadBuffer_Coverage tests read buffer operations
-func TestReadBuffer_Coverage(t *testing.T) {
-	dev := NewMockHIDDevice("/dev/hidraw0")
-	testData := make([]byte, 64)
-	for i := range testData {
-		testData[i] = byte(i)
-	}
-	dev.readBuf = bytes.NewBuffer(testData)
-
-	buf := make([]byte, 64)
-	n, err := dev.Read(buf)
-	require.NoError(t, err)
-	assert.Equal(t, 64, n)
-	assert.Equal(t, testData, buf)
-}
-
-// TestWaitForDevice_NoDev_Coverage tests waiting for device when none exist
-func TestWaitForDevice_NoDev_Coverage(t *testing.T) {
-	config := DefaultConfig
-	enum := NewMockHIDDeviceEnumerator()
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	_, err = handler.WaitForDevice(ctx)
-	assert.Error(t, err)
-}
-
-// TestSendCBOR_EmptyResponse_Coverage tests empty CBOR response handling
-func TestSendCBOR_EmptyResponse_Coverage(t *testing.T) {
-	config := DefaultConfig
-	config.Timeout = 500 * time.Millisecond
-
-	mockDev := &EmptyResponseMockDevice{
-		MockHIDDevice: NewMockHIDDevice("/dev/hidraw0"),
-	}
-
-	ctapDev := &CTAPHIDDevice{
-		device: mockDev,
-		config: &config,
-		cid:    0x12345678,
-	}
-
-	emptyResp := make([]byte, HIDPacketSize)
-	binary.BigEndian.PutUint32(emptyResp[0:4], ctapDev.cid)
-	emptyResp[4] = CTAPHID_CBOR
-	binary.BigEndian.PutUint16(emptyResp[5:7], 0)
-
-	mockDev.SetResponse(emptyResp)
-
-	_, err := ctapDev.SendCBOR(CmdGetInfo, nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "empty CBOR response")
-}
-
-// EmptyResponseMockDevice returns empty responses
-type EmptyResponseMockDevice struct {
-	*MockHIDDevice
-}
-
 // TestReadResponse_Timeout_Coverage tests timeout handling in readResponse
 func TestReadResponse_Timeout_Coverage(t *testing.T) {
 	config := DefaultConfig
@@ -617,92 +417,6 @@ type SlowReadMockDevice struct {
 func (d *SlowReadMockDevice) Read(data []byte) (int, error) {
 	time.Sleep(d.delay)
 	return d.MockHIDDevice.Read(data)
-}
-
-// TestReadResponse_ChannelIDMismatch_Coverage tests channel ID mismatch handling
-func TestReadResponse_ChannelIDMismatch_Coverage(t *testing.T) {
-	config := DefaultConfig
-	config.Timeout = 500 * time.Millisecond
-
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-
-	ctapDev := &CTAPHIDDevice{
-		device: mockDev,
-		config: &config,
-		cid:    0x12345678,
-	}
-
-	// Write directly to readBuf instead of using SetResponse
-	// (SetResponse is consumed during Write, but we're calling readResponseSync directly)
-	wrongCIDResp := make([]byte, HIDPacketSize)
-	binary.BigEndian.PutUint32(wrongCIDResp[0:4], 0x87654321) // Wrong CID
-	wrongCIDResp[4] = CTAPHID_CBOR
-	binary.BigEndian.PutUint16(wrongCIDResp[5:7], 1)
-	wrongCIDResp[7] = StatusOK
-
-	mockDev.mu.Lock()
-	mockDev.readBuf.Write(wrongCIDResp)
-	mockDev.mu.Unlock()
-
-	_, err := ctapDev.readResponseSync(ctapDev.cid)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "channel ID mismatch")
-}
-
-// MismatchedCIDMockDevice returns responses with wrong CID
-type MismatchedCIDMockDevice struct {
-	*MockHIDDevice
-}
-
-// TestReadResponse_KeepaliveHandling_Coverage tests keepalive message handling
-func TestReadResponse_KeepaliveHandling_Coverage(t *testing.T) {
-	config := DefaultConfig
-	config.Timeout = 2 * time.Second
-
-	mockDev := &KeepaliveMockDevice{
-		MockHIDDevice: NewMockHIDDevice("/dev/hidraw0"),
-		cid:           0x12345678,
-	}
-
-	ctapDev := &CTAPHIDDevice{
-		device: mockDev,
-		config: &config,
-		cid:    0x12345678,
-	}
-
-	resp, err := ctapDev.readResponseSync(ctapDev.cid)
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp)
-}
-
-// KeepaliveMockDevice sends keepalive then real response
-type KeepaliveMockDevice struct {
-	*MockHIDDevice
-	readCount int
-	cid       uint32
-}
-
-func (d *KeepaliveMockDevice) Read(data []byte) (int, error) {
-	d.readCount++
-
-	if d.readCount == 1 {
-		keepalive := make([]byte, HIDPacketSize)
-		binary.BigEndian.PutUint32(keepalive[0:4], d.cid)
-		keepalive[4] = CTAPHID_KEEPALIVE
-		binary.BigEndian.PutUint16(keepalive[5:7], 1)
-		keepalive[7] = 0x01
-		copy(data, keepalive)
-		return HIDPacketSize, nil
-	}
-
-	response := make([]byte, HIDPacketSize)
-	binary.BigEndian.PutUint32(response[0:4], d.cid)
-	response[4] = CTAPHID_CBOR
-	binary.BigEndian.PutUint16(response[5:7], 2)
-	response[7] = StatusOK
-	response[8] = 0xA0
-	copy(data, response)
-	return HIDPacketSize, nil
 }
 
 // TestInit_NonceMismatch_Coverage tests nonce mismatch during initialization

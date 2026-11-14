@@ -1,0 +1,1 @@
+ACME DNS-01: the `cloudflare`, `clouddns`, `azure` and `route53` provider factories, both the env and the config ones, now return a nil `Provider` when the provider cannot be built. Before, they returned a typed-nil `*Provider` inside the interface, so a caller that checked `provider != nil` went on to call methods on a nil receiver (#1794).

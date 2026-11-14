@@ -175,16 +175,6 @@ func TestSimulatorTPM_IAKCertificateCarriesVerifiedTPMRestricted(t *testing.T) {
 	}
 }
 
-func TestSimulatorTPM_AttestedHostVerifies(t *testing.T) {
-	host := newSimulatorHost(t)
-	host.world.putReferenceValues(t, "simulator", host.readPCRs(t))
-
-	ev := host.containerEvidence(t, simulatorNonce(0x5A), "simulator")
-	if err := host.world.app.AppraiseContainer(host.world.ctx, host.world.tenant, ev); err != nil {
-		t.Fatalf("AppraiseContainer: %v", err)
-	}
-}
-
 func TestSimulatorTPM_MeasuredLaunchVerifies(t *testing.T) {
 	host := newSimulatorHost(t)
 
@@ -211,33 +201,40 @@ func TestSimulatorTPM_MeasuredLaunchVerifies(t *testing.T) {
 
 func TestSimulatorTPM_ChangedPCRIsRefused(t *testing.T) {
 	host := newSimulatorHost(t)
-	host.world.putReferenceValues(t, "simulator", host.readPCRs(t))
+	reference := host.readPCRs(t)
+	host.world.putReferenceValues(t, "simulator", reference)
 
 	// The register moves after the reference values were signed.
 	if err := host.tpm.ExtendPCR(7, simulatorBank, []byte("unexpected boot component")); err != nil {
 		t.Fatalf("ExtendPCR: %v", err)
 	}
+	extended := host.readPCRs(t)
 
 	ev := host.containerEvidence(t, simulatorNonce(0x5A), "simulator")
 	err := host.world.app.AppraiseContainer(host.world.ctx, host.world.tenant, ev)
-	if !errors.Is(err, ErrPCRMismatch) {
-		t.Fatalf("error %v does not wrap ErrPCRMismatch", err)
+	if !errors.Is(err, ErrPCRMismatch) || !errors.Is(err, ErrHostNotVerified) {
+		t.Fatalf("error %v does not wrap ErrPCRMismatch and ErrHostNotVerified", err)
 	}
 	var appraisal *HostAppraisalError
 	if !errors.As(err, &appraisal) {
 		t.Fatalf("expected *HostAppraisalError, got %T", err)
 	}
+	if appraisal.Image != "alpine" || appraisal.ReferenceValues != "simulator" {
+		t.Errorf("error names %q against %q, want alpine against simulator", appraisal.Image, appraisal.ReferenceValues)
+	}
 	if !appraisal.CryptographicFailure {
 		t.Error("a drifted PCR is a cryptographic failure of the baseline")
 	}
-	var diverged []uint32
-	for _, failure := range appraisal.Failures {
-		for _, pcr := range failure.PCRs {
-			diverged = append(diverged, pcr.Index)
-		}
+	// The quote itself is genuine: only the baseline fails.
+	if len(appraisal.Failures) != 1 || appraisal.Failures[0].Check != AppraisalCheckBaseline ||
+		appraisal.Failures[0].Outcome != string(AppraisalForged) {
+		t.Fatalf("failures %+v, want only a forged baseline", appraisal.Failures)
 	}
-	if len(diverged) != 1 || diverged[0] != 7 {
-		t.Fatalf("diverging PCRs = %v, want [7]", diverged)
+	diverged := appraisal.Failures[0].PCRs
+	if len(diverged) != 1 || diverged[0].Index != 7 ||
+		!bytes.Equal(diverged[0].Quoted, extended[7]) ||
+		len(diverged[0].Expected) != 1 || !bytes.Equal(diverged[0].Expected[0], reference[7]) {
+		t.Fatalf("divergences = %+v, want PCR 7 with its expected and quoted digests", diverged)
 	}
 }
 
@@ -315,6 +312,9 @@ func TestSimulatorTPM_QuoteOverAnotherNonceIsRefusedByTheVerifier(t *testing.T) 
 	}
 	if !hasFailedCheck(appraisal.Failures, "quote", "forged") {
 		t.Fatalf("failures %+v do not name a forged quote check", appraisal.Failures)
+	}
+	if !hasFailedCheck(appraisal.Failures, AppraisalCheckBaseline, string(AppraisalAbsent)) {
+		t.Fatalf("failures %+v: a baseline is not evaluated over an unverified quote", appraisal.Failures)
 	}
 }
 

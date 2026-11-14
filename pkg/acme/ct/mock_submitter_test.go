@@ -22,9 +22,6 @@ import (
 
 // MockLogSubmitter implements LogSubmitter for the policy tests.
 type MockLogSubmitter struct {
-	// SCTs maps log URL to the SCT that should be returned.
-	SCTs map[string]*SignedCertificateTimestamp
-
 	// Errors maps log URL to the error that should be returned.
 	Errors map[string]error
 
@@ -48,12 +45,11 @@ type MockSubmission struct {
 // NewMockLogSubmitter creates a new mock submitter.
 func NewMockLogSubmitter() *MockLogSubmitter {
 	return &MockLogSubmitter{
-		SCTs:   make(map[string]*SignedCertificateTimestamp),
 		Errors: make(map[string]error),
 	}
 }
 
-// SubmitPrecert records the submission and returns the configured SCT or error.
+// SubmitPrecert records the submission and returns the configured error or a generated SCT.
 func (m *MockLogSubmitter) SubmitPrecert(ctx context.Context, precertDER []byte, chain [][]byte, log LogGroup) (*SignedCertificateTimestamp, error) {
 	// Record submission
 	m.mu.Lock()
@@ -77,16 +73,11 @@ func (m *MockLogSubmitter) SubmitPrecert(ctx context.Context, precertDER []byte,
 	// Check for error
 	m.mu.Lock()
 	err, hasErr := m.Errors[log.URL]
-	sct, hasSCT := m.SCTs[log.URL]
 	m.mu.Unlock()
 	if hasErr {
 		return nil, err
 	}
 
-	// Return configured SCT or generate one
-	if hasSCT {
-		return sct, nil
-	}
 	return m.generateMockSCT(log), nil
 }
 
@@ -112,13 +103,6 @@ func (m *MockLogSubmitter) generateMockSCT(log LogGroup) *SignedCertificateTimes
 	}
 }
 
-// SetSCT configures the SCT to return for a log.
-func (m *MockLogSubmitter) SetSCT(logURL string, sct *SignedCertificateTimestamp) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.SCTs[logURL] = sct
-}
-
 // SetError configures the error to return for a log.
 func (m *MockLogSubmitter) SetError(logURL string, err error) {
 	m.mu.Lock()
@@ -134,14 +118,4 @@ func (m *MockLogSubmitter) GetSubmissions() []MockSubmission {
 	result := make([]MockSubmission, len(m.Submissions))
 	copy(result, m.Submissions)
 	return result
-}
-
-// Reset clears all recorded submissions and configuration.
-func (m *MockLogSubmitter) Reset() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.SCTs = make(map[string]*SignedCertificateTimestamp)
-	m.Errors = make(map[string]error)
-	m.Submissions = nil
 }

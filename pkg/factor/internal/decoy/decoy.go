@@ -72,7 +72,6 @@ const (
 	scalarAttempts = 64
 )
 
-// SeedError reports a decoy seed shorter than MinSeedSize.
 // Key algorithms, as KeyShape names them.
 const (
 	AlgorithmECDSA   = "ecdsa"
@@ -135,6 +134,7 @@ var keyDerivers = map[string]func(d *Deriver, purpose string, s KeyShape) (crypt
 	},
 }
 
+// SeedError reports a decoy seed shorter than MinSeedSize.
 type SeedError struct {
 	// Size is the length supplied.
 	Size int
@@ -269,8 +269,7 @@ func (d *Deriver) Time(purpose string, from, to time.Time) (time.Time, error) {
 	return from.Add(time.Duration(offset) * time.Second), nil
 }
 
-// Serial derives a positive certificate serial number of size bytes.
-// Serial derives a certificate serial number as a CA draws a random one:
+// Serial derives a positive certificate serial number of size bytes, as a CA draws a random one:
 // size uniform bytes with the sign bit cleared, so DER needs no leading zero.
 func (d *Deriver) Serial(purpose string, size int) (*big.Int, error) {
 	if size <= 0 {

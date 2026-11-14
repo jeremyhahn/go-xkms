@@ -1,0 +1,1 @@
+password: a `pkg/password` test pins that a password whose locked buffer was destroyed underneath it (a shutdown `secure.WipeAll`) refuses Bytes, WithBytes and Equal instead of lending the secret (#1794).

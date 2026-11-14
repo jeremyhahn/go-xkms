@@ -21,15 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew(t *testing.T) {
-	k, err := New()
-	require.NoError(t, err)
-	defer k.Clean()
-	assert.NotNil(t, k.dk)
-	assert.NotNil(t, k.seed)
-	assert.Len(t, k.ExportSecretKey(), SeedSize)
-}
-
 func TestGenerateKeyPair(t *testing.T) {
 	k, err := New()
 	require.NoError(t, err)
@@ -43,12 +34,6 @@ func TestGenerateKeyPair(t *testing.T) {
 	seed := k.ExportSecretKey()
 	assert.NotEmpty(t, seed)
 	assert.Len(t, seed, mlkem.SeedSize)
-}
-
-func TestGenerateKeyPair_NotInitialized(t *testing.T) {
-	k := &MLKEM1024{}
-	_, err := k.GenerateKeyPair()
-	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestEncapsulateDecapsulate(t *testing.T) {
@@ -176,13 +161,6 @@ func TestDetails(t *testing.T) {
 	assert.Equal(t, mlkem.SeedSize, details.LengthSecretKey)
 	assert.Equal(t, mlkem.CiphertextSize1024, details.LengthCiphertext)
 	assert.Equal(t, mlkem.SharedKeySize, details.LengthSharedSecret)
-}
-
-func TestHelperMethods(t *testing.T) {
-	k, err := New()
-	require.NoError(t, err)
-	defer k.Clean()
-
 	assert.Equal(t, mlkem.EncapsulationKeySize1024, k.PublicKeyLength())
 	assert.Equal(t, mlkem.SeedSize, k.SecretKeyLength())
 	assert.Equal(t, mlkem.CiphertextSize1024, k.CiphertextLength())
@@ -197,8 +175,12 @@ func TestTypeStrings(t *testing.T) {
 	assert.Equal(t, "MLKEM1024", kemAlgo.String())
 }
 
-func TestExportSecretKey_NotInitialized(t *testing.T) {
-	k := &MLKEM1024{}
+// Once the sealed seed is destroyed the key material cannot be exported,
+// even though the decapsulation key is still referenced.
+func TestExportSecretKey_DestroyedSeed(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+	k.seed.Destroy()
 	assert.Nil(t, k.ExportSecretKey())
 }
 
