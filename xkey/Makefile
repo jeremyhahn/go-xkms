@@ -666,6 +666,29 @@ coverage:
 	@$(GO) tool cover -func=$(COVERAGE_FILE) | tail -1
 	@echo "$(GREEN)Coverage report: $(COVERAGE_HTML)$(RESET)"
 
+# The package list and tags of CI's Nested Module Tests xkey steps.
+COVERAGE_GATE_TAGS := codec_json tpm_simulator
+COVERAGE_GATE_PKGS := ./cmd/e2eprobe ./cmd/xkey ./cmd/xkey/cmd \
+	./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
+	./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
+	./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
+	./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
+	./pkg/oidc/aws ./pkg/oidc/handlers \
+	./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
+	./pkg/serverregistry ./pkg/shellquote ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
+	./pkg/tokenstore ./pkg/usb ./pkg/xhome
+
+.PHONY: coverage-gate
+## coverage-gate: CI's xkey test set with a coverage profile; fails under COVERAGE_THRESHOLD
+coverage-gate:
+	@mkdir -p $(COVERAGE_DIR)
+	$(GO) test -race -timeout 60m -tags "$(COVERAGE_GATE_TAGS)" -count=1 \
+		-coverprofile=$(COVERAGE_DIR)/ci.out -covermode=atomic \
+		$(COVERAGE_GATE_PKGS)
+	@total=$$($(GO) tool cover -func=$(COVERAGE_DIR)/ci.out | tail -1); \
+		echo "$$total"; \
+		echo "$$total" | awk -v min=$(COVERAGE_THRESHOLD) '{ pct = $$NF; sub(/%/, "", pct); if (pct + 0 < min + 0) { printf "FAIL xkey coverage %s%% is under the threshold %s%%\n", pct, min; exit 1 } printf "OK xkey coverage %s%% meets the threshold %s%%\n", pct, min }'
+
 .PHONY: coverage-full
 ## coverage-full: Generate comprehensive coverage (unit + integration tests)
 coverage-full:
