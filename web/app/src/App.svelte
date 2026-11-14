@@ -24,6 +24,7 @@
   import CryptoToolsView from "$views/CryptoToolsView.svelte";
   import TrustRootsView from "$views/TrustRootsView.svelte";
   import KeyAccessPolicyView from "$views/KeyAccessPolicyView.svelte";
+  import KeyRotationPolicyView from "$views/KeyRotationPolicyView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
   import CertImportView from "$views/CertImportView.svelte";
   import PinView from "$views/PinView.svelte";
@@ -112,6 +113,7 @@
     {:else if routerStore.name === "cryptoTools"}<CryptoToolsView />
     {:else if routerStore.name === "trustRoots"}<TrustRootsView />
     {:else if routerStore.name === "keyAccessPolicy"}<KeyAccessPolicyView />
+    {:else if routerStore.name === "keyRotationPolicy"}<KeyRotationPolicyView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
     {:else if routerStore.name === "tenantTpm"}<TenantTpmView />
