@@ -144,6 +144,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Keys & Crypto | Keys, FROST, TPM Policies, OTA Image Keys | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/ota` |
 | Keys & Crypto | Keys, FROST, TPM Policies, Random & Hash | `#/keys`, `#/frost`, `#/tpm/policies`, `#/tools/crypto` |
 | Keys & Crypto | Keys, FROST, TPM Policies, Key Access Policy | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/access-policy` |
+| Keys & Crypto | Keys, FROST, TPM Policies, Rotation Policy | `#/keys`, `#/frost`, `#/tpm/policies`, `#/keys/rotation-policy` |
 | Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Signing Keys, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/attestation/signing-keys`, `#/platform` |
 | Security | PIN, PIV, SSH, SSH Trust, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/ssh/trust`, `#/passwords`, `#/oidc/credentials`, `#/platform` |

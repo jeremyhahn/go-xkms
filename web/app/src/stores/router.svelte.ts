@@ -61,6 +61,7 @@ export type RouteName =
   | "cryptoTools"
   | "trustRoots"
   | "keyAccessPolicy"
+  | "keyRotationPolicy"
   | "settings"
   | "frostKeyImport"
   | "not-found";
@@ -119,6 +120,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/tools/crypto": "cryptoTools",
   "/trust/roots": "trustRoots",
   "/keys/access-policy": "keyAccessPolicy",
+  "/keys/rotation-policy": "keyRotationPolicy",
   "/settings": "settings",
   "/platform/secrets": "platformSecretNames",
 };
