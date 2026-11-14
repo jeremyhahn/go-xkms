@@ -151,6 +151,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Identity & Access | Users, Tenants, Tenant TPM | `#/users`, `#/tenants`, `#/tenants/tpm` |
+| Identity & Access | Users, Add Passkey, Tenants | `#/users`, `#/account/passkeys`, `#/tenants` |
 | Settings | Settings | `#/settings` |
 
 Every nav entry is gated twice: an RBAC gate hides an entry the identity

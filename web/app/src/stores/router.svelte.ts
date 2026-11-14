@@ -48,6 +48,7 @@ export type RouteName =
   | "seal"
   | "tpmKeyPolicy"
   | "users"
+  | "addPasskey"
   | "frost"
   | "settings"
   | "not-found";
@@ -93,6 +94,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/seal": "seal",
   "/tpm/key-policy": "tpmKeyPolicy",
   "/users": "users",
+  "/account/passkeys": "addPasskey",
   "/frost": "frost",
   "/settings": "settings",
 };

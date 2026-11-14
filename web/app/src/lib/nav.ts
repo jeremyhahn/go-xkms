@@ -85,6 +85,7 @@ export const navSections: NavSection[] = [
     heading: "Identity & Access",
     items: [
       { route: "users", path: "/users", label: "Users", icon: "Users", requires: { resource: "users", action: "list" } },
+      { route: "addPasskey", path: "/account/passkeys", label: "Add Passkey", icon: "Fingerprint", capability: "webauthn" },
       { route: "tenants", path: "/tenants", label: "Tenants", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "list" } },
       { route: "tenantTpm", path: "/tenants/tpm", label: "Tenant TPM", icon: "Server", capability: "tpm_policies", requires: { resource: "tenants", action: "read" } },
     ],
