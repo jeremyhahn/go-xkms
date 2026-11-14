@@ -37,4 +37,13 @@ sdk/ts, docs/SPEC.md.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass (tracked sdk/ts/dist restored after).
+- sdk/ts/svelte-auth npm ci: pass.
+- web/app npm ci: pass.
+- vitest test/view3_key_public_key.test.ts: pass (6 tests).
+- web/app npm test (NODE_OPTIONS=--no-experimental-webstorage): pass (51 files, 418 tests).
+- npm run check (svelte-check): pass, 0 errors, 0 warnings.
+- vite build to /tmp/sujj-dist: pass.
+- go test -race pkg/api/rest (codec tags): pass.
+- sdk/go go build ./...: pass (the first try failed on a corrupted shared /gocache; it passed when re-run with a lane-local GOCACHE).
+- make lint: not finished. actionlint passed, and golangci-lint reported 0 issues for the root (base and backend tag sets), sdk/go, xkey and web/desktop. The root raft tag set then failed with "no space left on device" at pkg/trust/bootstrap/bootstrap.go:1 (typecheck) because the host disk was full, not because of a lint finding. An earlier run hit the 30-minute background limit. This slice changes no Go code.
