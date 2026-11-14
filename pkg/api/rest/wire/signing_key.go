@@ -22,6 +22,9 @@ const (
 	SigningKeyResolvePath = SigningKeysPath + "/resolve"
 )
 
+// SigningKeySignPath signs a release CoRIM with a repository's key.
+const SigningKeySignPath = SigningKeysPath + "/sign"
+
 // SigningKeyRepositoryParam names the repository on the routes that take
 // one.
 const SigningKeyRepositoryParam = "repository"
@@ -32,7 +35,10 @@ func signingKeyPath(path, repository string) string {
 }
 
 // Compile-time check that the client serves the whole signing-key API.
-var _ transport.SigningKeyService = SigningKeyClient{}
+var (
+	_ transport.SigningKeyService     = SigningKeyClient{}
+	_ transport.ReleaseSigningService = SigningKeyClient{}
+)
 
 // SigningKeyClient serves transport.SigningKeyService over the REST routes.
 // The REST and QUIC transports (QUIC serves the same router over HTTP/3)
@@ -90,6 +96,18 @@ func (c SigningKeyClient) ResolveSigningKey(ctx context.Context, req *transport.
 	}
 	var resp transport.SigningKeyResolution
 	if err := callJSON(ctx, c.Do, http.MethodGet, signingKeyPath(SigningKeyResolvePath, req.Repository), nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// SignReleaseCoRIM signs an unsigned CoRIM with a repository's key.
+func (c SigningKeyClient) SignReleaseCoRIM(ctx context.Context, req *transport.SignReleaseCoRIMRequest) (*transport.SignReleaseCoRIMResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	var resp transport.SignReleaseCoRIMResponse
+	if err := callJSON(ctx, c.Do, http.MethodPost, SigningKeySignPath, req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

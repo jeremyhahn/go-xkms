@@ -146,3 +146,7 @@ func (*mockService) DeleteSigningKeyBinding(context.Context, *transport.DeleteSi
 func (*mockService) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, nil
 }
+
+func (*mockService) SignReleaseCoRIM(context.Context, *transport.SignReleaseCoRIMRequest) (*transport.SignReleaseCoRIMResponse, error) {
+	return nil, nil
+}

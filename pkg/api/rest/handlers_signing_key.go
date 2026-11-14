@@ -86,3 +86,15 @@ func (h *SigningKeyHandlers) ResolveHandler(w http.ResponseWriter, r *http.Reque
 	resp, err := h.servicer.ResolveSigningKey(r.Context(), &transport.ResolveSigningKeyRequest{Repository: repositoryQuery(r)})
 	respondSigningKey(w, resp, err, http.StatusOK)
 }
+
+// SignHandler handles POST /api/v1/attestation/signing-keys/sign: it signs
+// an unsigned CoRIM with the repository's key of the caller's tenant.
+func (h *SigningKeyHandlers) SignHandler(w http.ResponseWriter, r *http.Request) {
+	var req transport.SignReleaseCoRIMRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+	resp, err := h.servicer.SignReleaseCoRIM(r.Context(), &req)
+	respondSigningKey(w, resp, err, http.StatusOK)
+}

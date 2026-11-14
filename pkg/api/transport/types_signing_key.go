@@ -44,9 +44,20 @@ type SigningKeyService interface {
 	ResolveSigningKey(ctx context.Context, req *ResolveSigningKeyRequest) (*SigningKeyResolution, error)
 }
 
-// SigningKeyServicer is the server side of SigningKeyService.
+// ReleaseSigningService signs a repository's release artefacts with the
+// repository's signing key (go-xkms#2190): the caller tenant's release key
+// unless a binding names another of its keys.
+type ReleaseSigningService interface {
+	// SignReleaseCoRIM signs an unsigned CoRIM with the repository's key.
+	// Permission: attestation_signing_keys:sign.
+	SignReleaseCoRIM(ctx context.Context, req *SignReleaseCoRIMRequest) (*SignReleaseCoRIMResponse, error)
+}
+
+// SigningKeyServicer is the server side of SigningKeyService and
+// ReleaseSigningService.
 type SigningKeyServicer interface {
 	SigningKeyService
+	ReleaseSigningService
 }
 
 // The signing-key request and response types are aliases of the appraisal
@@ -60,4 +71,6 @@ type (
 	DeleteSigningKeyBindingRequest = appraisal.DeleteSigningKeyBindingRequest
 	ResolveSigningKeyRequest       = appraisal.ResolveSigningKeyRequest
 	SigningKeyResolution           = appraisal.SigningKeyResolution
+	SignReleaseCoRIMRequest        = appraisal.SignReleaseCoRIMRequest
+	SignReleaseCoRIMResponse       = appraisal.SignReleaseCoRIMResponse
 )

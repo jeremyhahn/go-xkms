@@ -28,29 +28,12 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-// SignReleaseCoRIMRequest names the repository whose signing key signs an
-// unsigned CoRIM.
-type SignReleaseCoRIMRequest struct {
-	// Repository is the repository the reference values belong to; its key
-	// is the tenant's release key unless a binding names another.
-	Repository string
-
-	// CoRIM is the CBOR encoding of the unsigned CoRIM.
-	CoRIM []byte
-
-	// SignerName is the corim-meta signer name. Empty means Repository.
-	SignerName string
-}
-
-// SignReleaseCoRIMResponse carries the signed CoRIM and the key that signed it.
-type SignReleaseCoRIMResponse struct {
-	// SignedCoRIM is the COSE_Sign1 encoding of the signed CoRIM.
-	SignedCoRIM []byte
-
-	// KeyID and Backend name the repository key that signed it.
-	KeyID   string
-	Backend string
-}
+// SignReleaseCoRIMRequest and SignReleaseCoRIMResponse are the appraisal
+// types, which carry the JSON tags every transport shares.
+type (
+	SignReleaseCoRIMRequest  = appraisal.SignReleaseCoRIMRequest
+	SignReleaseCoRIMResponse = appraisal.SignReleaseCoRIMResponse
+)
 
 // SignReleaseCoRIM signs an unsigned CoRIM with the signing key of one of
 // the caller's tenant's repositories: the release key

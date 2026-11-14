@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -41,6 +42,9 @@ func TestSigningKeyClassOf(t *testing.T) {
 		{appraisal.ErrInvalidTenant, ClassInvalidArgument},
 		{fmt.Errorf("get: %w", appraisal.ErrRecordNotFound), ClassNotFound},
 		{appraisal.ErrStoreUnavailable, ClassUnavailable},
+		{fmt.Errorf("resolve: %w", xkms.ErrKeyNotFound), ClassNotFound},
+		{refvalue.ErrMalformed, ClassInvalidArgument},
+		{refvalue.ErrUnsupportedKey, ClassFailedPrecondition},
 	}
 	for _, tt := range tests {
 		got, ok := SigningKeyClassOf(tt.err)
@@ -52,7 +56,7 @@ func TestSigningKeyClassOf(t *testing.T) {
 // TestSigningKeyClassOf_Unclassified proves an error outside the model, and
 // nil, are not classified.
 func TestSigningKeyClassOf_Unclassified(t *testing.T) {
-	for _, err := range []error{nil, errors.New("disk full"), xkms.ErrKeyNotFound} {
+	for _, err := range []error{nil, errors.New("disk full")} {
 		_, ok := SigningKeyClassOf(err)
 		assert.False(t, ok, "%v", err)
 	}

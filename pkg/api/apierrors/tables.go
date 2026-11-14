@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
@@ -336,6 +337,9 @@ var SigningKeySentinelClasses = []SentinelClass{
 	{appraisal.ErrInvalidTenant, ClassInvalidArgument},
 	{appraisal.ErrRecordNotFound, ClassNotFound},
 	{appraisal.ErrStoreUnavailable, ClassUnavailable},
+	{xkms.ErrKeyNotFound, ClassNotFound},
+	{refvalue.ErrMalformed, ClassInvalidArgument},
+	{refvalue.ErrUnsupportedKey, ClassFailedPrecondition},
 }
 
 // SigningKeyClassOf classifies an error of the repository signing-key verbs.
