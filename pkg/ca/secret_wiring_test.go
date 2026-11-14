@@ -26,6 +26,7 @@ import (
 	pkcs8backend "github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,4 +142,181 @@ func TestCA_RequireKeyPassword_RejectsEmptyPassword(t *testing.T) {
 	require.Error(t, err, "CA init with empty password and RequireKeyPassword=true must fail")
 	assert.True(t, errors.Is(err, ErrKeyPasswordRequired),
 		"expected ErrKeyPasswordRequired, got: %v", err)
+}
+
+// passwordProtectedIdentity returns a software-keyed CA identity whose key
+// password is set on the KeyConfig itself (precedence 1 of
+// Identity.ToKeyAttributes).
+func passwordProtectedIdentity(t *testing.T, id Identity, password string) Identity {
+	t.Helper()
+	sv, err := types.NewLiteralSecretValue(context.Background(), []byte(password))
+	require.NoError(t, err)
+	key := *id.Keys[0]
+	key.Password = sv
+	id.Keys = []*types.KeyConfig{&key}
+	return id
+}
+
+// assertKeysEncryptedAtRest asserts that the CA key of each identity is stored
+// in keyStorage as encrypted PKCS#8: the raw DER is not a plaintext
+// PrivateKeyInfo, and a fresh fail-closed pkcs8 backend over the same storage
+// loads it with the identity's password and refuses it without one.
+func assertKeysEncryptedAtRest(t *testing.T, keyStorage storage.Backend, ids ...Identity) {
+	t.Helper()
+
+	reload, err := pkcs8backend.NewBackend(&pkcs8backend.Config{
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: false,
+	})
+	require.NoError(t, err)
+	// Closing the backend closes keyStorage too, so it closes once, last.
+	defer func() { require.NoError(t, reload.Close()) }()
+
+	for _, id := range ids {
+		assertKeyEncryptedAtRest(t, keyStorage, reload, id)
+	}
+}
+
+func assertKeyEncryptedAtRest(t *testing.T, keyStorage storage.Backend, reload types.KeyProvider, id Identity) {
+	t.Helper()
+	ctx := context.Background()
+
+	attrs, err := id.ToKeyAttributes(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, attrs.Password, "identity must carry a key password")
+	attrs.KeyType = types.KeyTypeCA
+
+	rawDER, err := storage.GetKey(ctx, keyStorage, attrs.ID())
+	require.NoError(t, err, "CA key %q must be stored", attrs.CN)
+	_, parseErr := x509.ParsePKCS8PrivateKey(rawDER)
+	assert.Error(t, parseErr, "CA key %q must not be stored as plaintext PKCS#8", attrs.CN)
+
+	_, err = reload.GetKey(ctx, attrs)
+	assert.NoError(t, err, "CA key %q must reload with its password", attrs.CN)
+
+	withoutPassword := *attrs
+	withoutPassword.Password = nil
+	_, err = reload.GetKey(ctx, &withoutPassword)
+	assert.Error(t, err, "CA key %q must not reload without its password", attrs.CN)
+}
+
+// newPKCS8CABackend returns a fail-closed (AllowPlaintextKeys=false) pkcs8
+// backend for the CA and the key storage it writes to.
+func newPKCS8CABackend(t *testing.T) (xkms.Backend, storage.Backend) {
+	t.Helper()
+	keyStorage := storage.NewMemory()
+	be, err := pkcs8backend.NewBackend(&pkcs8backend.Config{
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: false,
+	})
+	require.NoError(t, err)
+	backend, err := xkms.New(&xkms.BackendConfig{
+		Backend:     be,
+		CertStorage: storage.NewMemory(),
+	})
+	require.NoError(t, err)
+	return backend, keyStorage
+}
+
+// TestCA_RequireKeyPassword_ConfiguredPasswordInitializes covers #1768: the
+// constructors rebuild the CA identity from the flat CAConfig, and that
+// rebuild must carry the configured key password so a RequireKeyPassword CA
+// initializes and writes its keys as encrypted PKCS#8.
+func TestCA_RequireKeyPassword_ConfiguredPasswordInitializes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("NewCA root and intermediate", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		backend, keyStorage := newPKCS8CABackend(t)
+
+		root := passwordProtectedIdentity(t, rootIdentity("PW Root CA"), "root-key-password")
+
+		// The intermediate carries its password on the identity-wide software
+		// keystore (precedence 2), not on the KeyConfig.
+		intermediate := intermediateIdentity("PW Intermediate CA", "PW Root CA")
+		sv, err := types.NewLiteralSecretValue(ctx, []byte("intermediate-key-password"))
+		require.NoError(t, err)
+		intermediate.Keystores = &CAKeystoresConfig{Software: &CAKeystoreSoftwareConfig{Password: sv}}
+
+		rootCA, intermediateCA, err := NewCA(ctx, &Params{
+			Identity:           []Identity{root, intermediate},
+			KeyStore:           backend,
+			BackendForStore:    singleBackendFactory(backend),
+			RevocationStore:    storage.NewMemory(),
+			CertStore:          newInMemoryCertStore(t),
+			RequireKeyPassword: true,
+		})
+		require.NoError(t, err, "CA init with a configured password and RequireKeyPassword=true must succeed")
+		require.NotNil(t, rootCA)
+		require.NotNil(t, intermediateCA)
+
+		assertKeysEncryptedAtRest(t, keyStorage, root, intermediate)
+	})
+
+	t.Run("NewParentCA then Init", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		backend, keyStorage := newPKCS8CABackend(t)
+
+		root := passwordProtectedIdentity(t, rootIdentity("PW Parent CA"), "parent-key-password")
+		parent, err := NewParentCA(&Params{
+			Identity:           []Identity{root},
+			KeyStore:           backend,
+			BackendForStore:    singleBackendFactory(backend),
+			RevocationStore:    storage.NewMemory(),
+			CertStore:          newInMemoryCertStore(t),
+			RequireKeyPassword: true,
+		})
+		require.NoError(t, err)
+		require.NoError(t, parent.Init(ctx), "Init with a configured password and RequireKeyPassword=true must succeed")
+
+		assertKeysEncryptedAtRest(t, keyStorage, root)
+	})
+}
+
+func TestCarryKeyPassword_CarriesPassword(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	pw, err := types.NewPasswordFromString("carried-password")
+	require.NoError(t, err)
+	id := rootIdentity("Carry CA")
+
+	require.NoError(t, carryKeyPassword(ctx, &id, &types.KeyAttributes{Password: pw}))
+	require.NotNil(t, id.Keys[0].Password, "the password must land on KeyConfig.Password")
+
+	attrs, err := id.ToKeyAttributes(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, attrs.Password)
+	got := attrs.Password.Bytes()
+	defer secure.Wipe(got)
+	assert.Equal(t, "carried-password", string(got))
+}
+
+func TestCarryKeyPassword_NoPasswordLeavesIdentityUnchanged(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	empty, err := types.NewPasswordFromString("")
+	require.NoError(t, err)
+	tests := map[string]*types.KeyAttributes{
+		"nil key attributes": nil,
+		"nil password":       {},
+		"empty password":     {Password: empty},
+	}
+	for name, keyAttrs := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			id := rootIdentity("No Password CA")
+			require.NoError(t, carryKeyPassword(ctx, &id, keyAttrs))
+			assert.Nil(t, id.Keys[0].Password)
+		})
+	}
+
+	pw, err := types.NewPasswordFromString("unused")
+	require.NoError(t, err)
+	assert.NoError(t, carryKeyPassword(ctx, nil, &types.KeyAttributes{Password: pw}), "a nil identity is a no-op")
+	noKeys := Identity{}
+	assert.NoError(t, carryKeyPassword(ctx, &noKeys, &types.KeyAttributes{Password: pw}), "an identity without keys is a no-op")
 }
