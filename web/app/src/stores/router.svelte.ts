@@ -34,6 +34,7 @@ export type RouteName =
   | "signingKeys"
   | "platform"
   | "tpmPolicies"
+  | "seal"
   | "users"
   | "frost"
   | "settings"
@@ -66,6 +67,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/attestation/signing-keys": "signingKeys",
   "/platform": "platform",
   "/tpm/policies": "tpmPolicies",
+  "/seal": "seal",
   "/users": "users",
   "/frost": "frost",
   "/settings": "settings",
