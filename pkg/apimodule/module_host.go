@@ -116,7 +116,9 @@ func (m *Module) restServer() (*rest.Server, error) {
 		// The user store runs as the node's service principal here, as it
 		// does in xkmsd (Server.initializeWebAuthnService); the principal's
 		// base grant holds no user permission, so it gains the user store's
-		// users CRUD on this construction path too.
+		// users:read/update/delete on this construction path too. It holds
+		// no users:create: anonymous public registration is refused with 403
+		// pending go-xkms #2202 (CA ruling 602).
 		if m.serviceContext != nil {
 			serviceprincipal.RegisterWebAuthnGrant()
 		}
