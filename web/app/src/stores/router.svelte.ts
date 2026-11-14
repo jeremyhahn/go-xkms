@@ -68,6 +68,7 @@ export type RouteName =
   | "bootstrapKeys"
   | "keyRewrap"
   | "wrappedDataKey"
+  | "keyBatch"
   | "settings"
   | "frostKeyImport"
   | "not-found";
@@ -133,6 +134,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/bootstrap/keys": "bootstrapKeys",
   "/keys/rewrap": "keyRewrap",
   "/keys/data-keys": "wrappedDataKey",
+  "/keys/batch": "keyBatch",
   "/settings": "settings",
   "/platform/secrets": "platformSecretNames",
 };

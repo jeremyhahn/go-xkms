@@ -1,0 +1,1 @@
+- **Batch Crypto in the web console.** A new view at `#/keys/batch` (Keys & Crypto, needs `keys:encrypt`) encrypts or decrypts up to 100 items under one key in a single call to `POST /api/v1/keys/{id}/encrypt-batch` or `/decrypt-batch`, and shows each item's result or error in its own row; results can be copied as JSON.
