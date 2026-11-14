@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -376,45 +375,7 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 
 	s.log.Debug("ChangeUserPIN: attempting PIN change", "strategy", svc.Strategy())
 
-	// The barrier follows the PIN only when the PIN is its credential: the
-	// wizard may have sealed it under an independent master password
-	// (UseUserPinAsMaster=false), which a PIN change leaves alone. The
-	// rewrap runs before the PIN backend commits, so the barrier itself
-	// proves whether it is PIN-bound: it refuses a rewrap with
-	// ErrCredentialMismatch only when the current PIN is not its credential,
-	// and that definitive refusal is the only one that means "independent
-	// password". Any other failure -- a storage read, a guarded-write
-	// conflict, a concurrent root-key write -- says nothing about which
-	// credential the barrier holds, so it is returned before the PIN backend
-	// changes anything. A PIN change that then fails restores the barrier:
-	// both credentials change, or neither does.
-	bsvc := s.barrierSvc.Load()
-	pinBound := false
-	if bsvc != nil {
-		switch err := bsvc.ChangePassword(currentUserPIN, newUserPIN); {
-		case err == nil:
-			pinBound = true
-		case errors.Is(err, qrdbseal.ErrCredentialMismatch):
-			s.log.Debug("ChangeUserPIN: barrier sealed under an independent password; left unchanged")
-		default:
-			s.log.Error("ChangeUserPIN: barrier re-seal failed; PIN left unchanged", "error", err)
-			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
-				"operation": "barrier_reseal",
-				"type":      "user_pin",
-			}); auditErr != nil {
-				return auditErr
-			}
-			return errors.Join(ErrBarrierResealFailed, err)
-		}
-	}
-
 	if err := svc.ChangeUserPIN(currentUserPIN, newUserPIN); err != nil {
-		if pinBound {
-			if rbErr := bsvc.ChangePassword(newUserPIN, currentUserPIN); rbErr != nil {
-				s.log.Error("ChangeUserPIN: barrier rollback failed", "error", rbErr)
-				err = errors.Join(err, ErrBarrierResealFailed, rbErr)
-			}
-		}
 		s.log.Warn("ChangeUserPIN: failed", "strategy", svc.Strategy(), "error", err)
 		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 			"operation": "change",
@@ -433,7 +394,21 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 		return auditErr
 	}
 
-	if pinBound {
+	// The barrier follows the PIN only when the PIN is its credential; one
+	// sealed under an independent master password is left alone, and
+	// BarrierService.ChangePassword is a no-op for a barrier that is not
+	// passphrase-sealed.
+	if bsvc := s.barrierSvc.Load(); bsvc != nil && bsvc.FollowsUserPIN() {
+		if err := bsvc.ChangePassword(currentUserPIN, newUserPIN); err != nil {
+			s.log.Error("ChangeUserPIN: barrier re-seal failed", "error", err)
+			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+				"operation": "barrier_reseal",
+				"type":      "user_pin",
+			}); auditErr != nil {
+				return auditErr
+			}
+			return ErrBarrierResealFailed
+		}
 		s.log.Info("ChangeUserPIN: barrier re-sealed with new PIN")
 	}
 	return nil

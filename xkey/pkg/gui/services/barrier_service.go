@@ -99,6 +99,25 @@ type BarrierService struct {
 	// Initialize or Unseal so that GetSealInfo can display the actual
 	// strategy even when the barrier object is nil (sealed between sessions).
 	lastStrategy string
+
+	// independentPassword is set when the barrier was sealed under a master
+	// password of its own rather than the user PIN (the wizard's
+	// UseUserPinAsMaster=false with a BarrierPassword). A user PIN change
+	// then leaves the barrier alone. The default is PIN-bound, the lock
+	// screen's assumption.
+	independentPassword atomic.Bool
+}
+
+// SetIndependentPassword records whether the barrier is sealed under an
+// independent master password instead of the user PIN.
+func (s *BarrierService) SetIndependentPassword(independent bool) {
+	s.independentPassword.Store(independent)
+}
+
+// FollowsUserPIN reports whether the barrier credential is the user PIN, so a
+// user PIN change must rewrap the barrier.
+func (s *BarrierService) FollowsUserPIN() bool {
+	return !s.independentPassword.Load()
 }
 
 // NewBarrierService creates a new BarrierService. By default, encrypted data
@@ -581,11 +600,13 @@ func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (er
 	if s.barrier == nil {
 		return ErrBarrierNotInitialized
 	}
+	// Only a passphrase-sealed barrier holds a password to rewrap; a TPM2,
+	// PKCS#11 or cloud-sealed barrier is left as it is.
+	if st := s.barrier.Status(); st == nil || st.Strategy != xkms.StrategyPassphrase {
+		return nil
+	}
 
 	ctx := s.context()
-	// CredentialsFor: ChangePassword is a no-op for hardware-backed
-	// strategies, which are called with empty passwords by design (see
-	// the doc comment above); NewCredentials would reject that empty input.
 	current, credErr := xkms.CredentialsFor(ctx, []byte(currentPassword))
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
