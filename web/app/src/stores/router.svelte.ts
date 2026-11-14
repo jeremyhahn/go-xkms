@@ -19,6 +19,7 @@
 
 export type RouteName =
   | "dashboard"
+  | "trustBundle"
   | "login"
   | "register"
   | "backends"
@@ -59,6 +60,7 @@ export interface Route {
 const staticRoutes: Record<string, RouteName> = {
   "/": "dashboard",
   "/dashboard": "dashboard",
+  "/trust/bundle": "trustBundle",
   "/login": "login",
   "/register": "register",
   "/backends": "backends",
