@@ -33,6 +33,7 @@
   import WrappedDataKeyView from "$views/WrappedDataKeyView.svelte";
   import KeyBatchView from "$views/KeyBatchView.svelte";
   import SshSignView from "$views/SshSignView.svelte";
+  import TenantDetailView from "$views/TenantDetailView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
   import CertImportView from "$views/CertImportView.svelte";
   import PinView from "$views/PinView.svelte";
@@ -131,6 +132,7 @@
     {:else if routerStore.name === "wrappedDataKey"}<WrappedDataKeyView />
     {:else if routerStore.name === "keyBatch"}<KeyBatchView />
     {:else if routerStore.name === "sshSign"}<SshSignView />
+    {:else if routerStore.name === "tenantDetail"}<TenantDetailView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
     {:else if routerStore.name === "tenantTpm"}<TenantTpmView />

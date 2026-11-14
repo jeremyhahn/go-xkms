@@ -171,6 +171,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Identity & Access | Users, Tenants, Tenant TPM | `#/users`, `#/tenants`, `#/tenants/tpm` |
 | Identity & Access | Users, Add Passkey, Tenants | `#/users`, `#/account/passkeys`, `#/tenants` |
 | Identity & Access | Tenant Quotas, Users, Tenants | `#/tenants/quotas`, `#/users`, `#/tenants` |
+| Identity & Access | Users, Tenants, Tenant Detail | `#/users`, `#/tenants`, `#/tenants/detail` |
 | Settings | Settings | `#/settings` |
 | Settings | Secret Names, Settings | `#/platform/secrets`, `#/settings` |
 | Settings | Settings, Tenant Entitlements | `#/settings`, `#/tenants/entitlements` |
