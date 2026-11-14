@@ -794,6 +794,34 @@ func TestJWTAuthenticator_TenantID(t *testing.T) {
 	assert.False(t, IsCrossTenant(identity))
 }
 
+// A passkey token binds to its account (Subject becomes the account id), and
+// the identity keeps the handle it carried as its OwnerSubject, the key the
+// password store recorded the account's data under before binding.
+func TestJWTAuthenticator_UserHandleKeepsOwnerSubject(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair(t)
+	authn, err := NewJWTAuthenticator(&JWTConfig{PublicKey: publicKey})
+	require.NoError(t, err)
+
+	handle := "AAAAAAAAACo" // base64url of account id 42
+	token := createTestToken(t, privateKey, jwt.MapClaims{
+		"sub":                  handle,
+		SubjectKindMetadataKey: SubjectKindUserHandle,
+		"exp":                  time.Now().Add(time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	identity, err := authn.AuthenticateHTTP(req)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(42), identity.UserID)
+	assert.NotEqual(t, handle, identity.Subject)
+	assert.Equal(t, handle, OwnerSubject(identity))
+
+	// An unbound identity's ownership key is its subject.
+	assert.Equal(t, "user123", OwnerSubject(&Identity{Subject: "user123"}))
+	assert.Equal(t, "", OwnerSubject(nil))
+}
+
 func TestJWTAuthenticator_NoTenantID(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair(t)
 

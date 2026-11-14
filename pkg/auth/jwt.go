@@ -245,6 +245,10 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 	if kind, _ := claims[SubjectKindMetadataKey].(string); kind == SubjectKindUserHandle {
 		identity.Metadata[SubjectKindMetadataKey] = kind
 		if userID, ok := decodeWebAuthnHandle(sub); ok {
+			// Binding renames Subject to the account id; data keyed by
+			// the subject before binding (the password store's vault,
+			// entries and shared OwnerID) keeps its handle key.
+			identity.Metadata[OwnerSubjectMetadataKey] = sub
 			identity.BindUser(userID, identity.Metadata["username"])
 		}
 	}
@@ -304,6 +308,26 @@ func extractRolesClaim(claims jwt.MapClaims) []string {
 		return []string{role}
 	}
 	return nil
+}
+
+// OwnerSubjectMetadataKey records, on an identity the JWT authenticator bound
+// to an account, the subject the token carried before binding: the account's
+// base64 WebAuthn handle. Data persisted under that subject before accounts
+// were bound (the password store's personal vault and entries, a shared
+// entry's OwnerID) stays addressed by it, so an upgrade loses none of it.
+const OwnerSubjectMetadataKey = "owner_subject"
+
+// OwnerSubject returns the key an identity's persisted ownership is recorded
+// under: the pre-binding subject when the identity was bound to an account,
+// and Subject otherwise.
+func OwnerSubject(identity *Identity) string {
+	if identity == nil {
+		return ""
+	}
+	if owner := identity.Metadata[OwnerSubjectMetadataKey]; owner != "" {
+		return owner
+	}
+	return identity.Subject
 }
 
 // validateAudience checks if the token audience matches any configured audience.

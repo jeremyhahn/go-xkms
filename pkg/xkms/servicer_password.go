@@ -58,7 +58,7 @@ func passwordCaller(ctx context.Context) (tenantID, subject string, ok bool) {
 	if identity == nil {
 		return "", "", false
 	}
-	return scope.TenantName(identity.TenantID), identity.Subject, true
+	return scope.TenantName(identity.TenantID), auth.OwnerSubject(identity), true
 }
 
 // resolvePasswordStore returns the password store the caller sees: with a
@@ -123,7 +123,7 @@ func (s *XKMSService) checkSharedPasswordOwnership(ctx context.Context, pw *stat
 		return staticpw.ErrNotOwner
 	}
 	// Owner can always modify their own shared passwords.
-	if identity.Subject == pw.OwnerID {
+	if auth.OwnerSubject(identity) == pw.OwnerID {
 		return nil
 	}
 	if s.roles == nil {
