@@ -156,10 +156,19 @@ func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
 // DaemonConfig.CORS. The host that builds the node sets cfg.CORS from it
 // before NewStandaloneNode / NewClusterNode, so the node's outer CORS layer
 // and the module's routes answer with one policy.
+//
+// It reads configuration only. A host-supplied server reports its own policy;
+// a self-built surface carries no CORS policy, so the zero config is returned
+// without building the surface. Building it here, before the node client is
+// published, would cache stores without persistence and a server without
+// WebAuthn or the session store.
 func (m *Module) NodeCORS() (qrdbsdk.DaemonCORSConfig, error) {
-	srv, err := m.restServer()
-	if err != nil || srv == nil {
-		return qrdbsdk.DaemonCORSConfig{}, err
+	if m.resolveREST == nil {
+		return qrdbsdk.DaemonCORSConfig{}, nil
+	}
+	srv := m.resolveREST()
+	if srv == nil {
+		return qrdbsdk.DaemonCORSConfig{}, nil
 	}
 	return DaemonCORS(srv.CORSOptions()), nil
 }
