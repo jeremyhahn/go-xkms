@@ -71,6 +71,7 @@ export type RouteName =
   | "sshSign"
   | "tenantDetail"
   | "keyPublicKey"
+  | "keyLifecycle"
   | "settings"
   | "frostKeyImport"
   | "not-found";
@@ -139,6 +140,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/ssh/sign": "sshSign",
   "/tenants/detail": "tenantDetail",
   "/keys/public-key": "keyPublicKey",
+  "/keys/lifecycle": "keyLifecycle",
   "/settings": "settings",
   "/platform/secrets": "platformSecretNames",
 };
