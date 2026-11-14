@@ -64,14 +64,14 @@ func (m *mockPINBackend) UserPINSet() bool                            { return m
 func (m *mockPINBackend) IsInitialized() bool                         { return m.initialized }
 func (m *mockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
 
-func (m *mockPINBackend) SetSOPIN(_, _ string) error      { return m.setSOPINErr }
-func (m *mockPINBackend) SetUserPIN(_, _ string) error    { return m.setUserPINErr }
-func (m *mockPINBackend) ChangeSOPIN(_, _ string) error   { return m.changeSOPINErr }
+func (m *mockPINBackend) SetSOPIN(_, _ string) error    { return m.setSOPINErr }
+func (m *mockPINBackend) SetUserPIN(_, _ string) error  { return m.setUserPINErr }
+func (m *mockPINBackend) ChangeSOPIN(_, _ string) error { return m.changeSOPINErr }
 func (m *mockPINBackend) ChangeUserPIN(_, _ string) error {
 	m.changeUserCalls.Add(1)
 	return m.changeUserErr
 }
-func (m *mockPINBackend) VerifySOPIN(_ string) error      { return m.verifySOErr }
+func (m *mockPINBackend) VerifySOPIN(_ string) error { return m.verifySOErr }
 func (m *mockPINBackend) VerifyUserPIN(_ string) error {
 	m.verifyUserCalls.Add(1)
 	return m.verifyUserErr
