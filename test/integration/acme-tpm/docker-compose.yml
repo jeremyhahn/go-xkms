@@ -45,9 +45,10 @@ services:
       secrets:
         - gomodauth
     image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
-    # config.acme-tpm.yaml, and the fixed EK issuer trust anchor its
-    # ca.tcg-config.trust-anchors points at, are read from the source tree
-    # this image already COPYs into /workspace, not bind-mounted: the Docker
+    # config.acme-tpm.yaml is read from the source tree this image already
+    # COPYs into /workspace, not bind-mounted (the swtpm test EK root its
+    # ca.tcg-config.trust-anchors points at is generated into /data/ek-root
+    # at start, see the command below): the Docker
     # daemon resolves a bind-mount source on its own host, which in CI is not
     # the job container holding the checkout (DS-4181).
     volumes:
@@ -57,12 +58,14 @@ services:
       - KEYSTORE_DATA_DIR=/data
     # Generates the ACME listener's throwaway self-signed TLS cert (see
     # certgen/main.go for why this runs stdlib-only `go run` rather than
-    # shelling out to openssl, which the runtime image does not carry) and
-    # then execs the daemon xkmsd already builds at image build time.
+    # shelling out to openssl, which the runtime image does not carry), plus
+    # the throwaway swtpm test EK root CA pair in /data/ek-root that xkmsd
+    # trusts and the test container signs EK certificates with, and then
+    # execs the daemon xkmsd already builds at image build time.
     command: >
       sh -c "
       set -e &&
-      go run ./test/integration/acme-tpm/certgen -cn acme-server -cert /data/acme-tls/acme.crt -key /data/acme-tls/acme.key &&
+      go run ./test/integration/acme-tpm/certgen -cn acme-server -cert /data/acme-tls/acme.crt -key /data/acme-tls/acme.key -ca-cert /data/ek-root/swtpm-test-ek-root.crt -ca-key /data/ek-root/swtpm-test-ek-root.key &&
       exec /app/xkmsd -config /workspace/test/integration/acme-tpm/config.acme-tpm.yaml
       "
     healthcheck:
@@ -96,10 +99,11 @@ services:
         condition: service_healthy
     volumes:
       # Read-only: the acme-server container generates
-      # /data/acme-tls/acme.crt (certgen/main.go) before it becomes healthy,
-      # so it already exists by the time this depends_on condition is met.
-      # Sharing the same named volume (rather than copying the file) means
-      # there is nothing to keep in sync if the cert is regenerated.
+      # /data/acme-tls/acme.crt and the swtpm test EK root pair in
+      # /data/ek-root (certgen/main.go) before it becomes healthy, so they
+      # already exist by the time this depends_on condition is met.
+      # Sharing the same named volume (rather than copying the files) means
+      # there is nothing to keep in sync if they are regenerated.
       - acme-data:/data:ro
     environment:
       - CGO_ENABLED=1
