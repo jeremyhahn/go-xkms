@@ -33,15 +33,18 @@ const (
 
 type (
 	AddCertificateOptions = truststore.AddCertificateOptions
+	CertMetadata          = truststore.CertMetadata
 	CertPurpose           = truststore.CertPurpose
 	FileStore             = truststore.FileStore
 	FileStoreConfig       = truststore.FileStoreConfig
 	ImportResult          = truststore.ImportResult
+	OSCertStore           = truststore.OSCertStore
 	TrustStore            = truststore.TrustStore
 )
 
 var (
 	BootstrapImportOptions = truststore.BootstrapImportOptions
+	ClassifyCertificate    = truststore.ClassifyCertificate
 	Fingerprint            = truststore.Fingerprint
 	IsAnchorPurpose        = truststore.IsAnchorPurpose
 	IsValidPurpose         = truststore.IsValidPurpose
@@ -53,4 +56,7 @@ var (
 
 	ErrCertificateExists   = truststore.ErrCertificateExists
 	ErrCertificateNotFound = truststore.ErrCertificateNotFound
+	ErrInvalidCertificate  = truststore.ErrInvalidCertificate
+	ErrPermissionDenied    = truststore.ErrPermissionDenied
+	ErrRemoveFailed        = truststore.ErrRemoveFailed
 )
