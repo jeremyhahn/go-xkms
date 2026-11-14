@@ -376,7 +376,8 @@ func (s *SwtpmConnection) Close() {
 // root -- SwtpmTestEKRootPEM / writeSwtpmTestEKRootPEM expose it for
 // newTestCA (handlers_tcgcsr_integration_test.go) to configure as a pkg/ca
 // TCGConfig trust anchor. Lazily loaded once via swtpmTestEKIssuerOnce, from
-// the fixed key/cert committed at testdata/swtpm-test-ek-root.{crt,key}.
+// swtpm-test-ek-root.{crt,key} in the directory named by
+// SWTPM_TEST_EK_ROOT_DIR (default /data/ek-root).
 //
 // Before this, each call minted a fresh ECDSA key, signed with it, and then
 // discarded it -- the certificate embedded the EK's own public key but was
@@ -385,17 +386,18 @@ func (s *SwtpmConnection) Close() {
 // required for chain verification to be possible at all, not merely
 // convenient.
 //
-// It must additionally be FIXED, not generated fresh per test-binary run
-// (as an earlier version of this helper did): the acme-tpm lane's real ACME
-// server (test/integration/acme-tpm/config.acme-tpm.yaml, a separate
-// process in the acme-server container) verifies device EK certificates
-// against its own configured trust anchors too, and can only be given a
-// trust anchor that exists before it starts -- config.acme-tpm.yaml's
-// `ca.tcg-config.trust-anchors` points at the same committed
-// testdata/swtpm-test-ek-root.crt (bind-mounted read-only into that
-// container by docker-compose.yml), so the two processes agree on the
-// issuer without either needing to know anything about the other's runtime
-// state.
+// It must additionally be shared with the acme-tpm lane's real ACME server,
+// not generated fresh per test-binary run (as an earlier version of this
+// helper did): that server (test/integration/acme-tpm/config.acme-tpm.yaml,
+// a separate process in the acme-server container) verifies device EK
+// certificates against its own configured trust anchors too, and can only
+// be given a trust anchor that exists before it starts. The acme-server
+// container generates the pair with certgen (certgen/main.go, -ca-cert and
+// -ca-key) into /data/ek-root on the acme-data volume before xkmsd starts;
+// config.acme-tpm.yaml's `ca.tcg-config.trust-anchors` points at that
+// certificate, and this container mounts the same volume read-only at /data
+// and starts only after acme-server is healthy, so the two processes agree
+// on the issuer and no key is committed to the repository.
 var (
 	swtpmTestEKIssuerOnce sync.Once
 	swtpmTestEKIssuerKey  *ecdsa.PrivateKey
@@ -404,26 +406,33 @@ var (
 
 func swtpmTestEKIssuer() (*ecdsa.PrivateKey, *x509.Certificate) {
 	swtpmTestEKIssuerOnce.Do(func() {
-		certPEM, err := os.ReadFile("testdata/swtpm-test-ek-root.crt")
+		dir := os.Getenv("SWTPM_TEST_EK_ROOT_DIR")
+		if dir == "" {
+			dir = "/data/ek-root"
+		}
+		certPath := filepath.Join(dir, "swtpm-test-ek-root.crt")
+		keyPath := filepath.Join(dir, "swtpm-test-ek-root.key")
+
+		certPEM, err := os.ReadFile(certPath)
 		if err != nil {
 			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer certificate: %v", err))
 		}
 		certBlock, _ := pem.Decode(certPEM)
 		if certBlock == nil {
-			panic("swtpmTestEKIssuer: testdata/swtpm-test-ek-root.crt has no PEM block")
+			panic(fmt.Sprintf("swtpmTestEKIssuer: %s has no PEM block", certPath))
 		}
 		cert, err := x509.ParseCertificate(certBlock.Bytes)
 		if err != nil {
 			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to parse issuer certificate: %v", err))
 		}
 
-		keyPEM, err := os.ReadFile("testdata/swtpm-test-ek-root.key")
+		keyPEM, err := os.ReadFile(keyPath)
 		if err != nil {
 			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer key: %v", err))
 		}
 		keyBlock, _ := pem.Decode(keyPEM)
 		if keyBlock == nil {
-			panic("swtpmTestEKIssuer: testdata/swtpm-test-ek-root.key has no PEM block")
+			panic(fmt.Sprintf("swtpmTestEKIssuer: %s has no PEM block", keyPath))
 		}
 		key, err := x509.ParseECPrivateKey(keyBlock.Bytes)
 		if err != nil {

@@ -122,17 +122,15 @@ ca:
   # pkg/ca/tcg_ek_trust.go refuses every device's EK certificate with
   # ErrTCGEKCertUntrusted ("no ek trust anchors configured") unless the CA
   # has at least one configured. The swtpm fixture (swtpm_helper_test.go's
-  # generateEKCertificate) signs every EK certificate with the fixed,
-  # committed key/cert at testdata/swtpm-test-ek-root.{crt,key} -- fixed
-  # rather than generated per test-binary run, specifically so this server
-  # process (a different container, started before the test binary even
-  # runs) can be told about it in advance, read from the source tree the
-  # image COPYs into /workspace (docker-compose.yml explains why it is not
-  # bind-mounted).
+  # generateEKCertificate) signs every EK certificate with the swtpm test EK
+  # root CA that certgen generates into the acme-data volume at
+  # /data/ek-root/swtpm-test-ek-root.{crt,key} before this server starts
+  # (docker-compose.yml, acme-server command); the test container mounts the
+  # same volume read-only and reads the key from there.
   tcg-config:
     trust-anchors:
       external_root_paths:
-        - "/workspace/test/integration/acme-tpm/testdata/swtpm-test-ek-root.crt"
+        - "/data/ek-root/swtpm-test-ek-root.crt"
 
 # ACME (RFC 8555) server. The TLS cert/key are generated at container start by
 # `go run ./test/integration/acme-tpm/certgen` (see docker-compose.yml) since

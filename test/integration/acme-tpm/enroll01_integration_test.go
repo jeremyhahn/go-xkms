@@ -249,11 +249,11 @@ func TestEnroll01_CompleteWorkflow(t *testing.T) {
 
 			t.Logf("  Polling... Status: %s", challengeResp.Status)
 
-			if challengeResp.Status == "valid" {
+			switch challengeResp.Status {
+			case "valid":
 				challengeValid = true
 				t.Log("✓ Challenge validated successfully!")
-				break
-			} else if challengeResp.Status == "invalid" {
+			case "invalid":
 				t.Fatalf("Challenge validation failed: %s", challengeResp.Status)
 			}
 		}
@@ -334,11 +334,11 @@ func TestEnroll01_CompleteWorkflow(t *testing.T) {
 
 			t.Logf("  Polling... Status: %s", order.Status)
 
-			if order.Status == "valid" {
+			switch order.Status {
+			case "valid":
 				orderValid = true
 				t.Log("✓ Order valid! Certificate issued.")
-				break
-			} else if order.Status == "invalid" {
+			case "invalid":
 				t.Fatalf("Order became invalid during processing")
 			}
 		}
