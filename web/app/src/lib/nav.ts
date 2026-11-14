@@ -97,6 +97,7 @@ export const navSections: NavSection[] = [
     items: [
       { route: "platformSecretNames", path: "/platform/secrets", label: "Secret Names", icon: "FolderLock", capability: "platform", requires: { resource: "keys", action: "list" } },
       { route: "settings", path: "/settings", label: "Settings", icon: "Settings" },
+      { route: "tenantEntitlements", path: "/tenants/entitlements", label: "Tenant Entitlements", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "set_entitlements" } },
     ],
   },
 ];

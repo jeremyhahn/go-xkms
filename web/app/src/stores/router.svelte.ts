@@ -21,6 +21,7 @@ export type RouteName =
   | "dashboard"
   | "trustBundle"
   | "login"
+  | "tenantEntitlements"
   | "register"
   | "platformSecretNames"
   | "backends"
@@ -69,6 +70,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/dashboard": "dashboard",
   "/trust/bundle": "trustBundle",
   "/login": "login",
+  "/tenants/entitlements": "tenantEntitlements",
   "/register": "register",
   "/backends": "backends",
   "/ssh/import": "sshKeyImport",

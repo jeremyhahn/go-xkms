@@ -5,6 +5,7 @@
   import AppShell from "$components/AppShell.svelte";
   import ToastContainer from "$components/ToastContainer.svelte";
   import PlaceholderView from "$components/PlaceholderView.svelte";
+  import TenantEntitlementsView from "$views/TenantEntitlementsView.svelte";
   import LoginView from "$views/LoginView.svelte";
   import RegisterView from "$views/RegisterView.svelte";
   import PlatformSecretNamesView from "$views/PlatformSecretNamesView.svelte";
@@ -116,6 +117,7 @@
     {:else if routerStore.name === "login" || routerStore.name === "register"}
       <!-- Already authenticated; send credential screens to the dashboard. -->
       {(navigateTo("/dashboard"), "")}
+    {:else if routerStore.name === "tenantEntitlements"}<TenantEntitlementsView />
     {:else}
       <PlaceholderView title="Not found" />
     {/if}
