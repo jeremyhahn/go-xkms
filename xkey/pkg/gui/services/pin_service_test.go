@@ -698,25 +698,62 @@ func TestPINService_ChangeUserPIN_NoBarrierService(t *testing.T) {
 }
 
 // The wizard may seal the barrier under an independent master password
-// (UseUserPinAsMaster=false, BarrierPassword set): a PIN change commits and
-// leaves that barrier and its password alone.
+// (UseUserPinAsMaster=false, BarrierPassword set): after setup and a
+// restart, a PIN change commits and leaves that barrier and its password
+// alone, while a barrier the wizard sealed under the user PIN follows it.
 func TestPINService_ChangeUserPIN_IndependentBarrierPasswordLeftAlone(t *testing.T) {
-	backend := &mockPINBackend{
-		strategy:   qrdbsdk.PINStrategySoftware,
-		userPINSet: true,
+	const masterPassword = "independent-master-password"
+	const newPIN = "112233"
+
+	for _, tc := range []struct {
+		name               string
+		useUserPinAsMaster bool
+		credential         string
+		afterChange        string
+		notAfterChange     string
+	}{
+		// The wizard sealed the barrier under its own master password: after
+		// a restart a PIN change still leaves it under that password.
+		{name: "independent password", credential: masterPassword, afterChange: masterPassword, notAfterChange: newPIN},
+		// The wizard sealed the barrier under the user PIN: after a restart a
+		// PIN change rewraps it under the new PIN.
+		{name: "user PIN", useUserPinAsMaster: true, credential: testUserPin, afterChange: newPIN, notAfterChange: testUserPin},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			setupBarrier := NewBarrierService(configDir, slog.Default())
+			setupBarrier.SetContext(context.Background())
+			tw := newTestSetupWizard(&GUIConfigData{})
+			tw.svc.SetBarrierService(setupBarrier)
+			result, err := tw.svc.ApplySetup(&SetupChoices{
+				Mode:               "standalone",
+				SOPin:              testSOPin,
+				UserPin:            testUserPin,
+				PasswordStoreMode:  "aes_software",
+				SealerBackend:      "passphrase",
+				StorageType:        "barrier",
+				BarrierPassword:    masterPassword,
+				UseUserPinAsMaster: tc.useUserPinAsMaster,
+			})
+			require.NoError(t, err)
+			require.True(t, result.Success, "setup errors: %v", result.Errors)
+			require.NoError(t, setupBarrier.Seal())
+
+			// A restart: the app builds a fresh barrier service over the
+			// same directory and the lock screen unseals it.
+			restarted := NewBarrierService(configDir, slog.Default())
+			require.NoError(t, restarted.Unseal(tc.credential, "passphrase"))
+			svc := newTestPINService(&mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true})
+			svc.SetBarrierService(restarted)
+
+			require.NoError(t, svc.ChangeUserPIN(testUserPin, newPIN))
+
+			require.NoError(t, restarted.Seal())
+			reopened := NewBarrierService(configDir, slog.Default())
+			require.Error(t, reopened.Unseal(tc.notAfterChange, "passphrase"))
+			require.NoError(t, reopened.Unseal(tc.afterChange, "passphrase"))
+		})
 	}
-	svc := newTestPINService(backend)
-	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
-	require.NoError(t, barrierSvc.Initialize("independent-master-password", "passphrase"))
-	barrierSvc.SetIndependentPassword(true)
-	svc.SetBarrierService(barrierSvc)
-
-	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
-
-	require.NoError(t, barrierSvc.Seal())
-	reopened := NewBarrierService(barrierSvc.configDir, slog.Default())
-	require.Error(t, reopened.Unseal("new-pin", "passphrase"), "the PIN never became the barrier's credential")
-	require.NoError(t, reopened.Unseal("independent-master-password", "passphrase"))
 }
 
 // A PIN-bound barrier is rewrapped only together with the PIN: when the PIN
