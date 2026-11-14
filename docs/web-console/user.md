@@ -144,6 +144,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Security | PIN, PIV, PIV Slots, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/piv/slots`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Security | PIN, PIN Setup, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/pin/setup`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Certificates & CA | Certificates, Import Certificate, Certificate Authority | `#/certs`, `#/certs/import`, `#/ca` |
+| Certificates & CA | Certificates, Certificate Authority, TCG Certificates | `#/certs`, `#/ca`, `#/ca/tcg` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Security | PIN, PIV, SSH, Passwords, Password Access Mode, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/passwords/access-mode`, `#/oidc/credentials`, `#/platform` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets, Boot Credentials | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform`, `#/credentials/boot` |
