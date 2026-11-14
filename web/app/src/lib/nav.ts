@@ -57,6 +57,7 @@ export const navSections: NavSection[] = [
     heading: "Certificates & CA",
     items: [
       { route: "certificates", path: "/certs", label: "Certificates", icon: "FileBadge", requires: { resource: "certs", action: "list" } },
+      { route: "certImport", path: "/certs/import", label: "Import Certificate", icon: "FileBadge", requires: { resource: "certs", action: "enroll" } },
       { route: "ca", path: "/ca", label: "Certificate Authority", icon: "Landmark", capability: "ca" },
     ],
   },

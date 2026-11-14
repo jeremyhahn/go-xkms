@@ -12,6 +12,7 @@
   import SettingsView from "$views/SettingsView.svelte";
   import KeysView from "$views/KeysView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
+  import CertImportView from "$views/CertImportView.svelte";
   import PinView from "$views/PinView.svelte";
   import PinSetupView from "$views/PinSetupView.svelte";
   import TpmPoliciesView from "$views/TpmPoliciesView.svelte";
@@ -60,6 +61,7 @@
     {:else if routerStore.name === "keyVersions"}<KeyVersionsView />
     {:else if routerStore.name === "certificates"}
       <CertificatesView />
+    {:else if routerStore.name === "certImport"}<CertImportView />
     {:else if routerStore.name === "ca"}
       <CaView />
     {:else if routerStore.name === "pin"}
