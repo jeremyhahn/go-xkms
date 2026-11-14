@@ -146,6 +146,54 @@ generates the key on that crypto backend via `pkg/ssh/backend.Provider`, and
 signing is delegated so a hardware-backed private key never leaves the
 device.
 
+`MigrateLegacyStores` (`stores.go:82`) is the exported entry to
+`pkg/ssh/migrate`, below; `MigrateReport`, `MigrateRecordError` and
+`MigrateRecordsFailedError` are aliases of that package's types.
+
+## Exported surface — `pkg/ssh/migrate` (the pre-DAO migrator)
+
+`Run(ctx, legacy storage.Backend, daos *qrdbsdk.DAOFactory) (Report,
+error)` (`migrate.go:94`) moves every SSH record of the old sealed-KV layout
+into the DAO catalogs:
+
+| Old key | Imported by |
+|---|---|
+| `[{tenant}/]ssh/{shared\|users/<o>\|services/<o>}/keys/<name>` | `keys.DAOStore.ImportLegacy` (`pkg/ssh/keys/store.go:233`) |
+| `[{tenant}/]ssh/.../known_hosts/<host>` | `known_hosts.DAOStore.ImportLegacy` (`pkg/ssh/known_hosts/store.go:184`) |
+| `[{tenant}/]ssh/.../authorized_keys/<name>` | `authorized.DAOStore.ImportLegacy` (`pkg/ssh/authorized/store.go:172`) |
+| `ssh/sessions/<id>` | `sessions.DAOStore.ImportLegacy` (`pkg/ssh/sessions/store.go:164`) |
+| `ssh/profiles/<id>.json` | `profile.DAOStore.ImportLegacy` (`pkg/ssh/profile/store.go:427`) |
+| `ssh/profiles/__folders__/<path>` | `profile.DAOStore.ImportLegacyFolder` (`pkg/ssh/profile/store.go:452`) |
+
+The three scoped stores import through `records.Table.Import`
+(`pkg/ssh/records/legacy.go:44`) into the partition of the old key's tenant
+prefix (none is the system tenant). It decodes the old JSON's `scope`,
+`owner` and `name`/`host`, refuses a record whose own path differs from its
+key (`*records.LegacyPathError`), runs the store's validation
+(`*records.LegacyRecordError` on failure) and refuses to overwrite another
+owner's record (`*records.LegacyOwnerConflictError`). Sessions and profiles
+keep their IDs and wrap failures in `sessions.ErrLegacyRecord` /
+`profile.ErrLegacyRecord`.
+
+Invariants:
+
+- **Delete after Put.** Each record is read, imported, wiped from memory
+  (`secure.Wipe`) and only then deleted from `legacy`. A failure at any step
+  leaves the old key in place.
+- **Idempotent.** A migrated key is gone from `legacy`, so a second run
+  migrates nothing: its `Report` has `Migrated` and `Failed` at zero and
+  `Skipped` unchanged. A record imported but not deleted (a `delete` failure)
+  is imported again over its catalog copy by the next run, then deleted
+  (`TestRunRetriesAfterFailedDelete`).
+- **Counts.** `Report{Migrated, Skipped, Failed}`. Skipped: tenant-prefixed
+  sessions and profiles, and `ssh/` keys matching no layout. Keys outside
+  `ssh/` are not counted.
+- **Errors** (`errors.go`): `NilInputError{Field}`, `OpenError{Store, Err}`,
+  `ListError{Err}`, `RecordError{Path, Op, Err}` (`Op` is `read`, `import`
+  or `delete`) and `RecordsFailedError{Errs}`, whose `Unwrap() []error` lets
+  `errors.As` reach each `*RecordError`. Other records still migrate when one
+  fails. A done `ctx` stops the run and returns `ctx.Err()`.
+
 ## Daemon wiring (`pkg/server/server.go`)
 
 `ensureSSHClient()` (`server.go:508-527`, `sync.Once`-guarded) is the only
