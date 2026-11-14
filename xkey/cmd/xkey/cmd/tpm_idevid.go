@@ -318,7 +318,7 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) (err error) {
 	// here, so a forced run leaves the device as a first run does.
 	if idevidExists {
 		if _, certErr := tpm.IDevIDCertificate(); certErr == nil {
-			if err := tpm.DeleteIDevIDCertificate(); err != nil {
+			if err := tpm.DeleteIDevIDCertificate([]byte(tpmCfg.hierarchyAuth)); err != nil {
 				return &SentinelCauseError{Sentinel: ErrIDevIDCertRemove, Cause: err}
 			}
 		}

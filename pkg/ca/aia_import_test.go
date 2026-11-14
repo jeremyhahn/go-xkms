@@ -30,6 +30,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 // aiaRepo is an httptest server publishing certificates by path, standing
@@ -259,4 +262,127 @@ func TestImportIssuingCAs_SelfSignedStartIsNotFetched(t *testing.T) {
 
 	require.NoError(t, ca.ImportIssuingCAs(context.Background(), root))
 	assert.Zero(t, repo.requests())
+}
+
+// newTenantStore returns an in-memory certificate store owned by one tenant.
+func newTenantStore(t *testing.T) certstore.CertStore {
+	t.Helper()
+	store, err := certstore.New(&certstore.Config{DAOs: testutil.NewMemoryDAOFactory()})
+	require.NoError(t, err)
+	return store
+}
+
+// assertNotInSharedStores fails when cn reached the CA's shared certificate
+// or key store.
+func assertNotInSharedStores(t *testing.T, ca *CA, cn string) {
+	t.Helper()
+	assertNotStored(t, ca, cn)
+	if ca.keyStore != nil {
+		cert, err := ca.keyStore.GetCert(context.Background(), cn)
+		assert.True(t, err != nil || cert == nil, "%s must not reach the shared key store", cn)
+	}
+}
+
+func TestImportIssuingCAsInto_TenantsWithSameIssuerCNKeepTheirOwn(t *testing.T) {
+	t.Parallel()
+	repo := newAIARepo(t)
+	// Two distinct issuers, distinct keys, one common name.
+	issuerA, keyA := aiaCert(t, "shared-cn", nil, nil, "")
+	issuerB, keyB := aiaCert(t, "shared-cn", nil, nil, "")
+	repo.publish("tenant-a", issuerA)
+	repo.publish("tenant-b", issuerB)
+	leafA, _ := aiaCert(t, "tenant-a-leaf", issuerA, keyA, repo.url("tenant-a"))
+	leafB, _ := aiaCert(t, "tenant-b-leaf", issuerB, keyB, repo.url("tenant-b"))
+	ca := setupTestCA(t)
+	allowLoopbackFetch(ca)
+	storeA, storeB := newTenantStore(t), newTenantStore(t)
+
+	require.NoError(t, ca.ImportIssuingCAsInto(context.Background(), leafA, storeA))
+	require.NoError(t, ca.ImportIssuingCAsInto(context.Background(), leafB, storeB))
+
+	gotA, err := storeA.GetCertificate("shared-cn")
+	require.NoError(t, err)
+	assert.Equal(t, issuerA.Raw, gotA.Raw)
+	gotB, err := storeB.GetCertificate("shared-cn")
+	require.NoError(t, err)
+	assert.Equal(t, issuerB.Raw, gotB.Raw)
+	assertNotInSharedStores(t, ca, "shared-cn")
+}
+
+func TestImportIssuingCAsInto_SharedStoresUntouched(t *testing.T) {
+	t.Parallel()
+	repo := newAIARepo(t)
+	leaf := aiaChain(t, repo, "tenant", 1)
+	ca := setupTestCA(t)
+	allowLoopbackFetch(ca)
+	store := newTenantStore(t)
+
+	require.NoError(t, ca.ImportIssuingCAsInto(context.Background(), leaf, store))
+
+	for _, cn := range []string{"tenant-int1", "tenant-root"} {
+		cert, err := store.GetCertificate(cn)
+		require.NoError(t, err, cn)
+		assert.Equal(t, cn, cert.Subject.CommonName)
+		assertNotInSharedStores(t, ca, cn)
+	}
+}
+
+func TestImportIssuingCAsInto_AlreadyStoredIssuerIsWalkedThrough(t *testing.T) {
+	t.Parallel()
+	repo := newAIARepo(t)
+	root, rootKey := aiaCert(t, "tagain-root", nil, nil, "")
+	repo.publish("tagain-root", root)
+	intermediate, intermediateKey := aiaCert(t, "tagain-int1", root, rootKey, repo.url("tagain-root"))
+	repo.publish("tagain-int1", intermediate)
+	leaf, _ := aiaCert(t, "tagain-leaf", intermediate, intermediateKey, repo.url("tagain-int1"))
+	ca := setupTestCA(t)
+	allowLoopbackFetch(ca)
+	store := newTenantStore(t)
+	// The intermediate is already in the tenant store; only the root is new.
+	require.NoError(t, store.StoreCertificate(intermediate))
+
+	require.NoError(t, ca.ImportIssuingCAsInto(context.Background(), leaf, store))
+
+	_, err := store.GetCertificate("tagain-root")
+	require.NoError(t, err, "the walk must continue through an issuer already stored")
+	assertNotInSharedStores(t, ca, "tagain-int1")
+	assertNotInSharedStores(t, ca, "tagain-root")
+}
+
+func TestImportIssuingCAsInto_NilStoreRefused(t *testing.T) {
+	t.Parallel()
+	repo := newAIARepo(t)
+	leaf := aiaChain(t, repo, "nilstore", 1)
+	ca := setupTestCA(t)
+	allowLoopbackFetch(ca)
+
+	err := ca.ImportIssuingCAsInto(context.Background(), leaf, nil)
+	assert.ErrorIs(t, err, ErrTargetCertStoreRequired)
+	assert.Zero(t, repo.requests(), "a nil store must be refused before any fetch")
+	assertNotInSharedStores(t, ca, "nilstore-int1")
+}
+
+func TestImportIssuingCAsInto_NilCertificateRefused(t *testing.T) {
+	t.Parallel()
+	ca := setupTestCA(t)
+
+	err := ca.ImportIssuingCAsInto(context.Background(), nil, newTenantStore(t))
+	assert.ErrorIs(t, err, ErrInvalidCertificate)
+}
+
+func TestImportIssuingCAsInto_UnrelatedIssuerRefused(t *testing.T) {
+	t.Parallel()
+	repo := newAIARepo(t)
+	realIssuer, realKey := aiaCert(t, "tsig-real", nil, nil, "")
+	impostor, _ := aiaCert(t, "tsig-impostor", nil, nil, "")
+	repo.publish("tsig-real", impostor)
+	leaf, _ := aiaCert(t, "tsig-leaf", realIssuer, realKey, repo.url("tsig-real"))
+	ca := setupTestCA(t)
+	allowLoopbackFetch(ca)
+	store := newTenantStore(t)
+
+	err := ca.ImportIssuingCAsInto(context.Background(), leaf, store)
+	assert.ErrorIs(t, err, ErrAIAIssuerSignatureInvalid)
+	_, err = store.GetCertificate("tsig-impostor")
+	assert.Error(t, err, "the impostor must not be imported")
 }

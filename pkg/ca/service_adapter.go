@@ -274,6 +274,7 @@ func (ca *CA) EnrollDeviceRaw(ctx context.Context, commonName, organization stri
 
 // IssueLAKCertificateRaw issues a Local Attestation Key certificate using
 // primitive types (go-xkms#715). See provider.TCGCA.IssueLAKCertificateRaw.
+// tenantID is the caller's tenant.
 // Thread-safe: Yes
 func (ca *CA) IssueLAKCertificateRaw(
 	ctx context.Context,
@@ -282,6 +283,7 @@ func (ca *CA) IssueLAKCertificateRaw(
 	certifyInfo, signature []byte,
 	signatureAlgorithm x509.SignatureAlgorithm,
 	lakPublicArea, nonce []byte,
+	tenantID string,
 ) (certDER []byte, err error) {
 	iakCert, err := x509.ParseCertificate(iakCertDER)
 	if err != nil {
@@ -292,6 +294,7 @@ func (ca *CA) IssueLAKCertificateRaw(
 		TPMManufacturer:    tpmManufacturer,
 		TPMModel:           tpmModel,
 		TPMFirmwareVersion: tpmFirmwareVersion,
+		TenantID:           tenantID,
 	}
 
 	evidence := &LAKCertificationEvidence{

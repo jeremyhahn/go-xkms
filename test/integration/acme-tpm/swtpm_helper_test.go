@@ -376,7 +376,7 @@ func (s *SwtpmConnection) Close() {
 // root -- SwtpmTestEKRootPEM / writeSwtpmTestEKRootPEM expose it for
 // newTestCA (handlers_tcgcsr_integration_test.go) to configure as a pkg/ca
 // TCGConfig trust anchor. Lazily loaded once via swtpmTestEKIssuerOnce, from
-// the fixed key/cert committed at testdata/swtpm-test-ek-root.{crt,key}.
+// swtpmTestEKRootCertPath / swtpmTestEKRootKeyPath.
 //
 // Before this, each call minted a fresh ECDSA key, signed with it, and then
 // discarded it -- the certificate embedded the EK's own public key but was
@@ -385,45 +385,52 @@ func (s *SwtpmConnection) Close() {
 // required for chain verification to be possible at all, not merely
 // convenient.
 //
-// It must additionally be FIXED, not generated fresh per test-binary run
-// (as an earlier version of this helper did): the acme-tpm lane's real ACME
-// server (test/integration/acme-tpm/config.acme-tpm.yaml, a separate
-// process in the acme-server container) verifies device EK certificates
-// against its own configured trust anchors too, and can only be given a
-// trust anchor that exists before it starts -- config.acme-tpm.yaml's
-// `ca.tcg-config.trust-anchors` points at the same committed
-// testdata/swtpm-test-ek-root.crt (bind-mounted read-only into that
-// container by docker-compose.yml), so the two processes agree on the
-// issuer without either needing to know anything about the other's runtime
-// state.
+// It must additionally be generated BEFORE the stack starts, not inside the
+// test binary (as an earlier version of this helper did): the acme-tpm
+// lane's real ACME server (test/integration/acme-tpm/config.acme-tpm.yaml, a
+// separate process in the acme-server container) verifies device EK
+// certificates against its own configured trust anchors too, and can only
+// be given a trust anchor that exists before it starts. The Makefile's
+// integration-test-acme-tpm target therefore runs certgen -ca, which writes
+// a fresh pair into the (git-ignored) testdata/ek-root/ before it builds the
+// image; both containers read it from the source tree the image COPYs into
+// /workspace, so the two processes agree on the issuer and no private key
+// is committed (#1993).
 var (
 	swtpmTestEKIssuerOnce sync.Once
 	swtpmTestEKIssuerKey  *ecdsa.PrivateKey
 	swtpmTestEKIssuerCert *x509.Certificate
 )
 
+// The EK root pair certgen -ca writes before the stack starts, relative to
+// this package (config.acme-tpm.yaml trusts the same certificate).
+const (
+	swtpmTestEKRootCertPath = "testdata/ek-root/ek-root.crt"
+	swtpmTestEKRootKeyPath  = "testdata/ek-root/ek-root.key"
+)
+
 func swtpmTestEKIssuer() (*ecdsa.PrivateKey, *x509.Certificate) {
 	swtpmTestEKIssuerOnce.Do(func() {
-		certPEM, err := os.ReadFile("testdata/swtpm-test-ek-root.crt")
+		certPEM, err := os.ReadFile(swtpmTestEKRootCertPath)
 		if err != nil {
-			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer certificate: %v", err))
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer certificate (make integration-test-acme-tpm generates it): %v", err))
 		}
 		certBlock, _ := pem.Decode(certPEM)
 		if certBlock == nil {
-			panic("swtpmTestEKIssuer: testdata/swtpm-test-ek-root.crt has no PEM block")
+			panic("swtpmTestEKIssuer: " + swtpmTestEKRootCertPath + " has no PEM block")
 		}
 		cert, err := x509.ParseCertificate(certBlock.Bytes)
 		if err != nil {
 			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to parse issuer certificate: %v", err))
 		}
 
-		keyPEM, err := os.ReadFile("testdata/swtpm-test-ek-root.key")
+		keyPEM, err := os.ReadFile(swtpmTestEKRootKeyPath)
 		if err != nil {
-			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer key: %v", err))
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer key (make integration-test-acme-tpm generates it): %v", err))
 		}
 		keyBlock, _ := pem.Decode(keyPEM)
 		if keyBlock == nil {
-			panic("swtpmTestEKIssuer: testdata/swtpm-test-ek-root.key has no PEM block")
+			panic("swtpmTestEKIssuer: " + swtpmTestEKRootKeyPath + " has no PEM block")
 		}
 		key, err := x509.ParseECPrivateKey(keyBlock.Bytes)
 		if err != nil {

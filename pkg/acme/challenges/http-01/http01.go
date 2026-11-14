@@ -115,13 +115,13 @@ func challengeHandlerHTTPx(keyAuth string) http.HandlerFunc {
 		_, err := w.Write([]byte(keyAuth))
 		if err != nil {
 			slog.Error("Failed to write response for key authorization",
-				slog.String("key-authorization", keyAuth),
+				slog.Int("key-authorization-length", len(keyAuth)),
 				slog.String("error", err.Error()))
 			return
 		}
 
 		slog.Debug("Served key authorization",
-			slog.String("key-authorization", keyAuth),
+			slog.Int("key-authorization-length", len(keyAuth)),
 			slog.String("remote-addr", r.RemoteAddr),
 			slog.String("request-uri", r.RequestURI),
 			slog.String("http-method", r.Method),

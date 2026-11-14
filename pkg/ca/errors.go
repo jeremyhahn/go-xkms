@@ -210,6 +210,11 @@ var (
 	// AIA URL did not sign the certificate that named it, so it is not that
 	// certificate's issuer and is never imported.
 	ErrAIAIssuerSignatureInvalid = errors.New("ca: aia certificate did not sign the child certificate")
+
+	// ErrTargetCertStoreRequired indicates ImportIssuingCAsInto was given no
+	// certificate store. A tenant-scoped import never falls back to the CA's
+	// shared stores.
+	ErrTargetCertStoreRequired = errors.New("ca: aia import requires a target certificate store")
 )
 
 // Serial number errors indicate issues with certificate serial generation.

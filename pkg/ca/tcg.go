@@ -185,7 +185,7 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 		return nil, err
 	}
 
-	cert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
+	cert, err := ca.issueTCGCertificate(ctx, signer, signingCert, &CertificateSpec{
 		Serial:             serial,
 		Subject:            ekSubject,
 		NotBefore:          time.Now().Add(-1 * time.Minute),
@@ -265,7 +265,7 @@ func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateReques
 		return nil, err
 	}
 
-	cert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
+	cert, err := ca.issueTCGCertificate(ctx, signer, signingCert, &CertificateSpec{
 		Serial:             serial,
 		Subject:            akSubject,
 		NotBefore:          time.Now().Add(-1 * time.Minute),
@@ -468,7 +468,7 @@ func (ca *CA) SignTCGCSRIDevID(
 		return nil, nil, err
 	}
 
-	iakCert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
+	iakCert, err := ca.issueTCGCertificate(ctx, signer, signingCert, &CertificateSpec{
 		Serial:             iakSerial,
 		Subject:            iakSubject,
 		NotBefore:          time.Now().Add(-1 * time.Minute),
@@ -515,7 +515,7 @@ func (ca *CA) SignTCGCSRIDevID(
 		return nil, nil, err
 	}
 
-	idevidCert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
+	idevidCert, err := ca.issueTCGCertificate(ctx, signer, signingCert, &CertificateSpec{
 		Serial:             idevidSerial,
 		Subject:            idevidSubject,
 		NotBefore:          time.Now().Add(-1 * time.Minute),
@@ -597,18 +597,35 @@ func (ca *CA) resolveTCGSigner(ctx context.Context, request *CertificateRequest)
 // Signer belongs to a different issuer whose CRL and OCSP services this CA
 // cannot speak for, so that path carries no identity; this is the same rule
 // SignCSR applies.
+//
+// For the same reason, a credential this CA signed records the request's
+// tenant (empty for the system scope) through recordCertTenant, so
+// CertificateTenant answers for it; a recording failure fails the issuance.
+// A caller-signed credential records nothing.
 func (ca *CA) issueTCGCertificate(
+	ctx context.Context,
 	signer crypto.Signer,
 	signingCert *x509.Certificate,
 	spec *CertificateSpec,
 ) (*x509.Certificate, error) {
 	issuer := &Issuer{Signer: signer, Certificate: signingCert}
-	if spec.Request == nil || spec.Request.Signer == nil {
+	ownSigner := spec.Request == nil || spec.Request.Signer == nil
+	if ownSigner {
 		issuer.Identity = ca.config.IssuingIdentity()
 	}
 	cert, err := issuer.Issue(rand.Reader, spec)
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
+	}
+	if !ownSigner {
+		return cert, nil
+	}
+	tenantID := ""
+	if spec.Request != nil {
+		tenantID = spec.Request.TenantID
+	}
+	if err := ca.recordCertTenant(ctx, cert.SerialNumber, tenantID); err != nil {
+		return nil, err
 	}
 	return cert, nil
 }

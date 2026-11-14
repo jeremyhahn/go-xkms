@@ -909,3 +909,62 @@ func TestRotateKey_ConcurrentRotationsTakeDistinctVersions(t *testing.T) {
 	assert.Equal(t, uint32(rotations+1), listed.CurrentVersion)
 	assert.Len(t, listed.Versions, rotations+1)
 }
+
+// rotateAfterListing is a backend that runs a rotation once, right after
+// its first key listing is taken: the rotation lands between a resolve's
+// listing and its load of the version record.
+type rotateAfterListing struct {
+	Backend
+	rotation func()
+}
+
+func (b *rotateAfterListing) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
+	keys, err := b.Backend.ListKeys(ctx)
+	if rotation := b.rotation; rotation != nil {
+		b.rotation = nil
+		rotation()
+	}
+	return keys, err
+}
+
+func TestResolveKey_SeesARotationRecordedDuringItsListing(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := ctxFor("")
+	genKey(t, svc, "", "k", "ed25519", 0)
+	base, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+	b := &rotateAfterListing{Backend: base, rotation: func() {
+		_, err := svc.rotateKey(ctx, base, "software", "k")
+		require.NoError(t, err)
+	}}
+
+	k, err := svc.resolveKey(ctx, b, "software", "k")
+	require.NoError(t, err)
+	cur, err := k.current()
+	require.NoError(t, err, "the version the record names is never half made")
+	assert.Equal(t, uint32(2), cur.number)
+	assert.Equal(t, "k--v2", cur.attrs.CN)
+}
+
+func TestResolveKey_CurrentVersionWithoutItsBackendKey(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := ctxFor("")
+	genKey(t, svc, "", "k", "ed25519", 0)
+	rotate(t, svc, "", "k")
+	b, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+	keys, err := b.ListKeys(ctx)
+	require.NoError(t, err)
+	for _, attrs := range keys {
+		if attrs.CN == "k--v2" {
+			require.NoError(t, b.DeleteKey(ctx, attrs))
+		}
+	}
+
+	k, err := svc.resolveKey(ctx, b, "software", "k")
+	require.NoError(t, err)
+	_, err = k.current()
+	var missing *KeyVersionMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, uint32(2), missing.Version)
+}

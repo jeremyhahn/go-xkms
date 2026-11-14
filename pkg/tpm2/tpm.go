@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -235,11 +236,11 @@ type TrustedPlatformModule interface {
 
 	// IDevID/IAK Certificate management
 	IDevIDCertificate() (*x509.Certificate, error)
-	ProvisionIDevIDCert(cert *x509.Certificate) error
-	DeleteIDevIDCertificate() error
+	ProvisionIDevIDCert(hierarchyAuth []byte, cert *x509.Certificate) error
+	DeleteIDevIDCertificate(hierarchyAuth []byte) error
 	IAKCertificate() (*x509.Certificate, error)
-	ProvisionIAKCert(cert *x509.Certificate) error
-	DeleteIAKCertificate() error
+	ProvisionIAKCert(hierarchyAuth []byte, cert *x509.Certificate) error
+	DeleteIAKCertificate(hierarchyAuth []byte) error
 
 	// Local Attestation Key (go-xkms#715): a Restricted signing key created
 	// as a child of the Platform SRK and certified by the IAK via
@@ -253,8 +254,8 @@ type TrustedPlatformModule interface {
 	CertifyLAK(nonce []byte, backend store.KeyBackend) (*CertifyResult, error)
 	CertifyKeyWithLAK(keyAttrs *types.KeyAttributes, nonce []byte, backend store.KeyBackend) (*CertifyResult, error)
 	LAKCertificate() (*x509.Certificate, error)
-	ProvisionLAKCert(cert *x509.Certificate) error
-	DeleteLAKCertificate() error
+	ProvisionLAKCert(hierarchyAuth []byte, cert *x509.Certificate) error
+	DeleteLAKCertificate(hierarchyAuth []byte) error
 
 	VerifyTCGCSR(
 		csr *TCG_CSR_IDEVID,
@@ -542,8 +543,9 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 			slog.String("ekHandle", fmt.Sprintf("0x%08X", params.Config.EK.Handle)),
 			slog.String("readPublicError", err.Error()))
 
+		certIndex := configuredEKCertIndex(*params.Config.EK)
 		_, nvErr := tpm2.NVReadPublic{
-			NVIndex: tpm2.TPMHandle(params.Config.EK.CertHandle),
+			NVIndex: certIndex,
 		}.Execute(tpm.transport)
 
 		if nvErr != nil && !isTPMResponse(nvErr) {
@@ -553,14 +555,14 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 			// Neither persistent EK nor manufacturer certificate exists
 			tpm.logger.Debug("TPM not initialized: no persistent EK and no manufacturer EK certificate",
 				slog.String("ekHandle", fmt.Sprintf("0x%08X", params.Config.EK.Handle)),
-				slog.String("certHandle", fmt.Sprintf("0x%08X", params.Config.EK.CertHandle)))
+				slog.String("certHandle", fmt.Sprintf("0x%08X", certIndex)))
 			return tpm, ErrNotInitialized
 		}
 
 		// Manufacturer EK certificate exists in NV RAM — TPM can be used for read operations
 		// but provisioning is still needed to create the persistent EK key
 		tpm.logger.Debug("Manufacturer EK certificate found in NV RAM",
-			slog.String("certHandle", fmt.Sprintf("0x%08X", params.Config.EK.CertHandle)))
+			slog.String("certHandle", fmt.Sprintf("0x%08X", certIndex)))
 	}
 
 	return tpm, nil
@@ -1318,25 +1320,16 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		return ekCert, nil
 	}
 
-	// Build list of NV indices to try (configured first, then standard locations)
-	var indicesToTry []tpm2.TPMHandle
-
-	// Add configured/attribute-based index first
-	if ekAttrs.TPMAttributes != nil && ekAttrs.TPMAttributes.CertHandle != 0 {
-		indicesToTry = append(indicesToTry, ekAttrs.TPMAttributes.CertHandle)
-	} else if tpm.config.EK.CertHandle > 0 {
-		indicesToTry = append(indicesToTry, tpm2.TPMHandle(tpm.config.EK.CertHandle))
-	}
-
-	// Add standard RSA and EC locations as fallbacks (avoiding duplicates)
-	rsaIndex := tpm2.TPMHandle(ekCertIndexRSA2048)
-	ecIndex := tpm2.TPMHandle(ekCertIndexECCP256)
-
-	if len(indicesToTry) == 0 || indicesToTry[0] != rsaIndex {
-		indicesToTry = append(indicesToTry, rsaIndex)
-	}
-	if len(indicesToTry) < 2 || (indicesToTry[0] != ecIndex && indicesToTry[1] != ecIndex) {
-		indicesToTry = append(indicesToTry, ecIndex)
+	// Try the index the write resolves for the configured EK key type
+	// first, then the standard RSA and EC locations (avoiding duplicates).
+	indicesToTry := []tpm2.TPMHandle{configuredEKCertIndex(*tpm.config.EK)}
+	for _, fallback := range []tpm2.TPMHandle{
+		tpm2.TPMHandle(ekCertIndexRSA2048),
+		tpm2.TPMHandle(ekCertIndexECCP256),
+	} {
+		if !slices.Contains(indicesToTry, fallback) {
+			indicesToTry = append(indicesToTry, fallback)
+		}
 	}
 
 	// Try each NV index until we find a valid certificate

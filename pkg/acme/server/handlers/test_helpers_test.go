@@ -346,6 +346,9 @@ func (m *MockCA) ImportBlob(_ []byte, _ []byte) error { return nil }
 
 func (m *MockCA) ImportDistributionCRLs(_ *x509.Certificate) error              { return nil }
 func (m *MockCA) ImportIssuingCAs(_ context.Context, _ *x509.Certificate) error { return nil }
+func (m *MockCA) ImportIssuingCAsInto(_ context.Context, _ *x509.Certificate, _ certstore.CertStore) error {
+	return nil
+}
 func (m *MockCA) ParseBundle(_ []byte) ([]*x509.Certificate, error) {
 	return []*x509.Certificate{}, nil
 }

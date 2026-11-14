@@ -106,7 +106,7 @@ func newSimulatorHost(t *testing.T) *simulatorHost {
 	if err != nil {
 		t.Fatalf("CertifyAttestationKey: %v", err)
 	}
-	if err := tpm.ProvisionIAKCert(cert); err != nil {
+	if err := tpm.ProvisionIAKCert(nil, cert); err != nil {
 		t.Fatalf("ProvisionIAKCert: %v", err)
 	}
 	return &simulatorHost{tpm: tpm, world: world}

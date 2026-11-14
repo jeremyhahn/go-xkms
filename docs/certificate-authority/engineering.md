@@ -77,7 +77,18 @@ most 3 redirects, a 30-second timeout, and a body cap of 64 KiB for a
 certificate or 32 MiB for a CRL (`pki_fetch.go:31-49`). `ImportIssuingCAs`
 also requires each fetched issuer to verify the child's signature and stops
 a walk that repeats a certificate or climbs more than 5 issuers
-(`trust_chain_extensions.go:278-328`). None of the limits is configurable.
+(`trust_chain_extensions.go:314-353`). None of the limits is configurable.
+
+`ImportIssuingCAsInto(ctx, cert, store)` runs the same walk, under the same
+limits and refusals, but looks for and stores each issuer only in `store`, a
+`certstore.CertStore` the caller owns (`trust_chain_extensions.go:298`). It
+never reads or writes the CA's shared certificate or key stores, which every
+tenant shares and which are keyed by common name: importing a tenant's
+issuers there would let one tenant claim a common name and block another
+tenant's issuer of that name (go-quicbaas#1993). A nil `store` returns
+`ErrTargetCertStoreRequired`; there is no fallback to the shared stores.
+`ImportIssuingCAs` stays for system-scope callers. Both share one walk,
+`importIssuingCAs`, parameterised by an `issuerSink` (lookup and store).
 
 **`CACrossSigner`** — `ImportXSignedCertificate(issuerCN, cert)`,
 `XSignedCertificate(issuerCN, attrs)`, `XSignedRootCertificate(issuerCN, cert)`,

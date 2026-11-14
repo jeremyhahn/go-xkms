@@ -137,7 +137,7 @@ func TestProvisionIDevIDCert_NotConfigured(t *testing.T) {
 	defer func() { tpm2Impl.config.IDevID = originalConfig }()
 
 	cert := createTestCertForIDevID(t)
-	err := tpm.ProvisionIDevIDCert(cert)
+	err := tpm.ProvisionIDevIDCert(nil, cert)
 	assert.ErrorIs(t, err, ErrNotConfigured)
 }
 
@@ -165,7 +165,7 @@ func TestDeleteIDevIDCertificate_NotConfigured(t *testing.T) {
 	tpm2Impl.config.IDevID = nil
 	defer func() { tpm2Impl.config.IDevID = originalConfig }()
 
-	err := tpm.DeleteIDevIDCertificate()
+	err := tpm.DeleteIDevIDCertificate(nil)
 	assert.ErrorIs(t, err, ErrNotConfigured)
 }
 
@@ -180,7 +180,7 @@ func TestProvisionIAKCert_NotConfigured(t *testing.T) {
 	defer func() { tpm2Impl.config.IAK = originalConfig }()
 
 	cert := createTestCertForIDevID(t)
-	err := tpm.ProvisionIAKCert(cert)
+	err := tpm.ProvisionIAKCert(nil, cert)
 	assert.ErrorIs(t, err, ErrNotConfigured)
 }
 
@@ -208,7 +208,7 @@ func TestDeleteIAKCertificate_NotConfigured(t *testing.T) {
 	tpm2Impl.config.IAK = nil
 	defer func() { tpm2Impl.config.IAK = originalConfig }()
 
-	err := tpm.DeleteIAKCertificate()
+	err := tpm.DeleteIAKCertificate(nil)
 	assert.ErrorIs(t, err, ErrNotConfigured)
 }
 
@@ -230,7 +230,7 @@ func TestWriteCertToStore_NotConfigured(t *testing.T) {
 	}
 
 	cert := createTestCertForIDevID(t)
-	err := tpm.ProvisionIDevIDCert(cert)
+	err := tpm.ProvisionIDevIDCert(nil, cert)
 	// Should fail with key mismatch since cert doesn't match TPM key
 	assert.Error(t, err)
 }
@@ -311,7 +311,7 @@ func TestProvisionIDevIDCert_PublicKeyMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should fail because cert's public key doesn't match TPM key
-	err = tpm.ProvisionIDevIDCert(cert)
+	err = tpm.ProvisionIDevIDCert(nil, cert)
 	assert.ErrorIs(t, err, ErrCertPublicKeyMismatch)
 
 	// A rejected certificate must not be stored.
@@ -345,7 +345,7 @@ func TestProvisionIAKCert_PublicKeyMismatch(t *testing.T) {
 	cert, err := x509.ParseCertificate(certDER)
 	require.NoError(t, err)
 
-	err = tpm.ProvisionIAKCert(cert)
+	err = tpm.ProvisionIAKCert(nil, cert)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrCertPublicKeyMismatch)
 }
@@ -364,14 +364,14 @@ func TestDeleteIDevIDCertificate_StoreMode(t *testing.T) {
 	require.NoError(t, err)
 	cert := certForTPMKey(t, idevidAttrs, "idevid-device-001")
 
-	require.NoError(t, tpm.ProvisionIDevIDCert(cert),
+	require.NoError(t, tpm.ProvisionIDevIDCert(nil, cert),
 		"a certificate matching the IDevID key must be accepted")
 
 	stored, err := tpm.IDevIDCertificate()
 	require.NoError(t, err, "the provisioned certificate must be readable")
 	assert.Equal(t, cert.Raw, stored.Raw, "the stored certificate must round trip intact")
 
-	require.NoError(t, tpm.DeleteIDevIDCertificate())
+	require.NoError(t, tpm.DeleteIDevIDCertificate(nil))
 
 	after, err := tpm.IDevIDCertificate()
 	assert.Nil(t, after)
@@ -384,7 +384,7 @@ func TestDeleteIDevIDCertificate_StoreNotConfigured(t *testing.T) {
 	tpm := newCertStoreTPM(t)
 	tpm.certStore = nil
 
-	assert.ErrorIs(t, tpm.DeleteIDevIDCertificate(), ErrCertStoreNotConfigured)
+	assert.ErrorIs(t, tpm.DeleteIDevIDCertificate(nil), ErrCertStoreNotConfigured)
 }
 
 // TestDeleteIAKCertificate_StoreMode is the IAK counterpart of
@@ -396,14 +396,14 @@ func TestDeleteIAKCertificate_StoreMode(t *testing.T) {
 	require.NoError(t, err)
 	cert := certForTPMKey(t, iakAttrs, "device-id-001")
 
-	require.NoError(t, tpm.ProvisionIAKCert(cert),
+	require.NoError(t, tpm.ProvisionIAKCert(nil, cert),
 		"a certificate matching the IAK must be accepted")
 
 	stored, err := tpm.IAKCertificate()
 	require.NoError(t, err)
 	assert.Equal(t, cert.Raw, stored.Raw)
 
-	require.NoError(t, tpm.DeleteIAKCertificate())
+	require.NoError(t, tpm.DeleteIAKCertificate(nil))
 
 	after, err := tpm.IAKCertificate()
 	assert.Nil(t, after)
@@ -416,7 +416,7 @@ func TestDeleteIAKCertificate_StoreNotConfigured(t *testing.T) {
 	tpm := newCertStoreTPM(t)
 	tpm.certStore = nil
 
-	assert.ErrorIs(t, tpm.DeleteIAKCertificate(), ErrCertStoreNotConfigured)
+	assert.ErrorIs(t, tpm.DeleteIAKCertificate(nil), ErrCertStoreNotConfigured)
 }
 
 // TestIDevIDAndIAKCertificatesAreStoredSeparately proves the two identities do
@@ -434,10 +434,10 @@ func TestIDevIDAndIAKCertificatesAreStoredSeparately(t *testing.T) {
 	idevidCert := certForTPMKey(t, idevidAttrs, "idevid-device-001")
 	iakCert := certForTPMKey(t, iakAttrs, "device-id-001")
 
-	require.NoError(t, tpm.ProvisionIDevIDCert(idevidCert))
-	require.NoError(t, tpm.ProvisionIAKCert(iakCert))
+	require.NoError(t, tpm.ProvisionIDevIDCert(nil, idevidCert))
+	require.NoError(t, tpm.ProvisionIAKCert(nil, iakCert))
 
-	require.NoError(t, tpm.DeleteIDevIDCertificate())
+	require.NoError(t, tpm.DeleteIDevIDCertificate(nil))
 
 	_, err = tpm.IDevIDCertificate()
 	assert.ErrorIs(t, err, ErrIDevIDCertNotFound)
@@ -883,7 +883,7 @@ func TestDeleteIDevIDCertificate_FromStoreSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	// Delete it
-	err = tpmObj.DeleteIDevIDCertificate()
+	err = tpmObj.DeleteIDevIDCertificate(nil)
 	assert.NoError(t, err)
 
 	// Verify it's gone
@@ -921,7 +921,7 @@ func TestDeleteIAKCertificate_FromStoreSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	// Delete it
-	err = tpmObj.DeleteIAKCertificate()
+	err = tpmObj.DeleteIAKCertificate(nil)
 	assert.NoError(t, err)
 
 	// Verify it's gone
@@ -1102,14 +1102,14 @@ func TestProvisionIDevIDCert_NVRAMRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	cert := certForTPMKey(t, idevidAttrs, "idevid-device-001")
 
-	require.NoError(t, tpm.ProvisionIDevIDCert(cert))
+	require.NoError(t, tpm.ProvisionIDevIDCert(nil, cert))
 
 	stored, err := tpm.IDevIDCertificate()
 	require.NoError(t, err, "the certificate must be readable back out of NV RAM")
 	require.NotNil(t, stored)
 	assert.Equal(t, cert.Raw, stored.Raw, "NV RAM must return the certificate verbatim")
 
-	require.NoError(t, tpm.DeleteIDevIDCertificate())
+	require.NoError(t, tpm.DeleteIDevIDCertificate(nil))
 
 	_, err = tpm.IDevIDCertificate()
 	assert.Error(t, err, "reading an undefined NV index must fail")
@@ -1125,14 +1125,14 @@ func TestProvisionIAKCert_NVRAMRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	cert := certForTPMKey(t, iakAttrs, "device-id-001")
 
-	require.NoError(t, tpm.ProvisionIAKCert(cert))
+	require.NoError(t, tpm.ProvisionIAKCert(nil, cert))
 
 	stored, err := tpm.IAKCertificate()
 	require.NoError(t, err, "the certificate must be readable back out of NV RAM")
 	require.NotNil(t, stored)
 	assert.Equal(t, cert.Raw, stored.Raw)
 
-	require.NoError(t, tpm.DeleteIAKCertificate())
+	require.NoError(t, tpm.DeleteIAKCertificate(nil))
 
 	_, err = tpm.IAKCertificate()
 	assert.Error(t, err)
@@ -1148,6 +1148,6 @@ func TestProvisionIDevIDCert_NVRAMOversized(t *testing.T) {
 	indexMax, err := nvIndexMaxSize(tpm.transport)
 	require.NoError(t, err)
 
-	err = tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.IDevID.CertHandle), make([]byte, int(indexMax)+1))
+	err = tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.IDevID.CertHandle), nil, make([]byte, int(indexMax)+1))
 	assert.ErrorIs(t, err, ErrNVCertTooLarge)
 }

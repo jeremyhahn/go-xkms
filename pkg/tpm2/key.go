@@ -282,9 +282,11 @@ func (tpm *TPM2) EKAttributes() (*types.KeyAttributes, error) {
 				errors.Is(err, tpmRCHandle) // TPM_RC_HANDLE
 
 			if isPersistentHandleError {
-				// Persistent EK doesn't exist - check for manufacturer EK certificate in NV RAM
+				// Persistent EK doesn't exist - check for manufacturer EK
+				// certificate in NV RAM, at the index for the EK's key type.
+				certIndex := configuredEKCertIndex(*tpm.config.EK)
 				_, nvErr := tpm2.NVReadPublic{
-					NVIndex: tpm2.TPMHandle(tpm.config.EK.CertHandle),
+					NVIndex: certIndex,
 				}.Execute(tpm.transport)
 
 				if nvErr != nil {
@@ -294,7 +296,7 @@ func (tpm *TPM2) EKAttributes() (*types.KeyAttributes, error) {
 
 				// Manufacturer EK certificate exists - create attributes from config
 				tpm.logger.Debug("Persistent EK not found, using config-based attributes with manufacturer certificate",
-					slog.String("certHandle", fmt.Sprintf("0x%08X", tpm.config.EK.CertHandle)))
+					slog.String("certHandle", fmt.Sprintf("0x%08X", certIndex)))
 
 				policyDigest, pdErr := tpm.PlatformPolicyDigest()
 				if pdErr != nil {
@@ -1196,7 +1198,7 @@ func (tpm *TPM2) DeleteIAK(ekAttrs *types.KeyAttributes) error {
 
 	// The certificate store keys the IAK certificate on the attributes still
 	// cached above, so the cache is dropped only after it.
-	err = tpm.DeleteIAKCertificate()
+	err = tpm.DeleteIAKCertificate(hierarchyAuth)
 	if err != nil &&
 		!errors.Is(err, ErrCertStoreNotConfigured) &&
 		!errors.Is(err, store.ErrCertNotFound) &&
