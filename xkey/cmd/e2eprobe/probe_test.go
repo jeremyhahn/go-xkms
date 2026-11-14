@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 var errPipeClosed = &MessageError{Msg: "pipe closed"}
