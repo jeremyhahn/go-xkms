@@ -21,10 +21,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -197,6 +199,91 @@ func TestBuildTokenIssuer_RefreshWithoutWebAuthn(t *testing.T) {
 	refreshed, err := issuer.Refresh(context.Background(), pair.RefreshToken)
 	require.NoError(t, err)
 	require.NotEmpty(t, refreshed.AccessToken)
+}
+
+const refreshTenantAccountChild = "GO_XKMS_TEST_REFRESH_TENANT_ACCOUNT"
+
+// TestBuildTokenIssuer_RefreshResolvesTheAccountInItsTenant: over an
+// enforcing node whose service principal belongs to the system tenant, a
+// refresh re-checks the account in the tenant the refresh token carries, by
+// username and by WebAuthn user handle, for a system-tenant account and for
+// one in a provisioned tenant alike. Refresh records stay the principal's.
+// It re-executes itself in a child process because the refresh grant
+// BuildTokenIssuer registers is process-wide.
+func TestBuildTokenIssuer_RefreshResolvesTheAccountInItsTenant(t *testing.T) {
+	if os.Getenv(refreshTenantAccountChild) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestBuildTokenIssuer_RefreshResolvesTheAccountInItsTenant$", "-test.count=1")
+		cmd.Env = append(os.Environ(), refreshTenantAccountChild+"=1")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "child process:\n%s", out)
+		require.Contains(t, string(out), "PASS", "child process:\n%s", out)
+		return
+	}
+
+	node := newEnforcingNode(t)
+	svcs := node.Services()
+	require.NotNil(t, svcs)
+	factors, ok := svcs.UserAuthFactor.(qrdbsdk.ActiveFactorChecker)
+	require.True(t, ok, "the node's auth-factor service checks active factors")
+	const tenantID = "acme"
+	_, err := qrdbsdk.ProvisionTenant(context.Background(), qrdbsdk.BootstrapTenantProvisionConfig{
+		TenantID:        tenantID,
+		Isolation:       qrdbsdk.TenantIsolationPrefix,
+		AdminEnrollment: qrdbsdk.BootstrapAdminEnrollDeferred,
+	}, qrdbsdk.BootstrapDependencies{
+		Tenants:      svcs.Tenant,
+		Users:        svcs.User,
+		Roles:        svcs.Role,
+		AdminFactors: factors,
+		Logger:       slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+
+	issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
+		Backend:     xkmsmocks.NewMockKeyStore(),
+		BackendName: "test",
+		QRDBClient:  node.Client(),
+		CallContext: node.ServiceContext,
+		UserLookup:  node.UserService(),
+	})
+	require.NoError(t, err)
+
+	for _, tenant := range []string{DefaultWebAuthnTenant, tenantID} {
+		created, err := node.UserService().CreateUser(qrdbsdk.ContextWithTenant(context.Background(), tenant), &qrdbuser.CreateUserRequest{
+			Username: "alice",
+			Email:    "alice@" + tenant + ".example",
+			Name:     "Alice of " + tenant,
+			TenantID: tenant,
+		})
+		require.NoError(t, err, "tenant %s", tenant)
+		require.Equal(t, tenant, created.TenantID)
+
+		handle := make([]byte, 8)
+		binary.BigEndian.PutUint64(handle, created.ID)
+		for kind, subject := range map[string]string{
+			auth.SubjectKindUsername:   "alice",
+			auth.SubjectKindUserHandle: base64.RawURLEncoding.EncodeToString(handle),
+		} {
+			pair, err := issuer.Mint(context.Background(), &auth.Identity{
+				Subject:  subject,
+				TenantID: tenant,
+				Metadata: map[string]string{auth.SubjectKindMetadataKey: kind},
+			})
+			require.NoError(t, err, "mint, tenant %s, %s", tenant, kind)
+
+			refreshed, err := issuer.Refresh(context.Background(), pair.RefreshToken)
+			require.NoError(t, err, "refresh, tenant %s, %s", tenant, kind)
+			require.NotEmpty(t, refreshed.AccessToken)
+			parts := strings.Split(refreshed.AccessToken, ".")
+			require.Len(t, parts, 3, "the access token is a compact JWS")
+			payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+			require.NoError(t, err)
+			var claims map[string]any
+			require.NoError(t, json.Unmarshal(payload, &claims))
+			require.Equal(t, tenant, claims["tenant_id"], "the refreshed session stays in tenant %s (%s)", tenant, kind)
+			require.Equal(t, "Alice of "+tenant, claims["name"], "the account re-read is the one in tenant %s (%s)", tenant, kind)
+		}
+	}
 }
 
 // TestNewHostServer_PasskeyAccessTokenNamesTheAccount covers Codex P1 (3):
