@@ -38,6 +38,7 @@ export const navSections: NavSection[] = [
   {
     heading: "Overview",
     items: [
+      { route: "frostSigning", path: "/frost/sign", label: "FROST Signing", icon: "Snowflake", capability: "frost", requires: { resource: "keys", action: "sign" } },
       { route: "dashboard", path: "/dashboard", label: "Dashboard", icon: "LayoutDashboard" },
       { route: "trustBundle", path: "/trust/bundle", label: "Trust Bundle", icon: "ShieldCheck" },
       { route: "backends", path: "/backends", label: "Backends", icon: "Server", requires: { resource: "backends", action: "list" } },
