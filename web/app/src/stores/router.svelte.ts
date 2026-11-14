@@ -58,6 +58,7 @@ export type RouteName =
   | "tenantQuotas"
   | "keySafety"
   | "otaImageKeys"
+  | "cryptoTools"
   | "settings"
   | "frostKeyImport"
   | "not-found";
@@ -113,6 +114,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/tenants/quotas": "tenantQuotas",
   "/keys/safety": "keySafety",
   "/keys/ota": "otaImageKeys",
+  "/tools/crypto": "cryptoTools",
   "/settings": "settings",
   "/platform/secrets": "platformSecretNames",
 };

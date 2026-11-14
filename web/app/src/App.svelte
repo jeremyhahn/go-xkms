@@ -21,6 +21,7 @@
   import TenantQuotasView from "$views/TenantQuotasView.svelte";
   import KeySafetyView from "$views/KeySafetyView.svelte";
   import OtaImageKeysView from "$views/OtaImageKeysView.svelte";
+  import CryptoToolsView from "$views/CryptoToolsView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
   import CertImportView from "$views/CertImportView.svelte";
   import PinView from "$views/PinView.svelte";
@@ -107,6 +108,7 @@
     {:else if routerStore.name === "frostKeyImport"}<FrostKeyImportView />
     {:else if routerStore.name === "keySafety"}<KeySafetyView />
     {:else if routerStore.name === "otaImageKeys"}<OtaImageKeysView />
+    {:else if routerStore.name === "cryptoTools"}<CryptoToolsView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
     {:else if routerStore.name === "tenantTpm"}<TenantTpmView />
