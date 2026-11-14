@@ -29,6 +29,7 @@
   import SshTrustView from "$views/SshTrustView.svelte";
   import FrostView from "$views/FrostView.svelte";
   import KeyVersionsView from "$views/KeyVersionsView.svelte";
+  import SystemHealthView from "$views/SystemHealthView.svelte";
 
   // Once authenticated, ensure the session (permissions + capabilities) is
   // loaded before the shell gates navigation. Runs whenever auth status flips.
@@ -87,6 +88,7 @@
       <SigningKeysView />
     {:else if routerStore.name === "platform"}
       <PlatformView />
+    {:else if routerStore.name === "systemHealth"}<SystemHealthView />
     {:else if routerStore.name === "settings"}
       <SettingsView />
     {:else if routerStore.name === "login" || routerStore.name === "register"}
