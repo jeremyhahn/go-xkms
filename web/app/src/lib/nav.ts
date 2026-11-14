@@ -68,6 +68,7 @@ export const navSections: NavSection[] = [
       { route: "certImport", path: "/certs/import", label: "Import Certificate", icon: "FileBadge", requires: { resource: "certs", action: "enroll" } },
       { route: "ca", path: "/ca", label: "Certificate Authority", icon: "Landmark", capability: "ca" },
       { route: "caTcg", path: "/ca/tcg", label: "TCG Certificates", icon: "Fingerprint", capability: "ca", requires: { resource: "certs", action: "issue" } },
+      { route: "trustRoots", path: "/trust/roots", label: "Trust Roots", icon: "Fingerprint", capability: "trust_roots", requires: { resource: "trust_roots", action: "list" } },
     ],
   },
   {

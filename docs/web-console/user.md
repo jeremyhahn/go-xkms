@@ -151,6 +151,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Certificates & CA | Certificates, Import Certificate, Certificate Authority | `#/certs`, `#/certs/import`, `#/ca` |
 | Certificates & CA | Certificates, Certificate Authority, TCG Certificates | `#/certs`, `#/ca`, `#/ca/tcg` |
 | Certificates & CA | Certificate Binding, Certificates, Certificate Authority | `#/users/cert-bindings`, `#/certs`, `#/ca` |
+| Certificates & CA | Certificates, Certificate Authority, Trust Roots | `#/certs`, `#/ca`, `#/trust/roots` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Security | PIN, PIV, SSH, Passwords, Password Access Mode, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/passwords/access-mode`, `#/oidc/credentials`, `#/platform` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets, Boot Credentials | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform`, `#/credentials/boot` |
