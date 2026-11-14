@@ -17,16 +17,15 @@ import (
 const inHouseModules = "github.com/jeremyhahn"
 
 // goPrivateAssign matches an assignment of a variable that takes modules off
-// the proxy or the checksum database: NAME=v, NAME:=v, NAME?=v, NAME+=v (shell,
-// Makefile, compose list, `docker run -e`, Dockerfile ENV), `ENV NAME v`
-// (Dockerfile) and `NAME: v` (compose map).
+// the proxy or the checksum database, or of any GO* variable whose name holds
+// PRIVATE, NOSUMDB, NOPROXY or INSECURE (GOMODAUTH_GOPRIVATE, a helper such as
+// GOMODAUTH_GOPRIVATE_DEFAULT), so moving the literal into another variable
+// cannot pass the gate: NAME=v, NAME:=v, NAME?=v, NAME+=v (shell, Makefile,
+// compose list, `docker run -e`, Dockerfile ENV), `ENV NAME v` (Dockerfile)
+// and `NAME: v` (compose map). A conditional default, such as compose's
+// ${GITEA_HOST:+...}, counts like any other value (DS-7983).
 var goPrivateAssign = regexp.MustCompile(
-	`(?:^|[^A-Za-z0-9_])(?:(GOPRIVATE|GONOSUMDB|GONOPROXY|GOINSECURE|GOMODAUTH_GOPRIVATE)(?:\s*(?::=|\?=|\+=|=)\s*|:\s+)|ENV\s+(GOPRIVATE|GONOSUMDB|GONOPROXY|GOINSECURE)\s+)(.*)`)
-
-// giteaOnly matches a ${GITEA_HOST:+...} expansion: the module name it holds
-// only applies with a Gitea rewrite configured (main #2057, CA m2514), so
-// the gate drops it before it looks for an in-house module.
-var giteaOnly = regexp.MustCompile(`\$\{GITEA_HOST:\+[^{}]*\}`)
+	`(?:^|[^A-Za-z0-9_])(?:(GO[A-Z0-9_]*(?:PRIVATE|NOSUMDB|NOPROXY|INSECURE)[A-Z0-9_]*)(?:\s*(?::=|\?=|\+=|=)\s*|:\s+)|ENV\s+(GOPRIVATE|GONOSUMDB|GONOPROXY|GOINSECURE)\s+)(.*)`)
 
 // goPrivateProblems reports each line of src (named name) that assigns one of
 // the variables above a value naming an in-house module. A comment line, or
@@ -42,7 +41,7 @@ func goPrivateProblems(name, src string) []string {
 			line = line[:j]
 		}
 		for _, m := range goPrivateAssign.FindAllStringSubmatch(line, -1) {
-			if strings.Contains(giteaOnly.ReplaceAllString(m[3], ""), inHouseModules) {
+			if strings.Contains(m[3], inHouseModules) {
 				problems = append(problems, name+":"+strconv.Itoa(i+1)+": "+m[1]+m[2]+" names an in-house module")
 			}
 		}
@@ -116,6 +115,11 @@ func TestGoPrivateProblemsCatchEachForm(t *testing.T) {
 		"      - GOPRIVATE=" + inHouseModules + "/*",
 		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-" + inHouseModules + "/*}",
 		"      - GOPRIVATE=${GITEA_HOST:+x} " + inHouseModules + "/*",
+		// A module name behind a credential condition or a helper variable
+		// is still a default (Codex P1 on a77f8f575).
+		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+" + inHouseModules + "/*}}",
+		"GOMODAUTH_GOPRIVATE_DEFAULT := $(if $(GOPRIVATE),$(GOPRIVATE)," + inHouseModules + "/*)",
+		"GONOSUMDB_FALLBACK = " + inHouseModules + "/*",
 	}
 	for _, line := range bad {
 		if got := goPrivateProblems("f", line); len(got) != 1 {
@@ -125,8 +129,8 @@ func TestGoPrivateProblemsCatchEachForm(t *testing.T) {
 	good := []string{
 		"GOMODAUTH_GOPRIVATE := $(GOPRIVATE)",
 		"      - GOPRIVATE=${GOPRIVATE:-}",
-		// Main's #2057 form (CA m2514): the module only behind a Gitea rewrite.
-		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+" + inHouseModules + "/*}}",
+		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GOPRIVATE:-}}",
+		"GOMODAUTH_GIT_CONFIG_VALUE_0 := https://" + inHouseModules + "/",
 		"                    -e GOPRIVATE='$(GOMODAUTH_GOPRIVATE)' \\",
 		"# GOPRIVATE=" + inHouseModules + "/* was the old default",
 		"      - GOWORK=off # GOPRIVATE=" + inHouseModules + "/*",
