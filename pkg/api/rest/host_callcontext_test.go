@@ -30,7 +30,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
 	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -428,7 +427,8 @@ func TestNewHostServer_PasskeyAccessTokenNamesTheAccount(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, alice.ID, id.UserID, "the identity must name the account the handle encodes")
 	require.Equal(t, "alice", id.Username)
-	require.Equal(t, qrdbauth.UserSubject(alice.ID), id.Subject)
+	require.Equal(t, base64.RawURLEncoding.EncodeToString(binary.BigEndian.AppendUint64(nil, alice.ID)), id.Subject,
+		"the subject stays the handle every persisted principal reference names")
 
 	// Through the unified server: JWT via the module fallback, go-qrdb
 	// account enrichment, and the authorizer. The granted account is served,

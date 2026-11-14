@@ -238,18 +238,17 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 	}
 
 	// A passkey login mints its subject as the account's base64 WebAuthn
-	// handle (sub_kind=user_handle). Bind it back to the account, so the
-	// identity carries UserID and the RBAC layer finds the account's grants.
-	// A handle that encodes no account id stays unbound: it names no
-	// account, so it holds no account's grants.
+	// handle (sub_kind=user_handle). The identity is bound to the account
+	// through UserID and Username, so the RBAC layer finds the account's
+	// grants. Subject stays the handle: key policies, the password store and
+	// every other persisted principal reference name the caller by it. A
+	// handle that encodes no account id stays unbound: it names no account,
+	// so it holds no account's grants.
 	if kind, _ := claims[SubjectKindMetadataKey].(string); kind == SubjectKindUserHandle {
 		identity.Metadata[SubjectKindMetadataKey] = kind
 		if userID, ok := decodeWebAuthnHandle(sub); ok {
-			// Binding renames Subject to the account id; data keyed by
-			// the subject before binding (the password store's vault,
-			// entries and shared OwnerID) keeps its handle key.
-			identity.Metadata[OwnerSubjectMetadataKey] = sub
-			identity.BindUser(userID, identity.Metadata["username"])
+			identity.UserID = userID
+			identity.Username = identity.Metadata["username"]
 		}
 	}
 
@@ -308,26 +307,6 @@ func extractRolesClaim(claims jwt.MapClaims) []string {
 		return []string{role}
 	}
 	return nil
-}
-
-// OwnerSubjectMetadataKey records, on an identity the JWT authenticator bound
-// to an account, the subject the token carried before binding: the account's
-// base64 WebAuthn handle. Data persisted under that subject before accounts
-// were bound (the password store's personal vault and entries, a shared
-// entry's OwnerID) stays addressed by it, so an upgrade loses none of it.
-const OwnerSubjectMetadataKey = "owner_subject"
-
-// OwnerSubject returns the key an identity's persisted ownership is recorded
-// under: the pre-binding subject when the identity was bound to an account,
-// and Subject otherwise.
-func OwnerSubject(identity *Identity) string {
-	if identity == nil {
-		return ""
-	}
-	if owner := identity.Metadata[OwnerSubjectMetadataKey]; owner != "" {
-		return owner
-	}
-	return identity.Subject
 }
 
 // validateAudience checks if the token audience matches any configured audience.

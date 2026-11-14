@@ -1102,8 +1102,9 @@ func TestPasswordAdd_SharedPersonalIsolation(t *testing.T) {
 // regression for the JWT authenticator's BindUser: before binding, a passkey
 // session's subject was the account's base64 WebAuthn handle, and the password
 // store keyed the personal vault, its entries and a shared entry's OwnerID by
-// it. Binding renames Subject to the account id; the same account's token
-// after the upgrade must still reach every entry written under the handle.
+// it. Binding sets the account id beside the subject and keeps the handle as
+// Subject; the same account's token after the upgrade must still reach every
+// entry written under the handle.
 func TestPasswordStore_PasskeyEntriesSurviveAccountBinding(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
 
@@ -1137,7 +1138,7 @@ func TestPasswordStore_PasskeyEntriesSurviveAccountBinding(t *testing.T) {
 	bound, err := authn.AuthenticateHTTP(req)
 	require.NoError(t, err)
 	require.Equal(t, uint64(42), bound.UserID, "the passkey token binds to its account")
-	require.NotEqual(t, handle, bound.Subject, "binding names the account by id")
+	require.Equal(t, handle, bound.Subject, "binding keeps the handle as the subject")
 	boundCtx := auth.WithIdentity(context.Background(), bound)
 
 	personal, err := svc.PasswordList(boundCtx, &transport.PasswordListRequest{Scope: "personal"})
