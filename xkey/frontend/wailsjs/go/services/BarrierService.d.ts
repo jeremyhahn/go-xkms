@@ -40,8 +40,6 @@ export function SetDataDir(arg1:string):Promise<void>;
 
 export function SetExternalStrategyFunc(arg1:any):Promise<void>;
 
-export function SetIndependentPassword(arg1:boolean):Promise<void>;
-
 export function SetLastStrategy(arg1:string):Promise<void>;
 
 export function SetPostUnsealHook(arg1:any):Promise<void>;

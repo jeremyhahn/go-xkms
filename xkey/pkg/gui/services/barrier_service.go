@@ -32,6 +32,27 @@ import (
 // Used as the fallback when no explicit dataDir is configured.
 const barrierSubdir = "barrier"
 
+// barrierCredentialSourceFile, in configDir, records which credential the
+// barrier is sealed under: barrierCredentialSourceIndependent or
+// barrierCredentialSourceUserPIN.
+const (
+	barrierCredentialSourceFile        = "barrier-credential-source"
+	barrierCredentialSourceIndependent = "independent_password"
+	barrierCredentialSourceUserPIN     = "user_pin"
+)
+
+// ErrBarrierCredentialSource reports a failure to persist the barrier's
+// credential source.
+type ErrBarrierCredentialSource struct {
+	Err error
+}
+
+func (e *ErrBarrierCredentialSource) Error() string {
+	return "barrier: record credential source: " + e.Err.Error()
+}
+
+func (e *ErrBarrierCredentialSource) Unwrap() error { return e.Err }
+
 // barrierRootKeyPath is the storage key for the sealed root key blob.
 const barrierRootKeyPath = "barrier/root_key"
 
@@ -103,15 +124,54 @@ type BarrierService struct {
 	// independentPassword is set when the barrier was sealed under a master
 	// password of its own rather than the user PIN (the wizard's
 	// UseUserPinAsMaster=false with a BarrierPassword). A user PIN change
-	// then leaves the barrier alone. The default is PIN-bound, the lock
-	// screen's assumption.
+	// then leaves the barrier alone. The wizard records it
+	// (recordCredentialSource) and NewBarrierService restores it. The
+	// default is PIN-bound, the lock screen's assumption.
 	independentPassword atomic.Bool
 }
 
-// SetIndependentPassword records whether the barrier is sealed under an
-// independent master password instead of the user PIN.
-func (s *BarrierService) SetIndependentPassword(independent bool) {
+// recordCredentialSource persists whether the barrier is sealed under a
+// master password of its own (independent) or the user PIN, beside the
+// barrier in configDir, so NewBarrierService restores it after a restart.
+// The setup wizard records it once the barrier is created or reopened.
+func (s *BarrierService) recordCredentialSource(independent bool) error {
+	source := barrierCredentialSourceUserPIN
+	if independent {
+		source = barrierCredentialSourceIndependent
+	}
+	if err := os.MkdirAll(s.configDir, 0700); err != nil {
+		return &ErrBarrierCredentialSource{Err: err}
+	}
+	path := filepath.Join(s.configDir, barrierCredentialSourceFile)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(source), 0600); err != nil {
+		return &ErrBarrierCredentialSource{Err: err}
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return &ErrBarrierCredentialSource{Err: errors.Join(err, os.Remove(tmp))}
+	}
 	s.independentPassword.Store(independent)
+	return nil
+}
+
+// restoreCredentialSource loads the credential source recordCredentialSource
+// persisted. With none recorded, or an unrecognised one, the barrier is
+// PIN-bound, the lock screen's assumption.
+func (s *BarrierService) restoreCredentialSource() {
+	data, err := os.ReadFile(filepath.Join(s.configDir, barrierCredentialSourceFile))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			s.log.Warn("barrier: credential source unreadable; treating the barrier as PIN-bound", "error", err)
+		}
+		return
+	}
+	switch string(data) {
+	case barrierCredentialSourceIndependent:
+		s.independentPassword.Store(true)
+	case barrierCredentialSourceUserPIN:
+	default:
+		s.log.Warn("barrier: unrecognised credential source; treating the barrier as PIN-bound")
+	}
 }
 
 // FollowsUserPIN reports whether the barrier credential is the user PIN, so a
@@ -136,10 +196,12 @@ func destroyCreds(c xkms.SealCredentials) error {
 }
 
 func NewBarrierService(configDir string, log *slog.Logger) *BarrierService {
-	return &BarrierService{
+	s := &BarrierService{
 		configDir: configDir,
 		log:       log.With("component", "barrier_service"),
 	}
+	s.restoreCredentialSource()
+	return s
 }
 
 // SetContext is the Wails lifecycle hook that provides the application context.

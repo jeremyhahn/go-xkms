@@ -70,10 +70,6 @@ export function SetExternalStrategyFunc(arg1) {
   return window['go']['services']['BarrierService']['SetExternalStrategyFunc'](arg1);
 }
 
-export function SetIndependentPassword(arg1) {
-  return window['go']['services']['BarrierService']['SetIndependentPassword'](arg1);
-}
-
 export function SetLastStrategy(arg1) {
   return window['go']['services']['BarrierService']['SetLastStrategy'](arg1);
 }

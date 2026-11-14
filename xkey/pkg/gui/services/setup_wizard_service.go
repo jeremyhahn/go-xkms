@@ -753,6 +753,18 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			}
 		}
 
+		// Record which credential the barrier is sealed under, so a later
+		// user PIN change (after a restart too) rewraps a PIN-bound barrier
+		// and leaves one under its own master password alone.
+		if barrierInitialized {
+			independent := barrierPW != choices.UserPin
+			if err := s.barrierSvc.recordCredentialSource(independent); err != nil {
+				slog.Error("wizard: barrier credential source not recorded", "error", err)
+				result.Errors = append(result.Errors, err.Error())
+				result.Success = false
+			}
+		}
+
 		// Detect a silent hardware->passphrase downgrade. This happens when the
 		// user requested hardware-backed sealing (tpm2 / pkcs11 / tpm_sealed) but
 		// the hardware strategy was unavailable or failed (e.g. TPM_RC_BAD_AUTH,
