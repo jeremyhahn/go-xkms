@@ -67,6 +67,7 @@ export const navSections: NavSection[] = [
       { route: "wrappedDataKey", path: "/keys/data-keys", label: "Data Keys", icon: "KeyRound", requires: { resource: "keys", action: "encrypt" } },
       { route: "keyBatch", path: "/keys/batch", label: "Batch Crypto", icon: "Lock", requires: { resource: "keys", action: "encrypt" } },
       { route: "keyPublicKey", path: "/keys/public-key", label: "Public Keys", icon: "Key", requires: { resource: "keys", action: "get" } },
+      { route: "keyLifecycle", path: "/keys/lifecycle", label: "Key Lifecycle", icon: "ShieldCheck", requires: { resource: "keys", action: "rotate" } },
     ],
   },
   {
