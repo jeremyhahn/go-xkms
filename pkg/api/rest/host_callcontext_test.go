@@ -43,6 +43,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
@@ -434,6 +435,83 @@ func TestNewHostServer_PasskeyAccessTokenNamesTheAccount(t *testing.T) {
 	// the ungranted one is denied.
 	require.Equal(t, http.StatusOK, get(aliceToken), "an account holding keys:read must be served")
 	require.Equal(t, http.StatusForbidden, get(bobToken), "an account without keys:read must be denied")
+}
+
+// TestNewHostServer_AnonymousRegistrationRefusedOverEnforcingNode is CA
+// ruling 602: over an enforcing embedded node, anonymous public
+// registration is refused pending the owner's pending-account decision
+// (go-xkms #2202), even with allow_public_registration on. The begin
+// answers the documented 403 registration_refused, never a 500, and
+// persists no account an anonymous caller could use to reserve the email.
+func TestNewHostServer_AnonymousRegistrationRefusedOverEnforcingNode(t *testing.T) {
+	node := newEnforcingNode(t)
+	srv := newEnforcingHostServer(t, node)
+
+	body, err := json.Marshal(map[string]string{"email": "anon@example.com", "display_name": "Anon"})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	var refusal ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &refusal))
+	require.Equal(t, webauthnhttp.ErrorCodeRegistrationRefused, refusal.Error)
+
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	_, err = node.Client().Users().GetUserByEmail(ctx, DefaultWebAuthnTenant, "anon@example.com")
+	require.Error(t, err, "a refused anonymous begin must leave no user")
+	var denied *qrdbsdk.PermissionDeniedError
+	require.NotErrorAs(t, err, &denied, "the lookup must be authorized, so its failure means no user")
+}
+
+// TestNewHostServer_AddPasskeyBeginOverEnforcingNode proves refusing
+// anonymous registration leaves the authenticated add-a-passkey flow
+// working over an enforcing node: an account's own session begins a
+// ceremony for that account's handle.
+func TestNewHostServer_AddPasskeyBeginOverEnforcingNode(t *testing.T) {
+	node := newEnforcingNode(t)
+	srv := newEnforcingHostServer(t, node)
+
+	ctx := context.Background()
+	u, err := node.UserService().CreateUser(ctx, &qrdbuser.CreateUserRequest{
+		Username: "carol@example.com",
+		Email:    "carol@example.com",
+		Name:     "Carol",
+	})
+	require.NoError(t, err)
+	var raw [8]byte
+	binary.BigEndian.PutUint64(raw[:], u.ID)
+	handle := base64.RawURLEncoding.EncodeToString(raw[:])
+	pair, err := srv.tokenIssuer.Mint(ctx, &auth.Identity{
+		Subject:  handle,
+		TenantID: DefaultWebAuthnTenant,
+		Metadata: map[string]string{
+			auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle,
+			"username":                  "carol@example.com",
+			"email":                     "carol@example.com",
+		},
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/credentials/begin", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	require.NotEmpty(t, w.Header().Get(webauthnhttp.HeaderSessionID))
+	var options struct {
+		PublicKey struct {
+			User struct {
+				ID string `json:"id"`
+			} `json:"user"`
+		} `json:"publicKey"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &options))
+	require.Equal(t, handle, options.PublicKey.User.ID, "the ceremony enrols the session's own account")
 }
 
 // keysProbeModule mounts GET /api/v1/keys under keys:read on the unified

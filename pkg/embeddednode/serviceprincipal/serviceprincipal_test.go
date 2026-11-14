@@ -219,13 +219,23 @@ func TestRegisterRefreshGrant_AuthorizesUserLookup(t *testing.T) {
 	assert.NotErrorAs(t, err, &denied)
 }
 
-func TestWebAuthnGrant_IsUsersCRUDCopy(t *testing.T) {
+// TestWebAuthnGrant_HoldsNoUsersCreate is CA ruling 602: the principal never
+// creates a user for the WebAuthn store, so an anonymous registration/begin
+// over an enforcing node cannot persist an account (go-xkms #2202).
+func TestWebAuthnGrant_HoldsNoUsersCreate(t *testing.T) {
+	RegisterWebAuthnGrant()
+	assert.NotContains(t, WebAuthnGrant(), qrdbsdk.Permission("users:create"))
+	assert.False(t, qrdbsdk.HasPermissionRoleGrant(Name, "users:create"),
+		"no grant this package registers holds users:create")
+}
+
+func TestWebAuthnGrant_IsUsersCopy(t *testing.T) {
 	base := Grant()
 	RegisterWebAuthnGrant()
 
 	got := WebAuthnGrant()
 	assert.ElementsMatch(t, []qrdbsdk.Permission{
-		"users:read", "users:create", "users:update", "users:delete",
+		"users:read", "users:update", "users:delete",
 	}, got)
 	assert.Equal(t, base, Grant(), "registering the WebAuthn grant leaves the base grant unchanged")
 	for _, p := range got {
