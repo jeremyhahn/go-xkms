@@ -63,6 +63,7 @@ export const navSections: NavSection[] = [
       { route: "keyRotationPolicy", path: "/keys/rotation-policy", label: "Rotation Policy", icon: "KeyRound", requires: { resource: "keys", action: "get" } },
       { route: "keyMetadata", path: "/keys/metadata", label: "Key Metadata", icon: "Key", requires: { resource: "keys", action: "get" } },
       { route: "keyHmac", path: "/keys/hmac", label: "HMAC", icon: "Fingerprint", requires: { resource: "keys", action: "sign" } },
+      { route: "keyRewrap", path: "/keys/rewrap", label: "Rewrap", icon: "Split", requires: { resource: "keys", action: "decrypt" } },
     ],
   },
   {
