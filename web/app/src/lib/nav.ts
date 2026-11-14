@@ -65,6 +65,7 @@ export const navSections: NavSection[] = [
       { route: "ssh", path: "/ssh", label: "SSH", icon: "TerminalSquare", capability: "ssh", requires: { resource: "ssh", action: "read" } },
       { route: "passwords", path: "/passwords", label: "Passwords", icon: "Vault", capability: "passwords", requires: { resource: "passwords", action: "read" } },
       { route: "oidcCredentials", path: "/oidc/credentials", label: "OIDC Credentials", icon: "LogIn", capability: "oidc_credentials", requires: { resource: "oidc_credentials", action: "list" } },
+      { route: "signingKeys", path: "/attestation/signing-keys", label: "Signing Keys", icon: "KeyRound", requires: { resource: "attestation_signing_keys", action: "list" } },
       { route: "platform", path: "/platform", label: "Platform Secrets", icon: "FolderLock", capability: "platform" },
     ],
   },
