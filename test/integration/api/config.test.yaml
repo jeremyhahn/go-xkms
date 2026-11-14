@@ -31,8 +31,10 @@ tls:
   key_file: /etc/xkms/certs/server.key
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
-  # No client auth for integration tests
-  client_auth: none
+  # Request but do not require a client certificate: the init-ceremony admin
+  # credential authenticates over mTLS to provision test accounts, while
+  # anonymous and session clients still connect.
+  client_auth: verify
 
 # Adaptive authentication: anonymous until the first user is provisioned, then
 # enforced. This keeps the integration suites able to exercise the API without
@@ -54,8 +56,10 @@ webauthn:
   authenticator_attachment: ""
   resident_key: "preferred"
   user_verification: "preferred"
-  # Registration is closed by default (go-xkms#184); the suite creates its
-  # users through open sign-up, so opt in explicitly.
+  # Registration is closed by default (go-xkms#184). Even opted in, an
+  # enforcing node refuses anonymous sign-up with 403 registration_refused
+  # (ruling 602, pending #2202); the suite proves that and provisions its
+  # accounts as admin, redeeming each invitation with a passkey.
   allow_public_registration: true
 
 ratelimit:

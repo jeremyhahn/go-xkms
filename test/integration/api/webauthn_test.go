@@ -165,6 +165,23 @@ func TestWebAuthnBeginRegistration(t *testing.T) {
 		assertNoError(t, err, "Begin registration request failed")
 		defer resp.Body.Close()
 
+		// Ruling 602 (pending #2202): anonymous sign-up is refused with a clean
+		// 403 and creates no account.
+		assertEqual(t, http.StatusForbidden, resp.StatusCode, "Anonymous registration must be refused")
+		var refusal map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&refusal)
+		assertNoError(t, err, "Failed to decode refusal")
+		assertEqual(t, "registration_refused", refusal["error"], "Unexpected refusal code")
+		assertNoUserWithEmail(t, cfg, testEmail)
+
+		// The ceremony options are checked on the supported path: an
+		// admin-provisioned account that signed in with its passkey begins
+		// adding a passkey to itself.
+		account := provisionPasskeyAccount(t, cfg, testEmail)
+		resp, err = account.doRequest("POST", "/api/v1/webauthn/credentials/begin", nil)
+		assertNoError(t, err, "Begin add-credential request failed")
+		defer resp.Body.Close()
+
 		assertEqual(t, http.StatusOK, resp.StatusCode, "Unexpected status code")
 
 		// Check for session ID header
