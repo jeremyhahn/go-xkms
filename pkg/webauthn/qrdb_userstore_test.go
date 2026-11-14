@@ -306,6 +306,29 @@ func TestQRDBAdapter_CreateAndGetByEmail(t *testing.T) {
 	}
 }
 
+func TestQRDBAdapter_GetByUsername(t *testing.T) {
+	us, _, _ := newTestAdapter(t)
+	ctx := context.Background()
+	user, err := us.Create(ctx, "alice@example.com", "Alice")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := us.GetByUsername(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("GetByUsername: %v", err)
+	}
+	if string(got.WebAuthnID()) != string(user.WebAuthnID()) {
+		t.Fatalf("ID mismatch")
+	}
+
+	for _, username := range []string{"", "nobody"} {
+		if _, err := us.GetByUsername(ctx, username); !errors.Is(err, ErrUserNotFound) {
+			t.Fatalf("GetByUsername(%q) = %v, want ErrUserNotFound", username, err)
+		}
+	}
+}
+
 func TestQRDBAdapter_GetByEmail_NotFound(t *testing.T) {
 	us, _, _ := newTestAdapter(t)
 	_, err := us.GetByEmail(context.Background(), "nobody@example.com")
