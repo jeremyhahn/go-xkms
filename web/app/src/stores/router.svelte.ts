@@ -18,6 +18,7 @@
  */
 
 export type RouteName =
+  | "userCertBinding"
   | "dashboard"
   | "trustBundle"
   | "login"
@@ -74,6 +75,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/login": "login",
   "/tenants/entitlements": "tenantEntitlements",
   "/register": "register",
+  "/users/cert-bindings": "userCertBinding",
   "/backends": "backends",
   "/ssh/import": "sshKeyImport",
   "/keys": "keys",
