@@ -72,6 +72,7 @@ export type RouteName =
   | "tenantDetail"
   | "keyPublicKey"
   | "keyLifecycle"
+  | "userDetail"
   | "settings"
   | "frostKeyImport"
   | "not-found";
@@ -141,6 +142,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/tenants/detail": "tenantDetail",
   "/keys/public-key": "keyPublicKey",
   "/keys/lifecycle": "keyLifecycle",
+  "/users/detail": "userDetail",
   "/settings": "settings",
   "/platform/secrets": "platformSecretNames",
 };

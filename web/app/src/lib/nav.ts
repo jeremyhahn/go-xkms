@@ -106,6 +106,7 @@ export const navSections: NavSection[] = [
       { route: "tenantQuotas", path: "/tenants/quotas", label: "Tenant Quotas", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "set_quotas" } },
       { route: "users", path: "/users", label: "Users", icon: "Users", requires: { resource: "users", action: "list" } },
       { route: "addPasskey", path: "/account/passkeys", label: "Add Passkey", icon: "Fingerprint", capability: "webauthn" },
+      { route: "userDetail", path: "/users/detail", label: "User Detail", icon: "Users", requires: { resource: "users", action: "read" } },
       { route: "tenants", path: "/tenants", label: "Tenants", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "list" } },
       { route: "tenantTpm", path: "/tenants/tpm", label: "Tenant TPM", icon: "Server", capability: "tpm_policies", requires: { resource: "tenants", action: "read" } },
       { route: "tenantDetail", path: "/tenants/detail", label: "Tenant Detail", icon: "Building2", capability: "tenants", requires: { resource: "tenants", action: "read" } },

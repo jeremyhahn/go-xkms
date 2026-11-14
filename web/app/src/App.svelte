@@ -36,6 +36,7 @@
   import TenantDetailView from "$views/TenantDetailView.svelte";
   import KeyPublicKeyView from "$views/KeyPublicKeyView.svelte";
   import KeyLifecycleView from "$views/KeyLifecycleView.svelte";
+  import UserDetailView from "$views/UserDetailView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
   import CertImportView from "$views/CertImportView.svelte";
   import PinView from "$views/PinView.svelte";
@@ -136,6 +137,7 @@
     {:else if routerStore.name === "tenantDetail"}<TenantDetailView />
     {:else if routerStore.name === "keyPublicKey"}<KeyPublicKeyView />
     {:else if routerStore.name === "keyLifecycle"}<KeyLifecycleView />
+    {:else if routerStore.name === "userDetail"}<UserDetailView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
     {:else if routerStore.name === "tenantTpm"}<TenantTpmView />
