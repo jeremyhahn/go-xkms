@@ -103,6 +103,15 @@ type TokenIssuerParams struct {
 	// writes them may be anonymous (#2541). Nil runs them on the caller's.
 	CallContext token.CallContext
 
+	// UserLookup, when set with QRDBClient, is the embedded node's user
+	// service (Node.UserService): the refresh recheck reads the account
+	// through it in the tenant the refresh token carries. CallContext binds a
+	// principal of one tenant (the node's service principal is the system
+	// tenant's), and qrdb refuses that principal another tenant's account, so
+	// without UserLookup the recheck reads through QRDBClient under
+	// CallContext and only resolves accounts in the principal's tenant.
+	UserLookup auth.ServiceUserLookup
+
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
 
@@ -220,15 +229,24 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
+		// Refresh records are xkms's own persistence: they stay under
+		// CallContext (the node's service principal) whatever tenant the
+		// session belongs to.
 		refreshStore = token.BindRefreshStore(qs, p.CallContext)
-		// Bound to the node's service principal, the refresh recheck reads
-		// the user record as the principal, whichever login flow minted the
-		// session: it needs the principal's refresh grant (users:read), not
-		// only the WebAuthn one.
-		if p.CallContext != nil {
-			serviceprincipal.RegisterRefreshGrant()
+		if p.UserLookup != nil {
+			// The account is read in the refresh token's own tenant through
+			// the node's user service, which authorizes no caller.
+			userResolver = auth.NewQRDBServiceUserResolver(p.UserLookup)
+		} else {
+			// Bound to the node's service principal, the refresh recheck
+			// reads the user record as the principal, whichever login flow
+			// minted the session: it needs the principal's refresh grant
+			// (users:read), not only the WebAuthn one.
+			if p.CallContext != nil {
+				serviceprincipal.RegisterRefreshGrant()
+			}
+			userResolver = token.BindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
 		}
-		userResolver = token.BindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}

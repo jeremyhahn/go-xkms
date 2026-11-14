@@ -1672,6 +1672,32 @@ func (n nodeCertUsers) UserByCertThumbprint(ctx context.Context, thumbprint stri
 	return users.UserByCertThumbprint(ctx, thumbprint)
 }
 
+// nodeRefreshUsers is the refresh recheck's account lookup over the embedded
+// node's user service (auth.ServiceUserLookup). It reads the service per
+// call, so a node that publishes its data plane after the issuer is built
+// (an unseal) still serves the lookup.
+type nodeRefreshUsers struct {
+	node *qrdbnode.Node
+}
+
+// GetUser implements auth.ServiceUserLookup.
+func (n nodeRefreshUsers) GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.GetUser(ctx, id)
+}
+
+// GetUserByUsername implements auth.ServiceUserLookup.
+func (n nodeRefreshUsers) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.GetUserByUsername(ctx, tenantID, username)
+}
+
 // initializeKeyVersionStore builds the key-version record store through
 // compose.BuildKeyVersionStore -- the path an embedding host's module takes
 // -- over its database on the server's datastore, whose calls run as the
