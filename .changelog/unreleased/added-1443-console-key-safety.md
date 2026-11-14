@@ -1,0 +1,1 @@
+Web console: a Key Safety view (`#/keys/safety`, Keys & Crypto, needs keys:get) shows keys near or past their usage limits and the usage report, and sets or clears a key's usage limits (max operations, max bytes, warning percent) through the existing `/api/v1/keys/{id}/safety` and `/api/v1/safety/*` routes (#1443).

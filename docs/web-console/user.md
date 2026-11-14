@@ -131,12 +131,12 @@ tenants. The dashboard shows whether the deployment is clustered.
 
 | Section | Screen | Route |
 |---|---|---|
-| Overview | Dashboard, Backends | `#/dashboard`, `#/backends` |
-| Keys & Crypto | Keys, FROST, TPM Policies | `#/keys`, `#/frost`, `#/tpm/policies` |
-| Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
-| Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
-| Settings | Settings | `#/settings` |
+| Overview | FROST Signing, Dashboard, Trust Bundle, Backends, System Health, Backend Diagnostics | `#/frost/sign`, `#/dashboard`, `#/trust/bundle`, `#/backends`, `#/system/health`, `#/backends/diagnostics` |
+| Keys & Crypto | FROST Key Import, Keys, Key Versions, FROST, TPM Key Policy, TPM Policies, Seal, Key Safety, OTA Image Keys, Random & Hash, Key Access Policy, Rotation Policy, Key Metadata, HMAC, Rewrap, Data Keys, Batch Crypto, Public Keys, Key Lifecycle, TPM Policy Detail | `#/frost/import`, `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/key-policy`, `#/tpm/policies`, `#/seal`, `#/keys/safety`, `#/keys/ota`, `#/tools/crypto`, `#/keys/access-policy`, `#/keys/rotation-policy`, `#/keys/metadata`, `#/keys/hmac`, `#/keys/rewrap`, `#/keys/data-keys`, `#/keys/batch`, `#/keys/public-key`, `#/keys/lifecycle`, `#/tpm/policies/detail` |
+| Certificates & CA | Certificate Binding, Certificates, Import Certificate, Certificate Authority, TCG Certificates, Trust Roots | `#/users/cert-bindings`, `#/certs`, `#/certs/import`, `#/ca`, `#/ca/tcg`, `#/trust/roots` |
+| Security | SSH Key Import, PIN, PIN Setup, PIV, PIV Slots, SSH, SSH Trust, SSH Sign, Passwords, Password Access Mode, OIDC Credentials, Signing Keys, Platform Secrets, Boot Credentials, Bootstrap Keys | `#/ssh/import`, `#/pin`, `#/pin/setup`, `#/piv`, `#/piv/slots`, `#/ssh`, `#/ssh/trust`, `#/ssh/sign`, `#/passwords`, `#/passwords/access-mode`, `#/oidc/credentials`, `#/attestation/signing-keys`, `#/platform`, `#/credentials/boot`, `#/bootstrap/keys` |
+| Identity & Access | Tenant Quotas, Users, Add Passkey, User Detail, Tenants, Tenant TPM, Tenant Detail | `#/tenants/quotas`, `#/users`, `#/account/passkeys`, `#/users/detail`, `#/tenants`, `#/tenants/tpm`, `#/tenants/detail` |
+| Settings | Secret Names, Settings, Tenant Entitlements | `#/platform/secrets`, `#/settings`, `#/tenants/entitlements` |
 
 Every nav entry is gated twice: an RBAC gate hides an entry the identity
 has no permission for, and a capability gate hides one the deployment never

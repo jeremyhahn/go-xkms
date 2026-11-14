@@ -1,0 +1,1 @@
+- **The web console has a Public Keys view.** `#/keys/public-key` (Keys & Crypto, needs `keys:get`) fetches the public half of an asymmetric key, the latest or one version, through `GET /api/v1/keys/{id}/public-key` and shows it as base64 DER and PEM, with Copy PEM and a `<key_id>-v<version>.pem` download. Private key material is never requested.

@@ -18,24 +18,65 @@
  */
 
 export type RouteName =
+  | "userCertBinding"
   | "dashboard"
+  | "trustBundle"
   | "login"
+  | "tenantEntitlements"
   | "register"
+  | "platformSecretNames"
   | "backends"
+  | "sshKeyImport"
   | "keys"
+  | "keyVersions"
+  | "frostSigning"
   | "certificates"
+  | "certImport"
   | "ca"
+  | "caTcg"
   | "tenants"
+  | "tenantTpm"
   | "pin"
+  | "pinSetup"
   | "piv"
+  | "pivSlots"
   | "ssh"
+  | "sshTrust"
   | "passwords"
+  | "passwordAccessMode"
   | "oidcCredentials"
+  | "signingKeys"
   | "platform"
+  | "systemHealth"
+  | "bootCredentials"
   | "tpmPolicies"
+  | "seal"
+  | "tpmKeyPolicy"
   | "users"
+  | "addPasskey"
   | "frost"
+  | "tenantQuotas"
+  | "keySafety"
+  | "otaImageKeys"
+  | "cryptoTools"
+  | "trustRoots"
+  | "keyAccessPolicy"
+  | "keyRotationPolicy"
+  | "keyMetadata"
+  | "backendDiagnostics"
+  | "keyHmac"
+  | "bootstrapKeys"
+  | "keyRewrap"
+  | "wrappedDataKey"
+  | "keyBatch"
+  | "sshSign"
+  | "tenantDetail"
+  | "keyPublicKey"
+  | "keyLifecycle"
+  | "userDetail"
+  | "tpmPolicyDetail"
   | "settings"
+  | "frostKeyImport"
   | "not-found";
 
 export interface Route {
@@ -48,25 +89,66 @@ export interface Route {
 // (none yet in this phase) would be matched separately below.
 const staticRoutes: Record<string, RouteName> = {
   "/": "dashboard",
+  "/frost/sign": "frostSigning",
   "/dashboard": "dashboard",
+  "/trust/bundle": "trustBundle",
   "/login": "login",
+  "/tenants/entitlements": "tenantEntitlements",
   "/register": "register",
+  "/users/cert-bindings": "userCertBinding",
   "/backends": "backends",
+  "/ssh/import": "sshKeyImport",
   "/keys": "keys",
+  "/keys/versions": "keyVersions",
   "/certs": "certificates",
+  "/frost/import": "frostKeyImport",
   "/certificates": "certificates",
+  "/certs/import": "certImport",
   "/ca": "ca",
+  "/ca/tcg": "caTcg",
   "/tenants": "tenants",
+  "/tenants/tpm": "tenantTpm",
   "/pin": "pin",
+  "/pin/setup": "pinSetup",
   "/piv": "piv",
+  "/piv/slots": "pivSlots",
   "/ssh": "ssh",
+  "/ssh/trust": "sshTrust",
   "/passwords": "passwords",
+  "/passwords/access-mode": "passwordAccessMode",
   "/oidc/credentials": "oidcCredentials",
+  "/attestation/signing-keys": "signingKeys",
   "/platform": "platform",
+  "/system/health": "systemHealth",
+  "/credentials/boot": "bootCredentials",
   "/tpm/policies": "tpmPolicies",
+  "/seal": "seal",
+  "/tpm/key-policy": "tpmKeyPolicy",
   "/users": "users",
+  "/account/passkeys": "addPasskey",
   "/frost": "frost",
+  "/tenants/quotas": "tenantQuotas",
+  "/keys/safety": "keySafety",
+  "/keys/ota": "otaImageKeys",
+  "/tools/crypto": "cryptoTools",
+  "/trust/roots": "trustRoots",
+  "/keys/access-policy": "keyAccessPolicy",
+  "/keys/rotation-policy": "keyRotationPolicy",
+  "/keys/metadata": "keyMetadata",
+  "/backends/diagnostics": "backendDiagnostics",
+  "/keys/hmac": "keyHmac",
+  "/bootstrap/keys": "bootstrapKeys",
+  "/keys/rewrap": "keyRewrap",
+  "/keys/data-keys": "wrappedDataKey",
+  "/keys/batch": "keyBatch",
+  "/ssh/sign": "sshSign",
+  "/tenants/detail": "tenantDetail",
+  "/keys/public-key": "keyPublicKey",
+  "/keys/lifecycle": "keyLifecycle",
+  "/users/detail": "userDetail",
+  "/tpm/policies/detail": "tpmPolicyDetail",
   "/settings": "settings",
+  "/platform/secrets": "platformSecretNames",
 };
 
 export function parseHash(hash: string): Route {
