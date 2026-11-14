@@ -265,6 +265,24 @@ func TestSoftwareAdapter_GetAssertion_WithoutAllowList(t *testing.T) {
 	if response["type"] != "public-key" {
 		t.Errorf("type = %v, want 'public-key'", response["type"])
 	}
+
+	// A discoverable assertion carries the credential's user handle
+	// (WebAuthn Level 2 §5.2.2): the user.id given at registration.
+	assertion, ok := response["response"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("response.response missing or not an object: %v", response["response"])
+	}
+	userHandleB64, ok := assertion["userHandle"].(string)
+	if !ok {
+		t.Fatalf("response.userHandle missing: %v", assertion)
+	}
+	userHandle, err := base64.RawURLEncoding.DecodeString(userHandleB64)
+	if err != nil {
+		t.Fatalf("userHandle is not base64url: %v", err)
+	}
+	if string(userHandle) != "user-123" {
+		t.Errorf("userHandle = %q, want %q", userHandle, "user-123")
+	}
 }
 
 func TestSoftwareAdapter_CredentialCount(t *testing.T) {

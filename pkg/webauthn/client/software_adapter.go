@@ -327,21 +327,50 @@ func (a *SoftwareAdapter) GetAssertion(_ context.Context, ceremonyOpts *Ceremony
 
 	authDataRaw, _ := ctapResp[0x02].([]byte)
 	signature, _ := ctapResp[0x03].([]byte)
+	userHandle, err := extractUserHandle(ctapResp)
+	if err != nil {
+		return nil, err
+	}
 
 	// Build the WebAuthn JSON assertion response
 	credIDB64 := base64.RawURLEncoding.EncodeToString(credIDBytes)
+	assertion := map[string]interface{}{
+		"clientDataJSON":    base64.RawURLEncoding.EncodeToString(clientDataBytes),
+		"authenticatorData": base64.RawURLEncoding.EncodeToString(authDataRaw),
+		"signature":         base64.RawURLEncoding.EncodeToString(signature),
+	}
+	if userHandle != nil {
+		assertion["userHandle"] = base64.RawURLEncoding.EncodeToString(userHandle)
+	}
 	response := map[string]interface{}{
-		"id":    credIDB64,
-		"rawId": credIDB64,
-		"type":  "public-key",
-		"response": map[string]interface{}{
-			"clientDataJSON":    base64.RawURLEncoding.EncodeToString(clientDataBytes),
-			"authenticatorData": base64.RawURLEncoding.EncodeToString(authDataRaw),
-			"signature":         base64.RawURLEncoding.EncodeToString(signature),
-		},
+		"id":       credIDB64,
+		"rawId":    credIDB64,
+		"type":     "public-key",
+		"response": assertion,
 	}
 
 	return json.Marshal(response)
+}
+
+// extractUserHandle returns the user handle carried in the CTAP2
+// authenticatorGetAssertion response member user (0x04), or nil when the
+// authenticator omitted it. CTAP2.1 §6.2.2 has the authenticator include the
+// user for a discoverable credential selected without an allow list; WebAuthn
+// Level 2 §5.2.2 surfaces its id as AuthenticatorAssertionResponse.userHandle.
+func extractUserHandle(ctapResp map[int]interface{}) ([]byte, error) {
+	raw, present := ctapResp[0x04]
+	if !present {
+		return nil, nil
+	}
+	userMap, ok := raw.(map[interface{}]interface{})
+	if !ok {
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "malformed user in assertion response"}
+	}
+	userID, ok := userMap["id"].([]byte)
+	if !ok || len(userID) == 0 {
+		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "malformed user ID in assertion response"}
+	}
+	return userID, nil
 }
 
 // CredentialCount returns the number of stored credentials.

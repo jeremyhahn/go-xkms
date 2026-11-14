@@ -178,16 +178,16 @@ func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID st
 		return nil, nil, time.Time{}, &qrdbsdk.FactorTypeUnsupportedError{Type: string(factorType)}
 	}
 
-	// A non-empty hint (username/email) scopes the ceremony to that user's
+	// A non-empty hint (username or email) scopes the ceremony to that user's
 	// credentials; otherwise nil requests a discoverable-credential ceremony.
+	// The hint is tried as a username first and then as an email, so a user
+	// without an email (the first-boot admin) is found too (go-xkms#1759).
 	// An account that may not log in (xkmswebauthn.CheckAccountStanding) is
 	// treated exactly like an unknown hint, so the ceremony's shape does not
 	// reveal its state; Verify refuses it regardless (go-xkms#1298).
 	var userID []byte
-	if hint != "" {
-		if u, uErr := v.service.GetUserByEmail(ctx, hint); uErr == nil && u != nil && xkmswebauthn.CheckAccountStanding(u) == nil {
-			userID = u.WebAuthnID()
-		}
+	if u := v.resolveHint(ctx, hint); u != nil && xkmswebauthn.CheckAccountStanding(u) == nil {
+		userID = u.WebAuthnID()
 	}
 
 	options, sessionID, err := v.service.BeginLogin(ctx, userID)
@@ -203,6 +203,23 @@ func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID st
 		"options":    string(optionsJSON),
 	}
 	return []byte(options.Response.Challenge), meta, time.Time{}, nil
+}
+
+// resolveHint returns the user a login hint names, looking it up as a
+// username and then as an email. It returns nil for an empty hint or one
+// that resolves to nobody; a lookup error is treated as not found, so the
+// caller cannot tell an unknown hint from a failed one.
+func (v *WebAuthnFactorVerifier) resolveHint(ctx context.Context, hint string) xkmswebauthn.User {
+	if hint == "" {
+		return nil
+	}
+	if u, err := v.service.GetUserByUsername(ctx, hint); err == nil && u != nil {
+		return u
+	}
+	if u, err := v.service.GetUserByEmail(ctx, hint); err == nil && u != nil {
+		return u
+	}
+	return nil
 }
 
 // Compile-time interface assertion. The qrdb embedded transport's

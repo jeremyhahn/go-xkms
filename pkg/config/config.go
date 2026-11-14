@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
@@ -477,9 +478,27 @@ type SessionConfig struct {
 	// RefreshTokenTTL is the rotating refresh token lifetime (e.g. "8h").
 	RefreshTokenTTL string `yaml:"refresh_token_ttl"`
 
+	// AccessTokenType is the JOSE "typ" header (RFC 7515 §4.1.9) of issued
+	// access tokens. Empty keeps "JWT"; "at+jwt" marks them as OAuth 2.0
+	// JWT access tokens (RFC 9068 §2.1). Refresh tokens are unaffected.
+	AccessTokenType string `yaml:"access_token_type"`
+
 	// LoginRatePerMin caps per-client login and refresh attempts per minute.
 	// Zero uses the default (10).
 	LoginRatePerMin int `yaml:"login_rate_per_min"`
+}
+
+// SessionConfigError reports an auth.session field whose value is not one
+// the session token issuer accepts.
+type SessionConfigError struct {
+	// Field names the offending auth.session key.
+	Field string
+	// Value is the rejected value.
+	Value string
+}
+
+func (e *SessionConfigError) Error() string {
+	return "config: invalid auth.session." + e.Field + ": " + e.Value
 }
 
 // CompositeAuthConfig configures composite authentication that chains
@@ -1655,7 +1674,8 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Session TTLs must parse as Go durations when set.
+	// Session TTLs must parse as Go durations when set, and the access token
+	// type is empty (typ "JWT") or "at+jwt" (RFC 9068 §2.1).
 	if c.Auth.Session != nil {
 		if v := c.Auth.Session.AccessTokenTTL; v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
@@ -1666,6 +1686,9 @@ func (c *Config) Validate() error {
 			if _, err := time.ParseDuration(v); err != nil {
 				return &errs.Message{Msg: fmt.Sprintf("invalid auth.session.refresh_token_ttl: %s", v)}
 			}
+		}
+		if v := c.Auth.Session.AccessTokenType; v != "" && v != token.ATJWTType {
+			return &SessionConfigError{Field: "access_token_type", Value: v}
 		}
 	}
 
