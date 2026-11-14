@@ -158,22 +158,24 @@ sort -zu "$FILES" >"$FILES.sorted" || fail "cannot sort the matching paths"
 # "line:text"; cut keeps the line number and drops the text before anything
 # reaches the log. The hits go through a 0600 file in the rules directory so
 # that each grep's own status is checked: a file grep cannot read (exit 2) is
-# a scan failure, never a clean file.
+# a scan failure, never a clean file. -a reads each file as text: git grep -I
+# already dropped NUL files, and in a UTF-8 locale grep would call a line with
+# an invalid byte binary and print no number for it.
 HITS="$RULES_DIR/hits"
 lines() {
 	local rc
 	(umask 077 && : >"$HITS") || return 2
 	if [ -s "$RULES_CS" ]; then
 		rc=0
-		grep -nE -f "$RULES_CS" -- "$1" >>"$HITS" || rc=$?
+		grep -anE -f "$RULES_CS" -- "$1" >>"$HITS" || rc=$?
 		[ "$rc" -le 1 ] || return 2
 	fi
 	if [ -s "$RULES_CI" ]; then
 		rc=0
-		grep -niE -f "$RULES_CI" -- "$1" >>"$HITS" || rc=$?
+		grep -aniE -f "$RULES_CI" -- "$1" >>"$HITS" || rc=$?
 		[ "$rc" -le 1 ] || return 2
 	fi
-	{ grep -vE 'lab-string-ok:[[:space:]]*[[:alnum:]]' -- "$HITS" || [ "$?" = 1 ]; } | cut -d: -f1 | sort -nu
+	{ grep -avE 'lab-string-ok:[[:space:]]*[[:alnum:]]' -- "$HITS" || [ "$?" = 1 ]; } | cut -d: -f1 | sort -nu
 }
 
 found=0
