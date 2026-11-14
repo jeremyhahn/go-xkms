@@ -24,6 +24,7 @@
   import PivView from "$views/PivView.svelte";
   import CaView from "$views/CaView.svelte";
   import SshView from "$views/SshView.svelte";
+  import SshTrustView from "$views/SshTrustView.svelte";
   import FrostView from "$views/FrostView.svelte";
   import KeyVersionsView from "$views/KeyVersionsView.svelte";
 
@@ -64,6 +65,7 @@
       <PivView />
     {:else if routerStore.name === "ssh"}
       <SshView />
+    {:else if routerStore.name === "sshTrust"}<SshTrustView />
     {:else if routerStore.name === "tpmPolicies"}
       <TpmPoliciesView />
     {:else if routerStore.name === "seal"}<SealView />

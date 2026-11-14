@@ -136,6 +136,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Keys & Crypto | Keys, Key Versions, FROST, TPM Policies | `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/policies` |
 | Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Signing Keys, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/attestation/signing-keys`, `#/platform` |
+| Security | PIN, PIV, SSH, SSH Trust, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/ssh/trust`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
 | Settings | Settings | `#/settings` |
 
