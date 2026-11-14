@@ -105,6 +105,9 @@ func (m *Module) restServer() (*rest.Server, error) {
 			return nil, &HostBuildError{Err: err}
 		}
 		hc.DAOFactory = ds.DAOFactory()
+		if m.resolveUserLookup != nil {
+			hc.UserLookup = m.resolveUserLookup()
+		}
 	}
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)

@@ -688,6 +688,12 @@ type HostConfig struct {
 	// store's calls run on; see WebAuthnServiceParams.CallContext.
 	WebAuthnCallContext qrdbstorage.CallContext
 
+	// UserLookup is the embedded node's user service (Node.UserService), the
+	// refresh recheck's lookup in the refresh token's own tenant; see
+	// TokenIssuerParams.UserLookup. Nil reads the account through QRDBClient
+	// under WebAuthnCallContext, which resolves only the principal's tenant.
+	UserLookup auth.ServiceUserLookup
+
 	// WebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
 	// store the WebAuthn relying party persists passkeys through, letting
 	// the composing host add its own side effects (an identity-plane auth
@@ -802,6 +808,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			// and the login may be anonymous: run it on the same binder
 			// the WebAuthn user store uses (#2541).
 			CallContext: token.CallContext(hc.WebAuthnCallContext),
+			UserLookup:  hc.UserLookup,
 			Logger:      logger,
 		})
 		if tiErr != nil {

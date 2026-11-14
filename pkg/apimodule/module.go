@@ -53,6 +53,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -142,6 +143,21 @@ func WithQRDBClient(resolve QRDBClientResolver) Option {
 func WithServiceContext(bind qrdbstorage.CallContext) Option {
 	return func(m *Module) {
 		m.serviceContext = bind
+	}
+}
+
+// UserLookupResolver returns the host's embedded node user service
+// (Node.UserService), or nil while the node is not serving.
+type UserLookupResolver func() auth.ServiceUserLookup
+
+// WithUserLookup wires the host's user-service resolver: the self-built REST
+// surface's refresh recheck reads the account through it in the refresh
+// token's own tenant (rest.HostConfig.UserLookup), as xkmsd's does. Absent
+// one, the recheck reads through the qrdb client under the service context
+// and resolves only accounts in the service principal's tenant.
+func WithUserLookup(resolve UserLookupResolver) Option {
+	return func(m *Module) {
+		m.resolveUserLookup = resolve
 	}
 }
 
@@ -340,6 +356,10 @@ type Module struct {
 	// serviceContext is WithServiceContext's binder, applied to every
 	// datastore the module opens (openDatastore).
 	serviceContext qrdbstorage.CallContext
+
+	// resolveUserLookup is WithUserLookup's resolver, read when the
+	// self-built REST surface is constructed.
+	resolveUserLookup UserLookupResolver
 
 	// Host composition inputs (module_host.go): the dependencies the module
 	// builds its store-backed features from when it self-builds.
