@@ -41,19 +41,18 @@ go-qrdb's own create path (needs the v0.58.2-alpha bump, frozen); docs/SPEC.md.
 - `go test -count=1 -tags "codec_cbor codec_json codec_msgpack" ./pkg/xkms/... ./pkg/spiffe/... ./pkg/acme/admin/... ./cmd/xkmsd/...`: pass; no existing test needed a new tenant ID.
 - `make lint`: pass (0 issues on every module and tag set).
 
-## What remains of the row (next slice, 2026-11-13)
+## SPEC text (lane row2094b, 2026-11-14)
 
-- docs/SPEC.md row `workload-identity` (line 141): the policy guard refuses this
-  lane without LANE_POLICY_ALLOW. Text to apply:
-  - after "go-xkms refuses any other tenant before it signs
-    (`pkg/spiffe/spiffe.go:97`)" add: ", and both its tenant-create paths, the
-    core lifecycle behind /api/v1/tenants (`pkg/xkms/servicer_tenant.go:104`)
-    and the ACME admin service (`pkg/acme/admin/tenant_service.go:222`),
-    refuse such an ID and the cluster trust domain (`:108`, `:226`) before
-    go-qrdb is called".
-  - Open note: narrow to "a tenant created directly in go-qrdb, outside
-    go-xkms"; go-qrdb v0.58.2-alpha `ValidateTenantIDTrustDomain`
-    (`pkg/tenant/reserved.go:146`) closes it with the go-qrdb bump.
-- The row stays `in progress` until the go-qrdb v0.58.2-alpha bump, which is
-  frozen (DS-7715). pkg/spiffe/spiffe.go and pkg/auth/mtls.go need no change:
-  the sign-time refusal (`pkg/spiffe/spiffe.go:97`) is already the cited line.
+- docs/SPEC.md row `workload-identity` now says both tenant-create paths
+  (`pkg/xkms/servicer_tenant.go:104`, `pkg/acme/admin/tenant_service.go:222`)
+  refuse a non-trust-domain ID and the cluster trust domain (`:108`, `:226`)
+  before go-qrdb is called; each cited line checked against the code.
+- The open note is narrowed to a tenant created directly in go-qrdb, outside
+  go-xkms, closed by go-qrdb v0.58.2-alpha `ValidateTenantIDTrustDomain`
+  (`pkg/tenant/reserved.go:146`).
+
+## What remains of the row
+
+- The go-qrdb v0.58.2-alpha bump, frozen (DS-7715). The row stays
+  `in progress` until it lands; then the open note is removed and the row
+  can move on. pkg/spiffe/spiffe.go and pkg/auth/mtls.go need no change.
