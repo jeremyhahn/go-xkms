@@ -20,6 +20,7 @@
   import SealView from "$views/SealView.svelte";
   import TpmKeyPolicyView from "$views/TpmKeyPolicyView.svelte";
   import UsersView from "$views/UsersView.svelte";
+  import AddPasskeyView from "$views/AddPasskeyView.svelte";
   import TenantsView from "$views/TenantsView.svelte";
   import TenantTpmView from "$views/TenantTpmView.svelte";
   import PasswordsView from "$views/PasswordsView.svelte";
@@ -86,6 +87,7 @@
     {:else if routerStore.name === "tpmKeyPolicy"}<TpmKeyPolicyView />
     {:else if routerStore.name === "users"}
       <UsersView />
+    {:else if routerStore.name === "addPasskey"}<AddPasskeyView />
     {:else if routerStore.name === "frost"}
       <FrostView />
     {:else if routerStore.name === "tenants"}
