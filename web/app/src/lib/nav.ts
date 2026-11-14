@@ -65,6 +65,7 @@ export const navSections: NavSection[] = [
       { route: "keyHmac", path: "/keys/hmac", label: "HMAC", icon: "Fingerprint", requires: { resource: "keys", action: "sign" } },
       { route: "keyRewrap", path: "/keys/rewrap", label: "Rewrap", icon: "Split", requires: { resource: "keys", action: "decrypt" } },
       { route: "wrappedDataKey", path: "/keys/data-keys", label: "Data Keys", icon: "KeyRound", requires: { resource: "keys", action: "encrypt" } },
+      { route: "keyBatch", path: "/keys/batch", label: "Batch Crypto", icon: "Lock", requires: { resource: "keys", action: "encrypt" } },
     ],
   },
   {
