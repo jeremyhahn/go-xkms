@@ -26,6 +26,13 @@ Every fetched certificate is filed under `bootstrap-ca` with source
 address when only Noise is configured), exactly as `trust fetch` and the GUI's
 trust-strap import file it. It is never auto-classified.
 
+**Against a server.** With an xkmsd endpoint configured, the bundle is fetched
+the same way and then imported into the server's trust-root store through
+`TrustRootImport`, with the same `bootstrap-ca` purpose and `platform:<host>`
+source; the local store is never written. The output is the same
+`Certificates imported: N` line, plus
+`Certificates skipped (already present): N` when the server already held some.
+
 ## `xkey trust fetch <url>` (SPKI-pinned direct fetch)
 
 `xkey trust fetch` and `xkey trust import-platform` (below) go through a
@@ -117,7 +124,7 @@ Error: trust: import-platform failed: trust: platform CA bundle fetch failed: Ge
 | Verb | Flags |
 |---|---|
 | `trust add <pem-file>` | `--purpose`, `--source` |
-| `trust list` | — |
+| `trust list` | `--purpose` |
 | `trust show <fingerprint>` | — |
 | `trust remove <fingerprint>` | — |
 
@@ -154,6 +161,18 @@ configuration from, so adding a server's CA here is enough to let
 
 Everything after `add` is keyed by **fingerprint**, not by name.
 
+`trust list --purpose <purpose>` lists only the certificates of one purpose:
+`general`, `tpm-manufacturer`, `android-hardware`, `user-ca`, `bootstrap-ca`,
+`idevid-issuer`, `image-signer` or `synced`. Locally a certificate with no
+metadata counts as `general`; against a server the filter is sent as the
+`TrustRootList` request's purpose. An unknown purpose fails with
+`ErrTrustListFailed` before any store is read or call is made; a filter that
+matches nothing prints `No trusted certificates found.`
+
+```
+xkey trust list --purpose tpm-manufacturer
+```
+
 ## `xkey trust classify <fingerprint> --purpose <purpose>`
 
 `--purpose` is **required**. The set:
@@ -185,6 +204,14 @@ the guarantee that verification was providing — if an attestation is failing,
 the question is whether the right anchor is present, not whether this one can be
 made to count.
 
+**Against a server.** With an xkmsd endpoint configured, `classify` changes
+the server's trust-root store and never the local one. The server offers one
+reclassification, quarantine: `--purpose synced` calls `TrustRootQuarantine`
+and prints the purpose the server returns. Any other purpose is refused with
+`trust: classify failed` before any call is made; to give a server root
+another purpose, `xkey trust remove` it and `xkey trust add` it again with
+`--purpose`. There is no fallback to the local store.
+
 ## `xkey trust install` / `uninstall <fingerprint>`
 
 ```
@@ -195,6 +222,15 @@ xkey trust uninstall 3fa1…
 `install` writes into the **operating system and NSS trust stores**. Every
 application on the machine — browsers included — trusts the certificate
 afterwards, not just xkey. `uninstall` reverses it, and removing xkey does not.
+
+**Against a server.** With an xkmsd endpoint configured, `install` takes the
+certificate from the server's trust-root store (`TrustRootGet`), checks that
+its fingerprint is the one given, and installs it under the same
+`xkey-<first 16 hex digits>` label. An unknown fingerprint fails with
+`ErrTrustInstallFailed`, the error naming `TrustRootGet`. No installed flag is recorded,
+locally or on the server, and the local store is never opened. `uninstall`
+removes the OS trust store entry under that label and reads neither store, so
+it also cleans up a root the server no longer holds.
 
 ## A first-run sequence
 
