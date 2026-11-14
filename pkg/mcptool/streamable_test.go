@@ -205,6 +205,35 @@ func TestStreamableHTTP_RejectsBadResponses(t *testing.T) {
 	}
 }
 
+// TestStreamableHTTP_MediaTypeIsCaseInsensitive pins RFC 9110 media-type
+// matching: type and subtype compare case-insensitively and parameters such
+// as charset are ignored, so a server spelling Application/JSON or
+// Text/Event-Stream is answered like one spelling them in lower case.
+func TestStreamableHTTP_MediaTypeIsCaseInsensitive(t *testing.T) {
+	const response = `{"jsonrpc":"2.0","id":1,"result":{"ok":true}}`
+	for _, tc := range []struct {
+		contentType string
+		body        string
+	}{
+		{contentType: "Application/JSON", body: response},
+		{contentType: "Application/JSON; charset=utf-8", body: response},
+		{contentType: "APPLICATION/json;Charset=UTF-8", body: response},
+		{contentType: "Text/Event-Stream", body: "data: " + response + "\n\n"},
+		{contentType: "Text/Event-Stream; charset=utf-8", body: "data: " + response + "\n\n"},
+	} {
+		t.Run(tc.contentType, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			resp, err := newStreamableHTTP(srv.URL, http.DefaultTransport, nil).SendRequest(context.Background(), initRequest())
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"ok":true}`, string(resp.Result))
+		})
+	}
+}
+
 // TestStreamableHTTP_ResponsesCarryTheRequestID pins response correlation: a
 // JSON-RPC response is the request's result only when its wire ID matches
 // the request's ID. A JSON body with a mismatched, missing or null ID is an
