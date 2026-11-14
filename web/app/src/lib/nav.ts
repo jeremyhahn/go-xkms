@@ -58,6 +58,7 @@ export const navSections: NavSection[] = [
       { route: "keySafety", path: "/keys/safety", label: "Key Safety", icon: "Lock", requires: { resource: "keys", action: "get" } },
       { route: "otaImageKeys", path: "/keys/ota", label: "OTA Image Keys", icon: "ScrollText", requires: { resource: "keys", action: "create" } },
       { route: "cryptoTools", path: "/tools/crypto", label: "Random & Hash", icon: "Sparkles", requires: { resource: "keys", action: "verify" } },
+      { route: "keyAccessPolicy", path: "/keys/access-policy", label: "Key Access Policy", icon: "ShieldCheck", requires: { resource: "keys", action: "get" } },
     ],
   },
   {
