@@ -55,6 +55,7 @@ export const navSections: NavSection[] = [
       { route: "tpmKeyPolicy", path: "/tpm/key-policy", label: "TPM Key Policy", icon: "ScrollText", capability: "tpm_policies", requires: { resource: "tpm_policy", action: "get" } },
       { route: "tpmPolicies", path: "/tpm/policies", label: "TPM Policies", icon: "ShieldCheck", capability: "tpm_policies" },
       { route: "seal", path: "/seal", label: "Seal", icon: "Lock", requires: { resource: "keys", action: "encrypt" } },
+      { route: "keySafety", path: "/keys/safety", label: "Key Safety", icon: "Lock", requires: { resource: "keys", action: "get" } },
     ],
   },
   {
