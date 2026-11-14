@@ -43,6 +43,7 @@ export type RouteName =
   | "systemHealth"
   | "tpmPolicies"
   | "seal"
+  | "tpmKeyPolicy"
   | "users"
   | "frost"
   | "settings"
@@ -84,6 +85,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/system/health": "systemHealth",
   "/tpm/policies": "tpmPolicies",
   "/seal": "seal",
+  "/tpm/key-policy": "tpmKeyPolicy",
   "/users": "users",
   "/frost": "frost",
   "/settings": "settings",
