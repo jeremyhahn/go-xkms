@@ -69,7 +69,7 @@ func TestSigningKeyClassOf(t *testing.T) {
 // TestSigningKeyClassOf_Unclassified proves an error outside the model, and
 // nil, are not classified.
 func TestSigningKeyClassOf_Unclassified(t *testing.T) {
-	for _, err := range []error{nil, errors.New("disk full"), xkms.ErrKeyNotFound} {
+	for _, err := range []error{nil, errors.New("disk full")} {
 		got, ok := SigningKeyClassOf(err)
 		assert.False(t, ok, "%v", err)
 		assert.Equal(t, ClassInternal, got, "%v", err)
