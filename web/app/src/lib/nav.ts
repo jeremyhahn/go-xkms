@@ -39,6 +39,7 @@ export const navSections: NavSection[] = [
     heading: "Overview",
     items: [
       { route: "dashboard", path: "/dashboard", label: "Dashboard", icon: "LayoutDashboard" },
+      { route: "trustBundle", path: "/trust/bundle", label: "Trust Bundle", icon: "ShieldCheck" },
       { route: "backends", path: "/backends", label: "Backends", icon: "Server", requires: { resource: "backends", action: "list" } },
       { route: "systemHealth", path: "/system/health", label: "System Health", icon: "Network" },
     ],
