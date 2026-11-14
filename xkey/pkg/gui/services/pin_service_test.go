@@ -689,6 +689,51 @@ func TestPINService_ChangeUserPIN_NoBarrierService(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// The wizard may seal the barrier under an independent master password
+// (UseUserPinAsMaster=false, BarrierPassword set): a PIN change commits and
+// leaves that barrier and its password alone.
+func TestPINService_ChangeUserPIN_IndependentBarrierPasswordLeftAlone(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("independent-master-password", "passphrase"))
+	svc.SetBarrierService(barrierSvc)
+
+	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
+
+	require.NoError(t, barrierSvc.Seal())
+	reopened := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.Error(t, reopened.Unseal("new-pin", "passphrase"), "the PIN never became the barrier's credential")
+	require.NoError(t, reopened.Unseal("independent-master-password", "passphrase"))
+}
+
+// A PIN-bound barrier is rewrapped only together with the PIN: when the PIN
+// backend refuses the change, the barrier still opens with the current PIN
+// and not the new one, so the two credentials never diverge.
+func TestPINService_ChangeUserPIN_FailedPINChangeLeavesBarrierUnchanged(t *testing.T) {
+	pinErr := errors.New("pin backend refused the change")
+	backend := &mockPINBackend{
+		strategy:      qrdbsdk.PINStrategySoftware,
+		userPINSet:    true,
+		changeUserErr: pinErr,
+	}
+	svc := newTestPINService(backend)
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("old-pin", "passphrase"))
+	svc.SetBarrierService(barrierSvc)
+
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, pinErr)
+
+	require.NoError(t, barrierSvc.Seal())
+	reopened := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.Error(t, reopened.Unseal("new-pin", "passphrase"), "the barrier must not take a PIN the backend refused")
+	require.NoError(t, reopened.Unseal("old-pin", "passphrase"))
+}
+
 func TestPINService_SetBarrierService_NilSafe(t *testing.T) {
 	svc := NewPINService()
 	svc.SetBarrierService(nil) // should not panic
