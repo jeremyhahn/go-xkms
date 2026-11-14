@@ -93,6 +93,7 @@ export const navSections: NavSection[] = [
   {
     heading: "Settings",
     items: [
+      { route: "platformSecretNames", path: "/platform/secrets", label: "Secret Names", icon: "FolderLock", capability: "platform", requires: { resource: "keys", action: "list" } },
       { route: "settings", path: "/settings", label: "Settings", icon: "Settings" },
     ],
   },
