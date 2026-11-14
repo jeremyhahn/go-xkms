@@ -193,7 +193,7 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 	workDir := req.WorkDir
 	ownsWorkDir := false
 	if workDir == "" {
-		dir, err := os.MkdirTemp("", "xkey-ssh-")
+		dir, err := os.MkdirTemp(defaultWorkDirBase(), workDirPattern)
 		if err != nil {
 			return nil, &LaunchError{Op: "tempdir", Err: err}
 		}
@@ -609,6 +609,91 @@ var removeAll = os.RemoveAll
 // cleanupDir removes the work dir with remove, only when this package created
 // it. The caller passes the seam it read, so a background reaper uses the one
 // in force when it started.
+// maxSocketPathLen is the longest agent socket path a default work dir may
+// produce. AF_UNIX's sun_path buffer is 108 bytes on Linux and 104 on macOS,
+// each including the trailing NUL; staying under 104 is safe on both, so a
+// long TMPDIR fails over to a short base instead of failing bind(2) with
+// EINVAL (the same limit xkey/pkg/ipc applies to its own sockets).
+const maxSocketPathLen = 103
+
+// workDirPattern is the os.MkdirTemp pattern of a default work dir.
+const workDirPattern = "xkey-ssh-"
+
+// shortWorkDirBase is the last-resort base for a default work dir: short
+// enough that the agent socket under it always fits sun_path.
+const shortWorkDirBase = "/tmp"
+
+// geteuid is os.Geteuid, a seam so tests can stand in for another user.
+var geteuid = os.Geteuid
+
+// defaultWorkDirBase picks the base directory of a default work dir: the
+// usual temp dir when the agent socket under it fits sun_path, else
+// $XDG_RUNTIME_DIR when it is a usable private directory that fits, else
+// /tmp. MkdirTemp still makes the work dir itself 0700 and owned by this
+// process, so the choice of base never weakens the socket's protection.
+func defaultWorkDirBase() string {
+	if fitsSunPath(os.TempDir()) {
+		return ""
+	}
+	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" && filepath.IsAbs(xdg) && fitsSunPath(xdg) && isPrivateDir(xdg) {
+		return xdg
+	}
+	return shortWorkDirBase
+}
+
+// fitsSunPath reports whether an agent socket in a default work dir under
+// base stays within maxSocketPathLen. The placeholder stands in for the
+// random suffix MkdirTemp appends (at most 20 decimal digits).
+func fitsSunPath(base string) bool {
+	probe := filepath.Join(base, workDirPattern+"00000000000000000000")
+	return len(sshagent.SocketPath(probe)) <= maxSocketPathLen
+}
+
+// isPrivateDir reports whether dir is a 0700 directory owned by the
+// effective user that nobody else can swap out. Writability is not enough:
+// root may write any 0700 directory, and if it inherited an unprivileged
+// user's XDG_RUNTIME_DIR that user could rename the session dir and
+// redirect UserKnownHostsFile and SSH_AUTH_SOCK. Root therefore gets no
+// exception. For the same reason no component of dir may be a symlink
+// (its owner could repoint it after this check), and every ancestor must
+// be owned by root or the effective user and be writable by nobody else
+// unless it is sticky, as /tmp is.
+func isPrivateDir(dir string) bool {
+	dir = filepath.Clean(dir)
+	if resolved, err := filepath.EvalSymlinks(dir); err != nil || resolved != dir {
+		return false
+	}
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return false
+	}
+	if uid, ok := dirOwner(info); !ok || uid != geteuid() {
+		return false
+	}
+	for parent := filepath.Dir(dir); ; parent = filepath.Dir(parent) {
+		if !isSafeAncestor(parent) {
+			return false
+		}
+		if parent == filepath.Dir(parent) {
+			return true
+		}
+	}
+}
+
+// isSafeAncestor reports whether only root or the effective user can
+// rename entries in dir: it is owned by one of them and is not group- or
+// other-writable unless the sticky bit is set.
+func isSafeAncestor(dir string) bool {
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	if uid, ok := dirOwner(info); !ok || (uid != 0 && uid != geteuid()) {
+		return false
+	}
+	return info.Mode().Perm()&0o022 == 0 || info.Mode()&os.ModeSticky != 0
+}
+
 func cleanupDir(remove func(string) error, owns bool, dir string) error {
 	if owns && dir != "" {
 		return remove(dir)

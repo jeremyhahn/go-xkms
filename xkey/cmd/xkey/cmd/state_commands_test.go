@@ -364,6 +364,19 @@ func noDaemonSocket(t *testing.T) string {
 func privateTempDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	if len(dir)+len("/test-barrier-serve.sock") > maxTestSocketPathLen {
+		// A long TMPDIR (CI runner pools nest it under the job's work dir)
+		// would push sockets under t.TempDir() past AF_UNIX's sun_path, so
+		// bind/dial fail with EINVAL instead of the error under test.
+		short, err := os.MkdirTemp("/tmp", "xk-")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = os.RemoveAll(short) })
+		dir = short
+	}
 	require.NoError(t, os.Chmod(dir, 0o700))
 	return dir
 }
+
+// maxTestSocketPathLen keeps test socket paths within AF_UNIX's sun_path:
+// 108 bytes on Linux and 104 on macOS, each including the trailing NUL.
+const maxTestSocketPathLen = 103
