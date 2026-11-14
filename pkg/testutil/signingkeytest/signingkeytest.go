@@ -48,5 +48,13 @@ func Calls(ctx context.Context, svc transport.SigningKeyService) map[string]func
 			_, err := svc.ResolveSigningKey(ctx, &transport.ResolveSigningKeyRequest{Repository: Repository})
 			return err
 		},
+		"SignCoRIM": func() error {
+			_, err := svc.SignCoRIM(ctx, &transport.SignCoRIMRequest{Repository: Repository, CoRIM: []byte{0xd9, 0x01, 0xf5, 0xa0}, SignerName: "Acme"})
+			return err
+		},
+		"SignImage": func() error {
+			_, err := svc.SignImage(ctx, &transport.SignImageRequest{Reference: "registry.example/" + Repository + ":1.0.0"})
+			return err
+		},
 	}
 }

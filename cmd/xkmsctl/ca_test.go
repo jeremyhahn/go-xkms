@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -30,6 +31,10 @@ import (
 
 // mockCAClient is a mock client for CA command tests.
 type mockCAClient struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	connectErr error
 	connected  bool
 
@@ -143,6 +148,10 @@ func (m *mockCAClient) RotateOTAImageKey(_ context.Context, req *client.OTAImage
 func (m *mockCAClient) SignOTAImage(_ context.Context, req *client.OTAImageSignRequest) (*client.SignResponse, error) {
 	return nil, nil
 }
+
+func (m *mockCAClient) ExportOTAImageKey(_ context.Context, req *client.OTAImageKeyRequest) (*client.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
 func (m *mockCAClient) GetImportParameters(_ context.Context, req *client.GetImportParametersRequest) (*client.GetImportParametersResponse, error) {
 	return &client.GetImportParametersResponse{Algorithm: req.Algorithm}, nil
 }
@@ -226,6 +235,26 @@ func (m *mockCAClient) GetCABundle(_ context.Context, _ *transport.GetCABundleRe
 	}
 	return m.caBundle, nil
 }
+func (m *mockCAClient) GetTransparencyLogHead(_ context.Context, _ *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) GetTransparencyLogEntry(_ context.Context, _ *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) GetTransparencyLogInclusionProof(_ context.Context, _ *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, nil
+}
+
 func (m *mockCAClient) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	if m.caCertErr != nil {
 		return nil, m.caCertErr
@@ -1831,5 +1860,12 @@ func (*mockCAClient) DeleteSigningKeyBinding(context.Context, *transport.DeleteS
 	return nil
 }
 func (*mockCAClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*mockCAClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}
+
+func (*mockCAClient) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
 	return nil, nil
 }

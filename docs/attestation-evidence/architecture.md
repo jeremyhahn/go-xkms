@@ -105,7 +105,7 @@ events, 16 algorithms.
 
 ## Device security-event record
 
-SPEC row `device-security-event-evidence` (planned, #1765). An HSM device's
+SPEC row `device-security-event-evidence` (shipped, #1765). An HSM device's
 tamper-response record (trusted-firmware#50, A6) is RFC 9334 Evidence about
 its Attesting Environment (§8.1). go-xkms owns the format and its check.
 
@@ -127,46 +127,78 @@ A CMW (RFC 9999 §3.1 record, §3.3 collection) could label the record next to
 the DICE evidence. It protects nothing by itself (§8.1), so it does not
 answer the binding question.
 
-**Binding options, and what the Verifier may conclude.**
+**Binding: detached digest in signed evidence** (owner ruling 7dbbb72 item
+181, #1765). The device signs EAT evidence that carries a Detached Submodule
+Digest of the record (RFC 9711 §4.2.18.2) and the Verifier's `eat_nonce`
+(RFC 9711 §4.1). The record travels beside the envelope. The alias
+certificate is issued at boot, before the record is written, so it cannot
+carry the digest; the evidence must be signed after the record's last entry.
+The Verifier recomputes the record's digest, compares it with the Detached
+Submodule Digest in the signed evidence, checks the signature through the
+DICE chain and checks the `eat_nonce`. It may then conclude that the
+device's key vouched for this exact record, and that the record is fresh
+(RFC 9334 §10).
+
+The seam has two sides. go-xkms's side is the capability interface below and
+that appraisal. trusted-firmware's side (trusted-firmware#283, theirs) is the
+adapter and firmware change that produces the signed evidence after the
+record's last entry, with the digest and the nonce, and hands the record
+beside it.
+
+Rejected:
 
 - **(a) Channel only.** The record arrives unsigned, as a UCCS. RFC 9781 §4
   accepts that only when the receiver authenticated the sender and the
   channel provides integrity. Out of the channel the record is unprotected,
   and once forwarded it counts as originating at the forwarder (§4). go-xkms
   receives it from the adapter, not from the device, so the Verifier may
-  conclude only that the adapter reported it. It may not conclude that the
-  device's Attesting Environment produced it, or that nothing was left out.
-- **(b) Detached digest in signed evidence.** The device signs evidence that
-  carries a Detached Submodule Digest of the record (RFC 9711 §4.2.18.2) and
-  the Verifier's `eat_nonce` (RFC 9711 §4.1). The alias certificate is
-  issued at boot, before the record is written, so it cannot carry the
-  digest; the evidence must be signed after the record's last entry. The
-  Verifier may then conclude that the device's key vouched for this exact
-  record, and that the record is fresh (RFC 9334 §10). This needs a
-  trusted-firmware change.
-- **(c) Inline submodule in signed evidence.** The same, with the record
-  inside the signed token as a Claims-Set submodule (RFC 9711 §4.2.18.1).
+  conclude only that the adapter reported it, not that the device's
+  Attesting Environment produced it or that nothing was left out.
+- **(c) Inline submodule in signed evidence.** The record inside the signed
+  token as a Claims-Set submodule (RFC 9711 §4.2.18.1). The ruling chose the
+  detached form, so the record travels beside the envelope and the signed
+  evidence carries only its digest.
 
-Which of these is required is open for the owner to rule on.
+**Hook.** Before this row, a backend registered with `RegisterExternalBackend`
+(`pkg/xkms/registry_external.go:54`, SPEC backend-registry) had no call that
+handed go-xkms device evidence: `types.AttestingKeyProvider.AttestKey`
+attests one key, and `dice.Evidence` (`pkg/attestation/dice/verify.go:114`)
+has no submodule field.
 
-**Hook: none yet.** A backend registered with `RegisterExternalBackend`
-(`pkg/xkms/registry_external.go:54`, SPEC backend-registry) has no call that
-hands go-xkms device evidence. The backend contract's only attestation
-capability, `types.AttestingKeyProvider.AttestKey`
-(`pkg/types/types.go:1936`), attests one key. The device's DICE claims
-arrive in `dice.Evidence` (`pkg/attestation/dice/verify.go:114`), which has no
-submodule field: its `Claims.Other` (`:125`) only holds the claims go-xkms
-does not model.
+The row adds one optional capability interface to the backend contract, in
+the `AttestingKeyProvider` pattern: `types.SecurityEventAttester`
+(`pkg/types/types.go`). It embeds `KeyProvider` and adds one method,
+`AttestSecurityEvents(ctx, nonce)`, which returns a
+`types.SecurityEventEvidence`, or `ErrNotSupported` when the backend keeps no
+record. The nonce is the Verifier's `eat_nonce`. The evidence has three
+parts:
 
-The planned row adds one optional capability interface to the backend
-contract, in the `AttestingKeyProvider` pattern. It embeds `KeyProvider` and
-adds one method, `AttestSecurityEvents(ctx, nonce)`, which returns the
-record's Claims-Set, or `ErrNotSupported` when the backend keeps no record.
-The nonce is the Verifier's `eat_nonce` under (b) and (c), and is unused
-under (a). Which of these applies is still the owner's ruling.
+| Field | Content |
+|---|---|
+| `Evidence` | COSE_Sign1_Tagged (RFC 9052 §4.2), ES256, whose payload is a CBOR Claims-Set with `eat_nonce` (10) and `submods` (266) |
+| `Chain` | the signing key's DICE certificate chain, leaf first, DER |
+| `Record` | the record's CBOR Claims-Set, the exact bytes the digest covers |
 
-**Recommendation (not a decision): (b).** A tamper record is worth having
-only if a compromised host cannot hide or rewrite it. Under (a) the record
-is the adapter's word (RFC 9781 §4). (b) binds it to the device's key and
-the Verifier's nonce, and adds only a digest to the signed evidence. (c)
-puts the whole log inside the signed token.
+The `submods` map holds the record under the label `security-events` as a
+Detached-Submodule-Digest `[hash-algorithm, digest]`; the algorithm is a
+COSE Algorithms identifier, integer or text (SHA-256 -16, SHA-384 -43,
+SHA-512 -44).
+
+**Appraisal.** `securityevent.Appraise` (`pkg/attestation/securityevent`)
+takes the evidence and `Options{Nonce, DICE}` and, in order:
+
+1. verifies the chain with `dice.Verify` under `Options.DICE`, whose
+   `ExpectedNonce` is the leaf's boot-time UCCS nonce, not `Options.Nonce`
+   (`ErrMalformedChain`, `ErrUntrustedSigner`);
+2. verifies the COSE_Sign1 signature under the leaf's key, pinned to ES256
+   (`ErrMalformedEvidence`, `ErrSignature`);
+3. compares `eat_nonce` with `Options.Nonce` in constant time
+   (`ErrNonceMismatch`);
+4. finds the `security-events` detached digest (`ErrNoDetachedDigest`,
+   `ErrUnsupportedHashAlgorithm`), recomputes the record's digest over its
+   bytes with no wrapping (§4.2.18.2) and compares it in constant time
+   (`ErrRecordDigestMismatch`);
+5. checks that the record is one well-formed CBOR map (`ErrMalformedRecord`).
+
+It returns the record and the chain's `dice.Evidence`. An inline Claims-Set
+under `security-events` is refused, because option (c) was rejected.

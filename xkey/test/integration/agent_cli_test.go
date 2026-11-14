@@ -55,6 +55,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // agentStateFileRelPath is the run-state file "agent start" writes under
@@ -127,6 +129,9 @@ func setupAgentEnv(t *testing.T) string {
 	t.Setenv("XKEY_HOME", xkeyHome)
 	t.Setenv("HOME", xkeyHome)
 	t.Setenv("XKMSD_URL", startFakeCAEndpoint(t))
+	// The fake CA is a plain-HTTP loopback endpoint, the one use the
+	// mandatory-TLS opt-out exists for (ruling 152); the CLI inherits it.
+	t.Setenv(transport.EnvAllowInsecureTransport, "true")
 
 	return xkeyHome
 }
@@ -302,7 +307,7 @@ func TestAgentCLI_Start_UnreachableCertificateAuthority(t *testing.T) {
 	t.Setenv("XKEY_HOME", xkeyHome)
 	t.Setenv("HOME", xkeyHome)
 	// Port 9 (discard) refuses connections.
-	t.Setenv("XKMSD_URL", "http://127.0.0.1:9")
+	t.Setenv("XKMSD_URL", "https://127.0.0.1:9")
 
 	errOutput := RunXKeyExpectFailure(t, binary, "", "agent", "start", "--listen", "127.0.0.1:0")
 

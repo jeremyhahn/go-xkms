@@ -50,6 +50,35 @@ func TestACMECircuitBreakerConfig_Validate(t *testing.T) {
 	}
 }
 
+// TestACMENonceConfig_Resolve verifies an unset or negative nonce lifetime
+// and used-nonce bound fall back to the defaults, so a nonce epoch is never
+// unbounded, and that configured values are kept.
+func TestACMENonceConfig_Resolve(t *testing.T) {
+	tests := []struct {
+		name         string
+		cfg          ACMENonceConfig
+		wantLifetime time.Duration
+		wantMaxUsed  int
+	}{
+		{name: "zero selects the defaults", cfg: ACMENonceConfig{},
+			wantLifetime: DefaultACMENonceLifetime, wantMaxUsed: DefaultACMENonceMaxUsed},
+		{name: "negative selects the defaults", cfg: ACMENonceConfig{Lifetime: -time.Minute, MaxUsed: -1},
+			wantLifetime: DefaultACMENonceLifetime, wantMaxUsed: DefaultACMENonceMaxUsed},
+		{name: "configured values are kept", cfg: ACMENonceConfig{Lifetime: 2 * time.Minute, MaxUsed: 64},
+			wantLifetime: 2 * time.Minute, wantMaxUsed: 64},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.ResolveLifetime(); got != tt.wantLifetime {
+				t.Errorf("ResolveLifetime() = %v, want %v", got, tt.wantLifetime)
+			}
+			if got := tt.cfg.ResolveMaxUsed(); got != tt.wantMaxUsed {
+				t.Errorf("ResolveMaxUsed() = %d, want %d", got, tt.wantMaxUsed)
+			}
+		})
+	}
+}
+
 // TestACMECircuitBreakerConfig_CircuitBreakerConfig verifies the mapping to
 // circuitbreaker.Config: defaults are substituted for zero fields, and
 // operator-supplied values are carried through untouched.

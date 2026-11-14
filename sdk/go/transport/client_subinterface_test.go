@@ -16,13 +16,19 @@ package transport
 import (
 	"context"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 )
 
 // stubClient is a minimal implementation of Client used for compile-time
 // interface satisfaction checks. All methods panic because they are never
 // called at runtime; they exist solely to prove that a single concrete
 // type satisfying Client also satisfies every sub-interface.
-type stubClient struct{}
+type stubClient struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+}
 
 func (s *stubClient) Connect(context.Context) error { panic("stub") }
 func (s *stubClient) Close() error                  { panic("stub") }
@@ -71,6 +77,9 @@ func (s *stubClient) RotateOTAImageKey(context.Context, *OTAImageKeyRequest) (*R
 }
 
 func (s *stubClient) SignOTAImage(context.Context, *OTAImageSignRequest) (*SignResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) ExportOTAImageKey(context.Context, *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error) {
 	panic("stub")
 }
 func (s *stubClient) GetImportParameters(context.Context, *GetImportParametersRequest) (*GetImportParametersResponse, error) {
@@ -209,6 +218,21 @@ func (s *stubClient) ActivateInvitePIV(context.Context, *ActivateInvitePIVReques
 }
 
 func (s *stubClient) GetCABundle(context.Context, *GetCABundleRequest) (*GetCABundleResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) GetTransparencyLogHead(context.Context, *GetTransparencyLogHeadRequest) (*GetTransparencyLogHeadResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) GetTransparencyLogEntry(context.Context, *GetTransparencyLogEntryRequest) (*GetTransparencyLogEntryResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) GetTransparencyLogInclusionProof(context.Context, *GetTransparencyLogInclusionProofRequest) (*GetTransparencyLogInclusionProofResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) GetTransparencyLogConsistencyProof(context.Context, *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) AppendTransparencyLogExternal(context.Context, *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error) {
 	panic("stub")
 }
 func (s *stubClient) GetCACertificate(context.Context, *GetCACertificateRequest) (*GetCACertificateResponse, error) {
@@ -684,5 +708,12 @@ func (*stubClient) DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBin
 	return nil
 }
 func (*stubClient) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*stubClient) SignCoRIM(context.Context, *SignCoRIMRequest) (*SignedCoRIM, error) {
+	return nil, nil
+}
+
+func (*stubClient) SignImage(context.Context, *SignImageRequest) (*SignedImage, error) {
 	return nil, nil
 }

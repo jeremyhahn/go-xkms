@@ -64,6 +64,20 @@ func (otaImageServer) SignOTAImage(_ context.Context, req *pb.SignOTAImageReques
 	return &pb.SignResponse{Signature: []byte("sig"), KeyVersion: 2}, nil
 }
 
+func (otaImageServer) ExportOTAImageKey(_ context.Context, req *pb.OTAImageKeyRequest) (*pb.ExportOTAImageKeyResponse, error) {
+	if req.BoardId == otaBadBoard {
+		return nil, status.Error(codes.InvalidArgument, "invalid board id")
+	}
+	return &pb.ExportOTAImageKeyResponse{
+		BoardId:    req.BoardId,
+		KeyId:      "ota-image-" + req.BoardId,
+		KeyVersion: 2,
+		Algorithm:  "ES256",
+		PublicKey:  []byte("x||y"),
+		CoseKey:    []byte("cose"),
+	}, nil
+}
+
 func newOTAImageTransport(t *testing.T) *Transport {
 	t.Helper()
 	lis := bufconn.Listen(bufSize)
@@ -110,6 +124,17 @@ func TestOTAImageKey_GRPC(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("sig"), signed.Signature)
 	assert.Equal(t, uint32(2), signed.KeyVersion)
+
+	exported, err := tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
+	require.NoError(t, err)
+	assert.Equal(t, &transport.ExportOTAImageKeyResponse{
+		BoardID:    "cm4",
+		KeyID:      "ota-image-cm4",
+		KeyVersion: 2,
+		Algorithm:  "ES256",
+		PublicKey:  []byte("x||y"),
+		COSEKey:    []byte("cose"),
+	}, exported, "every field crosses the wire")
 }
 
 func TestOTAImageKey_GRPC_InvalidBoard(t *testing.T) {
@@ -129,6 +154,10 @@ func TestOTAImageKey_GRPC_InvalidBoard(t *testing.T) {
 			_, err := tr.SignOTAImage(ctx, &transport.OTAImageSignRequest{Backend: "software", BoardID: otaBadBoard, Data: []byte("image")})
 			return err
 		},
+		"export": func() error {
+			_, err := tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: otaBadBoard})
+			return err
+		},
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
@@ -146,5 +175,7 @@ func TestOTAImageKey_GRPC_NotConnected(t *testing.T) {
 	_, err = tr.RotateOTAImageKey(ctx, &transport.OTAImageKeyRequest{BoardID: "cm4"})
 	assert.ErrorIs(t, err, ErrNotConnected)
 	_, err = tr.SignOTAImage(ctx, &transport.OTAImageSignRequest{BoardID: "cm4"})
+	assert.ErrorIs(t, err, ErrNotConnected)
+	_, err = tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{BoardID: "cm4"})
 	assert.ErrorIs(t, err, ErrNotConnected)
 }

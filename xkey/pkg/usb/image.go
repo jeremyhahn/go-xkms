@@ -346,6 +346,17 @@ func admitPassphraseCopy(buf *secure.Buffer) (enclave.ByteAccess, error) {
 	return pass, nil
 }
 
+// freezePassphrase makes a filled passphrase enclave read-only, so a stray
+// write faults instead of silently corrupting it. Every memory enclave is an
+// enclave.Freezer; a handle that is not one is refused.
+func freezePassphrase(pass enclave.ByteAccess) error {
+	var freezer enclave.Freezer
+	if !enclave.As(pass, &freezer) {
+		return ErrPassphraseNotFreezable
+	}
+	return freezer.Freeze()
+}
+
 // formatAndInitLUKS formats partition as LUKS2 under pass, then unlocks it
 // long enough to create the ext4 data filesystem and locks it again.
 func formatAndInitLUKS(ctx context.Context, partition string, pass enclave.ByteAccess) error {

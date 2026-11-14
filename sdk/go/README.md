@@ -114,12 +114,21 @@ client, _ := xkms.NewFromURL("https://localhost:8443")
 
 ```go
 client, _ := xkms.New(&xkms.BackendConfig{
-    Protocol: xkms.ProtocolGRPC,
-    Address:  "localhost:9443",
+    Protocol:   xkms.ProtocolGRPC,
+    Address:    "localhost:9443",
+    TLSEnabled: true,
+    TLSCAFile:  "/etc/xkms/ca.pem",
 })
 // or
-client, _ := xkms.NewFromURL("grpc://localhost:9443")
+client, _ := xkms.NewFromURL("grpcs://localhost:9443")
 ```
+
+`New` refuses a gRPC or REST endpoint with TLS disabled (`grpc://`,
+`http://`) with `transport.ErrInsecureTransport`, because the client would
+send its credentials in clear. A unix socket is allowed. For loopback tests
+and dev only, set `BackendConfig.AllowInsecureTransport` or
+`XKMS_TRANSPORT_ALLOW_INSECURE_TRANSPORT=true`; see
+[Client Transport Security](../../docs/configuration/README.md#client-transport-security).
 
 ### QUIC
 

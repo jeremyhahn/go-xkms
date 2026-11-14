@@ -21,6 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -93,6 +94,12 @@ func TestSigningKeyTools_MapErrors(t *testing.T) {
 			assert.Equal(t, tt.code, keyErr.Code)
 		})
 	}
+
+	// SignCoRIM and SignImage admit the release key as Sign does.
+	var keyErr *KeyOpError
+	err := mapSigningKeyError(&keypolicy.PolicyDeniedError{KeyID: "release-signing", Operation: keypolicy.OpSign}, "sign_corim")
+	require.ErrorAs(t, err, &keyErr)
+	assert.Equal(t, ErrCodeForbidden, keyErr.Code)
 }
 
 // TestSigningKeyTools_WithoutTheVerifier proves every tool fails on a

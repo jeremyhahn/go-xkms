@@ -71,6 +71,10 @@ type baseSDKClient struct {
 	// SigningKeyService completes transport.Client; these tests never call
 	// it.
 	transport.SigningKeyService
+
+	// AttestationAppraisalService completes transport.Client; these tests
+	// never call it.
+	transport.AttestationAppraisalService
 }
 
 func (b *baseSDKClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
@@ -202,6 +206,10 @@ func (b *baseSDKClient) RotateOTAImageKey(ctx context.Context, req *transport.OT
 }
 
 func (b *baseSDKClient) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	return nil, nil
+}
+
+func (b *baseSDKClient) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
 	return nil, nil
 }
 
@@ -354,6 +362,26 @@ func (b *baseSDKClient) ActivateInvitePIV(ctx context.Context, req *transport.Ac
 }
 
 func (b *baseSDKClient) GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) GetTransparencyLogHead(ctx context.Context, req *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) GetTransparencyLogEntry(ctx context.Context, req *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) GetTransparencyLogInclusionProof(ctx context.Context, req *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) GetTransparencyLogConsistencyProof(ctx context.Context, req *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
 	return nil, errNotImplemented
 }
 

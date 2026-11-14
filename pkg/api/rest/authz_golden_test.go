@@ -180,6 +180,7 @@ var goldenRESTPermissions = map[string]string{
 	"POST /api/v1/ota-image-keys/{board}":                        "keys:create",
 	"POST /api/v1/ota-image-keys/{board}/rotate":                 "keys:rotate",
 	"POST /api/v1/ota-image-keys/{board}/sign":                   "keys:sign",
+	"POST /api/v1/ota-image-keys/{board}/export":                 "keys:get",
 	"POST /api/v1/passwords/":                                    "passwords:write",
 	"POST /api/v1/passwords/access-mode":                         "passwords:write",
 	"POST /api/v1/passwords/generate":                            "passwords:generate",
@@ -243,6 +244,11 @@ var goldenRESTPermissions = map[string]string{
 	"GET /api/v1/trust-roots/{fingerprint}":                      "trust_roots:get",
 	"DELETE /api/v1/trust-roots/{fingerprint}":                   "trust_roots:delete",
 	"POST /api/v1/trust-roots/{fingerprint}/quarantine":          "trust_roots:update",
+	"GET /api/v1/ca/transparency-log/head":                       "vlog:head",
+	"GET /api/v1/ca/transparency-log/entries/{index}":            "vlog:get",
+	"GET /api/v1/ca/transparency-log/proofs/inclusion":           "vlog:proof",
+	"GET /api/v1/ca/transparency-log/proofs/consistency":         "vlog:proof",
+	"POST /api/v1/ca/transparency-log/entries":                   "vlog:append",
 	"GET /api/v1/tenants/{tenantID}/tpm":                         "tenants:read",
 	"PUT /api/v1/tenants/{tenantID}/tpm":                         "tenants:set_tpm_mode",
 	"GET /api/v1/tenants/{tenantID}/tpm/vtpm":                    "tenants:read",
@@ -260,13 +266,24 @@ var goldenRESTPermissions = map[string]string{
 
 	// Repository signing keys (go-xkms#1697); a repository travels in the
 	// repository query parameter.
-	"PUT /api/v1/attestation/signing-keys":            "attestation_signing_keys:bind",
-	"GET /api/v1/attestation/signing-keys":            "attestation_signing_keys:list",
-	"GET /api/v1/attestation/signing-keys/binding":    "attestation_signing_keys:get",
-	"DELETE /api/v1/attestation/signing-keys/binding": "attestation_signing_keys:bind",
-	"GET /api/v1/attestation/signing-keys/resolve":    "attestation_signing_keys:get",
-	"POST /api/v1/peer-attestation/challenge":         "peer_attestation:challenge",
-	"POST /api/v1/peer-attestation/evidence":          "peer_attestation:submit",
+	"PUT /api/v1/attestation/signing-keys":             "attestation_signing_keys:bind",
+	"GET /api/v1/attestation/signing-keys":             "attestation_signing_keys:list",
+	"GET /api/v1/attestation/signing-keys/binding":     "attestation_signing_keys:get",
+	"DELETE /api/v1/attestation/signing-keys/binding":  "attestation_signing_keys:bind",
+	"GET /api/v1/attestation/signing-keys/resolve":     "attestation_signing_keys:get",
+	"POST /api/v1/attestation/signing-keys/sign-corim": "attestation_signing_keys:sign",
+	"POST /api/v1/attestation/signing-keys/sign-image": "attestation_signing_keys:sign",
+	// Attestation Verifier (go-xkms#1608).
+	"PUT /api/v1/attestation/endorsements":               "attestation_endorsements:create",
+	"GET /api/v1/attestation/endorsements":               "attestation_endorsements:list",
+	"DELETE /api/v1/attestation/endorsements/{name}":     "attestation_endorsements:delete",
+	"PUT /api/v1/attestation/reference-values":           "attestation_reference_values:create",
+	"GET /api/v1/attestation/reference-values":           "attestation_reference_values:list",
+	"GET /api/v1/attestation/reference-values/{name}":    "attestation_reference_values:get",
+	"DELETE /api/v1/attestation/reference-values/{name}": "attestation_reference_values:delete",
+	"POST /api/v1/attestation/appraise":                  "attestation_verifier:verify",
+	"POST /api/v1/peer-attestation/challenge":            "peer_attestation:challenge",
+	"POST /api/v1/peer-attestation/evidence":             "peer_attestation:submit",
 }
 
 // TestRESTPermissions_MatchWireContract pins the resource:action pair of

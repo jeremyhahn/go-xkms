@@ -268,7 +268,7 @@ func TestCompareInEnclave_CorrectlySizedEnclaveComparesBothWays(t *testing.T) {
 // -- and a caller acts on it by giving up its claim. A comparison that never ran
 // reporting false would make the caller abandon a claim it still holds.
 //
-// It is reachable rather than theoretical: NewMemoryEnclaveSized documents that
+// It is reachable rather than theoretical: NewMemorySized documents that
 // it can return a successful but ALREADY-DESTROYED enclave when WipeAll runs
 // between publication and return. Destroying explicitly reproduces that state
 // deterministically instead of trying to win a race in a test.

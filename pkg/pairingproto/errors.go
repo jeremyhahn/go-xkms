@@ -48,6 +48,17 @@ var (
 	// ErrBiometricFailed indicates biometric verification failed on the device.
 	ErrBiometricFailed = errors.New("pairing: biometric verification failed")
 
+	// ErrUserVerificationNotEnrolled indicates the device has no biometric or
+	// device credential enrolled to verify its user with.
+	ErrUserVerificationNotEnrolled = errors.New("pairing: no biometric or device credential enrolled")
+
+	// ErrUserVerificationLockout indicates the device has locked user
+	// authentication out after too many failed attempts.
+	ErrUserVerificationLockout = errors.New("pairing: user authentication locked out")
+
+	// ErrNotPaired indicates the device holds no pairing with this desktop.
+	ErrNotPaired = errors.New("pairing: device is not paired with this desktop")
+
 	// ErrKeyNotFound indicates the requested key does not exist on the device.
 	ErrKeyNotFound = errors.New("pairing: key not found")
 

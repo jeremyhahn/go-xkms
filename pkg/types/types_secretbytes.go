@@ -16,6 +16,8 @@ package types
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -228,6 +230,29 @@ func (p *SecretBytes) Wipe() {
 	}
 	secure.Wipe(*p)
 	*p = nil
+}
+
+// String returns PasswordRedacted, the marker a Password prints, and never
+// the secret (ruling 152).
+func (p SecretBytes) String() string {
+	return PasswordRedacted
+}
+
+// GoString returns PasswordRedacted, so %#v never prints the secret.
+func (p SecretBytes) GoString() string {
+	return PasswordRedacted
+}
+
+// Format implements fmt.Formatter, writing PasswordRedacted for every verb
+// and flag: without it %x, %q and %v would print the bytes, since fmt
+// consults String only for some verbs and formats a byte slice itself for
+// the rest.
+func (p SecretBytes) Format(f fmt.State, _ rune) {
+	// Format cannot return an error; a failed write leaves the output short,
+	// and the redaction marker is all there was to write.
+	if _, err := io.WriteString(f, PasswordRedacted); err != nil {
+		return
+	}
 }
 
 // SecretBytesError reports a malformed JSON string for a SecretBytes.

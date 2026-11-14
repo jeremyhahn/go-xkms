@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 )
 
@@ -245,7 +246,7 @@ func TestWithTrustStore_BacksPurposeChecks(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeTPMManufacturer)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	pool, err := v.BuildTrustPool(truststore.PurposeTPMManufacturer)
 	if err != nil {
@@ -260,7 +261,7 @@ func TestWithTrustStore_BacksPurposeChecks(t *testing.T) {
 // built only for attestation statements refuses every purpose-pooled check
 // rather than dereferencing a missing store.
 func TestNewVerifier_WithoutTrustStoreRefusesPurposeChecks(t *testing.T) {
-	v := NewVerifier(nil)
+	v := NewVerifier(nil, WithRevocation(&android.StatusList{}))
 	ca := generateTestCA(t, "Some CA")
 	leaf := generateLeafCert(t, ca, "Leaf")
 
@@ -289,7 +290,7 @@ func TestVerifyTPMAttestation_Success(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeTPMManufacturer)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	ekCert := generateLeafCert(t, rootCA, "TPM EK Certificate")
 
@@ -320,7 +321,7 @@ func TestVerifyTPMAttestation_WithEmbeddedRoots(t *testing.T) {
 		return nil
 	}
 
-	v := NewVerifier(nil, WithTrustStore(store, loader))
+	v := NewVerifier(nil, WithTrustStore(store, loader), WithRevocation(&android.StatusList{}))
 
 	ekCert := generateLeafCert(t, rootCA, "TPM EK via Embedded")
 
@@ -338,7 +339,7 @@ func TestVerifyTPMAttestation_WithEmbeddedRoots(t *testing.T) {
 
 func TestVerifyTPMAttestation_NilCert(t *testing.T) {
 	store := newMockTrustStore()
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	_, err := v.VerifyTPMAttestation(nil)
 	if !errors.Is(err, ErrNilCertificate) {
@@ -348,7 +349,7 @@ func TestVerifyTPMAttestation_NilCert(t *testing.T) {
 
 func TestVerifyTPMAttestation_NoAnchors(t *testing.T) {
 	store := newMockTrustStore()
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	unrelatedCA := generateTestCA(t, "Unrelated CA")
 	ekCert := generateLeafCert(t, unrelatedCA, "Orphan EK")
@@ -366,7 +367,7 @@ func TestVerifyTPMAttestation_InvalidChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeTPMManufacturer)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	// Leaf signed by untrusted CA, not by the one in the store.
 	ekCert := generateLeafCert(t, untrustedCA, "Wrong Issuer EK")
@@ -388,7 +389,7 @@ func TestVerifyTPMAttestation_StoreError(t *testing.T) {
 	store := newMockTrustStore()
 	store.err = storeErr
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	ca := generateTestCA(t, "Some CA")
 	ekCert := generateLeafCert(t, ca, "EK")
@@ -411,7 +412,7 @@ func TestVerifyAndroidAttestation_Success(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert, rootCA.cert}
 
@@ -436,7 +437,7 @@ func TestVerifyAndroidAttestation_TwoCertChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	chain := []*x509.Certificate{leaf, rootCA.cert}
 
@@ -451,7 +452,7 @@ func TestVerifyAndroidAttestation_TwoCertChain(t *testing.T) {
 
 func TestVerifyAndroidAttestation_EmptyChain(t *testing.T) {
 	store := newMockTrustStore()
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	_, err := v.VerifyAndroidAttestation(nil, nil)
 	if !errors.Is(err, ErrEmptyCertificateChain) {
@@ -473,7 +474,7 @@ func TestVerifyAndroidAttestation_SingleCert(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	chain := []*x509.Certificate{rootCA.cert}
 
@@ -493,7 +494,7 @@ func TestVerifyAndroidAttestation_InvalidChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeAndroidHardware)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	challenge := []byte("challenge-generated-by-this-host")
 	leaf := generateAttestedLeaf(t, untrustedCA, "Wrong Android Leaf", challenge, androidSecurityLevelTrustedEnv)
@@ -521,7 +522,7 @@ func TestVerifyAndroidAttestation_WithNonce(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	chain := []*x509.Certificate{leaf, rootCA.cert}
 
@@ -542,7 +543,7 @@ func TestVerifyIDevID_Success(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeIDevIDIssuer)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	idevidCert := generateLeafCert(t, rootCA, "Device IDevID")
 
@@ -560,7 +561,7 @@ func TestVerifyIDevID_Success(t *testing.T) {
 
 func TestVerifyIDevID_NilCert(t *testing.T) {
 	store := newMockTrustStore()
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	_, err := v.VerifyIDevID(nil)
 	if !errors.Is(err, ErrNilCertificate) {
@@ -575,7 +576,7 @@ func TestVerifyIDevID_InvalidChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeIDevIDIssuer)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	cert := generateLeafCert(t, untrustedCA, "Wrong IDevID")
 
@@ -593,7 +594,7 @@ func TestVerifyIDevID_InvalidChain(t *testing.T) {
 
 func TestVerifyIDevID_NoAnchors(t *testing.T) {
 	store := newMockTrustStore()
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	ca := generateTestCA(t, "Some CA")
 	cert := generateLeafCert(t, ca, "Orphan IDevID")
@@ -614,7 +615,7 @@ func TestVerifyChain_Success(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeUserCA)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert}
 
@@ -632,7 +633,7 @@ func TestVerifyChain_Success(t *testing.T) {
 
 func TestVerifyChain_EmptyChain(t *testing.T) {
 	store := newMockTrustStore()
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	_, err := v.VerifyPurposeChain(nil, truststore.PurposeGeneral)
 	if !errors.Is(err, ErrEmptyCertificateChain) {
@@ -647,7 +648,7 @@ func TestVerifyChain_EmptyChain(t *testing.T) {
 
 func TestVerifyChain_UnsupportedPurpose(t *testing.T) {
 	store := newMockTrustStore()
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	ca := generateTestCA(t, "CA")
 	leaf := generateLeafCert(t, ca, "Leaf")
@@ -665,7 +666,7 @@ func TestVerifyChain_SingleLeafInStore(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeBootstrapCA)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	chain := []*x509.Certificate{leaf}
 
@@ -688,7 +689,7 @@ func TestVerifyChain_InvalidChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeGeneral)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	leaf := generateLeafCert(t, untrustedCA, "Wrong Leaf")
 	chain := []*x509.Certificate{leaf}
@@ -721,7 +722,7 @@ func TestBuildTrustPool_MergesStoreAndEmbedded(t *testing.T) {
 		return nil
 	}
 
-	v := NewVerifier(nil, WithTrustStore(store, loader))
+	v := NewVerifier(nil, WithTrustStore(store, loader), WithRevocation(&android.StatusList{}))
 
 	// Verify a cert signed by the store CA.
 	storeLeaf := generateLeafCert(t, storeCA, "Store Leaf")
@@ -756,7 +757,7 @@ func TestBuildTrustPool_EmptyStoreWithLoader(t *testing.T) {
 		return nil
 	}
 
-	v := NewVerifier(nil, WithTrustStore(store, loader))
+	v := NewVerifier(nil, WithTrustStore(store, loader), WithRevocation(&android.StatusList{}))
 
 	challenge := []byte("challenge-generated-by-this-host")
 	leaf := generateAttestedLeaf(t, embeddedCA, "Embedded-Only Leaf", challenge, androidSecurityLevelTrustedEnv)
@@ -779,7 +780,7 @@ func TestBuildTrustPool_NoAnchors(t *testing.T) {
 		return nil
 	}
 
-	v := NewVerifier(nil, WithTrustStore(store, loader))
+	v := NewVerifier(nil, WithTrustStore(store, loader), WithRevocation(&android.StatusList{}))
 
 	ca := generateTestCA(t, "Orphan CA")
 	cert := generateLeafCert(t, ca, "Orphan Leaf")
@@ -795,7 +796,7 @@ func TestBuildTrustPool_StoreError(t *testing.T) {
 	store := newMockTrustStore()
 	store.err = storeErr
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	ca := generateTestCA(t, "Some CA")
 	cert := generateLeafCert(t, ca, "Leaf")
@@ -843,7 +844,7 @@ func TestVerificationResult_FailureFields(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(trustedCA.cert, truststore.PurposeTPMManufacturer)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	ekCert := generateLeafCert(t, untrustedCA, "Bad EK Cert")
 
@@ -874,7 +875,7 @@ func TestVerificationResult_SuccessFields(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeTPMManufacturer)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	ekCert := generateLeafCert(t, rootCA, "Good EK")
 
@@ -906,7 +907,7 @@ func TestVerifyChain_ThreeLevelChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeUserCA)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert}
 
@@ -932,7 +933,7 @@ func TestVerifyAndroidAttestation_ThreeLevelChain(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert, rootCA.cert}
 
@@ -964,7 +965,7 @@ func TestEmbeddedLoader_PurposeFiltering(t *testing.T) {
 		return purposeRoots[purpose]
 	}
 
-	v := NewVerifier(nil, WithTrustStore(store, loader))
+	v := NewVerifier(nil, WithTrustStore(store, loader), WithRevocation(&android.StatusList{}))
 
 	// TPM leaf should verify against TPM embedded root.
 	tpmLeaf := generateLeafCert(t, tpmCA, "TPM Leaf")
@@ -1008,7 +1009,7 @@ func TestBuildTrustPool_RefusesSyncedPurpose(t *testing.T) {
 	store := newMockTrustStore()
 	store.addCertForPurpose(generateTestCA(t, "Synced CA").cert, truststore.PurposeSynced)
 
-	v := NewVerifier(nil, WithTrustStore(store, truststore.LoadEmbeddedRoots))
+	v := NewVerifier(nil, WithTrustStore(store, truststore.LoadEmbeddedRoots), WithRevocation(&android.StatusList{}))
 
 	pool, err := v.BuildTrustPool(truststore.PurposeSynced)
 	if !errors.Is(err, ErrUnsupportedPurpose) {

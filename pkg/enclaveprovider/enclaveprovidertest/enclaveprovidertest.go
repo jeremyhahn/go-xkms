@@ -145,7 +145,7 @@ func roundTrip(t *testing.T, option enclave.SealerOption) {
 	}
 	t.Cleanup(func() {
 		if err := opened.Destroy(); err != nil {
-			t.Errorf("MemoryEnclave.Destroy: %v", err)
+			t.Errorf("ByteAccess.Destroy: %v", err)
 		}
 	})
 	equal, err := opened.EqualTo(want)

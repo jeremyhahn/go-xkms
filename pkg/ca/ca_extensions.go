@@ -614,12 +614,16 @@ func (ca *CA) RevokeCert(ctx context.Context, cert *x509.Certificate, opts Revok
 		return ErrNotInitialized
 	}
 
-	if err := ca.recordRevocation(ctx, cert.SerialNumber, opts.Reason, opts.DeleteKeys); err != nil {
-		return err
+	// A revocation recorded without its transparency log entry still
+	// stands, so its cleanup below still runs and the missing entry is
+	// reported with the cleanup's errors.
+	logErr := ca.recordRevocation(ctx, cert.SerialNumber, opts.Reason, opts.DeleteKeys)
+	if logErr != nil && !errors.Is(logErr, ErrTransparencyLogEntryMissing) {
+		return logErr
 	}
 
 	if !opts.DeleteKeys {
-		return nil
+		return logErr
 	}
 
 	// The certificate is already revoked at this point: recordRevocation
@@ -629,6 +633,9 @@ func (ca *CA) RevokeCert(ctx context.Context, cert *x509.Certificate, opts Revok
 	// into the return rather than discarded (go-xkms#687), so a real
 	// storage failure is never silently swallowed.
 	var cleanupErrs []error
+	if logErr != nil {
+		cleanupErrs = append(cleanupErrs, logErr)
+	}
 
 	// Resolve the exact KeyAttributes the CA generated or resolved for this
 	// certificate's key at issuance (go-xkms#751): the certificate alone
@@ -791,7 +798,10 @@ func (ca *CA) recordRevocation(ctx context.Context, serial *big.Int, reason int,
 		slog.Warn("ca: failed to refresh crl after revocation", "serial", key, "err", err)
 	}
 
-	return nil
+	// Revoke and RevokeCert both record here, once. The revocation above is
+	// never undone: a failed append returns ErrTransparencyLogEntryMissing
+	// with the revocation in place.
+	return ca.appendRevoked(ctx, serial, reason)
 }
 
 // alreadyRevokedError renders ErrAlreadyRevoked carrying info's original

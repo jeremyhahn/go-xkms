@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -39,6 +40,9 @@ import (
 type mockTransportClient struct {
 	// Fake serves the TPM policy API, which these tests do not exercise.
 	*tpmpolicyfake.Fake
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise either.
+	appraisaltest.Unserved
 
 	listBackendsResp *transport.ListBackendsResponse
 	listBackendsErr  error
@@ -214,6 +218,10 @@ func (m *mockTransportClient) SignOTAImage(_ context.Context, _ *transport.OTAIm
 	return nil, nil
 }
 
+func (m *mockTransportClient) ExportOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockTransportClient) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, errNotImplemented
 }
@@ -347,6 +355,26 @@ func (m *mockTransportClient) GetCABundle(_ context.Context, _ *transport.GetCAB
 		return nil, errNotImplemented
 	}
 	return m.caBundleResp, nil
+}
+
+func (m *mockTransportClient) GetTransparencyLogHead(_ context.Context, _ *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) GetTransparencyLogEntry(_ context.Context, _ *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) GetTransparencyLogInclusionProof(_ context.Context, _ *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, errNotImplemented
 }
 
 func (m *mockTransportClient) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
@@ -3143,5 +3171,12 @@ func (*mockTransportClient) DeleteSigningKeyBinding(context.Context, *transport.
 	return nil
 }
 func (*mockTransportClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*mockTransportClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}
+
+func (*mockTransportClient) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
 	return nil, nil
 }

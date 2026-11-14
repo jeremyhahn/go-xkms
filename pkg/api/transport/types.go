@@ -662,6 +662,25 @@ type OTAImageSignRequest struct {
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
+// ExportOTAImageKeyResponse is the public half of a board's OTA
+// image-signing key and the record of which board id its key ID belongs to.
+// It never carries private key material.
+type ExportOTAImageKeyResponse struct {
+	BoardID string `json:"board_id"`
+	KeyID   string `json:"key_id"`
+	// KeyVersion is the exported version: always the current one, the one
+	// SignOTAImage signs with and names in SignResponse.KeyVersion.
+	KeyVersion uint32 `json:"key_version"`
+	// Algorithm is always ES256.
+	Algorithm string `json:"algorithm"`
+	// PublicKey is the raw 64-byte X || Y, each coordinate 32 bytes
+	// big-endian, left-padded.
+	PublicKey []byte `json:"public_key"`
+	// COSEKey is the RFC 9052 §7 COSE_Key (RFC 9053 §7.1.1 EC2, kid the
+	// key ID, alg ES256) in RFC 8949 §4.2.1 deterministic CBOR.
+	COSEKey []byte `json:"cose_key"`
+}
+
 // RotateKeyResponse contains the result of key rotation.
 type RotateKeyResponse struct {
 	Success bool   `json:"success"`

@@ -44,6 +44,7 @@ type RotateKeyRequest = pkgtransport.RotateKeyRequest
 type RotateKeyResponse = pkgtransport.RotateKeyResponse
 type OTAImageKeyRequest = pkgtransport.OTAImageKeyRequest
 type OTAImageSignRequest = pkgtransport.OTAImageSignRequest
+type ExportOTAImageKeyResponse = pkgtransport.ExportOTAImageKeyResponse
 type GetImportParametersRequest = pkgtransport.GetImportParametersRequest
 type GetImportParametersResponse = pkgtransport.GetImportParametersResponse
 type CopyKeyRequest = pkgtransport.CopyKeyRequest
@@ -122,6 +123,19 @@ type FinishAuthenticationResponse = pkgtransport.FinishAuthenticationResponse
 // CA types.
 type GetCABundleRequest = pkgtransport.GetCABundleRequest
 type GetCABundleResponse = pkgtransport.GetCABundleResponse
+
+// CA transparency log types.
+type GetTransparencyLogHeadRequest = pkgtransport.GetTransparencyLogHeadRequest
+type GetTransparencyLogHeadResponse = pkgtransport.GetTransparencyLogHeadResponse
+type GetTransparencyLogEntryRequest = pkgtransport.GetTransparencyLogEntryRequest
+type GetTransparencyLogEntryResponse = pkgtransport.GetTransparencyLogEntryResponse
+type GetTransparencyLogInclusionProofRequest = pkgtransport.GetTransparencyLogInclusionProofRequest
+type GetTransparencyLogInclusionProofResponse = pkgtransport.GetTransparencyLogInclusionProofResponse
+type GetTransparencyLogConsistencyProofRequest = pkgtransport.GetTransparencyLogConsistencyProofRequest
+type GetTransparencyLogConsistencyProofResponse = pkgtransport.GetTransparencyLogConsistencyProofResponse
+type AppendTransparencyLogExternalRequest = pkgtransport.AppendTransparencyLogExternalRequest
+type AppendTransparencyLogExternalResponse = pkgtransport.AppendTransparencyLogExternalResponse
+
 type GetCACertificateRequest = pkgtransport.GetCACertificateRequest
 type GetCACertificateResponse = pkgtransport.GetCACertificateResponse
 type SignCSRRequest = pkgtransport.SignCSRRequest
@@ -359,6 +373,23 @@ type OIDCCredentialImportRequest = pkgtransport.OIDCCredentialImportRequest
 type OIDCCredentialListRequest = pkgtransport.OIDCCredentialListRequest
 type OIDCCredentialListResponse = pkgtransport.OIDCCredentialListResponse
 
+// Attestation Verifier types (go-xkms#1608).
+type AttestationEndorsementKind = pkgtransport.AttestationEndorsementKind
+type AttestationEndorsement = pkgtransport.AttestationEndorsement
+type PutAttestationEndorsementRequest = pkgtransport.PutAttestationEndorsementRequest
+type ListAttestationEndorsementsRequest = pkgtransport.ListAttestationEndorsementsRequest
+type ListAttestationEndorsementsResponse = pkgtransport.ListAttestationEndorsementsResponse
+type DeleteAttestationEndorsementRequest = pkgtransport.DeleteAttestationEndorsementRequest
+type AttestationReferenceValues = pkgtransport.AttestationReferenceValues
+type PutAttestationReferenceValuesRequest = pkgtransport.PutAttestationReferenceValuesRequest
+type GetAttestationReferenceValuesRequest = pkgtransport.GetAttestationReferenceValuesRequest
+type ListAttestationReferenceValuesResponse = pkgtransport.ListAttestationReferenceValuesResponse
+type DeleteAttestationReferenceValuesRequest = pkgtransport.DeleteAttestationReferenceValuesRequest
+type AppraiseAttestationQuoteRequest = pkgtransport.AppraiseAttestationQuoteRequest
+type AttestationResult = pkgtransport.AttestationResult
+type AttestationAppraisalCheck = pkgtransport.AttestationAppraisalCheck
+type AttestationAppraisalOutcome = pkgtransport.AttestationAppraisalOutcome
+
 // Repository signing-key binding types (go-xkms#1697).
 type SigningKeyBinding = pkgtransport.SigningKeyBinding
 type SetSigningKeyBindingRequest = pkgtransport.SetSigningKeyBindingRequest
@@ -367,6 +398,11 @@ type ListSigningKeyBindingsResponse = pkgtransport.ListSigningKeyBindingsRespons
 type DeleteSigningKeyBindingRequest = pkgtransport.DeleteSigningKeyBindingRequest
 type ResolveSigningKeyRequest = pkgtransport.ResolveSigningKeyRequest
 type SigningKeyResolution = pkgtransport.SigningKeyResolution
+type SignCoRIMRequest = pkgtransport.SignCoRIMRequest
+type SignedCoRIM = pkgtransport.SignedCoRIM
+type SignImageRequest = pkgtransport.SignImageRequest
+type ImageRegistryCredentials = pkgtransport.ImageRegistryCredentials
+type SignedImage = pkgtransport.SignedImage
 type OIDCDeviceLogin = pkgtransport.OIDCDeviceLogin
 type OIDCAccessToken = pkgtransport.OIDCAccessToken
 

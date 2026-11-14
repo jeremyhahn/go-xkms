@@ -63,7 +63,7 @@ func (c *compositeBackend) GenerateRSA(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	// Wrap in OpaqueKey for safe operations
-	pub := publicKey(key)
+	pub := c.generatedPublicKey(ctx, attrs, key)
 	if pub == nil {
 		return nil, &ErrPublicKeyExtraction{Algorithm: "RSA"}
 	}
@@ -96,7 +96,7 @@ func (c *compositeBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAt
 	}
 
 	// Wrap in OpaqueKey for safe operations
-	pub := publicKey(key)
+	pub := c.generatedPublicKey(ctx, attrs, key)
 	if pub == nil {
 		return nil, &ErrPublicKeyExtraction{Algorithm: "ECDSA"}
 	}
@@ -128,7 +128,7 @@ func (c *compositeBackend) GenerateEd25519(ctx context.Context, attrs *types.Key
 	}
 
 	// Wrap in OpaqueKey for safe operations
-	pub := publicKey(key)
+	pub := c.generatedPublicKey(ctx, attrs, key)
 	if pub == nil {
 		return nil, &ErrPublicKeyExtraction{Algorithm: "Ed25519"}
 	}
@@ -252,6 +252,24 @@ func (c *compositeBackend) RotateKey(ctx context.Context, attrs *types.KeyAttrib
 // ========================================================================
 
 // publicKey extracts the public key from a private key
+// generatedPublicKey returns the public half of a key the provider just
+// generated. A provider whose private material is non-extractable (AWS KMS,
+// Azure Key Vault, GCP KMS) returns no private key from GenerateKey, so the
+// public key is read from the provider's signer for the same attributes.
+func (c *compositeBackend) generatedPublicKey(ctx context.Context, attrs *types.KeyAttributes, key crypto.PrivateKey) crypto.PublicKey {
+	if pub := publicKey(key); pub != nil {
+		return pub
+	}
+	if key != nil {
+		return nil
+	}
+	signer, err := c.backend.Signer(ctx, attrs)
+	if err != nil || signer == nil {
+		return nil
+	}
+	return signer.Public()
+}
+
 func publicKey(priv crypto.PrivateKey) crypto.PublicKey {
 	if priv == nil {
 		return nil

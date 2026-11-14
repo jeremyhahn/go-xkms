@@ -54,6 +54,14 @@ const (
 // reference values.
 var VerifySignedCoRIM = refvalue.VerifySigned
 
+// SignCoRIM wraps an unsigned CoRIM in the COSE_Sign1 signed-corim of
+// draft-ietf-rats-corim-11 §4.2, signed with a crypto.Signer.
+var SignCoRIM = refvalue.Sign
+
+// CoRIMMeta is the corim-meta-map SignCoRIM puts in the protected header,
+// §4.2.3: the signer and an optional signature validity.
+type CoRIMMeta = refvalue.Meta
+
 // CoRIM verification errors, matched with errors.Is.
 var (
 	ErrCoRIMTrustSource     = refvalue.ErrTrustSource
@@ -66,4 +74,7 @@ var (
 	ErrCoRIMDigestLength    = refvalue.ErrDigestLength
 	ErrCoRIMUnsupportedHash = refvalue.ErrUnsupportedHash
 	ErrCoRIMComponentDigest = refvalue.ErrComponentDigest
+	ErrCoRIMSignerKey       = refvalue.ErrSignerKey
+	ErrCoRIMMeta            = refvalue.ErrMeta
+	ErrCoRIMSign            = refvalue.ErrSign
 )

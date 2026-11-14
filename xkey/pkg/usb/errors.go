@@ -65,6 +65,10 @@ var (
 
 	// ErrBinaryNotFound indicates a binary to copy was not found.
 	ErrBinaryNotFound = errors.New("usb: binary not found")
+
+	// ErrPassphraseNotFreezable is returned when the enclave admitted for a
+	// LUKS passphrase cannot be made read-only.
+	ErrPassphraseNotFreezable = errors.New("usb: passphrase enclave cannot be frozen")
 )
 
 // USBError represents a USB operation error with context.

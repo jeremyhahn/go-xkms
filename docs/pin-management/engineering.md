@@ -209,11 +209,11 @@ The user PIN of the TPM2 backend is the auth value of the Platform SRK.
 - **`VerifyFIDO2Hash` grants PIN-equivalent authority.** Treat the hash as
   PIN-strength material.
 - **The cached FIDO2 hash lives in protected memory.** `TPM2Backend` caches
-  it in a go-enclave `MemoryEnclave` (mlock'd, guard-paged, wiped on
+  it in a go-enclave `ByteAccess` (mlock'd, guard-paged, wiped on
   release), never a plain `[]byte`, per the stack-wide protected-memory
   mandate. The enclave is admitted through `enclave.ProcessAllocator()`, the
   one locked-memory budget the process shares. `VerifyFIDO2Hash` compares via
-  `MemoryEnclave.EqualTo` (constant-time, and fail-closed: a nil or destroyed
+  `ByteAccess.EqualTo` (constant-time, and fail-closed: a nil or destroyed
   enclave reports no match). `Close` destroys the enclave; safe to call more
   than once.
 - **A hash that cannot be cached is an error, never a silent skip.** When the

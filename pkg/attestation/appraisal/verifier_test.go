@@ -448,6 +448,28 @@ func TestVerifier_RecordsListGetDeleteAndTenancy(t *testing.T) {
 	}
 }
 
+// TestAppraiserDeletesAnEndorsementNamedBeforeTheDotRule is the upgrade
+// regression at the Appraiser: an endorsement stored as ".." before
+// ValidateName refused that name is still a trust anchor, so an operator
+// must still be able to revoke it.
+func TestAppraiserDeletesAnEndorsementNamedBeforeTheDotRule(t *testing.T) {
+	w := newVerifierWorld(t)
+	seedStoredRecord(t, w.app.store.endorsements, w.tenant, "..", Endorsement{Name: "..", Kind: EndorsementAKRoot, CertificatePEM: []byte("pem")})
+
+	if listed, err := w.app.ListEndorsements(w.ctx, w.tenant, nil); err != nil || len(listed.Endorsements) != 1 || listed.Endorsements[0].Name != ".." {
+		t.Fatalf("ListEndorsements = %+v, %v; want the stored \"..\"", listed, err)
+	}
+	if err := w.app.DeleteEndorsement(w.ctx, w.tenant, &DeleteEndorsementRequest{Name: ".."}); err != nil {
+		t.Fatalf("DeleteEndorsement(\"..\") = %v, want the stored record deleted", err)
+	}
+	if listed, err := w.app.ListEndorsements(w.ctx, w.tenant, nil); err != nil || len(listed.Endorsements) != 0 {
+		t.Fatalf("ListEndorsements after delete = %+v, %v", listed, err)
+	}
+	if err := w.app.DeleteEndorsement(w.ctx, w.tenant, &DeleteEndorsementRequest{Name: "a/b"}); !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("DeleteEndorsement(\"a/b\") = %v, want ErrInvalidName", err)
+	}
+}
+
 func TestVerifier_StoreFailures(t *testing.T) {
 	w := newVerifierWorld(t)
 	w.endorse(t)

@@ -34,8 +34,17 @@ The backend's own `Config` (`pkg/backend/phone/config.go:76`) carries
 `Transport`, `DeviceAddress`, `NoiseStaticKey`, `PhoneStaticKey`,
 `ScanTimeout`, `ConnectTimeout`, `RequestTimeout`, `Attestation` and `Logger`.
 `Attestation` (`AttestationConfig`, `config.go:52`) holds `platform`
-(required, `android`), `trust_store`, `min_security_level` and
-`verify_boot_state`; when nil, attestation chains are returned unverified.
+(required, `android`), `trust_store`, `min_security_level`,
+`verify_boot_state`, `status_list_url` and `status_list_file`; when nil,
+attestation chains are returned unverified. `NewAndroidVerifier`
+(`pkg/backend/phone/android/verifier.go:68`) builds the Android attestation
+revocation status list source once (ruling 180): `status_list_file` when set,
+else `status_list_url` (empty means Google's
+`https://android.googleapis.com/attestation/status`), cached for the freshness
+the response allows. Every chain certificate is checked against it, and the
+check fails closed: an unreadable or stale list fails the chain with
+`ErrChainVerificationFailed` wrapping `ErrStatusListUnavailable`, and a
+verifier without a source refuses (`verifier.go:131`).
 `RegisterPhoneBackend` copies only transport, device address, both static
 keys and the request timeout, so a backend xkmsd registers has no
 `Attestation` and no scan or connect timeouts.

@@ -56,6 +56,13 @@ const Name = "xkms"
 //   - users:read, users:create, users:update, users:delete -- the WebAuthn
 //     user store (pkg/webauthn.qrdbUserStore) looks a registering user up by
 //     email or ID, creates it, saves its display name and deletes it.
+//   - vlog:create, vlog:append, vlog:get, vlog:head, vlog:sign_head,
+//     vlog:proof -- the CA's transparency log (pkg/ca/tlog) creates its
+//     verifiable log, appends and reads back entries, serves the latest
+//     checkpoint when it still covers the head and has the head signed
+//     under the CA key when it does not, and serves inclusion and
+//     consistency proofs. It never lists logs or expires bodies, so
+//     vlog:list and vlog:expire stay ungranted.
 var grant = []qrdbsdk.Permission{
 	"kv:get",
 	"kv:put",
@@ -75,6 +82,12 @@ var grant = []qrdbsdk.Permission{
 	"users:create",
 	"users:update",
 	"users:delete",
+	"vlog:create",
+	"vlog:append",
+	"vlog:get",
+	"vlog:head",
+	"vlog:sign_head",
+	"vlog:proof",
 }
 
 var registerOnce sync.Once

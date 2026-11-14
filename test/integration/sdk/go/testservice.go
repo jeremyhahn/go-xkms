@@ -16,6 +16,8 @@
 package integration
 
 import (
+	"github.com/veraison/go-cose"
+
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -31,6 +33,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 
 	xkmssvc "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -46,6 +49,10 @@ var ErrNotImplemented = errors.New("not implemented in test service")
 // TestXKMSService is a real implementation of XKMSServicer for integration tests.
 // It uses in-memory storage to avoid external dependencies.
 type TestXKMSService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	mu           sync.RWMutex
 	keys         map[string]*testKey
 	certificates map[string][]byte
@@ -435,6 +442,47 @@ func (s *TestXKMSService) SignOTAImage(ctx context.Context, req *xkms.OTAImageSi
 		return nil, err
 	}
 	return s.Sign(ctx, &xkms.SignRequest{KeyID: keyID, Backend: req.Backend, Data: req.Data, DataIsDigest: req.DataIsDigest})
+}
+
+func (s *TestXKMSService) ExportOTAImageKey(ctx context.Context, req *xkms.OTAImageKeyRequest) (*xkms.ExportOTAImageKeyResponse, error) {
+	keyID, err := otaImageKeyID(req.BoardID, req.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+	key, err := s.GetKey(ctx, req.Backend, keyID)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode([]byte(key.PublicKeyPEM))
+	if block == nil {
+		return nil, &xkmssvc.ErrValidation{Sentinel: xkmssvc.ErrOTAImageAlgorithm, Detail: keyID}
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	pub, ok := parsed.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, &xkmssvc.ErrValidation{Sentinel: xkmssvc.ErrOTAImageAlgorithm, Detail: keyID}
+	}
+	ecdhPub, err := pub.ECDH()
+	if err != nil {
+		return nil, err
+	}
+	point := ecdhPub.Bytes()[1:]
+	coseKey, err := cose.NewKeyEC2(cose.AlgorithmES256, point[:32], point[32:], nil)
+	if err != nil {
+		return nil, err
+	}
+	coseKey.ID = []byte(keyID)
+	encoded, err := coseKey.MarshalCBOR()
+	if err != nil {
+		return nil, err
+	}
+	return &xkms.ExportOTAImageKeyResponse{
+		BoardID: req.BoardID, KeyID: keyID, KeyVersion: 1, Algorithm: xkmssvc.OTAImageAlgorithmES256,
+		PublicKey: point, COSEKey: encoded,
+	}, nil
 }
 
 func (s *TestXKMSService) GetImportParameters(ctx context.Context, req *xkms.GetImportParametersRequest) (*xkms.GetImportParametersResponse, error) {
@@ -952,6 +1000,31 @@ func (s *TestXKMSService) GetCABundle(ctx context.Context, req *xkms.GetCABundle
 	return &xkms.GetCABundleResponse{}, nil
 }
 
+// GetTransparencyLogHead retrieves the transparency log's signed head.
+func (s *TestXKMSService) GetTransparencyLogHead(ctx context.Context, req *xkms.GetTransparencyLogHeadRequest) (*xkms.GetTransparencyLogHeadResponse, error) {
+	return &xkms.GetTransparencyLogHeadResponse{}, nil
+}
+
+// GetTransparencyLogEntry retrieves one transparency log entry by index.
+func (s *TestXKMSService) GetTransparencyLogEntry(ctx context.Context, req *xkms.GetTransparencyLogEntryRequest) (*xkms.GetTransparencyLogEntryResponse, error) {
+	return &xkms.GetTransparencyLogEntryResponse{}, nil
+}
+
+// GetTransparencyLogInclusionProof retrieves an inclusion proof for one entry.
+func (s *TestXKMSService) GetTransparencyLogInclusionProof(ctx context.Context, req *xkms.GetTransparencyLogInclusionProofRequest) (*xkms.GetTransparencyLogInclusionProofResponse, error) {
+	return &xkms.GetTransparencyLogInclusionProofResponse{}, nil
+}
+
+// GetTransparencyLogConsistencyProof retrieves a consistency proof between two tree sizes.
+func (s *TestXKMSService) GetTransparencyLogConsistencyProof(ctx context.Context, req *xkms.GetTransparencyLogConsistencyProofRequest) (*xkms.GetTransparencyLogConsistencyProofResponse, error) {
+	return &xkms.GetTransparencyLogConsistencyProofResponse{}, nil
+}
+
+// AppendTransparencyLogExternal appends an external entry to the transparency log.
+func (s *TestXKMSService) AppendTransparencyLogExternal(ctx context.Context, req *xkms.AppendTransparencyLogExternalRequest) (*xkms.AppendTransparencyLogExternalResponse, error) {
+	return &xkms.AppendTransparencyLogExternalResponse{}, nil
+}
+
 // GetCACertificate retrieves the CA certificate.
 func (s *TestXKMSService) GetCACertificate(ctx context.Context, req *xkms.GetCACertificateRequest) (*xkms.GetCACertificateResponse, error) {
 	return &xkms.GetCACertificateResponse{}, nil
@@ -1404,5 +1477,12 @@ func (*TestXKMSService) DeleteSigningKeyBinding(context.Context, *xkms.DeleteAtt
 	return nil
 }
 func (*TestXKMSService) ResolveSigningKey(context.Context, *xkms.ResolveAttestationSigningKeyRequest) (*xkms.AttestationSigningKeyResolution, error) {
+	return nil, nil
+}
+func (*TestXKMSService) SignCoRIM(context.Context, *xkms.SignAttestationCoRIMRequest) (*xkms.SignedAttestationCoRIM, error) {
+	return nil, nil
+}
+
+func (*TestXKMSService) SignImage(context.Context, *xkms.SignAttestationImageRequest) (*xkms.SignedAttestationImage, error) {
 	return nil, nil
 }

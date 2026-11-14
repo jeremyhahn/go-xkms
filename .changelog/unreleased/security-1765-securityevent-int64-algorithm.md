@@ -1,0 +1,1 @@
+- **A security-event appraisal refuses a detached-digest hash algorithm outside the int64 range instead of panicking.** `securityevent.Appraise` decoded such an integer to a `big.Int`, an unhashable map key, so signed evidence carrying one panicked the Verifier; it is now `ErrMalformedEvidence` (go-xkms#1765).

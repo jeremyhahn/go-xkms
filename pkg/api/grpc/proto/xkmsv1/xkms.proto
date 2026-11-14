@@ -79,6 +79,13 @@ service KeystoreService {
     option (qrdb.v1.permission) = "keys:sign";
   }
 
+  // ExportOTAImageKey returns the public half of the current version of a
+  // board's OTA image-signing key; it reads a public key, so the get
+  // permission applies.
+  rpc ExportOTAImageKey(OTAImageKeyRequest) returns (ExportOTAImageKeyResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
+
   // ListKeyVersions lists every version of a key and marks the current one.
   // A key that was never rotated lists version 1 alone.
   rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse) {
@@ -500,6 +507,42 @@ service KeystoreService {
   // REST equivalent: GET /v1/ca/bundle
   rpc GetCABundle(GetCABundleRequest) returns (GetCABundleResponse) {
     option (qrdb.v1.permission) = "certs:read";
+  }
+
+  // ==================== CA Transparency Log Operations ====================
+  // The read verbs over the CA's transparency log (docs/transparency-log).
+  // Permissions are go-qrdb's verifiable-log actions.
+
+  // GetTransparencyLogHead returns the log's current signed tree head.
+  // REST equivalent: GET /api/v1/ca/transparency-log/head
+  rpc GetTransparencyLogHead(GetTransparencyLogHeadRequest) returns (GetTransparencyLogHeadResponse) {
+    option (qrdb.v1.permission) = "vlog:head";
+  }
+
+  // GetTransparencyLogEntry returns one encoded log entry.
+  // REST equivalent: GET /api/v1/ca/transparency-log/entries/{index}
+  rpc GetTransparencyLogEntry(GetTransparencyLogEntryRequest) returns (GetTransparencyLogEntryResponse) {
+    option (qrdb.v1.permission) = "vlog:get";
+  }
+
+  // GetTransparencyLogInclusionProof returns an RFC 9162 §2.1.3 inclusion proof.
+  // REST equivalent: GET /api/v1/ca/transparency-log/proofs/inclusion
+  rpc GetTransparencyLogInclusionProof(GetTransparencyLogInclusionProofRequest) returns (GetTransparencyLogInclusionProofResponse) {
+    option (qrdb.v1.permission) = "vlog:proof";
+  }
+
+  // GetTransparencyLogConsistencyProof returns an RFC 9162 §2.1.4 consistency proof.
+  // REST equivalent: GET /api/v1/ca/transparency-log/proofs/consistency
+  rpc GetTransparencyLogConsistencyProof(GetTransparencyLogConsistencyProofRequest) returns (GetTransparencyLogConsistencyProofResponse) {
+    option (qrdb.v1.permission) = "vlog:proof";
+  }
+
+  // AppendTransparencyLogExternal appends an external entry under the
+  // caller's SPIFFE ID, read from the caller's verified TLS client
+  // certificate, and returns its leaf index.
+  // REST equivalent: POST /api/v1/ca/transparency-log/entries
+  rpc AppendTransparencyLogExternal(AppendTransparencyLogExternalRequest) returns (AppendTransparencyLogExternalResponse) {
+    option (qrdb.v1.permission) = "vlog:append";
   }
 
   // ==================== CA Operations ====================
@@ -993,6 +1036,56 @@ service KeystoreService {
     option (qrdb.v1.permission) = "peer_attestation:submit";
   }
 
+  // ==================== Attestation Verifier ====================
+  // The RATS Verifier (RFC 9334 §3, go-xkms#1608): the tenant's trust
+  // anchors (endorsements) and signed CoRIM reference values, and the
+  // appraisal of TPM quote evidence against them. Every call acts on the
+  // caller's tenant.
+
+  // PutAttestationEndorsement stores a trust anchor: an attestation-key root
+  // or a reference-value signer.
+  rpc PutAttestationEndorsement(PutAttestationEndorsementRequest) returns (AttestationEndorsement) {
+    option (qrdb.v1.permission) = "attestation_endorsements:create";
+  }
+
+  // ListAttestationEndorsements lists the tenant's trust anchors, optionally
+  // of one kind.
+  rpc ListAttestationEndorsements(ListAttestationEndorsementsRequest) returns (ListAttestationEndorsementsResponse) {
+    option (qrdb.v1.permission) = "attestation_endorsements:list";
+  }
+
+  // DeleteAttestationEndorsement removes a trust anchor.
+  rpc DeleteAttestationEndorsement(DeleteAttestationEndorsementRequest) returns (DeleteAttestationEndorsementResponse) {
+    option (qrdb.v1.permission) = "attestation_endorsements:delete";
+  }
+
+  // PutAttestationReferenceValues verifies a signed CoRIM and stores its
+  // reference values.
+  rpc PutAttestationReferenceValues(PutAttestationReferenceValuesRequest) returns (AttestationReferenceValues) {
+    option (qrdb.v1.permission) = "attestation_reference_values:create";
+  }
+
+  // GetAttestationReferenceValues returns stored reference values.
+  rpc GetAttestationReferenceValues(GetAttestationReferenceValuesRequest) returns (AttestationReferenceValues) {
+    option (qrdb.v1.permission) = "attestation_reference_values:get";
+  }
+
+  // ListAttestationReferenceValues lists the tenant's reference values.
+  rpc ListAttestationReferenceValues(ListAttestationReferenceValuesRequest) returns (ListAttestationReferenceValuesResponse) {
+    option (qrdb.v1.permission) = "attestation_reference_values:list";
+  }
+
+  // DeleteAttestationReferenceValues removes stored reference values.
+  rpc DeleteAttestationReferenceValues(DeleteAttestationReferenceValuesRequest) returns (DeleteAttestationReferenceValuesResponse) {
+    option (qrdb.v1.permission) = "attestation_reference_values:delete";
+  }
+
+  // AppraiseAttestationQuote appraises TPM quote evidence against stored
+  // reference values and returns the attestation result.
+  rpc AppraiseAttestationQuote(AppraiseAttestationQuoteRequest) returns (AttestationResult) {
+    option (qrdb.v1.permission) = "attestation_verifier:verify";
+  }
+
   // ==================== Repository Signing Keys ====================
   // The key that signs a repository's images and CoRIM: the tenant release
   // key unless a binding names another of the tenant's keys (go-xkms#1697).
@@ -1022,6 +1115,19 @@ service KeystoreService {
   // ResolveSigningKey returns the key that signs a repository.
   rpc ResolveSigningKey(ResolveSigningKeyRequest) returns (SigningKeyResolution) {
     option (qrdb.v1.permission) = "attestation_signing_keys:get";
+  }
+
+  // SignCoRIM signs a repository's CoRIM with the key ResolveSigningKey
+  // returns, as a draft-ietf-rats-corim-11 §4.2 signed CoRIM.
+  rpc SignCoRIM(SignCoRIMRequest) returns (SignedCoRIM) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:sign";
+  }
+
+  // SignImage signs an image with the key ResolveSigningKey returns for the
+  // image's repository and pushes the DSSE attestation to the registry as an
+  // OCI 1.1 referrer and to the image's cosign ".att" tag.
+  rpc SignImage(SignImageRequest) returns (SignedImage) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:sign";
   }
 
   // ==================== PKCS#11 State Operations ====================
@@ -1528,6 +1634,23 @@ message SignOTAImageRequest {
   bytes data = 3;
   // data_is_digest states that data is already the image's SHA-256 digest.
   bool data_is_digest = 4;
+}
+
+// ExportOTAImageKeyResponse is the public half of a board's OTA image-signing
+// key and the record of which board id its key ID belongs to.
+message ExportOTAImageKeyResponse {
+  string board_id = 1;
+  string key_id = 2;
+  // key_version is the exported version, always the current one.
+  uint32 key_version = 3;
+  // algorithm is always ES256.
+  string algorithm = 4;
+  // public_key is the raw 64-byte X || Y, each coordinate 32 bytes
+  // big-endian, left-padded.
+  bytes public_key = 5;
+  // cose_key is the RFC 9052 §7 COSE_Key (RFC 9053 §7.1.1 EC2) in RFC 8949
+  // §4.2.1 deterministic CBOR.
+  bytes cose_key = 6;
 }
 
 // KeyVersionInfo contains information about a key version
@@ -3254,6 +3377,78 @@ message FrostVerifyResponse {
   string message = 2;
 }
 
+// ==================== CA Transparency Log Messages ====================
+
+// GetTransparencyLogHeadRequest requests the log's current signed tree head.
+message GetTransparencyLogHeadRequest {}
+
+// GetTransparencyLogHeadResponse is the log's signed tree head.
+message GetTransparencyLogHeadResponse {
+  // The tree head as a C2SP signed note (tlog-checkpoint), signed with the CA key.
+  bytes checkpoint = 1;
+  // The checkpoint's origin line.
+  string origin = 2;
+  // The number of entries the tree head covers.
+  uint64 size = 3;
+  // The RFC 9162 Merkle tree root hash at size.
+  bytes root_hash = 4;
+}
+
+// GetTransparencyLogEntryRequest requests one log entry.
+message GetTransparencyLogEntryRequest {
+  // The entry's zero-based index; below the current tree head's size.
+  uint64 index = 1;
+}
+
+// GetTransparencyLogEntryResponse is one encoded log entry.
+message GetTransparencyLogEntryResponse {
+  uint64 index = 1;
+  // The encoded entry: the leaf data whose leaf hash the inclusion proof proves.
+  bytes entry = 2;
+}
+
+// GetTransparencyLogInclusionProofRequest names an entry and a tree size.
+message GetTransparencyLogInclusionProofRequest {
+  // The entry's zero-based index; below tree_size.
+  uint64 index = 1;
+  // The tree size to prove against; 1 to the current tree head's size.
+  uint64 tree_size = 2;
+}
+
+// GetTransparencyLogInclusionProofResponse is an RFC 9162 §2.1.3 inclusion proof.
+message GetTransparencyLogInclusionProofResponse {
+  uint64 index = 1;
+  uint64 tree_size = 2;
+  // The inclusion path, leaf to root.
+  repeated bytes hashes = 3;
+}
+
+// GetTransparencyLogConsistencyProofRequest names two tree sizes,
+// 1 <= first_size <= second_size <= the current tree head's size.
+message GetTransparencyLogConsistencyProofRequest {
+  uint64 first_size = 1;
+  uint64 second_size = 2;
+}
+
+// GetTransparencyLogConsistencyProofResponse is an RFC 9162 §2.1.4 consistency proof.
+message GetTransparencyLogConsistencyProofResponse {
+  uint64 first_size = 1;
+  uint64 second_size = 2;
+  repeated bytes hashes = 3;
+}
+
+// AppendTransparencyLogExternalRequest carries only the payload: the entry's
+// SPIFFE ID is the authenticated caller's, never a request field.
+message AppendTransparencyLogExternalRequest {
+  // The caller's opaque payload, 1 to 65535 bytes.
+  bytes payload = 1;
+}
+
+// AppendTransparencyLogExternalResponse names the appended entry.
+message AppendTransparencyLogExternalResponse {
+  uint64 index = 1;
+}
+
 // ==================== CA Bundle Messages ====================
 
 // GetCABundleRequest requests the CA certificate bundle
@@ -4559,6 +4754,116 @@ message SubmitPeerAttestationRequest {
 
 message SubmitPeerAttestationResponse {}
 
+// ============================================================================
+// Attestation Verifier Messages (go-xkms#1608)
+// ============================================================================
+
+// AttestationEndorsement is a trust anchor. kind is "reference-signer" or
+// "ak-root"; it carries a certificate, a public key, or both, in PEM.
+message AttestationEndorsement {
+  string name = 1;
+  string kind = 2;
+  bytes certificate_pem = 3;
+  bytes public_key_pem = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message PutAttestationEndorsementRequest {
+  string name = 1;
+  string kind = 2;
+  bytes certificate_pem = 3;
+  bytes public_key_pem = 4;
+}
+
+// ListAttestationEndorsementsRequest filters by kind; empty lists every kind.
+message ListAttestationEndorsementsRequest {
+  string kind = 1;
+}
+
+message ListAttestationEndorsementsResponse {
+  repeated AttestationEndorsement endorsements = 1;
+}
+
+message DeleteAttestationEndorsementRequest {
+  string name = 1;
+}
+
+message DeleteAttestationEndorsementResponse {}
+
+// AttestationReferenceValues are verified CoRIM reference values as stored.
+// repository, when set, is the repository whose signing key verified them.
+message AttestationReferenceValues {
+  string name = 1;
+  string manifest_id = 2;
+  string profile = 3;
+  string signer = 4;
+  string repository = 5;
+  google.protobuf.Timestamp not_before = 6;
+  google.protobuf.Timestamp not_after = 7;
+  repeated uint32 pcr_indices = 8;
+  google.protobuf.Timestamp stored_at = 9;
+  bytes signed_corim = 10;
+}
+
+// PutAttestationReferenceValuesRequest carries a COSE_Sign1 signed CoRIM.
+// With repository set it verifies under the repository's signing key;
+// otherwise against the tenant's reference-signer endorsements.
+message PutAttestationReferenceValuesRequest {
+  string name = 1;
+  bytes signed_corim = 2;
+  string repository = 3;
+}
+
+message GetAttestationReferenceValuesRequest {
+  string name = 1;
+}
+
+message ListAttestationReferenceValuesRequest {}
+
+message ListAttestationReferenceValuesResponse {
+  repeated AttestationReferenceValues reference_values = 1;
+}
+
+message DeleteAttestationReferenceValuesRequest {
+  string name = 1;
+}
+
+message DeleteAttestationReferenceValuesResponse {}
+
+// AppraiseAttestationQuoteRequest is TPM quote evidence: the attestation
+// key's certificate chain in PEM (leaf first), the marshaled TPMS_ATTEST and
+// its signature, the verifier-issued nonce, the quoted PCR values by index,
+// an optional TCG event log, and the reference values to compare against.
+message AppraiseAttestationQuoteRequest {
+  bytes ak_certificate_pem = 1;
+  bytes quote = 2;
+  bytes signature = 3;
+  bytes nonce = 4;
+  map<uint32, bytes> pcrs = 5;
+  bytes event_log = 6;
+  string reference_values = 7;
+}
+
+// AttestationAppraisalCheck is one check's outcome: "pass", "forged",
+// "absent" or "skipped".
+message AttestationAppraisalCheck {
+  string name = 1;
+  string outcome = 2;
+  string reason = 3;
+}
+
+// AttestationResult is the appraisal's attestation result (RFC 9334 §3).
+message AttestationResult {
+  bool verified = 1;
+  bool cryptographic_failure = 2;
+  repeated AttestationAppraisalCheck checks = 3;
+  string reference_values = 4;
+  string manifest_id = 5;
+  string signer = 6;
+  string baseline_source = 7;
+  google.protobuf.Timestamp appraised_at = 8;
+}
+
 // SigningKeyBinding names the tenant key that signs a repository.
 message SigningKeyBinding {
   string repository = 1;
@@ -4609,6 +4914,63 @@ message SigningKeyResolution {
   // default is true when no binding names the repository, so the key is
   // the tenant's release key.
   bool default = 4;
+}
+
+// SignCoRIMRequest is a repository's unsigned CoRIM and the corim-meta of
+// its signature, draft-ietf-rats-corim-11 §4.2.3.
+message SignCoRIMRequest {
+  string repository = 1;
+  // corim is the CBOR unsigned-corim-map, tagged #6.501 or not (§4.1).
+  bytes corim = 2;
+  string signer_name = 3;
+  string signer_uri = 4;
+  // not_before and not_after bound the signature validity (§7.3); an
+  // unset not_after omits it.
+  google.protobuf.Timestamp not_before = 5;
+  google.protobuf.Timestamp not_after = 6;
+}
+
+// SignedCoRIM is the signed CoRIM and the key that signed it.
+message SignedCoRIM {
+  SigningKeyResolution key = 1;
+  // corim is the COSE_Sign1 signed-corim (§4.2).
+  bytes corim = 2;
+}
+
+// SignImageRequest names the image to sign and the registry credentials to
+// push its attestation with; the credentials serve this call only.
+message SignImageRequest {
+  // reference is the image reference, name[:tag][@digest]; its repository
+  // selects the signing key.
+  string reference = 1;
+  // predicate_type is the in-toto predicate type; cosign's when empty.
+  string predicate_type = 2;
+  // predicate is the JSON predicate; empty only for cosign's type.
+  bytes predicate = 3;
+  ImageRegistryCredentials registry = 4;
+}
+
+// ImageRegistryCredentials are the registry's basic credentials.
+message ImageRegistryCredentials {
+  string username = 1;
+  bytes password = 2;
+}
+
+// SignedImage is the signed image's attestation and where it was pushed.
+message SignedImage {
+  SigningKeyResolution key = 1;
+  // digest is the signed manifest digest.
+  string digest = 2;
+  // envelope is the DSSE envelope JSON.
+  bytes envelope = 3;
+  // certificate is the PEM code-signing certificate the service CA issued.
+  bytes certificate = 4;
+  // referrer is the digest of the OCI 1.1 referrer manifest.
+  string referrer = 5;
+  // referrer_indexed reports whether the registry indexed the referrer.
+  bool referrer_indexed = 6;
+  // attestation_tag is the cosign ".att" tag the attestation was added to.
+  string attestation_tag = 7;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================

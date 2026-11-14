@@ -20,10 +20,12 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // createTestClient creates an embedded SDK client with the test service.
@@ -411,25 +413,36 @@ func TestSDK_Embedded_SealUnseal(t *testing.T) {
 	t.Log("Seal/Unseal successful - data matches")
 }
 
-// TestSDK_URLParsing tests creating clients from URLs.
+// TestSDK_URLParsing tests creating clients from URLs. A TLS-disabled TCP
+// scheme (http://, grpc://) is refused with ErrInsecureTransport, because the
+// client would send its credentials in clear (ruling 152).
 func TestSDK_URLParsing(t *testing.T) {
+	t.Setenv(transport.EnvAllowInsecureTransport, "")
+
 	testCases := []struct {
 		URL      string
 		Expected xkms.Protocol
+		Refused  bool
 	}{
-		{"http://localhost:8443", xkms.ProtocolREST},
-		{"https://localhost:8443", xkms.ProtocolREST},
-		{"grpc://localhost:9443", xkms.ProtocolGRPC},
-		{"grpcs://localhost:9443", xkms.ProtocolGRPC},
-		{"quic://localhost:8444", xkms.ProtocolQUIC},
-		{"mcp://localhost:9444", xkms.ProtocolMCP},
-		{"mcps://localhost:9444", xkms.ProtocolMCP},
-		{"unix:///path/to/socket", xkms.ProtocolUnix},
+		{"http://localhost:8443", xkms.ProtocolREST, true},
+		{"https://localhost:8443", xkms.ProtocolREST, false},
+		{"grpc://localhost:9443", xkms.ProtocolGRPC, true},
+		{"grpcs://localhost:9443", xkms.ProtocolGRPC, false},
+		{"quic://localhost:8444", xkms.ProtocolQUIC, false},
+		{"mcp://localhost:9444", xkms.ProtocolMCP, false},
+		{"mcps://localhost:9444", xkms.ProtocolMCP, false},
+		{"unix:///path/to/socket", xkms.ProtocolUnix, false},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.URL, func(t *testing.T) {
 			client, err := xkms.NewFromURL(tc.URL)
+			if tc.Refused {
+				if !errors.Is(err, transport.ErrInsecureTransport) {
+					t.Fatalf("NewFromURL(%s) error = %v, want ErrInsecureTransport", tc.URL, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("NewFromURL failed for %s: %v", tc.URL, err)
 			}

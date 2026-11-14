@@ -6,7 +6,7 @@
 
 go-xkms ships one qrdb `ServiceModule`, named `xkms` (`pkg/apimodule`). A host
 that embeds a go-qrdb node — go-quicbaas, go-trusted-platform — mounts it with
-`qrdbsdk.WithModule` and gets the xkms capability plane on the node's REST,
+`qrdbserver.WithModule` and gets the xkms capability plane on the node's REST,
 gRPC, unix, QUIC and MCP transports.
 
 Before this feature, a mounted module was **host-inert** for every

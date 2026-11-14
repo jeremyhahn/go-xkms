@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/signingkeytest"
@@ -51,6 +52,11 @@ func (s *mockKeystoreServer) ResolveSigningKey(_ context.Context, req *pb.Resolv
 	return &pb.SigningKeyResolution{Repository: req.GetRepository(), KeyId: "release-signing", Default: true}, nil
 }
 
+func (s *mockKeystoreServer) SignCoRIM(_ context.Context, req *pb.SignCoRIMRequest) (*pb.SignedCoRIM, error) {
+	key := &pb.SigningKeyResolution{Repository: req.GetRepository(), KeyId: "release-signing", Default: true}
+	return &pb.SignedCoRIM{Key: key, Corim: append([]byte{0xd2}, req.GetCorim()...)}, nil
+}
+
 // TestSigningKey_ReachesTheServer proves a connected transport serves the
 // signing-key API over its connection: each request reaches the server and
 // its answer is decoded. The conversions themselves are tested once, in
@@ -79,6 +85,14 @@ func TestSigningKey_ReachesTheServer(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resolution.Default)
 	assert.Equal(t, "release-signing", resolution.KeyID)
+
+	signed, err := tr.SignCoRIM(ctx, &transport.SignCoRIMRequest{Repository: signingkeytest.Repository, CoRIM: []byte{0xa0}, SignerName: "Acme"})
+	require.NoError(t, err)
+	assert.Equal(t, "release-signing", signed.Key.KeyID)
+	assert.Equal(t, []byte{0xd2, 0xa0}, signed.CoRIM)
+
+	_, err = tr.SignCoRIM(ctx, nil)
+	assert.ErrorIs(t, err, pbconv.ErrNilRequest, "a nil request never reaches the server")
 }
 
 // TestSigningKey_NotConnected proves every signing-key method refuses

@@ -57,6 +57,7 @@ const (
 	AttestPurposeReattest            = pairingproto.AttestPurposeReattest
 	AttestPurposeVerifyUser          = pairingproto.AttestPurposeVerifyUser
 	UserVerificationGenesisChallenge = pairingproto.UserVerificationGenesisChallenge
+	VerifyUserRPNameMaxLen           = pairingproto.VerifyUserRPNameMaxLen
 	AttestSignatureES256             = pairingproto.AttestSignatureES256
 	AttestTranscriptDomain           = pairingproto.AttestTranscriptDomain
 )
@@ -134,40 +135,43 @@ const (
 
 // JSON-RPC error codes.
 const (
-	ErrorCodeAttestFailed         = pairingproto.ErrorCodeAttestFailed
-	ErrorCodeAttestUnsupported    = pairingproto.ErrorCodeAttestUnsupported
-	ErrorCodeBackendDenied        = pairingproto.ErrorCodeBackendDenied
-	ErrorCodeBackupFailed         = pairingproto.ErrorCodeBackupFailed
-	ErrorCodeBackupNotFound       = pairingproto.ErrorCodeBackupNotFound
-	ErrorCodeBackupRestore        = pairingproto.ErrorCodeBackupRestore
-	ErrorCodeFeatureUnavailable   = pairingproto.ErrorCodeFeatureUnavailable
-	ErrorCodeInternalError        = pairingproto.ErrorCodeInternalError
-	ErrorCodeInvalidFormat        = pairingproto.ErrorCodeInvalidFormat
-	ErrorCodeInvalidParams        = pairingproto.ErrorCodeInvalidParams
-	ErrorCodeInvalidPublicKey     = pairingproto.ErrorCodeInvalidPublicKey
-	ErrorCodeInvalidRequest       = pairingproto.ErrorCodeInvalidRequest
-	ErrorCodeKeyExists            = pairingproto.ErrorCodeKeyExists
-	ErrorCodeKeyNotFound          = pairingproto.ErrorCodeKeyNotFound
-	ErrorCodeMethodNotFound       = pairingproto.ErrorCodeMethodNotFound
-	ErrorCodeOATHGenerate         = pairingproto.ErrorCodeOATHGenerate
-	ErrorCodeOATHNotFound         = pairingproto.ErrorCodeOATHNotFound
-	ErrorCodeOATHStore            = pairingproto.ErrorCodeOATHStore
-	ErrorCodeParseError           = pairingproto.ErrorCodeParseError
-	ErrorCodePIVInvalidSlot       = pairingproto.ErrorCodePIVInvalidSlot
-	ErrorCodePIVSignFailed        = pairingproto.ErrorCodePIVSignFailed
-	ErrorCodePIVSlotNotFound      = pairingproto.ErrorCodePIVSlotNotFound
-	ErrorCodePIVSlotOccupied      = pairingproto.ErrorCodePIVSlotOccupied
-	ErrorCodeShareDenied          = pairingproto.ErrorCodeShareDenied
-	ErrorCodeShareNotExportable   = pairingproto.ErrorCodeShareNotExportable
-	ErrorCodeSyncApprovalRequired = pairingproto.ErrorCodeSyncApprovalRequired
-	ErrorCodeSyncConflict         = pairingproto.ErrorCodeSyncConflict
-	ErrorCodeSyncFailed           = pairingproto.ErrorCodeSyncFailed
-	ErrorCodeSyncNoData           = pairingproto.ErrorCodeSyncNoData
-	ErrorCodeSyncNotApproved      = pairingproto.ErrorCodeSyncNotApproved
-	ErrorCodeMessageTooLarge      = pairingproto.ErrorCodeMessageTooLarge
-	ErrorCodeSyncRemoteUnavail    = pairingproto.ErrorCodeSyncRemoteUnavail
-	ErrorCodeSyncVersionMismatch  = pairingproto.ErrorCodeSyncVersionMismatch
-	ErrorCodeUnsupportedAlg       = pairingproto.ErrorCodeUnsupportedAlg
+	ErrorCodeAttestFailed          = pairingproto.ErrorCodeAttestFailed
+	ErrorCodeAttestUnsupported     = pairingproto.ErrorCodeAttestUnsupported
+	ErrorCodeBackendDenied         = pairingproto.ErrorCodeBackendDenied
+	ErrorCodeBackupFailed          = pairingproto.ErrorCodeBackupFailed
+	ErrorCodeBackupNotFound        = pairingproto.ErrorCodeBackupNotFound
+	ErrorCodeBackupRestore         = pairingproto.ErrorCodeBackupRestore
+	ErrorCodeFeatureUnavailable    = pairingproto.ErrorCodeFeatureUnavailable
+	ErrorCodeInternalError         = pairingproto.ErrorCodeInternalError
+	ErrorCodeInvalidFormat         = pairingproto.ErrorCodeInvalidFormat
+	ErrorCodeInvalidParams         = pairingproto.ErrorCodeInvalidParams
+	ErrorCodeInvalidPublicKey      = pairingproto.ErrorCodeInvalidPublicKey
+	ErrorCodeInvalidRequest        = pairingproto.ErrorCodeInvalidRequest
+	ErrorCodeKeyExists             = pairingproto.ErrorCodeKeyExists
+	ErrorCodeKeyNotFound           = pairingproto.ErrorCodeKeyNotFound
+	ErrorCodeMethodNotFound        = pairingproto.ErrorCodeMethodNotFound
+	ErrorCodeOATHGenerate          = pairingproto.ErrorCodeOATHGenerate
+	ErrorCodeOATHNotFound          = pairingproto.ErrorCodeOATHNotFound
+	ErrorCodeOATHStore             = pairingproto.ErrorCodeOATHStore
+	ErrorCodeParseError            = pairingproto.ErrorCodeParseError
+	ErrorCodePIVInvalidSlot        = pairingproto.ErrorCodePIVInvalidSlot
+	ErrorCodePIVSignFailed         = pairingproto.ErrorCodePIVSignFailed
+	ErrorCodePIVSlotNotFound       = pairingproto.ErrorCodePIVSlotNotFound
+	ErrorCodePIVSlotOccupied       = pairingproto.ErrorCodePIVSlotOccupied
+	ErrorCodeShareDenied           = pairingproto.ErrorCodeShareDenied
+	ErrorCodeShareNotExportable    = pairingproto.ErrorCodeShareNotExportable
+	ErrorCodeSyncApprovalRequired  = pairingproto.ErrorCodeSyncApprovalRequired
+	ErrorCodeSyncConflict          = pairingproto.ErrorCodeSyncConflict
+	ErrorCodeSyncFailed            = pairingproto.ErrorCodeSyncFailed
+	ErrorCodeSyncNoData            = pairingproto.ErrorCodeSyncNoData
+	ErrorCodeSyncNotApproved       = pairingproto.ErrorCodeSyncNotApproved
+	ErrorCodeMessageTooLarge       = pairingproto.ErrorCodeMessageTooLarge
+	ErrorCodeVerifyUserNotEnrolled = pairingproto.ErrorCodeVerifyUserNotEnrolled
+	ErrorCodeVerifyUserLockout     = pairingproto.ErrorCodeVerifyUserLockout
+	ErrorCodeNotPaired             = pairingproto.ErrorCodeNotPaired
+	ErrorCodeSyncRemoteUnavail     = pairingproto.ErrorCodeSyncRemoteUnavail
+	ErrorCodeSyncVersionMismatch   = pairingproto.ErrorCodeSyncVersionMismatch
+	ErrorCodeUnsupportedAlg        = pairingproto.ErrorCodeUnsupportedAlg
 )
 
 // Envelope, transport, framing and error types.
@@ -176,6 +180,7 @@ type (
 	Fragmenter           = pairingproto.Fragmenter
 	HandshakeConfig      = pairingproto.HandshakeConfig
 	LiveAttestFunc       = pairingproto.LiveAttestFunc
+	VerifyUserFunc       = pairingproto.VerifyUserFunc
 	RPCError             = pairingproto.RPCError
 	RPCExchange          = pairingproto.RPCExchange
 	Reassembler          = pairingproto.Reassembler
@@ -339,6 +344,9 @@ var (
 	VerifyAttestChallengeSignature         = pairingproto.VerifyAttestChallengeSignature
 	VerifyGenesisChallenge                 = pairingproto.VerifyGenesisChallenge
 	VerifyUserVerificationGenesisChallenge = pairingproto.VerifyUserVerificationGenesisChallenge
+	BuildVerifyUserTranscript              = pairingproto.BuildVerifyUserTranscript
+	ValidateVerifyUserRPName               = pairingproto.ValidateVerifyUserRPName
+	MapVerifyUserRPCError                  = pairingproto.MapVerifyUserRPCError
 )
 
 // DecodeResult decodes the result of a successful response into a T. A
@@ -352,6 +360,10 @@ func DecodeResult[T any](resp *Response) (*T, error) {
 var (
 	ErrAttestProtocolDowngrade          = pairingproto.ErrAttestProtocolDowngrade
 	ErrUserVerificationGenesisChallenge = pairingproto.ErrUserVerificationGenesisChallenge
+	ErrVerifyUserRPName                 = pairingproto.ErrVerifyUserRPName
+	ErrUserVerificationNotEnrolled      = pairingproto.ErrUserVerificationNotEnrolled
+	ErrUserVerificationLockout          = pairingproto.ErrUserVerificationLockout
+	ErrNotPaired                        = pairingproto.ErrNotPaired
 	ErrAttestationFailed                = pairingproto.ErrAttestationFailed
 	ErrAttestationNotSupported          = pairingproto.ErrAttestationNotSupported
 	ErrBackendClosed                    = pairingproto.ErrBackendClosed

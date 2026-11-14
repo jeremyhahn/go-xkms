@@ -5,18 +5,23 @@
 
 Public specification documents this project implements against. Nothing here
 is proprietary; each entry is a publicly published standard, kept locally so
-implementation work does not depend on the publisher's site staying up.
+implementation work does not depend on the publisher's site staying up. The
+TCG and USB-IF documents are not redistributed here; their rows name their
+path in the private `jeremyhahn/vendor-tcg` repository.
 
-- `TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf` — TCG
+- `tcg/TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf` in
+  the private `jeremyhahn/vendor-tcg` repository — TCG
   "TPM 2.0 Keys for Device Identity and Attestation", v1.00 r12. IAK/IDevID
   key templates, the TCG-CSR-IDEVID enrollment structure, and the identity
   provisioning strategies `pkg/tpm2` implements (`ParseIdentityProvisioningStrategy`).
-- `TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.10r9_pub.pdf` — the
+- `tcg/TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.10r9_pub.pdf` in
+  the private `jeremyhahn/vendor-tcg` repository — the
   same TCG specification, revision v1.10 r9 (public review draft). Kept
   alongside v1.00 r12 rather than replacing it: this project's IAK/IDevID
   code was implemented and is tested against r12, and the two revisions are
   compared here before any migration, not silently swapped.
-- `DWG_Smart-Card_CCID_Rev110.pdf` — USB Implementers Forum, "Universal Serial
+- `usb-if/DWG_Smart-Card_CCID_Rev110.pdf` in the private `jeremyhahn/vendor-tcg`
+  repository — USB Implementers Forum, "Universal Serial
   Bus Device Class: Smart Card CCID", revision 1.10. USB CCID framing used by
   PIV/smart-card integration.
 - `kmip-spec-v1.4-os.pdf` — OASIS "Key Management Interoperability Protocol
@@ -49,7 +54,22 @@ implementation work does not depend on the publisher's site staying up.
   https://www.rfc-editor.org/rfc/rfc9053.txt. §2.1 fixes the ECDSA signature
   encoding `I2OSP(R, n) | I2OSP(S, n)` that `XKMSService.SignOTAImage` returns
   for the OTA_AUTH image signature (ruling 136); every other signature stays
-  ASN.1 DER.
+  ASN.1 DER. §7.1.1 defines the EC2 COSE_Key parameters (crv, x, y) that
+  `XKMSService.ExportOTAImageKey` sets.
+- `rfc-9052.txt` — IETF RFC 9052, "CBOR Object Signing and Encryption (COSE):
+  Structures and Process", copied verbatim from
+  https://www.rfc-editor.org/rfc/rfc9052.txt. §7 is the COSE_Key structure
+  (kty, kid, alg) of the per-board OTA verification key
+  `XKMSService.ExportOTAImageKey` returns.
+- `rfc-8949.txt` — IETF RFC 8949, "Concise Binary Object Representation
+  (CBOR)", copied verbatim from https://www.rfc-editor.org/rfc/rfc8949.txt.
+  §4.2.1 is the core deterministic encoding of that COSE_Key.
+- `rfc-9111.txt` — IETF RFC 9111, "HTTP Caching", copied verbatim from
+  https://www.rfc-editor.org/rfc/rfc9111.txt. `HTTPStatusList` in
+  `pkg/attestation/android` keeps the Android attestation status list only
+  while §4.2 holds (`freshness_lifetime > current_age`, the lifetime per
+  §4.2.1, the age per §4.2.3); a response its own max-age or Expires already
+  expired is stale, revalidated once (§5.2.1.4) and otherwise refused.
 - `NIST.SP.800-76-2.pdf` — NIST SP 800-76-2, "Biometric Specifications for
   Personal Identity Verification".
 - `NIST.SP.800-78-5.pdf` — NIST SP 800-78-5, "Cryptographic Algorithms and Key

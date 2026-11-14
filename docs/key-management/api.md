@@ -112,7 +112,8 @@ operation chooses and the errors are in
 ### Per-board OTA image keys
 
 Each trusted-firmware board has one ES256 key, which signs its OTA images.
-The contract (board-id format, ES256 only, rotation and errors) is in
+The contract (board-id format, ES256 only, rotation, the exported
+encodings and errors) is in
 [engineering.md](engineering.md#per-board-ota-image-keys).
 
 | Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC (HTTP/3) | MCP | Embedded / SDK | Permission |
@@ -120,31 +121,32 @@ The contract (board-id format, ES256 only, rotation and errors) is in
 | Create a board key | `POST /api/v1/ota-image-keys/{board}` | `CreateOTAImageKey` | same as REST | `xkms.createOTAImageKey` | `CreateOTAImageKey` | `keys:create` |
 | Rotate a board key | `POST /api/v1/ota-image-keys/{board}/rotate` | `RotateOTAImageKey` | same as REST | `xkms.rotateOTAImageKey` | `RotateOTAImageKey` | `keys:rotate` |
 | Sign an OTA image | `POST /api/v1/ota-image-keys/{board}/sign` | `SignOTAImage` | same as REST | `xkms.signOTAImage` | `SignOTAImage` | `keys:sign` |
+| Export a board's public key | `POST /api/v1/ota-image-keys/{board}/export` | `ExportOTAImageKey` | same as REST | `xkms.exportOTAImageKey` | `ExportOTAImageKey` | `keys:get` |
 
 Where each call is defined:
 
-- REST: the routes are at `pkg/api/rest/routes.go:166-168`. Sign uses the
-  bulk body limit (`permBulk`, `:168`).
+- REST: the routes are at `pkg/api/rest/routes.go:196-200`. Sign uses the
+  bulk body limit (`permBulk`, `:198`).
 - gRPC: the RPCs and their permissions are at
-  `pkg/api/grpc/proto/xkmsv1/xkms.proto:66-80`. Unix carries the same RPCs
-  over its socket (`pkg/api/transport/unix/transport.go:475`, `:498`,
-  `:525`).
+  `pkg/api/grpc/proto/xkmsv1/xkms.proto:66-87`. Unix carries the same RPCs
+  over its socket (`pkg/api/transport/unix/transport.go:474`, `:497`,
+  `:524`, `:547`).
 - QUIC: the client sends the REST paths over HTTP/3
-  (`pkg/api/transport/quic/transport.go:949`, `:971`, `:993`).
-- MCP: the tools are registered at `pkg/api/mcp/server.go:273-275`.
+  (`pkg/api/transport/quic/transport.go:942`, `:964`, `:986`, `:1009`).
+- MCP: the tools are registered at `pkg/api/mcp/server.go:273-277`.
 - SDK: the methods are on `transport.Client`
-  (`pkg/api/transport/client.go:71-79`). `sdk/go` re-exports the request
-  types (`sdk/go/xkms.go:347-348`).
+  (`pkg/api/transport/client.go:71-84`). `sdk/go` re-exports the request
+  types and the export's response type (`sdk/go/xkms.go:347-348`, `:369`).
 
 Every call names the key by the board id, and the permission is checked on
 the board's key ID, `ota-image-<board-id>`.
 
 **Requests.**
 
-| Transport | Create / rotate | Sign |
+| Transport | Create / rotate / export | Sign |
 |---|---|---|
 | REST | board in `{board}`; body `{"backend", "algorithm"}` (`pkg/api/rest/handlers_ota_image.go:29-33`) | body `{"backend", "data", "data_is_digest"}` (`:37-42`) |
-| gRPC | `OTAImageKeyRequest {board_id, backend, algorithm}` (`xkms.proto:1327-1333`) | `SignOTAImageRequest {board_id, backend, data, data_is_digest}` (`:1336-1342`) |
+| gRPC | `OTAImageKeyRequest {board_id, backend, algorithm}` (`xkms.proto:1523-1529`) | `SignOTAImageRequest {board_id, backend, data, data_is_digest}` (`:1532-1538`) |
 | MCP | `{board_id, backend, algorithm}` (`pkg/api/mcp/handlers_ota_image.go:24-29`) | `{board_id, backend, data, data_is_digest}` (`:32-38`) |
 
 `algorithm` is optional. It must be `ES256`, and empty selects it.
@@ -160,6 +162,13 @@ the board's key ID, `ota-image-<board-id>`.
   (64 bytes for ES256), the OTA_AUTH encoding of ruling 136, not ASN.1 DER.
   Every transport carries those bytes unchanged. Every other signature,
   including the generic sign on the same key, stays DER.
+- Export returns `200 OK` over REST (`handlers_ota_image.go:180`) with
+  `board_id`, `key_id`, `key_version` (the current version), `algorithm`
+  (`ES256`), `public_key` (the raw 64-byte `X || Y`) and `cose_key` (the
+  RFC 9052 §7 COSE_Key in deterministic CBOR). Over gRPC and Unix the
+  response is `ExportOTAImageKeyResponse` (`xkms.proto:1542-1555`), and both
+  byte fields are `bytes`. Over REST, QUIC and MCP the JSON carries them in
+  base64. No transport carries private key material.
 
 The errors are in
 [engineering.md](engineering.md#per-board-ota-image-keys).

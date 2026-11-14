@@ -132,6 +132,115 @@ func TestDAKRespond_IsAVersion2ResponseOverTheGivenChallenge(t *testing.T) {
 	require.NoError(t, pairingproto.VerifyAttestChallengeSignature(dak.Leaf, res.SignatureAlgorithm, res.Signature, transcript))
 }
 
+func TestDAKSignVerifyUserRaw_VerifiesUnderTheProductionTranscript(t *testing.T) {
+	uvk := NewUVK(t, NewCA(t, "root"), UserVerificationKeyClaims())
+	nonce := FixedBytes(0x55, pairingproto.AttestNonceSize)
+	binding := FixedBytes(0x66, pairingproto.AttestChannelBindingSize)
+
+	sig, err := uvk.SignVerifyUserRaw(nonce, binding, "example.com")
+	require.NoError(t, err)
+
+	// The RP name is in the transcript (ruling 180): the signature verifies
+	// for the name the phone showed and for no other.
+	tests := map[string]struct {
+		rpName   string
+		verifies bool
+	}{
+		"the signed RP name":                {"example.com", true},
+		"another RP name":                   {"example.org", false},
+		"a name extending the signed one":   {"example.com.evil", false},
+		"a name truncating the signed name": {"example.co", false},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			transcript, err := pairingproto.BuildVerifyUserTranscript(tt.rpName, nonce, binding, uvk.FP)
+			require.NoError(t, err)
+
+			err = pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, pairingproto.AttestSignatureES256, sig, transcript)
+			if tt.verifies {
+				require.NoError(t, err, "the fixture's hand-built transcript drifted from BuildVerifyUserTranscript")
+				return
+			}
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestDAKRespondVerifyUser_IsAVersion2AnswerOverTheRPName(t *testing.T) {
+	uvk := NewUVK(t, NewCA(t, "root"), UserVerificationKeyClaims())
+	nonce := FixedBytes(0x55, pairingproto.AttestNonceSize)
+	binding := FixedBytes(0x66, pairingproto.AttestChannelBindingSize)
+
+	res := uvk.RespondVerifyUser(t, nonce, binding, "example.com")
+
+	require.Equal(t, pairingproto.AttestProtocolV2, res.ProtocolVersion)
+	require.Equal(t, pairingproto.AttestSignatureES256, res.SignatureAlgorithm)
+	require.Equal(t, uvk.Chain, res.CertificateChain)
+
+	transcript, err := pairingproto.BuildVerifyUserTranscript("example.com", nonce, binding, uvk.FP)
+	require.NoError(t, err)
+	require.NoError(t, pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, res.SignatureAlgorithm, res.Signature, transcript))
+
+	// The UVK's fingerprint is in the transcript: the answer does not stand
+	// for another key.
+	other, err := pairingproto.BuildVerifyUserTranscript("example.com", nonce, binding, FixedBytes(0x77, len(uvk.FP)))
+	require.NoError(t, err)
+	require.Error(t, pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, res.SignatureAlgorithm, res.Signature, other))
+}
+
+func TestNewUVK_MeetsTheProductionUserVerificationChecks(t *testing.T) {
+	tests := map[string]struct {
+		key                  func(t *testing.T) *DAK
+		wantGenesis          error
+		wantUserVerification error
+	}{
+		"a user-verification key": {
+			key: func(t *testing.T) *DAK { return NewUVK(t, NewCA(t, "root"), UserVerificationKeyClaims()) },
+		},
+		"device claims under the user-verification genesis": {
+			key:                  func(t *testing.T) *DAK { return NewUVK(t, NewCA(t, "root"), DeviceKeyClaims()) },
+			wantUserVerification: xkms.ErrAndroidKeyUserAuthTypeNotUserVerification,
+		},
+		"a device attestation key": {
+			key: func(t *testing.T) *DAK {
+				return NewDAK(t, NewCA(t, "root"), GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState())
+			},
+			wantGenesis:          pairingproto.ErrUserVerificationGenesisChallenge,
+			wantUserVerification: xkms.ErrAndroidKeyUserAuthTypeNotUserVerification,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			desc, err := xkms.ParseAndroidKeyAttestation(tt.key(t).Leaf)
+			require.NoError(t, err)
+
+			requireErrorIsOrNil(t, tt.wantGenesis, pairingproto.VerifyUserVerificationGenesisChallenge(desc.AttestationChallenge))
+			requireErrorIsOrNil(t, tt.wantUserVerification, xkms.RequireAndroidAttestedPerUseUserVerification(desc))
+		})
+	}
+}
+
+func TestNoRevocations_RevokesNothing(t *testing.T) {
+	list := NoRevocations()
+	require.NotNil(t, list)
+	require.Zero(t, list.Len())
+
+	dak := NewDAK(t, NewCA(t, "root"), GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState())
+	_, listed := list.Lookup(dak.Leaf.SerialNumber)
+	require.False(t, listed)
+}
+
+// requireErrorIsOrNil requires err to be nil when want is nil, and to match
+// want otherwise.
+func requireErrorIsOrNil(t *testing.T, want, err error) {
+	t.Helper()
+	if want == nil {
+		require.NoError(t, err)
+		return
+	}
+	require.ErrorIs(t, err, want)
+}
+
 func TestFixedBytes(t *testing.T) {
 	require.Equal(t, []byte{0x5a, 0x5a, 0x5a}, FixedBytes(0x5a, 3))
 	require.Empty(t, FixedBytes(0x5a, 0))

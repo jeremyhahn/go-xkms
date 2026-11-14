@@ -123,6 +123,17 @@ func isU2FAppID(rpid string) bool {
 	return strings.Contains(rpid, "://")
 }
 
+// isUVTokenRequest reports whether a CTAP2 command is the ClientPIN
+// getPinUvAuthTokenUsingUvWithPermissions subcommand, whose built-in user
+// verification waits for the user as a touch does and so needs keepalives.
+func isUVTokenRequest(cmd byte, data []byte) bool {
+	if cmd != CmdClientPIN {
+		return false
+	}
+	req, err := decodeClientPINRequest(data)
+	return err == nil && req.SubCommand == ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions
+}
+
 // CTAPHIDHandler errors.
 var (
 	// ErrInvalidPacketSize indicates the HID packet is not 64 bytes.
@@ -620,7 +631,8 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 		return
 	}
 
-	// Start keepalive goroutine for commands that require user presence.
+	// Start keepalive goroutine for commands that require user presence,
+	// and for the ClientPIN subcommand that verifies the user built-in.
 	// Per CTAP HID spec, the authenticator must send CTAPHID_KEEPALIVE
 	// messages while processing long-running commands to prevent host timeout.
 	// GetAssertion only reaches here if matching credentials exist (the
@@ -634,9 +646,9 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 	//     required) and the authenticator is waiting for a physical touch.
 	keepaliveDone := make(chan struct{})
 	var keepaliveWG sync.WaitGroup
-	if cmd == CmdMakeCredential || cmd == CmdGetAssertion {
+	if cmd == CmdMakeCredential || cmd == CmdGetAssertion || isUVTokenRequest(cmd, data) {
 		keepaliveStatus := byte(KeepaliveStatusUpNeeded)
-		if h.authenticator.NeedsPINBeforeTouch(cmd, data) {
+		if cmd != CmdClientPIN && h.authenticator.NeedsPINBeforeTouch(cmd, data) {
 			keepaliveStatus = KeepaliveStatusProcessing
 		}
 		if h.logger != nil {

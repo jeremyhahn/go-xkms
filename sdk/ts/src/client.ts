@@ -13,6 +13,7 @@
 
 import { resolveAuthPaths, type AuthPaths, type XkmsClientConfig } from './config.js';
 import { HttpCore } from './http.js';
+import { AttestationAppraisalClient } from './clients/attestationAppraisal.js';
 import { AuthClient } from './clients/auth.js';
 import { BackendsClient } from './clients/backends.js';
 import { CaClient } from './clients/ca.js';
@@ -58,6 +59,7 @@ export class XkmsClient {
   readonly passwords: PasswordsClient;
   readonly oidcCredentials: OidcCredentialClient;
   readonly signingKeys: SigningKeyClient;
+  readonly attestation: AttestationAppraisalClient;
   readonly platform: PlatformClient;
   readonly tpmPolicies: TpmPolicyClient;
   readonly credentials: CredentialsClient;
@@ -83,6 +85,7 @@ export class XkmsClient {
     this.passwords = new PasswordsClient(this.http);
     this.oidcCredentials = new OidcCredentialClient(this.http);
     this.signingKeys = new SigningKeyClient(this.http);
+    this.attestation = new AttestationAppraisalClient(this.http);
     this.platform = new PlatformClient(this.http);
     this.tpmPolicies = new TpmPolicyClient(this.http);
     this.credentials = new CredentialsClient(this.http);

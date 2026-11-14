@@ -322,6 +322,11 @@ func newPairedDeviceBackendConfig(
 		RequireLiveAttestation: true,
 		LiveAttest:             newLiveAttestor(device, logger),
 
+		// The user-verification key's chain is checked against the same
+		// trust on every call; nothing from an earlier answer is kept
+		// (ruling 167).
+		VerifyUser: attestation.NewUserVerifier(loadPairingAttestationTrust, logger),
+
 		ScanTimeout:      30 * time.Second,
 		ConnectTimeout:   30 * time.Second,
 		OperationTimeout: timeout,

@@ -78,6 +78,11 @@ type KeyService interface {
 	// board's key.
 	SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error)
 
+	// ExportOTAImageKey returns the public half of the current version of a
+	// board's OTA image-signing key, as raw X || Y and as a COSE_Key, with
+	// the record of which board id its key ID belongs to.
+	ExportOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error)
+
 	// GetImportParameters gets the parameters needed to import a key.
 	GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error)
 
@@ -357,6 +362,26 @@ type FIDO2Service interface {
 
 	// FinishAuthentication completes a WebAuthn authentication flow.
 	FinishAuthentication(ctx context.Context, req *FinishAuthenticationRequest) (*FinishAuthenticationResponse, error)
+}
+
+// TransparencyLogService reads the CA's transparency log.
+type TransparencyLogService interface {
+	// GetTransparencyLogHead returns the log's current signed tree head.
+	GetTransparencyLogHead(ctx context.Context, req *GetTransparencyLogHeadRequest) (*GetTransparencyLogHeadResponse, error)
+
+	// GetTransparencyLogEntry returns one encoded log entry.
+	GetTransparencyLogEntry(ctx context.Context, req *GetTransparencyLogEntryRequest) (*GetTransparencyLogEntryResponse, error)
+
+	// GetTransparencyLogInclusionProof returns an entry's inclusion proof.
+	GetTransparencyLogInclusionProof(ctx context.Context, req *GetTransparencyLogInclusionProofRequest) (*GetTransparencyLogInclusionProofResponse, error)
+
+	// GetTransparencyLogConsistencyProof returns the consistency proof
+	// between two tree sizes.
+	GetTransparencyLogConsistencyProof(ctx context.Context, req *GetTransparencyLogConsistencyProofRequest) (*GetTransparencyLogConsistencyProofResponse, error)
+
+	// AppendTransparencyLogExternal appends an external entry under the
+	// caller's SPIFFE ID and returns its leaf index.
+	AppendTransparencyLogExternal(ctx context.Context, req *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error)
 }
 
 // CAService handles Certificate Authority operations.
@@ -704,12 +729,14 @@ type Client interface {
 	PIVService
 	FIDO2Service
 	CAService
+	TransparencyLogService
 	TCGCAService
 	PINService
 	UserService
 	PasswordService
 	SealStoreService
 	TPMPolicyService
+	AttestationAppraisalService
 	SigningKeyService
 	TrustRootService
 	OIDCCredentialService

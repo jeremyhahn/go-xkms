@@ -273,6 +273,8 @@ var rpcMethods = map[string]rpcMethod{
 	"xkms.createOTAImageKey": handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleCreateOTAImageKey),
 	"xkms.rotateOTAImageKey": handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateOTAImageKey),
 	"xkms.signOTAImage":      handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleSignOTAImage),
+	// Exporting a board key reads its public half, so the get permission applies.
+	"xkms.exportOTAImageKey": handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleExportOTAImageKey),
 
 	// Key versions: listing reads like listing keys; enabling and disabling
 	// versions is rotation lifecycle management; retiring destroys a
@@ -379,6 +381,13 @@ var rpcMethods = map[string]rpcMethod{
 	"xkms.ca.revoke":      handle(auth.ResourceCerts, auth.ActionRevoke, (*Server).handleRevokeCertificate),
 	"xkms.ca.crl":         handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleGenerateCRL),
 	"xkms.ca.is-revoked":  handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleIsRevoked),
+
+	// CA transparency log reads (docs/transparency-log).
+	"xkms.ca.transparency-log.head":              handle(auth.ResourceVlog, auth.ActionHead, (*Server).handleTransparencyLogHead),
+	"xkms.ca.transparency-log.entry":             handle(auth.ResourceVlog, auth.ActionGet, (*Server).handleTransparencyLogEntry),
+	"xkms.ca.transparency-log.inclusion-proof":   handle(auth.ResourceVlog, auth.ActionProof, (*Server).handleTransparencyLogInclusionProof),
+	"xkms.ca.transparency-log.consistency-proof": handle(auth.ResourceVlog, auth.ActionProof, (*Server).handleTransparencyLogConsistencyProof),
+	"xkms.ca.transparency-log.append":            handle(auth.ResourceVlog, auth.ActionAppend, (*Server).handleTransparencyLogAppend),
 
 	// TCG certificate authority -- pkg/api/grpc/service_ca_tcg.go.
 	"xkms.ca.tcg.issue-ek":  handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleIssueEKCertificate),
@@ -531,12 +540,29 @@ var rpcMethods = map[string]rpcMethod{
 	// pkg/auth.ResourceAttestationSigningKeys, an xkms-owned resource family
 	// scoped in pkg/apimodule/module_scopes.go. Mirrors the gRPC SigningKey
 	// RPCs' (qrdb.v1.permission) options one-for-one: changing a binding is
-	// bind, reading one or resolving a repository's key is get.
-	"attestation.signing_key.set":     handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeySet),
-	"attestation.signing_key.get":     handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyGet),
-	"attestation.signing_key.list":    handle(auth.ResourceAttestationSigningKeys, auth.ActionList, (*Server).handleSigningKeyList),
-	"attestation.signing_key.delete":  handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
-	"attestation.signing_key.resolve": handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
+	// bind, reading one or resolving a repository's key is get, and signing
+	// a repository's CoRIM with that key is sign.
+	"attestation.signing_key.set":        handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeySet),
+	"attestation.signing_key.get":        handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyGet),
+	"attestation.signing_key.list":       handle(auth.ResourceAttestationSigningKeys, auth.ActionList, (*Server).handleSigningKeyList),
+	"attestation.signing_key.delete":     handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
+	"attestation.signing_key.resolve":    handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
+	"attestation.signing_key.sign_corim": handle(auth.ResourceAttestationSigningKeys, auth.ActionSign, (*Server).handleSigningKeySignCoRIM),
+	"attestation.signing_key.sign_image": handle(auth.ResourceAttestationSigningKeys, auth.ActionSign, (*Server).handleSigningKeySignImage),
+
+	// Attestation Verifier (go-xkms#1608) -- the xkms-owned
+	// attestation_endorsements, attestation_reference_values and
+	// attestation_verifier families, scoped in
+	// pkg/apimodule/module_scopes.go. Mirrors the gRPC Verifier RPCs'
+	// (qrdb.v1.permission) options one-for-one.
+	"attestation.endorsement.put":         handle(auth.ResourceAttestationEndorsements, auth.ActionCreate, (*Server).handleEndorsementPut),
+	"attestation.endorsement.list":        handle(auth.ResourceAttestationEndorsements, auth.ActionList, (*Server).handleEndorsementList),
+	"attestation.endorsement.delete":      handle(auth.ResourceAttestationEndorsements, auth.ActionDelete, (*Server).handleEndorsementDelete),
+	"attestation.reference_values.put":    handle(auth.ResourceAttestationReferenceValues, auth.ActionCreate, (*Server).handleReferenceValuesPut),
+	"attestation.reference_values.get":    handle(auth.ResourceAttestationReferenceValues, auth.ActionGet, (*Server).handleReferenceValuesGet),
+	"attestation.reference_values.list":   handle(auth.ResourceAttestationReferenceValues, auth.ActionList, (*Server).handleReferenceValuesList),
+	"attestation.reference_values.delete": handle(auth.ResourceAttestationReferenceValues, auth.ActionDelete, (*Server).handleReferenceValuesDelete),
+	"attestation.quote.appraise":          handle(auth.ResourceAttestationVerifier, auth.ActionVerify, (*Server).handleQuoteAppraise),
 
 	// Attested-caller evidence (pkg/attestation/peergate) --
 	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped

@@ -69,7 +69,7 @@ func main() {
 // once run has returned -- on every orderly exit, including the graceful
 // shutdown run drives on SIGINT/SIGTERM -- enclave.WipeAll destroys every
 // locked-memory enclave the process holds. go-qrdb's Secret/Buffer and
-// go-xkms's own MemoryEnclaves (pintpm2's cached FIDO2 hash, sealed backend
+// go-xkms's own ByteAccess enclaves (pintpm2's cached FIDO2 hash, sealed backend
 // DEKs) are all go-enclave memory on one registry, so this one call sweeps
 // them all, as cmd/qrdbd's start does.
 //
@@ -77,7 +77,7 @@ func main() {
 // that belongs only to the binary (go-xkms#623), and specifically to the one
 // call that owns the real process's exit -- not to run, which tests also call
 // directly to reach its flag-parsing and dispatch branches. A WipeAll wired
-// into run instead destroyed every MemoryEnclave live anywhere in the test
+// into run instead destroyed every ByteAccess enclave live anywhere in the test
 // binary each time one of those tests called it, including sealers other
 // tests in the same package were still using (go-xkms#1153).
 func runProcess() int {

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -231,6 +232,14 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 		return err
 	}
 	policy.TrustedRoots = roots
+
+	// Ruling 180: the attestation status list is resolved up front too, so
+	// an unreadable list refuses before the phone generates a key.
+	revocation, err := attestation.RevocationSource(unifiedConfigOrDefault().Phone)
+	if err != nil {
+		return err
+	}
+	policy.Revocation = revocation
 
 	nonce := make([]byte, enrollmentNonceSize)
 	if _, err := rand.Read(nonce); err != nil {

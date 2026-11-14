@@ -371,10 +371,10 @@ engine below wraps it); `xkmsd` never selects an engine through it.
 
 | Kind | Opens | Needs |
 |---|---|---|
-| `file` (also the empty kind) | `qrdbsdk.NewFileStorage(Path)` | `Path` |
-| `pebble` | `qrdbsdk.NewPebbleStorage(DefaultPebbleConfig(Path))` | `Path` |
-| `memory` | `qrdbsdk.NewMemoryStorage()` | nothing |
-| `objstore` | `qrdbsdk.NewObjStoreStorage(Provider, Options)` | `Provider` (empty = `"local"`); `Options` go verbatim to go-objstore (`pkg/storage/engine.go:375-388`) |
+| `file` (also the empty kind) | `qrdbstorage.NewFileStorage(Path)` | `Path` |
+| `pebble` | `qrdbstorage.NewPebbleStorage(DefaultPebbleConfig(Path))` | `Path` |
+| `memory` | `qrdbstorage.NewMemoryStorage()` | nothing |
+| `objstore` | `qrdbstorage.NewObjStoreStorage(Provider, Options)` | `Provider` (empty = `"local"`); `Options` go verbatim to go-objstore (`pkg/storage/engine.go:375-388`) |
 
 A missing `Path` is `ErrEnginePathRequired`, an unknown kind wraps
 `ErrUnknownEngine` (`pkg/storage/errors.go:49-54`), and an open failure is
@@ -384,12 +384,12 @@ A missing `Path` is `ErrEnginePathRequired`, an unknown kind wraps
 ### CA blob storage
 
 `pkg/ca` keeps its non-certificate blobs in a go-qrdb storage engine, the
-`qrdbsdk.Storage` the embedder passes as `ca.Params.ObjectStore` or builds
+`qrdbstorage.Storage` the embedder passes as `ca.Params.ObjectStore` or builds
 per CA with `ca.Params.ObjectStoreFactory` (`pkg/ca/ca.go:144,172`,
 `pkg/ca/constructors.go:82`). go-xkms imports go-objstore nowhere: the
 backend is chosen by configuration through go-qrdb. `sdk/go` exposes the
 engine as `ObjectStorage`, opened by `NewObjectStorage(provider, settings)`
-(`qrdbsdk.NewObjStoreStorage`; `"local"` needs no build tag, cloud providers
+(`qrdbstorage.NewObjStoreStorage`; `"local"` needs no build tag, cloud providers
 need go-objstore's tag) or `NewObjectStorageMemory()`
 (`sdk/go/storage.go:70,131,135`). The engine is optional; a CA without one
 refuses only the blob operations, with `ca.ErrObjectStoreRequired`

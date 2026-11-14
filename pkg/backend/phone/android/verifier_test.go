@@ -20,7 +20,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"errors"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -101,8 +106,10 @@ func TestAndroidVerifier_VerifyAttestation_InvalidCertDER(t *testing.T) {
 	}
 }
 
-func TestAndroidVerifier_VerifyAttestation_ValidChainWithAttestation(t *testing.T) {
-	nonce := []byte("test-nonce-12345")
+// newAttestedChain returns a StrongBox attestation leaf for nonce, issued by a
+// self-signed CA with serial 1, and a pool trusting that CA.
+func newAttestedChain(t *testing.T, nonce []byte) (leafDER, caDER []byte, pool *x509.CertPool) {
+	t.Helper()
 
 	// Create a self-signed CA.
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -119,7 +126,7 @@ func TestAndroidVerifier_VerifyAttestation_ValidChainWithAttestation(t *testing.
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
-	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	caDER, err = x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
 	if err != nil {
 		t.Fatalf("failed to create CA cert: %v", err)
 	}
@@ -159,19 +166,26 @@ func TestAndroidVerifier_VerifyAttestation_ValidChainWithAttestation(t *testing.
 			},
 		},
 	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
+	leafDER, err = x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
 	if err != nil {
 		t.Fatalf("failed to create leaf cert: %v", err)
 	}
 
 	// Set up trust pool.
-	pool := x509.NewCertPool()
+	pool = x509.NewCertPool()
 	pool.AddCert(caCert)
+	return leafDER, caDER, pool
+}
+
+func TestAndroidVerifier_VerifyAttestation_ValidChainWithAttestation(t *testing.T) {
+	nonce := []byte("test-nonce-12345")
+	leafDER, caDER, pool := newAttestedChain(t, nonce)
 
 	v := &AndroidVerifier{
 		trustPool:       pool,
 		minSecLevel:     attestandroid.SecurityLevelSoftware,
 		verifyBootState: false,
+		revocation:      &attestandroid.StatusList{},
 	}
 
 	result, err := v.VerifyAttestation([][]byte{leafDER, caDER}, nonce)
@@ -195,6 +209,102 @@ func TestAndroidVerifier_VerifyAttestation_ValidChainWithAttestation(t *testing.
 	}
 	if desc.AttestationSecurityLevel != attestandroid.SecurityLevelStrongBox {
 		t.Errorf("expected SecurityLevelStrongBox, got %v", desc.AttestationSecurityLevel)
+	}
+}
+
+// statusListServer serves body with status from an httptest server. Tests
+// never reach Google's list.
+func statusListServer(t *testing.T, status int, body string) *phone.AttestationConfig {
+	t.Helper()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		if _, err := w.Write([]byte(body)); err != nil {
+			return
+		}
+	}))
+	t.Cleanup(server.Close)
+	return &phone.AttestationConfig{StatusListURL: server.URL, StatusListClient: server.Client()}
+}
+
+func TestAndroidVerifier_VerifyAttestation_StatusListFromConfig(t *testing.T) {
+	nonce := []byte("test-nonce-12345")
+	leafDER, caDER, pool := newAttestedChain(t, nonce)
+
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		wantErr error
+	}{
+		{"unlisted chain verifies", http.StatusOK, `{"entries":{"5":{"status":"REVOKED"}}}`, nil},
+		{"revoked root fails", http.StatusOK, `{"entries":{"1":{"status":"REVOKED","reason":"CA_COMPROMISE"}}}`, attestandroid.ErrCertificateRevoked},
+		{"suspended leaf fails", http.StatusOK, `{"entries":{"2":{"status":"SUSPENDED"}}}`, attestandroid.ErrCertificateRevoked},
+		{"unavailable list fails closed", http.StatusServiceUnavailable, "down", attestandroid.ErrStatusListUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := statusListServer(t, tt.status, tt.body)
+			v, err := NewAndroidVerifier(pool, cfg)
+			if err != nil {
+				t.Fatalf("NewAndroidVerifier() error: %v", err)
+			}
+
+			result, err := v.VerifyAttestation([][]byte{leafDER, caDER}, nonce)
+
+			if tt.wantErr == nil {
+				if err != nil || result == nil {
+					t.Fatalf("VerifyAttestation() = %v, %v; want a result", result, err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.wantErr) || !errors.Is(err, phone.ErrChainVerificationFailed) {
+				t.Fatalf("VerifyAttestation() error = %v, want %v and ErrChainVerificationFailed", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAndroidVerifier_VerifyAttestation_NoStatusListRefuses(t *testing.T) {
+	nonce := []byte("test-nonce-12345")
+	leafDER, caDER, pool := newAttestedChain(t, nonce)
+	v := &AndroidVerifier{trustPool: pool}
+
+	_, err := v.VerifyAttestation([][]byte{leafDER, caDER}, nonce)
+
+	if !errors.Is(err, attestandroid.ErrNilStatusListSource) || !errors.Is(err, phone.ErrChainVerificationFailed) {
+		t.Fatalf("VerifyAttestation() error = %v, want ErrNilStatusListSource", err)
+	}
+}
+
+func TestNewAndroidVerifier_StatusListFile(t *testing.T) {
+	dir := t.TempDir()
+	listed := filepath.Join(dir, "status.json")
+	if err := os.WriteFile(listed, []byte(`{"entries":{"1":{"status":"REVOKED"}}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	nonce := []byte("test-nonce-12345")
+	leafDER, caDER, pool := newAttestedChain(t, nonce)
+
+	v, err := NewAndroidVerifier(pool, &phone.AttestationConfig{StatusListFile: listed, StatusListURL: "https://unused.test/status"})
+	if err != nil {
+		t.Fatalf("NewAndroidVerifier() error: %v", err)
+	}
+	if _, err := v.VerifyAttestation([][]byte{leafDER, caDER}, nonce); !errors.Is(err, attestandroid.ErrCertificateRevoked) {
+		t.Fatalf("VerifyAttestation() error = %v, want ErrCertificateRevoked from the file", err)
+	}
+
+	_, err = NewAndroidVerifier(pool, &phone.AttestationConfig{StatusListFile: filepath.Join(dir, "absent.json")})
+	if !errors.Is(err, attestandroid.ErrStatusListUnavailable) {
+		t.Fatalf("NewAndroidVerifier() error = %v, want ErrStatusListUnavailable for a missing file", err)
+	}
+}
+
+func TestNewAndroidVerifier_InvalidStatusListURL(t *testing.T) {
+	for _, bad := range []string{"ftp://mirror.test/status", "http://mirror.test/status"} {
+		_, err := NewAndroidVerifier(x509.NewCertPool(), &phone.AttestationConfig{StatusListURL: bad})
+		if !errors.Is(err, attestandroid.ErrInvalidStatusListURL) {
+			t.Fatalf("NewAndroidVerifier(%q) error = %v, want ErrInvalidStatusListURL", bad, err)
+		}
 	}
 }
 

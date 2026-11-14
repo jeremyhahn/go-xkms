@@ -142,3 +142,37 @@ func (s *Service) SignOTAImage(ctx context.Context, req *pb.SignOTAImageRequest)
 
 	return &pb.SignResponse{Signature: resp.Signature, KeyVersion: resp.KeyVersion}, nil
 }
+
+// ExportOTAImageKey returns the public half of the current version of a
+// board's key. It reads a public key, so the get permission applies.
+func (s *Service) ExportOTAImageKey(ctx context.Context, req *pb.OTAImageKeyRequest) (*pb.ExportOTAImageKeyResponse, error) {
+	keyID, err := s.otaImageKeyID(ctx, req.BoardId, req.Backend)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionGet, keyID); err != nil {
+		return nil, err
+	}
+	if err := s.requireXKMSService(); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.xkmsService.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{
+		Backend:   req.Backend,
+		BoardID:   req.BoardId,
+		Algorithm: req.Algorithm,
+		TenantID:  callerTenantID(ctx),
+	})
+	if err != nil {
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
+	}
+
+	return &pb.ExportOTAImageKeyResponse{
+		BoardId:    resp.BoardID,
+		KeyId:      resp.KeyID,
+		KeyVersion: resp.KeyVersion,
+		Algorithm:  resp.Algorithm,
+		PublicKey:  resp.PublicKey,
+		CoseKey:    resp.COSEKey,
+	}, nil
+}

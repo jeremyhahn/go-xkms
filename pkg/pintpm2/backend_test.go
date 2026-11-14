@@ -413,14 +413,14 @@ func TestTPM2Backend_VerifyUserPIN_WrongPIN_LockoutInfoFails(t *testing.T) {
 
 func TestTPM2Backend_VerifyUserPIN_FIDO2HashNotRecachedIfPresent(t *testing.T) {
 	b, _ := newProvisionedTPM2Backend(t, "user-pin")
-	enc1 := b.fido2Enclave.Load()
+	enc1 := b.loadFIDO2Enclave()
 	if enc1 == nil {
 		t.Fatal("FIDO2 enclave should be set after SetUserPIN")
 	}
 	if err := b.VerifyUserPIN("user-pin"); err != nil {
 		t.Fatalf("VerifyUserPIN: %v", err)
 	}
-	enc2 := b.fido2Enclave.Load()
+	enc2 := b.loadFIDO2Enclave()
 	if enc1 != enc2 {
 		t.Fatal("FIDO2 enclave should not be replaced when already cached")
 	}
@@ -747,7 +747,7 @@ func TestTPM2Backend_VerifyFIDO2Hash_AfterPINChange(t *testing.T) {
 
 func TestTPM2Backend_Close_DestroysMemoryEnclave(t *testing.T) {
 	b, _ := newProvisionedTPM2Backend(t, "user-pin")
-	enc := b.fido2Enclave.Load()
+	enc := b.loadFIDO2Enclave()
 	if enc == nil {
 		t.Fatal("expected fido2Enclave to be set")
 	}

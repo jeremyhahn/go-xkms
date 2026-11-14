@@ -256,6 +256,32 @@ func TestParseKeyAttestation_RealChainOriginAndPurpose(t *testing.T) {
 	}
 }
 
+// TestParseKeyAttestation_RealChainUserAuthentication reads the
+// user-authentication fields (tags 503-506) off a real chain. The captured key
+// was generated without setUserAuthenticationRequired, so Keystore attested it
+// noAuthRequired, and a per-use biometric policy must refuse it.
+func TestParseKeyAttestation_RealChainUserAuthentication(t *testing.T) {
+	chain := loadRealChain(t)
+
+	desc, err := ParseKeyAttestation(chain[0])
+	if err != nil {
+		t.Fatalf("parse real attestation: %v", err)
+	}
+
+	sw := desc.SoftwareEnforced
+	if !sw.NoAuthRequired {
+		t.Error("softwareEnforced noAuthRequired = false, want true: the key was generated without user authentication")
+	}
+	if sw.UserAuthType != UserAuthTypeNone || sw.HasAuthTimeout || sw.AllowWhileOnBody {
+		t.Errorf("softwareEnforced userAuthType=%d hasAuthTimeout=%v allowWhileOnBody=%v, want no claims",
+			sw.UserAuthType, sw.HasAuthTimeout, sw.AllowWhileOnBody)
+	}
+
+	if err := RequireAttestedPerUseUserVerification(desc); !errors.Is(err, ErrKeyNoAuthRequired) {
+		t.Errorf("RequireAttestedPerUseUserVerification = %v, want ErrKeyNoAuthRequired", err)
+	}
+}
+
 // TestParseKeyAttestation_RealChainCarriesApplicationIdentity proves the field
 // the enterprise CA's allow-list is built on actually decodes.
 //

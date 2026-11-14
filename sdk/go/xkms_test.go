@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport/embedded"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport/grpc"
@@ -766,6 +767,10 @@ func TestOptsFromConfig_SPKIPin(t *testing.T) {
 
 // mockXKMSService is a mock implementation of XKMSServicer for testing
 type mockXKMSService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	healthStatus  string
 	healthVersion string
 	healthErr     error
@@ -863,6 +868,10 @@ func (m *mockXKMSService) RotateOTAImageKey(ctx context.Context, req *transport.
 }
 
 func (m *mockXKMSService) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
 	return nil, nil
 }
 
@@ -987,6 +996,26 @@ func (m *mockXKMSService) DeriveKeyECDH(ctx context.Context, req *transport.Deri
 }
 
 func (m *mockXKMSService) GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) GetTransparencyLogHead(ctx context.Context, req *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) GetTransparencyLogEntry(ctx context.Context, req *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) GetTransparencyLogInclusionProof(ctx context.Context, req *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) GetTransparencyLogConsistencyProof(ctx context.Context, req *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
 	return nil, nil
 }
 
@@ -1445,5 +1474,12 @@ func (*mockXKMSService) DeleteSigningKeyBinding(context.Context, *transport.Dele
 	return nil
 }
 func (*mockXKMSService) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*mockXKMSService) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}
+
+func (*mockXKMSService) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
 	return nil, nil
 }

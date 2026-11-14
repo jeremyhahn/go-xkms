@@ -2295,7 +2295,16 @@ func (s *PhoneService) loadAttestationTrust() (*xkms.AndroidDeviceTrust, error) 
 	if err != nil {
 		return nil, err
 	}
-	return xkeyAttestation.LoadTrust(s.trustStore, apps)
+
+	unified, err := config.Load()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
+	}
+	revocation, err := xkeyAttestation.RevocationSource(unified.Phone)
+	if err != nil {
+		return nil, err
+	}
+	return xkeyAttestation.LoadTrust(s.trustStore, apps, revocation)
 }
 
 // ResolvedApplicationPolicy returns the attested-application allow-list a

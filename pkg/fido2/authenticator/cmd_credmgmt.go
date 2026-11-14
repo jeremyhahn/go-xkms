@@ -208,6 +208,12 @@ func (a *Authenticator) handleEnumerateRPsBegin() ([]byte, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// CTAP 2.1 §6.8.3: listing every RP is authenticator-wide, so a token
+	// scoped to one RP never authorizes it.
+	if a.pinState.protocol.tokenRPID != "" {
+		return nil, ErrPINAuthInvalid
+	}
+
 	// Build list of unique RPs with discoverable credentials.
 	rpMap := make(map[string]*rpEntry)
 
@@ -257,6 +263,13 @@ func (a *Authenticator) handleEnumerateRPsGetNextRP() ([]byte, error) {
 		return nil, ErrNoEnumerationInProgress
 	}
 
+	// CTAP 2.1 §6.8.3 and §6.5.5.7: the continuation is authorized by the
+	// current pinUvAuthToken, not by the one that began the enumeration, so
+	// a token scoped to one RP never reads the authenticator-wide RP list.
+	if a.pinState.protocol.tokenRPID != "" {
+		return nil, ErrPINAuthInvalid
+	}
+
 	// Move to next RP.
 	a.credMgmtState.currentRPIndex++
 
@@ -280,6 +293,11 @@ func (a *Authenticator) handleEnumerateCredentialsBegin(req *CredentialManagemen
 	rpIDHash, err := extractRPIDHash(req.SubCommandParams)
 	if err != nil {
 		return nil, err
+	}
+
+	// CTAP 2.1 §6.8.4: a token scoped to an RP enumerates that RP only.
+	if !a.credMgmtTokenCoversRPLocked(rpIDHash) {
+		return nil, ErrPINAuthInvalid
 	}
 
 	// Find credentials matching this RP ID hash.
@@ -319,6 +337,13 @@ func (a *Authenticator) handleEnumerateCredentialsGetNextCredential() ([]byte, e
 		return nil, ErrNoEnumerationInProgress
 	}
 
+	// CTAP 2.1 §6.8.4 and §6.5.5.7: the current pinUvAuthToken's permissions
+	// RP ID must cover the RP being enumerated, so a token scoped to another
+	// RP cannot read this enumeration's remaining credentials.
+	if !a.credMgmtTokenCoversRPLocked(a.credMgmtState.enumerationRPIDHash) {
+		return nil, ErrPINAuthInvalid
+	}
+
 	// Move to next credential.
 	a.credMgmtState.currentCredIndex++
 
@@ -342,6 +367,12 @@ func (a *Authenticator) handleDeleteCredential(req *CredentialManagementRequest)
 	// Extract credential ID from params.
 	credentialID, err := extractCredentialID(req.SubCommandParams)
 	if err != nil {
+		return nil, err
+	}
+
+	// CTAP 2.1 §6.8.5: a token scoped to an RP deletes that RP's
+	// credentials only.
+	if err := a.credMgmtTokenCoversCredentialLocked(credentialID); err != nil {
 		return nil, err
 	}
 
@@ -385,6 +416,13 @@ func (a *Authenticator) handleUpdateUserInformation(req *CredentialManagementReq
 		return nil, ErrStorageError
 	}
 
+	// CTAP 2.1 §6.8.6: a token scoped to an RP updates that RP's
+	// credentials only.
+	credRPIDHash := sha256.Sum256([]byte(cred.RPID))
+	if !a.credMgmtTokenCoversRPLocked(credRPIDHash[:]) {
+		return nil, ErrPINAuthInvalid
+	}
+
 	// Update user information.
 	if name, ok := userInfo["name"].(string); ok {
 		cred.UserName = name
@@ -406,8 +444,10 @@ func (a *Authenticator) verifyCredMgmtAuth(req *CredentialManagementRequest) err
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	// Check if PIN is set.
-	if !a.isPINSetLocked() {
+	// A token minted by built-in user verification (CTAP 2.1 §6.5.5.7.3)
+	// authorizes credential management on an authenticator with no PIN, so
+	// the missing PIN is the answer only when no usable token exists either.
+	if !a.isPINSetLocked() && !a.pinUvAuthTokenUsableLocked(time.Now()) {
 		return ErrPINNotSet
 	}
 
@@ -454,6 +494,41 @@ func (a *Authenticator) verifyCredMgmtAuth(req *CredentialManagementRequest) err
 		return ErrPINAuthInvalid
 	}
 
+	return nil
+}
+
+// credMgmtTokenCoversRPLocked reports whether the token that authorized a
+// credential management subcommand may act on the RP whose RP ID hashes to
+// rpIDHash. A token minted without a permissions RP ID covers every RP; a
+// token minted with one covers that RP only (CTAP 2.1 §6.8.4-§6.8.6).
+func (a *Authenticator) credMgmtTokenCoversRPLocked(rpIDHash []byte) bool {
+	tokenRPID := a.pinState.protocol.tokenRPID
+	if tokenRPID == "" {
+		return true
+	}
+	tokenRPIDHash := sha256.Sum256([]byte(tokenRPID))
+	return bytes.Equal(tokenRPIDHash[:], rpIDHash)
+}
+
+// credMgmtTokenCoversCredentialLocked refuses, with CTAP2_ERR_PIN_AUTH_INVALID,
+// a token scoped to an RP other than the one the credential belongs to (CTAP
+// 2.1 §6.8.5). The credential is loaded only for a scoped token: a token
+// without a permissions RP ID covers every credential.
+func (a *Authenticator) credMgmtTokenCoversCredentialLocked(credentialID []byte) error {
+	if a.pinState.protocol.tokenRPID == "" {
+		return nil
+	}
+	cred, err := a.storage.Load(credentialID)
+	if err != nil {
+		if errors.Is(err, ErrCredentialNotFound) {
+			return ErrCredentialNotFound
+		}
+		return ErrStorageError
+	}
+	credRPIDHash := sha256.Sum256([]byte(cred.RPID))
+	if !a.credMgmtTokenCoversRPLocked(credRPIDHash[:]) {
+		return ErrPINAuthInvalid
+	}
 	return nil
 }
 

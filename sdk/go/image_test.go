@@ -168,6 +168,13 @@ func TestImageErrorsAreTheCanonicalSentinels(t *testing.T) {
 	}
 }
 
+// TestImageCodeSigningProfileIsTrustedCAs pins the profile pkg/image asks
+// TrustedCA for, which it names without importing pkg/ca, to the CA's
+// code-signing profile.
+func TestImageCodeSigningProfileIsTrustedCAs(t *testing.T) {
+	assert.Equal(t, xkms.ProfileNameCodeSigning, image.ProfileCodeSigning)
+}
+
 func TestVerifySignature(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)

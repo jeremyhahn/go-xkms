@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 )
 
@@ -353,7 +352,7 @@ func TestRequestCodeSigningCertificate(t *testing.T) {
 			issuer := &testIssuer{t: t, pki: f.pki}
 			certificate, err := RequestCodeSigningCertificate(t.Context(), issuer, key, "tenant-a", "release signer")
 			require.NoError(t, err)
-			assert.Equal(t, ca.ProfileNameCodeSigning, issuer.profile)
+			assert.Equal(t, ProfileCodeSigning, issuer.profile)
 			assert.Equal(t, "tenant-a", issuer.tenant)
 			assert.Equal(t, "release signer", certificate.Subject.CommonName)
 			assert.Equal(t, []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning}, certificate.ExtKeyUsage)
@@ -390,7 +389,7 @@ func TestRequestCodeSigningCertificate_Errors(t *testing.T) {
 			want:       ErrIssuerRequired,
 		},
 		"no signer":         {issuer: issuer(nil, nil), signer: nil, commonName: "release signer", want: ErrSignerRequired},
-		"no tenant":         {issuer: issuer(nil, nil), signer: key, tenantID: " ", commonName: "release signer", want: ca.ErrTenantRequired},
+		"no tenant":         {issuer: issuer(nil, nil), signer: key, tenantID: " ", commonName: "release signer", want: ErrTenantRequired},
 		"blank common name": {issuer: issuer(nil, nil), signer: key, commonName: " \t", want: ErrCommonNameRequired},
 		"request unsigned": {
 			issuer:     issuer(nil, nil),

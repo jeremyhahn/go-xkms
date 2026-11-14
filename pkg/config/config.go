@@ -35,30 +35,32 @@ import (
 
 // Config represents the complete server configuration
 type Config struct {
-	Server      ServerConfig              `yaml:"server"`
-	Protocols   ProtocolsConfig           `yaml:"protocols"`
-	Unix        UnixConfig                `yaml:"unix"`
-	Logging     LoggingConfig             `yaml:"logging"`
-	TLS         TLSConfig                 `yaml:"tls"`
-	Auth        AuthConfig                `yaml:"auth"`
-	WebAuthn    *WebAuthnConfig           `yaml:"webauthn,omitempty"`
-	CORS        CORSConfig                `yaml:"cors"`
-	UI          UIConfig                  `yaml:"ui"`
-	RateLimit   RateLimitConfig           `yaml:"ratelimit"`
-	Metrics     MetricsConfig             `yaml:"metrics"`
-	Health      HealthConfig              `yaml:"health"`
-	Datastore   DatastoreConfig           `yaml:"datastore"`
-	Crypto      CryptoConfig              `yaml:"crypto"`
-	Cluster     ClusterConfig             `yaml:"cluster"`
-	RNG         RNGConfig                 `yaml:"rng"`
-	Default     DefaultConfig             `yaml:"default_backend"`
-	Backends    BackendsConfig            `yaml:"backends"`
-	Bootstrap   BootstrapConfig           `yaml:"bootstrap"`
-	Barrier     BarrierConfig             `yaml:"barrier"`
-	PIN         PINConfig                 `yaml:"pin"`
-	Credentials CredentialsConfig         `yaml:"credentials"`
-	CA          *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
-	ACME        *ACMEConfig               `yaml:"acme,omitempty"`
+	Server    ServerConfig    `yaml:"server"`
+	Protocols ProtocolsConfig `yaml:"protocols"`
+	Unix      UnixConfig      `yaml:"unix"`
+	Logging   LoggingConfig   `yaml:"logging"`
+	TLS       TLSConfig       `yaml:"tls"`
+	Auth      AuthConfig      `yaml:"auth"`
+	WebAuthn  *WebAuthnConfig `yaml:"webauthn,omitempty"`
+	CORS      CORSConfig      `yaml:"cors"`
+	UI        UIConfig        `yaml:"ui"`
+	// TransparencyLog configures the CA's transparency log.
+	TransparencyLog TransparencyLogConfig     `yaml:"transparency_log"`
+	RateLimit       RateLimitConfig           `yaml:"ratelimit"`
+	Metrics         MetricsConfig             `yaml:"metrics"`
+	Health          HealthConfig              `yaml:"health"`
+	Datastore       DatastoreConfig           `yaml:"datastore"`
+	Crypto          CryptoConfig              `yaml:"crypto"`
+	Cluster         ClusterConfig             `yaml:"cluster"`
+	RNG             RNGConfig                 `yaml:"rng"`
+	Default         DefaultConfig             `yaml:"default_backend"`
+	Backends        BackendsConfig            `yaml:"backends"`
+	Bootstrap       BootstrapConfig           `yaml:"bootstrap"`
+	Barrier         BarrierConfig             `yaml:"barrier"`
+	PIN             PINConfig                 `yaml:"pin"`
+	Credentials     CredentialsConfig         `yaml:"credentials"`
+	CA              *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
+	ACME            *ACMEConfig               `yaml:"acme,omitempty"`
 	// Escrow configures the optional external key escrow subsystem
 	// (pkg/escrow). When nil or Enabled is false, no escrow agents are
 	// constructed and the escrow servicer methods return ErrNotConfigured.
@@ -625,6 +627,35 @@ func (c *Config) UIEnabled() bool {
 		return true
 	}
 	return *c.UI.Enabled
+}
+
+// TransparencyLogConfig configures the CA's transparency log on the embedded
+// node (docs/transparency-log/engineering.md): every certificate the CA
+// issues or revokes is appended to it.
+type TransparencyLogConfig struct {
+	// Enabled toggles the log. A nil value takes the build's default
+	// (transparencyLogDefault): on when xkmsd is built with go-qrdb's
+	// qrdb_vlog tag, off without it, because go-qrdb then serves no
+	// verifiable logs. An explicit true in a build without the tag makes
+	// start-up fail, since the log cannot be opened.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// Origin is the log's identity, the first line of every checkpoint
+	// (tlog-checkpoint §Note text) and the name of the key that signs its
+	// tree heads. Empty derives it from the CA's first identity: its common
+	// name, whitespace runs joined by "-", followed by "/tlog". The origin
+	// is fixed when the log is created.
+	Origin string `yaml:"origin,omitempty"`
+}
+
+// TransparencyLogEnabled reports whether the CA appends to a transparency
+// log. An unset flag takes the build's default: on with the qrdb_vlog tag,
+// off without it.
+func (c *Config) TransparencyLogEnabled() bool {
+	if c.TransparencyLog.Enabled == nil {
+		return transparencyLogDefault
+	}
+	return *c.TransparencyLog.Enabled
 }
 
 // RateLimitConfig controls rate limiting

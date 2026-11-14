@@ -257,7 +257,7 @@ func WithTenantStores(resolve TenantStoresResolver) Option {
 }
 
 // WithPINBackend supplies the host's PIN backend (the one its qrdb node was
-// built with, qrdbsdk.WithPINBackend). Its user PIN opens a tenant's
+// built with, qrdbserver.WithPINBackend). Its user PIN opens a tenant's
 // Password Manager session (/api/v1/password-vault/unlock), so without it tenant
 // password stores stay locked; it also backs the /api/v1/pin/* routes.
 func WithPINBackend(pin qrdbsdk.PINBackend) Option {

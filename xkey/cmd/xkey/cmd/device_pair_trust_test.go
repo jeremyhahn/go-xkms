@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -141,6 +142,33 @@ func TestLoadPairingAttestationTrust_EmptyStore(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, trust)
 	require.Equal(t, attesttest.Applications(), trust.Applications)
+}
+
+// TestLoadPairingAttestationTrust_UnreadableStatusListFailsClosed pins ruling
+// 180: a configured status list that cannot be read refuses the trust rather
+// than verifying chains without revocation.
+func TestLoadPairingAttestationTrust_UnreadableStatusListFailsClosed(t *testing.T) {
+	isolatePairingTrust(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		AttestationPolicy: &AttestationPolicy{ApplicationPolicy: attesttest.Applications()},
+	}))
+	useAbsentStatusList(t)
+
+	trust, err := loadPairingAttestationTrust()
+
+	require.ErrorIs(t, err, xkms.ErrAndroidStatusListUnavailable)
+	require.Nil(t, trust)
+}
+
+// useAbsentStatusList points the loaded configuration at a status list file
+// that does not exist, restoring the previous configuration on cleanup.
+func useAbsentStatusList(t *testing.T) {
+	t.Helper()
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.Phone.AttestationStatusFile = filepath.Join(t.TempDir(), "absent.json")
+	previous := loadedConfig
+	loadedConfig = cfg
+	t.Cleanup(func() { loadedConfig = previous })
 }
 
 // TestLoadPairingAttestationTrust_RefusesWithoutAnAllowList pins #1305's fail

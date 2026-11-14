@@ -175,6 +175,17 @@ var goldenRPCPermissions = map[string]string{
 	"OIDCCredentialDeviceStart":    "oidc_credentials:update",
 	"OIDCCredentialDevicePoll":     "oidc_credentials:update",
 
+	// Attestation Verifier (go-xkms#1608) -- the trust anchors, signed
+	// CoRIM reference values and quote appraisal of pkg/attestation/appraisal.
+	"PutAttestationEndorsement":        "attestation_endorsements:create",
+	"ListAttestationEndorsements":      "attestation_endorsements:list",
+	"DeleteAttestationEndorsement":     "attestation_endorsements:delete",
+	"PutAttestationReferenceValues":    "attestation_reference_values:create",
+	"GetAttestationReferenceValues":    "attestation_reference_values:get",
+	"ListAttestationReferenceValues":   "attestation_reference_values:list",
+	"DeleteAttestationReferenceValues": "attestation_reference_values:delete",
+	"AppraiseAttestationQuote":         "attestation_verifier:verify",
+
 	// Repository signing keys (go-xkms#1697) --
 	// pkg/auth.ResourceAttestationSigningKeys, an xkms-owned resource family.
 	// Changing a binding is bind; reading one or resolving a repository's
@@ -184,6 +195,8 @@ var goldenRPCPermissions = map[string]string{
 	"ListSigningKeyBindings":   "attestation_signing_keys:list",
 	"DeleteSigningKeyBinding":  "attestation_signing_keys:bind",
 	"ResolveSigningKey":        "attestation_signing_keys:get",
+	"SignCoRIM":                "attestation_signing_keys:sign",
+	"SignImage":                "attestation_signing_keys:sign",
 	"PeerAttestationChallenge": "peer_attestation:challenge",
 	"SubmitPeerAttestation":    "peer_attestation:submit",
 	// A tenant's TPM mode and vTPM (system scope only; tenants:set_tpm_mode
@@ -201,6 +214,12 @@ var goldenRPCPermissions = map[string]string{
 	"TrustRootImport":     "trust_roots:import",
 	"TrustRootQuarantine": "trust_roots:update",
 	"TrustRootRemove":     "trust_roots:delete",
+	// CA transparency log reads (docs/transparency-log).
+	"GetTransparencyLogHead":             "vlog:head",
+	"GetTransparencyLogEntry":            "vlog:get",
+	"GetTransparencyLogInclusionProof":   "vlog:proof",
+	"GetTransparencyLogConsistencyProof": "vlog:proof",
+	"AppendTransparencyLogExternal":      "vlog:append",
 	// PKCS#11 remote-state RPCs persist a token's key/object state, so they
 	// gate on the keys resource with the same per-verb CRUD actions REST's
 	// /api/v1/pkcs11state/* routes carry (go-xkms#1249): create for the two
@@ -239,6 +258,7 @@ var goldenRPCPermissions = map[string]string{
 	"CreateOTAImageKey":        "keys:create",
 	"RotateOTAImageKey":        "keys:rotate",
 	"SignOTAImage":             "keys:sign",
+	"ExportOTAImageKey":        "keys:get",
 	"ListKeyVersions":          "keys:list",
 	"EnableKeyVersion":         "keys:rotate",
 	"DisableKeyVersion":        "keys:rotate",

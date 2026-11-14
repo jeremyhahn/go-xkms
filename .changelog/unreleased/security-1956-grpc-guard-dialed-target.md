@@ -1,0 +1,1 @@
+- **The gRPC secure-channel guard judges the address `Connect` dialed, not the caller's mutable `Config.Address`.** Setting `Address` to a unix socket after a plaintext TCP `Connect` no longer lets the unix exception admit `SignImage` registry credentials over the TCP channel (go-xkms#1956).

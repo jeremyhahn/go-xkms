@@ -29,6 +29,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
 // Note: mockClient and newMockClient are defined in crypto_test.go
@@ -2059,6 +2061,7 @@ func TestInitializeClient(t *testing.T) {
 	t.Run("initializes with dns prefix", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.Target = "dns:///localhost:8080"
+		cfg.AllowInsecureTransport = true // plaintext loopback (ruling 152)
 
 		m, err := New(WithConfig(cfg))
 		require.NoError(t, err)
@@ -2071,6 +2074,7 @@ func TestInitializeClient(t *testing.T) {
 	t.Run("initializes with direct host:port", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.Target = "localhost:8080"
+		cfg.AllowInsecureTransport = true // plaintext loopback (ruling 152)
 
 		m, err := New(WithConfig(cfg))
 		require.NoError(t, err)
@@ -2078,6 +2082,19 @@ func TestInitializeClient(t *testing.T) {
 		err = m.initializeClient()
 		assert.NoError(t, err)
 		assert.NotNil(t, m.client)
+	})
+
+	t.Run("refuses plaintext host:port without the opt-out", func(t *testing.T) {
+		t.Setenv(transport.EnvAllowInsecureTransport, "")
+		cfg := DefaultConfig()
+		cfg.Target = "localhost:8080"
+
+		m, err := New(WithConfig(cfg))
+		require.NoError(t, err)
+
+		err = m.initializeClient()
+		assert.ErrorIs(t, err, transport.ErrInsecureTransport)
+		assert.Nil(t, m.client)
 	})
 
 	t.Run("initializes with default unix path", func(t *testing.T) {

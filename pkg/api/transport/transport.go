@@ -94,6 +94,15 @@ type Config struct {
 
 	// JWTToken is the JWT token for bearer authentication.
 	JWTToken string
+
+	// AllowInsecureTransport opts out of the mandatory-TLS guard the gRPC
+	// and REST clients enforce for non-unix endpoints (ruling 152). It is
+	// false by default: with TLS disabled every request, and the bearer
+	// token, PINs, passwords and registry credentials it carries, crosses
+	// the network in the clear. Set it only for a loopback test or a dev
+	// setup, never in production. The XKMS_TRANSPORT_ALLOW_INSECURE_TRANSPORT
+	// environment variable, when set, overrides it.
+	AllowInsecureTransport bool
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -360,6 +369,16 @@ func WithHeader(key, value string) Option {
 func WithJWTToken(token string) Option {
 	return func(c *Config) error {
 		c.JWTToken = token
+		return nil
+	}
+}
+
+// WithAllowInsecureTransport sets Config.AllowInsecureTransport, the opt-out
+// that lets a gRPC or REST client reach a non-unix endpoint with TLS
+// disabled. Loopback tests and dev setups only, never production.
+func WithAllowInsecureTransport(allow bool) Option {
+	return func(c *Config) error {
+		c.AllowInsecureTransport = allow
 		return nil
 	}
 }

@@ -88,6 +88,17 @@ func WithTrustStore(store truststore.TrustStore, embeddedLoader EmbeddedRootsLoa
 	}
 }
 
+// WithRevocation sets the Android attestation certificate revocation status
+// list VerifyAndroidAttestation checks every chain certificate against
+// (docs/references/android-key-attestation.md §Certificate revocation status
+// list). A Verifier without one refuses VerifyAndroidAttestation with
+// ErrNoRevocationSource.
+func WithRevocation(source android.StatusListSource) VerifierOption {
+	return func(v *Verifier) {
+		v.revocation = source
+	}
+}
+
 // VerifyTPMAttestation verifies a TPM endorsement key certificate against
 // TPM manufacturer trust anchors. It queries the trust store for certificates
 // with PurposeTPMManufacturer and merges in any embedded manufacturer roots.
@@ -136,6 +147,11 @@ func (v *Verifier) VerifyTPMAttestation(ekCert *x509.Certificate) (*Verification
 // the challenge accepts any previously captured attestation, so an empty nonce
 // is refused with ErrMissingNonce rather than silently verified.
 //
+// Every chain certificate is checked against the revocation status list set
+// by WithRevocation; without one the call is refused with
+// ErrNoRevocationSource, and a list that cannot be obtained fails it with
+// android.ErrStatusListUnavailable.
+//
 // The reported trust level follows the attestation security level recorded in
 // the extension: TEE and StrongBox attestations are hardware-backed, a
 // software attestation is not.
@@ -145,6 +161,9 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 	}
 	if len(nonce) == 0 {
 		return nil, ErrMissingNonce
+	}
+	if v.revocation == nil {
+		return nil, ErrNoRevocationSource
 	}
 
 	leaf := chain[0]
@@ -177,6 +196,19 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 			Issuer:      leaf.Issuer.String(),
 			ChainLength: len(chain),
 			Message:     fmt.Sprintf("chain verification failed: %v", err),
+		}, &errs.Joined{Lead: ErrChainVerificationFailed, Cause: err}
+	}
+
+	// Every certificate of the presented and the verified chains, the trust
+	// anchor included, is checked against the status list (ruling 180).
+	if err := android.CheckRevocation(v.revocation, append(chains, chain)...); err != nil {
+		return &VerificationResult{
+			Verified:    false,
+			TrustLevel:  TrustLevelUnknown,
+			Subject:     leaf.Subject.String(),
+			Issuer:      leaf.Issuer.String(),
+			ChainLength: len(chains[0]),
+			Message:     fmt.Sprintf("revocation check failed: %v", err),
 		}, &errs.Joined{Lead: ErrChainVerificationFailed, Cause: err}
 	}
 

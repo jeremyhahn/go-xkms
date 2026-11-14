@@ -28,8 +28,10 @@ import (
 // exist yet" from a real storage failure via errors.Is(err, ErrSecretNotFound),
 // but xkms storage backends (and the StorageBarrier wrapping them) report a
 // missing key as storage.ErrNotFound. This adapter translates that sentinel on
-// Get so tenant create/lookup behaves correctly; all other operations delegate
-// unchanged.
+// Get so tenant create/lookup behaves correctly, and forwards the guarded writes
+// go-qrdb's TenantService commits tenant records with (PutIfAllAbsent and
+// CompareAndSwap), which the embedded StorageBackend interface does not carry.
+// All other operations delegate unchanged.
 type tenantMetadataStore struct {
 	qrdbsdk.StorageBackend
 }

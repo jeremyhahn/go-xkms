@@ -54,6 +54,10 @@ type mockPIVClient struct {
 	// it.
 	transport.SigningKeyService
 
+	// AttestationAppraisalService completes transport.Client; these tests
+	// never call it.
+	transport.AttestationAppraisalService
+
 	listPIVSlotsResp *transport.ListPIVSlotsResponse
 	listPIVSlotsErr  error
 
@@ -205,6 +209,9 @@ func (m *mockPIVClient) RotateOTAImageKey(_ context.Context, _ *transport.OTAIma
 func (m *mockPIVClient) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }
+func (m *mockPIVClient) ExportOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
 func (m *mockPIVClient) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, errMockNotImplemented
 }
@@ -302,6 +309,25 @@ func (m *mockPIVClient) ActivateInvitePIV(_ context.Context, _ *transport.Activa
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) GetCABundle(_ context.Context, _ *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
+	return nil, errMockNotImplemented
+}
+
+func (m *mockPIVClient) GetTransparencyLogHead(_ context.Context, _ *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, errMockNotImplemented
+}
+
+func (m *mockPIVClient) GetTransparencyLogEntry(_ context.Context, _ *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, errMockNotImplemented
+}
+
+func (m *mockPIVClient) GetTransparencyLogInclusionProof(_ context.Context, _ *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, errMockNotImplemented
+}
+
+func (m *mockPIVClient) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {

@@ -37,6 +37,13 @@ type AndroidDeviceTrust struct {
 
 	// Applications decides which attesting applications are allowed.
 	Applications android.ApplicationMatcher
+
+	// Revocation supplies the attestation certificate revocation status
+	// list every chain certificate is checked against: an
+	// *android.HTTPStatusList fetching Google's list, or an
+	// *android.StatusList loaded from a file on a host that cannot reach
+	// it. It is required.
+	Revocation android.StatusListSource
 }
 
 // AndroidDeviceKey is a verified Android device-key attestation.
@@ -57,9 +64,11 @@ type AndroidDeviceKey struct {
 
 // VerifyAndroidDeviceKey verifies a DER-encoded Android key attestation
 // chain as a hardware-held device key. The chain must anchor in
-// trust.Roots, the key must be generated in at least a TEE and may sign,
-// the bootloader must be locked with a verified boot state, and the
-// attesting application must satisfy trust.Applications.
+// trust.Roots, no certificate of the chain or its anchor may be on
+// trust.Revocation's status list, the key must be generated in at least a
+// TEE and may sign, the bootloader must be locked with a verified boot
+// state, and the attesting application must satisfy trust.Applications.
+// A status list the source cannot supply fails the verification.
 //
 // It makes no freshness claim: the leaf carries the key's genesis
 // challenge (see android.DeviceVerifyOptions), so the caller proves
@@ -69,11 +78,17 @@ func VerifyAndroidDeviceKey(chainDER [][]byte, trust *AndroidDeviceTrust) (*Andr
 		return nil, ErrNoTrustAnchors
 	}
 
+	if trust.Revocation == nil {
+		return nil, ErrNoRevocationSource
+	}
+
 	chain, err := ParseDERChain(chainDER)
 	if err != nil {
 		return nil, err
 	}
-	desc, err := android.VerifyKeyAttestation(chain, android.DeviceVerifyOptions(trust.Roots))
+	opts := android.DeviceVerifyOptions(trust.Roots)
+	opts.Revocation = trust.Revocation
+	desc, err := android.VerifyKeyAttestation(chain, opts)
 	if err != nil {
 		return nil, err
 	}

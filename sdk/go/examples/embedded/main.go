@@ -130,6 +130,10 @@ func (m *MockXKMSService) SignOTAImage(ctx context.Context, req *xkms.OTAImageSi
 	return &xkms.SignResponse{Signature: []byte("mock-signature"), KeyVersion: 1}, nil
 }
 
+func (m *MockXKMSService) ExportOTAImageKey(ctx context.Context, req *xkms.OTAImageKeyRequest) (*xkms.ExportOTAImageKeyResponse, error) {
+	return &xkms.ExportOTAImageKeyResponse{BoardID: req.BoardID, KeyID: "ota-image-" + req.BoardID, KeyVersion: 1, Algorithm: "ES256"}, nil
+}
+
 func (m *MockXKMSService) GetImportParameters(ctx context.Context, req *xkms.GetImportParametersRequest) (*xkms.GetImportParametersResponse, error) {
 	return &xkms.GetImportParametersResponse{}, nil
 }
@@ -263,6 +267,26 @@ func (m *MockXKMSService) DeriveKeyECDH(ctx context.Context, req *transport.Deri
 
 func (m *MockXKMSService) GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	return nil, &mockUnsupportedError{capability: "CA bundle"}
+}
+
+func (m *MockXKMSService) GetTransparencyLogHead(ctx context.Context, req *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log head"}
+}
+
+func (m *MockXKMSService) GetTransparencyLogEntry(ctx context.Context, req *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log entry"}
+}
+
+func (m *MockXKMSService) GetTransparencyLogInclusionProof(ctx context.Context, req *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log inclusion proof"}
+}
+
+func (m *MockXKMSService) GetTransparencyLogConsistencyProof(ctx context.Context, req *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log consistency proof"}
+}
+
+func (m *MockXKMSService) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	return nil, &mockUnsupportedError{capability: "transparency log append"}
 }
 
 func (m *MockXKMSService) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
@@ -889,6 +913,30 @@ func (m *MockXKMSService) SafetyReport(context.Context, *transport.SafetyReportR
 	return nil, &mockUnsupportedError{capability: "key management"}
 }
 
+func (*MockXKMSService) PutAttestationEndorsement(context.Context, *transport.PutAttestationEndorsementRequest) (*transport.AttestationEndorsement, error) {
+	return nil, nil
+}
+func (*MockXKMSService) ListAttestationEndorsements(context.Context, *transport.ListAttestationEndorsementsRequest) (*transport.ListAttestationEndorsementsResponse, error) {
+	return nil, nil
+}
+func (*MockXKMSService) DeleteAttestationEndorsement(context.Context, *transport.DeleteAttestationEndorsementRequest) error {
+	return nil
+}
+func (*MockXKMSService) PutAttestationReferenceValues(context.Context, *transport.PutAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*MockXKMSService) GetAttestationReferenceValues(context.Context, *transport.GetAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*MockXKMSService) ListAttestationReferenceValues(context.Context) (*transport.ListAttestationReferenceValuesResponse, error) {
+	return nil, nil
+}
+func (*MockXKMSService) DeleteAttestationReferenceValues(context.Context, *transport.DeleteAttestationReferenceValuesRequest) error {
+	return nil
+}
+func (*MockXKMSService) AppraiseAttestationQuote(context.Context, *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
 func (*MockXKMSService) SetSigningKeyBinding(context.Context, *transport.SetSigningKeyBindingRequest) (*transport.SigningKeyBinding, error) {
 	return nil, nil
 }
@@ -902,5 +950,12 @@ func (*MockXKMSService) DeleteSigningKeyBinding(context.Context, *transport.Dele
 	return nil
 }
 func (*MockXKMSService) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*MockXKMSService) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}
+
+func (*MockXKMSService) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
 	return nil, nil
 }

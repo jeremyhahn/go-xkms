@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 )
 
@@ -118,6 +119,20 @@ type (
 	ResolveAttestationSigningKeyRequest = appraisal.ResolveSigningKeyRequest
 	// AttestationSigningKeyResolution is the key that signs a repository.
 	AttestationSigningKeyResolution = appraisal.SigningKeyResolution
+	// SignAttestationCoRIMRequest is a repository's CoRIM to sign with the
+	// key the repository resolves to, draft-ietf-rats-corim-11 §4.2.
+	SignAttestationCoRIMRequest = appraisal.SignCoRIMRequest
+	// SignedAttestationCoRIM is the signed CoRIM and the key that signed it.
+	SignedAttestationCoRIM = appraisal.SignedCoRIM
+	// SignAttestationImageRequest is an image to sign with the key its
+	// repository resolves to, and the registry credentials to push with.
+	SignAttestationImageRequest = transport.SignImageRequest
+	// AttestationImageRegistryCredentials are a registry's basic
+	// credentials, used for one SignImage call.
+	AttestationImageRegistryCredentials = transport.ImageRegistryCredentials
+	// SignedAttestationImage is the signed image's attestation, the key and
+	// certificate that signed it, and where the registry stored it.
+	SignedAttestationImage = transport.SignedImage
 	// AttestationSigningKeySource returns the public half of a tenant key.
 	AttestationSigningKeySource = appraisal.SigningKeySource
 	// AttestationTenantSigningKeys resolves the keys of one tenant's
