@@ -1,0 +1,1 @@
+- **The web console computes and verifies an HMAC with a stored key.** The new HMAC view at `#/keys/hmac` (Keys & Crypto, shown to identities with `keys:sign`) sends text or base64 data to `POST /api/v1/keys/{id}/hmac` and shows the MAC as hex and base64, and checks a hex or base64 MAC through `POST /api/v1/keys/{id}/hmac/verify` with a valid or invalid badge.
