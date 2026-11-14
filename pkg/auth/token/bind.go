@@ -111,10 +111,10 @@ func (b *boundRefreshStore) RevokeFamily(ctx context.Context, family string) err
 	return b.store.RevokeFamily(bound, family)
 }
 
-func (b *boundRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+func (b *boundRefreshStore) RevokeBySubject(ctx context.Context, tenantID, subject string) error {
 	bound, err := b.call(ctx)
 	if err != nil {
 		return err
 	}
-	return b.store.RevokeBySubject(bound, subject)
+	return b.store.RevokeBySubject(bound, tenantID, subject)
 }
