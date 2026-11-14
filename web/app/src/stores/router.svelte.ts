@@ -50,6 +50,7 @@ export type RouteName =
   | "users"
   | "addPasskey"
   | "frost"
+  | "tenantQuotas"
   | "settings"
   | "not-found";
 
@@ -96,6 +97,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/users": "users",
   "/account/passkeys": "addPasskey",
   "/frost": "frost",
+  "/tenants/quotas": "tenantQuotas",
   "/settings": "settings",
 };
 
