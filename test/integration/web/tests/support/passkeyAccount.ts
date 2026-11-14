@@ -32,6 +32,18 @@ import { loginOperator, type Operator } from './operator.ts';
 const API_ORIGIN = 'https://localhost:18463';
 
 /**
+ * OPERATOR_ROLE is the built-in role each operator is provisioned with. Open
+ * self-registration assigned no role, so it never proved the account could
+ * manage keys; the built-in admin role is the one that holds the key
+ * lifecycle (pkg/apimodule RegisterRoleGrants grants it every xkms
+ * permission, keys:* included), which key-lifecycle.spec.ts exercises.
+ */
+const OPERATOR_ROLE = 'admin';
+
+/** OPERATOR_PERMISSIONS are the permissions the key lifecycle needs. */
+const OPERATOR_PERMISSIONS = ['keys:create', 'keys:sign', 'keys:delete'];
+
+/**
  * adminCredential locates the init-ceremony admin certificate and key.
  * run-server.sh points `xkmsd init --data-dir` at <suite>/.runtime/storage,
  * and the suite's testDir is <suite>/tests.
@@ -99,10 +111,16 @@ export async function provisionInvite(op: Operator): Promise<{ tenant: string; t
   const admin = await adminRequest();
   try {
     const resp = await admin.post('/api/v1/users', {
-      data: { username: op.email.split('@')[0], email: op.email, display_name: op.displayName },
+      data: {
+        username: op.email.split('@')[0],
+        email: op.email,
+        display_name: op.displayName,
+        role: OPERATOR_ROLE,
+      },
     });
     expect(resp.status(), await resp.text()).toBe(201);
-    const { invite } = await resp.json();
+    const { user, invite } = await resp.json();
+    expect(user?.roles, `POST /api/v1/users did not assign the ${OPERATOR_ROLE} role`).toContain(OPERATOR_ROLE);
     expect(invite?.token, 'POST /api/v1/users returned no invitation').toBeTruthy();
     const marker = '/#/invite/';
     const url: string = invite.url ?? '';
@@ -193,16 +211,60 @@ export async function redeemInvite(page: Page, invite: { tenant: string; token: 
 }
 
 /**
+ * expectUserHoldsRole asserts, as the administrator, that the operator's
+ * account holds role (GET /api/v1/users/{username}).
+ */
+export async function expectUserHoldsRole(op: Operator, role: string): Promise<void> {
+  const admin = await adminRequest();
+  try {
+    const username = op.email.split('@')[0];
+    const resp = await admin.get(`/api/v1/users/${encodeURIComponent(username)}`);
+    expect(resp.status(), await resp.text()).toBe(200);
+    const body = await resp.json();
+    const roles: string[] = (body.user ?? body).roles ?? [];
+    expect(roles, `${username} does not hold the ${role} role`).toContain(role);
+  } finally {
+    await admin.dispose();
+  }
+}
+
+/**
+ * expectSessionPermissions asserts that the signed-in session behind token
+ * holds every permission in want (GET /api/v1/auth/me, the RBAC view the
+ * server enforces).
+ */
+export async function expectSessionPermissions(page: Page, token: string, want: string[]): Promise<void> {
+  const resp = await page.request.get('/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } });
+  expect(resp.status(), await resp.text()).toBe(200);
+  const { permissions } = await resp.json();
+  for (const perm of want) {
+    expect(permissions?.[perm], `the provisioned operator lacks ${perm}`).toBe(true);
+  }
+}
+
+/**
  * provisionOperator replaces open self-registration: it asserts anonymous
- * sign-up is refused for op, provisions op as admin, redeems its invitation
- * with the virtual authenticator installed on `page`, and signs in through
- * the real LoginView, which asserts the SPA lands on the authenticated
- * dashboard (heading "Dashboard" and the shell's aside) exactly as the old
- * registerOperator did.
+ * sign-up is refused for op, provisions op as admin with OPERATOR_ROLE and
+ * checks, as admin, that the account holds it, redeems its invitation with
+ * the virtual authenticator installed on `page`, and signs in through the
+ * real LoginView, which asserts the SPA lands on the authenticated dashboard
+ * (heading "Dashboard" and the shell's aside) exactly as the old
+ * registerOperator did. The session that sign-in minted must hold
+ * keys:create, keys:sign and keys:delete before any key lifecycle runs.
  */
 export async function provisionOperator(page: Page, op: Operator): Promise<void> {
   await page.goto('/ui/#/login');
   await expectAnonymousSignUpRefused(page, op);
   await redeemInvite(page, await provisionInvite(op));
+  await expectUserHoldsRole(op, OPERATOR_ROLE);
+
+  const loginFinish = page.waitForResponse(
+    (r) => r.request().method() === 'POST' && r.url().includes('/api/v1/webauthn/login/finish'),
+  );
   await loginOperator(page, op);
+  const finished = await loginFinish;
+  expect(finished.status(), await finished.text()).toBe(200);
+  const { token } = await finished.json();
+  expect(token, 'webauthn login/finish returned no token').toBeTruthy();
+  await expectSessionPermissions(page, token, OPERATOR_PERMISSIONS);
 }
