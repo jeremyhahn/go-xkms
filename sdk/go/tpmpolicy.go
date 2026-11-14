@@ -93,6 +93,20 @@ type TPMPolicyBindingResolver = tpm2.PolicyBindingResolver
 // offline. Install it with TPM.SetPolicyBindingResolver.
 type TPMStaticPolicyResolver = tpm2.StaticPolicyResolver
 
+// TPMPolicyIndexInfo is what an object bound to a named policy commits to:
+// the policy's NV index and hash algorithm. TPMPolicyBindingResolver.PolicyIndex
+// returns it.
+type TPMPolicyIndexInfo = tpm2.PolicyIndexInfo
+
+// TPMPolicyBranchApproval is the authority's signed approval of one branch of
+// a named policy, with everything a policy session needs to redeem it.
+// TPMPolicyBindingResolver.Approvals returns one per branch.
+type TPMPolicyBranchApproval = tpm2.PolicyApproval
+
+// TPMPolicyBindingRecord is the .tpmpolicy binding record of an object bound
+// to a named policy; NewTPMStaticPolicyResolver reads its MarshalBinary form.
+type TPMPolicyBindingRecord = store.TPMPolicyBinding
+
 // TPMMode is a tenant's TPM mode.
 type TPMMode = tpmpolicy.Mode
 
