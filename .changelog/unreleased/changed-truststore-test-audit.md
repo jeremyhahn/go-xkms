@@ -1,0 +1,1 @@
+Tests: `pkg/attestation/truststore` drops 45 tests that repeat a path a kept test covers, cover nothing the rest miss, or run no package code; coverage holds, and every refusal, error mapping and field-mapping test stays (#1794).

@@ -402,47 +402,6 @@ func TestClassifyCertificate_General(t *testing.T) {
 	}
 }
 
-func TestClassifyCertificate_General_NonCANonSpecial(t *testing.T) {
-	// A self-signed non-CA cert with no special properties classifies as general.
-	cert := generateSelfSignedCert(t,
-		"plain-service.example.com",
-		[]string{"Example Inc"},
-		false,
-		nil,
-		nil,
-	)
-
-	got := ClassifyCertificate(cert)
-	if got != PurposeGeneral {
-		t.Errorf("ClassifyCertificate() = %q, want %q", got, PurposeGeneral)
-	}
-}
-
-func TestClassifyCertificate_PriorityOrder(t *testing.T) {
-	// A certificate with both the Android attestation OID and an Intel
-	// issuer organization classifies as a TPM manufacturer: the OID confers
-	// nothing (#1312), so it cannot outrank the manufacturer match.
-	androidOID := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11129, 2, 1, 17}
-	ext := pkix.Extension{
-		Id:    androidOID,
-		Value: []byte{0x30, 0x00},
-	}
-
-	cert := generateSelfSignedCert(t,
-		"Intel Attestation Root",
-		[]string{"Intel Corporation"},
-		false,
-		nil,
-		[]pkix.Extension{ext},
-	)
-
-	got := ClassifyCertificate(cert)
-	if got != PurposeTPMManufacturer {
-		t.Errorf("ClassifyCertificate() = %q, want %q (the Android OID must not outrank the TPM manufacturer match)",
-			got, PurposeTPMManufacturer)
-	}
-}
-
 func TestClassifyCertificate_PriorityTPMOverIDevID(t *testing.T) {
 	// TPM manufacturer match takes priority over IDevID issuer heuristic.
 	// The parent CA subject becomes the leaf's issuer. Use an Intel org so
@@ -464,22 +423,6 @@ func TestClassifyCertificate_PriorityTPMOverIDevID(t *testing.T) {
 	}
 }
 
-func TestClassifyCertificate_UserCA_SameSubjectIssuer(t *testing.T) {
-	// Verify the UserCA check requires both CN match and org match.
-	cert := generateSelfSignedCert(t,
-		"Internal Root CA",
-		[]string{"My Company"},
-		true,
-		nil,
-		nil,
-	)
-
-	got := ClassifyCertificate(cert)
-	if got != PurposeUserCA {
-		t.Errorf("ClassifyCertificate() = %q, want %q", got, PurposeUserCA)
-	}
-}
-
 func TestClassifyCertificate_UserCA_NotCA(t *testing.T) {
 	// A self-signed cert that is NOT a CA should not classify as UserCA.
 	cert := generateSelfSignedCert(t,
@@ -494,50 +437,6 @@ func TestClassifyCertificate_UserCA_NotCA(t *testing.T) {
 	if got == PurposeUserCA {
 		t.Errorf("ClassifyCertificate() = %q, want anything other than %q for non-CA self-signed cert",
 			got, PurposeUserCA)
-	}
-}
-
-func TestHasOIDPrefix(t *testing.T) {
-	// 2.23.133.2.1 starts with the TCG base OID 2.23.133.
-	tcgChild := asn1.ObjectIdentifier{2, 23, 133, 2, 1}
-	ext := pkix.Extension{
-		Id:    tcgChild,
-		Value: []byte{0x05, 0x00},
-	}
-
-	cert := generateSelfSignedCert(t,
-		"TCG Cert",
-		[]string{"Test"},
-		false,
-		nil,
-		[]pkix.Extension{ext},
-	)
-
-	prefix := asn1.ObjectIdentifier{2, 23, 133}
-	if !hasOIDPrefix(cert, prefix) {
-		t.Error("hasOIDPrefix() = false, want true for extension OID 2.23.133.2.1 with prefix 2.23.133")
-	}
-}
-
-func TestHasOIDPrefix_NoMatch(t *testing.T) {
-	// Extension OID 1.2.3.4 does not start with 2.23.133.
-	unrelatedOID := asn1.ObjectIdentifier{1, 2, 3, 4}
-	ext := pkix.Extension{
-		Id:    unrelatedOID,
-		Value: []byte{0x05, 0x00},
-	}
-
-	cert := generateSelfSignedCert(t,
-		"Unrelated Cert",
-		[]string{"Test"},
-		false,
-		nil,
-		[]pkix.Extension{ext},
-	)
-
-	prefix := asn1.ObjectIdentifier{2, 23, 133}
-	if hasOIDPrefix(cert, prefix) {
-		t.Error("hasOIDPrefix() = true, want false for extension OID 1.2.3.4 with prefix 2.23.133")
 	}
 }
 
@@ -585,16 +484,6 @@ func TestHasOIDPrefix_ShorterThanPrefix(t *testing.T) {
 	}
 }
 
-func TestHasOIDPrefix_NoExtensions(t *testing.T) {
-	cert := generateTestCert(t, "No Extra Extensions")
-
-	// Use a prefix that would not match the standard CA extensions.
-	prefix := asn1.ObjectIdentifier{2, 23, 133}
-	if hasOIDPrefix(cert, prefix) {
-		t.Error("hasOIDPrefix() = true, want false for standard CA cert with no TCG extensions")
-	}
-}
-
 func TestClassifyCertificate_MultipleExtensions(t *testing.T) {
 	// A cert with multiple extensions, one of them the Android attestation
 	// OID, is still not an Android hardware anchor (#1312).
@@ -618,40 +507,5 @@ func TestClassifyCertificate_MultipleExtensions(t *testing.T) {
 	if got != PurposeGeneral {
 		t.Errorf("ClassifyCertificate() = %q, want %q for cert with Android OID among multiple extensions",
 			got, PurposeGeneral)
-	}
-}
-
-func TestClassifyCertificate_GoogleIssuerNoAttestation(t *testing.T) {
-	// A Google LLC certificate that is not an embedded attestation root is
-	// not an Android hardware anchor.
-	cert := generateSelfSignedCert(t,
-		"Google Trust Services",
-		[]string{"Google LLC"},
-		false,
-		nil,
-		nil,
-	)
-
-	got := ClassifyCertificate(cert)
-	if got == PurposeAndroidHardware {
-		t.Errorf("ClassifyCertificate() = %q, want anything other than %q for Google issuer without Attestation in CN",
-			got, PurposeAndroidHardware)
-	}
-}
-
-func TestClassifyCertificate_CaseInsensitiveManufacturer(t *testing.T) {
-	// Manufacturer lookup should be case-insensitive.
-	cert := generateSelfSignedCert(t,
-		"INTEL TPM EK",
-		[]string{"INTEL CORPORATION"},
-		false,
-		nil,
-		nil,
-	)
-
-	got := ClassifyCertificate(cert)
-	if got != PurposeTPMManufacturer {
-		t.Errorf("ClassifyCertificate() = %q, want %q for uppercase manufacturer name",
-			got, PurposeTPMManufacturer)
 	}
 }

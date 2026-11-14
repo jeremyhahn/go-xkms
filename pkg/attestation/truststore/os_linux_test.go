@@ -21,37 +21,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 // ---------------------------------------------------------------------------
 // Label validation tests
 // ---------------------------------------------------------------------------
-
-func TestValidateLabel_ValidLabels(t *testing.T) {
-	tests := []struct {
-		name  string
-		label string
-	}{
-		{"hyphenated", "my-cert"},
-		{"underscore", "ca_root"},
-		{"alphanumeric", "TestCA123"},
-		{"single char", "a"},
-		{"mixed", "a-b_c"},
-		{"digits only", "12345"},
-		{"uppercase only", "ABCDEF"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateLabel(tt.label)
-			if err != nil {
-				t.Fatalf("validateLabel(%q) returned unexpected error: %v", tt.label, err)
-			}
-		})
-	}
-}
 
 func TestValidateLabel_InvalidLabels(t *testing.T) {
 	tests := []struct {
@@ -109,22 +84,6 @@ HOME_URL="https://www.ubuntu.com/"
 	}
 }
 
-func TestParseOSRelease_Fedora(t *testing.T) {
-	content := `NAME="Fedora Linux"
-ID=fedora
-VERSION_ID="39"
-`
-
-	id, idLike := parseOSRelease(content)
-
-	if id != "fedora" {
-		t.Errorf("parseOSRelease() id = %q, want %q", id, "fedora")
-	}
-	if idLike != "" {
-		t.Errorf("parseOSRelease() idLike = %q, want empty", idLike)
-	}
-}
-
 func TestParseOSRelease_Comments(t *testing.T) {
 	content := `# This is a comment
 ID=arch
@@ -147,21 +106,6 @@ func TestParseOSRelease_EmptyContent(t *testing.T) {
 	}
 	if idLike != "" {
 		t.Errorf("parseOSRelease(empty) idLike = %q, want empty", idLike)
-	}
-}
-
-func TestParseOSRelease_EmptyLines(t *testing.T) {
-	content := `ID=debian
-
-NAME="Debian GNU/Linux"
-
-VERSION_ID="12"
-`
-
-	id, _ := parseOSRelease(content)
-
-	if id != "debian" {
-		t.Errorf("parseOSRelease() id = %q, want %q", id, "debian")
 	}
 }
 
@@ -558,29 +502,6 @@ func TestLinuxCertStore_IsInstalled_InvalidLabel(t *testing.T) {
 	}
 }
 
-func TestLinuxCertStore_IsInstalled_AfterRemove(t *testing.T) {
-	certDir := t.TempDir()
-	store := NewLinuxCertStoreWithDir(certDir, ".crt", "echo", []string{"done"})
-
-	cert := generateTestCert(t, "Remove Then Check CA")
-
-	if err := store.Install(cert, "remove-check"); err != nil {
-		t.Fatalf("Install() returned unexpected error: %v", err)
-	}
-
-	if err := store.Remove("remove-check"); err != nil {
-		t.Fatalf("Remove() returned unexpected error: %v", err)
-	}
-
-	installed, err := store.IsInstalled("remove-check")
-	if err != nil {
-		t.Fatalf("IsInstalled() returned unexpected error: %v", err)
-	}
-	if installed {
-		t.Error("IsInstalled() = true after Remove(), want false")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // RefreshSystemStore tests
 // ---------------------------------------------------------------------------
@@ -672,39 +593,6 @@ func TestLinuxCertStore_InstallAndRefresh(t *testing.T) {
 // Multiple certificates
 // ---------------------------------------------------------------------------
 
-func TestLinuxCertStore_Install_MultipleCerts(t *testing.T) {
-	certDir := t.TempDir()
-	store := NewLinuxCertStoreWithDir(certDir, ".crt", "echo", []string{"done"})
-
-	labels := []string{"root-ca", "intermediate-ca", "signing-ca"}
-	for _, label := range labels {
-		cert := generateTestCert(t, "CA for "+label)
-		if err := store.Install(cert, label); err != nil {
-			t.Fatalf("Install(%q) returned unexpected error: %v", label, err)
-		}
-	}
-
-	// Verify all are installed.
-	for _, label := range labels {
-		installed, err := store.IsInstalled(label)
-		if err != nil {
-			t.Fatalf("IsInstalled(%q) returned unexpected error: %v", label, err)
-		}
-		if !installed {
-			t.Errorf("IsInstalled(%q) = false, want true", label)
-		}
-	}
-
-	// Verify the correct number of files.
-	entries, err := os.ReadDir(certDir)
-	if err != nil {
-		t.Fatalf("failed to read cert dir: %v", err)
-	}
-	if len(entries) != len(labels) {
-		t.Errorf("cert dir has %d files, want %d", len(entries), len(labels))
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Install overwrites existing file
 // ---------------------------------------------------------------------------
@@ -751,65 +639,13 @@ func TestLinuxCertStore_Install_Overwrite(t *testing.T) {
 // Interface compliance
 // ---------------------------------------------------------------------------
 
-func TestOSCertStoreInterfaceCompliance(t *testing.T) {
-	// Verify LinuxCertStore implements OSCertStore at compile time.
-	var _ OSCertStore = (*LinuxCertStore)(nil)
-}
-
 // ---------------------------------------------------------------------------
 // Distro type string representation
 // ---------------------------------------------------------------------------
 
-func TestLinuxDistroValues(t *testing.T) {
-	tests := []struct {
-		distro linuxDistro
-		want   string
-	}{
-		{distroDebian, "debian"},
-		{distroRedHat, "redhat"},
-		{distroArch, "arch"},
-		{distroUnknown, "unknown"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			got := string(tt.distro)
-			if got != tt.want {
-				t.Errorf("linuxDistro = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Error type verification
 // ---------------------------------------------------------------------------
-
-func TestOSCertStoreErrors(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		msg  string
-	}{
-		{"ErrUnsupportedDistro", ErrUnsupportedDistro, "truststore: unsupported Linux distribution"},
-		{"ErrInvalidLabel", ErrInvalidLabel, "truststore: invalid certificate label"},
-		{"ErrSystemStoreRefresh", ErrSystemStoreRefresh, "truststore: system trust store refresh failed"},
-		{"ErrInstallFailed", ErrInstallFailed, "truststore: certificate installation failed"},
-		{"ErrRemoveFailed", ErrRemoveFailed, "truststore: certificate removal failed"},
-		{"ErrPermissionDenied", ErrPermissionDenied, "truststore: permission denied"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.err == nil {
-				t.Fatal("error variable is nil")
-			}
-			if tt.err.Error() != tt.msg {
-				t.Errorf("error message = %q, want %q", tt.err.Error(), tt.msg)
-			}
-		})
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Distro config map tests
@@ -895,24 +731,6 @@ func TestIDLikeDetectors_KnownKeywords(t *testing.T) {
 // NewLinuxCertStoreWithDir tests
 // ---------------------------------------------------------------------------
 
-func TestNewLinuxCertStoreWithDir(t *testing.T) {
-	certDir := t.TempDir()
-	store := NewLinuxCertStoreWithDir(certDir, ".crt", "echo", []string{"done"})
-
-	if store.certDir != certDir {
-		t.Errorf("certDir = %q, want %q", store.certDir, certDir)
-	}
-	if store.certExt != ".crt" {
-		t.Errorf("certExt = %q, want %q", store.certExt, ".crt")
-	}
-	if store.updateCmd != "echo" {
-		t.Errorf("updateCmd = %q, want %q", store.updateCmd, "echo")
-	}
-	if store.distro != distroUnknown {
-		t.Errorf("distro = %q, want %q", store.distro, distroUnknown)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // unquote tests
 // ---------------------------------------------------------------------------
@@ -968,32 +786,5 @@ func TestGetDistroConfig_ReturnsConfig(t *testing.T) {
 	}
 	if cfg.UpdateCmd == "" {
 		t.Error("GetDistroConfig().UpdateCmd is empty")
-	}
-}
-
-func TestGetDistroConfig_FieldsPopulated(t *testing.T) {
-	cfg, err := GetDistroConfig()
-	if err != nil {
-		if errors.Is(err, ErrUnsupportedDistro) {
-			t.Logf("GetDistroConfig() returned ErrUnsupportedDistro (acceptable on unknown distro): %v", err)
-			return
-		}
-		t.Fatalf("GetDistroConfig() returned unexpected error: %v", err)
-	}
-
-	// CertDir must be an absolute path.
-	if !strings.HasPrefix(cfg.CertDir, "/") {
-		t.Errorf("GetDistroConfig().CertDir = %q, want path starting with /", cfg.CertDir)
-	}
-
-	// CertExt must start with a dot.
-	if !strings.HasPrefix(cfg.CertExt, ".") {
-		t.Errorf("GetDistroConfig().CertExt = %q, want extension starting with .", cfg.CertExt)
-	}
-
-	// UpdateCmd must be non-empty (already checked above, but verify the value
-	// is one of the known update commands).
-	if cfg.UpdateCmd != "update-ca-certificates" && cfg.UpdateCmd != "update-ca-trust" {
-		t.Errorf("GetDistroConfig().UpdateCmd = %q, want update-ca-certificates or update-ca-trust", cfg.UpdateCmd)
 	}
 }

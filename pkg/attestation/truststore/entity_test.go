@@ -18,21 +18,6 @@ import (
 	"time"
 )
 
-func TestTrustCertEntity_EntityID_RoundTrip(t *testing.T) {
-	e := &TrustCertEntity{}
-	e.SetEntityID(101)
-	if got := e.EntityID(); got != 101 {
-		t.Fatalf("EntityID() = %d, want 101", got)
-	}
-}
-
-func TestTrustCertEntity_ZeroValue(t *testing.T) {
-	var e TrustCertEntity
-	if got := e.EntityID(); got != 0 {
-		t.Fatalf("zero-value EntityID() = %d, want 0", got)
-	}
-}
-
 func TestTrustCertEntityFromMetadata(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	meta := &CertMetadata{

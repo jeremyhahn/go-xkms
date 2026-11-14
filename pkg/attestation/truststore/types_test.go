@@ -41,24 +41,6 @@ func TestIsValidPurpose(t *testing.T) {
 	}
 }
 
-func TestIsValidPurpose_Invalid(t *testing.T) {
-	tests := []struct {
-		name    string
-		purpose CertPurpose
-	}{
-		{"empty string", CertPurpose("")},
-		{"arbitrary string", CertPurpose("foobar")},
-		{"wrong case", CertPurpose("General")},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if IsValidPurpose(tt.purpose) {
-				t.Errorf("IsValidPurpose(%q) = true, want false", tt.purpose)
-			}
-		})
-	}
-}
-
 // TestIsAnchorPurpose_EveryAnchorPurpose pins which purposes may anchor a
 // trust decision: every recognized purpose except the synced quarantine.
 func TestIsAnchorPurpose_EveryAnchorPurpose(t *testing.T) {
@@ -129,28 +111,6 @@ func TestParsePurpose_Invalid(t *testing.T) {
 			}
 			if got != "" {
 				t.Errorf("ParsePurpose(%q) = %q, want empty string on error", tt.input, got)
-			}
-		})
-	}
-}
-
-func TestCertPurpose_StringValue(t *testing.T) {
-	tests := []struct {
-		purpose  CertPurpose
-		expected string
-	}{
-		{PurposeGeneral, "general"},
-		{PurposeTPMManufacturer, "tpm-manufacturer"},
-		{PurposeAndroidHardware, "android-hardware"},
-		{PurposeUserCA, "user-ca"},
-		{PurposeBootstrapCA, "bootstrap-ca"},
-		{PurposeIDevIDIssuer, "idevid-issuer"},
-		{PurposeImageSigner, "image-signer"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.expected, func(t *testing.T) {
-			if string(tt.purpose) != tt.expected {
-				t.Errorf("CertPurpose string value = %q, want %q", string(tt.purpose), tt.expected)
 			}
 		})
 	}

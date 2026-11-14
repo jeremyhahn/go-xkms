@@ -94,21 +94,6 @@ func TestNew_NilConfig(t *testing.T) {
 	}
 }
 
-func TestNew_EmptyConfig(t *testing.T) {
-	ts, err := New(&Config{})
-	if err != nil {
-		t.Fatalf("New() with empty config returned unexpected error: %v", err)
-	}
-
-	count, err := ts.Count()
-	if err != nil {
-		t.Fatalf("Count() returned unexpected error: %v", err)
-	}
-	if count != 0 {
-		t.Errorf("Count() = %d, want 0 for empty config", count)
-	}
-}
-
 func TestNew_ExternalRootNotFound(t *testing.T) {
 	config := &Config{
 		ExternalRootPaths: []string{"/nonexistent/path/to/root.pem"},
@@ -289,16 +274,6 @@ func TestParsePEMCertificates_NonCertificateBlock(t *testing.T) {
 	}
 	if len(certs) != 1 {
 		t.Errorf("parsePEMCertificates() returned %d certs, want 1 (non-cert block should be skipped)", len(certs))
-	}
-}
-
-func TestParsePEMCertificates_EmptyInput(t *testing.T) {
-	_, err := parsePEMCertificates([]byte{})
-	if err == nil {
-		t.Fatal("parsePEMCertificates() expected error for empty input, got nil")
-	}
-	if !errors.Is(err, ErrInvalidCertificate) {
-		t.Errorf("parsePEMCertificates() error = %v, want ErrInvalidCertificate", err)
 	}
 }
 

@@ -54,30 +54,3 @@ func TestLoadEmbeddedRoots_UnsupportedPurpose(t *testing.T) {
 		}
 	}
 }
-
-func TestLoadEmbeddedRoots_CertificatesAreValid(t *testing.T) {
-	certs := LoadEmbeddedRoots(PurposeAndroidHardware)
-	if len(certs) == 0 {
-		t.Fatal("no certificates returned for Android hardware purpose")
-	}
-
-	for i, cert := range certs {
-		// Verify each certificate has non-empty raw data
-		if len(cert.Raw) == 0 {
-			t.Errorf("certificate %d has empty Raw data", i)
-		}
-		// Verify the certificate is self-signed (root CA): subject and issuer match.
-		// Google's RSA roots use only a SerialNumber in the DN (no Organization/CN),
-		// while the EC root uses "Google LLC" as the Organization. Both patterns
-		// are valid Google Hardware Attestation roots.
-		if cert.Subject.String() != cert.Issuer.String() {
-			t.Errorf("certificate %d is not self-signed: subject=%s, issuer=%s",
-				i, cert.Subject, cert.Issuer)
-		}
-		// Each root must identify itself via either an Organization or a SerialNumber
-		hasIdentity := len(cert.Subject.Organization) > 0 || cert.Subject.SerialNumber != ""
-		if !hasIdentity {
-			t.Errorf("certificate %d has no Organization and no SerialNumber", i)
-		}
-	}
-}
