@@ -42,6 +42,7 @@ export type RouteName =
   | "signingKeys"
   | "platform"
   | "systemHealth"
+  | "bootCredentials"
   | "tpmPolicies"
   | "seal"
   | "tpmKeyPolicy"
@@ -85,6 +86,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/attestation/signing-keys": "signingKeys",
   "/platform": "platform",
   "/system/health": "systemHealth",
+  "/credentials/boot": "bootCredentials",
   "/tpm/policies": "tpmPolicies",
   "/seal": "seal",
   "/tpm/key-policy": "tpmKeyPolicy",

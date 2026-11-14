@@ -27,6 +27,7 @@
   import OidcCredentialsView from "$views/OidcCredentialsView.svelte";
   import SigningKeysView from "$views/SigningKeysView.svelte";
   import PlatformView from "$views/PlatformView.svelte";
+  import BootCredentialsView from "$views/BootCredentialsView.svelte";
   import PivView from "$views/PivView.svelte";
   import PivSlotsView from "$views/PivSlotsView.svelte";
   import CaView from "$views/CaView.svelte";
@@ -99,6 +100,7 @@
     {:else if routerStore.name === "platform"}
       <PlatformView />
     {:else if routerStore.name === "systemHealth"}<SystemHealthView />
+    {:else if routerStore.name === "bootCredentials"}<BootCredentialsView />
     {:else if routerStore.name === "settings"}
       <SettingsView />
     {:else if routerStore.name === "login" || routerStore.name === "register"}

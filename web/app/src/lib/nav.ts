@@ -77,6 +77,7 @@ export const navSections: NavSection[] = [
       { route: "oidcCredentials", path: "/oidc/credentials", label: "OIDC Credentials", icon: "LogIn", capability: "oidc_credentials", requires: { resource: "oidc_credentials", action: "list" } },
       { route: "signingKeys", path: "/attestation/signing-keys", label: "Signing Keys", icon: "KeyRound", requires: { resource: "attestation_signing_keys", action: "list" } },
       { route: "platform", path: "/platform", label: "Platform Secrets", icon: "FolderLock", capability: "platform" },
+      { route: "bootCredentials", path: "/credentials/boot", label: "Boot Credentials", icon: "KeyRound", requires: { resource: "credentials", action: "strategy" } },
     ],
   },
   {
