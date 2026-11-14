@@ -32,7 +32,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
-	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"

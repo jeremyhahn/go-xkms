@@ -30,8 +30,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 )
 
 func TestOIDCCmd_Help(t *testing.T) {
