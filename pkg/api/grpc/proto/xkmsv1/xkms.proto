@@ -1024,6 +1024,12 @@ service KeystoreService {
     option (qrdb.v1.permission) = "attestation_signing_keys:get";
   }
 
+  // SignReleaseCoRIM signs a CoRIM with the key of a repository: the
+  // caller tenant's release key unless a binding names another.
+  rpc SignReleaseCoRIM(SignReleaseCoRIMRequest) returns (SignReleaseCoRIMResponse) {
+    option (qrdb.v1.permission) = "attestation_signing_keys:sign";
+  }
+
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
@@ -4609,6 +4615,22 @@ message SigningKeyResolution {
   // default is true when no binding names the repository, so the key is
   // the tenant's release key.
   bool default = 4;
+}
+
+// SignReleaseCoRIMRequest is an unsigned CoRIM (CBOR) of a repository.
+message SignReleaseCoRIMRequest {
+  string repository = 1;
+  bytes corim = 2;
+  // signer_name is the signer entity of the COSE envelope; empty names the
+  // repository.
+  string signer_name = 3;
+}
+
+// SignReleaseCoRIMResponse is the COSE_Sign1 signed CoRIM and its key.
+message SignReleaseCoRIMResponse {
+  bytes signed_corim = 1;
+  string key_id = 2;
+  string backend = 3;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================

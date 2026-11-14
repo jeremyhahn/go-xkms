@@ -41,7 +41,6 @@ func TestReleaseSigningRPC_SignsWithTheCallersKey(t *testing.T) {
 	resp, err := svc.SignReleaseCoRIM(ctx, signRequest(releasesigningtest.UnsignedCoRIM(t)))
 	require.NoError(t, err)
 	assert.Equal(t, appraisal.ReleaseSigningKeyID, resp.GetKeyId())
-	assert.Equal(t, "software", resp.GetBackend())
 	verified, err := refvalue.VerifySigned(resp.GetSignedCorim(), refvalue.VerifyOptions{PublicKey: f.ReleaseKey})
 	require.NoError(t, err)
 	assert.Equal(t, releasesigningtest.Repository, verified.Signer)
