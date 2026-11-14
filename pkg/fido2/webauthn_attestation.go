@@ -41,7 +41,17 @@ type WebAuthnRegistrationOptions struct {
 	UserName                string
 	UserDisplayName         string
 	RequireUserVerification bool
-	Timeout                 time.Duration
+
+	// RequireResidentKey asks the authenticator for a client-side
+	// discoverable credential (CTAP2 MakeCredential option "rk"). It carries
+	// the Relying Party's authenticatorSelection residentKey requirement
+	// (WebAuthn Level 2 §5.4.4): true for "required", and for "preferred",
+	// since §5.4.6 has the client create a discoverable credential if it
+	// can; also true for the legacy requireResidentKey member. "discouraged"
+	// or an absent requirement leaves it false.
+	RequireResidentKey bool
+
+	Timeout time.Duration
 
 	// PIN is the authenticator's CTAP2 PIN. An authenticator with a PIN set
 	// refuses MakeCredential outright (CTAP2_ERR_PIN_REQUIRED) unless the
@@ -327,8 +337,26 @@ func ParseWebAuthnRegistrationOptions(optionsJSON []byte, origin string) (WebAut
 		UserName:                opts.User.Name,
 		UserDisplayName:         opts.User.DisplayName,
 		RequireUserVerification: opts.AuthenticatorSelection.UserVerification == protocol.VerificationRequired,
+		RequireResidentKey:      residentKeyRequested(opts.AuthenticatorSelection),
 		Timeout:                 time.Duration(opts.Timeout) * time.Millisecond,
 	}, nil
+}
+
+// residentKeyRequested reports whether the Relying Party's authenticator
+// selection criteria ask for a client-side discoverable credential.
+//
+// WebAuthn Level 2 §5.4.4: residentKey takes precedence; requireResidentKey
+// is retained for Level 1 compatibility and is honoured when residentKey is
+// absent. §5.4.6: "required" and "preferred" both create a discoverable
+// credential when the authenticator can; "discouraged" does not.
+func residentKeyRequested(sel protocol.AuthenticatorSelection) bool {
+	switch sel.ResidentKey {
+	case protocol.ResidentKeyRequirementRequired, protocol.ResidentKeyRequirementPreferred:
+		return true
+	case protocol.ResidentKeyRequirementDiscouraged:
+		return false
+	}
+	return sel.RequireResidentKey != nil && *sel.RequireResidentKey
 }
 
 // decodeWebAuthnUserHandle extracts the WebAuthn user handle bytes from the
@@ -411,6 +439,7 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 		},
 		PubKeyCredParams: makeCredentialPubKeyParams(),
 		Options: AuthenticatorOptions{
+			RK: opts.RequireResidentKey,
 			UV: opts.RequireUserVerification,
 		},
 	}
