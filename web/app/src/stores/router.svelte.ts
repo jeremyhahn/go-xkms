@@ -68,6 +68,7 @@ export type RouteName =
   | "keyRewrap"
   | "wrappedDataKey"
   | "keyBatch"
+  | "sshSign"
   | "settings"
   | "frostKeyImport"
   | "not-found";
@@ -133,6 +134,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/keys/rewrap": "keyRewrap",
   "/keys/data-keys": "wrappedDataKey",
   "/keys/batch": "keyBatch",
+  "/ssh/sign": "sshSign",
   "/settings": "settings",
   "/platform/secrets": "platformSecretNames",
 };
