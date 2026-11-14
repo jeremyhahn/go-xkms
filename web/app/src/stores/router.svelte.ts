@@ -36,6 +36,7 @@ export type RouteName =
   | "passwords"
   | "oidcCredentials"
   | "platform"
+  | "systemHealth"
   | "tpmPolicies"
   | "seal"
   | "users"
@@ -72,6 +73,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/passwords": "passwords",
   "/oidc/credentials": "oidcCredentials",
   "/platform": "platform",
+  "/system/health": "systemHealth",
   "/tpm/policies": "tpmPolicies",
   "/seal": "seal",
   "/users": "users",

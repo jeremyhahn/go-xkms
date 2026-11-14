@@ -131,7 +131,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 
 | Section | Screen | Route |
 |---|---|---|
-| Overview | Dashboard, Backends | `#/dashboard`, `#/backends` |
+| Overview | Dashboard, Backends, System Health | `#/dashboard`, `#/backends`, `#/system/health` |
 | Keys & Crypto | Keys, Key Versions, FROST, TPM Policies, Seal | `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/policies`, `#/seal` |
 | Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
 | Security | PIN, PIV, PIV Slots, SSH, SSH Trust, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/piv/slots`, `#/ssh`, `#/ssh/trust`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
