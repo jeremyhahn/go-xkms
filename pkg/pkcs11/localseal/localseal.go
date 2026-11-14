@@ -77,7 +77,7 @@ func (c *Controller) Unseal(passphrase []byte) (err error) {
 	if credErr != nil {
 		return credErr
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCreds(creds)) }()
 
 	if initErr := c.barrier.Initialize(ctx, creds); initErr != nil && !isAlreadyInitialized(initErr) {
 		return initErr

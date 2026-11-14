@@ -35,7 +35,7 @@ import (
 func isolateDaemonSocket(t *testing.T) string {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	return filepath.Join(dir, "xkey", "xkey.sock")
 }
