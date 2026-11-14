@@ -148,6 +148,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Security | PIN, PIV, SSH, Passwords, Password Access Mode, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/passwords/access-mode`, `#/oidc/credentials`, `#/platform` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets, Boot Credentials | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform`, `#/credentials/boot` |
+| Security | SSH Key Import, PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/ssh/import`, `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
 | Identity & Access | Users, Tenants, Tenant TPM | `#/users`, `#/tenants`, `#/tenants/tpm` |
