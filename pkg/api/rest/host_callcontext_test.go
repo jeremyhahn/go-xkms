@@ -95,6 +95,7 @@ func newEnforcingHostServer(t *testing.T, node *qrdbnode.Node) *Server {
 			AllowPublicRegistration: &allow,
 		}),
 		WebAuthnCallContext: node.ServiceContext,
+		UserLookup:          node.UserService(),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, srv.tokenIssuer, "the host must mount a token issuer")
@@ -337,6 +338,32 @@ func TestBuildTokenIssuer_LogoutFromATenantRevokesTheFamily(t *testing.T) {
 	require.NoError(t, issuer.RevokeBySubject(tenantCtx, tenantID, "alice"), "a lifecycle revocation in tenant %s revokes its sessions", tenantID)
 	_, err = issuer.Refresh(context.Background(), pair.RefreshToken)
 	require.ErrorAs(t, err, &revoked, "the revoked account's family no longer refreshes")
+}
+
+// The shared host constructor mounts the same refresh recheck the daemon
+// does: an account in a provisioned tenant refreshes through NewHostServer.
+func TestNewHostServer_RefreshResolvesTheAccountInItsTenant(t *testing.T) {
+	node := newEnforcingNode(t)
+	const tenantID = "acme"
+	provisionTenant(t, node, tenantID)
+	_, err := node.UserService().CreateUser(qrdbsdk.ContextWithTenant(context.Background(), tenantID), &qrdbuser.CreateUserRequest{
+		Username: "alice",
+		Email:    "alice@acme.example",
+		Name:     "Alice of acme",
+		TenantID: tenantID,
+	})
+	require.NoError(t, err)
+	srv := newEnforcingHostServer(t, node)
+
+	pair, err := srv.tokenIssuer.Mint(context.Background(), &auth.Identity{
+		Subject:  "alice",
+		TenantID: tenantID,
+		Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUsername},
+	})
+	require.NoError(t, err)
+	refreshed, err := srv.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
+	require.NoError(t, err, "an account in tenant %s refreshes through the host server", tenantID)
+	require.NotEmpty(t, refreshed.AccessToken)
 }
 
 // TestNewHostServer_PasskeyAccessTokenNamesTheAccount covers Codex P1 (3):
