@@ -50,16 +50,12 @@ v0.51.0-alpha and v0.58.2-alpha.
   credential), and the user-create route must stay gated on users:create
   alone, because the bootstrap path (`WithoutEmailLoginKey`) mints no
   invitation. users:invite is asked in `CreateUser`, below every transport.
-- docs/SPEC.md is a protected path for this lane (policy-guard, no
-  LANE_POLICY_ALLOW), so the row text was not edited. Proposed replacement for
-  the clause from "with invites created under users:create" up to "Parent:":
-  "for redeeming an invitation; minting one is decided by go-qrdb's
-  users:invite (`qrdbsdk.PermissionUsersInvite`, granted by go-qrdb's built-in
-  roles): `CreateUser` asks it before creating an email-login-key account
-  (`pkg/xkms/servicer_user.go`), on top of the transports' users:create gate.
-  Device onboarding is a permission, never a role. Replaced by users:invite and
-  device-onboarding permissions on the default roles. go-qrdb gap: no
-  device-onboarding permission is registered (absent from sdk/go v0.51.0-alpha
-  and v0.58.2-alpha), so the device half stays planned."
-- The row stays planned until go-qrdb registers the device-onboarding
-  permission (upstream remainder above).
+- docs/SPEC.md row text (slice 2b, LANE_POLICY_ALLOW docs/SPEC.md): the
+  clause from "with invites created under users:create" up to "Parent:" now
+  says users:invite decides who mints an invitation (`CreateUser`,
+  `pkg/xkms/servicer_user.go:147-150`); the invite-route citations were
+  re-pointed to `pkg/api/rest/routes.go:559-565` and
+  `pkg/api/mcp/server.go:447-448`.
+- Status `in progress`: the users:invite half is done; the device half stays
+  planned until go-qrdb registers the device-onboarding permission (absent
+  from sdk/go v0.51.0-alpha and v0.58.2-alpha; upstream remainder above).
