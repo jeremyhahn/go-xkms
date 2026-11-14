@@ -138,6 +138,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Overview | Dashboard, Trust Bundle, Backends | `#/dashboard`, `#/trust/bundle`, `#/backends` |
 | Keys & Crypto | Keys, FROST, TPM Policies | `#/keys`, `#/frost`, `#/tpm/policies` |
 | Keys & Crypto | Keys, FROST, TPM Key Policy, TPM Policies | `#/keys`, `#/frost`, `#/tpm/key-policy`, `#/tpm/policies` |
+| Keys & Crypto | FROST Key Import, Keys, FROST, TPM Policies | `#/frost/import`, `#/keys`, `#/frost`, `#/tpm/policies` |
 | Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
 | Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Signing Keys, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/attestation/signing-keys`, `#/platform` |
 | Security | PIN, PIV, SSH, SSH Trust, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/ssh/trust`, `#/passwords`, `#/oidc/credentials`, `#/platform` |

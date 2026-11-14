@@ -47,6 +47,7 @@ export const navSections: NavSection[] = [
   {
     heading: "Keys & Crypto",
     items: [
+      { route: "frostKeyImport", path: "/frost/import", label: "FROST Key Import", icon: "Snowflake", capability: "frost", requires: { resource: "keys", action: "import" } },
       { route: "keys", path: "/keys", label: "Keys", icon: "Key", requires: { resource: "keys", action: "list" } },
       { route: "keyVersions", path: "/keys/versions", label: "Key Versions", icon: "Split", requires: { resource: "keys", action: "list" } },
       { route: "frost", path: "/frost", label: "FROST", icon: "Snowflake", capability: "frost", requires: { resource: "keys", action: "list" } },
