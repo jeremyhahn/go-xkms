@@ -154,6 +154,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Identity & Access | Users, Add Passkey, Tenants | `#/users`, `#/account/passkeys`, `#/tenants` |
 | Identity & Access | Tenant Quotas, Users, Tenants | `#/tenants/quotas`, `#/users`, `#/tenants` |
 | Settings | Settings | `#/settings` |
+| Settings | Secret Names, Settings | `#/platform/secrets`, `#/settings` |
 
 Every nav entry is gated twice: an RBAC gate hides an entry the identity
 has no permission for, and a capability gate hides one the deployment never

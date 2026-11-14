@@ -22,6 +22,7 @@ export type RouteName =
   | "trustBundle"
   | "login"
   | "register"
+  | "platformSecretNames"
   | "backends"
   | "keys"
   | "keyVersions"
@@ -99,6 +100,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/frost": "frost",
   "/tenants/quotas": "tenantQuotas",
   "/settings": "settings",
+  "/platform/secrets": "platformSecretNames",
 };
 
 export function parseHash(hash: string): Route {
