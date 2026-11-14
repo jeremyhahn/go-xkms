@@ -64,6 +64,7 @@ export type RouteName =
   | "keyRotationPolicy"
   | "keyMetadata"
   | "backendDiagnostics"
+  | "keyHmac"
   | "settings"
   | "frostKeyImport"
   | "not-found";
@@ -125,6 +126,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/keys/rotation-policy": "keyRotationPolicy",
   "/keys/metadata": "keyMetadata",
   "/backends/diagnostics": "backendDiagnostics",
+  "/keys/hmac": "keyHmac",
   "/settings": "settings",
   "/platform/secrets": "platformSecretNames",
 };
