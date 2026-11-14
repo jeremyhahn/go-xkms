@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"sync/atomic"
 
+	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -379,17 +380,21 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	// wizard may have sealed it under an independent master password
 	// (UseUserPinAsMaster=false), which a PIN change leaves alone. The
 	// rewrap runs before the PIN backend commits, so the barrier itself
-	// proves whether it is PIN-bound: an initialized, unsealed barrier
-	// refuses a rewrap only when the current PIN is not its credential. A
-	// PIN change that then fails restores it: both credentials change, or
-	// neither does.
+	// proves whether it is PIN-bound: it refuses a rewrap with
+	// ErrCredentialMismatch only when the current PIN is not its credential,
+	// and that definitive refusal is the only one that means "independent
+	// password". Any other failure -- a storage read, a guarded-write
+	// conflict, a concurrent root-key write -- says nothing about which
+	// credential the barrier holds, so it is returned before the PIN backend
+	// changes anything. A PIN change that then fails restores the barrier:
+	// both credentials change, or neither does.
 	bsvc := s.barrierSvc.Load()
 	pinBound := false
 	if bsvc != nil {
 		switch err := bsvc.ChangePassword(currentUserPIN, newUserPIN); {
 		case err == nil:
 			pinBound = true
-		case bsvc.IsInitialized() && bsvc.IsUnsealed():
+		case errors.Is(err, qrdbseal.ErrCredentialMismatch):
 			s.log.Debug("ChangeUserPIN: barrier sealed under an independent password; left unchanged")
 		default:
 			s.log.Error("ChangeUserPIN: barrier re-seal failed; PIN left unchanged", "error", err)
@@ -399,7 +404,7 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 			}); auditErr != nil {
 				return auditErr
 			}
-			return ErrBarrierResealFailed
+			return errors.Join(ErrBarrierResealFailed, err)
 		}
 	}
 
