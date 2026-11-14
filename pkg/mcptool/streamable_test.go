@@ -15,6 +15,7 @@ package mcptool
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -296,4 +297,67 @@ func TestStreamableHTTP_NotificationErrors(t *testing.T) {
 	assert.Error(t, bad.SendNotification(context.Background(), note), "an invalid URL fails before dialing")
 	_, err := bad.SendRequest(context.Background(), mcptransport.JSONRPCRequest{Params: func() {}})
 	assert.Error(t, err, "an unencodable message fails before dialing")
+}
+
+// TestStreamSession_SilentDiscoverFallsBackToLegacyInitialize pins that a
+// legacy server which never answers server/discover (it holds the request
+// open) still gets the initialize handshake: the probe is bounded on its own,
+// so neither a context with no deadline nor a caller deadline longer than the
+// probe is spent on it.
+func TestStreamSession_SilentDiscoverFallsBackToLegacyInitialize(t *testing.T) {
+	for name, deadline := range map[string]time.Duration{
+		"no deadline":                0,
+		"deadline longer than probe": 3 * discoverProbeTimeout,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var msg struct {
+					ID     json.RawMessage `json:"id"`
+					Method string          `json:"method"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				switch {
+				case msg.Method == string(mcp.MethodServerDiscover):
+					<-r.Context().Done()
+					return
+				case len(msg.ID) == 0:
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(msg.ID) +
+					`,"result":{"protocolVersion":"` + mcp.ProtocolVersion20251125 +
+					`","capabilities":{},"serverInfo":{"name":"legacy","version":"1"}}}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			ctx := context.Background()
+			if deadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, deadline)
+				t.Cleanup(cancel)
+			}
+			session := &streamSession{transport: newStreamableHTTP(srv.URL, http.DefaultTransport, nil)}
+			t.Cleanup(func() { _ = session.Close() })
+
+			done := make(chan error, 1)
+			start := time.Now()
+			go func() { done <- session.initialize(ctx, mcp.Implementation{Name: "xkms-test", Version: "1"}) }()
+			select {
+			case err := <-done:
+				require.NoError(t, err, "the legacy initialize must run after the discover probe times out")
+				assert.Less(t, time.Since(start), 2*discoverProbeTimeout, "the discover probe must be bounded on its own")
+				session.transport.mu.Lock()
+				negotiated := session.transport.protocolVersion
+				session.transport.mu.Unlock()
+				assert.Equal(t, mcp.ProtocolVersion20251125, negotiated, "the legacy handshake must set the negotiated version")
+			case <-time.After(2 * discoverProbeTimeout):
+				t.Fatal("initialize hung on a server that never answers server/discover")
+			}
+		})
+	}
 }
