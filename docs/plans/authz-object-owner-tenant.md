@@ -1,7 +1,7 @@
 # authz-object-owner: object tenancy by go-qrdb's OwnTenant
 
-Row: authz-object-owner (docs/SPEC.md). The row stays planned: this slice
-covers the tenant half only.
+Row: authz-object-owner (docs/SPEC.md). The row is in progress: the tenant
+half is shipped, the owner half waits on go-qrdb (slice 2 below).
 
 ## Objective
 
@@ -48,3 +48,12 @@ v0.51.0-alpha nor v0.58.2-alpha.
 - cd sdk/go && go build ./... ok.
 - make lint ok (actionlint, golangci-lint 0 issues on every module and tag set).
 - owner half: sdk/go v0.51.0-alpha has no owner/ABAC decision (only the PermissionDeniedError type); the upstream remainder stands.
+
+## Slice 2: SPEC row text
+
+docs/SPEC.md row `authz-object-owner` moves from planned to in progress: it
+cites the tenant step (`ownTenant` calling `qrdbsdk.OwnTenant`, and
+`*CrossTenantError.Unwrap` to go-qrdb's CrossTenantDeniedError) at
+file:line and names the owner/ServiceAccess half as blocked on the go-qrdb
+object-owner ABAC decision above. No code change; checks: go test of
+./pkg/scope/... and make lint.
