@@ -76,6 +76,7 @@ export const navSections: NavSection[] = [
       { route: "passwordAccessMode", path: "/passwords/access-mode", label: "Password Access Mode", icon: "Lock", capability: "passwords", requires: { resource: "passwords", action: "write" } },
       { route: "oidcCredentials", path: "/oidc/credentials", label: "OIDC Credentials", icon: "LogIn", capability: "oidc_credentials", requires: { resource: "oidc_credentials", action: "list" } },
       { route: "platform", path: "/platform", label: "Platform Secrets", icon: "FolderLock", capability: "platform" },
+      { route: "bootCredentials", path: "/credentials/boot", label: "Boot Credentials", icon: "KeyRound", requires: { resource: "credentials", action: "strategy" } },
     ],
   },
   {
