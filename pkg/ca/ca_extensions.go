@@ -1123,10 +1123,12 @@ func certTenantStorageKey(serial *big.Int) string {
 // CertificateTenant to refuse a revoke request from a caller bound to a
 // different tenant (go-xkms#1229).
 //
-// TCG device-identity certificates (EK/AK/IDevID) and the CA's own
-// root/intermediate certificates do not go through signCSR and so carry no
-// record; CertificateTenant reports the system/platform scope for them,
-// which only a system-tenant caller may address.
+// TCG device-identity certificates (EK, AK, IAK, IDevID, LAK) this CA signs
+// record the request's tenant through issueTCGCertificate. The CA's own
+// root/intermediate certificates, and TCG certificates signed with a
+// caller-supplied Signer, carry no record; CertificateTenant reports the
+// system/platform scope for them, which only a system-tenant caller may
+// address.
 func (ca *CA) recordCertTenant(ctx context.Context, serial *big.Int, tenantID string) error {
 	if serial == nil {
 		return ErrInvalidCertificate
@@ -1148,7 +1150,8 @@ func (ca *CA) recordCertTenant(ctx context.Context, serial *big.Int, tenantID st
 // CertificateTenant returns the tenant recorded at issuance for the
 // certificate identified by serial, or the system/platform scope ("") when
 // no record exists -- either because the certificate was issued through a
-// path that does not record one (TCG device identity, CA hierarchy) or
+// path that does not record one (CA hierarchy, caller-signed TCG
+// certificates) or
 // because it predates this recording. Either way, only a cross-tenant caller
 // may then act on it; see recordCertTenant.
 //

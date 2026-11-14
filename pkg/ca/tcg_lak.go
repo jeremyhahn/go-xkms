@@ -169,7 +169,7 @@ func (ca *CA) IssueLAKCertificate(
 	directoryNames := []pkix.Name{tpmDeviceDirectoryName(
 		request.TPMManufacturer, request.TPMModel, request.TPMFirmwareVersion)}
 
-	cert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
+	cert, err := ca.issueTCGCertificate(ctx, signer, signingCert, &CertificateSpec{
 		Serial:             serial,
 		Subject:            pkix.Name{},
 		NotBefore:          time.Now().Add(-1 * time.Minute),
