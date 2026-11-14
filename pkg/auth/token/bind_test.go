@@ -57,9 +57,9 @@ func (s *ctxRecordingStore) RevokeFamily(ctx context.Context, family string) err
 	return s.RefreshStore.RevokeFamily(ctx, family)
 }
 
-func (s *ctxRecordingStore) RevokeBySubject(ctx context.Context, subject string) error {
+func (s *ctxRecordingStore) RevokeBySubject(ctx context.Context, tenantID, subject string) error {
 	s.check(ctx, "RevokeBySubject")
-	return s.RefreshStore.RevokeBySubject(ctx, subject)
+	return s.RefreshStore.RevokeBySubject(ctx, tenantID, subject)
 }
 
 func bindForTest(ctx context.Context) (context.Context, error) {
@@ -81,7 +81,7 @@ func TestBindRefreshStore_RunsEveryCallOnTheBoundContext(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.MarkRotated(ctx, "f1", "j1"))
 	require.NoError(t, store.RevokeFamily(ctx, "f1"))
-	require.NoError(t, store.RevokeBySubject(ctx, "u1"))
+	require.NoError(t, store.RevokeBySubject(ctx, "", "u1"))
 
 	assert.Empty(t, inner.unbound, "every refresh store call runs on the bound context")
 }

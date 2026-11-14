@@ -334,7 +334,7 @@ func TestBuildTokenIssuer_LogoutFromATenantRevokesTheFamily(t *testing.T) {
 
 	pair, err = issuer.Mint(context.Background(), alice)
 	require.NoError(t, err)
-	require.NoError(t, issuer.RevokeBySubject(tenantCtx, "alice"), "a lifecycle revocation in tenant %s revokes its sessions", tenantID)
+	require.NoError(t, issuer.RevokeBySubject(tenantCtx, tenantID, "alice"), "a lifecycle revocation in tenant %s revokes its sessions", tenantID)
 	_, err = issuer.Refresh(context.Background(), pair.RefreshToken)
 	require.ErrorAs(t, err, &revoked, "the revoked account's family no longer refreshes")
 }

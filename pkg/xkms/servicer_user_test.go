@@ -1066,6 +1066,8 @@ func TestCreateUser_SendsTheNormalizedEmail(t *testing.T) {
 // behavior for them is already covered in pkg/auth/token.
 type spyRefreshStore struct {
 	revoked []string
+	// tenants records the tenant each RevokeBySubject call was scoped to.
+	tenants []string
 	// failOn optionally fails RevokeBySubject for one subject, so a test can
 	// prove a revoke failure does not roll back the lifecycle change that
 	// already succeeded.
@@ -1084,8 +1086,9 @@ func (s *spyRefreshStore) MarkRotated(context.Context, string, string) error { r
 
 func (s *spyRefreshStore) RevokeFamily(context.Context, string) error { return nil }
 
-func (s *spyRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *spyRefreshStore) RevokeBySubject(_ context.Context, tenantID, subject string) error {
 	s.revoked = append(s.revoked, subject)
+	s.tenants = append(s.tenants, tenantID)
 	if s.failOn != "" && subject == s.failOn {
 		return errors.New("revoke store unavailable")
 	}
@@ -1115,7 +1118,7 @@ func newTestTokenIssuerWithStore(t *testing.T, store token.RefreshStore) *token.
 func TestDisableUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
 	svc, users, _ := setupServiceWithUserClients(t)
 	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
-		return &qrdbtransport.User{ID: 42, Username: "alice"}, nil
+		return &qrdbtransport.User{ID: 42, Username: "alice", TenantID: "acme"}, nil
 	}
 	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
 
@@ -1127,6 +1130,8 @@ func TestDisableUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
 	wantHandle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(42))
 	assert.ElementsMatch(t, []string{"alice", wantHandle}, store.revoked,
 		"disable must revoke both subject encodings a login can mint a refresh token under")
+	assert.Equal(t, []string{"acme", "acme"}, store.tenants,
+		"only the account's own tenant's sessions are revoked, never a namesake's in another tenant")
 }
 
 func TestDeleteUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
