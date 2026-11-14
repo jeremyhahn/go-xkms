@@ -34,6 +34,10 @@ var (
 	// ErrSignerRequired indicates a missing KMS crypto.Signer.
 	ErrSignerRequired = errors.New("image: crypto.Signer is required")
 
+	// ErrRepositoryRequired indicates a repository signer asked for no
+	// repository.
+	ErrRepositoryRequired = errors.New("image: repository is required")
+
 	// ErrCertificateRequired indicates a missing code-signing certificate.
 	ErrCertificateRequired = errors.New("image: code-signing certificate is required")
 

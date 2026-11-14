@@ -62,18 +62,7 @@ func (s *XKMSService) SignReleaseCoRIM(ctx context.Context, req *SignReleaseCoRI
 	if req == nil {
 		return nil, appraisal.ErrNilRequest
 	}
-	appraiser, tenant, err := s.attestationAppraiser(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.authorizeSigningKeys(ctx, auth.ActionSign); err != nil {
-		return nil, err
-	}
-	resolution, err := appraiser.ResolveSigningKey(ctx, tenant, &appraisal.ResolveSigningKeyRequest{Repository: req.Repository})
-	if err != nil {
-		return nil, err
-	}
-	signer, err := s.repositorySigner(ctx, tenant, resolution)
+	signer, resolution, err := s.resolveRepositorySigner(ctx, req.Repository)
 	if err != nil {
 		return nil, err
 	}
@@ -92,9 +81,41 @@ func (s *XKMSService) SignReleaseCoRIM(ctx context.Context, req *SignReleaseCoRI
 	return &SignReleaseCoRIMResponse{SignedCoRIM: signed, KeyID: resolution.KeyID, Backend: resolution.Backend}, nil
 }
 
-// repositorySigner returns the backend signer of a resolved repository key,
+// RepositorySigner returns the signer of the caller tenant's key for a
+// repository: the tenant's release key unless the tenant named another key
+// for the repository (owner ruling 134). It is the default signer of the
+// tenant's images (image.NewRepositorySigner) and CoRIMs
+// (SignReleaseCoRIM). The caller needs the signing-key sign permission; the
+// private key stays in its backend, the signer only signs through it.
+func (s *XKMSService) RepositorySigner(ctx context.Context, repository string) (crypto.Signer, error) {
+	signer, _, err := s.resolveRepositorySigner(ctx, repository)
+	return signer, err
+}
+
+// resolveRepositorySigner authorizes a sign, resolves the caller tenant's
+// key for repository and returns its signer with the resolution.
+func (s *XKMSService) resolveRepositorySigner(ctx context.Context, repository string) (crypto.Signer, *appraisal.SigningKeyResolution, error) {
+	appraiser, tenant, err := s.attestationAppraiser(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.authorizeSigningKeys(ctx, auth.ActionSign); err != nil {
+		return nil, nil, err
+	}
+	resolution, err := appraiser.ResolveSigningKey(ctx, tenant, &appraisal.ResolveSigningKeyRequest{Repository: repository})
+	if err != nil {
+		return nil, nil, err
+	}
+	signer, err := s.resolutionSigner(ctx, tenant, resolution)
+	if err != nil {
+		return nil, nil, err
+	}
+	return signer, resolution, nil
+}
+
+// resolutionSigner returns the backend signer of a resolved repository key,
 // restricted to the tenant's own keys like SigningPublicKey.
-func (s *XKMSService) repositorySigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.Signer, error) {
+func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.Signer, error) {
 	b, backendName, err := s.resolveTenantBackendWithName(key.Backend, tenant)
 	if err != nil {
 		return nil, err

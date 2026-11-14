@@ -100,6 +100,11 @@ type ImageVerifierConfig[P ~string] = image.VerifierConfig[P]
 // for an ImageVerifier, such as an AttestationAppraiser's TenantSigningKeys.
 type ImageSigningKeyResolver = image.SigningKeyResolver
 
+// ImageRepositorySigners returns the signer of a repository's images, the
+// tenant's release key unless the tenant named another; XKMSService
+// (pkg/xkms) implements it.
+type ImageRepositorySigners = image.RepositorySigners
+
 // PredicateTypeCosign is the predicate type of cosign's default attestation,
 // the one an ImageSigner signs when ImageSignOptions names none.
 const PredicateTypeCosign = image.PredicateTypeCosign
@@ -112,6 +117,11 @@ var (
 
 	// NewImageSigner returns an ImageSigner for an ImageSignerConfig.
 	NewImageSigner = image.NewSigner
+
+	// NewRepositoryImageSigner returns an ImageSigner that signs with the
+	// repository's key (the release key by default) when the config sets
+	// no signer.
+	NewRepositoryImageSigner = image.NewRepositorySigner
 
 	// RequestCodeSigningCertificate has a TrustedCA certify a KMS key under
 	// its code-signing profile. Only the CSR leaves the KMS.
@@ -141,6 +151,7 @@ var (
 	ErrImageInvalidDigest             = image.ErrInvalidDigest
 	ErrImageDigestRequired            = image.ErrDigestRequired
 	ErrImageSignerRequired            = image.ErrSignerRequired
+	ErrImageRepositoryRequired        = image.ErrRepositoryRequired
 	ErrImageCertificateRequired       = image.ErrCertificateRequired
 	ErrImageRegistryRequired          = image.ErrRegistryRequired
 	ErrImageIssuerRequired            = image.ErrIssuerRequired
