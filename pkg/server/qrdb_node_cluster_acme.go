@@ -30,6 +30,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -173,10 +174,7 @@ func clusterSecretHTTPClient(caPEM []byte) *http.Client {
 func (s *Server) buildClusterCAOptions(members map[uint64]string, backends func(string) (xkms.Backend, error)) (*clusterca.Options, error) {
 	enr := s.config.Cluster.RaftEnrollment
 
-	trustDomain := enr.TrustDomain
-	if trustDomain == "" {
-		trustDomain = defaultRaftTrustDomain
-	}
+	trustDomain := embeddednode.TrustDomain(s.config)
 	advPort := enr.AdvertiseNoisePort
 	if advPort == 0 {
 		advPort = clusterenroll.DefaultNoisePort

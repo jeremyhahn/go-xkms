@@ -29,10 +29,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 )
 
-// defaultRaftTrustDomain is the SPIFFE trust domain stamped into auto-provisioned
-// Raft node certificates when RaftEnrollment.TrustDomain is unset.
-const defaultRaftTrustDomain = embeddednode.DefaultTrustDomain
-
 // ErrRaftTLSRead is returned when one of the operator-supplied Raft mTLS PEM
 // files cannot be read at node boot. It carries the offending field name and
 // file path so the operator can correct the deployment.

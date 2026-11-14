@@ -50,6 +50,17 @@ login verifies under, and no tenant may be that trust domain.
   `auth.TenantPrincipalURIs` (`pkg/auth/mtls.go:324`) issues the same form
   (`pkg/spiffe/spiffe.go:21`). The CA's output resolves through that rule
   (`TestSignCSR_TenantResolvesThroughQRDBRule`).
+- **One cluster trust domain.** `embeddednode.TrustDomain(cfg)`
+  (`pkg/embeddednode/embedded_node.go:297`: `cluster.raft_enrollment.trust_domain`,
+  else `embeddednode.DefaultTrustDomain`, `"xkms.cluster"`) is the only source.
+  The ACME node URI-SAN hook (`cmd/xkmsd/acme.go`, `clusterACMETrustDomain`) and
+  the raft node provisioner (`pkg/server/qrdb_node_cluster_acme.go`,
+  `buildClusterCAOptions`) read it, and `EmbeddedNodeStorageConfig` hands it to
+  the embedded go-qrdb node as both `Auth.SPIFFETrustDomain` and
+  `Auth.ClusterTrustDomain`. The latter is go-qrdb's cluster-peer domain
+  (node SAN `spiffe://<domain>/node/<raftAddress>`, pinned by
+  `clusterkeys.Receiver` and `Sender`); left empty it would fall back to
+  go-qrdb's `"qrdb.cluster"` (`TestEmbeddedNodeStorageConfig_OneClusterTrustDomain`).
 - **go-qrdb tenant IDs (open).** go-qrdb's tenant-ID rules do not yet hold a
   tenant ID to the trust-domain grammar: v0.51.0-alpha refuses only control
   bytes, `/` and `\` on create (`ValidateTenantIDShape`,
