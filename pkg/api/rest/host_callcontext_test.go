@@ -39,6 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
@@ -221,23 +222,8 @@ func TestBuildTokenIssuer_RefreshResolvesTheAccountInItsTenant(t *testing.T) {
 	}
 
 	node := newEnforcingNode(t)
-	svcs := node.Services()
-	require.NotNil(t, svcs)
-	factors, ok := svcs.UserAuthFactor.(qrdbsdk.ActiveFactorChecker)
-	require.True(t, ok, "the node's auth-factor service checks active factors")
 	const tenantID = "acme"
-	_, err := qrdbsdk.ProvisionTenant(context.Background(), qrdbsdk.BootstrapTenantProvisionConfig{
-		TenantID:        tenantID,
-		Isolation:       qrdbsdk.TenantIsolationPrefix,
-		AdminEnrollment: qrdbsdk.BootstrapAdminEnrollDeferred,
-	}, qrdbsdk.BootstrapDependencies{
-		Tenants:      svcs.Tenant,
-		Users:        svcs.User,
-		Roles:        svcs.Role,
-		AdminFactors: factors,
-		Logger:       slog.New(slog.DiscardHandler),
-	})
-	require.NoError(t, err)
+	provisionTenant(t, node, tenantID)
 
 	issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
 		Backend:     xkmsmocks.NewMockKeyStore(),
@@ -284,6 +270,73 @@ func TestBuildTokenIssuer_RefreshResolvesTheAccountInItsTenant(t *testing.T) {
 			require.Equal(t, "Alice of "+tenant, claims["name"], "the account re-read is the one in tenant %s (%s)", tenant, kind)
 		}
 	}
+}
+
+// provisionTenant provisions tenantID on node's identity plane, with its
+// admin enrollment deferred.
+func provisionTenant(t *testing.T, node *qrdbnode.Node, tenantID string) {
+	t.Helper()
+	svcs := node.Services()
+	require.NotNil(t, svcs)
+	factors, ok := svcs.UserAuthFactor.(qrdbsdk.ActiveFactorChecker)
+	require.True(t, ok, "the node's auth-factor service checks active factors")
+	_, err := qrdbsdk.ProvisionTenant(context.Background(), qrdbsdk.BootstrapTenantProvisionConfig{
+		TenantID:        tenantID,
+		Isolation:       qrdbsdk.TenantIsolationPrefix,
+		AdminEnrollment: qrdbsdk.BootstrapAdminEnrollDeferred,
+	}, qrdbsdk.BootstrapDependencies{
+		Tenants:      svcs.Tenant,
+		Users:        svcs.User,
+		Roles:        svcs.Role,
+		AdminFactors: factors,
+		Logger:       slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+}
+
+// A logout (and a lifecycle revocation) runs on a context that carries the
+// session's own tenant. The refresh records are the service principal's in
+// the system tenant, so the store must reach them there whatever tenant the
+// caller's context names.
+func TestBuildTokenIssuer_LogoutFromATenantRevokesTheFamily(t *testing.T) {
+	node := newEnforcingNode(t)
+	const tenantID = "acme"
+	provisionTenant(t, node, tenantID)
+	tenantCtx := qrdbsdk.ContextWithTenant(context.Background(), tenantID)
+	_, err := node.UserService().CreateUser(tenantCtx, &qrdbuser.CreateUserRequest{
+		Username: "alice",
+		Email:    "alice@acme.example",
+		Name:     "Alice of acme",
+		TenantID: tenantID,
+	})
+	require.NoError(t, err)
+
+	issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
+		Backend:     xkmsmocks.NewMockKeyStore(),
+		BackendName: "test",
+		QRDBClient:  node.Client(),
+		CallContext: node.ServiceContext,
+		UserLookup:  node.UserService(),
+	})
+	require.NoError(t, err)
+
+	alice := &auth.Identity{
+		Subject:  "alice",
+		TenantID: tenantID,
+		Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUsername},
+	}
+	pair, err := issuer.Mint(context.Background(), alice)
+	require.NoError(t, err, "an anonymous login mints the session")
+	require.NoError(t, issuer.Revoke(tenantCtx, pair.RefreshToken), "a logout in tenant %s revokes its session", tenantID)
+	_, err = issuer.Refresh(context.Background(), pair.RefreshToken)
+	var revoked *token.RefreshRevokedError
+	require.ErrorAs(t, err, &revoked, "the logged-out family no longer refreshes")
+
+	pair, err = issuer.Mint(context.Background(), alice)
+	require.NoError(t, err)
+	require.NoError(t, issuer.RevokeBySubject(tenantCtx, "alice"), "a lifecycle revocation in tenant %s revokes its sessions", tenantID)
+	_, err = issuer.Refresh(context.Background(), pair.RefreshToken)
+	require.ErrorAs(t, err, &revoked, "the revoked account's family no longer refreshes")
 }
 
 // TestNewHostServer_PasskeyAccessTokenNamesTheAccount covers Codex P1 (3):
