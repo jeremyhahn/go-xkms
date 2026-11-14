@@ -10,6 +10,10 @@ export function ChangePassword(arg1, arg2) {
   return window['go']['services']['BarrierService']['ChangePassword'](arg1, arg2);
 }
 
+export function FollowsUserPIN() {
+  return window['go']['services']['BarrierService']['FollowsUserPIN']();
+}
+
 export function GetBackend() {
   return window['go']['services']['BarrierService']['GetBackend']();
 }
@@ -64,6 +68,10 @@ export function SetDataDir(arg1) {
 
 export function SetExternalStrategyFunc(arg1) {
   return window['go']['services']['BarrierService']['SetExternalStrategyFunc'](arg1);
+}
+
+export function SetIndependentPassword(arg1) {
+  return window['go']['services']['BarrierService']['SetIndependentPassword'](arg1);
 }
 
 export function SetLastStrategy(arg1) {
