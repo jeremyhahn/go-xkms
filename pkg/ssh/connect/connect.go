@@ -659,7 +659,11 @@ func fitsSunPath(base string) bool {
 // be owned by root or the effective user and be writable by nobody else
 // unless it is sticky, as /tmp is.
 func isPrivateDir(dir string) bool {
-	dir = filepath.Clean(dir)
+	// An unclean path is refused, not cleaned: the kernel resolves l/..
+	// through the symlink l, so the cleaned path is not the one used.
+	if dir != filepath.Clean(dir) {
+		return false
+	}
 	if resolved, err := filepath.EvalSymlinks(dir); err != nil || resolved != dir {
 		return false
 	}
