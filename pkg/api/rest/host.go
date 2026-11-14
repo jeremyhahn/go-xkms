@@ -396,6 +396,14 @@ type WebAuthnServiceParams struct {
 	// anonymous. Nil keeps the caller's context.
 	CallContext qrdbstorage.CallContext
 
+	// UserService is the node's server-side user service the store reads,
+	// updates and deletes TenantID's user records through
+	// (webauthn.QRDBUserStoreOptions.UserService). Over an enforcing
+	// embedded node pass Node.UserService(): the service principal
+	// CallContext binds belongs to the system tenant, and its client calls
+	// into any other tenant are refused. Nil keeps every call on QRDBClient.
+	UserService webauthn.TenantUserService
+
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
@@ -460,6 +468,7 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		DAOFactory:  p.DAOFactory,
 		TenantID:    tenantID,
 		CallContext: p.CallContext,
+		UserService: p.UserService,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
@@ -692,6 +701,10 @@ type HostConfig struct {
 	// refresh recheck's lookup in the refresh token's own tenant; see
 	// TokenIssuerParams.UserLookup. Nil reads the account through QRDBClient
 	// under WebAuthnCallContext, which resolves only the principal's tenant.
+	// When it is also a webauthn.TenantUserService, as Node.UserService is,
+	// the WebAuthn relying party reads, updates and deletes the accounts of
+	// WebAuthnTenantID through it too, so a non-system WebAuthnTenantID
+	// works over an enforcing node.
 	UserLookup auth.ServiceUserLookup
 
 	// WebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
@@ -855,12 +868,16 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			if tenantID == "" {
 				tenantID = DefaultWebAuthnTenant
 			}
+			// The node's user service, when UserLookup is one, also serves
+			// the relying party's user records in the configured tenant.
+			userService, _ := hc.UserLookup.(webauthn.TenantUserService)
 			svc, waErr := BuildWebAuthnService(WebAuthnServiceParams{
 				Config:                   hc.WebAuthn,
 				QRDBClient:               hc.QRDBClient,
 				DAOFactory:               hc.DAOFactory,
 				TenantID:                 tenantID,
 				CallContext:              hc.WebAuthnCallContext,
+				UserService:              userService,
 				TokenIssuer:              cfg.TokenIssuer,
 				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
 				Logger:                   logger,

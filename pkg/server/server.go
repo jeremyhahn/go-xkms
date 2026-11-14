@@ -1545,6 +1545,11 @@ func (s *Server) initializeWebAuthnService() error {
 	if s.qrdbNode != nil {
 		serviceprincipal.RegisterWebAuthnGrant()
 		params.CallContext = s.qrdbNode.ServiceContext
+		// The principal belongs to the system tenant, whose client calls
+		// into another tenant are refused: the relying party reads,
+		// updates and deletes its tenant's accounts through the node's
+		// user service, in that tenant.
+		params.UserService = nodeWebAuthnUsers{nodeRefreshUsers{node: s.qrdbNode}}
 	}
 	svc, err := rest.BuildWebAuthnService(params)
 	if err != nil {
@@ -1699,6 +1704,40 @@ func (n nodeRefreshUsers) GetUserByUsername(ctx context.Context, tenantID, usern
 		return nil, ErrQRDBNodeNotServing
 	}
 	return users.GetUserByUsername(ctx, tenantID, username)
+}
+
+// nodeWebAuthnUsers is the WebAuthn relying party's account access over the
+// embedded node's user service (webauthn.TenantUserService), read per call
+// as nodeRefreshUsers is.
+type nodeWebAuthnUsers struct {
+	nodeRefreshUsers
+}
+
+// GetUserByEmail implements webauthn.TenantUserService.
+func (n nodeWebAuthnUsers) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.GetUserByEmail(ctx, tenantID, email)
+}
+
+// UpdateUser implements webauthn.TenantUserService.
+func (n nodeWebAuthnUsers) UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.UpdateUser(ctx, req)
+}
+
+// DeleteUser implements webauthn.TenantUserService.
+func (n nodeWebAuthnUsers) DeleteUser(ctx context.Context, id uint64) error {
+	users := n.node.UserService()
+	if users == nil {
+		return ErrQRDBNodeNotServing
+	}
+	return users.DeleteUser(ctx, id)
 }
 
 // initializeKeyVersionStore builds the key-version record store through
