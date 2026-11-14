@@ -14,6 +14,7 @@
   import BackendsView from "$views/BackendsView.svelte";
   import SshKeyImportView from "$views/SshKeyImportView.svelte";
   import SettingsView from "$views/SettingsView.svelte";
+  import FrostKeyImportView from "$views/FrostKeyImportView.svelte";
   import KeysView from "$views/KeysView.svelte";
   import TenantQuotasView from "$views/TenantQuotasView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
@@ -96,6 +97,7 @@
     {:else if routerStore.name === "frost"}
       <FrostView />
     {:else if routerStore.name === "tenantQuotas"}<TenantQuotasView />
+    {:else if routerStore.name === "frostKeyImport"}<FrostKeyImportView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
     {:else if routerStore.name === "tenantTpm"}<TenantTpmView />

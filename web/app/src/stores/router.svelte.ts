@@ -54,6 +54,7 @@ export type RouteName =
   | "frost"
   | "tenantQuotas"
   | "settings"
+  | "frostKeyImport"
   | "not-found";
 
 export interface Route {
@@ -76,6 +77,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/keys": "keys",
   "/keys/versions": "keyVersions",
   "/certs": "certificates",
+  "/frost/import": "frostKeyImport",
   "/certificates": "certificates",
   "/certs/import": "certImport",
   "/ca": "ca",

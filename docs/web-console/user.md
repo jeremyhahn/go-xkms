@@ -132,7 +132,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Section | Screen | Route |
 |---|---|---|
 | Overview | Dashboard, Trust Bundle, Backends, System Health | `#/dashboard`, `#/trust/bundle`, `#/backends`, `#/system/health` |
-| Keys & Crypto | Keys, Key Versions, FROST, TPM Key Policy, TPM Policies, Seal | `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/key-policy`, `#/tpm/policies`, `#/seal` |
+| Keys & Crypto | FROST Key Import, Keys, Key Versions, FROST, TPM Key Policy, TPM Policies, Seal | `#/frost/import`, `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/key-policy`, `#/tpm/policies`, `#/seal` |
 | Certificates & CA | Certificates, Import Certificate, Certificate Authority, TCG Certificates | `#/certs`, `#/certs/import`, `#/ca`, `#/ca/tcg` |
 | Security | SSH Key Import, PIN, PIN Setup, PIV, PIV Slots, SSH, SSH Trust, Passwords, Password Access Mode, OIDC Credentials, Platform Secrets, Boot Credentials | `#/ssh/import`, `#/pin`, `#/pin/setup`, `#/piv`, `#/piv/slots`, `#/ssh`, `#/ssh/trust`, `#/passwords`, `#/passwords/access-mode`, `#/oidc/credentials`, `#/platform`, `#/credentials/boot` |
 | Identity & Access | Tenant Quotas, Users, Add Passkey, Tenants, Tenant TPM | `#/tenants/quotas`, `#/users`, `#/account/passkeys`, `#/tenants`, `#/tenants/tpm` |
