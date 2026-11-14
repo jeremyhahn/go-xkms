@@ -24,7 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
-func sampleTrustRoot() transport.TrustRoot {
+func sampleTrustRootValue() transport.TrustRoot {
 	return transport.TrustRoot{
 		Fingerprint: "ab12",
 		Purpose:     "tpm-manufacturer",
@@ -40,7 +40,7 @@ func sampleTrustRoot() transport.TrustRoot {
 }
 
 func TestTrustRootConversions(t *testing.T) {
-	root := sampleTrustRoot()
+	root := sampleTrustRootValue()
 	assert.Equal(t, &root, TrustRootFromProto(TrustRootToProto(&root)))
 
 	list := &transport.TrustRootListResponse{Roots: []transport.TrustRoot{root, {Fingerprint: "cd34", Purpose: "synced"}}}
@@ -56,7 +56,7 @@ func TestTrustRootConversions(t *testing.T) {
 }
 
 func TestTrustRootClient(t *testing.T) {
-	root := sampleTrustRoot()
+	root := sampleTrustRootValue()
 	stub := &stubKeystoreClient{resp: map[string]any{
 		"TrustRootList":       &pb.TrustRootListResponse{Roots: []*pb.TrustRoot{TrustRootToProto(&root)}},
 		"TrustRootGet":        TrustRootToProto(&root),

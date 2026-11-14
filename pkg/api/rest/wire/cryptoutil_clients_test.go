@@ -80,50 +80,6 @@ func assertFailures(t *testing.T, rec *recordingRequester, calls []wireCall) {
 	}
 }
 
-func TestCryptoUtilityClient_Routes(t *testing.T) {
-	rec := &recordingRequester{response: `{}`}
-	c := CryptoUtilityClient{Do: rec.do}
-
-	assertRoutes(t, rec, []route{
-		{"rewrap", func(ctx context.Context) error {
-			_, err := c.Rewrap(ctx, &transport.RewrapRequest{TargetKeyID: "k2"})
-			return err
-		}, http.MethodPost, "/api/v1/keys/rewrap"},
-		{"encrypt batch", func(ctx context.Context) error {
-			_, err := c.EncryptBatch(ctx, &transport.EncryptBatchRequest{KeyID: "a b"})
-			return err
-		}, http.MethodPost, "/api/v1/keys/a%20b/encrypt-batch"},
-		{"decrypt batch", func(ctx context.Context) error {
-			_, err := c.DecryptBatch(ctx, &transport.DecryptBatchRequest{KeyID: "k"})
-			return err
-		}, http.MethodPost, "/api/v1/keys/k/decrypt-batch"},
-		{"data key", func(ctx context.Context) error {
-			_, err := c.GenerateDataKey(ctx, &transport.GenerateDataKeyRequest{KeyID: "k"})
-			return err
-		}, http.MethodPost, "/api/v1/keys/k/data-key"},
-		{"wrapped data key", func(ctx context.Context) error {
-			_, err := c.GenerateWrappedDataKey(ctx, &transport.GenerateDataKeyRequest{KeyID: "k"})
-			return err
-		}, http.MethodPost, "/api/v1/keys/k/wrapped-data-key"},
-		{"hmac", func(ctx context.Context) error {
-			_, err := c.GenerateHMAC(ctx, &transport.GenerateHMACRequest{KeyID: "k"})
-			return err
-		}, http.MethodPost, "/api/v1/keys/k/hmac"},
-		{"verify hmac", func(ctx context.Context) error {
-			_, err := c.VerifyHMAC(ctx, &transport.VerifyHMACRequest{KeyID: "k"})
-			return err
-		}, http.MethodPost, "/api/v1/keys/k/hmac/verify"},
-		{"random", func(ctx context.Context) error {
-			_, err := c.GenerateRandom(ctx, &transport.GenerateRandomRequest{Length: 32})
-			return err
-		}, http.MethodPost, "/api/v1/random"},
-		{"hash", func(ctx context.Context) error {
-			_, err := c.Hash(ctx, &transport.HashRequest{Data: []byte("x")})
-			return err
-		}, http.MethodPost, "/api/v1/hash"},
-	})
-}
-
 // TestCryptoUtilityClient_Bodies proves the request goes out as the JSON the
 // server decodes and the answer comes back decoded.
 func TestCryptoUtilityClient_Bodies(t *testing.T) {

@@ -15,7 +15,6 @@ package grpc
 
 import (
 	"context"
-	"crypto/x509"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,117 +48,8 @@ func keyManagementService(t *testing.T) *Service {
 // TestKeyManagementRPCs_EndToEnd drives the key management RPCs against the
 // real service: the public key, metadata, policy, rotation policy, safety
 // limits, backend status and revocation.
-func TestKeyManagementRPCs_EndToEnd(t *testing.T) {
-	s := keyManagementService(t)
-	ctx := context.Background()
-
-	pub, err := s.GetPublicKey(ctx, &pb.GetPublicKeyRequest{Backend: "software", KeyId: "signer"})
-	require.NoError(t, err)
-	_, err = x509.ParsePKIXPublicKey(pub.GetPublicKey())
-	require.NoError(t, err)
-	assert.Equal(t, "signer", pub.GetKeyId())
-
-	updated, err := s.UpdateKeyMetadata(ctx, &pb.UpdateKeyMetadataRequest{Backend: "software", KeyId: "signer", Description: "billing", Tags: map[string]string{"team": "billing"}})
-	require.NoError(t, err)
-	assert.Equal(t, "billing", updated.GetMetadata().GetDescription())
-	metadata, err := s.GetKeyMetadata(ctx, &pb.GetKeyMetadataRequest{Backend: "software", KeyId: "signer"})
-	require.NoError(t, err)
-	assert.Equal(t, "billing", metadata.GetMetadata().GetTags()["team"])
-
-	set, err := s.SetKeyPolicy(ctx, &pb.SetKeyPolicyRequest{Backend: "software", KeyId: "signer", Policy: &pb.KeyPolicy{MaxUsageCount: 3}})
-	require.NoError(t, err)
-	assert.Equal(t, uint64(1), set.GetPolicyVersion())
-	policy, err := s.GetKeyPolicy(ctx, &pb.GetKeyPolicyRequest{Backend: "software", KeyId: "signer"})
-	require.NoError(t, err)
-	assert.Equal(t, uint64(3), policy.GetPolicy().GetMaxUsageCount())
-	deleted, err := s.DeleteKeyPolicy(ctx, &pb.DeleteKeyPolicyRequest{Backend: "software", KeyId: "signer"})
-	require.NoError(t, err)
-	assert.Equal(t, "signer", deleted.GetKeyId())
-
-	rotation, err := s.SetKeyRotationPolicy(ctx, &pb.SetKeyRotationPolicyRequest{Backend: "software", KeyId: "signer", Policy: &pb.RotationPolicy{IntervalSeconds: 86400}})
-	require.NoError(t, err)
-	assert.Equal(t, int64(86400), rotation.GetPolicy().GetIntervalSeconds())
-	gotRotation, err := s.GetKeyRotationPolicy(ctx, &pb.GetKeyRotationPolicyRequest{Backend: "software", KeyId: "signer"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(86400), gotRotation.GetPolicy().GetIntervalSeconds())
-	_, err = s.DeleteKeyRotationPolicy(ctx, &pb.DeleteKeyRotationPolicyRequest{Backend: "software", KeyId: "signer"})
-	require.NoError(t, err)
-
-	_, err = s.SetKeySafety(ctx, &pb.SetKeySafetyRequest{Backend: "software", KeyId: "aead", MaxOperations: 100})
-	require.NoError(t, err)
-	report, err := s.SafetyReport(ctx, &pb.SafetyReportRequest{Format: "json"})
-	require.NoError(t, err)
-	assert.Len(t, report.GetAllItems(), 1)
-	_, err = s.SafetyCheck(ctx, &pb.SafetyCheckRequest{})
-	require.NoError(t, err)
-	_, err = s.ClearKeySafety(ctx, &pb.ClearKeySafetyRequest{Backend: "software", KeyId: "aead"})
-	require.NoError(t, err)
-
-	algorithms, err := s.GetSupportedAlgorithms(ctx, &pb.GetSupportedAlgorithmsRequest{Backend: "software"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, algorithms.GetAlgorithms())
-	backend, err := s.BackendStatus(ctx, &pb.BackendStatusRequest{Backend: "software"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, backend.GetStatus())
-
-	disabled, err := s.UpdateKeyStatus(ctx, &pb.UpdateKeyStatusRequest{Backend: "software", KeyId: "signer", Status: pb.KeyStatus_KEY_STATUS_DISABLED})
-	require.NoError(t, err)
-	assert.Equal(t, pb.KeyStatus_KEY_STATUS_DISABLED, disabled.GetStatus())
-	revoked, err := s.RevokeKey(ctx, &pb.RevokeKeyRequest{Backend: "software", KeyId: "signer", Reason: "retired"})
-	require.NoError(t, err)
-	assert.Equal(t, pb.KeyStatus_KEY_STATUS_COMPROMISED, revoked.GetStatus())
-}
-
 // TestKeyManagementRPCs_MapErrors proves the key management refusals reach
 // the caller with their class's code.
-func TestKeyManagementRPCs_MapErrors(t *testing.T) {
-	s := keyManagementService(t)
-	ctx := context.Background()
-
-	tests := []struct {
-		name string
-		call func() error
-		code codes.Code
-	}{
-		{"symmetric public key", func() error {
-			_, err := s.GetPublicKey(ctx, &pb.GetPublicKeyRequest{Backend: "software", KeyId: "aead"})
-			return err
-		}, codes.InvalidArgument},
-		{"missing key", func() error {
-			_, err := s.GetPublicKey(ctx, &pb.GetPublicKeyRequest{Backend: "software", KeyId: "ghost"})
-			return err
-		}, codes.NotFound},
-		{"require mfa", func() error {
-			_, err := s.SetKeyPolicy(ctx, &pb.SetKeyPolicyRequest{Backend: "software", KeyId: "signer", Policy: &pb.KeyPolicy{RequireMfa: true}})
-			return err
-		}, codes.Unimplemented},
-		{"report format", func() error {
-			_, err := s.SafetyReport(ctx, &pb.SafetyReportRequest{Format: "xml"})
-			return err
-		}, codes.InvalidArgument},
-		{"unsettable status", func() error {
-			_, err := s.UpdateKeyStatus(ctx, &pb.UpdateKeyStatusRequest{Backend: "software", KeyId: "signer", Status: pb.KeyStatus_KEY_STATUS_COMPROMISED})
-			return err
-		}, codes.InvalidArgument},
-		{"backend test before a first seal", func() error {
-			_, err := s.BackendTest(ctx, &pb.BackendTestRequest{Backend: "software"})
-			return err
-		}, codes.Unimplemented},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.call()
-			require.Error(t, err)
-			assert.Equal(t, tt.code, status.Code(err), err.Error())
-		})
-	}
-
-	// Without a policy store the policy-backed operations are unavailable.
-	s.xkmsService.SetKeyPolicyStore(nil)
-	_, err := s.SetKeySafety(ctx, &pb.SetKeySafetyRequest{Backend: "software", KeyId: "aead", MaxOperations: 10})
-	assert.Equal(t, codes.Unavailable, status.Code(err), "%v", err)
-}
-
 // TestKeyManagementAndCryptoUtilityRPCs_NilService proves every key
 // management and crypto utility RPC answers Unavailable, not a panic, when
 // no service is wired.

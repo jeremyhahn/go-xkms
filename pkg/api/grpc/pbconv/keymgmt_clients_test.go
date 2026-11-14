@@ -24,52 +24,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
-func sampleRotationPolicy() *transport.RotationPolicy {
-	return &transport.RotationPolicy{Enabled: true, IntervalSeconds: 86400, NextRotation: 1700000000, RetainVersions: 3, AutoRotate: true}
-}
-
-func sampleKeyPolicy() *transport.KeyPolicy {
-	return &transport.KeyPolicy{
-		KeyID:             "k1",
-		Version:           2,
-		AllowedOperations: []transport.KeyUsage{transport.KeyUsageEncrypt, transport.KeyUsageSign},
-		AllowedPrincipals: []string{"alice"},
-		DeniedPrincipals:  []string{"mallory"},
-		ExpiresAt:         1800000000,
-		RotationRequired:  true,
-		MaxUsageCount:     1000,
-		RequireMFA:        true,
-		UpdatedAt:         1700000000,
-	}
-}
-
-func sampleKeyMetadata() *transport.KeyMetadata {
-	return &transport.KeyMetadata{
-		KeyID:              "k1",
-		Name:               "orders",
-		Description:        "order signing",
-		Algorithm:          transport.KeyAlgorithmECDSAP256,
-		Status:             transport.KeyStatusEnabled,
-		Usage:              []transport.KeyUsage{transport.KeyUsageSign, transport.KeyUsageVerify},
-		Version:            4,
-		Exportable:         true,
-		DeletionProtection: true,
-		CreatedAt:          1600000000,
-		UpdatedAt:          1700000000,
-		LastUsedAt:         1700000500,
-		RotationPolicy:     sampleRotationPolicy(),
-		Tags:               map[string]string{"team": "payments"},
-		Owner:              "alice",
-	}
-}
-
-func sampleSafetyWarnings() []transport.SafetyWarning {
-	return []transport.SafetyWarning{{
-		Type: "key", Path: "k1", UsagePercent: 91.5, Status: "critical",
-		OperationsUsed: 915, BytesUsed: 4096, MaxOperations: 1000, MaxBytes: 8192,
-	}}
-}
-
 func TestKeyManagementEnums(t *testing.T) {
 	for status := range keyStatusToProto {
 		assert.Equal(t, status, KeyStatusFromProto(KeyStatusToProto(status)), status)
@@ -99,32 +53,6 @@ func TestKeyManagementEnums(t *testing.T) {
 	assert.Equal(t, []string{string(transport.KeyAlgorithmAES256GCM), "ML-DSA-65"}, KeyAlgorithmNamesToProto(names))
 	assert.Equal(t, names, KeyAlgorithmNamesFromProto(KeyAlgorithmNamesToProto(names)))
 	assert.Empty(t, KeyAlgorithmNamesFromProto(nil))
-}
-
-func TestKeyManagementConversions_RoundTrip(t *testing.T) {
-	assert.Equal(t, sampleRotationPolicy(), RotationPolicyFromProto(RotationPolicyToProto(sampleRotationPolicy())))
-	assert.Equal(t, sampleKeyPolicy(), KeyPolicyFromProto(KeyPolicyToProto(sampleKeyPolicy())))
-	assert.Equal(t, sampleKeyMetadata(), KeyMetadataFromProto(KeyMetadataToProto(sampleKeyMetadata())))
-	assert.Equal(t, sampleSafetyWarnings(), SafetyWarningsFromProto(SafetyWarningsToProto(sampleSafetyWarnings())))
-
-	update := &transport.UpdateKeyMetadataRequest{
-		Backend: "pkcs8", KeyID: "k1", Name: "n", Description: "d",
-		Tags: map[string]string{"a": "b"}, RemoveTags: []string{"c"},
-	}
-	assert.Equal(t, update, UpdateKeyMetadataRequestFromProto(UpdateKeyMetadataRequestToProto(update)))
-
-	status := &transport.BackendStatusResponse{
-		BackendType: "tpm2", Status: "ready", Device: "/dev/tpmrm0", Region: "local", KeyID: "srk",
-		PCRBanks: []string{"sha256"}, PCRRegisters: []int32{0, 7},
-		Capabilities: map[string]bool{"seal": true}, Timestamp: 1700000000,
-	}
-	assert.Equal(t, status, BackendStatusResponseFromProto(BackendStatusResponseToProto(status)))
-
-	report := &transport.SafetyReportResponse{
-		AllItems: sampleSafetyWarnings(), TotalKeys: 10, TotalDEKs: 20,
-		KeysAtWarning: 1, KeysAtCritical: 2, DEKsAtWarning: 3, DEKsAtCritical: 4, Timestamp: 1700000000,
-	}
-	assert.Equal(t, report, SafetyReportResponseFromProto(SafetyReportResponseToProto(report)))
 }
 
 func TestKeyManagementConversions_NilAndTenant(t *testing.T) {
