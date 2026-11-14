@@ -101,6 +101,44 @@ func TestBuildCommandArgsStillPassesValuedFlags(t *testing.T) {
 	assert.Contains(t, argv, "--key-size 2048")
 }
 
+// TestPolicyCommandsCreateNamedBranches pins the integration set to the row's
+// named-branch flow: create builds a current and a next branch, and verify
+// expects a matching, approved line for each.
+func TestPolicyCommandsCreateNamedBranches(t *testing.T) {
+	runner := &TestRunner{}
+
+	byName := make(map[string]CommandDefinition)
+	for _, cmd := range PolicyCommands() {
+		byName[cmd.Name] = cmd
+	}
+
+	create, ok := byName["tpm-policy-create"]
+	if !ok {
+		t.Fatal("PolicyCommands has no tpm-policy-create")
+	}
+	args := runner.BuildCommandArgs(create, nil)
+	assert.NotContains(t, args, "--pcrs")
+
+	want := []string{
+		"--branch", "name=current;pcr=sha256:23",
+		"--branch", "name=next;pcr=sha256:23",
+	}
+	next := 0
+	for _, arg := range args {
+		if next < len(want) && arg == want[next] {
+			next++
+		}
+	}
+	assert.Equal(t, len(want), next, "create args %q must hold %q in order", args, want)
+
+	verify, ok := byName["tpm-policy-verify"]
+	if !ok {
+		t.Fatal("PolicyCommands has no tpm-policy-verify")
+	}
+	assert.Contains(t, verify.ExpectedOutputContains, "Branch current: PCRs match, approved: true")
+	assert.Contains(t, verify.ExpectedOutputContains, "Branch next: PCRs match, approved: true")
+}
+
 // TestBuildCommandArgsOverrideReplacesValue pins the override path, which is how
 // the suite gives each run unique key identifiers.
 func TestBuildCommandArgsOverrideReplacesValue(t *testing.T) {

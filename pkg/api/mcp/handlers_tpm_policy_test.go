@@ -106,6 +106,40 @@ func TestTPMPolicyTools_MapErrors(t *testing.T) {
 	}
 }
 
+// TestTPMPolicyTools_CarryBranchAndReferenceValues proves tpm.policy.update
+// hands the branch and its reference values to the service: each
+// combination draws the service's own answer, which a dropped field would
+// change (a dropped branch re-captures from the live PCRs, which the
+// offline service cannot reach; dropped reference values leave a branch
+// without them, invalid params). The offline service has no reference
+// signer, so signed values stop at the error REST answers 409 for; MCP
+// renders that precondition class as an internal error, so the test tells
+// the two internal answers apart by their cause.
+func TestTPMPolicyTools_CarryBranchAndReferenceValues(t *testing.T) {
+	s, _ := newTPMPolicyMCP(t)
+	tests := []struct {
+		name, params, cause string
+		code                int
+	}{
+		{"no branch re-captures", `{"name":"boot"}`, "secrets", ErrCodeInternalError},
+		{"branch without reference values", `{"name":"boot","branch":"next"}`, "", ErrCodeInvalidParams},
+		{"reference values without a branch", `{"name":"boot","reference_values":"0oRDoQEm"}`, "", ErrCodeInvalidParams},
+		{"branch and reference values without a signer", `{"name":"boot","branch":"next","reference_values":"0oRDoQEm"}`, "no reference-value signer", ErrCodeInternalError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out map[string]any
+			err := invokeTPM(t, s, "acme", "tpm.policy.update", tt.params, &out)
+			var keyErr *KeyOpError
+			require.ErrorAs(t, err, &keyErr)
+			assert.Equal(t, tt.code, keyErr.Code, "%v", err)
+			if tt.cause != "" {
+				assert.ErrorContains(t, err, tt.cause)
+			}
+		})
+	}
+}
+
 // TestTPMPolicyTools_WithoutTheService proves the tools answer "not
 // configured" on a server with no TPM policy service.
 func TestTPMPolicyTools_WithoutTheService(t *testing.T) {
