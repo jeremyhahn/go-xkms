@@ -11,6 +11,7 @@
   import DashboardView from "$views/DashboardView.svelte";
   import TrustBundleView from "$views/TrustBundleView.svelte";
   import BackendsView from "$views/BackendsView.svelte";
+  import SshKeyImportView from "$views/SshKeyImportView.svelte";
   import SettingsView from "$views/SettingsView.svelte";
   import KeysView from "$views/KeysView.svelte";
   import TenantQuotasView from "$views/TenantQuotasView.svelte";
@@ -65,6 +66,7 @@
     {:else if routerStore.name === "trustBundle"}<TrustBundleView />
     {:else if routerStore.name === "backends"}
       <BackendsView />
+    {:else if routerStore.name === "sshKeyImport"}<SshKeyImportView />
     {:else if routerStore.name === "keys"}
       <KeysView />
     {:else if routerStore.name === "keyVersions"}<KeyVersionsView />
