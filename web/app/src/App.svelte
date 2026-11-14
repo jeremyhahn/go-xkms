@@ -17,6 +17,7 @@
   import SealView from "$views/SealView.svelte";
   import UsersView from "$views/UsersView.svelte";
   import TenantsView from "$views/TenantsView.svelte";
+  import TenantTpmView from "$views/TenantTpmView.svelte";
   import PasswordsView from "$views/PasswordsView.svelte";
   import OidcCredentialsView from "$views/OidcCredentialsView.svelte";
   import PlatformView from "$views/PlatformView.svelte";
@@ -76,6 +77,7 @@
       <FrostView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
+    {:else if routerStore.name === "tenantTpm"}<TenantTpmView />
     {:else if routerStore.name === "passwords"}
       <PasswordsView />
     {:else if routerStore.name === "oidcCredentials"}

@@ -135,7 +135,7 @@ tenants. The dashboard shows whether the deployment is clustered.
 | Keys & Crypto | Keys, Key Versions, FROST, TPM Policies, Seal | `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/policies`, `#/seal` |
 | Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
 | Security | PIN, PIV, PIV Slots, SSH, SSH Trust, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/piv/slots`, `#/ssh`, `#/ssh/trust`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
+| Identity & Access | Users, Tenants, Tenant TPM | `#/users`, `#/tenants`, `#/tenants/tpm` |
 | Settings | Settings | `#/settings` |
 
 Every nav entry is gated twice: an RBAC gate hides an entry the identity
