@@ -32,6 +32,7 @@
   import KeyRewrapView from "$views/KeyRewrapView.svelte";
   import WrappedDataKeyView from "$views/WrappedDataKeyView.svelte";
   import KeyBatchView from "$views/KeyBatchView.svelte";
+  import SshSignView from "$views/SshSignView.svelte";
   import CertificatesView from "$views/CertificatesView.svelte";
   import CertImportView from "$views/CertImportView.svelte";
   import PinView from "$views/PinView.svelte";
@@ -129,6 +130,7 @@
     {:else if routerStore.name === "keyRewrap"}<KeyRewrapView />
     {:else if routerStore.name === "wrappedDataKey"}<WrappedDataKeyView />
     {:else if routerStore.name === "keyBatch"}<KeyBatchView />
+    {:else if routerStore.name === "sshSign"}<SshSignView />
     {:else if routerStore.name === "tenants"}
       <TenantsView />
     {:else if routerStore.name === "tenantTpm"}<TenantTpmView />
