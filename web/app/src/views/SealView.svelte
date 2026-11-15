@@ -23,6 +23,7 @@
 
   let sealedJson = $state("");
   let unsealAad = $state("");
+  let unsealPassword = $state("");
   let unsealErr = $state<string | null>(null);
   let plaintext = $state<string | null>(null);
 
@@ -94,11 +95,25 @@
       unsealErr = "Invalid seal result JSON.";
       return;
     }
-    if (typeof parsed.ciphertext !== "string" || !isB64(parsed.ciphertext)) {
-      unsealErr = "Ciphertext is not base64.";
+    // A seal result is either a ciphertext (with an envelope's wrapped_dek)
+    // or a TPM2 sealed object: null ciphertext plus tpm_public/tpm_private.
+    const b64 = (v: unknown): v is string => typeof v === "string" && isB64(v);
+    const req: UnsealRequest = { backend: parsed.backend };
+    if (typeof parsed.ciphertext === "string") {
+      if (!isB64(parsed.ciphertext)) {
+        unsealErr = "Ciphertext is not base64.";
+        return;
+      }
+      req.ciphertext = parsed.ciphertext;
+    } else if (b64(parsed.tpm_public) && b64(parsed.tpm_private)) {
+      req.tpm_public = parsed.tpm_public;
+      req.tpm_private = parsed.tpm_private;
+    } else {
+      unsealErr = "Seal result needs a base64 ciphertext or base64 tpm_public and tpm_private.";
       return;
     }
-    const req: UnsealRequest = { backend: parsed.backend, ciphertext: parsed.ciphertext };
+    if (parsed.wrapped_dek !== undefined) req.wrapped_dek = parsed.wrapped_dek;
+    if (unsealPassword !== "") req.password = unsealPassword;
     if (parsed.nonce !== undefined) req.nonce = parsed.nonce;
     if (parsed.tag !== undefined) req.tag = parsed.tag;
     if (parsed.metadata !== undefined) req.metadata = parsed.metadata;
@@ -156,6 +171,7 @@
       {#if unsealErr}<Alert kind="error"><span>{unsealErr}</span></Alert>{/if}
       <textarea class="textarea textarea-bordered w-full font-mono text-xs" aria-label="Seal result JSON" placeholder="Paste a seal result JSON" rows="8" bind:value={sealedJson}></textarea>
       <input class="input input-bordered w-full" aria-label="Unseal AAD" placeholder="AAD (optional)" bind:value={unsealAad} />
+      <input class="input input-bordered w-full" type="password" aria-label="Unseal password" placeholder="Password (optional)" bind:value={unsealPassword} />
       <button class="btn btn-primary" onclick={doUnseal} disabled={busy || sealedJson === ""}>Unseal</button>
       {#if plaintext !== null}
         <pre class="bg-base-200 rounded p-3 text-sm whitespace-pre-wrap" aria-label="Plaintext">{plaintext}</pre>

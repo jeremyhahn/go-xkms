@@ -2163,10 +2163,16 @@ interface SealRequest {
 /** Mirrors pkg/api/rest/types.go SealResponse. */
 interface SealResponse {
     backend: string;
-    ciphertext: Base64;
+    /** null for a TPM2 sealed object, which is the tpm_public/tpm_private pair. */
+    ciphertext: Base64 | null;
     nonce?: Base64;
     tag?: Base64;
     metadata?: Record<string, Base64>;
+    /** TPM2 sealed object public and private blobs. */
+    tpm_public?: Base64;
+    tpm_private?: Base64;
+    /** The data key wrapped by the backend key for an envelope seal. */
+    wrapped_dek?: Base64;
     key_id?: string;
     /** The sealing key version; absent for a TPM2 sealed object. Pass it back on unseal. */
     key_version?: number;
@@ -2175,11 +2181,17 @@ interface SealResponse {
 interface UnsealRequest {
     backend: string;
     key_id?: string;
-    ciphertext: Base64;
+    /** Absent for a TPM2 sealed object; send tpm_public and tpm_private instead. */
+    ciphertext?: Base64;
     nonce?: Base64;
     tag?: Base64;
     aad?: Base64;
     metadata?: Record<string, Base64>;
+    tpm_public?: Base64;
+    tpm_private?: Base64;
+    wrapped_dek?: Base64;
+    /** The password the data was sealed with. */
+    password?: string;
     /** The sealing key version the seal reported; omitted tries every enabled version. */
     key_version?: number;
 }
