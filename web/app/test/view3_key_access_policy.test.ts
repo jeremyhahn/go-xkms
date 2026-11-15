@@ -66,7 +66,6 @@ describe("KeyAccessPolicyView", () => {
         allowed_principals: ["svc-a"],
         denied_principals: ["svc-b"],
         expires_at: FUTURE,
-        require_mfa: true,
       },
       timestamp: 1,
     });
@@ -82,7 +81,7 @@ describe("KeyAccessPolicyView", () => {
     expect(screen.getByText("svc-a")).toBeInTheDocument();
     expect(screen.getByText("svc-b")).toBeInTheDocument();
     expect(screen.getByLabelText("Expiry")).toHaveValue("2100-01-01");
-    expect(screen.getByLabelText("Require MFA")).toBeChecked();
+    expect(screen.getByLabelText("Require MFA")).not.toBeChecked();
     expect(screen.getByLabelText("Rotation required")).not.toBeChecked();
   });
 
@@ -106,7 +105,6 @@ describe("KeyAccessPolicyView", () => {
     await addPrincipal("Allowed", "svc-a");
     await addPrincipal("Denied", "svc-b");
     await fireEvent.input(screen.getByLabelText("Max usage count"), { target: { value: "500" } });
-    await fireEvent.click(screen.getByLabelText("Require MFA"));
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(request).toHaveBeenCalledOnce());
@@ -119,7 +117,6 @@ describe("KeyAccessPolicyView", () => {
           allowed_principals: ["svc-a"],
           denied_principals: ["svc-b"],
           max_usage_count: 500,
-          require_mfa: true,
         },
       },
     });
@@ -263,5 +260,26 @@ describe("KeyAccessPolicyView", () => {
 
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
     expect(request.mock.calls[1]![2].body.policy).toEqual({});
+  });
+
+  it("disables Require MFA with the reason the service refuses it", async () => {
+    render(KeyAccessPolicyView);
+    await selectKey();
+
+    expect(screen.getByLabelText("Require MFA")).toBeDisabled();
+    expect(screen.getByText(/no per-operation MFA challenge/)).toBeInTheDocument();
+  });
+
+  it("shows the service's refusal of an unenforceable policy", async () => {
+    request.mockRejectedValue(
+      new Error('key "k1": policy field require_mfa cannot be enforced: the service has no per-operation MFA challenge'),
+    );
+
+    render(KeyAccessPolicyView);
+    await selectKey();
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(/policy field require_mfa cannot be enforced/)).toBeInTheDocument();
+    expect(toasts).toHaveLength(0);
   });
 });
