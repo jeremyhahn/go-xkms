@@ -77,19 +77,28 @@
     return s;
   }
 
+  let seq = 0;
+
   async function load(): Promise<void> {
+    // Capture the requested target before the await: the inputs stay
+    // editable, and the metadata belongs to what was requested.
+    const id = keyId;
+    const be = backend;
+    const n = ++seq;
     loading = true;
     error = null;
     try {
-      const m = await getKeyMetadata(keyId, backend);
-      loadedId = keyId;
-      loadedBackend = backend;
+      const m = await getKeyMetadata(id, be);
+      if (n !== seq) return;
+      loadedId = id;
+      loadedBackend = be;
       show(m);
     } catch (e) {
+      if (n !== seq) return;
       md = null;
       error = e instanceof Error ? e.message : String(e);
     } finally {
-      loading = false;
+      if (n === seq) loading = false;
     }
   }
 
