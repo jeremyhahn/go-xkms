@@ -36,6 +36,32 @@ is active and bound to the phone's key:
 - Finding P1: test commit 864aae088 (fails: all four refusal cases
   accepted), fix commit 6a6542796 (passes).
 
+## Codex review of da0470e8707c (lane row2093c, resumed)
+
+1. Security, backend_phone.go: the registry was compared with the
+   configuration, not with the connected peer. `RegisterPhoneBackend` now
+   takes an `AuthenticatedPhoneSender` and binds the record's identity key
+   to the session's `RemoteStaticKey`. Test 44ccfc0b2
+   (`TestRegisterPhoneBackend_RefusesOtherPeer`, fails before), fix
+   8dbd58fc8.
+2. Security, backend_phone.go: verification ran only at registration.
+   The backend now sends through `registryGuardedSender`, which re-reads
+   the record before every request, so a revocation from any process
+   refuses the next operation. Test 317f42580
+   (`TestRegisterPhoneBackend_RevokeAfterRegister`, fails before), fix
+   d92b14cf6.
+3. Tests: the registry-opening path was bypassed. Test-only commit
+   6a9297afe (`TestRegisterPhoneBackend_DatastoreRegistry`): registry
+   opened through `s.daoFactory` on a shared datastore; matching, revoked
+   by another registry after registration, revoked, store failure and no
+   datastore.
+4. docs/SPEC.md:87 (owner approval of the shipped status): an owner ask;
+   this lane does not edit docs/SPEC.md.
+
+Remaining for production use: the phone bridge that calls
+`RegisterPhoneBackend` must pass a Sender that reports its Noise
+session's remote static key; no such caller exists in this repository yet.
+
 ## Out of scope
 
 - Permissions, routes and service verbs (row device-share-policy).
