@@ -112,6 +112,60 @@ func TestNewHostServer_TokenIssuerRunsOnTheCallContext(t *testing.T) {
 	require.NotNil(t, pair)
 }
 
+// TestNewHostServer_AnonymousRefreshOverEnforcingNode pins that POST
+// /api/v1/auth/refresh, which arrives anonymous, re-checks the account on
+// the same binder the refresh store runs on: over an enforcing embedded node
+// a valid refresh token minted by Mint is exchanged for a new pair, and a
+// disabled account's refresh is still refused (go-xkms#1297).
+func TestNewHostServer_AnonymousRefreshOverEnforcingNode(t *testing.T) {
+	node := newEnforcingNode(t)
+	srv := newEnforcingHostServer(t, node)
+	ctx := context.Background()
+
+	mint := func(name string) (uint64, string) {
+		u, err := node.UserService().CreateUser(ctx, &qrdbuser.CreateUserRequest{
+			Username: name,
+			Email:    name + "@example.com",
+			Name:     name,
+		})
+		require.NoError(t, err)
+		pair, err := srv.tokenIssuer.Mint(ctx, &auth.Identity{
+			Subject:  base64.RawURLEncoding.EncodeToString(binary.BigEndian.AppendUint64(nil, u.ID)),
+			TenantID: DefaultWebAuthnTenant,
+			Metadata: map[string]string{
+				auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle,
+				"username":                  name,
+			},
+		})
+		require.NoError(t, err)
+		return u.ID, pair.RefreshToken
+	}
+	refresh := func(refreshToken string) *httptest.ResponseRecorder {
+		body, err := json.Marshal(map[string]string{"refresh_token": refreshToken})
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		srv.handleAuthRefresh(rec, req)
+		return rec
+	}
+
+	_, aliceRefresh := mint("alice")
+	rec := refresh(aliceRefresh)
+	require.Equal(t, http.StatusOK, rec.Code, "a valid anonymous refresh must succeed: %s", rec.Body.String())
+	var pair struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pair))
+	require.NotEmpty(t, pair.AccessToken)
+	require.NotEmpty(t, pair.RefreshToken)
+
+	bobID, bobRefresh := mint("bob")
+	require.NoError(t, node.UserService().DisableUser(ctx, bobID))
+	rec = refresh(bobRefresh)
+	require.Equal(t, http.StatusUnauthorized, rec.Code, "a disabled account's refresh must be refused")
+}
+
 // TestNewHostServer_PasskeyAccessTokenNamesTheAccount covers Codex P1 (3):
 // a passkey login mints an access token whose subject is the account's
 // base64 WebAuthn handle (sub_kind=user_handle). Bearer authentication must
