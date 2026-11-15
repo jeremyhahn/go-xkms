@@ -32,6 +32,11 @@ async function loadUser(username: string): Promise<void> {
   await fireEvent.click(screen.getByRole("button", { name: "Load" }));
 }
 
+// go-qrdb v0.51.0-alpha computes SPKI thumbprints with
+// base64.RawURLEncoding over SHA-256 and requires 32 decoded bytes; this is
+// the SHA-256 of the empty string in that encoding.
+const SPKI_THUMBPRINT = "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU";
+
 async function fillBind(thumbprint: string, notAfter: string): Promise<void> {
   await fireEvent.input(screen.getByLabelText("Thumbprint"), { target: { value: thumbprint } });
   await fireEvent.input(screen.getByLabelText("Not after"), { target: { value: notAfter } });
@@ -85,30 +90,38 @@ describe("UserCertBindingView", () => {
     expect(await screen.findByText("No credentials")).toBeInTheDocument();
   });
 
-  it("binds the normalised thumbprint and not-after, toasts and reloads", async () => {
+  it("binds the canonical base64url SPKI thumbprint and not-after, toasts and reloads", async () => {
     credentials.mockResolvedValue({ credentials: [] });
     bindCert.mockResolvedValue({ username: "alice", status: "bound" });
 
     render(UserCertBindingView);
     await fireEvent.input(screen.getByLabelText("Username"), { target: { value: "alice" } });
-    await fillBind("AB:CD:ef 01", "2030-01-01");
+    await fillBind(`  ${SPKI_THUMBPRINT}  `, "2030-01-01");
     await fireEvent.click(screen.getByRole("button", { name: "Bind" }));
 
     await waitFor(() => expect(bindCert).toHaveBeenCalledOnce());
-    expect(bindCert).toHaveBeenCalledWith("alice", { thumbprint: "ABCDef01", not_after_unix: 1893456000 });
+    expect(bindCert).toHaveBeenCalledWith("alice", { thumbprint: SPKI_THUMBPRINT, not_after_unix: 1893456000 });
     await waitFor(() => expect(credentials).toHaveBeenCalledWith("alice"));
     expect(toasts).toHaveLength(1);
     expect(toasts[0]!.kind).toBe("success");
     expect(toasts[0]!.message).toContain("bound");
   });
 
-  it("rejects a non-hex thumbprint inline without calling bindCert", async () => {
+  it.each([
+    ["a hexadecimal SHA-256 fingerprint", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
+    ["a colon-separated hex fingerprint", "AB:CD:EF:01"],
+    ["padded base64url", `${SPKI_THUMBPRINT}=`],
+    ["standard base64", "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"],
+    ["a short value", "abcd"],
+  ])("rejects %s inline without calling bindCert", async (_label, value) => {
     render(UserCertBindingView);
     await fireEvent.input(screen.getByLabelText("Username"), { target: { value: "alice" } });
-    await fillBind("zz:11", "2030-01-01");
+    await fillBind(value, "2030-01-01");
     await fireEvent.click(screen.getByRole("button", { name: "Bind" }));
 
-    expect(await screen.findByText("Thumbprint must be hexadecimal.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Thumbprint must be the unpadded base64url SHA-256 SPKI thumbprint (43 characters)."),
+    ).toBeInTheDocument();
     expect(bindCert).not.toHaveBeenCalled();
   });
 
@@ -126,7 +139,7 @@ describe("UserCertBindingView", () => {
 
     render(UserCertBindingView);
     await fireEvent.input(screen.getByLabelText("Username"), { target: { value: "alice" } });
-    await fillBind("abcd", "2030-01-01");
+    await fillBind(SPKI_THUMBPRINT, "2030-01-01");
     await fireEvent.click(screen.getByRole("button", { name: "Bind" }));
 
     expect(await screen.findByText("thumbprint already bound")).toBeInTheDocument();
