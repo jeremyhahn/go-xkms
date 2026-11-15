@@ -229,4 +229,39 @@ describe("KeyAccessPolicyView", () => {
     expect(await screen.findByText("permission denied")).toBeInTheDocument();
     expect(toasts).toHaveLength(0);
   });
+
+  async function loadSignOnly(): Promise<void> {
+    request.mockResolvedValueOnce({
+      policy: { key_id: "k1", version: 2, allowed_operations: ["sign"] },
+      timestamp: 1,
+    });
+    request.mockResolvedValue({ key_id: "k1", policy_version: 3, timestamp: 1 });
+    render(KeyAccessPolicyView);
+    await selectKey();
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    await screen.findByText("Version 2");
+  }
+
+  it("refuses an empty operation selection instead of saving the policy unrestricted", async () => {
+    await loadSignOnly();
+    expect(screen.getByLabelText("Restrict operations")).toBeChecked();
+    await fireEvent.click(screen.getByLabelText("sign"));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(/Select at least one operation/)).toBeInTheDocument();
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("asks before widening a restricted policy to every operation", async () => {
+    await loadSignOnly();
+    await fireEvent.click(screen.getByLabelText("Restrict operations"));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(/removes the operation restriction/)).toBeInTheDocument();
+    expect(request).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getByRole("button", { name: "Widen and save", hidden: true }));
+
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request.mock.calls[1]![2].body.policy).toEqual({});
+  });
 });
