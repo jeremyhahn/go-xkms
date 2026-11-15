@@ -17,6 +17,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -157,20 +158,57 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
 	}
 	if _, err := scoped.GenerateECDSA(ctx, attrs); err != nil {
-		return fmt.Errorf("tenant login CA key factory: generate key for tenant %q: %w", tenantID, err)
+		if !errors.Is(err, backend.ErrKeyAlreadyExists) {
+			return fmt.Errorf("tenant login CA key factory: generate key for tenant %q: %w", tenantID, err)
+		}
+		// Another node provisioned the key between the lookup and the
+		// generate: converge on the persisted key.
+		existing, lookupErr := tenantLoginCAKeyAttrs(ctx, scoped)
+		if lookupErr != nil {
+			return fmt.Errorf("tenant login CA key factory: generate key for tenant %q: %w", tenantID, errors.Join(err, lookupErr))
+		}
+		attrs = existing
 	}
+	return ensureTenantLoginCACert(ctx, scoped, tenantID, attrs)
+}
+
+// ensureTenantLoginCACert makes sure the tenant's saved login CA certificate is
+// a valid CA certificate over the key attrs names, issuing and saving one if it
+// is missing or does not match. A certificate another node saved first wins.
+func ensureTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string, attrs *types.KeyAttributes) error {
 	signer, err := scoped.Signer(ctx, attrs)
 	if err != nil {
 		return fmt.Errorf("tenant login CA key factory: signer for tenant %q: %w", tenantID, err)
+	}
+	if tenantLoginCACertValid(ctx, scoped, signer.Public()) {
+		return nil
 	}
 	cert, err := selfSignTenantLoginCA(tenantID, signer)
 	if err != nil {
 		return err
 	}
 	if err := scoped.SaveCert(ctx, tenantLoginCAKeyCN, cert); err != nil {
+		if tenantLoginCACertValid(ctx, scoped, signer.Public()) {
+			return nil
+		}
 		return fmt.Errorf("tenant login CA key factory: save certificate for tenant %q: %w", tenantID, err)
 	}
 	return nil
+}
+
+// tenantLoginCACertValid reports whether the tenant's saved login CA
+// certificate is a CA certificate, in its validity period, over pub.
+func tenantLoginCACertValid(ctx context.Context, scoped *xkms.TenantScopedBackend, pub crypto.PublicKey) bool {
+	cert, err := scoped.GetCert(ctx, tenantLoginCAKeyCN)
+	if err != nil || cert == nil || !cert.IsCA {
+		return false
+	}
+	now := time.Now()
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return false
+	}
+	certPub, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	return ok && certPub.Equal(pub)
 }
 
 // tenantLoginCAKeyAttrs finds the tenant's login CA key in its scoped view.
