@@ -20,6 +20,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -156,6 +157,13 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 	}
 	if m.resolveQRDBClient != nil {
 		if client := m.resolveQRDBClient(); client != nil {
+			// The host gates each RPC through go-qrdb's RBAC, but some
+			// decisions are made below that gate (users:invite on
+			// CreateUser, ssh:service, ...). Wire the same RBAC plane
+			// into the service, as pkg/server does with its authorizer,
+			// so those decisions are enforced here too instead of being
+			// allowed by a nil authorizer.
+			x.SetAuthorizer(auth.NewAuthorizer(client.RBAC()))
 			// Without storage compose leaves every store-backed feature
 			// off and records why.
 			open, daos, err := m.hostStorage(client, compose.Databases(deps))
