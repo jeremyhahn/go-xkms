@@ -936,6 +936,18 @@ func (m *mockXKMSService) GetInvite(ctx context.Context, req *transport.GetInvit
 	return &transport.GetInviteResponse{}, nil
 }
 
+func (m *mockXKMSService) ListAttestationVerdicts(context.Context, *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (m *mockXKMSService) GetLatestAttestationVerdict(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (m *mockXKMSService) ReattestDevice(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
 func (m *mockXKMSService) BeginInviteRegistration(ctx context.Context, req *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
 	return &transport.BeginInviteRegistrationResponse{}, nil
 }

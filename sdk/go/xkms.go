@@ -654,4 +654,9 @@ type (
 	CredentialSubmitRequest    = transport.CredentialSubmitRequest
 	CredentialSubmitResponse   = transport.CredentialSubmitResponse
 	CredentialStrategyResponse = transport.CredentialStrategyResponse
+
+	// Attestation Verdict Operations
+	AttestationVerdictRequest       = transport.AttestationVerdictRequest
+	AttestationVerdict              = transport.AttestationVerdict
+	ListAttestationVerdictsResponse = transport.ListAttestationVerdictsResponse
 )

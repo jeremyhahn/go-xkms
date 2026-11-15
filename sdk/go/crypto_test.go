@@ -638,6 +638,18 @@ func (n *noopClient) FinishAuthentication(context.Context, *transport.FinishAuth
 func (n *noopClient) GetInvite(context.Context, *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
 	return nil, nil
 }
+
+func (n *noopClient) ListAttestationVerdicts(context.Context, *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (n *noopClient) GetLatestAttestationVerdict(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (n *noopClient) ReattestDevice(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
 func (n *noopClient) BeginInviteRegistration(context.Context, *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
 	return nil, nil
 }

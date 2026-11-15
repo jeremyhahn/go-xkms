@@ -186,6 +186,18 @@ func (m *mockService) GetInvite(ctx context.Context, req *GetInviteRequest) (*Ge
 	return nil, nil
 }
 
+func (m *mockService) ListAttestationVerdicts(context.Context, *AttestationVerdictRequest) (*ListAttestationVerdictsResponse, error) {
+	return &ListAttestationVerdictsResponse{}, nil
+}
+
+func (m *mockService) GetLatestAttestationVerdict(context.Context, *AttestationVerdictRequest) (*AttestationVerdict, error) {
+	return &AttestationVerdict{}, nil
+}
+
+func (m *mockService) ReattestDevice(context.Context, *AttestationVerdictRequest) (*AttestationVerdict, error) {
+	return &AttestationVerdict{}, nil
+}
+
 func (m *mockService) BeginInviteRegistration(ctx context.Context, req *BeginInviteRegistrationRequest) (*BeginInviteRegistrationResponse, error) {
 	return nil, nil
 }

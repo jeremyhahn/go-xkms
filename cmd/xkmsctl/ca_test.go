@@ -191,6 +191,18 @@ func (m *mockCAClient) FinishAuthentication(_ context.Context, _ *client.FinishA
 func (m *mockCAClient) GetInvite(_ context.Context, _ *client.GetInviteRequest) (*client.GetInviteResponse, error) {
 	return nil, client.ErrNotSupported
 }
+
+func (m *mockCAClient) ListAttestationVerdicts(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (m *mockCAClient) GetLatestAttestationVerdict(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (m *mockCAClient) ReattestDevice(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
 func (m *mockCAClient) BeginInviteRegistration(_ context.Context, _ *client.BeginInviteRegistrationRequest) (*client.BeginInviteRegistrationResponse, error) {
 	return nil, client.ErrNotSupported
 }
