@@ -108,9 +108,19 @@ Three Codex P1s on the narrowed tree. Each fix comes after its test, which faile
   - xkey/go.mod moves go-qrdb from indirect to direct, same version, for seal.ErrCredentialMismatch.
   - Rollback of a failed rewrap after the commit stays with #2098.
 
+## Execution, part 4 (lane mf2183u)
+
+One Codex P1 on part 3, Company Agent option (c). The fix comes after its test, which failed before the fix.
+
+- pin_service.go:466 P1 (part 3's mismatch branch). Test 3ebe3902b, fix 203b9a006 (which also points the older uninitialized-barrier BarrierResealFails test at the new refusal). go-qrdb v0.58.4 VerifyCredentials (pkg/seal/change_password.go openedToLiveKey) turns every UnsealRootKey error into seal.ErrCredentialMismatch. So a strategy or enclave failure on a PIN-bound barrier looked like an independent password, and the PIN committed while the barrier stayed on the old PIN. ChangeUserPIN now fails closed:
+  - It commits only when VerifyCredentials confirms that the current user PIN seals the barrier. The barrier is then rewrapped from the current PIN to the new one, as in part 3.
+  - Every other outcome refuses the change before the PIN backend is called: a credential mismatch, a strategy or enclave failure, a storage error, or an uninitialized barrier. The error wraps the exported ErrBarrierNotPINSealed and the cause.
+  - The "independent barrier: leave it alone" branch is gone. A barrier sealed with its own password gets its credential changed separately.
+  - The proper fix is a go-qrdb seal/credential SPEC row with distinct operational errors, which #2098 consumes later.
+
 ## Final state
 
-- Restored to main: rows 11, 18 and 24 (row 24 narrowed to cfbc5f559's ChangePassword adaptation plus the part-3 pre-commit barrier check), and row 13 except ded5754bb/955fc155e and the part-3 bound refresh resolver.
+- Restored to main: rows 11, 18 and 24 (row 24 narrowed to cfbc5f559's ChangePassword adaptation plus the pre-commit barrier check from part 3, fail-closed since part 4), and row 13 except ded5754bb/955fc155e and the part-3 bound refresh resolver.
 - Kept: rows 1-10, 12, 15, 19, 20 and 23, plus the coverage timeout.
 - Kept as MINIMAL: rows 14 (final form, its Docker gate goes to CI), 16, 17, 21 (system tenant only) and 22, plus the PeerGate fixture d63c26b37.
 - Routed:
