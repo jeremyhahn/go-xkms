@@ -137,7 +137,8 @@ func (f *tenantCAKeyFactory) TenantIDs(ctx context.Context) ([]string, error) {
 
 // EnsureTenant provisions tenantID's login CA once: a P-256 signing key in the
 // tenant's scope and a self-signed CA certificate over it, saved under the same
-// name. An existing key is kept.
+// name. An existing key is kept and its certificate validated, or issued if
+// missing.
 func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) error {
 	if tenantID == "" {
 		return errors.New("tenant login CA key factory: empty tenant ID")
@@ -147,8 +148,10 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		return err
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
-	if _, err := tenantLoginCAKeyAttrs(ctx, scoped); err == nil {
-		return nil
+	if existing, err := tenantLoginCAKeyAttrs(ctx, scoped); err == nil {
+		// Keep the key, but a key alone is not a provisioned login CA: an
+		// earlier pass may have stopped before its certificate was saved.
+		return ensureTenantLoginCACert(ctx, scoped, tenantID, existing)
 	}
 	attrs := &types.KeyAttributes{
 		CN:            tenantLoginCAKeyCN,
