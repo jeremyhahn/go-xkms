@@ -231,6 +231,31 @@ func TestRegisterPhoneBackend_RefusesOtherPeer(t *testing.T) {
 	assert.False(t, ok, "a phone authenticated as another device must not be registered")
 }
 
+// TestRegisterPhoneBackend_RevokeAfterRegister: revoking the device in the
+// registry after the phone registered refuses the next operation on the
+// retained backend before any request reaches the phone.
+func TestRegisterPhoneBackend_RevokeAfterRegister(t *testing.T) {
+	phoneCfg := newTestPhoneConfig(t)
+	srv := newTestServerForPhone(t, phoneCfg)
+	var sent int
+	sender := &mockPhoneSender{sendFunc: func(_ context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+		sent++
+		return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID}, nil
+	}}
+	require.NoError(t, srv.RegisterPhoneBackend(sender))
+	srv.mu.RLock()
+	kp := srv.keyProviders["phone"]
+	srv.mu.RUnlock()
+	require.NotNil(t, kp)
+	t.Cleanup(func() { _ = kp.Close() })
+
+	require.NoError(t, srv.deviceRegistry.Revoke(context.Background(), phoneCfg.Tenant, phoneCfg.DeviceID, time.Now()))
+
+	err := kp.DeleteKey(context.Background(), &types.KeyAttributes{CN: "k1"})
+	require.ErrorIs(t, err, ErrPhoneDeviceRefused)
+	assert.Zero(t, sent, "no request may reach a revoked phone")
+}
+
 func TestRegisterPhoneBackend_NilSender(t *testing.T) {
 	phoneCfg := newTestPhoneConfig(t)
 	srv := newTestServerForPhone(t, phoneCfg)
