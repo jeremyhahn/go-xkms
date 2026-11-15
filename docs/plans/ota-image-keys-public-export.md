@@ -47,12 +47,29 @@ ship; the export did not exist.
 4. Docs commit: key-management/api.md documents the REST route and the MCP
    method; this plan.
 
+## Slice row1778c: gRPC and client transports
+
+1. Test commit `e6c7f7ef9` `test(api): gRPC and client transports export
+   the OTA image public key`: `TestService_ExportOTAImagePublicKey` (fields,
+   64-byte raw equal to the key's X||Y), `_NotFound` and
+   `_PermissionDenied` (gRPC service), and one `ExportPublicKey` test in
+   each of the six `transport_ota_image_test.go` files. They failed to
+   compile first.
+2. Fix commit `c148727c5` `feat(api): ExportOTAImagePublicKey on gRPC and
+   every client transport`: `rpc ExportOTAImagePublicKey` with
+   `OTAImagePublicKeyResponse` under `keys:get` (`make proto`), the gRPC
+   service method, `transport.Client.ExportOTAImagePublicKey` on gRPC, Unix,
+   embedded, REST and QUIC (`GET .../{board}/public-key?backend=`) and MCP
+   (`xkms.exportOTAImagePublicKey`), the gRPC authz golden table, and the
+   `Client` test doubles in cmd/xkmsctl and sdk/go.
+3. Docs commit: key-management/api.md names the gRPC and SDK methods; this
+   plan.
+
 ## Next slice
 
-- The gRPC proto RPC, `transport.Client` on all six client transports
-  (gRPC, REST, QUIC, MCP, Unix, embedded), `xkmsctl key ota-image`, and the
-  integration tests (the integration `TestXKMSService` returns
-  `ErrNotImplemented` for the export until then), with cli.md.
+- `xkmsctl key ota-image` export command, the integration tests
+  (test/integration/sdk/go/testservice.go returns `ErrNotImplemented` for
+  the export until then), and docs/cli.md.
 
 ## Out of scope
 

@@ -120,7 +120,7 @@ The contract (board-id format, ES256 only, rotation and errors) is in
 | Create a board key | `POST /api/v1/ota-image-keys/{board}` | `CreateOTAImageKey` | same as REST | `xkms.createOTAImageKey` | `CreateOTAImageKey` | `keys:create` |
 | Rotate a board key | `POST /api/v1/ota-image-keys/{board}/rotate` | `RotateOTAImageKey` | same as REST | `xkms.rotateOTAImageKey` | `RotateOTAImageKey` | `keys:rotate` |
 | Sign an OTA image | `POST /api/v1/ota-image-keys/{board}/sign` | `SignOTAImage` | same as REST | `xkms.signOTAImage` | `SignOTAImage` | `keys:sign` |
-| Export a board public key | `GET /api/v1/ota-image-keys/{board}/public-key` | not yet | not yet | `xkms.exportOTAImagePublicKey` | server side only (`Servicer`) | `keys:get` |
+| Export a board public key | `GET /api/v1/ota-image-keys/{board}/public-key` | `ExportOTAImagePublicKey` | same as REST | `xkms.exportOTAImagePublicKey` | `ExportOTAImagePublicKey` | `keys:get` |
 
 The public key export returns `key_id`, `board_id`, `version` (the current
 key version), `raw` (the 64-byte X || Y, base64 in JSON) and `cose_key` (a
