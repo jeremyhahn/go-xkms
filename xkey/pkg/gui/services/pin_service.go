@@ -351,6 +351,13 @@ func (s *PINService) ChangeSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 // is false: the user may not change their own PIN even when it is set.
 // An SO resetting the PIN goes through SetUserPIN instead, which this
 // field does not gate.
+//
+// When a barrier service is wired, the change commits only when the current
+// user PIN verifiably seals the barrier; the barrier is then rewrapped from
+// the current to the new PIN. Otherwise ChangeUserPIN returns an error
+// wrapping ErrBarrierNotPINSealed and the cause, before the PIN backend is
+// called: a barrier sealed with its own password must have its credential
+// changed separately (pending go-xkms #2098).
 func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -375,27 +382,30 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 		return err
 	}
 
-	// Decide BEFORE the PIN backend commits whether the barrier is sealed
-	// under the user PIN. The setup wizard may have sealed it with a
-	// separate barrier password (UseUserPinAsMaster=false): that barrier is
-	// independent of the PIN and is left alone. Any answer other than a
-	// definitive match or mismatch refuses the change while nothing has
-	// changed yet.
+	// Confirm BEFORE the PIN backend commits that the current user PIN
+	// seals the barrier. Any other outcome (credential mismatch, strategy or
+	// enclave failure, storage error, uninitialized barrier) refuses the
+	// change while nothing has changed yet: a barrier sealed with its own
+	// password cannot be told apart from a failing PIN-bound one until
+	// go-qrdb reports distinct operational errors (go-xkms #2098).
 	bsvc := s.barrierSvc.Load()
-	pinSealsBarrier := false
 	if bsvc != nil {
-		bound, err := barrierSealedWithPIN(bsvc, currentUserPIN)
-		if err != nil {
-			s.log.Error("ChangeUserPIN: barrier credential check failed", "error", err)
-			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+		if err := verifyBarrierSealedWithPIN(bsvc, currentUserPIN); err != nil {
+			reason := "verify_failed"
+			if errors.Is(err, qrdbseal.ErrCredentialMismatch) {
+				reason = "credential_mismatch"
+			}
+			s.log.Error("ChangeUserPIN: barrier not confirmed sealed by the user PIN", "reason", reason, "error", err)
+			refused := &SentinelCauseError{Sentinel: ErrBarrierNotPINSealed, Cause: err}
+			if auditErr := s.logPINOperation(audit.OpPINFailed, false, refused, map[string]any{
 				"operation": "barrier_check",
 				"type":      "user_pin",
+				"reason":    reason,
 			}); auditErr != nil {
-				return auditErr
+				return errors.Join(refused, auditErr)
 			}
-			return &SentinelCauseError{Sentinel: ErrBarrierResealFailed, Cause: err}
+			return refused
 		}
-		pinSealsBarrier = bound
 	}
 
 	s.log.Debug("ChangeUserPIN: attempting PIN change", "strategy", svc.Strategy())
@@ -419,9 +429,9 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 		return auditErr
 	}
 
-	// Re-seal a PIN-sealed barrier root key with the new PIN so that the
+	// Re-seal the PIN-sealed barrier root key with the new PIN so that the
 	// next unseal after restart uses the updated credential.
-	if pinSealsBarrier {
+	if bsvc != nil {
 		if err := bsvc.ChangePassword(currentUserPIN, newUserPIN); err != nil {
 			s.log.Error("ChangeUserPIN: barrier re-seal failed", "error", err)
 			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
@@ -437,37 +447,31 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	return nil
 }
 
-// barrierSealedWithPIN reports whether bsvc's barrier root key is sealed
-// under pin, without changing the barrier: go-qrdb's VerifyCredentials
-// unseals a candidate root key from the persisted blob and compares it with
-// the live one. A definitive credential mismatch is (false, nil): the
-// barrier is sealed under some other credential. Every other failure (no
-// barrier, a sealed barrier, an unreadable blob) is returned as an error.
-func barrierSealedWithPIN(bsvc *BarrierService, pin string) (sealed bool, err error) {
+// verifyBarrierSealedWithPIN returns nil only when bsvc's barrier root key
+// is confirmed sealed under pin, without changing the barrier: go-qrdb's
+// VerifyCredentials unseals a candidate root key from the persisted blob and
+// compares it with the live one. Every other outcome is an error: no
+// barrier, a sealed barrier, an unreadable blob, or a credential mismatch.
+// go-qrdb v0.58.4 turns every UnsealRootKey failure (a strategy or enclave
+// failure included) into seal.ErrCredentialMismatch, so a mismatch does not
+// prove the barrier is sealed by some other credential.
+func verifyBarrierSealedWithPIN(bsvc *BarrierService, pin string) (err error) {
 	bsvc.mu.Lock()
 	defer bsvc.mu.Unlock()
 
 	if bsvc.barrier == nil {
-		return false, ErrBarrierNotInitialized
+		return ErrBarrierNotInitialized
 	}
 	ctx := bsvc.context()
 	// CredentialsFor: a hardware-backed barrier may be checked with an
 	// empty PIN; NewCredentials would refuse that input.
 	creds, err := xkms.CredentialsFor(ctx, []byte(pin))
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer func() { err = errors.Join(err, destroyCreds(creds)) }()
 
-	verifyErr := bsvc.barrier.VerifyCredentials(ctx, creds)
-	switch {
-	case verifyErr == nil:
-		return true, nil
-	case errors.Is(verifyErr, qrdbseal.ErrCredentialMismatch):
-		return false, nil
-	default:
-		return false, verifyErr
-	}
+	return bsvc.barrier.VerifyCredentials(ctx, creds)
 }
 
 // VerifyUserPIN verifies the provided user PIN.

@@ -675,13 +675,17 @@ func TestPINService_ChangeUserPIN_BarrierResealFails(t *testing.T) {
 	}
 	svc := newTestPINService(backend)
 
-	// Create barrier service WITHOUT initializing it
+	// Create barrier service WITHOUT initializing it: the pre-commit
+	// credential check cannot confirm the PIN seals it, so the change is
+	// refused before the PIN backend commits and no reseal is attempted.
 	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
 	svc.SetBarrierService(barrierSvc)
 
 	err := svc.ChangeUserPIN("old-pin", "new-pin")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrBarrierResealFailed)
+	assert.ErrorIs(t, err, ErrBarrierNotPINSealed)
+	assert.NotErrorIs(t, err, ErrBarrierResealFailed)
+	assert.Equal(t, int32(0), backend.changeUserCalls.Load())
 }
 
 // A barrier sealed with its own passphrase (UseUserPinAsMaster=false) reads
