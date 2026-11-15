@@ -40,7 +40,7 @@ func TestServer_InitAWSKMSBackend_Stub(t *testing.T) {
 		Region:  "us-east-1",
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -60,7 +60,7 @@ func TestServer_InitAzureKVBackend_Stub(t *testing.T) {
 		VaultURL: "https://test.vault.azure.net",
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -81,7 +81,7 @@ func TestServer_InitGCPKMSBackend_Stub(t *testing.T) {
 		KeyRing:   "test-ring",
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -105,7 +105,7 @@ func TestServer_InitPKCS11Backend_Stub(t *testing.T) {
 		// unconfigured is the correct shape for this test's purpose.
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -128,7 +128,7 @@ func TestServer_InitVaultBackend_Stub(t *testing.T) {
 		// unconfigured is the correct shape for this test's purpose.
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()

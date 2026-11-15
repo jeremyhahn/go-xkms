@@ -41,7 +41,7 @@ func TestServer_SetMetricsListener_ServesOnInjectedListener(t *testing.T) {
 	cfg.Metrics.Enabled = true
 	cfg.Metrics.Path = "/metrics"
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -95,7 +95,7 @@ func TestServer_StartMetrics_WithoutInjectedListener_BindsConfiguredPort(t *test
 	cfg.Metrics.Path = "/metrics"
 	cfg.Metrics.Port = port
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.Nil(t, srv.MetricsAddr(), "no listener was injected, so there is nothing to report")
 

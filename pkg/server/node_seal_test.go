@@ -83,7 +83,7 @@ func TestNodeSealFlip_NoneStrategyAutoUnseal(t *testing.T) {
 		Strategy: "none",
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -141,7 +141,7 @@ func TestNodeSealFlip_PassphraseEngagesFlipAndBlocksForOperator(t *testing.T) {
 		err    error
 	}, 1)
 	go func() {
-		server, err := New(cfg)
+		server, err := newServerWithCleanup(t, cfg)
 		done <- struct {
 			server *Server
 			err    error
@@ -193,7 +193,7 @@ func writeNodeSealSentinel(t *testing.T, cfg *config.Config, sentinel []byte) st
 	t.Helper()
 	xkms.Reset()
 	t.Cleanup(xkms.Reset)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	store, err := server.CreateStorage("sentinel")
 	require.NoError(t, err)

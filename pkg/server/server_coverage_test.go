@@ -39,7 +39,7 @@ func TestServer_Barrier_NilByDefault(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -51,7 +51,7 @@ func TestServer_BarrierRegistry_NilByDefault(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -63,7 +63,7 @@ func TestServer_PINManager_NilByDefault(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -75,7 +75,7 @@ func TestServer_PasswordStore_NotNil(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -87,7 +87,7 @@ func TestServer_PlatformStore_NilWithoutBarrier(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -99,7 +99,7 @@ func TestServer_TPMPolicyService_NilByDefault(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -123,7 +123,7 @@ func TestServer_CreateCompositeAuthenticator_NilConfigDerives(t *testing.T) {
 	cfg.Auth.Type = "composite"
 	cfg.Auth.Composite = nil
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 	assert.Equal(t, "composite", server.authenticator.Name())
@@ -141,7 +141,7 @@ func TestServer_CreateCompositeAuthenticator_EmptyMethodsDerives(t *testing.T) {
 		Methods: []string{},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 	assert.Equal(t, "composite", server.authenticator.Name())
@@ -169,7 +169,7 @@ func TestServer_CreateCompositeAuthenticator_UnknownMethod(t *testing.T) {
 		Methods: []string{"biometric"},
 	}
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnknownCompositeMethod))
 }
@@ -186,7 +186,7 @@ func TestServer_CreateCompositeAuthenticator_JWTMissingConfig(t *testing.T) {
 	}
 	cfg.Auth.JWT = nil
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCompositeJWTRequired))
 }
@@ -222,7 +222,7 @@ func TestServer_CreateCompositeAuthenticator_MTLSSuccess(t *testing.T) {
 	cfg.TLS.CertFile = certFile
 	cfg.TLS.KeyFile = keyFile
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -282,7 +282,7 @@ func TestServer_InitializeAuditLogger_EnabledMissingPathNoLongerErrors(t *testin
 		Path:    "",
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -301,7 +301,7 @@ func TestServer_InitializePINManager_Enabled(t *testing.T) {
 	cfg.PIN.Enabled = true
 	cfg.PIN.Strategy = "software"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -316,7 +316,7 @@ func TestServer_InitializePINManager_DefaultStrategy(t *testing.T) {
 	cfg.PIN.Enabled = true
 	cfg.PIN.Strategy = "" // defaults to auto: software when no TPM is confirmed
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -331,7 +331,7 @@ func TestServer_InitializePINManager_UnknownStrategy(t *testing.T) {
 	cfg.PIN.Enabled = true
 	cfg.PIN.Strategy = "biometric"
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "biometric")
 }
@@ -347,7 +347,7 @@ func TestServer_InitializeAuthorization_RBACEnabled(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Auth.EnableRBAC = true
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -373,7 +373,7 @@ func TestServer_CreateStorage_Memory(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Datastore.Engine = "memory"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -391,7 +391,7 @@ func TestServer_CreateStorage_Pebble(t *testing.T) {
 	cfg.Datastore.Engine = "pebble"
 	cfg.Datastore.Path = tmpDir
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -416,7 +416,7 @@ func TestServer_CreateStorage_DistinctPrefixesOverOneStore(t *testing.T) {
 	// certificate, which needs the CA.
 	cfg.CA = testFirstBootCAConfig()
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -482,7 +482,7 @@ func TestServer_InitializePlatformStore_WithBarrier(t *testing.T) {
 	// node-adopted or xkms's own) so this test never blocks on an operator.
 	cfg.Barrier.Strategy = "none"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -498,7 +498,7 @@ func TestServer_RegisterPhoneBackend_NilSender(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -512,7 +512,7 @@ func TestServer_UnregisterPhoneBackend_NotRegistered(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -527,7 +527,7 @@ func TestServer_RegisterPhoneBackend_NilPhoneConfig(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Backends.Phone = nil
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -546,7 +546,7 @@ func TestServer_NoiseBootstrapServer_NilByDefault(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 

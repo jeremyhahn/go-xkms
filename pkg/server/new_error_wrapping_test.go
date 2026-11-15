@@ -50,7 +50,7 @@ func TestNew_NodeSealFailure_WrapsAsErrServiceInit(t *testing.T) {
 		Strategy: "tpm2",
 	}
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, srv)
 
@@ -82,7 +82,7 @@ func TestNew_QRDBStorageFailure_WrapsAsErrServiceInit(t *testing.T) {
 		Remote: config.DatastoreRemoteConfig{Address: "https://qrdb.example.com:63002", Transport: "ftp"},
 	}
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, srv)
 
@@ -109,7 +109,7 @@ func TestNew_CredentialServiceFailure_WrapsAsErrServiceInit(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Credentials.SealStrategy = "barrier"
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, srv)
 
@@ -135,7 +135,7 @@ func TestNew_ConfigSecretResolutionFailure_WrapsAsErrServiceInit(t *testing.T) {
 		Pin: &types.SecretValue{Raw: "1234"},
 	}
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, srv)
 

@@ -50,7 +50,7 @@ func TestNoiseBootstrapKeySurvivesStart(t *testing.T) {
 	cfg.Server.NoisePort = 0
 	cfg.Server.Host = "127.0.0.1"
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 
 	srv.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}

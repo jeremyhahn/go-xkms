@@ -126,7 +126,7 @@ func newUnixCATestServer(t *testing.T) *Server {
 		},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	return server
 }

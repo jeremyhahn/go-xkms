@@ -47,7 +47,7 @@ func TestInitializeCA_TLSEnabledAutoIssuesServerCert(t *testing.T) {
 	cfg := reproCA793Config(t, dataDir)
 	cfg.TLS = config.TLSConfig{Enabled: true, ServerCN: "xkms-i705-tls-test"}
 
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = s.Shutdown() }()
 
@@ -234,7 +234,7 @@ func TestInitializeWebAuthnService_QRDBBacked(t *testing.T) {
 		RPOrigins:     []string{"https://localhost"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -343,7 +343,7 @@ func TestInitializeAuthorization_RBACEnabledWithQRDBClient(t *testing.T) {
 	cfg := qrdbBarrierConfig(t)
 	cfg.Auth.EnableRBAC = true
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -375,7 +375,7 @@ func TestNew_EscrowInitFailureAbortsCleanly(t *testing.T) {
 		Agents:  []escrowpkg.AgentConfig{{Type: "not-a-real-agent-type", Endpoint: "https://escrow.example.com"}},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, server)
 
@@ -405,7 +405,7 @@ func TestNew_CAInitFailureAbortsCleanly(t *testing.T) {
 		}},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, server)
 
@@ -429,7 +429,7 @@ func TestNew_WebAuthnInitFailureAbortsCleanly(t *testing.T) {
 		// RPID deliberately empty: webauthn.Config.Validate refuses it.
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, server)
 

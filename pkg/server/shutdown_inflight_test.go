@@ -113,7 +113,7 @@ func TestShutdown_DrainsInFlightRequestBeforeClosingStorage(t *testing.T) {
 	require.NoError(t, err)
 
 	ports.Release(t)
-	server, err = New(cfg, WithExtraModules(probe))
+	server, err = newServerWithCleanup(t, cfg, WithExtraModules(probe))
 	require.NoError(t, err)
 
 	caPEM, err := os.ReadFile(caFile)

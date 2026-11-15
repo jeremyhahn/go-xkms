@@ -33,7 +33,7 @@ func TestServer_Reload_LogsWhenListenersRunning(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -42,6 +42,14 @@ func TestServer_Reload_LogsWhenListenersRunning(t *testing.T) {
 	dataDir := t.TempDir()
 	node := newSealedTestNode(t, dataDir, "correct-horse-battery-staple", "correct-horse-battery-staple")
 	defer func() { _ = node.Close() }()
+	// The swap below hides the node New started from Shutdown; close it here
+	// or its schedulers outlive the test (#1794).
+	origNode := server.qrdbNode
+	defer func() {
+		if origNode != nil {
+			_ = origNode.Close()
+		}
+	}()
 	server.qrdbNode = node
 
 	var logBuf bytes.Buffer

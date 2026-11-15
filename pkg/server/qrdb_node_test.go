@@ -44,7 +44,7 @@ func TestWaitForClusterLeader_StandaloneNodeReportsItselfLeaderImmediately(t *te
 	cfg := qrdbBarrierConfig(t)
 	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
 
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = s.Shutdown() }()
 
@@ -66,7 +66,7 @@ func TestWaitForClusterLeader_DefaultsShardIDToOne(t *testing.T) {
 	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
 	cfg.Cluster.ShardID = 0
 
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = s.Shutdown() }()
 

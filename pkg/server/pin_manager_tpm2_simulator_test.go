@@ -50,7 +50,7 @@ func TestInitializePINManager_TPM2StrategyGovernsWithThePlatformSRK(t *testing.T
 	defer xkms.Reset()
 
 	cfg := tpm2PINConfig(t, "tpm2")
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -80,7 +80,7 @@ func TestInitializePINManager_TPM2StrategyWithoutATPMIsRefused(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.PIN = config.PINConfig{Enabled: true, Strategy: "tpm2"}
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	var unavailable *pinselect.ProviderUnavailableError
 	require.True(t, errors.As(err, &unavailable), "want *pinselect.ProviderUnavailableError, got %v", err)
 
@@ -96,7 +96,7 @@ func TestInitializePINManager_AutoNeverAdoptsAnUnconfirmedSRK(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := tpm2PINConfig(t, "auto")
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -116,7 +116,7 @@ func TestInitializePINManager_StrategyChangeAgainstRecordIsRefused(t *testing.T)
 	cfg := tpm2PINConfig(t, "tpm2")
 	require.NoError(t, pinselect.SaveStrategy(filepath.Join(cfg.Datastore.Path, "pin"), qrdbsdk.PINStrategySoftware))
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	var mismatch *pinselect.StrategyMismatchError
 	require.True(t, errors.As(err, &mismatch), "want *pinselect.StrategyMismatchError, got %v", err)
 }

@@ -53,7 +53,7 @@ func TestInitTPM2Backend_SharedTPM_GenerateAndSign(t *testing.T) {
 	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "tpm2"}
 	cfg.Backends.TPM2 = &config.TPM2Config{Enabled: true, UseSimulator: true}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err, "Server.New must succeed with the barrier and the general backend sharing one TPM open")
 	defer func() { _ = server.Shutdown() }()
 

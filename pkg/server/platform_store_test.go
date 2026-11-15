@@ -176,7 +176,7 @@ func TestServerNew_UnavailableStrategyAbortsStartup(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Credentials = config.CredentialsConfig{SealStrategy: "pkcs11"}
 
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, s)
 

@@ -210,7 +210,7 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 
 	ports.Release(t)
 
-	server, err := New(cfg, WithExtraModules(adminModule))
+	server, err := newServerWithCleanup(t, cfg, WithExtraModules(adminModule))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = server.Shutdown() })
 
