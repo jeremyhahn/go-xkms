@@ -99,6 +99,39 @@ describe("KeyBatchView", () => {
     await waitFor(() => expect(within(resultRows()[0]!).getByText("/w==")).toBeInTheDocument());
   });
 
+  it("carries gcm_nonce_mode per item for random-nonce AES-GCM output", async () => {
+    // Server-shaped encrypt-batch output under GODEBUG=fips140=only: the
+    // first item was sealed with a random nonce, the second explicitly.
+    const randomOut = { ciphertext: "Y3Qx", nonce: "bm9uY2UxMjM0NTY=", tag: "dGFnMQ==", gcm_nonce_mode: "random", key_version: 3 };
+    const explicitOut = { ciphertext: "Y3Qy", nonce: "bm9uY2UyMzQ1Njc=", tag: "dGFnMg==", key_version: 3 };
+    request.mockResolvedValueOnce({ results: [{ plaintext: "aGk=", key_version: 3 }, { plaintext: "eW8=", key_version: 3 }] });
+
+    render(KeyBatchView);
+    await setKey("k1", "software");
+    await fireEvent.click(screen.getByRole("button", { name: "Decrypt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Add row" }));
+    for (const [i, out] of [randomOut, explicitOut].entries()) {
+      const n = i + 1;
+      await fireEvent.input(screen.getByLabelText(`Ciphertext ${n}`), { target: { value: out.ciphertext } });
+      await fireEvent.input(screen.getByLabelText(`Nonce ${n}`), { target: { value: out.nonce } });
+      await fireEvent.input(screen.getByLabelText(`Tag ${n}`), { target: { value: out.tag } });
+      await fireEvent.input(screen.getByLabelText(`Key version ${n}`), { target: { value: String(out.key_version) } });
+    }
+    await fireEvent.change(screen.getByLabelText("GCM nonce mode 1"), { target: { value: "random" } });
+    await fireEvent.click(runButton());
+
+    await waitFor(() => expect(request).toHaveBeenCalledOnce());
+    expect(request).toHaveBeenCalledWith("POST", "/api/v1/keys/k1/decrypt-batch", {
+      body: {
+        backend: "software",
+        items: [
+          { ciphertext: "Y3Qx", nonce: "bm9uY2UxMjM0NTY=", tag: "dGFnMQ==", gcm_nonce_mode: "random", key_version: 3 },
+          { ciphertext: "Y3Qy", nonce: "bm9uY2UyMzQ1Njc=", tag: "dGFnMg==", key_version: 3 },
+        ],
+      },
+    });
+  });
+
   it("disables Run with no items and Add row at 100 items", async () => {
     render(KeyBatchView);
     await setKey("k1", "software");
