@@ -95,9 +95,22 @@ Each fix comes after its test, which failed before the fix.
 - Row 11: RESTORE. c23cc3927 forward-reverts f9c6c3a38 and a3b05034b and drops tests 21b4ef276 and 49ad498c2. With the bare initialize, `make test-mcp` is green against mcp-go v1.5, so the server/discover opening is not needed for main. It is an MCP protocol feature with no row.
 - Coverage shard timeout (ruling 661(4)), KEEP. Test fba4b8c4e, fix ef93aad5a. ci.yml coverage `timeout-minutes` goes from 90 to 150 (CUSTOMIZE region). The Makefile adds COVERAGE_SHARD_TIMEOUT ?= 135m (UNIT_TEST_TIMEOUT 75m plus the same 60 min), which coverage-shard's go test runs under. internal/buildgates TestCoverageShardTimeoutsArePinned pins both and checks that the go test bound stays under the job's.
 
+## Execution, part 3 (lane mf2183t)
+
+Three Codex P1s on the narrowed tree. Each fix comes after its test, which failed before the fix. No restored row comes back.
+
+- servicer_invite.go:327 P1 (row 21 MINIMAL). Test 21c36f40a, fix 4a4af1771. webauthn FinishInviteRegistration takes the invited account's user handle and refuses a session begun for another account inside the ceremony's pre-persistence acceptance, so no credential is created or stored. The xkms handle check after the ceremony stays as defence in depth. The tests finish one account's session under another account's invitation, see no stored credential, and then let both accounts redeem their own invitations.
+- host.go:222 P1 (row 13, ded5754bb MINIMAL). Test 9295643ea, fix 379e8876d. The refresh user resolver runs on the CallContext binder the refresh store already uses, so an anonymous HTTP refresh over an enforcing node re-checks the account as the service principal. A disabled account's refresh is still refused. Tenant scoping stays with #2202.
+- pin_service.go:400 P1 (row 24's ChangePassword adaptation). Test 0628d3c5d, fix 006654c7d. Before the PIN backend commits, ChangeUserPIN asks go-qrdb VerifyCredentials whether the current PIN seals the barrier:
+  - If it does, the barrier is rewrapped after the change.
+  - On seal.ErrCredentialMismatch, the barrier was sealed with its own passphrase and is left alone.
+  - Any other error (no barrier, storage) refuses the change before anything commits.
+  - xkey/go.mod moves go-qrdb from indirect to direct, same version, for seal.ErrCredentialMismatch.
+  - Rollback of a failed rewrap after the commit stays with #2098.
+
 ## Final state
 
-- Restored to main: rows 11, 18 and 24 (row 24 narrowed to cfbc5f559's ChangePassword adaptation), and row 13 except ded5754bb/955fc155e.
+- Restored to main: rows 11, 18 and 24 (row 24 narrowed to cfbc5f559's ChangePassword adaptation plus the part-3 pre-commit barrier check), and row 13 except ded5754bb/955fc155e and the part-3 bound refresh resolver.
 - Kept: rows 1-10, 12, 15, 19, 20 and 23, plus the coverage timeout.
 - Kept as MINIMAL: rows 14 (final form, its Docker gate goes to CI), 16, 17, 21 (system tenant only) and 22, plus the PeerGate fixture d63c26b37.
 - Routed:
