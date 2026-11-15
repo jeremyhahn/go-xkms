@@ -90,13 +90,23 @@ func (s *Store) ListVerdicts(ctx context.Context, tenant, deviceID string) ([]Ve
 	if err != nil {
 		return nil, err
 	}
+	// ForEachPage scans each page separately, without a shared snapshot
+	// (go-qrdb v0.51.0-alpha has no snapshot or cursor iteration), so a
+	// concurrent append can shift an already read record onto the next
+	// page. A verdict ID is unique, so the first copy of each is kept.
 	var entities []*verdictEntity
+	seen := make(map[uint64]struct{})
 	query := qrdbsdk.PageQuery{Page: 1, PageSize: listPageSize}
 	err = s.records.ForEachPage(ctx, query, func(page qrdbsdk.PageResult[*verdictEntity]) error {
 		for _, e := range page.Entities {
-			if strings.HasPrefix(e.Key, prefix) {
-				entities = append(entities, e)
+			if !strings.HasPrefix(e.Key, prefix) {
+				continue
 			}
+			if _, dup := seen[e.ID]; dup {
+				continue
+			}
+			seen[e.ID] = struct{}{}
+			entities = append(entities, e)
 		}
 		return nil
 	})
