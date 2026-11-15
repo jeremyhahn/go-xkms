@@ -58,13 +58,15 @@ Slice 1 and this slice must land together, in one PR: slice 1 alone breaks
 tenant logins and races at startup. The head signer slice comes after
 the go-qrdb pin moves past v0.51.
 
-## SPEC row update (pending)
+## SPEC row update (done)
 
-docs/SPEC.md:117 still says go-xkms does not pass `WithCertKeyProviderFactory`.
-The lane policy guard refuses docs/SPEC.md without LANE_POLICY_ALLOW, so the
-row text was not changed. Replace, in the row's acceptance, the clause from
+Applied to docs/SPEC.md:117 (lane row2083b, under LANE_POLICY_ALLOW for
+docs/SPEC.md); every citation was checked against the branch head, and the
+boot pass hop through `provisionTenantCAKeysThenFirstBoot`
+(`tenant_ca_provisioning.go:106`) was added. In the row's acceptance, the clause from
 "`node.WithSealStrategy` (`pkg/embeddednode/embedded_node.go:219`, through
-`qrdb_node.go:248`); the pinned ..." through "which go-xkms does not pass." with:
+`qrdb_node.go:248`); the pinned ..." through "which go-xkms does not pass." was replaced with the text below (the
+row as committed adds the `provisionTenantCAKeysThenFirstBoot` hop):
 
 > `node.WithSealStrategy` (`pkg/embeddednode/embedded_node.go:219`, through `qrdb_node.go:248`), and `node.WithCertKeyProviderFactory` (`tenantCAKeyProviderOptions`, `pkg/server/tenant_ca_keyprovider.go:222`, appended at `qrdb_node.go:267` under the same cluster-CA condition). Through it each tenant's login CA key (Key B) is a P-256 key in the tenant-scoped default backend (`tenantCAKeyFactory.ProviderForTenant` `:87`, `EnsureTenant` `:140`), not a key go-qrdb mints in software. Every tenant has that key: the tenant service the node hands out is wrapped at `qrdb_node.go:309` so `CreateTenant` provisions it and deletes the tenant again on failure (`pkg/server/tenant_ca_provisioning.go:49`, `TenantProvisionError`), and a boot pass (`provisionTenantCAKeys` `:77`, run from `New` at `pkg/server/server.go:897`, after the key backends exist) provisions every tenant, the system tenant included, or stops startup. The pinned `sdk/go/node` also offers `WithDEKProvider`, `WithKeyDeliveryDecrypter`, `WithVolumeKeyProvider` and `WithVolumeProvider`, which go-xkms does not pass yet.
 
