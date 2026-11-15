@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -176,6 +177,62 @@ func tenantLoginCA(t *testing.T, f *tenantCAKeyFactory, tenantID string) (crypto
 	require.NoError(t, err)
 	require.NotNil(t, cert)
 	return signer.Public(), cert
+}
+
+// callerLoginCAKey makes a key named like the login CA key in tenantID the
+// way a caller could before the name was reserved: through the backend, not
+// the provisioning path.
+func callerLoginCAKey(t *testing.T, base xkms.Backend, tenantID string) (*xkms.TenantScopedBackend, crypto.Signer) {
+	t.Helper()
+	ctx := context.Background()
+	scoped := xkms.NewTenantScopedBackend(base, tenantID)
+	_, err := scoped.GenerateECDSA(ctx, &types.KeyAttributes{
+		CN:            tenantLoginCAKeyCN,
+		KeyType:       types.KeyTypeSigning,
+		StoreType:     types.StoreSoftware,
+		KeyAlgorithm:  x509.ECDSA,
+		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+	})
+	require.NoError(t, err)
+	attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+	require.NoError(t, err)
+	signer, err := scoped.Signer(ctx, attrs)
+	require.NoError(t, err)
+	return scoped, signer
+}
+
+// A key named qrdb-login-ca that the provisioning path did not make is a
+// collision, not a login CA: before the name was reserved a caller could
+// create or import one and keep its private material. The factory neither
+// certifies it nor trusts a certificate a caller saved over it.
+func TestTenantCAKeyFactory_RefusesKeyWithoutProvisioningProvenance(t *testing.T) {
+	ctx := context.Background()
+	f, base := newTenantCAKeyTestFactory(t, "tenant-b")
+
+	// tenant-a: a caller's key with a CA certificate the caller made over it.
+	scopedA, signerA := callerLoginCAKey(t, base, "tenant-a")
+	forged, err := selfSignTenantLoginCA("tenant-a", signerA)
+	require.NoError(t, err)
+	require.NoError(t, scopedA.SaveCert(ctx, tenantLoginCAKeyCN, forged))
+	// tenant-c: a caller's key with no certificate yet.
+	scopedC, _ := callerLoginCAKey(t, base, "tenant-c")
+
+	for _, id := range []string{"tenant-a", "tenant-c"} {
+		err := f.EnsureTenant(ctx, id)
+		assert.ErrorContains(t, err, "collision", id)
+		_, err = f.ProviderForTenant(id)
+		assert.Error(t, err, "a caller's key is served as %s's login CA", id)
+	}
+
+	exists, err := scopedC.CertExists(ctx, tenantLoginCAKeyCN)
+	require.NoError(t, err)
+	assert.False(t, exists, "a login CA certificate was issued over a caller's key")
+
+	ids, err := f.TenantIDs(ctx)
+	require.NoError(t, err)
+	assert.NotContains(t, ids, "tenant-a")
+	assert.NotContains(t, ids, "tenant-c")
+	assert.Contains(t, ids, "tenant-b")
 }
 
 func TestTenantCAKeyFactory_ConcurrentNodesConverge(t *testing.T) {
