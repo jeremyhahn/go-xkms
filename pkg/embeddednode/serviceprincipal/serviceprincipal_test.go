@@ -219,3 +219,16 @@ func TestWebAuthnGrant_IsUsersCopy(t *testing.T) {
 	got[0] = "users:*"
 	assert.NotEqual(t, got[0], WebAuthnGrant()[0], "WebAuthnGrant returns a copy")
 }
+
+func TestTokenResolverGrant_IsUsersReadCopy(t *testing.T) {
+	base := Grant()
+	RegisterTokenResolverGrant()
+
+	got := TokenResolverGrant()
+	assert.Equal(t, []qrdbsdk.Permission{"users:read"}, got)
+	assert.Equal(t, base, Grant(), "registering the resolver grant leaves the base grant unchanged")
+	assert.NotContains(t, Grant(), qrdbsdk.Permission("users:read"), "the base grant never holds users:read")
+
+	got[0] = "users:*"
+	assert.Equal(t, qrdbsdk.Permission("users:read"), TokenResolverGrant()[0], "TokenResolverGrant returns a copy")
+}
