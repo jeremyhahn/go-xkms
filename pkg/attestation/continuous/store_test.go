@@ -19,6 +19,62 @@ func newTestStore(t testing.TB) *Store {
 	return store
 }
 
+// TestStore_ListVerdictsNoDuplicatesUnderConcurrentAppends lists a device's
+// history across a page boundary while another device's verdicts are
+// appended; an append that lands before the boundary shifts records onto the
+// next page, and none may be returned twice.
+func TestStore_ListVerdictsNoDuplicatesUnderConcurrentAppends(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+	const tenant, want = "acme", listPageSize
+	for i := 0; i < want; i++ {
+		v := Verdict{Tenant: tenant, DeviceID: "dev-1", At: base.Add(time.Duration(i) * time.Millisecond)}
+		if err := store.SaveVerdict(ctx, v); err != nil {
+			t.Fatalf("SaveVerdict %d: %v", i, err)
+		}
+	}
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			v := Verdict{Tenant: tenant, DeviceID: "dev-0", At: base.Add(time.Duration(i) * time.Microsecond)}
+			if err := store.SaveVerdict(ctx, v); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		if err := <-done; err != nil {
+			t.Errorf("concurrent SaveVerdict: %v", err)
+		}
+	}()
+	for round := 0; round < 50; round++ {
+		verdicts, err := store.ListVerdicts(ctx, tenant, "dev-1")
+		if err != nil {
+			t.Fatalf("round %d: ListVerdicts: %v", round, err)
+		}
+		seen := make(map[time.Time]bool, len(verdicts))
+		for _, v := range verdicts {
+			if seen[v.At] {
+				t.Fatalf("round %d: verdict at %s returned twice", round, v.At)
+			}
+			seen[v.At] = true
+		}
+		if len(verdicts) != want {
+			t.Fatalf("round %d: %d verdicts, want %d", round, len(verdicts), want)
+		}
+	}
+}
+
 func TestNewStore_RequiresDAOs(t *testing.T) {
 	var ce *ConfigError
 	if _, err := NewStore(StoreConfig{}); !errors.As(err, &ce) {
