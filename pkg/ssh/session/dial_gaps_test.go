@@ -14,9 +14,11 @@
 package session
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,6 +185,20 @@ func TestDialClient_CancelDuringHandshakeClosesConn(t *testing.T) {
 		t.Fatal("peer never accepted the connection")
 	}
 	defer peer.Close()
+
+	// DialContext has returned once the client's version line arrives, so
+	// cancelling now can only be seen by the handshake watcher around
+	// ssh.NewClientConn. The server banner is withheld throughout.
+	if derr := peer.SetReadDeadline(time.Now().Add(5 * time.Second)); derr != nil {
+		t.Fatalf("SetReadDeadline: %v", derr)
+	}
+	banner, rerr := bufio.NewReader(peer).ReadString('\n')
+	if rerr != nil {
+		t.Fatalf("reading the client version line: %v", rerr)
+	}
+	if !strings.HasPrefix(banner, "SSH-2.0-") {
+		t.Fatalf("client version line = %q, want an SSH-2.0- prefix", banner)
+	}
 
 	cancel()
 
