@@ -141,6 +141,48 @@ Open: findings 3-7 of the same review (reliability, correctness, SPEC; see
 the lane's verify.codex.json) are later slices of this row and were not
 started.
 
+## Codex P1 findings on 58890f3d8 (lane-verify, 9 P1)
+
+The two security findings, each as test commit, then fix commit:
+
+1. A deleted tenant's login CA stayed trusted: it remained in `TenantIDs`,
+   `ProviderForTenant` and so in the node's Key B trust pool, and its key and
+   certificate stayed on the backend.
+   `TestServer_TenantCAKeys_DeletedTenantWithdrawn` (7f54892c1). Fix
+   (f7810812c): `ProviderForTenant` and `TenantIDs` check the tenant against
+   the node's tenant service and withdraw a deleted one; the provisioning
+   tenant service's `DeleteTenant` calls `RemoveTenant`, which deletes the
+   login CA key and certificate.
+2. `EnsureTenant` adopted any `qrdb-login-ca` key, including one a caller made
+   before the name was reserved, and issued a CA certificate over it.
+   `TestTenantCAKeyFactory_RefusesKeyWithoutProvisioningProvenance`
+   (11c80fd17). Fix (e82662e01): when `EnsureTenant` generates the key it
+   records a provenance certificate, signed by that key, under the
+   tenant-scoped ID `qrdb-login-ca:provenance` (key-reference validation
+   refuses a one-colon ID, so no API caller can write it). `EnsureTenant`,
+   `ProviderForTenant` and `TenantIDs` refuse a key without matching
+   provenance with `errTenantLoginCAKeyCollision` and issue no certificate.
+   A key another node has just generated is waited for (bounded, tied to
+   ctx). `RemoveTenant` deletes the provenance record.
+
+Limits and owner asks:
+
+- Existing collisions (a `qrdb-login-ca` key on a deployment from before this
+  fix, made by a caller or by an earlier provisioning pass without a
+  provenance record) are refused, not adopted. They need an explicit
+  migration: owner ask.
+- A crash between generating the key and saving its provenance leaves a key
+  that reads as a collision; it needs the same migration.
+- Trust-pool test gap: the finding 1 test rebuilds go-qrdb's trust from
+  `TenantIDs` and `ProviderForTenant`; go-qrdb's own trust pool and
+  `IsTenantIssuer` are not reachable from this lane.
+- A tenant deleted through go-qrdb's native tenant service leaves trust, but
+  its key and certificates stay on the backend (no teardown hook there).
+
+Open: findings 3-9 of the same review (CA migration, cloud KMS, PKCS#11
+concurrency, lazy certificate retry, create rollback, the docs/SPEC.md:118
+approval and the exported APIs) were not started.
+
 ## Results
 
 - `go test -count=1 -race -timeout 75m -tags "codec_cbor codec_json codec_msgpack" ./pkg/server/...`: pass (pkg/server 528 s; credentials, loopback pass). The run hits go test's default 10m bound under -race, so it needs the Makefile's UNIT_TEST_TIMEOUT.
