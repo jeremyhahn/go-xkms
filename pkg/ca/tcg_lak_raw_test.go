@@ -71,6 +71,7 @@ func TestIssueLAKCertificateRaw_Success(t *testing.T) {
 		certifyInfo, sig,
 		x509.ECDSAWithSHA256,
 		lakPubArea, nonce,
+		"tenant-a",
 	)
 	if err != nil {
 		t.Fatalf("IssueLAKCertificateRaw() returned unexpected error: %v", err)
@@ -151,6 +152,7 @@ func TestIssueLAKCertificateRaw_InvalidIAKCertificateDER(t *testing.T) {
 		[]byte("certify-info"), []byte("signature"),
 		x509.ECDSAWithSHA256,
 		[]byte("lak-public-area"), []byte("nonce"),
+		"tenant-a",
 	)
 	if err == nil {
 		t.Fatal("IssueLAKCertificateRaw() error = nil, want a parse error for garbage IAK certificate DER")
