@@ -67,11 +67,25 @@ ship; the export did not exist.
 3. Docs commit: key-management/api.md names the gRPC and SDK methods; this
    plan.
 
-## Next slice
+## Slice row1778d: xkmsctl export and the integration test
 
-- `xkmsctl key ota-image` export command, the integration tests
-  (test/integration/sdk/go/testservice.go returns `ErrNotImplemented` for
-  the export until then), and docs/cli.md.
+1. Test commit `68d5ef1b4` `test(xkmsctl): export the OTA image public
+   key`: `TestKeyOTAImageExportCmd` (key id, board id, version, raw hex),
+   `_NotFound` and `_Registered` in cmd/xkmsctl, and
+   `TestSDK_Embedded_ExportOTAImagePublicKey` (after a rotate: raw is 64
+   bytes and verifies the board's image signature) with `_NotFound` in
+   test/integration/sdk/go. They failed first.
+2. Fix commit `9233d2981` `feat(xkmsctl): ota-image-key export`:
+   `xkmsctl key ota-image export <board-id>` and
+   `ErrExportOTAImagePublicKeyFailed`; the integration test service answers
+   the export from its stored P-256 key.
+3. Docs commit: docs/key-management/cli.md documents the verb; this plan.
+
+## Left for the row
+
+- Nothing in code. The parity suite (`test/integration/api/commands`) has
+  no `key ota-image` definitions, the same pre-existing gap as create,
+  rotate and sign (cli.md, Parity coverage).
 
 ## Out of scope
 
