@@ -72,3 +72,9 @@ server (three sites) and cmd/xkmsd/admin.go pass TrustDomain().
   binary not built in the lane; unrelated).
 - docs/SPEC.md row 58 not changed: the lane's policy guard refuses the path
   (LANE_POLICY_ALLOW not set).
+
+### Slice 3: SPEC row shipped
+
+- docs/SPEC.md row 58 set to shipped (anchors mtls.go:256, :309, :337 re-checked).
+- make test-go UNIT_TEST_SCOPE=./pkg/auth/...: pass.
+- make lint: pass (0 issues on every module and tag set).
