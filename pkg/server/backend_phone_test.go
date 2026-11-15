@@ -15,16 +15,21 @@ package server
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
 
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/devicereg"
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -58,6 +63,8 @@ func newTestPhoneConfig(t testing.TB) *config.PhoneConfig {
 		NoiseStaticKey: secrettest.Literal(t, []byte("aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233")),
 
 		PhoneStaticKey: "11223344556677881122334455667788112233445566778811223344556677aa",
+		Tenant:         "acme",
+		DeviceID:       "phone-1",
 		RequestTimeout: 5 * time.Second,
 	}
 }
@@ -66,17 +73,49 @@ func newTestPhoneConfig(t testing.TB) *config.PhoneConfig {
 // It avoids the full New() constructor which requires filesystem and other setup.
 func newTestServerForPhone(t *testing.T, phoneCfg *config.PhoneConfig) *Server {
 	t.Helper()
-	return &Server{
+	srv := &Server{
 		ctx: context.Background(),
 		config: &config.Config{
 			Backends: config.BackendsConfig{
 				Phone: phoneCfg,
 			},
 		},
-		backends:     make(map[string]xkms.Backend),
-		keyProviders: make(map[string]types.KeyProvider),
-		logger:       slog.Default(),
+		backends:       make(map[string]xkms.Backend),
+		keyProviders:   make(map[string]types.KeyProvider),
+		logger:         slog.Default(),
+		deviceRegistry: newTestDeviceRegistry(t),
 	}
+	if phoneCfg != nil && phoneCfg.DeviceID != "" {
+		pairTestPhone(t, srv.deviceRegistry, phoneCfg.Tenant, phoneCfg.DeviceID, phoneCfg.PhoneStaticKey)
+	}
+	return srv
+}
+
+// newTestDeviceRegistry opens a device registry on an in-memory store.
+func newTestDeviceRegistry(t testing.TB) *devicereg.Registry {
+	t.Helper()
+	reg, err := devicereg.NewRegistry(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
+	return reg
+}
+
+// pairTestPhone pairs device id in tenant with the X25519 Noise static
+// public key phoneKeyHex as its identity key (SPKI DER).
+func pairTestPhone(t testing.TB, reg *devicereg.Registry, tenant, id, phoneKeyHex string) {
+	t.Helper()
+	raw, err := hex.DecodeString(phoneKeyHex)
+	require.NoError(t, err)
+	pub, err := ecdh.X25519().NewPublicKey(raw)
+	require.NoError(t, err)
+	spki, err := x509.MarshalPKIXPublicKey(pub)
+	require.NoError(t, err)
+	require.NoError(t, reg.Pair(context.Background(), tenant, &devicereg.Device{
+		ID:          id,
+		Name:        "test phone",
+		IdentityKey: spki,
+		PairedAt:    time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC),
+		PairedBy:    "admin",
+	}))
 }
 
 // newTestServerForPhoneWithCredentials is newTestServerForPhone plus a
@@ -109,6 +148,52 @@ func TestRegisterPhoneBackend_Success(t *testing.T) {
 
 	// Clean up: close the backend.
 	assert.NoError(t, kp.Close())
+}
+
+// TestRegisterPhoneBackend_RegistryRefusesDevice covers backend-mode
+// verification (docs/SPEC.md row device-registry): the phone is accepted
+// only while its device-registry record is active and bound to its key.
+func TestRegisterPhoneBackend_RegistryRefusesDevice(t *testing.T) {
+	const otherKey = "99887766554433229988776655443322998877665544332299887766554433bb"
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, reg *devicereg.Registry, cfg *config.PhoneConfig)
+	}{
+		{"unpaired", func(t *testing.T, _ *devicereg.Registry, _ *config.PhoneConfig) {}},
+		{"wrong key", func(t *testing.T, reg *devicereg.Registry, cfg *config.PhoneConfig) {
+			pairTestPhone(t, reg, cfg.Tenant, cfg.DeviceID, otherKey)
+		}},
+		{"other tenant", func(t *testing.T, reg *devicereg.Registry, cfg *config.PhoneConfig) {
+			pairTestPhone(t, reg, "globex", cfg.DeviceID, cfg.PhoneStaticKey)
+		}},
+		{"revoked", func(t *testing.T, reg *devicereg.Registry, cfg *config.PhoneConfig) {
+			pairTestPhone(t, reg, cfg.Tenant, cfg.DeviceID, cfg.PhoneStaticKey)
+			require.NoError(t, reg.Revoke(context.Background(), cfg.Tenant, cfg.DeviceID, time.Now()))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			phoneCfg := newTestPhoneConfig(t)
+			deviceID := phoneCfg.DeviceID
+			phoneCfg.DeviceID = "" // the helper pairs nothing
+			srv := newTestServerForPhone(t, phoneCfg)
+			phoneCfg.DeviceID = deviceID
+			tc.setup(t, srv.deviceRegistry, phoneCfg)
+
+			err := srv.RegisterPhoneBackend(&mockPhoneSender{})
+			require.ErrorIs(t, err, ErrPhoneDeviceRefused)
+			srv.mu.RLock()
+			_, ok := srv.keyProviders["phone"]
+			srv.mu.RUnlock()
+			assert.False(t, ok, "a refused phone must not be registered")
+		})
+	}
+
+	t.Run("paired and active", func(t *testing.T) {
+		srv := newTestServerForPhone(t, newTestPhoneConfig(t))
+		require.NoError(t, srv.RegisterPhoneBackend(&mockPhoneSender{}))
+		require.NoError(t, srv.UnregisterPhoneBackend())
+	})
 }
 
 func TestRegisterPhoneBackend_NilSender(t *testing.T) {
