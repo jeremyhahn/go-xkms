@@ -225,17 +225,6 @@ func (r *Record) AddCurrent(n uint32, at time.Time, createdBy string) {
 	r.Current = n
 }
 
-// Clone returns a deep copy of r, so a caller can keep the record it read as
-// the expected value of Store.CompareAndPut while it changes the copy.
-func (r *Record) Clone() *Record {
-	if r == nil {
-		return nil
-	}
-	c := *r
-	c.Versions = slices.Clone(r.Versions)
-	return &c
-}
-
 // SetState enables or disables version n. The current version cannot be
 // disabled (*CurrentVersionError), and a retired version cannot change
 // state (*RetiredVersionError). Retiring goes through Retire, which the

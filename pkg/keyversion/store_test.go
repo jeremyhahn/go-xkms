@@ -16,6 +16,7 @@ package keyversion
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -111,11 +112,11 @@ func TestStoreCompareAndPut(t *testing.T) {
 
 	first := Implicit("k", "software")
 	first.AddCurrent(2, at, "alice")
-	require.NoError(t, s.CompareAndPut(ctx, "acme", nil, first), "no record is stored yet")
+	require.NoError(t, s.CompareAndPut(ctx, "acme", "", nil, first), "no record is stored yet")
 
 	stale := Implicit("k", "software")
 	stale.AddCurrent(2, at, "bob")
-	err := s.CompareAndPut(ctx, "acme", nil, stale)
+	err := s.CompareAndPut(ctx, "acme", "", nil, stale)
 	require.ErrorIs(t, err, ErrVersionConflict, "a record now exists")
 	var conflict *VersionConflictError
 	require.ErrorAs(t, err, &conflict)
@@ -125,45 +126,106 @@ func TestStoreCompareAndPut(t *testing.T) {
 	read, found, err := s.Load(ctx, "acme", "software", "k")
 	require.NoError(t, err)
 	require.True(t, found)
-	next := read.Clone()
+	next := cloneRecord(read)
 	next.AddCurrent(3, at, "alice")
-	require.NoError(t, s.CompareAndPut(ctx, "acme", read, next), "the stored record is still the one read")
+	require.NoError(t, s.CompareAndPut(ctx, "acme", "", read, next), "the stored record is still the one read")
 
-	again := read.Clone()
+	again := cloneRecord(read)
 	again.AddCurrent(3, at, "bob")
-	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", read, again), ErrVersionConflict, "the record read is stale")
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", "", read, again), ErrVersionConflict, "the record read is stale")
 	got, _, err := s.Load(ctx, "acme", "software", "k")
 	require.NoError(t, err)
 	assert.Equal(t, "alice", got.Versions[2].CreatedBy, "the stale write changed nothing")
 
 	require.NoError(t, s.Delete(ctx, "acme", "software", "k"))
-	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", got, again), ErrVersionConflict, "the record was deleted")
-	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", nil, nil), ErrNilRecord)
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", "", got, again), ErrVersionConflict, "the record was deleted")
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", "", nil, nil), ErrNilRecord)
 }
 
-func TestStoreVerify(t *testing.T) {
+func TestStoreClaim(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
 	at := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 
-	require.NoError(t, s.Verify(ctx, "acme", "software", "k", nil), "no record is stored, none was read")
+	// No record is stored: the claim stores the implicit record.
+	tok, err := s.Claim(ctx, "acme", "software", "k", nil)
+	require.NoError(t, err)
+	_, err = s.Claim(ctx, "acme", "software", "k", nil)
+	require.ErrorIs(t, err, ErrVersionConflict, "the record is claimed")
+	read, found, err := s.Load(ctx, "acme", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	_, err = s.Claim(ctx, "acme", "software", "k", read)
+	require.ErrorIs(t, err, ErrVersionConflict, "the claim has not expired")
 
-	rec := Implicit("k", "software")
-	rec.AddCurrent(2, at, "alice")
-	require.NoError(t, s.Put(ctx, "acme", rec))
-	require.ErrorIs(t, s.Verify(ctx, "acme", "software", "k", nil), ErrVersionConflict, "a record was stored since")
+	next := cloneRecord(read)
+	next.AddCurrent(2, at, "bob")
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", "", read, next), ErrVersionConflict, "an unclaimed write of a claimed record")
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", "other", nil, next), ErrVersionConflict, "another token")
+
+	// Put keeps the claim; the holder's write then fails, as the record moved.
+	moved := cloneRecord(read)
+	moved.Versions[0].CreatedBy = "edited"
+	require.NoError(t, s.Put(ctx, "acme", moved))
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", tok, nil, next), ErrVersionConflict, "the record moved on")
+	_, err = s.Claim(ctx, "acme", "software", "k", moved)
+	require.ErrorIs(t, err, ErrVersionConflict, "Put kept the claim")
+
+	require.NoError(t, s.Release(ctx, "acme", "software", "k", tok))
+	require.NoError(t, s.Release(ctx, "acme", "software", "k", tok), "a released claim")
+	tok, err = s.Claim(ctx, "acme", "software", "k", moved)
+	require.NoError(t, err)
+	next = cloneRecord(moved)
+	next.AddCurrent(2, at, "alice")
+	require.NoError(t, s.CompareAndPut(ctx, "acme", tok, moved, next))
+	got, _, err := s.Load(ctx, "acme", "software", "k")
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), got.Current)
+	_, err = s.Claim(ctx, "acme", "software", "k", got)
+	require.NoError(t, err, "the write dropped the claim")
+}
+
+// TestStoreClaimTakeover proves an expired claim is taken over and its old
+// holder can no longer record its version.
+func TestStoreClaimTakeover(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newTestStore(t)
+	at := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+
+	old, err := s.Claim(ctx, "acme", "software", "k", nil)
+	require.NoError(t, err)
+	name, err := recordName("acme", "software", "k")
+	require.NoError(t, err)
+	stored, err := s.records.GetByNaturalKey(ctx, name)
+	require.NoError(t, err)
+	expired := *stored
+	expired.Claim = &rotationClaim{Token: old, Expires: time.Now().UTC().Add(-time.Second)}
+	swapped, err := s.records.CompareAndSwap(ctx, stored, &expired)
+	require.NoError(t, err)
+	require.True(t, swapped)
 
 	read, _, err := s.Load(ctx, "acme", "software", "k")
 	require.NoError(t, err)
-	require.NoError(t, s.Verify(ctx, "acme", "software", "k", read))
+	tok, err := s.Claim(ctx, "acme", "software", "k", read)
+	require.NoError(t, err, "the expired claim is taken over")
 
-	moved := read.Clone()
-	moved.AddCurrent(3, at, "bob")
-	require.NoError(t, s.Put(ctx, "acme", moved))
-	err = s.Verify(ctx, "acme", "software", "k", read)
-	var conflict *VersionConflictError
-	require.ErrorAs(t, err, &conflict, "the record moved on")
-	assert.Equal(t, uint32(2), read.Current, "Clone left the record read unchanged")
+	late := cloneRecord(read)
+	late.AddCurrent(2, at, "old-holder")
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", old, nil, late), ErrVersionConflict, "the old holder is fenced")
+	require.NoError(t, s.Release(ctx, "acme", "software", "k", old), "releasing a lost claim changes nothing")
+
+	next := cloneRecord(read)
+	next.AddCurrent(2, at, "new-holder")
+	require.NoError(t, s.CompareAndPut(ctx, "acme", tok, read, next))
+	got, _, err := s.Load(ctx, "acme", "software", "k")
+	require.NoError(t, err)
+	assert.Equal(t, "new-holder", got.Versions[1].CreatedBy)
+}
+
+func cloneRecord(r *Record) *Record {
+	c := *r
+	c.Versions = slices.Clone(r.Versions)
+	return &c
 }
 
 // TestStoreSystemTenant proves the empty tenant is stored as "system".

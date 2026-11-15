@@ -14,11 +14,12 @@
 package keyversion
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"crypto/rand"
+	"encoding/hex"
 	"strings"
 	"sync"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -125,19 +126,106 @@ func (s *Store) Put(ctx context.Context, tenant string, rec *Record) error {
 	if err != nil {
 		return err
 	}
-	if err := s.records.Save(ctx, &Entity{Name: name, Record: *rec}); err != nil {
-		return &StoreError{Op: "put", Key: name, Err: err}
+	// The record is swapped in, not saved over, so a rotation's claim on the
+	// stored record survives the write.
+	for {
+		current, err := s.records.GetByNaturalKey(ctx, name)
+		if qrdbsdk.IsDAONotFound(err) {
+			stored, err := s.records.SaveIfAbsent(ctx, &Entity{Name: name, Record: *rec})
+			if err != nil {
+				return &StoreError{Op: "put", Key: name, Err: err}
+			}
+			if stored {
+				return nil
+			}
+			continue
+		}
+		if err != nil {
+			return &StoreError{Op: "put", Key: name, Err: err}
+		}
+		swapped, err := s.records.CompareAndSwap(ctx, current,
+			&Entity{ID: current.ID, Name: name, Record: *rec, Claim: current.Claim})
+		if err != nil {
+			return &StoreError{Op: "put", Key: name, Err: err}
+		}
+		if swapped {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return &StoreError{Op: "put", Key: name, Err: err}
+		}
 	}
-	return nil
+}
+
+// ClaimTTL is how long a rotation's claim (Store.Claim) excludes every other
+// rotation of the key. A claim older than this was left by a rotation that
+// died, and another rotation may take it over; the old holder then can no
+// longer record its version (Store.CompareAndPut is fenced by the claim).
+const ClaimTTL = 10 * time.Minute
+
+// Claim claims the record of keyID in backend for tenant for one rotation,
+// while the stored record is still expected, the record the caller read (a
+// nil expected means the caller read no stored record). Only the holder of
+// the returned token creates or removes the backend key under the next
+// version's name, and records that version with CompareAndPut; it drops the
+// claim with Release when it does not record it. A changed record, or a
+// claim another rotation holds and has not let expire (ClaimTTL), is a
+// *VersionConflictError (matching ErrVersionConflict).
+func (s *Store) Claim(ctx context.Context, tenant, backend, keyID string, expected *Record) (token string, err error) {
+	name, err := recordName(tenant, backend, keyID)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", &StoreError{Op: "claim", Key: name, Err: err}
+	}
+	claim := &rotationClaim{Token: hex.EncodeToString(nonce), Expires: time.Now().UTC().Add(ClaimTTL)}
+	conflict := &VersionConflictError{KeyID: keyID, Backend: backend}
+	if expected == nil {
+		stored, err := s.records.SaveIfAbsent(ctx, &Entity{Name: name, Record: *Implicit(keyID, backend), Claim: claim})
+		if err != nil {
+			return "", &StoreError{Op: "claim", Key: name, Err: err}
+		}
+		if !stored {
+			return "", conflict
+		}
+		return claim.Token, nil
+	}
+	current, err := s.records.GetByNaturalKey(ctx, name)
+	if qrdbsdk.IsDAONotFound(err) {
+		return "", conflict
+	}
+	if err != nil {
+		return "", &StoreError{Op: "get", Key: name, Err: err}
+	}
+	if current.Claim != nil && time.Now().Before(current.Claim.Expires) {
+		return "", conflict
+	}
+	// The swap compares the stored record against expected itself, and
+	// against the expired claim, if any, it takes over.
+	swapped, err := s.records.CompareAndSwap(ctx,
+		&Entity{ID: current.ID, Name: name, Record: *expected, Claim: current.Claim},
+		&Entity{ID: current.ID, Name: name, Record: *expected, Claim: claim})
+	if err != nil {
+		return "", &StoreError{Op: "claim", Key: name, Err: err}
+	}
+	if !swapped {
+		return "", conflict
+	}
+	return claim.Token, nil
 }
 
 // CompareAndPut stores next as the record of its key for tenant only while
-// the stored record is still expected, the record the caller read; a nil
-// expected means the caller read no stored record, so next is stored only
-// while none exists. The comparison and the write are one guarded store
-// operation, so a stale or concurrent writer gets a *VersionConflictError
-// (matching ErrVersionConflict) and the stored record is left unchanged.
-func (s *Store) CompareAndPut(ctx context.Context, tenant string, expected, next *Record) error {
+// the stored record is still expected, the record the caller read, and is
+// claimed by token; it drops the claim. A nil expected means the caller read
+// no stored record. An empty token means the caller holds no claim: next is
+// then stored only while the record is unclaimed (and, for a nil expected,
+// while none is stored). The comparison and the write are one guarded store
+// operation, so a stale or concurrent writer, or a rotation whose claim was
+// taken over, gets a *VersionConflictError (matching ErrVersionConflict) and
+// the stored record is left unchanged.
+func (s *Store) CompareAndPut(ctx context.Context, tenant, token string, expected, next *Record) error {
 	if next == nil {
 		return ErrNilRecord
 	}
@@ -146,7 +234,7 @@ func (s *Store) CompareAndPut(ctx context.Context, tenant string, expected, next
 		return err
 	}
 	conflict := &VersionConflictError{KeyID: next.KeyID, Backend: next.Backend}
-	if expected == nil {
+	if expected == nil && token == "" {
 		stored, err := s.records.SaveIfAbsent(ctx, &Entity{Name: name, Record: *next})
 		if err != nil {
 			return &StoreError{Op: "put", Key: name, Err: err}
@@ -156,8 +244,12 @@ func (s *Store) CompareAndPut(ctx context.Context, tenant string, expected, next
 		}
 		return nil
 	}
-	// The read only finds the record's ID; the swap compares the stored
-	// bytes against expected itself.
+	if expected == nil {
+		// Claim stored the implicit record for a key that had none.
+		expected = Implicit(next.KeyID, next.Backend)
+	}
+	// The read only finds the record's ID and the claim held; the swap
+	// compares the stored bytes against expected and that claim itself.
 	current, err := s.records.GetByNaturalKey(ctx, name)
 	if qrdbsdk.IsDAONotFound(err) {
 		return conflict
@@ -165,8 +257,15 @@ func (s *Store) CompareAndPut(ctx context.Context, tenant string, expected, next
 	if err != nil {
 		return &StoreError{Op: "get", Key: name, Err: err}
 	}
+	var claim *rotationClaim
+	if token != "" {
+		if current.Claim == nil || current.Claim.Token != token {
+			return conflict
+		}
+		claim = current.Claim
+	}
 	swapped, err := s.records.CompareAndSwap(ctx,
-		&Entity{ID: current.ID, Name: name, Record: *expected},
+		&Entity{ID: current.ID, Name: name, Record: *expected, Claim: claim},
 		&Entity{ID: current.ID, Name: name, Record: *next})
 	if err != nil {
 		return &StoreError{Op: "put", Key: name, Err: err}
@@ -177,34 +276,37 @@ func (s *Store) CompareAndPut(ctx context.Context, tenant string, expected, next
 	return nil
 }
 
-// Verify returns a *VersionConflictError (matching ErrVersionConflict) when
-// the stored record of keyID in backend for tenant is no longer expected,
-// the record the caller read; a nil expected means the caller read no
-// stored record. It writes nothing.
-func (s *Store) Verify(ctx context.Context, tenant, backend, keyID string, expected *Record) error {
-	got, found, err := s.Load(ctx, tenant, backend, keyID)
+// Release drops the claim token holds on the record of keyID in backend for
+// tenant, leaving the record as it is. A record no longer claimed by token
+// is not an error.
+func (s *Store) Release(ctx context.Context, tenant, backend, keyID, token string) error {
+	name, err := recordName(tenant, backend, keyID)
 	if err != nil {
 		return err
 	}
-	conflict := &VersionConflictError{KeyID: keyID, Backend: backend}
-	if found != (expected != nil) {
-		return conflict
+	for {
+		current, err := s.records.GetByNaturalKey(ctx, name)
+		if qrdbsdk.IsDAONotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return &StoreError{Op: "get", Key: name, Err: err}
+		}
+		if current.Claim == nil || current.Claim.Token != token {
+			return nil
+		}
+		swapped, err := s.records.CompareAndSwap(ctx, current,
+			&Entity{ID: current.ID, Name: name, Record: current.Record})
+		if err != nil {
+			return &StoreError{Op: "release", Key: name, Err: err}
+		}
+		if swapped {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return &StoreError{Op: "release", Key: name, Err: err}
+		}
 	}
-	if !found {
-		return nil
-	}
-	a, err := json.Marshal(got)
-	if err != nil {
-		return &StoreError{Op: "verify", Key: keyID, Err: err}
-	}
-	b, err := json.Marshal(expected)
-	if err != nil {
-		return &StoreError{Op: "verify", Key: keyID, Err: err}
-	}
-	if !bytes.Equal(a, b) {
-		return conflict
-	}
-	return nil
 }
 
 // Delete removes the record of keyID in backend for tenant. An absent record
