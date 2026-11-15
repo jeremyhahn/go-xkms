@@ -382,6 +382,37 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 		return err
 	}
 
+	// Order matters (Codex P1 pin_service.go:393): the barrier check below
+	// tests the current PIN in software, outside any retry counter, so it
+	// must never see a PIN the backend has not authenticated. First refuse
+	// an invalid replacement PIN, so the answer cannot depend on the
+	// current PIN; then authenticate the current PIN through the backend's
+	// retry-enforced verification (TPM2 dictionary-attack protection,
+	// PKCS#11 token lockout), which counts a wrong guess and honours
+	// lockout, returning its error unchanged.
+	if err := validateReplacementUserPIN(newUserPIN); err != nil {
+		s.log.Warn("ChangeUserPIN: replacement PIN rejected", "error", err)
+		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+			"operation": "change",
+			"type":      "user_pin",
+			"reason":    "invalid_new_pin",
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
+		return err
+	}
+	if err := svc.VerifyUserPIN(currentUserPIN); err != nil {
+		s.log.Warn("ChangeUserPIN: current PIN not authenticated", "strategy", svc.Strategy(), "error", err)
+		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+			"operation": "change",
+			"type":      "user_pin",
+			"reason":    "current_pin_rejected",
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
+		return err
+	}
+
 	// Confirm BEFORE the PIN backend commits that the current user PIN
 	// seals the barrier. Any other outcome (credential mismatch, strategy or
 	// enclave failure, storage error, uninitialized barrier) refuses the
@@ -472,6 +503,30 @@ func verifyBarrierSealedWithPIN(bsvc *BarrierService, pin string) (err error) {
 	defer func() { err = errors.Join(err, destroyCreds(creds)) }()
 
 	return bsvc.barrier.VerifyCredentials(ctx, creds)
+}
+
+// errReplacementPINAccepted is what replacementPINProbe returns once
+// go-qrdb's PIN service has accepted the replacement PIN.
+var errReplacementPINAccepted = errors.New("pin_service: replacement PIN accepted")
+
+// replacementPINProbe is a PIN backend that commits nothing: go-qrdb's
+// Service.ChangeUserPIN validates the replacement PIN before it calls the
+// backend, so reaching ChangeUserPIN here means the PIN passed. No other
+// method is ever called; the embedded interface is nil.
+type replacementPINProbe struct{ qrdbsdk.PINBackend }
+
+func (replacementPINProbe) ChangeUserPIN(_, _ string) error { return errReplacementPINAccepted }
+
+// validateReplacementUserPIN applies go-qrdb's own replacement-PIN rules
+// (its unexported length validator, reached through Service.ChangeUserPIN
+// on a probe backend) without touching the real backend, so the rules are
+// never copied here and cannot drift from the commit path.
+func validateReplacementUserPIN(newUserPIN string) error {
+	err := qrdbsdk.NewPINService(replacementPINProbe{}, slog.Default()).ChangeUserPIN("", newUserPIN)
+	if errors.Is(err, errReplacementPINAccepted) {
+		return nil
+	}
+	return err
 }
 
 // VerifyUserPIN verifies the provided user PIN.
