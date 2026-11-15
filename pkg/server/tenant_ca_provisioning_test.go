@@ -208,3 +208,25 @@ func TestServer_ProvisionTenantCAKeys_BindsFactoryAfterBackends(t *testing.T) {
 	_, err = f.ProviderForTenant(qrdbsdk.SystemTenantID)
 	require.NoError(t, err)
 }
+
+// Request handlers take the server's write lock; a login CA lookup made
+// meanwhile must still resolve the bound backend, not read as unbound.
+func TestServer_TenantCAKeys_ResolveDuringServerLockContention(t *testing.T) {
+	_, base := newTenantCAKeyTestFactory(t)
+	f := newTenantCAKeyFactory()
+	s := &Server{
+		config:        &config.Config{},
+		tenantCAKeys:  f,
+		tenantService: &fakeTenantService{tenants: []string{"tenant-a"}},
+		backends:      map[string]xkms.Backend{"software": base},
+	}
+	require.NoError(t, s.provisionTenantCAKeys(context.Background()))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := f.ProviderForTenant("tenant-a")
+	require.NoError(t, err, "a held server lock must not unbind the login CA factory")
+	ids, err := f.TenantIDs(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, ids, "tenant-a")
+}
