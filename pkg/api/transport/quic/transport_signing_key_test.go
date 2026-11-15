@@ -15,11 +15,16 @@ package quic
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/signingkeytest"
 )
 
@@ -43,4 +48,29 @@ func TestSigningKey_NotConnected(t *testing.T) {
 	for name, call := range signingkeytest.Calls(context.Background(), newDisconnected(t)) {
 		t.Run(name, func(t *testing.T) { assert.ErrorIs(t, call(), ErrNotConnected) })
 	}
+}
+
+// TestReleaseSigning_ReachesTheSignRoute signs through the QUIC client over
+// the REST wire contract (the HTTP/3 listener serves the REST router, whose
+// sign handler pkg/api/rest tests against the real service; this package
+// cannot import pkg/auth, an import cycle through pkg/pkcs11/module).
+func TestReleaseSigning_ReachesTheSignRoute(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST "+wire.SigningKeySignPath, func(w http.ResponseWriter, r *http.Request) {
+		var req transport.SignReleaseCoRIMRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		assert.Equal(t, signingkeytest.Repository, req.Repository)
+		_ = json.NewEncoder(w).Encode(transport.SignReleaseCoRIMResponse{SignedCoRIM: append([]byte("signed:"), req.CoRIM...), KeyID: "release-signing"})
+	})
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+	tr := &Transport{config: transport.DefaultConfig(), httpClient: srv.Client(), baseURL: srv.URL, connected: true}
+
+	resp, err := tr.SignReleaseCoRIM(context.Background(), &transport.SignReleaseCoRIMRequest{Repository: signingkeytest.Repository, CoRIM: []byte{0xa0}})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("signed:\xa0"), resp.SignedCoRIM)
+	assert.Equal(t, "release-signing", resp.KeyID)
+
+	_, err = tr.SignReleaseCoRIM(context.Background(), nil)
+	assert.ErrorIs(t, err, wire.ErrNilRequest)
 }
