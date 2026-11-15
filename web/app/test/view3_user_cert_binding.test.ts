@@ -61,32 +61,17 @@ describe("UserCertBindingView", () => {
     expect(screen.getByRole("button", { name: "Bind" })).toBeEnabled();
   });
 
-  it("loads and renders the user's credentials", async () => {
-    credentials.mockResolvedValue({
-      credentials: [
-        { id: "cred-1", name: "laptop passkey" },
-        { id: "cred-2", name: "yubikey" },
-      ],
-    });
-
-    render(UserCertBindingView);
-    await loadUser("alice");
-
-    expect(await screen.findByText("laptop passkey")).toBeInTheDocument();
-    expect(screen.getByText("cred-1")).toBeInTheDocument();
-    expect(screen.getByText("yubikey")).toBeInTheDocument();
-    expect(screen.getByText("cred-2")).toBeInTheDocument();
-    expect(credentials).toHaveBeenCalledOnce();
-    expect(credentials).toHaveBeenCalledWith("alice");
-  });
-
-  it("shows the empty state when the user has no credentials", async () => {
+  it("says the credential inventory is unavailable instead of reporting no credentials", async () => {
+    // The server checks the user exists and returns an empty list: it has
+    // no credential inventory yet (pkg/xkms ListUserCredentials).
     credentials.mockResolvedValue({ credentials: [] });
 
     render(UserCertBindingView);
     await loadUser("bob");
 
-    expect(await screen.findByText("No credentials")).toBeInTheDocument();
+    expect(await screen.findByText(/Credential inventory is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText("No credentials")).not.toBeInTheDocument();
+    expect(credentials).toHaveBeenCalledWith("bob");
   });
 
   it("binds the normalised thumbprint and not-after, toasts and reloads", async () => {
