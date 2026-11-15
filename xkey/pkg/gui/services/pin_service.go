@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -432,16 +431,12 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	bsvc := s.barrierSvc.Load()
 	if bsvc != nil {
 		if err := verifyBarrierSealedWithPIN(bsvc, currentUserPIN); err != nil {
-			reason := "verify_failed"
-			if errors.Is(err, qrdbseal.ErrCredentialMismatch) {
-				reason = "credential_mismatch"
-			}
-			s.log.Error("ChangeUserPIN: barrier not confirmed sealed by the user PIN", "reason", reason, "error", err)
+			s.log.Error("ChangeUserPIN: barrier not confirmed sealed by the user PIN", "error", err)
 			refused := &SentinelCauseError{Sentinel: ErrBarrierNotPINSealed, Cause: err}
 			if auditErr := s.logPINOperation(audit.OpPINFailed, false, refused, map[string]any{
 				"operation": "barrier_check",
 				"type":      "user_pin",
-				"reason":    reason,
+				"reason":    "not_confirmed",
 			}); auditErr != nil {
 				return errors.Join(refused, auditErr)
 			}
@@ -494,8 +489,9 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 // compares it with the live one. Every other outcome is an error: no
 // barrier, a sealed barrier, an unreadable blob, or a credential mismatch.
 // go-qrdb v0.58.4 turns every UnsealRootKey failure (a strategy or enclave
-// failure included) into seal.ErrCredentialMismatch, so a mismatch does not
-// prove the barrier is sealed by some other credential.
+// failure included) into its credential-mismatch error, so a mismatch does
+// not prove the barrier is sealed by some other credential; the caller
+// refuses on every error and logs the cause unchanged.
 func verifyBarrierSealedWithPIN(bsvc *BarrierService, pin string) (err error) {
 	bsvc.mu.Lock()
 	defer bsvc.mu.Unlock()
