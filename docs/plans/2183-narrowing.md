@@ -75,6 +75,16 @@ Commit count: 194 (every sha above appears once).
   - If it also fails on main's tree, route it to the tpm2 row instead.
 - Coverage shard 1 timeout (ruling 661(4)): one KEEP change in the CI template's CUSTOMIZE region. Raise the coverage shard job's `timeout-minutes: 90` (.github/workflows/ci.yml:1312, "one sixth of the unit suite under -race") to 150, and raise the Makefile's per-shard timeout by the same amount. Add a buildgates test that pins the value.
 
+## Execution, part 1 (lane mf2183r)
+
+- Row 24 RESTORE: ea8db4e63. The row-24 paths are back to their state before 22ca6e423. Against main, the only remaining changes are cfbc5f559's ChangePassword(currentPIN, newPIN) and 3b6099bc3 (row 16). The Wails bindings are at cfbc5f559's signature.
+- Row 18 RESTORE: f51b875c3. Tenant refresh, tenant refresh records, subject revocation by tenant, the tenant WebAuthn store and the provisioned-tenant host are reverted. Row 21's xkmsd redemption keeps the node user service through a single nodeInviteUsers adapter. The host's redemption wiring (it read row 18's HostConfig.UserLookup) and host_webauthn_tenant_test.go are removed with row 18.
+- Row 13, partly RESTORE: 7bc0e97a5. 76f673f41 (bound refresh user resolver) and its test are reverted. ded5754bb and its test 955fc155e stay as MINIMAL: the kept row-14 and row-19 host tests mint over an enforcing NewHostServer, and without ded5754bb they fail with "refresh store put failed: qrdb/auth: unauthenticated". The P1 notes in 2541-webauthn-500.md (ea83da41a, 9c0ae765a) stay as a record.
+- Row 14: kept as MINIMAL in its final form. Its gate was not run: key-lifecycle.spec.ts needs Docker. It does exactly what #2071 P1 (3) describes (a passkey session holding keys:create/sign/delete), so I kept the row rather than revert it.
+- PeerGate fixture: d63c26b37. The test's provisioner now holds admin:status, which the go-qrdb v0.58 grantor rule requires. Not run here (Docker).
+- Coverage timeout (ruling 661(4)): blocked. The lane policy guard refuses edits to .github/workflows/ci.yml without LANE_POLICY_ALLOW. The Makefile half (COVERAGE_SHARD_TIMEOUT 135m) and its buildgates pin go together with the ci.yml change, so none of it was made.
+- Still to do: narrow row 21 to the system tenant, in servicer_invite.go. Its test 679d81f30 went with the host test file, so the system-tenant redemption test has to be written at the xkms level. Also row 11's `make test-mcp` gate.
+
 ## Next slice order
 
 1. Make the restore commits for rows 13, 14, 18 and 24, plus the non-system part of 21 and the conditional rows 11 and 14 once their gates are run. Each takes main's content per path where a file is wholly RESTORE, or does a hand narrowing where a file mixes rows.
