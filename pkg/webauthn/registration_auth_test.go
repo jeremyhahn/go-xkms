@@ -240,7 +240,7 @@ func TestBeginInviteRegistration_EnrollsPendingAccount(t *testing.T) {
 	require.NoError(t, err)
 	f.setStanding(t, "new@example.com", qrdbsdk.LifecyclePending, nil)
 
-	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, "new@example.com")
+	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, provisioned.WebAuthnID())
 	require.NoError(t, err)
 	enrolled, err := f.attestInvite(t, options, sessionID, newEC2Credential(t))
 	require.NoError(t, err)

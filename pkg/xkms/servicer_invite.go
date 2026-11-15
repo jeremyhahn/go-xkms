@@ -165,6 +165,18 @@ func inviteUserID(entity *qrdbsdk.InviteEntity) (uint64, error) {
 	return id, nil
 }
 
+// requireSystemTenantInvite refuses, before any lookup, an invitation of any
+// tenant but the system tenant, the WebAuthn relying party's tenant, with the
+// opaque answer every unusable invite gets. Redemption reads and activates
+// the invited account without an authenticated caller, so it serves only the
+// tenant it can bind safely; tenant-scoped redemption is go-xkms #2202.
+func requireSystemTenantInvite(tenantID string) error {
+	if qrdbsdk.NormalizeTenantID(tenantID) != qrdbsdk.SystemTenantID {
+		return ErrInviteUnusable
+	}
+	return nil
+}
+
 // createInvite mints a single-use invitation for u in tenantID and returns
 // the plaintext token, the link built from it, and its expiry. Called by
 // CreateUser (servicer_user.go) immediately after the account is created
@@ -194,6 +206,9 @@ func (s *XKMSService) createInvite(ctx context.Context, tenantID string, userID 
 func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
+	}
+	if err := requireSystemTenantInvite(req.TenantID); err != nil {
+		return nil, err
 	}
 	if s.inviteStore == nil || !s.inviteUsersConfigured() {
 		return nil, ErrNotConfigured
@@ -228,6 +243,9 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if req == nil {
 		return nil, ErrNilRequest
 	}
+	if err := requireSystemTenantInvite(req.TenantID); err != nil {
+		return nil, err
+	}
 	if s.inviteStore == nil || s.webauthnService == nil || !s.inviteUsersConfigured() {
 		return nil, ErrNotConfigured
 	}
@@ -239,12 +257,13 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.getInviteUser(ctx, req.TenantID, userID)
-	if err != nil {
+	if _, err := s.getInviteUser(ctx, req.TenantID, userID); err != nil {
 		return nil, ErrInviteUnusable
 	}
 
-	options, sessionID, err := s.webauthnService.BeginInviteRegistration(ctx, u.Email)
+	// The ceremony binds the account the invitation names, by its user
+	// handle, never an email lookup: the email can name another account.
+	options, sessionID, err := s.webauthnService.BeginInviteRegistration(ctx, xkmswebauthn.HandleFromUserID(userID))
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable
@@ -266,6 +285,9 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if req == nil {
 		return nil, ErrNilRequest
 	}
+	if err := requireSystemTenantInvite(req.TenantID); err != nil {
+		return nil, err
+	}
 	if s.inviteStore == nil || s.webauthnService == nil || !s.inviteUsersConfigured() {
 		return nil, ErrNotConfigured
 	}
@@ -273,8 +295,13 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	// expensive, failure-prone work must not burn a single-use token when it
 	// fails, and a caller whose attestation is rejected can retry with a
 	// working authenticator instead of needing to be re-invited.
-	if _, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token); err != nil {
+	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
+	if err != nil {
 		return nil, classifyInviteError(err)
+	}
+	invitedID, err := inviteUserID(entity)
+	if err != nil {
+		return nil, err
 	}
 
 	parsed, err := protocol.ParseCredentialCreationResponseBody(strings.NewReader(req.AttestationJSON))
@@ -294,6 +321,12 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "decode invite user handle", Err: err}
 	}
+	// The ceremony's session must have enrolled the account this invitation
+	// names: a session begun for another invitation's account is refused,
+	// leaving this invitation intact.
+	if userID != invitedID {
+		return nil, ErrInviteUnusable
+	}
 
 	if err := s.activateInviteUser(ctx, req.TenantID, userID); err != nil {
 		return nil, err
@@ -312,6 +345,9 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
+	}
+	if err := requireSystemTenantInvite(req.TenantID); err != nil {
+		return nil, err
 	}
 	if s.inviteStore == nil || !s.inviteUsersConfigured() {
 		return nil, ErrNotConfigured

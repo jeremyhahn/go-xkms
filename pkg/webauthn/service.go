@@ -225,8 +225,10 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 // BeginInviteRegistration opens a WebAuthn registration ceremony for a
 // PENDING account, authorized by an out-of-band invitation the caller has
 // already validated (pkg/xkms's BeginInviteRegistration looks up the
-// invitation and resolves email from the account it names — never from
-// caller input — before calling this).
+// invitation and passes the user handle of the account it names — never
+// caller input — before calling this). The account is resolved by that
+// handle, never by an email lookup: an email can name another account, and
+// the invitation authorizes only the one it names.
 //
 // This is the ONLY unauthenticated entry point that may enroll the first
 // credential of an account that already existed before the call
@@ -237,16 +239,19 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 // already holds a credential, all get the same ErrRegistrationRefused a
 // public BeginRegistration refusal carries, so this cannot be used to add a
 // second credential or to re-run activation.
-func (s *Service) BeginInviteRegistration(ctx context.Context, email string) (*protocol.CredentialCreation, string, error) {
+func (s *Service) BeginInviteRegistration(ctx context.Context, userHandle []byte) (*protocol.CredentialCreation, string, error) {
 	if !s.configured {
 		return nil, "", ErrNotConfigured
 	}
-	user, err := s.users.GetByEmail(ctx, email)
+	if len(userHandle) == 0 {
+		return nil, "", ErrRegistrationRefused
+	}
+	user, err := s.users.GetByID(ctx, userHandle)
 	if err != nil {
 		if IsUserNotFound(err) {
 			return nil, "", ErrRegistrationRefused
 		}
-		return nil, "", WrapError("get user by email", err)
+		return nil, "", WrapError("get user", err)
 	}
 	if user.Lifecycle() != qrdbsdk.LifecyclePending {
 		return nil, "", ErrRegistrationRefused
