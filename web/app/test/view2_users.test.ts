@@ -48,7 +48,7 @@ function user(over: Partial<UserInfo> = {}): UserInfo {
     id: "1",
     username: "alice",
     display_name: "Alice Admin",
-    role: "admin",
+    roles: ["admin", "auditor"],
     enabled: true,
     created_at: "2026-01-01T00:00:00Z",
     ...over,
@@ -73,7 +73,7 @@ beforeEach(() => {
 });
 
 describe("UsersView", () => {
-  it("renders username, display name, role and enabled state", async () => {
+  it("renders username, display name, every role and enabled state", async () => {
     await withPermissions({ "users:create": true, "users:update": true, "users:delete": true });
     list.mockResolvedValue({ users: [user()], page: 1, page_size: 50, total: 1, has_more: false });
 
@@ -81,7 +81,7 @@ describe("UsersView", () => {
 
     expect(await screen.findByText("alice")).toBeInTheDocument();
     expect(screen.getByText("Alice Admin")).toBeInTheDocument();
-    expect(screen.getByText("admin")).toBeInTheDocument();
+    expect(screen.getByText("admin, auditor")).toBeInTheDocument();
     expect(screen.getByText("yes")).toBeInTheDocument();
   });
 
