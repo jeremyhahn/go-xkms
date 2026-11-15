@@ -494,8 +494,16 @@ func (s *XKMSService) rotateKey(ctx context.Context, b Backend, backendName, key
 		return nil, err
 	}
 
+	// The record is written only while the stored one is still the record
+	// read above: the lock serializes rotations in this process only, so a
+	// rotator elsewhere, or any other writer, makes this one fail with a
+	// *keyversion.VersionConflictError instead of being overwritten.
+	var read *keyversion.Record
+	if k.stored {
+		read = k.record.Clone()
+	}
 	k.record.AddCurrent(next, time.Now().UTC(), callerSubject(ctx))
-	if err := store.Put(ctx, k.tenant, k.record); err != nil {
+	if err := store.CompareAndPut(ctx, k.tenant, read, k.record); err != nil {
 		// Unrecorded, the new key would be an orphan; it is removed so the
 		// key stays exactly as it was.
 		return nil, errors.Join(err, b.DeleteKey(ctx, attrs))

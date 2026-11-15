@@ -129,6 +129,52 @@ func (s *Store) Put(ctx context.Context, tenant string, rec *Record) error {
 	return nil
 }
 
+// CompareAndPut stores next as the record of its key for tenant only while
+// the stored record is still expected, the record the caller read; a nil
+// expected means the caller read no stored record, so next is stored only
+// while none exists. The comparison and the write are one guarded store
+// operation, so a stale or concurrent writer gets a *VersionConflictError
+// (matching ErrVersionConflict) and the stored record is left unchanged.
+func (s *Store) CompareAndPut(ctx context.Context, tenant string, expected, next *Record) error {
+	if next == nil {
+		return ErrNilRecord
+	}
+	name, err := recordName(tenant, next.Backend, next.KeyID)
+	if err != nil {
+		return err
+	}
+	conflict := &VersionConflictError{KeyID: next.KeyID, Backend: next.Backend}
+	if expected == nil {
+		stored, err := s.records.SaveIfAbsent(ctx, &Entity{Name: name, Record: *next})
+		if err != nil {
+			return &StoreError{Op: "put", Key: name, Err: err}
+		}
+		if !stored {
+			return conflict
+		}
+		return nil
+	}
+	// The read only finds the record's ID; the swap compares the stored
+	// bytes against expected itself.
+	current, err := s.records.GetByNaturalKey(ctx, name)
+	if qrdbsdk.IsDAONotFound(err) {
+		return conflict
+	}
+	if err != nil {
+		return &StoreError{Op: "get", Key: name, Err: err}
+	}
+	swapped, err := s.records.CompareAndSwap(ctx,
+		&Entity{ID: current.ID, Name: name, Record: *expected},
+		&Entity{ID: current.ID, Name: name, Record: *next})
+	if err != nil {
+		return &StoreError{Op: "put", Key: name, Err: err}
+	}
+	if !swapped {
+		return conflict
+	}
+	return nil
+}
+
 // Delete removes the record of keyID in backend for tenant. An absent record
 // is not an error.
 func (s *Store) Delete(ctx context.Context, tenant, backend, keyID string) error {

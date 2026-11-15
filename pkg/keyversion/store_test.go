@@ -104,6 +104,43 @@ func TestStoreRoundTrip(t *testing.T) {
 	assert.False(t, found)
 }
 
+func TestStoreCompareAndPut(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newTestStore(t)
+	at := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+
+	first := Implicit("k", "software")
+	first.AddCurrent(2, at, "alice")
+	require.NoError(t, s.CompareAndPut(ctx, "acme", nil, first), "no record is stored yet")
+
+	stale := Implicit("k", "software")
+	stale.AddCurrent(2, at, "bob")
+	err := s.CompareAndPut(ctx, "acme", nil, stale)
+	require.ErrorIs(t, err, ErrVersionConflict, "a record now exists")
+	var conflict *VersionConflictError
+	require.ErrorAs(t, err, &conflict)
+	assert.Equal(t, "k", conflict.KeyID)
+	assert.Equal(t, "software", conflict.Backend)
+
+	read, found, err := s.Load(ctx, "acme", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	next := read.Clone()
+	next.AddCurrent(3, at, "alice")
+	require.NoError(t, s.CompareAndPut(ctx, "acme", read, next), "the stored record is still the one read")
+
+	again := read.Clone()
+	again.AddCurrent(3, at, "bob")
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", read, again), ErrVersionConflict, "the record read is stale")
+	got, _, err := s.Load(ctx, "acme", "software", "k")
+	require.NoError(t, err)
+	assert.Equal(t, "alice", got.Versions[2].CreatedBy, "the stale write changed nothing")
+
+	require.NoError(t, s.Delete(ctx, "acme", "software", "k"))
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", got, again), ErrVersionConflict, "the record was deleted")
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", nil, nil), ErrNilRecord)
+}
+
 // TestStoreSystemTenant proves the empty tenant is stored as "system".
 func TestStoreSystemTenant(t *testing.T) {
 	ctx := context.Background()
