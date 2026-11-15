@@ -753,18 +753,6 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			}
 		}
 
-		// Record which credential the barrier is sealed under, so a later
-		// user PIN change (after a restart too) rewraps a PIN-bound barrier
-		// and leaves one under its own master password alone.
-		if barrierInitialized {
-			independent := barrierPW != choices.UserPin
-			if err := s.barrierSvc.recordCredentialSource(independent); err != nil {
-				slog.Error("wizard: barrier credential source not recorded", "error", err)
-				result.Errors = append(result.Errors, err.Error())
-				result.Success = false
-			}
-		}
-
 		// Detect a silent hardware->passphrase downgrade. This happens when the
 		// user requested hardware-backed sealing (tpm2 / pkcs11 / tpm_sealed) but
 		// the hardware strategy was unavailable or failed (e.g. TPM_RC_BAD_AUTH,
@@ -1339,15 +1327,7 @@ func (s *SetupWizardService) ApplySOProvisioning(choices *SetupChoices) (result 
 	s.emitSOProvisioningProgress(4, "Initializing built-in encryption")
 	if s.barrierSvc != nil {
 		barrierPW := choices.BarrierPassword
-		// The SO seals the barrier under a password of its own before the
-		// user has a PIN; a user PIN change later leaves it alone.
-		if initialized, _, _ := s.initBarrier(barrierPW, choices.SealerBackend, result); initialized {
-			if err := s.barrierSvc.recordCredentialSource(true); err != nil {
-				slog.Error("SO provisioning: barrier credential source not recorded", "error", err)
-				result.Errors = append(result.Errors, err.Error())
-				result.Success = false
-			}
-		}
+		s.initBarrier(barrierPW, choices.SealerBackend, result)
 	} else {
 		result.Warnings = append(result.Warnings, "barrier service unavailable")
 	}
@@ -1528,18 +1508,6 @@ func (s *SetupWizardService) ApplyUserOnboarding(choices *UserOnboardingChoices)
 			}
 		} else {
 			barrierInitialized = true
-		}
-
-		// Record which credential the barrier is sealed under: the SO's
-		// barrier password, or the user PIN when onboarding seals it under
-		// the PIN, so a later user PIN change rewraps only a PIN-bound one.
-		if barrierInitialized {
-			independent := barrierPW != choices.UserPIN
-			if err := s.barrierSvc.recordCredentialSource(independent); err != nil {
-				slog.Error("onboarding: barrier credential source not recorded", "error", err)
-				result.Errors = append(result.Errors, err.Error())
-				result.Success = false
-			}
 		}
 	}
 

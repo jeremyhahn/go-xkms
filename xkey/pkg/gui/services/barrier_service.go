@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -32,27 +31,6 @@ import (
 // barrierSubdir is the subdirectory under configDir for barrier storage.
 // Used as the fallback when no explicit dataDir is configured.
 const barrierSubdir = "barrier"
-
-// barrierCredentialSourceFile, in configDir, records which credential the
-// barrier is sealed under: barrierCredentialSourceIndependent or
-// barrierCredentialSourceUserPIN.
-const (
-	barrierCredentialSourceFile        = "barrier-credential-source"
-	barrierCredentialSourceIndependent = "independent_password"
-	barrierCredentialSourceUserPIN     = "user_pin"
-)
-
-// ErrBarrierCredentialSource reports a failure to persist the barrier's
-// credential source.
-type ErrBarrierCredentialSource struct {
-	Err error
-}
-
-func (e *ErrBarrierCredentialSource) Error() string {
-	return "barrier: record credential source: " + e.Err.Error()
-}
-
-func (e *ErrBarrierCredentialSource) Unwrap() error { return e.Err }
 
 // barrierRootKeyPath is the storage key for the sealed root key blob.
 const barrierRootKeyPath = "barrier/root_key"
@@ -121,127 +99,6 @@ type BarrierService struct {
 	// Initialize or Unseal so that GetSealInfo can display the actual
 	// strategy even when the barrier object is nil (sealed between sessions).
 	lastStrategy string
-
-	// independentPassword is set when the barrier was sealed under a master
-	// password of its own rather than the user PIN (the wizard's
-	// UseUserPinAsMaster=false with a BarrierPassword). A user PIN change
-	// then leaves the barrier alone. The wizard records it
-	// (recordCredentialSource) and NewBarrierService restores it. The
-	// default is PIN-bound, the lock screen's assumption.
-	independentPassword atomic.Bool
-	// credentialSourceKnown is set once the credential source is recorded
-	// or restored; an install from before it was recorded has none, and a
-	// user PIN change settles it from the barrier itself.
-	credentialSourceKnown atomic.Bool
-}
-
-// recordCredentialSource persists whether the barrier is sealed under a
-// master password of its own (independent) or the user PIN, beside the
-// barrier in configDir, so NewBarrierService restores it after a restart.
-// The setup wizard records it once the barrier is created or reopened.
-func (s *BarrierService) recordCredentialSource(independent bool) error {
-	source := barrierCredentialSourceUserPIN
-	if independent {
-		source = barrierCredentialSourceIndependent
-	}
-	if err := os.MkdirAll(s.configDir, 0700); err != nil {
-		return &ErrBarrierCredentialSource{Err: err}
-	}
-	path := filepath.Join(s.configDir, barrierCredentialSourceFile)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(source), 0600); err != nil {
-		return &ErrBarrierCredentialSource{Err: err}
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return &ErrBarrierCredentialSource{Err: errors.Join(err, os.Remove(tmp))}
-	}
-	s.independentPassword.Store(independent)
-	s.credentialSourceKnown.Store(true)
-	return nil
-}
-
-// restoreCredentialSource loads the credential source recordCredentialSource
-// persisted. With none recorded, or an unrecognised one, the barrier is
-// taken as PIN-bound, the lock screen's assumption, until
-// prepareUserPINRewrap settles it from the barrier itself.
-func (s *BarrierService) restoreCredentialSource() {
-	data, err := os.ReadFile(filepath.Join(s.configDir, barrierCredentialSourceFile))
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			s.log.Warn("barrier: credential source unreadable; treating the barrier as PIN-bound", "error", err)
-		}
-		return
-	}
-	switch string(data) {
-	case barrierCredentialSourceIndependent:
-		s.independentPassword.Store(true)
-		s.credentialSourceKnown.Store(true)
-	case barrierCredentialSourceUserPIN:
-		s.credentialSourceKnown.Store(true)
-	default:
-		s.log.Warn("barrier: unrecognised credential source; treating the barrier as PIN-bound")
-	}
-}
-
-// FollowsUserPIN reports whether the barrier credential is the user PIN, so a
-// user PIN change must rewrap the barrier.
-func (s *BarrierService) FollowsUserPIN() bool {
-	return !s.independentPassword.Load()
-}
-
-// prepareUserPINRewrap settles, before a user PIN change commits, whether
-// the barrier follows the PIN, and reports whether ChangePassword must
-// rewrap it once the PIN changes. A barrier under a password of its own,
-// or one sealed by a TPM2, PKCS#11 or cloud strategy, does not follow the
-// PIN. A PIN-bound barrier must be initialized, unsealed and open under
-// currentPIN, or the change is refused, so the PIN never changes without
-// the barrier following it. An install from before the credential source
-// was recorded has none: currentPIN opening the barrier records it as
-// PIN-bound, and currentPIN not opening it records it as sealed under a
-// password of its own once verifyCurrentPIN confirms currentPIN is the
-// user's PIN, so a mistyped PIN never settles it.
-func (s *BarrierService) prepareUserPINRewrap(currentPIN string, verifyCurrentPIN func() error) (rewrap bool, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.credentialSourceKnown.Load() && s.independentPassword.Load() {
-		return false, nil
-	}
-	if s.barrier == nil {
-		return false, ErrBarrierNotInitialized
-	}
-	if st := s.barrier.Status(); st == nil || st.Strategy != xkms.StrategyPassphrase {
-		return false, nil
-	}
-
-	ctx := s.context()
-	current, credErr := xkms.CredentialsFor(ctx, []byte(currentPIN))
-	if credErr != nil {
-		return false, credErr
-	}
-	defer func() { err = errors.Join(err, destroyCreds(current)) }()
-
-	verifyErr := s.barrier.VerifyCredentials(ctx, current)
-	switch {
-	case verifyErr == nil:
-		if !s.credentialSourceKnown.Load() {
-			if err := s.recordCredentialSource(false); err != nil {
-				return false, err
-			}
-		}
-		return true, nil
-	case errors.Is(verifyErr, qrdbseal.ErrCredentialMismatch) && !s.credentialSourceKnown.Load():
-		if err := verifyCurrentPIN(); err != nil {
-			return false, err
-		}
-		s.log.Info("barrier: credential source settled from the barrier; it is sealed under a password of its own")
-		if err := s.recordCredentialSource(true); err != nil {
-			return false, err
-		}
-		return false, nil
-	default:
-		return false, verifyErr
-	}
 }
 
 // NewBarrierService creates a new BarrierService. By default, encrypted data
@@ -260,12 +117,10 @@ func destroyCreds(c xkms.SealCredentials) error {
 }
 
 func NewBarrierService(configDir string, log *slog.Logger) *BarrierService {
-	s := &BarrierService{
+	return &BarrierService{
 		configDir: configDir,
 		log:       log.With("component", "barrier_service"),
 	}
-	s.restoreCredentialSource()
-	return s
 }
 
 // SetContext is the Wails lifecycle hook that provides the application context.
@@ -726,13 +581,11 @@ func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (er
 	if s.barrier == nil {
 		return ErrBarrierNotInitialized
 	}
-	// Only a passphrase-sealed barrier holds a password to rewrap; a TPM2,
-	// PKCS#11 or cloud-sealed barrier is left as it is.
-	if st := s.barrier.Status(); st == nil || st.Strategy != xkms.StrategyPassphrase {
-		return nil
-	}
 
 	ctx := s.context()
+	// CredentialsFor: ChangePassword is a no-op for hardware-backed
+	// strategies, which are called with empty passwords by design (see
+	// the doc comment above); NewCredentials would reject that empty input.
 	current, credErr := xkms.CredentialsFor(ctx, []byte(currentPassword))
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)

@@ -10,10 +10,6 @@ export function ChangePassword(arg1, arg2) {
   return window['go']['services']['BarrierService']['ChangePassword'](arg1, arg2);
 }
 
-export function FollowsUserPIN() {
-  return window['go']['services']['BarrierService']['FollowsUserPIN']();
-}
-
 export function GetBackend() {
   return window['go']['services']['BarrierService']['GetBackend']();
 }

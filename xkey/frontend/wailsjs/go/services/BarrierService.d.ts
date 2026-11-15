@@ -10,8 +10,6 @@ export function BestStrategy():Promise<services.BarrierStrategyInfo>;
 
 export function ChangePassword(arg1:string,arg2:string):Promise<void>;
 
-export function FollowsUserPIN():Promise<boolean>;
-
 export function GetBackend():Promise<storage.Backend>;
 
 export function GetBarrier():Promise<seal.StorageBarrier>;

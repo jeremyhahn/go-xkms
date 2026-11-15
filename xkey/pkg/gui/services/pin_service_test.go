@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
@@ -52,10 +51,6 @@ type mockPINBackend struct {
 	// verifyUserCalls counts VerifyUserPIN calls so a test can assert that
 	// an unlock never reached the PIN verification path.
 	verifyUserCalls atomic.Int32
-
-	// changeUserCalls counts ChangeUserPIN calls so a test can assert that a
-	// refused barrier rewrap never reached the PIN backend.
-	changeUserCalls atomic.Int32
 }
 
 func (m *mockPINBackend) Strategy() qrdbsdk.PINStrategyID             { return m.strategy }
@@ -64,14 +59,11 @@ func (m *mockPINBackend) UserPINSet() bool                            { return m
 func (m *mockPINBackend) IsInitialized() bool                         { return m.initialized }
 func (m *mockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
 
-func (m *mockPINBackend) SetSOPIN(_, _ string) error    { return m.setSOPINErr }
-func (m *mockPINBackend) SetUserPIN(_, _ string) error  { return m.setUserPINErr }
-func (m *mockPINBackend) ChangeSOPIN(_, _ string) error { return m.changeSOPINErr }
-func (m *mockPINBackend) ChangeUserPIN(_, _ string) error {
-	m.changeUserCalls.Add(1)
-	return m.changeUserErr
-}
-func (m *mockPINBackend) VerifySOPIN(_ string) error { return m.verifySOErr }
+func (m *mockPINBackend) SetSOPIN(_, _ string) error      { return m.setSOPINErr }
+func (m *mockPINBackend) SetUserPIN(_, _ string) error    { return m.setUserPINErr }
+func (m *mockPINBackend) ChangeSOPIN(_, _ string) error   { return m.changeSOPINErr }
+func (m *mockPINBackend) ChangeUserPIN(_, _ string) error { return m.changeUserErr }
+func (m *mockPINBackend) VerifySOPIN(_ string) error      { return m.verifySOErr }
 func (m *mockPINBackend) VerifyUserPIN(_ string) error {
 	m.verifyUserCalls.Add(1)
 	return m.verifyUserErr
@@ -695,169 +687,6 @@ func TestPINService_ChangeUserPIN_NoBarrierService(t *testing.T) {
 
 	err := svc.ChangeUserPIN("old-pin", "new-pin")
 	require.NoError(t, err)
-}
-
-// The wizard may seal the barrier under an independent master password
-// (UseUserPinAsMaster=false, BarrierPassword set): after setup and a
-// restart, a PIN change commits and leaves that barrier and its password
-// alone, while a barrier the wizard sealed under the user PIN follows it.
-func TestPINService_ChangeUserPIN_IndependentBarrierPasswordLeftAlone(t *testing.T) {
-	const masterPassword = "independent-master-password"
-	const newPIN = "112233"
-
-	for _, tc := range []struct {
-		name               string
-		useUserPinAsMaster bool
-		credential         string
-		afterChange        string
-		notAfterChange     string
-	}{
-		// The wizard sealed the barrier under its own master password: after
-		// a restart a PIN change still leaves it under that password.
-		{name: "independent password", credential: masterPassword, afterChange: masterPassword, notAfterChange: newPIN},
-		// The wizard sealed the barrier under the user PIN: after a restart a
-		// PIN change rewraps it under the new PIN.
-		{name: "user PIN", useUserPinAsMaster: true, credential: testUserPin, afterChange: newPIN, notAfterChange: testUserPin},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			configDir := t.TempDir()
-			setupBarrier := NewBarrierService(configDir, slog.Default())
-			setupBarrier.SetContext(context.Background())
-			tw := newTestSetupWizard(&GUIConfigData{})
-			tw.svc.SetBarrierService(setupBarrier)
-			result, err := tw.svc.ApplySetup(&SetupChoices{
-				Mode:               "standalone",
-				SOPin:              testSOPin,
-				UserPin:            testUserPin,
-				PasswordStoreMode:  "aes_software",
-				SealerBackend:      "passphrase",
-				StorageType:        "barrier",
-				BarrierPassword:    masterPassword,
-				UseUserPinAsMaster: tc.useUserPinAsMaster,
-			})
-			require.NoError(t, err)
-			require.True(t, result.Success, "setup errors: %v", result.Errors)
-			require.NoError(t, setupBarrier.Seal())
-
-			// A restart: the app builds a fresh barrier service over the
-			// same directory and the lock screen unseals it.
-			restarted := NewBarrierService(configDir, slog.Default())
-			require.NoError(t, restarted.Unseal(tc.credential, "passphrase"))
-			svc := newTestPINService(&mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true})
-			svc.SetBarrierService(restarted)
-
-			require.NoError(t, svc.ChangeUserPIN(testUserPin, newPIN))
-
-			require.NoError(t, restarted.Seal())
-			reopened := NewBarrierService(configDir, slog.Default())
-			require.Error(t, reopened.Unseal(tc.notAfterChange, "passphrase"))
-			require.NoError(t, reopened.Unseal(tc.afterChange, "passphrase"))
-		})
-	}
-}
-
-// A PIN-bound barrier is rewrapped only together with the PIN: when the PIN
-// backend refuses the change, the barrier still opens with the current PIN
-// and not the new one, so the two credentials never diverge.
-func TestPINService_ChangeUserPIN_FailedPINChangeLeavesBarrierUnchanged(t *testing.T) {
-	pinErr := errors.New("pin backend refused the change")
-	backend := &mockPINBackend{
-		strategy:      qrdbsdk.PINStrategySoftware,
-		userPINSet:    true,
-		changeUserErr: pinErr,
-	}
-	svc := newTestPINService(backend)
-	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
-	require.NoError(t, barrierSvc.Initialize("old-pin", "passphrase"))
-	svc.SetBarrierService(barrierSvc)
-
-	err := svc.ChangeUserPIN("old-pin", "new-pin")
-	require.ErrorIs(t, err, pinErr)
-
-	require.NoError(t, barrierSvc.Seal())
-	reopened := NewBarrierService(barrierSvc.configDir, slog.Default())
-	require.Error(t, reopened.Unseal("new-pin", "passphrase"), "the barrier must not take a PIN the backend refused")
-	require.NoError(t, reopened.Unseal("old-pin", "passphrase"))
-}
-
-// faultyBarrierStore is a barrier storage backend whose guarded writes fail
-// once failSwaps is set, standing in for a storage or guarded-write fault on
-// the root-key blob. Reads still work, so the barrier stays initialized and
-// unsealed. Close is a no-op: the barrier service reopens its backend through
-// the factory, and every reopening must see the same store.
-type faultyBarrierStore struct {
-	xkms.StorageBackend
-	failSwaps atomic.Bool
-	err       error
-}
-
-func (f *faultyBarrierStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, []byte, error) {
-	if f.failSwaps.Load() {
-		return false, nil, f.err
-	}
-	cas, ok := f.StorageBackend.(interface {
-		CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, []byte, error)
-	})
-	if !ok {
-		return false, nil, errors.New("faultyBarrierStore: inner store has no CompareAndSwap")
-	}
-	return cas.CompareAndSwap(ctx, key, expected, next)
-}
-
-func (f *faultyBarrierStore) Close() error { return nil }
-
-// A storage failure while the PIN-bound barrier is rewrapped is reported as
-// ErrBarrierResealFailed after the PIN backend has changed the PIN, the order
-// main uses.
-func TestPINService_ChangeUserPIN_BarrierStoreFailureReturnsResealFailed(t *testing.T) {
-	backend := &mockPINBackend{
-		strategy:   qrdbsdk.PINStrategySoftware,
-		userPINSet: true,
-	}
-	svc := newTestPINService(backend)
-	store := &faultyBarrierStore{
-		StorageBackend: xkms.NewStorageMemory(),
-		err:            errors.New("barrier store guarded write failed"),
-	}
-	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
-	barrierSvc.SetBaseBackendFactory(func(string) (xkms.StorageBackend, error) { return store, nil })
-	require.NoError(t, barrierSvc.Initialize("old-pin", "passphrase"))
-	require.True(t, barrierSvc.IsInitialized() && barrierSvc.IsUnsealed())
-	svc.SetBarrierService(barrierSvc)
-
-	store.failSwaps.Store(true)
-	err := svc.ChangeUserPIN("old-pin", "new-pin")
-	require.Error(t, err, "a failed barrier rewrap must not report success")
-	assert.ErrorIs(t, err, ErrBarrierResealFailed)
-	assert.Equal(t, int32(1), backend.changeUserCalls.Load(), "the PIN backend changes the PIN before the barrier is rewrapped")
-}
-
-// A hardware-sealed barrier (TPM2) does not hold the PIN as a passphrase: a
-// PIN change succeeds and no barrier password change is attempted. Every
-// guarded write to the barrier store fails, so any rewrap attempt would
-// surface as ErrBarrierResealFailed.
-func TestPINService_ChangeUserPIN_HardwareBarrierNotRewrapped(t *testing.T) {
-	backend := &mockPINBackend{
-		strategy:   qrdbsdk.PINStrategySoftware,
-		userPINSet: true,
-	}
-	svc := newTestPINService(backend)
-	store := &faultyBarrierStore{
-		StorageBackend: xkms.NewStorageMemory(),
-		err:            errors.New("barrier store guarded write attempted"),
-	}
-	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
-	barrierSvc.SetContext(context.Background())
-	barrierSvc.SetBaseBackendFactory(func(string) (xkms.StorageBackend, error) { return store, nil })
-	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return &mockSealer{canSeal: true} })
-	require.NoError(t, barrierSvc.Initialize("old-pin", string(xkms.StrategyTPM2)))
-	require.True(t, barrierSvc.IsUnsealed())
-	svc.SetBarrierService(barrierSvc)
-
-	store.failSwaps.Store(true)
-	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
-	assert.Equal(t, int32(1), backend.changeUserCalls.Load())
-	assert.True(t, barrierSvc.IsUnsealed())
 }
 
 func TestPINService_SetBarrierService_NilSafe(t *testing.T) {
