@@ -684,10 +684,12 @@ func TestPINService_ChangeUserPIN_BarrierResealFails(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBarrierResealFailed)
 }
 
-// A barrier sealed with its own passphrase (UseUserPinAsMaster=false) is
-// independent of the user PIN: the PIN change commits and the barrier keeps
-// unsealing with its passphrase, never with the new PIN.
-func TestPINService_ChangeUserPIN_IndependentBarrierLeftAlone(t *testing.T) {
+// A barrier sealed with its own passphrase (UseUserPinAsMaster=false) reads
+// as a credential mismatch for the user PIN. go-qrdb v0.58.4 reports every
+// unseal failure as a mismatch, so a mismatch cannot prove the barrier is
+// independent: the change is refused before the PIN backend commits, and the
+// barrier keeps unsealing with its passphrase.
+func TestPINService_ChangeUserPIN_CredentialMismatchRefusesBeforeCommit(t *testing.T) {
 	backend := &mockPINBackend{
 		strategy:   qrdbsdk.PINStrategySoftware,
 		userPINSet: true,
@@ -698,15 +700,55 @@ func TestPINService_ChangeUserPIN_IndependentBarrierLeftAlone(t *testing.T) {
 	require.NoError(t, barrierSvc.Initialize("barrier-pass", "passphrase"))
 	svc.SetBarrierService(barrierSvc)
 
-	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
-	require.Equal(t, int32(1), backend.changeUserCalls.Load())
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, ErrBarrierNotPINSealed)
+	require.Contains(t, err.Error(), "not sealed by the user PIN")
+	require.Equal(t, int32(0), backend.changeUserCalls.Load())
 
 	require.NoError(t, barrierSvc.Seal())
-	withNewPIN := NewBarrierService(barrierSvc.configDir, slog.Default())
-	require.Error(t, withNewPIN.Unseal("new-pin", "passphrase"))
 	withPassphrase := NewBarrierService(barrierSvc.configDir, slog.Default())
 	require.NoError(t, withPassphrase.Unseal("barrier-pass", "passphrase"))
 	require.True(t, withPassphrase.IsUnsealed())
+}
+
+// armableUnsealSealer unseals normally until armed, then fails every
+// unseal, standing in for a TPM or enclave failure on a PIN-bound barrier.
+type armableUnsealSealer struct {
+	mockSealer
+	armed atomic.Bool
+	err   error
+}
+
+func (s *armableUnsealSealer) Unseal(ctx context.Context, sealed *xkms.SealedData, opts *xkms.UnsealOptions) ([]byte, error) {
+	if s.armed.Load() {
+		return nil, s.err
+	}
+	return s.mockSealer.Unseal(ctx, sealed, opts)
+}
+
+// A strategy unseal failure while checking the barrier credential is not
+// proof that the PIN does not seal it: the change is refused before the PIN
+// backend commits.
+func TestPINService_ChangeUserPIN_StrategyUnsealFailureRefusesBeforeCommit(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+
+	sealer := &armableUnsealSealer{
+		mockSealer: mockSealer{canSeal: true},
+		err:        errors.New("simulated hardware unseal failure"),
+	}
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return sealer })
+	require.NoError(t, barrierSvc.Initialize("", string(xkms.StrategyTPM2)))
+	svc.SetBarrierService(barrierSvc)
+
+	sealer.armed.Store(true)
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, ErrBarrierNotPINSealed)
+	require.Equal(t, int32(0), backend.changeUserCalls.Load())
 }
 
 // A PIN-sealed barrier is checked before the commit and rewrapped after it:
@@ -765,7 +807,7 @@ func TestPINService_ChangeUserPIN_BarrierStorageErrorRefusesBeforeCommit(t *test
 
 	base.armed.Store(true)
 	err := svc.ChangeUserPIN("old-pin", "new-pin")
-	require.ErrorIs(t, err, ErrBarrierResealFailed)
+	require.ErrorIs(t, err, ErrBarrierNotPINSealed)
 	require.ErrorIs(t, err, storageErr)
 	require.Equal(t, int32(0), backend.changeUserCalls.Load())
 }
@@ -779,7 +821,9 @@ func TestPINService_ChangeUserPIN_UninitializedBarrierRefusesBeforeCommit(t *tes
 	svc := newTestPINService(backend)
 	svc.SetBarrierService(NewBarrierService(t.TempDir(), slog.Default()))
 
-	require.ErrorIs(t, svc.ChangeUserPIN("old-pin", "new-pin"), ErrBarrierResealFailed)
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, ErrBarrierNotPINSealed)
+	require.ErrorIs(t, err, ErrBarrierNotInitialized)
 	require.Equal(t, int32(0), backend.changeUserCalls.Load())
 }
 

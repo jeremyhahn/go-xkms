@@ -402,6 +402,15 @@ var (
 	// ErrBarrierResealFailed indicates the barrier root key re-seal failed
 	// during a password change operation.
 	ErrBarrierResealFailed = errors.New("barrier_service: barrier re-seal failed")
+
+	// ErrBarrierNotPINSealed indicates ChangeUserPIN refused the change
+	// because it could not confirm that the current user PIN seals the
+	// barrier. It wraps the cause (a credential mismatch, a strategy or
+	// enclave failure, a storage error or an uninitialized barrier); go-qrdb
+	// v0.58.4 reports every unseal failure as a credential mismatch, so none
+	// of these proves the barrier independent of the PIN. Nothing has
+	// committed when it is returned.
+	ErrBarrierNotPINSealed = errors.New("barrier_service: the barrier is not sealed by the user PIN; change its credential separately (pending go-xkms #2098)")
 )
 
 // ErrBarrierStrategyUnavailable indicates the selected barrier strategy
