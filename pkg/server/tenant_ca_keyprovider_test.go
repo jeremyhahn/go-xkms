@@ -6,6 +6,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,6 +18,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -126,6 +130,91 @@ func TestTenantCAKeyFactory_EnsureTenantIsIdempotent(t *testing.T) {
 	after := tenantSignerPublic(t, base, "tenant-a")
 	assert.True(t, before.Equal(after), "EnsureTenant replaced an existing login CA key")
 	require.Error(t, f.EnsureTenant(ctx, ""))
+}
+
+// sharedTenantCABackends returns two backends over one key store and one
+// certificate store: two cluster nodes that share the tenants' keys.
+func sharedTenantCABackends(t *testing.T) (xkms.Backend, xkms.Backend) {
+	t.Helper()
+	keys, certs := storage.New(), storage.New()
+	open := func() xkms.Backend {
+		provider, err := software.NewBackend(&software.Config{KeyStorage: keys})
+		require.NoError(t, err)
+		base, err := xkms.New(&xkms.BackendConfig{Backend: provider, CertStorage: certs})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = base.Close() })
+		return base
+	}
+	return open(), open()
+}
+
+// staleListBackend hides every key from its first hide ListKeys calls: the
+// view of a node that looked before another node generated the key.
+type staleListBackend struct {
+	xkms.Backend
+	hide atomic.Int32
+}
+
+func (b *staleListBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
+	if b.hide.Add(-1) >= 0 {
+		return nil, nil
+	}
+	return b.Backend.ListKeys(ctx)
+}
+
+// tenantLoginCA returns the public key of the tenant's login CA signer and
+// its saved certificate, through the factory.
+func tenantLoginCA(t *testing.T, f *tenantCAKeyFactory, tenantID string) (crypto.PublicKey, *x509.Certificate) {
+	t.Helper()
+	ctx := context.Background()
+	p, err := f.ProviderForTenant(tenantID)
+	require.NoError(t, err)
+	signer, err := p.Signer(ctx)
+	require.NoError(t, err)
+	cert, err := p.Certificate(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, cert)
+	return signer.Public(), cert
+}
+
+func TestTenantCAKeyFactory_ConcurrentNodesConverge(t *testing.T) {
+	ctx := context.Background()
+	baseA, baseB := sharedTenantCABackends(t)
+	a := newTenantCAKeyFactory()
+	require.NoError(t, a.Bind(baseA))
+	b := newTenantCAKeyFactory()
+	stale := &staleListBackend{Backend: baseB}
+	stale.hide.Store(1)
+	require.NoError(t, b.Bind(stale))
+
+	// Node A provisions first; node B had looked before A generated the key,
+	// so its generate collides with A's key.
+	require.NoError(t, a.EnsureTenant(ctx, "tenant-a"))
+	require.NoError(t, b.EnsureTenant(ctx, "tenant-a"), "a key another node provisioned is not a failure")
+
+	pubA, certA := tenantLoginCA(t, a, "tenant-a")
+	pubB, certB := tenantLoginCA(t, b, "tenant-a")
+	assert.True(t, pubA.(*ecdsa.PublicKey).Equal(pubB), "both nodes must resolve the one persisted key")
+	assert.True(t, certA.Equal(certB), "both nodes must resolve the one saved certificate")
+	assert.True(t, pubA.(*ecdsa.PublicKey).Equal(certA.PublicKey), "the certificate must be over the persisted key")
+
+	// Both at once, on a fresh tenant.
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, f := range []*tenantCAKeyFactory{a, b} {
+		wg.Add(1)
+		go func(i int, f *tenantCAKeyFactory) {
+			defer wg.Done()
+			errs[i] = f.EnsureTenant(ctx, "tenant-b")
+		}(i, f)
+	}
+	wg.Wait()
+	require.NoError(t, errs[0])
+	require.NoError(t, errs[1])
+	pubA, certA = tenantLoginCA(t, a, "tenant-b")
+	pubB, _ = tenantLoginCA(t, b, "tenant-b")
+	assert.True(t, pubA.(*ecdsa.PublicKey).Equal(pubB))
+	assert.True(t, pubA.(*ecdsa.PublicKey).Equal(certA.PublicKey))
 }
 
 func TestTenantCAKeyFactory_SignatureVerifies(t *testing.T) {
