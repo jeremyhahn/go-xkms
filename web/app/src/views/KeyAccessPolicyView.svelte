@@ -87,18 +87,45 @@
     return policy;
   }
 
+  // Each load gets a sequence number; a target edit bumps it, so a
+  // response for an earlier target never fills the form.
+  let seq = 0;
+  let loading = $state(false);
+  // The target the form holds a loaded policy for, or null.
+  let loadedFor: string | null = null;
+
+  function target(): string {
+    return `${backend.trim()}\u0000${keyId.trim()}`;
+  }
+
+  // Runs on every edit of the key ID or backend: a policy loaded for the
+  // previous target must never be saved to the new one.
+  function targetChanged(): void {
+    seq++;
+    loading = false;
+    if (loadedFor !== null && loadedFor !== target()) {
+      fill(undefined);
+      version = null;
+      loadedFor = null;
+    }
+  }
+
   async function load(): Promise<void> {
-    busy = true;
+    const mine = ++seq;
+    const at = target();
+    loading = true;
     error = null;
     formError = null;
     try {
       const res = await getKeyPolicy(keyId.trim(), backend.trim());
+      if (mine !== seq || at !== target()) return;
       fill(res.policy);
       version = res.policy ? (res.policy.version ?? 0) : "default";
+      loadedFor = at;
     } catch (e) {
-      error = message(e);
+      if (mine === seq) error = message(e);
     } finally {
-      busy = false;
+      if (mine === seq) loading = false;
     }
   }
 
@@ -113,8 +140,10 @@
     busy = true;
     try {
       const id = keyId.trim();
+      const at = target();
       const res = await setKeyPolicy(id, backend.trim(), policy);
       version = res.policy_version;
+      if (at === target()) loadedFor = at;
       showToast("success", `Access policy for "${id}" saved (version ${res.policy_version}).`);
     } catch (e) {
       error = message(e);
@@ -145,9 +174,9 @@
 <PageHeader title="Key Access Policy" subtitle="Who may use a key, and for what" />
 
 <div class="flex flex-wrap items-end gap-2 mb-4">
-  <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} />
-  <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} />
-  <button class="btn btn-sm" onclick={load} disabled={!ready || busy}>Load</button>
+  <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={() => keyId, (v) => { keyId = v; targetChanged(); }} />
+  <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={() => backend, (v) => { backend = v; targetChanged(); }} />
+  <button class="btn btn-sm" onclick={load} disabled={!ready || busy || loading}>Load</button>
   {#if version === "default"}
     <span class="text-sm text-base-content/60">No access policy set (default applies)</span>
   {:else if version !== null}
@@ -225,7 +254,7 @@
   {#if formError}<p class="text-error text-sm" role="alert">{formError}</p>{/if}
 
   <div class="flex gap-2">
-    <button class="btn btn-primary btn-sm" onclick={save} disabled={!ready || busy}>Save</button>
-    <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={!ready || busy}>Remove policy</button>
+    <button class="btn btn-primary btn-sm" onclick={save} disabled={!ready || busy || loading}>Save</button>
+    <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={!ready || busy || loading}>Remove policy</button>
   </div>
 </div>
