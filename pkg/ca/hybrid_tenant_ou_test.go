@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"errors"
 	"math/big"
 	"reflect"
@@ -115,5 +116,66 @@ func TestCreateHybridCertificate_CAKeepsSubject(t *testing.T) {
 		!reflect.DeepEqual(caCert.Subject.Organization, want.Organization) ||
 		!reflect.DeepEqual(caCert.Subject.Country, want.Country) {
 		t.Fatalf("CA subject = %+v, want %+v", caCert.Subject, want)
+	}
+}
+
+// A raw subject whose RDN SET holds two OUs (OU=a, OU=system) must not let DER
+// SET sorting move another OU ahead of the stamped tenant: the parsed
+// certificate names the tenant as OU[0], or the subject is refused.
+func TestCreateHybridCertificate_RawMultiOUSetKeepsTenantFirst(t *testing.T) {
+	caCert, classicalKey, quantumKey := hybridTestIssuer(t)
+	oidOU := asn1.ObjectIdentifier{2, 5, 4, 11}
+	oidCN := asn1.ObjectIdentifier{2, 5, 4, 3}
+	raw, err := asn1.Marshal(pkix.RDNSequence{
+		{{Type: oidCN, Value: "leaf"}},
+		{{Type: oidOU, Value: "a"}, {Type: oidOU, Value: "system"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal raw subject: %v", err)
+	}
+	leaf := makeHybridLeafTemplate()
+	leaf.RawSubject = raw
+
+	const tenant = "tenant-t"
+	leafDER, err := CreateHybridCertificate(tenant, leaf, caCert, classicalKey, quantumKey)
+	if err != nil {
+		if !errors.Is(err, ErrInvalidRawSubject) {
+			t.Fatalf("CreateHybridCertificate: err = %v, want ErrInvalidRawSubject or success", err)
+		}
+		return
+	}
+	parsed, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	if ou := parsed.Subject.OrganizationalUnit; len(ou) == 0 || ou[0] != tenant {
+		t.Fatalf("leaf OU = %v, want OU[0] = %s", ou, tenant)
+	}
+}
+
+// A self-signed hybrid leaf (parent == template) names the stamped subject as
+// its issuer too, and the caller's template is left untouched.
+func TestCreateHybridCertificate_SelfSignedLeafIssuerIsSubject(t *testing.T) {
+	_, classicalKey, quantumKey := hybridTestIssuer(t)
+	leaf := makeHybridLeafTemplate()
+	before := leaf.Subject.String()
+
+	const tenant = "tenant-t"
+	der, err := CreateHybridCertificate(tenant, leaf, leaf, classicalKey, quantumKey)
+	if err != nil {
+		t.Fatalf("CreateHybridCertificate self-signed: %v", err)
+	}
+	parsed, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	if got := parsed.Subject.OrganizationalUnit; !reflect.DeepEqual(got, []string{tenant}) {
+		t.Fatalf("leaf OU = %v, want [%s]", got, tenant)
+	}
+	if string(parsed.RawIssuer) != string(parsed.RawSubject) {
+		t.Fatalf("issuer %q != subject %q", parsed.Issuer, parsed.Subject)
+	}
+	if leaf.Subject.String() != before || leaf.RawSubject != nil {
+		t.Fatalf("caller template mutated: subject %+v", leaf.Subject)
 	}
 }
