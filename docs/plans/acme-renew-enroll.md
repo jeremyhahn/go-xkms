@@ -9,8 +9,8 @@ revoke.
 
 ## Commands
 
-- `xkey acme renew --cert <file> --domain <name> [--csr <file>]
-  [--challenge <type>] [--authz-type dns|ip|permanent-identifier]
+- `xkey acme renew --cert <file> --domain <name> --csr <file>
+  --challenge <type> [--authz-type dns|ip|permanent-identifier]
   [--out <file>]`
   - reads the old certificate (`os.ReadFile` + `parsePEMCertificate`),
     builds an `sdkacme.ACMECertificateRequest` (AuthzType, AuthzValue,
@@ -48,3 +48,12 @@ revoke.
 
 xkey build + cmd tests pass, sdk/go build passes, make lint 0 issues (2026-11-12).
 Renew reuses the package's loadCertificatePEM (as revoke does).
+
+## Codex fix slice (lane sacmej, PR #2126; each test commit before its fix)
+
+- Finding 2: `test(xkey): renew rejects a request the acme client would
+  reject`, `fix(xkey): renew requires a challenge type and a CSR, as the acme
+  client does` (CLI and GUI require both and run CertificateRequest.Validate).
+- Finding 4: `test(xkey): acme enrollment ends at its timeout and releases the
+  TPM`, `fix(xkey): acme enrollment honours its timeout` (ACMEEnrollContext).
+- Next slice: findings 1 (challenge dispatch) and 3 (challenge setup).

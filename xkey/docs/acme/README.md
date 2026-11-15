@@ -17,7 +17,7 @@ no client logic of its own.
 | `account register\|update\|deactivate` | Create and manage the ACME account | Implemented (CLI, GUI) |
 | `enroll` | Enroll the local TPM through `enroll-01`, `endorse-01` or `device-attest-01`; writes the IDevID, IAK and chain as PEM | Implemented (CLI, GUI) |
 | `endorse` | Obtain an EK certificate for the local TPM through `endorse-01` (`--ip` required); writes the PEM certificate only, to `--out` or stdout | Implemented (CLI, GUI) |
-| `renew` | Renew an issued certificate (`--cert`, `--domain`); writes the PEM certificate only | Implemented (CLI, GUI) |
+| `renew` | Renew an issued certificate (`--cert`, `--domain`, `--challenge`, `--csr`, all required: the ACME client has no default challenge and cannot derive a CSR from the old certificate); writes the PEM certificate only | Implemented (CLI, GUI) |
 | `revoke` | Revoke an issued certificate (`--cert`, `--reason` RFC 5280 name or number) | Implemented (CLI, GUI) |
 
 Shared flags: `--directory` (ACME directory URL), `--account-key` (PEM
