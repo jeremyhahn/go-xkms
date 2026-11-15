@@ -1,6 +1,7 @@
 <script lang="ts">
   import PageHeader from "$components/PageHeader.svelte";
   import Alert from "$components/Alert.svelte";
+  import Modal from "$components/Modal.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
   import {
     KEY_USAGES,
@@ -20,6 +21,13 @@
   let version = $state<number | "default" | null>(null);
 
   let ops = $state<Record<KeyUsage, boolean>>(emptyOps());
+  // An empty allowed_operations list means "every operation RBAC grants"
+  // (pkg/keypolicy), so unrestricted is an explicit choice, never an empty
+  // selection. loadedRestricted is the stored policy's state, to warn before
+  // a save widens it.
+  let restrictOps = $state(false);
+  let loadedRestricted = $state(false);
+  let confirmWiden = $state<KeyPolicy | null>(null);
   let allowed = $state<string[]>([]);
   let denied = $state<string[]>([]);
   let newAllowed = $state("");
@@ -42,6 +50,8 @@
   function fill(p: KeyPolicy | undefined): void {
     ops = emptyOps();
     for (const u of p?.allowed_operations ?? []) ops[u] = true;
+    restrictOps = (p?.allowed_operations ?? []).length > 0;
+    loadedRestricted = restrictOps;
     allowed = [...(p?.allowed_principals ?? [])];
     denied = [...(p?.denied_principals ?? [])];
     expiry = p?.expires_at ? new Date(p.expires_at * 1000).toISOString().slice(0, 10) : "";
@@ -67,8 +77,13 @@
     const both = allowed.filter((p) => denied.includes(p));
     if (both.length > 0) return `A principal cannot be both allowed and denied: ${both.join(", ")}`;
     const policy: KeyPolicy = {};
-    const operations = KEY_USAGES.filter((u) => ops[u]);
-    if (operations.length > 0) policy.allowed_operations = operations;
+    if (restrictOps) {
+      const operations = KEY_USAGES.filter((u) => ops[u]);
+      if (operations.length === 0) {
+        return "Select at least one operation, or turn off Restrict operations to allow every operation RBAC grants.";
+      }
+      policy.allowed_operations = operations;
+    }
     if (allowed.length > 0) policy.allowed_principals = [...allowed];
     if (denied.length > 0) policy.denied_principals = [...denied];
     if (expiry !== "") {
@@ -110,11 +125,21 @@
       return;
     }
     formError = null;
+    if (loadedRestricted && !restrictOps) {
+      confirmWiden = policy;
+      return;
+    }
+    await put(policy);
+  }
+
+  async function put(policy: KeyPolicy): Promise<void> {
+    confirmWiden = null;
     busy = true;
     try {
       const id = keyId.trim();
       const res = await setKeyPolicy(id, backend.trim(), policy);
       version = res.policy_version;
+      loadedRestricted = policy.allowed_operations !== undefined;
       showToast("success", `Access policy for "${id}" saved (version ${res.policy_version}).`);
     } catch (e) {
       error = message(e);
@@ -160,10 +185,17 @@
 <div class="space-y-4 max-w-3xl">
   <fieldset>
     <legend class="font-semibold mb-1">Allowed operations</legend>
+    <label class="label cursor-pointer gap-2 justify-start">
+      <input type="checkbox" class="checkbox checkbox-sm" bind:checked={restrictOps} />
+      <span>Restrict operations</span>
+    </label>
+    {#if !restrictOps}
+      <p class="text-sm text-base-content/60">Unrestricted: every operation RBAC grants is allowed.</p>
+    {/if}
     <div class="flex flex-wrap gap-x-4">
       {#each KEY_USAGES as u (u)}
         <label class="label cursor-pointer gap-2">
-          <input type="checkbox" class="checkbox checkbox-sm" bind:checked={ops[u]} />
+          <input type="checkbox" class="checkbox checkbox-sm" bind:checked={ops[u]} onchange={() => { if (ops[u]) restrictOps = true; }} />
           <span>{u}</span>
         </label>
       {/each}
@@ -229,3 +261,14 @@
     <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={!ready || busy}>Remove policy</button>
   </div>
 </div>
+
+{#if confirmWiden}
+  <Modal open={confirmWiden !== null} onClose={() => (confirmWiden = null)} labelledby="key-policy-widen-title">
+    <h3 id="key-policy-widen-title" class="text-lg font-semibold mb-4">Remove the operation restriction</h3>
+    <p>This save removes the operation restriction: the key will allow every operation RBAC grants.</p>
+    <div class="modal-action">
+      <button class="btn btn-ghost" onclick={() => (confirmWiden = null)} disabled={busy}>Cancel</button>
+      <button class="btn btn-warning" onclick={() => confirmWiden && put(confirmWiden)} disabled={busy}>Widen and save</button>
+    </div>
+  </Modal>
+{/if}
