@@ -474,12 +474,24 @@ func (s *XKMSService) rotateKey(ctx context.Context, b Backend, backendName, key
 	}
 	next := k.record.Next()
 	name := keyversion.Name(keyID, next)
+	// read is the record as read above, the expected value of every check
+	// and of the write below.
+	var read *keyversion.Record
+	if k.stored {
+		read = k.record.Clone()
+	}
 
 	// A backend key under the next version's name that the record does not
 	// hold was left by a rotation interrupted between creating the key and
 	// recording it. It was never current, so nothing was ever signed or
 	// encrypted with it; it is removed so the name can be created again.
+	// It is removed only while the stored record is still the one read: a
+	// writer that has since recorded that version owns the key, which is
+	// then no orphan, and this rotation fails with a conflict instead.
 	if orphan, ok := k.present[next]; ok {
+		if err := store.Verify(ctx, k.tenant, backendName, keyID, read); err != nil {
+			return nil, err
+		}
 		if err := b.DeleteKey(ctx, orphan); err != nil {
 			return nil, &ErrKeyOperation{Operation: "remove interrupted rotation", KeyID: name, Err: err}
 		}
@@ -498,10 +510,6 @@ func (s *XKMSService) rotateKey(ctx context.Context, b Backend, backendName, key
 	// read above: the lock serializes rotations in this process only, so a
 	// rotator elsewhere, or any other writer, makes this one fail with a
 	// *keyversion.VersionConflictError instead of being overwritten.
-	var read *keyversion.Record
-	if k.stored {
-		read = k.record.Clone()
-	}
 	k.record.AddCurrent(next, time.Now().UTC(), callerSubject(ctx))
 	if err := store.CompareAndPut(ctx, k.tenant, read, k.record); err != nil {
 		// Unrecorded, the new key would be an orphan; it is removed so the

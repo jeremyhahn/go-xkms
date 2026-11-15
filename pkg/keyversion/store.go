@@ -14,7 +14,9 @@
 package keyversion
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 
@@ -170,6 +172,36 @@ func (s *Store) CompareAndPut(ctx context.Context, tenant string, expected, next
 		return &StoreError{Op: "put", Key: name, Err: err}
 	}
 	if !swapped {
+		return conflict
+	}
+	return nil
+}
+
+// Verify returns a *VersionConflictError (matching ErrVersionConflict) when
+// the stored record of keyID in backend for tenant is no longer expected,
+// the record the caller read; a nil expected means the caller read no
+// stored record. It writes nothing.
+func (s *Store) Verify(ctx context.Context, tenant, backend, keyID string, expected *Record) error {
+	got, found, err := s.Load(ctx, tenant, backend, keyID)
+	if err != nil {
+		return err
+	}
+	conflict := &VersionConflictError{KeyID: keyID, Backend: backend}
+	if found != (expected != nil) {
+		return conflict
+	}
+	if !found {
+		return nil
+	}
+	a, err := json.Marshal(got)
+	if err != nil {
+		return &StoreError{Op: "verify", Key: keyID, Err: err}
+	}
+	b, err := json.Marshal(expected)
+	if err != nil {
+		return &StoreError{Op: "verify", Key: keyID, Err: err}
+	}
+	if !bytes.Equal(a, b) {
 		return conflict
 	}
 	return nil

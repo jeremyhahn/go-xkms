@@ -141,6 +141,31 @@ func TestStoreCompareAndPut(t *testing.T) {
 	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", nil, nil), ErrNilRecord)
 }
 
+func TestStoreVerify(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newTestStore(t)
+	at := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+
+	require.NoError(t, s.Verify(ctx, "acme", "software", "k", nil), "no record is stored, none was read")
+
+	rec := Implicit("k", "software")
+	rec.AddCurrent(2, at, "alice")
+	require.NoError(t, s.Put(ctx, "acme", rec))
+	require.ErrorIs(t, s.Verify(ctx, "acme", "software", "k", nil), ErrVersionConflict, "a record was stored since")
+
+	read, _, err := s.Load(ctx, "acme", "software", "k")
+	require.NoError(t, err)
+	require.NoError(t, s.Verify(ctx, "acme", "software", "k", read))
+
+	moved := read.Clone()
+	moved.AddCurrent(3, at, "bob")
+	require.NoError(t, s.Put(ctx, "acme", moved))
+	err = s.Verify(ctx, "acme", "software", "k", read)
+	var conflict *VersionConflictError
+	require.ErrorAs(t, err, &conflict, "the record moved on")
+	assert.Equal(t, uint32(2), read.Current, "Clone left the record read unchanged")
+}
+
 // TestStoreSystemTenant proves the empty tenant is stored as "system".
 func TestStoreSystemTenant(t *testing.T) {
 	ctx := context.Background()
