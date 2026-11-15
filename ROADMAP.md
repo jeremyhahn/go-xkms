@@ -161,6 +161,10 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **piv-i** — PIV-I profiles on FIPS-validated hardware — [xkey/docs/roadmap/piv.md](xkey/docs/roadmap/piv.md) — open
 - **browser-mode** — the GUI as a WebAuthn-authenticated web app — [xkey/docs/roadmap/web.md](xkey/docs/roadmap/web.md) — open
 
+## Shelved
+
+- **secure-enclave** — Mac Secure Enclave key backend from go-enclave, history kept as `refs/fold/secure-enclave` (owner rulings 679, 683) — [#2222](../../issues/2222) — shelved: until the owner has a Mac; no lane until the owner reopens it
+
 ## Dependencies
 
 - Up: go-qrdb v0.47.0-alpha (re-exported through `sdk/go`), go-enclave v0.8.0-alpha, go-luks2 v1.0.0-rc.4, go-quicraft v0.20.0, go-objstore v0.4.0-alpha, go-truststrap v0.6.0-alpha, go-frost v0.3.0-alpha, go-codec v1.4.0.
