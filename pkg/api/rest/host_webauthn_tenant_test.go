@@ -23,10 +23,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/descope/virtualwebauthn"
-	"github.com/go-webauthn/webauthn/protocol"
 	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -36,7 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
-	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -89,41 +90,6 @@ func TestNewHostServer_WebAuthnCeremoniesInTheConfiguredTenant(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			// Redemption runs on the relying party the host builds, over the
-			// same credential store.
-			wa, err := BuildWebAuthnService(WebAuthnServiceParams{
-				Config:      srv.webauthnConfigForTest,
-				QRDBClient:  node.Client(),
-				DAOFactory:  daos,
-				TenantID:    tenantID,
-				CallContext: node.ServiceContext,
-				UserService: node.UserService(),
-			})
-			require.NoError(t, err)
-			rp := virtualwebauthn.RelyingParty{Name: "example.com", ID: "example.com", Origin: "https://example.com"}
-			authenticator := virtualwebauthn.NewAuthenticator()
-			credential := newTenantEC2Credential(t)
-
-			regOptions, regSession, err := wa.BeginInviteRegistration(ctx, email)
-			require.NoError(t, err, "the invitation lookup finds the invitee in tenant %s", tenantID)
-			regJSON, err := json.Marshal(regOptions.Response)
-			require.NoError(t, err)
-			parsedReg, err := virtualwebauthn.ParseAttestationOptions(string(regJSON))
-			require.NoError(t, err)
-			var ccr protocol.CredentialCreationResponse
-			require.NoError(t, json.Unmarshal([]byte(virtualwebauthn.CreateAttestationResponse(rp, authenticator, credential, *parsedReg)), &ccr))
-			attestation, err := ccr.Parse()
-			require.NoError(t, err)
-			_, err = wa.FinishInviteRegistration(ctx, regSession, attestation)
-			require.NoError(t, err, "the invitee enrols a passkey in tenant %s", tenantID)
-			authenticator.AddCredential(credential)
-			_, err = node.UserService().UpdateUser(qrdbsdk.ContextWithTenant(ctx, tenantID), &qrdbuser.UpdateUserRequest{
-				ID:        invited.ID,
-				Lifecycle: qrdbsdk.LifecycleActive,
-			})
-			require.NoError(t, err)
-
-			// Login through the host's REST surface.
 			post := func(path, session, bearer string, body []byte) *httptest.ResponseRecorder {
 				req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
@@ -137,6 +103,47 @@ func TestNewHostServer_WebAuthnCeremoniesInTheConfiguredTenant(t *testing.T) {
 				srv.Handler().ServeHTTP(w, req)
 				return w
 			}
+			rp := virtualwebauthn.RelyingParty{Name: "example.com", ID: "example.com", Origin: "https://example.com"}
+			authenticator := virtualwebauthn.NewAuthenticator()
+			credential := newTenantEC2Credential(t)
+
+			// The invitee redeems the invitation through the host's
+			// unauthenticated invite surface: the ceremony enrols the
+			// passkey, and redemption activates the pending account.
+			inviteToken, _, err := srv.invites.Create(ctx, strconv.FormatUint(invited.ID, 10), tenantID, time.Hour)
+			require.NoError(t, err)
+			invitePath := "/api/v1/invites/" + tenantID + "/" + inviteToken
+			inviteBegin := post(invitePath+"/fido2/begin", "", "", nil)
+			require.Equal(t, http.StatusOK, inviteBegin.Code, "the invitation names the invitee in tenant %s; body: %s", tenantID, inviteBegin.Body.String())
+			var regBegin struct {
+				SessionID   string `json:"session_id"`
+				OptionsJSON string `json:"options_json"`
+			}
+			require.NoError(t, json.Unmarshal(inviteBegin.Body.Bytes(), &regBegin))
+			var regOptions struct {
+				Response json.RawMessage `json:"publicKey"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(regBegin.OptionsJSON), &regOptions))
+			parsedReg, err := virtualwebauthn.ParseAttestationOptions(string(regOptions.Response))
+			require.NoError(t, err)
+			finishBody, err := json.Marshal(map[string]string{
+				"session_id":       regBegin.SessionID,
+				"attestation_json": virtualwebauthn.CreateAttestationResponse(rp, authenticator, credential, *parsedReg),
+			})
+			require.NoError(t, err)
+			inviteFinish := post(invitePath+"/fido2/finish", "", "", finishBody)
+			require.Equal(t, http.StatusOK, inviteFinish.Code, "the invitee redeems the invitation in tenant %s; body: %s", tenantID, inviteFinish.Body.String())
+			var redeemed struct {
+				UserID uint64 `json:"user_id,string"`
+			}
+			require.NoError(t, json.Unmarshal(inviteFinish.Body.Bytes(), &redeemed))
+			require.Equal(t, invited.ID, redeemed.UserID)
+			authenticator.AddCredential(credential)
+			activated, err := node.UserService().GetUser(qrdbsdk.ContextWithTenant(ctx, tenantID), invited.ID)
+			require.NoError(t, err)
+			require.Equal(t, qrdbsdk.LifecycleActive, activated.Lifecycle, "redemption activates the invitee in tenant %s", tenantID)
+
+			// Login through the host's REST surface.
 			beginBody, err := json.Marshal(map[string]string{"email": email})
 			require.NoError(t, err)
 			begin := post("/api/v1/webauthn/login/begin", "", "", beginBody)
@@ -199,6 +206,12 @@ func newTenantWebAuthnHostServer(t *testing.T, node *qrdbnode.Node, daos *qrdbsd
 	}))
 	svc, err := xkms.Get()
 	require.NoError(t, err)
+	// The user clients and invitation store xkmsd wires: the user clients
+	// are the node client's, which answer only an authenticated caller.
+	svc.SetUserClients(node.Client().Users(), node.Client().Roles())
+	invites, err := invitetest.New(restSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	require.NoError(t, err)
+	svc.SetInviteStore(invites)
 
 	serviceprincipal.RegisterWebAuthnGrant()
 	wc := WebAuthnConfigFromXKMS(&config.WebAuthnConfig{RPID: "example.com"})
@@ -213,12 +226,12 @@ func newTenantWebAuthnHostServer(t *testing.T, node *qrdbnode.Node, daos *qrdbsd
 	})
 	require.NoError(t, err)
 	require.NotNil(t, srv.tokenIssuer)
-	return &tenantHostServer{Server: srv, webauthnConfigForTest: wc}
+	return &tenantHostServer{Server: srv, invites: invites}
 }
 
-// tenantHostServer is a host server with the relying-party configuration it
-// was built from.
+// tenantHostServer is a host server with the invitation store its invite
+// surface redeems from.
 type tenantHostServer struct {
 	*Server
-	webauthnConfigForTest *webauthn.Config
+	invites *invitetest.Store
 }
