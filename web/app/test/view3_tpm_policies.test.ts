@@ -265,8 +265,8 @@ describe("TpmPoliciesView", () => {
       match: false,
       approved: true,
       branches: [
-        { match: false, mismatched: [7], approved: true },
-        { match: true, approved: true },
+        { name: "branch-1", match: false, mismatched: [7], approved: true },
+        { name: "branch-2", match: true, approved: true },
       ],
     });
 
