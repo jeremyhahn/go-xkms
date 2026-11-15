@@ -60,7 +60,9 @@ type Record struct {
 	// TenantID is the tenant of the account the token refreshes, normalized
 	// (the system tenant for an unbound identity). Subjects are unique only
 	// within a tenant, and every tenant's records share one namespace, so a
-	// subject-wide revocation matches on (TenantID, Subject).
+	// subject-wide revocation matches on (TenantID, Subject). A record
+	// serialized before this field existed decodes with TenantID "" and is
+	// matched by a revocation of its Subject in any tenant.
 	TenantID string `json:"tenant_id"`
 
 	// ExpiresAt is the refresh token's absolute expiry (Unix seconds).
@@ -111,7 +113,8 @@ type RefreshStore interface {
 	RevokeFamily(ctx context.Context, family string) error
 
 	// RevokeBySubject revokes every family whose Record.Subject equals
-	// subject in tenant tenantID (normalized, as Record.TenantID is), exactly
+	// subject in tenant tenantID (normalized, as Record.TenantID is), plus
+	// every tenantless pre-tenant record of subject, exactly
 	// as RevokeFamily revokes one -- so a user-lifecycle
 	// change (disable, delete) ends every session the account holds, no
 	// matter which login flow minted it. It is idempotent: a subject with no
@@ -120,9 +123,21 @@ type RefreshStore interface {
 	RevokeBySubject(ctx context.Context, tenantID, subject string) error
 }
 
-// subjectMatches reports whether rec belongs to subject in tenantID.
+// subjectMatches reports whether rec belongs to subject in tenantID. A
+// tenantless (pre-tenant) record of subject matches in any tenant.
 func (rec *Record) subjectMatches(tenantID, subject string) bool {
-	return rec.Subject == subject && qrdbsdk.NormalizeTenantID(rec.TenantID) == qrdbsdk.NormalizeTenantID(tenantID)
+	if rec.Subject != subject {
+		return false
+	}
+	// A record with no tenant was written before records carried one
+	// (Issuer.Mint always stores the normalized tenant now). Its tenant is
+	// unknowable, so it matches the subject in every tenant: revocation errs
+	// toward ending a session rather than leaving one a re-enabled or
+	// recreated account could revive.
+	if rec.TenantID == "" {
+		return true
+	}
+	return qrdbsdk.NormalizeTenantID(rec.TenantID) == qrdbsdk.NormalizeTenantID(tenantID)
 }
 
 // refreshKey builds the KV key for a record.
