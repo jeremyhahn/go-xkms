@@ -7,7 +7,11 @@
   import { showToast } from "$stores/toast.svelte.ts";
   import type { SSHPin, SSHAuthorizedEntry, SSHAddKnownHostRequest, SSHAddAuthorizedKeyRequest } from "@go-xkms/sdk";
 
-  type Confirm = { kind: "host"; host: string } | { kind: "key"; name: string };
+  // A confirm carries the displayed row's scope and owner, so editing the
+  // Scope/Owner inputs before confirming never retargets the delete.
+  type Confirm =
+    | { kind: "host"; host: string; scope: string; owner: string }
+    | { kind: "key"; name: string; scope: string; owner: string };
   type Result = { ok: boolean; message: string };
 
   let scope = $state("global");
@@ -126,10 +130,10 @@
     busy = true;
     try {
       if (c.kind === "host") {
-        await getSDKClient().ssh.removeKnownHost(c.host, scope, owner);
+        await getSDKClient().ssh.removeKnownHost(c.host, c.scope, c.owner);
         showToast("success", `Pin for "${c.host}" removed.`);
       } else {
-        await getSDKClient().ssh.removeAuthorizedKey(scope, owner, c.name);
+        await getSDKClient().ssh.removeAuthorizedKey(c.scope, c.owner, c.name);
         showToast("success", `Authorized key "${c.name}" removed.`);
       }
       confirm = null;
@@ -190,7 +194,7 @@
               <td class="font-mono text-xs">{p.fingerprint}</td>
               <td>{p.added_at}</td>
               <td class="text-right">
-                <button class="btn btn-ghost btn-xs text-error" aria-label={`Remove ${p.host}`} onclick={() => (confirm = { kind: "host", host: p.host })}>Remove</button>
+                <button class="btn btn-ghost btn-xs text-error" aria-label={`Remove ${p.host}`} onclick={() => (confirm = { kind: "host", host: p.host, scope: p.scope, owner: p.owner })}>Remove</button>
               </td>
             </tr>
           {/each}
@@ -238,7 +242,7 @@
               <td>{k.comment ?? ""}</td>
               <td>{(k.options ?? []).join(", ")}</td>
               <td class="text-right">
-                <button class="btn btn-ghost btn-xs text-error" aria-label={`Remove ${k.name}`} onclick={() => (confirm = { kind: "key", name: k.name })}>Remove</button>
+                <button class="btn btn-ghost btn-xs text-error" aria-label={`Remove ${k.name}`} onclick={() => (confirm = { kind: "key", name: k.name, scope: k.scope, owner: k.owner })}>Remove</button>
               </td>
             </tr>
           {/each}
