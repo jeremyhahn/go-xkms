@@ -12,3 +12,8 @@
 - cf2028b buildgates (codec tags): ok.
 - cf2028b make lint: pass, 0 issues.
 - Superseded by docs/plans/11.md slice 2 (Codex P1 on a77f8f575): the in-house default kept by cf2028b and the ${GITEA_HOST:+...} compose fallback are removed; GOPRIVATE is the caller's in every credential branch.
+- cf2028c buildgates (codec tags) on a77f8f575 Makefile + compose files: FAIL (the in-house GOPRIVATE default and compose fallback are caught).
+- cf2028c gomodauth.test.sh after the fix: 276 passed, 0 failed.
+- cf2028c check-public-literals.test.sh: 51 passed, 0 failed.
+- cf2028c buildgates (codec tags) after the fix: ok.
+- cf2028c make lint: pass, 0 issues.
