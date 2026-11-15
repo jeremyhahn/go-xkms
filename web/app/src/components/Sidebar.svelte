@@ -43,6 +43,9 @@
     if (item.requires && !can(item.requires.resource, item.requires.action)) {
       return false;
     }
+    if (item.requiresAny && !item.requiresAny.some((p) => can(p.resource, p.action))) {
+      return false;
+    }
     if (item.capability && !hasCapability(item.capability)) {
       return false;
     }

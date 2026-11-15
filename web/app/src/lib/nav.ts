@@ -21,6 +21,11 @@ export interface NavItem {
   icon: string;
   /** RBAC gate: hidden unless the session holds resource:action. */
   requires?: { resource: string; action: string };
+  /**
+   * RBAC gate for a screen offering several operations the server
+   * authorizes separately: hidden unless the session holds at least one.
+   */
+  requiresAny?: Array<{ resource: string; action: string }>;
   /** Capability gate: hidden unless the server wired this subsystem. */
   capability?: string;
 }
@@ -61,10 +66,10 @@ export const navSections: NavSection[] = [
       { route: "keyAccessPolicy", path: "/keys/access-policy", label: "Key Access Policy", icon: "ShieldCheck", requires: { resource: "keys", action: "get" } },
       { route: "keyRotationPolicy", path: "/keys/rotation-policy", label: "Rotation Policy", icon: "KeyRound", requires: { resource: "keys", action: "get" } },
       { route: "keyMetadata", path: "/keys/metadata", label: "Key Metadata", icon: "Key", requires: { resource: "keys", action: "get" } },
-      { route: "keyHmac", path: "/keys/hmac", label: "HMAC", icon: "Fingerprint", requires: { resource: "keys", action: "sign" } },
+      { route: "keyHmac", path: "/keys/hmac", label: "HMAC", icon: "Fingerprint", requiresAny: [{ resource: "keys", action: "sign" }, { resource: "keys", action: "verify" }] },
       { route: "keyRewrap", path: "/keys/rewrap", label: "Rewrap", icon: "Split", requires: { resource: "keys", action: "decrypt" } },
       { route: "wrappedDataKey", path: "/keys/data-keys", label: "Data Keys", icon: "KeyRound", requires: { resource: "keys", action: "encrypt" } },
-      { route: "keyBatch", path: "/keys/batch", label: "Batch Crypto", icon: "Lock", requires: { resource: "keys", action: "encrypt" } },
+      { route: "keyBatch", path: "/keys/batch", label: "Batch Crypto", icon: "Lock", requiresAny: [{ resource: "keys", action: "encrypt" }, { resource: "keys", action: "decrypt" }] },
       { route: "keyPublicKey", path: "/keys/public-key", label: "Public Keys", icon: "Key", requires: { resource: "keys", action: "get" } },
       { route: "keyLifecycle", path: "/keys/lifecycle", label: "Key Lifecycle", icon: "ShieldCheck", requires: { resource: "keys", action: "rotate" } },
       { route: "tpmPolicyDetail", path: "/tpm/policies/detail", label: "TPM Policy Detail", icon: "ShieldCheck", capability: "tpm_policies" },
