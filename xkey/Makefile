@@ -685,9 +685,9 @@ coverage-gate:
 	$(GO) test -race -timeout 60m -tags "$(COVERAGE_GATE_TAGS)" -count=1 \
 		-coverprofile=$(COVERAGE_DIR)/ci.out -covermode=atomic \
 		$(COVERAGE_GATE_PKGS)
-	@total=$$($(GO) tool cover -func=$(COVERAGE_DIR)/ci.out | tail -1); \
-		echo "$$total"; \
-		echo "$$total" | awk -v min=$(COVERAGE_THRESHOLD) '{ pct = $$NF; sub(/%/, "", pct); if (pct + 0 < min + 0) { printf "FAIL xkey coverage %s%% is under the threshold %s%%\n", pct, min; exit 1 } printf "OK xkey coverage %s%% meets the threshold %s%%\n", pct, min }'
+	@bash scripts/coverage-total_test.sh
+	@pct=$$(GO="$(GO)" bash scripts/coverage-total.sh $(COVERAGE_DIR)/ci.out) || exit 1; \
+		echo "$$pct" | awk -v min=$(COVERAGE_THRESHOLD) '{ pct = $$1; if (pct + 0 < min + 0) { printf "FAIL xkey coverage %s%% is under the threshold %s%%\n", pct, min; exit 1 } printf "OK xkey coverage %s%% meets the threshold %s%%\n", pct, min }'
 
 .PHONY: coverage-full
 ## coverage-full: Generate comprehensive coverage (unit + integration tests)
