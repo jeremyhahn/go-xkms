@@ -70,3 +70,16 @@ v0.51.0-alpha and v0.58.2-alpha.
   is go-qrdb registering a device-onboarding permission and tagging it; this
   row then bumps the pin, grants it on the default roles and marks the row
   shipped. Until then the row is blocked upstream.
+
+## Slice 4 (lane row2091c): Codex P1 findings on 9b3375e75f3c
+
+1. Self-built ServiceModule host left the service authorizer nil, so a
+   users:create-only caller still got an invitation. Test 04ce9aa77 (role ID
+   set-up corrected in cd7c89fe6): `pkg/apimodule/module_host_invite_authz_test.go`
+   mounts the module without pkg/server over a real qrdb node. Fix ac6c0e378:
+   `hostStores` wires `auth.NewAuthorizer(client.RBAC())` into the service.
+2. The refusal surfaced as a server fault. Test 9b9cdb272: one assertion per
+   transport (REST 403, gRPC PermissionDenied, MCP ErrCodeForbidden). Fix
+   8c00ce10f: `handleCreateUser`, `createUserErrorCode` and `mapUserError`
+   classify `PermissionDeniedError` (and `auth.ErrUnauthenticated`) with each
+   gate's own message.
