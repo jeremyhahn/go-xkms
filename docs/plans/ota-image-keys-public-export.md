@@ -61,7 +61,9 @@ ship; the export did not exist.
    service method, `transport.Client.ExportOTAImagePublicKey` on gRPC, Unix,
    embedded, REST and QUIC (`GET .../{board}/public-key?backend=`) and MCP
    (`xkms.exportOTAImagePublicKey`), the gRPC authz golden table, and the
-   `Client` test doubles in cmd/xkmsctl and sdk/go.
+   `Client` test doubles in cmd/xkmsctl and sdk/go. Follow-up `83b57a9ed`:
+   the xkey `Client` doubles, and the raw check via `PublicKey.Bytes`
+   (SA1019).
 3. Docs commit: key-management/api.md names the gRPC and SDK methods; this
    plan.
 
