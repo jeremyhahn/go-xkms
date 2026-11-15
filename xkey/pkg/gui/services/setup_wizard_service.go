@@ -1339,7 +1339,15 @@ func (s *SetupWizardService) ApplySOProvisioning(choices *SetupChoices) (result 
 	s.emitSOProvisioningProgress(4, "Initializing built-in encryption")
 	if s.barrierSvc != nil {
 		barrierPW := choices.BarrierPassword
-		s.initBarrier(barrierPW, choices.SealerBackend, result)
+		// The SO seals the barrier under a password of its own before the
+		// user has a PIN; a user PIN change later leaves it alone.
+		if initialized, _, _ := s.initBarrier(barrierPW, choices.SealerBackend, result); initialized {
+			if err := s.barrierSvc.recordCredentialSource(true); err != nil {
+				slog.Error("SO provisioning: barrier credential source not recorded", "error", err)
+				result.Errors = append(result.Errors, err.Error())
+				result.Success = false
+			}
+		}
 	} else {
 		result.Warnings = append(result.Warnings, "barrier service unavailable")
 	}
@@ -1520,6 +1528,18 @@ func (s *SetupWizardService) ApplyUserOnboarding(choices *UserOnboardingChoices)
 			}
 		} else {
 			barrierInitialized = true
+		}
+
+		// Record which credential the barrier is sealed under: the SO's
+		// barrier password, or the user PIN when onboarding seals it under
+		// the PIN, so a later user PIN change rewraps only a PIN-bound one.
+		if barrierInitialized {
+			independent := barrierPW != choices.UserPIN
+			if err := s.barrierSvc.recordCredentialSource(independent); err != nil {
+				slog.Error("onboarding: barrier credential source not recorded", "error", err)
+				result.Errors = append(result.Errors, err.Error())
+				result.Success = false
+			}
 		}
 	}
 

@@ -375,6 +375,41 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 
 	s.log.Debug("ChangeUserPIN: attempting PIN change", "strategy", svc.Strategy())
 
+	// Whether the barrier follows the PIN, and whether it can, is settled
+	// before the PIN changes: a PIN-bound barrier the change could not
+	// rewrap refuses the change, so the PIN and the barrier never fall out
+	// of step. One sealed under an independent master password, or not
+	// passphrase-sealed, is left alone.
+	rewrapBarrier := false
+	if bsvc := s.barrierSvc.Load(); bsvc != nil {
+		var pinErr error
+		rewrap, err := bsvc.prepareUserPINRewrap(currentUserPIN, func() error {
+			pinErr = svc.VerifyUserPIN(currentUserPIN)
+			return pinErr
+		})
+		if pinErr != nil {
+			s.log.Warn("ChangeUserPIN: failed", "strategy", svc.Strategy(), "error", pinErr)
+			if auditErr := s.logPINOperation(audit.OpPINFailed, false, pinErr, map[string]any{
+				"operation": "change",
+				"type":      "user_pin",
+			}); auditErr != nil {
+				return auditErr
+			}
+			return pinErr
+		}
+		if err != nil {
+			s.log.Error("ChangeUserPIN: barrier cannot follow the PIN change; PIN left unchanged", "error", err)
+			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+				"operation": "barrier_reseal",
+				"type":      "user_pin",
+			}); auditErr != nil {
+				return auditErr
+			}
+			return ErrBarrierResealFailed
+		}
+		rewrapBarrier = rewrap
+	}
+
 	if err := svc.ChangeUserPIN(currentUserPIN, newUserPIN); err != nil {
 		s.log.Warn("ChangeUserPIN: failed", "strategy", svc.Strategy(), "error", err)
 		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
@@ -394,11 +429,8 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 		return auditErr
 	}
 
-	// The barrier follows the PIN only when the PIN is its credential; one
-	// sealed under an independent master password is left alone, and
-	// BarrierService.ChangePassword is a no-op for a barrier that is not
-	// passphrase-sealed.
-	if bsvc := s.barrierSvc.Load(); bsvc != nil && bsvc.FollowsUserPIN() {
+	// The barrier the checks above found PIN-bound follows the PIN.
+	if bsvc := s.barrierSvc.Load(); bsvc != nil && rewrapBarrier {
 		if err := bsvc.ChangePassword(currentUserPIN, newUserPIN); err != nil {
 			s.log.Error("ChangeUserPIN: barrier re-seal failed", "error", err)
 			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{

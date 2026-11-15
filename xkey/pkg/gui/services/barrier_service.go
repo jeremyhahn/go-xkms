@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -128,6 +129,10 @@ type BarrierService struct {
 	// (recordCredentialSource) and NewBarrierService restores it. The
 	// default is PIN-bound, the lock screen's assumption.
 	independentPassword atomic.Bool
+	// credentialSourceKnown is set once the credential source is recorded
+	// or restored; an install from before it was recorded has none, and a
+	// user PIN change settles it from the barrier itself.
+	credentialSourceKnown atomic.Bool
 }
 
 // recordCredentialSource persists whether the barrier is sealed under a
@@ -151,12 +156,14 @@ func (s *BarrierService) recordCredentialSource(independent bool) error {
 		return &ErrBarrierCredentialSource{Err: errors.Join(err, os.Remove(tmp))}
 	}
 	s.independentPassword.Store(independent)
+	s.credentialSourceKnown.Store(true)
 	return nil
 }
 
 // restoreCredentialSource loads the credential source recordCredentialSource
 // persisted. With none recorded, or an unrecognised one, the barrier is
-// PIN-bound, the lock screen's assumption.
+// taken as PIN-bound, the lock screen's assumption, until
+// prepareUserPINRewrap settles it from the barrier itself.
 func (s *BarrierService) restoreCredentialSource() {
 	data, err := os.ReadFile(filepath.Join(s.configDir, barrierCredentialSourceFile))
 	if err != nil {
@@ -168,7 +175,9 @@ func (s *BarrierService) restoreCredentialSource() {
 	switch string(data) {
 	case barrierCredentialSourceIndependent:
 		s.independentPassword.Store(true)
+		s.credentialSourceKnown.Store(true)
 	case barrierCredentialSourceUserPIN:
+		s.credentialSourceKnown.Store(true)
 	default:
 		s.log.Warn("barrier: unrecognised credential source; treating the barrier as PIN-bound")
 	}
@@ -178,6 +187,61 @@ func (s *BarrierService) restoreCredentialSource() {
 // user PIN change must rewrap the barrier.
 func (s *BarrierService) FollowsUserPIN() bool {
 	return !s.independentPassword.Load()
+}
+
+// prepareUserPINRewrap settles, before a user PIN change commits, whether
+// the barrier follows the PIN, and reports whether ChangePassword must
+// rewrap it once the PIN changes. A barrier under a password of its own,
+// or one sealed by a TPM2, PKCS#11 or cloud strategy, does not follow the
+// PIN. A PIN-bound barrier must be initialized, unsealed and open under
+// currentPIN, or the change is refused, so the PIN never changes without
+// the barrier following it. An install from before the credential source
+// was recorded has none: currentPIN opening the barrier records it as
+// PIN-bound, and currentPIN not opening it records it as sealed under a
+// password of its own once verifyCurrentPIN confirms currentPIN is the
+// user's PIN, so a mistyped PIN never settles it.
+func (s *BarrierService) prepareUserPINRewrap(currentPIN string, verifyCurrentPIN func() error) (rewrap bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.credentialSourceKnown.Load() && s.independentPassword.Load() {
+		return false, nil
+	}
+	if s.barrier == nil {
+		return false, ErrBarrierNotInitialized
+	}
+	if st := s.barrier.Status(); st == nil || st.Strategy != xkms.StrategyPassphrase {
+		return false, nil
+	}
+
+	ctx := s.context()
+	current, credErr := xkms.CredentialsFor(ctx, []byte(currentPIN))
+	if credErr != nil {
+		return false, credErr
+	}
+	defer func() { err = errors.Join(err, destroyCreds(current)) }()
+
+	verifyErr := s.barrier.VerifyCredentials(ctx, current)
+	switch {
+	case verifyErr == nil:
+		if !s.credentialSourceKnown.Load() {
+			if err := s.recordCredentialSource(false); err != nil {
+				return false, err
+			}
+		}
+		return true, nil
+	case errors.Is(verifyErr, qrdbseal.ErrCredentialMismatch) && !s.credentialSourceKnown.Load():
+		if err := verifyCurrentPIN(); err != nil {
+			return false, err
+		}
+		s.log.Info("barrier: credential source settled from the barrier; it is sealed under a password of its own")
+		if err := s.recordCredentialSource(true); err != nil {
+			return false, err
+		}
+		return false, nil
+	default:
+		return false, verifyErr
+	}
 }
 
 // NewBarrierService creates a new BarrierService. By default, encrypted data
