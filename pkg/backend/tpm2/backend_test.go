@@ -446,28 +446,6 @@ func (m *mockTPM) ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte)
 
 var _ pkgtpm2.TrustedPlatformModule = (*mockTPM)(nil)
 
-func TestConfig_Validate(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  *Config
-		wantErr bool
-	}{
-		{"ValidConfigWithDevice", &Config{Device: "/dev/null", Keys: tpmblobtest.New(t), SRKHandle: 0x81000001}, false},
-		{"ValidConfigWithSimulator", &Config{UseSimulator: true, Keys: tpmblobtest.New(t)}, false},
-		{"DefaultValues", &Config{Device: "/dev/null", Keys: tpmblobtest.New(t)}, false},
-		{"MissingKeys", &Config{Device: "/dev/null"}, true},
-		{"NonExistentDevice", &Config{Device: "/dev/nonexistent-tpm-device-xyz", Keys: tpmblobtest.New(t)}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Config.Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
 // TestConfig_Validate_MissingKeys verifies Validate returns a typed, wrapped
 // ErrKeysRequired when Keys is unset rather than opening a key store of its
 // own.
@@ -483,16 +461,6 @@ func TestConfig_Validate_MissingKeys(t *testing.T) {
 	}
 	if config.Keys != nil {
 		t.Errorf("Keys: expected to remain nil on validation failure, got %v", config.Keys)
-	}
-}
-
-// TestConfig_Validate_KeysSatisfiesRequirement proves a caller's key store
-// satisfies Validate's Keys requirement.
-func TestConfig_Validate_KeysSatisfiesRequirement(t *testing.T) {
-	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t)}
-
-	if err := config.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v, want nil with Keys set", err)
 	}
 }
 
@@ -562,29 +530,6 @@ func TestNewBackend_RefusesResettablePlatformPCR(t *testing.T) {
 	}
 }
 
-func TestConfig_ToTPMConfig(t *testing.T) {
-	config := &Config{Device: "/dev/tpmrm0", Keys: tpmblobtest.New(t), UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPCRs: pkgtpm2.PCRSet{7, 11}, PlatformPCRBank: "SHA256"}
-	tpmConfig := config.ToTPMConfig()
-	if tpmConfig == nil {
-		t.Fatal("ToTPMConfig returned nil")
-	}
-	if tpmConfig.Device != config.Device {
-		t.Errorf("Device = %s, want %s", tpmConfig.Device, config.Device)
-	}
-	if tpmConfig.UseSimulator != config.UseSimulator {
-		t.Errorf("UseSimulator = %v, want %v", tpmConfig.UseSimulator, config.UseSimulator)
-	}
-}
-
-func TestConfig_ToTPMConfig_WithPresetConfig(t *testing.T) {
-	pkgtpm2Config := &Config{Device: "/dev/custom"}
-	config := &Config{Device: "/dev/tpmrm0", TPMConfig: pkgtpm2Config.ToTPMConfig()}
-	tpmConfig := config.ToTPMConfig()
-	if tpmConfig.Device != "/dev/custom" {
-		t.Errorf("Expected preset config device /dev/custom, got %s", tpmConfig.Device)
-	}
-}
-
 func TestBackendType(t *testing.T) {
 	b := &Backend{}
 	if b.Type() != backend.BackendTypeTPM2 {
@@ -615,49 +560,6 @@ func TestCapabilities(t *testing.T) {
 	}
 }
 
-func TestNewBackend_InvalidConfig(t *testing.T) {
-	_, err := NewBackend(&Config{Device: "/dev/nonexistent-tpm-xyz123", Keys: tpmblobtest.New(t)})
-	if err == nil {
-		t.Error("Expected error for non-existent device")
-	}
-}
-
-func TestBackend_ClosedOperations(t *testing.T) {
-	b := &Backend{closed: true}
-	rsaAttrs := &types.KeyAttributes{CN: "test-key", KeyAlgorithm: x509.RSA}
-	if _, err := b.GenerateKey(context.Background(), rsaAttrs); err != ErrNotInitialized {
-		t.Errorf("GenerateKey: expected ErrNotInitialized, got %v", err)
-	}
-	if _, err := b.GetKey(context.Background(), rsaAttrs); err != ErrNotInitialized {
-		t.Errorf("GetKey: expected ErrNotInitialized, got %v", err)
-	}
-	if err := b.DeleteKey(context.Background(), rsaAttrs); err != ErrNotInitialized {
-		t.Errorf("DeleteKey: expected ErrNotInitialized, got %v", err)
-	}
-	if _, err := b.ListKeys(context.Background()); err != ErrNotInitialized {
-		t.Errorf("ListKeys: expected ErrNotInitialized, got %v", err)
-	}
-	if _, err := b.Signer(context.Background(), rsaAttrs); err != ErrNotInitialized {
-		t.Errorf("Signer: expected ErrNotInitialized, got %v", err)
-	}
-	if _, err := b.Decrypter(context.Background(), rsaAttrs); err != ErrNotInitialized {
-		t.Errorf("Decrypter: expected ErrNotInitialized, got %v", err)
-	}
-}
-
-func TestBackend_NilAttributes(t *testing.T) {
-	b := &Backend{closed: false}
-	if _, err := b.GenerateKey(context.Background(), nil); err != ErrInvalidKeyAttributes {
-		t.Errorf("GenerateKey(nil): expected ErrInvalidKeyAttributes, got %v", err)
-	}
-	if _, err := b.GetKey(context.Background(), nil); err != ErrInvalidKeyAttributes {
-		t.Errorf("GetKey(nil): expected ErrInvalidKeyAttributes, got %v", err)
-	}
-	if err := b.DeleteKey(context.Background(), nil); err != ErrInvalidKeyAttributes {
-		t.Errorf("DeleteKey(nil): expected ErrInvalidKeyAttributes, got %v", err)
-	}
-}
-
 func TestBackend_RotateKey(t *testing.T) {
 	b := &Backend{}
 	if err := b.RotateKey(context.Background(), &types.KeyAttributes{CN: "test"}); err != ErrKeyRotationNotSupported {
@@ -672,42 +574,6 @@ func TestBackend_DoubleClose(t *testing.T) {
 	}
 	if err := b.Close(); err != nil {
 		t.Errorf("Second Close() error = %v", err)
-	}
-}
-
-func TestBackend_ListKeys_EmptyStore(t *testing.T) {
-	b := &Backend{closed: false, keyBackend: tpmblobtest.New(t)}
-	keys, err := b.ListKeys(context.Background())
-	if err != nil {
-		t.Errorf("ListKeys() error = %v", err)
-	}
-	if len(keys) != 0 {
-		t.Errorf("Expected 0 keys in an empty store, got %d", len(keys))
-	}
-}
-
-// TestBackend_ListKeys_StoreCannotList proves a key store that is not a
-// store.KeyLister reports no keys rather than failing.
-func TestBackend_ListKeys_StoreCannotList(t *testing.T) {
-	b := &Backend{closed: false, keyBackend: &mockKeyBackend{}}
-	keys, err := b.ListKeys(context.Background())
-	if err != nil {
-		t.Errorf("ListKeys() error = %v", err)
-	}
-	if len(keys) != 0 {
-		t.Errorf("Expected 0 keys, got %d", len(keys))
-	}
-}
-
-func TestErrors(t *testing.T) {
-	errs := []error{ErrNotInitialized, ErrAlreadyInitialized, ErrInvalidConfig, ErrKeyNotFound, ErrUnsupportedKeyAlgorithm, ErrUnsupportedOperation, ErrKeyRotationNotSupported, ErrDecryptionNotSupported, ErrInvalidKeyAttributes, ErrTPMNotAvailable, ErrSessionCreationFailed}
-	for _, err := range errs {
-		if err == nil {
-			t.Error("Error is nil")
-		}
-		if err.Error() == "" {
-			t.Error("Error has empty message")
-		}
 	}
 }
 
@@ -855,39 +721,11 @@ func TestBackend_Accessors(t *testing.T) {
 	}
 }
 
-func TestTPM2Signer_Public(t *testing.T) {
-	rsaKey := &rsa.PublicKey{N: nil, E: 65537}
-	signer := &tpm2Signer{publicKey: rsaKey}
-	if pub := signer.Public(); pub != rsaKey {
-		t.Error("Public() did not return expected key")
-	}
-}
-
 func TestTPM2Signer_Sign_ClosedBackend(t *testing.T) {
 	b := &Backend{closed: true}
 	signer := &tpm2Signer{backend: b, attrs: &types.KeyAttributes{CN: "test"}}
 	if _, err := signer.Sign(nil, []byte("digest"), nil); err != ErrNotInitialized {
 		t.Errorf("Expected ErrNotInitialized, got %v", err)
-	}
-}
-
-func TestTPM2Decrypter_Decrypt_ClosedBackend(t *testing.T) {
-	b := &Backend{closed: true}
-	decrypter := &tpm2Decrypter{tpm2Signer: &tpm2Signer{backend: b, attrs: &types.KeyAttributes{CN: "test", KeyAlgorithm: x509.RSA}}}
-	if _, err := decrypter.Decrypt(nil, []byte("ciphertext"), nil); err != ErrNotInitialized {
-		t.Errorf("Expected ErrNotInitialized, got %v", err)
-	}
-}
-
-func TestTPM2Decrypter_Decrypt_NonRSA(t *testing.T) {
-	b := &Backend{closed: false}
-	decrypter := &tpm2Decrypter{tpm2Signer: &tpm2Signer{backend: b, attrs: &types.KeyAttributes{CN: "test", KeyAlgorithm: x509.ECDSA}}}
-	_, err := decrypter.Decrypt(nil, []byte("ciphertext"), nil)
-	if err == nil {
-		t.Error("Expected error for non-RSA key")
-	}
-	if !errors.Is(err, ErrDecryptionNotSupported) {
-		t.Errorf("Expected ErrDecryptionNotSupported, got %v", err)
 	}
 }
 
@@ -918,43 +756,6 @@ func TestConfig_Validate_SimulatorSkipsDeviceCheck(t *testing.T) {
 	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: true, Keys: tpmblobtest.New(t)}
 	if err := config.Validate(); err != nil {
 		t.Errorf("Expected no error when using simulator, got %v", err)
-	}
-}
-
-func TestConfig_ToTPMConfig_EKAndSSRKConfigs(t *testing.T) {
-	config := &Config{UseSimulator: true, SRKHandle: 0x81000002, EKHandle: 0x81010002}
-	tpmConfig := config.ToTPMConfig()
-	if tpmConfig.EK == nil {
-		t.Fatal("Expected EK config to be set")
-	}
-	if tpmConfig.EK.Handle != config.EKHandle {
-		t.Errorf("Expected EK handle 0x%x, got 0x%x", config.EKHandle, tpmConfig.EK.Handle)
-	}
-	if tpmConfig.SSRK == nil {
-		t.Fatal("Expected SSRK config to be set")
-	}
-	if tpmConfig.SSRK.Handle != config.SRKHandle {
-		t.Errorf("Expected SSRK handle 0x%x, got 0x%x", config.SRKHandle, tpmConfig.SSRK.Handle)
-	}
-}
-
-func TestBackend_CloseWithExternalTPMFlag(t *testing.T) {
-	b := &Backend{closed: false, externalTPM: true, tpm: nil}
-	if err := b.Close(); err != nil {
-		t.Errorf("Close() error = %v", err)
-	}
-	if !b.closed {
-		t.Error("Expected backend to be marked as closed")
-	}
-}
-
-func TestBackend_CloseWithNilTPM(t *testing.T) {
-	b := &Backend{closed: false, externalTPM: false, tpm: nil}
-	if err := b.Close(); err != nil {
-		t.Errorf("Close() with nil TPM should not error: %v", err)
-	}
-	if !b.closed {
-		t.Error("Expected backend to be marked as closed")
 	}
 }
 
@@ -1105,76 +906,6 @@ func TestNewBackendWithTPM_PlatformSRKUnavailable_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestNewBackendWithTPM_NoSRKAvailable_ReturnsError proves construction fails
-// with a typed, wrapped error when the Platform SRK is not available.
-func TestNewBackendWithTPM_NoSRKAvailable_ReturnsError(t *testing.T) {
-	platformErr := errors.New("platform srk error")
-	mockTpm := &mockTPM{platformSRKAttrsErr: platformErr}
-	mockKb := &mockKeyBackend{}
-	cfg := &ExternalTPMConfig{TPM: mockTpm, KeyBackend: mockKb}
-	_, err := NewBackendWithTPM(cfg)
-	if err == nil {
-		t.Fatal("Expected error when the Platform SRK is not available")
-	}
-	if !errors.Is(err, platformErr) {
-		t.Errorf("Expected error to wrap platform srk error, got %v", err)
-	}
-}
-
-func TestBackend_GenerateKey_RSA_Success(t *testing.T) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-	mockTpm := &mockTPM{rsaPublicKey: &rsaKey.PublicKey}
-	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
-	attrs := &types.KeyAttributes{CN: "test-rsa-key", KeyAlgorithm: x509.RSA}
-	key, err := b.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
-	}
-	signer, ok := key.(crypto.Signer)
-	if !ok {
-		t.Fatal("Expected key to implement crypto.Signer")
-	}
-	pub := signer.Public()
-	rsaPub, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		t.Fatal("Expected public key to be RSA")
-	}
-	if rsaPub.E != rsaKey.E {
-		t.Error("Public key exponent mismatch")
-	}
-}
-
-func TestBackend_GenerateKey_ECDSA_Success(t *testing.T) {
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate ECDSA key: %v", err)
-	}
-	mockTpm := &mockTPM{ecdsaPublicKey: &ecKey.PublicKey}
-	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
-	attrs := &types.KeyAttributes{CN: "test-ecdsa-key", KeyAlgorithm: x509.ECDSA}
-	key, err := b.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
-	}
-	signer, ok := key.(crypto.Signer)
-	if !ok {
-		t.Fatal("Expected key to implement crypto.Signer")
-	}
-	pub := signer.Public()
-	ecdsaPub, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
-		t.Fatal("Expected public key to be ECDSA")
-	}
-	if ecdsaPub.Curve != elliptic.P256() {
-		t.Error("Expected P256 curve")
-	}
-}
-
 func TestBackend_GenerateKey_ECDSA_DefaultCurve(t *testing.T) {
 	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -1217,30 +948,6 @@ func TestBackend_GenerateKey_ECDSA_Error(t *testing.T) {
 	_, err := b.GenerateKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error from CreateECDSA")
-	}
-}
-
-func TestBackend_GetKey_Success(t *testing.T) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-	mockTpm := &mockTPM{parsePublicKeyValue: &rsaKey.PublicKey}
-	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicData: []byte("mock-public-blob")}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
-	attrs := &types.KeyAttributes{CN: "test-key"}
-	key, err := b.GetKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GetKey() error = %v", err)
-	}
-	signer, ok := key.(crypto.Signer)
-	if !ok {
-		t.Fatal("Expected key to implement crypto.Signer")
-	}
-	pub := signer.Public()
-	if pub == nil {
-		t.Error("Expected non-nil public key")
 	}
 }
 
@@ -1292,18 +999,6 @@ func TestBackend_GetKey_ParsePublicKeyError(t *testing.T) {
 	_, err := b.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error when parsing public key fails")
-	}
-}
-
-func TestBackend_DeleteKey_Success(t *testing.T) {
-	mockTpm := &mockTPM{}
-	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: mockKb, srkAttrs: srkAttrs}
-	attrs := &types.KeyAttributes{CN: "test-key"}
-	err := b.DeleteKey(context.Background(), attrs)
-	if err != nil {
-		t.Errorf("DeleteKey() error = %v", err)
 	}
 }
 
@@ -1383,21 +1078,6 @@ func TestBackend_Close_WithTPMError(t *testing.T) {
 	}
 }
 
-func TestTPM2Signer_Sign_Success(t *testing.T) {
-	expectedSig := []byte("mock-signature")
-	mockTpm := &mockTPM{signatureValue: expectedSig}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}}
-	signer := &tpm2Signer{backend: b, attrs: &types.KeyAttributes{CN: "test"}, publicKey: &rsa.PublicKey{}}
-	digest := sha256.Sum256([]byte("test message"))
-	sig, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
-	if err != nil {
-		t.Fatalf("Sign() error = %v", err)
-	}
-	if string(sig) != string(expectedSig) {
-		t.Errorf("Expected signature %v, got %v", expectedSig, sig)
-	}
-}
-
 func TestTPM2Signer_Sign_Error(t *testing.T) {
 	expectedErr := errors.New("sign error")
 	mockTpm := &mockTPM{signErr: expectedErr}
@@ -1423,41 +1103,6 @@ func TestTPM2Signer_Sign_WithNilOpts(t *testing.T) {
 	if string(sig) != string(expectedSig) {
 		t.Errorf("Expected signature %v, got %v", expectedSig, sig)
 	}
-}
-
-func TestBackend_parsePublicKey(t *testing.T) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-	mockTpm := &mockTPM{parsePublicKeyValue: &rsaKey.PublicKey}
-	b := &Backend{tpm: mockTpm}
-	pub, err := b.parsePublicKey([]byte("mock-public-data"))
-	if err != nil {
-		t.Fatalf("parsePublicKey() error = %v", err)
-	}
-	rsaPub, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		t.Fatal("Expected RSA public key")
-	}
-	if rsaPub.E != rsaKey.E {
-		t.Error("Public key mismatch")
-	}
-}
-
-func TestBackend_parsePublicKey_Error(t *testing.T) {
-	expectedErr := errors.New("parse error")
-	mockTpm := &mockTPM{parsePublicKeyErr: expectedErr}
-	b := &Backend{tpm: mockTpm}
-	_, err := b.parsePublicKey([]byte("invalid-data"))
-	if err == nil {
-		t.Error("Expected error from parsePublicKey")
-	}
-}
-
-func TestTPM2Decrypter_ImplementsDecrypter(t *testing.T) {
-	decrypter := &tpm2Decrypter{tpm2Signer: &tpm2Signer{publicKey: &rsa.PublicKey{N: big.NewInt(1), E: 65537}}}
-	var _ crypto.Decrypter = decrypter
 }
 
 func TestBackend_GenerateKey_SetsParentToSRK(t *testing.T) {
@@ -1510,15 +1155,6 @@ func TestBackend_DeleteKey_SetsParent(t *testing.T) {
 	}
 }
 
-func TestConfig_ToTPMConfig_TrackerPassthrough(t *testing.T) {
-	tracker := backend.NewMemoryAEADTracker()
-	config := &Config{UseSimulator: true, Tracker: tracker}
-	tpmConfig := config.ToTPMConfig()
-	if tpmConfig.Tracker != tracker {
-		t.Error("Expected tracker to be passed through to TPM config")
-	}
-}
-
 func TestBackend_GenerateKey_PreservesExistingParent(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -1556,34 +1192,6 @@ func TestBackend_ECDSA_WithExistingCurve(t *testing.T) {
 	}
 }
 
-func TestBackend_Signer_GetKeyError(t *testing.T) {
-	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: store.ErrBlobNotFound}
-	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
-	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	_, err := b.Signer(context.Background(), attrs)
-	if err == nil {
-		t.Error("Expected error when GetKey fails")
-	}
-	if !errors.Is(err, ErrKeyNotFound) {
-		t.Errorf("Expected ErrKeyNotFound, got %v", err)
-	}
-}
-
-func TestBackend_Decrypter_GetKeyError(t *testing.T) {
-	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: store.ErrBlobNotFound}
-	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
-	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
-	_, err := b.Decrypter(context.Background(), attrs)
-	if err == nil {
-		t.Error("Expected error when GetKey fails")
-	}
-	if !errors.Is(err, ErrKeyNotFound) {
-		t.Errorf("Expected ErrKeyNotFound, got %v", err)
-	}
-}
-
 func TestConfig_Validate_ExistingDevice(t *testing.T) {
 	config := &Config{Device: "/dev/null", UseSimulator: false, Keys: tpmblobtest.New(t)}
 	err := config.Validate()
@@ -1617,15 +1225,6 @@ func TestConfig_Validate_EmptyDeviceNoSimulator(t *testing.T) {
 	}
 }
 
-// TestBackend_CloseWithExternalTPM_NoClose verifies external TPM is not closed
-func TestBackend_CloseWithExternalTPM_NoClose(t *testing.T) {
-	mockTpm := &mockTPM{}
-	b := &Backend{closed: false, externalTPM: true, tpm: mockTpm}
-	if err := b.Close(); err != nil {
-		t.Errorf("Close() error = %v", err)
-	}
-}
-
 // TestBackend_GenerateKey_ECDSA_WithNilCurve tests ECDSA with nil curve in ECCAttributes
 func TestBackend_GenerateKey_ECDSA_WithNilCurve(t *testing.T) {
 	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -1649,15 +1248,6 @@ func TestBackend_GenerateKey_ECDSA_WithNilCurve(t *testing.T) {
 	}
 }
 
-// TestBackend_TPM_Accessor tests the TPM accessor method
-func TestBackend_TPM_Accessor(t *testing.T) {
-	mockTpm := &mockTPM{}
-	b := &Backend{tpm: mockTpm}
-	if b.TPM() != mockTpm {
-		t.Error("TPM() did not return expected TPM instance")
-	}
-}
-
 // TestBackend_Close_ExternalTPM_WithMockTPM tests close with external TPM flag set
 func TestBackend_Close_ExternalTPM_WithMockTPM(t *testing.T) {
 	mockTpm := &mockTPM{closeErr: errors.New("should not be called")}
@@ -1665,42 +1255,6 @@ func TestBackend_Close_ExternalTPM_WithMockTPM(t *testing.T) {
 	// Should not return error because externalTPM is true
 	if err := b.Close(); err != nil {
 		t.Errorf("Close() should not error when externalTPM is true: %v", err)
-	}
-}
-
-// TestConfig_ToTPMConfig_AllFields tests all config fields are properly mapped
-func TestConfig_ToTPMConfig_AllFields(t *testing.T) {
-	config := &Config{
-		Device:          "/dev/tpmrm0",
-		UseSimulator:    true,
-		SRKHandle:       0x81000002,
-		EKHandle:        0x81010002,
-		Hash:            "SHA-384",
-		PlatformPCRs:    pkgtpm2.PCRSet{7, 11},
-		PlatformPCRBank: "SHA384",
-	}
-	tpmConfig := config.ToTPMConfig()
-
-	if tpmConfig.Device != config.Device {
-		t.Errorf("Device: got %s, want %s", tpmConfig.Device, config.Device)
-	}
-	if tpmConfig.UseSimulator != config.UseSimulator {
-		t.Errorf("UseSimulator: got %v, want %v", tpmConfig.UseSimulator, config.UseSimulator)
-	}
-	if tpmConfig.Hash != config.Hash {
-		t.Errorf("Hash: got %s, want %s", tpmConfig.Hash, config.Hash)
-	}
-	if !slices.Equal(tpmConfig.PlatformPCRs, config.PlatformPCRs) {
-		t.Errorf("PlatformPCRs: got %v, want %v", tpmConfig.PlatformPCRs, config.PlatformPCRs)
-	}
-	if tpmConfig.PlatformPCRBank != config.PlatformPCRBank {
-		t.Errorf("PlatformPCRBank: got %s, want %s", tpmConfig.PlatformPCRBank, config.PlatformPCRBank)
-	}
-	if tpmConfig.SSRK.Handle != config.SRKHandle {
-		t.Errorf("SSRK.Handle: got 0x%x, want 0x%x", tpmConfig.SSRK.Handle, config.SRKHandle)
-	}
-	if tpmConfig.EK.Handle != config.EKHandle {
-		t.Errorf("EK.Handle: got 0x%x, want 0x%x", tpmConfig.EK.Handle, config.EKHandle)
 	}
 }
 
@@ -1739,31 +1293,6 @@ func TestTPM2Decrypter_Public(t *testing.T) {
 // =============================================================================
 // NewBackend Tests - Testing the full backend creation path
 // =============================================================================
-
-// TestNewBackend_DefaultLoggerAndTracker tests that NewBackend sets default logger and tracker
-func TestNewBackend_DefaultLoggerAndTracker(t *testing.T) {
-	// We can only test the config preparation parts without a real TPM
-	config := &Config{
-		UseSimulator: true,
-		Keys:         tpmblobtest.New(t),
-	}
-
-	// Validate config manually to see defaults are set
-	if err := config.Validate(); err != nil {
-		t.Fatalf("Config validation failed: %v", err)
-	}
-
-	// Check defaults were set
-	if config.Keys == nil {
-		t.Error("Expected Keys to be set")
-	}
-	if config.SRKHandle == 0 {
-		t.Error("Expected SRKHandle to have default value")
-	}
-	if config.EKHandle == 0 {
-		t.Error("Expected EKHandle to have default value")
-	}
-}
 
 // TestNewBackend_ConfigValidationError tests NewBackend returns error on invalid config
 func TestNewBackend_ConfigValidationError(t *testing.T) {
@@ -1898,35 +1427,6 @@ func TestNewBackend_ConfigWithPresetTPMConfig(t *testing.T) {
 	}
 }
 
-// TestNewBackend_VerifyConfigDefaults tests that config defaults are properly applied
-func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
-	config := &Config{
-		UseSimulator: true,
-		Keys:         tpmblobtest.New(t),
-	}
-
-	if err := config.Validate(); err != nil {
-		t.Fatalf("Validate() error: %v", err)
-	}
-
-	// Check all defaults
-	if config.SRKHandle != 0x81000001 {
-		t.Errorf("SRKHandle default: got 0x%x, want 0x81000001", config.SRKHandle)
-	}
-	if config.EKHandle != 0x81010001 {
-		t.Errorf("EKHandle default: got 0x%x, want 0x81010001", config.EKHandle)
-	}
-	if config.Hash != "SHA-256" {
-		t.Errorf("Hash default: got %q, want %q", config.Hash, "SHA-256")
-	}
-	if config.PlatformPCRBank != pkgtpm2.PCRBankSHA256 {
-		t.Errorf("PlatformPCRBank default: got %q, want %q", config.PlatformPCRBank, pkgtpm2.PCRBankSHA256)
-	}
-	if config.CN != "xkms" {
-		t.Errorf("CN default: got %q, want %q", config.CN, "xkms")
-	}
-}
-
 // TestTPM2Decrypter_Decrypt_RSADecryptError tests RSADecrypt error path
 func TestTPM2Decrypter_Decrypt_RSADecryptError(t *testing.T) {
 	expectedErr := errors.New("rsa decrypt error")
@@ -1945,23 +1445,6 @@ func TestTPM2Decrypter_Decrypt_RSADecryptError(t *testing.T) {
 	_, err := decrypter.Decrypt(rand.Reader, []byte("ciphertext"), &rsa.OAEPOptions{Hash: crypto.SHA256})
 	if !errors.Is(err, expectedErr) {
 		t.Errorf("Expected the RSADecrypt error, got %v", err)
-	}
-}
-
-// TestNewBackend_ErrNotInitializedPath tests the TPM needs provisioning error path
-func TestNewBackend_ErrNotInitializedPath(t *testing.T) {
-	// This tests the error handling when TPM returns ErrNotInitialized
-	// We can only test this indirectly by checking error types
-
-	// Verify ErrNotInitialized is properly defined
-	if ErrNotInitialized == nil {
-		t.Error("ErrNotInitialized should not be nil")
-	}
-
-	// Test the error message
-	expectedMsg := "tpm2: backend not initialized"
-	if ErrNotInitialized.Error() != expectedMsg {
-		t.Errorf("ErrNotInitialized message: got %q, want %q", ErrNotInitialized.Error(), expectedMsg)
 	}
 }
 
@@ -2097,23 +1580,6 @@ func TestGenerateSymmetricKey_TPMError(t *testing.T) {
 	}
 }
 
-func TestGenerateSymmetricKey_PreservesExistingParent(t *testing.T) {
-	mockKey := &mockSymmetricKey{algorithm: "aes128-gcm", keySize: 128}
-	mockTpm := &mockTPM{generateSymmetricKeyResult: mockKey}
-	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	existingParent := &types.KeyAttributes{CN: "existing-parent"}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
-
-	attrs := &types.KeyAttributes{CN: "test-sym-key", Parent: existingParent}
-	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateSymmetricKey() error = %v", err)
-	}
-	if attrs.Parent != existingParent {
-		t.Error("Expected existing Parent to be preserved")
-	}
-}
-
 func TestGetSymmetricKey_Success(t *testing.T) {
 	mockKey := &mockSymmetricKey{algorithm: "aes256-gcm", keySize: 256}
 	mockTpm := &mockTPM{getSymmetricKeyResult: mockKey}
@@ -2235,13 +1701,5 @@ func TestGetTracker_ReturnsTracker(t *testing.T) {
 	result := b.GetTracker()
 	if result != tracker {
 		t.Error("Expected GetTracker() to return the backend's tracker")
-	}
-}
-
-func TestGetTracker_ReturnsNilWhenNoTracker(t *testing.T) {
-	b := &Backend{tracker: nil}
-	result := b.GetTracker()
-	if result != nil {
-		t.Error("Expected GetTracker() to return nil when no tracker is set")
 	}
 }

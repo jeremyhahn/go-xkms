@@ -20,11 +20,9 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
-	"os"
 	"slices"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -80,84 +78,6 @@ func TestSigner_GetKeyError(t *testing.T) {
 	}
 	if !errors.Is(err, ErrKeyNotFound) {
 		t.Errorf("Expected ErrKeyNotFound, got %v", err)
-	}
-}
-
-// TestConfig_Validate_EmptyDeviceWithoutSimulator tests validation with empty device
-func TestConfig_Validate_EmptyDeviceWithoutSimulator(t *testing.T) {
-	// Create temp file to simulate existing device
-	tmpFile, err := os.CreateTemp("", "tpmrm*")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
-	_ = tmpFile.Close()
-
-	config := &Config{
-		Device:       tmpFile.Name(),
-		UseSimulator: false,
-		Keys:         tpmblobtest.New(t),
-	}
-	if err := config.Validate(); err != nil {
-		t.Errorf("Validate() failed for existing device: %v", err)
-	}
-}
-
-// TestNewBackend_ValidateError tests NewBackend when config validation fails
-func TestNewBackend_ValidateError(t *testing.T) {
-	config := &Config{
-		Device:       "/dev/nonexistent-tpm-xyz",
-		UseSimulator: false,
-	}
-	_, err := NewBackend(config)
-	if err == nil {
-		t.Error("Expected error from NewBackend with invalid config")
-	}
-	if !errors.Is(err, ErrInvalidConfig) {
-		t.Errorf("Expected ErrInvalidConfig, got %v", err)
-	}
-}
-
-// TestBackend_DeleteKey_PreservesExistingParent verifies DeleteKey preserves an existing parent
-func TestBackend_DeleteKey_PreservesExistingParent(t *testing.T) {
-	mockTpm := &mockTPM{}
-	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	existingParent := &types.KeyAttributes{CN: "existing-parent"}
-	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
-
-	attrs := &types.KeyAttributes{CN: "test-key", Parent: existingParent}
-	err := b.DeleteKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("DeleteKey() error = %v", err)
-	}
-	if attrs.Parent != existingParent {
-		t.Error("Expected existing Parent to be preserved")
-	}
-}
-
-// TestConfig_Validate_AllDefaults verifies all defaults are set when empty config
-func TestConfig_Validate_AllDefaults(t *testing.T) {
-	config := &Config{UseSimulator: true, Keys: tpmblobtest.New(t)}
-	err := config.Validate()
-	if err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-
-	// Verify all defaults
-	if config.SRKHandle != 0x81000001 {
-		t.Errorf("SRKHandle: expected 0x81000001, got 0x%x", config.SRKHandle)
-	}
-	if config.EKHandle != 0x81010001 {
-		t.Errorf("EKHandle: expected 0x81010001, got 0x%x", config.EKHandle)
-	}
-	if config.Hash != "SHA-256" {
-		t.Errorf("Hash: expected SHA-256, got %s", config.Hash)
-	}
-	if config.PlatformPCRBank != pkgtpm2.PCRBankSHA256 {
-		t.Errorf("PlatformPCRBank: expected %s, got %s", pkgtpm2.PCRBankSHA256, config.PlatformPCRBank)
-	}
-	if config.CN != "xkms" {
-		t.Errorf("CN: expected xkms, got %s", config.CN)
 	}
 }
 

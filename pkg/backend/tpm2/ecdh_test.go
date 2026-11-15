@@ -357,39 +357,6 @@ func TestSupportedCurves(t *testing.T) {
 	}
 }
 
-// TestParsePeerPublicKey_DERFormat tests parsing DER-encoded public key
-func TestParsePeerPublicKey_DERFormat(t *testing.T) {
-	backend := &Backend{}
-
-	// Generate a test key pair
-	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	// Marshal to DER format
-	derBytes, err := x509.MarshalPKIXPublicKey(&privKey.PublicKey)
-	if err != nil {
-		t.Fatalf("failed to marshal public key: %v", err)
-	}
-
-	// Parse the key
-	eccPoint, curve, err := backend.parsePeerPublicKey(derBytes)
-	if err != nil {
-		t.Fatalf("parsePeerPublicKey failed: %v", err)
-	}
-
-	// Verify the curve
-	if curve.Params().Name != elliptic.P256().Params().Name {
-		t.Errorf("curve = %s, want P-256", curve.Params().Name)
-	}
-
-	// Verify the point coordinates
-	if len(eccPoint.X.Buffer) == 0 || len(eccPoint.Y.Buffer) == 0 {
-		t.Error("ECC point coordinates are empty")
-	}
-}
-
 // TestParsePeerPublicKey_SEC1Format tests parsing SEC1 uncompressed point
 func TestParsePeerPublicKey_SEC1Format(t *testing.T) {
 	backend := &Backend{}
@@ -479,80 +446,6 @@ func TestParsePeerPublicKey_NonECDSA(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for RSA key")
 	}
-}
-
-// TestApplyKDF_HKDF tests HKDF key derivation
-func TestApplyKDF_HKDF(t *testing.T) {
-	backend := &Backend{}
-
-	sharedSecret := make([]byte, 32)
-	for i := range sharedSecret {
-		sharedSecret[i] = byte(i)
-	}
-
-	params := &types.KDFParams{
-		Algorithm: types.KDFAlgorithmHKDF,
-		Hash:      "SHA-256",
-		Salt:      []byte("test-salt"),
-		Info:      []byte("test-info"),
-		KeyLength: 32,
-	}
-
-	derivedKey, err := backend.applyKDF(sharedSecret, params)
-	if err != nil {
-		t.Fatalf("applyKDF failed: %v", err)
-	}
-
-	if len(derivedKey) != params.KeyLength {
-		t.Errorf("derived key length = %d, want %d", len(derivedKey), params.KeyLength)
-	}
-
-	// Verify deterministic output
-	derivedKey2, _ := backend.applyKDF(sharedSecret, params)
-	for i := range derivedKey {
-		if derivedKey[i] != derivedKey2[i] {
-			t.Error("KDF output is not deterministic")
-			break
-		}
-	}
-}
-
-// TestApplyKDF_UnsupportedAlgorithm tests error handling for unsupported KDF
-func TestApplyKDF_UnsupportedAlgorithm(t *testing.T) {
-	backend := &Backend{}
-
-	params := &types.KDFParams{
-		Algorithm: "unsupported-kdf",
-		Hash:      "SHA-256",
-		KeyLength: 32,
-	}
-
-	_, err := backend.applyKDF([]byte("secret"), params)
-	if err == nil {
-		t.Error("expected error for unsupported KDF algorithm")
-	}
-}
-
-// TestApplyKDF_UnsupportedHash tests error handling for unsupported hash
-func TestApplyKDF_UnsupportedHash(t *testing.T) {
-	backend := &Backend{}
-
-	params := &types.KDFParams{
-		Algorithm: types.KDFAlgorithmHKDF,
-		Hash:      "unsupported-hash",
-		KeyLength: 32,
-	}
-
-	_, err := backend.applyKDF([]byte("secret"), params)
-	if err == nil {
-		t.Error("expected error for unsupported hash algorithm")
-	}
-}
-
-// TestKeyAgreementBackendInterface verifies interface compliance
-func TestKeyAgreementBackendInterface(t *testing.T) {
-	// This test verifies at compile time that Backend implements KeyAgreementBackend
-	var _ types.KeyAgreementProvider = (*Backend)(nil)
 }
 
 // generateTestRSAKey generates an RSA key for testing

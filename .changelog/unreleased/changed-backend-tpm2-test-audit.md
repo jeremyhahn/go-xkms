@@ -1,0 +1,1 @@
+Tests: the `pkg/backend/tpm2` unit tests drop 55 tests that repeated a path another test covers, asserted a compile-time interface check again, or tested `types.KDFParams.Derive` rather than the backend; `newbackend_sim_test.go` goes with its one test. Coverage holds at 89.6% with the simulator, 66.6% without (#1794).

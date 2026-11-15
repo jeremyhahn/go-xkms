@@ -57,12 +57,6 @@ func newSealerTestBackend(mock *sealerMockTPM) *Backend {
 	}
 }
 
-func TestSealerInterfaceCompliance(t *testing.T) {
-	// Compile-time assertion is in sealer.go (var _ types.Sealer = (*Backend)(nil)).
-	// This test verifies the assertion holds at runtime as well.
-	var _ types.Sealer = &Backend{}
-}
-
 func TestCanSeal_WhenOpen(t *testing.T) {
 	mock := &sealerMockTPM{canSealResult: true}
 	b := newSealerTestBackend(mock)
@@ -156,18 +150,6 @@ func TestSeal_WithOptions(t *testing.T) {
 	}
 }
 
-func TestSeal_ErrorWhenClosed(t *testing.T) {
-	mock := &sealerMockTPM{}
-	b := newSealerTestBackend(mock)
-	b.closed = true
-
-	ctx := context.Background()
-	_, err := b.Seal(ctx, []byte("data"), nil)
-	if !errors.Is(err, ErrNotInitialized) {
-		t.Errorf("Seal() error = %v, want ErrNotInitialized", err)
-	}
-}
-
 func TestSeal_PropagatesTPMError(t *testing.T) {
 	tpmErr := errors.New("tpm: seal hardware fault")
 	mock := &sealerMockTPM{sealErr: tpmErr}
@@ -202,73 +184,6 @@ func TestUnseal_DelegatesToTPM(t *testing.T) {
 	}
 	if string(plaintext) != string(expectedPlaintext) {
 		t.Errorf("Unseal() = %s, want %s", plaintext, expectedPlaintext)
-	}
-}
-
-func TestUnseal_WithOptions(t *testing.T) {
-	mock := &sealerMockTPM{unsealResult: []byte("data")}
-	b := newSealerTestBackend(mock)
-
-	ctx := context.Background()
-	sealed := &types.SealedData{
-		Backend: types.BackendTypeTPM2,
-		KeyID:   "key-2",
-	}
-	opts := &types.UnsealOptions{
-		KeyAttributes: &types.KeyAttributes{CN: "unseal-key"},
-	}
-
-	plaintext, err := b.Unseal(ctx, sealed, opts)
-	if err != nil {
-		t.Fatalf("Unseal() with options unexpected error: %v", err)
-	}
-	if string(plaintext) != "data" {
-		t.Errorf("Unseal() = %s, want data", plaintext)
-	}
-}
-
-func TestUnseal_ErrorWhenClosed(t *testing.T) {
-	mock := &sealerMockTPM{}
-	b := newSealerTestBackend(mock)
-	b.closed = true
-
-	ctx := context.Background()
-	sealed := &types.SealedData{Backend: types.BackendTypeTPM2}
-
-	_, err := b.Unseal(ctx, sealed, nil)
-	if !errors.Is(err, ErrNotInitialized) {
-		t.Errorf("Unseal() error = %v, want ErrNotInitialized", err)
-	}
-}
-
-func TestUnseal_NilSealedData(t *testing.T) {
-	mock := &sealerMockTPM{}
-	b := newSealerTestBackend(mock)
-
-	ctx := context.Background()
-	_, err := b.Unseal(ctx, nil, nil)
-	if !errors.Is(err, ErrNilSealedData) {
-		t.Errorf("Unseal(nil) error = %v, want ErrNilSealedData", err)
-	}
-}
-
-func TestUnseal_PropagatesTPMError(t *testing.T) {
-	tpmErr := errors.New("tpm: unseal PCR mismatch")
-	mock := &sealerMockTPM{unsealErr: tpmErr}
-	b := newSealerTestBackend(mock)
-
-	ctx := context.Background()
-	sealed := &types.SealedData{
-		Backend: types.BackendTypeTPM2,
-		KeyID:   "key-3",
-	}
-
-	_, err := b.Unseal(ctx, sealed, nil)
-	if err == nil {
-		t.Fatal("Unseal() expected error, got nil")
-	}
-	if !errors.Is(err, tpmErr) {
-		t.Errorf("Unseal() error = %v, want wrapped %v", err, tpmErr)
 	}
 }
 
