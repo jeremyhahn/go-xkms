@@ -203,5 +203,22 @@ approval and the exported APIs) were not started.
   (`TenantUndoPendingError`), not retired: the in-memory node has no volume
   pool, so go-qrdb cannot record its cleanup acknowledgement there, and an
   end-to-end reuse check needs a real node.
-- Still open: findings 3 to 5 (CA migration on enabling the factory, cloud
-  KMS default backends, cross-node PKCS#11 provisioning claim).
+- Finding 4 (cloud KMS default backends): fixed in lane row2083d, see
+  below.
+- Still open: finding 3 (owner ask on CA migration when the factory is
+  enabled) and finding 5 (cross-node PKCS#11 provisioning claim).
+
+## Finding 4: backends that return no key at generation (lane row2083d)
+
+- The AWS KMS, Azure Key Vault and GCP KMS providers return `(nil, nil)`
+  from `GenerateKey`. The composite `GenerateECDSA` now reads the public key
+  back through the provider's `Signer` for that key instead of failing with
+  `ErrPublicKeyExtraction`.
+- Those providers address a key by its CN alone, so the tenant login CA key
+  is generated as `qrdb-login-ca-<tenant>` (`tenantLoginCAKeyName`). xkms
+  reserves that prefix as well as the bare name. Certificate IDs keep
+  `qrdb-login-ca`, which the tenant-scoped certificate store already scopes.
+- Commits: test 75a58623e, fix d111a0cb8. The test is a fake provider over
+  the software backend that returns no key at generation; the real cloud
+  providers were not exercised.
+- Still open: findings 3 and 5.
