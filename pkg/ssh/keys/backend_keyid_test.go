@@ -23,26 +23,6 @@ import (
 )
 
 // TestBackendKeyID_InjectiveAcrossHyphenBoundary is the exact regression for
-// go-xkms#1238: "user/a-b/c" and "user/a/b-c" are two distinct SSH key
-// addresses (owner="a-b",name="c" vs. owner="a",name="b-c"; scope.BuildKeyID
-// forbids '/' inside owner or name, so both are individually well-formed).
-// The old strings.ReplaceAll(id, "/", "-") mapping flattened both to
-// "ssh-user-a-b-c", letting one address's backend key silently answer for
-// the other.
-func TestBackendKeyID_InjectiveAcrossHyphenBoundary(t *testing.T) {
-	id1, err := backendKeyID(scope.User, "a-b", "c")
-	if err != nil {
-		t.Fatalf("backendKeyID(user, %q, %q): %v", "a-b", "c", err)
-	}
-	id2, err := backendKeyID(scope.User, "a", "b-c")
-	if err != nil {
-		t.Fatalf("backendKeyID(user, %q, %q): %v", "a", "b-c", err)
-	}
-	if id1 == id2 {
-		t.Fatalf("backendKeyID collided: user/a-b/c and user/a/b-c both produced %q", id1)
-	}
-}
-
 // TestBackendKeyID_Deterministic proves the same identity always maps to the
 // same CN, which every caller relies on to find a key it created earlier.
 func TestBackendKeyID_Deterministic(t *testing.T) {

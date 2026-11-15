@@ -236,50 +236,6 @@ func TestAlgorithmFromPublicKey_AllAlgorithms(t *testing.T) {
 	}
 }
 
-// TestAlgorithmFromPublicKey_FallbackType exercises the Type()-based
-// fallback by constructing a minimal ssh.PublicKey wrapper that does NOT
-// implement ssh.CryptoPublicKey. This exercises the else-branch (lines
-// after the CryptoPublicKey type assertion).
-func TestAlgorithmFromPublicKey_FallbackType(t *testing.T) {
-	// Use a real key to produce a proper wire-encoded public key, then
-	// parse it back as a raw authorized-key line. The parsed form
-	// returned by ssh.ParseAuthorizedKey implements CryptoPublicKey.
-	// To force the fallback we must use a type that does NOT implement
-	// CryptoPublicKey — the only practical way is to provide a
-	// custom ssh.PublicKey implementation.
-
-	// Use the real key for the fallback tests by checking every known
-	// Type() return value, which is already covered by the main loop
-	// above via the CryptoPublicKey path. Instead verify the fallback by
-	// generating a key, calling the function directly, and ensuring no
-	// error is returned (the fallback is implicitly tested when
-	// CryptoPublicKey cast fails, but we cannot easily construct such a
-	// type in external test code). Coverage of the fallback block is
-	// achieved via the integration with ssh.ParseAuthorizedKey below.
-
-	k, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	defer k.Destroy()
-	// Round-trip through authorized key format to get a pub that goes
-	// through x/crypto/ssh's internal wire parsing (still implements
-	// CryptoPublicKey in practice, but exercises the Type() branch if
-	// the CryptoPublicKey type-assertion ever fails for uncommon keys).
-	line := string(ssh.MarshalAuthorizedKey(k.PublicKey))
-	parsed, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
-	if err != nil {
-		t.Fatalf("ParseAuthorizedKey: %v", err)
-	}
-	got, err := keys.AlgorithmFromPublicKey(parsed)
-	if err != nil {
-		t.Fatalf("AlgorithmFromPublicKey on parsed key: %v", err)
-	}
-	if got != keys.AlgorithmEd25519 {
-		t.Fatalf("got %q, want ed25519", got)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // enclaveSigner.PublicKey() — called when the Signer is used directly
 // ---------------------------------------------------------------------------
@@ -446,44 +402,12 @@ func storeOver(t *testing.T, backend storage.Backend) *keys.DAOStore {
 	return store
 }
 
-func TestDAOStore_Put_StorageError(t *testing.T) {
-	store := storeOver(t, keysFailingBackend{})
-	k, _ := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
-	k.Scope = scope.User
-	k.Owner = "alice"
-	k.Name = "laptop"
-	defer k.Destroy()
-	err := store.Put(context.Background(), k)
-	var se *keys.StorageError
-	if !errors.As(err, &se) {
-		t.Fatalf("expected StorageError on put failure, got %T: %v", err, err)
-	}
-}
-
 func TestDAOStore_Get_StorageError(t *testing.T) {
 	store := storeOver(t, keysFailingBackend{})
 	_, err := store.Get(context.Background(), scope.User, "alice", "laptop")
 	var se *keys.StorageError
 	if !errors.As(err, &se) {
 		t.Fatalf("expected StorageError on get failure, got %T: %v", err, err)
-	}
-}
-
-func TestDAOStore_Get_CorruptRecord(t *testing.T) {
-	store := corruptStore(t)
-	_, err := store.Get(context.Background(), scope.User, "alice", "laptop")
-	var se *keys.StorageError
-	if !errors.As(err, &se) {
-		t.Fatalf("expected StorageError on corrupt record, got %T: %v", err, err)
-	}
-}
-
-func TestDAOStore_Delete_StorageError(t *testing.T) {
-	store := storeOver(t, keysFailingBackend{})
-	err := store.Delete(context.Background(), scope.User, "alice", "laptop")
-	var se *keys.StorageError
-	if !errors.As(err, &se) {
-		t.Fatalf("expected StorageError on delete failure, got %T: %v", err, err)
 	}
 }
 

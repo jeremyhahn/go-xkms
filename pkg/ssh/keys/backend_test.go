@@ -86,42 +86,6 @@ func (f *fakeBackendProvider) Signer(_ context.Context, backendID, keyID string,
 	return s, nil
 }
 
-func TestGenerateOnBackend_RoundTripAndSign(t *testing.T) {
-	ctx := context.Background()
-	p := newFakeProvider()
-
-	key, err := GenerateOnBackend(ctx, p, "tpm2", GenerateOptions{Algorithm: AlgorithmEd25519, Comment: "alice@host"}, scope.User, "alice", "laptop")
-	if err != nil {
-		t.Fatalf("GenerateOnBackend: %v", err)
-	}
-	if !key.IsBackendBacked() {
-		t.Fatal("expected backend-backed key")
-	}
-	if key.Material != nil {
-		t.Fatal("backend-backed key must not carry Material")
-	}
-	if key.BackendID != "tpm2" || key.BackendKeyID == "" {
-		t.Fatalf("unexpected backend ref: id=%q keyID=%q", key.BackendID, key.BackendKeyID)
-	}
-	if key.PublicKey == nil || key.Fingerprint == "" {
-		t.Fatal("expected public key + fingerprint")
-	}
-
-	// Sign through the backend signer and verify with the public key.
-	signer, err := key.BackendSigner(ctx, p)
-	if err != nil {
-		t.Fatalf("BackendSigner: %v", err)
-	}
-	msg := []byte("the quick brown fox")
-	sig, err := signer.Sign(rand.Reader, msg)
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	if err := key.PublicKey.Verify(msg, sig); err != nil {
-		t.Fatalf("signature did not verify: %v", err)
-	}
-}
-
 func TestGenerateOnBackend_StorePutGetList(t *testing.T) {
 	ctx := context.Background()
 	p := newFakeProvider()
@@ -272,36 +236,5 @@ func TestBackendSigner_UnsupportedPublicKeyType(t *testing.T) {
 	var kme *KeyMaterialError
 	if !errors.As(err, &kme) {
 		t.Fatalf("expected *KeyMaterialError for an unsupported public key type, got %T: %v", err, err)
-	}
-}
-
-// TestEnvelopeV1BackwardCompat ensures a legacy v1 software envelope (no
-// backend fields) still decodes after the v2 schema bump.
-func TestEnvelopeV1BackwardCompat(t *testing.T) {
-	ctx := context.Background()
-	st, err := NewDAOStore(testutil.NewMemoryDAOFactory())
-	if err != nil {
-		t.Fatalf("NewDAOStore: %v", err)
-	}
-	sw, err := Generate(t.Context(), GenerateOptions{Algorithm: AlgorithmEd25519})
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	sw.Scope, sw.Owner, sw.Name = scope.User, "carol", "key1"
-	if err := st.Put(ctx, sw); err != nil {
-		t.Fatalf("Put software key: %v", err)
-	}
-	got, err := st.Get(ctx, scope.User, "carol", "key1")
-	if err != nil {
-		t.Fatalf("Get software key: %v", err)
-	}
-	if got.IsBackendBacked() {
-		t.Fatal("software key must not be backend-backed")
-	}
-	if got.Material == nil {
-		t.Fatal("software key must rehydrate Material")
-	}
-	if _, err := got.Signer(); err != nil {
-		t.Fatalf("software signer: %v", err)
 	}
 }

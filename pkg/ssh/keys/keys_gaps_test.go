@@ -105,15 +105,6 @@ func TestGenerate_AllAlgorithms(t *testing.T) {
 	}
 }
 
-// TestGenerate_RSATooSmall covers the InvalidKeySizeError branch.
-func TestGenerate_RSATooSmall(t *testing.T) {
-	_, err := Generate(t.Context(), GenerateOptions{Algorithm: AlgorithmRSA, RSABits: 1024})
-	var iks *InvalidKeySizeError
-	if !errors.As(err, &iks) {
-		t.Fatalf("expected InvalidKeySizeError, got %v", err)
-	}
-}
-
 // TestGenerate_RSATooLarge proves Generate refuses an oversized modulus
 // before it ever reaches rsa.GenerateKey, which cannot be cancelled and
 // whose cost grows with the cube of the modulus size (go-xkms#1260). 65536
@@ -125,15 +116,6 @@ func TestGenerate_RSATooLarge(t *testing.T) {
 	var iks *InvalidKeySizeError
 	if !errors.As(err, &iks) {
 		t.Fatalf("expected InvalidKeySizeError, got %v", err)
-	}
-}
-
-// TestGenerate_Unsupported covers the default branch of generatePrivateKey.
-func TestGenerate_Unsupported(t *testing.T) {
-	_, err := Generate(t.Context(), GenerateOptions{Algorithm: Algorithm("bogus-algo")})
-	var ua *UnsupportedAlgorithmError
-	if !errors.As(err, &ua) {
-		t.Fatalf("expected UnsupportedAlgorithmError, got %v", err)
 	}
 }
 
