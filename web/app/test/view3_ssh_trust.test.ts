@@ -66,6 +66,11 @@ const pin = {
   added_at: "2026-11-01T10:00:00Z",
 };
 
+// authorized_keys-format host keys, the shape the server parses with
+// ssh.ParseAuthorizedKey on Add and Verify.
+const hostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl new.example.com";
+const otherHostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB3W7ffHMb3S+Z2lW0Kp9xQZkGg8bTqzZcCQ1fPQwNzR other";
+
 const entry: SSHAuthorizedEntry = {
   scope: "global",
   owner: "default",
@@ -123,17 +128,17 @@ describe("SshTrustView", () => {
     await mounted();
 
     await fireEvent.input(screen.getByLabelText("Host"), { target: { value: "new.example.com" } });
-    await fireEvent.input(screen.getByLabelText("Host fingerprint"), { target: { value: "SHA256:newnew" } });
-    await fireEvent.input(screen.getByLabelText("Host algorithm"), { target: { value: "ecdsa-sha2-nistp256" } });
+    await fireEvent.input(screen.getByLabelText("Host public key"), { target: { value: hostKey } });
     await fireEvent.click(screen.getByRole("button", { name: "Add pin" }));
 
+    // The server derives fingerprint and algorithm from public_key and
+    // refuses an Add without it (embeddedKnownHostsClient.Add).
     await waitFor(() =>
       expect(addKnownHost).toHaveBeenCalledWith({
         scope: "global",
         owner: "default",
         host: "new.example.com",
-        fingerprint: "SHA256:newnew",
-        algorithm: "ecdsa-sha2-nistp256",
+        public_key: hostKey,
       }),
     );
     await waitFor(() => expect(listKnownHosts).toHaveBeenCalledTimes(2));
@@ -169,14 +174,14 @@ describe("SshTrustView", () => {
     await mounted();
 
     await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "git.example.com" } });
-    await fireEvent.input(screen.getByLabelText("Offered fingerprint"), { target: { value: "SHA256:pinnedpinned" } });
+    await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: hostKey } });
     await fireEvent.click(screen.getByRole("button", { name: "Verify host" }));
 
     await waitFor(() =>
       expect(verifyKnownHost).toHaveBeenCalledWith("git.example.com", {
         scope: "global",
         owner: "default",
-        fingerprint: "SHA256:pinnedpinned",
+        public_key: hostKey,
       }),
     );
     expect(await screen.findByText("Fingerprint matches the pin for git.example.com.")).toBeInTheDocument();
@@ -190,7 +195,7 @@ describe("SshTrustView", () => {
     await mounted();
 
     await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "git.example.com" } });
-    await fireEvent.input(screen.getByLabelText("Offered fingerprint"), { target: { value: "SHA256:other" } });
+    await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: otherHostKey } });
     await fireEvent.click(screen.getByRole("button", { name: "Verify host" }));
 
     expect(await screen.findByText("Fingerprint mismatch")).toBeInTheDocument();
