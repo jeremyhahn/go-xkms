@@ -16,6 +16,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -150,7 +151,9 @@ ever written.`,
 			}
 			defer func() { _ = release() }()
 			return flags.withACMEClient(c, "", func(client acmeClient) error {
-				res, err := client.EnrollDevice(c.Context(), ef.config(tpm))
+				ctx, cancel := services.ACMEEnrollContext(c.Context(), ef.timeout)
+				defer cancel()
+				res, err := client.EnrollDevice(ctx, ef.config(tpm))
 				if err != nil {
 					return fmt.Errorf("acme: enroll device: %w", err)
 				}

@@ -185,6 +185,22 @@ func ACMERenewInputsMissing(challenge, csrPath, challengeName, csrName string) e
 	return fmt.Errorf("acme: renew needs %s", strings.Join(missing, " and "))
 }
 
+// ACMEDefaultEnrollTimeout is the acme client's own default for
+// ACMEEnrollmentConfig.Timeout (pkg/acme/client/enrollment.go).
+const ACMEDefaultEnrollTimeout = 30 * time.Second
+
+// ACMEEnrollContext bounds a whole enrollment by its timeout, or by the
+// client's default when timeout is 0. The client only defaults the config
+// field; x/crypto acme polls a pending authorization or order until the
+// context ends, so without this deadline a stalled enrollment never returns
+// and the GUI keeps the TPM accessor for the whole wait.
+func ACMEEnrollContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		timeout = ACMEDefaultEnrollTimeout
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
 // RegisterAccount registers the account key with the server, or finds the
 // existing account, with an optional contact email.
 func (s *ACMEService) RegisterAccount(conn ACMEConnection, contact string) (info *ACMEAccountInfo, err error) {
@@ -314,7 +330,9 @@ func (s *ACMEService) EnrollDevice(conn ACMEConnection, req ACMEEnrollRequest) (
 		req.Challenge = sdkacme.ACMEChallengeTypeEnroll01
 	}
 	err = s.withDeviceTPM(conn, req, "enroll", func(c ACMEClient, cfg *sdkacme.ACMEEnrollmentConfig) error {
-		res, err := c.EnrollDevice(s.context(), cfg)
+		ctx, cancel := ACMEEnrollContext(s.context(), cfg.Timeout)
+		defer cancel()
+		res, err := c.EnrollDevice(ctx, cfg)
 		if err != nil {
 			return fmt.Errorf("acme: enroll device: %w", err)
 		}
