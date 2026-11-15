@@ -54,7 +54,7 @@ var (
 // holder gets a key of their own.
 func enrollHolder(t *testing.T, user string, params map[string]any) *qrdbsdk.AuthFactorEnrollment {
 	t.Helper()
-	e, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: user, MethodParams: params})
+	e, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: user, TenantID: "tenant-t", MethodParams: params})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
