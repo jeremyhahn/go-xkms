@@ -52,17 +52,25 @@
     }
   }
 
+  // The import request, snapshotted before the existence probe; the probe,
+  // the overwrite confirm and both writes all use this one snapshot.
+  type Request = { id: string; backend: string; certPem: string; chain: string[] };
+  let pending = $state<Request | null>(null);
+
   async function startImport(): Promise<void> {
     if (!ready) return;
+    const req: Request = { id: keyId.trim(), backend, certPem, chain: pemBlocks(chainPem) };
+    pending = req;
     busy = true;
     error = null;
     try {
-      if (await getSDKClient().certs.exists(keyId.trim(), backend)) {
+      if (await getSDKClient().certs.exists(req.id, req.backend)) {
         confirming = true;
         return;
       }
     } catch (e) {
       error = message(e);
+      pending = null;
       return;
     } finally {
       busy = false;
@@ -70,8 +78,15 @@
     await store();
   }
 
+  function cancel(): void {
+    confirming = false;
+    pending = null;
+  }
+
   async function store(): Promise<void> {
-    const id = keyId.trim();
+    const req = pending;
+    if (req === null) return;
+    const { id, backend, certPem, chain } = req;
     confirming = false;
     busy = true;
     error = null;
@@ -82,7 +97,6 @@
         error = message(e);
         return;
       }
-      const chain = pemBlocks(chainPem);
       if (chain.length > 0) {
         try {
           await getSDKClient().certs.saveChain(id, { backend, cert_chain_pem: chain });
@@ -94,6 +108,7 @@
       showToast("success", `Certificate stored for key "${id}".`);
     } finally {
       busy = false;
+      pending = null;
     }
   }
 
@@ -134,10 +149,10 @@
 
   {#if confirming}
     <Alert kind="warning">
-      <span>A certificate already exists for key "{keyId.trim()}". Overwrite it?</span>
+      <span>A certificate already exists for key "{pending?.id}" on {pending?.backend}. Overwrite it?</span>
     </Alert>
     <div class="flex gap-2">
-      <button class="btn btn-ghost" onclick={() => (confirming = false)} disabled={busy}>Cancel</button>
+      <button class="btn btn-ghost" onclick={cancel} disabled={busy}>Cancel</button>
       <button class="btn btn-warning" onclick={store} disabled={busy}>Confirm</button>
     </div>
   {:else}
