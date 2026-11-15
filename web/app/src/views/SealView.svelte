@@ -23,6 +23,7 @@
 
   let sealedJson = $state("");
   let unsealAad = $state("");
+  let unsealPassword = $state("");
   let unsealErr = $state<string | null>(null);
   let plaintext = $state<string | null>(null);
 
@@ -94,17 +95,33 @@
       unsealErr = "Invalid seal result JSON.";
       return;
     }
-    if (typeof parsed.ciphertext !== "string" || !isB64(parsed.ciphertext)) {
+    // A TPM2 result carries the sealed object (tpm_public/tpm_private) and a
+    // null ciphertext; every other result carries a base64 ciphertext.
+    const isTpm = typeof parsed.tpm_public === "string" && typeof parsed.tpm_private === "string";
+    const hasCipher = parsed.ciphertext !== null && parsed.ciphertext !== undefined;
+    if ((!isTpm || hasCipher) && (typeof parsed.ciphertext !== "string" || !isB64(parsed.ciphertext))) {
       unsealErr = "Ciphertext is not base64.";
       return;
     }
-    const req: UnsealRequest = { backend: parsed.backend, ciphertext: parsed.ciphertext };
+    for (const f of ["tpm_public", "tpm_private", "wrapped_dek"] as const) {
+      const v: unknown = parsed[f];
+      if (v !== undefined && (typeof v !== "string" || !isB64(v))) {
+        unsealErr = `${f} is not base64.`;
+        return;
+      }
+    }
+    const req: UnsealRequest = { backend: parsed.backend };
+    if (typeof parsed.ciphertext === "string") req.ciphertext = parsed.ciphertext;
     if (parsed.nonce !== undefined) req.nonce = parsed.nonce;
     if (parsed.tag !== undefined) req.tag = parsed.tag;
+    if (parsed.tpm_public !== undefined) req.tpm_public = parsed.tpm_public;
+    if (parsed.tpm_private !== undefined) req.tpm_private = parsed.tpm_private;
+    if (parsed.wrapped_dek !== undefined) req.wrapped_dek = parsed.wrapped_dek;
     if (parsed.metadata !== undefined) req.metadata = parsed.metadata;
     if (parsed.key_id !== undefined) req.key_id = parsed.key_id;
     if (parsed.key_version !== undefined) req.key_version = parsed.key_version;
     if (unsealAad !== "") req.aad = textToB64(unsealAad);
+    if (unsealPassword !== "") req.password = unsealPassword;
     busy = true;
     try {
       plaintext = b64ToText((await getSDKClient().seal.unseal(req)).plaintext);
@@ -156,6 +173,7 @@
       {#if unsealErr}<Alert kind="error"><span>{unsealErr}</span></Alert>{/if}
       <textarea class="textarea textarea-bordered w-full font-mono text-xs" aria-label="Seal result JSON" placeholder="Paste a seal result JSON" rows="8" bind:value={sealedJson}></textarea>
       <input class="input input-bordered w-full" aria-label="Unseal AAD" placeholder="AAD (optional)" bind:value={unsealAad} />
+      <input class="input input-bordered w-full" type="password" aria-label="Unseal password" placeholder="Password (optional, TPM2)" bind:value={unsealPassword} />
       <button class="btn btn-primary" onclick={doUnseal} disabled={busy || sealedJson === ""}>Unseal</button>
       {#if plaintext !== null}
         <pre class="bg-base-200 rounded p-3 text-sm whitespace-pre-wrap" aria-label="Plaintext">{plaintext}</pre>
