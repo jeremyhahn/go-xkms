@@ -26,10 +26,33 @@ ship; the export did not exist.
    `per-board-ota-image-keys` names the export and the board -> key id
    record (`OTAImageKeyID`); this plan.
 
+## Slice row1778b: REST and MCP
+
+1. `5c81ab950` `test(xkms): assert the OTA permissions are registered in
+   go-qrdb` (Codex P1 on row1778a): the grant test also checks
+   `qrdbsdk.IsPermissionRegistered`. It passes on the pinned go-qrdb and
+   guards a regression.
+2. Test commit `23bd9c5ec` `test(api): serve the OTA board public key export
+   on REST and MCP`: `TestOTAImageKeyHandlers_ExportPublicKey` and
+   `TestOTAImageKeyRoutes_ExportPublicKeyNeedsKeysGet` (REST),
+   `TestOTAImageKeyMethods_ExportPublicKey` and the `keys:get` entry in
+   `TestOTAImageKeyMethods_Registered` (MCP). They failed to compile first.
+3. Fix commit `237b0e44a` `feat(api): serve the OTA board public key export
+   on REST and MCP`: `Servicer.ExportOTAImagePublicKey` and its test
+   doubles, `GET /api/v1/ota-image-keys/{board}/public-key` and
+   `xkms.exportOTAImagePublicKey` under `keys:get`, the REST and MCP authz
+   golden tables, and the `sdk/go` alias `OTAImagePublicKeyResponse`.
+   Follow-up `66896c62a` `test(api): compare the OTA public export with
+   PublicKey.Bytes` (SA1019).
+4. Docs commit: key-management/api.md documents the REST route and the MCP
+   method; this plan.
+
 ## Next slice
 
-- Wire the export on gRPC, REST, MCP and the CLI (`xkmsctl key ota-image`),
-  with its integration tests, and api.md / cli.md.
+- The gRPC proto RPC, `transport.Client` on all six client transports
+  (gRPC, REST, QUIC, MCP, Unix, embedded), `xkmsctl key ota-image`, and the
+  integration tests (the integration `TestXKMSService` returns
+  `ErrNotImplemented` for the export until then), with cli.md.
 
 ## Out of scope
 
