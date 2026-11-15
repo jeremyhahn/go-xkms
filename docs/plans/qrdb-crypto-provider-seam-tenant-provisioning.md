@@ -187,3 +187,21 @@ approval and the exported APIs) were not started.
 
 - `go test -count=1 -race -timeout 75m -tags "codec_cbor codec_json codec_msgpack" ./pkg/server/...`: pass (pkg/server 528 s; credentials, loopback pass). The run hits go test's default 10m bound under -race, so it needs the Makefile's UNIT_TEST_TIMEOUT.
 - `make lint`: pass (0 issues, every module and tag set).
+
+## Third Codex review: reliability findings 6 and 7 (lane row2083d)
+
+- Finding 6 (lazy path): `ProviderForTenant` treats a tenant as provisioned
+  only when both its login CA key and its certificate exist; otherwise it
+  runs `EnsureTenant`, which reuses the key.
+- Finding 7 (failed-create rollback): `CreateTenant` undoes an incomplete
+  create with `UndoCreateTenant` on a bounded `context.WithoutCancel`
+  context, not `DeleteTenant` on the request context.
+- Commits: finding 6 test 389e6e9d1, fix ef287990a; finding 7 test
+  a4f77128a and 25bcd2d30 (real go-qrdb tenant service with tenant undo
+  active), fix 7b017f43a.
+- The finding 7 test asserts the retried ID is undone
+  (`TenantUndoPendingError`), not retired: the in-memory node has no volume
+  pool, so go-qrdb cannot record its cleanup acknowledgement there, and an
+  end-to-end reuse check needs a real node.
+- Still open: findings 3 to 5 (CA migration on enabling the factory, cloud
+  KMS default backends, cross-node PKCS#11 provisioning claim).
