@@ -52,7 +52,7 @@ Commit count: 194 (every sha above appears once).
   - The defect is on main: `func (p *PlatformPassword) Bytes()` at pkg/tpm2/password.go:134 is unchanged since 7b41da311. Main feeds it into the session auth at pkg/tpm2/session.go:726, :894 and :921 (`keyAuth = keyAttrs.Password.Bytes()`, both files unchanged by #2183).
   - Next slice, test first: a PlatformPassword whose backing unseal fails makes Seal/Unseal return that error, with no TPM command under empty auth.
   - Fix: lockSeal resolves through an error-returning read.
-  - Main's other Bytes() callers route to the tpm2 row. The coordinator names it; no row number was given.
+  - Main's other Bytes() callers (password.go:134 into session.go:726, :894 and :921) route to #2213.
 - pkg/mcptool/streamable.go:358 (ping requests dropped). The flagged code is the kept transport (rows 9-10), not on main.
   - Next slice, test first: a server-initiated `ping` request on the event stream gets an empty-result response with its ID.
   - Fix: answer ping in the transport's request dispatch.
@@ -85,9 +85,23 @@ Commit count: 194 (every sha above appears once).
 - Coverage timeout (ruling 661(4)): blocked. The lane policy guard refuses edits to .github/workflows/ci.yml without LANE_POLICY_ALLOW. The Makefile half (COVERAGE_SHARD_TIMEOUT 135m) and its buildgates pin go together with the ci.yml change, so none of it was made.
 - Still to do: narrow row 21 to the system tenant, in servicer_invite.go. Its test 679d81f30 went with the host test file, so the system-tenant redemption test has to be written at the xkms level. Also row 11's `make test-mcp` gate.
 
-## Next slice order
+## Execution, part 2 (lane mf2183s)
 
-1. Make the restore commits for rows 13, 14, 18 and 24, plus the non-system part of 21 and the conditional rows 11 and 14 once their gates are run. Each takes main's content per path where a file is wholly RESTORE, or does a hand narrowing where a file mixes rows.
-2. For each verify13 P1, commit the test, then the fix.
-3. Make the coverage timeout change and the PeerGate fix.
-4. Run the unit tests of the touched packages, `make integration-test-fido2`, `make test-mcp` and the xkey tests. Integration suites that need Docker go to CI.
+Each fix comes after its test, which failed before the fix.
+
+- Row 21 MINIMAL plus the servicer_invite.go:242 P1. Test 45611d40a, fix a7f6ebbd0. GetInvite, BeginInviteRegistration, FinishInviteRegistration and ActivateInvitePIV refuse any invitation outside the system tenant with ErrInviteUnusable, before any lookup. The WebAuthn invite ceremony binds the invited account by its user handle (webauthn BeginInviteRegistration takes the handle, not an email). Finish refuses a credential whose handle is not the invited account's. The tests cover system-tenant success, a refused "acme" invitation on every path, and a same-email account in the system tenant that stays unenrolled. The non-system-tenant wiring went with row 18 in part 1.
+- seal.go:247 P1 (row 22 MINIMAL). Test 3a620e0f0 (simulator), fix 2255abc57. lockSeal and requireSealProtection read a PlatformPassword through an error-returning read. A failed inner unseal returns ErrPlatformPasswordUnavailable from Seal and Unseal, and the lockout counter does not move. PlatformPassword.Bytes keeps main's signature for main's callers, which route to #2213.
+- streamable.go:358 P1 (rows 9-10, KEEP). Test 982fb0658, fix c98e6bee4. A server request (method + id) on a POST's event stream is answered on the same session: ping gets an empty result, any other method gets -32601 method not found. The fixture server finishes the tool call only after both answers arrive.
+- Row 11: RESTORE. c23cc3927 forward-reverts f9c6c3a38 and a3b05034b and drops tests 21b4ef276 and 49ad498c2. With the bare initialize, `make test-mcp` is green against mcp-go v1.5, so the server/discover opening is not needed for main. It is an MCP protocol feature with no row.
+- Coverage shard timeout (ruling 661(4)), KEEP. Test fba4b8c4e, fix ef93aad5a. ci.yml coverage `timeout-minutes` goes from 90 to 150 (CUSTOMIZE region). The Makefile adds COVERAGE_SHARD_TIMEOUT ?= 135m (UNIT_TEST_TIMEOUT 75m plus the same 60 min), which coverage-shard's go test runs under. internal/buildgates TestCoverageShardTimeoutsArePinned pins both and checks that the go test bound stays under the job's.
+
+## Final state
+
+- Restored to main: rows 11, 18 and 24 (row 24 narrowed to cfbc5f559's ChangePassword adaptation), and row 13 except ded5754bb/955fc155e.
+- Kept: rows 1-10, 12, 15, 19, 20 and 23, plus the coverage timeout.
+- Kept as MINIMAL: rows 14 (final form, its Docker gate goes to CI), 16, 17, 21 (system tenant only) and 22, plus the PeerGate fixture d63c26b37.
+- Routed:
+  - #2202: tenant-scoped redemption and the non-system-tenant invitation wiring (row 21), tenant scope (row 18), the host token path (row 13), and row 14's earlier forms.
+  - #2098: the PIN/barrier credential lifecycle (row 24).
+  - #2213: main's PlatformPassword.Bytes callers into the session auth (password.go:134 into session.go:726, :894 and :921).
+- CI only (Docker): Integration suites, key-lifecycle.spec.ts (row 14's gate) and the PeerGate test.
