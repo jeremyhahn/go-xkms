@@ -7,7 +7,11 @@
   import { showToast } from "$stores/toast.svelte.ts";
   import type { SSHPin, SSHAuthorizedEntry, SSHAddKnownHostRequest, SSHAddAuthorizedKeyRequest } from "@go-xkms/sdk";
 
-  type Confirm = { kind: "host"; host: string } | { kind: "key"; name: string };
+  // A confirm target carries the scope and owner the row was loaded from, so
+  // editing the Scope/Owner inputs without Load never retargets a removal.
+  type Confirm =
+    | { kind: "host"; host: string; scope: string; owner: string }
+    | { kind: "key"; name: string; scope: string; owner: string };
   type Result = { ok: boolean; message: string };
 
   let scope = $state("global");
@@ -41,14 +45,24 @@
     return (e as { status?: number } | null)?.status;
   }
 
+  // The scope and owner the displayed tables were loaded from.
+  let loadedScope = $state("global");
+  let loadedOwner = $state("default");
+
   async function load(): Promise<void> {
+    await loadFrom(scope, owner);
+  }
+
+  async function loadFrom(s: string, o: string): Promise<void> {
     loading = true;
     error = null;
     try {
       const ssh = getSDKClient().ssh;
-      const [hosts, keys] = await Promise.all([ssh.listKnownHosts(scope, owner), ssh.listAuthorizedKeys(scope, owner)]);
+      const [hosts, keys] = await Promise.all([ssh.listKnownHosts(s, o), ssh.listAuthorizedKeys(s, o)]);
       pins = hosts.items;
       entries = keys.items;
+      loadedScope = s;
+      loadedOwner = o;
     } catch (e) {
       pins = [];
       entries = [];
@@ -126,14 +140,14 @@
     busy = true;
     try {
       if (c.kind === "host") {
-        await getSDKClient().ssh.removeKnownHost(c.host, scope, owner);
+        await getSDKClient().ssh.removeKnownHost(c.host, c.scope, c.owner);
         showToast("success", `Pin for "${c.host}" removed.`);
       } else {
-        await getSDKClient().ssh.removeAuthorizedKey(scope, owner, c.name);
+        await getSDKClient().ssh.removeAuthorizedKey(c.scope, c.owner, c.name);
         showToast("success", `Authorized key "${c.name}" removed.`);
       }
       confirm = null;
-      await load();
+      await loadFrom(c.scope, c.owner);
     } catch (e) {
       confirm = null;
       showToast("error", message(e));
@@ -190,7 +204,7 @@
               <td class="font-mono text-xs">{p.fingerprint}</td>
               <td>{p.added_at}</td>
               <td class="text-right">
-                <button class="btn btn-ghost btn-xs text-error" aria-label={`Remove ${p.host}`} onclick={() => (confirm = { kind: "host", host: p.host })}>Remove</button>
+                <button class="btn btn-ghost btn-xs text-error" aria-label={`Remove ${p.host}`} onclick={() => (confirm = { kind: "host", host: p.host, scope: loadedScope, owner: loadedOwner })}>Remove</button>
               </td>
             </tr>
           {/each}
@@ -238,7 +252,7 @@
               <td>{k.comment ?? ""}</td>
               <td>{(k.options ?? []).join(", ")}</td>
               <td class="text-right">
-                <button class="btn btn-ghost btn-xs text-error" aria-label={`Remove ${k.name}`} onclick={() => (confirm = { kind: "key", name: k.name })}>Remove</button>
+                <button class="btn btn-ghost btn-xs text-error" aria-label={`Remove ${k.name}`} onclick={() => (confirm = { kind: "key", name: k.name, scope: loadedScope, owner: loadedOwner })}>Remove</button>
               </td>
             </tr>
           {/each}
