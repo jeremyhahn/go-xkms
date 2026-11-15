@@ -77,3 +77,15 @@ func (t *Transport) ResolveSigningKey(ctx context.Context, req *transport.Resolv
 	}
 	return &resp, nil
 }
+
+// SignReleaseCoRIM implements transport.ReleaseSigningService.
+func (t *Transport) SignReleaseCoRIM(ctx context.Context, req *transport.SignReleaseCoRIMRequest) (*transport.SignReleaseCoRIMResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var resp transport.SignReleaseCoRIMResponse
+	if err := t.rpcCall(ctx, "attestation.signing_key.sign", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

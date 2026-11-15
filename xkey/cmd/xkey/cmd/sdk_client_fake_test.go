@@ -71,6 +71,10 @@ type baseSDKClient struct {
 	// SigningKeyService completes transport.Client; these tests never call
 	// it.
 	transport.SigningKeyService
+
+	// ReleaseSigningService completes transport.Client; these tests never
+	// call it.
+	transport.ReleaseSigningService
 }
 
 func (b *baseSDKClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {

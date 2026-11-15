@@ -194,3 +194,15 @@ func (c SigningKeyClient) ResolveSigningKey(ctx context.Context, req *transport.
 	}
 	return SigningKeyResolutionFromProto(resp), nil
 }
+
+// SignReleaseCoRIM implements transport.ReleaseSigningService.
+func (c SigningKeyClient) SignReleaseCoRIM(ctx context.Context, req *transport.SignReleaseCoRIMRequest) (*transport.SignReleaseCoRIMResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	resp, err := c.Client.SignReleaseCoRIM(ctx, &pb.SignReleaseCoRIMRequest{Repository: req.Repository, Corim: req.CoRIM, SignerName: req.SignerName})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.SignReleaseCoRIMResponse{SignedCoRIM: resp.GetSignedCorim(), KeyID: resp.GetKeyId(), Backend: resp.GetBackend()}, nil
+}

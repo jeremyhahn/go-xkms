@@ -3307,3 +3307,7 @@ func (*mockCertClient) DeleteSigningKeyBinding(context.Context, *transport.Delet
 func (*mockCertClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, nil
 }
+
+func (*mockCertClient) SignReleaseCoRIM(context.Context, *transport.SignReleaseCoRIMRequest) (*transport.SignReleaseCoRIMResponse, error) {
+	return nil, nil
+}
