@@ -312,6 +312,78 @@ func TestStreamableHTTP_ResponsesCarryTheRequestID(t *testing.T) {
 	})
 }
 
+// TestStreamableHTTP_AnswersServerRequestsOnTheEventStream pins the verify13
+// P1 on streamable.go's dispatchEvent: a server may send its own request
+// (method + id) on a POST's event stream. The client answers ping with an
+// empty result and every other method with a JSON-RPC method-not-found
+// error, both on the same session; this fixture server completes the tool
+// call only once both answers have arrived.
+func TestStreamableHTTP_AnswersServerRequestsOnTheEventStream(t *testing.T) {
+	type reply struct {
+		body    map[string]any
+		session string
+	}
+	replies := make(chan reply, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var msg map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, isRequest := msg["method"]; !isRequest {
+			replies <- reply{body: msg, session: r.Header.Get(headerSessionID)}
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`data: {"jsonrpc":"2.0","id":"srv-ping","method":"ping"}` + "\n\n"))
+		_, _ = w.Write([]byte(`data: {"jsonrpc":"2.0","id":9,"method":"sampling/createMessage","params":{}}` + "\n\n"))
+		w.(http.Flusher).Flush()
+		got := map[string]reply{}
+		for len(got) < 2 {
+			select {
+			case rep := <-replies:
+				id, _ := json.Marshal(rep.body["id"])
+				got[string(id)] = rep
+			case <-time.After(10 * time.Second):
+				return // ends the stream without a response: the call fails
+			case <-r.Context().Done():
+				return
+			}
+		}
+		pingReply, otherReply := got[`"srv-ping"`], got[`9`]
+		if pingReply.body == nil || otherReply.body == nil {
+			return
+		}
+		replies <- pingReply
+		replies <- otherReply
+		_, _ = w.Write([]byte(`data: {"jsonrpc":"2.0","id":1,"result":{"done":true}}` + "\n\n"))
+	}))
+	defer srv.Close()
+
+	tr := newStreamableHTTP(srv.URL, http.DefaultTransport, nil)
+	tr.sessionID = "session-1"
+	resp, err := tr.SendRequest(context.Background(), mcptransport.JSONRPCRequest{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      mcp.NewRequestId(int64(1)),
+		Method:  string(mcp.MethodToolsCall),
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"done":true}`, string(resp.Result))
+
+	pingReply, otherReply := <-replies, <-replies
+	assert.Equal(t, "session-1", pingReply.session)
+	assert.Equal(t, "session-1", otherReply.session)
+	pingJSON, err := json.Marshal(pingReply.body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":"srv-ping","result":{}}`, string(pingJSON))
+	assert.Equal(t, float64(9), otherReply.body["id"])
+	assert.NotContains(t, otherReply.body, "result")
+	errObj, ok := otherReply.body["error"].(map[string]any)
+	require.True(t, ok, "a request for another method gets a JSON-RPC error: %v", otherReply.body)
+	assert.Equal(t, float64(mcp.METHOD_NOT_FOUND), errObj["code"])
+}
+
 func TestStreamableHTTP_NotificationErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
