@@ -238,7 +238,10 @@ func DialClient(ctx context.Context, p ClientParams) (*ssh.Client, error) {
 		// before reading its result.
 		<-cancelClosed
 		if hsErr == nil {
-			closeErr := closeAfterFailedHandshake(sshConn)
+			// Close a client, not the bare conn: its handlers drain chans
+			// and reqs, which the mux goroutine may be blocked sending
+			// queued peer traffic into.
+			closeErr := closeAfterFailedHandshake(ssh.NewClient(sshConn, chans, reqs))
 			return nil, errors.Join(&TimeoutError{Host: p.Host, Duration: timeout, Err: ctx.Err()}, cancelCloseErr, closeErr)
 		}
 	}
