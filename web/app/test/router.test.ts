@@ -51,6 +51,10 @@ describe("parseHash", () => {
     expect(parseHash("#/keys/extra/segments").name).toBe("not-found");
   });
 
+  it("has no FROST signing route: signing rounds run through xkmsctl frost", () => {
+    expect(parseHash("#/frost/sign").name).toBe("not-found");
+  });
+
   it("preserves the original hash on the route", () => {
     expect(parseHash("#/backends").hash).toBe("#/backends");
   });
