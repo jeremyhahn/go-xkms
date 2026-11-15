@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	pivpkcs11 "github.com/jeremyhahn/go-xkms/pkg/pivcert/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
@@ -519,7 +520,7 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 				}
 			}
 
-			decodeKeyType(ka, ckULong(readAttrs[2].Value), string(readAttrs[1].Value))
+			decodeListedLabel(ka, ckULong(readAttrs[2].Value), string(readAttrs[1].Value))
 
 			// CKA_EXTRACTABLE and CKA_SENSITIVE are the token's own record of
 			// whether this key may ever be wrapped out and whether its value
@@ -1990,10 +1991,35 @@ func (b *Backend) resolveKeyID(attrs *types.KeyAttributes) ([]byte, error) {
 // createKeyID generates a PKCS#11 object identifier for a key.
 // Format: {CN}.{algorithm}
 func createKeyID(attrs *types.KeyAttributes) string {
+	var id string
 	if attrs.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm {
-		return fmt.Sprintf("%s.", attrs.CN)
+		id = fmt.Sprintf("%s.", attrs.CN)
+	} else {
+		id = fmt.Sprintf("%s.%s", attrs.CN, strings.ToLower(attrs.KeyAlgorithm.String()))
 	}
-	return fmt.Sprintf("%s.%s", attrs.CN, strings.ToLower(attrs.KeyAlgorithm.String()))
+	// A CN is unique only within a tenant: a tenant key's token ID carries
+	// its tenant, so two tenants' keys of one name are two objects. System
+	// keys keep the unscoped ID, which every existing token object has.
+	if !scope.IsSystem(attrs.TenantID) {
+		id = tenantKeyIDPrefix + attrs.TenantID + "/" + id
+	}
+	return id
+}
+
+// tenantKeyIDPrefix opens the token ID (CKA_ID and CKA_LABEL) of a tenant
+// key: "tenant=<tenant>/<CN>.<algorithm>".
+const tenantKeyIDPrefix = "tenant="
+
+// decodeListedLabel fills ka from a listed key's CKA_KEY_TYPE and CKA_LABEL,
+// the tenant included.
+func decodeListedLabel(ka *types.KeyAttributes, keyType uint, label string) {
+	if rest, ok := strings.CutPrefix(label, tenantKeyIDPrefix); ok {
+		if tenant, name, found := strings.Cut(rest, "/"); found && tenant != "" {
+			ka.TenantID = tenant
+			label = name
+		}
+	}
+	decodeKeyType(ka, keyType, label)
 }
 
 // keyIDToCN recovers the common name from a PKCS#11 object label that
