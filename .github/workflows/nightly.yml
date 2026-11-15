@@ -207,7 +207,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache: ${{ runner.environment != 'self-hosted' }}
 
       - name: Install dependencies
         run: go mod download
@@ -327,7 +327,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache: ${{ runner.environment != 'self-hosted' }}
 
       # Same cgo deps ci.yml's nested-module-test job installs, for the same
       # reason: libicu-dev and libusb-1.0-0-dev are unconditional deps of the
