@@ -295,6 +295,7 @@ func TestModule_HostMount_MissingDependenciesAreTypedAndOff(t *testing.T) {
 		compose.FeatureKeyPolicies:     "DAO factory",
 		compose.FeatureTrustRoots:      "DAO factory",
 		compose.FeatureSSH:             "DAO factory",
+		compose.FeatureVerdicts:        "DAO factory",
 	}, missing)
 
 	w = h.call(t, http.MethodGet, "/api/v1/ca/certificate", "/api/v1/ca/certificate", nil, nil)
