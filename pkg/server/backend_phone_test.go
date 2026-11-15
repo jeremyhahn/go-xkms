@@ -29,6 +29,7 @@ import (
 
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/devicereg"
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
@@ -254,6 +255,80 @@ func TestRegisterPhoneBackend_RevokeAfterRegister(t *testing.T) {
 	err := kp.DeleteKey(context.Background(), &types.KeyAttributes{CN: "k1"})
 	require.ErrorIs(t, err, ErrPhoneDeviceRefused)
 	assert.Zero(t, sent, "no request may reach a revoked phone")
+}
+
+// TestRegisterPhoneBackend_DatastoreRegistry drives the production path:
+// no registry is injected, so RegisterPhoneBackend opens the devices
+// database through s.daoFactory and reads records another registry (as
+// another process would) wrote to the same datastore.
+func TestRegisterPhoneBackend_DatastoreRegistry(t *testing.T) {
+	ctx := context.Background()
+	newServer := func(t *testing.T) (*Server, *config.PhoneConfig, *devicereg.Registry) {
+		t.Helper()
+		phoneCfg := newTestPhoneConfig(t)
+		srv := newTestServerForPhone(t, nil)
+		srv.config.Backends.Phone = phoneCfg
+		srv.deviceRegistry = nil
+		openInMemoryDatastore(t, srv)
+		ds := srv.datastore.Load()
+		_, err := ds.DatabaseKVStore(ctx, devicereg.DatabaseName)
+		require.NoError(t, err)
+		writer, err := devicereg.NewRegistry(ds.DAOFactory())
+		require.NoError(t, err)
+		return srv, phoneCfg, writer
+	}
+
+	t.Run("matching then revoked by another registry", func(t *testing.T) {
+		srv, phoneCfg, writer := newServer(t)
+		pairTestPhone(t, writer, phoneCfg.Tenant, phoneCfg.DeviceID, phoneCfg.PhoneStaticKey)
+
+		require.NoError(t, srv.RegisterPhoneBackend(&mockPhoneSender{}))
+		require.NotNil(t, srv.deviceRegistry, "the registry is opened on the datastore")
+		srv.mu.RLock()
+		kp := srv.keyProviders["phone"]
+		srv.mu.RUnlock()
+		require.NotNil(t, kp)
+		t.Cleanup(func() { _ = kp.Close() })
+
+		require.NoError(t, writer.Revoke(ctx, phoneCfg.Tenant, phoneCfg.DeviceID, time.Now()))
+		err := kp.DeleteKey(ctx, &types.KeyAttributes{CN: "k1"})
+		require.ErrorIs(t, err, ErrPhoneDeviceRefused)
+	})
+
+	t.Run("revoked", func(t *testing.T) {
+		srv, phoneCfg, writer := newServer(t)
+		pairTestPhone(t, writer, phoneCfg.Tenant, phoneCfg.DeviceID, phoneCfg.PhoneStaticKey)
+		require.NoError(t, writer.Revoke(ctx, phoneCfg.Tenant, phoneCfg.DeviceID, time.Now()))
+
+		err := srv.RegisterPhoneBackend(&mockPhoneSender{})
+		require.ErrorIs(t, err, ErrPhoneDeviceRefused)
+		_, ok := srv.keyProviders["phone"]
+		assert.False(t, ok)
+	})
+
+	t.Run("store failure", func(t *testing.T) {
+		client, _, err := testutil.NewQRDBFakeClient()
+		require.NoError(t, err)
+		ds, err := datastore.New(client, config.DatastoreConfig{})
+		require.NoError(t, err)
+		srv := newTestServerForPhone(t, newTestPhoneConfig(t))
+		srv.deviceRegistry = nil
+		srv.datastore.Store(ds)
+
+		err = srv.RegisterPhoneBackend(&mockPhoneSender{})
+		require.ErrorIs(t, err, ErrPhoneDeviceRefused)
+		_, ok := srv.keyProviders["phone"]
+		assert.False(t, ok)
+	})
+
+	t.Run("no datastore", func(t *testing.T) {
+		srv := newTestServerForPhone(t, newTestPhoneConfig(t))
+		srv.deviceRegistry = nil
+
+		err := srv.RegisterPhoneBackend(&mockPhoneSender{})
+		require.ErrorIs(t, err, ErrPhoneDeviceRefused)
+		require.ErrorIs(t, err, ErrNoDatastore)
+	})
 }
 
 func TestRegisterPhoneBackend_NilSender(t *testing.T) {
