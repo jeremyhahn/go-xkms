@@ -39,9 +39,12 @@
 
   async function bind(): Promise<void> {
     thumbErr = null;
-    const tp = thumbprint.trim().replace(/[:\s]/g, "");
-    if (!/^[0-9a-fA-F]+$/.test(tp)) {
-      thumbErr = "Thumbprint must be hexadecimal.";
+    // go-qrdb's AddCertBinding takes the canonical unpadded base64url SHA-256
+    // of the certificate's SPKI, the value certificate login computes: 43
+    // characters, the last one carrying no stray bits.
+    const tp = thumbprint.trim();
+    if (!/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(tp)) {
+      thumbErr = "Thumbprint must be the unpadded base64url SHA-256 of the certificate's SPKI (43 characters).";
       return;
     }
     const notAfterUnix = Math.floor(Date.parse(notAfter) / 1000);
@@ -97,7 +100,7 @@
 <section class="space-y-3 max-w-xl">
   <h2 class="text-lg font-semibold">Bind certificate</h2>
   {#if thumbErr}<Alert kind="error"><span>{thumbErr}</span></Alert>{/if}
-  <input class="input input-bordered w-full font-mono" aria-label="Thumbprint" placeholder="Thumbprint (hex)" bind:value={thumbprint} />
+  <input class="input input-bordered w-full font-mono" aria-label="Thumbprint" placeholder="SPKI SHA-256 thumbprint (base64url)" bind:value={thumbprint} />
   <input class="input input-bordered w-full" type="date" aria-label="Not after" bind:value={notAfter} />
   <button class="btn btn-primary" onclick={bind} disabled={busy || user === "" || thumbprint.trim() === "" || notAfter === ""}>
     {#if busy}<span class="loading loading-spinner loading-xs"></span>{/if}
