@@ -407,6 +407,9 @@ func TPMPolicyClassOf(err error) (Class, bool) {
 //     found.
 //   - Disabling or retiring the current version, using a disabled or retired
 //     one, or changing a retired one conflicts with the key's current state.
+//   - A version record another writer changed since it was read (a stale or
+//     concurrent rotation) conflicts with its current state; the caller reads
+//     it again and retries.
 var KeyVersionTypedClasses = []TypedClass{
 	{As[*keyversion.KeyVersionRequiredError], ClassInvalidArgument},
 	{As[*keyversion.ReservedKeyIDError], ClassInvalidArgument},
@@ -417,6 +420,7 @@ var KeyVersionTypedClasses = []TypedClass{
 	{As[*keyversion.CurrentVersionError], ClassFailedPrecondition},
 	{As[*keyversion.RetiredVersionError], ClassFailedPrecondition},
 	{As[*keyversion.VersionUnavailableError], ClassFailedPrecondition},
+	{As[*keyversion.VersionConflictError], ClassFailedPrecondition},
 	{As[*xkms.KeyExistsError], ClassAlreadyExists},
 	{As[*xkms.KeyRotationUnsupportedError], ClassUnimplemented},
 }
@@ -424,6 +428,7 @@ var KeyVersionTypedClasses = []TypedClass{
 // KeyVersionSentinelClasses classifies the key-version model's sentinels.
 var KeyVersionSentinelClasses = []SentinelClass{
 	{xkms.ErrKeyVersionsNotConfigured, ClassUnavailable},
+	{keyversion.ErrVersionConflict, ClassFailedPrecondition},
 }
 
 // KeyVersionClassOf classifies an error of the key-version model: its typed
