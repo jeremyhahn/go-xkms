@@ -34,20 +34,33 @@
     }
   }
 
+  // The key the displayed versions belong to; every row action targets it,
+  // never the selector's current value. seq discards out-of-order responses.
+  type Target = { key_id: string; backend: string };
+  let shown = $state<Target | null>(null);
+  let seq = 0;
+
   async function load(): Promise<void> {
+    const n = ++seq;
+    data = null;
+    shown = null;
     if (!key) {
-      data = null;
+      loading = false;
       return;
     }
+    const target: Target = { key_id: key.key_id, backend: key.backend };
     loading = true;
     error = null;
     try {
-      data = await getSDKClient().keys.versions.list(key.key_id, key.backend);
+      const res = await getSDKClient().keys.versions.list(target.key_id, target.backend);
+      if (n !== seq) return;
+      data = res;
+      shown = target;
     } catch (e) {
+      if (n !== seq) return;
       error = msg(e);
-      data = null;
     } finally {
-      loading = false;
+      if (n === seq) loading = false;
     }
   }
 
@@ -64,8 +77,9 @@
   }
 
   function setState(version: number, enable: boolean): Promise<void> {
+    const k = shown;
+    if (!k) return Promise.resolve();
     return run(async () => {
-      const k = key!;
       const v = getSDKClient().keys.versions;
       await (enable ? v.enable(k.key_id, version, k.backend) : v.disable(k.key_id, version, k.backend));
       return `Version ${version} ${enable ? "enabled" : "disabled"}.`;
@@ -73,8 +87,9 @@
   }
 
   function setAll(enable: boolean): Promise<void> {
+    const k = shown;
+    if (!k) return Promise.resolve();
     return run(async () => {
-      const k = key!;
       const v = getSDKClient().keys.versions;
       const res = await (enable ? v.enableAll(k.key_id, k.backend) : v.disableAll(k.key_id, k.backend));
       return `${res.count} versions ${enable ? "enabled" : "disabled"}.`;
@@ -83,9 +98,10 @@
 
   async function retire(): Promise<void> {
     const version = retireVersion!;
+    const k = shown;
     retireVersion = null;
+    if (!k) return;
     await run(async () => {
-      const k = key!;
       await getSDKClient().keys.versions.retire(k.key_id, version, k.backend);
       return `Version ${version} retired.`;
     });
@@ -131,7 +147,7 @@
       <option value={String(i)}>{k.key_id} ({k.backend})</option>
     {/each}
   </select>
-  {#if key}
+  {#if shown}
     <button class="btn btn-ghost btn-sm" onclick={() => setAll(true)} disabled={busy}>Enable all</button>
     <button class="btn btn-ghost btn-sm" onclick={() => setAll(false)} disabled={busy}>Disable all</button>
   {/if}
@@ -184,10 +200,10 @@
   </div>
 {/if}
 
-{#if retireVersion !== null && key}
+{#if retireVersion !== null && shown}
   <Modal open={retireVersion !== null} onClose={() => (retireVersion = null)} labelledby="retire-version-title">
     <h3 id="retire-version-title" class="text-lg font-semibold mb-4">Retire version {retireVersion}</h3>
-    <p>Retiring version {retireVersion} of {key.key_id} deletes its key material for good.</p>
+    <p>Retiring version {retireVersion} of {shown.key_id} deletes its key material for good.</p>
     <div class="modal-action">
       <button class="btn btn-ghost" onclick={() => (retireVersion = null)}>Cancel</button>
       <button class="btn btn-error" onclick={retire}>Retire</button>
