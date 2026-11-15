@@ -95,7 +95,16 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 			tenants = append(tenants, e.TenantID)
 		}
 	}
-	if tenant := decoy.Predominant(tenants, ""); tenant != "" {
+	// Roster enrollments rebuilt by the ceremony carry no TenantID; their
+	// certificates still name it as Subject-OU[0], so read it from there.
+	if len(decoy.NonEmpty(tenants)) == 0 {
+		for _, cert := range decoy.Certificates(like) {
+			if ou := cert.Subject.OrganizationalUnit; len(ou) > 0 {
+				tenants = append(tenants, ou[0])
+			}
+		}
+	}
+	if tenant := decoy.Predominant(decoy.NonEmpty(tenants), ""); tenant != "" {
 		if subject, _, err = ca.StampTenant(tenant, subject, nil); err != nil {
 			return nil, &decoy.DerivationError{Purpose: "certificate"}
 		}
