@@ -181,4 +181,27 @@ describe("KeyMetadataView", () => {
 
     expect(await screen.findByText("permission denied")).toBeInTheDocument();
   });
+
+  it("binds a pending load to the requested key, not inputs edited before it resolves", async () => {
+    let resolveGet: (v: unknown) => void = () => {};
+    request.mockImplementationOnce(() => new Promise((r) => (resolveGet = r)));
+    request.mockResolvedValue({ metadata: metadata(), timestamp: 1700000200 });
+    render(KeyMetadataView);
+    await fireEvent.input(screen.getByPlaceholderText("Key ID"), { target: { value: "k1" } });
+    await fireEvent.input(screen.getByPlaceholderText("Backend"), { target: { value: "software" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    await fireEvent.input(screen.getByPlaceholderText("Key ID"), { target: { value: "k2" } });
+    await fireEvent.input(screen.getByPlaceholderText("Backend"), { target: { value: "tpm2" } });
+    resolveGet({ metadata: metadata(), timestamp: 1700000100 });
+    await screen.findByText("Version", { selector: "dt" });
+
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "renamed" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    const [method, path, opts] = request.mock.calls[1]!;
+    expect(method).toBe("PUT");
+    expect(path).toBe(PATH);
+    expect((opts as { body: { backend: string } }).body.backend).toBe("software");
+  });
 });
