@@ -24,12 +24,17 @@ is active and bound to the phone's key:
 ## Slices
 
 1. Test commit: `TestRegisterPhoneBackend_RegistryRefusesDevice`
-   (pkg/server/backend_phone_test.go): unpaired, wrong key and revoked are
-   refused; the paired, active, matching device is accepted. Fails before
-   the fix (all three are accepted).
-2. Fix commit: the registry check in `RegisterPhoneBackend`; the phone test
-   helpers pair the test device.
+   (pkg/server/backend_phone_test.go): unpaired, wrong key, other tenant and
+   revoked are refused; the paired, active, matching device is accepted;
+   the phone test helpers pair the test device. Fails before the fix (all
+   four are accepted).
+2. Fix commit: the registry check in `RegisterPhoneBackend`.
 3. Docs commit: SPEC row 87 cites the backend check and its test.
+
+## Results
+
+- Finding P1: test commit 864aae088 (fails: all four refusal cases
+  accepted), fix commit 6a6542796 (passes).
 
 ## Out of scope
 
