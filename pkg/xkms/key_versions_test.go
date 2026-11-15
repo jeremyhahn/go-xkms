@@ -16,6 +16,7 @@ package xkms
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -26,6 +27,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -908,4 +910,52 @@ func TestRotateKey_ConcurrentRotationsTakeDistinctVersions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(rotations+1), listed.CurrentVersion)
 	assert.Len(t, listed.Versions, rotations+1)
+}
+
+// generateHookBackend runs beforeGenerate when rotateKey creates the next
+// version's backend key: after rotateKey read the record, before it writes.
+type generateHookBackend struct {
+	Backend
+	beforeGenerate func(ctx context.Context)
+}
+
+func (b *generateHookBackend) GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	if b.beforeGenerate != nil {
+		b.beforeGenerate(ctx)
+	}
+	return b.Backend.GenerateEd25519(ctx, attrs)
+}
+
+func TestRotateKey_StaleRecordFailsWithVersionConflict(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := context.Background()
+	genKey(t, svc, "", "k", "ed25519", 0)
+	store, err := svc.requireVersionStore()
+	require.NoError(t, err)
+	inner, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+
+	// A second writer, which does not hold this process's key lock, records
+	// versions 2 and 3 between rotateKey's read and its write.
+	b := &generateHookBackend{Backend: inner, beforeGenerate: func(ctx context.Context) {
+		rec, _, err := store.Load(ctx, "", "software", "k")
+		require.NoError(t, err)
+		rec.AddCurrent(2, time.Now().UTC(), "second-writer")
+		rec.AddCurrent(3, time.Now().UTC(), "second-writer")
+		require.NoError(t, store.Put(ctx, "", rec))
+	}}
+
+	_, err = svc.rotateKey(ctx, b, "software", "k")
+	require.ErrorIs(t, err, keyversion.ErrVersionConflict)
+	var conflict *keyversion.VersionConflictError
+	require.ErrorAs(t, err, &conflict)
+
+	stored, found, err := store.Load(ctx, "", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint32(3), stored.Current, "the second writer's record is kept")
+	require.Len(t, stored.Versions, 3)
+	for _, v := range stored.Versions[1:] {
+		assert.Equal(t, "second-writer", v.CreatedBy)
+	}
 }
