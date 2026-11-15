@@ -845,6 +845,10 @@ var (
 	// image".
 	ErrSignOTAImageFailed = errors.New("failed to sign the OTA image")
 
+	// ErrSignReleaseCoRIMFailed is the sentinel error "failed to sign the
+	// release CoRIM".
+	ErrSignReleaseCoRIMFailed = errors.New("failed to sign the release CoRIM")
+
 	// ErrChangeKeyVersionFailed is the sentinel error "failed to change the
 	// key version".
 	ErrChangeKeyVersionFailed = errors.New("failed to change the key version")
