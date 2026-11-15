@@ -14,8 +14,10 @@
     | { kind: "key"; name: string; scope: string; owner: string };
   type Result = { ok: boolean; message: string };
 
-  let scope = $state("global");
-  let owner = $state("default");
+  // Empty scope and owner list without a filter (every pin the caller may
+  // read); pkg/scope accepts only tenant, user and service when one is set.
+  let scope = $state("");
+  let owner = $state("");
   let pins = $state<SSHPin[]>([]);
   let entries = $state<SSHAuthorizedEntry[]>([]);
   let error = $state<string | null>(null);
@@ -49,7 +51,9 @@
     error = null;
     try {
       const ssh = getSDKClient().ssh;
-      const [hosts, keys] = await Promise.all([ssh.listKnownHosts(scope, owner), ssh.listAuthorizedKeys(scope, owner)]);
+      const s = scope.trim() === "" ? undefined : scope.trim();
+      const o = owner.trim() === "" ? undefined : owner.trim();
+      const [hosts, keys] = await Promise.all([ssh.listKnownHosts(s, o), ssh.listAuthorizedKeys(s, o)]);
       pins = hosts.items;
       entries = keys.items;
     } catch (e) {
@@ -153,7 +157,7 @@
         : `Remove the authorized key ${confirm.name}?`,
   );
 
-  // Mount-time load with the default scope and owner; later loads are explicit (Load).
+  // Mount-time load is unfiltered; later loads are explicit (Load).
   onMount(() => {
     void load();
   });
@@ -162,7 +166,7 @@
 <PageHeader title="SSH Trust" subtitle="Known-host pins and authorized_keys entries" />
 
 <div class="flex flex-wrap items-end gap-2 mb-4">
-  <input class="input input-bordered input-sm" aria-label="Scope" placeholder="Scope" bind:value={scope} />
+  <input class="input input-bordered input-sm" aria-label="Scope" placeholder="Scope (tenant, user, service)" bind:value={scope} />
   <input class="input input-bordered input-sm" aria-label="Owner" placeholder="Owner" bind:value={owner} />
   <button class="btn btn-sm" onclick={load} disabled={loading}>Load</button>
 </div>
