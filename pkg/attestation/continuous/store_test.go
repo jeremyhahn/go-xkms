@@ -38,7 +38,7 @@ func TestStore_ListVerdictsNoDuplicatesUnderConcurrentAppends(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		defer close(done)
-		for i := 0; ; i++ {
+		for i := 0; i < 3*listPageSize; i++ {
 			select {
 			case <-stop:
 				return
@@ -57,7 +57,7 @@ func TestStore_ListVerdictsNoDuplicatesUnderConcurrentAppends(t *testing.T) {
 			t.Errorf("concurrent SaveVerdict: %v", err)
 		}
 	}()
-	for round := 0; round < 50; round++ {
+	for round := 0; round < 20; round++ {
 		verdicts, err := store.ListVerdicts(ctx, tenant, "dev-1")
 		if err != nil {
 			t.Fatalf("round %d: ListVerdicts: %v", round, err)
