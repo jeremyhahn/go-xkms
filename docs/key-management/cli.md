@@ -238,7 +238,7 @@ characters of `a-z`, `0-9` and single inner hyphens
 | `key ota-image export <board-id>` | board id | none | | |
 | `key ota-image sign <board-id> <image-file>` | board id, image file | `--digest` | bool | `false` |
 
-The flags are defined at `key_ota_image.go:182-186`.
+The flags are defined at `key_ota_image.go:184-188`.
 
 - `create` prints the new key ID.
 - `rotate` creates the next version and makes it current. Images signed
@@ -250,7 +250,7 @@ The flags are defined at `key_ota_image.go:182-186`.
   board ID, the version, the raw 64-byte X||Y point in hex (what a board
   flashes to verify its images) and the COSE_Key in base64; `-o json`
   prints the `key_id`, `board_id`, `version`, `raw` and `cose_key` fields
-  (`key_ota_image.go:73-91`, `:160-167`). A board without a key exits 1
+  (`key_ota_image.go:73-91`, `:160-169`). A board without a key exits 1
   with `failed to export the OTA image public key` and the server's
   not-found reason (`errors.go:846`).
 - `sign` signs the file with the current version and prints the base64

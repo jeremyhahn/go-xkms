@@ -162,8 +162,10 @@ func printOTAImagePublicKey(p *Printer, result any) {
 	if !ok || printJSONResult(p, result) {
 		return
 	}
-	fmt.Fprintf(os.Stdout, "Key ID: %s\nBoard ID: %s\nVersion: %d\nPublic key (raw X||Y, hex): %s\nCOSE_Key (base64): %s\n",
-		resp.KeyID, resp.BoardID, resp.Version, hex.EncodeToString(resp.Raw), base64.StdEncoding.EncodeToString(resp.COSEKey))
+	if _, err := fmt.Fprintf(os.Stdout, "Key ID: %s\nBoard ID: %s\nVersion: %d\nPublic key (raw X||Y, hex): %s\nCOSE_Key (base64): %s\n",
+		resp.KeyID, resp.BoardID, resp.Version, hex.EncodeToString(resp.Raw), base64.StdEncoding.EncodeToString(resp.COSEKey)); err != nil {
+		handleError(err)
+	}
 }
 
 func printOTAImageSignature(p *Printer, result any) {
