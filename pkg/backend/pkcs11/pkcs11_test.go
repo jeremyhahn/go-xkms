@@ -218,6 +218,33 @@ func TestCreateKeyID(t *testing.T) {
 
 // One CN under two tenants must name two token objects, and ListKeys must
 // report each object's tenant, so a tenant-scoped view finds its own key.
+// A YubiKey PIV backend configured with a slot puts every key it generates
+// in that slot (resolveKeyID returns it before any name-based ID), so it
+// must say so to callers that create keys per tenant.
+func TestBackend_FixedKeySlot(t *testing.T) {
+	slot := 0x9c
+	cases := []struct {
+		name string
+		cfg  *Config
+		want bool
+	}{
+		{"yubikey PIV with a slot", &Config{Library: "/usr/lib/libykcs11.so", Slot: &slot}, true},
+		{"yubikey PIV without a slot", &Config{Library: "/usr/lib/libykcs11.so"}, false},
+		{"softhsm with a slot", &Config{Library: "/usr/lib/softhsm/libsofthsm2.so", Slot: &slot}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixed, ok := any(&Backend{config: tc.cfg}).(interface{ FixedKeySlot() bool })
+			if !ok {
+				t.Fatal("the backend does not report whether its key slot is fixed")
+			}
+			if got := fixed.FixedKeySlot(); got != tc.want {
+				t.Fatalf("FixedKeySlot() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCreateKeyID_TenantScoped(t *testing.T) {
 	attrs := func(tenant string) *types.KeyAttributes {
 		return &types.KeyAttributes{CN: "qrdb-login-ca", KeyAlgorithm: x509.ECDSA, TenantID: tenant}

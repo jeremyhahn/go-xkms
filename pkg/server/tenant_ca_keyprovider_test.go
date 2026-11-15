@@ -251,6 +251,45 @@ func TestTenantCAKeyFactory_RetryAfterSaveCertFailure(t *testing.T) {
 	assert.True(t, cert.IsCA)
 }
 
+// fixedSlotProvider reports what a YubiKey PIV backend configured with one
+// slot reports: every key it generates lands in that slot, whatever its name.
+type fixedSlotProvider struct{ types.KeyProvider }
+
+func (fixedSlotProvider) FixedKeySlot() bool { return true }
+
+// fixedSlotBackend is a backend whose key provider has a fixed slot; it
+// counts the keys generated on it.
+type fixedSlotBackend struct {
+	xkms.Backend
+	generated atomic.Int32
+}
+
+func (b *fixedSlotBackend) KeyProvider() types.KeyProvider {
+	return fixedSlotProvider{b.Backend.KeyProvider()}
+}
+
+func (b *fixedSlotBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	b.generated.Add(1)
+	return b.Backend.GenerateECDSA(ctx, attrs)
+}
+
+// Every tenant's login CA on a fixed-slot backend would be the same
+// hardware key: the second tenant's generate overwrites the first's slot.
+// The factory refuses such a backend before it generates anything.
+func TestTenantCAKeyFactory_RefusesFixedSlotBackend(t *testing.T) {
+	_, base := newTenantCAKeyTestFactory(t)
+	piv := &fixedSlotBackend{Backend: base}
+	f := newTenantCAKeyFactory()
+	require.NoError(t, f.Bind(piv))
+
+	for _, tenant := range []string{"tenant-a", "tenant-b"} {
+		err := f.EnsureTenant(context.Background(), tenant)
+		require.Error(t, err, tenant)
+		assert.ErrorContains(t, err, "fixed key slot")
+	}
+	assert.Zero(t, piv.generated.Load(), "no key may be generated on a fixed-slot backend")
+}
+
 func TestTenantCAKeyFactory_SignatureVerifies(t *testing.T) {
 	ctx := context.Background()
 	f, base := newTenantCAKeyTestFactory(t, "tenant-a")
