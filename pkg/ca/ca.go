@@ -471,7 +471,19 @@ func carryKeyPassword(ctx context.Context, identity *Identity, keyAttrs *types.K
 	if identity == nil || len(identity.Keys) == 0 || keyAttrs == nil || keyAttrs.Password == nil {
 		return nil
 	}
-	password := keyAttrs.Password.Bytes()
+	// Borrow through WithBytes, not Bytes: Bytes returns nil both for an
+	// empty password and for a retrieval failure (a TPM unseal failure, a
+	// RequiredPassword placeholder), and treating a failure as "no password"
+	// would let Init persist the CA key unencrypted.
+	var password []byte
+	if err := keyAttrs.Password.WithBytes(func(b []byte) error {
+		if len(b) > 0 {
+			password = append([]byte(nil), b...)
+		}
+		return nil
+	}); err != nil {
+		return &errs.Wrapped{Msg: "ca: read CA key password", Err: err}
+	}
 	if len(password) == 0 {
 		return nil
 	}
