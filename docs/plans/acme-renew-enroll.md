@@ -62,4 +62,12 @@ Renew reuses the package's loadCertificatePEM (as revoke does).
   enroll-01 EnrollDevice, device-attest-01 DeviceAttest, endorse-01
   RequestEndorsementKeyCertificate; unknown challenge is an error). The tests
   use a fake of the ACMEClient interface, not the package's test server.
-- Next slice: finding 3 (renewal challenge setup).
+- Finding 3 (lane sacmek, resumed): `test(xkey): acme renewal answers a
+  pending http-01 challenge`, `fix(xkey): acme renewal serves the http-01
+  token for a pending authorization` (services.SetACMERenewSolver, shared by
+  the GUI and the CLI: http-01 serves the key authorization from the pkg/acme
+  http-01 Responder on --http-addr / httpAddr, default :80, until cleanup;
+  dns-01 is an error naming the missing DNS provider, since xkey has none).
+  The tests use a CA stand-in that calls ChallengeSetup as the client does
+  and fetches the token over HTTP.
+- Codex findings 1 to 4 of the sacmei review are fixed.
