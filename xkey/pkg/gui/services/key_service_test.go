@@ -269,6 +269,18 @@ func (m *mockClient) FinishAuthentication(context.Context, *transport.FinishAuth
 func (m *mockClient) GetInvite(context.Context, *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
 	panic("not implemented")
 }
+
+func (m *mockClient) ListAttestationVerdicts(context.Context, *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (m *mockClient) GetLatestAttestationVerdict(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (m *mockClient) ReattestDevice(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
 func (m *mockClient) BeginInviteRegistration(context.Context, *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
 	panic("not implemented")
 }

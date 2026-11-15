@@ -330,6 +330,18 @@ func (m *mockTransportClient) GetInvite(_ context.Context, _ *transport.GetInvit
 	return nil, errNotImplemented
 }
 
+func (m *mockTransportClient) ListAttestationVerdicts(context.Context, *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (m *mockTransportClient) GetLatestAttestationVerdict(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (m *mockTransportClient) ReattestDevice(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
 func (m *mockTransportClient) BeginInviteRegistration(_ context.Context, _ *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
 	return nil, errNotImplemented
 }
