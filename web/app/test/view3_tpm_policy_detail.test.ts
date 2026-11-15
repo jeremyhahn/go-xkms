@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import type { TPMPolicy } from "@go-xkms/sdk";
 
 const tenantsList = vi.fn();
@@ -147,7 +147,7 @@ describe("TpmPolicyDetailView", () => {
       name: "boot",
       match: false,
       approved: true,
-      branches: [{ match: false, mismatched: [7], approved: true }],
+      branches: [{ name: "branch-1", match: false, mismatched: [7], approved: true }],
     });
     await pickBoot();
 
@@ -156,6 +156,61 @@ describe("TpmPolicyDetailView", () => {
     await waitFor(() => expect(verify).toHaveBeenCalledWith("boot", "acme"));
     expect(await screen.findAllByText("mismatch")).not.toHaveLength(0);
     expect(screen.getByText("PCR 7")).toBeInTheDocument();
+  });
+
+  // Server-shaped: transport.TPMPolicyBranch / TPMPolicyBranchVerification
+  // carry name, approved and a reference whose digest is base64 SHA-256.
+  const corimDigest = "3q2+7wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  const reference = { id: "corim-fw-2", profile: "tag:example.com,2026:fw", signer: "Acme Firmware", digest: corimDigest };
+
+  it("shows each branch's name, approval and reference in the loaded policy", async () => {
+    get.mockResolvedValue({
+      ...boot,
+      approved: false,
+      branches: [
+        { name: "current", approved: false, conditions: [{ type: "auth_value" }] },
+        { name: "next", approved: true, reference, conditions: [{ type: "locality", localities: [0] }] },
+      ],
+    });
+    await pickBoot();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+
+    const current = await screen.findByTestId("policy-branch-current");
+    expect(within(current).getByText("current")).toBeInTheDocument();
+    expect(within(current).getByText("not approved")).toBeInTheDocument();
+    expect(within(current).getByText("captured live")).toBeInTheDocument();
+    const next = screen.getByTestId("policy-branch-next");
+    expect(within(next).getByText("next")).toBeInTheDocument();
+    expect(within(next).getByText("approved")).toBeInTheDocument();
+    expect(within(next).getByText("corim-fw-2")).toBeInTheDocument();
+    expect(within(next).getByText("tag:example.com,2026:fw")).toBeInTheDocument();
+    expect(within(next).getByText("Acme Firmware")).toBeInTheDocument();
+    expect(within(next).getByText(corimDigest)).toBeInTheDocument();
+  });
+
+  it("shows each branch's name, approval and reference in verify", async () => {
+    verify.mockResolvedValue({
+      name: "boot",
+      match: true,
+      approved: true,
+      branches: [
+        { name: "current", match: true, approved: false },
+        { name: "next", match: true, approved: true, reference },
+      ],
+    });
+    await pickBoot();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+    const current = await screen.findByTestId("verify-branch-current");
+    expect(within(current).getByText("current")).toBeInTheDocument();
+    expect(within(current).getByText("not approved")).toBeInTheDocument();
+    expect(within(current).getByText("captured live")).toBeInTheDocument();
+    const next = screen.getByTestId("verify-branch-next");
+    expect(within(next).getByText("approved")).toBeInTheDocument();
+    expect(within(next).getByText("corim-fw-2")).toBeInTheDocument();
+    expect(within(next).getByText(corimDigest)).toBeInTheDocument();
   });
 
   it.each([
