@@ -311,6 +311,31 @@ func TestTenantCAKeyFactory_RetryAfterSaveCertFailure(t *testing.T) {
 	assert.True(t, cert.IsCA)
 }
 
+// The lazy path (go-qrdb's native onboarding asking for a tenant's login CA)
+// must not take a key left behind by a failed certificate save as a
+// provisioned login CA: once the store recovers, the next request finishes
+// provisioning over the same key.
+func TestTenantCAKeyFactory_LazyRetryAfterSaveCertFailure(t *testing.T) {
+	ctx := context.Background()
+	_, base := newTenantCAKeyTestFactory(t)
+	flaky := &failSaveCertBackend{Backend: base}
+	flaky.fail.Store(1)
+	f := newTenantCAKeyFactory()
+	require.NoError(t, f.Bind(flaky))
+	f.TrackTenants(&fakeTenantService{tenants: []string{"tenant-a"}})
+
+	_, err := f.ProviderForTenant("tenant-a")
+	require.Error(t, err, "a failed certificate save must fail the lazy provisioning")
+	before := tenantSignerPublic(t, base, "tenant-a").(*ecdsa.PublicKey)
+
+	p, err := f.ProviderForTenant("tenant-a")
+	require.NoError(t, err)
+	cert, err := p.Certificate(ctx)
+	require.NoError(t, err, "the lazy retry must save the login CA certificate")
+	assert.True(t, before.Equal(cert.PublicKey), "the lazy retry must keep the existing key")
+	assert.True(t, cert.IsCA)
+}
+
 // fixedSlotProvider reports what a YubiKey PIV backend configured with one
 // slot reports: every key it generates lands in that slot, whatever its name.
 type fixedSlotProvider struct{ types.KeyProvider }
