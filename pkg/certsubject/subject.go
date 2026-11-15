@@ -78,6 +78,19 @@ func StampTenant(tenantID string, subject pkix.Name, rawSubject []byte) (pkix.Na
 	if rest, err := asn1.Unmarshal(rawSubject, &rdns); err != nil || len(rest) != 0 {
 		return pkix.Name{}, nil, ErrInvalidRawSubject
 	}
+	// DER sorts the attributes of an RDN SET, so a SET with two OUs could put
+	// another OU ahead of the stamped tenant: such a subject is refused.
+	for _, rdn := range rdns {
+		ous := 0
+		for _, atv := range rdn {
+			if atv.Type.Equal(oidAttributeOrganizationalUnit) {
+				ous++
+			}
+		}
+		if ous > 1 {
+			return pkix.Name{}, nil, ErrInvalidRawSubject
+		}
+	}
 	raw := rawSubject
 	if firstOrganizationalUnit(rdns) != tenantID {
 		rdns = stampTenantRDNs(tenantID, rdns)

@@ -150,6 +150,13 @@ func CreateHybridCertificate(
 			return nil, &HybridCertError{Op: "create", Err: err}
 		}
 		workingTemplate.Subject, workingTemplate.RawSubject = subject, raw
+		// A self-signed leaf names itself as issuer: the issuer must carry the
+		// stamped subject too, without touching the caller's template.
+		if parent == template {
+			stampedParent := *template
+			stampedParent.Subject, stampedParent.RawSubject = subject, raw
+			parent = &stampedParent
+		}
 	}
 
 	// Add the quantum alt public key and algorithm extensions
