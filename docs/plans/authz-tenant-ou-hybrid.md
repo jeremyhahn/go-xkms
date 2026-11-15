@@ -40,3 +40,7 @@ empty tenant. The caller's template is never modified.
 - Every path in SPEC.md:72's "does not carry it today" list is now stamped
   or exempt with a reason, so the coordinator can set the row (docs/SPEC.md
   not edited by this lane).
+- Ship slice (lane row2089b): docs/SPEC.md row `authz-tenant-ou` set to
+  `shipped`; its list now names each path as stamped or exempt with its
+  reason, every file:line re-checked against this HEAD, and the proving tests
+  (hybrid, PIV, bootstrap) named.
