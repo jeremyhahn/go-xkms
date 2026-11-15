@@ -28,6 +28,11 @@ The engine. `continuous.NewEngine` needs a production `EvidenceSource` (none
 exists in go-xkms), an appraiser wired in xkmsd (xkmsd never calls
 `SetAttestationAppraiser`) and a device `Inventory`.
 
+Open for the row, named in docs/SPEC.md (row set to `in progress` after
+slice 5): a production `EvidenceSource` (device quote collection, the
+go-trusted-platform side) and an `Inventory` implementation (the device
+registry, row #2093). Until both exist xkmsd does not start the engine.
+
 ## Tests
 
 - `TestBuildVerdictStore`: memory factory, nil factory, unavailable factory.
