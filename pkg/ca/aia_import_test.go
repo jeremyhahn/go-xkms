@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -347,6 +348,44 @@ func TestImportIssuingCAsInto_AlreadyStoredIssuerIsWalkedThrough(t *testing.T) {
 	require.NoError(t, err, "the walk must continue through an issuer already stored")
 	assertNotInSharedStores(t, ca, "tagain-int1")
 	assertNotInSharedStores(t, ca, "tagain-root")
+}
+
+// errStoreLookup is the transient read failure faultyLookupStore reports.
+var errStoreLookup = errors.New("certificate store read failed")
+
+// faultyLookupStore is a tenant store whose every lookup fails with a read
+// error other than certstore.ErrCertNotFound, and which counts writes.
+type faultyLookupStore struct {
+	certstore.CertStore
+	writes int
+}
+
+func (s *faultyLookupStore) GetCertificate(string) (*x509.Certificate, error) {
+	return nil, errStoreLookup
+}
+
+func (s *faultyLookupStore) StoreCertificate(cert *x509.Certificate) error {
+	s.writes++
+	return s.CertStore.StoreCertificate(cert)
+}
+
+// TestImportIssuingCAsInto_LookupErrorPropagatesWithoutWrite proves a failed
+// read of the target store is not taken for a missing issuer: StoreCertificate
+// replaces any certificate under the same common name, so storing on a read
+// failure could overwrite an existing certificate and report success.
+func TestImportIssuingCAsInto_LookupErrorPropagatesWithoutWrite(t *testing.T) {
+	t.Parallel()
+	repo := newAIARepo(t)
+	root, rootKey := aiaCert(t, "tfault-root", nil, nil, "")
+	repo.publish("tfault-root", root)
+	leaf, _ := aiaCert(t, "tfault-leaf", root, rootKey, repo.url("tfault-root"))
+	ca := setupTestCA(t)
+	allowLoopbackFetch(ca)
+	store := &faultyLookupStore{CertStore: newTenantStore(t)}
+
+	err := ca.ImportIssuingCAsInto(context.Background(), leaf, store)
+	require.ErrorIs(t, err, errStoreLookup, "a lookup error other than ErrCertNotFound must propagate")
+	assert.Zero(t, store.writes, "nothing may be stored after a failed lookup")
 }
 
 func TestImportIssuingCAsInto_NilStoreRefused(t *testing.T) {
