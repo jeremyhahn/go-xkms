@@ -38,8 +38,8 @@ var errTenantCAKeyFactoryUnbound = errors.New("tenant login CA key factory: no b
 // tenant-scoped backend: every tenant's login CA (Key B) signature goes
 // through that tenant's xkms key, and go-qrdb generates no software Key B.
 type tenantCAKeyFactory struct {
-	mu      sync.RWMutex
-	resolve func() (xkms.Backend, error)
+	mu   sync.RWMutex
+	base xkms.Backend
 }
 
 var _ qrdbsdk.CAKeyProviderFactory = (*tenantCAKeyFactory)(nil)
@@ -53,29 +53,19 @@ func (f *tenantCAKeyFactory) Bind(base xkms.Backend) error {
 	if base == nil {
 		return errors.New("tenant login CA key factory: nil backend")
 	}
-	f.bindResolver(func() (xkms.Backend, error) { return base, nil })
+	f.mu.Lock()
+	f.base = base
+	f.mu.Unlock()
 	return nil
 }
 
-// bindResolver makes resolve the source of the backend, read at each call so
-// a server can bind its default backend before that backend is loaded.
-func (f *tenantCAKeyFactory) bindResolver(resolve func() (xkms.Backend, error)) {
-	f.mu.Lock()
-	f.resolve = resolve
-	f.mu.Unlock()
-}
-
+// backend is the bound backend. The read takes only the factory's own lock,
+// which Bind holds for one assignment, so a lookup never waits on, or fails
+// for, a lock the server holds.
 func (f *tenantCAKeyFactory) backend() (xkms.Backend, error) {
 	f.mu.RLock()
-	resolve := f.resolve
+	base := f.base
 	f.mu.RUnlock()
-	if resolve == nil {
-		return nil, errTenantCAKeyFactoryUnbound
-	}
-	base, err := resolve()
-	if err != nil {
-		return nil, err
-	}
 	if base == nil {
 		return nil, errTenantCAKeyFactoryUnbound
 	}
@@ -258,8 +248,8 @@ func selfSignTenantLoginCA(tenantID string, signer crypto.Signer) (*x509.Certifi
 
 // tenantCAKeyProviderOptions returns the node option that routes every
 // tenant's login CA (Key B) through go-xkms (WithCertKeyProviderFactory),
-// under the same condition as the cluster CA provider. The factory reads the
-// server's default backend at each call.
+// under the same condition as the cluster CA provider. The boot pass binds the
+// factory to the server's default backend.
 func (s *Server) tenantCAKeyProviderOptions() []qrdbnode.NodeOption {
 	if !s.trustedCAIsClusterCA() {
 		return nil
@@ -273,13 +263,11 @@ func (s *Server) tenantCAKeyProviderOptions() []qrdbnode.NodeOption {
 }
 
 // tenantCAKeyBackend is the server's default backend, the one that holds the
-// tenants' login CA keys; an error before the backends are loaded. go-qrdb
-// may call in while the server holds its lock to boot the node, so the lookup
-// never blocks: a held lock reads as not yet loaded.
+// tenants' login CA keys; an error before the backends are loaded. Only the
+// boot pass calls it, once, to bind the factory; the lookups go-qrdb makes
+// afterwards read the bound backend and never take the server's lock.
 func (s *Server) tenantCAKeyBackend() (xkms.Backend, error) {
-	if !s.mu.TryRLock() {
-		return nil, errTenantCAKeyFactoryUnbound
-	}
+	s.mu.RLock()
 	defer s.mu.RUnlock()
 	name := xkms.ResolveDefaultBackend(string(s.config.Default), s.backends)
 	if name == "" {

@@ -78,7 +78,13 @@ func (s *Server) provisionTenantCAKeys(ctx context.Context) error {
 	if s.tenantCAKeys == nil || s.tenantService == nil {
 		return nil
 	}
-	s.tenantCAKeys.bindResolver(s.tenantCAKeyBackend)
+	base, err := s.tenantCAKeyBackend()
+	if err != nil {
+		return &TenantProvisionError{Err: err}
+	}
+	if err := s.tenantCAKeys.Bind(base); err != nil {
+		return &TenantProvisionError{Err: err}
+	}
 	return provisionTenantCAKeysWith(ctx, s.tenantService, s.tenantCAKeys)
 }
 
