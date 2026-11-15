@@ -119,6 +119,8 @@ func TestVerifyRegisteredDeviceHoldsTheApplicationReference(t *testing.T) {
 	t.Run("a reference that is not 32 bytes is an invalid record", func(t *testing.T) {
 		leaf := mintAliasWithApplication(t, deviceKey, registered)
 		_, err := referencedFor(t, deviceKey, registered[:31]).VerifyRegisteredDevice(ctx, leaf, diceKeyAuth)
+		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
+		assert.ErrorIs(t, err, ErrProvisioningRecordInvalid)
 		assert.ErrorIs(t, err, dice.ErrInvalidApplicationReference)
 	})
 

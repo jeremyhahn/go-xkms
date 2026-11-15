@@ -247,7 +247,7 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyApplicationReference(claims, opts.ApplicationReference); err != nil {
+	if err := VerifyApplicationReference(claims, opts.ApplicationReference); err != nil {
 		return nil, err
 	}
 
@@ -276,12 +276,18 @@ func Verify(chain []*x509.Certificate, opts *VerifyOptions) (*Evidence, error) {
 	return &Evidence{TcbInfo: info, Claims: claims, Ueid: ueid, Flags: flags, RootType: rootType}, nil
 }
 
-// verifyApplicationReference holds the leaf's measurements claim to the
-// registered application evidence, in constant time. A nil reference checks
-// nothing.
-func verifyApplicationReference(claims *ClaimsSet, reference []byte) error {
+// VerifyApplicationReference holds a leaf's measurements claim to the
+// registered application evidence, in constant time, as Verify does under
+// VerifyOptions.ApplicationReference. A nil reference checks nothing; any
+// length other than 32 is ErrInvalidApplicationReference. It reads claims
+// only, so a caller re-checking a leaf Verify already accepted (a registry
+// re-query at finalization) need not verify the chain again.
+func VerifyApplicationReference(claims *ClaimsSet, reference []byte) error {
 	if reference == nil {
 		return nil
+	}
+	if len(reference) != sha256.Size {
+		return ErrInvalidApplicationReference
 	}
 	var measurements []byte
 	if claims != nil {
