@@ -201,7 +201,9 @@ func TestOTAImageKeyMethods_ExportPublicKey(t *testing.T) {
 	assert.Equal(t, otaTestBoard, exported.BoardID)
 	assert.Equal(t, uint32(1), exported.Version)
 	pub := otaPublicKey(t, created.PublicKeyPEM)
-	assert.Equal(t, append(pub.X.FillBytes(make([]byte, 32)), pub.Y.FillBytes(make([]byte, 32))...), exported.Raw,
+	uncompressed, err := pub.Bytes()
+	require.NoError(t, err)
+	assert.Equal(t, uncompressed[1:], exported.Raw,
 		"raw is the 64-byte X||Y of the board key")
 	assert.NotEmpty(t, exported.COSEKey)
 
