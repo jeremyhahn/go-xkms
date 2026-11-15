@@ -80,10 +80,14 @@
   async function load(): Promise<void> {
     loading = true;
     error = null;
+    // Capture before the await: the inputs may change while the GET is in
+    // flight, and the response belongs to the values it was asked for.
+    const id = keyId;
+    const be = backend;
     try {
-      const m = await getKeyMetadata(keyId, backend);
-      loadedId = keyId;
-      loadedBackend = backend;
+      const m = await getKeyMetadata(id, be);
+      loadedId = id;
+      loadedBackend = be;
       show(m);
     } catch (e) {
       md = null;
