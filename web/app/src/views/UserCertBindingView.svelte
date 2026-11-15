@@ -17,6 +17,7 @@
   let thumbErr = $state<string | null>(null);
 
   const user = $derived(username.trim());
+  const SPKI_THUMBPRINT = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
 
   function errMsg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -39,9 +40,12 @@
 
   async function bind(): Promise<void> {
     thumbErr = null;
-    const tp = thumbprint.trim().replace(/[:\s]/g, "");
-    if (!/^[0-9a-fA-F]+$/.test(tp)) {
-      thumbErr = "Thumbprint must be hexadecimal.";
+    // go-qrdb's SPKI thumbprint: SHA-256 in unpadded base64url
+    // (base64.RawURLEncoding), 32 bytes = 43 characters whose last one
+    // carries only 4 data bits.
+    const tp = thumbprint.trim();
+    if (!SPKI_THUMBPRINT.test(tp)) {
+      thumbErr = "Thumbprint must be the unpadded base64url SHA-256 SPKI thumbprint (43 characters).";
       return;
     }
     const notAfterUnix = Math.floor(Date.parse(notAfter) / 1000);
@@ -97,7 +101,7 @@
 <section class="space-y-3 max-w-xl">
   <h2 class="text-lg font-semibold">Bind certificate</h2>
   {#if thumbErr}<Alert kind="error"><span>{thumbErr}</span></Alert>{/if}
-  <input class="input input-bordered w-full font-mono" aria-label="Thumbprint" placeholder="Thumbprint (hex)" bind:value={thumbprint} />
+  <input class="input input-bordered w-full font-mono" aria-label="Thumbprint" placeholder="SPKI SHA-256 thumbprint (base64url)" bind:value={thumbprint} />
   <input class="input input-bordered w-full" type="date" aria-label="Not after" bind:value={notAfter} />
   <button class="btn btn-primary" onclick={bind} disabled={busy || user === "" || thumbprint.trim() === "" || notAfter === ""}>
     {#if busy}<span class="loading loading-spinner loading-xs"></span>{/if}
