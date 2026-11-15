@@ -118,6 +118,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 - **workload-identity** — tenant as SPIFFE trust domain, SVIDs through ACME — [Dev complete](../../milestone/14) — blocked: go-qrdb `spiffe://<tenant>/...` support
 - **ota-image-keys** — one OTA image-signing key per trusted-firmware board id — [Dev complete](../../milestone/14) — blocked: go-qrdb #737 (OTA activate/confirm permissions)
 - **key-policy-and-crypto** — key-management, key-policy, key-safety and crypto-utility RPCs in `xkms.v1` for go-quicbaas (DEK is go-qrdb's `DEKClient`) — [#1681](../../issues/1681), [Dev complete](../../milestone/14) — open
+- **key-version-cas** — `rotateKey` writes the version record as a compare-and-swap against the record read before the rotation, and orphan cleanup never deletes a version newer than it; after the next release it is pinned into go-quicbaas, replacing the fence go-quicbaas #2469 adds — [#2218](../../issues/2218), [SPEC](docs/SPEC.md#features) — open
 
 ## Later
 
