@@ -14,10 +14,10 @@
 package server
 
 import (
+	"context"
 	"crypto/ecdh"
 	"crypto/subtle"
 	"crypto/x509"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -52,6 +52,15 @@ func (s *Server) initPhoneBackend() error {
 	return nil
 }
 
+// AuthenticatedPhoneSender is a phone Sender bound to one authenticated Noise
+// session. RemoteStaticKey returns the peer's static public key (X25519, 32
+// bytes) that the session handshake authenticated; the device registry binds
+// the phone to that key, not to the configuration.
+type AuthenticatedPhoneSender interface {
+	phonebackend.Sender
+	RemoteStaticKey() []byte
+}
+
 // RegisterPhoneBackend creates and registers the phone backend using
 // the provided Sender. This is called when a phone connects and provides
 // an active JSON-RPC transport (typically from the xkey binary acting
@@ -62,7 +71,13 @@ func (s *Server) initPhoneBackend() error {
 // lifecycle -- the caller owns the Sender.
 //
 // If a phone backend is already registered, it is closed and replaced.
-func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
+//
+// Backend mode: the phone is accepted only when the device-registry record
+// named by backends.phone.tenant/device_id is active and its identity key is
+// the static key the sender's Noise session authenticated
+// (AuthenticatedPhoneSender.RemoteStaticKey); otherwise the call fails with
+// ErrPhoneDeviceRefused.
+func (s *Server) RegisterPhoneBackend(sender AuthenticatedPhoneSender) error {
 	if sender == nil {
 		return ErrNilSender
 	}
@@ -126,7 +141,7 @@ func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
 
 	// Backend mode: go-xkms is the verifier. The phone is accepted only
 	// while its device-registry record is active and bound to its key.
-	if err := s.verifyPhoneDevice(phoneCfg); err != nil {
+	if err := s.verifyPhoneDevice(phoneCfg, sender.RemoteStaticKey()); err != nil {
 		if closeErr := backend.Close(); closeErr != nil {
 			s.logger.Warn("failed to close refused phone backend",
 				slog.Any("error", closeErr))
@@ -144,32 +159,35 @@ func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
 
 // verifyPhoneDevice refuses, with ErrPhoneDeviceRefused, a phone whose
 // device-registry record (phoneCfg.Tenant, phoneCfg.DeviceID) is missing,
-// revoked, or carries an identity key other than phoneCfg.PhoneStaticKey.
-// The identity key is SPKI DER of the phone's X25519 Noise static key.
-// Callers hold s.mu.
-func (s *Server) verifyPhoneDevice(phoneCfg *config.PhoneConfig) error {
+// revoked, or carries an identity key other than peerKey, the static key
+// the sender's Noise session authenticated. Callers hold s.mu.
+func (s *Server) verifyPhoneDevice(phoneCfg *config.PhoneConfig, peerKey []byte) error {
 	reg, err := s.phoneDeviceRegistry()
 	if err != nil {
 		return errors.Join(ErrPhoneDeviceRefused, err)
 	}
-	device, err := reg.Get(s.ctx, phoneCfg.Tenant, phoneCfg.DeviceID)
+	return checkPhoneDevice(s.ctx, reg, phoneCfg.Tenant, phoneCfg.DeviceID, peerKey)
+}
+
+// checkPhoneDevice refuses, with ErrPhoneDeviceRefused, unless tenant's
+// device id has an active record whose identity key (SPKI DER, X25519) is
+// peerKey, the static key the phone's Noise session authenticated.
+func checkPhoneDevice(ctx context.Context, reg *devicereg.Registry, tenant, id string, peerKey []byte) error {
+	device, err := reg.Get(ctx, tenant, id)
 	if err != nil {
 		return errors.Join(ErrPhoneDeviceRefused, err)
 	}
 	if !device.Active() {
 		return fmt.Errorf("%w: device %q is revoked", ErrPhoneDeviceRefused, device.ID)
 	}
-	want, err := hex.DecodeString(phoneCfg.PhoneStaticKey)
-	if err != nil {
-		return fmt.Errorf("%w: phone_static_key is not hex: %v", ErrPhoneDeviceRefused, err)
-	}
 	pub, err := x509.ParsePKIXPublicKey(device.IdentityKey)
 	if err != nil {
 		return fmt.Errorf("%w: device %q identity key: %v", ErrPhoneDeviceRefused, device.ID, err)
 	}
 	key, ok := pub.(*ecdh.PublicKey)
-	if !ok || key.Curve() != ecdh.X25519() || subtle.ConstantTimeCompare(key.Bytes(), want) != 1 {
-		return fmt.Errorf("%w: device %q identity key is not the phone's key", ErrPhoneDeviceRefused, device.ID)
+	if !ok || key.Curve() != ecdh.X25519() || len(peerKey) == 0 ||
+		subtle.ConstantTimeCompare(key.Bytes(), peerKey) != 1 {
+		return fmt.Errorf("%w: device %q identity key is not the session peer's key", ErrPhoneDeviceRefused, device.ID)
 	}
 	return nil
 }
