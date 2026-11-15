@@ -97,8 +97,17 @@ func (f *tenantCAKeyFactory) backend() (xkms.Backend, error) {
 	if base == nil {
 		return nil, errTenantCAKeyFactoryUnbound
 	}
+	// One key per tenant needs a backend that stores a key per name. A
+	// YubiKey PIV token configured with a slot puts every key in that slot,
+	// so each tenant's generate would overwrite the last tenant's login CA.
+	if p, ok := base.KeyProvider().(interface{ FixedKeySlot() bool }); ok && p.FixedKeySlot() {
+		return nil, errTenantCAKeyFixedSlot
+	}
 	return base, nil
 }
+
+// errTenantCAKeyFixedSlot refuses a backend whose keys all share one slot.
+var errTenantCAKeyFixedSlot = errors.New("tenant login CA key factory: the backend has a fixed key slot and cannot hold one login CA key per tenant")
 
 // ProviderForTenant returns the provider of tenantID's login CA: the tenant's
 // own xkms key and certificate. A tenant without a login CA key is

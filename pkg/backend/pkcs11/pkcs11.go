@@ -153,6 +153,14 @@ func (b *Backend) Config() *Config {
 	return b.config
 }
 
+// FixedKeySlot reports whether every key this backend generates lands in one
+// slot: a YubiKey PIV token configured with Config.Slot, which resolveKeyID
+// returns before any name-based ID. Such a backend holds one key, not one
+// key per name.
+func (b *Backend) FixedKeySlot() bool {
+	return b.config != nil && b.config.IsYubiKeyPIV() && b.config.Slot != nil
+}
+
 // userPIN borrows the configured user PIN as a plain string, the shape
 // miekg/pkcs11's Login and this package's session-pool helpers require. This
 // is the documented third-party-SDK boundary (go-xkms#610): the plaintext
