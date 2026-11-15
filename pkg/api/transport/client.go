@@ -74,6 +74,10 @@ type KeyService interface {
 	// image-signing key and makes it current.
 	RotateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*RotateKeyResponse, error)
 
+	// ExportOTAImagePublicKey returns the public half of a board's current
+	// OTA image-signing key as raw X||Y and as a COSE_Key.
+	ExportOTAImagePublicKey(ctx context.Context, req *OTAImageKeyRequest) (*OTAImagePublicKeyResponse, error)
+
 	// SignOTAImage signs an OTA image with the current version of its
 	// board's key.
 	SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error)

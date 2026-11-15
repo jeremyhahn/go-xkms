@@ -72,6 +72,11 @@ func (m *mockOTAImageClient) RotateOTAImageKey(_ context.Context, req *client.OT
 	return &client.RotateKeyResponse{KeyID: "ota-image-" + req.BoardID, KeyVersion: 2, CertificateReissueRequired: m.reissue}, nil
 }
 
+func (m *mockOTAImageClient) ExportOTAImagePublicKey(_ context.Context, req *client.OTAImageKeyRequest) (*client.OTAImagePublicKeyResponse, error) {
+	m.keyReq = req
+	return nil, nil
+}
+
 func (m *mockOTAImageClient) SignOTAImage(_ context.Context, req *client.OTAImageSignRequest) (*client.SignResponse, error) {
 	m.signReq = req
 	if err := m.validate(req.BoardID, ""); err != nil {
