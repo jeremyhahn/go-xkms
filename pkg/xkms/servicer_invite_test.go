@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -406,41 +407,90 @@ func (f *inviteFixture) lifecycle(t *testing.T, id uint64) string {
 }
 
 // An activation that fails after WebAuthn stored the credential is
-// resumable: the account stays pending and the invitation unredeemed, and
-// re-sending the same finish request (its session already consumed)
-// completes the activation without a new ceremony (verify P1
-// servicer_invite.go:332).
+// resumable: the account stays pending and the invitation unredeemed, and a
+// new begin answers with a WebAuthn get for the enrolled credential whose
+// valid assertion completes the activation once (verify P1
+// servicer_invite.go:332; Company Agent: possession, not public data).
 func TestFinishInviteRegistration_ResumesActivationAfterFailure(t *testing.T) {
 	f := newInviteFixture(t)
 	token := f.mintInvite(t)
+	credential, attestation := f.enrolThenFailActivation(t, token)
 
+	// Re-sending the attestation proves nothing (its credential ID and
+	// public key are public data): it is refused, and nothing changes.
+	_, err := f.finishRegistration(inviteFixtureTenant, token, "spent-session", attestation)
+	require.Error(t, err)
+	f.requirePendingUnredeemed(t, token, inviteFixtureQRDBUserID)
+
+	// The resume is a fresh WebAuthn get for the enrolled credential.
 	begin, err := f.beginRegistration(inviteFixtureTenant, token)
 	require.NoError(t, err)
-	attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
-
-	f.failActivationOnce(t)
-	_, err = f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
-	require.Error(t, err)
-	assert.Equal(t, string(qrdbsdk.LifecyclePending), f.lifecycle(t, inviteFixtureQRDBUserID))
-	_, err = f.getInvite(inviteFixtureTenant, token)
-	require.NoError(t, err, "a failed activation must leave the invitation unredeemed")
-
-	result, err := f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+	assertion := f.assertInvite(t, begin.OptionsJSON, credential)
+	result, err := f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, assertion)
 	require.NoError(t, err)
 	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
 	assert.Equal(t, string(qrdbsdk.LifecycleActive), f.lifecycle(t, inviteFixtureQRDBUserID))
 	_, err = f.getInvite(inviteFixtureTenant, token)
 	require.ErrorIs(t, err, ErrInviteUnusable)
 
-	// The resume ran once: the spent invitation does not resume again.
-	_, err = f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+	// The resume ran once: a replay of the assertion is refused.
+	_, err = f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, assertion)
 	require.ErrorIs(t, err, ErrInviteUnusable)
 }
 
-// The resume path is bound to the invitation's own account and the
-// credential its ceremony stored: another pending account's persisted
-// enrolment cannot be activated through this invitation, and a consumed
-// invitation resumes nothing.
+// Each resume finish without a valid assertion by the enrolled credential
+// over the resume session's own challenge is refused, leaving the account
+// pending and the invitation unredeemed.
+func TestFinishInviteRegistration_ResumeRefusesWithoutPossessionProof(t *testing.T) {
+	cases := []struct {
+		name      string
+		assertion func(f *inviteFixture, t *testing.T, token string, credential virtualwebauthn.Credential) (sessionID, assertion string)
+	}{
+		{"no assertion", func(f *inviteFixture, t *testing.T, token string, _ virtualwebauthn.Credential) (string, string) {
+			begin, err := f.beginRegistration(inviteFixtureTenant, token)
+			require.NoError(t, err)
+			return begin.SessionID, "{}"
+		}},
+		{"invalid signature", func(f *inviteFixture, t *testing.T, token string, credential virtualwebauthn.Credential) (string, string) {
+			begin, err := f.beginRegistration(inviteFixtureTenant, token)
+			require.NoError(t, err)
+			return begin.SessionID, tamperAssertionSignature(t, f.assertInvite(t, begin.OptionsJSON, credential))
+		}},
+		{"assertion over another challenge", func(f *inviteFixture, t *testing.T, token string, credential virtualwebauthn.Credential) (string, string) {
+			first, err := f.beginRegistration(inviteFixtureTenant, token)
+			require.NoError(t, err)
+			second, err := f.beginRegistration(inviteFixtureTenant, token)
+			require.NoError(t, err)
+			return second.SessionID, f.assertInvite(t, first.OptionsJSON, credential)
+		}},
+		{"assertion over a stale challenge", func(f *inviteFixture, t *testing.T, token string, credential virtualwebauthn.Credential) (string, string) {
+			stale, err := f.beginRegistration(inviteFixtureTenant, token)
+			require.NoError(t, err)
+			_, err = f.finishRegistration(inviteFixtureTenant, token, stale.SessionID, "{}")
+			require.Error(t, err)
+			return stale.SessionID, f.assertInvite(t, stale.OptionsJSON, credential)
+		}},
+		{"assertion signed by another credential", func(f *inviteFixture, t *testing.T, token string, _ virtualwebauthn.Credential) (string, string) {
+			begin, err := f.beginRegistration(inviteFixtureTenant, token)
+			require.NoError(t, err)
+			return begin.SessionID, f.assertInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newInviteFixture(t)
+			token := f.mintInvite(t)
+			credential, _ := f.enrolThenFailActivation(t, token)
+			sessionID, assertion := tc.assertion(f, t, token, credential)
+			_, err := f.finishRegistration(inviteFixtureTenant, token, sessionID, assertion)
+			require.Error(t, err)
+			f.requirePendingUnredeemed(t, token, inviteFixtureQRDBUserID)
+		})
+	}
+}
+
+// The resume is bound to the invitation's own account: another invitation
+// cannot carry it, and a consumed invitation resumes nothing.
 func TestFinishInviteRegistration_ResumeRefusesAnotherAccountAndConsumedInvite(t *testing.T) {
 	f := newInviteFixture(t)
 	const otherID = uint64(8)
@@ -453,28 +503,83 @@ func TestFinishInviteRegistration_ResumeRefusesAnotherAccountAndConsumedInvite(t
 	require.NoError(t, err)
 	tokenB := infoB.Token
 
-	// B's enrolment persists its credential, then its activation fails.
+	credentialB, _ := f.enrolThenFailActivation(t, tokenB)
 	beginB, err := f.beginRegistration(inviteFixtureTenant, tokenB)
 	require.NoError(t, err)
-	attestationB := f.attestInvite(t, beginB.OptionsJSON, newInviteEC2Credential(t))
-	f.failActivationOnce(t)
-	_, err = f.finishRegistration(inviteFixtureTenant, tokenB, beginB.SessionID, attestationB)
-	require.Error(t, err)
+	assertionB := f.assertInvite(t, beginB.OptionsJSON, credentialB)
 
-	// A's invitation cannot carry B's persisted enrolment to activation.
-	_, err = f.finishRegistration(inviteFixtureTenant, tokenA, beginB.SessionID, attestationB)
+	// A's invitation cannot carry B's resume to activation.
+	_, err = f.finishRegistration(inviteFixtureTenant, tokenA, beginB.SessionID, assertionB)
 	require.Error(t, err)
+	f.requirePendingUnredeemed(t, tokenA, inviteFixtureQRDBUserID)
 	assert.Equal(t, string(qrdbsdk.LifecyclePending), f.lifecycle(t, otherID))
-	assert.Equal(t, string(qrdbsdk.LifecyclePending), f.lifecycle(t, inviteFixtureQRDBUserID))
-	_, err = f.getInvite(inviteFixtureTenant, tokenA)
-	require.NoError(t, err, "a refused resume must not spend A's invitation")
 
 	// Once B's invitation is consumed, B's enrolment no longer resumes.
 	_, err = f.svc.inviteStore.Redeem(context.Background(), inviteFixtureTenant, tokenB)
 	require.NoError(t, err)
-	_, err = f.finishRegistration(inviteFixtureTenant, tokenB, beginB.SessionID, attestationB)
+	_, err = f.beginRegistration(inviteFixtureTenant, tokenB)
+	require.ErrorIs(t, err, ErrInviteUnusable)
+	beginB, err = f.beginRegistration(inviteFixtureTenant, tokenA)
+	require.NoError(t, err)
+	_, err = f.finishRegistration(inviteFixtureTenant, tokenB, beginB.SessionID, assertionB)
 	require.ErrorIs(t, err, ErrInviteUnusable)
 	assert.Equal(t, string(qrdbsdk.LifecyclePending), f.lifecycle(t, otherID))
+}
+
+// enrolThenFailActivation runs token's invite ceremony with a fresh
+// credential while the activation fails once, so the credential is stored
+// and the account stays pending. It returns the credential and attestation.
+func (f *inviteFixture) enrolThenFailActivation(t *testing.T, token string) (virtualwebauthn.Credential, string) {
+	t.Helper()
+	begin, err := f.beginRegistration(inviteFixtureTenant, token)
+	require.NoError(t, err)
+	credential := newInviteEC2Credential(t)
+	attestation := f.attestInvite(t, begin.OptionsJSON, credential)
+	f.failActivationOnce(t)
+	_, err = f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+	require.Error(t, err)
+	return credential, attestation
+}
+
+func (f *inviteFixture) requirePendingUnredeemed(t *testing.T, token string, id uint64) {
+	t.Helper()
+	assert.Equal(t, string(qrdbsdk.LifecyclePending), f.lifecycle(t, id))
+	_, err := f.getInvite(inviteFixtureTenant, token)
+	require.NoError(t, err, "the invitation must stay unredeemed")
+}
+
+// assertInvite answers a resume begin's WebAuthn get options with
+// credential's assertion.
+func (f *inviteFixture) assertInvite(t *testing.T, optionsJSON string, credential virtualwebauthn.Credential) string {
+	t.Helper()
+	var request protocol.CredentialAssertion
+	require.NoError(t, json.Unmarshal([]byte(optionsJSON), &request))
+	require.NotEmpty(t, request.Response.AllowedCredentials, "a resume begin answers with get options")
+	responseJSON, err := json.Marshal(request.Response)
+	require.NoError(t, err)
+	parsedOptions, err := virtualwebauthn.ParseAssertionOptions(string(responseJSON))
+	require.NoError(t, err)
+	authenticator := virtualwebauthn.NewAuthenticator()
+	authenticator.AddCredential(credential)
+	return virtualwebauthn.CreateAssertionResponse(f.rp, authenticator, credential, *parsedOptions)
+}
+
+// tamperAssertionSignature flips the last byte of an assertion's signature.
+func tamperAssertionSignature(t *testing.T, assertionJSON string) string {
+	t.Helper()
+	var body map[string]any
+	require.NoError(t, json.Unmarshal([]byte(assertionJSON), &body))
+	response, ok := body["response"].(map[string]any)
+	require.True(t, ok)
+	encoded, ok := response["signature"].(string)
+	require.True(t, ok)
+	sig, err := base64.RawURLEncoding.DecodeString(encoded)
+	require.NoError(t, err)
+	sig[len(sig)-1] ^= 0xff
+	response["signature"] = base64.RawURLEncoding.EncodeToString(sig)
+	out, err := json.Marshal(body)
+	require.NoError(t, err)
+	return string(out)
 }
 
 func TestGetInvite_Success(t *testing.T) {
