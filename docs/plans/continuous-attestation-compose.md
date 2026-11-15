@@ -68,3 +68,21 @@ off without its dependency. Commit 9713d2bd3 adds
 `FeatureVerdicts: "DAO factory"` to its expected map; no other
 pkg/apimodule test lists the off features.
 `go test (codec tags) ./pkg/apimodule/`: ok.
+
+## Codex findings on row2088c (lane row2088d)
+
+1. Replayed nonce: 14b4947f6 adds
+   `TestEngine_ReplayedQuoteWithOldNonceIsUnverified` (real appraiser; the
+   source replays its first signed quote and old nonce). It passes on the
+   code, so it guards a regression. By hand: with engine.go's
+   `issued.Nonce = nonce` removed the replay is verified and the test
+   fails; engine.go restored, never committed.
+2. History duplicates: test ced48cf32 (bounded in 5aae09d89) fails on the
+   old store; fix 265400184 de-duplicates by verdict ID in ListVerdicts.
+   go-qrdb v0.51.0-alpha gap: ForEachPage has no shared snapshot and the
+   GenericDAO has no snapshot or cursor iteration; pin unchanged.
+3. SDK verbs: test 09ca21119 (sdk.New and sdk.NewEmbedded); fix 82ebc1de2
+   composes the verdict interfaces into transport.Client and XKMSServicer,
+   adds embedded forwarding and sdk/go type aliases, updates the doubles;
+   3f3902298 updates the xkey doubles.
+4. SPEC row wording (docs/SPEC.md:81) waits on the owner; not edited.
