@@ -1309,7 +1309,7 @@ jobs:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: [preflight, ci-images]
     if: ${{ needs.preflight.outputs.verdict == 'run' }}
-    timeout-minutes: 90       # CUSTOMIZE (go-xkms, DS-8139): one sixth of the unit suite under -race
+    timeout-minutes: 150      # CUSTOMIZE (go-xkms, DS-8139, ruling 661(4)): one sixth of the unit suite under -race
     permissions:
       contents: read
       packages: read

@@ -469,6 +469,10 @@ TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost
 # `make coverage` (#1587): above that job's slowest green run, 70m, and below
 # its 140m timeout-minutes, so a hung test fails with a goroutine dump first.
 UNIT_TEST_TIMEOUT ?= 75m
+# Per-binary go test bound for one coverage shard (make coverage-shard, CI's
+# coverage job, ruling 661(4)): UNIT_TEST_TIMEOUT raised by the 60 min the job's
+# timeout-minutes rose (90 to 150), still below that bound.
+COVERAGE_SHARD_TIMEOUT ?= 135m
 TEST_FLAGS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS))"
 # FIPS variant. The `fips` tag has to join the SAME -tags list rather than
 # arrive as a second flag: go test keeps only the last -tags it is given, so
@@ -1262,7 +1266,7 @@ coverage-shard: check-insecure-tls agsim
 	pkgs=$$($(MAKE) -s --no-print-directory coverage-shard-pkgs); \
 	if [ -z "$$pkgs" ]; then echo "$(RED)✗ shard $(SHARD)/$(SHARDS) has no packages$(RESET)"; exit 1; fi; \
 	echo "shard $(SHARD)/$(SHARDS): $$(echo "$$pkgs" | wc -l) packages"; \
-	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/shard-$(SHARD).out -covermode=atomic $$pkgs \
+	$(GO) test $(TEST_FLAGS) -timeout $(COVERAGE_SHARD_TIMEOUT) -coverprofile=$(COVERAGE_DIR)/shard-$(SHARD).out -covermode=atomic $$pkgs \
 		2>&1 | tee $(COVERAGE_DIR)/shard-$(SHARD).log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
 	if [ $$EXIT_CODE -ne 0 ]; then \
