@@ -230,3 +230,52 @@ describe("KeyAccessPolicyView", () => {
     expect(toasts).toHaveLength(0);
   });
 });
+
+describe("KeyAccessPolicyView target binding", () => {
+  it("never saves a policy loaded for one key to another key", async () => {
+    let resolveGet: (v: unknown) => void = () => {};
+    request.mockImplementation((method: string) => {
+      if (method === "GET") return new Promise((r) => (resolveGet = r));
+      return Promise.resolve({ key_id: "k2", policy_version: 1, timestamp: 1 });
+    });
+
+    render(KeyAccessPolicyView);
+    await selectKey();
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith("GET", PATH, { query: { backend: "software" } }));
+
+    // The target changes to k2 before k1's policy arrives.
+    await fireEvent.input(screen.getByPlaceholderText("Key ID"), { target: { value: "k2" } });
+    resolveGet({
+      policy: { key_id: "k1", version: 4, allowed_principals: ["svc-a"], denied_principals: ["svc-b"] },
+      timestamp: 1,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.queryByText("svc-a")).toBeNull();
+    expect(screen.queryByText("Version 4")).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request).toHaveBeenLastCalledWith("PUT", "/api/v1/keys/k2/policy", {
+      body: { backend: "software", key_id: "k2", policy: {} },
+    });
+  });
+
+  it("clears a loaded policy when the target changes", async () => {
+    request.mockResolvedValue({
+      policy: { key_id: "k1", version: 2, denied_principals: ["svc-b"] },
+      timestamp: 1,
+    });
+
+    render(KeyAccessPolicyView);
+    await selectKey();
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(await screen.findByText("svc-b")).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByPlaceholderText("Backend"), { target: { value: "tpm2" } });
+
+    expect(screen.queryByText("svc-b")).toBeNull();
+    expect(screen.queryByText("Version 2")).toBeNull();
+  });
+});

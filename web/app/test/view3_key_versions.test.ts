@@ -217,3 +217,45 @@ describe("KeyVersionsView", () => {
     expect(screen.getByText("2026-02-01T00:00:00Z")).toBeInTheDocument();
   });
 });
+
+describe("KeyVersionsView out-of-order responses", () => {
+  const sealerVersions: ListKeyVersionsResponse = {
+    key_id: "sealer",
+    backend: "tpm2",
+    current_version: 2,
+    versions: [
+      { version: 1, state: "enabled", created_at: "2025-05-01T00:00:00Z" },
+      { version: 2, state: "enabled", current: true, created_at: "2025-06-01T00:00:00Z" },
+    ],
+  };
+
+  it("ignores a stale response and binds row actions to the displayed key", async () => {
+    let resolveSigner: (v: ListKeyVersionsResponse) => void = () => {};
+    list.mockImplementation((id: string) =>
+      id === "signer" ? new Promise((r) => (resolveSigner = r)) : Promise.resolve(sealerVersions),
+    );
+    disable.mockResolvedValue({} as KeyVersionStateResponse);
+    retire.mockResolvedValue({} as KeyVersionStateResponse);
+
+    render(KeyVersionsView);
+    await screen.findByRole("option", { name: "signer (soft)" });
+    await fireEvent.change(screen.getByLabelText("Key"), { target: { value: "0" } });
+    await fireEvent.change(screen.getByLabelText("Key"), { target: { value: "1" } });
+    expect(await screen.findByText("2025-06-01T00:00:00Z")).toBeInTheDocument();
+
+    // The signer's response arrives last; the table keeps the sealer's versions.
+    resolveSigner(versions);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("2026-03-01T00:00:00Z")).toBeNull();
+    expect(screen.getByText("2025-06-01T00:00:00Z")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Disable version 1" }));
+    await waitFor(() => expect(disable).toHaveBeenCalledWith("sealer", 1, "tpm2"));
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Retire version 1" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("of sealer");
+    await fireEvent.click(screen.getAllByRole("button", { name: "Retire" }).at(-1)!);
+    await waitFor(() => expect(retire).toHaveBeenCalledWith("sealer", 1, "tpm2"));
+  });
+});
