@@ -59,6 +59,12 @@ func (f *fakeTenantService) DeleteTenant(_ context.Context, id string) error {
 	return nil
 }
 
+// UndoCreateTenant removes the tenant as DeleteTenant does and records it in
+// deleted, so a test sees the rollback of a failed create.
+func (f *fakeTenantService) UndoCreateTenant(ctx context.Context, id string) error {
+	return f.DeleteTenant(ctx, id)
+}
+
 // fakeTenantCAKeys counts EnsureTenant calls per tenant and provisions a
 // tenant at most once, as tenantCAKeyFactory.EnsureTenant does.
 type fakeTenantCAKeys struct {

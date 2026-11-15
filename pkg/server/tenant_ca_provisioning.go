@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
@@ -45,8 +46,8 @@ func newProvisioningTenantService(svc qrdbsdk.ServiceTenantServicer, keys tenant
 }
 
 // CreateTenant creates the tenant, then provisions its login CA key. When the
-// key cannot be provisioned the tenant is deleted again, so no tenant exists
-// whose logins would fail.
+// key cannot be provisioned the create is undone, so no tenant exists whose
+// logins would fail and the tenant ID can be created again.
 func (p *provisioningTenantService) CreateTenant(ctx context.Context, id, name string, isolationType qrdbsdk.TenantIsolationType, opts ...qrdbsdk.CreateTenantOption) (*qrdbsdk.ServiceTenantInfo, error) {
 	info, err := p.ServiceTenantServicer.CreateTenant(ctx, id, name, isolationType, opts...)
 	if err != nil {
@@ -55,10 +56,27 @@ func (p *provisioningTenantService) CreateTenant(ctx context.Context, id, name s
 	if ensureErr := p.keys.EnsureTenant(ctx, info.ID); ensureErr != nil {
 		return nil, &TenantProvisionError{
 			TenantID: info.ID,
-			Err:      errors.Join(ensureErr, p.DeleteTenant(ctx, info.ID)),
+			Err:      errors.Join(ensureErr, p.undoCreate(ctx, info.ID)),
 		}
 	}
 	return info, nil
+}
+
+// tenantCreateUndoTimeout bounds the rollback of a create whose login CA
+// could not be provisioned.
+const tenantCreateUndoTimeout = 30 * time.Second
+
+// undoCreate rolls back a create that did not complete. It undoes the create
+// rather than deleting the tenant, so the tenant ID stays free for a retry,
+// and it runs on its own bounded context: a request cancelled during
+// provisioning must not leave the tenant behind.
+func (p *provisioningTenantService) undoCreate(ctx context.Context, id string) error {
+	undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tenantCreateUndoTimeout)
+	defer cancel()
+	if err := p.UndoCreateTenant(undoCtx, id); err != nil {
+		return err
+	}
+	return p.keys.RemoveTenant(undoCtx, id)
 }
 
 // DeleteTenant deletes the tenant, then its login CA key and certificate, so
