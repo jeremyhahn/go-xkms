@@ -2,6 +2,7 @@ package tpm2
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
@@ -244,7 +245,13 @@ func (tpm *TPM2) lockSeal(keyAttrs *types.KeyAttributes) (*types.KeyAttributes, 
 		if !ok {
 			return p, nil
 		}
-		secret := pp.Bytes()
+		// An unavailable platform password is an error, never an empty
+		// password: empty authorization would create an object anyone can
+		// open, or spend a dictionary-attack try on the object.
+		secret, err := pp.read()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrPlatformPasswordUnavailable, pp.keyAttrs.CN, err)
+		}
 		defer enclave.Wipe(secret)
 		rp, err := types.NewPassword(secret)
 		if err != nil {
@@ -284,10 +291,24 @@ func (tpm *TPM2) lockSeal(keyAttrs *types.KeyAttributes) (*types.KeyAttributes, 
 }
 
 func requireSealProtection(keyAttrs *types.KeyAttributes) error {
-	if keyAttrs.TPMPolicy != "" || keyAuthValue(keyAttrs) != nil {
+	if keyAttrs.TPMPolicy != "" {
 		return nil
 	}
 	if keyAttrs.TPMAttributes != nil && len(keyAttrs.TPMAttributes.Template.AuthPolicy.Buffer) > 0 {
+		return nil
+	}
+	// A platform password that cannot be read is that error, not an
+	// unprotected object: the caller asked for a password.
+	if pp, ok := keyAttrs.Password.(*PlatformPassword); ok {
+		secret, err := pp.read()
+		if err != nil {
+			return fmt.Errorf("%w: %s: %w", ErrPlatformPasswordUnavailable, pp.keyAttrs.CN, err)
+		}
+		defer enclave.Wipe(secret)
+		if len(secret) > 0 {
+			return nil
+		}
+	} else if keyAuthValue(keyAttrs) != nil {
 		return nil
 	}
 	return &errs.Detail{Err: ErrSealUnprotected, Detail: keyAttrs.CN}

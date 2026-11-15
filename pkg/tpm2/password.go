@@ -133,6 +133,14 @@ func (p *PlatformPassword) String() string {
 // is valid, returns the cached value. Otherwise, unseals from the TPM
 // and caches the result (if caching is enabled).
 func (p *PlatformPassword) Bytes() []byte {
+	data, _ := p.read()
+	return data
+}
+
+// read returns the platform password, from the cache when enabled, else by
+// unsealing it, with the unseal's error. A caller that must not treat an
+// unavailable password as an empty one (lockSeal) reads through this.
+func (p *PlatformPassword) read() ([]byte, error) {
 	// Check cache first if enabled (with read lock)
 	if p.cacheEnabled() {
 		if cached := p.getCached(); cached != nil {
@@ -141,7 +149,7 @@ func (p *PlatformPassword) Bytes() []byte {
 					fmt.Sprintf("keystore/tpm2: returning cached platform password: %s",
 						p.keyAttrs.CN))
 			}
-			return cached
+			return cached, nil
 		}
 
 		// Cache miss - need to unseal. Use write lock to ensure only one
@@ -155,7 +163,7 @@ func (p *PlatformPassword) Bytes() []byte {
 
 // unsealWithLock performs unseal while holding the write lock to prevent
 // concurrent unseal operations when caching is enabled.
-func (p *PlatformPassword) unsealWithLock() []byte {
+func (p *PlatformPassword) unsealWithLock() ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -163,13 +171,16 @@ func (p *PlatformPassword) unsealWithLock() []byte {
 	if p.cachedData != nil && time.Since(p.cacheTime) <= p.cacheTTL() {
 		result := make([]byte, len(p.cachedData))
 		copy(result, p.cachedData)
-		return result
+		return result, nil
 	}
 
 	// Perform unseal
-	data := p.unsealDirect()
+	data, err := p.unsealDirect()
+	if err != nil {
+		return nil, err
+	}
 	if data == nil {
-		return nil
+		return nil, nil
 	}
 
 	// Store in cache (we already hold the lock)
@@ -178,11 +189,11 @@ func (p *PlatformPassword) unsealWithLock() []byte {
 	copy(p.cachedData, data)
 	p.cacheTime = time.Now()
 
-	return data
+	return data, nil
 }
 
 // unsealDirect performs the actual TPM unseal operation without any locking.
-func (p *PlatformPassword) unsealDirect() []byte {
+func (p *PlatformPassword) unsealDirect() ([]byte, error) {
 	if p.keyAttrs.Debug {
 		p.logger.Debug(
 			fmt.Sprintf("keystore/tpm2: retrieving platform password from TPM: %s",
@@ -206,10 +217,10 @@ func (p *PlatformPassword) unsealDirect() []byte {
 		// when the sealed key doesn't exist yet. The calling code will handle
 		// the nil return by creating/sealing a new key.
 		p.logger.Debug(fmt.Sprintf("keystore/tpm2: failed to unseal platform password: %v", err))
-		return nil
+		return nil, err
 	}
 
-	return data
+	return data, nil
 }
 
 // Clear clears any cached password data from memory.
