@@ -114,8 +114,8 @@ RFC 8949 core deterministic (`deterministic`) is refused with
 Any DICE verifier can hold a device to its registered application:
 `dice.VerifyOptions.ApplicationReference []byte`
 (`pkg/attestation/dice/verify.go:59`), when set, makes `dice.Verify` read the
-leaf's 273 after the nonce check (`verify.go:250`, `verifyApplicationReference`
-`:282`) and compare its 32 bytes in constant time. A differing or missing claim
+leaf's 273 after the nonce check (`verify.go:250`, `VerifyApplicationReference`
+`:285`) and compare its 32 bytes in constant time. A differing or missing claim
 is `ErrApplicationEvidenceMismatch`, a claim not of the shape
 `ErrMeasurementsShape`, and a reference that is not 32 bytes
 `ErrInvalidApplicationReference`. Nil checks nothing. The AVR backend sets it
@@ -124,6 +124,18 @@ from the operator's `attestation.application_reference`
 `initAttestation` refuses one that is neither empty nor 32 bytes with
 `ErrInvalidApplicationReference` (`pkg/backend/avr/backend.go:196`), and
 `checkAliasCertificate` passes it to `dice.Verify` (`attestation.go:223`).
+
+device-attest-01 reads the reference from the device's registry record,
+`ProvisionedDevice.ApplicationReference`
+(`pkg/acme/challenges/device-attest-01/anchors.go:116`). The resolver refuses a
+record whose reference is neither nil nor 32 bytes as
+`ErrProvisioningRecordInvalid`, and `verifyDICEClaims` (`registry.go:259`)
+passes it to `dice.Verify` on the raw-key and the endorsed path. At
+finalization `ConfirmRegisteredDevice` (`registry.go:144`) re-reads the record
+and holds the recorded alias certificate's 273 to the reference it carries
+now, through `dice.VerifyApplicationReference`, so a reference changed after
+the challenge refuses the order under `ErrDeviceNotAuthorized`. A record with
+no reference leaves the application unchecked.
 
 The ACME client mints the request for a `dice` device:
 `AttestedKey.Format` selects it (`pkg/acme/client/tpm.go`), and

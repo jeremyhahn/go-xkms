@@ -91,3 +91,25 @@ ea93b2af2. The row stays in progress: the acme-issuance match is open.
 - 2026-11-14: applied as above, with `backend.go:196` written in full as
   `pkg/backend/avr/backend.go:196`. Left before the row ships: the
   acme-issuance reference match.
+
+## Slice 4: device-attest-01 and finalize match the registered reference
+
+Lane row2087c closes the row's last open item, the acme-issuance reference
+match.
+
+- Test (f13676345): `reference_test.go` mints aliases carrying a ruled 273 and
+  holds them to a registry record's reference: the registered application is
+  accepted, another one, a leaf without 273 and an endorsed device without it
+  are refused with `dice.ErrApplicationEvidenceMismatch`, a 31-byte reference
+  is an invalid record, no reference checks nothing; at finalization a
+  reference changed after validation is refused under `ErrDeviceNotAuthorized`.
+- Fix: `ProvisionedDevice.ApplicationReference`; `verifyDICEClaims` passes it
+  to `dice.Verify` on both paths; `ConfirmRegisteredDevice` takes the recorded
+  leaf and re-checks it through the now-exported
+  `dice.VerifyApplicationReference`.
+- SPEC.md row text extended with the device-attest-01 match and flipped to
+  `shipped`; engineering.md names the wiring.
+- Out of scope: filling the reference in a production registry (the
+  `DeviceResolver` implementation is the caller's, e.g. go-quicbaas); the
+  acme-issuance row's own "Open: nothing matches the 32 bytes" sentence
+  (docs/SPEC.md:40) is now stale and is that row's edit.
