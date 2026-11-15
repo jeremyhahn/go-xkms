@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -31,8 +32,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/oidccredentialtest/offline"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -161,4 +164,22 @@ func TestNewHostServer_PasskeyPrincipalReferencesSurviveAccountBinding(t *testin
 	require.NoError(t, err)
 	require.Equal(t, 1, personal.Total, "the personal entry written under the handle is still the bound caller's")
 	require.Equal(t, "Carol Private", personal.Passwords[0].Name)
+
+	// A personal OIDC credential stored under the handle before the upgrade.
+	svc.SetOIDCCredentialService(offline.NewService(t, scope.TenantName(bound.TenantID)))
+	t.Cleanup(func() { svc.SetOIDCCredentialService(nil) })
+	expires := time.Now().Add(time.Hour)
+	oidcRef := transport.OIDCCredentialRef{Scope: "user", Name: "carol-idp"}
+	created, err := svc.OIDCCredentialCreate(legacyCtx, &transport.OIDCCredentialCreateRequest{
+		OIDCCredentialRef: oidcRef,
+		Config:            transport.OIDCCredentialConfig{Template: "anthropic"},
+		Tokens:            &transport.OIDCCredentialTokens{AccessToken: "carol-at", ExpiresAt: &expires},
+	})
+	require.NoError(t, err)
+	require.Equal(t, handle, created.Owner, "the pre-upgrade credential is owned by the handle")
+	_, err = svc.OIDCCredentialGet(boundCtx, &oidcRef)
+	require.NoError(t, err, "the personal OIDC credential stored under the handle is still the bound caller's")
+	listed, err := svc.OIDCCredentialList(boundCtx, &transport.OIDCCredentialListRequest{})
+	require.NoError(t, err)
+	require.Len(t, listed.Credentials, 1, "the bound caller lists the credential stored under the handle")
 }
