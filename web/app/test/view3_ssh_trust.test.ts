@@ -290,4 +290,34 @@ describe("SshTrustView", () => {
     await waitFor(() => expect(toasts).toContainEqual({ kind: "error", message: "forbidden" }));
     expect(screen.getByText("deploy")).toBeInTheDocument();
   });
+
+  it("removes with the displayed row's scope and owner after the inputs are edited", async () => {
+    const pinA = { ...pin, scope: "tenant", owner: "acme" };
+    const entryA = { ...entry, scope: "tenant", owner: "acme" };
+    listKnownHosts.mockResolvedValue({ items: [pinA] });
+    listAuthorizedKeys.mockResolvedValue({ items: [entryA] });
+    removeKnownHost.mockResolvedValue(undefined);
+    removeAuthorizedKey.mockResolvedValue(undefined);
+    await mounted();
+
+    // Load scope A, then edit the inputs to scope B without loading it.
+    await fireEvent.input(screen.getByLabelText("Scope"), { target: { value: "tenant" } });
+    await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "acme" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    await waitFor(() => expect(listKnownHosts).toHaveBeenLastCalledWith("tenant", "acme"));
+    await screen.findByText("git.example.com");
+    await fireEvent.input(screen.getByLabelText("Scope"), { target: { value: "user" } });
+    await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "bob" } });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Remove git.example.com" }));
+    await screen.findByText("Remove the pin for git.example.com?");
+    await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
+    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith("git.example.com", "tenant", "acme"));
+
+    await screen.findByText("deploy");
+    await fireEvent.click(screen.getByRole("button", { name: "Remove deploy" }));
+    await screen.findByText("Remove the authorized key deploy?");
+    await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
+    await waitFor(() => expect(removeAuthorizedKey).toHaveBeenCalledWith("tenant", "acme", "deploy"));
+  });
 });
