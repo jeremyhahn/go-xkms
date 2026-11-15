@@ -117,6 +117,30 @@ Each as test commit, then fix commit:
    tenant back, system keys keep the old ID (c8913d06a). Open: a SoftHSM
    two-tenant factory test.
 
+## Codex P1 findings on d94e243c2 (lane-verify, 7 P1)
+
+The two security findings, each as test commit, then fix commit:
+
+1. Login CA key reachable by callers (`tenant_ca_keyprovider.go:183`):
+   `TestLoginCAKey_RefusedToUserAddressableOperations` (pkg/xkms, d94bf6c1b):
+   User and Operator sign, save a certificate over, rotate, delete or
+   pre-create `qrdb-login-ca`. Fix (25e5aa51b): `xkms.LoginCAKeyCN` is
+   reserved (`pkg/xkms/reserved_keys.go`, `ErrReservedKey`), refused in
+   `resolveKeyOf` (every by-name key operation), in `refuseRotatedKeyID`
+   (generate, import, copy) and in the certificate save, chain save and
+   delete calls. No permission is added; the node reaches the key on the
+   backend directly.
+2. Fixed-slot PIV backend (`tenant_ca_keyprovider.go:190`):
+   `TestTenantCAKeyFactory_RefusesFixedSlotBackend` and
+   `TestBackend_FixedKeySlot` (pkcs11 tag) (51beb0a30). Fix (d3636482a): the
+   PKCS#11 backend reports `FixedKeySlot` for a YubiKey PIV token with
+   `Config.Slot`; the factory refuses such a backend before any lookup or
+   generate. Tenant-to-slot allocation is not implemented.
+
+Open: findings 3-7 of the same review (reliability, correctness, SPEC; see
+the lane's verify.codex.json) are later slices of this row and were not
+started.
+
 ## Results
 
 - `go test -count=1 -race -timeout 75m -tags "codec_cbor codec_json codec_msgpack" ./pkg/server/...`: pass (pkg/server 528 s; credentials, loopback pass). The run hits go test's default 10m bound under -race, so it needs the Makefile's UNIT_TEST_TIMEOUT.
