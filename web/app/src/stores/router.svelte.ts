@@ -29,7 +29,6 @@ export type RouteName =
   | "sshKeyImport"
   | "keys"
   | "keyVersions"
-  | "frostSigning"
   | "certificates"
   | "certImport"
   | "ca"
@@ -88,7 +87,6 @@ export interface Route {
 // (none yet in this phase) would be matched separately below.
 const staticRoutes: Record<string, RouteName> = {
   "/": "dashboard",
-  "/frost/sign": "frostSigning",
   "/dashboard": "dashboard",
   "/trust/bundle": "trustBundle",
   "/login": "login",
