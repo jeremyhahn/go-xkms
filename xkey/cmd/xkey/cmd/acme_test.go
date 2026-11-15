@@ -109,6 +109,11 @@ func (f *fakeACMEClient) RequestEndorsementKeyCertificate(_ context.Context, con
 	return f.endorseCert, f.err
 }
 
+func (f *fakeACMEClient) DeviceAttest(_ context.Context, config *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error) {
+	f.endorseConfig = config
+	return f.endorseCert, f.err
+}
+
 func (f *fakeACMEClient) Close() error {
 	f.closed = true
 	return nil

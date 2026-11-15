@@ -332,12 +332,9 @@ func (s *ACMEService) EnrollDevice(conn ACMEConnection, req ACMEEnrollRequest) (
 	err = s.withDeviceTPM(conn, req, "enroll", func(c ACMEClient, cfg *sdkacme.ACMEEnrollmentConfig) error {
 		ctx, cancel := ACMEEnrollContext(s.context(), cfg.Timeout)
 		defer cancel()
-		res, err := c.EnrollDevice(ctx, cfg)
+		res, err := RunACMEEnrollment(ctx, c, req.Challenge, cfg)
 		if err != nil {
-			return fmt.Errorf("acme: enroll device: %w", err)
-		}
-		if res == nil {
-			return errors.New("acme: enroll device: no result")
+			return err
 		}
 		info = &ACMEEnrollmentInfo{
 			IDevIDPEM: certificatesPEM(res.IDevIDCertificate),
@@ -350,6 +347,42 @@ func (s *ACMEService) EnrollDevice(conn ACMEConnection, req ACMEEnrollRequest) (
 		return nil, err
 	}
 	return info, nil
+}
+
+// RunACMEEnrollment runs the client protocol of the selected device
+// challenge, shared by the GUI and the xkey acme enroll command:
+// enroll-01 runs EnrollDevice (IDevID and IAK), device-attest-01 runs
+// DeviceAttest (attObj on the permanent-identifier order) and endorse-01
+// runs RequestEndorsementKeyCertificate (EK identifier and finalize). The
+// single certificate the last two issue is returned as IDevIDCertificate.
+// An unknown challenge is an error.
+func RunACMEEnrollment(ctx context.Context, c ACMEClient, challenge string, cfg *sdkacme.ACMEEnrollmentConfig) (*sdkacme.ACMEEnrollmentResult, error) {
+	var single func(context.Context, *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error)
+	switch challenge {
+	case sdkacme.ACMEChallengeTypeEnroll01:
+		res, err := c.EnrollDevice(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("acme: enroll device: %w", err)
+		}
+		if res == nil {
+			return nil, errors.New("acme: enroll device: no result")
+		}
+		return res, nil
+	case sdkacme.ACMEChallengeTypeDeviceAttest01:
+		single = c.DeviceAttest
+	case sdkacme.ACMEChallengeTypeEndorse01:
+		single = c.RequestEndorsementKeyCertificate
+	default:
+		return nil, fmt.Errorf("acme: unknown enroll challenge %q", challenge)
+	}
+	cert, err := single(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("acme: %s: %w", challenge, err)
+	}
+	if cert == nil {
+		return nil, fmt.Errorf("acme: %s: no certificate", challenge)
+	}
+	return &sdkacme.ACMEEnrollmentResult{IDevIDCertificate: cert}, nil
 }
 
 // EndorseDevice requests an EK certificate with the endorse-01 challenge on

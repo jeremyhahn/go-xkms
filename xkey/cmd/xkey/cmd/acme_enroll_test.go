@@ -91,26 +91,31 @@ func TestACMEEnrollCallsClientWithConfig(t *testing.T) {
 func TestACMEEnrollDeviceAttestNeedsNoIPAndWritesOutDir(t *testing.T) {
 	env := newACMETestEnv(t)
 	stubACMETPMModule(t)
-	_, iak := writeTestCert(t)
-	env.fake.enrollResult = &sdkacme.ACMEEnrollmentResult{IAKCertificate: iak}
+	_, cert := writeTestCert(t)
+	// device-attest-01 runs DeviceAttest, which the fake answers with
+	// endorseCert; its one certificate is written as idevid.pem.
+	env.fake.endorseCert = cert
 	dir := filepath.Join(t.TempDir(), "out")
 	args := append([]string{"enroll", "--challenge", sdkacme.ACMEChallengeTypeDeviceAttest01, "--out-dir", dir}, env.common()...)
 	out, err := env.run(t, args...)
 	if err != nil {
 		t.Fatalf("enroll: %v (%s)", err, out)
 	}
-	cfg := env.fake.enrollConfig
+	if env.fake.enrollConfig != nil {
+		t.Fatal("device-attest-01 ran EnrollDevice")
+	}
+	cfg := env.fake.endorseConfig
 	if cfg == nil || cfg.IPAddress != "" || cfg.Port != "8080" || cfg.Timeout != 30*time.Second {
 		t.Fatalf("config = %+v", cfg)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "iak.pem"))
+	data, err := os.ReadFile(filepath.Join(dir, "idevid.pem"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if block, _ := pem.Decode(data); block == nil || string(block.Bytes) != string(iak.Raw) {
-		t.Fatal("iak.pem does not hold the IAK certificate")
+	if block, _ := pem.Decode(data); block == nil || string(block.Bytes) != string(cert.Raw) {
+		t.Fatal("idevid.pem does not hold the device-attest-01 certificate")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "idevid.pem")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "iak.pem")); !os.IsNotExist(err) {
 		t.Fatalf("idevid.pem written without an IDevID certificate: %v", err)
 	}
 	env.assertNoKeyMaterial(t, out+string(data))

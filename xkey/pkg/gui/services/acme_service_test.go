@@ -104,6 +104,11 @@ func (f *fakeACMEClient) RequestEndorsementKeyCertificate(_ context.Context, cfg
 	return f.ekCert, f.err
 }
 
+func (f *fakeACMEClient) DeviceAttest(_ context.Context, cfg *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error) {
+	f.enrollCfg = cfg
+	return f.ekCert, f.err
+}
+
 func (f *fakeACMEClient) Close() error {
 	f.closed = true
 	return nil
@@ -412,7 +417,8 @@ func TestACMEService_EnrollDevice(t *testing.T) {
 func TestACMEService_EnrollDevice_DeviceAttestNeedsNoIP(t *testing.T) {
 	fx := newACMEFixture(t)
 	released := fx.withTPMSource()
-	fx.fake.enrolled = &sdkacme.ACMEEnrollmentResult{IDevIDCertificate: fx.cert}
+	// device-attest-01 runs DeviceAttest, which the fake answers with ekCert.
+	fx.fake.ekCert = fx.cert
 	info, err := fx.svc.EnrollDevice(fx.conn, ACMEEnrollRequest{
 		Challenge: sdkacme.ACMEChallengeTypeDeviceAttest01,
 		PCRs:      []int{0, 1, 7},

@@ -41,6 +41,7 @@ type ACMEClient interface {
 	RenewCertificate(ctx context.Context, oldCert *x509.Certificate, req *sdkacme.ACMECertificateRequest) (*x509.Certificate, error)
 	EnrollDevice(ctx context.Context, config *sdkacme.ACMEEnrollmentConfig) (*sdkacme.ACMEEnrollmentResult, error)
 	RequestEndorsementKeyCertificate(ctx context.Context, config *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error)
+	DeviceAttest(ctx context.Context, config *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error)
 	Close() error
 }
 

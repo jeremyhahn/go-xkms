@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
@@ -131,6 +132,12 @@ func writeEnrollment(c *cobra.Command, outDir string, res *sdkacme.ACMEEnrollmen
 	return nil
 }
 
+// enroll runs the protocol of the selected --challenge through the dispatch
+// the GUI shares.
+func (f *acmeEnrollFlags) enroll(ctx context.Context, client acmeClient, cfg *sdkacme.ACMEEnrollmentConfig) (*sdkacme.ACMEEnrollmentResult, error) {
+	return services.RunACMEEnrollment(ctx, client, f.challenge, cfg)
+}
+
 func newACMEEnrollCmd(flags *acmeFlags) *cobra.Command {
 	ef := &acmeEnrollFlags{}
 	c := &cobra.Command{
@@ -153,12 +160,9 @@ ever written.`,
 			return flags.withACMEClient(c, "", func(client acmeClient) error {
 				ctx, cancel := services.ACMEEnrollContext(c.Context(), ef.timeout)
 				defer cancel()
-				res, err := client.EnrollDevice(ctx, ef.config(tpm))
+				res, err := ef.enroll(ctx, client, ef.config(tpm))
 				if err != nil {
-					return fmt.Errorf("acme: enroll device: %w", err)
-				}
-				if res == nil {
-					return errors.New("acme: enroll device: no result")
+					return err
 				}
 				return writeEnrollment(c, ef.outDir, res)
 			})
