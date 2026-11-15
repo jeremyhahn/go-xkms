@@ -46,7 +46,7 @@ describe("navSections", () => {
 
   it("has no FROST signing entry: signing rounds run through xkmsctl frost", () => {
     const all = navSections.flatMap((s) => s.items);
-    expect(all.some((i) => i.path === "/frost/sign" || i.route === "frostSigning")).toBe(false);
+    expect(all.some((i) => i.path === "/frost/sign" || String(i.route) === "frostSigning")).toBe(false);
   });
 
   it("maps the dashboard route to /dashboard with no RBAC or capability gate", () => {
