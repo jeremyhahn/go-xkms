@@ -220,7 +220,11 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
 		refreshStore = token.BindRefreshStore(qs, p.CallContext)
-		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
+		// The resolver reads the account on the same binder as the store:
+		// POST /api/v1/auth/refresh arrives anonymous, which an enforcing
+		// embedded node refuses, so the current-account checks run as the
+		// node's service principal.
+		userResolver = bindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
@@ -249,6 +253,32 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		return nil, &TokenIssuerConfigError{Err: err}
 	}
 	return issuer, nil
+}
+
+// bindUserResolver returns a token.UserResolver that runs every lookup of
+// resolver on the context bind derives from the caller's, as
+// token.BindRefreshStore does for the refresh store. A nil bind returns
+// resolver.
+func bindUserResolver(resolver token.UserResolver, bind token.CallContext) token.UserResolver {
+	if bind == nil {
+		return resolver
+	}
+	return &boundUserResolver{resolver: resolver, bind: bind}
+}
+
+type boundUserResolver struct {
+	resolver token.UserResolver
+	bind     token.CallContext
+}
+
+// ResolveUser resolves id on the bound context; a bind failure refuses the
+// refresh.
+func (b *boundUserResolver) ResolveUser(ctx context.Context, id *auth.Identity) (*auth.Identity, error) {
+	bound, err := b.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return b.resolver.ResolveUser(bound, id)
 }
 
 // Compile-time check: pkg/auth's QRDBUserResolver cannot declare this
