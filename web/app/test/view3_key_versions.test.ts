@@ -216,4 +216,26 @@ describe("KeyVersionsView", () => {
     await waitFor(() => expect(toasts).toContainEqual({ kind: "error", message: "retire refused" }));
     expect(screen.getByText("2026-02-01T00:00:00Z")).toBeInTheDocument();
   });
+
+  it("discards a stale versions response for a key that is no longer selected", async () => {
+    type Res = Awaited<ReturnType<typeof list>>;
+    let resolveA: (r: Res) => void = () => {};
+    let resolveB: (r: Res) => void = () => {};
+    list.mockImplementationOnce(() => new Promise<Res>((r) => (resolveA = r)));
+    list.mockImplementationOnce(() => new Promise<Res>((r) => (resolveB = r)));
+    render(KeyVersionsView);
+    await screen.findByRole("option", { name: "signer (soft)" });
+
+    await fireEvent.change(screen.getByLabelText("Key"), { target: { value: "0" } });
+    await fireEvent.change(screen.getByLabelText("Key"), { target: { value: "1" } });
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith("sealer", "tpm2"));
+
+    resolveB({ ...versions, key_id: "sealer", versions: [versions.versions[2]!] });
+    expect(await screen.findByText("2026-03-01T00:00:00Z")).toBeInTheDocument();
+    resolveA(versions);
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.queryByText("2026-01-01T00:00:00Z")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retire version 2" })).not.toBeInTheDocument();
+  });
 });
