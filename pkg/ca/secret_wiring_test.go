@@ -320,3 +320,51 @@ func TestCarryKeyPassword_NoPasswordLeavesIdentityUnchanged(t *testing.T) {
 	noKeys := Identity{}
 	assert.NoError(t, carryKeyPassword(ctx, &noKeys, &types.KeyAttributes{Password: pw}), "an identity without keys is a no-op")
 }
+
+// errUnreadablePassword is the retrieval failure failingPassword reports.
+var errUnreadablePassword = errors.New("password retrieval failed")
+
+// failingPassword models a Password whose retrieval fails (a TPM unseal
+// failure of PlatformPassword, a RequiredPassword placeholder): Bytes returns
+// nil, exactly as for an empty password, and only WithBytes exposes the error.
+type failingPassword struct{}
+
+func (failingPassword) Bytes() []byte                      { return nil }
+func (failingPassword) WithBytes(func([]byte) error) error { return errUnreadablePassword }
+func (failingPassword) String() string                     { return types.PasswordRedacted }
+func (failingPassword) Clear()                             {}
+
+// TestCA_New_UnreadableKeyPasswordFails proves that a CA whose configured key
+// password cannot be read fails construction instead of building an identity
+// without a password, which Init would then persist as a plaintext key.
+func TestCA_New_UnreadableKeyPasswordFails(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	id := rootIdentity("Unreadable Password CA")
+	require.ErrorIs(t, carryKeyPassword(ctx, &id, &types.KeyAttributes{Password: failingPassword{}}), errUnreadablePassword)
+	assert.Nil(t, id.Keys[0].Password, "no password may be carried from a failed read")
+
+	keyAttrs, err := (&Identity{
+		Subject: Subject{CommonName: "Unreadable Password CA"},
+		Keys:    rootIdentity("Unreadable Password CA").Keys,
+	}).ToKeyAttributes(ctx)
+	require.NoError(t, err)
+	keyAttrs.Password = failingPassword{}
+
+	instance, err := New(&Params{
+		Config: &CAConfig{
+			Identity:  "Unreadable Password CA",
+			Subject:   &Subject{CommonName: "Unreadable Password CA"},
+			IsRootCA:  true,
+			StoreType: types.StoreSoftware,
+		},
+		KeyAttributes:   keyAttrs,
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
+	})
+	require.ErrorIs(t, err, errUnreadablePassword, "construction must fail when the key password cannot be read")
+	assert.Nil(t, instance)
+}
