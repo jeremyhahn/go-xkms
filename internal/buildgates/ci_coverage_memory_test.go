@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -92,6 +93,56 @@ func TestCoverageRunsAsShardsThenOneThreshold(t *testing.T) {
 		if !slices.Contains(wf.Jobs[gateJob].Needs, j) {
 			t.Errorf("CI Gate does not need %s", j)
 		}
+	}
+}
+
+// Coverage shard bounds (ruling 661(4)): a shard under -race outgrew the 90
+// min job, so the job gets 150 min and the shard's go test bound rises by the
+// same 60 min, 75m to 135m. The go test bound stays under the job's, so a
+// hung test fails with a goroutine dump before the runner kills the job.
+const (
+	coverageJobTimeoutMinutes = 150
+	coverageShardTestTimeout  = 135 * time.Minute
+)
+
+func TestCoverageShardTimeoutsArePinned(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Timeout int `yaml:"timeout-minutes"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatalf("parse workflow: %v", err)
+	}
+	if got := wf.Jobs["coverage"].Timeout; got != coverageJobTimeoutMinutes {
+		t.Errorf("coverage job timeout-minutes = %d, want %d", got, coverageJobTimeoutMinutes)
+	}
+
+	got := makeLines(t, "--eval=print-coverage-shard-timeout: ; @echo $(COVERAGE_SHARD_TIMEOUT)", "print-coverage-shard-timeout")
+	if len(got) != 1 {
+		t.Fatalf("COVERAGE_SHARD_TIMEOUT = %q, want one duration", got)
+	}
+	bound, err := time.ParseDuration(got[0])
+	if err != nil {
+		t.Fatalf("COVERAGE_SHARD_TIMEOUT %q: %v", got[0], err)
+	}
+	if bound != coverageShardTestTimeout {
+		t.Errorf("COVERAGE_SHARD_TIMEOUT = %s, want %s", bound, coverageShardTestTimeout)
+	}
+	if bound >= coverageJobTimeoutMinutes*time.Minute {
+		t.Errorf("COVERAGE_SHARD_TIMEOUT %s is not under the coverage job's %d min", bound, coverageJobTimeoutMinutes)
+	}
+
+	makefile, err := os.ReadFile(repoRoot + "/Makefile")
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	if !strings.Contains(string(makefile), "$(GO) test $(TEST_FLAGS) -timeout $(COVERAGE_SHARD_TIMEOUT) -coverprofile=$(COVERAGE_DIR)/shard-$(SHARD).out") {
+		t.Error("coverage-shard's go test does not run under -timeout $(COVERAGE_SHARD_TIMEOUT)")
 	}
 }
 
