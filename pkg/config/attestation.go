@@ -72,7 +72,12 @@ func (a *AttestationConfig) PeerGateMode() (peergate.Mode, error) {
 // configuration. Every declared format must resolve to at least one root
 // certificate; a format that would produce an anchorless verifier is a
 // configuration error rather than a permissive default.
-func (c *AttestationConfig) Verifiers() (map[string]*attestation.Verifier, error) {
+//
+// roots is the persisted, purpose-classified trust-root store; when non-nil
+// every verifier appraises over it (Verifier.BuildTrustPool), so a root
+// installed through the trust_roots verbs is trusted without a config edit.
+// A nil roots leaves the purpose-pooled checks failing closed.
+func (c *AttestationConfig) Verifiers(roots truststore.PurposeLister) (map[string]*attestation.Verifier, error) {
 	if c == nil {
 		return nil, nil
 	}
@@ -91,15 +96,19 @@ func (c *AttestationConfig) Verifiers() (map[string]*attestation.Verifier, error
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: fmt.Sprintf("attestation: trust store for format %q", key), Err: err}
 		}
-		roots, err := store.Certificates()
+		anchors, err := store.Certificates()
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: fmt.Sprintf("attestation: trust store for format %q", key), Err: err}
 		}
-		if len(roots) == 0 {
+		if len(anchors) == 0 {
 			return nil, &errs.Detail{Err: ErrAttestationTrustStoreEmpty, Detail: key}
 		}
 
-		verifiers[key] = attestation.NewVerifier(roots)
+		var opts []attestation.VerifierOption
+		if roots != nil {
+			opts = append(opts, attestation.WithTrustStore(roots, nil))
+		}
+		verifiers[key] = attestation.NewVerifier(anchors, opts...)
 	}
 
 	return verifiers, nil

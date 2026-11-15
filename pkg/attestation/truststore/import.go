@@ -106,9 +106,9 @@ func bootstrapHost(server string) string {
 	return server
 }
 
-// purposeLister is the purpose-scoped read path every store implementation
+// PurposeLister is the purpose-scoped read path every store implementation
 // provides.
-type purposeLister interface {
+type PurposeLister interface {
 	CertificatesByPurpose(purpose CertPurpose) ([]*x509.Certificate, error)
 }
 
@@ -123,7 +123,7 @@ type purposeLister interface {
 var tlsAnchorPurposes = []CertPurpose{PurposeUserCA, PurposeBootstrapCA, PurposeGeneral}
 
 // tlsRoots collects the store's TLS-eligible anchors.
-func tlsRoots(store purposeLister) ([]*x509.Certificate, error) {
+func tlsRoots(store PurposeLister) ([]*x509.Certificate, error) {
 	var roots []*x509.Certificate
 	for _, purpose := range tlsAnchorPurposes {
 		certs, err := store.CertificatesByPurpose(purpose)

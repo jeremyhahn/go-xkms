@@ -254,6 +254,12 @@ func (s *DAOStore) GetByPurpose(ctx context.Context, purpose CertPurpose) ([]*x5
 	return certs, nil
 }
 
+// CertificatesByPurpose is GetByPurpose for the context-free PurposeLister
+// read path the attestation and image verifiers appraise over.
+func (s *DAOStore) CertificatesByPurpose(purpose CertPurpose) ([]*x509.Certificate, error) {
+	return s.GetByPurpose(context.Background(), purpose)
+}
+
 // List returns all trusted certificates sorted by subject name.
 func (s *DAOStore) List(ctx context.Context) ([]*x509.Certificate, []*CertMetadata, error) {
 	if s.closed.Load() {

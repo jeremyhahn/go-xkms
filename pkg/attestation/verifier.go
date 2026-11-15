@@ -52,7 +52,7 @@ type Verifier struct {
 
 	// store supplies purpose-scoped trust anchors; nil refuses the
 	// purpose-pooled checks.
-	store truststore.TrustStore
+	store truststore.PurposeLister
 
 	// embeddedLoader supplies compiled-in manufacturer roots per purpose.
 	embeddedLoader EmbeddedRootsLoader

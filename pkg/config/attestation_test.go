@@ -72,7 +72,7 @@ func TestAttestationConfigVerifiers_LoadsPerFormatAnchors(t *testing.T) {
 		},
 	}
 
-	verifiers, err := cfg.Verifiers()
+	verifiers, err := cfg.Verifiers(nil)
 	if err != nil {
 		t.Fatalf("Verifiers() error: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestAttestationConfigVerifiers_LoadsPerFormatAnchors(t *testing.T) {
 
 func TestAttestationConfigVerifiers_NilConfig(t *testing.T) {
 	var cfg *AttestationConfig
-	verifiers, err := cfg.Verifiers()
+	verifiers, err := cfg.Verifiers(nil)
 	if err != nil {
 		t.Fatalf("Verifiers() error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestAttestationConfigVerifiers_RejectsUnanchorableFormats(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			verifiers, err := tc.cfg.Verifiers()
+			verifiers, err := tc.cfg.Verifiers(nil)
 			if err == nil {
 				t.Fatalf("expected error, got verifiers %v", verifiers)
 			}
