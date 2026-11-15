@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -283,7 +284,9 @@ type failSaveCertBackend struct {
 }
 
 func (b *failSaveCertBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
-	if b.fail.Add(-1) >= 0 {
+	// Only the login CA certificate save fails; the provenance record the
+	// provisioning path writes first goes through.
+	if !strings.HasSuffix(keyID, tenantLoginCAProvenanceID) && b.fail.Add(-1) >= 0 {
 		return errors.New("certificate store unavailable")
 	}
 	return b.Backend.SaveCert(ctx, keyID, cert)

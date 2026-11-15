@@ -32,6 +32,19 @@ const tenantLoginCAKeyCN = xkms.LoginCAKeyCN
 // tenantLoginCAValidity is the lifetime of a tenant login CA certificate.
 const tenantLoginCAValidity = 10 * 365 * 24 * time.Hour
 
+// tenantLoginCAProvenanceID is the tenant-scoped certificate ID under which
+// the provisioning path records that it made the tenant's login CA key.
+const tenantLoginCAProvenanceID = tenantLoginCAKeyCN + ":provenance"
+
+// tenantLoginCAProvenanceWait bounds how long adoption waits for another
+// node's provisioning pass to record the provenance of a key it just made.
+const tenantLoginCAProvenanceWait = 2 * time.Second
+
+// errTenantLoginCAKeyCollision is returned when a tenant holds a login CA key
+// that the provisioning path did not make. Such a key is never adopted; an
+// existing one needs an explicit migration.
+var errTenantLoginCAKeyCollision = errors.New("tenant login CA key factory: key collision: a " + tenantLoginCAKeyCN + " key exists without provisioning provenance")
+
 // errTenantCAKeyFactoryUnbound is returned while no backend is bound.
 var errTenantCAKeyFactoryUnbound = errors.New("tenant login CA key factory: no backend bound")
 
@@ -140,7 +153,13 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		return nil, fmt.Errorf("tenant login CA key factory: tenant %q no longer exists", tenantID)
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
-	if _, err := tenantLoginCAKeyAttrs(context.Background(), base, tenantID); err != nil {
+	attrs, err := tenantLoginCAKeyAttrs(context.Background(), base, tenantID)
+	switch {
+	case err == nil:
+		if !tenantLoginCAKeyProvisionedAttrs(context.Background(), scoped, attrs) {
+			return nil, fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCAKeyCollision)
+		}
+	default:
 		// go-qrdb's native onboarding creates a tenant through the node's own
 		// tenant service, which go-xkms cannot wrap, and then asks for its
 		// login CA: provision a tenant the node knows on that first request.
@@ -177,8 +196,12 @@ func (f *tenantCAKeyFactory) TenantIDs(ctx context.Context) ([]string, error) {
 	}
 	seen := make(map[string]struct{})
 	for _, attrs := range keys {
-		if attrs != nil && attrs.CN == tenantLoginCAKeyCN {
-			seen[scope.TenantName(attrs.TenantID)] = struct{}{}
+		if attrs == nil || attrs.CN != tenantLoginCAKeyCN {
+			continue
+		}
+		id := scope.TenantName(attrs.TenantID)
+		if tenantLoginCAKeyProvisionedAttrs(ctx, xkms.NewTenantScopedBackend(base, id), attrs) {
+			seen[id] = struct{}{}
 		}
 	}
 	ids := make([]string, 0, len(seen))
@@ -206,8 +229,9 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	if existing, err := tenantLoginCAKeyAttrs(ctx, base, tenantID); err == nil {
 		// Keep the key, but a key alone is not a provisioned login CA: an
-		// earlier pass may have stopped before its certificate was saved.
-		return ensureTenantLoginCACert(ctx, scoped, tenantID, existing)
+		// earlier pass may have stopped before its certificate was saved,
+		// and a key this path did not make is never adopted.
+		return adoptTenantLoginCAKey(ctx, scoped, tenantID, existing)
 	}
 	attrs := &types.KeyAttributes{
 		CN:            tenantLoginCAKeyCN,
@@ -226,9 +250,68 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		if lookupErr != nil {
 			return fmt.Errorf("tenant login CA key factory: generate key for tenant %q: %w", tenantID, errors.Join(err, lookupErr))
 		}
-		attrs = existing
+		return adoptTenantLoginCAKey(ctx, scoped, tenantID, existing)
 	}
-	return ensureTenantLoginCACert(ctx, scoped, tenantID, attrs)
+	signer, err := scoped.Signer(ctx, attrs)
+	if err != nil {
+		return fmt.Errorf("tenant login CA key factory: signer for tenant %q: %w", tenantID, err)
+	}
+	// Record that this path made the key before anything else may use it.
+	provenance, err := selfSignTenantLoginCA(tenantID, signer)
+	if err != nil {
+		return err
+	}
+	if err := scoped.SaveCert(ctx, tenantLoginCAProvenanceID, provenance); err != nil {
+		return fmt.Errorf("tenant login CA key factory: record key provenance for tenant %q: %w", tenantID, err)
+	}
+	return ensureTenantLoginCACert(ctx, scoped, tenantID, signer)
+}
+
+// adoptTenantLoginCAKey finishes the login CA over an existing key only when
+// the provisioning path recorded its provenance. A key that another node is
+// provisioning right now gets its provenance shortly after it is generated,
+// so the check waits a bounded time, tied to ctx, before it reports a
+// collision.
+func adoptTenantLoginCAKey(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string, attrs *types.KeyAttributes) error {
+	signer, err := scoped.Signer(ctx, attrs)
+	if err != nil {
+		return fmt.Errorf("tenant login CA key factory: signer for tenant %q: %w", tenantID, err)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, tenantLoginCAProvenanceWait)
+	defer cancel()
+	ticker := time.NewTicker(tenantLoginCAProvenanceWait / 40)
+	defer ticker.Stop()
+	for !tenantLoginCAKeyProvisioned(ctx, scoped, signer.Public()) {
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCAKeyCollision)
+		case <-ticker.C:
+		}
+	}
+	return ensureTenantLoginCACert(ctx, scoped, tenantID, signer)
+}
+
+// tenantLoginCAKeyProvisioned reports whether the provenance record the
+// provisioning path writes is present and covers the key with public key pub.
+// Its certificate ID carries a single colon, which key-reference validation
+// refuses, so no API caller can write it.
+func tenantLoginCAKeyProvisioned(ctx context.Context, scoped *xkms.TenantScopedBackend, pub crypto.PublicKey) bool {
+	cert, err := scoped.GetCert(ctx, tenantLoginCAProvenanceID)
+	if err != nil || cert == nil {
+		return false
+	}
+	certPub, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	return ok && certPub.Equal(pub)
+}
+
+// tenantLoginCAKeyProvisionedAttrs reports whether attrs names a login CA key
+// the provisioning path made.
+func tenantLoginCAKeyProvisionedAttrs(ctx context.Context, scoped *xkms.TenantScopedBackend, attrs *types.KeyAttributes) bool {
+	signer, err := scoped.Signer(ctx, attrs)
+	if err != nil {
+		return false
+	}
+	return tenantLoginCAKeyProvisioned(ctx, scoped, signer.Public())
 }
 
 // RemoveTenant deletes a tenant's login CA certificate and key. Tenant
@@ -244,13 +327,15 @@ func (f *tenantCAKeyFactory) RemoveTenant(ctx context.Context, tenantID string) 
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	var errs []error
-	exists, err := scoped.CertExists(ctx, tenantLoginCAKeyCN)
-	switch {
-	case err != nil:
-		errs = append(errs, err)
-	case exists:
-		if delErr := scoped.DeleteCert(ctx, tenantLoginCAKeyCN); delErr != nil {
-			errs = append(errs, delErr)
+	for _, certID := range []string{tenantLoginCAKeyCN, tenantLoginCAProvenanceID} {
+		exists, err := scoped.CertExists(ctx, certID)
+		switch {
+		case err != nil:
+			errs = append(errs, err)
+		case exists:
+			if delErr := scoped.DeleteCert(ctx, certID); delErr != nil {
+				errs = append(errs, delErr)
+			}
 		}
 	}
 	if attrs, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID); lookupErr == nil {
@@ -267,11 +352,7 @@ func (f *tenantCAKeyFactory) RemoveTenant(ctx context.Context, tenantID string) 
 // ensureTenantLoginCACert makes sure the tenant's saved login CA certificate is
 // a valid CA certificate over the key attrs names, issuing and saving one if it
 // is missing or does not match. A certificate another node saved first wins.
-func ensureTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string, attrs *types.KeyAttributes) error {
-	signer, err := scoped.Signer(ctx, attrs)
-	if err != nil {
-		return fmt.Errorf("tenant login CA key factory: signer for tenant %q: %w", tenantID, err)
-	}
+func ensureTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string, signer crypto.Signer) error {
 	if tenantLoginCACertValid(ctx, scoped, signer.Public()) {
 		return nil
 	}
