@@ -24,10 +24,9 @@
   let confirm = $state<Confirm | null>(null);
 
   let hHost = $state("");
-  let hFingerprint = $state("");
-  let hAlgorithm = $state("");
+  let hPublicKey = $state("");
   let vHost = $state("");
-  let vFingerprint = $state("");
+  let vPublicKey = $state("");
   let hostResult = $state<Result | null>(null);
 
   let kName = $state("");
@@ -65,11 +64,11 @@
   async function addHost(): Promise<void> {
     busy = true;
     try {
-      const req: SSHAddKnownHostRequest = { scope, owner, host: hHost, fingerprint: hFingerprint };
-      if (hAlgorithm !== "") req.algorithm = hAlgorithm;
+      // The server derives the pin's fingerprint and algorithm from the key.
+      const req: SSHAddKnownHostRequest = { scope, owner, host: hHost, public_key: hPublicKey.trim() };
       await getSDKClient().ssh.addKnownHost(req);
       showToast("success", `Pinned "${hHost}".`);
-      hHost = ""; hFingerprint = ""; hAlgorithm = "";
+      hHost = ""; hPublicKey = "";
       await load();
     } catch (e) {
       showToast("error", message(e));
@@ -81,7 +80,7 @@
   async function verifyHost(): Promise<void> {
     hostResult = null;
     try {
-      await getSDKClient().ssh.verifyKnownHost(vHost, { scope, owner, fingerprint: vFingerprint });
+      await getSDKClient().ssh.verifyKnownHost(vHost, { scope, owner, public_key: vPublicKey.trim() });
       hostResult = { ok: true, message: `Fingerprint matches the pin for ${vHost}.` };
     } catch (e) {
       if (statusOf(e) === 409) {
@@ -206,14 +205,13 @@
     </div>
     <div class="flex flex-wrap gap-2 mt-3">
       <input class="input input-bordered input-sm" aria-label="Host" placeholder="Host" bind:value={hHost} />
-      <input class="input input-bordered input-sm" aria-label="Host fingerprint" placeholder="SHA256:..." bind:value={hFingerprint} />
-      <input class="input input-bordered input-sm" aria-label="Host algorithm" placeholder="Algorithm (optional)" bind:value={hAlgorithm} />
-      <button class="btn btn-primary btn-sm" onclick={addHost} disabled={busy || hHost === "" || hFingerprint === ""}>Add pin</button>
+      <input class="input input-bordered input-sm flex-1" aria-label="Host public key" placeholder="ssh-ed25519 AAAA..." bind:value={hPublicKey} />
+      <button class="btn btn-primary btn-sm" onclick={addHost} disabled={busy || hHost === "" || hPublicKey.trim() === ""}>Add pin</button>
     </div>
     <div class="flex flex-wrap gap-2 mt-3">
       <input class="input input-bordered input-sm" aria-label="Host to verify" placeholder="Host" bind:value={vHost} />
-      <input class="input input-bordered input-sm" aria-label="Offered fingerprint" placeholder="SHA256:..." bind:value={vFingerprint} />
-      <button class="btn btn-sm" onclick={verifyHost} disabled={vHost === "" || vFingerprint === ""}>Verify host</button>
+      <input class="input input-bordered input-sm flex-1" aria-label="Offered public key" placeholder="ssh-ed25519 AAAA..." bind:value={vPublicKey} />
+      <button class="btn btn-sm" onclick={verifyHost} disabled={vHost === "" || vPublicKey.trim() === ""}>Verify host</button>
     </div>
     {#if hostResult}
       {#if hostResult.ok}

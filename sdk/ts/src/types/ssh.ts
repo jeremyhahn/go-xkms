@@ -102,7 +102,11 @@ export interface SSHAddKnownHostRequest {
   scope: string;
   owner: string;
   host: string;
-  fingerprint: string;
+  /** authorized_keys-format host key ("ssh-ed25519 AAAA..."); the server
+   * derives the pin's fingerprint and algorithm from it and refuses an Add
+   * without it. */
+  public_key: string;
+  fingerprint?: string;
   algorithm?: string;
   source?: string;
 }
@@ -111,8 +115,8 @@ export interface SSHAddKnownHostRequest {
 export interface SSHVerifyKnownHostRequest {
   scope: string;
   owner: string;
-  fingerprint: string;
-  algorithm?: string;
+  /** authorized_keys-format host key the server compares with the pin. */
+  public_key: string;
 }
 
 /** Mirrors sdk/go/client/ssh types.go AddAuthorizedKeyRequest. */
