@@ -60,3 +60,11 @@ Departure: `TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons`
 (pkg/compose/restored_test.go) lists every feature's reason, so it gained
 `FeatureVerdicts` in the feat commit. In pkg/server the store build is a
 small `verdictStore` helper called from `composedStores`.
+
+Fix (lane row2088c): lane-verify gate 10 failed on
+`TestModule_HostMount_MissingDependenciesAreTypedAndOff`
+(pkg/apimodule/module_host_stores_test.go), which lists every feature
+off without its dependency. Commit 9713d2bd3 adds
+`FeatureVerdicts: "DAO factory"` to its expected map; no other
+pkg/apimodule test lists the off features.
+`go test (codec tags) ./pkg/apimodule/`: ok.
