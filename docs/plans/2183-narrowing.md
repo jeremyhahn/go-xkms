@@ -117,6 +117,7 @@ One Codex P1 on part 3, Company Agent option (c). The fix comes after its test, 
   - Every other outcome refuses the change before the PIN backend is called: a credential mismatch, a strategy or enclave failure, a storage error, or an uninitialized barrier. The error wraps the exported ErrBarrierNotPINSealed and the cause.
   - The "independent barrier: leave it alone" branch is gone. A barrier sealed with its own password gets its credential changed separately.
   - The proper fix is a go-qrdb seal/credential SPEC row with distinct operational errors, which #2098 consumes later.
+- Part 5 (Codex P1 pin_service.go:393, security): the part-4 barrier check let ChangeUserPIN test PIN guesses in software, outside the backend's retry counter, even with the backend locked. ChangeUserPIN now refuses an invalid replacement PIN first (go-qrdb's own validator, through a no-commit probe backend), then authenticates the current PIN through the backend's retry-enforced VerifyUserPIN and returns its error unchanged, and only then runs the barrier check. A wrong guess costs a retry; a locked backend refuses without the barrier being consulted.
 
 ## Final state
 
