@@ -39,6 +39,9 @@ func TestOTAImageKeys_QrdbGrantsOTAPermissionsToAdmin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParsePermission(%q): %v", raw, err)
 		}
+		if !qrdbsdk.IsPermissionRegistered(p) {
+			t.Errorf("go-qrdb does not register %q", raw)
+		}
 		if !qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, p) {
 			t.Errorf("go-qrdb does not grant %q to the %s role", raw, qrdbsdk.PermissionRoleAdmin)
 		}
