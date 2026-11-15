@@ -18,6 +18,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -84,12 +85,12 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		return nil, err
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
-	if _, err := tenantLoginCAKeyAttrs(context.Background(), scoped); err != nil {
+	if _, err := tenantLoginCAKeyAttrs(context.Background(), base, tenantID); err != nil {
 		return nil, err
 	}
 	return qrdbsdk.CAKeyAdapter{
 		SignerFunc: func(ctx context.Context) (crypto.Signer, error) {
-			attrs, err := tenantLoginCAKeyAttrs(ctx, scoped)
+			attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
 			if err != nil {
 				return nil, err
 			}
@@ -113,8 +114,8 @@ func (f *tenantCAKeyFactory) TenantIDs(ctx context.Context) ([]string, error) {
 	}
 	seen := make(map[string]struct{})
 	for _, attrs := range keys {
-		if attrs != nil && attrs.TenantID != "" && attrs.CN == tenantLoginCAKeyCN {
-			seen[attrs.TenantID] = struct{}{}
+		if attrs != nil && attrs.CN == tenantLoginCAKeyCN {
+			seen[scope.TenantName(attrs.TenantID)] = struct{}{}
 		}
 	}
 	ids := make([]string, 0, len(seen))
@@ -138,7 +139,7 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		return err
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
-	if existing, err := tenantLoginCAKeyAttrs(ctx, scoped); err == nil {
+	if existing, err := tenantLoginCAKeyAttrs(ctx, base, tenantID); err == nil {
 		// Keep the key, but a key alone is not a provisioned login CA: an
 		// earlier pass may have stopped before its certificate was saved.
 		return ensureTenantLoginCACert(ctx, scoped, tenantID, existing)
@@ -156,7 +157,7 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		}
 		// Another node provisioned the key between the lookup and the
 		// generate: converge on the persisted key.
-		existing, lookupErr := tenantLoginCAKeyAttrs(ctx, scoped)
+		existing, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID)
 		if lookupErr != nil {
 			return fmt.Errorf("tenant login CA key factory: generate key for tenant %q: %w", tenantID, errors.Join(err, lookupErr))
 		}
@@ -204,14 +205,17 @@ func tenantLoginCACertValid(ctx context.Context, scoped *xkms.TenantScopedBacken
 	return ok && certPub.Equal(pub)
 }
 
-// tenantLoginCAKeyAttrs finds the tenant's login CA key in its scoped view.
-func tenantLoginCAKeyAttrs(ctx context.Context, scoped *xkms.TenantScopedBackend) (*types.KeyAttributes, error) {
-	keys, err := scoped.ListKeys(ctx)
+// tenantLoginCAKeyAttrs finds tenantID's login CA key among base's keys.
+func tenantLoginCAKeyAttrs(ctx context.Context, base xkms.Backend, tenantID string) (*types.KeyAttributes, error) {
+	keys, err := base.ListKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tenant login CA key factory: list keys: %w", err)
 	}
+	// Compare normalized scopes: a backend may report a system key with an
+	// empty TenantID (tpm2 listSystemKeys) though it was made for "system".
+	want := scope.TenantName(tenantID)
 	for _, attrs := range keys {
-		if attrs != nil && attrs.CN == tenantLoginCAKeyCN {
+		if attrs != nil && attrs.CN == tenantLoginCAKeyCN && scope.TenantName(attrs.TenantID) == want {
 			return attrs, nil
 		}
 	}
