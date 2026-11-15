@@ -337,3 +337,21 @@ describe("SshTrustView", () => {
     await waitFor(() => expect(removeAuthorizedKey).toHaveBeenCalledWith("tenant", "acme", "deploy"));
   });
 });
+
+describe("SshTrustView duplicate names across scopes", () => {
+  it("renders a tenant and a user record with the same host or name", async () => {
+    const userPin = { ...pin, scope: "user", owner: "alice", fingerprint: "SHA256:userpin" };
+    const userEntry: SSHAuthorizedEntry = { ...entry, scope: "user", owner: "alice", comment: "alice@laptop" };
+    listKnownHosts.mockResolvedValue({ items: [pin, userPin] });
+    listAuthorizedKeys.mockResolvedValue({ items: [entry, userEntry] });
+
+    render(SshTrustView);
+
+    expect(await screen.findByText("SHA256:userpin")).toBeInTheDocument();
+    expect(screen.getByText("SHA256:pinnedpinned")).toBeInTheDocument();
+    expect(screen.getByText("alice@laptop")).toBeInTheDocument();
+    expect(screen.getByText("deploy@ci")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Remove git.example.com" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Remove deploy" })).toHaveLength(2);
+  });
+});
