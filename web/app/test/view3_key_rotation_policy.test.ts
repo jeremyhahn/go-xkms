@@ -35,10 +35,9 @@ async function fillKey(): Promise<void> {
   await fireEvent.input(screen.getByLabelText("Backend"), { target: { value: "software" } });
 }
 
-async function fillForm(interval: string, unit: "hours" | "days", retain: string): Promise<void> {
+async function fillForm(interval: string, unit: "hours" | "days"): Promise<void> {
   await fireEvent.input(screen.getByLabelText("Interval"), { target: { value: interval } });
   await fireEvent.change(screen.getByLabelText("Interval unit"), { target: { value: unit } });
-  await fireEvent.input(screen.getByLabelText("Retain versions"), { target: { value: retain } });
 }
 
 describe("KeyRotationPolicyView", () => {
@@ -72,13 +71,12 @@ describe("KeyRotationPolicyView", () => {
     request.mockResolvedValue({
       key_id: "k1",
       timestamp: "2026-11-12T00:00:00Z",
-      policy: { enabled: true, interval_seconds: 604800, retain_versions: 5, auto_rotate: true, next_rotation: 1800000000 },
+      policy: { enabled: true, interval_seconds: 604800, next_rotation: 1800000000 },
     });
     render(KeyRotationPolicyView);
     await fillKey();
     await fireEvent.click(screen.getByLabelText("Enabled"));
-    await fireEvent.click(screen.getByLabelText("Auto rotate"));
-    await fillForm("7", "days", "5");
+    await fillForm("7", "days");
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(request).toHaveBeenCalledOnce());
@@ -86,11 +84,10 @@ describe("KeyRotationPolicyView", () => {
       body: {
         backend: "software",
         key_id: "k1",
-        policy: { enabled: true, interval_seconds: 604800, retain_versions: 5, auto_rotate: true },
+        policy: { enabled: true, interval_seconds: 604800 },
       },
     });
     expect(await screen.findByText("7 days")).toBeInTheDocument();
-    expect(screen.getByText("5 versions")).toBeInTheDocument();
     expect(toasts).toEqual([{ kind: "success", message: expect.stringContaining("k1") }]);
   });
 
@@ -98,7 +95,7 @@ describe("KeyRotationPolicyView", () => {
     request.mockResolvedValue({ key_id: "k1", timestamp: "2026-11-12T00:00:00Z" });
     render(KeyRotationPolicyView);
     await fillKey();
-    await fillForm("12", "hours", "0");
+    await fillForm("12", "hours");
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(request).toHaveBeenCalledOnce());
@@ -143,14 +140,13 @@ describe("KeyRotationPolicyView", () => {
   });
 
   it.each([
-    ["0", "1", "Interval must be a positive whole number."],
-    ["-3", "1", "Interval must be a positive whole number."],
-    ["1.5", "1", "Interval must be a positive whole number."],
-    ["7", "-1", "Retain versions must be a whole number of zero or more."],
-  ])("rejects interval %s with retain %s inline", async (interval, retain, message) => {
+    ["0", "Interval must be a positive whole number."],
+    ["-3", "Interval must be a positive whole number."],
+    ["1.5", "Interval must be a positive whole number."],
+  ])("rejects interval %s inline", async (interval, message) => {
     render(KeyRotationPolicyView);
     await fillKey();
-    await fillForm(interval, "days", retain);
+    await fillForm(interval, "days");
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByText(message)).toBeInTheDocument();
@@ -170,10 +166,45 @@ describe("KeyRotationPolicyView", () => {
     request.mockRejectedValue(new Error("permission denied"));
     render(KeyRotationPolicyView);
     await fillKey();
-    await fillForm("7", "days", "1");
+    await fillForm("7", "days");
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByText("permission denied")).toBeInTheDocument();
     expect(toasts).toEqual([]);
+  });
+
+  it("disables Auto rotate and Retain versions with the reason the service refuses them", async () => {
+    render(KeyRotationPolicyView);
+    expect(screen.getByLabelText("Auto rotate")).toBeDisabled();
+    expect(screen.getByLabelText("Retain versions")).toBeDisabled();
+    expect(screen.getByText(/the service runs no rotation scheduler and retires no versions by itself/)).toBeInTheDocument();
+    expect(screen.getByText(/rotate the key by hand from Key Versions/)).toBeInTheDocument();
+  });
+
+  it("saves a loaded auto-rotate policy without the fields the service refuses", async () => {
+    request.mockResolvedValueOnce({
+      key_id: "k1",
+      timestamp: "2026-11-12T00:00:00Z",
+      policy: { enabled: true, interval_seconds: 86400, retain_versions: 3, auto_rotate: true },
+    });
+    request.mockResolvedValueOnce({ key_id: "k1", timestamp: "2026-11-12T00:00:00Z" });
+    render(KeyRotationPolicyView);
+    await fillKey();
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    await screen.findByText("1 day");
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request.mock.calls[1]![2].body.policy).toEqual({ enabled: true, interval_seconds: 86400 });
+  });
+
+  it("shows the service's refusal of an unenforceable rotation policy", async () => {
+    request.mockRejectedValue(new Error('keystore: key "k1": auto_rotate cannot be enforced: the service runs no rotation scheduler; rotate with RotateKey'));
+    render(KeyRotationPolicyView);
+    await fillKey();
+    await fillForm("7", "days");
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(/auto_rotate cannot be enforced/)).toBeInTheDocument();
   });
 });
