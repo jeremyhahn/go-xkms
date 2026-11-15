@@ -347,6 +347,42 @@ func TestInviteRegistration_BindsTheInvitedAccountNotAnEmailMatch(t *testing.T) 
 	assert.Equal(t, string(qrdbsdk.LifecyclePending), other.Lifecycle, "the same-email account must not be enrolled or activated")
 }
 
+// TestFinishInviteRegistration_MismatchedSessionEnrolsNothing pins that
+// finishing account A's ceremony session under account B's invitation is
+// refused before any credential is stored: afterwards both A and B redeem
+// their own invitations (a stored credential on A would make A's fresh
+// ceremony refuse).
+func TestFinishInviteRegistration_MismatchedSessionEnrolsNothing(t *testing.T) {
+	f := newInviteFixture(t)
+	const otherID = uint64(8)
+	f.accounts = append(f.accounts, &qrdbtransport.User{
+		ID: otherID, Username: "b@example.com", Email: "b@example.com",
+		Name: "B", TenantID: inviteFixtureTenant, Lifecycle: string(qrdbsdk.LifecyclePending),
+	})
+	tokenA := f.mintInvite(t)
+	infoB, err := f.svc.createInvite(context.Background(), inviteFixtureTenant, otherID, f.inviteTTL)
+	require.NoError(t, err)
+	tokenB := infoB.Token
+
+	beginA, err := f.beginRegistration(inviteFixtureTenant, tokenA)
+	require.NoError(t, err)
+	attestation := f.attestInvite(t, beginA.OptionsJSON, newInviteEC2Credential(t))
+	_, err = f.finishRegistration(inviteFixtureTenant, tokenB, beginA.SessionID, attestation)
+	require.ErrorIs(t, err, ErrInviteUnusable)
+
+	for _, tc := range []struct {
+		token string
+		id    uint64
+	}{{tokenA, inviteFixtureQRDBUserID}, {tokenB, otherID}} {
+		begin, err := f.beginRegistration(inviteFixtureTenant, tc.token)
+		require.NoError(t, err, "account %d must still be able to begin its own invite ceremony", tc.id)
+		attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+		result, err := f.finishRegistration(inviteFixtureTenant, tc.token, begin.SessionID, attestation)
+		require.NoError(t, err)
+		assert.Equal(t, tc.id, result.UserID)
+	}
+}
+
 func TestGetInvite_Success(t *testing.T) {
 	f := newInviteFixture(t)
 	token := f.mintInvite(t)

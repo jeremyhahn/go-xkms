@@ -114,7 +114,7 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse attestation response: %v", err)
 	}
-	if _, err := svc.FinishInviteRegistration(ctx, regSessionID, parsedAttResponse); err != nil {
+	if _, err := svc.FinishInviteRegistration(ctx, regSessionID, HandleFromUserID(created.ID), parsedAttResponse); err != nil {
 		t.Fatalf("FinishInviteRegistration: %v", err)
 	}
 	authenticator.AddCredential(credential)

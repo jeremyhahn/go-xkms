@@ -337,7 +337,7 @@ func TestBeginInviteRegistration_PendingAccountEnrols(t *testing.T) {
 
 	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, provisioned.WebAuthnID())
 	require.NoError(t, err)
-	_, err = f.attestInvite(t, options, sessionID, newEC2Credential(t))
+	_, err = f.attestInvite(t, provisioned.WebAuthnID(), options, sessionID, newEC2Credential(t))
 	require.NoError(t, err)
 }
 
@@ -357,7 +357,7 @@ func TestFinishInviteRegistration_RefusesAccountDeactivatedMidCeremony(t *testin
 	require.NoError(t, err)
 	f.setStanding(t, email, qrdbsdk.LifecycleSuspended, nil)
 
-	_, err = f.attestInvite(t, options, sessionID, newEC2Credential(t))
+	_, err = f.attestInvite(t, user.WebAuthnID(), options, sessionID, newEC2Credential(t))
 	require.ErrorIs(t, err, ErrRegistrationRefused)
 	creds, err := f.creds.GetByUserID(ctx, user.WebAuthnID())
 	require.NoError(t, err)
