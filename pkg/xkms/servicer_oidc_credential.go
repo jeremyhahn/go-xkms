@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
@@ -41,7 +42,15 @@ func (s *XKMSService) oidcCaller(ctx context.Context) (*credential.Service, scop
 	if svc == nil {
 		return nil, scope.Principal{}, ErrNotConfigured
 	}
-	return svc, scope.PrincipalFromContext(ctx), nil
+	// User-scoped credentials are owned by auth.PolicySubject, as the
+	// password vault is: a passkey caller's credentials stay under the handle
+	// they were stored under after account binding rewrites Subject.
+	identity := auth.GetIdentity(ctx)
+	p := scope.PrincipalOf(identity)
+	if p.Authenticated {
+		p.Subject = auth.PolicySubject(identity)
+	}
+	return svc, p, nil
 }
 
 // OIDCCredentialCreate creates an OIDC credential.
