@@ -14,6 +14,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/subtle"
@@ -23,8 +24,8 @@ import (
 	"log/slog"
 
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
-	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/devicereg"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
@@ -134,14 +135,29 @@ func (s *Server) RegisterPhoneBackend(sender AuthenticatedPhoneSender) error {
 		backendConfig.RequestTimeout = phonebackend.DefaultRequestTimeout
 	}
 
-	backend, err := phonebackend.NewBackend(backendConfig, sender)
+	// Backend mode: go-xkms is the verifier. The phone is accepted only while
+	// its device-registry record is active and bound to the session's peer
+	// key, and every request the backend sends re-reads that record, so a
+	// revocation (from any process sharing the datastore) refuses the next
+	// operation.
+	reg, err := s.phoneDeviceRegistry()
+	if err != nil {
+		return errors.Join(ErrPhoneDeviceRefused, err)
+	}
+	guarded := &registryGuardedSender{
+		inner:   sender,
+		reg:     reg,
+		tenant:  phoneCfg.Tenant,
+		id:      phoneCfg.DeviceID,
+		peerKey: bytes.Clone(sender.RemoteStaticKey()),
+	}
+
+	backend, err := phonebackend.NewBackend(backendConfig, guarded)
 	if err != nil {
 		return errors.Join(ErrPhoneBackendCreate, err)
 	}
 
-	// Backend mode: go-xkms is the verifier. The phone is accepted only
-	// while its device-registry record is active and bound to its key.
-	if err := s.verifyPhoneDevice(phoneCfg, sender.RemoteStaticKey()); err != nil {
+	if err := guarded.check(s.ctx); err != nil {
 		if closeErr := backend.Close(); closeErr != nil {
 			s.logger.Warn("failed to close refused phone backend",
 				slog.Any("error", closeErr))
@@ -157,16 +173,28 @@ func (s *Server) RegisterPhoneBackend(sender AuthenticatedPhoneSender) error {
 	return nil
 }
 
-// verifyPhoneDevice refuses, with ErrPhoneDeviceRefused, a phone whose
-// device-registry record (phoneCfg.Tenant, phoneCfg.DeviceID) is missing,
-// revoked, or carries an identity key other than peerKey, the static key
-// the sender's Noise session authenticated. Callers hold s.mu.
-func (s *Server) verifyPhoneDevice(phoneCfg *config.PhoneConfig, peerKey []byte) error {
-	reg, err := s.phoneDeviceRegistry()
-	if err != nil {
-		return errors.Join(ErrPhoneDeviceRefused, err)
+// registryGuardedSender is the Sender the phone backend sends through: it
+// re-checks the device-registry record before every request, so a revoked
+// or re-keyed device is refused with ErrPhoneDeviceRefused and no request
+// reaches the phone.
+type registryGuardedSender struct {
+	inner      AuthenticatedPhoneSender
+	reg        *devicereg.Registry
+	tenant, id string
+	peerKey    []byte
+}
+
+// check refuses unless the record is active and bound to peerKey.
+func (g *registryGuardedSender) check(ctx context.Context) error {
+	return checkPhoneDevice(ctx, g.reg, g.tenant, g.id, g.peerKey)
+}
+
+// SendRequest implements phonebackend.Sender.
+func (g *registryGuardedSender) SendRequest(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+	if err := g.check(ctx); err != nil {
+		return nil, err
 	}
-	return checkPhoneDevice(s.ctx, reg, phoneCfg.Tenant, phoneCfg.DeviceID, peerKey)
+	return g.inner.SendRequest(ctx, req)
 }
 
 // checkPhoneDevice refuses, with ErrPhoneDeviceRefused, unless tenant's
