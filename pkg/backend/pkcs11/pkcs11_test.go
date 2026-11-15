@@ -216,6 +216,30 @@ func TestCreateKeyID(t *testing.T) {
 	}
 }
 
+// One CN under two tenants must name two token objects, and ListKeys must
+// report each object's tenant, so a tenant-scoped view finds its own key.
+func TestCreateKeyID_TenantScoped(t *testing.T) {
+	attrs := func(tenant string) *types.KeyAttributes {
+		return &types.KeyAttributes{CN: "qrdb-login-ca", KeyAlgorithm: x509.ECDSA, TenantID: tenant}
+	}
+	a, b := createKeyID(attrs("tenant-a")), createKeyID(attrs("tenant-b"))
+	if a == b {
+		t.Fatalf("createKeyID gives tenants one token ID %q", a)
+	}
+	for _, sys := range []string{"", "system"} {
+		if got := createKeyID(attrs(sys)); got != "qrdb-login-ca.ecdsa" {
+			t.Errorf("createKeyID(system %q) = %q, want the unscoped ID", sys, got)
+		}
+	}
+	for _, tenant := range []string{"tenant-a", "tenant-b", ""} {
+		ka := &types.KeyAttributes{}
+		decodeListedLabel(ka, pkcs11.CKK_EC, createKeyID(attrs(tenant)))
+		if ka.TenantID != tenant || ka.CN != "qrdb-login-ca" || ka.KeyAlgorithm != x509.ECDSA {
+			t.Errorf("listed %q: TenantID=%q CN=%q alg=%v", tenant, ka.TenantID, ka.CN, ka.KeyAlgorithm)
+		}
+	}
+}
+
 // TestBackend_Close verifies that Close is idempotent and handles various states.
 func TestBackend_Close(t *testing.T) {
 	t.Run("close without context", func(t *testing.T) {
