@@ -190,7 +190,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each pins as p (p.host)}
+          {#each pins as p (JSON.stringify([p.scope, p.owner, p.host]))}
             <tr>
               <td>{p.host}</td>
               <td>{p.algorithm ?? ""}</td>
@@ -238,7 +238,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each entries as k (k.name)}
+          {#each entries as k (JSON.stringify([k.scope, k.owner, k.name]))}
             <tr>
               <td>{k.name}</td>
               <td>{k.comment ?? ""}</td>
