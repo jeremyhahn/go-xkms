@@ -167,6 +167,24 @@ func acmeAccountInfo(a *acme.Account) *ACMEAccountInfo {
 	return &ACMEAccountInfo{URI: a.URI, Status: a.Status, Contacts: a.Contact}
 }
 
+// ACMERenewInputsMissing reports, as one input error, the renew inputs the
+// acme client's CertificateRequest.Validate would reject: the client supplies
+// no default challenge type and cannot derive a CSR from the old certificate.
+// challengeName and csrName are how the front end names the two inputs.
+func ACMERenewInputsMissing(challenge, csrPath, challengeName, csrName string) error {
+	var missing []string
+	if challenge == "" {
+		missing = append(missing, challengeName)
+	}
+	if csrPath == "" {
+		missing = append(missing, csrName)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("acme: renew needs %s", strings.Join(missing, " and "))
+}
+
 // RegisterAccount registers the account key with the server, or finds the
 // existing account, with an optional contact email.
 func (s *ACMEService) RegisterAccount(conn ACMEConnection, contact string) (info *ACMEAccountInfo, err error) {
@@ -251,6 +269,9 @@ func (s *ACMEService) RenewCertificate(conn ACMEConnection, req ACMERenewRequest
 	if req.Domain == "" {
 		return "", errors.New("acme: renew needs a domain")
 	}
+	if err := ACMERenewInputsMissing(req.Challenge, req.CSRPath, "a challenge type", "a CSR"); err != nil {
+		return "", err
+	}
 	oldCert, err := LoadCertificatePEM(req.CertPath)
 	if err != nil {
 		return "", err
@@ -264,10 +285,11 @@ func (s *ACMEService) RenewCertificate(conn ACMEConnection, req ACMERenewRequest
 		AuthzValue:    req.Domain,
 		ChallengeType: req.Challenge,
 	}
-	if req.CSRPath != "" {
-		if certReq.CSR, err = LoadACMECSR(req.CSRPath); err != nil {
-			return "", err
-		}
+	if certReq.CSR, err = LoadACMECSR(req.CSRPath); err != nil {
+		return "", err
+	}
+	if err := certReq.Validate(); err != nil {
+		return "", fmt.Errorf("acme: renew: %w", err)
 	}
 	err = s.withClient(conn, "", func(c ACMEClient) error {
 		cert, err := c.RenewCertificate(s.context(), oldCert, certReq)

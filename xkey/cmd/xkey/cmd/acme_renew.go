@@ -68,6 +68,9 @@ material is ever written.`,
 			if domain == "" {
 				return errors.New("acme: renew needs --domain")
 			}
+			if err := services.ACMERenewInputsMissing(challenge, csrFile, "--challenge", "--csr"); err != nil {
+				return err
+			}
 			oldCert, err := loadCertificatePEM(certFile)
 			if err != nil {
 				return err
@@ -77,10 +80,11 @@ material is ever written.`,
 				AuthzValue:    domain,
 				ChallengeType: challenge,
 			}
-			if csrFile != "" {
-				if req.CSR, err = services.LoadACMECSR(csrFile); err != nil {
-					return err
-				}
+			if req.CSR, err = services.LoadACMECSR(csrFile); err != nil {
+				return err
+			}
+			if err := req.Validate(); err != nil {
+				return fmt.Errorf("acme: renew: %w", err)
 			}
 			return flags.withACMEClient(c, "", func(client acmeClient) error {
 				cert, err := client.RenewCertificate(c.Context(), oldCert, req)
@@ -97,8 +101,8 @@ material is ever written.`,
 	c.Flags().StringVar(&certFile, "cert", "", "PEM certificate to renew (required)")
 	c.Flags().StringVar(&domain, "domain", "", "identifier value to authorize (required)")
 	c.Flags().StringVar(&authzType, "authz-type", "dns", "identifier type: dns, ip or permanent-identifier")
-	c.Flags().StringVar(&challenge, "challenge", "", "challenge type (client default when empty)")
-	c.Flags().StringVar(&csrFile, "csr", "", "PEM or DER certificate signing request")
+	c.Flags().StringVar(&challenge, "challenge", "", "challenge type, e.g. http-01 or dns-01 (required)")
+	c.Flags().StringVar(&csrFile, "csr", "", "PEM or DER certificate signing request (required)")
 	c.Flags().StringVar(&out, "out", "", "file for the renewed PEM certificate (default stdout)")
 	return c
 }

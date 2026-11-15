@@ -242,8 +242,8 @@
     <Input id="acme-renew-cert" label="Certificate to renew" bind:value={renewPath} monospace />
     <Input id="acme-domain" label="Domain" bind:value={domain} />
     <Input id="acme-authz" label="Authorization type" bind:value={authzType} />
-    <Input id="acme-challenge" label="Challenge" bind:value={challenge} placeholder="dns-01" />
-    <Input id="acme-csr" label="CSR path" bind:value={csrPath} helperText="Optional" monospace />
+    <Input id="acme-challenge" label="Challenge" bind:value={challenge} placeholder="dns-01" helperText="Required" />
+    <Input id="acme-csr" label="CSR path" bind:value={csrPath} helperText="Required" monospace />
     <Button disabled={!ready} on:click={renew}>Renew</Button>
     {#if renewedPem}
       <label class="field-label" for="acme-renewed">Renewed certificate</label>

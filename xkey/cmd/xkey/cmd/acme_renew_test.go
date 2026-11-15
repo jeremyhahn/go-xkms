@@ -88,6 +88,7 @@ func TestACMERenewErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	missing := filepath.Join(t.TempDir(), "missing.pem")
+	csrFile, _ := writeACMETestCSR(t)
 	cases := []struct {
 		name string
 		args []string
@@ -95,9 +96,9 @@ func TestACMERenewErrors(t *testing.T) {
 	}{
 		{"missing cert flag", []string{"renew", "--domain", "x"}, "--cert"},
 		{"missing domain", []string{"renew", "--cert", certFile}, "--domain"},
-		{"missing cert file", []string{"renew", "--cert", missing, "--domain", "x"}, missing},
-		{"not a certificate", []string{"renew", "--cert", notCert, "--domain", "x"}, "certificate"},
-		{"pem not a csr", []string{"renew", "--cert", certFile, "--domain", "x", "--csr", certFile}, "certificate request"},
+		{"missing cert file", []string{"renew", "--cert", missing, "--domain", "x", "--challenge", "http-01", "--csr", csrFile}, missing},
+		{"not a certificate", []string{"renew", "--cert", notCert, "--domain", "x", "--challenge", "http-01", "--csr", csrFile}, "certificate"},
+		{"pem not a csr", []string{"renew", "--cert", certFile, "--domain", "x", "--csr", certFile, "--challenge", "http-01"}, "certificate request"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
