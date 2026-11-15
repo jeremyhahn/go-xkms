@@ -59,3 +59,14 @@ v0.51.0-alpha and v0.58.2-alpha.
 - Status `in progress`: the users:invite half is done; the device half stays
   planned until go-qrdb registers the device-onboarding permission (absent
   from sdk/go v0.51.0-alpha and v0.58.2-alpha; upstream remainder above).
+
+## Slice 3: nothing left in go-xkms
+
+- The brief named `pkg/api/rest/routes.go` as the first edit; slice 2 already
+  shows the transports need no change (redemption is public, users:create
+  stays the create gate, users:invite is asked in `CreateUser`). No route or
+  MCP edit was made, so no test was added.
+- Main still pins go-qrdb and sdk/go v0.51.0-alpha. The row's only remainder
+  is go-qrdb registering a device-onboarding permission and tagging it; this
+  row then bumps the pin, grants it on the default roles and marks the row
+  shipped. Until then the row is blocked upstream.
