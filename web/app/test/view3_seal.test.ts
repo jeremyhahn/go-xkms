@@ -41,8 +41,9 @@ vi.mock("../src/stores/toast.svelte.ts", () => ({
 
 import SealView from "../src/views/SealView.svelte";
 
+// A software-backend result (AES-GCM): ciphertext, nonce, tag, key version.
 const sealed: SealResponse = {
-  backend: "tpm2",
+  backend: "software",
   ciphertext: textToB64("cipher"),
   nonce: textToB64("nonce"),
   tag: textToB64("tag"),
@@ -50,6 +51,28 @@ const sealed: SealResponse = {
   key_id: "k1",
   key_version: 2,
 };
+
+// What pkg/api/rest SealResponse marshals for a TPM2 seal: Ciphertext has
+// no omitempty and is nil, so it arrives as null; the sealed object travels
+// in tpm_public/tpm_private, and there is no key version.
+const tpmSealed = {
+  backend: "tpm2",
+  ciphertext: null,
+  tpm_public: textToB64("tpm-public-area"),
+  tpm_private: textToB64("tpm-private-area"),
+  metadata: { "tpm:creation_ticket": textToB64("ticket") },
+  key_id: "sealed-1",
+} as unknown as SealResponse;
+
+// An envelope-sealing backend's result carries its wrapped DEK.
+const envelopeSealed = {
+  backend: "awskms",
+  ciphertext: textToB64("cipher"),
+  nonce: textToB64("nonce"),
+  wrapped_dek: textToB64("wrapped-dek"),
+  key_id: "arn:aws:kms:k1",
+  key_version: 1,
+} as unknown as SealResponse;
 
 function backends(): ListBackendsResponse {
   return {
@@ -88,7 +111,7 @@ describe("SealView", () => {
   });
 
   it("seals with only the filled fields and shows the result JSON", async () => {
-    seal.mockResolvedValue(sealed);
+    seal.mockResolvedValue(tpmSealed);
     render(SealView);
 
     await chooseBackend("tpm2");
@@ -104,7 +127,7 @@ describe("SealView", () => {
     expect(Object.keys(req).sort()).toEqual(["backend", "data", "tpm_policy"]);
 
     const result = await screen.findByLabelText("Seal result");
-    expect(JSON.parse(result.textContent ?? "")).toEqual(sealed);
+    expect(JSON.parse(result.textContent ?? "")).toEqual(tpmSealed);
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
   });
 
@@ -121,7 +144,7 @@ describe("SealView", () => {
     await waitFor(() => expect(unseal).toHaveBeenCalledOnce());
     const req = unseal.mock.calls[0]![0];
     expect(req).toEqual({
-      backend: "tpm2",
+      backend: "software",
       ciphertext: sealed.ciphertext,
       nonce: sealed.nonce,
       tag: sealed.tag,
@@ -130,6 +153,50 @@ describe("SealView", () => {
       key_version: 2,
     });
     expect((await screen.findByLabelText("Plaintext")).textContent).toBe("hello");
+  });
+
+  it("unseals a real TPM2 seal result with its sealed object and the password", async () => {
+    unseal.mockResolvedValue({ plaintext: textToB64("hello") });
+    render(SealView);
+    await screen.findByRole("option", { name: "tpm2" });
+
+    await fireEvent.input(screen.getByLabelText("Seal result JSON"), {
+      target: { value: JSON.stringify(tpmSealed) },
+    });
+    await fireEvent.input(screen.getByLabelText("Unseal password"), { target: { value: "s3cret" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Unseal" }));
+
+    await waitFor(() => expect(unseal).toHaveBeenCalledOnce());
+    expect(unseal.mock.calls[0]![0]).toEqual({
+      backend: "tpm2",
+      tpm_public: textToB64("tpm-public-area"),
+      tpm_private: textToB64("tpm-private-area"),
+      metadata: { "tpm:creation_ticket": textToB64("ticket") },
+      key_id: "sealed-1",
+      password: "s3cret",
+    });
+    expect((await screen.findByLabelText("Plaintext")).textContent).toBe("hello");
+  });
+
+  it("unseals an envelope seal result with its wrapped DEK", async () => {
+    unseal.mockResolvedValue({ plaintext: textToB64("hello") });
+    render(SealView);
+    await screen.findByRole("option", { name: "tpm2" });
+
+    await fireEvent.input(screen.getByLabelText("Seal result JSON"), {
+      target: { value: JSON.stringify(envelopeSealed) },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Unseal" }));
+
+    await waitFor(() => expect(unseal).toHaveBeenCalledOnce());
+    expect(unseal.mock.calls[0]![0]).toEqual({
+      backend: "awskms",
+      ciphertext: textToB64("cipher"),
+      nonce: textToB64("nonce"),
+      wrapped_dek: textToB64("wrapped-dek"),
+      key_id: "arn:aws:kms:k1",
+      key_version: 1,
+    });
   });
 
   it("rejects invalid JSON and a non-base64 ciphertext inline without a call", async () => {
