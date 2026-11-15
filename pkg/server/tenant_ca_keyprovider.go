@@ -202,7 +202,7 @@ func (f *tenantCAKeyFactory) TenantIDs(ctx context.Context) ([]string, error) {
 	}
 	seen := make(map[string]struct{})
 	for _, attrs := range keys {
-		if attrs == nil || attrs.CN != tenantLoginCAKeyCN {
+		if attrs == nil || attrs.CN != tenantLoginCAKeyName(attrs.TenantID) {
 			continue
 		}
 		id := scope.TenantName(attrs.TenantID)
@@ -240,7 +240,7 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		return adoptTenantLoginCAKey(ctx, scoped, tenantID, existing)
 	}
 	attrs := &types.KeyAttributes{
-		CN:            tenantLoginCAKeyCN,
+		CN:            tenantLoginCAKeyName(tenantID),
 		KeyType:       types.KeyTypeSigning,
 		StoreType:     types.StoreSoftware,
 		KeyAlgorithm:  x509.ECDSA,
@@ -400,11 +400,18 @@ func tenantLoginCAKeyAttrs(ctx context.Context, base xkms.Backend, tenantID stri
 	// empty TenantID (tpm2 listSystemKeys) though it was made for "system".
 	want := scope.TenantName(tenantID)
 	for _, attrs := range keys {
-		if attrs != nil && attrs.CN == tenantLoginCAKeyCN && scope.TenantName(attrs.TenantID) == want {
+		if attrs != nil && attrs.CN == tenantLoginCAKeyName(tenantID) && scope.TenantName(attrs.TenantID) == want {
 			return attrs, nil
 		}
 	}
 	return nil, errors.New("tenant login CA key factory: the tenant has no login CA key")
+}
+
+// tenantLoginCAKeyName is the name a tenant's login CA key is generated
+// under. It carries the tenant because the AWS KMS, Azure Key Vault and GCP
+// KMS providers address a key by its name alone, without the tenant scope.
+func tenantLoginCAKeyName(tenantID string) string {
+	return tenantLoginCAKeyCN + "-" + scope.TenantName(tenantID)
 }
 
 // selfSignTenantLoginCA issues the tenant's self-signed login CA certificate,

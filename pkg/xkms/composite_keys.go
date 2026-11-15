@@ -96,7 +96,7 @@ func (c *compositeBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAt
 	}
 
 	// Wrap in OpaqueKey for safe operations
-	pub := publicKey(key)
+	pub := c.generatedPublicKey(ctx, attrs, key)
 	if pub == nil {
 		return nil, &ErrPublicKeyExtraction{Algorithm: "ECDSA"}
 	}
@@ -107,6 +107,24 @@ func (c *compositeBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAt
 		return nil, &ErrKeyOperation{Operation: "create opaque key", Err: err}
 	}
 	return opaqueKey, nil
+}
+
+// generatedPublicKey returns the public half of a key the provider has just
+// generated. The AWS KMS, Azure Key Vault and GCP KMS providers create the
+// remote key and return none, so the public key is read back through the
+// provider's signer for that key.
+func (c *compositeBackend) generatedPublicKey(ctx context.Context, attrs *types.KeyAttributes, key crypto.PrivateKey) crypto.PublicKey {
+	if pub := publicKey(key); pub != nil {
+		return pub
+	}
+	if key != nil {
+		return nil
+	}
+	signer, err := c.backend.Signer(ctx, attrs)
+	if err != nil || signer == nil {
+		return nil
+	}
+	return signer.Public()
 }
 
 // GenerateEd25519 generates a new Ed25519 key pair with the specified attributes.

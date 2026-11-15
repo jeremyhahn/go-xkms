@@ -10,7 +10,8 @@ import (
 
 // LoginCAKeyCN names a tenant's login CA key: the key go-qrdb signs the
 // tenant's login certificates with (Key B). The node provisions it on the
-// backend directly; no caller reaches it through the service.
+// backend directly, under this name followed by "-" and the tenant; no caller
+// reaches it, or any name with that prefix, through the service.
 const LoginCAKeyCN = "qrdb-login-ca"
 
 // ErrReservedKey refuses a user-addressable operation on a key the node
@@ -30,7 +31,7 @@ func refuseReservedKey(ref string) error {
 	if base, _, ok := keyversion.Parse(name); ok {
 		name = base
 	}
-	if name == LoginCAKeyCN {
+	if name == LoginCAKeyCN || strings.HasPrefix(name, LoginCAKeyCN+"-") {
 		return fmt.Errorf("%w: %q", ErrReservedKey, ref)
 	}
 	return nil

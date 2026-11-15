@@ -52,7 +52,7 @@ func tenantSignerPublic(t *testing.T, base xkms.Backend, tenantID string) crypto
 	keys, err := scoped.ListKeys(ctx)
 	require.NoError(t, err)
 	for _, attrs := range keys {
-		if attrs.CN == tenantLoginCAKeyCN {
+		if attrs.CN == tenantLoginCAKeyName(tenantID) {
 			signer, err := scoped.Signer(ctx, attrs)
 			require.NoError(t, err)
 			return signer.Public()
@@ -188,7 +188,7 @@ func callerLoginCAKey(t *testing.T, base xkms.Backend, tenantID string) (*xkms.T
 	ctx := context.Background()
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	_, err := scoped.GenerateECDSA(ctx, &types.KeyAttributes{
-		CN:            tenantLoginCAKeyCN,
+		CN:            tenantLoginCAKeyName(tenantID),
 		KeyType:       types.KeyTypeSigning,
 		StoreType:     types.StoreSoftware,
 		KeyAlgorithm:  x509.ECDSA,
