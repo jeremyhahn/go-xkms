@@ -27,7 +27,7 @@ import (
 // (Key B) and of its certificate record. One key per tenant: the name is the
 // same under every tenant and the tenant scope tells the keys apart, so the
 // key ID is the tenant, as cakey.ProviderFactory requires.
-const tenantLoginCAKeyCN = "qrdb-login-ca"
+const tenantLoginCAKeyCN = xkms.LoginCAKeyCN
 
 // tenantLoginCAValidity is the lifetime of a tenant login CA certificate.
 const tenantLoginCAValidity = 10 * 365 * 24 * time.Hour
