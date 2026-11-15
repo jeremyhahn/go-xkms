@@ -64,3 +64,19 @@ empty tenant. The caller's template is never modified.
 - Checks: `go test -count=1 -race -tags "codec_cbor codec_json
   codec_msgpack" ./pkg/ca/... ./pkg/certsubject/... ./pkg/factor/...`,
   `go vet ./...` and `make lint`.
+
+## Codex review, round 2 (autoverify, tip 7f448a53e)
+
+- Finding 1 (security, pkg/factor/piv/decoy.go): go-qrdb's ceremony rebuilds
+  quorum roster enrollments without TenantID, so production decoys skipped
+  the tenant stamp and an anonymous quorum challenge could tell a stranger
+  from a holder by the OU. `DecoyEnrollment` now reads the predominant
+  Subject-OU[0] of the roster certificates when no enrollment names a
+  tenant; go-qrdb unchanged. Test b476c1f87, fix 3dcf8ad39.
+- Finding 2 (pkg/factor/piv/factor.go): `Enroll` replaced the slot key
+  before refusing an empty tenant. The tenant is now stamped before
+  `GeneratePIVKey`. Test 140ab58e6, fix 75745c420.
+- Finding 3 (docs/SPEC.md:72 re-scope): an owner ask; docs/SPEC.md is not
+  edited in this slice.
+- Checks: `go test -count=1 -race -tags "codec_cbor codec_json
+  codec_msgpack" ./pkg/factor/...`, `go vet ./...` and `make lint`.
