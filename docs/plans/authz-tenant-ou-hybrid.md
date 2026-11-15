@@ -44,3 +44,23 @@ empty tenant. The caller's template is never modified.
   `shipped`; its list now names each path as stamped or exempt with its
   reason, every file:line re-checked against this HEAD, and the proving tests
   (hybrid, PIV, bootstrap) named.
+
+## Codex review (lane-verify, row2089b)
+
+- Finding 1 (security, pkg/ca/hybrid.go): a raw subject with two OUs in one
+  RDN SET could let DER SET sorting put another OU ahead of the tenant.
+  `StampTenant` (pkg/certsubject) now refuses such a subject with
+  `ErrInvalidRawSubject`. Test 97d43d931, fix e21d81961.
+- Finding 2 (pkg/ca/hybrid.go): a self-signed hybrid leaf (parent ==
+  template) kept the unstamped issuer; the issuer is now a stamped copy of
+  the template. Test 97d43d931, fix e21d81961.
+- Finding 3 (pkg/factor/piv/factor.go): the PIV factor enrollment
+  certificate bypassed `StampTenant`. `Enroll` stamps `params.TenantID` and
+  refuses an empty tenant; `DecoyEnrollment` stamps the tenant its record
+  names (predominant tenant of the copied enrollments; an explicit tenant
+  needs a change to go-qrdb's decoy contract). Test 94c8b80eb, fix 56fd47707.
+- Finding 4 (docs/SPEC.md:72 exemptions need owner approval): waits for the
+  owner; docs/SPEC.md is not edited in this slice.
+- Checks: `go test -count=1 -race -tags "codec_cbor codec_json
+  codec_msgpack" ./pkg/ca/... ./pkg/certsubject/... ./pkg/factor/...`,
+  `go vet ./...` and `make lint`.
