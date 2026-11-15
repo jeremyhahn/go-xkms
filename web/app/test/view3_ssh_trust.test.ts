@@ -58,8 +58,8 @@ vi.mock("../src/stores/toast.svelte.ts", () => ({
 import SshTrustView from "../src/views/SshTrustView.svelte";
 
 const pin = {
-  scope: "global",
-  owner: "default",
+  scope: "tenant",
+  owner: "acme",
   host: "git.example.com",
   fingerprint: "SHA256:pinnedpinned",
   algorithm: "ssh-ed25519",
@@ -72,8 +72,8 @@ const hostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH
 const otherHostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB3W7ffHMb3S+Z2lW0Kp9xQZkGg8bTqzZcCQ1fPQwNzR other";
 
 const entry: SSHAuthorizedEntry = {
-  scope: "global",
-  owner: "default",
+  scope: "tenant",
+  owner: "acme",
   name: "deploy",
   line: "ssh-ed25519 AAAAC3Nz deploy@ci",
   options: ["no-pty", "restrict"],
@@ -91,18 +91,29 @@ async function mounted(): Promise<void> {
   await screen.findByText("deploy");
 }
 
+// mountedInScope types a server-valid scope (pkg/scope: tenant, user or
+// service) and its owner into the inputs, as an operator does before adding.
+async function mountedInScope(): Promise<void> {
+  await mounted();
+  await fireEvent.input(screen.getByLabelText("Scope"), { target: { value: "tenant" } });
+  await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "acme" } });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   toasts.length = 0;
 });
 
 describe("SshTrustView", () => {
-  it("lists known hosts and authorized keys for the default scope and owner", async () => {
+  it("loads unfiltered on mount; pkg/scope rejects any scope but tenant, user or service", async () => {
     seed();
     await mounted();
 
-    expect(listKnownHosts).toHaveBeenCalledWith("global", "default");
-    expect(listAuthorizedKeys).toHaveBeenCalledWith("global", "default");
+    // An empty scope and owner list every pin the caller may read; the old
+    // "global" default failed pkg/scope.Parse on every mount.
+    expect(listKnownHosts).toHaveBeenCalledWith(undefined, undefined);
+    expect(listAuthorizedKeys).toHaveBeenCalledWith(undefined, undefined);
+    expect(screen.getByLabelText("Scope")).toHaveValue("");
     expect(screen.getByText("ssh-ed25519")).toBeInTheDocument();
     expect(screen.getByText("SHA256:pinnedpinned")).toBeInTheDocument();
     expect(screen.getByText("2026-11-01T10:00:00Z")).toBeInTheDocument();
@@ -112,7 +123,7 @@ describe("SshTrustView", () => {
 
   it("reloads both lists with a new scope and owner on Load", async () => {
     seed();
-    await mounted();
+    await mountedInScope();
 
     await fireEvent.input(screen.getByLabelText("Scope"), { target: { value: "tenant" } });
     await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "acme" } });
@@ -125,7 +136,7 @@ describe("SshTrustView", () => {
   it("pins a known host and reloads", async () => {
     seed();
     addKnownHost.mockResolvedValue(undefined);
-    await mounted();
+    await mountedInScope();
 
     await fireEvent.input(screen.getByLabelText("Host"), { target: { value: "new.example.com" } });
     await fireEvent.input(screen.getByLabelText("Host public key"), { target: { value: hostKey } });
@@ -135,8 +146,8 @@ describe("SshTrustView", () => {
     // refuses an Add without it (embeddedKnownHostsClient.Add).
     await waitFor(() =>
       expect(addKnownHost).toHaveBeenCalledWith({
-        scope: "global",
-        owner: "default",
+        scope: "tenant",
+        owner: "acme",
         host: "new.example.com",
         public_key: hostKey,
       }),
@@ -153,7 +164,7 @@ describe("SshTrustView", () => {
     expect(await screen.findByText("Remove the pin for git.example.com?")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
 
-    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith("git.example.com", "global", "default"));
+    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith("git.example.com", "tenant", "acme"));
   });
 
   it("cancelling the remove confirm calls nothing", async () => {
@@ -171,7 +182,7 @@ describe("SshTrustView", () => {
   it("verifies a known host and shows the match", async () => {
     seed();
     verifyKnownHost.mockResolvedValue(undefined);
-    await mounted();
+    await mountedInScope();
 
     await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "git.example.com" } });
     await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: hostKey } });
@@ -179,8 +190,8 @@ describe("SshTrustView", () => {
 
     await waitFor(() =>
       expect(verifyKnownHost).toHaveBeenCalledWith("git.example.com", {
-        scope: "global",
-        owner: "default",
+        scope: "tenant",
+        owner: "acme",
         public_key: hostKey,
       }),
     );
@@ -192,7 +203,7 @@ describe("SshTrustView", () => {
     verifyKnownHost.mockRejectedValue(
       Object.assign(new Error("pinned SHA256:pinnedpinned, offered SHA256:other"), { status: 409 }),
     );
-    await mounted();
+    await mountedInScope();
 
     await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "git.example.com" } });
     await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: otherHostKey } });
@@ -206,7 +217,7 @@ describe("SshTrustView", () => {
   it("adds an authorized key with options split from a comma list", async () => {
     seed();
     addAuthorizedKey.mockResolvedValue(undefined);
-    await mounted();
+    await mountedInScope();
 
     await fireEvent.input(screen.getByLabelText("Key name"), { target: { value: "ops" } });
     await fireEvent.input(screen.getByLabelText("Authorized key line"), { target: { value: "ssh-ed25519 AAAAops ops@host" } });
@@ -215,8 +226,8 @@ describe("SshTrustView", () => {
 
     await waitFor(() =>
       expect(addAuthorizedKey).toHaveBeenCalledWith({
-        scope: "global",
-        owner: "default",
+        scope: "tenant",
+        owner: "acme",
         name: "ops",
         line: "ssh-ed25519 AAAAops ops@host",
         options: ["no-pty", "restrict"],
@@ -228,7 +239,7 @@ describe("SshTrustView", () => {
   it("omits options when the comma list is empty", async () => {
     seed();
     addAuthorizedKey.mockResolvedValue(undefined);
-    await mounted();
+    await mountedInScope();
 
     await fireEvent.input(screen.getByLabelText("Key name"), { target: { value: "ops" } });
     await fireEvent.input(screen.getByLabelText("Authorized key line"), { target: { value: "ssh-ed25519 AAAAops" } });
@@ -236,8 +247,8 @@ describe("SshTrustView", () => {
 
     await waitFor(() =>
       expect(addAuthorizedKey).toHaveBeenCalledWith({
-        scope: "global",
-        owner: "default",
+        scope: "tenant",
+        owner: "acme",
         name: "ops",
         line: "ssh-ed25519 AAAAops",
       }),
@@ -253,21 +264,21 @@ describe("SshTrustView", () => {
     expect(await screen.findByText("Remove the authorized key deploy?")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
 
-    await waitFor(() => expect(removeAuthorizedKey).toHaveBeenCalledWith("global", "default", "deploy"));
+    await waitFor(() => expect(removeAuthorizedKey).toHaveBeenCalledWith("tenant", "acme", "deploy"));
   });
 
   it("verifies an authorized key and names the matched entry", async () => {
     seed();
     verifyAuthorizedKey.mockResolvedValue(entry);
-    await mounted();
+    await mountedInScope();
 
     await fireEvent.input(screen.getByLabelText("Key fingerprint"), { target: { value: "SHA256:deploykey" } });
     await fireEvent.click(screen.getByRole("button", { name: "Verify key" }));
 
     await waitFor(() =>
       expect(verifyAuthorizedKey).toHaveBeenCalledWith({
-        scope: "global",
-        owner: "default",
+        scope: "tenant",
+        owner: "acme",
         fingerprint: "SHA256:deploykey",
       }),
     );
