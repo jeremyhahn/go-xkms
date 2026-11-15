@@ -128,3 +128,37 @@ describe("Sidebar RBAC and capability gating", () => {
     expect(screen.queryByText("Keys & Crypto")).not.toBeInTheDocument();
   });
 });
+
+// The server authorizes decrypt-batch with keys:decrypt and hmac/verify with
+// keys:verify (pkg/api/rest/routes.go), so a screen offering several
+// operations shows for a caller holding any of their permissions.
+describe("Sidebar gates multi-operation screens on any permission", () => {
+  beforeEach(() => {
+    clearSession();
+    meMock.mockReset();
+    window.location.hash = "";
+  });
+
+  async function session(permissions: Record<string, boolean>): Promise<void> {
+    meMock.mockResolvedValue({ subject: "u1", permissions, capabilities: {} });
+    await loadSession();
+    render(Sidebar);
+  }
+
+  it("shows Batch Crypto to a decrypt-only caller", async () => {
+    await session({ "keys:decrypt": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Batch Crypto/ })).toBeInTheDocument());
+  });
+
+  it("shows HMAC to a verify-only caller", async () => {
+    await session({ "keys:verify": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /HMAC/ })).toBeInTheDocument());
+  });
+
+  it("hides Batch Crypto and HMAC from a caller holding none of their permissions", async () => {
+    await session({ "keys:list": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Keys/ })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Batch Crypto/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /HMAC/ })).not.toBeInTheDocument();
+  });
+});
