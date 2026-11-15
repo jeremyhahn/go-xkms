@@ -154,12 +154,11 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	attrs, err := tenantLoginCAKeyAttrs(context.Background(), base, tenantID)
-	switch {
-	case err == nil:
+	if err == nil {
 		if !tenantLoginCAKeyProvisionedAttrs(context.Background(), scoped, attrs) {
 			return nil, fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCAKeyCollision)
 		}
-	default:
+	} else {
 		// go-qrdb's native onboarding creates a tenant through the node's own
 		// tenant service, which go-xkms cannot wrap, and then asks for its
 		// login CA: provision a tenant the node knows on that first request.
