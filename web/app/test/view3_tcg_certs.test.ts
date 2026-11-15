@@ -49,6 +49,10 @@ import { encodePEM } from "../src/lib/pem.ts";
 import TcgCertsView from "../src/views/TcgCertsView.svelte";
 
 const keyPEM = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n-----END PUBLIC KEY-----";
+// IssueEKCertificateRaw/IssueAKCertificateRaw call x509.ParsePKIXPublicKey
+// on the decoded bytes, so a PEM key must travel as its DER (the PEM body).
+const keyDerB64 = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE";
+
 const certPEM = "-----BEGIN CERTIFICATE-----\nMIIBcert\n-----END CERTIFICATE-----";
 
 function certResponse(serial: string): IssueEKCertificateResponse {
@@ -91,7 +95,7 @@ describe("TcgCertsView", () => {
     expect(issueEK).toHaveBeenCalledWith({
       common_name: "device-ek",
       organization: "Acme",
-      ek_public_key: encodePEM(keyPEM),
+      ek_public_key: keyDerB64,
       tenant_id: undefined,
     });
     expect(await screen.findByText("0a1b2c")).toBeInTheDocument();
@@ -130,7 +134,7 @@ describe("TcgCertsView", () => {
     expect(issueAK).toHaveBeenCalledWith({
       common_name: "device-ak",
       organization: undefined,
-      public_key: encodePEM(keyPEM),
+      public_key: keyDerB64,
       tenant_id: undefined,
     });
     expect(issueEK).not.toHaveBeenCalled();
