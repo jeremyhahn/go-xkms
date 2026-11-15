@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"testing"
 
@@ -229,4 +230,49 @@ func TestServer_TenantCAKeys_ResolveDuringServerLockContention(t *testing.T) {
 	ids, err := f.TenantIDs(context.Background())
 	require.NoError(t, err)
 	assert.Contains(t, ids, "tenant-a")
+}
+
+func (f *fakeTenantService) GetTenant(_ context.Context, id string) (*qrdbsdk.ServiceTenantInfo, error) {
+	for _, known := range f.tenants {
+		if known == id {
+			return &qrdbsdk.ServiceTenantInfo{ID: id}, nil
+		}
+	}
+	return nil, qrdbsdk.ErrTenantMissing
+}
+
+// go-qrdb's native onboarding (POST /v1/tenants) creates the tenant through
+// the node's own tenant service, not the wrapped one, then asks the factory
+// for the new tenant's login CA to sign the admin CSR. The key must be there.
+func TestServer_TenantCAKeys_NativeOnboardingGetsKey(t *testing.T) {
+	ctx := context.Background()
+	_, base := newTenantCAKeyTestFactory(t)
+	f := newTenantCAKeyFactory()
+	native := &fakeTenantService{tenants: []string{"tenant-a"}}
+	s := &Server{
+		config:       &config.Config{},
+		tenantCAKeys: f,
+		backends:     map[string]xkms.Backend{"software": base},
+	}
+	s.adoptTenantService(native)
+	require.NoError(t, s.provisionTenantCAKeys(ctx))
+
+	// The onboarding path: the unwrapped service creates the tenant.
+	_, err := native.CreateTenant(ctx, "tenant-b", "B", qrdbsdk.TenantIsolationType(""))
+	require.NoError(t, err)
+
+	p, err := f.ProviderForTenant("tenant-b")
+	require.NoError(t, err, "a tenant onboarded natively must get its login CA key")
+	signer, err := p.Signer(ctx)
+	require.NoError(t, err)
+	cert, err := p.Certificate(ctx)
+	require.NoError(t, err)
+	assert.True(t, signer.Public().(*ecdsa.PublicKey).Equal(cert.PublicKey))
+
+	// A tenant go-qrdb does not know is still refused, and gets no key.
+	_, err = f.ProviderForTenant("ghost")
+	require.Error(t, err)
+	ids, err := f.TenantIDs(ctx)
+	require.NoError(t, err)
+	assert.NotContains(t, ids, "ghost")
 }
