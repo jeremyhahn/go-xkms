@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from "vitest";
 import { parseHash } from "../src/stores/router.svelte.ts";
+import { navSections } from "../src/lib/nav.ts";
 
 describe("parseHash", () => {
   it("maps the root and empty hash to the dashboard", () => {
@@ -53,5 +54,18 @@ describe("parseHash", () => {
 
   it("preserves the original hash on the route", () => {
     expect(parseHash("#/backends").hash).toBe("#/backends");
+  });
+});
+
+// docs/web-console/architecture.md: the console does not run FROST signing
+// rounds; the ceremony runs through `xkmsctl frost`.
+describe("FROST signing rounds are not a console screen", () => {
+  it("has no route for /frost/sign", () => {
+    expect(parseHash("#/frost/sign").name).toBe("not-found");
+  });
+
+  it("has no navigation entry for FROST signing", () => {
+    const items = navSections.flatMap((s) => s.items);
+    expect(items.find((i) => i.path === "/frost/sign" || i.label === "FROST Signing")).toBeUndefined();
   });
 });
