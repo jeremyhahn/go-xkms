@@ -177,9 +177,9 @@ func TestService_ExportOTAImagePublicKey(t *testing.T) {
 	require.Len(t, got.Raw, 64)
 	assert.NotEmpty(t, got.CoseKey)
 
-	pub := otaPublicKey(t, created.PublicKeyPem)
-	assert.Equal(t, pub.X.FillBytes(make([]byte, 32)), got.Raw[:32])
-	assert.Equal(t, pub.Y.FillBytes(make([]byte, 32)), got.Raw[32:])
+	uncompressed, err := otaPublicKey(t, created.PublicKeyPem).Bytes()
+	require.NoError(t, err)
+	assert.Equal(t, uncompressed[1:], got.Raw, "raw is the uncompressed point without its 0x04 prefix")
 }
 
 func TestService_ExportOTAImagePublicKey_NotFound(t *testing.T) {
