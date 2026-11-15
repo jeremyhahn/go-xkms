@@ -49,7 +49,7 @@ services:
       # First boot runs `xkmsd init --admin-factor mtls`, which writes the
       # administrator credential into the datastore (/data/xkms) and
       # initializes the passphrase barrier under XKMS_SO_PIN. The suite's
-      # TestMain unseals with the same value (passkey_account_test.go).
+      # TestMain unseals with the same value (apiharness.BarrierPassphrase).
       - XKMS_SO_PIN=xkms-api-harness-barrier-passphrase
       # Trust the ceremony root so the admin certificate authenticates over
       # mTLS (config.test.yaml: client_auth verify).

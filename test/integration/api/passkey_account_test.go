@@ -20,96 +20,27 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	webauthnclient "github.com/jeremyhahn/go-xkms/pkg/webauthn/client"
-	"github.com/jeremyhahn/go-xkms/test/integration/xkmsdtest"
+	"github.com/jeremyhahn/go-xkms/test/integration/api/apiharness"
 )
-
-// apiBarrierPassphrase is the passphrase TestMain unseals the server's barrier
-// with. docker-compose.yml hands the same value to `xkmsd init` as
-// XKMS_SO_PIN, which init makes the barrier passphrase; the two must match.
-const apiBarrierPassphrase = "xkms-api-harness-barrier-passphrase"
-
-// apiBarrierTimeout bounds bringing the server past its sealed window.
-const apiBarrierTimeout = 120 * time.Second
 
 // passkeyOrigin is the WebAuthn origin the software authenticator binds into
 // clientDataJSON. It must be one of config.test.yaml's webauthn.rp_origins,
 // and rp_id (localhost) is its effective domain.
 const passkeyOrigin = "https://localhost:8443"
 
-// TestMain brings the server past its sealed window before any test runs.
-// The compose stack bootstraps a fresh volume with `xkmsd init --admin-factor
-// mtls`, which also initializes the passphrase barrier, so xkmsd boots sealed
-// and answers nothing but the barrier routes until it is unsealed -- exactly
-// as the cluster harness's TestMain does for its nodes. The integration-tests
-// service therefore waits for the server to start, not to turn healthy.
-// Outside compose (a bare compile or vet run) KEYSTORE_REST_URL is unset and
-// there is no server to open.
+// TestMain brings the server past its sealed window before any test runs,
+// through the harness every api test package shares.
 func TestMain(m *testing.M) {
-	if os.Getenv("KEYSTORE_REST_URL") != "" {
-		if err := openAPIBarrier(); err != nil {
-			fmt.Fprintf(os.Stderr, "api harness barrier unseal failed: %v\n", err)
-			os.Exit(1)
-		}
-	}
-	os.Exit(m.Run())
-}
-
-// openAPIBarrier unseals the server's barrier through its sealed window. The
-// window serves the configured certificate (tls.cert_file), so the suite's CA
-// is the anchor.
-func openAPIBarrier() error {
-	ctx, cancel := context.WithTimeout(context.Background(), apiBarrierTimeout)
-	defer cancel()
-	client, err := xkmsdtest.SealedWindowClient(ctx, getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"))
-	if err != nil {
-		return err
-	}
-	baseURL := LoadTestConfig().RESTBaseURL
-	if err := xkmsdtest.OpenBarrier(ctx, client, baseURL, []byte(apiBarrierPassphrase)); err != nil {
-		return err
-	}
-	return awaitAPIReady(ctx, client, baseURL)
-}
-
-// awaitAPIReady polls baseURL's /health/ready, the probe the cluster stack
-// waits on, over client (anchored on the suite's CA, so only the verified
-// server answers) until it returns 200 or ctx ends. The unseal answering 204
-// means the barrier opened, not that the full server has replaced the sealed
-// window and serves requests.
-func awaitAPIReady(ctx context.Context, client *http.Client, baseURL string) error {
-	route := baseURL + "/health/ready"
-	var last error
-	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, route, nil)
-		if err != nil {
-			return err
-		}
-		resp, err := client.Do(req)
-		if err == nil {
-			_ = resp.Body.Close() // only the status is read; a close failure cannot change it
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-			err = fmt.Errorf("GET %s: status %d", route, resp.StatusCode)
-		}
-		last = err
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("server not ready after unseal: %w (last: %v)", ctx.Err(), last)
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
+	apiharness.Main(m)
 }
 
 // adminHTTPClient presents the administrator credential `xkmsd init` wrote
@@ -178,6 +109,9 @@ func provisionPasskeyAccount(t *testing.T, cfg *TestConfig, email string) *Passk
 	expectJSON(t, anon, "POST", cfg.RESTBaseURL+invitePath+"/fido2/begin", map[string]interface{}{}, nil, http.StatusOK, &begin)
 	if begin.SessionID == "" || begin.OptionsJSON == "" {
 		t.Fatalf("invite fido2/begin returned session %q and options %q", begin.SessionID, begin.OptionsJSON)
+	}
+	if begin.Ceremony != transport.InviteCeremonyCreate {
+		t.Fatalf("invite fido2/begin for a fresh invitation named ceremony %q, want %q", begin.Ceremony, transport.InviteCeremonyCreate)
 	}
 
 	ctx := context.Background()
