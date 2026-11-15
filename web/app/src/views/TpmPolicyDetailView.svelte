@@ -11,7 +11,7 @@
     verifyPolicy,
     pcrRows,
   } from "$lib/tpmPolicyDetail.ts";
-  import type { TPMPolicy, TPMPolicyVerifyResponse } from "@go-xkms/sdk";
+  import type { TPMPolicy, TPMPolicyReference, TPMPolicyVerifyResponse } from "@go-xkms/sdk";
 
   let scopes = $state<string[]>([]);
   let scope = $state("");
@@ -102,6 +102,21 @@
   });
 </script>
 
+<!-- The signed reference values (CoRIM) a branch was updated from, or a note
+     that its values were captured from the live PCRs. -->
+{#snippet referenceOf(ref: TPMPolicyReference | undefined)}
+  {#if ref}
+    <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm mb-2">
+      <dt>Reference</dt><dd class="font-mono break-all">{ref.id || "-"}</dd>
+      <dt>Profile</dt><dd class="font-mono break-all">{ref.profile || "-"}</dd>
+      <dt>Signer</dt><dd>{ref.signer || "-"}</dd>
+      <dt>Digest</dt><dd><code class="break-all">{ref.digest}</code></dd>
+    </dl>
+  {:else}
+    <div class="text-sm text-base-content/60 mb-2">captured live</div>
+  {/if}
+{/snippet}
+
 <PageHeader
   title="TPM Policy Detail"
   subtitle="Read-only: a policy's captured PCR values, its bound objects and a live PCR check"
@@ -170,8 +185,13 @@
         <dt>Updated</dt><dd>{policy.updated_at ?? "-"}</dd>
       </dl>
       {#each policy.branches as branch, i (i)}
-        <section class="border border-base-300 rounded p-3">
-          <h3 class="font-semibold mb-2">Branch {i}</h3>
+        {@const bname = branch.name || `branch-${i + 1}`}
+        <section class="border border-base-300 rounded p-3" data-testid={`policy-branch-${bname}`}>
+          <div class="flex flex-wrap items-center gap-2 mb-2">
+            <h3 class="font-semibold">{bname}</h3>
+            <StatusBadge label={branch.approved ? "approved" : "not approved"} ok={branch.approved === true} />
+          </div>
+          {@render referenceOf(branch.reference)}
           {#each branch.conditions as c, j (j)}
             <div class="mb-2">
               {#if c.type === "pcr"}
@@ -227,12 +247,17 @@
         <StatusBadge label={verdict.approved ? "approved" : "not approved"} ok={verdict.approved} />
       </div>
       {#each verdict.branches as b, i (i)}
-        <div class="flex flex-wrap items-center gap-2 text-sm">
-          <span>Branch {i}</span>
-          <StatusBadge label={b.match ? "match" : "mismatch"} ok={b.match} />
-          {#each b.mismatched ?? [] as p (p)}
-            <span class="badge badge-outline">PCR {p}</span>
-          {/each}
+        {@const bname = b.name || `branch-${i + 1}`}
+        <div class="text-sm" data-testid={`verify-branch-${bname}`}>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-semibold">{bname}</span>
+            <StatusBadge label={b.match ? "match" : "mismatch"} ok={b.match} />
+            <StatusBadge label={b.approved ? "approved" : "not approved"} ok={b.approved} />
+            {#each b.mismatched ?? [] as p (p)}
+              <span class="badge badge-outline">PCR {p}</span>
+            {/each}
+          </div>
+          {@render referenceOf(b.reference)}
         </div>
       {/each}
     </div>
