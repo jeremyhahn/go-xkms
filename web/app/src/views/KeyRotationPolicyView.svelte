@@ -24,11 +24,13 @@
   let error = $state<string | null>(null);
   let busy = $state(false);
 
+  // auto_rotate and retain_versions are not offered: the service refuses
+  // both (UnenforceablePolicyError), as it runs no rotation scheduler and
+  // retires no versions by itself. The policy records the interval; keys
+  // are rotated by hand.
   let enabled = $state(false);
-  let autoRotate = $state(false);
   let interval = $state<number | null>(30);
   let unit = $state<IntervalUnit>("days");
-  let retain = $state<number | null>(null);
   let formErr = $state<string | null>(null);
 
   const ready = $derived(keyId.trim() !== "" && backend.trim() !== "");
@@ -42,9 +44,7 @@
     loaded = true;
     if (policy) {
       enabled = policy.enabled;
-      autoRotate = policy.auto_rotate ?? false;
       ({ value: interval, unit } = fromSeconds(policy.interval_seconds));
-      retain = policy.retain_versions ?? null;
     }
   }
 
@@ -72,14 +72,8 @@
       formErr = "Interval must be a positive whole number.";
       return null;
     }
-    if (retain !== null && (!Number.isInteger(retain) || retain < 0)) {
-      formErr = "Retain versions must be a whole number of zero or more.";
-      return null;
-    }
     formErr = null;
-    const policy: RotationPolicy = { enabled, interval_seconds: toSeconds(interval, unit), auto_rotate: autoRotate };
-    if (retain !== null) policy.retain_versions = retain;
-    return policy;
+    return { enabled, interval_seconds: toSeconds(interval, unit) };
   }
 
   function save(): Promise<void> {
@@ -148,7 +142,7 @@
       <span>Enabled</span>
     </label>
     <label class="label cursor-pointer justify-start gap-2">
-      <input type="checkbox" class="checkbox checkbox-sm" bind:checked={autoRotate} />
+      <input type="checkbox" class="checkbox checkbox-sm" checked={false} disabled aria-describedby="rotation-manual-note" />
       <span>Auto rotate</span>
     </label>
     <div class="flex flex-wrap items-center gap-2">
@@ -157,8 +151,12 @@
         <option value="hours">hours</option>
         <option value="days">days</option>
       </select>
-      <input type="number" class="input input-bordered input-sm w-28" aria-label="Retain versions" placeholder="Retain" min="0" step="1" bind:value={retain} />
+      <input type="number" class="input input-bordered input-sm w-28" aria-label="Retain versions" placeholder="Retain" disabled aria-describedby="rotation-manual-note" />
     </div>
+    <p id="rotation-manual-note" class="text-sm text-base-content/70">
+      Auto rotate and Retain versions are unavailable: the service runs no rotation scheduler and retires no versions by itself.
+      The policy records the interval; rotate the key by hand from Key Versions and disable old versions there.
+    </p>
     {#if formErr}<p class="text-error text-sm">{formErr}</p>{/if}
     <div class="flex gap-2">
       <button class="btn btn-primary btn-sm" onclick={save} disabled={busy || !ready}>Save</button>

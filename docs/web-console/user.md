@@ -158,6 +158,13 @@ services and have no console page: use `xkmsctl cluster` and
 - **No FROST signing rounds.** Generate, list, delete threshold keys and
   verify finished signatures here; the three-round signing ceremony
   coordinates separate share-holders through `xkmsctl frost`.
+- **No scheduled rotation or version retention.** Rotation Policy records
+  whether a key's rotation is due and at what interval; Auto rotate and
+  Retain versions are disabled because the service runs no rotation
+  scheduler and retires no versions by itself. Rotate by hand on Key
+  Versions and disable or retire old versions there.
+- **No per-operation MFA.** Key Access Policy disables Require MFA: the
+  service has no per-operation MFA challenge and refuses the flag.
 - **No barrier, audit, custodian or share screens.** Those surfaces are go-qrdb's and xkms does not re-expose them.
 - **No cluster status, membership or auth-factor management.** Those are
   go-qrdb services; use `xkmsctl cluster` and `xkmsctl auth factor`.
