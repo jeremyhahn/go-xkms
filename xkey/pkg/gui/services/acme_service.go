@@ -14,11 +14,14 @@
 package services
 
 import (
+	"sync"
+
 	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
 	"log/slog"
 	"os"
 	"strconv"
@@ -53,6 +56,9 @@ type ACMERenewRequest struct {
 	AuthzType string `json:"authzType"`
 	Challenge string `json:"challenge"`
 	CSRPath   string `json:"csrPath"`
+	// HTTPAddr is where an http-01 token is served (DefaultACMEHTTP01Addr
+	// when empty).
+	HTTPAddr string `json:"httpAddr"`
 }
 
 // ACMEEnrollRequest names the device challenge and its listener for
@@ -185,6 +191,59 @@ func ACMERenewInputsMissing(challenge, csrPath, challengeName, csrName string) e
 	return fmt.Errorf("acme: renew needs %s", strings.Join(missing, " and "))
 }
 
+// DefaultACMEHTTP01Addr is where renewal serves an http-01 token when no
+// address is given: port 80 on every interface, where the CA fetches it.
+const DefaultACMEHTTP01Addr = ":80"
+
+// SetACMERenewSolver wires the challenge solver of a renewal into req, shared
+// by the GUI and the xkey acme renew command. http-01 serves the key
+// authorization from a pkg/acme http-01 Responder on httpAddr
+// (DefaultACMEHTTP01Addr when empty) from ChallengeSetup until
+// ChallengeCleanup. xkey has no DNS provider, so dns-01, like any other
+// challenge without a solver, is an error. The returned stop closes a
+// responder still running; call it once the renewal returns, whatever its
+// result, since the client runs cleanup only on success.
+func SetACMERenewSolver(req *sdkacme.ACMECertificateRequest, httpAddr string) (stop func(), err error) {
+	switch req.ChallengeType {
+	case "http-01":
+	case "dns-01":
+		return nil, errors.New("acme: renew: dns-01 needs a DNS provider and xkey has none configured; use http-01")
+	default:
+		return nil, fmt.Errorf("acme: renew: no solver for challenge %q; use http-01", req.ChallengeType)
+	}
+	if httpAddr == "" {
+		httpAddr = DefaultACMEHTTP01Addr
+	}
+	var (
+		mu        sync.Mutex
+		responder *http01.Responder
+	)
+	stop = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if responder != nil {
+			_ = responder.Close()
+			responder = nil
+		}
+	}
+	req.ChallengeSetup = func(_, _, keyAuth string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if responder != nil {
+			_ = responder.Close()
+			responder = nil
+		}
+		r, err := http01.NewResponder(http01.ResponderConfig{Addr: httpAddr, KeyAuth: keyAuth})
+		if err != nil {
+			return fmt.Errorf("acme: http-01 responder on %s: %w", httpAddr, err)
+		}
+		responder = r
+		return nil
+	}
+	req.ChallengeCleanup = func(string) { stop() }
+	return stop, nil
+}
+
 // ACMEDefaultEnrollTimeout is the acme client's own default for
 // ACMEEnrollmentConfig.Timeout (pkg/acme/client/enrollment.go).
 const ACMEDefaultEnrollTimeout = 30 * time.Second
@@ -307,6 +366,11 @@ func (s *ACMEService) RenewCertificate(conn ACMEConnection, req ACMERenewRequest
 	if err := certReq.Validate(); err != nil {
 		return "", fmt.Errorf("acme: renew: %w", err)
 	}
+	stop, err := SetACMERenewSolver(certReq, req.HTTPAddr)
+	if err != nil {
+		return "", err
+	}
+	defer stop()
 	err = s.withClient(conn, "", func(c ACMEClient) error {
 		cert, err := c.RenewCertificate(s.context(), oldCert, certReq)
 		if err != nil {

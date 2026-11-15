@@ -52,7 +52,7 @@ func writePEMOutput(w io.Writer, path string, ders ...[]byte) error {
 }
 
 func newACMERenewCmd(flags *acmeFlags) *cobra.Command {
-	var certFile, csrFile, domain, authzType, challenge, out string
+	var certFile, csrFile, domain, authzType, challenge, out, httpAddr string
 	c := &cobra.Command{
 		Use:   "renew",
 		Short: "Renew a certificate through the ACME account",
@@ -86,6 +86,11 @@ material is ever written.`,
 			if err := req.Validate(); err != nil {
 				return fmt.Errorf("acme: renew: %w", err)
 			}
+			stop, err := services.SetACMERenewSolver(req, httpAddr)
+			if err != nil {
+				return err
+			}
+			defer stop()
 			return flags.withACMEClient(c, "", func(client acmeClient) error {
 				cert, err := client.RenewCertificate(c.Context(), oldCert, req)
 				if err != nil {
@@ -104,5 +109,6 @@ material is ever written.`,
 	c.Flags().StringVar(&challenge, "challenge", "", "challenge type, e.g. http-01 or dns-01 (required)")
 	c.Flags().StringVar(&csrFile, "csr", "", "PEM or DER certificate signing request (required)")
 	c.Flags().StringVar(&out, "out", "", "file for the renewed PEM certificate (default stdout)")
+	c.Flags().StringVar(&httpAddr, "http-addr", services.DefaultACMEHTTP01Addr, "address the http-01 token is served on")
 	return c
 }
