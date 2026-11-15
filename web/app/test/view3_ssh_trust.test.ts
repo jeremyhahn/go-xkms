@@ -290,4 +290,24 @@ describe("SshTrustView", () => {
     await waitFor(() => expect(toasts).toContainEqual({ kind: "error", message: "forbidden" }));
     expect(screen.getByText("deploy")).toBeInTheDocument();
   });
+
+  it("removes a displayed row in its loaded scope and owner after the inputs change without Load", async () => {
+    seed();
+    removeKnownHost.mockResolvedValue(undefined);
+    removeAuthorizedKey.mockResolvedValue(undefined);
+    await mounted();
+
+    await fireEvent.input(screen.getByLabelText("Scope"), { target: { value: "tenant" } });
+    await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "acme" } });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Remove git.example.com" }));
+    await screen.findByText("Remove the pin for git.example.com?");
+    await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
+    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith("git.example.com", "global", "default"));
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove deploy" }));
+    await screen.findByText("Remove the authorized key deploy?");
+    await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
+    await waitFor(() => expect(removeAuthorizedKey).toHaveBeenCalledWith("global", "default", "deploy"));
+  });
 });
