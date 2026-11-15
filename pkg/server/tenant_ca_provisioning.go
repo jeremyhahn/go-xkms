@@ -25,10 +25,11 @@ func (e *TenantProvisionError) Error() string {
 
 func (e *TenantProvisionError) Unwrap() error { return e.Err }
 
-// tenantCAKeyProvisioner provisions a tenant's login CA key once;
-// tenantCAKeyFactory implements it.
+// tenantCAKeyProvisioner provisions a tenant's login CA key once and
+// removes it at teardown; tenantCAKeyFactory implements it.
 type tenantCAKeyProvisioner interface {
 	EnsureTenant(ctx context.Context, tenantID string) error
+	RemoveTenant(ctx context.Context, tenantID string) error
 }
 
 // provisioningTenantService is the node's tenant service with one change:
@@ -58,6 +59,15 @@ func (p *provisioningTenantService) CreateTenant(ctx context.Context, id, name s
 		}
 	}
 	return info, nil
+}
+
+// DeleteTenant deletes the tenant, then its login CA key and certificate, so
+// the CA a deleted tenant's logins chained to does not outlive it.
+func (p *provisioningTenantService) DeleteTenant(ctx context.Context, id string) error {
+	if err := p.ServiceTenantServicer.DeleteTenant(ctx, id); err != nil {
+		return err
+	}
+	return p.keys.RemoveTenant(ctx, id)
 }
 
 // adoptTenantService installs the node's tenant service, wrapped to

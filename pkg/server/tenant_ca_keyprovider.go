@@ -70,6 +70,21 @@ func (f *tenantCAKeyFactory) knownTenant(ctx context.Context, tenantID string) b
 	return err == nil && info != nil
 }
 
+// withdrawn reports a tenant whose login CA the node must no longer serve:
+// the tenant service no longer knows it. A tenant deleted through go-qrdb's
+// own service leaves its key behind, so the key alone never vouches for a
+// tenant. The system tenant is never withdrawn, and a factory not yet
+// tracking tenants (before the boot pass) withdraws none.
+func (f *tenantCAKeyFactory) withdrawn(ctx context.Context, tenantID string) bool {
+	if scope.TenantName(tenantID) == scope.TenantName(qrdbsdk.SystemTenantID) {
+		return false
+	}
+	f.mu.RLock()
+	tracked := f.tenants != nil
+	f.mu.RUnlock()
+	return tracked && !f.knownTenant(ctx, tenantID)
+}
+
 var _ qrdbsdk.CAKeyProviderFactory = (*tenantCAKeyFactory)(nil)
 
 func newTenantCAKeyFactory() *tenantCAKeyFactory {
@@ -121,6 +136,9 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 	if err != nil {
 		return nil, err
 	}
+	if f.withdrawn(context.Background(), tenantID) {
+		return nil, fmt.Errorf("tenant login CA key factory: tenant %q no longer exists", tenantID)
+	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	if _, err := tenantLoginCAKeyAttrs(context.Background(), base, tenantID); err != nil {
 		// go-qrdb's native onboarding creates a tenant through the node's own
@@ -165,7 +183,9 @@ func (f *tenantCAKeyFactory) TenantIDs(ctx context.Context) ([]string, error) {
 	}
 	ids := make([]string, 0, len(seen))
 	for id := range seen {
-		ids = append(ids, id)
+		if !f.withdrawn(ctx, id) {
+			ids = append(ids, id)
+		}
 	}
 	sort.Strings(ids)
 	return ids, nil
@@ -209,6 +229,39 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		attrs = existing
 	}
 	return ensureTenantLoginCACert(ctx, scoped, tenantID, attrs)
+}
+
+// RemoveTenant deletes a tenant's login CA certificate and key. Tenant
+// teardown calls it once the tenant is deleted; a tenant with neither is not
+// an error.
+func (f *tenantCAKeyFactory) RemoveTenant(ctx context.Context, tenantID string) error {
+	if tenantID == "" {
+		return errors.New("tenant login CA key factory: empty tenant ID")
+	}
+	base, err := f.backend()
+	if err != nil {
+		return err
+	}
+	scoped := xkms.NewTenantScopedBackend(base, tenantID)
+	var errs []error
+	exists, err := scoped.CertExists(ctx, tenantLoginCAKeyCN)
+	switch {
+	case err != nil:
+		errs = append(errs, err)
+	case exists:
+		if delErr := scoped.DeleteCert(ctx, tenantLoginCAKeyCN); delErr != nil {
+			errs = append(errs, delErr)
+		}
+	}
+	if attrs, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID); lookupErr == nil {
+		if delErr := base.DeleteKey(ctx, attrs); delErr != nil {
+			errs = append(errs, delErr)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("tenant login CA key factory: remove tenant %q: %w", tenantID, errors.Join(errs...))
+	}
+	return nil
 }
 
 // ensureTenantLoginCACert makes sure the tenant's saved login CA certificate is
