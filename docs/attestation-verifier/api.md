@@ -61,6 +61,7 @@ Appraiser wired, each returns `ErrNotConfigured`.
 | Read a binding | `GET /api/v1/attestation/signing-keys/binding?repository=` | `GetSigningKeyBinding` | same as REST | `attestation.signing_key.get` | `GetSigningKeyBinding` | `attestation_signing_keys:get` |
 | Remove a binding | `DELETE /api/v1/attestation/signing-keys/binding?repository=` (204) | `DeleteSigningKeyBinding` | same as REST | `attestation.signing_key.delete` | `DeleteSigningKeyBinding` | `attestation_signing_keys:bind` |
 | Resolve a repository's key | `GET /api/v1/attestation/signing-keys/resolve?repository=` | `ResolveSigningKey` | same as REST | `attestation.signing_key.resolve` | `ResolveSigningKey` | `attestation_signing_keys:get` |
+| Sign a release CoRIM | `POST /api/v1/attestation/signing-keys/sign` | `SignReleaseCoRIM` | same as REST (server side) | `attestation.signing_key.sign` | `SignReleaseCoRIM` | `attestation_signing_keys:sign` |
 
 USB returns `ErrNotSupported`. A repository path contains slashes
 (`"org/app"`), so the REST routes take it as the `repository` query
