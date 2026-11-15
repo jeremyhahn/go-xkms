@@ -158,6 +158,13 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		if !tenantLoginCAKeyProvisionedAttrs(context.Background(), scoped, attrs) {
 			return nil, fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCAKeyCollision)
 		}
+		// A key without its certificate is an earlier pass that stopped
+		// after the key: finish it over the same key.
+		if _, certErr := scoped.GetCert(context.Background(), tenantLoginCAKeyCN); certErr != nil {
+			if err := f.EnsureTenant(context.Background(), tenantID); err != nil {
+				return nil, err
+			}
+		}
 	} else {
 		// go-qrdb's native onboarding creates a tenant through the node's own
 		// tenant service, which go-xkms cannot wrap, and then asks for its
