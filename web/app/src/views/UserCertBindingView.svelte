@@ -81,20 +81,12 @@
 {#if loading}
   <div class="flex justify-center py-6"><span class="loading loading-spinner loading-lg"></span></div>
 {:else if creds}
-  <div class="overflow-x-auto mb-6">
-    <table class="table table-sm">
-      <caption class="sr-only">Credentials of {loadedFor}</caption>
-      <thead><tr><th scope="col">Name</th><th scope="col">ID</th></tr></thead>
-      <tbody>
-        {#each creds as c (c.id)}
-          <tr><td>{c.name}</td><td class="font-mono text-xs">{c.id}</td></tr>
-        {/each}
-        {#if creds.length === 0}
-          <tr><td colspan="2" class="text-center text-base-content/60 py-6">No credentials</td></tr>
-        {/if}
-      </tbody>
-    </table>
-  </div>
+  <!-- The server confirms the user exists but has no credential inventory
+       yet (ListUserCredentials returns an empty list), so an empty list is
+       never shown as "no credentials". -->
+  <Alert kind="info" class="mb-6">
+    <span>User "{loadedFor}" exists. Credential inventory is unavailable: the server does not list a user's credentials yet.</span>
+  </Alert>
 {/if}
 
 <section class="space-y-3 max-w-xl">
