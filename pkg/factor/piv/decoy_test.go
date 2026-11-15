@@ -252,12 +252,20 @@ func TestDecoyEnrollmentEmptyLikeYieldsDefaultForm(t *testing.T) {
 			if !reflect.DeepEqual(fake.Metadata, want) {
 				t.Errorf("want metadata %v, got %v", want, fake.Metadata)
 			}
-			real, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "holder"})
+			real, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "holder", TenantID: "tenant-t"})
 			if err != nil {
 				t.Fatalf("Enroll: %v", err)
 			}
-			if got, want := shapeOfCert(t, fake.PublicKey), shapeOfCert(t, real.PublicKey); !reflect.DeepEqual(got, want) {
-				t.Errorf("certificate shapes differ:\nreal  %+v\ndecoy %+v", want, got)
+			// With no enrollment to copy, the decoy record names no tenant
+			// (decoy.Deriver.Enrollment), so its certificate carries no
+			// tenant OU; every other field of the shape must match.
+			got, realShape := shapeOfCert(t, fake.PublicKey), shapeOfCert(t, real.PublicKey)
+			if fake.TenantID != "" || got.subject != "CN=PIV 9a" || got.issuer != "CN=PIV 9a" {
+				t.Errorf("tenantless decoy: tenant %q subject %q issuer %q, want no tenant and CN=PIV 9a", fake.TenantID, got.subject, got.issuer)
+			}
+			got.subject, got.issuer = realShape.subject, realShape.issuer
+			if !reflect.DeepEqual(got, realShape) {
+				t.Errorf("certificate shapes differ:\nreal  %+v\ndecoy %+v", realShape, got)
 			}
 			cert := parseCert(t, fake.PublicKey)
 			if from, to := decoy.NotBeforeSpan(nil); cert.NotBefore.Before(from) || cert.NotBefore.After(to) {
@@ -270,7 +278,7 @@ func TestDecoyEnrollmentEmptyLikeYieldsDefaultForm(t *testing.T) {
 func TestDecoyEnrollmentFailsVerify(t *testing.T) {
 	ctx := context.Background()
 	holder := New(Config{})
-	if _, err := holder.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "holder"}); err != nil {
+	if _, err := holder.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "holder", TenantID: "tenant-t"}); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
 	fake := decoyFor(t, holder, decoySeed, "stranger", nil)

@@ -166,7 +166,14 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "piv: generate key: " + err.Error()}
 	}
 
-	certPEM, err := buildSelfSignedCert(signer, pkix.Name{CommonName: cn}, defaultValidityDays)
+	// The enrollment certificate names its tenant as Subject-OU[0], through
+	// the one stamping path every issued certificate takes.
+	subject, _, err := ca.StampTenant(params.TenantID, pkix.Name{CommonName: cn}, nil)
+	if err != nil {
+		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "piv: " + err.Error()}
+	}
+
+	certPEM, err := buildSelfSignedCert(signer, subject, defaultValidityDays)
 	if err != nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "piv: build certificate: " + err.Error()}
 	}

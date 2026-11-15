@@ -47,7 +47,7 @@ func TestPIVFactor_Enroll_UsesCanonicalIssuer(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
 
-	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "custodian-profile"})
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "custodian-profile", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestPIVFactor_FullRoundTrip_Software(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
 
-	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "custodian-1"})
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "custodian-1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestPIVFactor_Enroll_RejectsNilParams(t *testing.T) {
 func TestPIVFactor_Verify_RejectsExpiredChallenge(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{ChallengeTTLSeconds: 1})
-	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	challenge, _ := f.Challenge(ctx, enrollment)
 	// Force expiry by manually moving ExpiresAt into the past.
 	challenge.ExpiresAt = challenge.ExpiresAt.Add(-1000 * 1000 * 1000) // -1s in nanoseconds
@@ -153,7 +153,7 @@ func TestPIVFactor_Verify_RejectsExpiredChallenge(t *testing.T) {
 func TestPIVFactor_Verify_RejectsAttackerKeyInResponse(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
-	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "victim"})
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "victim", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestPIVFactor_Verify_RejectsAttackerKeyInResponse(t *testing.T) {
 func TestPIVFactor_Verify_RejectsChallengeWithoutEnrolledCert(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
-	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestPIVFactor_Verify_RejectsChallengeWithoutEnrolledCert(t *testing.T) {
 func TestPIVFactor_Verify_RejectsBadSignature(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
-	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	challenge, _ := f.Challenge(ctx, enrollment)
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
@@ -238,7 +238,7 @@ func TestPIVFactor_Verify_BindsTheChallengeMessage(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
 	slot := pivcert.PIVSlotAuthentication
-	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestPIVFactor_EmptyNonceIsRefused(t *testing.T) {
 		t.Fatalf("SignChallenge(empty nonce) err = %v, want EmptyNonceError", err)
 	}
 
-	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}

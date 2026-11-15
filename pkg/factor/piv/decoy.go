@@ -19,6 +19,7 @@ import (
 	"strconv"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/factor/internal/decoy"
 )
 
@@ -84,7 +85,22 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 	if err != nil {
 		return nil, err
 	}
-	certPEM, err := issueSelfSignedCert(decoy.Signer(key), pkix.Name{CommonName: cn}, new(big.Int).SetBytes(serialBytes), notBefore, defaultValidityDays)
+	// The decoy record names the tenant its real counterparts predominantly
+	// carry (decoy.Deriver.Enrollment); its certificate carries the same OU a
+	// real enrollment certificate would.
+	subject := pkix.Name{CommonName: cn}
+	tenants := make([]string, 0, len(like))
+	for _, e := range like {
+		if e != nil {
+			tenants = append(tenants, e.TenantID)
+		}
+	}
+	if tenant := decoy.Predominant(tenants, ""); tenant != "" {
+		if subject, _, err = ca.StampTenant(tenant, subject, nil); err != nil {
+			return nil, &decoy.DerivationError{Purpose: "certificate"}
+		}
+	}
+	certPEM, err := issueSelfSignedCert(decoy.Signer(key), subject, new(big.Int).SetBytes(serialBytes), notBefore, defaultValidityDays)
 	if err != nil {
 		return nil, &decoy.DerivationError{Purpose: "certificate"}
 	}

@@ -81,7 +81,8 @@ func TestPIVFactor_Enroll_CustomSlotAndAlgorithm(t *testing.T) {
 	// the default-only round trip skips.
 	f := New(Config{})
 	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
-		UserID: "u-custom",
+		UserID:   "u-custom",
+		TenantID: "tenant-t",
 		MethodParams: map[string]any{
 			"slot":      "9c",
 			"algorithm": "ecdsap384",
@@ -105,7 +106,7 @@ func TestPIVFactor_Enroll_GeneratePIVKeyError(t *testing.T) {
 	f := New(Config{Generator: stub})
 
 	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
-	_, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	_, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if !errors.As(err, &inv) {
 		t.Fatalf("expected EnrollmentInvalidError, got %v", err)
 	}
@@ -119,7 +120,7 @@ func TestPIVFactor_Enroll_BuildCertError(t *testing.T) {
 	f := New(Config{Generator: stub})
 
 	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
-	_, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	_, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if !errors.As(err, &inv) {
 		t.Fatalf("expected EnrollmentInvalidError, got %v", err)
 	}
@@ -142,7 +143,7 @@ func TestPIVFactor_Challenge_HonoursEnrollmentTTLOverride(t *testing.T) {
 	// Metadata["ttl"] = "120" overrides cfg.ChallengeTTLSeconds. This exercises
 	// the parseable-int branch of the TTL lookup.
 	f := New(Config{ChallengeTTLSeconds: 5})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestPIVFactor_Challenge_IgnoresMalformedTTL(t *testing.T) {
 	// A garbage "ttl" string falls through the strconv.Atoi branch; the
 	// default TTL is preserved. This drives the !ok branch of the int parse.
 	f := New(Config{ChallengeTTLSeconds: 7})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestPIVFactor_Verify_RejectsNilChallenge(t *testing.T) {
 
 func TestPIVFactor_Verify_RejectsNilResponse(t *testing.T) {
 	f := New(Config{})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -204,7 +205,7 @@ func TestPIVFactor_Verify_RejectsNilResponse(t *testing.T) {
 
 func TestPIVFactor_Verify_RejectsMalformedPEM(t *testing.T) {
 	f := New(Config{})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -238,7 +239,7 @@ func TestPIVFactor_Verify_RejectsNonECDSAPublicKey(t *testing.T) {
 	rsaPubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pkixDER})
 
 	f := New(Config{})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -343,7 +344,7 @@ func TestVerifyECDSA_RejectsWrongNonceSignature(t *testing.T) {
 	// against nonce B. Decodes successfully but ecdsa.Verify returns false,
 	// driving the "signature invalid" branch.
 	f := New(Config{})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
