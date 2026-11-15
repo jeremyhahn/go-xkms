@@ -121,9 +121,6 @@ jobs:
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
 
-      - name: Pull the toolchain image from the registry cache
-        run: scripts/ci-image-cache.sh pull || true
-
       - name: Build the toolchain image
         run: |
           ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
