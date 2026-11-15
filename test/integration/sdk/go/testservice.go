@@ -429,6 +429,10 @@ func (s *TestXKMSService) RotateOTAImageKey(ctx context.Context, req *xkms.OTAIm
 	return s.RotateKey(ctx, &xkms.RotateKeyRequest{KeyID: keyID, Backend: req.Backend})
 }
 
+func (s *TestXKMSService) ExportOTAImagePublicKey(ctx context.Context, req *xkms.OTAImageKeyRequest) (*xkms.OTAImagePublicKeyResponse, error) {
+	return nil, ErrNotImplemented
+}
+
 func (s *TestXKMSService) SignOTAImage(ctx context.Context, req *xkms.OTAImageSignRequest) (*xkms.SignResponse, error) {
 	keyID, err := otaImageKeyID(req.BoardID, "")
 	if err != nil {

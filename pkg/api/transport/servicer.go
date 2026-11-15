@@ -120,6 +120,9 @@ type KeyServicer interface {
 	RotateKey(ctx context.Context, req *RotateKeyRequest) (*RotateKeyResponse, error)
 	CreateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*GenerateKeyResponse, error)
 	RotateOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*RotateKeyResponse, error)
+	// ExportOTAImagePublicKey returns a board's OTA image public key as raw
+	// X||Y and as a COSE_Key.
+	ExportOTAImagePublicKey(ctx context.Context, req *OTAImageKeyRequest) (*OTAImagePublicKeyResponse, error)
 	SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error)
 	GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error)
 	CopyKey(ctx context.Context, req *CopyKeyRequest) (*CopyKeyResponse, error)
