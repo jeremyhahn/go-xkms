@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"testing"
 
+	tenantpkg "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -45,7 +47,14 @@ func newRealTenantService(t *testing.T) seal.TenantService {
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 	registry, err := seal.NewBarrierRegistry(barrier)
 	require.NoError(t, err)
-	svc, err := seal.NewHardwareTenantService(barrier, registry, logger, nil)
+	// Tenant undo active, with this node the whole serving roster, as on a
+	// node whose cluster has the feature on.
+	const nodeID = "node-1"
+	svc, err := seal.NewHardwareTenantService(barrier, registry, logger, nil,
+		tenantpkg.WithNodeID(nodeID),
+		tenantpkg.WithTenantUndoGate(func() error { return nil }),
+		tenantpkg.WithUndoCleanupRoster(func(context.Context) ([]string, error) { return []string{nodeID}, nil }),
+	)
 	require.NoError(t, err)
 	return svc
 }
@@ -67,7 +76,12 @@ func TestProvisioningTenantService_CancelledCreateRollsBackForRetry(t *testing.T
 	_, err = p.GetTenant(context.Background(), "tenant-a")
 	require.Error(t, err, "the failed create must leave no tenant behind")
 
-	info, err := p.CreateTenant(context.Background(), "tenant-a", "Tenant A", "")
-	require.NoError(t, err, "a retry with the same tenant ID must succeed")
-	require.Equal(t, "tenant-a", info.ID)
+	// The ID is undone, not retired: a retry is told to come back once the
+	// serving nodes have acknowledged the cleanup (this in-memory node has no
+	// volume pool, so its acknowledgement never lands here), never that the ID
+	// can no longer be used.
+	_, err = p.CreateTenant(context.Background(), "tenant-a", "Tenant A", "")
+	var pending *qrdbsdk.TenantUndoPendingError
+	require.ErrorAs(t, err, &pending, "a retry with the same tenant ID must stay possible, got: %v", err)
+	require.Equal(t, "tenant-a", pending.TenantID)
 }
