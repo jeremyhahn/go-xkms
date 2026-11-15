@@ -896,6 +896,13 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				// Without this the SDK lane fails ErrNotConfigured on a
 				// host while the browser lane works.
 				hc.XKMSService.SetWebAuthn(svc)
+				// Invitation redemption reads and activates the invited
+				// account through the node's user service too, as xkmsd's
+				// does: its caller is unauthenticated, which the node's
+				// client refuses.
+				if inviteUsers, ok := hc.UserLookup.(xkms.InviteUserService); ok {
+					hc.XKMSService.SetInviteUserService(inviteUsers)
+				}
 			}
 		}
 	}

@@ -219,6 +219,11 @@ type XKMSService struct {
 	// pkg/compose/invite.go).
 	inviteStore InviteStore
 
+	// inviteUsers, when set, is the embedded node's user service that
+	// invitation redemption reads and activates the invited account through,
+	// in the invitation's tenant. Nil redeems through users.
+	inviteUsers InviteUserService
+
 	// inviteConfig holds the operator-configured invitation link base URL
 	// and TTL bounds. The zero value is usable: an empty PublicBaseURL
 	// yields a link with no origin, and empty TTL bounds fall back to
@@ -306,6 +311,12 @@ func (s *XKMSService) SetWebAuthn(w *webauthn.Service) { s.webauthnService = w }
 // issue an activation link for, and every invite-redemption entry point
 // reports ErrNotConfigured.
 func (s *XKMSService) SetInviteStore(store InviteStore) { s.inviteStore = store }
+
+// SetInviteUserService wires the embedded node's user service that
+// invitation redemption reads and activates the invited account through, in
+// the invitation's tenant: redemption's caller is unauthenticated, and the
+// node's client refuses it. Nil redeems through the user client.
+func (s *XKMSService) SetInviteUserService(users InviteUserService) { s.inviteUsers = users }
 
 // SetInviteConfig wires the operator-configured invitation link base URL
 // and TTL bounds. The zero value is usable (see InviteConfig).

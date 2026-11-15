@@ -195,7 +195,7 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.users == nil {
+	if s.inviteStore == nil || !s.inviteUsersConfigured() {
 		return nil, ErrNotConfigured
 	}
 	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
@@ -206,7 +206,7 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.getInviteUser(ctx, req.TenantID, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -228,7 +228,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.webauthnService == nil || s.users == nil {
+	if s.inviteStore == nil || s.webauthnService == nil || !s.inviteUsersConfigured() {
 		return nil, ErrNotConfigured
 	}
 	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
@@ -239,7 +239,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.getInviteUser(ctx, req.TenantID, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -266,7 +266,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.webauthnService == nil || s.users == nil {
+	if s.inviteStore == nil || s.webauthnService == nil || !s.inviteUsersConfigured() {
 		return nil, ErrNotConfigured
 	}
 	// Looked up (not redeemed) BEFORE the ceremony is validated: the
@@ -295,7 +295,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, &ErrUserOperation{Operation: "decode invite user handle", Err: err}
 	}
 
-	if err := s.activateInviteUser(ctx, userID); err != nil {
+	if err := s.activateInviteUser(ctx, req.TenantID, userID); err != nil {
 		return nil, err
 	}
 	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
@@ -313,7 +313,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.users == nil {
+	if s.inviteStore == nil || !s.inviteUsersConfigured() {
 		return nil, ErrNotConfigured
 	}
 	if _, err := s.getCA(); err != nil {
@@ -350,7 +350,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrPIVCertRejected{Err: err}
 	}
 
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.getInviteUser(ctx, req.TenantID, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -359,11 +359,11 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	}
 
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	if _, err := s.users.AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+	if err := s.bindInviteCert(ctx, req.TenantID, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
 		return nil, &ErrUserOperation{Operation: "bind piv certificate", Err: err}
 	}
 
-	if err := s.activateInviteUser(ctx, userID); err != nil {
+	if err := s.activateInviteUser(ctx, req.TenantID, userID); err != nil {
 		return nil, err
 	}
 	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
@@ -383,15 +383,80 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 // other outcome (including a failed re-read) keeps the fail-closed refusal,
 // which leaves the invitation intact and the account recoverable — mirrors
 // go-quicbaas's ActivateFIDO2Finish / PIVActivator.Activate.
-func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) error {
-	active := string(qrdbsdk.LifecycleActive)
-	if _, err := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: active}); err != nil {
-		if u, gErr := s.users.GetUser(ctx, userID); gErr == nil && u != nil && u.Lifecycle == active {
+func (s *XKMSService) activateInviteUser(ctx context.Context, tenantID string, userID uint64) error {
+	if err := s.setInviteUserActive(ctx, tenantID, userID); err != nil {
+		if u, gErr := s.getInviteUser(ctx, tenantID, userID); gErr == nil && u.Lifecycle == string(qrdbsdk.LifecycleActive) {
 			return nil
 		}
 		return &ErrUserOperation{Operation: "activate invited user", Err: err}
 	}
 	return nil
+}
+
+// InviteUserService is the embedded node's user service (Node.UserService)
+// as invitation redemption uses it. Redemption runs for an unauthenticated
+// caller, whom the node's client refuses; the node's own service reads and
+// writes in the tenant the context names without authorizing a caller, so
+// the invitation token, validated first, is the only authority redemption
+// acts on.
+type InviteUserService interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error)
+	UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error)
+	AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbsdk.User, error)
+}
+
+// inviteAccount is what redemption reads of the account an invitation names.
+type inviteAccount struct {
+	Email     string
+	Name      string
+	Lifecycle string
+}
+
+// inviteUsersConfigured reports whether redemption has a user service to
+// read and activate the invited account through.
+func (s *XKMSService) inviteUsersConfigured() bool {
+	return s.inviteUsers != nil || s.users != nil
+}
+
+// getInviteUser reads the account an invitation of tenantID names: through
+// the node's user service in that tenant when one is wired, refusing a
+// record of another tenant, else through the user client.
+func (s *XKMSService) getInviteUser(ctx context.Context, tenantID string, userID uint64) (*inviteAccount, error) {
+	if s.inviteUsers == nil {
+		u, err := s.users.GetUser(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		return &inviteAccount{Email: u.Email, Name: u.Name, Lifecycle: u.Lifecycle}, nil
+	}
+	u, err := s.inviteUsers.GetUser(qrdbsdk.ContextWithTenant(ctx, tenantID), userID)
+	if err != nil {
+		return nil, err
+	}
+	if u == nil || qrdbsdk.NormalizeTenantID(u.TenantID) != qrdbsdk.NormalizeTenantID(tenantID) {
+		return nil, ErrInviteUnusable
+	}
+	return &inviteAccount{Email: u.Email, Name: u.Name, Lifecycle: string(u.Lifecycle)}, nil
+}
+
+// setInviteUserActive writes the invited account of tenantID active.
+func (s *XKMSService) setInviteUserActive(ctx context.Context, tenantID string, userID uint64) error {
+	if s.inviteUsers == nil {
+		_, err := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: string(qrdbsdk.LifecycleActive)})
+		return err
+	}
+	_, err := s.inviteUsers.UpdateUser(qrdbsdk.ContextWithTenant(ctx, tenantID), &qrdbsdk.UpdateUserRequest{ID: userID, Lifecycle: qrdbsdk.LifecycleActive})
+	return err
+}
+
+// bindInviteCert binds thumbprint to the invited account of tenantID.
+func (s *XKMSService) bindInviteCert(ctx context.Context, tenantID string, userID uint64, thumbprint string, notAfterUnix int64) error {
+	if s.inviteUsers == nil {
+		_, err := s.users.AddCertBinding(ctx, userID, thumbprint, notAfterUnix)
+		return err
+	}
+	_, err := s.inviteUsers.AddCertBinding(qrdbsdk.ContextWithTenant(ctx, tenantID), userID, thumbprint, notAfterUnix)
+	return err
 }
 
 // caRootPool builds the trust-root pool PIV invite activation verifies

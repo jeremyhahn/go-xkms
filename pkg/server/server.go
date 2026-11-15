@@ -939,6 +939,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.passwordStore != nil && s.qrdbClient != nil {
 			svc.SetUserClients(s.qrdbClient.Users(), s.qrdbClient.Roles())
 		}
+		if s.qrdbNode != nil {
+			// Invitation redemption's caller is unauthenticated, which the
+			// node's client refuses; it reads and activates the invited
+			// account through the node's user service in the invitation's
+			// tenant instead.
+			svc.SetInviteUserService(nodeInviteUsers{nodeWebAuthnUsers{nodeRefreshUsers{node: s.qrdbNode}}})
+		}
 		if s.pkcs11StateStore != nil {
 			svc.SetPKCS11StateStore(s.pkcs11StateStore)
 		}
@@ -1711,6 +1718,24 @@ func (n nodeRefreshUsers) GetUserByUsername(ctx context.Context, tenantID, usern
 // as nodeRefreshUsers is.
 type nodeWebAuthnUsers struct {
 	nodeRefreshUsers
+}
+
+// nodeInviteUsers is invitation redemption's account access over the
+// embedded node's user service (xkms.InviteUserService), read per call as
+// nodeRefreshUsers is.
+type nodeInviteUsers struct {
+	nodeWebAuthnUsers
+}
+
+var _ xkms.InviteUserService = nodeInviteUsers{}
+
+// AddCertBinding implements xkms.InviteUserService.
+func (n nodeInviteUsers) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbsdk.User, error) {
+	users := n.node.UserService()
+	if users == nil {
+		return nil, ErrQRDBNodeNotServing
+	}
+	return users.AddCertBinding(ctx, userID, thumbprint, notAfterUnix)
 }
 
 // GetUserByEmail implements webauthn.TenantUserService.
