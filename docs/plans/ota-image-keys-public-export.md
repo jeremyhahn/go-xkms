@@ -20,7 +20,9 @@ ship; the export did not exist.
    `transport.OTAImagePublicKeyResponse` with its `sdk/go/transport` alias,
    and `requireES256KeyVersion` behind `requireES256Key`. The COSE_Key uses
    `github.com/fxamacker/cbor/v2`, already in go.mod.
-3. Docs commit: key-management/engineering.md section
+   Follow-up `501d9a5c3` `fix(xkms): encode the OTA public export from
+   PublicKey.Bytes` (staticcheck SA1019: ecdsa X/Y deprecated in Go 1.26).
+3. Docs commit `4c1cb5e68`: key-management/engineering.md section
    `per-board-ota-image-keys` names the export and the board -> key id
    record (`OTAImageKeyID`); this plan.
 
