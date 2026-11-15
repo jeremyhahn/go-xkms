@@ -50,26 +50,6 @@ type QRDBUserStoreOptions struct {
 	// sign-up's registration/begin is anonymous). A bind error fails the
 	// call. Nil keeps the caller's context.
 	CallContext qrdbstorage.CallContext
-
-	// UserService, when set, is the node's server-side user service the
-	// store reads, updates and deletes the tenant's user records through,
-	// scoped to TenantID by qrdbsdk.ContextWithTenant, as the refresh
-	// resolver reads them. Over an enforcing embedded node the service
-	// principal CallContext binds belongs to the system tenant, and strict
-	// tenant isolation refuses its client calls into any other tenant, so a
-	// non-system TenantID needs it: pass Node.UserService(). A record of
-	// another tenant is not found. Create stays on Users, authorized as the
-	// bound caller. Nil keeps every call on Users.
-	UserService TenantUserService
-}
-
-// TenantUserService is the part of the node's server-side user service
-// (qrdbsdk.UserServicer) the store uses for a tenant's user records.
-type TenantUserService interface {
-	GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error)
-	GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbsdk.User, error)
-	UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error)
-	DeleteUser(ctx context.Context, id uint64) error
 }
 
 // qrdbUserStore implements xkms's UserStore over qrdb's user records. A
@@ -80,7 +60,6 @@ type qrdbUserStore struct {
 	creds    CredentialStore
 	tenantID string
 	bind     qrdbstorage.CallContext
-	service  TenantUserService
 }
 
 // callContext returns the context a call into qrdb runs on.
@@ -114,7 +93,7 @@ func NewQRDBUserStoreAdapter(opts QRDBUserStoreOptions) (UserStore, CredentialSt
 	if err != nil {
 		return nil, nil, WrapError("build credential store", err)
 	}
-	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID, bind: opts.CallContext, service: opts.UserService}
+	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID, bind: opts.CallContext}
 	return users, creds, nil
 }
 
@@ -159,18 +138,11 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 	if err != nil {
 		return nil, err
 	}
-	if s.service != nil {
-		u, sErr := s.tenantUser(ctx, id)
-		if sErr != nil {
-			return nil, sErr
-		}
-		return s.materialize(ctx, u.ID, u.Email, u.Name, string(u.Lifecycle), u.AuthMethods)
-	}
 	u, err := s.users.GetUser(ctx, id)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
-	return s.materialize(ctx, u.ID, u.Email, u.Name, u.Lifecycle, u.AuthMethods)
+	return s.materialize(ctx, u)
 }
 
 // GetByEmail looks up a user by the canonical tenant-scoped email login key.
@@ -188,21 +160,11 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 	if err != nil {
 		return nil, err
 	}
-	if s.service != nil {
-		u, sErr := s.service.GetUserByEmail(qrdbsdk.ContextWithTenant(ctx, s.tenantID), s.tenantID, email)
-		if sErr != nil {
-			return nil, mapNotFound(sErr)
-		}
-		if !s.inTenant(u) {
-			return nil, ErrUserNotFound
-		}
-		return s.materialize(ctx, u.ID, u.Email, u.Name, string(u.Lifecycle), u.AuthMethods)
-	}
 	u, err := s.users.GetUserByEmail(ctx, s.tenantID, email)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
-	return s.materialize(ctx, u.ID, u.Email, u.Name, u.Lifecycle, u.AuthMethods)
+	return s.materialize(ctx, u)
 }
 
 // Create creates a new user in the configured tenant.
@@ -219,8 +181,6 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 	if err != nil {
 		return nil, err
 	}
-	// Creation is authorized as the bound caller even when UserService is
-	// set: the service user path does not check users:create.
 	u, err := s.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: email,
 		Email:    email,
@@ -230,7 +190,7 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 	if err != nil {
 		return nil, WrapError("qrdb create user", err)
 	}
-	return s.materialize(ctx, u.ID, u.Email, u.Name, u.Lifecycle, u.AuthMethods)
+	return s.materialize(ctx, u)
 }
 
 // Save stores per-user state. xkms's User abstraction carries in-memory
@@ -252,18 +212,6 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 	ctx, err = s.callContext(ctx)
 	if err != nil {
 		return err
-	}
-	if s.service != nil {
-		if _, sErr := s.tenantUser(ctx, id); sErr != nil {
-			return sErr
-		}
-		if _, uErr := s.service.UpdateUser(qrdbsdk.ContextWithTenant(ctx, s.tenantID), &qrdbsdk.UpdateUserRequest{
-			ID:   id,
-			Name: dn,
-		}); uErr != nil {
-			return WrapError("qrdb update display name", uErr)
-		}
-		return nil
 	}
 	if _, uErr := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{
 		ID:   id,
@@ -287,16 +235,7 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	if err != nil {
 		return err
 	}
-	var dErr error
-	if s.service != nil {
-		if _, sErr := s.tenantUser(ctx, id); sErr != nil {
-			return sErr
-		}
-		dErr = s.service.DeleteUser(qrdbsdk.ContextWithTenant(ctx, s.tenantID), id)
-	} else {
-		dErr = s.users.DeleteUser(ctx, id)
-	}
-	if dErr != nil {
+	if dErr := s.users.DeleteUser(ctx, id); dErr != nil {
 		if isUserNotFound(dErr) {
 			return ErrUserNotFound
 		}
@@ -310,18 +249,18 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 
 // materialize hydrates a qrdb User into the xkms DefaultUser shape, with
 // its credentials read from the credential store.
-func (s *qrdbUserStore) materialize(ctx context.Context, id uint64, email, name, lifecycle string, authMethods []string) (*DefaultUser, error) {
+func (s *qrdbUserStore) materialize(ctx context.Context, u *qrdbtransport.User) (*DefaultUser, error) {
 	// The WebAuthn name is the canonical EMAIL login key, and the display name
 	// is the record's own Name. Both used to come from elsewhere — the name from
 	// u.Username, the display name from an xkms KV blob — which is what let the
 	// two drift.
-	user := NewDefaultUser(HandleFromUserID(id), email, name)
+	user := NewDefaultUser(HandleFromUserID(u.ID), u.Email, u.Name)
 	// Account standing is qrdb's, carried verbatim: the service refuses a
 	// login or enrolment the record's lifecycle or auth-method policy does
 	// not allow (go-xkms#1298). A record with no lifecycle is not treated as
 	// active — only qrdbsdk.LifecycleActive authenticates.
-	user.SetLifecycle(qrdbsdk.Lifecycle(lifecycle))
-	user.SetAuthMethods(authMethods)
+	user.SetLifecycle(qrdbsdk.Lifecycle(u.Lifecycle))
+	user.SetAuthMethods(u.AuthMethods)
 
 	// A read failure is returned, never skipped: a user handed back with
 	// silently FEWER credentials than they have would make the
@@ -332,24 +271,6 @@ func (s *qrdbUserStore) materialize(ctx context.Context, id uint64, email, name,
 	}
 	user.SetCredentials(creds)
 	return user, nil
-}
-
-// tenantUser reads the user record through the node's user service in the
-// store's tenant. A record of another tenant is not found.
-func (s *qrdbUserStore) tenantUser(ctx context.Context, id uint64) (*qrdbsdk.User, error) {
-	u, err := s.service.GetUser(qrdbsdk.ContextWithTenant(ctx, s.tenantID), id)
-	if err != nil {
-		return nil, mapNotFound(err)
-	}
-	if !s.inTenant(u) {
-		return nil, ErrUserNotFound
-	}
-	return u, nil
-}
-
-// inTenant reports whether u is a record of the store's tenant.
-func (s *qrdbUserStore) inTenant(u *qrdbsdk.User) bool {
-	return u != nil && qrdbsdk.NormalizeTenantID(u.TenantID) == qrdbsdk.NormalizeTenantID(s.tenantID)
 }
 
 // mapNotFound converts a qrdb not-found error into the xkms sentinel.

@@ -193,32 +193,6 @@ func TestRegisterWebAuthnGrant_AuthorizesUserLookup(t *testing.T) {
 	assert.NotErrorAs(t, err, &denied)
 }
 
-// TestRefreshGrant_IsUsersReadOnly pins the refresh grant to the one
-// permission a session refresh's user recheck exercises.
-func TestRefreshGrant_IsUsersReadOnly(t *testing.T) {
-	assert.Equal(t, []qrdbsdk.Permission{"users:read"}, RefreshGrant())
-	g := RefreshGrant()
-	g[0] = "users:delete"
-	assert.Equal(t, []qrdbsdk.Permission{"users:read"}, RefreshGrant(), "RefreshGrant returns a copy")
-}
-
-// TestRegisterRefreshGrant_AuthorizesUserLookup: once the refresh grant is
-// registered, the principal's user lookup by username (the refresh recheck,
-// auth.QRDBUserResolver) is authorized.
-func TestRegisterRefreshGrant_AuthorizesUserLookup(t *testing.T) {
-	node := newNode(t, Option())
-	RegisterRefreshGrant()
-	RegisterRefreshGrant()
-	assert.True(t, qrdbsdk.HasPermissionRoleGrant(Name, "users:read"))
-	ctx, err := node.ServiceContext(context.Background())
-	require.NoError(t, err)
-
-	_, err = node.Client().Users().GetUserByUsername(ctx, "system", "nobody")
-	require.Error(t, err)
-	var denied *qrdbsdk.PermissionDeniedError
-	assert.NotErrorAs(t, err, &denied)
-}
-
 // TestWebAuthnGrant_HoldsNoUsersCreate is CA ruling 602: the principal never
 // creates a user for the WebAuthn store, so an anonymous registration/begin
 // over an enforcing node cannot persist an account (go-xkms #2202).

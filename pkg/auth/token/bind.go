@@ -16,8 +16,6 @@ package token
 import (
 	"context"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -29,11 +27,7 @@ type CallContext func(ctx context.Context) (context.Context, error)
 // the context bind derives from the caller's. Refresh-token records are
 // xkms's own persistence, as its storage is: a login that mints them is
 // often anonymous (a WebAuthn sign-up, #2541), so over an embedded node they
-// are written as the node's service principal. The records are the system
-// tenant's whatever tenant the session belongs to, so each call is bound to
-// the system tenant before bind runs: a logout or a lifecycle revocation
-// whose context names the account's tenant still reaches them. A nil bind
-// returns store.
+// are written as the node's service principal. A nil bind returns store.
 func BindRefreshStore(store RefreshStore, bind CallContext) RefreshStore {
 	if bind == nil {
 		return store
@@ -73,14 +67,8 @@ type boundRefreshStore struct {
 	bind  CallContext
 }
 
-// call derives the context a store call runs on: the system tenant, which
-// holds the records, under bind's principal.
-func (b *boundRefreshStore) call(ctx context.Context) (context.Context, error) {
-	return b.bind(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID))
-}
-
 func (b *boundRefreshStore) Save(ctx context.Context, rec *Record) error {
-	bound, err := b.call(ctx)
+	bound, err := b.bind(ctx)
 	if err != nil {
 		return err
 	}
@@ -88,7 +76,7 @@ func (b *boundRefreshStore) Save(ctx context.Context, rec *Record) error {
 }
 
 func (b *boundRefreshStore) Get(ctx context.Context, family, jti string) (*Record, error) {
-	bound, err := b.call(ctx)
+	bound, err := b.bind(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +84,7 @@ func (b *boundRefreshStore) Get(ctx context.Context, family, jti string) (*Recor
 }
 
 func (b *boundRefreshStore) MarkRotated(ctx context.Context, family, jti string) error {
-	bound, err := b.call(ctx)
+	bound, err := b.bind(ctx)
 	if err != nil {
 		return err
 	}
@@ -104,17 +92,17 @@ func (b *boundRefreshStore) MarkRotated(ctx context.Context, family, jti string)
 }
 
 func (b *boundRefreshStore) RevokeFamily(ctx context.Context, family string) error {
-	bound, err := b.call(ctx)
+	bound, err := b.bind(ctx)
 	if err != nil {
 		return err
 	}
 	return b.store.RevokeFamily(bound, family)
 }
 
-func (b *boundRefreshStore) RevokeBySubject(ctx context.Context, tenantID, subject string) error {
-	bound, err := b.call(ctx)
+func (b *boundRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+	bound, err := b.bind(ctx)
 	if err != nil {
 		return err
 	}
-	return b.store.RevokeBySubject(bound, tenantID, subject)
+	return b.store.RevokeBySubject(bound, subject)
 }

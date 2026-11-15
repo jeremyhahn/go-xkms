@@ -944,7 +944,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 			// node's client refuses; it reads and activates the invited
 			// account through the node's user service in the invitation's
 			// tenant instead.
-			svc.SetInviteUserService(nodeInviteUsers{nodeWebAuthnUsers{nodeRefreshUsers{node: s.qrdbNode}}})
+			svc.SetInviteUserService(nodeInviteUsers{node: s.qrdbNode})
 		}
 		if s.pkcs11StateStore != nil {
 			svc.SetPKCS11StateStore(s.pkcs11StateStore)
@@ -1552,11 +1552,6 @@ func (s *Server) initializeWebAuthnService() error {
 	if s.qrdbNode != nil {
 		serviceprincipal.RegisterWebAuthnGrant()
 		params.CallContext = s.qrdbNode.ServiceContext
-		// The principal belongs to the system tenant, whose client calls
-		// into another tenant are refused: the relying party reads,
-		// updates and deletes its tenant's accounts through the node's
-		// user service, in that tenant.
-		params.UserService = nodeWebAuthnUsers{nodeRefreshUsers{node: s.qrdbNode}}
 	}
 	svc, err := rest.BuildWebAuthnService(params)
 	if err != nil {
@@ -1687,16 +1682,18 @@ func (n nodeCertUsers) UserByCertThumbprint(ctx context.Context, thumbprint stri
 	return users.UserByCertThumbprint(ctx, thumbprint)
 }
 
-// nodeRefreshUsers is the refresh recheck's account lookup over the embedded
-// node's user service (auth.ServiceUserLookup). It reads the service per
-// call, so a node that publishes its data plane after the issuer is built
-// (an unseal) still serves the lookup.
-type nodeRefreshUsers struct {
+// nodeInviteUsers is invitation redemption's account access over the
+// embedded node's user service (xkms.InviteUserService). It reads the
+// service per call, so a node that publishes its data plane after the
+// service is wired (an unseal) still serves redemption.
+type nodeInviteUsers struct {
 	node *qrdbnode.Node
 }
 
-// GetUser implements auth.ServiceUserLookup.
-func (n nodeRefreshUsers) GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error) {
+var _ xkms.InviteUserService = nodeInviteUsers{}
+
+// GetUser implements xkms.InviteUserService.
+func (n nodeInviteUsers) GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error) {
 	users := n.node.UserService()
 	if users == nil {
 		return nil, ErrQRDBNodeNotServing
@@ -1704,30 +1701,14 @@ func (n nodeRefreshUsers) GetUser(ctx context.Context, id uint64) (*qrdbsdk.User
 	return users.GetUser(ctx, id)
 }
 
-// GetUserByUsername implements auth.ServiceUserLookup.
-func (n nodeRefreshUsers) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error) {
+// UpdateUser implements xkms.InviteUserService.
+func (n nodeInviteUsers) UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error) {
 	users := n.node.UserService()
 	if users == nil {
 		return nil, ErrQRDBNodeNotServing
 	}
-	return users.GetUserByUsername(ctx, tenantID, username)
+	return users.UpdateUser(ctx, req)
 }
-
-// nodeWebAuthnUsers is the WebAuthn relying party's account access over the
-// embedded node's user service (webauthn.TenantUserService), read per call
-// as nodeRefreshUsers is.
-type nodeWebAuthnUsers struct {
-	nodeRefreshUsers
-}
-
-// nodeInviteUsers is invitation redemption's account access over the
-// embedded node's user service (xkms.InviteUserService), read per call as
-// nodeRefreshUsers is.
-type nodeInviteUsers struct {
-	nodeWebAuthnUsers
-}
-
-var _ xkms.InviteUserService = nodeInviteUsers{}
 
 // AddCertBinding implements xkms.InviteUserService.
 func (n nodeInviteUsers) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbsdk.User, error) {
@@ -1736,33 +1717,6 @@ func (n nodeInviteUsers) AddCertBinding(ctx context.Context, userID uint64, thum
 		return nil, ErrQRDBNodeNotServing
 	}
 	return users.AddCertBinding(ctx, userID, thumbprint, notAfterUnix)
-}
-
-// GetUserByEmail implements webauthn.TenantUserService.
-func (n nodeWebAuthnUsers) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbsdk.User, error) {
-	users := n.node.UserService()
-	if users == nil {
-		return nil, ErrQRDBNodeNotServing
-	}
-	return users.GetUserByEmail(ctx, tenantID, email)
-}
-
-// UpdateUser implements webauthn.TenantUserService.
-func (n nodeWebAuthnUsers) UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error) {
-	users := n.node.UserService()
-	if users == nil {
-		return nil, ErrQRDBNodeNotServing
-	}
-	return users.UpdateUser(ctx, req)
-}
-
-// DeleteUser implements webauthn.TenantUserService.
-func (n nodeWebAuthnUsers) DeleteUser(ctx context.Context, id uint64) error {
-	users := n.node.UserService()
-	if users == nil {
-		return ErrQRDBNodeNotServing
-	}
-	return users.DeleteUser(ctx, id)
 }
 
 // initializeKeyVersionStore builds the key-version record store through

@@ -35,7 +35,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
@@ -102,15 +101,6 @@ type TokenIssuerParams struct {
 	// refresh-token records are xkms's own persistence, and a login that
 	// writes them may be anonymous (#2541). Nil runs them on the caller's.
 	CallContext token.CallContext
-
-	// UserLookup, when set with QRDBClient, is the embedded node's user
-	// service (Node.UserService): the refresh recheck reads the account
-	// through it in the tenant the refresh token carries. CallContext binds a
-	// principal of one tenant (the node's service principal is the system
-	// tenant's), and qrdb refuses that principal another tenant's account, so
-	// without UserLookup the recheck reads through QRDBClient under
-	// CallContext and only resolves accounts in the principal's tenant.
-	UserLookup auth.ServiceUserLookup
 
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
@@ -229,24 +219,8 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
-		// Refresh records are xkms's own persistence: they stay under
-		// CallContext (the node's service principal) whatever tenant the
-		// session belongs to.
 		refreshStore = token.BindRefreshStore(qs, p.CallContext)
-		if p.UserLookup != nil {
-			// The account is read in the refresh token's own tenant through
-			// the node's user service, which authorizes no caller.
-			userResolver = auth.NewQRDBServiceUserResolver(p.UserLookup)
-		} else {
-			// Bound to the node's service principal, the refresh recheck
-			// reads the user record as the principal, whichever login flow
-			// minted the session: it needs the principal's refresh grant
-			// (users:read), not only the WebAuthn one.
-			if p.CallContext != nil {
-				serviceprincipal.RegisterRefreshGrant()
-			}
-			userResolver = token.BindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
-		}
+		userResolver = token.BindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
@@ -396,14 +370,6 @@ type WebAuthnServiceParams struct {
 	// anonymous. Nil keeps the caller's context.
 	CallContext qrdbstorage.CallContext
 
-	// UserService is the node's server-side user service the store reads,
-	// updates and deletes TenantID's user records through
-	// (webauthn.QRDBUserStoreOptions.UserService). Over an enforcing
-	// embedded node pass Node.UserService(): the service principal
-	// CallContext binds belongs to the system tenant, and its client calls
-	// into any other tenant are refused. Nil keeps every call on QRDBClient.
-	UserService webauthn.TenantUserService
-
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
@@ -468,7 +434,6 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		DAOFactory:  p.DAOFactory,
 		TenantID:    tenantID,
 		CallContext: p.CallContext,
-		UserService: p.UserService,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
@@ -697,16 +662,6 @@ type HostConfig struct {
 	// store's calls run on; see WebAuthnServiceParams.CallContext.
 	WebAuthnCallContext qrdbstorage.CallContext
 
-	// UserLookup is the embedded node's user service (Node.UserService), the
-	// refresh recheck's lookup in the refresh token's own tenant; see
-	// TokenIssuerParams.UserLookup. Nil reads the account through QRDBClient
-	// under WebAuthnCallContext, which resolves only the principal's tenant.
-	// When it is also a webauthn.TenantUserService, as Node.UserService is,
-	// the WebAuthn relying party reads, updates and deletes the accounts of
-	// WebAuthnTenantID through it too, so a non-system WebAuthnTenantID
-	// works over an enforcing node.
-	UserLookup auth.ServiceUserLookup
-
 	// WebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
 	// store the WebAuthn relying party persists passkeys through, letting
 	// the composing host add its own side effects (an identity-plane auth
@@ -821,7 +776,6 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			// and the login may be anonymous: run it on the same binder
 			// the WebAuthn user store uses (#2541).
 			CallContext: token.CallContext(hc.WebAuthnCallContext),
-			UserLookup:  hc.UserLookup,
 			Logger:      logger,
 		})
 		if tiErr != nil {
@@ -868,16 +822,12 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			if tenantID == "" {
 				tenantID = DefaultWebAuthnTenant
 			}
-			// The node's user service, when UserLookup is one, also serves
-			// the relying party's user records in the configured tenant.
-			userService, _ := hc.UserLookup.(webauthn.TenantUserService)
 			svc, waErr := BuildWebAuthnService(WebAuthnServiceParams{
 				Config:                   hc.WebAuthn,
 				QRDBClient:               hc.QRDBClient,
 				DAOFactory:               hc.DAOFactory,
 				TenantID:                 tenantID,
 				CallContext:              hc.WebAuthnCallContext,
-				UserService:              userService,
 				TokenIssuer:              cfg.TokenIssuer,
 				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
 				Logger:                   logger,
@@ -896,13 +846,6 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				// Without this the SDK lane fails ErrNotConfigured on a
 				// host while the browser lane works.
 				hc.XKMSService.SetWebAuthn(svc)
-				// Invitation redemption reads and activates the invited
-				// account through the node's user service too, as xkmsd's
-				// does: its caller is unauthenticated, which the node's
-				// client refuses.
-				if inviteUsers, ok := hc.UserLookup.(xkms.InviteUserService); ok {
-					hc.XKMSService.SetInviteUserService(inviteUsers)
-				}
 			}
 		}
 	}
