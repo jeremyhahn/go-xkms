@@ -3712,8 +3712,21 @@ toolchain-image:
 
 .PHONY: deps-check
 ## deps-check: Fail when a direct dependency of the root, sdk/go or xkey module is behind its newest release
+# deps-check and deps-bump: the shared depscheck v1.0.0 (handbook
+# templates/deps/depscheck, ruling 640). With DEPS_CHECK_BASE (ci.yml passes
+# the PR base or the push's before) a lag fails only on a go.mod line the
+# change adds or bumps; -vuln fails a vulnerable version of a go.mod
+# requirement. deps-bump moves every failing requirement to latest; the
+# daily deps-bump.yml PR carries it.
+DEPS_CHECK_MODULES ?= . sdk/go xkey
+GOVULNCHECK ?= govulncheck
+
 deps-check:
-	@./scripts/deps-check.sh
+	$(GO) run ./scripts/depscheck -go $(GO) $(if $(DEPS_CHECK_BASE),-base $(DEPS_CHECK_BASE)) -vuln -govulncheck $(GOVULNCHECK) $(if $(DEPS_CHECK_VULN_TAGS),-vuln-tags $(DEPS_CHECK_VULN_TAGS)) $(DEPS_CHECK_MODULES)
+
+.PHONY: deps-bump
+deps-bump:
+	$(GO) run ./scripts/depscheck -go $(GO) -bump $(DEPS_CHECK_MODULES)
 
 .PHONY: docker-build-test-image
 ## docker-build-test-image: Build the root Dockerfile image `make docker-test` runs
