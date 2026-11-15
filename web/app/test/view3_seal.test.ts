@@ -147,6 +147,56 @@ describe("SealView", () => {
     expect(unseal).not.toHaveBeenCalled();
   });
 
+  it("unseals a TPM2 result (null ciphertext, TPM blobs) with the unseal password", async () => {
+    unseal.mockResolvedValue({ plaintext: textToB64("tpm secret") });
+    render(SealView);
+    await screen.findByRole("option", { name: "tpm2" });
+    // The REST TPM2 seal shape: ciphertext is null, the sealed object is
+    // the tpm_public/tpm_private pair.
+    const tpm = {
+      backend: "tpm2",
+      ciphertext: null,
+      tpm_public: textToB64("pub"),
+      tpm_private: textToB64("priv"),
+      key_id: "k1",
+    };
+    await fireEvent.input(screen.getByLabelText("Seal result JSON"), { target: { value: JSON.stringify(tpm) } });
+    await fireEvent.input(screen.getByLabelText("Unseal password"), { target: { value: "pw" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Unseal" }));
+
+    await waitFor(() => expect(unseal).toHaveBeenCalledOnce());
+    expect(unseal.mock.calls[0]![0]).toEqual({
+      backend: "tpm2",
+      tpm_public: tpm.tpm_public,
+      tpm_private: tpm.tpm_private,
+      key_id: "k1",
+      password: "pw",
+    });
+    expect((await screen.findByLabelText("Plaintext")).textContent).toBe("tpm secret");
+  });
+
+  it("passes an envelope result's wrapped_dek through to unseal", async () => {
+    unseal.mockResolvedValue({ plaintext: textToB64("env") });
+    render(SealView);
+    await screen.findByRole("option", { name: "tpm2" });
+    const env = { backend: "pkcs11", ciphertext: textToB64("c"), nonce: textToB64("n"), wrapped_dek: textToB64("dek"), key_id: "k2", key_version: 1 };
+    await fireEvent.input(screen.getByLabelText("Seal result JSON"), { target: { value: JSON.stringify(env) } });
+    await fireEvent.click(screen.getByRole("button", { name: "Unseal" }));
+
+    await waitFor(() => expect(unseal).toHaveBeenCalledOnce());
+    expect(unseal.mock.calls[0]![0]).toEqual(env);
+  });
+
+  it("refuses a result with neither a ciphertext nor both TPM blobs", async () => {
+    render(SealView);
+    await screen.findByRole("option", { name: "tpm2" });
+    const box = screen.getByLabelText("Seal result JSON");
+    await fireEvent.input(box, { target: { value: JSON.stringify({ backend: "tpm2", ciphertext: null, tpm_public: textToB64("pub") }) } });
+    await fireEvent.click(screen.getByRole("button", { name: "Unseal" }));
+    expect(await screen.findByText("Seal result needs a base64 ciphertext or base64 tpm_public and tpm_private.")).toBeInTheDocument();
+    expect(unseal).not.toHaveBeenCalled();
+  });
+
   it("toasts a rejected seal and keeps the input", async () => {
     seal.mockRejectedValue(new Error("policy mismatch"));
     render(SealView);
