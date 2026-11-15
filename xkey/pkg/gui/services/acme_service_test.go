@@ -38,6 +38,9 @@ import (
 
 // fakeACMEClient records calls and returns canned results.
 type fakeACMEClient struct {
+	// blockEnroll makes EnrollDevice wait for its context to end, as a
+	// server that keeps an order pending does (Codex finding 4, #2126).
+	blockEnroll bool
 	account     *acme.Account
 	err         error
 	renewed     *x509.Certificate
@@ -87,7 +90,11 @@ func (f *fakeACMEClient) RenewCertificate(_ context.Context, old *x509.Certifica
 	return f.renewed, nil
 }
 
-func (f *fakeACMEClient) EnrollDevice(_ context.Context, cfg *sdkacme.ACMEEnrollmentConfig) (*sdkacme.ACMEEnrollmentResult, error) {
+func (f *fakeACMEClient) EnrollDevice(ctx context.Context, cfg *sdkacme.ACMEEnrollmentConfig) (*sdkacme.ACMEEnrollmentResult, error) {
+	if f.blockEnroll {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	f.enrollCfg = cfg
 	return f.enrolled, f.err
 }
