@@ -35,7 +35,6 @@
   let expiry = $state("");
   let maxUsage = $state("");
   let rotationRequired = $state(false);
-  let requireMfa = $state(false);
 
   const ready = $derived(keyId.trim() !== "" && backend.trim() !== "");
 
@@ -57,7 +56,6 @@
     expiry = p?.expires_at ? new Date(p.expires_at * 1000).toISOString().slice(0, 10) : "";
     maxUsage = p?.max_usage_count ? String(p.max_usage_count) : "";
     rotationRequired = p?.rotation_required ?? false;
-    requireMfa = p?.require_mfa ?? false;
   }
 
   function add(list: "allowed" | "denied"): void {
@@ -98,7 +96,6 @@
       if (n > 0) policy.max_usage_count = n;
     }
     if (rotationRequired) policy.rotation_required = true;
-    if (requireMfa) policy.require_mfa = true;
     return policy;
   }
 
@@ -248,11 +245,14 @@
       <input type="checkbox" class="checkbox checkbox-sm" bind:checked={rotationRequired} />
       <span>Rotation required</span>
     </label>
-    <label class="label cursor-pointer gap-2">
-      <input type="checkbox" class="checkbox checkbox-sm" bind:checked={requireMfa} />
+    <label class="label gap-2">
+      <input type="checkbox" class="checkbox checkbox-sm" checked={false} disabled aria-describedby="require-mfa-note" />
       <span>Require MFA</span>
     </label>
   </div>
+  <p id="require-mfa-note" class="text-sm text-base-content/60">
+    Require MFA is unavailable: the service refuses it because it has no per-operation MFA challenge.
+  </p>
 
   {#if formError}<p class="text-error text-sm" role="alert">{formError}</p>{/if}
 
