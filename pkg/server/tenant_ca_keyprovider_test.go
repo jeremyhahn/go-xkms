@@ -336,6 +336,61 @@ func TestTenantCAKeyFactory_LazyRetryAfterSaveCertFailure(t *testing.T) {
 	assert.True(t, cert.IsCA)
 }
 
+// cloudKMSLikeProvider creates the key but, like the AWS KMS, Azure Key Vault
+// and GCP KMS providers, returns no key from generation: the public key is
+// only reachable afterwards through Signer. It records the CN each key was
+// generated under, the name those providers address a key by.
+type cloudKMSLikeProvider struct {
+	types.KeyProvider
+	mu        sync.Mutex
+	generated []string
+}
+
+func (p *cloudKMSLikeProvider) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	if _, err := p.KeyProvider.GenerateKey(ctx, attrs); err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	p.generated = append(p.generated, attrs.CN)
+	p.mu.Unlock()
+	return nil, nil
+}
+
+// A backend that returns no public key at generation still provisions each
+// tenant's login CA over the remote key, under a key name that keeps the
+// tenant.
+func TestTenantCAKeyFactory_BackendWithoutPublicKeyAtGeneration(t *testing.T) {
+	ctx := context.Background()
+	inner, err := software.NewBackend(&software.Config{KeyStorage: storage.New()})
+	require.NoError(t, err)
+	provider := &cloudKMSLikeProvider{KeyProvider: inner}
+	base, err := xkms.New(&xkms.BackendConfig{Backend: provider, CertStorage: storage.New()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = base.Close() })
+
+	f := newTenantCAKeyFactory()
+	require.NoError(t, f.Bind(base))
+	tenants := []string{"tenant-a", "tenant-b"}
+	f.TrackTenants(&fakeTenantService{tenants: tenants})
+
+	for _, id := range tenants {
+		require.NoError(t, f.EnsureTenant(ctx, id), "provisioning %s", id)
+		p, err := f.ProviderForTenant(id)
+		require.NoError(t, err)
+		cert, err := p.Certificate(ctx)
+		require.NoError(t, err)
+		remote := tenantSignerPublic(t, base, id).(*ecdsa.PublicKey)
+		assert.True(t, remote.Equal(cert.PublicKey), "the %s login CA must certify the remote key", id)
+		assert.True(t, cert.IsCA)
+	}
+
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	require.Len(t, provider.generated, len(tenants))
+	assert.NotEqual(t, provider.generated[0], provider.generated[1],
+		"a provider that addresses keys by name must get one name per tenant")
+}
+
 // fixedSlotProvider reports what a YubiKey PIV backend configured with one
 // slot reports: every key it generates lands in that slot, whatever its name.
 type fixedSlotProvider struct{ types.KeyProvider }
