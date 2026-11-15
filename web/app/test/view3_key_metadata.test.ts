@@ -124,6 +124,29 @@ describe("KeyMetadataView", () => {
     expect(toasts).toContainEqual({ kind: "success", message: 'Metadata of key "k1" saved.' });
   });
 
+  it("ties a deferred GET to the key and backend captured at Load", async () => {
+    let resolveGet: (v: unknown) => void = () => {};
+    request.mockReturnValueOnce(new Promise((r) => (resolveGet = r)));
+    render(KeyMetadataView);
+    await fireEvent.input(screen.getByPlaceholderText("Key ID"), { target: { value: "k1" } });
+    await fireEvent.input(screen.getByPlaceholderText("Backend"), { target: { value: "software" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    // The inputs change while the GET is in flight.
+    await fireEvent.input(screen.getByPlaceholderText("Key ID"), { target: { value: "k2" } });
+    await fireEvent.input(screen.getByPlaceholderText("Backend"), { target: { value: "pkcs11" } });
+    resolveGet({ metadata: metadata(), timestamp: 1700000100 });
+    await screen.findByText("Version", { selector: "dt" });
+
+    request.mockResolvedValueOnce({ metadata: metadata({ description: "new" }), timestamp: 1700000200 });
+    await fireEvent.input(screen.getByLabelText("Description"), { target: { value: "new" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request).toHaveBeenLastCalledWith("PUT", PATH, {
+      body: { backend: "software", key_id: "k1", description: "new" },
+    });
+  });
+
   it("keeps Save disabled while nothing has changed", async () => {
     await load();
 
