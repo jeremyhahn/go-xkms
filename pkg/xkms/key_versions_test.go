@@ -32,8 +32,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
@@ -958,4 +961,86 @@ func TestRotateKey_StaleRecordFailsWithVersionConflict(t *testing.T) {
 	for _, v := range stored.Versions[1:] {
 		assert.Equal(t, "second-writer", v.CreatedBy)
 	}
+}
+
+// writeAfterReadKV runs afterRead once, after the first Get that follows
+// arm: the read returns the value stored before afterRead writes.
+type writeAfterReadKV struct {
+	qrdbsdk.AtomicKVStore
+	mu        sync.Mutex
+	armed     bool
+	afterRead func()
+}
+
+func (s *writeAfterReadKV) arm() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.armed = true
+}
+
+func (s *writeAfterReadKV) Get(ctx context.Context, key string) ([]byte, error) {
+	v, err := s.AtomicKVStore.Get(ctx, key)
+	s.mu.Lock()
+	fire := s.armed
+	s.armed = false
+	s.mu.Unlock()
+	if fire {
+		s.afterRead()
+	}
+	return v, err
+}
+
+// listHookBackend runs onList after its n-th ListKeys.
+type listHookBackend struct {
+	Backend
+	n      int
+	onList func(n int)
+}
+
+func (b *listHookBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
+	keys, err := b.Backend.ListKeys(ctx)
+	b.n++
+	b.onList(b.n)
+	return keys, err
+}
+
+func TestRotateKey_OrphanCleanupKeepsAVersionNewerThanTheRecordRead(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := context.Background()
+	kv := &writeAfterReadKV{AtomicKVStore: qrdbsdk.NewMemoryKVStore()}
+	store, err := keyversion.NewStore(dao.NewStoreFactory(kv))
+	require.NoError(t, err)
+	svc.SetKeyVersionStore(store)
+
+	genKey(t, svc, "", "k", "ed25519", 0)
+	inner, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+	// Another rotator has created version 2's backend key and records it
+	// right after this rotation reads the record under its lock, so the key
+	// this rotation lists under the next version's name is no orphan.
+	v2, err := inner.GenerateEd25519(ctx, &types.KeyAttributes{CN: "k--v2", KeyType: types.KeyTypeSigning, StoreType: types.StoreSoftware})
+	require.NoError(t, err)
+	kv.afterRead = func() {
+		rec := keyversion.Implicit("k", "software")
+		rec.AddCurrent(2, time.Now().UTC(), "second-writer")
+		require.NoError(t, store.Put(ctx, "", rec))
+	}
+	b := &listHookBackend{Backend: inner, onList: func(n int) {
+		if n == 2 { // the listing under the key's lock, just before the read
+			kv.arm()
+		}
+	}}
+
+	_, err = svc.rotateKey(ctx, b, "software", "k")
+	require.ErrorIs(t, err, keyversion.ErrVersionConflict)
+
+	stored, found, err := store.Load(ctx, "", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint32(2), stored.Current)
+	got, err := svc.GetKey(ctx, "software", "k")
+	require.NoError(t, err)
+	v2PEM, err := pubKeyPEM(v2)
+	require.NoError(t, err)
+	assert.Equal(t, v2PEM, got.PublicKeyPEM, "version 2 is still the second writer's key")
 }
