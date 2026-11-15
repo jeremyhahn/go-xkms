@@ -15,16 +15,23 @@ package apimodule
 
 import (
 	"context"
+	"crypto/x509"
 	"slices"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/compose"
 )
 
 // attestedCallerStorage names the surface the gate's evidence storage
 // reports as composing until the host's qrdb client resolves.
 const attestedCallerStorage = "attested-caller evidence storage"
+
+// attestedCallerTrustRootsSurface names the persisted trust-root store a gate
+// policy without anchors reads its IDevID-issuer roots from.
+const attestedCallerTrustRootsSurface = "attested-caller trust roots"
 
 // AttestedCallerClientError is returned by NewModule when WithAttestedCallerGate
 // is configured without WithQRDBClient: the gate's evidence lives in the
@@ -43,7 +50,10 @@ func (e *AttestedCallerClientError) Error() string {
 // installs the gate on its node with go-qrdb's node.WithPeerAttestationGate,
 // passing Module.PeerAttestationGate.
 //
-// The policy's PCR values are the embedder's; go-xkms ships none.
+// The policy's PCR values are the embedder's; go-xkms ships none. Anchor
+// pools the policy leaves nil (Quote.Anchors, DeviceIdentity.Anchors) are
+// the IDevID-issuer roots in the host node's persisted trust-root store when
+// the gate is built, so the client must resolve at NewModule.
 func WithAttestedCallerGate(policy peergate.GatePolicy) Option {
 	return func(m *Module) {
 		policy.Permissions = slices.Clone(policy.Permissions)
@@ -69,12 +79,75 @@ func (m *Module) buildAttestedCallerGate() error {
 	if m.resolveQRDBClient == nil {
 		return &AttestedCallerClientError{}
 	}
-	gate, err := peergate.NewGate(peergate.GateConfig{Policy: *m.attestedCallerPolicy, DAOs: m.peerEvidenceStorage})
+	policy := *m.attestedCallerPolicy
+	if attestedCallerNeedsAnchors(policy) {
+		roots, err := m.attestedCallerTrustRoots()
+		if err != nil {
+			return err
+		}
+		if policy, err = attestedCallerAnchors(policy, roots); err != nil {
+			return err
+		}
+	}
+	gate, err := peergate.NewGate(peergate.GateConfig{Policy: policy, DAOs: m.peerEvidenceStorage})
 	if err != nil {
 		return err
 	}
 	m.peerGate = gate
 	return nil
+}
+
+// attestedCallerNeedsAnchors reports whether policy leaves an anchor pool
+// for the persisted trust-root store to fill.
+func attestedCallerNeedsAnchors(policy peergate.GatePolicy) bool {
+	return policy.Quote.Anchors == nil ||
+		(policy.DeviceIdentity != nil && policy.DeviceIdentity.Anchors == nil)
+}
+
+// attestedCallerTrustRoots opens the host node's persisted trust-root store
+// (compose.BuildTrustRootStore over truststore.DatabaseName), the store the
+// trust_roots verbs serve.
+func (m *Module) attestedCallerTrustRoots() (truststore.PurposeLister, error) {
+	client := m.resolveQRDBClient()
+	if client == nil {
+		return nil, &SurfaceComposingError{Surface: attestedCallerTrustRootsSurface}
+	}
+	ds, err := m.openDatastore(client)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := ds.DatabaseKVStore(context.Background(), truststore.DatabaseName); err != nil {
+		return nil, err
+	}
+	return compose.BuildTrustRootStore(ds.DAOFactory())
+}
+
+// attestedCallerAnchors returns policy with each anchor pool it left nil
+// (Quote.Anchors, and DeviceIdentity.Anchors when DeviceIdentity is set)
+// built from the PurposeIDevIDIssuer roots in roots. Pools the embedder gave
+// are kept. The pools are a snapshot taken when the gate is built; an empty
+// purpose yields an empty pool, which trusts no peer.
+func attestedCallerAnchors(policy peergate.GatePolicy, roots truststore.PurposeLister) (peergate.GatePolicy, error) {
+	if !attestedCallerNeedsAnchors(policy) {
+		return policy, nil
+	}
+	certs, err := roots.CertificatesByPurpose(truststore.PurposeIDevIDIssuer)
+	if err != nil {
+		return policy, err
+	}
+	pool := x509.NewCertPool()
+	for _, cert := range certs {
+		pool.AddCert(cert)
+	}
+	if policy.Quote.Anchors == nil {
+		policy.Quote.Anchors = pool
+	}
+	if policy.DeviceIdentity != nil && policy.DeviceIdentity.Anchors == nil {
+		identity := *policy.DeviceIdentity
+		identity.Anchors = pool
+		policy.DeviceIdentity = &identity
+	}
+	return policy, nil
 }
 
 // peerEvidenceStorage resolves the gate's evidence storage on the host's
