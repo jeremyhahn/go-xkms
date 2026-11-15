@@ -89,6 +89,34 @@ The pinned go-qrdb v0.51.0-alpha `sdk/go/node` seams that go-xkms does not fill:
 - `WithVolumeProvider(volume.Provider)` is storage (luks2 pools), not crypto.
   It belongs to the volume row, not this one.
 
+## Codex P1 findings on 7e753ec9e (lane row2083c)
+
+Each as test commit, then fix commit:
+
+5. Concurrent boot passes: `TestTenantCAKeyFactory_ConcurrentNodesConverge`
+   (080332a90); `ErrKeyAlreadyExists` converges on the persisted key and its
+   certificate (f97090abc).
+3. Key without certificate: `TestTenantCAKeyFactory_RetryAfterSaveCertFailure`
+   (cb0aa5a56); an existing key is validated against its saved certificate,
+   which is issued if missing (71da131f4).
+6. TryRLock contention: `TestServer_TenantCAKeys_ResolveDuringServerLockContention`
+   (0eb88f911); the boot pass resolves the default backend once and binds it,
+   the read path takes only the factory's lock (d9a48f6c3).
+4. TPM system scope: `TestTenantCAKeyFactory_TPM2SystemKeyIsReused`
+   (tpm_simulator, 8213e5d92); lookup and `TenantIDs` compare
+   `scope.TenantName` (3043fff7c).
+2. Native onboarding: `TestServer_TenantCAKeys_NativeOnboardingGetsKey`
+   (4ae2a0865); the pinned go-qrdb has no option to wrap the tenant service
+   its `TenantOnboardingService` uses, so `ProviderForTenant` provisions a
+   tenant the node's tenant service knows (`GetTenant`) on first request and
+   refuses an unknown one (3a1b42909). Open: an end-to-end POST /v1/tenants
+   CSR test (needs a cluster-CA node harness); the cleaner fix is a go-qrdb
+   seam that lets the embedder wrap the onboarding tenant service.
+1. PKCS#11: `TestCreateKeyID_TenantScoped` (7c84e77cc); tenant keys use
+   `tenant=<tenant>/<CN>.<alg>` as CKA_ID/CKA_LABEL, `ListKeys` reads the
+   tenant back, system keys keep the old ID (c8913d06a). Open: a SoftHSM
+   two-tenant factory test.
+
 ## Results
 
 - `go test -count=1 -race -timeout 75m -tags "codec_cbor codec_json codec_msgpack" ./pkg/server/...`: pass (pkg/server 528 s; credentials, loopback pass). The run hits go test's default 10m bound under -race, so it needs the Makefile's UNIT_TEST_TIMEOUT.
