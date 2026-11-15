@@ -383,6 +383,100 @@ func TestFinishInviteRegistration_MismatchedSessionEnrolsNothing(t *testing.T) {
 	}
 }
 
+// failActivationOnce makes the next lifecycle update fail without
+// committing, as a qrdb write lost after the credential was persisted.
+func (f *inviteFixture) failActivationOnce(t *testing.T) {
+	t.Helper()
+	update := f.users.updateUser
+	failed := false
+	f.users.updateUser = func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+		if !failed && req.Lifecycle == string(qrdbsdk.LifecycleActive) {
+			failed = true
+			return nil, errors.New("injected: activation not committed")
+		}
+		return update(ctx, req)
+	}
+}
+
+func (f *inviteFixture) lifecycle(t *testing.T, id uint64) string {
+	t.Helper()
+	u, err := f.users.GetUser(context.Background(), id)
+	require.NoError(t, err)
+	return u.Lifecycle
+}
+
+// An activation that fails after WebAuthn stored the credential is
+// resumable: the account stays pending and the invitation unredeemed, and
+// re-sending the same finish request (its session already consumed)
+// completes the activation without a new ceremony (verify P1
+// servicer_invite.go:332).
+func TestFinishInviteRegistration_ResumesActivationAfterFailure(t *testing.T) {
+	f := newInviteFixture(t)
+	token := f.mintInvite(t)
+
+	begin, err := f.beginRegistration(inviteFixtureTenant, token)
+	require.NoError(t, err)
+	attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+
+	f.failActivationOnce(t)
+	_, err = f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+	require.Error(t, err)
+	assert.Equal(t, string(qrdbsdk.LifecyclePending), f.lifecycle(t, inviteFixtureQRDBUserID))
+	_, err = f.getInvite(inviteFixtureTenant, token)
+	require.NoError(t, err, "a failed activation must leave the invitation unredeemed")
+
+	result, err := f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+	require.NoError(t, err)
+	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+	assert.Equal(t, string(qrdbsdk.LifecycleActive), f.lifecycle(t, inviteFixtureQRDBUserID))
+	_, err = f.getInvite(inviteFixtureTenant, token)
+	require.ErrorIs(t, err, ErrInviteUnusable)
+
+	// The resume ran once: the spent invitation does not resume again.
+	_, err = f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+	require.ErrorIs(t, err, ErrInviteUnusable)
+}
+
+// The resume path is bound to the invitation's own account and the
+// credential its ceremony stored: another pending account's persisted
+// enrolment cannot be activated through this invitation, and a consumed
+// invitation resumes nothing.
+func TestFinishInviteRegistration_ResumeRefusesAnotherAccountAndConsumedInvite(t *testing.T) {
+	f := newInviteFixture(t)
+	const otherID = uint64(8)
+	f.accounts = append(f.accounts, &qrdbtransport.User{
+		ID: otherID, Username: "b@example.com", Email: "b@example.com",
+		Name: "B", TenantID: inviteFixtureTenant, Lifecycle: string(qrdbsdk.LifecyclePending),
+	})
+	tokenA := f.mintInvite(t)
+	infoB, err := f.svc.createInvite(context.Background(), inviteFixtureTenant, otherID, f.inviteTTL)
+	require.NoError(t, err)
+	tokenB := infoB.Token
+
+	// B's enrolment persists its credential, then its activation fails.
+	beginB, err := f.beginRegistration(inviteFixtureTenant, tokenB)
+	require.NoError(t, err)
+	attestationB := f.attestInvite(t, beginB.OptionsJSON, newInviteEC2Credential(t))
+	f.failActivationOnce(t)
+	_, err = f.finishRegistration(inviteFixtureTenant, tokenB, beginB.SessionID, attestationB)
+	require.Error(t, err)
+
+	// A's invitation cannot carry B's persisted enrolment to activation.
+	_, err = f.finishRegistration(inviteFixtureTenant, tokenA, beginB.SessionID, attestationB)
+	require.Error(t, err)
+	assert.Equal(t, string(qrdbsdk.LifecyclePending), f.lifecycle(t, otherID))
+	assert.Equal(t, string(qrdbsdk.LifecyclePending), f.lifecycle(t, inviteFixtureQRDBUserID))
+	_, err = f.getInvite(inviteFixtureTenant, tokenA)
+	require.NoError(t, err, "a refused resume must not spend A's invitation")
+
+	// Once B's invitation is consumed, B's enrolment no longer resumes.
+	_, err = f.svc.inviteStore.Redeem(context.Background(), inviteFixtureTenant, tokenB)
+	require.NoError(t, err)
+	_, err = f.finishRegistration(inviteFixtureTenant, tokenB, beginB.SessionID, attestationB)
+	require.ErrorIs(t, err, ErrInviteUnusable)
+	assert.Equal(t, string(qrdbsdk.LifecyclePending), f.lifecycle(t, otherID))
+}
+
 func TestGetInvite_Success(t *testing.T) {
 	f := newInviteFixture(t)
 	token := f.mintInvite(t)
