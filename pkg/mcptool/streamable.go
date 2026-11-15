@@ -177,7 +177,7 @@ func (s *streamableHTTP) sendRequest(ctx context.Context, request mcptransport.J
 		}
 		return msg.response()
 	case contentTypeEventFeed:
-		return s.readEventStream(body, request)
+		return s.readEventStream(ctx, body, request)
 	default:
 		return nil, fmt.Errorf("mcp request %s: unexpected content type %q", request.Method, mediaType)
 	}
@@ -304,8 +304,8 @@ func (s *streamableHTTP) setHeaders(req *http.Request, extra http.Header) {
 
 // readEventStream reads server-sent events until the response to request
 // arrives. Notifications on the way go to the notification handler; requests
-// from the server are not supported by this client and are dropped.
-func (s *streamableHTTP) readEventStream(body io.Reader, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
+// from the server are answered on the same session (answerServerRequest).
+func (s *streamableHTTP) readEventStream(ctx context.Context, body io.Reader, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64<<10), maxResponseBytes)
 	var data strings.Builder
@@ -314,7 +314,7 @@ func (s *streamableHTTP) readEventStream(body io.Reader, request mcptransport.JS
 		line := scanner.Text()
 		if !more || line == "" {
 			if data.Len() > 0 {
-				if resp := s.dispatchEvent(data.String(), request.ID); resp != nil {
+				if resp := s.dispatchEvent(ctx, data.String(), request.ID); resp != nil {
 					return resp, nil
 				}
 				data.Reset()
@@ -339,7 +339,7 @@ func (s *streamableHTTP) readEventStream(body io.Reader, request mcptransport.JS
 
 // dispatchEvent handles one event's data. It returns the response when the
 // event carries one, and nil otherwise.
-func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) *mcptransport.JSONRPCResponse {
+func (s *streamableHTTP) dispatchEvent(ctx context.Context, data string, id mcp.RequestId) *mcptransport.JSONRPCResponse {
 	var msg wireMessage
 	if err := json.Unmarshal([]byte(data), &msg); err != nil {
 		return nil
@@ -355,7 +355,11 @@ func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) *mcptransp
 		}
 		return resp
 	}
-	if msg.Method != "" && msg.ID == nil {
+	if msg.Method != "" && msg.ID != nil && string(msg.ID) != "null" {
+		s.answerServerRequest(ctx, msg)
+		return nil
+	}
+	if msg.Method != "" {
 		var notification mcp.JSONRPCNotification
 		if err := json.Unmarshal([]byte(data), &notification); err != nil {
 			return nil
@@ -368,6 +372,37 @@ func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) *mcptransp
 		}
 	}
 	return nil
+}
+
+// serverRequestReply is the client's answer to a request the server sent on
+// an event stream. ID stays raw so the server gets its own id back exactly.
+type serverRequestReply struct {
+	JSONRPC string                   `json:"jsonrpc"`
+	ID      json.RawMessage          `json:"id"`
+	Result  *struct{}                `json:"result,omitempty"`
+	Error   *mcp.JSONRPCErrorDetails `json:"error,omitempty"`
+}
+
+// answerServerRequest answers a server-initiated request on the same
+// session: ping gets an empty result, every other method a JSON-RPC
+// method-not-found error. The client offers no sampling, roots or
+// elicitation, so no other request has a meaningful answer; leaving one
+// unanswered would stall a server that waits for it before completing the
+// call. A failed reply is dropped: the call's own response, or its absence,
+// reports the outcome.
+func (s *streamableHTTP) answerServerRequest(ctx context.Context, msg wireMessage) {
+	reply := serverRequestReply{JSONRPC: mcp.JSONRPC_VERSION, ID: msg.ID}
+	if msg.Method == string(mcp.MethodPing) {
+		reply.Result = &struct{}{}
+	} else {
+		reply.Error = &mcp.JSONRPCErrorDetails{Code: mcp.METHOD_NOT_FOUND, Message: "Method not found"}
+	}
+	resp, err := s.post(ctx, reply, nil)
+	if err != nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+	_ = resp.Body.Close()
 }
 
 // wireMessage is the part of a JSON-RPC message the transport inspects.
