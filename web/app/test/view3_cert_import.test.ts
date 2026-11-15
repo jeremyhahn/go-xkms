@@ -185,4 +185,22 @@ describe("CertImportView", () => {
 
     expect(await screen.findByText(/certificate was stored but the chain was not: chain rejected/)).toBeInTheDocument();
   });
+
+  it("stores the request snapshotted before the existence check, not inputs edited while it runs", async () => {
+    let resolveExists: (v: boolean) => void = () => {};
+    exists.mockImplementation(() => new Promise<boolean>((r) => (resolveExists = r)));
+    save.mockResolvedValue(undefined as never);
+    await mountReady();
+    await fill("k-a", "tpm2", LEAF);
+    await fireEvent.click(importButton());
+    await waitFor(() => expect(exists).toHaveBeenCalledWith("k-a", "tpm2"));
+
+    await fireEvent.input(screen.getByLabelText("Key ID"), { target: { value: "k-b" } });
+    await fireEvent.input(screen.getByLabelText("Certificate PEM"), { target: { value: `${LEAF}\n` } });
+    resolveExists(false);
+
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save).toHaveBeenCalledWith("k-a", "tpm2", { backend: "tpm2", certificate_pem: LEAF });
+    expect(exists).toHaveBeenCalledOnce();
+  });
 });
