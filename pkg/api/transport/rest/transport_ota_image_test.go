@@ -41,6 +41,19 @@ func newOTAImageRESTServer(t *testing.T) *Transport {
 		writeOTAJSON(t, w, http.StatusOK, transport.HealthResponse{Status: "ok"})
 	})
 	mux.HandleFunc("/api/v1/ota-image-keys/", func(w http.ResponseWriter, r *http.Request) {
+		if board, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/ota-image-keys/"), "/public-key"); ok {
+			require.Equal(t, http.MethodGet, r.Method)
+			require.Equal(t, "software", r.URL.Query().Get("backend"))
+			if board == otaBadBoard {
+				writeOTAJSON(t, w, http.StatusBadRequest, map[string]string{"error": "invalid board id"})
+				return
+			}
+			writeOTAJSON(t, w, http.StatusOK, transport.OTAImagePublicKeyResponse{
+				KeyID: "ota-image-" + board, BoardID: board, Version: 2,
+				Raw: make([]byte, 64), COSEKey: []byte{0xa5},
+			})
+			return
+		}
 		require.Equal(t, http.MethodPost, r.Method)
 		var body struct {
 			Backend string `json:"backend"`
@@ -95,6 +108,21 @@ func TestOTAImageKey_REST(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("sig"), signed.Signature)
 	assert.Equal(t, uint32(2), signed.KeyVersion)
+}
+
+func TestOTAImageKey_REST_ExportPublicKey(t *testing.T) {
+	tr := newOTAImageRESTServer(t)
+
+	got, err := tr.ExportOTAImagePublicKey(context.Background(), &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
+	require.NoError(t, err)
+	assert.Equal(t, "ota-image-cm4", got.KeyID)
+	assert.Equal(t, "cm4", got.BoardID)
+	assert.Equal(t, uint32(2), got.Version)
+	assert.Len(t, got.Raw, 64)
+	assert.Equal(t, []byte{0xa5}, got.COSEKey)
+
+	_, err = tr.ExportOTAImagePublicKey(context.Background(), &transport.OTAImageKeyRequest{Backend: "software", BoardID: otaBadBoard})
+	assert.Error(t, err)
 }
 
 func TestOTAImageKey_REST_InvalidBoard(t *testing.T) {

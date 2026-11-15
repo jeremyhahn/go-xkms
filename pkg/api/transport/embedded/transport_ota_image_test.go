@@ -91,6 +91,16 @@ func TestOTAImageKey_Embedded_InvalidBoard(t *testing.T) {
 	assert.ErrorIs(t, err, xkms.ErrInvalidBoardID)
 }
 
+func TestOTAImageKey_Embedded_ExportPublicKey(t *testing.T) {
+	tr := newOTAImageTransport(t)
+
+	got, err := tr.ExportOTAImagePublicKey(context.Background(), &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
+	require.NoError(t, err)
+	assert.Equal(t, "ota-image-cm4", got.KeyID)
+	assert.Equal(t, "cm4", got.BoardID)
+	assert.Equal(t, uint32(1), got.Version)
+}
+
 func TestOTAImageKey_Embedded_NotConnected(t *testing.T) {
 	tr, err := New(&otaImageService{})
 	require.NoError(t, err)
