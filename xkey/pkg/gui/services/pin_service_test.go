@@ -29,6 +29,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
@@ -791,6 +792,7 @@ type retryLimitedPINBackend struct {
 	*mockPINBackend
 	userPIN string
 	retries int
+	failed  int
 }
 
 func (b *retryLimitedPINBackend) VerifyUserPIN(pin string) error {
@@ -800,9 +802,16 @@ func (b *retryLimitedPINBackend) VerifyUserPIN(pin string) error {
 	}
 	if pin != b.userPIN {
 		b.retries--
+		b.failed++
 		return errTestUserPINWrong
 	}
 	return nil
+}
+
+// GetLockoutStatus reports the hardware lockout state: locked once the
+// retries are spent.
+func (b *retryLimitedPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus {
+	return &qrdbsdk.PINLockoutStatus{IsLocked: b.retries == 0, FailedAttempts: b.failed}
 }
 
 func (b *retryLimitedPINBackend) ChangeUserPIN(current, next string) error {
@@ -867,6 +876,65 @@ func TestPINService_ChangeUserPIN_LockedBackendRefusesBeforeBarrier(t *testing.T
 		require.NotErrorIs(t, err, ErrBarrierNotPINSealed)
 	}
 	require.Equal(t, int32(0), backend.changeUserCalls.Load())
+}
+
+func auditEntriesWithOp(l *recordingAuditLogger, op audit.OperationType) []audit.Entry {
+	var out []audit.Entry
+	for _, e := range l.entries {
+		if e.Operation == op {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// A locked backend reached through ChangeUserPIN is audited exactly as the
+// login path (VerifyUserPIN) audits it: one OpPINLocked event with the same
+// fields, which security monitoring keys on, and no failed-attempt event.
+func TestPINService_ChangeUserPIN_LockoutAuditedAsLoginPath(t *testing.T) {
+	lockedBackend := func() *retryLimitedPINBackend {
+		return &retryLimitedPINBackend{
+			mockPINBackend: &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true},
+			userPIN:        "old-pin",
+			retries:        0,
+			failed:         3,
+		}
+	}
+
+	login := newTestPINService(lockedBackend())
+	loginLog := &recordingAuditLogger{}
+	login.SetAuditLogger(loginLog)
+	require.ErrorIs(t, login.VerifyUserPIN("old-pin"), errTestUserPINLocked)
+	want := auditEntriesWithOp(loginLog, audit.OpPINLocked)
+	require.Len(t, want, 1, "the login path records the lockout event")
+
+	svc := newTestPINService(lockedBackend())
+	log := &recordingAuditLogger{}
+	svc.SetAuditLogger(log)
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, errTestUserPINLocked)
+	assert.Equal(t, want, log.entries, "only the login path's lockout event is recorded")
+	assert.Empty(t, auditEntriesWithOp(log, audit.OpPINFailed), "a lockout is not a failed attempt")
+}
+
+// A plain wrong current PIN keeps the failed-attempt audit and records no
+// lockout.
+func TestPINService_ChangeUserPIN_WrongPINAuditedAsFailedAttempt(t *testing.T) {
+	backend := &retryLimitedPINBackend{
+		mockPINBackend: &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true},
+		userPIN:        "old-pin",
+		retries:        3,
+	}
+	svc := newTestPINService(backend)
+	log := &recordingAuditLogger{}
+	svc.SetAuditLogger(log)
+
+	err := svc.ChangeUserPIN("wrong-pin", "new-pin")
+	require.ErrorIs(t, err, errTestUserPINWrong)
+	failed := auditEntriesWithOp(log, audit.OpPINFailed)
+	require.Len(t, failed, 1)
+	assert.Equal(t, "current_pin_rejected", failed[0].Details["reason"])
+	assert.Empty(t, auditEntriesWithOp(log, audit.OpPINLocked))
 }
 
 // An invalid replacement PIN is refused with go-qrdb's own validation error
