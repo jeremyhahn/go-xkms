@@ -82,6 +82,7 @@ type inviteFixture struct {
 	users     *mockUserClient
 	rp        virtualwebauthn.RelyingParty
 	inviteTTL time.Duration
+	accounts  []*qrdbtransport.User
 }
 
 const inviteFixtureQRDBUserID = uint64(42)
@@ -96,38 +97,56 @@ func newInviteFixture(t *testing.T) *inviteFixture {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	// qrdb side: mockUserClient tracks the pending account by qrdb id.
-	qrdbUser := &qrdbtransport.User{
+	// qrdb side: mockUserClient tracks the pending accounts by qrdb id. A
+	// test may append accounts (f.accounts); an email lookup answers the
+	// lowest-ID match in the tenant, as an ambiguous login key would.
+	f := &inviteFixture{}
+	f.accounts = []*qrdbtransport.User{{
 		ID: inviteFixtureQRDBUserID, Username: inviteFixtureEmail, Email: inviteFixtureEmail,
 		Name: "Invitee", TenantID: inviteFixtureTenant, Lifecycle: string(qrdbsdk.LifecyclePending),
+	}}
+	byID := func(id uint64) *qrdbtransport.User {
+		for _, u := range f.accounts {
+			if u.ID == id {
+				return u
+			}
+		}
+		return nil
 	}
 	users := &mockUserClient{
 		getUser: func(_ context.Context, id uint64) (*qrdbtransport.User, error) {
-			if id != qrdbUser.ID {
-				return nil, &qrdbtransport.UserNotFoundError{ID: id}
+			if u := byID(id); u != nil {
+				return u, nil
 			}
-			return qrdbUser, nil
+			return nil, &qrdbtransport.UserNotFoundError{ID: id}
 		},
 		getUserByEmail: func(_ context.Context, tenantID, email string) (*qrdbtransport.User, error) {
-			if tenantID != qrdbUser.TenantID || email != qrdbUser.Email {
+			var found *qrdbtransport.User
+			for _, u := range f.accounts {
+				if u.TenantID == tenantID && u.Email == email && (found == nil || u.ID < found.ID) {
+					found = u
+				}
+			}
+			if found == nil {
 				return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, email)}
 			}
-			return qrdbUser, nil
+			return found, nil
 		},
 		updateUser: func(_ context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
-			if req.ID != qrdbUser.ID {
+			u := byID(req.ID)
+			if u == nil {
 				return nil, &qrdbtransport.UserNotFoundError{ID: req.ID}
 			}
 			if req.Lifecycle != "" {
-				qrdbUser.Lifecycle = req.Lifecycle
+				u.Lifecycle = req.Lifecycle
 			}
-			return qrdbUser, nil
+			return u, nil
 		},
 		addCertBinding: func(_ context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
-			if userID != qrdbUser.ID {
-				return nil, &qrdbtransport.UserNotFoundError{ID: userID}
+			if u := byID(userID); u != nil {
+				return u, nil
 			}
-			return qrdbUser, nil
+			return nil, &qrdbtransport.UserNotFoundError{ID: userID}
 		},
 	}
 	svc.SetUserClients(users, &mockRoleClient{})
@@ -153,11 +172,10 @@ func newInviteFixture(t *testing.T) *inviteFixture {
 	require.NoError(t, err)
 	svc.SetInviteStore(inviteStore)
 
-	return &inviteFixture{
-		svc: svc, users: users,
-		rp:        virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
-		inviteTTL: time.Hour,
-	}
+	f.svc, f.users = svc, users
+	f.rp = virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]}
+	f.inviteTTL = time.Hour
+	return f
 }
 
 // mintInvite issues a token for the fixture's pending account.
@@ -270,6 +288,63 @@ func TestFinishInviteRegistration_RefusesUnknownToken(t *testing.T) {
 	result, err := f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
 	require.NoError(t, err)
 	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+}
+
+// TestInviteRedemption_RefusesNonSystemTenant pins row 21 of the #2183
+// narrowing: redemption serves invitations of the system tenant only, and
+// an invitation of any other tenant is refused with the opaque answer every
+// unusable invite gets, on every redemption path, leaving the account as it
+// was. Tenant-scoped redemption is go-xkms #2202.
+func TestInviteRedemption_RefusesNonSystemTenant(t *testing.T) {
+	f := newInviteFixture(t)
+	const tenant = "acme"
+	info, err := f.svc.createInvite(context.Background(), tenant, inviteFixtureQRDBUserID, f.inviteTTL)
+	require.NoError(t, err)
+	caCert, leafCert, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	f.svc.SetCA(&mockCA{bundlePEM: pemEncodeCert(caCert)})
+
+	_, err = f.getInvite(tenant, info.Token)
+	require.ErrorIs(t, err, ErrInviteUnusable)
+	_, err = f.beginRegistration(tenant, info.Token)
+	require.ErrorIs(t, err, ErrInviteUnusable)
+	_, err = f.finishRegistration(tenant, info.Token, "session", "{}")
+	require.ErrorIs(t, err, ErrInviteUnusable)
+	_, err = f.activatePIV(tenant, info.Token, pemEncodeCert(leafCert))
+	require.ErrorIs(t, err, ErrInviteUnusable)
+
+	u, err := f.users.GetUser(context.Background(), inviteFixtureQRDBUserID)
+	require.NoError(t, err)
+	assert.Equal(t, string(qrdbsdk.LifecyclePending), u.Lifecycle)
+}
+
+// TestInviteRegistration_BindsTheInvitedAccountNotAnEmailMatch pins the
+// verify13 P1 on servicer_invite.go: the WebAuthn ceremony binds to the
+// account the invitation names, by its user ID, never to whichever account
+// an email lookup finds. Here another pending account carries the same
+// email and sorts first; it must stay unenrolled and pending.
+func TestInviteRegistration_BindsTheInvitedAccountNotAnEmailMatch(t *testing.T) {
+	f := newInviteFixture(t)
+	const otherID = uint64(7)
+	f.accounts = append(f.accounts, &qrdbtransport.User{
+		ID: otherID, Username: "other", Email: inviteFixtureEmail,
+		Name: "Other", TenantID: inviteFixtureTenant, Lifecycle: string(qrdbsdk.LifecyclePending),
+	})
+	token := f.mintInvite(t)
+
+	begin, err := f.beginRegistration(inviteFixtureTenant, token)
+	require.NoError(t, err)
+	attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+	result, err := f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+	require.NoError(t, err)
+	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+
+	invited, err := f.users.GetUser(context.Background(), inviteFixtureQRDBUserID)
+	require.NoError(t, err)
+	assert.Equal(t, string(qrdbsdk.LifecycleActive), invited.Lifecycle)
+	other, err := f.users.GetUser(context.Background(), otherID)
+	require.NoError(t, err)
+	assert.Equal(t, string(qrdbsdk.LifecyclePending), other.Lifecycle, "the same-email account must not be enrolled or activated")
 }
 
 func TestGetInvite_Success(t *testing.T) {
