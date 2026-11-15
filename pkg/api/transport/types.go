@@ -650,6 +650,18 @@ type OTAImageKeyRequest struct {
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
+// OTAImagePublicKeyResponse is the public half of a board's current OTA
+// image-signing key: Raw is the uncompressed P-256 point without its 0x04
+// prefix (X || Y, 32 bytes each) and COSEKey is the RFC 9052 COSE_Key (EC2,
+// P-256, ES256) whose kid is KeyID.
+type OTAImagePublicKeyResponse struct {
+	KeyID   string `json:"key_id"`
+	BoardID string `json:"board_id"`
+	Version uint32 `json:"version"`
+	Raw     []byte `json:"raw"`
+	COSEKey []byte `json:"cose_key"`
+}
+
 // OTAImageSignRequest signs an OTA image, or its SHA-256 digest, with the
 // current version of a board's OTA image-signing key.
 type OTAImageSignRequest struct {
