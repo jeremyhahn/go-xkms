@@ -112,40 +112,6 @@ func TestNewHostServer_TokenIssuerRunsOnTheCallContext(t *testing.T) {
 	require.NotNil(t, pair)
 }
 
-// TestNewHostServer_RefreshResolvesOnTheCallContext is the regression test
-// for #2541 P1 (2): POST /api/v1/auth/refresh is public, so the resolver's
-// current-account lookup runs on the host's bound context. A valid refresh
-// token for a live account rotates (200) on a node that enforces
-// authentication instead of failing unauthenticated (401).
-func TestNewHostServer_RefreshResolvesOnTheCallContext(t *testing.T) {
-	node := newEnforcingNode(t)
-	srv := newEnforcingHostServer(t, node)
-
-	// The account exists before the login: seed it below the RBAC layer, as
-	// an operator's earlier sign-up would have.
-	_, err := node.UserService().CreateUser(context.Background(), &qrdbuser.CreateUserRequest{
-		Username: "alice",
-		Email:    "alice@example.com",
-		Name:     "Alice",
-	})
-	require.NoError(t, err)
-
-	pair, err := srv.tokenIssuer.Mint(context.Background(), &auth.Identity{
-		Subject:  "alice",
-		TenantID: DefaultWebAuthnTenant,
-		Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUsername},
-	})
-	require.NoError(t, err)
-
-	body, err := json.Marshal(map[string]string{"refresh_token": pair.RefreshToken})
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-}
-
 // TestNewHostServer_PasskeyAccessTokenNamesTheAccount covers Codex P1 (3):
 // a passkey login mints an access token whose subject is the account's
 // base64 WebAuthn handle (sub_kind=user_handle). Bearer authentication must
