@@ -75,7 +75,41 @@ func openAPIBarrier() error {
 	if err != nil {
 		return err
 	}
-	return xkmsdtest.OpenBarrier(ctx, client, LoadTestConfig().RESTBaseURL, []byte(apiBarrierPassphrase))
+	baseURL := LoadTestConfig().RESTBaseURL
+	if err := xkmsdtest.OpenBarrier(ctx, client, baseURL, []byte(apiBarrierPassphrase)); err != nil {
+		return err
+	}
+	return awaitAPIReady(ctx, client, baseURL)
+}
+
+// awaitAPIReady polls baseURL's /health/ready, the probe the cluster stack
+// waits on, over client (anchored on the suite's CA, so only the verified
+// server answers) until it returns 200 or ctx ends. The unseal answering 204
+// means the barrier opened, not that the full server has replaced the sealed
+// window and serves requests.
+func awaitAPIReady(ctx context.Context, client *http.Client, baseURL string) error {
+	route := baseURL + "/health/ready"
+	var last error
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, route, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			_ = resp.Body.Close() // only the status is read; a close failure cannot change it
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+			err = fmt.Errorf("GET %s: status %d", route, resp.StatusCode)
+		}
+		last = err
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("server not ready after unseal: %w (last: %v)", ctx.Err(), last)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 // adminHTTPClient presents the administrator credential `xkmsd init` wrote
