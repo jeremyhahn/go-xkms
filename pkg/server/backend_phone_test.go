@@ -41,6 +41,24 @@ import (
 // mockPhoneSender implements phonebackend.Sender for testing.
 type mockPhoneSender struct {
 	sendFunc func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error)
+	// peerKey is the remote static key of the sender's Noise session;
+	// nil means the test phone's key (testPhoneKeyHex).
+	peerKey []byte
+}
+
+// testPhoneKeyHex is the test phone's X25519 Noise static public key.
+const testPhoneKeyHex = "11223344556677881122334455667788112233445566778811223344556677aa"
+
+// RemoteStaticKey reports the peer key the mock session is authenticated to.
+func (m *mockPhoneSender) RemoteStaticKey() []byte {
+	if m.peerKey != nil {
+		return m.peerKey
+	}
+	key, err := hex.DecodeString(testPhoneKeyHex)
+	if err != nil {
+		panic(err)
+	}
+	return key
 }
 
 func (m *mockPhoneSender) SendRequest(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
@@ -62,7 +80,7 @@ func newTestPhoneConfig(t testing.TB) *config.PhoneConfig {
 		DeviceAddress:  "127.0.0.1:9876",
 		NoiseStaticKey: secrettest.Literal(t, []byte("aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233")),
 
-		PhoneStaticKey: "11223344556677881122334455667788112233445566778811223344556677aa",
+		PhoneStaticKey: testPhoneKeyHex,
 		Tenant:         "acme",
 		DeviceID:       "phone-1",
 		RequestTimeout: 5 * time.Second,
@@ -194,6 +212,23 @@ func TestRegisterPhoneBackend_RegistryRefusesDevice(t *testing.T) {
 		require.NoError(t, srv.RegisterPhoneBackend(&mockPhoneSender{}))
 		require.NoError(t, srv.UnregisterPhoneBackend())
 	})
+}
+
+// TestRegisterPhoneBackend_RefusesOtherPeer: the registry record and the
+// configuration are valid for phone A, but the sender's session is
+// authenticated to phone B. Verification binds the authenticated peer key,
+// not the configuration, so phone B is refused.
+func TestRegisterPhoneBackend_RefusesOtherPeer(t *testing.T) {
+	srv := newTestServerForPhone(t, newTestPhoneConfig(t))
+	phoneB, err := hex.DecodeString("99887766554433229988776655443322998877665544332299887766554433bb")
+	require.NoError(t, err)
+
+	err = srv.RegisterPhoneBackend(&mockPhoneSender{peerKey: phoneB})
+	require.ErrorIs(t, err, ErrPhoneDeviceRefused)
+	srv.mu.RLock()
+	_, ok := srv.keyProviders["phone"]
+	srv.mu.RUnlock()
+	assert.False(t, ok, "a phone authenticated as another device must not be registered")
 }
 
 func TestRegisterPhoneBackend_NilSender(t *testing.T) {
