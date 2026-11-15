@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 )
 
 // TestDialClient_InputGuards covers the four nil/empty parameter guards.
@@ -307,12 +309,16 @@ func TestDialClient_CancelAfterAuthWithQueuedRequestsLeavesNoGoroutine(t *testin
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// A failed handshake is left to DialClient and judged below, on the
+	// test goroutine: under GODEBUG=fips140=only the default key exchange
+	// is refused, and the test then re-runs outside FIPS enforcement.
+	var handshakeErr error
 	afterHandshakeHook = func(hsErr error) {
-		defer cancel()
 		if hsErr != nil {
-			t.Errorf("handshake failed: %v", hsErr)
+			handshakeErr = hsErr
 			return
 		}
+		defer cancel()
 		if !waitForBlockedClientMux(5 * time.Second) {
 			t.Error("the client mux never blocked on the queued peer traffic")
 		}
@@ -328,6 +334,17 @@ func TestDialClient_CancelAfterAuthWithQueuedRequestsLeavesNoGoroutine(t *testin
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         30 * time.Second,
 	})
+	if handshakeErr != nil {
+		select {
+		case <-serverDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the test server did not end within 5s of the failed handshake")
+		}
+		if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+			return
+		}
+		t.Fatalf("handshake failed: %v (DialClient: %v)", handshakeErr, err)
+	}
 	var te *TimeoutError
 	if !errors.As(err, &te) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected a TimeoutError wrapping context.Canceled, got %v", err)
