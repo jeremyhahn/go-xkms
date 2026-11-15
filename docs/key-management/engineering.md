@@ -636,7 +636,7 @@ returns `ErrOTAImageAlgorithm` (`:56-57`).
   OTA image key (`:119-121`, `ota_image_keys_test.go:166`).
 
 **Public key export.** `ExportOTAImagePublicKey` returns the public half
-of the current version of a board's key (`ota_image_keys.go:183-206`), the
+of the current version of a board's key (`ota_image_keys.go:183-210`), the
 form trusted-firmware #104 (requirement 10) embeds in a board image. The
 board's record is its key ID, `OTAImageKeyID(boardID)`; the response,
 `OTAImagePublicKeyResponse` (`pkg/api/transport/types.go:657-663`), carries
@@ -645,7 +645,7 @@ board's record is its key ID, `OTAImageKeyID(boardID)`; the response,
 - `Raw`: the 64-byte X || Y of the P-256 point, each coordinate left-padded
   to 32 bytes, without the SEC 1 `0x04` prefix.
 - `COSEKey`: a COSE_Key (RFC 9052 §7, RFC 9053 §7.1.1) in core
-  deterministic CBOR (`encodeES256COSEKey`, `:210-221`, with
+  deterministic CBOR (`encodeES256COSEKey`, `:214-225`, with
   `github.com/fxamacker/cbor/v2`): kty 2 (EC2), kid the key ID's bytes,
   alg -7 (ES256), crv 1 (P-256), x and y. It never carries d (-4).
 

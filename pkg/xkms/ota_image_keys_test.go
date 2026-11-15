@@ -490,10 +490,10 @@ func otaPublicKeyFromPEM(t *testing.T, pemKey string) *ecdsa.PublicKey {
 // (RFC 9052 §7, RFC 9053 §7.1.1) with the key id and no private part.
 func assertOTAPublicExport(t *testing.T, resp *transport.OTAImagePublicKeyResponse, want *ecdsa.PublicKey, keyID string) {
 	t.Helper()
-	x := make([]byte, 32)
-	y := make([]byte, 32)
-	want.X.FillBytes(x)
-	want.Y.FillBytes(y)
+	point, err := want.Bytes() // 0x04 || X || Y, 32 bytes each
+	require.NoError(t, err)
+	require.Len(t, point, 65)
+	x, y := point[1:33], point[33:]
 
 	require.Len(t, resp.Raw, 64, "the raw export is X || Y")
 	assert.Equal(t, x, resp.Raw[:32])

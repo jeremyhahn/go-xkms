@@ -189,9 +189,13 @@ func (s *XKMSService) ExportOTAImagePublicKey(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, err
 	}
-	raw := make([]byte, 2*p256CoordinateSz)
-	pub.X.FillBytes(raw[:p256CoordinateSz])
-	pub.Y.FillBytes(raw[p256CoordinateSz:])
+	// Bytes is the SEC 1 uncompressed point 0x04 || X || Y, each coordinate
+	// fixed at 32 bytes; the raw export drops the 0x04 prefix.
+	point, err := pub.Bytes()
+	if err != nil || len(point) != 1+2*p256CoordinateSz {
+		return nil, &ErrValidation{Sentinel: ErrOTAImageAlgorithm, Detail: "the board key is not an uncompressed P-256 point"}
+	}
+	raw := point[1:]
 	coseKey, err := encodeES256COSEKey(keyID, raw[:p256CoordinateSz], raw[p256CoordinateSz:])
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "encode OTA image COSE_Key", KeyID: keyID, Err: err}
