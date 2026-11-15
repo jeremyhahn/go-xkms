@@ -26,7 +26,9 @@ func TestACMERenewCallsClientAndWritesPEM(t *testing.T) {
 	certFile, oldCert := writeTestCert(t)
 	_, renewed := writeTestCert(t)
 	env.fake.renewed = renewed
-	args := append([]string{"renew", "--cert", certFile, "--domain", "device.test"}, env.common()...)
+	csrFile, csrDER := writeACMETestCSR(t)
+	args := append([]string{"renew", "--cert", certFile, "--domain", "device.test",
+		"--challenge", "http-01", "--csr", csrFile}, env.common()...)
 	out, err := env.run(t, args...)
 	if err != nil {
 		t.Fatalf("renew: %v (%s)", err, out)
@@ -37,6 +39,9 @@ func TestACMERenewCallsClientAndWritesPEM(t *testing.T) {
 	req := env.fake.renewReq
 	if req == nil || req.AuthzValue != "device.test" || req.AuthzType != "dns" {
 		t.Fatalf("request = %+v, want dns device.test", req)
+	}
+	if req.ChallengeType != "http-01" || string(req.CSR) != string(csrDER) {
+		t.Fatalf("request = %+v, want challenge http-01 and the CSR from --csr", req)
 	}
 	block, _ := pem.Decode([]byte(out))
 	if block == nil || block.Type != "CERTIFICATE" || string(block.Bytes) != string(renewed.Raw) {

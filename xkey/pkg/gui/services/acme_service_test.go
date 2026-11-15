@@ -76,6 +76,11 @@ func (f *fakeACMEClient) RevokeCertificate(_ context.Context, cert *x509.Certifi
 
 func (f *fakeACMEClient) RenewCertificate(_ context.Context, old *x509.Certificate, req *sdkacme.ACMECertificateRequest) (*x509.Certificate, error) {
 	f.renewOld, f.renewReq = old, req
+	// Apply the real client's request validation so a test cannot pass
+	// with a request the library would reject (Codex finding 2, #2126).
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -236,7 +241,8 @@ func TestACMEService_RevokeCertificate_UnknownReason(t *testing.T) {
 
 func TestACMEService_RenewCertificate(t *testing.T) {
 	fx := newACMEFixture(t)
-	out, err := fx.svc.RenewCertificate(fx.conn, ACMERenewRequest{CertPath: fx.certPath, Domain: "example.test", AuthzType: "dns", Challenge: "dns-01"})
+	csrPath, _ := writeACMETestCSR(t)
+	out, err := fx.svc.RenewCertificate(fx.conn, ACMERenewRequest{CertPath: fx.certPath, Domain: "example.test", AuthzType: "dns", Challenge: "dns-01", CSRPath: csrPath})
 	require.NoError(t, err)
 	block, _ := pem.Decode([]byte(out))
 	require.NotNil(t, block)
@@ -257,14 +263,14 @@ func TestACMEService_RenewCertificate_CSRPath(t *testing.T) {
 	der := []byte{0x30, 0x03, 0x02, 0x01, 0x01}
 	csrPath := dir + "/req.csr"
 	require.NoError(t, os.WriteFile(csrPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), 0o600))
-	_, err := fx.svc.RenewCertificate(fx.conn, ACMERenewRequest{CertPath: fx.certPath, Domain: "example.test", CSRPath: csrPath})
+	_, err := fx.svc.RenewCertificate(fx.conn, ACMERenewRequest{CertPath: fx.certPath, Domain: "example.test", Challenge: "dns-01", CSRPath: csrPath})
 	require.NoError(t, err)
 	require.NotNil(t, fx.fake.renewReq)
 	assert.Equal(t, der, fx.fake.renewReq.CSR)
 
 	wrongPath := dir + "/wrong.pem"
 	require.NoError(t, os.WriteFile(wrongPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
-	_, err = fx.svc.RenewCertificate(fx.conn, ACMERenewRequest{CertPath: fx.certPath, Domain: "example.test", CSRPath: wrongPath})
+	_, err = fx.svc.RenewCertificate(fx.conn, ACMERenewRequest{CertPath: fx.certPath, Domain: "example.test", Challenge: "dns-01", CSRPath: wrongPath})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), wrongPath)
 }
@@ -272,7 +278,8 @@ func TestACMEService_RenewCertificate_CSRPath(t *testing.T) {
 func TestACMEService_RenewCertificate_ClientError(t *testing.T) {
 	fx := newACMEFixture(t)
 	fx.fake.err = errors.New("server said no")
-	out, err := fx.svc.RenewCertificate(fx.conn, ACMERenewRequest{CertPath: fx.certPath, Domain: "example.test"})
+	csrPath, _ := writeACMETestCSR(t)
+	out, err := fx.svc.RenewCertificate(fx.conn, ACMERenewRequest{CertPath: fx.certPath, Domain: "example.test", Challenge: "dns-01", CSRPath: csrPath})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "server said no")
 	assert.Empty(t, out)

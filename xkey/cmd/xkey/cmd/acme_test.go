@@ -84,6 +84,11 @@ func (f *fakeACMEClient) RevokeCertificate(_ context.Context, cert *x509.Certifi
 func (f *fakeACMEClient) RenewCertificate(_ context.Context, oldCert *x509.Certificate, req *sdkacme.ACMECertificateRequest) (*x509.Certificate, error) {
 	f.renewOld = oldCert
 	f.renewReq = req
+	// Apply the real client's request validation so a test cannot pass
+	// with a request the library would reject (Codex finding 2, #2126).
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
 	return f.renewed, f.err
 }
 
