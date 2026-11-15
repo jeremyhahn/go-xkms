@@ -140,7 +140,9 @@ tenants. The dashboard shows whether the deployment is clustered.
 
 Every nav entry is gated twice: an RBAC gate hides an entry the identity
 has no permission for, and a capability gate hides one the deployment never
-wired. Hiding is a convenience — the server's own RBAC decorators are the
+wired. A screen serving several operations (HMAC: sign or verify; Batch
+Crypto: encrypt or decrypt; Key Lifecycle: enable/disable or revoke) shows
+for any one of them and disables the controls the identity lacks. Hiding is a convenience — the server's own RBAC decorators are the
 enforcement authority, and any view you reach anyway (a stale link, a typed
 hash route) still renders the 403 it gets back.
 

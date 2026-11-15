@@ -3,6 +3,7 @@
   import StatusBadge from "$components/StatusBadge.svelte";
   import Alert from "$components/Alert.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
+  import { lacks } from "$stores/session.svelte.ts";
   import { b64ToBytes, isB64, textToB64 } from "$lib/b64.ts";
   import {
     MAX_BATCH_ITEMS,
@@ -31,7 +32,11 @@
 
   let keyId = $state("");
   let backend = $state("");
-  let mode = $state<Mode>("encrypt");
+  // Encrypt needs keys:encrypt and Decrypt keys:decrypt; a decrypt-only role
+  // starts in decrypt mode.
+  const noEncrypt = lacks("keys", "encrypt");
+  const noDecrypt = lacks("keys", "decrypt");
+  let mode = $state<Mode>(noEncrypt && !noDecrypt ? "decrypt" : "encrypt");
   let rows = $state<Row[]>([emptyRow()]);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -53,7 +58,7 @@
   }
 
   const canRun = $derived(
-    !busy && keyId.trim() !== "" && backend.trim() !== "" && rows.length > 0 && rows.every(rowValid),
+    !busy && !(mode === "encrypt" ? noEncrypt : noDecrypt) && keyId.trim() !== "" && backend.trim() !== "" && rows.length > 0 && rows.every(rowValid),
   );
 
   function setMode(m: Mode): void {
@@ -140,8 +145,8 @@
         <input class="input input-bordered input-sm" aria-label="Backend" placeholder="software" bind:value={backend} />
       </label>
       <div class="join" role="group" aria-label="Mode">
-        <button class="btn btn-sm join-item" class:btn-active={mode === "encrypt"} aria-pressed={mode === "encrypt"} onclick={() => setMode("encrypt")}>Encrypt</button>
-        <button class="btn btn-sm join-item" class:btn-active={mode === "decrypt"} aria-pressed={mode === "decrypt"} onclick={() => setMode("decrypt")}>Decrypt</button>
+        <button class="btn btn-sm join-item" class:btn-active={mode === "encrypt"} aria-pressed={mode === "encrypt"} onclick={() => setMode("encrypt")} disabled={noEncrypt}>Encrypt</button>
+        <button class="btn btn-sm join-item" class:btn-active={mode === "decrypt"} aria-pressed={mode === "decrypt"} onclick={() => setMode("decrypt")} disabled={noDecrypt}>Decrypt</button>
       </div>
     </div>
   </div>

@@ -3,6 +3,7 @@
   import StatusBadge from "$components/StatusBadge.svelte";
   import Alert from "$components/Alert.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
+  import { lacks } from "$stores/session.svelte.ts";
   import { isB64, textToB64 } from "$lib/b64.ts";
   import { b64ToHex, computeHmac, macToB64, verifyHmac, type GenerateHMACResponse } from "$lib/keyHmac.ts";
 
@@ -20,6 +21,9 @@
   let computing = $state(false);
   let verifying = $state(false);
 
+  // Compute needs keys:sign and Verify keys:verify; the page serves either.
+  const noSign = lacks("keys", "sign");
+  const noVerify = lacks("keys", "verify");
   const ready = $derived(keyId.trim() !== "" && backend.trim() !== "" && data !== "");
   const macHex = $derived(computed ? b64ToHex(computed.mac) : "");
 
@@ -110,7 +114,7 @@
     <div class="card-body space-y-3">
       <h2 class="card-title">Compute</h2>
       {#if computeErr}<Alert kind="error"><span>{computeErr}</span></Alert>{/if}
-      <button class="btn btn-primary" onclick={compute} disabled={!ready || computing}>
+      <button class="btn btn-primary" onclick={compute} disabled={noSign || !ready || computing}>
         {#if computing}<span class="loading loading-spinner loading-xs"></span>{/if}Compute
       </button>
       {#if computed}
@@ -132,7 +136,7 @@
       <h2 class="card-title">Verify</h2>
       {#if verifyErr}<Alert kind="error"><span>{verifyErr}</span></Alert>{/if}
       <input class="input input-bordered w-full font-mono" aria-label="MAC" placeholder="MAC (hex or base64)" bind:value={macIn} />
-      <button class="btn btn-primary" onclick={verify} disabled={!ready || macIn.trim() === "" || verifying}>
+      <button class="btn btn-primary" onclick={verify} disabled={noVerify || !ready || macIn.trim() === "" || verifying}>
         {#if verifying}<span class="loading loading-spinner loading-xs"></span>{/if}Verify
       </button>
       {#if valid !== null}

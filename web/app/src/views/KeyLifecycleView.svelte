@@ -3,6 +3,7 @@
   import StatusBadge from "$components/StatusBadge.svelte";
   import Alert from "$components/Alert.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
+  import { lacks } from "$stores/session.svelte.ts";
   import { revokeKey, setKeyStatus, type SettableKeyStatus } from "$lib/keyLifecycle.ts";
 
   interface Result {
@@ -25,8 +26,11 @@
 
   const versionOk = $derived(version === null || (Number.isInteger(version) && version >= 1));
   const keyReady = $derived(keyId.trim() !== "" && backend.trim() !== "");
-  const canSetStatus = $derived(keyReady && versionOk && !busy);
-  const canRevoke = $derived(keyReady && confirmId === keyId && !busy);
+  // Enable/Disable need keys:rotate and Revoke keys:delete; the page serves either.
+  const noRotate = lacks("keys", "rotate");
+  const noDelete = lacks("keys", "delete");
+  const canSetStatus = $derived(!noRotate && keyReady && versionOk && !busy);
+  const canRevoke = $derived(!noDelete && keyReady && confirmId === keyId && !busy);
 
   async function run(action: () => Promise<Result>, done: string): Promise<void> {
     busy = true;
