@@ -138,7 +138,8 @@ function of its arguments alone.
 | `changelog_has_heading file version` | `## [version]` at the **start** of a line |
 | `changelog_entries_pending dir` | true when `dir` holds at least one non-`README.md` entry file |
 | `escape_dots s` | BRE-literal dots |
-| `forge_repo_url url` | the forge's web URL for the repository, `<scheme>://<host>[:<port>]/<owner>/<repo>` (no `.git`, no userinfo), from an `ssh://`, scp-like or `http(s)://` remote URL; an SSH remote maps to `http` on `GITEA_HTTP_PORT` (default `3001`); empty for a local path, a `file://` URL, or a path that is not exactly `<owner>/<repo>` |
+| `forge_repo_url url` | the forge's web URL for the repository, `<scheme>://<host>[:<port>]/<owner>/<repo>` (no `.git`, no userinfo), from an `ssh://`, scp-like or `http(s)://` remote URL; an SSH remote maps to `http` on `GITEA_HTTP_PORT` (default `3001`), except that a `github.com` remote of any shape maps to `https://github.com`; empty for a local path, a `file://` URL, or a path that is not exactly `<owner>/<repo>` |
+| `forge_api_url repo` | the repository's REST root from `forge_repo_url`'s output: `https://api.github.com/repos/<owner>/<repo>` for `https://github.com`, otherwise `<origin>/api/v1/repos/<owner>/<repo>` (Gitea) |
 | `json_string s` | `s` as a JSON string literal, `\` and `"` escaped |
 
 Sourcing either script with `RELEASE_ALPHA_LIB=1` defines these and returns

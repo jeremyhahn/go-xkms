@@ -10,11 +10,14 @@ library, the SDK or any transport exposes them. Publishing is deliberately not
 reachable from a running service.
 
 The scripts are themselves clients of the forge's API. `release-alpha.sh`
-calls two endpoints, as the project agent (`FORGE_TOKEN`):
+calls two endpoints under the repository's API root, as the project agent
+(`FORGE_TOKEN`). The root is `https://api.github.com/repos/{owner}/{repo}` for a
+`github.com` remote and `<origin>/api/v1/repos/{owner}/{repo}` for a Gitea one
+(`forge_api_url`, `scripts/release-alpha.sh`):
 
-- `GET /api/v1/repos/{owner}/{repo}`, which must answer `200` before anything
+- `GET <root>`, which must answer `200` before anything
   is fetched or written;
-- `POST /api/v1/repos/{owner}/{repo}/pulls`, with `title`
+- `POST <root>/pulls`, with `title`
   `chore(release): v<V>`, `head` `release/v<V>` and `base` the release branch,
   which must answer `201`.
 

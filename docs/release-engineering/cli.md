@@ -57,7 +57,9 @@ forms:
 
 An SSH remote names the SSH port, not the web port, so for an SSH remote the
 forge URL is `http` on the port in `GITEA_HTTP_PORT`; the table leaves the
-scheme and port of that mapping to the deployment. A remote that is a local path or a
+scheme and port of that mapping to the deployment. A `github.com` remote, in
+any of these shapes, maps to `https://github.com/<owner>/<repo>`, and its
+pull request is opened through `https://api.github.com`. A remote that is a local path or a
 `file://` URL names no forge, and the run is refused. If the forge refuses the
 pull request after the push (one is already open, say), the run fails and
 prints the `compare/` URL and the exact title, so you can open it by hand.

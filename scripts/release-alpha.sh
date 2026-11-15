@@ -347,7 +347,25 @@ forge_repo_url() {
 	path=${path%/}
 	path=${path%.git}
 	[[ -n ${hostport%%:*} && $path == */* && $path != */*/* ]] || return 0
+	# GitHub serves HTTPS on its default port whatever shape the remote
+	# takes; the Gitea SSH-to-HTTP port mapping does not apply to it.
+	if [[ ${hostport%%:*} == github.com ]]; then
+		scheme=https hostport=github.com
+	fi
 	printf '%s://%s/%s' "$scheme" "$hostport" "$path"
+}
+
+# forge_api_url prints the REST root of the repository whose web URL
+# forge_repo_url printed: GitHub serves it on api.github.com with no
+# prefix, Gitea under its own origin at /api/v1.
+forge_api_url() {
+	local repo=$1 base
+	base=${repo%/*/*}
+	if [[ $base == https://github.com ]]; then
+		printf 'https://api.github.com/repos/%s' "${repo#"$base"/}"
+		return 0
+	fi
+	printf '%s/api/v1/repos/%s' "$base" "${repo#"$base"/}"
 }
 
 # json_string prints $1 as a JSON string literal, escaping the backslash and
@@ -457,8 +475,7 @@ REMOTE_URL=$($GIT config --get "remote.$REMOTE.url") || die "no git remote named
 FORGE_REPO=$(forge_repo_url "$REMOTE_URL")
 [ -n "$FORGE_REPO" ] ||
 	die "remote '$REMOTE' ($REMOTE_URL) names no forge repository -- it must be an ssh://, scp-like or http(s):// URL ending in <owner>/<repo>"
-FORGE_BASE=${FORGE_REPO%/*/*}
-FORGE_API="$FORGE_BASE/api/v1/repos/${FORGE_REPO#"$FORGE_BASE"/}"
+FORGE_API=$(forge_api_url "$FORGE_REPO")
 [ -n "${FORGE_TOKEN:-}" ] ||
 	die "FORGE_TOKEN is not set -- the release pull request is opened on $FORGE_REPO as the project agent"
 
