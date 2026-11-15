@@ -23,6 +23,7 @@ func TestModule_HostMount_InviteNeedsUsersInvite(t *testing.T) {
 	client := newHostNodeClient(t)
 	ctx := context.Background()
 	_, err := client.Roles().CreateRole(ctx, &qrdbtransport.CreateRoleRequest{
+		ID:          "creator",
 		Name:        "creator",
 		TenantID:    qrdbsdk.SystemTenantID,
 		Permissions: []string{string(qrdbsdk.PermissionUsersCreate)},
