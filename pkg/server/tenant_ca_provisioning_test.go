@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/x509"
 	"errors"
 	"testing"
 
@@ -45,7 +46,17 @@ func (f *fakeTenantService) ListTenants(context.Context) ([]qrdbsdk.ServiceTenan
 
 func (f *fakeTenantService) DeleteTenant(_ context.Context, id string) error {
 	f.deleted = append(f.deleted, id)
-	return f.deleteErr
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	kept := f.tenants[:0]
+	for _, known := range f.tenants {
+		if known != id {
+			kept = append(kept, known)
+		}
+	}
+	f.tenants = kept
+	return nil
 }
 
 // fakeTenantCAKeys counts EnsureTenant calls per tenant and provisions a
@@ -275,4 +286,81 @@ func TestServer_TenantCAKeys_NativeOnboardingGetsKey(t *testing.T) {
 	ids, err := f.TenantIDs(ctx)
 	require.NoError(t, err)
 	assert.NotContains(t, ids, "ghost")
+}
+
+// loginCATrust is the node's tenant login CA trust as go-qrdb builds it from
+// the factory: the certificate of every tenant TenantIDs lists, read through
+// ProviderForTenant. A certificate outside it is not a tenant issuer.
+func loginCATrust(t *testing.T, f *tenantCAKeyFactory) []*x509.Certificate {
+	t.Helper()
+	ctx := context.Background()
+	ids, err := f.TenantIDs(ctx)
+	require.NoError(t, err)
+	var pool []*x509.Certificate
+	for _, id := range ids {
+		p, err := f.ProviderForTenant(id)
+		require.NoError(t, err, id)
+		cert, err := p.Certificate(ctx)
+		require.NoError(t, err, id)
+		pool = append(pool, cert)
+	}
+	return pool
+}
+
+func isTenantIssuer(pool []*x509.Certificate, cert *x509.Certificate) bool {
+	for _, c := range pool {
+		if c.Equal(cert) {
+			return true
+		}
+	}
+	return false
+}
+
+// A deleted tenant's login CA leaves the node's trust at once, whether the
+// tenant was deleted through the node's wrapped tenant service or through
+// go-qrdb's own one, and the wrapped teardown removes its key and certificate.
+func TestServer_TenantCAKeys_DeletedTenantWithdrawn(t *testing.T) {
+	ctx := context.Background()
+	_, base := newTenantCAKeyTestFactory(t)
+	f := newTenantCAKeyFactory()
+	native := &fakeTenantService{tenants: []string{"tenant-a", "tenant-b", "tenant-c"}}
+	s := &Server{
+		config:       &config.Config{},
+		tenantCAKeys: f,
+		backends:     map[string]xkms.Backend{"software": base},
+	}
+	s.adoptTenantService(native)
+	require.NoError(t, s.provisionTenantCAKeys(ctx))
+	_, caA := tenantLoginCA(t, f, "tenant-a")
+	_, caB := tenantLoginCA(t, f, "tenant-b")
+	_, caC := tenantLoginCA(t, f, "tenant-c")
+
+	// Deleted through the node's tenant service.
+	require.NoError(t, s.tenantService.DeleteTenant(ctx, "tenant-a"))
+	// Deleted by go-qrdb directly: no teardown hook runs.
+	require.NoError(t, native.DeleteTenant(ctx, "tenant-b"))
+
+	ids, err := f.TenantIDs(ctx)
+	require.NoError(t, err)
+	assert.NotContains(t, ids, "tenant-a")
+	assert.NotContains(t, ids, "tenant-b")
+	assert.Contains(t, ids, "tenant-c")
+	assert.Contains(t, ids, qrdbsdk.SystemTenantID)
+
+	for _, id := range []string{"tenant-a", "tenant-b"} {
+		_, err := f.ProviderForTenant(id)
+		assert.Error(t, err, "a deleted tenant keeps a login CA provider: %s", id)
+	}
+
+	pool := loginCATrust(t, f)
+	assert.False(t, isTenantIssuer(pool, caA), "deleted tenant-a is still a tenant issuer")
+	assert.False(t, isTenantIssuer(pool, caB), "deleted tenant-b is still a tenant issuer")
+	assert.True(t, isTenantIssuer(pool, caC))
+
+	// The wrapped teardown removed tenant-a's key and certificate.
+	_, err = tenantLoginCAKeyAttrs(ctx, base, "tenant-a")
+	assert.Error(t, err, "tenant-a's login CA key outlived the tenant")
+	exists, err := xkms.NewTenantScopedBackend(base, "tenant-a").CertExists(ctx, tenantLoginCAKeyCN)
+	require.NoError(t, err)
+	assert.False(t, exists, "tenant-a's login CA certificate outlived the tenant")
 }
