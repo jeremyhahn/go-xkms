@@ -68,11 +68,11 @@ pkg/attestation/verifier.go, the device registry, sdk/go, docs/SPEC.md.
 - Run: make lint: first run timed out at 540 s in golangci-lint (web/desktop);
   rerun pass, 0 issues in every module and tag set.
 
-## Slice 3: SPEC.md row text (blocked: protected path)
+## Slice 3: SPEC.md row text (applied)
 
-docs/SPEC.md is protected by the lane policy guard and this lane has no
-LANE_POLICY_ALLOW for it, so the row text is proposed here for whoever holds
-the allowance. The row stays in progress: the acme-issuance match is open.
+Lane row2087b ran with LANE_POLICY_ALLOW for docs/SPEC.md and applied the
+text below to the row (docs/SPEC.md:89); each citation was checked against
+ea93b2af2. The row stays in progress: the acme-issuance match is open.
 
 - Replace the row's last sentence ("Open: the reference match of
   acme-issuance; nothing matches the 32 bytes against a registered reference
@@ -88,8 +88,6 @@ the allowance. The row stays in progress: the acme-issuance match is open.
 - Stale verify.go citations in the same row after slice 1 (1-based on f378cbe60):
   `verify.go:139` -> `:148` (Evidence.RootType), `:229` -> `:241`
   (`RootTypeFromPaths(paths)`), `:512` -> `:551` (`verifyRootTypePermitted`).
-- 2026-11-13: lane-place --queue re-staged the same brief four times from
-  a1fe3704d without LANE_POLICY_ALLOW; each resume ends with no change. The
-  row needs a launch with LANE_POLICY_ALLOW covering docs/SPEC.md (or the
-  coordinator applying the text above), and the acme-issuance reference match
-  before it can ship.
+- 2026-11-14: applied as above, with `backend.go:196` written in full as
+  `pkg/backend/avr/backend.go:196`. Left before the row ships: the
+  acme-issuance reference match.
