@@ -182,6 +182,64 @@ func TestEngine_FreshNoncePerRun(t *testing.T) {
 	}
 }
 
+// replaySource answers the first challenge honestly, then ignores every fresh
+// challenge and replays the recorded signed quote with its old nonce.
+type replaySource struct {
+	inner    *fixtureSource
+	mu       sync.Mutex
+	recorded *appraisal.AppraiseQuoteRequest
+}
+
+func (s *replaySource) Collect(ctx context.Context, tenant, deviceID string, nonce []byte) (*appraisal.AppraiseQuoteRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recorded != nil {
+		replay := *s.recorded
+		return &replay, nil
+	}
+	req, err := s.inner.Collect(ctx, tenant, deviceID, nonce)
+	if err != nil {
+		return nil, err
+	}
+	recorded := *req
+	s.recorded = &recorded
+	return req, nil
+}
+
+func TestEngine_ReplayedQuoteWithOldNonceIsUnverified(t *testing.T) {
+	w := newWorld(t)
+	store := newTestStore(t)
+	pub := newRecordingPublisher(4)
+	source := &replaySource{inner: w.source}
+	engine := newEngine(t, w, Config{Source: source, Store: store, Publishers: []Publisher{pub}})
+	ctx := context.Background()
+	first, err := engine.Reattest(ctx, w.tenant, "dev-1")
+	if err != nil {
+		t.Fatalf("first Reattest: %v", err)
+	}
+	if !first.Verified {
+		t.Fatalf("first verdict = %+v, want verified for an honest quote", first)
+	}
+	replayed, err := engine.Reattest(ctx, w.tenant, "dev-1")
+	if err != nil {
+		t.Fatalf("replayed Reattest: %v", err)
+	}
+	if replayed.Verified || replayed.Cause == "" {
+		t.Fatalf("replayed verdict = %+v, want unverified with a cause", replayed)
+	}
+	stored, err := store.LatestVerdict(ctx, w.tenant, "dev-1")
+	if err != nil {
+		t.Fatalf("LatestVerdict: %v", err)
+	}
+	if stored == nil || stored.Verified {
+		t.Fatalf("stored verdict = %+v, want unverified", stored)
+	}
+	published := pub.all()
+	if len(published) != 2 || published[1].Verified {
+		t.Fatalf("published verdicts = %+v, want the second unverified", published)
+	}
+}
+
 func TestEngine_CollectErrorIsAnUnverifiedVerdict(t *testing.T) {
 	w := newWorld(t)
 	pub := newRecordingPublisher(1)
