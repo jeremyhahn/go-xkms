@@ -56,4 +56,10 @@ Renew reuses the package's loadCertificatePEM (as revoke does).
   client does` (CLI and GUI require both and run CertificateRequest.Validate).
 - Finding 4: `test(xkey): acme enrollment ends at its timeout and releases the
   TPM`, `fix(xkey): acme enrollment honours its timeout` (ACMEEnrollContext).
-- Next slice: findings 1 (challenge dispatch) and 3 (challenge setup).
+- Finding 1 (lane sacmek): `test(xkey): acme enrollment runs the selected
+  challenge protocol`, `fix(xkey): dispatch acme enrollment on the selected
+  challenge` (services.RunACMEEnrollment, shared by the GUI and the CLI:
+  enroll-01 EnrollDevice, device-attest-01 DeviceAttest, endorse-01
+  RequestEndorsementKeyCertificate; unknown challenge is an error). The tests
+  use a fake of the ACMEClient interface, not the package's test server.
+- Next slice: finding 3 (renewal challenge setup).
