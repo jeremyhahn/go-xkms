@@ -403,6 +403,16 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	}
 	if err := svc.VerifyUserPIN(currentUserPIN); err != nil {
 		s.log.Warn("ChangeUserPIN: current PIN not authenticated", "strategy", svc.Strategy(), "error", err)
+		// A locked backend is audited as the login path audits it (the
+		// lockout event security monitoring keys on), not as a failed
+		// attempt; a plain wrong PIN keeps the failed-attempt audit.
+		locked, auditErr := s.auditUserPINLockout(svc)
+		if auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
+		if locked {
+			return err
+		}
 		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 			"operation": "change",
 			"type":      "user_pin",
@@ -561,13 +571,8 @@ func (s *PINService) VerifyUserPIN(userPIN string) (retErr error) {
 			return auditErr
 		}
 		// Check if this verification failure resulted in lockout.
-		if status := svc.GetLockoutStatus(); status != nil && status.IsLocked {
-			if auditErr := s.logPINOperation(audit.OpPINLocked, false, nil, map[string]any{
-				"type":            "user_pin",
-				"failed_attempts": status.FailedAttempts,
-			}); auditErr != nil {
-				return auditErr
-			}
+		if _, auditErr := s.auditUserPINLockout(svc); auditErr != nil {
+			return auditErr
 		}
 		return err
 	}
@@ -683,6 +688,21 @@ func (s *PINService) VerifyFIDO2Hash(hash []byte) bool {
 // logPINOperation logs a PIN operation to the audit log. Every PIN
 // operation is SeveritySecurity, so the caller must propagate a non-nil
 // return and fail the request rather than proceed unaudited.
+// auditUserPINLockout records the OpPINLocked event when the backend reports
+// the user PIN locked after a refused verification, and reports whether it
+// was locked. VerifyUserPIN and ChangeUserPIN share it so a lockout reached
+// through either is audited the same way.
+func (s *PINService) auditUserPINLockout(svc *qrdbsdk.PINService) (bool, error) {
+	status := svc.GetLockoutStatus()
+	if status == nil || !status.IsLocked {
+		return false, nil
+	}
+	return true, s.logPINOperation(audit.OpPINLocked, false, nil, map[string]any{
+		"type":            "user_pin",
+		"failed_attempts": status.FailedAttempts,
+	})
+}
+
 func (s *PINService) logPINOperation(op audit.OperationType, success bool, err error, details map[string]any) error {
 	logger := s.getAuditLogger()
 	if logger == nil {
