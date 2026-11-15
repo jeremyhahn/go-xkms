@@ -325,6 +325,12 @@ const (
 	KeyRotationFailed  = pkgtransport.KeyRotationFailed
 )
 
+// Invite ceremony types (BeginInviteRegistrationResponse.Ceremony).
+const (
+	InviteCeremonyCreate = pkgtransport.InviteCeremonyCreate
+	InviteCeremonyGet    = pkgtransport.InviteCeremonyGet
+)
+
 // TPM policy types.
 type TPMPolicy = pkgtransport.TPMPolicy
 type TPMPolicyBranch = pkgtransport.TPMPolicyBranch

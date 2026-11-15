@@ -270,6 +270,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	// options are a WebAuthn get for exactly that credential, answered
 	// through FinishInviteRegistration.
 	var options any
+	ceremony := transport.InviteCeremonyGet
 	assertion, sessionID, err := s.webauthnService.BeginInviteResume(ctx, invitedHandle, entity.CreatedAt)
 	switch {
 	case err == nil:
@@ -282,7 +283,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 			}
 			return nil, &ErrWebAuthnCeremony{Operation: "begin invite registration", Err: regErr}
 		}
-		options, sessionID = creation, regSessionID
+		options, sessionID, ceremony = creation, regSessionID, transport.InviteCeremonyCreate
 	default:
 		return nil, &ErrWebAuthnCeremony{Operation: "begin invite resume", Err: err}
 	}
@@ -290,7 +291,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "marshal options", Err: err}
 	}
-	return &transport.BeginInviteRegistrationResponse{SessionID: sessionID, OptionsJSON: string(optsJSON)}, nil
+	return &transport.BeginInviteRegistrationResponse{SessionID: sessionID, OptionsJSON: string(optsJSON), Ceremony: ceremony}, nil
 }
 
 // FinishInviteRegistration completes the invite-authorized WebAuthn

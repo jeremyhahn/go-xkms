@@ -59,6 +59,15 @@ const (
 	KeyRotationFailed  = transport.KeyRotationFailed
 )
 
+// Invite ceremony types: BeginInviteRegistrationResponse.Ceremony names the
+// WebAuthn ceremony its options are for, a new credential (create) or a
+// possession proof for the credential already enrolled under the
+// invitation (get).
+const (
+	InviteCeremonyCreate = transport.InviteCeremonyCreate
+	InviteCeremonyGet    = transport.InviteCeremonyGet
+)
+
 // DefaultUnixSocketPath is the default Unix socket path (relative to current working directory)
 const DefaultUnixSocketPath = "xkms-data/xkms.sock"
 

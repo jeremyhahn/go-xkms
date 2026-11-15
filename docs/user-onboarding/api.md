@@ -79,16 +79,28 @@ all three (see `architecture.md` "Opacity").
 
 ### `POST /api/v1/invites/{tenant_id}/{token}/fido2/begin`
 
-No request body. Returns the WebAuthn registration ceremony:
+No request body. Returns the WebAuthn ceremony to run:
 
 ```json
-{"session_id": "...", "options_json": "{\"publicKey\":{...}}"}
+{"session_id": "...", "options_json": "{\"publicKey\":{...}}", "ceremony": "create"}
 ```
 
-`options_json` is a JSON-encoded `protocol.CredentialCreation` — unmarshal
-it, take `.publicKey`, and drive it through `navigator.credentials.create()`
-or an SDK authenticator adapter exactly as the ordinary registration
-ceremony (`pkg/webauthn/http`) is driven. 404 `invite_unusable` for a bad
+`ceremony` names the ceremony `options_json` is for (constants
+`InviteCeremonyCreate` / `InviteCeremonyGet` in `pkg/api/transport`):
+
+- `"create"`: `options_json` is a JSON-encoded `protocol.CredentialCreation`.
+  Unmarshal it, take `.publicKey`, and drive it through
+  `navigator.credentials.create()` or an SDK adapter's `MakeCredential`,
+  exactly as the ordinary registration ceremony (`pkg/webauthn/http`) is
+  driven.
+- `"get"`: an earlier finish stored the credential but the activation then
+  failed. `options_json` is a JSON-encoded `protocol.CredentialAssertion`
+  allowing exactly that credential; drive it through
+  `navigator.credentials.get()` or the adapter's `GetAssertion`. The
+  assertion over this session's challenge is the possession proof that
+  completes the activation; no second credential is enrolled.
+
+A client refuses any other value. 404 `invite_unusable` for a bad
 token; 503 if WebAuthn is not configured on this server.
 
 ### `POST /api/v1/invites/{tenant_id}/{token}/fido2/finish`
@@ -97,8 +109,9 @@ token; 503 if WebAuthn is not configured on this server.
 {"session_id": "...", "attestation_json": "{...}"}
 ```
 
-`attestation_json` is the authenticator's raw `PublicKeyCredential`
-attestation response JSON. On success:
+`attestation_json` is the authenticator's raw `PublicKeyCredential` response
+JSON: the attestation for a `"create"` begin, the assertion for a `"get"`
+begin. On success:
 
 ```json
 {"user_id": "42", "message": "activation successful"}
@@ -130,7 +143,7 @@ is this codebase's established marker for "ungated", the pattern the
 pre-existing FIDO2 ceremony RPCs use:
 
 - `GetInvite(GetInviteRequest{tenant_id, token}) → GetInviteResponse{email, display_name, expires_at, methods}`
-- `BeginInviteRegistration(BeginInviteRegistrationRequest{tenant_id, token}) → BeginInviteRegistrationResponse{session_id, options_json}`
+- `BeginInviteRegistration(BeginInviteRegistrationRequest{tenant_id, token}) → BeginInviteRegistrationResponse{session_id, options_json, ceremony}`
 - `FinishInviteRegistration(FinishInviteRegistrationRequest{tenant_id, token, session_id, attestation_json}) → FinishInviteRegistrationResponse{user_id}`
 - `ActivateInvitePIV(ActivateInvitePIVRequest{tenant_id, token, cert_pem}) → ActivateInvitePIVResponse{user_id}`
 

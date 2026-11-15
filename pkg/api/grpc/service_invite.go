@@ -97,7 +97,7 @@ func (s *Service) BeginInviteRegistration(ctx context.Context, req *pb.BeginInvi
 	if err != nil {
 		return nil, invitationErrorStatus(err)
 	}
-	return &pb.BeginInviteRegistrationResponse{SessionId: resp.SessionID, OptionsJson: resp.OptionsJSON}, nil
+	return &pb.BeginInviteRegistrationResponse{SessionId: resp.SessionID, OptionsJson: resp.OptionsJSON, Ceremony: resp.Ceremony}, nil
 }
 
 // FinishInviteRegistration completes the invite-authorized WebAuthn

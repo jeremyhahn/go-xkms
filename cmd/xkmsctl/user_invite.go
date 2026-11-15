@@ -85,11 +85,24 @@ func redeemInviteFIDO2(
 		return nil, err
 	}
 
-	attestation, err := adapter.MakeCredential(ctx, &webauthnclient.CeremonyOptions{
+	// The begin names the ceremony: a new credential (create), or, when an
+	// earlier finish stored the credential but its activation failed, a
+	// possession proof by that credential (get). Either answer goes back
+	// through FinishInviteRegistration.
+	opts := &webauthnclient.CeremonyOptions{
 		OptionsJSON: []byte(beginResp.OptionsJSON),
 		Origin:      origin,
 		PIN:         pin,
-	})
+	}
+	var answer []byte
+	switch beginResp.Ceremony {
+	case client.InviteCeremonyCreate:
+		answer, err = adapter.MakeCredential(ctx, opts)
+	case client.InviteCeremonyGet:
+		answer, err = adapter.GetAssertion(ctx, opts)
+	default:
+		return nil, &WrappedError{Sentinel: ErrBeginInviteRegistrationFailed, Err: &WrappedDetailError{Sentinel: ErrUnknownInviteCeremony, Detail: `ceremony "` + beginResp.Ceremony + `"`}}
+	}
 	if err != nil {
 		return nil, ceremonyFailure(ErrFinishInviteRegistrationFailed, pin, err)
 	}
@@ -98,7 +111,7 @@ func redeemInviteFIDO2(
 		TenantID:        tenantID,
 		Token:           token,
 		SessionID:       beginResp.SessionID,
-		AttestationJSON: string(attestation),
+		AttestationJSON: string(answer),
 	})
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrFinishInviteRegistrationFailed, Err: err}

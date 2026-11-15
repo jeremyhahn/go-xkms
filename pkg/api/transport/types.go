@@ -1069,13 +1069,32 @@ type BeginInviteRegistrationRequest struct {
 	Token    string `json:"token"`
 }
 
-// BeginInviteRegistrationResponse carries the begun ceremony: the full
-// CredentialCreation options, JSON-marshaled so callers do not need the
-// go-webauthn types, and the opaque session ID
-// FinishInviteRegistrationRequest echoes back.
+// Invite ceremony types: the WebAuthn ceremony a BeginInviteRegistration
+// answer asks the client to run.
+const (
+	// InviteCeremonyCreate asks for a new credential: OptionsJSON is a
+	// CredentialCreation (navigator.credentials.create / MakeCredential)
+	// and the finish carries its attestation.
+	InviteCeremonyCreate = "create"
+	// InviteCeremonyGet resumes an activation whose credential was stored
+	// but whose activation then failed: OptionsJSON is a
+	// CredentialAssertion for exactly that credential
+	// (navigator.credentials.get / GetAssertion) and the finish carries its
+	// assertion.
+	InviteCeremonyGet = "get"
+)
+
+// BeginInviteRegistrationResponse carries the begun ceremony: its type
+// (InviteCeremonyCreate or InviteCeremonyGet), the full WebAuthn options
+// for it, JSON-marshaled so callers do not need the go-webauthn types, and
+// the opaque session ID FinishInviteRegistrationRequest echoes back. A
+// client runs the ceremony Ceremony names and sends its answer
+// (attestation or assertion) as FinishInviteRegistrationRequest's
+// AttestationJSON.
 type BeginInviteRegistrationResponse struct {
 	SessionID   string `json:"session_id"`
 	OptionsJSON string `json:"options_json"`
+	Ceremony    string `json:"ceremony"`
 }
 
 // FinishInviteRegistrationRequest completes the invite-authorized WebAuthn

@@ -163,28 +163,62 @@ export async function redeemInvite(
       const begin = await beginResp.json();
       const { publicKey } = JSON.parse(begin.options_json);
       publicKey.challenge = b64urlToBuf(publicKey.challenge);
-      publicKey.user.id = b64urlToBuf(publicKey.user.id);
-      if (Array.isArray(publicKey.excludeCredentials)) {
-        publicKey.excludeCredentials = publicKey.excludeCredentials.map((c: any) => ({ ...c, id: b64urlToBuf(c.id) }));
-      }
 
+      // begin names the ceremony: "create" enrols the invitation's passkey,
+      // "get" resumes an activation by asserting the passkey already enrolled.
       let cred: PublicKeyCredential;
-      try {
-        cred = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential;
-      } catch (e: any) {
-        return { status: 0, ok: false, body: null, clientError: `${e.name}: ${e.message}` };
+      let attestation: any;
+      if (begin.ceremony === 'create') {
+        publicKey.user.id = b64urlToBuf(publicKey.user.id);
+        if (Array.isArray(publicKey.excludeCredentials)) {
+          publicKey.excludeCredentials = publicKey.excludeCredentials.map((c: any) => ({ ...c, id: b64urlToBuf(c.id) }));
+        }
+        try {
+          cred = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential;
+        } catch (e: any) {
+          return { status: 0, ok: false, body: null, clientError: `${e.name}: ${e.message}` };
+        }
+        const att = cred.response as AuthenticatorAttestationResponse;
+        attestation = {
+          id: cred.id,
+          rawId: bufToB64url(cred.rawId),
+          type: cred.type,
+          response: {
+            attestationObject: bufToB64url(att.attestationObject),
+            clientDataJSON: bufToB64url(att.clientDataJSON),
+          },
+          clientExtensionResults: cred.getClientExtensionResults(),
+        };
+      } else if (begin.ceremony === 'get') {
+        if (Array.isArray(publicKey.allowCredentials)) {
+          publicKey.allowCredentials = publicKey.allowCredentials.map((c: any) => ({ ...c, id: b64urlToBuf(c.id) }));
+        }
+        try {
+          cred = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential;
+        } catch (e: any) {
+          return { status: 0, ok: false, body: null, clientError: `${e.name}: ${e.message}` };
+        }
+        const asr = cred.response as AuthenticatorAssertionResponse;
+        attestation = {
+          id: cred.id,
+          rawId: bufToB64url(cred.rawId),
+          type: cred.type,
+          response: {
+            authenticatorData: bufToB64url(asr.authenticatorData),
+            clientDataJSON: bufToB64url(asr.clientDataJSON),
+            signature: bufToB64url(asr.signature),
+            userHandle: asr.userHandle ? bufToB64url(asr.userHandle) : undefined,
+          },
+          clientExtensionResults: cred.getClientExtensionResults(),
+        };
+      } else {
+        return {
+          status: 0,
+          ok: false,
+          body: null,
+          clientError: `unknown invitation ceremony ${JSON.stringify(begin.ceremony)}`,
+        };
       }
-      const att = cred.response as AuthenticatorAttestationResponse;
-      const attestation = {
-        id: cred.id,
-        rawId: bufToB64url(cred.rawId),
-        type: cred.type,
-        response: {
-          attestationObject: bufToB64url(att.attestationObject),
-          clientDataJSON: bufToB64url(att.clientDataJSON),
-        },
-        clientExtensionResults: cred.getClientExtensionResults(),
-      };
 
       const finishResp = await fetch(`${base}/finish`, {
         method: 'POST',

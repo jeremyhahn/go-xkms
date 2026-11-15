@@ -232,6 +232,7 @@ func TestBeginInviteRegistration_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.SessionID)
 	assert.Contains(t, resp.OptionsJSON, inviteFixtureEmail)
+	assert.Equal(t, xkmstransport.InviteCeremonyCreate, resp.Ceremony, "a fresh invitation asks for a new credential")
 }
 
 func TestBeginInviteRegistration_UnknownToken(t *testing.T) {
@@ -425,6 +426,7 @@ func TestFinishInviteRegistration_ResumesActivationAfterFailure(t *testing.T) {
 	// The resume is a fresh WebAuthn get for the enrolled credential.
 	begin, err := f.beginRegistration(inviteFixtureTenant, token)
 	require.NoError(t, err)
+	assert.Equal(t, xkmstransport.InviteCeremonyGet, begin.Ceremony, "a resume asks the client for a WebAuthn get")
 	assertion := f.assertInvite(t, begin.OptionsJSON, credential)
 	result, err := f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, assertion)
 	require.NoError(t, err)
