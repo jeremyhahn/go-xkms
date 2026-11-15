@@ -309,7 +309,10 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: err}
 	}
 
-	user, err := s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, parsed)
+	// The ceremony's session must belong to the account this invitation
+	// names: FinishInviteRegistration refuses any other session before it
+	// stores a credential, leaving both invitations intact.
+	user, err := s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, xkmswebauthn.HandleFromUserID(invitedID), parsed)
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable
@@ -321,9 +324,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "decode invite user handle", Err: err}
 	}
-	// The ceremony's session must have enrolled the account this invitation
-	// names: a session begun for another invitation's account is refused,
-	// leaving this invitation intact.
+	// Defence in depth: the enrolled account is the invited one.
 	if userID != invitedID {
 		return nil, ErrInviteUnusable
 	}

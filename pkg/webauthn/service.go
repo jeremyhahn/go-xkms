@@ -14,6 +14,7 @@
 package webauthn
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -407,8 +408,19 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 // FinishInviteRegistration) leaves the invitation intact and the token
 // retryable rather than a redeemed invite pointing at a still-pending
 // account with no way back in.
-func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
+//
+// invitedHandle is the user handle of the account the caller's invitation
+// names: a session begun for any other account is refused with
+// ErrRegistrationRefused before a credential is created or stored.
+func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string, invitedHandle []byte, response *protocol.ParsedCredentialCreationData) (User, error) {
 	return s.runFinishRegistration(ctx, sessionID, response, func(user User) error {
+		// The session must belong to the account the invitation names. The
+		// check runs before the credential is created or stored: a session
+		// begun for another invitation's account enrols nothing, so both
+		// accounts can still redeem their own invitations.
+		if len(invitedHandle) == 0 || !bytes.Equal(user.WebAuthnID(), invitedHandle) {
+			return ErrRegistrationRefused
+		}
 		if user.Lifecycle() != qrdbsdk.LifecyclePending {
 			return ErrRegistrationRefused
 		}
