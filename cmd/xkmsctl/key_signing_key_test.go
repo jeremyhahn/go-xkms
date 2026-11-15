@@ -97,3 +97,137 @@ func TestKeySigningKeySignCmd_ServerRefuses(t *testing.T) {
 	assert.NotEqual(t, -1, code)
 	assert.Contains(t, stderr, ErrSignReleaseCoRIMFailed.Error())
 }
+
+// mockSigningKeyClient records the signing-key binding requests and answers
+// from bindings, or refuses every call when fail is set.
+type mockSigningKeyClient struct {
+	mockBackendsClient
+
+	fail     bool
+	set      *client.SetAttestationSigningKeyBindingRequest
+	get      *client.GetAttestationSigningKeyBindingRequest
+	deleted  *client.DeleteAttestationSigningKeyBindingRequest
+	resolve  *client.ResolveAttestationSigningKeyRequest
+	bindings []*client.AttestationSigningKeyBinding
+}
+
+func (m *mockSigningKeyClient) SetSigningKeyBinding(_ context.Context, req *client.SetAttestationSigningKeyBindingRequest) (*client.AttestationSigningKeyBinding, error) {
+	m.set = req
+	if m.fail {
+		return nil, errReleaseSign
+	}
+	return &client.AttestationSigningKeyBinding{Repository: req.Repository, KeyID: req.KeyID, Backend: req.Backend}, nil
+}
+
+func (m *mockSigningKeyClient) GetSigningKeyBinding(_ context.Context, req *client.GetAttestationSigningKeyBindingRequest) (*client.AttestationSigningKeyBinding, error) {
+	m.get = req
+	if m.fail {
+		return nil, errReleaseSign
+	}
+	return &client.AttestationSigningKeyBinding{Repository: req.Repository, KeyID: "app-key", Backend: "pkcs11"}, nil
+}
+
+func (m *mockSigningKeyClient) ListSigningKeyBindings(context.Context) (*client.ListAttestationSigningKeyBindingsResponse, error) {
+	if m.fail {
+		return nil, errReleaseSign
+	}
+	return &client.ListAttestationSigningKeyBindingsResponse{Bindings: m.bindings}, nil
+}
+
+func (m *mockSigningKeyClient) DeleteSigningKeyBinding(_ context.Context, req *client.DeleteAttestationSigningKeyBindingRequest) error {
+	m.deleted = req
+	if m.fail {
+		return errReleaseSign
+	}
+	return nil
+}
+
+func (m *mockSigningKeyClient) ResolveSigningKey(_ context.Context, req *client.ResolveAttestationSigningKeyRequest) (*client.AttestationSigningKeyResolution, error) {
+	m.resolve = req
+	if m.fail {
+		return nil, errReleaseSign
+	}
+	return &client.AttestationSigningKeyResolution{Repository: req.Repository, KeyID: "release-signing", Default: true}, nil
+}
+
+func TestKeySigningKeyBindingCmds_Registered(t *testing.T) {
+	for _, name := range []string{"set", "get", "list", "delete", "resolve"} {
+		sub, _, err := keySigningKeyCmd.Find([]string{name})
+		require.NoError(t, err)
+		assert.Equal(t, name, sub.Name())
+	}
+}
+
+func TestKeySigningKeySetCmd(t *testing.T) {
+	mock := &mockSigningKeyClient{}
+	out, _, code := runOTAImageCmd(t, mock, keySigningKeySetCmd, []string{"acme/app", "app-key"}, map[string]string{"key-backend": "pkcs11"})
+	assert.Equal(t, -1, code)
+	assert.Equal(t, &client.SetAttestationSigningKeyBindingRequest{Repository: "acme/app", KeyID: "app-key", Backend: "pkcs11"}, mock.set)
+	assert.Contains(t, out, "acme/app")
+	assert.Contains(t, out, "app-key")
+}
+
+func TestKeySigningKeyGetCmd(t *testing.T) {
+	mock := &mockSigningKeyClient{}
+	out, _, code := runOTAImageCmd(t, mock, keySigningKeyGetCmd, []string{"acme/app"}, nil)
+	assert.Equal(t, -1, code)
+	assert.Equal(t, &client.GetAttestationSigningKeyBindingRequest{Repository: "acme/app"}, mock.get)
+	assert.Contains(t, out, "app-key")
+	assert.Contains(t, out, "pkcs11")
+}
+
+func TestKeySigningKeyListCmd(t *testing.T) {
+	mock := &mockSigningKeyClient{bindings: []*client.AttestationSigningKeyBinding{
+		{Repository: "acme/app", KeyID: "app-key"},
+		{Repository: "acme/web", KeyID: "web-key", Backend: "pkcs11"},
+	}}
+	out, _, code := runOTAImageCmd(t, mock, keySigningKeyListCmd, nil, nil)
+	assert.Equal(t, -1, code)
+	for _, want := range []string{"acme/app", "app-key", "acme/web", "web-key"} {
+		assert.Contains(t, out, want)
+	}
+
+	out, _, code = runOTAImageCmd(t, &mockSigningKeyClient{}, keySigningKeyListCmd, nil, nil)
+	assert.Equal(t, -1, code)
+	assert.Contains(t, out, "No signing-key bindings")
+}
+
+func TestKeySigningKeyDeleteCmd(t *testing.T) {
+	mock := &mockSigningKeyClient{}
+	out, _, code := runOTAImageCmd(t, mock, keySigningKeyDeleteCmd, []string{"acme/app"}, nil)
+	assert.Equal(t, -1, code)
+	assert.Equal(t, &client.DeleteAttestationSigningKeyBindingRequest{Repository: "acme/app"}, mock.deleted)
+	assert.Contains(t, out, "acme/app")
+}
+
+func TestKeySigningKeyResolveCmd(t *testing.T) {
+	mock := &mockSigningKeyClient{}
+	out, _, code := runOTAImageCmd(t, mock, keySigningKeyResolveCmd, []string{"acme/app"}, nil)
+	assert.Equal(t, -1, code)
+	assert.Equal(t, &client.ResolveAttestationSigningKeyRequest{Repository: "acme/app"}, mock.resolve)
+	assert.Contains(t, out, "release-signing")
+	assert.Contains(t, out, "release key")
+}
+
+func TestKeySigningKeyBindingCmds_ServerRefuses(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		sentinel error
+	}{
+		{"set", []string{"acme/app", "app-key"}, ErrSetSigningKeyBindingFailed},
+		{"get", []string{"acme/app"}, ErrGetSigningKeyBindingFailed},
+		{"list", nil, ErrListSigningKeyBindingsFailed},
+		{"delete", []string{"acme/app"}, ErrDeleteSigningKeyBindingFailed},
+		{"resolve", []string{"acme/app"}, ErrResolveSigningKeyFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, _, err := keySigningKeyCmd.Find([]string{tc.name})
+			require.NoError(t, err)
+			_, stderr, code := runOTAImageCmd(t, &mockSigningKeyClient{fail: true}, cmd, tc.args, nil)
+			assert.NotEqual(t, -1, code)
+			assert.Contains(t, stderr, tc.sentinel.Error())
+		})
+	}
+}
