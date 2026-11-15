@@ -263,12 +263,28 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 
 	// The ceremony binds the account the invitation names, by its user
 	// handle, never an email lookup: the email can name another account.
-	options, sessionID, err := s.webauthnService.BeginInviteRegistration(ctx, xkmswebauthn.HandleFromUserID(userID))
-	if err != nil {
-		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
-			return nil, ErrInviteUnusable
+	invitedHandle := xkmswebauthn.HandleFromUserID(userID)
+
+	// An account whose credential was stored under this invitation but
+	// whose activation then failed resumes with a possession proof: the
+	// options are a WebAuthn get for exactly that credential, answered
+	// through FinishInviteRegistration.
+	var options any
+	assertion, sessionID, err := s.webauthnService.BeginInviteResume(ctx, invitedHandle, entity.CreatedAt)
+	switch {
+	case err == nil:
+		options = assertion
+	case errors.Is(err, xkmswebauthn.ErrInviteNotResumable):
+		creation, regSessionID, regErr := s.webauthnService.BeginInviteRegistration(ctx, invitedHandle)
+		if regErr != nil {
+			if errors.Is(regErr, xkmswebauthn.ErrRegistrationRefused) {
+				return nil, ErrInviteUnusable
+			}
+			return nil, &ErrWebAuthnCeremony{Operation: "begin invite registration", Err: regErr}
 		}
-		return nil, &ErrWebAuthnCeremony{Operation: "begin invite registration", Err: err}
+		options, sessionID = creation, regSessionID
+	default:
+		return nil, &ErrWebAuthnCeremony{Operation: "begin invite resume", Err: err}
 	}
 	optsJSON, err := json.Marshal(options)
 	if err != nil {
@@ -304,28 +320,27 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, err
 	}
 
-	parsed, err := protocol.ParseCredentialCreationResponseBody(strings.NewReader(req.AttestationJSON))
-	if err != nil {
-		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: err}
-	}
-
-	// A finish whose credential was stored but whose activation then failed
-	// is resumed from the same attestation: the session is gone and a new
-	// ceremony is refused for an account that holds a credential, so the
-	// still-valid invitation completes the activation. The resume is bound
-	// to this invitation's account and to the one credential it enrolled
-	// since the invitation was issued (verify P1 servicer_invite.go:332).
+	// The answer is either the attestation of a new enrolment or, after a
+	// finish whose credential was stored but whose activation then failed,
+	// the assertion answering BeginInviteResume's get ceremony. Re-sending
+	// the attestation proves nothing (its credential ID and public key are
+	// public), so only a valid assertion by the enrolled credential over
+	// the resume session's challenge resumes. Both are bound to this
+	// invitation's account; neither touches another invitation.
 	invitedHandle := xkmswebauthn.HandleFromUserID(invitedID)
-	user, err := s.webauthnService.ResumeInviteRegistration(ctx, invitedHandle, entity.CreatedAt, parsed)
-	if errors.Is(err, xkmswebauthn.ErrInviteNotResumable) {
-		// The ceremony's session must belong to the account this
-		// invitation names: FinishInviteRegistration refuses any other
-		// session before it stores a credential, leaving both invitations
-		// intact.
+	var user xkmswebauthn.User
+	if parsed, perr := protocol.ParseCredentialCreationResponseBody(strings.NewReader(req.AttestationJSON)); perr == nil {
 		user, err = s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, invitedHandle, parsed)
+	} else if asserted, aerr := protocol.ParseCredentialRequestResponseBody(strings.NewReader(req.AttestationJSON)); aerr == nil {
+		user, err = s.webauthnService.FinishInviteResume(ctx, req.SessionID, invitedHandle, entity.CreatedAt, asserted)
+	} else {
+		// No assertion: the session is still claimed, so a refused
+		// answer leaves no challenge to sign later.
+		_, _ = s.webauthnService.FinishInviteResume(ctx, req.SessionID, invitedHandle, entity.CreatedAt, nil)
+		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: perr}
 	}
 	if err != nil {
-		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
+		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) || errors.Is(err, xkmswebauthn.ErrInviteNotResumable) {
 			return nil, ErrInviteUnusable
 		}
 		return nil, &ErrWebAuthnCeremony{Operation: "finish invite registration", Err: err}

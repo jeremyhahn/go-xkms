@@ -424,62 +424,123 @@ func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string
 		if user.Lifecycle() != qrdbsdk.LifecyclePending {
 			return ErrRegistrationRefused
 		}
+		// An account that already holds its invite credential resumes
+		// through BeginInviteResume; no session (a resume session
+		// included) enrols a second one.
+		existing, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
+		if err != nil {
+			return WrapError("get credentials", err)
+		}
+		if len(existing) > 0 {
+			return ErrRegistrationRefused
+		}
 		return nil
 	})
 }
 
-// ErrInviteNotResumable reports that ResumeInviteRegistration found no
-// persisted invite enrolment to resume; the caller runs the normal finish.
+// ErrInviteNotResumable reports that BeginInviteResume found no persisted
+// invite enrolment to resume; the caller runs the normal invite ceremony.
 var ErrInviteNotResumable = errors.New("webauthn: no persisted invite enrolment to resume")
 
-// ResumeInviteRegistration recovers an invite enrolment whose credential was
-// stored by FinishInviteRegistration but whose account activation then
-// failed: the ceremony's session is gone and BeginInviteRegistration refuses
-// an account that holds a credential, so without this the invitation could
-// never complete. It returns the invited account only when all of these
-// hold, and ErrInviteNotResumable otherwise:
-//   - the account named by invitedHandle is still pending;
-//   - it holds exactly one credential, stored no earlier than issuedAt (the
-//     invitation's issue time), so it was enrolled under this invitation;
-//   - response is the attestation of that credential: the same credential
-//     ID and public key as the stored one.
-//
-// Nothing is stored or consumed. The caller keeps the invitation itself
-// valid and unredeemed until the activation commits.
-func (s *Service) ResumeInviteRegistration(ctx context.Context, invitedHandle []byte, issuedAt time.Time, response *protocol.ParsedCredentialCreationData) (User, error) {
-	if !s.configured {
-		return nil, ErrNotConfigured
-	}
-	if len(invitedHandle) == 0 || response == nil {
-		return nil, ErrInviteNotResumable
+// resumableInviteCredential returns the account named by invitedHandle and
+// the one credential enrolled under its invitation, when the account is
+// still pending and holds exactly one credential, stored no earlier than
+// issuedAt (the invitation's issue time). Otherwise it returns
+// ErrInviteNotResumable.
+func (s *Service) resumableInviteCredential(ctx context.Context, invitedHandle []byte, issuedAt time.Time) (User, *Credential, error) {
+	if len(invitedHandle) == 0 {
+		return nil, nil, ErrInviteNotResumable
 	}
 	user, err := s.users.GetByID(ctx, invitedHandle)
 	if err != nil {
 		if IsUserNotFound(err) {
-			return nil, ErrInviteNotResumable
+			return nil, nil, ErrInviteNotResumable
 		}
-		return nil, WrapError("get user", err)
+		return nil, nil, WrapError("get user", err)
 	}
 	if user.Lifecycle() != qrdbsdk.LifecyclePending {
-		return nil, ErrInviteNotResumable
+		return nil, nil, ErrInviteNotResumable
 	}
 	creds, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
 	if err != nil {
-		return nil, WrapError("get credentials", err)
+		return nil, nil, WrapError("get credentials", err)
 	}
 	if len(creds) != 1 {
-		return nil, ErrInviteNotResumable
+		return nil, nil, ErrInviteNotResumable
 	}
 	stored := creds[0]
-	attested := response.Response.AttestationObject.AuthData.AttData
-	if !bytes.Equal(stored.UserID, invitedHandle) ||
-		stored.CreatedAt.Before(issuedAt) ||
-		len(stored.ID) == 0 ||
-		!bytes.Equal(stored.ID, response.RawID) ||
-		!bytes.Equal(stored.ID, attested.CredentialID) ||
-		len(stored.PublicKey) == 0 ||
-		!bytes.Equal(stored.PublicKey, attested.CredentialPublicKey) {
-		return nil, ErrInviteNotResumable
+	if !bytes.Equal(stored.UserID, invitedHandle) || stored.CreatedAt.Before(issuedAt) || len(stored.ID) == 0 {
+		return nil, nil, ErrInviteNotResumable
+	}
+	return user, stored, nil
+}
+
+// BeginInviteResume starts the recovery of an invite enrolment whose
+// credential was stored by FinishInviteRegistration but whose account
+// activation then failed. The invitation alone, or the stored credential's
+// ID and public key (public data), prove nothing, so the resume is a
+// possession proof: a fresh WebAuthn get ceremony whose only allowed
+// credential is the one enrolled under the invitation, in a new bounded
+// session. It returns ErrInviteNotResumable unless resumableInviteCredential
+// holds; the caller then runs the normal invite ceremony.
+func (s *Service) BeginInviteResume(ctx context.Context, invitedHandle []byte, issuedAt time.Time) (*protocol.CredentialAssertion, string, error) {
+	if !s.configured {
+		return nil, "", ErrNotConfigured
+	}
+	user, stored, err := s.resumableInviteCredential(ctx, invitedHandle, issuedAt)
+	if err != nil {
+		return nil, "", err
+	}
+	options, session, err := s.webauthn.BeginLogin(user, webauthn.WithAllowedCredentials([]protocol.CredentialDescriptor{{
+		Type:         protocol.PublicKeyCredentialType,
+		CredentialID: stored.ID,
+	}}))
+	if err != nil {
+		return nil, "", WrapError("begin invite resume", err)
+	}
+	return s.saveLoginSession(ctx, options, session)
+}
+
+// FinishInviteResume verifies the assertion answering a BeginInviteResume
+// ceremony with go-webauthn's login validation (signature, challenge,
+// origin, RP ID, sign count) against the enrolled credential, and returns
+// the invited account only for a valid assertion by that credential over
+// this session's challenge. The session is claimed first, so an assertion
+// verifies at most once. Nothing about the account's standing changes here:
+// the caller activates the account and then redeems the invitation.
+func (s *Service) FinishInviteResume(ctx context.Context, sessionID string, invitedHandle []byte, issuedAt time.Time, response *protocol.ParsedCredentialAssertionData) (User, error) {
+	if !s.configured {
+		return nil, ErrNotConfigured
+	}
+	session, err := s.sessions.Take(ctx, sessionID)
+	if err != nil {
+		return nil, sessionClaimError("take invite resume session", err)
+	}
+	if response == nil {
+		return nil, NewVerificationError("validate invite resume", nil)
+	}
+	user, stored, err := s.resumableInviteCredential(ctx, invitedHandle, issuedAt)
+	if err != nil {
+		return nil, err
+	}
+	// Only a resume session begun for this account and its one enrolled
+	// credential: a registration session carries credential parameters, a
+	// login or another account's session another handle or allow list.
+	if len(session.CredParams) != 0 ||
+		!bytes.Equal(session.UserID, invitedHandle) ||
+		len(session.AllowedCredentialIDs) != 1 ||
+		!bytes.Equal(session.AllowedCredentialIDs[0], stored.ID) {
+		return nil, NewVerificationError("validate invite resume", nil)
+	}
+	credential, err := s.webauthn.ValidateLogin(user, *session, response)
+	if err != nil {
+		return nil, verificationError("validate invite resume", err)
+	}
+	if !bytes.Equal(credential.ID, stored.ID) {
+		return nil, NewVerificationError("validate invite resume", nil)
+	}
+	if err := s.recordAssertion(ctx, user, credential, response); err != nil {
+		return nil, err
 	}
 	return user, nil
 }
@@ -801,14 +862,23 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 		return nil, NewVerificationError("validate login", nil)
 	}
 
-	// Update credential sign counter
+	if err := s.recordAssertion(ctx, user, credential, response); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// recordAssertion stores what a verified assertion tells about its
+// credential: the sign counter (reporting a clone warning) and last use.
+// Login and the invite resume share it.
+func (s *Service) recordAssertion(ctx context.Context, user User, credential *webauthn.Credential, response *protocol.ParsedCredentialAssertionData) error {
 	cred, err := s.creds.GetByCredentialID(ctx, credential.ID)
 	if err != nil {
-		return nil, WrapError("get credential for update", err)
+		return WrapError("get credential for update", err)
 	}
 	if credential.Authenticator.CloneWarning {
 		if err := s.reportCloneWarning(ctx, user, cred, response.Response.AuthenticatorData.Counter); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	cred.Authenticator.SignCount = credential.Authenticator.SignCount
@@ -816,16 +886,15 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 	cred.LastUsedAt = time.Now().UTC()
 
 	if err := s.creds.Update(ctx, cred); err != nil {
-		return nil, WrapError("update credential", err)
+		return WrapError("update credential", err)
 	}
 
 	// Update user's credential
 	user.UpdateCredential(cred)
 	if err := s.users.Save(ctx, user); err != nil {
-		return nil, WrapError("save user", err)
+		return WrapError("save user", err)
 	}
-
-	return user, nil
+	return nil
 }
 
 // logStandingRefusal records, for the operator, why a ceremony was refused
