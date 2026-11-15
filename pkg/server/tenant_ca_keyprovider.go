@@ -39,8 +39,35 @@ var errTenantCAKeyFactoryUnbound = errors.New("tenant login CA key factory: no b
 // tenant-scoped backend: every tenant's login CA (Key B) signature goes
 // through that tenant's xkms key, and go-qrdb generates no software Key B.
 type tenantCAKeyFactory struct {
-	mu   sync.RWMutex
-	base xkms.Backend
+	mu      sync.RWMutex
+	base    xkms.Backend
+	tenants tenantLookup
+}
+
+// tenantLookup is the part of go-qrdb's tenant service the factory uses to
+// tell a tenant the node knows from an arbitrary ID.
+type tenantLookup interface {
+	GetTenant(ctx context.Context, tenantID string) (*qrdbsdk.ServiceTenantInfo, error)
+}
+
+// TrackTenants makes the factory provision, on first request, the login CA of
+// any tenant svc knows that has none yet. Without it such a tenant is refused.
+func (f *tenantCAKeyFactory) TrackTenants(svc tenantLookup) {
+	f.mu.Lock()
+	f.tenants = svc
+	f.mu.Unlock()
+}
+
+// knownTenant reports whether the tracked tenant service has tenantID.
+func (f *tenantCAKeyFactory) knownTenant(ctx context.Context, tenantID string) bool {
+	f.mu.RLock()
+	svc := f.tenants
+	f.mu.RUnlock()
+	if svc == nil {
+		return false
+	}
+	info, err := svc.GetTenant(ctx, tenantID)
+	return err == nil && info != nil
 }
 
 var _ qrdbsdk.CAKeyProviderFactory = (*tenantCAKeyFactory)(nil)
@@ -74,7 +101,8 @@ func (f *tenantCAKeyFactory) backend() (xkms.Backend, error) {
 }
 
 // ProviderForTenant returns the provider of tenantID's login CA: the tenant's
-// own xkms key and certificate. A tenant without a login CA key is refused;
+// own xkms key and certificate. A tenant without a login CA key is
+// provisioned if the tracked tenant service knows it, and refused otherwise;
 // a provider is never shared between tenants.
 func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyProvider, error) {
 	if tenantID == "" {
@@ -86,7 +114,15 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	if _, err := tenantLoginCAKeyAttrs(context.Background(), base, tenantID); err != nil {
-		return nil, err
+		// go-qrdb's native onboarding creates a tenant through the node's own
+		// tenant service, which go-xkms cannot wrap, and then asks for its
+		// login CA: provision a tenant the node knows on that first request.
+		if !f.knownTenant(context.Background(), tenantID) {
+			return nil, err
+		}
+		if err := f.EnsureTenant(context.Background(), tenantID); err != nil {
+			return nil, err
+		}
 	}
 	return qrdbsdk.CAKeyAdapter{
 		SignerFunc: func(ctx context.Context) (crypto.Signer, error) {
