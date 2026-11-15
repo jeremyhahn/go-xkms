@@ -14,10 +14,17 @@
 package server
 
 import (
+	"crypto/ecdh"
+	"crypto/subtle"
+	"crypto/x509"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/devicereg"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
@@ -117,12 +124,72 @@ func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
 		return errors.Join(ErrPhoneBackendCreate, err)
 	}
 
+	// Backend mode: go-xkms is the verifier. The phone is accepted only
+	// while its device-registry record is active and bound to its key.
+	if err := s.verifyPhoneDevice(phoneCfg); err != nil {
+		if closeErr := backend.Close(); closeErr != nil {
+			s.logger.Warn("failed to close refused phone backend",
+				slog.Any("error", closeErr))
+		}
+		return err
+	}
+
 	s.keyProviders["phone"] = backend
 	s.logger.Info("phone backend registered",
 		"transport", phoneCfg.Transport,
 		"device_address", phoneCfg.DeviceAddress,
 	)
 	return nil
+}
+
+// verifyPhoneDevice refuses, with ErrPhoneDeviceRefused, a phone whose
+// device-registry record (phoneCfg.Tenant, phoneCfg.DeviceID) is missing,
+// revoked, or carries an identity key other than phoneCfg.PhoneStaticKey.
+// The identity key is SPKI DER of the phone's X25519 Noise static key.
+// Callers hold s.mu.
+func (s *Server) verifyPhoneDevice(phoneCfg *config.PhoneConfig) error {
+	reg, err := s.phoneDeviceRegistry()
+	if err != nil {
+		return errors.Join(ErrPhoneDeviceRefused, err)
+	}
+	device, err := reg.Get(s.ctx, phoneCfg.Tenant, phoneCfg.DeviceID)
+	if err != nil {
+		return errors.Join(ErrPhoneDeviceRefused, err)
+	}
+	if !device.Active() {
+		return fmt.Errorf("%w: device %q is revoked", ErrPhoneDeviceRefused, device.ID)
+	}
+	want, err := hex.DecodeString(phoneCfg.PhoneStaticKey)
+	if err != nil {
+		return fmt.Errorf("%w: phone_static_key is not hex: %v", ErrPhoneDeviceRefused, err)
+	}
+	pub, err := x509.ParsePKIXPublicKey(device.IdentityKey)
+	if err != nil {
+		return fmt.Errorf("%w: device %q identity key: %v", ErrPhoneDeviceRefused, device.ID, err)
+	}
+	key, ok := pub.(*ecdh.PublicKey)
+	if !ok || key.Curve() != ecdh.X25519() || subtle.ConstantTimeCompare(key.Bytes(), want) != 1 {
+		return fmt.Errorf("%w: device %q identity key is not the phone's key", ErrPhoneDeviceRefused, device.ID)
+	}
+	return nil
+}
+
+// phoneDeviceRegistry returns the device registry, opening it on the
+// datastore at first use. Callers hold s.mu.
+func (s *Server) phoneDeviceRegistry() (*devicereg.Registry, error) {
+	if s.deviceRegistry != nil {
+		return s.deviceRegistry, nil
+	}
+	daos, err := s.daoFactory(devicereg.DatabaseName)
+	if err != nil {
+		return nil, err
+	}
+	reg, err := devicereg.NewRegistry(daos)
+	if err != nil {
+		return nil, err
+	}
+	s.deviceRegistry = reg
+	return reg, nil
 }
 
 // UnregisterPhoneBackend removes the phone backend, typically called when
