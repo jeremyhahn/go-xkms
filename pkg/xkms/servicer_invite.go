@@ -309,10 +309,21 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: err}
 	}
 
-	// The ceremony's session must belong to the account this invitation
-	// names: FinishInviteRegistration refuses any other session before it
-	// stores a credential, leaving both invitations intact.
-	user, err := s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, xkmswebauthn.HandleFromUserID(invitedID), parsed)
+	// A finish whose credential was stored but whose activation then failed
+	// is resumed from the same attestation: the session is gone and a new
+	// ceremony is refused for an account that holds a credential, so the
+	// still-valid invitation completes the activation. The resume is bound
+	// to this invitation's account and to the one credential it enrolled
+	// since the invitation was issued (verify P1 servicer_invite.go:332).
+	invitedHandle := xkmswebauthn.HandleFromUserID(invitedID)
+	user, err := s.webauthnService.ResumeInviteRegistration(ctx, invitedHandle, entity.CreatedAt, parsed)
+	if errors.Is(err, xkmswebauthn.ErrInviteNotResumable) {
+		// The ceremony's session must belong to the account this
+		// invitation names: FinishInviteRegistration refuses any other
+		// session before it stores a credential, leaving both invitations
+		// intact.
+		user, err = s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, invitedHandle, parsed)
+	}
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable

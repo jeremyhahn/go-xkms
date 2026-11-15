@@ -428,6 +428,62 @@ func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string
 	})
 }
 
+// ErrInviteNotResumable reports that ResumeInviteRegistration found no
+// persisted invite enrolment to resume; the caller runs the normal finish.
+var ErrInviteNotResumable = errors.New("webauthn: no persisted invite enrolment to resume")
+
+// ResumeInviteRegistration recovers an invite enrolment whose credential was
+// stored by FinishInviteRegistration but whose account activation then
+// failed: the ceremony's session is gone and BeginInviteRegistration refuses
+// an account that holds a credential, so without this the invitation could
+// never complete. It returns the invited account only when all of these
+// hold, and ErrInviteNotResumable otherwise:
+//   - the account named by invitedHandle is still pending;
+//   - it holds exactly one credential, stored no earlier than issuedAt (the
+//     invitation's issue time), so it was enrolled under this invitation;
+//   - response is the attestation of that credential: the same credential
+//     ID and public key as the stored one.
+//
+// Nothing is stored or consumed. The caller keeps the invitation itself
+// valid and unredeemed until the activation commits.
+func (s *Service) ResumeInviteRegistration(ctx context.Context, invitedHandle []byte, issuedAt time.Time, response *protocol.ParsedCredentialCreationData) (User, error) {
+	if !s.configured {
+		return nil, ErrNotConfigured
+	}
+	if len(invitedHandle) == 0 || response == nil {
+		return nil, ErrInviteNotResumable
+	}
+	user, err := s.users.GetByID(ctx, invitedHandle)
+	if err != nil {
+		if IsUserNotFound(err) {
+			return nil, ErrInviteNotResumable
+		}
+		return nil, WrapError("get user", err)
+	}
+	if user.Lifecycle() != qrdbsdk.LifecyclePending {
+		return nil, ErrInviteNotResumable
+	}
+	creds, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		return nil, WrapError("get credentials", err)
+	}
+	if len(creds) != 1 {
+		return nil, ErrInviteNotResumable
+	}
+	stored := creds[0]
+	attested := response.Response.AttestationObject.AuthData.AttData
+	if !bytes.Equal(stored.UserID, invitedHandle) ||
+		stored.CreatedAt.Before(issuedAt) ||
+		len(stored.ID) == 0 ||
+		!bytes.Equal(stored.ID, response.RawID) ||
+		!bytes.Equal(stored.ID, attested.CredentialID) ||
+		len(stored.PublicKey) == 0 ||
+		!bytes.Equal(stored.PublicKey, attested.CredentialPublicKey) {
+		return nil, ErrInviteNotResumable
+	}
+	return user, nil
+}
+
 // runFinishRegistration claims the ceremony session, resolves the account it
 // names, and — only once accept approves that account — validates the
 // authenticator response and persists the resulting credential. accept
