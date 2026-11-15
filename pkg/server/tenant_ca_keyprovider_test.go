@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -215,6 +216,39 @@ func TestTenantCAKeyFactory_ConcurrentNodesConverge(t *testing.T) {
 	pubB, _ = tenantLoginCA(t, b, "tenant-b")
 	assert.True(t, pubA.(*ecdsa.PublicKey).Equal(pubB))
 	assert.True(t, pubA.(*ecdsa.PublicKey).Equal(certA.PublicKey))
+}
+
+// failSaveCertBackend fails its first fail SaveCert calls: a store outage, or
+// a process that stopped between the key and the certificate.
+type failSaveCertBackend struct {
+	xkms.Backend
+	fail atomic.Int32
+}
+
+func (b *failSaveCertBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
+	if b.fail.Add(-1) >= 0 {
+		return errors.New("certificate store unavailable")
+	}
+	return b.Backend.SaveCert(ctx, keyID, cert)
+}
+
+func TestTenantCAKeyFactory_RetryAfterSaveCertFailure(t *testing.T) {
+	ctx := context.Background()
+	_, base := newTenantCAKeyTestFactory(t)
+	flaky := &failSaveCertBackend{Backend: base}
+	flaky.fail.Store(1)
+	f := newTenantCAKeyFactory()
+	require.NoError(t, f.Bind(flaky))
+
+	require.Error(t, f.EnsureTenant(ctx, "tenant-a"), "a failed certificate save must fail provisioning")
+	before := tenantSignerPublic(t, base, "tenant-a").(*ecdsa.PublicKey)
+
+	// The key is left behind without a certificate; the retry must finish it.
+	require.NoError(t, f.EnsureTenant(ctx, "tenant-a"))
+	pub, cert := tenantLoginCA(t, f, "tenant-a")
+	assert.True(t, before.Equal(pub), "the retry must keep the existing key")
+	assert.True(t, before.Equal(cert.PublicKey), "the retry must issue the certificate over the existing key")
+	assert.True(t, cert.IsCA)
 }
 
 func TestTenantCAKeyFactory_SignatureVerifies(t *testing.T) {
