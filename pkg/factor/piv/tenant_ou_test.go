@@ -79,3 +79,30 @@ func TestDecoyEnrollment_CertificateCarriesLikeTenantOU(t *testing.T) {
 		t.Fatalf("decoy OU = %v (tenant %q), real OU = %v", got.Subject.OrganizationalUnit, d.TenantID, real.Subject.OrganizationalUnit)
 	}
 }
+
+// The ceremony rebuilds quorum roster enrollments with PublicKey and Metadata
+// only (no TenantID). A decoy built from that roster carries the same tenant
+// OU as the real holders' certificates, so an anonymous quorum challenge
+// cannot tell a stranger from a holder by the OU.
+func TestDecoyEnrollment_RosterShapedLikeCarriesHolderTenantOU(t *testing.T) {
+	f := New(Config{})
+	holders := []*qrdbsdk.AuthFactorEnrollment{enrollHolder(t, "holder-1", nil), enrollHolder(t, "holder-2", nil)}
+	roster := make([]*qrdbsdk.AuthFactorEnrollment, 0, len(holders))
+	for _, h := range holders {
+		roster = append(roster, &qrdbsdk.AuthFactorEnrollment{
+			UserID:     h.UserID,
+			FactorName: h.FactorName,
+			PublicKey:  h.PublicKey,
+			Metadata:   h.Metadata,
+		})
+	}
+	d := decoyFor(t, f, decoySeed, "stranger", roster)
+	real := enrolledCertificate(t, holders[0])
+	got := enrolledCertificate(t, d)
+	if !reflect.DeepEqual(got.Subject.OrganizationalUnit, real.Subject.OrganizationalUnit) {
+		t.Fatalf("roster decoy OU = %v, real holder OU = %v", got.Subject.OrganizationalUnit, real.Subject.OrganizationalUnit)
+	}
+	if got.Issuer.String() != got.Subject.String() {
+		t.Fatalf("decoy issuer %q != subject %q", got.Issuer, got.Subject)
+	}
+}
