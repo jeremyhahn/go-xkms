@@ -65,6 +65,23 @@ type streamableHTTP struct {
 	protocolVersion string
 	onNotification  func(mcp.JSONRPCNotification)
 	closed          bool
+	// inflight holds the cancel function of every POST whose response body
+	// is still open, so Close interrupts requests a server holds open.
+	inflight map[uint64]context.CancelFunc
+	nextReq  uint64
+}
+
+// releasingBody closes the response body and then releases the request's
+// registration and context in Close.
+type releasingBody struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b *releasingBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.release()
+	return err
 }
 
 var _ mcptransport.HTTPConnection = (*streamableHTTP)(nil)
@@ -183,7 +200,18 @@ func (s *streamableHTTP) Close() error {
 	}
 	s.closed = true
 	sessionID := s.sessionID
+	cancels := make([]context.CancelFunc, 0, len(s.inflight))
+	for _, cancel := range s.inflight {
+		cancels = append(cancels, cancel)
+	}
 	s.mu.Unlock()
+
+	// Interrupt every request whose response is still open: a stalled
+	// response or an unfinished event stream must not keep its goroutine
+	// and connection after the client is closed.
+	for _, cancel := range cancels {
+		cancel()
+	}
 
 	if sessionID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
@@ -201,19 +229,41 @@ func (s *streamableHTTP) Close() error {
 
 // post sends one JSON-RPC message to the endpoint. A redirect is an error.
 func (s *streamableHTTP) post(ctx context.Context, message any, extra http.Header) (*http.Response, error) {
-	s.mu.RLock()
-	closed := s.closed
-	s.mu.RUnlock()
-	if closed {
-		return nil, errTransportClosed
-	}
-
 	data, err := json.Marshal(message)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: encode message: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint, bytes.NewReader(data))
+
+	// Register the request's cancel function under the same lock that Close
+	// takes to mark the transport closed: a request either sees closed and
+	// never starts, or is registered and cancelled by Close.
+	reqCtx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		cancel()
+		return nil, errTransportClosed
+	}
+	if s.inflight == nil {
+		s.inflight = make(map[uint64]context.CancelFunc)
+	}
+	s.nextReq++
+	key := s.nextReq
+	s.inflight[key] = cancel
+	s.mu.Unlock()
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			s.mu.Lock()
+			delete(s.inflight, key)
+			s.mu.Unlock()
+			cancel()
+		})
+	}
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, s.endpoint, bytes.NewReader(data))
 	if err != nil {
+		release()
 		return nil, fmt.Errorf("mcp: build request: %w", err)
 	}
 	s.setHeaders(req, extra)
@@ -222,12 +272,15 @@ func (s *streamableHTTP) post(ctx context.Context, message any, extra http.Heade
 
 	resp, err := s.http.Do(req)
 	if err != nil {
+		release()
 		return nil, fmt.Errorf("mcp: send request: %w", err)
 	}
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		_ = resp.Body.Close()
+		release()
 		return nil, fmt.Errorf("%w (HTTP %d)", ErrRedirectRefused, resp.StatusCode)
 	}
+	resp.Body = &releasingBody{ReadCloser: resp.Body, release: release}
 	return resp, nil
 }
 
