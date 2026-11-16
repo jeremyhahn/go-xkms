@@ -789,7 +789,9 @@ func TestDecrypt_CompactSerialization(t *testing.T) {
 	}
 	plaintext := []byte("compact jwe round trip")
 
-	enc, err := NewEncrypter("RSA-OAEP-256", "A256GCM", &key.PublicKey)
+	// A256CBC-HS512 keeps the test runnable under GODEBUG=fips140=only, where
+	// go-jose's AES-GCM content encryption is rejected.
+	enc, err := NewEncrypter("RSA-OAEP-256", "A256CBC-HS512", &key.PublicKey)
 	if err != nil {
 		t.Fatalf("NewEncrypter: %v", err)
 	}
@@ -805,7 +807,7 @@ func TestDecrypt_CompactSerialization(t *testing.T) {
 		t.Fatalf("Decrypt compact = %q, want %q", got, plaintext)
 	}
 
-	joseEnc, err := jose.NewEncrypter(jose.A256GCM, jose.Recipient{Algorithm: jose.RSA_OAEP_256, Key: &key.PublicKey}, nil)
+	joseEnc, err := jose.NewEncrypter(jose.A256CBC_HS512, jose.Recipient{Algorithm: jose.RSA_OAEP_256, Key: &key.PublicKey}, nil)
 	if err != nil {
 		t.Fatalf("jose.NewEncrypter: %v", err)
 	}
