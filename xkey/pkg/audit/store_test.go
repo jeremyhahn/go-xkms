@@ -30,7 +30,7 @@ import (
 )
 
 // fakeEntryLogger is a test double for entryLogger that lets tests inject
-// a Log failure to prove BackendStore and DAOAuditStore no longer discard
+// a Log failure to prove BackendStore and QRDBStore no longer discard
 // it.
 type fakeEntryLogger struct {
 	logErr error

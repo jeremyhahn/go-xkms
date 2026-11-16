@@ -219,7 +219,7 @@ type Logger interface {
 	LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any) error
 }
 
-// entryLogger is the minimal capability BackendStore and DAOAuditStore need
+// entryLogger is the minimal capability BackendStore and QRDBStore need
 // from a configured audit logger: writing an individual entry (whose error
 // must be surfaced, not discarded, alongside the primary persistent write
 // failure) and exposing the underlying *slog.Logger for
@@ -241,15 +241,15 @@ func NewSlogLogger(logger *slog.Logger) *SlogLogger {
 	}
 }
 
-// slogHandle returns the underlying *slog.Logger so BackendStore and
-// DAOAuditStore can pass it to handleWriteFailure.
+// slogHandle returns the underlying *slog.Logger so BackendStore can pass it
+// to handleWriteFailure.
 func (l *SlogLogger) slogHandle() *slog.Logger {
 	return l.logger
 }
 
 // Log writes an audit entry. SlogLogger has no persistent backing store to
 // fail, so Log always returns nil; it satisfies the Logger contract so
-// SlogLogger is interchangeable with BackendStore and DAOAuditStore.
+// SlogLogger is interchangeable with BackendStore and QRDBStore.
 func (l *SlogLogger) Log(e Entry) error {
 	attrs := []any{
 		"operation", string(e.Operation),
