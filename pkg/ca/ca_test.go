@@ -166,3 +166,61 @@ func TestPasswordScopedSigner_RefusesAKeyOtherThanItsOwn(t *testing.T) {
 	_, err = swapped.Sign(rand.Reader, digest[:], crypto.SHA256)
 	require.Error(t, err, "Sign must refuse a key other than the one Public reports")
 }
+
+// TestCA_RepeatedSignKeepsParentPasswordsBounded proves the per-lookup and
+// per-Sign cleanup clears every password the key conversion allocated, the
+// parent key's included: N lookups and signatures with a CA key whose
+// KeyConfig carries a password-protected parent leave the process
+// allocator's locked bytes where they started. Not parallel: it measures the
+// process-wide allocator.
+func TestCA_RepeatedSignKeepsParentPasswordsBounded(t *testing.T) {
+	ctx := context.Background()
+	backend, _ := newPKCS8CABackend(t)
+
+	root := passwordProtectedIdentity(t, rootIdentity("PW Parent Chain CA"), "chain-key-password")
+	trusted, err := NewParentCA(&Params{
+		Identity:           []Identity{root},
+		KeyStore:           backend,
+		BackendForStore:    singleBackendFactory(backend),
+		RevocationStore:    storage.NewMemory(),
+		CertStore:          newInMemoryCertStore(t),
+		RequireKeyPassword: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, trusted.Init(ctx))
+	ca, ok := trusted.(*CA)
+	require.True(t, ok, "NewParentCA must return a *CA")
+
+	// The constructors rebuild the identity from the flat CAConfig, so the
+	// parent key is attached to the live issuing identity after Init.
+	issuing := ca.config.IssuingIdentity()
+	require.NotNil(t, issuing)
+	parentPassword, err := types.NewLiteralSecretValue(ctx, []byte("parent-key-password"))
+	require.NoError(t, err)
+	parentKey := *issuing.Keys[0]
+	parentKey.Password = parentPassword
+	parentKey.Parent = nil
+	key := *issuing.Keys[0]
+	key.Parent = &parentKey
+	issuing.Keys = []*types.KeyConfig{&key}
+
+	alloc, err := enclave.ProcessAllocator()
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte("parent chain"))
+	signOnce := func() {
+		signer, err := ca.getSigner(ctx)
+		require.NoError(t, err)
+		_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+		require.NoError(t, err)
+	}
+
+	signOnce() // warm up lazily created state
+	before := alloc.InUse()
+	const n = 50
+	for i := 0; i < n; i++ {
+		signOnce()
+	}
+	after := alloc.InUse()
+	require.LessOrEqual(t, after, before,
+		"%d lookups and signatures grew locked bytes from %d to %d", n, before, after)
+}
