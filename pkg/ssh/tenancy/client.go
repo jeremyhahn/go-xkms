@@ -178,10 +178,18 @@ type caller struct {
 	principal scope.Principal
 }
 
-// callerOf returns the principal ctx carries.
+// callerOf returns the principal ctx carries, named by its policy subject.
 func callerOf(ctx context.Context) caller {
 	identity := auth.GetIdentity(ctx)
-	return caller{identity: identity, principal: scope.PrincipalOf(identity)}
+	p := scope.PrincipalOf(identity)
+	// User-scoped SSH assets are owned by auth.PolicySubject, as the
+	// password vault, OIDC credentials and key policies are: a passkey
+	// caller's keys stay under the handle they were stored under after
+	// account binding rewrites Subject to the account ID.
+	if p.Authenticated {
+		p.Subject = auth.PolicySubject(identity)
+	}
+	return caller{identity: identity, principal: p}
 }
 
 // target returns the owner a request addressing (sc, owner) names: a
