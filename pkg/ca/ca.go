@@ -1201,13 +1201,18 @@ func (ca *CA) getSigner(ctx context.Context) (crypto.Signer, error) {
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get signer", Err: err}
 	}
-	defer clearKeyPassword(attrs)
 
 	backend, err := ca.resolveKeyBackend(attrs.StoreType)
 	if err != nil {
+		clearKeyPassword(attrs)
 		return nil, err
 	}
-	return backend.Signer(ctx, attrs)
+	signer, err := backend.Signer(ctx, attrs)
+	if err != nil {
+		clearKeyPassword(attrs)
+		return nil, err
+	}
+	return ca.passwordScoped(ctx, issuingIdentity, attrs, signer), nil
 }
 
 // getCAKeyAttributes returns KeyAttributes for the specified identity.
@@ -1236,6 +1241,54 @@ func clearKeyPassword(attrs *types.KeyAttributes) {
 	if attrs != nil && attrs.Password != nil {
 		attrs.Password.Clear()
 	}
+}
+
+// passwordScoped returns a signer that keeps no key password live between
+// signatures. A backend signer may read attrs.Password inside Sign (the TPM
+// 2.0 signer does), so the password cannot be cleared when the lookup
+// returns; instead each Sign resolves fresh attributes and a fresh backend
+// signer, signs, and clears that password. signer's own password is cleared
+// here once its public key is taken. A key without a password needs no
+// scoping and signer is returned unchanged.
+func (ca *CA) passwordScoped(ctx context.Context, identity *Identity, attrs *types.KeyAttributes, signer crypto.Signer) crypto.Signer {
+	if attrs.Password == nil {
+		return signer
+	}
+	pub := signer.Public()
+	clearKeyPassword(attrs)
+	ctx = context.WithoutCancel(ctx)
+	return &passwordScopedSigner{
+		pub: pub,
+		open: func() (crypto.Signer, *types.KeyAttributes, error) {
+			attrs, err := ca.getCAKeyAttributes(ctx, identity)
+			if err != nil {
+				return nil, nil, err
+			}
+			backend, err := ca.resolveKeyBackend(attrs.StoreType)
+			if err != nil {
+				return nil, attrs, err
+			}
+			s, err := backend.Signer(ctx, attrs)
+			return s, attrs, err
+		},
+	}
+}
+
+// passwordScopedSigner opens the CA key, with its password, for one Sign.
+type passwordScopedSigner struct {
+	pub  crypto.PublicKey
+	open func() (crypto.Signer, *types.KeyAttributes, error)
+}
+
+func (s *passwordScopedSigner) Public() crypto.PublicKey { return s.pub }
+
+func (s *passwordScopedSigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	signer, attrs, err := s.open()
+	defer clearKeyPassword(attrs)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "ca: open CA key for signing", Err: err}
+	}
+	return signer.Sign(r, digest, opts)
 }
 
 // getOrGenerateCAKey retrieves an existing key or generates a new one if it doesn't exist.

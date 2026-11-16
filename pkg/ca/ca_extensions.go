@@ -514,16 +514,17 @@ func (ca *CA) IssuerForIdentity(ctx context.Context, cn string) (crypto.Signer, 
 	if err != nil {
 		return nil, nil, err
 	}
-	defer clearKeyPassword(attrs)
 	backend, err := ca.resolveKeyBackend(attrs.StoreType)
 	if err != nil {
+		clearKeyPassword(attrs)
 		return nil, nil, err
 	}
 	signer, err := backend.Signer(ctx, attrs)
 	if err != nil {
+		clearKeyPassword(attrs)
 		return nil, nil, &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("identity %q key: %v", cn, err)}
 	}
-	return signer, cert, nil
+	return ca.passwordScoped(ctx, identity, attrs, signer), cert, nil
 }
 
 // =============================================================================
