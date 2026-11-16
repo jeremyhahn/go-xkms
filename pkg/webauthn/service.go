@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -220,7 +221,7 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 
 	// beginRegistrationFor also checks account standing — which is how
 	// public registration created accounts as active from the start.
-	return s.beginRegistrationFor(ctx, user, existingCreds)
+	return s.beginRegistrationFor(ctx, user, existingCreds, purposeRegistration)
 }
 
 // BeginInviteRegistration opens a WebAuthn registration ceremony for a
@@ -265,7 +266,7 @@ func (s *Service) BeginInviteRegistration(ctx context.Context, userHandle []byte
 		return nil, "", ErrRegistrationRefused
 	}
 
-	return s.runBeginRegistration(ctx, user, nil)
+	return s.runBeginRegistration(ctx, user, nil, purposeInvite)
 }
 
 // BeginAddCredential starts a registration ceremony that adds a passkey to
@@ -299,7 +300,66 @@ func (s *Service) BeginAddCredential(ctx context.Context, acct SessionAccount) (
 	if err != nil {
 		return nil, "", WrapError("get credentials", err)
 	}
-	return s.beginRegistrationFor(ctx, user, existingCreds)
+	return s.beginRegistrationFor(ctx, user, existingCreds, purposeAddCredential)
+}
+
+// sessionPurpose names the authorization a registration ceremony was opened
+// under. It is written into the server-side session record when the ceremony
+// begins and checked when it finishes, so a session opened by one entry point
+// cannot be finished through another: an invite ceremony's session never
+// completes through the public registration finish (which would enrol a
+// further credential once the account is active and mint tokens without the
+// first credential being used), and an ordinary session never completes
+// through the invite finish.
+type sessionPurpose string
+
+const (
+	// purposeRegistration: public BeginRegistration of a new account.
+	purposeRegistration sessionPurpose = "registration"
+	// purposeAddCredential: BeginAddCredential for an authenticated
+	// session's account; the session also records that account.
+	purposeAddCredential sessionPurpose = "add_credential"
+	// purposeInvite: BeginInviteRegistration for an invited pending account.
+	purposeInvite sessionPurpose = "invite"
+)
+
+// The purpose and bound account are kept in the session's Extensions.Extra,
+// the map go-webauthn persists verbatim for the relying party's own use,
+// under keys no WebAuthn extension uses. SessionData never leaves the
+// server, so the client cannot set them; both are strings so a store that
+// serializes the session round-trips them unchanged.
+const (
+	sessionPurposeKey = "xkms_session_purpose"
+	sessionAccountKey = "xkms_session_account"
+)
+
+// bindSessionPurpose records purpose, and for add-a-passkey the account the
+// authenticated caller belongs to, in the session record.
+func bindSessionPurpose(session *webauthn.SessionData, purpose sessionPurpose, account []byte) {
+	if session.Extensions.Extra == nil {
+		session.Extensions.Extra = map[string]any{}
+	}
+	session.Extensions.Extra[sessionPurposeKey] = string(purpose)
+	if purpose == purposeAddCredential {
+		session.Extensions.Extra[sessionAccountKey] = base64.RawURLEncoding.EncodeToString(account)
+	}
+}
+
+// sessionPurposeAllows reports whether the session was opened under one of
+// allowed, and, for an add-a-passkey session, whether the account it was
+// bound to is user. A session without a recorded purpose (a login session,
+// or one not opened by a registration begin) is never allowed.
+func sessionPurposeAllows(session *webauthn.SessionData, user User, allowed ...sessionPurpose) bool {
+	got, _ := session.Extensions.Extra[sessionPurposeKey].(string)
+	purpose := sessionPurpose(got)
+	if purpose == "" || !slices.Contains(allowed, purpose) {
+		return false
+	}
+	if purpose == purposeAddCredential {
+		bound, _ := session.Extensions.Extra[sessionAccountKey].(string)
+		return bound != "" && bound == base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
+	}
+	return true
 }
 
 // beginRegistrationFor runs the registration ceremony for an already
@@ -307,12 +367,12 @@ func (s *Service) BeginAddCredential(ctx context.Context, acct SessionAccount) (
 // that is not active is refused with ErrRegistrationRefused, the same answer
 // every other refused enrolment gets, so the refusal does not reveal the
 // account's state (go-xkms#1298).
-func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingCreds []*Credential) (*protocol.CredentialCreation, string, error) {
+func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingCreds []*Credential, purpose sessionPurpose) (*protocol.CredentialCreation, string, error) {
 	if err := checkLifecycle(user); err != nil {
 		s.logStandingRefusal("begin registration", err)
 		return nil, "", ErrRegistrationRefused
 	}
-	return s.runBeginRegistration(ctx, user, existingCreds)
+	return s.runBeginRegistration(ctx, user, existingCreds, purpose)
 }
 
 // runBeginRegistration starts the go-webauthn ceremony for an already
@@ -321,8 +381,9 @@ func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingC
 // or credential-count policy of its own — every caller decides that before
 // reaching here — because BeginInviteRegistration's policy (pending, zero
 // credentials) and beginRegistrationFor's (active) are deliberately
-// different gates in front of the identical ceremony mechanics.
-func (s *Service) runBeginRegistration(ctx context.Context, user User, existingCreds []*Credential) (*protocol.CredentialCreation, string, error) {
+// different gates in front of the identical ceremony mechanics. The session
+// records purpose, which the matching finish entry point requires.
+func (s *Service) runBeginRegistration(ctx context.Context, user User, existingCreds []*Credential, purpose sessionPurpose) (*protocol.CredentialCreation, string, error) {
 	excludeList := make([]protocol.CredentialDescriptor, len(existingCreds))
 	for i, cred := range existingCreds {
 		excludeList[i] = protocol.CredentialDescriptor{
@@ -338,6 +399,7 @@ func (s *Service) runBeginRegistration(ctx context.Context, user User, existingC
 	if err != nil {
 		return nil, "", WrapError("begin registration", err)
 	}
+	bindSessionPurpose(session, purpose, user.WebAuthnID())
 
 	sessionID, err := s.sessions.Save(ctx, session)
 	if err != nil {
@@ -385,7 +447,7 @@ func (s *Service) FinishRegistrationPair(ctx context.Context, sessionID string, 
 // The account must still be active: it may have left that state since the
 // ceremony began.
 func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
-	return s.runFinishRegistration(ctx, sessionID, response, false, func(user User) error {
+	return s.runFinishRegistration(ctx, sessionID, response, false, []sessionPurpose{purposeRegistration, purposeAddCredential}, func(user User) error {
 		if err := checkLifecycle(user); err != nil {
 			s.logStandingRefusal("finish registration", err)
 			return ErrRegistrationRefused
@@ -413,7 +475,7 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 // names: a session begun for any other account is refused with
 // ErrRegistrationRefused before a credential is created or stored.
 func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string, invitedHandle []byte, response *protocol.ParsedCredentialCreationData) (User, error) {
-	return s.runFinishRegistration(ctx, sessionID, response, true, func(user User) error {
+	return s.runFinishRegistration(ctx, sessionID, response, true, []sessionPurpose{purposeInvite}, func(user User) error {
 		// The session must belong to the account the invitation names. The
 		// check runs before the credential is created or stored: a session
 		// begun for another invitation's account enrols nothing, so both
@@ -561,7 +623,7 @@ func (s *Service) FinishInviteResume(ctx context.Context, sessionID string, invi
 // under a won CredentialStore.ClaimFirstCredential, a create-if-absent in the
 // shared store; the loser is refused with ErrRegistrationRefused and stores
 // nothing, and a winner whose save fails releases the claim.
-func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData, firstCredential bool, accept func(User) error) (User, error) {
+func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData, firstCredential bool, purposes []sessionPurpose, accept func(User) error) (User, error) {
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
@@ -578,6 +640,13 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 	user, err := s.users.GetByID(ctx, session.UserID)
 	if err != nil {
 		return nil, WrapError("get user", err)
+	}
+
+	// The session must have been opened by a begin this finish serves (and
+	// an add-a-passkey session for this very account). The session is
+	// already claimed, so a refused one cannot be retried elsewhere.
+	if !sessionPurposeAllows(session, user, purposes...) {
+		return nil, ErrRegistrationRefused
 	}
 
 	if err := accept(user); err != nil {
