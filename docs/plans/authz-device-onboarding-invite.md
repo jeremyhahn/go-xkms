@@ -83,3 +83,22 @@ v0.51.0-alpha and v0.58.2-alpha.
    8c00ce10f: `handleCreateUser`, `createUserErrorCode` and `mapUserError`
    classify `PermissionDeniedError` (and `auth.ErrUnauthenticated`) with each
    gate's own message.
+
+## Slice 5 (lane row2091c): Codex P1 findings on 358219ec3
+
+1. The self-built host wired the qrdb RBAC plane whenever a client existed,
+   so a host that runs with authorization disabled refused invitations.
+   Test eb924a2df: `TestModule_HostMount_AuthDisabledAllowsInvite`. Fix
+   5a75c2e78: `WithAuthorization(false)` (sdk/go
+   `WithServiceModuleAuthorization`) keeps the service authorizer nil; unset,
+   the module enforces (fail closed).
+2. `AuthorizeCaller` decided through `bindIdentity`'s SDK projection, which
+   drops ScopePermissions, so a delegated caller granted users:invite there
+   was refused. Test d185f1ec4: `TestIdentityAuthorizer_DecidesOnScopePermissions`
+   (pkg/auth) and `TestModule_HostMount_DelegatedInviteUsesNodeAuthorizer`.
+   Fix 4f0f00612: `auth.NewIdentityAuthorizer` decides on the original
+   identity through the node's own authorizer; the module uses it under
+   `WithNodeAuthorizer` (sdk/go `WithServiceModuleNodeAuthorizer`).
+- Open: pkg/server still builds `auth.NewAuthorizer(qrdbClient.RBAC())`, so
+  xkmsd's own service keeps the projection until it is handed the node
+  authorizer.
