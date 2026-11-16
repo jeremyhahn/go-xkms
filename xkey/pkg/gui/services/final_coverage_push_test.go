@@ -1353,7 +1353,7 @@ func TestFinalCoveragePush_AuditService_GetEntries_NilStore(t *testing.T) {
 }
 
 func TestFinalCoveragePush_AuditService_GetEntries_WithFilter(t *testing.T) {
-	store, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, err)
 
 	store.Log(audit.Entry{
@@ -1946,7 +1946,7 @@ func TestFinalCoveragePush_AuditService_ExportEntries_NilStore(t *testing.T) {
 }
 
 func TestFinalCoveragePush_AuditService_ExportEntries_JSON(t *testing.T) {
-	store, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, err)
 
 	store.Log(audit.Entry{
@@ -1964,7 +1964,7 @@ func TestFinalCoveragePush_AuditService_ExportEntries_JSON(t *testing.T) {
 }
 
 func TestFinalCoveragePush_AuditService_ExportEntries_CSV(t *testing.T) {
-	store, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, err)
 
 	store.Log(audit.Entry{

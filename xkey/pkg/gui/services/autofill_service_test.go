@@ -77,7 +77,7 @@ func (m *autofillMockBarrier) Seal() error                  { m.unsealed = false
 // newTestAutoFillService creates a fully wired AutoFillService for testing.
 // It populates the static password store with test entries and the OATH
 // store with a test TOTP credential.
-func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore) {
+func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.QRDBStore) {
 	t.Helper()
 
 	// Static password store backed by in-memory storage.
@@ -134,7 +134,7 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 	appLockSvc := NewAppLockService(pinSvc, &autofillMockBarrier{unsealed: true})
 
 	// Audit store.
-	auditStore, auditErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	auditStore, auditErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, auditErr)
 
 	svc := NewAutoFillService(passwordSvc, oathSvc, appLockSvc, auditStore, slog.Default())
@@ -211,7 +211,7 @@ func TestAutoFillService_SetPolicy_Invalid(t *testing.T) {
 }
 
 func TestAutoFillService_SetPolicy_DeniedByEnterprisePolicy(t *testing.T) {
-	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+	auditStore, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, err)
 	svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
 	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: false})
@@ -1227,7 +1227,7 @@ func TestAutoFillService_SetEnabled_PolicyGate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+			auditStore, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 			require.NoError(t, err)
 			svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
 			svc.SetEnterprisePolicy(tt.policy)
@@ -1253,7 +1253,7 @@ func TestAutoFillService_SetEnabled_PolicyGate(t *testing.T) {
 // order: the user toggle is applied before the verified policy arrives, and a
 // policy that disables the extension must win over it.
 func TestAutoFillService_IsEnabled_FollowsEnterprisePolicy(t *testing.T) {
-	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+	auditStore, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, err)
 	svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
 	require.NoError(t, svc.SetEnabled(true))
