@@ -15,10 +15,17 @@ package ca
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/sha256"
+	"errors"
+	"io"
 	"testing"
 
 	enclave "github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,4 +67,73 @@ func TestCA_RepeatedSigningKeepsPasswordAllocationsBounded(t *testing.T) {
 	after := alloc.InUse()
 	require.LessOrEqual(t, after, before,
 		"%d signer lookups grew locked bytes from %d to %d", n, before, after)
+}
+
+// lazyPasswordBackend wraps a CA backend so its signers read the key
+// password at Sign time from the attrs they were created with, as the TPM 2.0
+// backend's signer does.
+type lazyPasswordBackend struct {
+	xkms.Backend
+}
+
+func (b lazyPasswordBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	inner, err := b.Backend.Signer(ctx, attrs)
+	if err != nil {
+		return nil, err
+	}
+	return lazyPasswordSigner{Signer: inner, attrs: attrs}, nil
+}
+
+type lazyPasswordSigner struct {
+	crypto.Signer
+	attrs *types.KeyAttributes
+}
+
+func (s lazyPasswordSigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if s.attrs.Password == nil {
+		return nil, errors.New("lazy signer: no key password")
+	}
+	pw := s.attrs.Password.Bytes()
+	if len(pw) == 0 {
+		return nil, errors.New("lazy signer: key password cleared before Sign")
+	}
+	enclave.Wipe(pw)
+	return s.Signer.Sign(r, digest, opts)
+}
+
+// TestCA_SignerReadsPasswordAtSignTime proves the signers getSigner and
+// IssuerForIdentity return still sign when the backend signer reads the key
+// password only inside Sign, after the getter has returned.
+func TestCA_SignerReadsPasswordAtSignTime(t *testing.T) {
+	ctx := context.Background()
+	backend, _ := newPKCS8CABackend(t)
+
+	root := passwordProtectedIdentity(t, rootIdentity("PW Lazy CA"), "lazy-key-password")
+	parent, err := NewParentCA(&Params{
+		Identity:           []Identity{root},
+		KeyStore:           backend,
+		BackendForStore:    singleBackendFactory(backend),
+		RevocationStore:    storage.NewMemory(),
+		CertStore:          newInMemoryCertStore(t),
+		RequireKeyPassword: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, parent.Init(ctx))
+	ca, ok := parent.(*CA)
+	require.True(t, ok, "NewParentCA must return a *CA")
+	for st, b := range ca.keystoreMap {
+		ca.keystoreMap[st] = lazyPasswordBackend{Backend: b}
+	}
+
+	digest := sha256.Sum256([]byte("lazy signer"))
+
+	signer, err := ca.getSigner(ctx)
+	require.NoError(t, err)
+	_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.NoError(t, err, "getSigner's signer must still hold the key password at Sign time")
+
+	signer, _, err = ca.IssuerForIdentity(ctx, "PW Lazy CA")
+	require.NoError(t, err)
+	_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.NoError(t, err, "IssuerForIdentity's signer must still hold the key password at Sign time")
 }
