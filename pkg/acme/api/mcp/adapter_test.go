@@ -785,6 +785,36 @@ func TestAdapterTenantOperations(t *testing.T) {
 		}
 	})
 
+	t.Run("ListTenants nil request lists unfiltered", func(t *testing.T) {
+		handler := newMockMCPHandler(t)
+		handler.responses["admin.listTenants"] = map[string]interface{}{
+			"tenants": []*admin.TenantInfo{
+				{ID: "tenant-1", Name: "Tenant 1"},
+				{ID: "tenant-2", Name: "Tenant 2"},
+			},
+			"pagination": &admin.Pagination{Page: 1, PerPage: 20, Total: 2},
+		}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: strings.TrimPrefix(server.URL, "http://")})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		tenants, pagination, err := adapter.ListTenants(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("ListTenants(nil) failed: %v", err)
+		}
+		if len(tenants) != 2 {
+			t.Errorf("Expected 2 tenants, got %d", len(tenants))
+		}
+		if pagination == nil {
+			t.Error("Expected pagination, got nil")
+		}
+	})
+
 	t.Run("ListTenants status filter refused", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.validateParams = func(method string, _ json.RawMessage) error {
