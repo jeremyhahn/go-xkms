@@ -46,22 +46,37 @@
     return (e as { status?: number } | null)?.status;
   }
 
+  // Each list and verify request carries a sequence number and a snapshot
+  // of the inputs it was made for; a reply is applied only while both still
+  // match. Scope, owner and the add inputs are frozen while a mutation runs.
+  let listSeq = 0;
+  let hostSeq = 0;
+  let keySeq = 0;
+
+  function filter(): [string | undefined, string | undefined] {
+    return [scope.trim() === "" ? undefined : scope.trim(), owner.trim() === "" ? undefined : owner.trim()];
+  }
+
   async function load(): Promise<void> {
+    const mine = ++listSeq;
+    const [s, o] = filter();
+    const at = JSON.stringify([s, o]);
+    const current = () => mine === listSeq && at === JSON.stringify(filter());
     loading = true;
     error = null;
     try {
       const ssh = getSDKClient().ssh;
-      const s = scope.trim() === "" ? undefined : scope.trim();
-      const o = owner.trim() === "" ? undefined : owner.trim();
       const [hosts, keys] = await Promise.all([ssh.listKnownHosts(s, o), ssh.listAuthorizedKeys(s, o)]);
+      if (!current()) return;
       pins = hosts.items;
       entries = keys.items;
     } catch (e) {
+      if (!current()) return;
       pins = [];
       entries = [];
       error = message(e);
     } finally {
-      loading = false;
+      if (mine === listSeq) loading = false;
     }
   }
 
@@ -71,7 +86,7 @@
       // The server derives the pin's fingerprint and algorithm from the key.
       const req: SSHAddKnownHostRequest = { scope, owner, host: hHost, public_key: hPublicKey.trim() };
       await getSDKClient().ssh.addKnownHost(req);
-      showToast("success", `Pinned "${hHost}".`);
+      showToast("success", `Pinned "${req.host}".`);
       hHost = ""; hPublicKey = "";
       await load();
     } catch (e) {
@@ -82,11 +97,17 @@
   }
 
   async function verifyHost(): Promise<void> {
+    const mine = ++hostSeq;
+    const req = { host: vHost, scope, owner, public_key: vPublicKey.trim() };
+    const at = JSON.stringify(req);
+    const current = () =>
+      mine === hostSeq && at === JSON.stringify({ host: vHost, scope, owner, public_key: vPublicKey.trim() });
     hostResult = null;
     try {
-      await getSDKClient().ssh.verifyKnownHost(vHost, { scope, owner, public_key: vPublicKey.trim() });
-      hostResult = { ok: true, message: `Fingerprint matches the pin for ${vHost}.` };
+      await getSDKClient().ssh.verifyKnownHost(req.host, { scope: req.scope, owner: req.owner, public_key: req.public_key });
+      if (current()) hostResult = { ok: true, message: `Fingerprint matches the pin for ${req.host}.` };
     } catch (e) {
+      if (!current()) return;
       if (statusOf(e) === 409) {
         hostResult = { ok: false, message: message(e) };
       } else {
@@ -102,7 +123,7 @@
       const options = kOptions.split(",").map((o) => o.trim()).filter((o) => o !== "");
       if (options.length > 0) req.options = options;
       await getSDKClient().ssh.addAuthorizedKey(req);
-      showToast("success", `Authorized key "${kName}" added.`);
+      showToast("success", `Authorized key "${req.name}" added.`);
       kName = ""; kLine = ""; kOptions = "";
       await load();
     } catch (e) {
@@ -113,11 +134,16 @@
   }
 
   async function verifyKey(): Promise<void> {
+    const mine = ++keySeq;
+    const req = { scope, owner, fingerprint: kFingerprint };
+    const at = JSON.stringify(req);
+    const current = () => mine === keySeq && at === JSON.stringify({ scope, owner, fingerprint: kFingerprint });
     keyResult = null;
     try {
-      const matched = await getSDKClient().ssh.verifyAuthorizedKey({ scope, owner, fingerprint: kFingerprint });
-      keyResult = { ok: true, message: `Fingerprint matches ${matched.name}.` };
+      const matched = await getSDKClient().ssh.verifyAuthorizedKey(req);
+      if (current()) keyResult = { ok: true, message: `Fingerprint matches ${matched.name}.` };
     } catch (e) {
+      if (!current()) return;
       const status = statusOf(e);
       if (status === 409 || status === 404) {
         keyResult = { ok: false, message: message(e) };
@@ -166,8 +192,8 @@
 <PageHeader title="SSH Trust" subtitle="Known-host pins and authorized_keys entries" />
 
 <div class="flex flex-wrap items-end gap-2 mb-4">
-  <input class="input input-bordered input-sm" aria-label="Scope" placeholder="Scope (tenant, user, service)" bind:value={scope} />
-  <input class="input input-bordered input-sm" aria-label="Owner" placeholder="Owner" bind:value={owner} />
+  <input class="input input-bordered input-sm" aria-label="Scope" placeholder="Scope (tenant, user, service)" bind:value={scope} disabled={busy} />
+  <input class="input input-bordered input-sm" aria-label="Owner" placeholder="Owner" bind:value={owner} disabled={busy} />
   <button class="btn btn-sm" onclick={load} disabled={loading}>Load</button>
 </div>
 
@@ -208,8 +234,8 @@
       </table>
     </div>
     <div class="flex flex-wrap gap-2 mt-3">
-      <input class="input input-bordered input-sm" aria-label="Host" placeholder="Host" bind:value={hHost} />
-      <input class="input input-bordered input-sm flex-1" aria-label="Host public key" placeholder="ssh-ed25519 AAAA..." bind:value={hPublicKey} />
+      <input class="input input-bordered input-sm" aria-label="Host" placeholder="Host" bind:value={hHost} disabled={busy} />
+      <input class="input input-bordered input-sm flex-1" aria-label="Host public key" placeholder="ssh-ed25519 AAAA..." bind:value={hPublicKey} disabled={busy} />
       <button class="btn btn-primary btn-sm" onclick={addHost} disabled={busy || hHost === "" || hPublicKey.trim() === ""}>Add pin</button>
     </div>
     <div class="flex flex-wrap gap-2 mt-3">
@@ -255,9 +281,9 @@
       </table>
     </div>
     <div class="flex flex-wrap gap-2 mt-3">
-      <input class="input input-bordered input-sm" aria-label="Key name" placeholder="Name" bind:value={kName} />
-      <input class="input input-bordered input-sm flex-1" aria-label="Authorized key line" placeholder="ssh-ed25519 AAAA... comment" bind:value={kLine} />
-      <input class="input input-bordered input-sm" aria-label="Options" placeholder="no-pty, restrict" bind:value={kOptions} />
+      <input class="input input-bordered input-sm" aria-label="Key name" placeholder="Name" bind:value={kName} disabled={busy} />
+      <input class="input input-bordered input-sm flex-1" aria-label="Authorized key line" placeholder="ssh-ed25519 AAAA... comment" bind:value={kLine} disabled={busy} />
+      <input class="input input-bordered input-sm" aria-label="Options" placeholder="no-pty, restrict" bind:value={kOptions} disabled={busy} />
       <button class="btn btn-primary btn-sm" onclick={addKey} disabled={busy || kName === "" || kLine === ""}>Add key</button>
     </div>
     <div class="flex flex-wrap gap-2 mt-3">
