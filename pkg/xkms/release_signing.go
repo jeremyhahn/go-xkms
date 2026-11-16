@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 )
 
 // SignReleaseCoRIMRequest and SignReleaseCoRIMResponse are the appraisal
@@ -106,6 +107,11 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 	owner := recordTenant(tenant)
 	k, err := s.resolveKeyOf(ctx, b, backendName, key.KeyID, &owner)
 	if err != nil {
+		return nil, err
+	}
+	// Admitted like XKMSService.Sign: a disabled, revoked or policy-denied
+	// key never signs a release.
+	if err := s.admitKey(ctx, k, keypolicy.OpSign); err != nil {
 		return nil, err
 	}
 	cur, err := k.current()
