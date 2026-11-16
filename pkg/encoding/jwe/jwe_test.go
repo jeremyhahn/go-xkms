@@ -19,6 +19,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
+
+	"github.com/go-jose/go-jose/v4"
 )
 
 // Test RSA-OAEP encryption and decryption
@@ -776,4 +778,42 @@ func TestAutoDetection_AEADAlgorithm(t *testing.T) {
 			t.Errorf("Direct encrypted text doesn't match")
 		}
 	})
+}
+
+// TestDecrypt_CompactSerialization pins that Decrypt takes the compact
+// serialization Encrypt returns, and rejects the JSON serialization.
+func TestDecrypt_CompactSerialization(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	plaintext := []byte("compact jwe round trip")
+
+	enc, err := NewEncrypter("RSA-OAEP-256", "A256GCM", &key.PublicKey)
+	if err != nil {
+		t.Fatalf("NewEncrypter: %v", err)
+	}
+	compact, err := enc.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	got, err := NewDecrypter().Decrypt(compact, key)
+	if err != nil {
+		t.Fatalf("Decrypt compact: %v", err)
+	}
+	if string(got) != string(plaintext) {
+		t.Fatalf("Decrypt compact = %q, want %q", got, plaintext)
+	}
+
+	joseEnc, err := jose.NewEncrypter(jose.A256GCM, jose.Recipient{Algorithm: jose.RSA_OAEP_256, Key: &key.PublicKey}, nil)
+	if err != nil {
+		t.Fatalf("jose.NewEncrypter: %v", err)
+	}
+	obj, err := joseEnc.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("jose Encrypt: %v", err)
+	}
+	if _, err := NewDecrypter().Decrypt(obj.FullSerialize(), key); err == nil {
+		t.Fatal("Decrypt accepted a JSON-serialized JWE; want compact only")
+	}
 }
