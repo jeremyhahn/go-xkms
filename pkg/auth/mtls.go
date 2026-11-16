@@ -331,14 +331,15 @@ func (a *MTLSAuthenticator) userIdentity(ctx context.Context, cert *x509.Certifi
 }
 
 // certIdentity builds a certificate-only identity for an authenticator with no
-// UserStore: Subject from the configured extractor, TenantID from certTenant
-// (qrdbsdk.TenantFromClientCert), and no roles. A certificate the tenant
-// rule refuses is refused.
+// UserStore: Subject from the configured extractor, TenantID from
+// qrdbsdk.TenantFromClientCert with no go-xkms rule on top, and no roles.
+// A certificate go-qrdb refuses is refused with go-qrdb's error.
 func (a *MTLSAuthenticator) certIdentity(cert *x509.Certificate) (*Identity, error) {
-	tenantID, _, err := a.certTenant(cert)
+	tenantID, err := qrdbsdk.TenantFromClientCert(cert, a.trustDomain)
 	if err != nil {
 		return nil, err
 	}
+	tenantID = qrdbsdk.NormalizeTenantID(tenantID)
 	identity := &Identity{
 		Subject:  a.extractSubject(cert),
 		Metadata: a.certMetadataMap(cert),
