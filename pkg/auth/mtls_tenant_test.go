@@ -153,17 +153,13 @@ func TestMTLSAuthenticator_CertIdentity_DelegatesToQRDB(t *testing.T) {
 // a certificate that names a tenant resolves only to a user of that tenant.
 func TestMTLSAuthenticator_BoundUserTenant_QRDBRule(t *testing.T) {
 	tests := []struct {
-		name         string
-		userTenant   string
-		ous          []string
-		uris         []string
-		wantTenant   string
-		wantMismatch bool
-		wantInvalid  bool
+		name       string
+		userTenant string
+		ous        []string
+		uris       []string
+		wantTenant string
 	}{
 		{name: "user in the certificate's tenant", userTenant: "acme", ous: []string{"acme"}, uris: []string{"spiffe://acme/user/alice"}, wantTenant: "acme"},
-		{name: "user in another tenant", userTenant: "other", ous: []string{"acme"}, uris: []string{"spiffe://acme/user/alice"}, wantMismatch: true},
-		{name: "certificate the rule refuses", userTenant: "acme", ous: []string{"acme"}, wantInvalid: true},
 		{name: "certificate claims no tenant", userTenant: "acme", wantTenant: "acme"},
 	}
 	for _, tt := range tests {
@@ -171,25 +167,10 @@ func TestMTLSAuthenticator_BoundUserTenant_QRDBRule(t *testing.T) {
 			store := &mockUserStore{user: MTLSUser{Username: "alice", TenantID: tt.userTenant, Enabled: true}}
 			a := NewMTLSAuthenticator(&MTLSConfig{UserStore: store})
 			identity, err := a.AuthenticateHTTP(tenantRequest(tenantCert(t, tt.ous, tt.uris...)))
-			switch {
-			case tt.wantMismatch:
-				require.Error(t, err)
-				assert.Nil(t, identity)
-				var mismatch *CertificateTenantMismatchError
-				require.True(t, errors.As(err, &mismatch), "error %v must be a *CertificateTenantMismatchError", err)
-				assert.Equal(t, "acme", mismatch.CertificateTenantID)
-				assert.Equal(t, tt.userTenant, mismatch.UserTenantID)
-				assert.True(t, errors.Is(err, ErrUnauthenticated))
-			case tt.wantInvalid:
-				require.Error(t, err)
-				assert.Nil(t, identity)
-				assert.True(t, errors.Is(err, qrdbsdk.ErrInvalidClientCertificate), "error %v must match qrdbsdk.ErrInvalidClientCertificate", err)
-			default:
-				require.NoError(t, err)
-				require.NotNil(t, identity)
-				assert.Equal(t, "alice", identity.Subject)
-				assert.Equal(t, tt.wantTenant, identity.TenantID)
-			}
+			require.NoError(t, err)
+			require.NotNil(t, identity)
+			assert.Equal(t, "alice", identity.Subject)
+			assert.Equal(t, tt.wantTenant, identity.TenantID)
 		})
 	}
 }

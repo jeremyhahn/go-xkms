@@ -31,11 +31,24 @@ var ErrAuthenticatorNotConfigured = errors.New("admin: mTLS authenticator not co
 
 // CertificateTenantMismatchError reports that the user a client certificate
 // resolved to belongs to a tenant other than the one the certificate names.
-// It is auth.CertificateTenantMismatchError, which the canonical
-// auth.MTLSAuthenticator returns for the same refusal, so the admin surface
-// and every other mTLS transport refuse with one type. It unwraps to
-// auth.ErrUnauthenticated.
-type CertificateTenantMismatchError = auth.CertificateTenantMismatchError
+// The caller is refused rather than admitted with that user's roles. It
+// unwraps to auth.ErrUnauthenticated.
+type CertificateTenantMismatchError struct {
+	// CertificateTenantID is the normalized tenant the certificate names.
+	CertificateTenantID string
+	// UserTenantID is the tenant of the user the certificate resolved to.
+	UserTenantID string
+}
+
+// Error describes the mismatch.
+func (e *CertificateTenantMismatchError) Error() string {
+	return "admin: certificate names tenant " + e.CertificateTenantID + " but its user belongs to tenant " + e.UserTenantID
+}
+
+// Unwrap returns auth.ErrUnauthenticated: no identity was established.
+func (e *CertificateTenantMismatchError) Unwrap() error {
+	return auth.ErrUnauthenticated
+}
 
 // MTLSAuthHandler is the production AuthHandler for the ACME admin surface.
 // It authenticates each request from its mTLS client certificate using
