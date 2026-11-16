@@ -802,10 +802,32 @@ else
   fail "printed '$(cat "$WORK_DIR/stdout")'"
 fi
 
-start_case "use: no reference on a push to main fails rather than rebuild"
-run_script 1 use toolchain "" -- CI_PUBLISH=true
-stderr_has "a consumer runs the image ci-images published and never builds its own"
-not_called "make "
+# DS-9239 (ruling 752): a consumer never turns a job red because no image of
+# main's can be had; a missing ref on a push to main, or a forge pull that
+# fails every attempt, falls back to a build on this runner.
+FB_LAN=lan.invalid:5000
+FB_REF="$TOOLCHAIN_REPO@sha256:$(printf '%064d' 0 | tr 0 a)"
+
+start_case "use (e): CI_PUBLISH=true, empty ref, no CI_IMAGE_REGISTRY: builds on this runner"
+run_script 0 use toolchain "" -- CI_PUBLISH=true
+called "docker-build-toolchain"
+stderr_has "building it on this runner"
+not_called "docker push"
+
+start_case "use (f): CI_PUBLISH=true, empty ref, CI_IMAGE_REGISTRY misses: builds on this runner"
+run_script 0 use toolchain "" -- CI_PUBLISH=true CI_IMAGE_REGISTRY="$FB_LAN" FAKE_LAN="$FB_LAN" FAKE_LAN_PULL_RC=1
+called "docker pull --quiet $FB_LAN/go-xkms-toolchain:"
+called "docker-build-toolchain"
+
+start_case "use (g): the forge pull fails every attempt: builds on this runner"
+run_script 0 use toolchain "$FB_REF" -- "GITHUB_SERVER_URL=https://$FORGE" CI_REGISTRY_BACKOFF=0 FAKE_PULL_RC=1
+stderr_has "cannot pull $FB_REF; building it on this runner"
+called "docker-build-toolchain"
+
+start_case "use (h): CI_IMAGE_REGISTRY misses and the forge pull fails: builds on this runner"
+run_script 0 use toolchain "$FB_REF" -- "GITHUB_SERVER_URL=https://$FORGE" CI_REGISTRY_BACKOFF=0 FAKE_PULL_RC=1 CI_IMAGE_REGISTRY="$FB_LAN" FAKE_LAN="$FB_LAN" FAKE_LAN_PULL_RC=1
+stderr_has "cannot pull $FB_REF; building it on this runner"
+called "docker-build-toolchain"
 
 start_case "use: no CI_STACK_PREFIX, no hold name"
 run_script 1 use toolchain "$TOOLCHAIN_REPO@$DIGEST" -- CI_STACK_PREFIX=
