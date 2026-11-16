@@ -877,6 +877,8 @@ export interface ACMERenewRequest {
   authzType: string;
   challenge: string;
   csrPath: string;
+  /** Address the http-01 token is served on (empty: the backend default, :80). */
+  httpAddr: string;
 }
 
 export interface ACMEEnrollRequest {
@@ -885,7 +887,6 @@ export interface ACMEEnrollRequest {
   port: number;
   listenHost: string;
   commonName: string;
-  pcrs: number[];
   timeoutSeconds: number;
 }
 

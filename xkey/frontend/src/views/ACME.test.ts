@@ -121,12 +121,13 @@ describe('ACME view', () => {
     await fillConnection(view);
     await fireEvent.input(view.getByLabelText('Certificate to renew'), { target: { value: '/certs/a.pem' } });
     await fireEvent.input(view.getByLabelText('Domain'), { target: { value: 'a.test' } });
-    await fireEvent.input(view.getByLabelText('Challenge'), { target: { value: 'dns-01' } });
+    await fireEvent.input(view.getByLabelText('Challenge'), { target: { value: 'http-01' } });
+    await fireEvent.input(view.getByLabelText('HTTP-01 listen address'), { target: { value: '127.0.0.1:8080' } });
     await fireEvent.input(view.getByLabelText('CSR path'), { target: { value: '/certs/a.csr' } });
     await fireEvent.click(view.getByRole('button', { name: 'Renew' }));
     await waitFor(() => expect(acme.RenewCertificate).toHaveBeenCalledTimes(1));
     expect(acme.RenewCertificate).toHaveBeenCalledWith(conn, {
-      certPath: '/certs/a.pem', domain: 'a.test', authzType: 'dns', challenge: 'dns-01', csrPath: '/certs/a.csr',
+      certPath: '/certs/a.pem', domain: 'a.test', authzType: 'dns', challenge: 'http-01', csrPath: '/certs/a.csr', httpAddr: '127.0.0.1:8080',
     });
     await waitFor(() =>
       expect((view.getByLabelText('Renewed certificate') as HTMLTextAreaElement).value).toContain('BEGIN CERTIFICATE'));
@@ -173,7 +174,7 @@ describe('ACME view', () => {
     await waitFor(() => expect(acme.EnrollDevice).toHaveBeenCalledTimes(1));
     expect(acme.EnrollDevice).toHaveBeenCalledWith(conn, {
       challenge: 'enroll-01', ipAddress: '192.0.2.10', port: 9090, listenHost: '0.0.0.0',
-      commonName: 'device-1', pcrs: [], timeoutSeconds: 0,
+      commonName: 'device-1', timeoutSeconds: 0,
     });
     await waitFor(() =>
       expect((view.getByLabelText('IDevID certificate') as HTMLTextAreaElement).value).toContain('IDEVID'));
@@ -181,17 +182,16 @@ describe('ACME view', () => {
     expect((view.getByLabelText('Chain') as HTMLTextAreaElement).value).toContain('CHAIN');
   });
 
-  it('enrolls with device-attest-01 and PCRs without an IP address', async () => {
+  it('enrolls with device-attest-01 without an IP address', async () => {
     const acme = installMock();
     const view = render(ACME);
     await fillConnection(view);
     await fireEvent.change(view.getByLabelText('Device challenge'), { target: { value: 'device-attest-01' } });
-    await fireEvent.input(view.getByLabelText('PCRs'), { target: { value: '0, 1, , 7' } });
     const enroll = view.getByRole('button', { name: 'Enroll' });
     expect(enroll).not.toBeDisabled();
     await fireEvent.click(enroll);
     await waitFor(() => expect(acme.EnrollDevice).toHaveBeenCalledTimes(1));
-    expect(acme.EnrollDevice.mock.calls[0][1]).toMatchObject({ challenge: 'device-attest-01', ipAddress: '', pcrs: [0, 1, 7] });
+    expect(acme.EnrollDevice.mock.calls[0][1]).toMatchObject({ challenge: 'device-attest-01', ipAddress: '' });
   });
 
   it('keeps Enroll and Request EK certificate disabled without an IP address', async () => {

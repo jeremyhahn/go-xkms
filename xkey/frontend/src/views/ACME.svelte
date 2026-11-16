@@ -38,6 +38,7 @@
   let authzType = 'dns';
   let challenge = '';
   let csrPath = '';
+  let httpAddr = '';
   let renewedPem = '';
 
   const deviceChallenges = ['enroll-01', 'endorse-01', 'device-attest-01'];
@@ -46,7 +47,6 @@
   let port = '';
   let listenHost = '';
   let commonName = '';
-  let pcrsText = '';
   let idevidPem = '';
   let iakPem = '';
   let chainPem = '';
@@ -135,6 +135,7 @@
       authzType: authzType.trim(),
       challenge: challenge.trim(),
       csrPath: csrPath.trim(),
+      httpAddr: httpAddr.trim(),
     };
     return run(async () => {
       const { result, error: err } = await callBackendWithError<string>(
@@ -151,7 +152,6 @@
       port: Number(port.trim()) || 0,
       listenHost: listenHost.trim(),
       commonName: commonName.trim(),
-      pcrs: pcrsText.split(',').map((p) => p.trim()).filter((p) => p !== '').map(Number),
       timeoutSeconds: 0,
     };
   }
@@ -242,8 +242,9 @@
     <Input id="acme-renew-cert" label="Certificate to renew" bind:value={renewPath} monospace />
     <Input id="acme-domain" label="Domain" bind:value={domain} />
     <Input id="acme-authz" label="Authorization type" bind:value={authzType} />
-    <Input id="acme-challenge" label="Challenge" bind:value={challenge} placeholder="dns-01" helperText="Required" />
+    <Input id="acme-challenge" label="Challenge" bind:value={challenge} placeholder="http-01" helperText="Required" />
     <Input id="acme-csr" label="CSR path" bind:value={csrPath} helperText="Required" monospace />
+    <Input id="acme-http-addr" label="HTTP-01 listen address" bind:value={httpAddr} placeholder=":80" helperText="Where the http-01 token is served" />
     <Button disabled={!ready} on:click={renew}>Renew</Button>
     {#if renewedPem}
       <label class="field-label" for="acme-renewed">Renewed certificate</label>
@@ -264,7 +265,6 @@
     <Input id="acme-port" label="Port" bind:value={port} placeholder="8080" />
     <Input id="acme-listen-host" label="Listen host" bind:value={listenHost} />
     <Input id="acme-common-name" label="Common name" bind:value={commonName} />
-    <Input id="acme-pcrs" label="PCRs" bind:value={pcrsText} helperText="Comma separated, device-attest-01" />
     <Button disabled={!canEnroll} on:click={enroll}>Enroll</Button>
     <Button variant="secondary" disabled={!canEndorse} on:click={endorse}>Request EK certificate</Button>
     {#if idevidPem}
