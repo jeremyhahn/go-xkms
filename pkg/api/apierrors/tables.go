@@ -343,8 +343,19 @@ var SigningKeySentinelClasses = []SentinelClass{
 }
 
 // SigningKeyClassOf classifies an error of the repository signing-key verbs.
+// A repository signer admits its key under key policy on every Sign, so the
+// key-policy refusals classify through KeyPolicyClassOf; a retained signer
+// whose key moved to a newer version is a failed precondition (obtain a new
+// signer), not a missing key.
 func SigningKeyClassOf(err error) (Class, bool) {
-	return ClassOf(SigningKeySentinelClasses, err)
+	// Checked first: the error also matches the key-not-found sentinel.
+	if As[*xkms.KeyVersionMissingError](err) {
+		return ClassFailedPrecondition, true
+	}
+	if class, ok := ClassOf(SigningKeySentinelClasses, err); ok {
+		return class, true
+	}
+	return KeyPolicyClassOf(err)
 }
 
 // TypedClass classifies a typed error: Match reports whether an error's
