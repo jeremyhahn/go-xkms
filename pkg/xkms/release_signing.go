@@ -20,6 +20,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"io"
 
 	"github.com/veraison/go-cose"
 
@@ -122,7 +123,23 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "sign with repository signing key", KeyID: key.KeyID, Err: err}
 	}
-	return signer, nil
+	return opaqueSigner{signer: signer}, nil
+}
+
+// opaqueSigner exposes only Public and Sign of a backend signer. A software
+// backend's signer is the private key itself (*ecdsa.PrivateKey and the
+// like), which a caller of RepositorySigner could otherwise type-assert to
+// and read.
+type opaqueSigner struct {
+	signer crypto.Signer
+}
+
+// Public returns the backend key's public half.
+func (o opaqueSigner) Public() crypto.PublicKey { return o.signer.Public() }
+
+// Sign signs digest through the backend.
+func (o opaqueSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return o.signer.Sign(rand, digest, opts)
 }
 
 // coseAlgorithm picks the COSE algorithm a public key signs a CoRIM with.
