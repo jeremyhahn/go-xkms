@@ -790,7 +790,7 @@ if [ "$(grep -c '^docker pull ' "$CALL_LOG")" -eq 3 ]; then
 else
   fail "$(grep -c '^docker pull ' "$CALL_LOG") pull attempts, want 3"
 fi
-not_called "make "
+called "make --no-print-directory docker-build-toolchain"
 
 start_case "use: no reference on a pull request builds locally, with no push, held by image ID"
 run_script 0 use it "" -- "${RUN_TOKEN[@]}"
