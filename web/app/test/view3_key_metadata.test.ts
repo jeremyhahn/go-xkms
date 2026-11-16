@@ -205,3 +205,19 @@ describe("KeyMetadataView", () => {
     expect(await screen.findByText("permission denied")).toBeInTheDocument();
   });
 });
+
+describe("KeyMetadataView pending save", () => {
+  it("keeps Load disabled while a save is in flight", async () => {
+    await load();
+    let resolve!: (v: unknown) => void;
+    request.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    await fireEvent.input(screen.getByLabelText("Description"), { target: { value: "new" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+
+    expect(screen.getByRole("button", { name: "Load" })).toBeDisabled();
+    resolve({ metadata: metadata({ description: "new" }), timestamp: 1700000200 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load" })).toBeEnabled());
+  });
+
+});
