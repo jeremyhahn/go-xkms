@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -108,15 +109,18 @@ func (s *QRDBStore) Close() error {
 	return s.sink.Close()
 }
 
-// Log writes entry to the go-qrdb sink. A write the sink did not record is
-// returned, so the caller can fail the operation it audits.
+// Log writes entry to the go-qrdb sink under the go-xkms write-failure
+// policy: a security event the sink did not record is returned as
+// *ErrAuditWriteFailed so the caller fails the operation it audits; an
+// informational one is logged and dropped.
 func (s *QRDBStore) Log(entry Entry) error {
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now()
 	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.sink.Emit(context.Background(), entryToQRDBEvent(entry))
+	writeErr := s.sink.Emit(context.Background(), entryToQRDBEvent(entry))
+	s.mu.RUnlock()
+	return handleWriteFailure(slog.Default(), entry.Operation, writeErr)
 }
 
 // LogKeyOperation logs a key lifecycle operation.
