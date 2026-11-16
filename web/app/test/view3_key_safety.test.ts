@@ -28,6 +28,13 @@ vi.mock("../src/stores/toast.svelte.ts", () => ({
   },
 }));
 
+// A caller holding every permission of the page's routes; per-operation
+// gating is tested in view3_key_policy_permissions.test.ts.
+vi.mock("../src/stores/session.svelte.ts", async (orig) => ({
+  ...(await orig<typeof import("../src/stores/session.svelte.ts")>()),
+  can: () => true,
+}));
+
 import KeySafetyView from "../src/views/KeySafetyView.svelte";
 
 const warning = {
