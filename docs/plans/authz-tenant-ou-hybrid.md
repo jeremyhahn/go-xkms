@@ -91,5 +91,12 @@ profile (profile_fido2.go:227-234) and its virtual-authenticator CSR
 (attestation.go:183-186, Subject-OU fixed by WebAuthn L2 §8.2.1), and the
 TPM LAK (tcg_lak.go:109/:174).
 
+Question for the owner: may docs/SPEC.md:72 exempt these three paths from
+the tenant OU, or must each carry it: (1) the CA templates
+(pkg/ca/hybrid.go:146-160), (2) the fixed FIDO2 attestation OU
+(pkg/ca/profile_fido2.go:227-234) and (3) the empty LAK subject
+(pkg/ca/tcg_lak.go:172-181)? Until the answer, the row stays in progress
+(Codex P1 on row2089b, fixed in 2de42faa5).
+
 Codex round 3: PIV decoys mirror a mixed legacy roster's OU share (test
 ecffd4bf7, fix e7751ec51).
