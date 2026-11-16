@@ -100,6 +100,20 @@ func TestSignRefusesMalformedCoRIM(t *testing.T) {
 	}
 }
 
+// TestSignRefusesEmptySignerName: corim's SetSigner returns nil for an empty
+// name, so Sign must refuse it with an error rather than panic.
+func TestSignRefusesEmptySignerName(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Sign panicked on an empty signer name: %v", r)
+		}
+	}()
+	unsigned := buildUnsigned(t, buildCoMID(t), nil)
+	if _, err := Sign(context.Background(), unsigned, newKey(t, elliptic.P256()), cose.AlgorithmES256, ""); err == nil {
+		t.Fatal("Sign accepted an empty signer name")
+	}
+}
+
 func TestSignHonoursCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
