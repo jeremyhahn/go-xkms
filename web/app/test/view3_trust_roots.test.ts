@@ -12,6 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { answerConfirm, confirmDialog, spyWindowConfirm } from "./confirm_modal";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 
 const request = vi.fn();
@@ -114,8 +115,8 @@ describe("TrustRootsView", () => {
     await waitFor(() => expect(listCalls()).toHaveLength(2));
   });
 
-  it("quarantines a root after a confirm and reloads", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("quarantines a root only after the confirm dialog and reloads", async () => {
+    const confirmSpy = spyWindowConfirm();
     request.mockImplementation((method: string) =>
       Promise.resolve(method === "POST" ? { ...root, purpose: "synced" } : { roots: [root] }),
     );
@@ -124,16 +125,21 @@ describe("TrustRootsView", () => {
     await screen.findByTitle(FP);
 
     await fireEvent.click(screen.getByRole("button", { name: "Quarantine" }));
+    expect(await confirmDialog()).toHaveTextContent("It is reclassified as synced.");
+    expect(request.mock.calls.filter((c) => c[0] === "POST")).toHaveLength(0);
+
+    await answerConfirm("Quarantine");
 
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith("POST", `/api/v1/trust-roots/${FP}/quarantine`),
     );
     await waitFor(() => expect(toasts.some((t) => t.kind === "success")).toBe(true));
     await waitFor(() => expect(listCalls()).toHaveLength(2));
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it("deletes a root after a confirm", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("deletes a root only after the confirm dialog", async () => {
+    const confirmSpy = spyWindowConfirm();
     request.mockImplementation((method: string) =>
       Promise.resolve(method === "DELETE" ? undefined : { roots: [root] }),
     );
@@ -142,23 +148,30 @@ describe("TrustRootsView", () => {
     await screen.findByTitle(FP);
 
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(await confirmDialog()).toHaveTextContent("Delete trust root");
+    expect(request.mock.calls.filter((c) => c[0] === "DELETE")).toHaveLength(0);
+
+    await answerConfirm("Delete");
 
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith("DELETE", `/api/v1/trust-roots/${FP}`, { parse: "void" }),
     );
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it("sends nothing when the delete confirm is declined", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("sends nothing when the delete dialog is cancelled", async () => {
+    const confirmSpy = spyWindowConfirm();
     request.mockResolvedValue({ roots: [root] });
 
     render(TrustRootsView);
     await screen.findByTitle(FP);
 
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await answerConfirm("Cancel");
 
-    expect(window.confirm).toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(request.mock.calls.filter((c) => c[0] === "DELETE")).toHaveLength(0);
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
   it("shows a list failure in an error alert", async () => {

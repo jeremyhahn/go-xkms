@@ -12,6 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { answerConfirm, confirmDialog, spyWindowConfirm } from "./confirm_modal";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 
 const request = vi.fn();
@@ -66,28 +67,35 @@ describe("OtaImageKeysView", () => {
     expect(pem.textContent).not.toContain("PRIVATE");
   });
 
-  it("rotates a board key after a confirm and shows the new version", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("rotates a board key only after the confirm dialog and shows the new version", async () => {
+    const confirmSpy = spyWindowConfirm();
     request.mockResolvedValue({ success: true, key_id: "ota-board-7", key_version: 7, public_key_pem: PEM });
 
     render(OtaImageKeysView);
     await fillBoard();
     await fireEvent.click(screen.getByRole("button", { name: "Rotate key" }));
+    expect(await confirmDialog()).toHaveTextContent('Rotate the OTA image key of "board-7"?');
+    expect(request).not.toHaveBeenCalled();
+
+    await answerConfirm("Rotate key");
 
     await waitFor(() => expect(request).toHaveBeenCalledOnce());
     expect(request).toHaveBeenCalledWith("POST", "/api/v1/ota-image-keys/board-7/rotate", { body: { backend: "software" } });
     expect(await screen.findByTestId("ota-key-version")).toHaveTextContent("7");
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it("sends nothing when the rotate confirm is declined", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("sends nothing when the rotate dialog is cancelled", async () => {
+    const confirmSpy = spyWindowConfirm();
 
     render(OtaImageKeysView);
     await fillBoard();
     await fireEvent.click(screen.getByRole("button", { name: "Rotate key" }));
+    await answerConfirm("Cancel");
 
-    expect(window.confirm).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(request).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
   it("signs a SHA-256 digest as its bytes in base64", async () => {

@@ -1,6 +1,7 @@
 // KeyRotationPolicyView: shows, sets and removes a key's automatic rotation
 // policy through GET, PUT and DELETE /api/v1/keys/{id}/rotation-policy.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { answerConfirm, confirmDialog, spyWindowConfirm } from "./confirm_modal";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 
 const request = vi.fn();
@@ -103,26 +104,33 @@ describe("KeyRotationPolicyView", () => {
     expect(opts.body.policy.interval_seconds).toBe(43200);
   });
 
-  it("removes the policy after a confirm", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("removes the policy only after the confirm dialog", async () => {
+    const confirmSpy = spyWindowConfirm();
     request.mockResolvedValue({ key_id: "k1", timestamp: "2026-11-12T00:00:00Z" });
     render(KeyRotationPolicyView);
     await fillKey();
     await fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(await confirmDialog()).toHaveTextContent('Remove the rotation policy of key "k1"?');
+    expect(request).not.toHaveBeenCalled();
+
+    await answerConfirm("Remove");
 
     await waitFor(() => expect(request).toHaveBeenCalledOnce());
     expect(request).toHaveBeenCalledWith("DELETE", PATH, { query: { backend: "software" } });
     expect(await screen.findByText("No rotation policy")).toBeInTheDocument();
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it("sends nothing when the confirm is declined", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("sends nothing when the confirm dialog is cancelled", async () => {
+    const confirmSpy = spyWindowConfirm();
     render(KeyRotationPolicyView);
     await fillKey();
     await fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await answerConfirm("Cancel");
 
-    expect(window.confirm).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(request).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
   it("keeps Load and Save disabled until key ID and backend are set", async () => {

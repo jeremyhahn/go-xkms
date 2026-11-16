@@ -12,6 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { answerConfirm, confirmDialog, spyWindowConfirm } from "./confirm_modal";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 
 const request = vi.fn<(method: string, path: string, opts?: unknown) => Promise<unknown>>();
@@ -143,32 +144,39 @@ describe("KeySafetyView", () => {
     expect(calls("GET", "/api/v1/safety/report")).toHaveLength(2);
   });
 
-  it("clears limits with DELETE and the backend query after a confirm", async () => {
+  it("clears limits with DELETE and the backend query only after the confirm dialog", async () => {
     answer();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirmSpy = spyWindowConfirm();
     render(KeySafetyView);
     await screen.findByText("Total keys: 7");
 
     await fill({ "Key ID": "k1", Backend: "software" });
     await fireEvent.click(screen.getByRole("button", { name: "Clear limits" }));
+    expect(await confirmDialog()).toHaveTextContent('Clear the usage limits of "k1" on software?');
+    expect(calls("DELETE", "/api/v1/keys/k1/safety")).toHaveLength(0);
+
+    await answerConfirm("Clear limits");
 
     await waitFor(() => expect(calls("DELETE", "/api/v1/keys/k1/safety")).toHaveLength(1));
     const [, , opts] = calls("DELETE", "/api/v1/keys/k1/safety")[0]!;
     expect(opts).toEqual({ query: { backend: "software" } });
     await waitFor(() => expect(toasts.some((t) => t.kind === "success")).toBe(true));
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it("sends nothing when the clear confirm is declined", async () => {
+  it("sends nothing when the clear dialog is cancelled", async () => {
     answer();
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const confirmSpy = spyWindowConfirm();
     render(KeySafetyView);
     await screen.findByText("Total keys: 7");
 
     await fill({ "Key ID": "k1", Backend: "software" });
     await fireEvent.click(screen.getByRole("button", { name: "Clear limits" }));
+    await answerConfirm("Cancel");
 
-    expect(window.confirm).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(request.mock.calls.filter((c) => c[0] === "DELETE")).toHaveLength(0);
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
   it.each([

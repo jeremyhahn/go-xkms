@@ -12,6 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { answerConfirm, confirmDialog, spyWindowConfirm } from "./confirm_modal";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 
 const request = vi.fn();
@@ -138,28 +139,35 @@ describe("KeyAccessPolicyView", () => {
     expect(request.mock.calls[0]![2].body.policy).toEqual({ allowed_principals: ["svc-a"] });
   });
 
-  it("removes the policy after a confirm", async () => {
-    confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("removes the policy only after the confirm dialog", async () => {
+    confirmSpy = spyWindowConfirm();
     request.mockResolvedValue({ key_id: "k1", timestamp: 1 });
 
     render(KeyAccessPolicyView);
     await selectKey();
     await fireEvent.click(screen.getByRole("button", { name: "Remove policy" }));
+    expect(await confirmDialog()).toHaveTextContent('Remove the access policy of "k1"?');
+    expect(request.mock.calls.filter((c) => c[0] === "DELETE")).toHaveLength(0);
+
+    await answerConfirm("Remove policy");
 
     await waitFor(() => expect(request).toHaveBeenCalledWith("DELETE", PATH, { query: { backend: "software" } }));
     expect(await screen.findByText("No access policy set (default applies)")).toBeInTheDocument();
     expect(toasts.some((t) => t.kind === "success")).toBe(true);
+    expect(window.confirm).not.toHaveBeenCalled();
   });
 
-  it("sends nothing when the remove confirm is declined", async () => {
-    confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("sends nothing when the remove dialog is cancelled", async () => {
+    confirmSpy = spyWindowConfirm();
 
     render(KeyAccessPolicyView);
     await selectKey();
     await fireEvent.click(screen.getByRole("button", { name: "Remove policy" }));
+    await answerConfirm("Cancel");
 
-    expect(confirmSpy).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(request).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
   });
 
   it("keeps Load, Save and Remove disabled until key ID and backend are set", async () => {
