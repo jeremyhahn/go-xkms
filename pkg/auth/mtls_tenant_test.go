@@ -73,7 +73,7 @@ func TestMTLSAuthenticator_CertificateTenant_QRDBRule(t *testing.T) {
 		{name: "OU without a SPIFFE SAN", ous: []string{"acme", "second"}, wantRefused: true},
 		{name: "tenant is the cluster trust domain", trustDomain: "cluster.local", ous: []string{"cluster.local"}, uris: []string{"spiffe://cluster.local/svc/node"}, wantRefused: true},
 		{name: "SANs under two trust domains", ous: []string{"acme"}, uris: []string{"spiffe://acme/user/alice", "spiffe://other/user/alice"}, wantRefused: true},
-		{name: "certificate claims no tenant", wantTenant: ""},
+		{name: "certificate with no OU names no tenant", wantRefused: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -90,6 +90,46 @@ func TestMTLSAuthenticator_CertificateTenant_QRDBRule(t *testing.T) {
 			assert.Equal(t, "tenant-client", identity.Subject)
 			assert.Equal(t, tt.wantTenant, identity.TenantID)
 		})
+	}
+}
+
+// TestMTLSAuthenticator_CertIdentity_DelegatesToQRDB pins the certificate-only
+// path to go-qrdb's rule with no go-xkms rule on top: for each certificate
+// shape, certIdentity refuses exactly when qrdbsdk.TenantFromClientCert
+// refuses, and otherwise carries the tenant it names (normalized, as
+// go-qrdb's doc binds it).
+func TestMTLSAuthenticator_CertIdentity_DelegatesToQRDB(t *testing.T) {
+	shapes := []struct {
+		name string
+		ous  []string
+		uris []string
+	}{
+		{name: "SPIFFE SAN only", uris: []string{"spiffe://acme/user/alice"}},
+		{name: "OU only", ous: []string{"acme"}},
+		{name: "SAN and OU agree", ous: []string{"acme"}, uris: []string{"spiffe://acme/user/alice"}},
+		{name: "SAN and OU disagree", ous: []string{"acme"}, uris: []string{"spiffe://other/user/alice"}},
+		{name: "neither", uris: nil},
+	}
+	for _, trustDomain := range []string{"", "cluster.local"} {
+		for _, s := range shapes {
+			t.Run(s.name+"/trust-domain="+trustDomain, func(t *testing.T) {
+				cert := tenantCert(t, s.ous, s.uris...)
+				wantTenant, wantErr := qrdbsdk.TenantFromClientCert(cert, trustDomain)
+
+				a := NewMTLSAuthenticator(&MTLSConfig{TrustDomain: trustDomain})
+				identity, err := a.certIdentity(cert)
+				if wantErr != nil {
+					require.Error(t, err)
+					assert.Nil(t, identity)
+					assert.Equal(t, wantErr.Error(), err.Error())
+					assert.True(t, errors.Is(err, qrdbsdk.ErrInvalidClientCertificate))
+					return
+				}
+				require.NoError(t, err)
+				require.NotNil(t, identity)
+				assert.Equal(t, qrdbsdk.NormalizeTenantID(wantTenant), identity.TenantID)
+			})
+		}
 	}
 }
 
