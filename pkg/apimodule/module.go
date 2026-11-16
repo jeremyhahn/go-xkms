@@ -130,6 +130,19 @@ func WithQRDBClient(resolve QRDBClientResolver) Option {
 	}
 }
 
+// WithAuthorization states the embedding host's authorization posture. A
+// self-built host wires its qrdb client's RBAC plane into the service so the
+// decisions made below the transport gate (users:invite on CreateUser,
+// ssh:service, ...) are enforced too. A host that runs with authorization
+// disabled passes false: the service then keeps a nil authorizer and allows
+// those decisions, as pkg/server does when RBAC is off. Unset, the module
+// enforces (fail closed).
+func WithAuthorization(enabled bool) Option {
+	return func(m *Module) {
+		m.authzDisabled = !enabled
+	}
+}
+
 // WithServiceContext wires the host's service-context binder: every call a
 // datastore the module opens on the host's qrdb client makes -- database
 // initialisation and each later DAO call -- runs on the context bind
@@ -335,6 +348,10 @@ type Module struct {
 	resolveREST       RESTResolver
 	resolveMCP        MCPResolver
 	resolveQRDBClient QRDBClientResolver
+
+	// authzDisabled is WithAuthorization(false): the host runs with
+	// authorization off, so the self-built service keeps a nil authorizer.
+	authzDisabled bool
 
 	// serviceContext is WithServiceContext's binder, applied to every
 	// datastore the module opens (openDatastore).

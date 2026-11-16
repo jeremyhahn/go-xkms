@@ -163,7 +163,11 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 			// into the service, as pkg/server does with its authorizer,
 			// so those decisions are enforced here too instead of being
 			// allowed by a nil authorizer.
-			x.SetAuthorizer(auth.NewAuthorizer(client.RBAC()))
+			// A host that disabled authorization says so through
+			// WithAuthorization(false); its service keeps a nil authorizer.
+			if !m.authzDisabled {
+				x.SetAuthorizer(auth.NewAuthorizer(client.RBAC()))
+			}
 			// Without storage compose leaves every store-backed feature
 			// off and records why.
 			open, daos, err := m.hostStorage(client, compose.Databases(deps))
