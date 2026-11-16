@@ -67,7 +67,7 @@ async function adminRequest(): Promise<APIRequestContext> {
 export async function expectNoUser(email: string): Promise<void> {
   const admin = await adminRequest();
   try {
-    const resp = await admin.get('/api/v1/users');
+    const resp = await admin.get('/api/v1/users/');
     expect(resp.status(), await resp.text()).toBe(200);
     const { users } = await resp.json();
     const emails = ((users ?? []) as Array<{ email?: string }>).map((u) => (u.email ?? '').toLowerCase());
@@ -110,7 +110,7 @@ export async function expectAnonymousSignUpRefused(page: Page, op: Operator): Pr
 export async function provisionInvite(op: Operator): Promise<{ tenant: string; token: string }> {
   const admin = await adminRequest();
   try {
-    const resp = await admin.post('/api/v1/users', {
+    const resp = await admin.post('/api/v1/users/', {
       data: {
         username: op.email.split('@')[0],
         email: op.email,
@@ -120,8 +120,8 @@ export async function provisionInvite(op: Operator): Promise<{ tenant: string; t
     });
     expect(resp.status(), await resp.text()).toBe(201);
     const { user, invite } = await resp.json();
-    expect(user?.roles, `POST /api/v1/users did not assign the ${OPERATOR_ROLE} role`).toContain(OPERATOR_ROLE);
-    expect(invite?.token, 'POST /api/v1/users returned no invitation').toBeTruthy();
+    expect(user?.roles, `POST /api/v1/users/ did not assign the ${OPERATOR_ROLE} role`).toContain(OPERATOR_ROLE);
+    expect(invite?.token, 'POST /api/v1/users/ returned no invitation').toBeTruthy();
     const marker = '/#/invite/';
     const url: string = invite.url ?? '';
     expect(url, `invitation URL ${url} has no ${marker} segment`).toContain(marker);

@@ -57,7 +57,7 @@ async function adminRequest(apiOrigin: string): Promise<APIRequestContext> {
 export async function expectNoUser(apiOrigin: string, email: string): Promise<void> {
   const admin = await adminRequest(apiOrigin);
   try {
-    const resp = await admin.get('/api/v1/users');
+    const resp = await admin.get('/api/v1/users/');
     expect(resp.status(), await resp.text()).toBe(200);
     const { users } = await resp.json();
     const emails = ((users ?? []) as Array<{ email?: string }>).map((u) => (u.email ?? '').toLowerCase());
@@ -109,12 +109,12 @@ export async function provisionInvite(
 ): Promise<{ tenant: string; token: string }> {
   const admin = await adminRequest(apiOrigin);
   try {
-    const resp = await admin.post('/api/v1/users', {
+    const resp = await admin.post('/api/v1/users/', {
       data: { username: email.split('@')[0], email, display_name: displayName },
     });
     expect(resp.status(), await resp.text()).toBe(201);
     const { invite } = await resp.json();
-    expect(invite?.token, 'POST /api/v1/users returned no invitation').toBeTruthy();
+    expect(invite?.token, 'POST /api/v1/users/ returned no invitation').toBeTruthy();
     const marker = '/#/invite/';
     const url: string = invite.url ?? '';
     expect(url, `invitation URL ${url} has no ${marker} segment`).toContain(marker);
