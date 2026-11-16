@@ -348,7 +348,7 @@ func (m *wireMessage) response(id mcp.RequestId) (*mcptransport.JSONRPCResponse,
 		return nil, fmt.Errorf("decode response id: %w", err)
 	}
 	got, err := received.MarshalJSON()
-	if err != nil || received.IsNil() || string(got) != string(want) {
+	if err != nil || received.IsNil() || !bytes.Equal(got, want) {
 		return nil, fmt.Errorf("response id %s does not match request id %s", m.ID, want)
 	}
 	return &mcptransport.JSONRPCResponse{
