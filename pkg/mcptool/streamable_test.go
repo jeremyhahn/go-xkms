@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -186,4 +187,63 @@ func TestStreamableHTTP_NotificationErrors(t *testing.T) {
 	assert.Error(t, bad.SendNotification(context.Background(), note), "an invalid URL fails before dialing")
 	_, err := bad.SendRequest(context.Background(), mcptransport.JSONRPCRequest{Params: func() {}})
 	assert.Error(t, err, "an unencodable message fails before dialing")
+}
+
+// TestStreamableHTTP_CloseInterruptsActiveRequests proves Close cancels a
+// request whose response the server holds open, with a background context:
+// a stalled response (no headers yet) and an unfinished event stream both
+// return an error once the transport is closed, and no request stays
+// registered.
+func TestStreamableHTTP_CloseInterruptsActiveRequests(t *testing.T) {
+	cases := map[string]func(w http.ResponseWriter){
+		"stalled response": func(http.ResponseWriter) {},
+		"open event stream": func(w http.ResponseWriter) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\"}\n\n"))
+			w.(http.Flusher).Flush()
+		},
+	}
+	for name, start := range cases {
+		t.Run(name, func(t *testing.T) {
+			arrived := make(chan struct{})
+			hold := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					return
+				}
+				start(w)
+				close(arrived)
+				select {
+				case <-r.Context().Done():
+				case <-hold:
+				}
+			}))
+			defer srv.Close()
+			defer close(hold)
+
+			tr := newStreamableHTTP(srv.URL, http.DefaultTransport, nil)
+			done := make(chan error, 1)
+			go func() {
+				_, err := tr.SendRequest(context.Background(), initRequest())
+				done <- err
+			}()
+			select {
+			case <-arrived:
+			case <-time.After(5 * time.Second):
+				t.Fatal("request never reached the server")
+			}
+
+			require.NoError(t, tr.Close())
+			select {
+			case err := <-done:
+				assert.Error(t, err, "the held request fails once the transport is closed")
+			case <-time.After(5 * time.Second):
+				t.Fatal("Close left the active request running")
+			}
+			tr.mu.RLock()
+			defer tr.mu.RUnlock()
+			assert.Empty(t, tr.inflight, "the finished request is deregistered")
+		})
+	}
 }
