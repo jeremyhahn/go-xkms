@@ -80,7 +80,7 @@ func TestDecoyEnrollment_MirrorsMixedLegacyRoster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
 	}
-	legacyPEM, err := issueSelfSignedCert(key, pkix.Name{CommonName: stamped.Metadata["cn"]}, big.NewInt(7), time.Now().UTC().Add(-time.Hour), defaultValidityDays)
+	legacyPEM, err := issueSelfSignedCert(key, pkix.Name{CommonName: stamped.Metadata["cn"]}, big.NewInt(7), time.Now().UTC().Add(-30*24*time.Hour), defaultValidityDays)
 	if err != nil {
 		t.Fatalf("legacy certificate: %v", err)
 	}
@@ -92,16 +92,36 @@ func TestDecoyEnrollment_MirrorsMixedLegacyRoster(t *testing.T) {
 		t.Fatalf("legacy holder OU = %v, want none", ou)
 	}
 
+	// The OU and the validity come from one roster cohort: an OU-bearing
+	// decoy is never older than the oldest OU-bearing holder, and an
+	// OU-less decoy is never newer than the newest OU-less (legacy) holder.
+	stampedCert := parseCert(t, stamped.PublicKey)
+	legacyCert := parseCert(t, legacyPEM)
+	if !legacyCert.NotBefore.Before(stampedCert.NotBefore) {
+		t.Fatalf("legacy NotBefore %v not before stamped %v", legacyCert.NotBefore, stampedCert.NotBefore)
+	}
+
 	f := New(Config{})
 	const n = 200
 	ouLess := 0
 	for i := 0; i < n; i++ {
 		d := decoyFor(t, f, decoySeed, "stranger-"+strconv.Itoa(i), roster)
-		switch ou := parseCert(t, d.PublicKey).Subject.OrganizationalUnit; {
+		cert := parseCert(t, d.PublicKey)
+		switch ou := cert.Subject.OrganizationalUnit; {
 		case len(ou) == 0:
 			ouLess++
+			if cert.NotBefore.After(legacyCert.NotBefore) {
+				t.Fatalf("OU-less decoy NotBefore %v after the newest OU-less holder %v", cert.NotBefore, legacyCert.NotBefore)
+			}
 		case !reflect.DeepEqual(ou, []string{"tenant-t"}):
 			t.Fatalf("decoy OU = %v, want [tenant-t] or none", ou)
+		default:
+			if cert.NotBefore.Before(stampedCert.NotBefore) {
+				t.Fatalf("OU decoy NotBefore %v before the oldest OU holder %v", cert.NotBefore, stampedCert.NotBefore)
+			}
+		}
+		if got, want := cert.NotAfter.Sub(cert.NotBefore), legacyCert.NotAfter.Sub(legacyCert.NotBefore); got != want {
+			t.Fatalf("decoy validity %v, want the roster's %v", got, want)
 		}
 	}
 	// Half the roster is OU-less; the decoy share must match it, not be 0.
