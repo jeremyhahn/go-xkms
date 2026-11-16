@@ -173,6 +173,25 @@ describe("Sidebar gates multi-operation screens on any permission", () => {
     expect(screen.queryByRole("button", { name: /OTA Image Keys/ })).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["Key Access Policy", "keys:rotate"],
+    ["Key Access Policy", "keys:delete"],
+    ["Rotation Policy", "keys:rotate"],
+    ["Rotation Policy", "keys:delete"],
+    ["Key Safety", "keys:rotate"],
+  ])("shows %s to a %s-only caller", async (label, perm) => {
+    await session({ [perm]: true });
+    await waitFor(() => expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument());
+  });
+
+  it("hides Key Access Policy, Rotation Policy and Key Safety from a caller with none of their operations", async () => {
+    await session({ "keys:list": true });
+    await waitFor(() => expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Key Access Policy/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Rotation Policy/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Key Safety/ })).not.toBeInTheDocument();
+  });
+
   it("shows HMAC to a verify-only caller", async () => {
     await session({ "keys:verify": true });
     await waitFor(() => expect(screen.getByRole("button", { name: /HMAC/ })).toBeInTheDocument());
