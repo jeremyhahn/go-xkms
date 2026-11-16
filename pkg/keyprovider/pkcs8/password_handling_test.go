@@ -60,8 +60,8 @@ func (p copyTrackingPassword) Bytes() []byte {
 }
 
 func (p copyTrackingPassword) WithBytes(fn func([]byte) error) error { return fn(p.Bytes()) }
-func (p copyTrackingPassword) String() string                       { return types.PasswordRedacted }
-func (p copyTrackingPassword) Clear()                               {}
+func (p copyTrackingPassword) String() string                        { return types.PasswordRedacted }
+func (p copyTrackingPassword) Clear()                                {}
 
 func requireAllWiped(t *testing.T, copies [][]byte, op string) {
 	t.Helper()
