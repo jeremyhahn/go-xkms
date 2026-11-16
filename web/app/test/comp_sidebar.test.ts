@@ -150,6 +150,29 @@ describe("Sidebar gates multi-operation screens on any permission", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Batch Crypto/ })).toBeInTheDocument());
   });
 
+  it("shows Seal to an unseal-only (decrypt) caller", async () => {
+    await session({ "keys:decrypt": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Seal$/ })).toBeInTheDocument());
+  });
+
+  it("shows Key Lifecycle to a revoke-only (delete) caller", async () => {
+    await session({ "keys:delete": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Key Lifecycle/ })).toBeInTheDocument());
+  });
+
+  it.each(["keys:rotate", "keys:sign"])("shows OTA Image Keys to a %s-only caller", async (perm) => {
+    await session({ [perm]: true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /OTA Image Keys/ })).toBeInTheDocument());
+  });
+
+  it("hides Seal, Key Lifecycle and OTA Image Keys from a caller with none of their operations", async () => {
+    await session({ "keys:get": true });
+    await waitFor(() => expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /^Seal$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Key Lifecycle/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /OTA Image Keys/ })).not.toBeInTheDocument();
+  });
+
   it("shows HMAC to a verify-only caller", async () => {
     await session({ "keys:verify": true });
     await waitFor(() => expect(screen.getByRole("button", { name: /HMAC/ })).toBeInTheDocument());
