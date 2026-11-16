@@ -21,6 +21,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -169,18 +170,55 @@ func TestCoseAlgorithm(t *testing.T) {
 	} {
 		k, err := ecdsa.GenerateKey(tc.curve, rand.Reader)
 		require.NoError(t, err)
-		got, err := coseAlgorithm(k.Public())
+		got, err := coseAlgorithm(k.Public(), x509.UnknownSignatureAlgorithm)
 		require.NoError(t, err)
 		assert.Equal(t, tc.want, got)
 	}
 	edPub, _, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	got, err := coseAlgorithm(edPub)
+	got, err := coseAlgorithm(edPub, x509.UnknownSignatureAlgorithm)
 	require.NoError(t, err)
 	assert.Equal(t, cose.AlgorithmEdDSA, got)
-	got, err = coseAlgorithm(&rsa.PublicKey{})
+	_, err = coseAlgorithm(struct{}{}, x509.UnknownSignatureAlgorithm)
+	require.ErrorIs(t, err, refvalue.ErrUnsupportedKey)
+}
+
+// TestCoseAlgorithm_RSAFollowsTheKeyPadding: an RSA key's COSE algorithm is
+// the padding its backend produces. A PKCS#1 v1.5 key (GCP KMS
+// RSA_SIGN_PKCS1_*) or one whose padding is not recorded is refused, never
+// labelled PS256.
+func TestCoseAlgorithm_RSAFollowsTheKeyPadding(t *testing.T) {
+	pub := &rsa.PublicKey{}
+	for _, tc := range []struct {
+		sigAlg x509.SignatureAlgorithm
+		want   cose.Algorithm
+	}{
+		{x509.SHA256WithRSAPSS, cose.AlgorithmPS256},
+		{x509.SHA384WithRSAPSS, cose.AlgorithmPS384},
+		{x509.SHA512WithRSAPSS, cose.AlgorithmPS512},
+	} {
+		got, err := coseAlgorithm(pub, tc.sigAlg)
+		require.NoError(t, err, tc.sigAlg.String())
+		assert.Equal(t, tc.want, got, tc.sigAlg.String())
+	}
+	for _, sigAlg := range []x509.SignatureAlgorithm{
+		x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA, x509.UnknownSignatureAlgorithm,
+	} {
+		got, err := coseAlgorithm(pub, sigAlg)
+		require.ErrorIs(t, err, refvalue.ErrUnsupportedKey, sigAlg.String())
+		assert.NotEqual(t, cose.AlgorithmPS256, got, sigAlg.String())
+	}
+}
+
+// TestRepositorySigner_CarriesTheKeySignatureAlgorithm: the wrapped signer
+// keeps the key's recorded signature algorithm so release signing can pick
+// the COSE algorithm the backend produces.
+func TestRepositorySigner_CarriesTheKeySignatureAlgorithm(t *testing.T) {
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	_, err = releaseAlgorithm(opaqueSigner{signer: k, sigAlg: x509.SHA256WithRSA})
+	require.ErrorIs(t, err, refvalue.ErrUnsupportedKey)
+	got, err := releaseAlgorithm(opaqueSigner{signer: k, sigAlg: x509.SHA256WithRSAPSS})
 	require.NoError(t, err)
 	assert.Equal(t, cose.AlgorithmPS256, got)
-	_, err = coseAlgorithm(struct{}{})
-	require.ErrorIs(t, err, refvalue.ErrUnsupportedKey)
 }
