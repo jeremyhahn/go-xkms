@@ -51,9 +51,9 @@ the row; the coordinator ruled the requirement text stays.
 
 ## Open
 
-- docs/SPEC.md row 58: the lane's policy guard refused the edit (this
-  lane's LANE_POLICY_ALLOW covers only .github/workflows/*). The row still
-  carries the re-scoped text from 239a4c465; it must go back to main's text
-  with status shipped and reference `pkg/auth/mtls.go:337-342`.
+- docs/SPEC.md row 58 is back to main's requirement text; only Status
+  (shipped), the certIdentity line reference and the Detail references
+  (mtls.go:337-342, mtls_tenant_test.go, mtls_test.go) changed.
+- The two owner follow-ups above are not reflected in SPEC text.
 
 Closes #2086
