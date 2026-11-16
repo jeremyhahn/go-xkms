@@ -279,6 +279,23 @@ eq "a non-GitHub host merely containing github.com stays Gitea-shaped" \
 	"https://github.com.example.com/api/v1/repos/jeremyhahn/go-xkms" \
 	"$(forge_api_url 'https://github.com.example.com/jeremyhahn/go-xkms')"
 
+# --- pr_html_url: the pull request the forge says it opened -------------------
+#
+# Gitea links a pull request under /pulls/<n>, GitHub under /pull/<n>; the
+# user and repository objects in either response carry html_urls of their own.
+
+section "pr_html_url"
+PRRESP=$(mktemp)
+printf '{"number":7,"user":{"html_url":"http://192.0.2.50:3000/example-bot"},"html_url":"http://192.0.2.50:3000/jeremyhahn/go-xkms/pulls/7"}' >"$PRRESP"
+eq "a Gitea response yields its /pulls/<n> URL" \
+	"http://192.0.2.50:3000/jeremyhahn/go-xkms/pulls/7" "$(pr_html_url "$PRRESP")"
+printf '{"url":"https://api.github.com/repos/jeremyhahn/go-xkms/pulls/9","html_url":"https://github.com/jeremyhahn/go-xkms/pull/9","number":9,"user":{"html_url":"https://github.com/example-bot"},"head":{"repo":{"html_url":"https://github.com/jeremyhahn/go-xkms"}}}' >"$PRRESP"
+eq "a GitHub response yields its /pull/<n> URL" \
+	"https://github.com/jeremyhahn/go-xkms/pull/9" "$(pr_html_url "$PRRESP")"
+printf '{"user":{"html_url":"https://github.com/example-bot"}}' >"$PRRESP"
+eq "a response with no pull request URL yields nothing" "" "$(pr_html_url "$PRRESP")"
+rm -f "$PRRESP"
+
 section "json_string"
 eq "plain text is quoted" '"chore(release): v0.2.0-alpha"' "$(json_string 'chore(release): v0.2.0-alpha')"
 eq "quotes and backslashes are escaped" '"a\"b\\c"' "$(json_string 'a"b\c')"
