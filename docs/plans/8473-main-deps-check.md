@@ -29,3 +29,4 @@
   - make lint: PASS (0 issues, all modules and tag sets).
 - dk8473b 11-12 (restored from checkpoint 3194ebe6b, was 45c79c88f): make deps-check on 147c13538 failed only on go-truststrap v0.6.0-alpha -> v0.7.1-alpha (root, sdk/go); v0.7.1-alpha fails to build (undefined: enclave.ByteAccess under the go-enclave v0.8.0-alpha replace), so it is held with a held: comment; then deps-check, the four readonly builds and make lint passed.
 - dk8473b 11-16 (ruling 731): checkpoint 3194ebe6b merged into 142fedb78 (23c778126); merged tree equals 142fedb78, no tidy needed.
+- af2080 11-16: lane-verify make vet on ac04b1ee4 failed on a proxy.golang.org stream error (modernc.org/sqlite v1.62.0 zip, INTERNAL_ERROR), an outside transient; re-run of make vet (XKMS_NATIVE_BUILD=1, DS-7500 module setup) on the same tree: PASS, go.sum -mod=mod additions put back. origin/main ec11e342b already merged; the clone could not fetch a newer main (origin repo.git missing).
