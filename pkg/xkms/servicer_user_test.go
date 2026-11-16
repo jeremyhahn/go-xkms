@@ -576,6 +576,56 @@ func TestCreateUser_SystemTenantInviteStillMinted(t *testing.T) {
 	assert.NotEmpty(t, resp.Invite.Token)
 }
 
+// An administrator of tenant acme may omit tenant_id: go-qrdb resolves an
+// empty request tenant from the caller context (tenant.EffectiveTenant), so
+// the account would land in acme with an invitation no redemption path
+// serves. The guard must resolve the tenant the same way and refuse before
+// anything is persisted (#2183 narrowing part 12, Codex P1).
+func TestCreateUser_RefusesContextTenantInviteWhenRequestTenantEmpty(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.createUser = func(context.Context, *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		t.Fatal("CreateUser must not persist an account of the caller's non-system tenant when tenant_id is omitted")
+		return nil, nil
+	}
+
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), "acme")
+	resp, err := svc.CreateUser(ctx, &transport.CreateUserRequest{
+		Username: "acme-user", Email: "user@acme.example",
+	})
+	require.ErrorIs(t, err, ErrInviteUnusable)
+	assert.Nil(t, resp)
+}
+
+// A system-tenant caller (bound explicitly or by the unbound default) that
+// omits tenant_id still creates the pending account and gets its invitation.
+func TestCreateUser_SystemContextEmptyRequestTenantStillInvites(t *testing.T) {
+	for name, ctx := range map[string]context.Context{
+		"bound":   qrdbsdk.ContextWithTenant(context.Background(), qrdbsdk.SystemTenantID),
+		"unbound": context.Background(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, users, _ := setupServiceWithUserClients(t)
+			created := false
+			users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+				created = true
+				assert.True(t, req.Pending)
+				return &qrdbtransport.User{
+					ID: 9, Username: "sys", Email: req.Email, TenantID: qrdbsdk.SystemTenantID,
+					Lifecycle: string(qrdbsdk.LifecyclePending),
+				}, nil
+			}
+
+			resp, err := svc.CreateUser(ctx, &transport.CreateUserRequest{
+				Username: "sys", Email: "sys@example.com",
+			})
+			require.NoError(t, err)
+			assert.True(t, created)
+			require.NotNil(t, resp.Invite)
+			assert.NotEmpty(t, resp.Invite.Token)
+		})
+	}
+}
+
 // TestCreateUser_NonSystemTenantWithoutEmailLoginKey shows the refusal is
 // about the invitation only: a certificate-only identity mints none, so it
 // is still created in any tenant.
