@@ -22,6 +22,11 @@
 
   const ready = $derived(keyId.trim() !== "" && backend.trim() !== "" && data !== "");
   const macHex = $derived(computed ? b64ToHex(computed.mac) : "");
+  // inputSig names the inputs a verdict covers; the verdict shows only
+  // while the inputs still match the ones it verified.
+  const inputSig = $derived(JSON.stringify([keyId, backend, data, dataIsB64, hash, macIn]));
+  let validFor = $state<string | null>(null);
+  const verdict = $derived(validFor === inputSig ? valid : null);
 
   function message(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -64,10 +69,16 @@
       return;
     }
     verifying = true;
+    const sig = inputSig;
     try {
-      valid = (await verifyHmac(keyId.trim(), backend.trim(), d, mac, hash || undefined)).valid;
+      const v = (await verifyHmac(keyId.trim(), backend.trim(), d, mac, hash || undefined)).valid;
+      // A reply for inputs edited since the request says nothing about them.
+      if (sig === inputSig) {
+        valid = v;
+        validFor = sig;
+      }
     } catch (e) {
-      verifyErr = message(e);
+      if (sig === inputSig) verifyErr = message(e);
     } finally {
       verifying = false;
     }
@@ -135,8 +146,8 @@
       <button class="btn btn-primary" onclick={verify} disabled={!ready || macIn.trim() === "" || verifying}>
         {#if verifying}<span class="loading loading-spinner loading-xs"></span>{/if}Verify
       </button>
-      {#if valid !== null}
-        <div><StatusBadge label={valid ? "valid" : "invalid"} ok={valid} /></div>
+      {#if verdict !== null}
+        <div><StatusBadge label={verdict ? "valid" : "invalid"} ok={verdict} /></div>
       {/if}
     </div>
   </div>
