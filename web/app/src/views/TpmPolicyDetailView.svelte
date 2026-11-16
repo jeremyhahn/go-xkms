@@ -34,18 +34,43 @@
     return e instanceof Error ? e.message : String(e);
   }
 
-  async function refreshNames(): Promise<void> {
-    name = "";
-    names = [];
+  // Every scope or policy pick starts a new generation; a reply is applied
+  // only while the generation and the scope/policy it was asked for still
+  // match, so a slow reply for an earlier pick never shows under a new one.
+  let gen = 0;
+
+  function begin(): void {
+    gen++;
     policy = null;
     objects = null;
     verdict = null;
     error = null;
+    loadBusy = false;
+    objectsBusy = false;
+    verifyBusy = false;
+  }
+
+  async function request<T>(fetch: () => Promise<T>, apply: (v: T) => void, setBusy?: (b: boolean) => void): Promise<void> {
+    const mine = gen;
+    const at = `${scope}\u0000${name}`;
+    const current = () => mine === gen && at === `${scope}\u0000${name}`;
+    setBusy?.(true);
+    error = null;
     try {
-      names = await listPolicyNames(tenantId());
+      const v = await fetch();
+      if (current()) apply(v);
     } catch (e) {
-      error = message(e);
+      if (current()) error = message(e);
+    } finally {
+      if (mine === gen) setBusy?.(false);
     }
+  }
+
+  function refreshNames(): Promise<void> {
+    name = "";
+    names = [];
+    begin();
+    return request(() => listPolicyNames(tenantId()), (v) => (names = v));
   }
 
   function pickScope(value: string): void {
@@ -55,45 +80,22 @@
 
   function pickPolicy(value: string): void {
     name = value;
-    policy = null;
-    objects = null;
-    verdict = null;
+    begin();
   }
 
-  async function load(): Promise<void> {
-    loadBusy = true;
-    error = null;
-    try {
-      policy = await loadPolicy(name, tenantId());
-    } catch (e) {
-      error = message(e);
-    } finally {
-      loadBusy = false;
-    }
+  function load(): Promise<void> {
+    const n = name;
+    return request(() => loadPolicy(n, tenantId()), (v) => (policy = v), (b) => (loadBusy = b));
   }
 
-  async function listObjects(): Promise<void> {
-    objectsBusy = true;
-    error = null;
-    try {
-      objects = await policyObjects(name, tenantId());
-    } catch (e) {
-      error = message(e);
-    } finally {
-      objectsBusy = false;
-    }
+  function listObjects(): Promise<void> {
+    const n = name;
+    return request(() => policyObjects(n, tenantId()), (v) => (objects = v), (b) => (objectsBusy = b));
   }
 
-  async function verify(): Promise<void> {
-    verifyBusy = true;
-    error = null;
-    try {
-      verdict = await verifyPolicy(name, tenantId());
-    } catch (e) {
-      error = message(e);
-    } finally {
-      verifyBusy = false;
-    }
+  function verify(): Promise<void> {
+    const n = name;
+    return request(() => verifyPolicy(n, tenantId()), (v) => (verdict = v), (b) => (verifyBusy = b));
   }
 
   onMount(() => {
