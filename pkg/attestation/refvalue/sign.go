@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto"
 	"errors"
+	"io"
 
 	"github.com/veraison/corim/corim"
 	"github.com/veraison/go-cose"
@@ -55,6 +56,17 @@ func Sign(ctx context.Context, unsigned []byte, signer crypto.Signer, alg cose.A
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// go-cose calls an opaque ECDSA signer with nil SignerOpts; a KMS signer
+	// rejects that (AWS) or assumes SHA-256 (GCP), so the algorithm's hash is
+	// named on every call.
+	switch alg {
+	case cose.AlgorithmES256:
+		signer = hashedSigner{Signer: signer, hash: crypto.SHA256}
+	case cose.AlgorithmES384:
+		signer = hashedSigner{Signer: signer, hash: crypto.SHA384}
+	case cose.AlgorithmES512:
+		signer = hashedSigner{Signer: signer, hash: crypto.SHA512}
+	}
 	coseSigner, err := cose.NewSigner(alg, signer)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrUnsupportedKey, Cause: err}
@@ -71,4 +83,16 @@ func Sign(ctx context.Context, unsigned []byte, signer crypto.Signer, alg cose.A
 		return nil, &errs.Joined{Lead: ErrSign, Cause: err}
 	}
 	return out, nil
+}
+
+// hashedSigner passes hash as the SignerOpts of every Sign, whatever its
+// caller gave.
+type hashedSigner struct {
+	crypto.Signer
+	hash crypto.Hash
+}
+
+// Sign signs digest with the hash the COSE algorithm names.
+func (h hashedSigner) Sign(rand io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
+	return h.Signer.Sign(rand, digest, h.hash)
 }
