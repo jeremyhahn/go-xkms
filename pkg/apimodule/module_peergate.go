@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/x509"
 	"slices"
+	"sync"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -52,8 +53,8 @@ func (e *AttestedCallerClientError) Error() string {
 //
 // The policy's PCR values are the embedder's; go-xkms ships none. Anchor
 // pools the policy leaves nil (Quote.Anchors, DeviceIdentity.Anchors) are
-// the IDevID-issuer roots in the host node's persisted trust-root store when
-// the gate is built, so the client must resolve at NewModule.
+// the IDevID-issuer roots in the host node's persisted trust-root store,
+// opened on the first verification and read on every one.
 func WithAttestedCallerGate(policy peergate.GatePolicy) Option {
 	return func(m *Module) {
 		policy.Permissions = slices.Clone(policy.Permissions)
@@ -81,11 +82,7 @@ func (m *Module) buildAttestedCallerGate() error {
 	}
 	cfg := peergate.GateConfig{Policy: *m.attestedCallerPolicy, DAOs: m.peerEvidenceStorage}
 	if attestedCallerNeedsAnchors(cfg.Policy) {
-		roots, err := m.attestedCallerTrustRoots()
-		if err != nil {
-			return err
-		}
-		cfg.Anchors = attestedCallerAnchors(roots)
+		cfg.Anchors = m.attestedCallerAnchorSource()
 	}
 	gate, err := peergate.NewGate(cfg)
 	if err != nil {
@@ -124,6 +121,30 @@ func (m *Module) attestedCallerTrustRoots() (truststore.PurposeLister, error) {
 // PurposeIDevIDIssuer roots, read on each verification, so a root
 // quarantined, removed or imported takes effect on the next peer. An empty
 // purpose yields an empty pool, which trusts no peer.
+// attestedCallerAnchorSource is the gate's anchor source over the host
+// node's trust-root store, opened on the first verification rather than at
+// NewModule: the module is built before the host node exists
+// (docs/attested-peer/api.md). Until the client resolves it answers
+// SurfaceComposingError, which leaves the gate undecided.
+func (m *Module) attestedCallerAnchorSource() peergate.AnchorSource {
+	var mu sync.Mutex
+	var roots truststore.PurposeLister
+	return func(ctx context.Context) (*x509.CertPool, error) {
+		mu.Lock()
+		if roots == nil {
+			opened, err := m.attestedCallerTrustRoots()
+			if err != nil {
+				mu.Unlock()
+				return nil, err
+			}
+			roots = opened
+		}
+		current := roots
+		mu.Unlock()
+		return attestedCallerAnchors(current)(ctx)
+	}
+}
+
 func attestedCallerAnchors(roots truststore.PurposeLister) peergate.AnchorSource {
 	return func(context.Context) (*x509.CertPool, error) {
 		certs, err := roots.CertificatesByPurpose(truststore.PurposeIDevIDIssuer)
