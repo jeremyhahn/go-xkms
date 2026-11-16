@@ -36,4 +36,17 @@ suite, svelte-check, vite build, pkg/api/rest -race, sdk/go build, make lint.
 
 ## Results
 
-Results to follow.
+- sdk/ts npm ci + build: pass (sdk/ts/dist restored)
+- sdk/ts/svelte-auth npm ci: pass
+- web/app npm ci: pass
+- vitest test/view3_tenant_detail.test.ts: pass (8 tests)
+- web/app npm test: pass (51 files, 420 tests)
+- svelte-check: pass (0 errors, 0 warnings)
+- vite build: pass
+- go test -race pkg/api/rest: pass (GOCACHE/TMPDIR on /tmp: lane disk full, shared /gocache missing entries)
+- sdk/go go build: pass
+- make lint: pass
+
+Note: the feat(web) commit 06d3b74bf carries the test(web) subject by mistake
+(the message file was not rewritten); its diff is the view, helper, route, nav
+and App dispatch.
