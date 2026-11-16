@@ -44,3 +44,24 @@ the branch and is not recreated here.
 - actionlint: no workflow file differs from main after the merge, so
   nothing to lint.
 - No code change beyond the merge was needed; no fixture or allowlist edit.
+
+## Company Agent review of b50ed31: re-import overwrote newer data
+
+- Defect (CHANGES_REQUESTED): a re-imported legacy record overwrote newer
+  data. records `Table.Import` used `Table.Put`, sessions and profiles
+  `ImportLegacy` a plain DAO `Save`; the migrator deletes the legacy key
+  only after the import, so a failed delete re-ran the import at every
+  store open and reverted changes made in the new store.
+- Test commit 09f0ee5d7: import, change the stored record, import again,
+  assert the change survives (records, sessions, profile); all three
+  failed before the fix. The other-owner case is
+  TestTableImportOwnerConflict.
+- Fix commit 7945680af: `Table.Import` creates with `Table.Create`; when not
+  stored it reads the record: same owner returns nil (already migrated, so
+  the legacy key is deleted), another owner `LegacyOwnerConflictError`.
+  Sessions and profiles import with `SaveIfAbsent` and keep a record
+  already under the ID. The "importing twice" comments now say the
+  existing record is kept.
+- Checks: `go test -count=1 -race -tags "codec_cbor codec_json
+  codec_msgpack" ./pkg/ssh/...` pass; sdk/go `./client/ssh/...` pass;
+  `make lint` pass, 0 issues.
