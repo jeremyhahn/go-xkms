@@ -80,3 +80,16 @@ empty tenant. The caller's template is never modified.
   edited in this slice.
 - Checks: `go test -count=1 -race -tags "codec_cbor codec_json
   codec_msgpack" ./pkg/factor/...`, `go vet ./...` and `make lint`.
+
+## Open owner question: tenant-OU exemptions
+
+docs/SPEC.md:72 keeps the owner's wording (only its status changes); the
+exemptions this lane proposed are not in the SPEC until the owner approves
+them: CA hierarchy certificates (pkg/ca/ca.go:1346/:1546,
+pkg/ca/subordinate.go:166, hybrid CA templates), the FIDO2 attestation
+profile (profile_fido2.go:227-234) and its virtual-authenticator CSR
+(attestation.go:183-186, Subject-OU fixed by WebAuthn L2 §8.2.1), and the
+TPM LAK (tcg_lak.go:109/:174).
+
+Codex round 3: PIV decoys mirror a mixed legacy roster's OU share (test
+ecffd4bf7, fix e7751ec51).
