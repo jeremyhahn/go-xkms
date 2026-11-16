@@ -126,6 +126,7 @@ One Codex P1 on part 3, Company Agent option (c). The fix comes after its test, 
   - Whenever xkmsd builds the token issuer over the embedded node, the issuer's user resolver gets its own read-only service-principal grant (users:read, RegisterTokenResolverGrant), independently of WebAuthn. A PIV/mTLS-only refresh no longer fails on the missing grant. The test runs in a fresh process, since the grants are process-global.
   - BeginInviteRegistration names its ceremony (`ceremony`: create or get) in the transport, the proto and REST. xkmsctl answers a get with GetAssertion, and the browser suites' invite helpers call navigator.credentials.get for it. Any other value is refused.
   - The api suite's unseal and /health/ready wait move into test/integration/api/apiharness. The parent package and each protocol package (grpc, quic, rest, unix) call apiharness.Main from TestMain, so a per-protocol make target finds the server unsealed.
+- Part 10 (lane mf2183x, two P1s): CreateUser refuses an invited account of a non-system tenant with ErrInviteUnusable before persisting it, since redemption serves system-tenant invitations only (tenant-scoped redemption stays on #2202). ChangeUserPIN reads the barrier's sealing strategy first: a hardware or external barrier (TPM2, PKCS#11, cloud KMS) skips VerifyCredentials and the rewrap and rests on the backend's retry-enforced verify, while a passphrase barrier keeps the option-(c) check.
 
 ## Final state
 
