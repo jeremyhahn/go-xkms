@@ -14,11 +14,13 @@
 package auth
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"testing"
@@ -26,6 +28,9 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 )
 
 // tenantCert builds a client certificate with the given Subject OUs and
@@ -185,6 +190,53 @@ func TestMTLSAuthenticator_BoundUserTenant_QRDBRule(t *testing.T) {
 				assert.Equal(t, "alice", identity.Subject)
 				assert.Equal(t, tt.wantTenant, identity.TenantID)
 			}
+		})
+	}
+}
+
+// TestMTLSAuthenticator_BoundUser_AsOnMain proves the row leaves bound-user
+// mTLS authentication as on main: the user the certificate's SPKI
+// fingerprint is bound to authenticates with its own subject, tenant and
+// roles over HTTP and gRPC, whatever tenant the certificate's OU names and
+// with no SPIFFE SAN. The tenant rule of this row is certificate-only
+// (certIdentity, docs/SPEC.md).
+func TestMTLSAuthenticator_BoundUser_AsOnMain(t *testing.T) {
+	tests := []struct {
+		name string
+		ous  []string
+	}{
+		{name: "certificate OU names the user's tenant", ous: []string{"acme"}},
+		{name: "certificate OU names another tenant", ous: []string{"other"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &mockUserStore{user: MTLSUser{Username: "alice", TenantID: "acme", Roles: []string{"operator"}, Enabled: true}}
+			a := NewMTLSAuthenticator(&MTLSConfig{UserStore: store})
+			cert := tenantCert(t, tt.ous)
+
+			httpIdentity, httpErr := a.AuthenticateHTTP(tenantRequest(cert))
+			grpcCtx := peer.NewContext(context.Background(), &peer.Peer{
+				Addr: &net.TCPAddr{IP: net.ParseIP("10.0.0.4"), Port: 9090},
+				AuthInfo: credentials.TLSInfo{
+					State: tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}},
+				},
+			})
+			grpcIdentity, grpcErr := a.AuthenticateGRPC(grpcCtx, metadata.MD{})
+
+			for transport, got := range map[string]struct {
+				identity *Identity
+				err      error
+			}{
+				"http": {httpIdentity, httpErr},
+				"grpc": {grpcIdentity, grpcErr},
+			} {
+				require.NoError(t, got.err, transport)
+				require.NotNil(t, got.identity, transport)
+				assert.Equal(t, "alice", got.identity.Subject, transport)
+				assert.Equal(t, "acme", got.identity.TenantID, transport)
+				assert.Equal(t, []string{"operator"}, got.identity.Roles, transport)
+			}
+			assert.NotEmpty(t, store.queriedFingerprint)
 		})
 	}
 }
