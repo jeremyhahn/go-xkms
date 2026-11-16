@@ -124,7 +124,11 @@ func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.J
 		if !msg.isResponse() {
 			return nil, fmt.Errorf("mcp request %s: server body is not a JSON-RPC response", request.Method)
 		}
-		return msg.response(request.ID), nil
+		resp, err := msg.response(request.ID)
+		if err != nil {
+			return nil, fmt.Errorf("mcp request %s: %w", request.Method, err)
+		}
+		return resp, nil
 	case contentTypeEventFeed:
 		return s.readEventStream(body, request)
 	default:
@@ -260,7 +264,11 @@ func (s *streamableHTTP) readEventStream(body io.Reader, request mcptransport.JS
 		line := scanner.Text()
 		if !more || line == "" {
 			if data.Len() > 0 {
-				if resp := s.dispatchEvent(data.String(), request.ID); resp != nil {
+				resp, err := s.dispatchEvent(data.String(), request.ID)
+				if err != nil {
+					return nil, fmt.Errorf("mcp request %s: %w", request.Method, err)
+				}
+				if resp != nil {
 					return resp, nil
 				}
 				data.Reset()
@@ -285,10 +293,10 @@ func (s *streamableHTTP) readEventStream(body io.Reader, request mcptransport.JS
 
 // dispatchEvent handles one event's data. It returns the response when the
 // event carries one, and nil otherwise.
-func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) *mcptransport.JSONRPCResponse {
+func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) (*mcptransport.JSONRPCResponse, error) {
 	var msg wireMessage
 	if err := json.Unmarshal([]byte(data), &msg); err != nil {
-		return nil
+		return nil, nil
 	}
 	if msg.isResponse() {
 		return msg.response(id)
@@ -296,7 +304,7 @@ func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) *mcptransp
 	if msg.Method != "" && msg.ID == nil {
 		var notification mcp.JSONRPCNotification
 		if err := json.Unmarshal([]byte(data), &notification); err != nil {
-			return nil
+			return nil, nil
 		}
 		s.mu.RLock()
 		handler := s.onNotification
@@ -305,7 +313,7 @@ func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) *mcptransp
 			handler(notification)
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // wireMessage is the part of a JSON-RPC message the transport inspects.
@@ -324,11 +332,29 @@ func (m *wireMessage) isResponse() bool {
 
 // response converts the message to mcp-go's response type. One POST carries
 // one request, so the response takes that request's id.
-func (m *wireMessage) response(id mcp.RequestId) *mcptransport.JSONRPCResponse {
+func (m *wireMessage) response(id mcp.RequestId) (*mcptransport.JSONRPCResponse, error) {
+	if m.JSONRPC != mcp.JSONRPC_VERSION {
+		return nil, fmt.Errorf("response has JSON-RPC version %q, want %q", m.JSONRPC, mcp.JSONRPC_VERSION)
+	}
+	want, err := id.MarshalJSON()
+	if err != nil {
+		return nil, fmt.Errorf("encode request id: %w", err)
+	}
+	if len(m.ID) == 0 || string(m.ID) == "null" {
+		return nil, fmt.Errorf("response has no id, want %s", want)
+	}
+	var received mcp.RequestId
+	if err := received.UnmarshalJSON(m.ID); err != nil {
+		return nil, fmt.Errorf("decode response id: %w", err)
+	}
+	got, err := received.MarshalJSON()
+	if err != nil || received.IsNil() || string(got) != string(want) {
+		return nil, fmt.Errorf("response id %s does not match request id %s", m.ID, want)
+	}
 	return &mcptransport.JSONRPCResponse{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      id,
 		Result:  m.Result,
 		Error:   m.Error,
-	}
+	}, nil
 }

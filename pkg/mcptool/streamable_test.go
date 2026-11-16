@@ -127,6 +127,51 @@ func TestStreamableHTTP_RejectsBadResponses(t *testing.T) {
 	}
 }
 
+// TestStreamableHTTP_ValidatesResponseID proves a JSON or event-stream
+// response is accepted only when its JSON-RPC version is 2.0 and its id is the
+// outstanding request's id (1); a different, missing or null id, or another
+// version, fails the call instead of answering it.
+func TestStreamableHTTP_ValidatesResponseID(t *testing.T) {
+	bodies := map[string]struct {
+		body string
+		want string
+	}{
+		"matching id":   {body: `{"jsonrpc":"2.0","id":1,"result":{}}`},
+		"different id":  {body: `{"jsonrpc":"2.0","id":2,"result":{}}`, want: "does not match"},
+		"string id":     {body: `{"jsonrpc":"2.0","id":"1","result":{}}`, want: "does not match"},
+		"missing id":    {body: `{"jsonrpc":"2.0","result":{}}`, want: "no id"},
+		"null id":       {body: `{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse"}}`, want: "no id"},
+		"wrong version": {body: `{"jsonrpc":"1.0","id":1,"result":{}}`, want: "version"},
+		"no version":    {body: `{"id":1,"result":{}}`, want: "version"},
+	}
+	encodings := map[string]func(string) (string, string){
+		"json": func(b string) (string, string) { return "application/json", b },
+		"sse":  func(b string) (string, string) { return "text/event-stream", "data: " + b + "\n\n" },
+	}
+	for enc, encode := range encodings {
+		for name, tc := range bodies {
+			t.Run(enc+"/"+name, func(t *testing.T) {
+				contentType, payload := encode(tc.body)
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", contentType)
+					_, _ = w.Write([]byte(payload))
+				}))
+				defer srv.Close()
+				tr := newStreamableHTTP(srv.URL, http.DefaultTransport, nil)
+				resp, err := tr.SendRequest(context.Background(), initRequest())
+				if tc.want == "" {
+					require.NoError(t, err)
+					assert.Equal(t, mcp.NewRequestId(int64(1)), resp.ID)
+					return
+				}
+				require.Error(t, err)
+				assert.Nil(t, resp)
+				assert.Contains(t, err.Error(), tc.want)
+			})
+		}
+	}
+}
+
 func TestStreamableHTTP_NotificationErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
