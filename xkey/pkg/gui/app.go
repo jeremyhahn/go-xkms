@@ -93,6 +93,9 @@ func ParseFirmwareVersion(version string) uint32 {
 
 // App is the central Wails v2 application. It wires the config, services,
 // tray manager, and Wails lifecycle hooks together.
+// auditLogFileName is go-qrdb's audit file in the xkey data directory.
+const auditLogFileName = "audit.log"
+
 type App struct {
 	ctx    context.Context
 	config *GUIConfig
@@ -108,7 +111,7 @@ type App struct {
 	pivService               *services.PIVService
 	tpmService               *services.TPMService
 	auditService             *services.AuditService
-	auditStore               *audit.BackendStore
+	auditStore               *audit.QRDBStore
 	adminService             *services.AdminService
 	connectionService        *services.ConnectionService
 	keyService               *services.KeyService
@@ -1039,13 +1042,15 @@ func (a *App) initializeDataDir() error {
 		a.log.Info("sealed blob store using barrier backend")
 	}
 
-	// Audit store — migrate to barrier-encrypted persistence.
-	if barrierBackend != nil {
-		if migrateErr := a.auditStore.MigrateBackend(barrierBackend); migrateErr != nil {
-			a.log.Warn("failed to migrate audit store to barrier", "error", migrateErr)
-		} else {
-			a.log.Info("audit store migrated to barrier backend")
-		}
+	// Audit store: move from the start-up ring to go-qrdb's hash-chained
+	// audit file in the data directory, replaying what was logged so far.
+	if auditSink, sinkErr := xkmssdk.NewQRDBAuditFileLogger(filepath.Join(dir, auditLogFileName)); sinkErr != nil {
+		a.log.Warn("failed to open go-qrdb audit file", "error", sinkErr)
+	} else if moveErr := a.auditStore.MoveTo(auditSink); moveErr != nil {
+		_ = auditSink.Close()
+		a.log.Warn("failed to move audit store to go-qrdb audit file", "error", moveErr)
+	} else {
+		a.log.Info("audit store moved to go-qrdb audit file")
 	}
 
 	// Wire the SSH services: build an embedded SSH client whose key
@@ -1837,9 +1842,9 @@ func NewApp(cfg *GUIConfig) *App {
 	}
 
 	// Create shared audit store for queryable logging across all services.
-	// Initially backed by in-memory storage; migrated to barrier-encrypted
-	// persistence in initializeDataDir() after barrier unseal.
-	auditStore, auditStoreErr := audit.NewBackendStore(xkmssdk.NewStorageMemory(), 10000, slog.Default())
+	// go-qrdb's audit store: a go-qrdb ring buffer until initializeDataDir()
+	// moves it to go-qrdb's audit file in the data directory.
+	auditStore, auditStoreErr := audit.NewQRDBStore(xkmssdk.NewQRDBAuditRingBuffer(10000))
 	if auditStoreErr != nil {
 		log.Error("failed to create audit store", "error", auditStoreErr)
 		panic("audit store initialization failed: " + auditStoreErr.Error())
