@@ -43,73 +43,85 @@
     }
   }
 
-  async function loadVtpm(id: string): Promise<void> {
+  // seq names the current tenant selection; a response for an older
+  // selection is dropped, and every action targets the tenant captured
+  // when it was sent.
+  let seq = 0;
+
+  async function loadVtpm(id: string, n: number): Promise<void> {
     try {
-      vtpm = await getSDKClient().tenants.vtpmStatus(id);
+      const s = await getSDKClient().tenants.vtpmStatus(id);
+      if (n === seq) vtpm = s;
     } catch (e) {
-      showToast("error", msg(e));
+      if (n === seq) showToast("error", msg(e));
     }
   }
 
   async function selectTenant(id: string): Promise<void> {
+    const n = ++seq;
     tenantId = id;
     mode = null;
     modeError = null;
     vtpm = null;
     ownerAuth = "";
+    busy = false;
     if (id === "") return;
     try {
       const r = await getSDKClient().tenants.getTPMMode(id);
+      if (n !== seq) return;
       mode = r.mode;
       newMode = r.mode;
-      if (r.mode === "vtpm") await loadVtpm(id);
+      if (r.mode === "vtpm") await loadVtpm(id, n);
     } catch (e) {
-      modeError = msg(e);
+      if (n === seq) modeError = msg(e);
     }
   }
 
   async function applyMode(): Promise<void> {
     confirmMode = false;
+    const n = seq;
+    const id = tenantId;
     busy = true;
-    const req: SetTenantTPMModeRequest = { tenant_id: tenantId, mode: newMode };
+    const req: SetTenantTPMModeRequest = { tenant_id: id, mode: newMode };
     if (ownerAuth !== "") req.owner_auth = toB64(ownerAuth);
     try {
-      const r = await getSDKClient().tenants.setTPMMode(tenantId, req);
+      const r = await getSDKClient().tenants.setTPMMode(id, req);
+      showToast("success", `TPM mode set to ${r.mode}.`);
+      if (n !== seq) return;
       mode = r.mode;
       ownerAuth = "";
-      showToast("success", `TPM mode set to ${r.mode}.`);
       vtpm = null;
-      if (r.mode === "vtpm") await loadVtpm(tenantId);
+      if (r.mode === "vtpm") await loadVtpm(id, n);
     } catch (e) {
       showToast("error", msg(e));
     } finally {
-      busy = false;
+      if (n === seq) busy = false;
     }
   }
 
-  async function start(): Promise<void> {
+  async function vtpmAction(stopIt: boolean): Promise<void> {
+    const n = seq;
+    const id = tenantId;
     busy = true;
     try {
-      vtpm = await getSDKClient().tenants.vtpmStart(tenantId);
-      showToast("success", "vTPM started.");
+      const t = getSDKClient().tenants;
+      const s = stopIt ? await t.vtpmStop(id) : await t.vtpmStart(id);
+      if (n === seq) vtpm = s;
+      showToast("success", stopIt ? "vTPM stopped." : "vTPM started.");
     } catch (e) {
       showToast("error", msg(e));
     } finally {
-      busy = false;
+      if (n === seq) busy = false;
     }
   }
 
-  async function stop(): Promise<void> {
+  function start(): Promise<void> {
+    return vtpmAction(false);
+  }
+
+  function stop(): Promise<void> {
     confirmStop = false;
-    busy = true;
-    try {
-      vtpm = await getSDKClient().tenants.vtpmStop(tenantId);
-      showToast("success", "vTPM stopped.");
-    } catch (e) {
-      showToast("error", msg(e));
-    } finally {
-      busy = false;
-    }
+    return vtpmAction(true);
   }
 
   onMount(() => {

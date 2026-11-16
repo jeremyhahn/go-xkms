@@ -99,16 +99,36 @@
     return policy;
   }
 
+  // seq names the current target: editing the key or backend inputs, or a
+  // new Load, bumps it, and a response for an older target is dropped.
+  let seq = 0;
+
+  // Editing the key or backend clears a loaded form, so Save never sends
+  // one key's policy to another.
+  function retarget(): void {
+    seq++;
+    if (version !== null) {
+      fill(undefined);
+      version = null;
+      error = null;
+      formError = null;
+    }
+  }
+
   async function load(): Promise<void> {
+    const n = ++seq;
+    const id = keyId.trim();
+    const be = backend.trim();
     busy = true;
     error = null;
     formError = null;
     try {
-      const res = await getKeyPolicy(keyId.trim(), backend.trim());
+      const res = await getKeyPolicy(id, be);
+      if (n !== seq) return;
       fill(res.policy);
       version = res.policy ? (res.policy.version ?? 0) : "default";
     } catch (e) {
-      error = message(e);
+      if (n === seq) error = message(e);
     } finally {
       busy = false;
     }
@@ -132,11 +152,15 @@
   async function put(policy: KeyPolicy): Promise<void> {
     confirmWiden = null;
     busy = true;
+    const n = seq;
+    const id = keyId.trim();
+    const be = backend.trim();
     try {
-      const id = keyId.trim();
-      const res = await setKeyPolicy(id, backend.trim(), policy);
-      version = res.policy_version;
-      loadedRestricted = policy.allowed_operations !== undefined;
+      const res = await setKeyPolicy(id, be, policy);
+      if (n === seq) {
+        version = res.policy_version;
+        loadedRestricted = policy.allowed_operations !== undefined;
+      }
       showToast("success", `Access policy for "${id}" saved (version ${res.policy_version}).`);
     } catch (e) {
       error = message(e);
@@ -156,13 +180,16 @@
     const id = confirmRemove;
     confirmRemove = null;
     if (id === null) return;
+    const n = seq;
     busy = true;
     error = null;
     formError = null;
     try {
       await deleteKeyPolicy(id, backend.trim());
-      fill(undefined);
-      version = "default";
+      if (n === seq) {
+        fill(undefined);
+        version = "default";
+      }
       showToast("success", `Access policy for "${id}" removed.`);
     } catch (e) {
       error = message(e);
@@ -175,8 +202,8 @@
 <PageHeader title="Key Access Policy" subtitle="Who may use a key, and for what" />
 
 <div class="flex flex-wrap items-end gap-2 mb-4">
-  <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} />
-  <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} />
+  <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} oninput={retarget} />
+  <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} oninput={retarget} />
   <button class="btn btn-sm" onclick={load} disabled={!ready || busy}>Load</button>
   {#if version === "default"}
     <span class="text-sm text-base-content/60">No access policy set (default applies)</span>

@@ -104,13 +104,19 @@
 
   async function save(): Promise<void> {
     if (tagError || !changed) return;
+    // Bind the save to the loaded target: a response that lands after
+    // another key loaded must not replace what the view shows.
+    const n = seq;
+    const id = loadedId;
+    const be = loadedBackend;
     busy = true;
     error = null;
     try {
-      show(await updateKeyMetadata(loadedId, loadedBackend, changes));
-      showToast("success", `Metadata of key "${loadedId}" saved.`);
+      const m = await updateKeyMetadata(id, be, changes);
+      if (n === seq) show(m);
+      showToast("success", `Metadata of key "${id}" saved.`);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      if (n === seq) error = e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
     }
@@ -122,7 +128,7 @@
 <div class="flex flex-wrap gap-2 mb-4">
   <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} />
   <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} />
-  <button class="btn btn-primary btn-sm" onclick={load} disabled={loading || keyId === "" || backend === ""}>Load</button>
+  <button class="btn btn-primary btn-sm" onclick={load} disabled={loading || busy || keyId === "" || backend === ""}>Load</button>
 </div>
 
 {#if error}

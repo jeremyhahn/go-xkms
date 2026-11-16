@@ -103,7 +103,7 @@ describe("KeyAccessPolicyView target binding", () => {
     const puts = request.mock.calls.filter(([m]) => m === "PUT");
     for (const [, path, opts] of puts) {
       const body = (opts as { body: { policy: { allowed_principals?: string[] } } }).body;
-      expect(path === "/api/v1/keys/kb/policy" && body.policy.allowed_principals?.includes("alice")).toBe(false);
+      expect(path === "/api/v1/keys/kb/policy" && (body.policy.allowed_principals ?? []).includes("alice")).toBe(false);
     }
     expect(screen.queryByText("alice")).not.toBeInTheDocument();
   });
