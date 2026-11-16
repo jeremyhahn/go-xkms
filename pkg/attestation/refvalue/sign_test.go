@@ -109,8 +109,8 @@ func TestSignRefusesEmptySignerName(t *testing.T) {
 		}
 	}()
 	unsigned := buildUnsigned(t, buildCoMID(t), nil)
-	if _, err := Sign(context.Background(), unsigned, newKey(t, elliptic.P256()), cose.AlgorithmES256, ""); err == nil {
-		t.Fatal("Sign accepted an empty signer name")
+	if _, err := Sign(context.Background(), unsigned, newKey(t, elliptic.P256()), cose.AlgorithmES256, ""); !errors.Is(err, ErrNoSignerName) {
+		t.Fatalf("got %v, want ErrNoSignerName", err)
 	}
 }
 

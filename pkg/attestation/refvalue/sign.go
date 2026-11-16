@@ -28,6 +28,10 @@ var (
 	// ErrNilSigner reports a Sign call without a signer.
 	ErrNilSigner = errors.New("refvalue: a signer is required to sign a CoRIM")
 
+	// ErrNoSignerName reports an empty signer name; the CoRIM meta map
+	// requires one.
+	ErrNoSignerName = errors.New("refvalue: a signer name is required to sign a CoRIM")
+
 	// ErrUnsupportedKey reports a signer whose key go-cose cannot sign with
 	// under the requested algorithm.
 	ErrUnsupportedKey = errors.New("refvalue: the signer's key cannot sign with the requested COSE algorithm")
@@ -44,6 +48,9 @@ var (
 func Sign(ctx context.Context, unsigned []byte, signer crypto.Signer, alg cose.Algorithm, signerName string) ([]byte, error) {
 	if signer == nil {
 		return nil, ErrNilSigner
+	}
+	if signerName == "" {
+		return nil, ErrNoSignerName
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
