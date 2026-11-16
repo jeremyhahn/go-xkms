@@ -137,6 +137,10 @@ var (
 	// or set RequireKeyPassword to false to permit plaintext key storage.
 	ErrKeyPasswordRequired = errors.New("ca: key password required (RequireKeyPassword=true)")
 
+	// ErrCAKeyChanged indicates a password-scoped CA signer's per-Sign key
+	// lookup resolved a key other than the one the signer was created for.
+	ErrCAKeyChanged = errors.New("ca: CA key changed since the signer was created")
+
 	// ErrKeyRetrievalFailed indicates the configured backend returned an
 	// error other than "key not found" (errors.Is(err, backend.ErrKeyNotFound))
 	// while getOrGenerateCAKey checked whether a CA key already exists.

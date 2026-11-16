@@ -1288,6 +1288,12 @@ func (s *passwordScopedSigner) Sign(r io.Reader, digest []byte, opts crypto.Sign
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "ca: open CA key for signing", Err: err}
 	}
+	// Pin the key: a lookup that now resolves another key (rotated or
+	// replaced) must not sign under the public key this signer reports.
+	pub, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !pub.Equal(s.pub) {
+		return nil, ErrCAKeyChanged
+	}
 	return signer.Sign(r, digest, opts)
 }
 
