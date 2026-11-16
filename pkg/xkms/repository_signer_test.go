@@ -3,6 +3,9 @@ package xkms
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
@@ -35,6 +38,30 @@ func TestRepositorySigner_ReleaseKeyUnlessTheTenantNamedAnother(t *testing.T) {
 	signer, err = svc.RepositorySigner(ctx, "acme/other")
 	require.NoError(t, err)
 	assert.True(t, samePublicKey(t, release, signer), "the binding is per repository")
+}
+
+// TestRepositorySigner_IsOpaque checks that the signer exposes only Public
+// and Sign: a caller cannot type-assert it back to the backend's private key
+// (a software backend's signer is the *ecdsa.PrivateKey itself).
+func TestRepositorySigner_IsOpaque(t *testing.T) {
+	svc, _, ctx := releaseSigningService(t, "attestation_signing_keys:sign")
+	generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+
+	signer, err := svc.RepositorySigner(ctx, "acme/app")
+	require.NoError(t, err)
+	_, isKey := signer.(*ecdsa.PrivateKey)
+	assert.False(t, isKey, "the signer must not be the backend's private key")
+	_, isPrivate := signer.(interface{ Equal(crypto.PrivateKey) bool })
+	assert.False(t, isPrivate, "the signer must expose only Public and Sign")
+	_, isDecrypter := signer.(crypto.Decrypter)
+	assert.False(t, isDecrypter)
+
+	digest := sha256.Sum256([]byte("release"))
+	sig, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.NoError(t, err)
+	pub, ok := signer.Public().(*ecdsa.PublicKey)
+	require.True(t, ok)
+	assert.True(t, ecdsa.VerifyASN1(pub, digest[:], sig), "the opaque signer still signs through the backend")
 }
 
 func TestRepositorySigner_Refusals(t *testing.T) {
