@@ -35,13 +35,6 @@ server has the appraisal handlers wired (as `hasSigningKeys` does).
    client, embedded transport, sdk/go exposure.
 3. docs/attestation-verifier/api.md route list; changelog entry.
 
-## Checks
-
-- go test -count=1 -tags "codec_cbor codec_json codec_msgpack"
-  ./pkg/api/rest/... ./pkg/api/transport/... ./pkg/xkms/...
-- go build ./... in sdk/go
-- make lint
-
 ## Out of scope
 
 gRPC, Unix, QUIC, USB and MCP: a later slice. No proto change, and no new
