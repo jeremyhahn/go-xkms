@@ -71,3 +71,5 @@ Renew reuses the package's loadCertificatePEM (as revoke does).
   The tests use a CA stand-in that calls ChallengeSetup as the client does
   and fetches the token over HTTP.
 - Codex findings 1 to 4 of the sacmei review are fixed.
+- lane-verify (check-wailsjs): `fix(xkey): regenerate wails bindings for the
+  acme renew http address` commits the ACMERenewRequest.httpAddr binding.
