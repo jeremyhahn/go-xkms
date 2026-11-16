@@ -109,6 +109,15 @@ func TestVerifyDetached_Refusals(t *testing.T) {
 	sha1 := append([]byte{0x82, 0x20, 0x58, 0x20}, good[4:]...) // alg -1: not a hash
 	three := append([]byte{0x83, 0x2F, 0x58, 0x20}, append(append([]byte(nil), good[4:]...), 0x00)...)
 	textDigest := append([]byte{0x82, 0x2F, 0x78, 0x20}, good[4:]...)
+	// The correct SHA-256 bytes as an array(32) of unsigned integers, not a bstr.
+	intArray := []byte{0x82, 0x2F, 0x98, 0x20}
+	for _, b := range good[4:] {
+		if b < 24 {
+			intArray = append(intArray, b)
+		} else {
+			intArray = append(intArray, 0x18, b)
+		}
+	}
 
 	cases := []struct {
 		name string
@@ -122,6 +131,7 @@ func TestVerifyDetached_Refusals(t *testing.T) {
 		{"not a hash algorithm", cs, sha1, securityevent.ErrUnsupportedAlgorithm},
 		{"three elements", cs, three, securityevent.ErrMalformedDigest},
 		{"digest not a bstr", cs, textDigest, securityevent.ErrMalformedDigest},
+		{"digest an integer array", cs, intArray, securityevent.ErrMalformedDigest},
 		{"not CBOR", cs, []byte{0xFF}, securityevent.ErrMalformedDigest},
 		{"empty", cs, nil, securityevent.ErrMalformedDigest},
 	}
