@@ -20,6 +20,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/x509"
 	"io"
 
 	"github.com/veraison/go-cose"
@@ -27,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 )
 
@@ -51,7 +53,7 @@ func (s *XKMSService) SignReleaseCoRIM(ctx context.Context, req *SignReleaseCoRI
 	if err != nil {
 		return nil, err
 	}
-	alg, err := coseAlgorithm(signer.Public())
+	alg, err := releaseAlgorithm(signer)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +125,7 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "sign with repository signing key", KeyID: key.KeyID, Err: err}
 	}
-	return opaqueSigner{signer: signer}, nil
+	return opaqueSigner{signer: signer, sigAlg: cur.attrs.SignatureAlgorithm}, nil
 }
 
 // opaqueSigner exposes only Public and Sign of a backend signer. A software
@@ -132,6 +134,7 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 // and read.
 type opaqueSigner struct {
 	signer crypto.Signer
+	sigAlg x509.SignatureAlgorithm
 }
 
 // Public returns the backend key's public half.
@@ -143,7 +146,7 @@ func (o opaqueSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 }
 
 // coseAlgorithm picks the COSE algorithm a public key signs a CoRIM with.
-func coseAlgorithm(pub crypto.PublicKey) (cose.Algorithm, error) {
+func coseAlgorithm(pub crypto.PublicKey, sigAlg x509.SignatureAlgorithm) (cose.Algorithm, error) {
 	switch k := pub.(type) {
 	case *ecdsa.PublicKey:
 		switch k.Curve {
@@ -157,7 +160,30 @@ func coseAlgorithm(pub crypto.PublicKey) (cose.Algorithm, error) {
 	case ed25519.PublicKey:
 		return cose.AlgorithmEdDSA, nil
 	case *rsa.PublicKey:
-		return cose.AlgorithmPS256, nil
+		// The padding is the backend's, not ours: a PKCS#1 v1.5 key (GCP KMS
+		// RSA_SIGN_PKCS1_*) signs v1.5 whatever options it is given, so only
+		// a key recorded as RSASSA-PSS may carry a PS* label.
+		switch sigAlg {
+		case x509.SHA256WithRSAPSS:
+			return cose.AlgorithmPS256, nil
+		case x509.SHA384WithRSAPSS:
+			return cose.AlgorithmPS384, nil
+		case x509.SHA512WithRSAPSS:
+			return cose.AlgorithmPS512, nil
+		}
+		return 0, &errs.Detail{Err: refvalue.ErrUnsupportedKey,
+			Detail: "RSA release signing needs an RSASSA-PSS key, got signature algorithm " + sigAlg.String()}
 	}
 	return 0, refvalue.ErrUnsupportedKey
+}
+
+// releaseAlgorithm picks the COSE algorithm for a repository signer from its
+// public key and, for a wrapped signer, the key's recorded signature
+// algorithm.
+func releaseAlgorithm(signer crypto.Signer) (cose.Algorithm, error) {
+	sigAlg := x509.UnknownSignatureAlgorithm
+	if o, ok := signer.(opaqueSigner); ok {
+		sigAlg = o.sigAlg
+	}
+	return coseAlgorithm(signer.Public(), sigAlg)
 }
