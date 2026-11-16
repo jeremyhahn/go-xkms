@@ -29,7 +29,9 @@ import (
 // once: /health stays 503 and the status stays sealed (every caller sees the
 // barrier sealed and posts), the first unseal answers 204 and each later one
 // answers lostCode, the status the node gives an already-unsealed barrier.
-// /health/ready answers 200 once an unseal has succeeded.
+// /health/ready answers 200 once an unseal has succeeded. The status body is
+// the shape go-qrdb v0.58.4 returns for a sealed barrier: the initialized
+// flag set and initialized_at absent.
 type racingWindow struct {
 	lostCode int
 	unseals  atomic.Int32
@@ -42,7 +44,7 @@ func (w *racingWindow) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		rw.WriteHeader(http.StatusServiceUnavailable)
 	case "/v1/barrier/status":
 		rw.Header().Set("Content-Type", "application/json")
-		_, _ = rw.Write([]byte(`{"sealed":true,"initialized_at":"2025-01-01T00:00:00Z"}`))
+		_, _ = rw.Write([]byte(`{"sealed":true,"initialized":true}`))
 	case "/v1/barrier/unseal":
 		if w.unseals.Add(1) == 1 {
 			w.unsealed.Store(true)
