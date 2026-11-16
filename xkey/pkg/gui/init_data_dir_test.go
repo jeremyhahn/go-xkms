@@ -34,6 +34,7 @@ package gui
 // an already-initialized sentinel.
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -67,8 +68,8 @@ func newMinimalApp(t *testing.T) *App {
 	// configDirPath: use a subdir inside xkeyHome so nothing escapes.
 	cfgDir := filepath.Join(xkeyHome, "config")
 
-	auditStore, err := audit.NewBackendStore(xkmssdk.NewStorageMemory(), 100, log)
-	require.NoError(t, err, "audit.NewBackendStore")
+	auditStore, err := audit.NewQRDBStore(xkmssdk.NewQRDBAuditRingBuffer(100))
+	require.NoError(t, err, "audit.NewQRDBStore")
 
 	barrierSvc := services.NewBarrierService(cfgDir, log)
 	pinSvc := services.NewPINService()
@@ -195,6 +196,33 @@ func TestInitializeDataDir_PreSetDataDirSucceeds(t *testing.T) {
 		"initializeDataDir must succeed when dataDir is pre-set but dataDirInit=false")
 	assert.True(t, app.dataDirInit,
 		"dataDirInit must be true after successful initialization")
+}
+
+// TestInitializeDataDir_AuditMovesToGoQRDBFileSink proves the desktop's audit
+// events land in go-qrdb's hash-chained audit file in the data directory once
+// it is open, including the events written before it was.
+func TestInitializeDataDir_AuditMovesToGoQRDBFileSink(t *testing.T) {
+	app := newMinimalApp(t)
+	xkeyHome := t.TempDir()
+	t.Setenv("XKEY_HOME", xkeyHome)
+	app.dataDir = filepath.Join(xkeyHome, "data")
+
+	require.NoError(t, app.auditStore.LogServiceEvent(audit.OpServiceStarted, nil))
+	require.NoError(t, app.initializeDataDir())
+	require.NoError(t, app.auditStore.LogKeyOperation(audit.OpKeyCreated, "software", "k1", true, nil, 1))
+	require.NoError(t, app.auditStore.Close())
+
+	sink, err := xkmssdk.NewQRDBAuditFileLogger(filepath.Join(app.dataDir, auditLogFileName))
+	require.NoError(t, err, "reopen the go-qrdb audit file")
+	defer func() { _ = sink.Close() }()
+	page, err := sink.Query(context.Background(), xkmssdk.QRDBNodeAuditFilter{})
+	require.NoError(t, err)
+	var actions []string
+	for _, ev := range page.Events {
+		actions = append(actions, ev.Action)
+	}
+	assert.Contains(t, actions, string(audit.OpServiceStarted), "pre-init event replayed")
+	assert.Contains(t, actions, string(audit.OpKeyCreated), "post-init event persisted")
 }
 
 // TestInitializeDataDir_UnopenableStoresDegrade verifies that, with no

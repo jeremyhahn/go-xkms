@@ -54,7 +54,7 @@ func newLifecycleApp(t *testing.T) *App {
 	log := lifecycleTestLogger()
 	cfgDir := filepath.Join(xkeyHome, "config")
 
-	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, log)
+	auditStore, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, err)
 
 	barrierSvc := services.NewBarrierService(cfgDir, log)
