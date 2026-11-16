@@ -206,7 +206,7 @@ func (a *Adapter) DeleteTenant(ctx context.Context, tenantID string) error {
 
 // ListTenants lists all tenants.
 func (a *Adapter) ListTenants(ctx context.Context, req *admin.ListTenantsRequest) ([]*admin.TenantInfo, *admin.Pagination, error) {
-	if req.Status != "" {
+	if req != nil && req.Status != "" {
 		return nil, nil, admin.TenantStatusUnsupported()
 	}
 	var result struct {
