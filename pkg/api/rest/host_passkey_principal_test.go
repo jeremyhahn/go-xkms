@@ -33,10 +33,12 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
+	sshtenancy "github.com/jeremyhahn/go-xkms/pkg/ssh/tenancy"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/oidccredentialtest/offline"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // identityProbeModule serves GET /api/v1/keys under keys:read and records the
@@ -71,7 +73,8 @@ func (p *identityProbeModule) AuthenticateHTTP(r *http.Request) (*qrdbsdk.Identi
 // A passkey request through the unified server is bound to its account by
 // go-qrdb's middleware, which rewrites Subject to the account id. The
 // principal references persisted under the passkey handle before that --
-// key-policy Allowed/DeniedPrincipals and the personal password vault --
+// key-policy Allowed/DeniedPrincipals, the personal password vault, personal
+// OIDC credentials and user-scoped SSH keys and authorized keys --
 // still name the caller: a deny of the handle denies, an allow allows, and
 // the vault entry written under the handle is still the caller's.
 func TestNewHostServer_PasskeyPrincipalReferencesSurviveAccountBinding(t *testing.T) {
@@ -182,4 +185,41 @@ func TestNewHostServer_PasskeyPrincipalReferencesSurviveAccountBinding(t *testin
 	listed, err := svc.OIDCCredentialList(boundCtx, &transport.OIDCCredentialListRequest{})
 	require.NoError(t, err)
 	require.Len(t, listed.Credentials, 1, "the bound caller lists the credential stored under the handle")
+
+	// A user-scoped SSH key and authorized key stored under the handle before
+	// the upgrade are still the bound caller's, and another user's bound
+	// request still cannot reach them.
+	sshClient, err := sshtenancy.New(sshtenancy.Options{DAOs: testutil.NewMemoryDAOFactory()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sshClient.Close()) })
+	_, err = sshClient.Keys().Generate(legacyCtx, sdkssh.GenerateRequest{Scope: "user", Owner: handle, Name: "carol-ssh", Algorithm: "ed25519"})
+	require.NoError(t, err)
+	exported, err := sshClient.Keys().ExportPublic(legacyCtx, sdkssh.ExportRequest{Scope: "user", Owner: handle, Name: "carol-ssh"})
+	require.NoError(t, err)
+	require.NoError(t, sshClient.AuthorizedKeys().Add(legacyCtx, sdkssh.AddAuthorizedKeyRequest{
+		Scope: "user", Owner: handle, Name: "carol-login", Line: exported.Line,
+	}))
+
+	sshKeys, err := sshClient.Keys().List(boundCtx, sdkssh.ListKeysRequest{Scope: "user", Owner: handle})
+	require.NoError(t, err, "the bound caller lists the SSH keys stored under the handle")
+	require.Len(t, sshKeys, 1)
+	require.Equal(t, "carol-ssh", sshKeys[0].Name)
+	_, err = sshClient.Keys().ExportPublic(boundCtx, sdkssh.ExportRequest{Scope: "user", Owner: handle, Name: "carol-ssh"})
+	require.NoError(t, err, "the bound caller uses the SSH key stored under the handle")
+	authorized, err := sshClient.AuthorizedKeys().List(boundCtx, sdkssh.ListAuthorizedKeysRequest{Scope: "user", Owner: handle})
+	require.NoError(t, err, "the bound caller lists the authorized keys stored under the handle")
+	require.Len(t, authorized, 1)
+
+	// Another passkey user bound to its own account in the same tenant.
+	other := *bound
+	other.Subject = "9999"
+	other.UserID = carol.ID + 1
+	other.Metadata = map[string]string{auth.PasskeyHandleMetadataKey: base64.RawURLEncoding.EncodeToString(binary.BigEndian.AppendUint64(nil, carol.ID+1))}
+	otherCtx := auth.WithIdentity(ctx, &other)
+	otherKeys, err := sshClient.Keys().List(otherCtx, sdkssh.ListKeysRequest{Scope: "user", Owner: handle})
+	require.True(t, err != nil || len(otherKeys) == 0, "another user does not list the handle's SSH keys")
+	_, err = sshClient.Keys().ExportPublic(otherCtx, sdkssh.ExportRequest{Scope: "user", Owner: handle, Name: "carol-ssh"})
+	require.Error(t, err, "another user cannot use the handle's SSH key")
+	otherAuthorized, err := sshClient.AuthorizedKeys().List(otherCtx, sdkssh.ListAuthorizedKeysRequest{Scope: "user", Owner: handle})
+	require.True(t, err != nil || len(otherAuthorized) == 0, "another user does not list the handle's authorized keys")
 }
