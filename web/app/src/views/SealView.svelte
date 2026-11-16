@@ -141,12 +141,13 @@
 
 {#if loading}
   <div class="flex justify-center py-12"><span class="loading loading-spinner loading-lg"></span></div>
-{:else if error}
-  <Alert kind="error"><span>{error}</span></Alert>
 {:else}
   <div class="grid gap-6 lg:grid-cols-2">
     <section class="space-y-3" aria-labelledby="seal-title">
       <h2 id="seal-title" class="text-lg font-semibold">Seal</h2>
+      <!-- A refused backend list only empties the picker; Unseal reads the
+           backend from the pasted result and needs no list. -->
+      {#if error}<Alert kind="error"><span>{error}</span></Alert>{/if}
       <select class="select select-bordered w-full" aria-label="Backend" bind:value={backend} onchange={checkCapability}>
         <option value="" disabled>Choose a backend</option>
         {#each backends as b (b.id)}
