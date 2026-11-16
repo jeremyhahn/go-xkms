@@ -2,55 +2,58 @@
 
 Epic #2086, SPEC row authz-mtls-tenant (docs/SPEC.md:58), PR #2109.
 
-## What the row does
+## Requirement (not re-scoped, ruling 734)
 
-The xkmsd mTLS authenticator (`pkg/auth/mtls.go`) decides the tenant with
-go-qrdb's `qrdbsdk.TenantFromClientCert` under `MTLSConfig.TrustDomain`, the
-same rule as the ACME admin mTLS resolver:
+The row as written on main: `certIdentity` takes the tenant from subject
+OU[0] by hand; replaced by `qrdbsdk.TenantFromClientCert`, as the ACME admin
+mTLS resolver does. Codex (f3df47a0b) found the earlier SPEC flip re-scoped
+the row; the coordinator ruled the requirement text stays.
 
-- `certTenant` (mtls.go:256): a certificate with a Subject OU claims a tenant
-  and the rule decides it. An OU with no SPIFFE tenant SAN, or an OU that
-  disagrees with the SAN, is refused (`qrdbsdk.ErrInvalidClientCertificate`).
-  A certificate with no OU claims no tenant, as before, so SVID-only and
-  testutil certificates keep working.
-- `userIdentity` (mtls.go:309): a bound go-qrdb user of another tenant is
-  refused with `CertificateTenantMismatchError`. `pkg/acme/admin` aliases
-  that type.
-- `certIdentity` (mtls.go:337): the certificate-only path; returns
-  `(*Identity, error)`.
-- `pkg/server/server.go` (three sites) and `cmd/xkmsd/admin.go` pass the
-  node's `TrustDomain()`.
+## What the code does
 
-Decision (slice 2): the pinned rule (v0.51.0-alpha) refuses an OU alone and
-an OU differing from the SAN, so the first brief's "OU-only keeps today's
-tenant" and "SAN beats a differing OU" cases could not hold. The row applies
-the rule whenever the certificate claims a tenant (has an OU) and leaves
-no-OU certificates tenantless. `TenantID_FromOU` in mtls_test.go now expects
-the refusal.
+- `certIdentity` (pkg/auth/mtls.go:337-342) calls
+  `qrdbsdk.TenantFromClientCert(cert, MTLSConfig.TrustDomain)` and binds
+  `qrdbsdk.NormalizeTenantID` of the result, with no go-xkms rule on top;
+  every refusal is go-qrdb's error (`qrdbsdk.ErrInvalidClientCertificate`).
+- The rules that apply are go-qrdb's own, documented on
+  `TenantFromClientCert` (go-qrdb sdk/go v0.51.0-alpha `types_auth.go`,
+  alias of go-qrdb `pkg/auth.TenantFromClientCert`): OU and SPIFFE SAN must
+  both be present and agree (an OU alone or a SAN alone names no tenant; a
+  disagreeing OU is refused); a certificate with no OU is refused; with a
+  cluster trust domain no tenant may be it; SANs under two domains are
+  refused. Line numbers are not cited: the module cache is outside the
+  lane workspace.
+- Removed: the go-xkms rule "a certificate with no OU claims no tenant" on
+  the certificate-only path (it produced a tenantless, cross-tenant identity).
+- Callers pass the node's trust domain: pkg/server/server.go (three sites),
+  cmd/xkmsd/admin.go.
 
 ## Tests
 
-- `TestMTLSAuthenticator_CertificateTenant_QRDBRule` and
-  `TestMTLSAuthenticator_BoundUserTenant_QRDBRule`
-  (`pkg/auth/mtls_tenant_test.go`), on generated certificates.
-- Updated `pkg/auth/mtls_test.go` cases.
+- `TestMTLSAuthenticator_CertIdentity_DelegatesToQRDB`: SAN only, OU only,
+  agree, disagree, neither, with and without a trust domain; certIdentity
+  matches `TenantFromClientCert` exactly.
+- `TestMTLSAuthenticator_CertificateTenant_QRDBRule`,
+  `TestMTLSAuthenticator_BoundUserTenant_QRDBRule`; the ValidCert,
+  WithoutUserStore and TenantID_NoOU tests in mtls_test.go now use a tenant
+  claim or expect go-qrdb's refusal.
 
-## Results (lane row2086a, 2026-11-16)
+## Follow-ups needing owner approval (rule 720)
 
-- go test -race -tags "codec_cbor codec_json codec_msgpack" pkg/auth/...,
-  pkg/acme/admin/..., pkg/server/..., cmd/xkmsd: pass.
-- GODEBUG=fips140=only go test pkg/auth: pass.
-- make lint: pass (0 issues on every module and tag set).
-- SPEC row 58 file:line references (mtls.go:256, :309, :337) and test names
-  re-checked against the code: current.
+- `userIdentity` (bound-user path) still applies the tenant rule only when
+  the certificate has an OU, and refuses a bound user of another tenant
+  (`CertificateTenantMismatchError`). The mismatch refusal mirrors go-qrdb's
+  "look the thumbprint up within that tenant only"; the OU gate is go-xkms's.
+  Dropping it refuses every bound user on a certificate without a tenant
+  claim (REST/gRPC/server callers), so it is left for an owner decision.
+- The row text says the SPIFFE SAN "takes precedence over" the OU; go-qrdb
+  refuses a disagreeing pair instead. Row wording is the owner's call.
 
 ## Open
 
-- With a trust domain set, no tenant may equal the cluster trust domain, so
-  a node certificate under the cluster domain that carries an OU is refused
-  on the certificate-only path; callers that rely on such certificates are
-  not yet checked.
-- Out of scope: role mapping, permissions, `pkg/server/unified_tls.go`.
-- The PR waits for lane-verify and the CA merge gate.
+- docs/SPEC.md row 58: the lane's policy guard refused the edit (this
+  lane's LANE_POLICY_ALLOW covers only .github/workflows/*). The row still
+  carries the re-scoped text from 239a4c465; it must go back to main's text
+  with status shipped and reference `pkg/auth/mtls.go:337-342`.
 
 Closes #2086
