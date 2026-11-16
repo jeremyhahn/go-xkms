@@ -355,3 +355,77 @@ describe("SshTrustView duplicate names across scopes", () => {
     expect(screen.getAllByRole("button", { name: "Remove deploy" })).toHaveLength(2);
   });
 });
+
+describe("SshTrustView stale replies", () => {
+  beforeEach(() => {
+    seed();
+  });
+
+  async function settle(): Promise<void> {
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  it("drops a list reply that lands after the scope or owner changed", async () => {
+    await mounted();
+    let resolveHosts: (v: SSHPinListResponse) => void = () => {};
+    listKnownHosts.mockImplementationOnce(() => new Promise((r) => (resolveHosts = r)));
+    listAuthorizedKeys.mockResolvedValueOnce({ items: [] });
+    await fireEvent.input(screen.getByLabelText("Scope"), { target: { value: "user" } });
+    await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "bob" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    await waitFor(() => expect(listKnownHosts).toHaveBeenLastCalledWith("user", "bob"));
+
+    await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "carol" } });
+    resolveHosts({ items: [{ ...pin, scope: "user", owner: "bob", host: "bob.example.com" }] });
+    await settle();
+
+    expect(screen.queryByText("bob.example.com")).not.toBeInTheDocument();
+  });
+
+  it("drops a host verify reply that lands after the host changed", async () => {
+    await mountedInScope();
+    let resolveVerify: () => void = () => {};
+    verifyKnownHost.mockImplementationOnce(() => new Promise<void>((r) => (resolveVerify = r)));
+    await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "git.example.com" } });
+    await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: hostKey } });
+    await fireEvent.click(screen.getByRole("button", { name: "Verify host" }));
+    await waitFor(() => expect(verifyKnownHost).toHaveBeenCalledOnce());
+
+    await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "other.example.com" } });
+    resolveVerify();
+    await settle();
+
+    expect(screen.queryByText(/Fingerprint matches the pin/)).not.toBeInTheDocument();
+  });
+
+  it("drops a key verify reply that lands after the fingerprint changed", async () => {
+    await mountedInScope();
+    let resolveVerify: (e: SSHAuthorizedEntry) => void = () => {};
+    verifyAuthorizedKey.mockImplementationOnce(() => new Promise<SSHAuthorizedEntry>((r) => (resolveVerify = r)));
+    await fireEvent.input(screen.getByLabelText("Key fingerprint"), { target: { value: "SHA256:one" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Verify key" }));
+    await waitFor(() => expect(verifyAuthorizedKey).toHaveBeenCalledOnce());
+
+    await fireEvent.input(screen.getByLabelText("Key fingerprint"), { target: { value: "SHA256:two" } });
+    resolveVerify(entry);
+    await settle();
+
+    expect(screen.queryByText(/Fingerprint matches deploy/)).not.toBeInTheDocument();
+  });
+
+  it("freezes scope and owner while an add is pending", async () => {
+    await mountedInScope();
+    let resolveAdd: () => void = () => {};
+    addKnownHost.mockImplementationOnce(() => new Promise<void>((r) => (resolveAdd = r)));
+    await fireEvent.input(screen.getByLabelText("Host"), { target: { value: "new.example.com" } });
+    await fireEvent.input(screen.getByLabelText("Host public key"), { target: { value: hostKey } });
+    await fireEvent.click(screen.getByRole("button", { name: "Add pin" }));
+    await waitFor(() => expect(addKnownHost).toHaveBeenCalledOnce());
+
+    expect(screen.getByLabelText("Scope")).toBeDisabled();
+    expect(screen.getByLabelText("Owner")).toBeDisabled();
+    resolveAdd();
+    await waitFor(() => expect(screen.getByLabelText("Scope")).not.toBeDisabled());
+  });
+});
