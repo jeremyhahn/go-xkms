@@ -70,6 +70,46 @@ func decoyFor(t *testing.T, f *Factor, seed []byte, user string, like []*qrdbsdk
 	return e
 }
 
+// A roster that mixes a legacy OU-less holder certificate with a stamped
+// one yields decoys in the same mix: OU-less decoys in proportion to the
+// OU-less holders, so the legacy holder does not stand out as the only
+// certificate without a tenant OU.
+func TestDecoyEnrollment_MirrorsMixedLegacyRoster(t *testing.T) {
+	stamped := enrollHolder(t, "holder-stamped", nil)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	legacyPEM, err := issueSelfSignedCert(key, pkix.Name{CommonName: stamped.Metadata["cn"]}, big.NewInt(7), time.Now().UTC().Add(-time.Hour), defaultValidityDays)
+	if err != nil {
+		t.Fatalf("legacy certificate: %v", err)
+	}
+	roster := []*qrdbsdk.AuthFactorEnrollment{
+		{UserID: "holder-legacy", FactorName: FactorName, PublicKey: legacyPEM, Metadata: stamped.Metadata},
+		{UserID: stamped.UserID, FactorName: FactorName, PublicKey: stamped.PublicKey, Metadata: stamped.Metadata},
+	}
+	if ou := parseCert(t, legacyPEM).Subject.OrganizationalUnit; len(ou) != 0 {
+		t.Fatalf("legacy holder OU = %v, want none", ou)
+	}
+
+	f := New(Config{})
+	const n = 200
+	ouLess := 0
+	for i := 0; i < n; i++ {
+		d := decoyFor(t, f, decoySeed, "stranger-"+strconv.Itoa(i), roster)
+		switch ou := parseCert(t, d.PublicKey).Subject.OrganizationalUnit; {
+		case len(ou) == 0:
+			ouLess++
+		case !reflect.DeepEqual(ou, []string{"tenant-t"}):
+			t.Fatalf("decoy OU = %v, want [tenant-t] or none", ou)
+		}
+	}
+	// Half the roster is OU-less; the decoy share must match it, not be 0.
+	if ouLess < n*3/10 || ouLess > n*7/10 {
+		t.Fatalf("OU-less decoys = %d of %d, want about half (the roster's OU-less share)", ouLess, n)
+	}
+}
+
 func parseCert(t *testing.T, pemBytes []byte) *x509.Certificate {
 	t.Helper()
 	block, _ := pem.Decode(pemBytes)
