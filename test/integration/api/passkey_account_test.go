@@ -84,7 +84,7 @@ func (a *PasskeyAccount) doRequest(method, path string, body interface{}) (*http
 }
 
 // provisionPasskeyAccount creates an account the supported way under ruling
-// 602: the administrator creates it (POST /api/v1/users), the account
+// 602: the administrator creates it (POST /api/v1/users/), the account
 // redeems its one-time invitation with a passkey ceremony
 // (/api/v1/invites/{tenant}/{token}/fido2/begin and finish), and then signs
 // in with that passkey (/api/v1/webauthn/login/begin and finish).
@@ -94,13 +94,13 @@ func provisionPasskeyAccount(t *testing.T, cfg *TestConfig, email string) *Passk
 	anon := createTLSClient()
 
 	var created transport.GetUserResponse
-	expectJSON(t, admin, "POST", cfg.RESTBaseURL+"/api/v1/users", map[string]interface{}{
+	expectJSON(t, admin, "POST", cfg.RESTBaseURL+"/api/v1/users/", map[string]interface{}{
 		"username":     strings.SplitN(email, "@", 2)[0],
 		"email":        email,
 		"display_name": "Integration Test User",
 	}, nil, http.StatusCreated, &created)
 	if created.Invite == nil || created.Invite.Token == "" {
-		t.Fatalf("POST /api/v1/users for %s returned no invitation", email)
+		t.Fatalf("POST /api/v1/users/ for %s returned no invitation", email)
 	}
 	tenant := inviteTenant(t, created.Invite.URL)
 	invitePath := "/api/v1/invites/" + url.PathEscape(tenant) + "/" + url.PathEscape(created.Invite.Token)
@@ -172,7 +172,7 @@ func provisionPasskeyAccount(t *testing.T, cfg *TestConfig, email string) *Passk
 func assertNoUserWithEmail(t *testing.T, cfg *TestConfig, email string) {
 	t.Helper()
 	var users transport.ListUsersResponse
-	expectJSON(t, adminHTTPClient(t), "GET", cfg.RESTBaseURL+"/api/v1/users", nil, nil, http.StatusOK, &users)
+	expectJSON(t, adminHTTPClient(t), "GET", cfg.RESTBaseURL+"/api/v1/users/", nil, nil, http.StatusOK, &users)
 	for _, u := range users.Users {
 		if strings.EqualFold(u.Email, email) {
 			t.Fatalf("user %d exists for %s; a refused registration must create no account", u.ID, email)
