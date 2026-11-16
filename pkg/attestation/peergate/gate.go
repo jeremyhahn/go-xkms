@@ -113,6 +113,10 @@ type GateConfig struct {
 	// Challenges sizes the collector. Its Store field is ignored: the
 	// collector writes to the gate's evidence store.
 	Challenges CollectorConfig
+
+	// Anchors supplies the anchor pools the policy leaves nil, read on each
+	// verification. See VerifierConfig.Anchors.
+	Anchors AnchorSource
 }
 
 // Gate is the attested-caller gate, assembled: one evidence store, the
@@ -151,6 +155,7 @@ func NewGate(cfg GateConfig, opts ...Option) (*Gate, error) {
 		Policy:          cfg.Policy.Quote,
 		DeviceIdentity:  cfg.Policy.DeviceIdentity,
 		AdmitUnattested: mode == ModeOptional,
+		Anchors:         cfg.Anchors,
 	}, opts...)
 	if err != nil {
 		return nil, err

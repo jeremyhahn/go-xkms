@@ -79,17 +79,15 @@ func (m *Module) buildAttestedCallerGate() error {
 	if m.resolveQRDBClient == nil {
 		return &AttestedCallerClientError{}
 	}
-	policy := *m.attestedCallerPolicy
-	if attestedCallerNeedsAnchors(policy) {
+	cfg := peergate.GateConfig{Policy: *m.attestedCallerPolicy, DAOs: m.peerEvidenceStorage}
+	if attestedCallerNeedsAnchors(cfg.Policy) {
 		roots, err := m.attestedCallerTrustRoots()
 		if err != nil {
 			return err
 		}
-		if policy, err = attestedCallerAnchors(policy, roots); err != nil {
-			return err
-		}
+		cfg.Anchors = attestedCallerAnchors(roots)
 	}
-	gate, err := peergate.NewGate(peergate.GateConfig{Policy: policy, DAOs: m.peerEvidenceStorage})
+	gate, err := peergate.NewGate(cfg)
 	if err != nil {
 		return err
 	}
@@ -122,32 +120,22 @@ func (m *Module) attestedCallerTrustRoots() (truststore.PurposeLister, error) {
 	return compose.BuildTrustRootStore(ds.DAOFactory())
 }
 
-// attestedCallerAnchors returns policy with each anchor pool it left nil
-// (Quote.Anchors, and DeviceIdentity.Anchors when DeviceIdentity is set)
-// built from the PurposeIDevIDIssuer roots in roots. Pools the embedder gave
-// are kept. The pools are a snapshot taken when the gate is built; an empty
+// attestedCallerAnchors is the gate's anchor source over roots: the
+// PurposeIDevIDIssuer roots, read on each verification, so a root
+// quarantined, removed or imported takes effect on the next peer. An empty
 // purpose yields an empty pool, which trusts no peer.
-func attestedCallerAnchors(policy peergate.GatePolicy, roots truststore.PurposeLister) (peergate.GatePolicy, error) {
-	if !attestedCallerNeedsAnchors(policy) {
-		return policy, nil
+func attestedCallerAnchors(roots truststore.PurposeLister) peergate.AnchorSource {
+	return func(context.Context) (*x509.CertPool, error) {
+		certs, err := roots.CertificatesByPurpose(truststore.PurposeIDevIDIssuer)
+		if err != nil {
+			return nil, err
+		}
+		pool := x509.NewCertPool()
+		for _, cert := range certs {
+			pool.AddCert(cert)
+		}
+		return pool, nil
 	}
-	certs, err := roots.CertificatesByPurpose(truststore.PurposeIDevIDIssuer)
-	if err != nil {
-		return policy, err
-	}
-	pool := x509.NewCertPool()
-	for _, cert := range certs {
-		pool.AddCert(cert)
-	}
-	if policy.Quote.Anchors == nil {
-		policy.Quote.Anchors = pool
-	}
-	if policy.DeviceIdentity != nil && policy.DeviceIdentity.Anchors == nil {
-		identity := *policy.DeviceIdentity
-		identity.Anchors = pool
-		policy.DeviceIdentity = &identity
-	}
-	return policy, nil
 }
 
 // peerEvidenceStorage resolves the gate's evidence storage on the host's

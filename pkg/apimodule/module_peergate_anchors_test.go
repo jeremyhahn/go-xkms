@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -68,46 +67,52 @@ func newAnchorsTestStore(t *testing.T, idevid, other *x509.Certificate) *trustst
 	return store
 }
 
-// TestAttestedCallerAnchors_FromPersistedStore: a gate policy given no
-// anchors takes the persisted store's IDevID-issuer roots as both its quote
-// and its device-identity anchors, and no root filed under another purpose.
+// TestAttestedCallerAnchors_FromPersistedStore: the gate's anchor source is
+// the persisted store's IDevID-issuer roots, and no root filed under another
+// purpose.
 func TestAttestedCallerAnchors_FromPersistedStore(t *testing.T) {
 	idevid := newAnchorsTestRoot(t, "idevid issuer")
 	other := newAnchorsTestRoot(t, "user ca")
 	store := newAnchorsTestStore(t, idevid, other)
 
-	policy := testAttestedCallerPolicy()
-	policy.Quote.Anchors = nil
-	policy.DeviceIdentity = &peer.DevIDPolicy{}
-
-	got, err := attestedCallerAnchors(policy, store)
+	got, err := attestedCallerAnchors(store)(t.Context())
 	require.NoError(t, err)
-
 	want := x509.NewCertPool()
 	want.AddCert(idevid)
-	require.NotNil(t, got.Quote.Anchors)
-	require.NotNil(t, got.DeviceIdentity)
-	require.NotNil(t, got.DeviceIdentity.Anchors)
-	assert.True(t, want.Equal(got.Quote.Anchors), "quote anchors are the IDevID-issuer roots")
-	assert.True(t, want.Equal(got.DeviceIdentity.Anchors), "device-identity anchors are the IDevID-issuer roots")
-	assert.Nil(t, policy.DeviceIdentity.Anchors, "the caller's policy is not mutated")
+	assert.True(t, want.Equal(got), "anchors are the IDevID-issuer roots")
 }
 
-// TestAttestedCallerAnchors_KeepsGivenAnchors: anchors the embedder gave
-// win over the store.
-func TestAttestedCallerAnchors_KeepsGivenAnchors(t *testing.T) {
-	store := newAnchorsTestStore(t, newAnchorsTestRoot(t, "idevid issuer"), newAnchorsTestRoot(t, "user ca"))
+// TestAttestedCallerAnchors_FollowsTheStore: quarantining, removing and
+// importing a root change the very next answer of the anchor source.
+func TestAttestedCallerAnchors_FollowsTheStore(t *testing.T) {
+	idevid := newAnchorsTestRoot(t, "idevid issuer")
+	store := newAnchorsTestStore(t, idevid, newAnchorsTestRoot(t, "user ca"))
+	source := attestedCallerAnchors(store)
+	only := func(certs ...*x509.Certificate) *x509.CertPool {
+		pool := x509.NewCertPool()
+		for _, c := range certs {
+			pool.AddCert(c)
+		}
+		return pool
+	}
+	current := func() *x509.CertPool {
+		pool, err := source(t.Context())
+		require.NoError(t, err)
+		return pool
+	}
+	require.True(t, only(idevid).Equal(current()))
 
-	given := x509.NewCertPool()
-	given.AddCert(newAnchorsTestRoot(t, "embedder root"))
-	policy := testAttestedCallerPolicy()
-	policy.Quote.Anchors = given
-	policy.DeviceIdentity = &peer.DevIDPolicy{Anchors: given}
-
-	got, err := attestedCallerAnchors(policy, store)
+	_, err := store.SetPurpose(t.Context(), truststore.Fingerprint(idevid), truststore.PurposeSynced)
 	require.NoError(t, err)
-	assert.Same(t, given, got.Quote.Anchors)
-	assert.Same(t, given, got.DeviceIdentity.Anchors)
+	assert.True(t, only().Equal(current()), "a quarantined root is withdrawn at once")
+
+	imported := newAnchorsTestRoot(t, "imported issuer")
+	require.NoError(t, store.Add(t.Context(), imported,
+		&truststore.AddCertificateOptions{Purpose: truststore.PurposeIDevIDIssuer}))
+	assert.True(t, only(imported).Equal(current()), "an imported root is trusted at once")
+
+	require.NoError(t, store.Delete(t.Context(), truststore.Fingerprint(imported)))
+	assert.True(t, only().Equal(current()), "a removed root is withdrawn at once")
 }
 
 // TestWithAttestedCallerGate_AnchorsFromTrustRootStore: a gate policy with
