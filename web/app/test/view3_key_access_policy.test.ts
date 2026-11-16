@@ -106,7 +106,9 @@ describe("KeyAccessPolicyView", () => {
     await addPrincipal("Allowed", "svc-a");
     await addPrincipal("Denied", "svc-b");
     await fireEvent.input(screen.getByLabelText("Max usage count"), { target: { value: "500" } });
-    await fireEvent.click(screen.getByLabelText("Require MFA"));
+    // SetKeyPolicy refuses require_mfa (UnenforceablePolicyError), so the
+    // control is disabled and a saved policy never carries it.
+    expect(screen.getByLabelText("Require MFA")).toBeDisabled();
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(request).toHaveBeenCalledOnce());
@@ -119,7 +121,6 @@ describe("KeyAccessPolicyView", () => {
           allowed_principals: ["svc-a"],
           denied_principals: ["svc-b"],
           max_usage_count: 500,
-          require_mfa: true,
         },
       },
     });
