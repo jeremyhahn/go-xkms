@@ -93,8 +93,12 @@ func ParseFirmwareVersion(version string) uint32 {
 
 // App is the central Wails v2 application. It wires the config, services,
 // tray manager, and Wails lifecycle hooks together.
-// auditLogFileName is go-qrdb's audit file in the xkey data directory.
-const auditLogFileName = "audit.log"
+// auditBarrierPrefix is where the audit records live in the barrier backend.
+const auditBarrierPrefix = "audit/"
+
+// auditRingCapacity is the number of audit events held in process for
+// queries, both before the barrier opens and after.
+const auditRingCapacity = 10000
 
 type App struct {
 	ctx    context.Context
@@ -1042,16 +1046,12 @@ func (a *App) initializeDataDir() error {
 		a.log.Info("sealed blob store using barrier backend")
 	}
 
-	// Audit store: move from the start-up ring to go-qrdb's hash-chained
-	// audit file in the data directory, replaying what was logged so far.
-	if auditSink, sinkErr := xkmssdk.NewQRDBAuditFileLogger(filepath.Join(dir, auditLogFileName)); sinkErr != nil {
-		a.log.Warn("failed to open go-qrdb audit file", "error", sinkErr)
-	} else if moveErr := a.auditStore.MoveTo(auditSink); moveErr != nil {
-		_ = auditSink.Close()
-		a.log.Warn("failed to move audit store to go-qrdb audit file", "error", moveErr)
-	} else {
-		a.log.Info("audit store moved to go-qrdb audit file")
-	}
+	// Audit store: with the barrier unsealed, move from the start-up ring to
+	// a sink that persists each hash-chained record through the barrier, so
+	// the audit trail is encrypted at rest; what was logged so far is
+	// replayed into it. With no barrier nothing is persisted: the events stay
+	// in the in-process ring, never in a plaintext file.
+	a.moveAuditStoreBehindBarrier(barrierBackend)
 
 	// Wire the SSH services: build an embedded SSH client whose key
 	// generation and signing are delegated to the user-selected crypto
@@ -1123,6 +1123,36 @@ func (a *App) initializeDataDir() error {
 // (the only production App constructor), so they are never nil here.
 // Test harnesses that build an App composite literal directly must
 // populate them (see init_data_dir_test.go).
+// moveAuditStoreBehindBarrier moves the audit store to a BarrierSink over
+// the barrier backend's audit prefix. It does nothing without a barrier, or
+// when the store already writes through one (a second data-dir open must
+// not replay the stored records into themselves).
+func (a *App) moveAuditStoreBehindBarrier(barrierBackend xkmssdk.StorageBackend) {
+	if barrierBackend == nil {
+		a.log.Info("audit events kept in memory only: no barrier to encrypt them at rest")
+		return
+	}
+	if a.auditStore.SealedAtRest() {
+		return
+	}
+	auditBE, err := xkmssdk.NewStoragePrefixBackend(barrierBackend, auditBarrierPrefix)
+	if err != nil {
+		a.log.Warn("failed to scope the barrier backend for audit", "error", err)
+		return
+	}
+	sink, err := audit.OpenBarrierSink(context.Background(), auditBE, auditRingCapacity)
+	if err != nil {
+		a.log.Warn("failed to open the barrier audit sink", "error", err)
+		return
+	}
+	if err := a.auditStore.MoveTo(sink); err != nil {
+		_ = sink.Close()
+		a.log.Warn("failed to move the audit store behind the barrier", "error", err)
+		return
+	}
+	a.log.Info("audit store persisted through the barrier")
+}
+
 func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBackend) {
 	a.sshLocalService.SetLogger(a.log)
 
@@ -1844,7 +1874,7 @@ func NewApp(cfg *GUIConfig) *App {
 	// Create shared audit store for queryable logging across all services.
 	// go-qrdb's audit store: a go-qrdb ring buffer until initializeDataDir()
 	// moves it to go-qrdb's audit file in the data directory.
-	auditStore, auditStoreErr := audit.NewQRDBStore(xkmssdk.NewQRDBAuditRingBuffer(10000))
+	auditStore, auditStoreErr := audit.NewQRDBStore(xkmssdk.NewQRDBAuditRingBuffer(auditRingCapacity))
 	if auditStoreErr != nil {
 		log.Error("failed to create audit store", "error", auditStoreErr)
 		panic("audit store initialization failed: " + auditStoreErr.Error())

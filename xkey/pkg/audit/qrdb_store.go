@@ -102,6 +102,27 @@ func (s *QRDBStore) MoveTo(next xkms.QRDBNodeAuditLogger) error {
 	return old.Close()
 }
 
+// SealedAtRest reports whether the store writes to a BarrierSink, so its
+// records are persisted under the barrier key.
+func (s *QRDBStore) SealedAtRest() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.sink.(*BarrierSink)
+	return ok
+}
+
+// VerifyChain verifies the hash chain of the persisted records, or returns
+// ErrChainUnsupported while the sink keeps none.
+func (s *QRDBStore) VerifyChain(ctx context.Context) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.sink.(interface{ VerifyChain(context.Context) error })
+	if !ok {
+		return ErrChainUnsupported
+	}
+	return v.VerifyChain(ctx)
+}
+
 // Close closes the go-qrdb sink.
 func (s *QRDBStore) Close() error {
 	s.mu.RLock()
