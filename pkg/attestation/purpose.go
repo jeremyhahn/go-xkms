@@ -88,6 +88,15 @@ func WithTrustStore(store truststore.PurposeLister, embeddedLoader EmbeddedRoots
 	}
 }
 
+// WithChainPurpose makes VerifyChain and VerifyChainAnchored also anchor at
+// the trust store's roots of purpose, read on each verification. It needs
+// WithTrustStore; without a store it adds nothing.
+func WithChainPurpose(purpose truststore.CertPurpose) VerifierOption {
+	return func(v *Verifier) {
+		v.chainPurpose = purpose
+	}
+}
+
 // VerifyTPMAttestation verifies a TPM endorsement key certificate against
 // TPM manufacturer trust anchors. It queries the trust store for certificates
 // with PurposeTPMManufacturer and merges in any embedded manufacturer roots.

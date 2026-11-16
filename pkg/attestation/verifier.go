@@ -56,6 +56,10 @@ type Verifier struct {
 
 	// embeddedLoader supplies compiled-in manufacturer roots per purpose.
 	embeddedLoader EmbeddedRootsLoader
+
+	// chainPurpose, when set with a store, adds the store's roots of that
+	// purpose to the chain anchors, read on every verification.
+	chainPurpose truststore.CertPurpose
 }
 
 // NewVerifier creates a new attestation verifier.
@@ -167,13 +171,27 @@ func (v *Verifier) TrustAnchorCount() int {
 // anchors returns the effective trust anchor set: the anchors the verifier was
 // constructed with, plus any supplied per-call through the options.
 func (v *Verifier) anchors(opts *VerifyOptions) []*x509.Certificate {
-	if opts == nil || len(opts.TrustedRoots) == 0 {
-		return v.trustedRoots
-	}
-	combined := make([]*x509.Certificate, 0, len(v.trustedRoots)+len(opts.TrustedRoots))
+	combined := make([]*x509.Certificate, 0, len(v.trustedRoots))
 	combined = append(combined, v.trustedRoots...)
-	combined = append(combined, opts.TrustedRoots...)
+	combined = append(combined, v.storeChainRoots()...)
+	if opts != nil {
+		combined = append(combined, opts.TrustedRoots...)
+	}
 	return combined
+}
+
+// storeChainRoots reads the store's roots of the chain purpose. It runs on
+// every verification, so a root quarantined, removed or imported takes
+// effect at once; a store that cannot answer adds no anchor (fails closed).
+func (v *Verifier) storeChainRoots() []*x509.Certificate {
+	if v.store == nil || v.chainPurpose == "" {
+		return nil
+	}
+	roots, err := v.store.CertificatesByPurpose(v.chainPurpose)
+	if err != nil {
+		return nil
+	}
+	return roots
 }
 
 // VerifyChain validates the certificate chain in the attestation statement.

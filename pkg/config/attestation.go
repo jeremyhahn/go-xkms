@@ -107,9 +107,25 @@ func (c *AttestationConfig) Verifiers(roots truststore.PurposeLister) (map[strin
 		var opts []attestation.VerifierOption
 		if roots != nil {
 			opts = append(opts, attestation.WithTrustStore(roots, nil))
+			if purpose, ok := formatChainPurpose(key); ok {
+				opts = append(opts, attestation.WithChainPurpose(purpose))
+			}
 		}
 		verifiers[key] = attestation.NewVerifier(anchors, opts...)
 	}
 
 	return verifiers, nil
+}
+
+// formatChainPurpose names the persisted trust-root purpose whose roots anchor
+// a format's attestation chains. Formats without one anchor at their
+// configured roots only.
+func formatChainPurpose(format string) (truststore.CertPurpose, bool) {
+	switch {
+	case format == "tpm" || format == "tpm2":
+		return truststore.PurposeTPMManufacturer, true
+	case strings.HasPrefix(format, "android"):
+		return truststore.PurposeAndroidHardware, true
+	}
+	return "", false
 }
