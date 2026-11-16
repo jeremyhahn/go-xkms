@@ -48,6 +48,17 @@ func tenantCert(t *testing.T, ous []string, uris ...string) *x509.Certificate {
 	return cert
 }
 
+// withTenant gives a generated certificate the tenant claim go-qrdb's rule
+// accepts: first Subject OU and SPIFFE SAN trust domain both naming tenant.
+func withTenant(t *testing.T, cert *x509.Certificate, tenant string) *x509.Certificate {
+	t.Helper()
+	u, err := url.Parse("spiffe://" + tenant + "/user/" + cert.Subject.CommonName)
+	require.NoError(t, err)
+	cert.Subject.OrganizationalUnit = []string{tenant}
+	cert.URIs = append(cert.URIs, u)
+	return cert
+}
+
 func tenantRequest(cert *x509.Certificate) *http.Request {
 	return &http.Request{
 		TLS:        &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}},
