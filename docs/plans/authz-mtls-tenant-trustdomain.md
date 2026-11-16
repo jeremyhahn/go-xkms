@@ -11,7 +11,7 @@ the row; the coordinator ruled the requirement text stays.
 
 ## What the code does
 
-- `certIdentity` (pkg/auth/mtls.go:337-342) calls
+- `certIdentity` (pkg/auth/mtls.go:288-293) calls
   `qrdbsdk.TenantFromClientCert(cert, MTLSConfig.TrustDomain)` and binds
   `qrdbsdk.NormalizeTenantID` of the result, with no go-xkms rule on top;
   every refusal is go-qrdb's error (`qrdbsdk.ErrInvalidClientCertificate`).
@@ -33,27 +33,25 @@ the row; the coordinator ruled the requirement text stays.
 - `TestMTLSAuthenticator_CertIdentity_DelegatesToQRDB`: SAN only, OU only,
   agree, disagree, neither, with and without a trust domain; certIdentity
   matches `TenantFromClientCert` exactly.
-- `TestMTLSAuthenticator_CertificateTenant_QRDBRule`,
-  `TestMTLSAuthenticator_BoundUserTenant_QRDBRule`; the ValidCert,
-  WithoutUserStore and TenantID_NoOU tests in mtls_test.go now use a tenant
+- `TestMTLSAuthenticator_CertificateTenant_QRDBRule`; the ValidCert,
+  WithoutUserStore and TenantID_NoOU tests in mtls_test.go use a tenant
   claim or expect go-qrdb's refusal.
+- `TestMTLSAuthenticator_BoundUser_AsOnMain`: bound-user path unchanged.
 
-## Follow-ups needing owner approval (rule 720)
+## Codex P1 on e6efbde90 fixed (2026-11-16)
 
-- `userIdentity` (bound-user path) still applies the tenant rule only when
-  the certificate has an OU, and refuses a bound user of another tenant
-  (`CertificateTenantMismatchError`). The mismatch refusal mirrors go-qrdb's
-  "look the thumbprint up within that tenant only"; the OU gate is go-xkms's.
-  Dropping it refuses every bound user on a certificate without a tenant
-  claim (REST/gRPC/server callers), so it is left for an owner decision.
-- The row text says the SPIFFE SAN "takes precedence over" the OU; go-qrdb
-  refuses a disagreeing pair instead. Row wording is the owner's call.
+The PR had changed the bound-user path (`userIdentity`) beyond the row.
+Test c03110e74, fix 12c5b98c7: `userIdentity` is as on main (no
+certificate tenant check), `certTenant` and `auth.CertificateTenantMismatchError`
+removed, pkg/acme/admin keeps its own `CertificateTenantMismatchError` as
+on main. Bound-user refusal cases deleted from
+`TestMTLSAuthenticator_BoundUserTenant_QRDBRule`. HEAD after the docs commit.
 
 ## Open
 
-- docs/SPEC.md row 58 is back to main's requirement text; only Status
-  (shipped), the certIdentity line reference and the Detail references
-  (mtls.go:337-342, mtls_tenant_test.go, mtls_test.go) changed.
-- The two owner follow-ups above are not reflected in SPEC text.
+- docs/SPEC.md row 58 cites mtls.go:337-342; certIdentity is now at
+  288-293 (SPEC.md not edited in this slice).
+- The row text says the SPIFFE SAN "takes precedence over" the OU; go-qrdb
+  refuses a disagreeing pair instead. Row wording is the owner's call.
 
 Closes #2086
