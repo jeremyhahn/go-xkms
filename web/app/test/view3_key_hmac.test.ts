@@ -119,6 +119,35 @@ describe("KeyHmacView verify", () => {
   });
 });
 
+describe("KeyHmacView verdict binds to the verified inputs", () => {
+  it("clears the verdict when an input is edited after verify", async () => {
+    request.mockResolvedValue({ valid: true });
+    render(KeyHmacView);
+    await fill();
+    await fireEvent.input(screen.getByLabelText("MAC"), { target: { value: "deadbeef" } });
+    await fireEvent.click(verifyBtn());
+    expect(await screen.findByText("valid")).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByLabelText("Data"), { target: { value: "other" } });
+    expect(screen.queryByText("valid")).not.toBeInTheDocument();
+  });
+
+  it("ignores a verify reply that arrives after the inputs changed", async () => {
+    let resolve!: (v: unknown) => void;
+    request.mockReturnValue(new Promise((r) => (resolve = r)));
+    render(KeyHmacView);
+    await fill();
+    await fireEvent.input(screen.getByLabelText("MAC"), { target: { value: "deadbeef" } });
+    await fireEvent.click(verifyBtn());
+    await waitFor(() => expect(request).toHaveBeenCalledOnce());
+
+    await fireEvent.input(screen.getByLabelText("MAC"), { target: { value: "cafebabe" } });
+    resolve({ valid: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("valid")).not.toBeInTheDocument();
+  });
+});
+
 describe("KeyHmacView validation", () => {
   it("keeps Compute and Verify disabled until key ID, backend and data are set", async () => {
     render(KeyHmacView);
