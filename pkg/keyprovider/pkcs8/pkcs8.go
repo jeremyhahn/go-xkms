@@ -687,6 +687,8 @@ func (b *PKCS8Backend) encodeKey(privateKey crypto.PrivateKey, password types.Pa
 	if password != nil {
 		passwordBytes = password.Bytes()
 	}
+	// Bytes returns a copy this function owns; wipe it on every return.
+	defer func() { clear(passwordBytes) }()
 
 	// Encode the key
 	if len(passwordBytes) > 0 {
@@ -724,6 +726,8 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 	if password != nil {
 		passwordBytes = password.Bytes()
 	}
+	// Bytes returns a copy this function owns; wipe it on every return.
+	defer func() { clear(passwordBytes) }()
 
 	var privateKey crypto.PrivateKey
 
