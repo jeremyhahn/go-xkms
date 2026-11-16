@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -61,7 +62,11 @@ func (tpm *TPM2) bindObjectPolicy(
 	var pin *store.PlatformPolicyPin
 	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		var err error
-		pin, err = tpm.capturePlatformPolicyPin()
+		pcrs, err := tpm.sealPCRSet(keyAttrs)
+		if err != nil {
+			return nil, nil, err
+		}
+		pin, err = tpm.capturePlatformPolicyPinOver(pcrs)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -136,7 +141,11 @@ func (tpm *TPM2) objectSession(
 		return tpm.passwordKeySession(keyAttrs)
 	}
 	if keyAuthValue(keyAttrs) == nil {
-		return tpm.platformPCRBranchSession(authPolicy)
+		pcrs, err := tpm.sealPCRSet(keyAttrs)
+		if err != nil {
+			return nil, noopCloser, err
+		}
+		return tpm.platformPCRBranchSessionOver(pcrs, authPolicy)
 	}
 	return tpm.platformKeySession(keyAttrs, backend)
 }
@@ -167,14 +176,68 @@ func (tpm *TPM2) objectAuthPolicy(handle tpm2.TPMHandle) ([]byte, error) {
 // choice only selects which session to build: the TPM still checks the
 // session against the object, so a wrong choice can only fail.
 func (tpm *TPM2) platformPCRBranchSession(authPolicy []byte) (tpm2.Session, func() error, error) {
-	pcrPolicy, err := tpm.platformPCRPolicyDigest()
+	return tpm.platformPCRBranchSessionOver(tpm.config.PlatformPCRs, authPolicy)
+}
+
+// platformPCRBranchSessionOver is platformPCRBranchSession for an object
+// whose PolicyPCR branch covers pcrs (sealPCRSet) rather than the configured
+// platform set.
+func (tpm *TPM2) platformPCRBranchSessionOver(pcrs PCRSet, authPolicy []byte) (tpm2.Session, func() error, error) {
+	pin, err := tpm.capturePlatformPolicyPinOver(pcrs)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	pcrPolicy, err := platformPCRPolicyDigestFromPin(pin)
 	if err != nil {
 		return nil, noopCloser, err
 	}
 	if bytes.Equal(pcrPolicy.Buffer, authPolicy) {
-		return tpm.platformPCRSession()
+		return tpm.platformPCRSessionOver(pcrs)
+	}
+	if pcrs.Mask() != tpm.config.PlatformPCRs.Mask() {
+		// An object whose PCRSelection is not part of its policy (an AK's
+		// creation PCRs, say) keeps the platform set's session.
+		return tpm.platformPCRBranchSession(authPolicy)
 	}
 	return tpm.PlatformPolicySession(nil)
+}
+
+// sealPCRSet returns the PCRs the PolicyPCR branch of an object sealed to
+// the platform policy covers: the configured platform set joined with the
+// caller's keyAttrs.TPMAttributes.PCRSelection (#2226). With no selection,
+// or one inside the platform set, it is the platform set itself, so such an
+// object's policy digest is unchanged. A selection in a bank other than the
+// platform bank cannot join the platform PolicyPCR and is refused.
+func (tpm *TPM2) sealPCRSet(keyAttrs *types.KeyAttributes) (PCRSet, error) {
+	platform := tpm.config.PlatformPCRs
+	if keyAttrs.TPMAttributes == nil ||
+		len(keyAttrs.TPMAttributes.PCRSelection.PCRSelections) == 0 {
+		return platform, nil
+	}
+	bank, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+	}
+	selection := keyAttrs.TPMAttributes.PCRSelection
+	for _, s := range selection.PCRSelections {
+		if s.Hash == bank {
+			continue
+		}
+		for _, b := range s.PCRSelect {
+			if b != 0 {
+				return nil, &errs.Detail{
+					Err: ErrPlatformPolicyDigestCompute,
+					Detail: fmt.Sprintf("sealed PCR selection in bank 0x%04x, platform bank 0x%04x",
+						uint16(s.Hash), uint16(bank)),
+				}
+			}
+		}
+	}
+	union := platform.Mask() | pcrSetFromSelection(selection, bank).Mask()
+	if union == platform.Mask() {
+		return platform, nil
+	}
+	return PCRSetFromMask(union), nil
 }
 
 // platformPCRPolicyDigest returns the PolicyPCR branch of the platform

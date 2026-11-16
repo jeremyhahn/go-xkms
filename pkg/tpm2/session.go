@@ -553,10 +553,21 @@ func (tpm *TPM2) platformPolicyPCR(
 	hashAlgID tpm2.TPMAlgID,
 	pcrDigest []byte) error {
 
+	return tpm.platformPolicyPCROver(session, hashAlgID, tpm.config.PlatformPCRs, pcrDigest)
+}
+
+// platformPolicyPCROver is platformPolicyPCR over pcrs instead of the
+// configured platform set.
+func (tpm *TPM2) platformPolicyPCROver(
+	session tpm2.Session,
+	hashAlgID tpm2.TPMAlgID,
+	pcrs PCRSet,
+	pcrDigest []byte) error {
+
 	_, err := tpm2.PolicyPCR{
 		PolicySession: session.Handle(),
 		PcrDigest:     tpm2.TPM2BDigest{Buffer: pcrDigest},
-		Pcrs:          platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCRs),
+		Pcrs:          platformPolicyPCRSelection(hashAlgID, pcrs),
 	}.Execute(tpm.transport)
 	if err != nil {
 		return &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyPCR execute: %v", err)}
@@ -571,11 +582,17 @@ func (tpm *TPM2) platformPolicyPCR(
 // session proves no secret, so it is unsalted. It fails with
 // TPM_RC_POLICY_FAIL at use once the platform state has moved.
 func (tpm *TPM2) platformPCRSession() (tpm2.Session, func() error, error) {
+	return tpm.platformPCRSessionOver(tpm.config.PlatformPCRs)
+}
+
+// platformPCRSessionOver is platformPCRSession over pcrs, in the platform
+// bank, instead of the configured platform set.
+func (tpm *TPM2) platformPCRSessionOver(pcrs PCRSet) (tpm2.Session, func() error, error) {
 	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
 		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
-	pcrDigest, err := tpm.PlatformPolicyDigestHash()
+	pcrDigest, err := tpm.platformPCRDigestOver(hashAlgID, pcrs)
 	if err != nil {
 		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -583,7 +600,7 @@ func (tpm *TPM2) platformPCRSession() (tpm2.Session, func() error, error) {
 	if err != nil {
 		return nil, noopCloser, &errs.Joined{Lead: ErrPlatformPolicySession, Cause: err}
 	}
-	if err := tpm.platformPolicyPCR(session, hashAlgID, pcrDigest); err != nil {
+	if err := tpm.platformPolicyPCROver(session, hashAlgID, pcrs, pcrDigest); err != nil {
 		tpm.closeSession(closer, "platform PCR policy")
 		return nil, noopCloser, err
 	}

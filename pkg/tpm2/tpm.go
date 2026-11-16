@@ -831,20 +831,29 @@ func platformPolicyORDigest(hashAlgID tpm2.TPMAlgID, branch1, branch2 []byte) ([
 // PolicyAuthValue (PIN) branch rebuild the object's PolicyPCR branch digest
 // without consulting live PCRs.
 func (tpm *TPM2) capturePlatformPolicyPin() (*store.PlatformPolicyPin, error) {
+	return tpm.capturePlatformPolicyPinOver(tpm.config.PlatformPCRs)
+}
+
+// capturePlatformPolicyPinOver is capturePlatformPolicyPin over pcrs, in the
+// platform bank, instead of the configured platform set: the pin of an
+// object sealed to the platform policy plus a caller PCR selection
+// (sealPCRSet). The pin records pcrs in PCRSelect, so a stored pin rebuilds
+// the same policy.
+func (tpm *TPM2) capturePlatformPolicyPinOver(pcrs PCRSet) (*store.PlatformPolicyPin, error) {
 
 	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	pcrDigest, err := tpm.PlatformPolicyDigestHash()
+	pcrDigest, err := tpm.platformPCRDigestOver(hashAlgID, pcrs)
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return &store.PlatformPolicyPin{
 		PCRBank:   uint16(hashAlgID),
-		PCRSelect: tpm.config.PlatformPCRs.Mask(),
+		PCRSelect: pcrs.Mask(),
 		PCRDigest: pcrDigest,
 	}, nil
 }
