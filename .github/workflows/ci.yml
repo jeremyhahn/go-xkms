@@ -1064,6 +1064,7 @@ jobs:
     name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
     # CUSTOMIZE (go-xkms, #2240): schedule and workflow_dispatch runs on main
     # also use the bigdisk-docker pool, not hosted-runner hours; fork PRs stay hosted.
+    # github.com has the bigdisk-docker pool (push run 43481870662 ran Integration on it); the schedule guard's 'no bigdisk runner' text at the l.821 echo is about its run-count check, not runner availability.
     runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
@@ -1551,7 +1552,9 @@ jobs:
     needs: preflight   # v1.34
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
     # CUSTOMIZE (go-xkms, #2240, ruling 740): schedule and workflow_dispatch runs
-    # on main also use the bigdisk-docker pool; fork PRs stay hosted.
+    # on main also use the bigdisk-docker pool. Ruling 740 (11-16) supersedes
+    # InfoSec W-1 / DS-8215 for schedule and workflow_dispatch on main only;
+    # pushes, same-repo PRs and fork PRs keep their routing.
     runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
@@ -1653,7 +1656,9 @@ jobs:
     # v1.30: a dispatch off main is refused, so soak runs only on `run`.
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.preflight.outputs.verdict == 'run' }}
     # CUSTOMIZE (go-xkms, #2240, ruling 740): schedule and workflow_dispatch runs
-    # on main also use the bigdisk-docker pool; fork PRs stay hosted.
+    # on main also use the bigdisk-docker pool. Ruling 740 (11-16) supersedes
+    # InfoSec W-1 / DS-8215 for schedule and workflow_dispatch on main only;
+    # pushes, same-repo PRs and fork PRs keep their routing.
     runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 210      # CUSTOMIZE (go-xkms): SOAK_MINUTES (30) plus one 180-minute iteration
     env:
