@@ -123,3 +123,30 @@ func TestQRDBStore_MoveToReplaysIntoNewSink(t *testing.T) {
 		t.Fatalf("file sink events = %+v", page.Events)
 	}
 }
+
+// failingQRDBSink is a go-qrdb sink whose every write fails.
+type failingQRDBSink struct {
+	xkms.QRDBNodeAuditLogger
+	err error
+}
+
+var errSinkDown = errors.New("sink down")
+
+func (f failingQRDBSink) Emit(context.Context, xkms.QRDBNodeAuditEvent) error { return f.err }
+
+// TestQRDBStore_WriteFailurePolicy proves the go-xkms write-failure policy
+// holds on the go-qrdb sink: a security event that is not recorded fails,
+// an informational one is logged and does not.
+func TestQRDBStore_WriteFailurePolicy(t *testing.T) {
+	store, err := NewQRDBStore(failingQRDBSink{err: errSinkDown})
+	if err != nil {
+		t.Fatalf("NewQRDBStore: %v", err)
+	}
+	var failed *ErrAuditWriteFailed
+	if err := store.LogKeyOperation(OpKeyCreated, "software", "k1", true, nil, 1); !errors.As(err, &failed) || !errors.Is(err, errSinkDown) {
+		t.Fatalf("security write error = %v, want *ErrAuditWriteFailed wrapping the sink error", err)
+	}
+	if err := store.LogConnectionEvent(OpConnectionEstablished, "d1", "Phone", nil); err != nil {
+		t.Fatalf("informational write error = %v, want nil", err)
+	}
+}

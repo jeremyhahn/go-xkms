@@ -25,11 +25,11 @@ import (
 
 var _ authenticator.AuditLogger = (*FIDO2Logger)(nil)
 
-// newFIDO2TestStore returns an in-memory BackendStore and a FIDO2Logger
+// newFIDO2TestStore returns a QRDBStore on go-qrdb's ring and a FIDO2Logger
 // writing through it.
-func newFIDO2TestStore(t *testing.T) (*BackendStore, *FIDO2Logger) {
+func newFIDO2TestStore(t *testing.T) (*QRDBStore, *FIDO2Logger) {
 	t.Helper()
-	store, err := NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, err := NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, err)
 	return store, NewFIDO2Logger(store)
 }
@@ -71,8 +71,9 @@ func TestFIDO2Logger_WriteFailureIsReturned(t *testing.T) {
 
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
-			store, logger := newFIDO2TestStore(t)
-			store.slog = &fakeEntryLogger{logErr: writeErr}
+			store, storeErr := NewQRDBStore(failingQRDBSink{err: writeErr})
+			require.NoError(t, storeErr)
+			logger := NewFIDO2Logger(store)
 
 			err := call(logger)
 
