@@ -42,7 +42,8 @@ func TestQRDBNodeAuditSinks_EmitThenQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Query: %v", err)
 			}
-			var p *QRDBNodeAuditPage = page
+			// The query's page is the re-exported QRDBNodeAuditPage.
+			p := func(p *QRDBNodeAuditPage) *QRDBNodeAuditPage { return p }(page)
 			if p == nil || len(p.Events) != 1 || p.Events[0].Resource != "key:k1" {
 				t.Fatalf("Query page = %+v, want the one emitted event", p)
 			}
