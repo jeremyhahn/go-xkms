@@ -43,15 +43,21 @@
     }
   }
 
-  async function loadVtpm(id: string): Promise<void> {
+  // Each tenant selection gets a sequence number; a reply for an earlier
+  // selection is dropped so it never overwrites the current tenant's state.
+  let seq = 0;
+
+  async function loadVtpm(id: string, mine: number): Promise<void> {
     try {
-      vtpm = await getSDKClient().tenants.vtpmStatus(id);
+      const s = await getSDKClient().tenants.vtpmStatus(id);
+      if (mine === seq) vtpm = s;
     } catch (e) {
-      showToast("error", msg(e));
+      if (mine === seq) showToast("error", msg(e));
     }
   }
 
   async function selectTenant(id: string): Promise<void> {
+    const mine = ++seq;
     tenantId = id;
     mode = null;
     modeError = null;
@@ -60,26 +66,32 @@
     if (id === "") return;
     try {
       const r = await getSDKClient().tenants.getTPMMode(id);
+      if (mine !== seq) return;
       mode = r.mode;
       newMode = r.mode;
-      if (r.mode === "vtpm") await loadVtpm(id);
+      if (r.mode === "vtpm") await loadVtpm(id, mine);
     } catch (e) {
-      modeError = msg(e);
+      if (mine === seq) modeError = msg(e);
     }
   }
 
+  // Mutations target the tenant frozen at their start; the selector is
+  // disabled while one is pending.
   async function applyMode(): Promise<void> {
     confirmMode = false;
     busy = true;
-    const req: SetTenantTPMModeRequest = { tenant_id: tenantId, mode: newMode };
+    const id = tenantId;
+    const mine = seq;
+    const req: SetTenantTPMModeRequest = { tenant_id: id, mode: newMode };
     if (ownerAuth !== "") req.owner_auth = toB64(ownerAuth);
     try {
-      const r = await getSDKClient().tenants.setTPMMode(tenantId, req);
+      const r = await getSDKClient().tenants.setTPMMode(id, req);
+      showToast("success", `TPM mode set to ${r.mode}.`);
+      if (mine !== seq) return;
       mode = r.mode;
       ownerAuth = "";
-      showToast("success", `TPM mode set to ${r.mode}.`);
       vtpm = null;
-      if (r.mode === "vtpm") await loadVtpm(tenantId);
+      if (r.mode === "vtpm") await loadVtpm(id, mine);
     } catch (e) {
       showToast("error", msg(e));
     } finally {
@@ -89,8 +101,10 @@
 
   async function start(): Promise<void> {
     busy = true;
+    const mine = seq;
     try {
-      vtpm = await getSDKClient().tenants.vtpmStart(tenantId);
+      const s = await getSDKClient().tenants.vtpmStart(tenantId);
+      if (mine === seq) vtpm = s;
       showToast("success", "vTPM started.");
     } catch (e) {
       showToast("error", msg(e));
@@ -102,8 +116,10 @@
   async function stop(): Promise<void> {
     confirmStop = false;
     busy = true;
+    const mine = seq;
     try {
-      vtpm = await getSDKClient().tenants.vtpmStop(tenantId);
+      const s = await getSDKClient().tenants.vtpmStop(tenantId);
+      if (mine === seq) vtpm = s;
       showToast("success", "vTPM stopped.");
     } catch (e) {
       showToast("error", msg(e));
@@ -128,6 +144,7 @@
       id="tenant-tpm-tenant"
       class="select select-bordered w-full"
       value={tenantId}
+      disabled={busy}
       onchange={(e) => selectTenant((e.currentTarget as HTMLSelectElement).value)}
     >
       <option value="">Select a tenant</option>
