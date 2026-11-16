@@ -918,7 +918,6 @@ export namespace services {
 	    port: number;
 	    listenHost: string;
 	    commonName: string;
-	    pcrs: number[];
 	    timeoutSeconds: number;
 	
 	    static createFrom(source: any = {}) {
@@ -932,7 +931,6 @@ export namespace services {
 	        this.port = source["port"];
 	        this.listenHost = source["listenHost"];
 	        this.commonName = source["commonName"];
-	        this.pcrs = source["pcrs"];
 	        this.timeoutSeconds = source["timeoutSeconds"];
 	    }
 	}

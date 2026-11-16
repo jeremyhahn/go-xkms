@@ -46,7 +46,6 @@
   let port = '';
   let listenHost = '';
   let commonName = '';
-  let pcrsText = '';
   let idevidPem = '';
   let iakPem = '';
   let chainPem = '';
@@ -151,7 +150,6 @@
       port: Number(port.trim()) || 0,
       listenHost: listenHost.trim(),
       commonName: commonName.trim(),
-      pcrs: pcrsText.split(',').map((p) => p.trim()).filter((p) => p !== '').map(Number),
       timeoutSeconds: 0,
     };
   }
@@ -264,7 +262,6 @@
     <Input id="acme-port" label="Port" bind:value={port} placeholder="8080" />
     <Input id="acme-listen-host" label="Listen host" bind:value={listenHost} />
     <Input id="acme-common-name" label="Common name" bind:value={commonName} />
-    <Input id="acme-pcrs" label="PCRs" bind:value={pcrsText} helperText="Comma separated, device-attest-01" />
     <Button disabled={!canEnroll} on:click={enroll}>Enroll</Button>
     <Button variant="secondary" disabled={!canEndorse} on:click={endorse}>Request EK certificate</Button>
     {#if idevidPem}

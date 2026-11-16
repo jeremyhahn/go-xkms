@@ -885,7 +885,6 @@ export interface ACMEEnrollRequest {
   port: number;
   listenHost: string;
   commonName: string;
-  pcrs: number[];
   timeoutSeconds: number;
 }
 
