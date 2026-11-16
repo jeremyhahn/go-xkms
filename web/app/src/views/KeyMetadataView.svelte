@@ -101,9 +101,14 @@
     if (tagError || !changed) return;
     busy = true;
     error = null;
+    const id = loadedId;
+    const be = loadedBackend;
     try {
-      show(await updateKeyMetadata(loadedId, loadedBackend, changes));
-      showToast("success", `Metadata of key "${loadedId}" saved.`);
+      const m = await updateKeyMetadata(id, be, changes);
+      // Load is disabled while Save runs; still, never show one key's
+      // reply over another key's form.
+      if (id === loadedId && be === loadedBackend) show(m);
+      showToast("success", `Metadata of key "${id}" saved.`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -117,7 +122,7 @@
 <div class="flex flex-wrap gap-2 mb-4">
   <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} />
   <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} />
-  <button class="btn btn-primary btn-sm" onclick={load} disabled={loading || keyId === "" || backend === ""}>Load</button>
+  <button class="btn btn-primary btn-sm" onclick={load} disabled={loading || busy || keyId === "" || backend === ""}>Load</button>
 </div>
 
 {#if error}
