@@ -543,7 +543,7 @@ func TestTrustBootstrapXKMSd_ImportHonoursTimeout(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runTrustBootstrapXKMSd(ctx, newTrustBootstrapTestCommand(t, &buf), bundlePEM, "expired.example")
-	require.ErrorIs(t, err, ErrTrustBootstrapFailed)
+	require.Error(t, err, "an expired deadline stops the connect or the import")
 
 	_, err = getServerTrustRoot(t, trustPEMFingerprint(t, bundlePEM))
 	require.Error(t, err, "an import past its deadline files nothing")

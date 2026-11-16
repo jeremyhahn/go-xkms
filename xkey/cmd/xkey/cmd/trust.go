@@ -1150,9 +1150,10 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) (err error) {
 
 // runTrustBootstrapXKMSd files a fetched bootstrap bundle in the server's
 // trust-root store with the same purpose and source the local path uses. ctx
-// is the bootstrap --timeout context; the import runs under its deadline.
+// is the bootstrap --timeout context; the connect and the import run under
+// its deadline.
 func runTrustBootstrapXKMSd(ctx context.Context, cmd *cobra.Command, pemData []byte, server string) (err error) {
-	client, err := connectXKMSdClient(cmd)
+	client, err := connectXKMSdClientContext(ctx, cmd)
 	if err != nil {
 		return err
 	}

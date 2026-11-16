@@ -490,12 +490,19 @@ func newXKMSdClient(cmd *cobra.Command) (transport.Client, error) {
 // client is closed before returning an error, so a successful call always
 // hands back a client the caller must Close.
 func connectXKMSdClient(cmd *cobra.Command) (transport.Client, error) {
+	return connectXKMSdClientContext(context.Background(), cmd)
+}
+
+// connectXKMSdClientContext is connectXKMSdClient under parent: the connect
+// deadline is the earlier of parent's and xkmsdConnectTimeout, so a caller's
+// own timeout (trust bootstrap --timeout) bounds client setup too.
+func connectXKMSdClientContext(parent context.Context, cmd *cobra.Command) (transport.Client, error) {
 	client, err := newXKMSdClient(cmd)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), xkmsdConnectTimeout)
+	ctx, cancel := context.WithTimeout(parent, xkmsdConnectTimeout)
 	defer cancel()
 
 	if err := client.Connect(ctx); err != nil {
