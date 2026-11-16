@@ -23,12 +23,13 @@
   let loaded = $state(false);
   let error = $state<string | null>(null);
   let busy = $state(false);
+  let loading = $state(false);
 
+  // The server refuses auto_rotate and a nonzero retain_versions, so the
+  // form sets only enabled and the interval.
   let enabled = $state(false);
-  let autoRotate = $state(false);
   let interval = $state<number | null>(30);
   let unit = $state<IntervalUnit>("days");
-  let retain = $state<number | null>(null);
   let formErr = $state<string | null>(null);
 
   const ready = $derived(keyId.trim() !== "" && backend.trim() !== "");
@@ -42,29 +43,54 @@
     loaded = true;
     if (policy) {
       enabled = policy.enabled;
-      autoRotate = policy.auto_rotate ?? false;
       ({ value: interval, unit } = fromSeconds(policy.interval_seconds));
-      retain = policy.retain_versions ?? null;
     }
   }
 
-  async function run(action: () => Promise<void>): Promise<void> {
-    busy = true;
+  // Each request carries a sequence number and the key it was made for; a
+  // reply is applied only while both still match. Editing the key drops
+  // any reply in flight and the policy shown for the previous key.
+  let seq = 0;
+
+  function target(): string {
+    return `${keyId.trim()}\u0000${backend.trim()}`;
+  }
+
+  function targetChanged(): void {
+    seq++;
+    loading = false;
+    current = null;
+    loaded = false;
+    error = null;
+  }
+
+  // A load leaves the key inputs editable (editing drops its reply); a
+  // mutation freezes them until it settles.
+  async function run(
+    action: (id: string, be: string) => Promise<() => void>,
+    mutation = true,
+  ): Promise<void> {
+    const mine = ++seq;
+    const at = target();
+    if (mutation) busy = true;
+    else loading = true;
     error = null;
     try {
-      await action();
+      const apply = await action(keyId.trim(), backend.trim());
+      if (mine === seq && at === target()) apply();
     } catch (e) {
-      error = message(e);
+      if (mine === seq && at === target()) error = message(e);
     } finally {
-      busy = false;
+      if (mutation) busy = false;
+      else if (mine === seq) loading = false;
     }
   }
 
   function load(): Promise<void> {
-    return run(async () => {
-      const res = await getRotationPolicy(keyId.trim(), backend.trim());
-      show(res.policy);
-    });
+    return run(async (id, be) => {
+      const res = await getRotationPolicy(id, be);
+      return () => show(res.policy);
+    }, false);
   }
 
   function validate(): RotationPolicy | null {
@@ -72,34 +98,27 @@
       formErr = "Interval must be a positive whole number.";
       return null;
     }
-    if (retain !== null && (!Number.isInteger(retain) || retain < 0)) {
-      formErr = "Retain versions must be a whole number of zero or more.";
-      return null;
-    }
     formErr = null;
-    const policy: RotationPolicy = { enabled, interval_seconds: toSeconds(interval, unit), auto_rotate: autoRotate };
-    if (retain !== null) policy.retain_versions = retain;
-    return policy;
+    return { enabled, interval_seconds: toSeconds(interval, unit) };
   }
 
   function save(): Promise<void> {
     const policy = validate();
     if (!policy) return Promise.resolve();
-    const id = keyId.trim();
-    return run(async () => {
-      const res = await setRotationPolicy(id, backend.trim(), policy);
-      show(res.policy ?? policy);
+    return run(async (id, be) => {
+      const res = await setRotationPolicy(id, be, policy);
       showToast("success", `Rotation policy of key "${id}" saved.`);
+      return () => show(res.policy ?? policy);
     });
   }
 
   function remove(): Promise<void> {
     const id = keyId.trim();
     if (!window.confirm(`Remove the rotation policy of key "${id}"?`)) return Promise.resolve();
-    return run(async () => {
-      await deleteRotationPolicy(id, backend.trim());
-      show(undefined);
-      showToast("success", `Rotation policy of key "${id}" removed.`);
+    return run(async (key, be) => {
+      await deleteRotationPolicy(key, be);
+      showToast("success", `Rotation policy of key "${key}" removed.`);
+      return () => show(undefined);
     });
   }
 
@@ -111,9 +130,9 @@
 <PageHeader title="Rotation Policy" subtitle="Scheduled rotation of a key: interval and versions kept" />
 
 <div class="flex flex-wrap items-end gap-2 mb-4">
-  <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} />
-  <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} />
-  <button class="btn btn-sm" onclick={load} disabled={busy || !ready}>Load</button>
+  <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} oninput={targetChanged} disabled={busy} />
+  <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} oninput={targetChanged} disabled={busy} />
+  <button class="btn btn-sm" onclick={load} disabled={busy || loading || !ready}>Load</button>
 </div>
 
 {#if error}<Alert kind="error" class="mb-4"><span>{error}</span></Alert>{/if}
@@ -147,22 +166,17 @@
       <input type="checkbox" class="checkbox checkbox-sm" bind:checked={enabled} />
       <span>Enabled</span>
     </label>
-    <label class="label cursor-pointer justify-start gap-2">
-      <input type="checkbox" class="checkbox checkbox-sm" bind:checked={autoRotate} />
-      <span>Auto rotate</span>
-    </label>
     <div class="flex flex-wrap items-center gap-2">
       <input type="number" class="input input-bordered input-sm w-28" aria-label="Interval" min="1" step="1" bind:value={interval} />
       <select class="select select-bordered select-sm" aria-label="Interval unit" bind:value={unit}>
         <option value="hours">hours</option>
         <option value="days">days</option>
       </select>
-      <input type="number" class="input input-bordered input-sm w-28" aria-label="Retain versions" placeholder="Retain" min="0" step="1" bind:value={retain} />
     </div>
     {#if formErr}<p class="text-error text-sm">{formErr}</p>{/if}
     <div class="flex gap-2">
-      <button class="btn btn-primary btn-sm" onclick={save} disabled={busy || !ready}>Save</button>
-      <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={busy || !ready}>Remove</button>
+      <button class="btn btn-primary btn-sm" onclick={save} disabled={busy || loading || !ready}>Save</button>
+      <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={busy || loading || !ready}>Remove</button>
     </div>
   </div>
 </div>
