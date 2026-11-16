@@ -81,7 +81,14 @@ case "$1" in
     case " ${FAKE_RMI_FAIL:-} " in *" $2 "*) echo "Error response from daemon: conflict: unable to remove $2" >&2; exit 1 ;; esac
     echo "Untagged: $2"
     ;;
-  pull) exit "${FAKE_PULL_RC:-0}" ;;
+  pull)
+    # FAKE_LAN: the CI_IMAGE_REGISTRY a case sets; its pulls answer FAKE_LAN_PULL_RC.
+    if [ -n "${FAKE_LAN:-}" ]; then
+      case "$*" in *" $FAKE_LAN/"*) exit "${FAKE_LAN_PULL_RC:-0}" ;; esac
+    fi
+    exit "${FAKE_PULL_RC:-0}"
+    ;;
+  push) exit "${FAKE_PUSH_RC:-0}" ;;
   create) exit "${FAKE_CREATE_RC:-0}" ;;
 esac
 exit 0
@@ -111,6 +118,10 @@ exit "${FAKE_BUILD_RC:-0}"
 FAKE
 cat >"$FAKE_BIN/curl" <<'FAKE'
 #!/bin/bash
+# The CI_IMAGE_REGISTRY probe (#2243): FAKE_LAN_CURL_RC answers it (7 = closed port).
+if [ -n "${FAKE_LAN:-}" ]; then
+  case " $* " in *" http://$FAKE_LAN/v2/ "*) echo "curl $*" >>"$FAKE_LOG"; exit "${FAKE_LAN_CURL_RC:-0}" ;; esac
+fi
 # Fake curl: a registry on every host, served over FAKE_SERVES (https by
 # default). It records each request with the credential it carried named,
 # never its value, and answers from FAKE_* variables:
@@ -882,6 +893,65 @@ not_called "docker"
 start_case "an unknown command"
 run_script 1 push toolchain
 stderr_has "unknown command 'push'"
+
+# #2243 (ruling 752): CI_IMAGE_REGISTRY, a LAN registry with no auth, serves
+# the content-hash tag; a hit is pulled instead of built, a miss is built and
+# pushed, and neither a failed pull nor a failed push turns the job red.
+LAN=lan.invalid:5000
+LAN_TC="$LAN/$TOOLCHAIN_TAG"
+
+start_case "use: CI_IMAGE_REGISTRY hit pulls the content tag, tags it locally, builds nothing"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+stderr_has "pulled $LAN_TC $DIGEST"
+called "docker pull --quiet $LAN_TC"
+called "docker tag $LAN_TC $TOOLCHAIN_TAG"
+not_called "docker-build-toolchain"
+not_called "docker push"
+not_called "docker login"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout" && grep -q '^TOOLCHAIN_HOLD=go-xkms-ci-hold-42-1-toolchain-' "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE as the image ID and TOOLCHAIN_HOLD"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+start_case "use: CI_IMAGE_REGISTRY is read before GITHUB_SERVER_URL; a hit skips the forge pull"
+run_script 0 use toolchain "$FORGE/example-ci-images/go-xkms-ci-toolchain@$DIGEST" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" GITHUB_SERVER_URL=
+stderr_has "pulled $LAN_TC $DIGEST"
+not_called "docker pull --quiet $FORGE"
+not_called "docker-build-toolchain"
+
+start_case "use: CI_IMAGE_REGISTRY miss builds, tags and pushes the content tag"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1
+called "docker pull --quiet $LAN_TC"
+called "docker-build-toolchain"
+called "docker tag $TOOLCHAIN_TAG $LAN_TC"
+called "docker push $LAN_TC"
+stderr_has "miss, built and pushed $LAN_TC"
+not_called "docker login"
+
+start_case "use: CI_IMAGE_REGISTRY push failure is one line and the job stays green"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 FAKE_PUSH_RC=1
+called "docker-build-toolchain"
+called "docker push $LAN_TC"
+stderr_has "miss, built, push failed"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE after a failed push"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+start_case "use: CI_IMAGE_REGISTRY unset builds as before, with no pull and no push"
+run_script 0 use toolchain "" -- FAKE_LAN="$LAN"
+called "docker-build-toolchain"
+not_called "docker pull"
+not_called "docker push"
+not_called "$LAN"
+
+start_case "use: CI_IMAGE_REGISTRY on a closed port builds as before, with no pull and no push"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_CURL_RC=7
+called "docker-build-toolchain"
+not_called "docker pull"
+not_called "docker push"
 
 # --------------------------------------------------------------------------
 if [ "$FAILURES" -eq 0 ]; then
