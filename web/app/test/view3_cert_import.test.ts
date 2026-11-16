@@ -186,3 +186,55 @@ describe("CertImportView", () => {
     expect(await screen.findByText(/certificate was stored but the chain was not: chain rejected/)).toBeInTheDocument();
   });
 });
+
+describe("CertImportView frozen target", () => {
+  it("stores to the key and backend the overwrite check was made for", async () => {
+    exists.mockResolvedValue(true);
+    save.mockResolvedValue({ success: true });
+    await mountReady();
+    await fill("k1", "pkcs8", LEAF, INT1);
+    await fireEvent.click(importButton());
+    await screen.findByRole("button", { name: "Confirm" });
+
+    await fireEvent.input(screen.getByLabelText("Key ID"), { target: { value: "k2" } });
+    await fireEvent.change(screen.getByLabelText("Backend"), { target: { value: "tpm2" } });
+    await fireEvent.input(screen.getByLabelText("Certificate PEM"), { target: { value: INT2 } });
+    await fireEvent.input(screen.getByLabelText("Chain PEM"), { target: { value: "" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save).toHaveBeenCalledWith("k1", "pkcs8", { backend: "pkcs8", certificate_pem: LEAF });
+    await waitFor(() => expect(saveChain).toHaveBeenCalledWith("k1", { backend: "pkcs8", cert_chain_pem: [INT1] }));
+  });
+
+  it("freezes the inputs while the overwrite confirm is open", async () => {
+    exists.mockResolvedValue(true);
+    await mountReady();
+    await fill("k1", "pkcs8", LEAF);
+    await fireEvent.click(importButton());
+    await screen.findByRole("button", { name: "Confirm" });
+
+    expect(screen.getByLabelText("Key ID")).toBeDisabled();
+    expect(screen.getByLabelText("Backend")).toBeDisabled();
+    expect(screen.getByLabelText("Certificate PEM")).toBeDisabled();
+    expect(screen.getByLabelText("Chain PEM")).toBeDisabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByLabelText("Key ID")).not.toBeDisabled();
+  });
+
+  it("freezes the inputs while the overwrite check is pending", async () => {
+    let resolveExists: (v: boolean) => void = () => {};
+    exists.mockImplementation(() => new Promise<boolean>((r) => (resolveExists = r)));
+    save.mockResolvedValue({ success: true });
+    await mountReady();
+    await fill("k1", "pkcs8", LEAF);
+    await fireEvent.click(importButton());
+    await waitFor(() => expect(exists).toHaveBeenCalledOnce());
+
+    expect(screen.getByLabelText("Key ID")).toBeDisabled();
+    expect(screen.getByLabelText("Backend")).toBeDisabled();
+    resolveExists(false);
+    await waitFor(() => expect(save).toHaveBeenCalledWith("k1", "pkcs8", { backend: "pkcs8", certificate_pem: LEAF }));
+  });
+});
