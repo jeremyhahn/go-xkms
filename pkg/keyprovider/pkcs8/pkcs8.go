@@ -209,19 +209,40 @@ func (b *PKCS8Backend) loadKeyMetadata(ctx context.Context, keyID string) *keyMe
 	return &metadata
 }
 
-// deleteKeyMetadata removes keyID's metadata record.
-//
-// storage.ErrNotFound is swallowed rather than propagated: a key written
-// before this package persisted metadata never had a record, and deleting it
-// must still succeed.
-func (b *PKCS8Backend) deleteKeyMetadata(ctx context.Context, keyID string) error {
+// clearOrphanedMetadata removes keyID's metadata record when keyID has no key
+// blob: such a record is the remnant of a delete interrupted between its two
+// storage calls (#2231), and a new key under keyID must not inherit it. A key
+// that still exists keeps its record.
+func (b *PKCS8Backend) clearOrphanedMetadata(ctx context.Context, keyID string) error {
+	exists, err := storage.KeyExists(ctx, b.storage, keyID)
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
+	}
+	if exists {
+		// A live key keeps its record; SaveKeyIfAbsent reports the clash.
+		return nil
+	}
+	orphaned, err := b.storage.Exists(ctx, metadataPath(keyID))
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to check key metadata", Err: err}
+	}
+	if !orphaned {
+		return nil
+	}
+	_, err = b.removeKeyMetadata(ctx, keyID)
+	return err
+}
+
+// removeKeyMetadata deletes keyID's metadata record and reports whether there
+// was none to delete.
+func (b *PKCS8Backend) removeKeyMetadata(ctx context.Context, keyID string) (missing bool, err error) {
 	if err := b.storage.Delete(ctx, metadataPath(keyID)); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil
+			return true, nil
 		}
-		return &errs.Wrapped{Msg: "failed to delete key metadata", Err: err}
+		return false, &errs.Wrapped{Msg: "failed to delete key metadata", Err: err}
 	}
-	return nil
+	return false, nil
 }
 
 // GenerateKey generates a new private key with the given attributes.
@@ -282,6 +303,12 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	// PutIfAbsent result is the authoritative uniqueness decision.
 	keyData, err := b.encodeKey(privateKey, attrs.Password)
 	if err != nil {
+		return nil, err
+	}
+	// A metadata record whose blob is missing is an orphan of an interrupted
+	// delete (#2231); clear it before the new key becomes visible so the key
+	// never reads, even briefly, as carrying the old tenant or Exportable flag.
+	if err := b.clearOrphanedMetadata(ctx, keyID); err != nil {
 		return nil, err
 	}
 	stored, err := storage.SaveKeyIfAbsent(ctx, b.storage, keyID, keyData)
@@ -359,18 +386,27 @@ func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 	}
 
 	keyID := attrs.ID()
+	blobMissing := false
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
+		if !errors.Is(err, storage.ErrNotFound) {
+			return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 		}
-		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
+		blobMissing = true
 	}
 
 	// Remove the metadata record so a deleted key leaves no orphaned tenant or
 	// Exportable flag behind for a future key of the same identifier to
-	// inherit.
-	if err := b.deleteKeyMetadata(ctx, keyID); err != nil {
+	// inherit. The blob and the record are two storage calls, so a delete
+	// interrupted between them leaves the record alone; it is removed here
+	// even when the blob is already gone, which makes a retried delete finish
+	// the job (#2231). The blob goes first: a blob without its record would
+	// lose its tenant binding.
+	metaMissing, err := b.removeKeyMetadata(ctx, keyID)
+	if err != nil {
 		return err
+	}
+	if blobMissing && metaMissing {
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 	}
 
 	return nil
