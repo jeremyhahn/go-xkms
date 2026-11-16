@@ -1062,7 +1062,9 @@ jobs:
 
   image:
     name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    # CUSTOMIZE (go-xkms, #2240): schedule and workflow_dispatch runs on main
+    # also use the bigdisk-docker pool, not hosted-runner hours; fork PRs stay hosted.
+    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     # v1.30: only on the guard's `run` (not `refused`, not `proven`). It keeps
