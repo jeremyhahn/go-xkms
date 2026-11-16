@@ -67,10 +67,7 @@ func registryVerifier(t *testing.T, anchors TrustAnchors) *TrustAnchorVerifier {
 // TestApplicationReference covers how finalize obtains the reference the
 // possession request's application evidence must match: the provisioning
 // record's ApplicationReference, re-read from the registry, refused when
-// it is not 32 bytes, and refused when absent under
-// DICEPolicy.RequireApplicationReference. Without that option a device
-// with no reference is admitted (nil reference), as the end-to-end
-// enrollment of the real firmware still is.
+// it is not 32 bytes, and refused when absent (docs/SPEC.md:41).
 func TestApplicationReference(t *testing.T) {
 	leafDER, key := newDICEAlias(t, DICENonce(diceKeyAuth))
 	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
@@ -82,17 +79,10 @@ func TestApplicationReference(t *testing.T) {
 			return &ProvisionedDevice{DeviceIDKey: spki, ApplicationReference: ref}, nil
 		})})
 	}
-	required := DICEPolicy{RequireApplicationReference: true}
-
 	t.Run("the registered reference is returned", func(t *testing.T) {
-		got, err := verified.ApplicationReference(context.Background(), verifierFor(required, reference))
+		got, err := verified.ApplicationReference(context.Background(), verifierFor(DICEPolicy{}, reference))
 		require.NoError(t, err)
 		assert.Equal(t, reference, got)
-	})
-	t.Run("a missing reference is refused when the policy requires one", func(t *testing.T) {
-		got, err := verified.ApplicationReference(context.Background(), verifierFor(required, nil))
-		assert.ErrorIs(t, err, ErrPossessionApplicationEvidenceMismatch)
-		assert.Nil(t, got)
 	})
 	t.Run("a missing reference is refused with the default policy", func(t *testing.T) {
 		got, err := verified.ApplicationReference(context.Background(), verifierFor(DICEPolicy{}, nil))

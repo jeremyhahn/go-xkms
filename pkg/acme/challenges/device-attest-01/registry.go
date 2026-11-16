@@ -184,18 +184,15 @@ func (v *TrustAnchorVerifier) resolve(ctx context.Context, ueid string) (*Provis
 
 // RegisteredApplicationReference re-queries the registry at finalization
 // for the application reference the device's possession request must
-// carry. It returns nil for a device with none, unless the DICE policy
-// requires one (DICEPolicy.RequireApplicationReference).
+// carry. A device registered without one is refused: docs/SPEC.md:41
+// matches the evidence against the registered reference, always.
 func (v *TrustAnchorVerifier) RegisteredApplicationReference(ctx context.Context, ueid string) ([]byte, error) {
 	record, err := v.resolve(ctx, ueid)
 	if err != nil {
 		return nil, err
 	}
 	if len(record.ApplicationReference) == 0 {
-		if v.dice.RequireApplicationReference {
-			return nil, &errs.Detail{Err: ErrPossessionApplicationEvidenceMismatch, Detail: "no application reference is registered for the device"}
-		}
-		return nil, nil
+		return nil, &errs.Detail{Err: ErrPossessionApplicationEvidenceMismatch, Detail: "no application reference is registered for the device"}
 	}
 	return bytes.Clone(record.ApplicationReference), nil
 }

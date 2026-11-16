@@ -670,9 +670,8 @@ func TestVerifyPossessionCSRAcceptsTheDevicesRequest(t *testing.T) {
 
 // The fifth finalize check matches the request's application evidence,
 // read from trusted-firmware's own CoSWID (vectorCoswid), against the
-// reference registered for the device. A nil reference is a device the
-// registry's policy admits without one (DICEPolicy.RequireApplicationReference
-// off); VerifiedAttestation.ApplicationReference refuses it otherwise.
+// reference registered for the device. A nil reference (no reference
+// registered) is refused like any mismatch (docs/SPEC.md:41).
 func TestVerifyPossessionCSRApplicationEvidence(t *testing.T) {
 	f := newPossessionFixture(t)
 	evidence := mustHex(t, vectorApplicationEvidence)
@@ -685,7 +684,7 @@ func TestVerifyPossessionCSRApplicationEvidence(t *testing.T) {
 	}{
 		"the registered reference": {evidence, nil},
 		"a reference one byte off": {offByOne, ErrPossessionApplicationEvidenceMismatch},
-		"no reference registered":  {nil, nil},
+		"no reference registered":  {nil, ErrPossessionApplicationEvidenceMismatch},
 		"an empty reference":       {[]byte{}, ErrPossessionApplicationEvidenceMismatch},
 		"a 31-byte reference":      {evidence[:31], ErrPossessionApplicationEvidenceMismatch},
 		"a 33-byte reference":      {append(bytes.Clone(evidence), 0x00), ErrPossessionApplicationEvidenceMismatch},

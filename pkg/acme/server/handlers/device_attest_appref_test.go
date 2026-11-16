@@ -31,25 +31,6 @@ import (
 // devicePossessionCSR's measurements carry.
 var possessionApplicationEvidence, _ = hex.DecodeString("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 
-// newRequiringRegistry installs on service a device registry whose DICE policy
-// requires a registered application reference, as serviceRegistry installs
-// the default one.
-func newRequiringRegistry(t *testing.T, service *RestService) *registeredDevices {
-	t.Helper()
-	registry := deviceRegistry{}
-	verifier, err := deviceattest01.NewTrustAnchorVerifier(deviceattest01.TrustAnchors{
-		Devices: registry,
-		DICE:    deviceattest01.DICEPolicy{RequireApplicationReference: true},
-	})
-	require.NoError(t, err)
-	registered := &registeredDevices{TrustAnchorVerifier: verifier, registry: registry}
-	if service.attestingVerifiers == nil {
-		service.attestingVerifiers = make(map[string]common.AttestingVerifier)
-	}
-	service.attestingVerifiers[common.ChallengeTypeDeviceAttest01] = NewDeviceAttestVerifier(registered)
-	return registered
-}
-
 // TestBindDeviceAttestationKey_ApplicationReference is SPEC.md:41's open item
 // at the finalize handler: a DICE possession request's application evidence
 // is matched against the reference the device's provisioning record
@@ -81,15 +62,9 @@ func TestBindDeviceAttestationKey_ApplicationReference(t *testing.T) {
 			wantInMsg: mismatch,
 		},
 		{
-			name:      "no reference is a bad request with the default config",
-			arrange:   func(t *testing.T, setup *deviceBindSetup) {},
-			wantType:  common.ErrTypeBadCSR,
-			wantInMsg: mismatch,
-		},
-		{
-			name: "no reference under a policy that requires one is a bad request",
+			name: "no reference is a bad request with the default config",
 			arrange: func(t *testing.T, setup *deviceBindSetup) {
-				newRequiringRegistry(t, setup.service).provision(t, setup.ueid, setup.key)
+				setReference(setup, nil)
 			},
 			wantType:  common.ErrTypeBadCSR,
 			wantInMsg: mismatch,

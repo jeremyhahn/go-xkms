@@ -129,7 +129,7 @@ var (
 
 	// ErrPossessionApplicationEvidenceMismatch is a possession request whose
 	// application evidence is not the reference registered for the device,
-	// or a device the policy requires a reference for that has none.
+	// or a device registered without one.
 	ErrPossessionApplicationEvidenceMismatch = errors.New("device-attest-01: the possession request application evidence is not the device's registered reference")
 )
 
@@ -716,7 +716,7 @@ func possessionClaims(extensions []pkix.Extension) (*dice.ClaimsSet, error) {
 //  4. its identifiers are the order's       ErrPossessionIdentifierMismatch
 //  5. its application evidence is           ErrPossessionApplicationEvidenceMismatch
 //     applicationReference, the device's registered reference
-//     (VerifiedAttestation.ApplicationReference); nil skips only this check
+//     (VerifiedAttestation.ApplicationReference); nil is refused
 //
 // A request that is not the possession template at all is
 // ErrPossessionCSRMalformed, and none of the checks run.
@@ -751,10 +751,10 @@ func (v *VerifiedAttestation) VerifyPossessionCSR(csr *x509.CertificateRequest, 
 			Detail: "the request names only " + request.Identifier().Type + " " + request.Identifier().Value,
 		}
 	}
-	// A nil reference is a device the registry's policy admits without one
-	// (VerifiedAttestation.ApplicationReference); any other value, of any
-	// length, must be exactly the request's evidence.
-	if applicationReference != nil && subtle.ConstantTimeCompare(request.ApplicationEvidence, applicationReference) != 1 {
+	// The reference is the device's registered one
+	// (VerifiedAttestation.ApplicationReference); nil or any other value
+	// that is not exactly the request's evidence is refused.
+	if subtle.ConstantTimeCompare(request.ApplicationEvidence, applicationReference) != 1 {
 		return ErrPossessionApplicationEvidenceMismatch
 	}
 	return nil

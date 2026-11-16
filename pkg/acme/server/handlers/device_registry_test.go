@@ -16,6 +16,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
@@ -58,10 +59,14 @@ func newRegisteredDevices(t *testing.T) *registeredDevices {
 	return &registeredDevices{TrustAnchorVerifier: verifier, registry: registry}
 }
 
-// provision records key as the DeviceID key of the device whose UEID is ueid.
+// provision records key as the DeviceID key of the device whose UEID is ueid,
+// with the application reference devicePossessionCSR's evidence matches.
 func (r *registeredDevices) provision(t *testing.T, ueid []byte, key *ecdsa.PrivateKey) {
 	t.Helper()
-	r.registry[hex.EncodeToString(ueid)] = &deviceattest01.ProvisionedDevice{DeviceIDKey: marshalSPKI(t, key)}
+	r.registry[hex.EncodeToString(ueid)] = &deviceattest01.ProvisionedDevice{
+		DeviceIDKey:          marshalSPKI(t, key),
+		ApplicationReference: bytes.Clone(possessionApplicationEvidence),
+	}
 }
 
 // withdraw removes the device whose UEID is ueid from the registry.

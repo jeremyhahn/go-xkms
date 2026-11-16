@@ -139,12 +139,6 @@ type DICEPolicy struct {
 	// (dice.VerifyOptions.RequireTcbInfo).
 	RequireTcbInfo bool
 
-	// RequireApplicationReference refuses at finalize a device whose
-	// provisioning record registers no ApplicationReference. Off, such a
-	// device is admitted without the application evidence comparison; a
-	// registered reference is always compared.
-	RequireApplicationReference bool
-
 	// PermittedFlags are the operational states tolerated; none by default.
 	PermittedFlags dice.OperationalFlags
 }
