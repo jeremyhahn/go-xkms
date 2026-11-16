@@ -19,6 +19,7 @@ package apiharness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -83,10 +84,28 @@ func Open(baseURL string) error {
 	if err != nil {
 		return err
 	}
-	if err := xkmsdtest.OpenBarrier(ctx, client, baseURL, []byte(BarrierPassphrase)); err != nil {
+	return openReady(ctx, client, baseURL, []byte(BarrierPassphrase))
+}
+
+// openReady opens the barrier of the server at baseURL and waits until it is
+// ready. go test runs the test binaries under test/integration/api at once,
+// and each one's TestMain opens the same server: every binary may see the
+// barrier sealed and post an unseal, and the server answers each one that
+// loses with the already-unsealed refusal, HTTP 409 Conflict. That answer
+// means another binary opened the barrier, so the loser waits for readiness
+// within the same deadline like the winner; any other unseal error fails.
+func openReady(ctx context.Context, client *http.Client, baseURL string, passphrase []byte) error {
+	if err := xkmsdtest.OpenBarrier(ctx, client, baseURL, passphrase); err != nil && !lostUnsealRace(err) {
 		return err
 	}
 	return AwaitReady(ctx, client, baseURL)
+}
+
+// lostUnsealRace reports whether err is the server's already-unsealed answer
+// to an unseal post, recognised by its HTTP status.
+func lostUnsealRace(err error) bool {
+	var status *xkmsdtest.StatusError
+	return errors.As(err, &status) && status.Code == http.StatusConflict
 }
 
 // AwaitReady polls baseURL's /health/ready, the probe the cluster stack waits
