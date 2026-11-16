@@ -197,6 +197,18 @@ func (s *BarrierService) SetLastStrategy(strategy string) {
 	s.mu.Unlock()
 }
 
+// sealStrategy reports the barrier's sealing strategy: the live barrier's
+// own when it is open, otherwise the one from the last Initialize/Unseal or
+// the persisted config (SetLastStrategy). Empty when none is known.
+func (s *BarrierService) sealStrategy() xkms.StrategyID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.barrier != nil {
+		return s.barrier.Status().Strategy
+	}
+	return xkms.StrategyID(s.lastStrategy)
+}
+
 // SetAuditLogger sets the audit logger for security event logging.
 func (s *BarrierService) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)

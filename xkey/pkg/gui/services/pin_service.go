@@ -428,7 +428,19 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	// change while nothing has changed yet: a barrier sealed with its own
 	// password cannot be told apart from a failing PIN-bound one until
 	// go-qrdb reports distinct operational errors (go-xkms #2098).
+	//
+	// Only a passphrase barrier can be sealed by the user PIN. A hardware or
+	// external strategy (TPM2, PKCS#11, cloud KMS) is not, so it is neither
+	// probed here nor rewrapped below: its PIN change rests on the backend's
+	// retry-enforced verify above. An unknown strategy (nothing initialized
+	// or recorded) stays on the passphrase path and is refused there.
 	bsvc := s.barrierSvc.Load()
+	if bsvc != nil {
+		if strategy := bsvc.sealStrategy(); strategy != "" && strategy != xkms.StrategyPassphrase {
+			s.log.Debug("ChangeUserPIN: barrier not PIN-sealed by strategy; skipping barrier check", "barrier_strategy", strategy)
+			bsvc = nil
+		}
+	}
 	if bsvc != nil {
 		if err := verifyBarrierSealedWithPIN(bsvc, currentUserPIN); err != nil {
 			s.log.Error("ChangeUserPIN: barrier not confirmed sealed by the user PIN", "error", err)
