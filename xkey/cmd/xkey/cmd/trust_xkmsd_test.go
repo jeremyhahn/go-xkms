@@ -530,6 +530,25 @@ func TestTrustBootstrapXKMSd_ImportsToServer(t *testing.T) {
 	requireLocalTrustStoreUntouched(t)
 }
 
+// TestTrustBootstrapXKMSd_ImportHonoursTimeout: the server import runs under
+// the bootstrap --timeout context, so an expired deadline stops it and files
+// nothing on the server.
+func TestTrustBootstrapXKMSd_ImportHonoursTimeout(t *testing.T) {
+	startTrustXKMSd(t)
+	bundlePEM := newTestCertificatePEM(t, "strotf expired bootstrap CA")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+
+	var buf bytes.Buffer
+	err := runTrustBootstrapXKMSd(ctx, newTrustBootstrapTestCommand(t, &buf), bundlePEM, "expired.example")
+	require.ErrorIs(t, err, ErrTrustBootstrapFailed)
+
+	_, err = getServerTrustRoot(t, trustPEMFingerprint(t, bundlePEM))
+	require.Error(t, err, "an import past its deadline files nothing")
+}
+
 func TestTrustBootstrapXKMSd_ReportsSkipped(t *testing.T) {
 	startTrustXKMSd(t)
 	startTrustBootstrapServer(t, newTestCertificatePEM(t, "strotf bootstrap CA"))
