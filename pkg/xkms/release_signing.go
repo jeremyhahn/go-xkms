@@ -22,6 +22,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"io"
+	"time"
 
 	"github.com/veraison/go-cose"
 
@@ -112,9 +113,8 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 	if err != nil {
 		return nil, err
 	}
-	// Admitted like XKMSService.Sign: a disabled, revoked or policy-denied
-	// key never signs a release.
-	if err := s.admitKey(ctx, k, keypolicy.OpSign); err != nil {
+	// A disabled, revoked or policy-denied key yields no signer.
+	if err := s.checkKeyPolicy(ctx, k, keypolicy.OpSign); err != nil {
 		return nil, err
 	}
 	cur, err := k.current()
@@ -125,16 +125,37 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "sign with repository signing key", KeyID: key.KeyID, Err: err}
 	}
-	return opaqueSigner{signer: signer, sigAlg: cur.attrs.SignatureAlgorithm}, nil
+	// Each Sign is admitted like XKMSService.Sign, under the tenant, key and
+	// caller captured here: a retained signer stops when the key is disabled,
+	// revoked or its policy expires, and every use is charged to the key.
+	signCtx := context.WithoutCancel(ctx)
+	sign := func(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+		use := *k
+		if err := s.admitKey(signCtx, &use, keypolicy.OpSign); err != nil {
+			return nil, err
+		}
+		cur, err := use.current()
+		if err != nil {
+			return nil, err
+		}
+		backendSigner, err := use.backend.Signer(signCtx, cur.attrs)
+		if err != nil {
+			return nil, &ErrKeyOperation{Operation: "sign with repository signing key", KeyID: key.KeyID, Err: err}
+		}
+		return backendSigner.Sign(rand, digest, opts)
+	}
+	return opaqueSigner{signer: signer, sigAlg: cur.attrs.SignatureAlgorithm, sign: sign}, nil
 }
 
 // opaqueSigner exposes only Public and Sign of a backend signer. A software
 // backend's signer is the private key itself (*ecdsa.PrivateKey and the
 // like), which a caller of RepositorySigner could otherwise type-assert to
-// and read.
+// and read. When sign is set, every Sign goes through it: the repository
+// signer admits the key under key policy on each use (resolutionSigner).
 type opaqueSigner struct {
 	signer crypto.Signer
 	sigAlg x509.SignatureAlgorithm
+	sign   func(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error)
 }
 
 // Public returns the backend key's public half.
@@ -142,7 +163,24 @@ func (o opaqueSigner) Public() crypto.PublicKey { return o.signer.Public() }
 
 // Sign signs digest through the backend.
 func (o opaqueSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if o.sign != nil {
+		return o.sign(rand, digest, opts)
+	}
 	return o.signer.Sign(rand, digest, opts)
+}
+
+// checkKeyPolicy refuses a key its policy does not admit for op, without
+// charging a use: a signer is obtained once and charged per Sign.
+func (s *XKMSService) checkKeyPolicy(ctx context.Context, k *versionedKey, op keypolicy.Operation) error {
+	store := s.keyPolicies.load()
+	if store == nil {
+		return nil
+	}
+	rec, _, err := store.Load(ctx, k.tenant, k.backendName, k.keyID)
+	if err != nil {
+		return err
+	}
+	return rec.Check(callerSubject(ctx), op, 0, time.Now())
 }
 
 // coseAlgorithm picks the COSE algorithm a public key signs a CoRIM with.
