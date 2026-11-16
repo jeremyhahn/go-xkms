@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -45,6 +46,11 @@ func TestSigningKeyClassOf(t *testing.T) {
 		{fmt.Errorf("resolve: %w", xkms.ErrKeyNotFound), ClassNotFound},
 		{refvalue.ErrMalformed, ClassInvalidArgument},
 		{refvalue.ErrUnsupportedKey, ClassFailedPrecondition},
+		// A repository signer admits its key under key policy on every Sign.
+		{&keypolicy.KeyUnavailableError{KeyID: "release", Status: keypolicy.StatusDisabled}, ClassFailedPrecondition},
+		{fmt.Errorf("sign: %w", &keypolicy.PolicyDeniedError{}), ClassPermissionDenied},
+		// A retained signer whose key moved to a newer version is refused.
+		{&xkms.KeyVersionMissingError{KeyID: "release", Version: 1}, ClassFailedPrecondition},
 	}
 	for _, tt := range tests {
 		got, ok := SigningKeyClassOf(tt.err)
