@@ -27,3 +27,5 @@
   - go build -mod=readonly in root, sdk/go, xkey, web/desktop: PASS.
   - go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack" ./pkg/acme/... ./pkg/mcptool/...: PASS, with make agsim first (TFWSIM_DIR=build/agsim; without it the 5 TestDeviceAttestDICE* fail on the missing binary).
   - make lint: PASS (0 issues, all modules and tag sets).
+- dk8473b 11-12 (restored from checkpoint 3194ebe6b, was 45c79c88f): make deps-check on 147c13538 failed only on go-truststrap v0.6.0-alpha -> v0.7.1-alpha (root, sdk/go); v0.7.1-alpha fails to build (undefined: enclave.ByteAccess under the go-enclave v0.8.0-alpha replace), so it is held with a held: comment; then deps-check, the four readonly builds and make lint passed.
+- dk8473b 11-16 (ruling 731): checkpoint 3194ebe6b merged into 142fedb78 (23c778126); merged tree equals 142fedb78, no tidy needed.
