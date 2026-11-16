@@ -1201,6 +1201,7 @@ func (ca *CA) getSigner(ctx context.Context) (crypto.Signer, error) {
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get signer", Err: err}
 	}
+	defer clearKeyPassword(attrs)
 
 	backend, err := ca.resolveKeyBackend(attrs.StoreType)
 	if err != nil {
@@ -1225,6 +1226,16 @@ func (ca *CA) getCAKeyAttributes(ctx context.Context, identity *Identity) (*type
 		attrs.KeyType = types.KeyTypeCA
 	}
 	return attrs, nil
+}
+
+// clearKeyPassword releases the password getCAKeyAttributes opened for one
+// lookup. Identity.ToKeyAttributes builds a fresh locked password per call,
+// so a caller that discards the attributes must clear it, or each lookup
+// keeps a locked buffer live until process exit.
+func clearKeyPassword(attrs *types.KeyAttributes) {
+	if attrs != nil && attrs.Password != nil {
+		attrs.Password.Clear()
+	}
 }
 
 // getOrGenerateCAKey retrieves an existing key or generates a new one if it doesn't exist.

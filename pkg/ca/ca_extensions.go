@@ -514,6 +514,7 @@ func (ca *CA) IssuerForIdentity(ctx context.Context, cn string) (crypto.Signer, 
 	if err != nil {
 		return nil, nil, err
 	}
+	defer clearKeyPassword(attrs)
 	backend, err := ca.resolveKeyBackend(attrs.StoreType)
 	if err != nil {
 		return nil, nil, err
