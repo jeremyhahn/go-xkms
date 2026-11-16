@@ -16,10 +16,12 @@ package refvalue
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -111,6 +113,52 @@ func TestSignRefusesEmptySignerName(t *testing.T) {
 	unsigned := buildUnsigned(t, buildCoMID(t), nil)
 	if _, err := Sign(context.Background(), unsigned, newKey(t, elliptic.P256()), cose.AlgorithmES256, ""); !errors.Is(err, ErrNoSignerName) {
 		t.Fatalf("got %v, want ErrNoSignerName", err)
+	}
+}
+
+// strictSigner is a KMS-like ECDSA signer: like AWS KMS it rejects nil
+// SignerOpts, and like GCP KMS it signs with the hash the options name, so it
+// refuses a hash that does not match the curve's COSE algorithm.
+type strictSigner struct {
+	key  *ecdsa.PrivateKey
+	want crypto.Hash
+}
+
+func (s strictSigner) Public() crypto.PublicKey { return s.key.Public() }
+
+func (s strictSigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if opts == nil {
+		return nil, errors.New("strictSigner: nil SignerOpts")
+	}
+	if opts.HashFunc() != s.want {
+		return nil, fmt.Errorf("strictSigner: hash %v, want %v", opts.HashFunc(), s.want)
+	}
+	return s.key.Sign(r, digest, opts)
+}
+
+// TestSignPassesTheAlgorithmHashToTheSigner: go-cose calls an opaque ECDSA
+// signer with nil SignerOpts; Sign must name the COSE algorithm's hash.
+func TestSignPassesTheAlgorithmHashToTheSigner(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		curve elliptic.Curve
+		alg   cose.Algorithm
+		hash  crypto.Hash
+	}{
+		{"P-256", elliptic.P256(), cose.AlgorithmES256, crypto.SHA256},
+		{"P-384", elliptic.P384(), cose.AlgorithmES384, crypto.SHA384},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signer := strictSigner{key: newKey(t, tc.curve), want: tc.hash}
+			unsigned := buildUnsigned(t, buildCoMID(t), nil)
+			signed, err := Sign(context.Background(), unsigned, signer, tc.alg, testSignerName)
+			if err != nil {
+				t.Fatalf("Sign: %v", err)
+			}
+			if _, err := VerifySigned(signed, VerifyOptions{PublicKey: signer.Public()}); err != nil {
+				t.Fatalf("VerifySigned: %v", err)
+			}
+		})
 	}
 }
 
