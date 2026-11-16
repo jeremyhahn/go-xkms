@@ -217,6 +217,45 @@ func TestSealUnseal_PlatformPolicySRK_PCRBranchesStillFailAfterExtend(t *testing
 	assert.Equal(t, ErrPolicyCheckFailed, err)
 }
 
+// A seal through Seal with the platform policy and a caller PCR selection
+// is bound to the selected PCRs too: extending a selected PCR outside the
+// platform set must close the object (#2226).
+func TestSeal_PlatformPolicy_BindsRequestedPCRSelection(t *testing.T) {
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+
+	// The harness's platform set is {7, 11}; 15 lies outside it.
+	const extraPCR = 15
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, 7, extraPCR)
+	attrsFor := func() *types.KeyAttributes {
+		attrs := sealedKeyAttrsUnder(
+			platformPolicySRKAttrs(t, h, nil), "platform-policy-pcr-selection", nil)
+		attrs.TPMAttributes.PCRSelection = selection
+		return attrs
+	}
+
+	secret := []byte("bound-to-pcr-7-and-15")
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+	require.NoError(t, err)
+
+	// Baseline: the unchanged state opens the object.
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+	require.NoError(t, err, "the sealed state must open the object")
+	require.Equal(t, secret, got)
+
+	h.extendPCR(t, extraPCR, []byte("post-seal-measurement"))
+
+	out, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+	require.Error(t, err, "extending a selected PCR must close the object")
+	assert.Nil(t, out)
+}
+
 // TestSealUnseal_WrongSRKPINAfterExtend_Rejected proves the SRK's recovery path
 // still demands the SRK's auth value. The pin record removes the PCR coupling
 // of the OR digest; it does not remove the PIN requirement, which the TPM
