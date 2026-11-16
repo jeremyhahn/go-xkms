@@ -236,3 +236,19 @@ describe("SealView", () => {
     expect(await screen.findByText("backends unavailable")).toBeInTheDocument();
   });
 });
+
+describe("SealView without the backend list", () => {
+  it("keeps Unseal usable when backends.list() is refused", async () => {
+    backendsList.mockRejectedValue(new Error("permission denied"));
+    unseal.mockResolvedValue({ plaintext: "aGk=" } as UnsealResponse);
+    render(SealView);
+
+    expect(await screen.findByText("permission denied")).toBeInTheDocument();
+    const json = JSON.stringify({ backend: "software", ciphertext: "AAEC", nonce: "AA==" });
+    await fireEvent.input(screen.getByLabelText("Seal result JSON"), { target: { value: json } });
+    await fireEvent.click(screen.getByRole("button", { name: "Unseal" }));
+
+    await waitFor(() => expect(unseal).toHaveBeenCalledOnce());
+    expect(await screen.findByLabelText("Plaintext")).toHaveTextContent("hi");
+  });
+});
