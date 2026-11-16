@@ -48,7 +48,8 @@ the refusal.
 
 - With a trust domain set, no tenant may equal the cluster trust domain, so
   a node certificate under the cluster domain that carries an OU is refused
-  on the certificate-only path; no current caller depends on it.
+  on the certificate-only path; callers that rely on such certificates are
+  not yet checked.
 - Out of scope: role mapping, permissions, `pkg/server/unified_tls.go`.
 - The PR waits for lane-verify and the CA merge gate.
 
