@@ -518,7 +518,7 @@ func verifyBarrierSealedWithPIN(bsvc *BarrierService, pin string) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, destroyCreds(creds)) }()
+	defer func() { err = errors.Join(err, xkms.DestroySealCredentials(creds)) }()
 
 	return bsvc.barrier.VerifyCredentials(ctx, creds)
 }
