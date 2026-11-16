@@ -111,6 +111,11 @@ func VerifyDetached(claimsSet, dsd []byte) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	// The digest must be a CBOR byte string (major type 2). Decoding into
+	// []byte alone would also accept an array of unsigned integers.
+	if len(parts[1]) == 0 || parts[1][0]>>5 != 2 {
+		return Record{}, fmt.Errorf("%w: digest is not a byte string", ErrMalformedDigest)
+	}
 	var want []byte
 	if err := decMode.Unmarshal(parts[1], &want); err != nil {
 		return Record{}, fmt.Errorf("%w: digest: %v", ErrMalformedDigest, err)
