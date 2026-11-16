@@ -24,7 +24,7 @@ const legacySession = `{"id":"abc123","title":"alice@example.com","host":"exampl
 
 func TestImportLegacyKeepsTheSession(t *testing.T) {
 	s := newTestStore(t)
-	// Importing twice is harmless: the second import overwrites the first.
+	// Importing twice is harmless: the second import leaves the first in place.
 	for range 2 {
 		if err := s.ImportLegacy(t.Context(), "abc123", []byte(legacySession)); err != nil {
 			t.Fatalf("ImportLegacy: %v", err)
@@ -41,6 +41,32 @@ func TestImportLegacyKeepsTheSession(t *testing.T) {
 	all, err := s.List()
 	if err != nil || len(all) != 1 {
 		t.Fatalf("List = %d sessions, %v", len(all), err)
+	}
+}
+
+func TestImportLegacyNeverOverwritesNewerData(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.ImportLegacy(t.Context(), "abc123", []byte(legacySession)); err != nil {
+		t.Fatalf("ImportLegacy: %v", err)
+	}
+	sess, err := s.Get("abc123")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	sess.Title = "renamed"
+	if err := s.Save(sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// The legacy key survived (its delete failed): the migrator imports it again.
+	if err := s.ImportLegacy(t.Context(), "abc123", []byte(legacySession)); err != nil {
+		t.Fatalf("second ImportLegacy: %v", err)
+	}
+	got, err := s.Get("abc123")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Title != "renamed" {
+		t.Fatalf("title after re-import = %q, want the newer %q", got.Title, "renamed")
 	}
 }
 

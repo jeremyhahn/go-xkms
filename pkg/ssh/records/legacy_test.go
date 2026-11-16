@@ -52,6 +52,30 @@ func TestTableImportReadsBack(t *testing.T) {
 	}
 }
 
+func TestTableImportNeverOverwritesNewerData(t *testing.T) {
+	ctx := context.Background()
+	table := newTable(t)
+	data := []byte(`{"scope":"user","owner":"alice","name":"id","value":"legacy"}`)
+
+	if err := table.Import(ctx, "ssh/users/alice/keys/id", data, acceptAll); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if stored, err := table.Put(ctx, scope.User, "alice", "id", body{Value: "newer"}); err != nil || !stored {
+		t.Fatalf("Put = %v, %v", stored, err)
+	}
+	// The legacy key survived (its delete failed): the migrator imports it again.
+	if err := table.Import(ctx, "ssh/users/alice/keys/id", data, acceptAll); err != nil {
+		t.Fatalf("second Import: %v", err)
+	}
+	e, found, err := table.Get(ctx, scope.User, "alice", "id")
+	if err != nil || !found {
+		t.Fatalf("Get = %v, %v", found, err)
+	}
+	if e.Body.Value != "newer" {
+		t.Fatalf("value after re-import = %q, want the newer %q", e.Body.Value, "newer")
+	}
+}
+
 func TestTableImportNamesByHost(t *testing.T) {
 	ctx := context.Background()
 	table := newTable(t)

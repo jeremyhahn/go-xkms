@@ -24,7 +24,7 @@ const legacyProfile = `{"id":"p-1","name":"web","folder_path":"prod","host":"web
 
 func TestImportLegacyKeepsTheProfile(t *testing.T) {
 	s := newStore(t)
-	// Importing twice is harmless: the second import overwrites the first.
+	// Importing twice is harmless: the second import leaves the first in place.
 	for range 2 {
 		if err := s.ImportLegacy(t.Context(), "p-1", []byte(legacyProfile)); err != nil {
 			t.Fatalf("ImportLegacy: %v", err)
@@ -36,6 +36,33 @@ func TestImportLegacyKeepsTheProfile(t *testing.T) {
 	}
 	if got.ID != "p-1" || got.Name != "web" || got.Host != "web.example.com" || got.FolderPath != "prod" {
 		t.Fatalf("imported profile = %+v", got)
+	}
+}
+
+func TestImportLegacyNeverOverwritesNewerData(t *testing.T) {
+	s := newStore(t)
+	if err := s.ImportLegacy(t.Context(), "p-1", []byte(legacyProfile)); err != nil {
+		t.Fatalf("ImportLegacy: %v", err)
+	}
+	p, err := s.Get("p-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	p.Host = "newer.example.com"
+	// Save in place: the legacy ID is not the one Update would derive.
+	if err := s.profiles.Save(t.Context(), &record{Key: "p-1", Profile: *p}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// The legacy key survived (its delete failed): the migrator imports it again.
+	if err := s.ImportLegacy(t.Context(), "p-1", []byte(legacyProfile)); err != nil {
+		t.Fatalf("second ImportLegacy: %v", err)
+	}
+	got, err := s.Get("p-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Host != "newer.example.com" {
+		t.Fatalf("host after re-import = %q, want the newer %q", got.Host, "newer.example.com")
 	}
 }
 
