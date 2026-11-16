@@ -16,7 +16,9 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -49,6 +51,7 @@ var ErrNilQRDBSink = errors.New("audit: go-qrdb audit sink is nil")
 // is written to a go-qrdb node audit sink through go-xkms sdk/go, and Query
 // reads it back from that sink. xkey keeps no audit storage of its own.
 type QRDBStore struct {
+	mu   sync.RWMutex
 	sink xkms.QRDBNodeAuditLogger
 }
 
@@ -62,8 +65,48 @@ func NewQRDBStore(sink xkms.QRDBNodeAuditLogger) (*QRDBStore, error) {
 	return &QRDBStore{sink: sink}, nil
 }
 
+// MoveTo replays every event of the current sink into next, closes the
+// current sink and writes to next from then on. The desktop starts on a
+// go-qrdb ring buffer and moves to the go-qrdb file sink in its data
+// directory once that directory is open. On a replay error the store keeps
+// its current sink.
+func (s *QRDBStore) MoveTo(next xkms.QRDBNodeAuditLogger) error {
+	if next == nil {
+		return ErrNilQRDBSink
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ctx := context.Background()
+	qf := xkms.QRDBNodeAuditFilter{Limit: qrdbQueryPageSize}
+	for {
+		page, err := s.sink.Query(ctx, qf)
+		if err != nil {
+			return fmt.Errorf("audit: read go-qrdb sink: %w", err)
+		}
+		if page == nil {
+			break
+		}
+		for i := range page.Events {
+			if err := next.Emit(ctx, page.Events[i]); err != nil {
+				return fmt.Errorf("audit: replay into go-qrdb sink: %w", err)
+			}
+		}
+		if page.Next == "" {
+			break
+		}
+		qf.Cursor = page.Next
+	}
+	old := s.sink
+	s.sink = next
+	return old.Close()
+}
+
 // Close closes the go-qrdb sink.
-func (s *QRDBStore) Close() error { return s.sink.Close() }
+func (s *QRDBStore) Close() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sink.Close()
+}
 
 // Log writes entry to the go-qrdb sink. A write the sink did not record is
 // returned, so the caller can fail the operation it audits.
@@ -71,6 +114,8 @@ func (s *QRDBStore) Log(entry Entry) error {
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now()
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.sink.Emit(context.Background(), entryToQRDBEvent(entry))
 }
 
@@ -128,6 +173,8 @@ func (s *QRDBStore) Query(filter QueryFilter) []Entry {
 	}
 	var matched []Entry
 	skipped := 0
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for {
 		page, err := s.sink.Query(context.Background(), qf)
 		if err != nil || page == nil {
