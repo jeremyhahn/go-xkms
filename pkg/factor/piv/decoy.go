@@ -14,6 +14,7 @@
 package piv
 
 import (
+	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
 	"strconv"
@@ -80,25 +81,29 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 	if err != nil {
 		return nil, err
 	}
-	from, to := decoy.NotBeforeSpan(decoy.Certificates(like))
-	notBefore, err := d.Time("not-before", from, to)
-	if err != nil {
-		return nil, err
-	}
-	// The OU mirrors one roster certificate, picked from the seed, so the
-	// decoys carry the roster's mix: a roster with legacy OU-less holders
-	// yields OU-less decoys in the same share. Roster enrollments rebuilt by
-	// the ceremony carry no TenantID, so the certificates are the source.
+	// The OU and the validity mirror one roster certificate, picked from the
+	// seed: the decoys carry the roster's mix (a roster with legacy OU-less
+	// holders yields OU-less decoys in the same share), and each decoy's
+	// NotBefore falls within its exemplar's cohort (the roster certificates
+	// with the same OU), so no decoy pairs an OU with a date only the other
+	// cohort has. Roster enrollments rebuilt by the ceremony carry no
+	// TenantID, so the certificates are the source.
 	subject := pkix.Name{CommonName: cn}
 	var tenant string
-	if certs := decoy.Certificates(like); len(certs) > 0 {
+	certs := decoy.Certificates(like)
+	cohort := certs
+	if len(certs) > 0 {
 		pickBytes, err := d.Bytes("tenant-ou", 8)
 		if err != nil {
 			return nil, err
 		}
 		pick := new(big.Int).Mod(new(big.Int).SetBytes(pickBytes), big.NewInt(int64(len(certs)))).Int64()
-		if ou := certs[pick].Subject.OrganizationalUnit; len(ou) > 0 {
-			tenant = ou[0]
+		tenant = certOU(certs[pick])
+		cohort = make([]*x509.Certificate, 0, len(certs))
+		for _, c := range certs {
+			if certOU(c) == tenant {
+				cohort = append(cohort, c)
+			}
 		}
 	} else {
 		tenants := make([]string, 0, len(like))
@@ -108,6 +113,11 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 			}
 		}
 		tenant = decoy.Predominant(decoy.NonEmpty(tenants), "")
+	}
+	from, to := decoy.NotBeforeSpan(cohort)
+	notBefore, err := d.Time("not-before", from, to)
+	if err != nil {
+		return nil, err
 	}
 	if tenant != "" {
 		if subject, _, err = ca.StampTenant(tenant, subject, nil); err != nil {
@@ -126,4 +136,13 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 		"ttl":       decoy.Predominant(decoy.NonEmpty(decoy.MetadataValues(like, "ttl")), strconv.Itoa(f.cfg.ChallengeTTLSeconds)),
 	}
 	return d.Enrollment(FactorName, like, certPEM, metadata)
+}
+
+// certOU returns a certificate's tenant OU (Subject OU[0]), or "" when the
+// certificate carries none.
+func certOU(c *x509.Certificate) string {
+	if ou := c.Subject.OrganizationalUnit; len(ou) > 0 {
+		return ou[0]
+	}
+	return ""
 }
