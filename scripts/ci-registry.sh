@@ -682,8 +682,25 @@ lan_timeout() {
   printf '%s\n' "$t"
 }
 
+# lan_config: an empty private Docker config for the CI_IMAGE_REGISTRY pull
+# and push (no auth, so no credential of the runner's or the run's is ever
+# offered to it: #2243 Codex P1-2), made once, removed at exit. Only the
+# runner's CLI plugins are linked in.
+lan_cfg=""
+lan_config() {
+  [ -z "$lan_cfg" ] || return 0
+  local plugins=${DOCKER_CONFIG:-${HOME:-/nonexistent}/.docker}/cli-plugins
+  lan_cfg=$(mktemp -d)
+  cleanup+=("$lan_cfg")
+  [ ! -d "$plugins" ] || ln -s "$plugins" "$lan_cfg/cli-plugins"
+}
+
+# lan_pull <family> <hold> [ref]: 0 on a hit held, 1 when the registry is not
+# used, 2 on a miss. With a digest ref, the hit must be that digest (#2243
+# Codex P1-1); any other image is a miss, and its pulled name is dropped.
 lan_pull() {
-  local family=$1 hold=$2 lanref tag digest id
+  local family=$1 hold=$2 ref=${3:-} lanref tag digest id want=""
+  [[ $ref != *@sha256:* ]] || want=${ref##*@}
   if ! lanref=$(lan_ref "$family"); then
     echo "==> CI_IMAGE_REGISTRY is not a host[:port]; not used" >&2
     return 1
@@ -693,15 +710,22 @@ lan_pull() {
     return 1
   fi
   tag=${lanref#"$CI_IMAGE_REGISTRY"/}
-  timeout "$(lan_timeout)" docker pull --quiet "$lanref" >/dev/null 2>&1 || return 2
+  lan_config
+  timeout "$(lan_timeout)" env DOCKER_CONFIG="$lan_cfg" docker pull --quiet "$lanref" >/dev/null 2>&1 || return 2
+  digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$lanref" 2>/dev/null |
+    while IFS= read -r d; do [[ $d != "${lanref%:*}@"* ]] || { echo "${d##*@}"; break; }; done)
+  if [ -n "$want" ] && [ "$digest" != "$want" ]; then
+    echo "==> $lanref is ${digest:-of no digest}, not the digest of $ref; not used" >&2
+    docker image rm "$lanref" >/dev/null 2>&1 || true
+    return 2
+  fi
   docker tag "$lanref" "$tag" || return 2
-  digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$lanref" 2>/dev/null || true)
   id=$(docker image inspect -f '{{.Id}}' "$tag" 2>/dev/null) || return 2
   [[ $id =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
   docker rm -f "$hold" >/dev/null 2>&1 || true
   docker create --pull never --name "$hold" "$id" true >/dev/null || return 2
   image=$id
-  echo "==> pulled $lanref ${digest##*@}" >&2
+  echo "==> pulled $lanref $digest" >&2
   echo "==> $hold holds $tag ($id) until the job's teardown" >&2
 }
 
@@ -709,7 +733,8 @@ lan_push() {
   local family=$1 src=$2 lanref what="built"
   lanref=$(lan_ref "$family") || return 0
   [ "$src" = "${lanref#"$CI_IMAGE_REGISTRY"/}" ] || what="pulled from the forge"
-  if docker tag "$src" "$lanref" && timeout "$(lan_timeout)" docker push "$lanref" >/dev/null 2>&1; then
+  lan_config
+  if docker tag "$src" "$lanref" && timeout "$(lan_timeout)" env DOCKER_CONFIG="$lan_cfg" docker push "$lanref" >/dev/null 2>&1; then
     echo "==> miss, $what and pushed $lanref" >&2
   else
     echo "==> miss, $what, push failed" >&2
@@ -730,7 +755,7 @@ use() {
   fi
   # #2243: CI_IMAGE_REGISTRY comes first, before any GITHUB_SERVER_URL logic.
   if [ -n "${CI_IMAGE_REGISTRY:-}" ]; then
-    lan_pull "$family" "$hold" && lan_rc=0 || lan_rc=$?
+    lan_pull "$family" "$hold" "$ref" && lan_rc=0 || lan_rc=$?
   fi
   if [ "$lan_rc" -ne 0 ]; then
     if [ -n "$ref" ] && pull_ref "$ref" "$hold"; then
