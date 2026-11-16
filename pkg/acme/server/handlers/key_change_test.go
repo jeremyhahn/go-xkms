@@ -88,6 +88,12 @@ func generateTestECDSAKey(t *testing.T, curve elliptic.Curve) *TestKey {
 
 // createKeyChangeRequest creates a properly formatted key-change request with inner JWS
 func createKeyChangeRequest(t *testing.T, service *RestService, oldKey, newKey *TestKey, accountID uint64) *http.Request {
+	return createKeyChangeRequestInner(t, service, oldKey, newKey, accountID, false)
+}
+
+// createKeyChangeRequestInner builds a key-change request whose outer JWS is
+// flattened JSON; compactInner serializes the inner JWS in compact form.
+func createKeyChangeRequestInner(t *testing.T, service *RestService, oldKey, newKey *TestKey, accountID uint64, compactInner bool) *http.Request {
 	// Get a nonce for the inner JWS
 	innerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
@@ -155,6 +161,10 @@ func createKeyChangeRequest(t *testing.T, service *RestService, oldKey, newKey *
 	require.NoError(t, err)
 
 	innerJWSString := innerJWS.FullSerialize()
+	if compactInner {
+		innerJWSString, err = innerJWS.CompactSerialize()
+		require.NoError(t, err)
+	}
 
 	// Now create outer JWS with old key
 	outerNonce, err := service.GetNonceService().Generate()
@@ -1094,6 +1104,33 @@ func TestKeyChangeHandler_VerifyAccountKeyUpdated(t *testing.T) {
 	newKeyPEM, err := xkmssdk.EncodePublicKeyPEM(newKey.PublicKey)
 	require.NoError(t, err)
 	assert.Equal(t, string(newKeyPEM), updatedAccount.Key)
+}
+
+// TestKeyChangeHandler_CompactInnerJWSRejected pins the inner key-rollover
+// parser to flattened JSON: an otherwise valid rollover whose inner JWS is
+// compact-serialized inside a JSON outer JWS is malformed and leaves the
+// stored account key unchanged.
+func TestKeyChangeHandler_CompactInnerJWSRejected(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	oldKey := generateTestKey(t)
+	newKey := generateTestKey(t)
+	account := createTestAccount(t, service, oldKey)
+	originalKey := account.Key
+
+	req := createKeyChangeRequestInner(t, service, oldKey, newKey, account.ID, true)
+
+	resp := httptest.NewRecorder()
+	service.KeyChangeHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
+
+	accountDAO, err := service.storageFactory.AccountDAO()
+	require.NoError(t, err)
+	stored, err := accountDAO.Get(context.Background(), account.ID)
+	require.NoError(t, err)
+	assert.Equal(t, originalKey, stored.Key)
 }
 
 // TestKeyChangeHandler_InvalidAccountKey tests error handling when account key cannot be decoded
