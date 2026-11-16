@@ -81,3 +81,39 @@ func TestModule_HostMount_AuthDisabledAllowsInvite(t *testing.T) {
 	})
 	require.NoError(t, err, "an auth-disabled host allows the invitation")
 }
+
+// nodeScopeAuthorizer stands in for the host node's Authorizer(): it
+// grants what the identity carries in ScopePermissions.
+type nodeScopeAuthorizer struct{}
+
+func (nodeScopeAuthorizer) Authorize(_ context.Context, identity *auth.Identity, resource, action string) error {
+	for _, p := range identity.ScopePermissions {
+		if p == resource+":"+action {
+			return nil
+		}
+	}
+	return &qrdbsdk.PermissionDeniedError{}
+}
+
+// TestModule_HostMount_DelegatedInviteUsesNodeAuthorizer: a delegated caller
+// granted users:invite only through ScopePermissions gets its invitation
+// when the host hands the module its node authorizer, which decides on the
+// original identity; the SDK RBAC client drops ScopePermissions.
+func TestModule_HostMount_DelegatedInviteUsesNodeAuthorizer(t *testing.T) {
+	client := newHostNodeClient(t)
+	h := mountLikeHost(t, client, WithNodeAuthorizer(nodeScopeAuthorizer{}))
+	h.svc.SetUserClients(client.Users(), client.Roles())
+	h.module.hostStores(h.svc)
+
+	delegated := &auth.Identity{
+		Subject:          "qrdb-service:onboarder",
+		TenantID:         qrdbsdk.SystemTenantID,
+		ScopePermissions: []string{string(qrdbsdk.PermissionUsersInvite)},
+	}
+	_, err := h.svc.CreateUser(auth.WithIdentity(context.Background(), delegated), &transport.CreateUserRequest{
+		Username: "invitee",
+		Email:    "invitee@example.com",
+		TenantID: qrdbsdk.SystemTenantID,
+	})
+	require.NoError(t, err, "the delegated users:invite grant is honoured")
+}
