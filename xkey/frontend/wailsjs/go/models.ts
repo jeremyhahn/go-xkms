@@ -958,6 +958,7 @@ export namespace services {
 	    authzType: string;
 	    challenge: string;
 	    csrPath: string;
+	    httpAddr: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ACMERenewRequest(source);
@@ -970,6 +971,7 @@ export namespace services {
 	        this.authzType = source["authzType"];
 	        this.challenge = source["challenge"];
 	        this.csrPath = source["csrPath"];
+	        this.httpAddr = source["httpAddr"];
 	    }
 	}
 	export class AddFactorRequest {
