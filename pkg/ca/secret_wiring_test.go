@@ -15,6 +15,9 @@ package ca
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -216,6 +219,72 @@ func newPKCS8CABackend(t *testing.T) (xkms.Backend, storage.Backend) {
 	})
 	require.NoError(t, err)
 	return backend, keyStorage
+}
+
+// sharedParentBackend attaches one shared parent KeyAttributes to every
+// Signer lookup that has none, the way the TPM 2.0 backend attaches its
+// b.srkAttrs. The parent and its password belong to the backend, not to the
+// CA lookup that triggered the call.
+type sharedParentBackend struct {
+	xkms.Backend
+	parent *types.KeyAttributes
+}
+
+func (b *sharedParentBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	if attrs != nil && attrs.Parent == nil {
+		attrs.Parent = b.parent
+	}
+	return b.Backend.Signer(ctx, attrs)
+}
+
+// TestCA_PasswordCleanupKeepsBackendParentPassword proves the CA clears only
+// the passwords its own key lookup allocated: a parent password the backend
+// attached (shared across lookups, like the TPM SRK's) stays readable after
+// the issuing signer is taken and after each Sign.
+func TestCA_PasswordCleanupKeepsBackendParentPassword(t *testing.T) {
+	ctx := context.Background()
+	inner, _ := newPKCS8CABackend(t)
+	parentPassword, err := types.NewPassword([]byte("backend-parent-password"))
+	require.NoError(t, err)
+	backend := &sharedParentBackend{
+		Backend: inner,
+		parent:  &types.KeyAttributes{CN: "backend-parent", Password: parentPassword},
+	}
+	assertParentReadable := func(step string) {
+		t.Helper()
+		var got []byte
+		require.NoError(t, parentPassword.WithBytes(func(b []byte) error {
+			got = append([]byte(nil), b...)
+			return nil
+		}), "%s: the backend's parent password must stay readable", step)
+		require.Equal(t, "backend-parent-password", string(got),
+			"%s: the CA cleared a parent password it does not own", step)
+	}
+
+	root := passwordProtectedIdentity(t, rootIdentity("Backend Parent CA"), "ca-key-password")
+	trusted, err := NewParentCA(&Params{
+		Identity:           []Identity{root},
+		KeyStore:           backend,
+		BackendForStore:    singleBackendFactory(backend),
+		RevocationStore:    storage.NewMemory(),
+		CertStore:          newInMemoryCertStore(t),
+		RequireKeyPassword: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, trusted.Init(ctx))
+	assertParentReadable("Init")
+	ca, ok := trusted.(*CA)
+	require.True(t, ok, "NewParentCA must return a *CA")
+
+	signer, err := ca.getSigner(ctx)
+	require.NoError(t, err)
+	assertParentReadable("getSigner")
+	digest := sha256.Sum256([]byte("backend parent"))
+	for i := 0; i < 2; i++ {
+		_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+		require.NoError(t, err)
+		assertParentReadable(fmt.Sprintf("Sign %d", i+1))
+	}
 }
 
 // TestCA_RequireKeyPassword_ConfiguredPasswordInitializes covers #1768: the
