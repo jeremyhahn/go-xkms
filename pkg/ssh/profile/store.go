@@ -418,9 +418,11 @@ func (s *DAOStore) DeleteFolder(path string) error {
 	return nil
 }
 
-// ImportLegacy upserts a profile the pre-DAO sealed-KV store wrote under
+// ImportLegacy creates a profile the pre-DAO sealed-KV store wrote under
 // ssh/profiles/<id>.json: data is its JSON. Unlike Add, the profile keeps
-// its ID and timestamps, so importing it twice is harmless. It is the
+// its ID and timestamps. A profile already stored under id is kept as it is
+// (it is this record imported before, possibly changed since), so
+// importing it twice is harmless and never reverts newer data. It is the
 // per-record step of the SSH store migrator (pkg/ssh/migrate). A record
 // that does not decode, names another ID or fails validation is an
 // ErrLegacyRecord.
@@ -440,7 +442,9 @@ func (s *DAOStore) ImportLegacy(ctx context.Context, id string, data []byte) err
 	if s.closed {
 		return ErrStoreClosed
 	}
-	if err := s.profiles.Save(ctx, &record{Key: id, Profile: p}); err != nil {
+	// Create-if-absent: a profile already stored under id is this record
+	// imported before, possibly changed since, so it is kept.
+	if _, err := s.profiles.SaveIfAbsent(ctx, &record{Key: id, Profile: p}); err != nil {
 		return &errs.Joined{Lead: ErrStorage, Detail: "import " + id, Cause: err}
 	}
 	return nil

@@ -156,9 +156,11 @@ func (s *DAOStore) Delete(id string) error {
 	return nil
 }
 
-// ImportLegacy upserts a session the pre-DAO sealed-KV store wrote under
+// ImportLegacy creates a session the pre-DAO sealed-KV store wrote under
 // ssh/sessions/<id>: data is its JSON. The session keeps its ID and
-// timestamps, so importing it twice is harmless. It is the per-record step
+// timestamps. A session already stored under id is kept as it is (it is
+// this record imported before, possibly changed since), so importing it
+// twice is harmless and never reverts newer data. It is the per-record step
 // of the SSH store migrator (pkg/ssh/migrate). A record that does not decode,
 // names another ID or fails validation is an ErrLegacyRecord.
 func (s *DAOStore) ImportLegacy(ctx context.Context, id string, data []byte) error {
@@ -175,7 +177,9 @@ func (s *DAOStore) ImportLegacy(ctx context.Context, id string, data []byte) err
 	if err := sess.Validate(); err != nil {
 		return &errs.Joined{Lead: ErrLegacyRecord, Detail: id, Cause: err}
 	}
-	if err := s.records.Save(ctx, &record{Key: id, Session: sess}); err != nil {
+	// Create-if-absent: a session already stored under id is this record
+	// imported before, possibly changed since, so it is kept.
+	if _, err := s.records.SaveIfAbsent(ctx, &record{Key: id, Session: sess}); err != nil {
 		return &errs.Joined{Lead: ErrStorage, Detail: "import " + id, Cause: err}
 	}
 	return nil

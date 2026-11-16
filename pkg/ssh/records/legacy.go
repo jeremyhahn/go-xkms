@@ -30,17 +30,20 @@ type legacyHeader struct {
 	Host  string      `json:"host"`
 }
 
-// Import upserts a record written by the pre-DAO sealed-KV store. rel is the
+// Import creates a record written by the pre-DAO sealed-KV store. rel is the
 // record's old key below the tenant root, which is its Kind.RecordPath, and
 // data is its JSON. The old JSON holds the scope, owner and name beside the
 // body fields, and T keeps the old field names, so data decodes into both.
 // check validates the decoded entity before it is written.
 //
-// Import overwrites a record the same owner already holds, so importing a
-// record twice is harmless. It returns *LegacyRecordError when data does not
-// decode or fails check, *LegacyPathError when data names a record other
-// than rel, *LegacyOwnerConflictError when another owner holds the record,
-// and the Put error when the write fails.
+// Import never overwrites a record: one the same owner already holds is
+// newer data (or this record imported before), so Import keeps it and
+// returns nil, and importing a record twice is harmless. It returns
+// *LegacyRecordError when data does not decode or fails check,
+// *LegacyPathError when data names a record other than rel,
+// *LegacyOwnerConflictError when another owner holds the record, the Create
+// error when the write fails, and *ConflictError when the record keeps
+// vanishing between the create and the read.
 func (t *Table[T]) Import(ctx context.Context, rel string, data []byte, check func(*Entity[T]) error) error {
 	var h legacyHeader
 	if err := json.Unmarshal(data, &h); err != nil {
@@ -65,12 +68,27 @@ func (t *Table[T]) Import(ctx context.Context, rel string, data []byte, check fu
 	if err := check(e); err != nil {
 		return &LegacyRecordError{Path: rel, Err: err}
 	}
-	stored, err := t.Put(ctx, e.Scope, e.Owner, e.Name, e.Body)
-	if err != nil {
-		return err
+	// Create, never Put: a record already at the path is newer than the
+	// legacy one (the migrator re-runs while a legacy key survives its
+	// delete), so it is kept. The owner's own record means already migrated.
+	for range maxAttempts {
+		stored, err := t.Create(ctx, e.Scope, e.Owner, e.Name, e.Body)
+		if err != nil || stored {
+			return err
+		}
+		current, err := t.load(ctx, e.Path)
+		if err != nil {
+			return err
+		}
+		if current == nil {
+			continue
+		}
+		owner := current.Owner
+		discard(current)
+		if owner != e.Owner {
+			return &LegacyOwnerConflictError{Path: rel}
+		}
+		return nil
 	}
-	if !stored {
-		return &LegacyOwnerConflictError{Path: rel}
-	}
-	return nil
+	return &ConflictError{Op: "import", Path: e.Path}
 }

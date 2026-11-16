@@ -35,7 +35,7 @@ func TestTableImportReadsBack(t *testing.T) {
 	if err := acme.Import(ctx, "ssh/users/alice/keys/id", data, acceptAll); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
-	// A second import of the same record overwrites it in place.
+	// A second import of the same record keeps the first in place.
 	if err := acme.Import(ctx, "ssh/users/alice/keys/id", data, acceptAll); err != nil {
 		t.Fatalf("second Import: %v", err)
 	}
