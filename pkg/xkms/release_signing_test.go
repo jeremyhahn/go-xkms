@@ -28,10 +28,12 @@ import (
 	"github.com/veraison/corim/corim"
 	"github.com/veraison/go-cose"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
@@ -134,6 +136,26 @@ func TestSignReleaseCoRIM_NotConfigured(t *testing.T) {
 	svc := &XKMSService{}
 	_, err := svc.SignReleaseCoRIM(context.Background(), &SignReleaseCoRIMRequest{Repository: "acme/app"})
 	require.Error(t, err)
+}
+
+// TestReleaseSigning_HonoursKeyPolicy disables the release key in the key
+// policy store: release signing and the repository signer refuse it, as
+// XKMSService.Sign does.
+func TestReleaseSigning_HonoursKeyPolicy(t *testing.T) {
+	svc, _, ctx := releaseSigningService(t, "attestation_signing_keys:sign")
+	store, err := keypolicy.NewStore(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
+	svc.SetKeyPolicyStore(store)
+	generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+	_, err = svc.UpdateKeyStatus(ctx, &transport.UpdateKeyStatusRequest{Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, Status: transport.KeyStatusDisabled})
+	require.NoError(t, err)
+
+	var unavailable *keypolicy.KeyUnavailableError
+	_, err = svc.SignReleaseCoRIM(ctx, &SignReleaseCoRIMRequest{Repository: "acme/app", CoRIM: unsignedCoRIM(t)})
+	require.ErrorAs(t, err, &unavailable)
+	assert.Equal(t, keypolicy.StatusDisabled, unavailable.Status)
+	_, err = svc.RepositorySigner(ctx, "acme/app")
+	require.ErrorAs(t, err, &unavailable)
 }
 
 func TestCoseAlgorithm(t *testing.T) {
