@@ -535,6 +535,63 @@ func TestCreateUser_InviteStoreNotConfigured(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotConfigured)
 }
 
+// TestCreateUser_RefusesNonSystemTenantInvite pins the #2183 narrowing at
+// creation: every redemption path refuses an invitation of a tenant other
+// than the system tenant (go-xkms #2202 brings tenant-scoped redemption), so
+// CreateUser refuses such an invited account with the same typed refusal
+// before anything is persisted, rather than leaving a pending account that
+// nothing can ever activate.
+func TestCreateUser_RefusesNonSystemTenantInvite(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.createUser = func(context.Context, *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		t.Fatal("CreateUser must not persist an account whose invitation no redemption path serves")
+		return nil, nil
+	}
+
+	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "acme-user", Email: "user@acme.example", TenantID: "acme",
+	})
+	require.ErrorIs(t, err, ErrInviteUnusable)
+	assert.Nil(t, resp)
+}
+
+// TestCreateUser_SystemTenantInviteStillMinted is the other side of the
+// narrowing: an invited account of the system tenant, named explicitly, is
+// still created pending with an invitation.
+func TestCreateUser_SystemTenantInviteStillMinted(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		assert.True(t, req.Pending)
+		return &qrdbtransport.User{
+			ID: 9, Username: "sys", Email: req.Email, TenantID: req.TenantID,
+			Lifecycle: string(qrdbsdk.LifecyclePending),
+		}, nil
+	}
+
+	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "sys", Email: "sys@example.com", TenantID: qrdbsdk.SystemTenantID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Invite)
+	assert.NotEmpty(t, resp.Invite.Token)
+}
+
+// TestCreateUser_NonSystemTenantWithoutEmailLoginKey shows the refusal is
+// about the invitation only: a certificate-only identity mints none, so it
+// is still created in any tenant.
+func TestCreateUser_NonSystemTenantWithoutEmailLoginKey(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 10, Username: "svc", TenantID: req.TenantID, Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
+	}
+
+	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "svc", WithoutEmailLoginKey: true, TenantID: "acme",
+	})
+	require.NoError(t, err)
+	assert.Nil(t, resp.Invite)
+}
+
 // TestCreateUser_RollsBackOnInviteMintFailure proves the create is atomic: a
 // user this build minted no invitation for is rolled back rather than left
 // pending with nothing that can ever activate it.
