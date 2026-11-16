@@ -16,9 +16,11 @@ package refvalue
 import (
 	"context"
 	"crypto"
+	"crypto/rand"
 	"errors"
 	"io"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/veraison/corim/corim"
 	"github.com/veraison/go-cose"
 
@@ -72,18 +74,58 @@ func Sign(ctx context.Context, unsigned []byte, signer crypto.Signer, alg cose.A
 		return nil, &errs.Joined{Lead: ErrUnsupportedKey, Cause: err}
 	}
 
-	var signed corim.SignedCorim
-	if err := signed.UnsignedCorim.FromCBOR(unsigned); err != nil {
+	// The whole input must be one well-formed CBOR item with bounded
+	// container sizes before the corim decoder sees it: a bare tag head or a
+	// huge declared map makes that decoder panic or allocate without bound.
+	if err := wellformedMode.Wellformed(unsigned); err != nil {
 		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
 	}
-	signed.Meta = *corim.NewMeta().SetSigner(signerName, nil)
+	var parsed corim.UnsignedCorim
+	if err := parsed.FromCBOR(unsigned); err != nil {
+		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+	}
+	if err := parsed.Valid(); err != nil {
+		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+	}
+	metaCBOR, err := corim.NewMeta().SetSigner(signerName, nil).ToCBOR()
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrSign, Cause: err}
+	}
 
-	out, err := signed.Sign(coseSigner)
+	// The COSE payload is the caller's bytes, not a re-encoding: the corim
+	// decoder drops fields it does not register, and a signature must never
+	// cover a document that differs from the one submitted.
+	msg := cose.NewSign1Message()
+	msg.Payload = unsigned
+	msg.Headers.Protected.SetAlgorithm(alg)
+	msg.Headers.Protected[cose.HeaderLabelContentType] = corim.ContentType
+	msg.Headers.Protected[corim.HeaderLabelCorimMeta] = metaCBOR
+	if err := msg.Sign(rand.Reader, corim.NoExternalData, coseSigner); err != nil {
+		return nil, &errs.Joined{Lead: ErrSign, Cause: err}
+	}
+	out, err := msg.MarshalCBOR()
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrSign, Cause: err}
 	}
 	return out, nil
 }
+
+// maxCBORItems bounds every array and map in a CoRIM submitted for signing.
+const maxCBORItems = 1 << 16
+
+// wellformedMode checks CoRIM input for well-formedness with bounded
+// container sizes and nesting.
+var wellformedMode = func() cbor.DecMode {
+	dm, err := cbor.DecOptions{
+		MaxArrayElements: maxCBORItems,
+		MaxMapPairs:      maxCBORItems,
+		MaxNestedLevels:  32,
+	}.DecMode()
+	if err != nil {
+		panic(err)
+	}
+	return dm
+}()
 
 // hashedSigner passes hash as the SignerOpts of every Sign, whatever its
 // caller gave.
