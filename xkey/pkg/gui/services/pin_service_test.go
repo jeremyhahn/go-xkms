@@ -731,29 +731,71 @@ func (s *armableUnsealSealer) Unseal(ctx context.Context, sealed *xkms.SealedDat
 	return s.mockSealer.Unseal(ctx, sealed, opts)
 }
 
-// A strategy unseal failure while checking the barrier credential is not
-// proof that the PIN does not seal it: the change is refused before the PIN
-// backend commits.
-func TestPINService_ChangeUserPIN_StrategyUnsealFailureRefusesBeforeCommit(t *testing.T) {
+// countingSealer records every Seal and Unseal the barrier makes once armed,
+// so a test can prove a hardware barrier is never probed or rewrapped.
+type countingSealer struct {
+	mockSealer
+	armed   atomic.Bool
+	seals   atomic.Int32
+	unseals atomic.Int32
+}
+
+func (s *countingSealer) Seal(ctx context.Context, data []byte, opts *xkms.SealOptions) (*xkms.SealedData, error) {
+	if s.armed.Load() {
+		s.seals.Add(1)
+	}
+	return s.mockSealer.Seal(ctx, data, opts)
+}
+
+func (s *countingSealer) Unseal(ctx context.Context, sealed *xkms.SealedData, opts *xkms.UnsealOptions) ([]byte, error) {
+	if s.armed.Load() {
+		s.unseals.Add(1)
+		return nil, errors.New("hardware barrier must not be unsealed by a PIN change")
+	}
+	return s.mockSealer.Unseal(ctx, sealed, opts)
+}
+
+// A hardware-strategy barrier (TPM2 here; PKCS#11 and cloud KMS alike) is
+// not sealed by the user PIN, so a PIN change neither probes it with
+// VerifyCredentials nor rewraps it with ChangePassword: the PIN change goes
+// through the backend's retry-enforced verify alone and succeeds.
+func TestPINService_ChangeUserPIN_HardwareBarrierSkipsBarrierCheck(t *testing.T) {
 	backend := &mockPINBackend{
 		strategy:   qrdbsdk.PINStrategySoftware,
 		userPINSet: true,
 	}
 	svc := newTestPINService(backend)
 
-	sealer := &armableUnsealSealer{
-		mockSealer: mockSealer{canSeal: true},
-		err:        errors.New("simulated hardware unseal failure"),
-	}
+	sealer := &countingSealer{mockSealer: mockSealer{canSeal: true}}
 	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
 	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return sealer })
 	require.NoError(t, barrierSvc.Initialize("", string(xkms.StrategyTPM2)))
 	svc.SetBarrierService(barrierSvc)
 
 	sealer.armed.Store(true)
-	err := svc.ChangeUserPIN("old-pin", "new-pin")
-	require.ErrorIs(t, err, ErrBarrierNotPINSealed)
-	require.Equal(t, int32(0), backend.changeUserCalls.Load())
+	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
+	require.Equal(t, int32(1), backend.changeUserCalls.Load())
+	require.Equal(t, int32(0), sealer.unseals.Load(), "VerifyCredentials must not run on a hardware barrier")
+	require.Equal(t, int32(0), sealer.seals.Load(), "ChangePassword must not rewrap a hardware barrier")
+	require.True(t, barrierSvc.IsUnsealed())
+}
+
+// The strategy is also known while the barrier is sealed between sessions
+// (from the persisted config): a sealed hardware barrier is skipped too,
+// rather than refused as uninitialized.
+func TestPINService_ChangeUserPIN_SealedHardwareBarrierSkipsBarrierCheck(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	barrierSvc.SetLastStrategy(string(xkms.StrategyPKCS11))
+	svc.SetBarrierService(barrierSvc)
+
+	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
+	require.Equal(t, int32(1), backend.changeUserCalls.Load())
 }
 
 // A PIN-sealed barrier is checked before the commit and rewrapped after it:
