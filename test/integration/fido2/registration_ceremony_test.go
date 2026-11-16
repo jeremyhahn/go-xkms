@@ -66,11 +66,15 @@ func newCeremonySurface(t *testing.T) *ceremonySurface {
 	)
 
 	stores := webauthntest.NewStores(t)
+	openSignUp := true
 	webauthnSvc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
 			RPID:          rpID,
 			RPDisplayName: rpDisplayName,
 			RPOrigins:     []string{rpOrigin},
+			// The ceremony registers a fresh email: open sign-up, which is
+			// off by default (go-xkms#184).
+			AllowPublicRegistration: &openSignUp,
 		},
 		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
