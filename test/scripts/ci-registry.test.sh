@@ -780,9 +780,11 @@ run_script 1 use toolchain "ghcr.io/jeremyhahn/go-xkms-ci-toolchain@$DIGEST" -- 
 stderr_has "is not in this run's registry, $FORGE"
 not_called "docker pull"
 
-start_case "use: a failed pull fails after three attempts and never rebuilds"
-run_script 1 use toolchain "$TOOLCHAIN_REPO@$DIGEST" -- "${RUN_TOKEN[@]}" FAKE_PULL_RC=1
-stderr_has "cannot pull $TOOLCHAIN_REPO@$DIGEST after 3 attempts"
+start_case "use: a failed pull tries three times, then builds on this runner (DS-9239)"
+run_script 0 use toolchain "$TOOLCHAIN_REPO@$DIGEST" -- "${RUN_TOKEN[@]}" FAKE_PULL_RC=1
+stderr_has "failed (attempt 2 of 3)"
+stderr_has "cannot pull $TOOLCHAIN_REPO@$DIGEST; building it on this runner"
+called "docker-build-toolchain"
 if [ "$(grep -c '^docker pull ' "$CALL_LOG")" -eq 3 ]; then
   pass "three pull attempts"
 else

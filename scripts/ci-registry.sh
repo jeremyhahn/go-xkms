@@ -16,7 +16,8 @@
 #   - A push to main (CI_PUBLISH=true): ci-images runs on the release runner
 #     and publishes each image, building and pushing it only when main has
 #     not published that hash yet. Every consumer pulls the printed digest; a
-#     consumer that cannot pull it fails rather than rebuild.
+#     consumer that cannot pull it, or gets no digest, builds the image on
+#     its own runner (DS-9239) rather than fail.
 #   - Any other event (a pull request, the schedule, a dispatch): ci-images
 #     resolves <hash>-main to a digest. When main published the same content,
 #     every consumer pulls it by digest; when it did not, or the registry
@@ -636,7 +637,8 @@ pull_ref() {
     echo "==> pull of $ref failed (attempt $n of $attempts); retrying" >&2
     sleep $((n * backoff))
   done
-  die "cannot pull $ref after $attempts attempts; a consumer never rebuilds an image main published"
+  # DS-9239: the caller falls back to a build on this runner.
+  return 1
 }
 
 # hold_local builds or reuses family $1's image on this runner, holds it as
@@ -723,16 +725,20 @@ use() {
   hold=$(hold_name "$family")
   image=""
   if [ -z "$ref" ] && [ "${CI_PUBLISH:-}" = true ]; then
-    die "no $family image reference on a push to main: a consumer runs the image ci-images published and never builds its own"
+    # DS-9239: a missing reference never turns the job red.
+    echo "::warning::ci-registry: no $family image reference on a push to main; building it on this runner" >&2
   fi
   # #2243: CI_IMAGE_REGISTRY comes first, before any GITHUB_SERVER_URL logic.
   if [ -n "${CI_IMAGE_REGISTRY:-}" ]; then
     lan_pull "$family" "$hold" && lan_rc=0 || lan_rc=$?
   fi
   if [ "$lan_rc" -ne 0 ]; then
-    if [ -n "$ref" ]; then
-      pull_ref "$ref" "$hold"
+    if [ -n "$ref" ] && pull_ref "$ref" "$hold"; then
       image=$ref
+    elif [ -n "$ref" ]; then
+      echo "==> cannot pull $ref; building it on this runner" >&2
+      ref=""
+      hold_local "$family" "$hold"
     else
       echo "==> no $family image of main's for this content; building it on this runner" >&2
       hold_local "$family" "$hold"
