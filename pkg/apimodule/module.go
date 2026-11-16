@@ -52,6 +52,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -140,6 +141,18 @@ func WithQRDBClient(resolve QRDBClientResolver) Option {
 func WithAuthorization(enabled bool) Option {
 	return func(m *Module) {
 		m.authzDisabled = !enabled
+	}
+}
+
+// WithNodeAuthorizer hands the module the host node's own authorizer
+// (node.Node.Authorizer). The self-built service then decides on the
+// caller's original identity, so a delegated caller's ScopePermissions (a
+// token's scp claim, a service principal's declared permissions) count; the
+// qrdb client's RBAC plane, used without it, sees only Subject, TenantID,
+// Roles and Metadata. Ignored under WithAuthorization(false).
+func WithNodeAuthorizer(a auth.IdentityAuthorizer) Option {
+	return func(m *Module) {
+		m.nodeAuthorizer = a
 	}
 }
 
@@ -352,6 +365,10 @@ type Module struct {
 	// authzDisabled is WithAuthorization(false): the host runs with
 	// authorization off, so the self-built service keeps a nil authorizer.
 	authzDisabled bool
+
+	// nodeAuthorizer is WithNodeAuthorizer's: the host node's own
+	// authorizer, which decides on the caller's full identity.
+	nodeAuthorizer auth.IdentityAuthorizer
 
 	// serviceContext is WithServiceContext's binder, applied to every
 	// datastore the module opens (openDatastore).

@@ -90,6 +90,11 @@ var WithServiceModuleQRDBClient = apimodule.WithQRDBClient
 // Unset, the module enforces.
 var WithServiceModuleAuthorization = apimodule.WithAuthorization
 
+// WithServiceModuleNodeAuthorizer hands the module the host node's own
+// authorizer (node.Node.Authorizer), so the service decides on the caller's
+// full identity and a delegated caller's ScopePermissions count.
+var WithServiceModuleNodeAuthorizer = apimodule.WithNodeAuthorizer
+
 // WithServiceModuleServiceContext wires the host's service-context binder:
 // every call the module's storage makes into the host's qrdb node --
 // database initialisation and each later DAO call -- runs on the context it

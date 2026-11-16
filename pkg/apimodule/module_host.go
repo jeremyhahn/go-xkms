@@ -165,7 +165,14 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 			// allowed by a nil authorizer.
 			// A host that disabled authorization says so through
 			// WithAuthorization(false); its service keeps a nil authorizer.
-			if !m.authzDisabled {
+			// With the node's own authorizer (WithNodeAuthorizer) the
+			// decision is made on the caller's full identity, so a
+			// delegated caller's ScopePermissions count.
+			switch {
+			case m.authzDisabled:
+			case m.nodeAuthorizer != nil:
+				x.SetAuthorizer(auth.NewIdentityAuthorizer(m.nodeAuthorizer).WithRBAC(client.RBAC()))
+			default:
 				x.SetAuthorizer(auth.NewAuthorizer(client.RBAC()))
 			}
 			// Without storage compose leaves every store-backed feature
