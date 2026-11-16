@@ -9,10 +9,7 @@ Row acme-issuance (docs/SPEC.md:41), PR #2102.
   device (constant-time compare); a mismatch is refused with
   `ErrPossessionApplicationEvidenceMismatch`.
 - `ProvisionedDevice.ApplicationReference` is exactly 32 bytes when set.
-- Unregistered device: gated on `DICEPolicy.RequireApplicationReference`
-  (refuse when set; admit without the comparison when off, the default), so
-  `TestDeviceAttestDICEEnrollsTheRealFirmware` (no reference registered)
-  still enrolls. Policy in docs/plans/acme-issuance-appref-policy.md.
+- Unregistered device (no reference): always refused. Policy in docs/plans/acme-issuance-appref-policy.md.
 - sdk/go/acme exports the possession-request assembly
   (`AssemblePossessionCSR` and friends, aliases only); plan in
   docs/plans/acme-issuance-sdk-possession.md.
@@ -35,6 +32,8 @@ T="codec_cbor codec_json codec_msgpack"
 - `(cd sdk/go && go test -count=1 -race -tags "$T" ./acme/...)`: pass.
 - `make lint`: pass (0 issues in every module and tag set, actionlint pass).
 - No code change was needed.
+
+- Codex P1 (lane row1667a slice 2): a record without ApplicationReference is always refused; the dice_require_application_reference switch is removed and the fixtures register references.
 
 ## Still open
 
