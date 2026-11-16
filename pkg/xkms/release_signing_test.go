@@ -21,6 +21,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"testing"
 
@@ -192,6 +193,50 @@ func TestRepositorySigner_AdmitsEverySign(t *testing.T) {
 		_, err = signer.Sign(rand.Reader, digest, crypto.SHA256)
 		require.Error(t, err, "a MaxUsageCount=1 key signed more than once (first sign: %v)", firstErr)
 	})
+}
+
+// TestRepositorySigner_KeepsItsKeyAcrossRotation checks that a retained
+// signer whose key gets a newer version either refuses or keeps signing with
+// the key its Public returns; it never signs under a different key.
+func TestRepositorySigner_KeepsItsKeyAcrossRotation(t *testing.T) {
+	svc, _, ctx := releaseSigningService(t, "attestation_signing_keys:sign")
+	store, err := keypolicy.NewStore(testutil.NewMemoryDAOFactory())
+	require.NoError(t, err)
+	svc.SetKeyPolicyStore(store)
+	generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+	// A usage-tracking policy makes admission follow the counters to the
+	// newest version.
+	_, err = svc.SetKeyPolicy(ctx, &transport.SetKeyPolicyRequest{Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, Policy: &transport.KeyPolicy{MaxUsageCount: 10}})
+	require.NoError(t, err)
+	signer, err := svc.RepositorySigner(ctx, "acme/app")
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte("release"))
+	_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.NoError(t, err, "sign before the rotation")
+	_, err = svc.RotateKey(ctx, &transport.RotateKeyRequest{Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, TenantID: "tenant-a"})
+	require.NoError(t, err)
+	// A signer resolved after the rotation moves the usage counters to the
+	// new version.
+	fresh, err := svc.RepositorySigner(ctx, "acme/app")
+	require.NoError(t, err)
+	_, err = fresh.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.NoError(t, err, "sign with the new version")
+
+	sig, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	if err != nil {
+		return // refusing after a rotation is acceptable
+	}
+	var ok bool
+	switch pub := signer.Public().(type) {
+	case *ecdsa.PublicKey:
+		ok = ecdsa.VerifyASN1(pub, digest[:], sig)
+	case *rsa.PublicKey:
+		ok = rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], sig) == nil ||
+			rsa.VerifyPSS(pub, crypto.SHA256, digest[:], sig, nil) == nil
+	default:
+		t.Fatalf("unexpected public key type %T", pub)
+	}
+	require.True(t, ok, "the retained signer signed under a key other than its Public()")
 }
 
 func TestCoseAlgorithm(t *testing.T) {
