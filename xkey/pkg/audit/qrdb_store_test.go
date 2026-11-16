@@ -90,3 +90,36 @@ func TestQRDBStore_WritesToGoQRDBSink(t *testing.T) {
 		})
 	}
 }
+
+// TestQRDBStore_MoveToReplaysIntoNewSink proves the start-up ring's events
+// move into the persistent go-qrdb file sink and new writes land there.
+func TestQRDBStore_MoveToReplaysIntoNewSink(t *testing.T) {
+	store, err := NewQRDBStore(xkms.NewQRDBAuditRingBuffer(16))
+	if err != nil {
+		t.Fatalf("NewQRDBStore: %v", err)
+	}
+	if err := store.LogServiceEvent(OpServiceStarted, nil); err != nil {
+		t.Fatalf("LogServiceEvent: %v", err)
+	}
+	if err := store.MoveTo(nil); !errors.Is(err, ErrNilQRDBSink) {
+		t.Fatalf("MoveTo(nil) error = %v, want ErrNilQRDBSink", err)
+	}
+	file, err := xkms.NewQRDBAuditFileLogger(filepath.Join(t.TempDir(), "audit.log"))
+	if err != nil {
+		t.Fatalf("NewQRDBAuditFileLogger: %v", err)
+	}
+	if err := store.MoveTo(file); err != nil {
+		t.Fatalf("MoveTo: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.LogKeyOperation(OpKeyCreated, "software", "k2", true, nil, 1); err != nil {
+		t.Fatalf("LogKeyOperation: %v", err)
+	}
+	page, err := file.Query(context.Background(), xkms.QRDBNodeAuditFilter{})
+	if err != nil || page == nil || len(page.Events) != 2 {
+		t.Fatalf("file sink = %+v, %v; want the replayed and the new event", page, err)
+	}
+	if page.Events[0].Action != string(OpServiceStarted) || page.Events[1].Resource != "key:k2" {
+		t.Fatalf("file sink events = %+v", page.Events)
+	}
+}
