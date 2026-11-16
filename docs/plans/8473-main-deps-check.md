@@ -21,3 +21,9 @@
 - make lint: PASS (0 issues, all modules and tag sets).
 - scripts/deps-check.sh: exit 0 (go-truststrap held).
 - go build ./... with -mod=readonly in root, xkey, sdk/go, web/desktop: PASS.
+- dk8473b resume 2026-11-16 (DS-9127, red main ec11e342b): local tip joined to PR head 122f4cbb5 (9ac7bd16e + merge), then main ec11e342b merged (467677d52, workflows and scripts/in-toolchain-image.sh only).
+  - The listed bumps (azcore v1.24.0, mcp-go v1.5.0, quic-go v0.65.0, wails v2.17.1, grpc v1.85.0, go-jose v4.1.9, x/sys v0.50.0 and the rest) are already in this branch's go.mod files; go get changed nothing. main is red because #2080 has not landed.
+  - make deps-check (467677d52): PASS; go-truststrap held, none failing (luks2, qrdb sdk/go, x/crypto, x/term under 7 days).
+  - go build -mod=readonly in root, sdk/go, xkey, web/desktop: PASS.
+  - go test -count=1 -race -tags "codec_cbor codec_json codec_msgpack" ./pkg/acme/... ./pkg/mcptool/...: PASS, with make agsim first (TFWSIM_DIR=build/agsim; without it the 5 TestDeviceAttestDICE* fail on the missing binary).
+  - make lint: PASS (0 issues, all modules and tag sets).
