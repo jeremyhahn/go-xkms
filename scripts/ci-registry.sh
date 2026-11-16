@@ -660,21 +660,84 @@ hold_local() {
   die "$tag was removed before $hold could hold it"
 }
 
+# CI_IMAGE_REGISTRY (#2243, ruling 752): a LAN registry, plain HTTP and no
+# auth, that the runner env of some pools sets. `use` pulls
+# <CI_IMAGE_REGISTRY>/<content tag> before anything else and tags it to the
+# local content tag, so a pulled image is the one the build would make. A
+# miss builds (or pulls main's) as without it, then pushes. No credential is
+# used. The probe, the pull and the push are bounded (CI_IMAGE_TIMEOUT
+# seconds, default 900, for the transfers), and none of them fails the job.
+# lan_pull returns 0 on a hit, 2 on a miss, 1 when the registry is not used.
+lan_ref() {
+  local reg=${CI_IMAGE_REGISTRY:-}
+  [[ $reg =~ ^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?$ ]] || return 1
+  printf '%s/%s\n' "$reg" "$(content_tag "$1")"
+}
+
+lan_timeout() {
+  local t=${CI_IMAGE_TIMEOUT:-900}
+  [[ $t =~ ^[1-9][0-9]*$ ]] || t=900
+  printf '%s\n' "$t"
+}
+
+lan_pull() {
+  local family=$1 hold=$2 lanref tag digest id
+  if ! lanref=$(lan_ref "$family"); then
+    echo "==> CI_IMAGE_REGISTRY is not a host[:port]; not used" >&2
+    return 1
+  fi
+  if ! curl -fsS --max-time 5 -o /dev/null "http://${CI_IMAGE_REGISTRY}/v2/" 2>/dev/null; then
+    echo "==> CI_IMAGE_REGISTRY does not answer; not used" >&2
+    return 1
+  fi
+  tag=${lanref#"$CI_IMAGE_REGISTRY"/}
+  timeout "$(lan_timeout)" docker pull --quiet "$lanref" >/dev/null 2>&1 || return 2
+  docker tag "$lanref" "$tag" || return 2
+  digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$lanref" 2>/dev/null || true)
+  id=$(docker image inspect -f '{{.Id}}' "$tag" 2>/dev/null) || return 2
+  [[ $id =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
+  docker rm -f "$hold" >/dev/null 2>&1 || true
+  docker create --pull never --name "$hold" "$id" true >/dev/null || return 2
+  image=$id
+  echo "==> pulled $lanref ${digest##*@}" >&2
+  echo "==> $hold holds $tag ($id) until the job's teardown" >&2
+}
+
+lan_push() {
+  local family=$1 src=$2 lanref what="built"
+  lanref=$(lan_ref "$family") || return 0
+  [ "$src" = "${lanref#"$CI_IMAGE_REGISTRY"/}" ] || what="pulled from the forge"
+  if docker tag "$src" "$lanref" && timeout "$(lan_timeout)" docker push "$lanref" >/dev/null 2>&1; then
+    echo "==> miss, $what and pushed $lanref" >&2
+  else
+    echo "==> miss, $what, push failed" >&2
+  fi
+  return 0
+}
+
 use() {
   [ $# -eq 2 ] || die "usage: use toolchain|it <ref>"
   check_family "$1"
-  local family=$1 ref=$2 hold var=TOOLCHAIN
+  local family=$1 ref=$2 hold var=TOOLCHAIN lan_rc=1
   [ "$family" = toolchain ] || var=IT
   hold=$(hold_name "$family")
   image=""
-  if [ -n "$ref" ]; then
-    pull_ref "$ref" "$hold"
-    image=$ref
-  elif [ "${CI_PUBLISH:-}" = true ]; then
+  if [ -z "$ref" ] && [ "${CI_PUBLISH:-}" = true ]; then
     die "no $family image reference on a push to main: a consumer runs the image ci-images published and never builds its own"
-  else
-    echo "==> no $family image of main's for this content; building it on this runner, with no push" >&2
-    hold_local "$family" "$hold"
+  fi
+  # #2243: CI_IMAGE_REGISTRY comes first, before any GITHUB_SERVER_URL logic.
+  if [ -n "${CI_IMAGE_REGISTRY:-}" ]; then
+    lan_pull "$family" "$hold" && lan_rc=0 || lan_rc=$?
+  fi
+  if [ "$lan_rc" -ne 0 ]; then
+    if [ -n "$ref" ]; then
+      pull_ref "$ref" "$hold"
+      image=$ref
+    else
+      echo "==> no $family image of main's for this content; building it on this runner" >&2
+      hold_local "$family" "$hold"
+    fi
+    [ "$lan_rc" -ne 2 ] || lan_push "$family" "${ref:-$(content_tag "$family")}"
   fi
   printf '%s_IMAGE=%s\n%s_HOLD=%s\n' "$var" "$image" "$var" "$hold"
 }
