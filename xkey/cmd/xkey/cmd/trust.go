@@ -1116,7 +1116,7 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	if resolveXKMSdURL() != "" {
-		return runTrustBootstrapXKMSd(cmd, resp.PEM, bootstrapServer(autoCfg))
+		return runTrustBootstrapXKMSd(ctx, cmd, resp.PEM, bootstrapServer(autoCfg))
 	}
 
 	store, err := openTrustStore()
@@ -1149,8 +1149,9 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) (err error) {
 }
 
 // runTrustBootstrapXKMSd files a fetched bootstrap bundle in the server's
-// trust-root store with the same purpose and source the local path uses.
-func runTrustBootstrapXKMSd(cmd *cobra.Command, pemData []byte, server string) (err error) {
+// trust-root store with the same purpose and source the local path uses. ctx
+// is the bootstrap --timeout context; the import runs under its deadline.
+func runTrustBootstrapXKMSd(ctx context.Context, cmd *cobra.Command, pemData []byte, server string) (err error) {
 	client, err := connectXKMSdClient(cmd)
 	if err != nil {
 		return err
@@ -1162,7 +1163,7 @@ func runTrustBootstrapXKMSd(cmd *cobra.Command, pemData []byte, server string) (
 	}()
 
 	opts := truststore.BootstrapImportOptions(server)
-	resp, err := client.TrustRootImport(trustCommandContext(cmd), &transport.TrustRootImportRequest{
+	resp, err := client.TrustRootImport(ctx, &transport.TrustRootImportRequest{
 		PEM:     string(pemData),
 		Purpose: string(opts.Purpose),
 		Source:  opts.Source,
