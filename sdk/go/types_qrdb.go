@@ -311,6 +311,28 @@ type (
 	QRDBAuditLogger = qrdb.AuditLogger
 )
 
+// Node audit store types: go-qrdb's compliance-grade audit sink (Emit, Query,
+// Close) and its record, filter and page. A process that hosts no go-qrdb
+// node, such as xkey, writes its audit events to one of these sinks.
+type (
+	QRDBNodeAuditLogger = qrdb.NodeAuditLogger
+	QRDBNodeAuditEvent  = qrdb.NodeAuditEvent
+	QRDBNodeAuditFilter = qrdb.NodeAuditFilter
+	QRDBNodeAuditPage   = qrdb.NodeAuditPage
+)
+
+// NewQRDBAuditFileLogger opens go-qrdb's SHA-256 hash-chained, tamper-evident
+// audit file at path as a node audit sink.
+func NewQRDBAuditFileLogger(path string) (QRDBNodeAuditLogger, error) {
+	return qrdb.NewAuditFileLogger(path)
+}
+
+// NewQRDBAuditRingBuffer returns go-qrdb's in-memory node audit sink holding
+// the most recent capacity events.
+func NewQRDBAuditRingBuffer(capacity int) QRDBNodeAuditLogger {
+	return qrdb.NewAuditRingBuffer(capacity)
+}
+
 // Identity and RBAC types: the go-qrdb authorizer and the identity it
 // decides for. Consumers authorize over these instead of keeping a local
 // authorizer (SPEC row authz-xkey-uid0).
