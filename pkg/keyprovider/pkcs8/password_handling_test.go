@@ -45,3 +45,53 @@ func TestDecodeKey_PasswordConfiguredLoadsPlaintextKey(t *testing.T) {
 	_, err = (&PKCS8Backend{allowPlaintext: false}).decodeKey(plaintext, pw)
 	require.ErrorIs(t, err, ErrKeyDecodingFailed, "a fail-closed backend must not fall back to a plaintext key")
 }
+
+// copyTrackingPassword hands out a fresh copy of its value from each Bytes
+// call and keeps every copy, so a test can check the caller wiped them.
+type copyTrackingPassword struct {
+	value  []byte
+	copies *[][]byte
+}
+
+func (p copyTrackingPassword) Bytes() []byte {
+	c := append([]byte(nil), p.value...)
+	*p.copies = append(*p.copies, c)
+	return c
+}
+
+func (p copyTrackingPassword) WithBytes(fn func([]byte) error) error { return fn(p.Bytes()) }
+func (p copyTrackingPassword) String() string                       { return types.PasswordRedacted }
+func (p copyTrackingPassword) Clear()                               {}
+
+func requireAllWiped(t *testing.T, copies [][]byte, op string) {
+	t.Helper()
+	require.NotEmpty(t, copies, "%s must read the password", op)
+	for i, c := range copies {
+		for _, b := range c {
+			if b != 0 {
+				t.Fatalf("%s left password copy %d unwiped", op, i)
+			}
+		}
+	}
+}
+
+// TestEncodeDecodeKey_WipePasswordCopies proves encodeKey and decodeKey wipe
+// the Password.Bytes() copy they borrow before returning.
+func TestEncodeDecodeKey_WipePasswordCopies(t *testing.T) {
+	t.Parallel()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	b := &PKCS8Backend{}
+
+	var encCopies [][]byte
+	encoded, err := b.encodeKey(key, copyTrackingPassword{value: []byte("wipe-me"), copies: &encCopies})
+	require.NoError(t, err)
+	requireAllWiped(t, encCopies, "encodeKey")
+
+	var decCopies [][]byte
+	got, err := b.decodeKey(encoded, copyTrackingPassword{value: []byte("wipe-me"), copies: &decCopies})
+	require.NoError(t, err)
+	require.True(t, key.Equal(got))
+	requireAllWiped(t, decCopies, "decodeKey")
+}
