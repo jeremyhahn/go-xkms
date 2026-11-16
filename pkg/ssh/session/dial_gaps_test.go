@@ -367,6 +367,101 @@ func TestDialClient_CancelAfterAuthWithQueuedRequestsLeavesNoGoroutine(t *testin
 	}
 }
 
+// TestDialClient_CancelAfterSuccessfulDialLeavesClientUsable pins that the
+// dial context only bounds the dial: once DialClient has returned a client,
+// cancelling that context must not close the connection under it.
+func TestDialClient_CancelAfterSuccessfulDialLeavesClientUsable(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+
+	serverCfg := &ssh.ServerConfig{
+		PublicKeyCallback: func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
+			return nil, nil
+		},
+	}
+	serverCfg.AddHostKey(testSigner(t))
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		nc, aerr := ln.Accept()
+		if aerr != nil {
+			return
+		}
+		defer nc.Close()
+		sc, chans, reqs, serr := ssh.NewServerConn(nc, serverCfg)
+		if serr != nil {
+			return
+		}
+		defer sc.Close()
+		go func() {
+			for nch := range chans {
+				_ = nch.Reject(ssh.Prohibited, "test")
+			}
+		}()
+		go func() {
+			for req := range reqs {
+				if req.WantReply {
+					_ = req.Reply(req.Type == "ping@test", nil)
+				}
+			}
+		}()
+		_ = sc.Wait()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	addr := ln.Addr().(*net.TCPAddr)
+	client, err := DialClient(ctx, ClientParams{
+		Host:            "127.0.0.1",
+		Port:            addr.Port,
+		User:            "u",
+		Signer:          testSigner(t),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	})
+	if err != nil {
+		select {
+		case <-serverDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the test server did not end within 5s of the failed dial")
+		}
+		if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+			return
+		}
+		t.Fatalf("DialClient: %v", err)
+	}
+	defer client.Close()
+
+	cancel()
+	<-ctx.Done()
+
+	// Several round trips after the cancel: a watcher left armed closes
+	// the socket from its own goroutine, which fails one of them.
+	for i := 0; i < 3; i++ {
+		ok, _, rerr := client.SendRequest("ping@test", true, nil)
+		if rerr != nil {
+			t.Fatalf("global request %d after cancelling the dial context: %v", i, rerr)
+		}
+		if !ok {
+			t.Fatalf("global request %d after cancelling the dial context was refused", i)
+		}
+	}
+
+	if cerr := client.Close(); cerr != nil {
+		t.Fatalf("Close: %v", cerr)
+	}
+	select {
+	case <-serverDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the test server did not end within 5s of the client closing")
+	}
+}
+
 // waitForBlockedClientMux reports whether, within d, a goroutine of the
 // x/crypto ssh mux is blocked on a channel send.
 func waitForBlockedClientMux(d time.Duration) bool {
