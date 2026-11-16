@@ -153,8 +153,8 @@ func TestPasswordScopedSigner_RefusesAKeyOtherThanItsOwn(t *testing.T) {
 	require.NoError(t, err)
 	digest := sha256.Sum256([]byte("pinned key"))
 
-	open := func(k crypto.Signer) func() (crypto.Signer, *types.KeyAttributes, error) {
-		return func() (crypto.Signer, *types.KeyAttributes, error) { return k, &types.KeyAttributes{}, nil }
+	open := func(k crypto.Signer) func() (crypto.Signer, caKeyPasswords, error) {
+		return func() (crypto.Signer, caKeyPasswords, error) { return k, nil, nil }
 	}
 
 	same := &passwordScopedSigner{pub: pinned.Public(), open: open(pinned)}

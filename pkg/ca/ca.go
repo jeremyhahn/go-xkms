@@ -1197,22 +1197,22 @@ func (ca *CA) getSigner(ctx context.Context) (crypto.Signer, error) {
 		return nil, ErrInvalidConfig
 	}
 
-	attrs, err := ca.getCAKeyAttributes(ctx, issuingIdentity)
+	attrs, owned, err := ca.openCAKeyAttributes(ctx, issuingIdentity)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get signer", Err: err}
 	}
 
 	backend, err := ca.resolveKeyBackend(attrs.StoreType)
 	if err != nil {
-		clearKeyPassword(attrs)
+		owned.clear()
 		return nil, err
 	}
 	signer, err := backend.Signer(ctx, attrs)
 	if err != nil {
-		clearKeyPassword(attrs)
+		owned.clear()
 		return nil, err
 	}
-	return ca.passwordScoped(ctx, issuingIdentity, attrs, signer), nil
+	return ca.passwordScoped(ctx, issuingIdentity, owned, signer), nil
 }
 
 // getCAKeyAttributes returns KeyAttributes for the specified identity.
@@ -1233,56 +1233,68 @@ func (ca *CA) getCAKeyAttributes(ctx context.Context, identity *Identity) (*type
 	return attrs, nil
 }
 
-// clearKeyPassword releases every password getCAKeyAttributes opened for one
-// lookup, the parent chain's included. Identity.ToKeyAttributes builds a fresh locked password per call,
-// so a caller that discards the attributes must clear it, or each lookup
-// keeps a locked buffer live until process exit.
-func clearKeyPassword(attrs *types.KeyAttributes) {
-	for a := attrs; a != nil; a = a.Parent {
-		if a.Password != nil {
-			a.Password.Clear()
-		}
+// caKeyPasswords is the set of passwords one CA key lookup allocated: the
+// identity key's and those of its own configured parent chain. A backend may
+// attach further parents to the attributes during its call (the TPM 2.0
+// backend attaches its shared SRK attributes); those belong to the backend
+// and are not in the set, so the CA never clears them.
+type caKeyPasswords []types.Password
+
+// clear releases every password in the set. Identity.ToKeyAttributes builds
+// a fresh locked password per call, so a caller that discards the attributes
+// must clear them, or each lookup keeps a locked buffer live until process
+// exit.
+func (p caKeyPasswords) clear() {
+	for _, pw := range p {
+		pw.Clear()
 	}
 }
 
-// hasKeyPassword reports whether attrs or any parent in its chain carries a
-// password the conversion opened.
-func hasKeyPassword(attrs *types.KeyAttributes) bool {
+// openCAKeyAttributes is getCAKeyAttributes for a caller that will clear
+// the key passwords: it records the passwords the lookup allocated before
+// any backend sees the attributes, so a later cleanup clears exactly those.
+func (ca *CA) openCAKeyAttributes(ctx context.Context, identity *Identity) (*types.KeyAttributes, caKeyPasswords, error) {
+	attrs, err := ca.getCAKeyAttributes(ctx, identity)
+	if err != nil {
+		return nil, nil, err
+	}
+	var owned caKeyPasswords
 	for a := attrs; a != nil; a = a.Parent {
 		if a.Password != nil {
-			return true
+			owned = append(owned, a.Password)
 		}
 	}
-	return false
+	return attrs, owned, nil
 }
 
-// passwordScoped returns a signer that keeps no key password live between
-// signatures. A backend signer may read attrs.Password inside Sign (the TPM
-// 2.0 signer does), so the password cannot be cleared when the lookup
-// returns; instead each Sign resolves fresh attributes and a fresh backend
-// signer, signs, and clears that password. signer's own password is cleared
-// here once its public key is taken. A key with no password anywhere in its
-// parent chain needs no scoping and signer is returned unchanged.
-func (ca *CA) passwordScoped(ctx context.Context, identity *Identity, attrs *types.KeyAttributes, signer crypto.Signer) crypto.Signer {
-	if !hasKeyPassword(attrs) {
+// passwordScoped returns a signer that keeps no CA-owned key password live
+// between signatures. A backend signer may read attrs.Password inside Sign
+// (the TPM 2.0 signer does), so the password cannot be cleared when the
+// lookup returns; instead each Sign resolves fresh attributes and a fresh
+// backend signer, signs, and clears the passwords that lookup allocated.
+// owned, the lookup's own passwords, is cleared here once signer's public
+// key is taken. A lookup that allocated no password needs no scoping and
+// signer is returned unchanged.
+func (ca *CA) passwordScoped(ctx context.Context, identity *Identity, owned caKeyPasswords, signer crypto.Signer) crypto.Signer {
+	if len(owned) == 0 {
 		return signer
 	}
 	pub := signer.Public()
-	clearKeyPassword(attrs)
+	owned.clear()
 	ctx = context.WithoutCancel(ctx)
 	return &passwordScopedSigner{
 		pub: pub,
-		open: func() (crypto.Signer, *types.KeyAttributes, error) {
-			attrs, err := ca.getCAKeyAttributes(ctx, identity)
+		open: func() (crypto.Signer, caKeyPasswords, error) {
+			attrs, owned, err := ca.openCAKeyAttributes(ctx, identity)
 			if err != nil {
 				return nil, nil, err
 			}
 			backend, err := ca.resolveKeyBackend(attrs.StoreType)
 			if err != nil {
-				return nil, attrs, err
+				return nil, owned, err
 			}
 			s, err := backend.Signer(ctx, attrs)
-			return s, attrs, err
+			return s, owned, err
 		},
 	}
 }
@@ -1290,14 +1302,14 @@ func (ca *CA) passwordScoped(ctx context.Context, identity *Identity, attrs *typ
 // passwordScopedSigner opens the CA key, with its password, for one Sign.
 type passwordScopedSigner struct {
 	pub  crypto.PublicKey
-	open func() (crypto.Signer, *types.KeyAttributes, error)
+	open func() (crypto.Signer, caKeyPasswords, error)
 }
 
 func (s *passwordScopedSigner) Public() crypto.PublicKey { return s.pub }
 
 func (s *passwordScopedSigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	signer, attrs, err := s.open()
-	defer clearKeyPassword(attrs)
+	signer, owned, err := s.open()
+	defer owned.clear()
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "ca: open CA key for signing", Err: err}
 	}

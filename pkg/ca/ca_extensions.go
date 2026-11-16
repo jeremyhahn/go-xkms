@@ -510,21 +510,21 @@ func (ca *CA) IssuerForIdentity(ctx context.Context, cn string) (crypto.Signer, 
 		return nil, nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("identity %q certificate: %v", cn, err)}
 	}
 
-	attrs, err := ca.getCAKeyAttributes(ctx, identity)
+	attrs, owned, err := ca.openCAKeyAttributes(ctx, identity)
 	if err != nil {
 		return nil, nil, err
 	}
 	backend, err := ca.resolveKeyBackend(attrs.StoreType)
 	if err != nil {
-		clearKeyPassword(attrs)
+		owned.clear()
 		return nil, nil, err
 	}
 	signer, err := backend.Signer(ctx, attrs)
 	if err != nil {
-		clearKeyPassword(attrs)
+		owned.clear()
 		return nil, nil, &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("identity %q key: %v", cn, err)}
 	}
-	return ca.passwordScoped(ctx, identity, attrs, signer), cert, nil
+	return ca.passwordScoped(ctx, identity, owned, signer), cert, nil
 }
 
 // =============================================================================
