@@ -227,3 +227,74 @@ describe("TpmPolicyDetailView", () => {
     expect(alert.closest('[role="alert"]')).not.toBeNull();
   });
 });
+
+describe("TpmPolicyDetailView stale replies", () => {
+  async function settle(): Promise<void> {
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  async function toOwnScope(): Promise<void> {
+    await fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "" } });
+  }
+
+  it("drops a policy reply that lands after the scope changed", async () => {
+    let resolveGet: (p: TPMPolicy) => void = () => {};
+    get.mockImplementation(() => new Promise<TPMPolicy>((r) => (resolveGet = r)));
+    await pickBoot();
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    await waitFor(() => expect(get).toHaveBeenCalledOnce());
+
+    await toOwnScope();
+    resolveGet({ ...boot, index: 9 });
+    await settle();
+
+    expect(screen.queryByTestId("policy-index")).not.toBeInTheDocument();
+  });
+
+  it("drops an objects reply that lands after the scope changed", async () => {
+    let resolveObjects: (v: unknown) => void = () => {};
+    objects.mockImplementation(() => new Promise((r) => (resolveObjects = r)));
+    await pickBoot();
+    await fireEvent.click(screen.getByRole("button", { name: "Objects" }));
+    await waitFor(() => expect(objects).toHaveBeenCalledOnce());
+
+    await toOwnScope();
+    resolveObjects({ name: "boot", objects: ["key/k1"] });
+    await settle();
+
+    expect(screen.queryByText("Bound objects")).not.toBeInTheDocument();
+  });
+
+  it("drops a verify reply that lands after the scope changed", async () => {
+    let resolveVerify: (v: unknown) => void = () => {};
+    verify.mockImplementation(() => new Promise((r) => (resolveVerify = r)));
+    await pickBoot();
+    await fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await waitFor(() => expect(verify).toHaveBeenCalledOnce());
+
+    await toOwnScope();
+    resolveVerify({ name: "boot", match: true, approved: true, branches: [] });
+    await settle();
+
+    expect(screen.queryByText("Live PCR check")).not.toBeInTheDocument();
+  });
+
+  it("drops a policy-name list for an earlier scope", async () => {
+    let resolveAcme: (v: unknown) => void = () => {};
+    list.mockImplementation((tenantId?: string) =>
+      tenantId === "acme" ? new Promise((r) => (resolveAcme = r)) : Promise.resolve({ policies: [] }),
+    );
+    render(TpmPolicyDetailView);
+    await screen.findByRole("option", { name: "acme" });
+    await fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "acme" } });
+    await waitFor(() => expect(list).toHaveBeenCalledWith("acme"));
+
+    await toOwnScope();
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(3));
+    resolveAcme({ policies: [boot] });
+    await settle();
+
+    expect(screen.queryByRole("option", { name: "boot" })).not.toBeInTheDocument();
+  });
+});
