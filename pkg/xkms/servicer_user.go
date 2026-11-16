@@ -139,6 +139,16 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	if !req.WithoutEmailLoginKey && s.inviteStore == nil {
 		return nil, ErrNotConfigured
 	}
+	// Every redemption path serves system-tenant invitations only (#2183
+	// narrowing; tenant-scoped redemption is go-xkms #2202), so an invited
+	// account of any other tenant would be a pending account nothing can
+	// activate. Refuse it with the same typed refusal redemption gives,
+	// before anything is persisted.
+	if !req.WithoutEmailLoginKey {
+		if err := requireSystemTenantInvite(req.TenantID); err != nil {
+			return nil, err
+		}
+	}
 	roleID, err := s.roleNameToID(ctx, req.TenantID, req.Role)
 	if err != nil {
 		return nil, err
