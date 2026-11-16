@@ -30,8 +30,13 @@
 // the deterministic encoding of a well-formed record and names the first
 // rule the input breaks with one of the errors in errors.go.
 //
-// The package does not decide how the record is bound to the device (the
-// binding question in the architecture document): it neither signs nor
-// verifies, and does not check a nonce. A backend hands the encoded
-// Claims-Set over through types.SecurityEventProvider.
+// The binding is owner ruling 7dbbb72 item 181 (b): the device signs EAT
+// evidence, after the record's last entry, that carries the Verifier's
+// eat_nonce (RFC 9711 §4.1) and the record's Detached Submodule Digest
+// (RFC 9711 §4.2.18.2), and the record travels beside that evidence. The
+// Claims-Set alone is unauthenticated. DetachedDigest builds the digest and
+// VerifyDetached checks a record against the digest taken from evidence
+// whose signature and eat_nonce the caller has already verified; this
+// package neither signs nor verifies the evidence itself. A backend hands
+// the encoded Claims-Set over through types.SecurityEventProvider.
 package securityevent

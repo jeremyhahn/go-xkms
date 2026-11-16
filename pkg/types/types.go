@@ -1964,9 +1964,14 @@ type SecurityEventProvider interface {
 	// its encoded Claims-Set, in the format of
 	// pkg/attestation/securityevent (Decode reads it).
 	//
-	// nonce is the Verifier's challenge. How the record is bound to it and
-	// to the device is not yet decided; a backend that does not bind the
-	// record ignores it.
+	// nonce is the Verifier's challenge, its eat_nonce (RFC 9711 §4.1). The
+	// backend must bind the record as owner ruling 7dbbb72 item 181 (b)
+	// requires: the device signs EAT evidence, after the record's last
+	// entry, that carries this nonce and the record's Detached Submodule
+	// Digest (RFC 9711 §4.2.18.2, securityevent.DetachedDigest). The
+	// returned Claims-Set alone is unauthenticated; a Verifier accepts it
+	// only through securityevent.VerifyDetached against the digest taken
+	// from that evidence once its signature and eat_nonce have verified.
 	//
 	// Returns ErrNotSupported when the backend keeps no record.
 	AttestSecurityEvents(ctx context.Context, nonce []byte) ([]byte, error)
