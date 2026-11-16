@@ -21,7 +21,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
 	"log/slog"
 	"os"
 	"strconv"
@@ -70,7 +69,6 @@ type ACMEEnrollRequest struct {
 	Port           int    `json:"port"`
 	ListenHost     string `json:"listenHost"`
 	CommonName     string `json:"commonName"`
-	PCRs           []int  `json:"pcrs"`
 	TimeoutSeconds int    `json:"timeoutSeconds"`
 }
 
@@ -216,7 +214,7 @@ func SetACMERenewSolver(req *sdkacme.ACMECertificateRequest, httpAddr string) (s
 	}
 	var (
 		mu        sync.Mutex
-		responder *http01.Responder
+		responder *sdkacme.HTTP01Responder
 	)
 	stop = func() {
 		mu.Lock()
@@ -233,7 +231,7 @@ func SetACMERenewSolver(req *sdkacme.ACMECertificateRequest, httpAddr string) (s
 			_ = responder.Close()
 			responder = nil
 		}
-		r, err := http01.NewResponder(http01.ResponderConfig{Addr: httpAddr, KeyAuth: keyAuth})
+		r, err := sdkacme.NewHTTP01Responder(sdkacme.HTTP01ResponderConfig{Addr: httpAddr, KeyAuth: keyAuth})
 		if err != nil {
 			return fmt.Errorf("acme: http-01 responder on %s: %w", httpAddr, err)
 		}
@@ -455,7 +453,9 @@ func (s *ACMEService) EndorseDevice(conn ACMEConnection, req ACMEEnrollRequest) 
 	defer s.recoverPanic("EndorseDevice", &err)
 	req.Challenge = sdkacme.ACMEChallengeTypeEndorse01
 	err = s.withDeviceTPM(conn, req, "endorse", func(c ACMEClient, cfg *sdkacme.ACMEEnrollmentConfig) error {
-		cert, err := c.RequestEndorsementKeyCertificate(s.context(), cfg)
+		ctx, cancel := ACMEEnrollContext(s.context(), cfg.Timeout)
+		defer cancel()
+		cert, err := c.RequestEndorsementKeyCertificate(ctx, cfg)
 		if err != nil {
 			return fmt.Errorf("acme: request EK certificate: %w", err)
 		}
@@ -503,14 +503,13 @@ func (s *ACMEService) withDeviceTPM(conn ACMEConnection, req ACMEEnrollRequest, 
 		port = strconv.Itoa(req.Port)
 	}
 	cfg := &sdkacme.ACMEEnrollmentConfig{
-		Challenge:    req.Challenge,
-		IPAddress:    req.IPAddress,
-		TPMModule:    tpm,
-		Port:         port,
-		ListenHost:   req.ListenHost,
-		CommonName:   req.CommonName,
-		PCRSelection: req.PCRs,
-		Timeout:      time.Duration(req.TimeoutSeconds) * time.Second,
+		Challenge:  req.Challenge,
+		IPAddress:  req.IPAddress,
+		TPMModule:  tpm,
+		Port:       port,
+		ListenHost: req.ListenHost,
+		CommonName: req.CommonName,
+		Timeout:    time.Duration(req.TimeoutSeconds) * time.Second,
 	}
 	return s.withClient(conn, "", func(c ACMEClient) error { return fn(c, cfg) })
 }

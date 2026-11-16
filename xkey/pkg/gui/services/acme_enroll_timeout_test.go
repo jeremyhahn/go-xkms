@@ -55,3 +55,33 @@ func TestACMEService_EnrollDevice_EndsAtTimeout(t *testing.T) {
 		t.Fatalf("TPM released %d times after the second call, want 2", *released)
 	}
 }
+
+// TestACMEService_EndorseDevice_EndsAtTimeout: a CA that keeps the
+// endorse-01 authorization pending must not hold the shared TPM past
+// TimeoutSeconds.
+func TestACMEService_EndorseDevice_EndsAtTimeout(t *testing.T) {
+	fx := newACMEFixture(t)
+	released := fx.withTPMSource()
+	fx.fake.blockEnroll = true
+	req := ACMEEnrollRequest{IPAddress: "192.0.2.10", TimeoutSeconds: 1}
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := fx.svc.EndorseDevice(fx.conn, req)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("endorse err = %v, want a deadline error", err)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("endorse took %s with a 1 s timeout", elapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("endorse did not end at its timeout")
+	}
+	if *released != 1 {
+		t.Fatalf("TPM released %d times after the timed-out endorsement, want 1", *released)
+	}
+}

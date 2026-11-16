@@ -56,7 +56,6 @@ type acmeEnrollFlags struct {
 	port       string
 	listenHost string
 	commonName string
-	pcrs       []int
 	timeout    time.Duration
 	dataDir    string
 	tpmDevice  string
@@ -80,14 +79,13 @@ func (f *acmeEnrollFlags) validate() error {
 
 func (f *acmeEnrollFlags) config(tpm sdkacme.ACMETPMModule) *sdkacme.ACMEEnrollmentConfig {
 	return &sdkacme.ACMEEnrollmentConfig{
-		Challenge:    f.challenge,
-		IPAddress:    f.ip,
-		TPMModule:    tpm,
-		Port:         f.port,
-		ListenHost:   f.listenHost,
-		CommonName:   f.commonName,
-		PCRSelection: f.pcrs,
-		Timeout:      f.timeout,
+		Challenge:  f.challenge,
+		IPAddress:  f.ip,
+		TPMModule:  tpm,
+		Port:       f.port,
+		ListenHost: f.listenHost,
+		CommonName: f.commonName,
+		Timeout:    f.timeout,
 	}
 }
 
@@ -174,7 +172,6 @@ ever written.`,
 	fl.StringVar(&ef.port, "port", "8080", "port of the challenge listener")
 	fl.StringVar(&ef.listenHost, "listen-host", "", "host the challenge listener binds")
 	fl.StringVar(&ef.commonName, "common-name", "", "common name of the device certificate")
-	fl.IntSliceVar(&ef.pcrs, "pcr", nil, "PCR indexes to attest (comma-separated)")
 	fl.DurationVar(&ef.timeout, "timeout", 30*time.Second, "enrollment timeout")
 	fl.StringVar(&ef.dataDir, "data-dir", "", "xkey data directory (TPM key store)")
 	fl.StringVar(&ef.tpmDevice, "tpm-device", "", "TPM device path")

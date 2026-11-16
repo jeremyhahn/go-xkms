@@ -20,6 +20,7 @@ import (
 	"time"
 
 	sdkacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/spf13/cobra"
 )
 
@@ -44,7 +45,9 @@ stdout. No key material is ever written.`,
 			}
 			defer func() { _ = release() }()
 			return flags.withACMEClient(c, "", func(client acmeClient) error {
-				cert, err := client.RequestEndorsementKeyCertificate(c.Context(), ef.config(tpm))
+				ctx, cancel := services.ACMEEnrollContext(c.Context(), ef.timeout)
+				defer cancel()
+				cert, err := client.RequestEndorsementKeyCertificate(ctx, ef.config(tpm))
 				if err != nil {
 					return fmt.Errorf("acme: endorse: %w", err)
 				}

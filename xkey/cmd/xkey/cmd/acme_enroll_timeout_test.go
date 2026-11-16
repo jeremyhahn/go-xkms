@@ -41,3 +41,32 @@ func TestACMEEnrollEndsAtTimeout(t *testing.T) {
 		t.Fatal("TPM module not released after the timed-out enrollment")
 	}
 }
+
+// TestACMEEndorseEndsAtTimeout: a CA that keeps the endorse-01
+// authorization pending must not hold `xkey acme endorse` past --timeout.
+func TestACMEEndorseEndsAtTimeout(t *testing.T) {
+	env := newACMETestEnv(t)
+	tpm := stubACMETPMModule(t)
+	env.fake.blockEnroll = true
+	args := append([]string{"endorse", "--ip", "192.0.2.7", "--timeout", "1s", "--tpm-simulator"}, env.common()...)
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := env.run(t, args...)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("endorse err = %v, want a deadline error", err)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("endorse took %s with --timeout 1s", elapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("endorse did not end at its --timeout")
+	}
+	if !tpm.released {
+		t.Fatal("TPM module not released after the timed-out endorsement")
+	}
+}

@@ -61,7 +61,7 @@ func TestACMEEnrollCallsClientWithConfig(t *testing.T) {
 		IDevIDCertificate: idevid, IAKCertificate: iak, Chain: []*x509.Certificate{ca},
 	}
 	args := append([]string{"enroll", "--challenge", sdkacme.ACMEChallengeTypeEnroll01, "--ip", "192.0.2.7",
-		"--port", "9443", "--listen-host", "0.0.0.0", "--common-name", "dev-1", "--pcr", "0,7",
+		"--port", "9443", "--listen-host", "0.0.0.0", "--common-name", "dev-1",
 		"--timeout", "45s", "--tpm-device", "/dev/tpmrm0", "--tpm-simulator", "--data-dir", "/tmp/xk"}, env.common()...)
 	out, err := env.run(t, args...)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestACMEEnrollCallsClientWithConfig(t *testing.T) {
 	}
 	want := &sdkacme.ACMEEnrollmentConfig{
 		Challenge: sdkacme.ACMEChallengeTypeEnroll01, IPAddress: "192.0.2.7", TPMModule: tpm.module,
-		Port: "9443", ListenHost: "0.0.0.0", CommonName: "dev-1", PCRSelection: []int{0, 7}, Timeout: 45 * time.Second,
+		Port: "9443", ListenHost: "0.0.0.0", CommonName: "dev-1", Timeout: 45 * time.Second,
 	}
 	if !reflect.DeepEqual(env.fake.enrollConfig, want) {
 		t.Fatalf("config = %+v, want %+v", env.fake.enrollConfig, want)

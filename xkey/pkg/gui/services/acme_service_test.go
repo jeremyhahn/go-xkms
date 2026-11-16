@@ -38,8 +38,9 @@ import (
 
 // fakeACMEClient records calls and returns canned results.
 type fakeACMEClient struct {
-	// blockEnroll makes EnrollDevice wait for its context to end, as a
-	// server that keeps an order pending does (Codex finding 4, #2126).
+	// blockEnroll makes EnrollDevice and RequestEndorsementKeyCertificate
+	// wait for their context to end, as a server that keeps an order or
+	// authorization pending does (Codex findings, #2126).
 	blockEnroll bool
 	account     *acme.Account
 	err         error
@@ -99,8 +100,12 @@ func (f *fakeACMEClient) EnrollDevice(ctx context.Context, cfg *sdkacme.ACMEEnro
 	return f.enrolled, f.err
 }
 
-func (f *fakeACMEClient) RequestEndorsementKeyCertificate(_ context.Context, cfg *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error) {
+func (f *fakeACMEClient) RequestEndorsementKeyCertificate(ctx context.Context, cfg *sdkacme.ACMEEnrollmentConfig) (*x509.Certificate, error) {
 	f.enrollCfg = cfg
+	if f.blockEnroll {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return f.ekCert, f.err
 }
 
@@ -393,7 +398,6 @@ func TestACMEService_EnrollDevice(t *testing.T) {
 		Port:           9090,
 		ListenHost:     "0.0.0.0",
 		CommonName:     "device-1",
-		PCRs:           []int{0, 7},
 		TimeoutSeconds: 45,
 	})
 	require.NoError(t, err)
@@ -404,7 +408,7 @@ func TestACMEService_EnrollDevice(t *testing.T) {
 	assert.Equal(t, "9090", cfg.Port)
 	assert.Equal(t, "0.0.0.0", cfg.ListenHost)
 	assert.Equal(t, "device-1", cfg.CommonName)
-	assert.Equal(t, []int{0, 7}, cfg.PCRSelection)
+	assert.Empty(t, cfg.PCRSelection, "xkey offers no PCR selection: device-attest-01 evidence carries no PCRs")
 	assert.Equal(t, 45*time.Second, cfg.Timeout)
 	assert.Equal(t, stubACMETPM{}, cfg.TPMModule)
 	assert.Equal(t, certPEM(fx.cert), info.IDevIDPEM)
@@ -421,7 +425,6 @@ func TestACMEService_EnrollDevice_DeviceAttestNeedsNoIP(t *testing.T) {
 	fx.fake.ekCert = fx.cert
 	info, err := fx.svc.EnrollDevice(fx.conn, ACMEEnrollRequest{
 		Challenge: sdkacme.ACMEChallengeTypeDeviceAttest01,
-		PCRs:      []int{0, 1, 7},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, certPEM(fx.cert), info.IDevIDPEM)
