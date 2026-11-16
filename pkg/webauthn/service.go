@@ -385,7 +385,7 @@ func (s *Service) FinishRegistrationPair(ctx context.Context, sessionID string, 
 // The account must still be active: it may have left that state since the
 // ceremony began.
 func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
-	return s.runFinishRegistration(ctx, sessionID, response, func(user User) error {
+	return s.runFinishRegistration(ctx, sessionID, response, false, func(user User) error {
 		if err := checkLifecycle(user); err != nil {
 			s.logStandingRefusal("finish registration", err)
 			return ErrRegistrationRefused
@@ -413,7 +413,7 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 // names: a session begun for any other account is refused with
 // ErrRegistrationRefused before a credential is created or stored.
 func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string, invitedHandle []byte, response *protocol.ParsedCredentialCreationData) (User, error) {
-	return s.runFinishRegistration(ctx, sessionID, response, func(user User) error {
+	return s.runFinishRegistration(ctx, sessionID, response, true, func(user User) error {
 		// The session must belong to the account the invitation names. The
 		// check runs before the credential is created or stored: a session
 		// begun for another invitation's account enrols nothing, so both
@@ -553,7 +553,15 @@ func (s *Service) FinishInviteResume(ctx context.Context, sessionID string, invi
 // account must still be pending): everything else about completing a
 // WebAuthn registration ceremony is identical, and duplicating it per caller
 // is how the two could silently drift.
-func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData, accept func(User) error) (User, error) {
+//
+// firstCredential marks a ceremony that may only store the account's FIRST
+// credential (an invite finish). accept's zero-credential check alone cannot
+// arbitrate two such finishes begun in different sessions: both can read
+// zero credentials before either saves. So the credential is stored only
+// under a won CredentialStore.ClaimFirstCredential, a create-if-absent in the
+// shared store; the loser is refused with ErrRegistrationRefused and stores
+// nothing, and a winner whose save fails releases the claim.
+func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData, firstCredential bool, accept func(User) error) (User, error) {
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
@@ -584,7 +592,22 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 
 	// Convert and store credential
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
+	var release func(context.Context) error
+	if firstCredential {
+		release, err = s.creds.ClaimFirstCredential(ctx, user.WebAuthnID())
+		if errors.Is(err, ErrFirstCredentialClaimed) {
+			return nil, ErrRegistrationRefused
+		}
+		if err != nil {
+			return nil, WrapError("claim first credential", err)
+		}
+	}
 	if err := s.creds.Save(ctx, cred); err != nil {
+		if release != nil {
+			if relErr := release(context.WithoutCancel(ctx)); relErr != nil {
+				s.logger.Error("release first-credential claim after a failed save", "error", relErr)
+			}
+		}
 		return nil, WrapError("save credential", err)
 	}
 

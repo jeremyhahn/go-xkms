@@ -44,9 +44,28 @@ func (e *credentialEntity) EntityID() uint64 { return e.ID }
 // SetEntityID sets the entity's ID.
 func (e *credentialEntity) SetEntityID(id uint64) { e.ID = id }
 
+// firstCredentialClaimEntityType is the go-qrdb entity type an account's
+// first-credential claim is stored under (see ClaimFirstCredential).
+const firstCredentialClaimEntityType = "webauthn_first_credential_claims"
+
+// firstCredentialClaimEntity marks that an account's first credential was
+// claimed. Its ID is derived from UserID, so an account has at most one
+// claim and creating it is a create-if-absent on that ID.
+type firstCredentialClaimEntity struct {
+	ID     uint64 `json:"id"`
+	UserID string `json:"user_id"`
+}
+
+// EntityID returns the entity's ID.
+func (e *firstCredentialClaimEntity) EntityID() uint64 { return e.ID }
+
+// SetEntityID sets the entity's ID.
+func (e *firstCredentialClaimEntity) SetEntityID(id uint64) { e.ID = id }
+
 // daoCredentialStore is the CredentialStore over a go-qrdb DAO.
 type daoCredentialStore struct {
-	creds qrdbsdk.GenericDAO[*credentialEntity]
+	creds  qrdbsdk.GenericDAO[*credentialEntity]
+	claims qrdbsdk.GenericDAO[*firstCredentialClaimEntity]
 }
 
 // Compile-time assertion that daoCredentialStore satisfies CredentialStore.
@@ -63,7 +82,50 @@ func newCredentialStore(factory *qrdbsdk.DAOFactory) (*daoCredentialStore, error
 	if err != nil {
 		return nil, err
 	}
-	return &daoCredentialStore{creds: creds}, nil
+	claims, err := dao.New(factory, "", firstCredentialClaimEntityType,
+		func() *firstCredentialClaimEntity { return &firstCredentialClaimEntity{} },
+		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("UserID")))
+	if err != nil {
+		return nil, err
+	}
+	return &daoCredentialStore{creds: creds, claims: claims}, nil
+}
+
+// ClaimFirstCredential creates the account's first-credential claim with
+// SaveIfAbsent, so across sessions and replicas exactly one caller creates
+// it; the rest get ErrFirstCredentialClaimed. release deletes the claim the
+// caller created, for a credential save that failed.
+func (s *daoCredentialStore) ClaimFirstCredential(ctx context.Context, userID []byte) (func(context.Context) error, error) {
+	if len(userID) == 0 {
+		return nil, ErrInvalidCredential
+	}
+	claim := &firstCredentialClaimEntity{UserID: encodeID(userID)}
+	stored, err := s.claims.SaveIfAbsent(ctx, claim)
+	if err != nil {
+		return nil, WrapError("claim first credential", err)
+	}
+	if !stored {
+		return nil, ErrFirstCredentialClaimed
+	}
+	return func(ctx context.Context) error {
+		return s.dropClaim(ctx, claim.UserID)
+	}, nil
+}
+
+// dropClaim deletes the first-credential claim of the account whose
+// encodeID-form ID is userID, if there is one.
+func (s *daoCredentialStore) dropClaim(ctx context.Context, userID string) error {
+	claim, err := s.claims.GetByNaturalKey(ctx, userID)
+	if err != nil {
+		if qrdbsdk.IsDAONotFound(err) {
+			return nil
+		}
+		return WrapError("read first-credential claim", err)
+	}
+	if err := s.claims.Delete(ctx, claim); err != nil && !qrdbsdk.IsDAONotFound(err) {
+		return WrapError("drop first-credential claim", err)
+	}
+	return nil
 }
 
 // Save stores a NEW credential. A credential ID that is already registered
@@ -145,6 +207,14 @@ func (s *daoCredentialStore) Delete(ctx context.Context, credID []byte) error {
 	if err := s.creds.Delete(ctx, e); err != nil {
 		return WrapError("delete credential", err)
 	}
+	// An account left with no credential may enrol a first one again.
+	remaining, err := s.creds.Find(ctx).Where("UserID = ?", e.UserID).Execute()
+	if err != nil {
+		return WrapError("list user credentials", err)
+	}
+	if len(remaining) == 0 {
+		return s.dropClaim(ctx, e.UserID)
+	}
 	return nil
 }
 
@@ -159,7 +229,7 @@ func (s *daoCredentialStore) DeleteByUserID(ctx context.Context, userID []byte) 
 			return WrapError("delete credential", err)
 		}
 	}
-	return nil
+	return s.dropClaim(ctx, encodeID(userID))
 }
 
 // get loads the entity for credID, verified against its natural key.

@@ -116,6 +116,10 @@ func (s *faultyCredStore) Delete(ctx context.Context, credID []byte) error {
 	return s.inner.Delete(ctx, credID)
 }
 
+func (s *faultyCredStore) ClaimFirstCredential(ctx context.Context, userID []byte) (func(context.Context) error, error) {
+	return s.inner.ClaimFirstCredential(ctx, userID)
+}
+
 func (s *faultyCredStore) DeleteByUserID(ctx context.Context, userID []byte) error {
 	if s.deleteByUserErr != nil {
 		return s.deleteByUserErr
