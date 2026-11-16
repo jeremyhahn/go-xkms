@@ -2,6 +2,7 @@
   import PageHeader from "$components/PageHeader.svelte";
   import Alert from "$components/Alert.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
+  import { can } from "$stores/session.svelte.ts";
   import {
     KEY_USAGES,
     getKeyPolicy,
@@ -34,6 +35,12 @@
   function emptyOps(): Record<KeyUsage, boolean> {
     return Object.fromEntries(KEY_USAGES.map((u) => [u, false])) as Record<KeyUsage, boolean>;
   }
+
+  // Each control follows its own route (pkg/api/rest/routes.go): GET needs
+  // keys:get, PUT keys:rotate, DELETE keys:delete.
+  const canGet = $derived(can("keys", "get"));
+  const canRotate = $derived(can("keys", "rotate"));
+  const canDelete = $derived(can("keys", "delete"));
 
   function message(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -175,7 +182,7 @@
 <div class="flex flex-wrap items-end gap-2 mb-4">
   <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={() => keyId, (v) => { keyId = v; targetChanged(); }} />
   <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={() => backend, (v) => { backend = v; targetChanged(); }} />
-  <button class="btn btn-sm" onclick={load} disabled={!ready || busy || loading}>Load</button>
+  <button class="btn btn-sm" onclick={load} disabled={!ready || busy || loading || !canGet}>Load</button>
   {#if version === "default"}
     <span class="text-sm text-base-content/60">No access policy set (default applies)</span>
   {:else if version !== null}
@@ -255,7 +262,7 @@
   {#if formError}<p class="text-error text-sm" role="alert">{formError}</p>{/if}
 
   <div class="flex gap-2">
-    <button class="btn btn-primary btn-sm" onclick={save} disabled={!ready || busy || loading}>Save</button>
-    <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={!ready || busy || loading}>Remove policy</button>
+    <button class="btn btn-primary btn-sm" onclick={save} disabled={!ready || busy || loading || !canRotate}>Save</button>
+    <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={!ready || busy || loading || !canDelete}>Remove policy</button>
   </div>
 </div>

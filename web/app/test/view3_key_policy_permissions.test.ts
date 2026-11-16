@@ -40,7 +40,7 @@ import KeyAccessPolicyView from "../src/views/KeyAccessPolicyView.svelte";
 import KeyRotationPolicyView from "../src/views/KeyRotationPolicyView.svelte";
 import KeySafetyView from "../src/views/KeySafetyView.svelte";
 
-let confirmSpy: ReturnType<typeof vi.spyOn> | undefined;
+let confirmSpy: { mockRestore(): void } | undefined;
 
 function grant(...p: string[]): void {
   perms.clear();

@@ -4,6 +4,7 @@
   import StatusBadge from "$components/StatusBadge.svelte";
   import Alert from "$components/Alert.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
+  import { can } from "$stores/session.svelte.ts";
   import {
     safetyCheck,
     safetyReport,
@@ -45,6 +46,11 @@
     if (w.max_bytes) parts.push(`${w.bytes_used} / ${w.max_bytes} bytes`);
     return parts.join(", ") || "-";
   }
+
+  // Each control follows its own route (pkg/api/rest/routes.go): the check
+  // and report GETs need keys:get; setting and clearing limits keys:rotate.
+  const canGet = $derived(can("keys", "get"));
+  const canRotate = $derived(can("keys", "rotate"));
 
   async function load(): Promise<void> {
     loading = true;
@@ -107,7 +113,7 @@
     try {
       await action();
       showToast("success", done);
-      await load();
+      if (canGet) await load();
     } catch (e) {
       actionErr = message(e);
     } finally {
@@ -130,7 +136,7 @@
   }
 
   onMount(() => {
-    void load();
+    if (canGet) void load();
   });
 </script>
 
@@ -212,6 +218,6 @@
 </div>
 {#if formErr}<p class="text-error text-sm mb-2">{formErr}</p>{/if}
 <div class="flex gap-2">
-  <button class="btn btn-primary btn-sm" onclick={setLimits} disabled={busy}>Set limits</button>
-  <button class="btn btn-ghost btn-sm text-error" onclick={clearLimits} disabled={busy}>Clear limits</button>
+  <button class="btn btn-primary btn-sm" onclick={setLimits} disabled={busy || !canRotate}>Set limits</button>
+  <button class="btn btn-ghost btn-sm text-error" onclick={clearLimits} disabled={busy || !canRotate}>Clear limits</button>
 </div>

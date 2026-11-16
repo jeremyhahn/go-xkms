@@ -3,6 +3,7 @@
   import StatusBadge from "$components/StatusBadge.svelte";
   import Alert from "$components/Alert.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
+  import { can } from "$stores/session.svelte.ts";
   import {
     deleteRotationPolicy,
     formatInterval,
@@ -33,6 +34,12 @@
   let formErr = $state<string | null>(null);
 
   const ready = $derived(keyId.trim() !== "" && backend.trim() !== "");
+
+  // Each control follows its own route (pkg/api/rest/routes.go): GET needs
+  // keys:get, PUT keys:rotate, DELETE keys:delete.
+  const canGet = $derived(can("keys", "get"));
+  const canRotate = $derived(can("keys", "rotate"));
+  const canDelete = $derived(can("keys", "delete"));
 
   function message(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -132,7 +139,7 @@
 <div class="flex flex-wrap items-end gap-2 mb-4">
   <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} oninput={targetChanged} disabled={busy} />
   <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} oninput={targetChanged} disabled={busy} />
-  <button class="btn btn-sm" onclick={load} disabled={busy || loading || !ready}>Load</button>
+  <button class="btn btn-sm" onclick={load} disabled={busy || loading || !ready || !canGet}>Load</button>
 </div>
 
 {#if error}<Alert kind="error" class="mb-4"><span>{error}</span></Alert>{/if}
@@ -175,8 +182,8 @@
     </div>
     {#if formErr}<p class="text-error text-sm">{formErr}</p>{/if}
     <div class="flex gap-2">
-      <button class="btn btn-primary btn-sm" onclick={save} disabled={busy || loading || !ready}>Save</button>
-      <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={busy || loading || !ready}>Remove</button>
+      <button class="btn btn-primary btn-sm" onclick={save} disabled={busy || loading || !ready || !canRotate}>Save</button>
+      <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={busy || loading || !ready || !canDelete}>Remove</button>
     </div>
   </div>
 </div>
