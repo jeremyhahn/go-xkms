@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,4 +129,30 @@ func TestWithAttestedCallerGate_AnchorsFromTrustRootStore(t *testing.T) {
 		WithAttestedCallerGate(policy))
 	require.NoError(t, err)
 	require.NotNil(t, m.PeerAttestationGate())
+}
+
+// TestWithAttestedCallerGate_AnchorsLoadOnFirstUse: NewModule runs before
+// the host node exists (docs/attested-peer/api.md), so a gate without
+// anchors builds while the client is still composing and opens the
+// trust-root store only when a peer is verified.
+func TestWithAttestedCallerGate_AnchorsLoadOnFirstUse(t *testing.T) {
+	var resolved atomic.Pointer[qrdbsdk.Client]
+	policy := testAttestedCallerPolicy()
+	policy.Quote.Anchors = nil
+
+	m, err := NewModule(func() *xkms.XKMSService { return nil },
+		WithQRDBClient(resolved.Load),
+		WithAttestedCallerGate(policy))
+	require.NoError(t, err, "the store is not opened at NewModule")
+	require.NotNil(t, m.PeerAttestationGate())
+
+	source := m.attestedCallerAnchorSource()
+	_, err = source(t.Context())
+	var composing *SurfaceComposingError
+	require.ErrorAs(t, err, &composing, "no anchors until the host node resolves")
+
+	resolved.Store(newHostNodeClient(t))
+	pool, err := source(t.Context())
+	require.NoError(t, err)
+	assert.NotNil(t, pool)
 }
