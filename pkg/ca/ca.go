@@ -1233,14 +1233,27 @@ func (ca *CA) getCAKeyAttributes(ctx context.Context, identity *Identity) (*type
 	return attrs, nil
 }
 
-// clearKeyPassword releases the password getCAKeyAttributes opened for one
-// lookup. Identity.ToKeyAttributes builds a fresh locked password per call,
+// clearKeyPassword releases every password getCAKeyAttributes opened for one
+// lookup, the parent chain's included. Identity.ToKeyAttributes builds a fresh locked password per call,
 // so a caller that discards the attributes must clear it, or each lookup
 // keeps a locked buffer live until process exit.
 func clearKeyPassword(attrs *types.KeyAttributes) {
-	if attrs != nil && attrs.Password != nil {
-		attrs.Password.Clear()
+	for a := attrs; a != nil; a = a.Parent {
+		if a.Password != nil {
+			a.Password.Clear()
+		}
 	}
+}
+
+// hasKeyPassword reports whether attrs or any parent in its chain carries a
+// password the conversion opened.
+func hasKeyPassword(attrs *types.KeyAttributes) bool {
+	for a := attrs; a != nil; a = a.Parent {
+		if a.Password != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // passwordScoped returns a signer that keeps no key password live between
@@ -1248,10 +1261,10 @@ func clearKeyPassword(attrs *types.KeyAttributes) {
 // 2.0 signer does), so the password cannot be cleared when the lookup
 // returns; instead each Sign resolves fresh attributes and a fresh backend
 // signer, signs, and clears that password. signer's own password is cleared
-// here once its public key is taken. A key without a password needs no
-// scoping and signer is returned unchanged.
+// here once its public key is taken. A key with no password anywhere in its
+// parent chain needs no scoping and signer is returned unchanged.
 func (ca *CA) passwordScoped(ctx context.Context, identity *Identity, attrs *types.KeyAttributes, signer crypto.Signer) crypto.Signer {
-	if attrs.Password == nil {
+	if !hasKeyPassword(attrs) {
 		return signer
 	}
 	pub := signer.Public()
