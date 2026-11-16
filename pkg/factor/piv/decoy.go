@@ -85,26 +85,31 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 	if err != nil {
 		return nil, err
 	}
-	// The decoy record names the tenant its real counterparts predominantly
-	// carry (decoy.Deriver.Enrollment); its certificate carries the same OU a
-	// real enrollment certificate would.
+	// The OU mirrors one roster certificate, picked from the seed, so the
+	// decoys carry the roster's mix: a roster with legacy OU-less holders
+	// yields OU-less decoys in the same share. Roster enrollments rebuilt by
+	// the ceremony carry no TenantID, so the certificates are the source.
 	subject := pkix.Name{CommonName: cn}
-	tenants := make([]string, 0, len(like))
-	for _, e := range like {
-		if e != nil {
-			tenants = append(tenants, e.TenantID)
+	var tenant string
+	if certs := decoy.Certificates(like); len(certs) > 0 {
+		pickBytes, err := d.Bytes("tenant-ou", 8)
+		if err != nil {
+			return nil, err
 		}
-	}
-	// Roster enrollments rebuilt by the ceremony carry no TenantID; their
-	// certificates still name it as Subject-OU[0], so read it from there.
-	if len(decoy.NonEmpty(tenants)) == 0 {
-		for _, cert := range decoy.Certificates(like) {
-			if ou := cert.Subject.OrganizationalUnit; len(ou) > 0 {
-				tenants = append(tenants, ou[0])
+		pick := new(big.Int).Mod(new(big.Int).SetBytes(pickBytes), big.NewInt(int64(len(certs)))).Int64()
+		if ou := certs[pick].Subject.OrganizationalUnit; len(ou) > 0 {
+			tenant = ou[0]
+		}
+	} else {
+		tenants := make([]string, 0, len(like))
+		for _, e := range like {
+			if e != nil {
+				tenants = append(tenants, e.TenantID)
 			}
 		}
+		tenant = decoy.Predominant(decoy.NonEmpty(tenants), "")
 	}
-	if tenant := decoy.Predominant(decoy.NonEmpty(tenants), ""); tenant != "" {
+	if tenant != "" {
 		if subject, _, err = ca.StampTenant(tenant, subject, nil); err != nil {
 			return nil, &decoy.DerivationError{Purpose: "certificate"}
 		}
