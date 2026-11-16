@@ -16,6 +16,8 @@ package ca
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
@@ -136,4 +138,31 @@ func TestCA_SignerReadsPasswordAtSignTime(t *testing.T) {
 	require.NoError(t, err)
 	_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 	require.NoError(t, err, "IssuerForIdentity's signer must still hold the key password at Sign time")
+}
+
+// TestPasswordScopedSigner_RefusesAKeyOtherThanItsOwn proves the scoped
+// signer pins the key it was created for: when the per-Sign lookup resolves
+// a different key (a rotated or replaced CA key), Sign refuses instead of
+// producing a signature that Public() does not verify.
+func TestPasswordScopedSigner_RefusesAKeyOtherThanItsOwn(t *testing.T) {
+	t.Parallel()
+
+	pinned, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte("pinned key"))
+
+	open := func(k crypto.Signer) func() (crypto.Signer, *types.KeyAttributes, error) {
+		return func() (crypto.Signer, *types.KeyAttributes, error) { return k, &types.KeyAttributes{}, nil }
+	}
+
+	same := &passwordScopedSigner{pub: pinned.Public(), open: open(pinned)}
+	sig, err := same.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.NoError(t, err)
+	require.True(t, ecdsa.VerifyASN1(&pinned.PublicKey, digest[:], sig))
+
+	swapped := &passwordScopedSigner{pub: pinned.Public(), open: open(other)}
+	_, err = swapped.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.Error(t, err, "Sign must refuse a key other than the one Public reports")
 }
