@@ -83,7 +83,6 @@
       if (n > 0) policy.max_usage_count = n;
     }
     if (rotationRequired) policy.rotation_required = true;
-    if (requireMfa) policy.require_mfa = true;
     return policy;
   }
 
@@ -245,8 +244,10 @@
       <input type="checkbox" class="checkbox checkbox-sm" bind:checked={rotationRequired} />
       <span>Rotation required</span>
     </label>
-    <label class="label cursor-pointer gap-2">
-      <input type="checkbox" class="checkbox checkbox-sm" bind:checked={requireMfa} />
+    <!-- SetKeyPolicy refuses require_mfa (UnenforceablePolicyError: the
+         service has no per-operation MFA challenge), so it is shown, never set. -->
+    <label class="label gap-2" title="The service cannot enforce MFA per operation">
+      <input type="checkbox" class="checkbox checkbox-sm" checked={requireMfa} disabled />
       <span>Require MFA</span>
     </label>
   </div>
