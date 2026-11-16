@@ -81,8 +81,10 @@ func TestBindDeviceAttestationKey_ApplicationReference(t *testing.T) {
 			wantInMsg: mismatch,
 		},
 		{
-			name:    "no reference is admitted by default",
-			arrange: func(t *testing.T, setup *deviceBindSetup) {},
+			name:      "no reference is a bad request with the default config",
+			arrange:   func(t *testing.T, setup *deviceBindSetup) {},
+			wantType:  common.ErrTypeBadCSR,
+			wantInMsg: mismatch,
 		},
 		{
 			name: "no reference under a policy that requires one is a bad request",

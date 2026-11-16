@@ -94,9 +94,9 @@ func TestApplicationReference(t *testing.T) {
 		assert.ErrorIs(t, err, ErrPossessionApplicationEvidenceMismatch)
 		assert.Nil(t, got)
 	})
-	t.Run("a missing reference is admitted when the policy does not require one", func(t *testing.T) {
+	t.Run("a missing reference is refused with the default policy", func(t *testing.T) {
 		got, err := verified.ApplicationReference(context.Background(), verifierFor(DICEPolicy{}, nil))
-		require.NoError(t, err)
+		assert.ErrorIs(t, err, ErrPossessionApplicationEvidenceMismatch)
 		assert.Nil(t, got)
 	})
 	for name, ref := range map[string][]byte{
