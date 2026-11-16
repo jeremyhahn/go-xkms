@@ -159,6 +159,41 @@ func TestReleaseSigning_HonoursKeyPolicy(t *testing.T) {
 	require.ErrorAs(t, err, &unavailable)
 }
 
+// TestRepositorySigner_AdmitsEverySign: a retained repository signer is
+// admitted under key policy on each Sign, not only when it is obtained, so a
+// key disabled afterwards, or one whose usage count is spent, stops signing.
+func TestRepositorySigner_AdmitsEverySign(t *testing.T) {
+	digest := make([]byte, 32)
+	t.Run("disabled after retain", func(t *testing.T) {
+		svc, _, ctx := releaseSigningService(t, "attestation_signing_keys:sign")
+		store, err := keypolicy.NewStore(testutil.NewMemoryDAOFactory())
+		require.NoError(t, err)
+		svc.SetKeyPolicyStore(store)
+		generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+		signer, err := svc.RepositorySigner(ctx, "acme/app")
+		require.NoError(t, err)
+		_, err = svc.UpdateKeyStatus(ctx, &transport.UpdateKeyStatusRequest{Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, Status: transport.KeyStatusDisabled})
+		require.NoError(t, err)
+		_, err = signer.Sign(rand.Reader, digest, crypto.SHA256)
+		var unavailable *keypolicy.KeyUnavailableError
+		require.ErrorAs(t, err, &unavailable)
+	})
+	t.Run("usage count spent", func(t *testing.T) {
+		svc, _, ctx := releaseSigningService(t, "attestation_signing_keys:sign")
+		store, err := keypolicy.NewStore(testutil.NewMemoryDAOFactory())
+		require.NoError(t, err)
+		svc.SetKeyPolicyStore(store)
+		generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+		_, err = svc.SetKeyPolicy(ctx, &transport.SetKeyPolicyRequest{Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, Policy: &transport.KeyPolicy{MaxUsageCount: 1}})
+		require.NoError(t, err)
+		signer, err := svc.RepositorySigner(ctx, "acme/app")
+		require.NoError(t, err)
+		_, firstErr := signer.Sign(rand.Reader, digest, crypto.SHA256)
+		_, err = signer.Sign(rand.Reader, digest, crypto.SHA256)
+		require.Error(t, err, "a MaxUsageCount=1 key signed more than once (first sign: %v)", firstErr)
+	})
+}
+
 func TestCoseAlgorithm(t *testing.T) {
 	for _, tc := range []struct {
 		curve elliptic.Curve
