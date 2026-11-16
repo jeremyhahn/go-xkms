@@ -20,7 +20,7 @@ revoke.
     stdout; never key material.
 - `xkey acme enroll --challenge enroll-01|endorse-01|device-attest-01
   [--ip <addr>] [--port 8080] [--listen-host <h>] [--common-name <cn>]
-  [--pcr 0,1,..] [--timeout 30s] [--tpm-device <path>] [--tpm-simulator]
+  [--timeout 30s] [--tpm-device <path>] [--tpm-simulator]
   [--data-dir <dir>] [--out-dir <dir>]`
   - checks the challenge name and that --ip is set (unless
     device-attest-01) before the client is called.
@@ -73,3 +73,7 @@ Renew reuses the package's loadCertificatePEM (as revoke does).
 - Codex findings 1 to 4 of the sacmei review are fixed.
 - lane-verify (check-wailsjs): `fix(xkey): regenerate wails bindings for the
   acme renew http address` commits the ACMERenewRequest.httpAddr binding.
+- lane-verify (check-wailsjs, lane af2126d): the deadline fix dropped
+  ACMEEnrollRequest.PCRs (device-attest-01 evidence carries none), so `fix(xkey):
+  drop the GUI PCRs field with the regenerated wails bindings` commits
+  models.ts and removes the PCRs input and the hand-written `pcrs` type.
