@@ -718,19 +718,6 @@ func TestPINService_ChangeUserPIN_CredentialMismatchRefusesBeforeCommit(t *testi
 
 // armableUnsealSealer unseals normally until armed, then fails every
 // unseal, standing in for a TPM or enclave failure on a PIN-bound barrier.
-type armableUnsealSealer struct {
-	mockSealer
-	armed atomic.Bool
-	err   error
-}
-
-func (s *armableUnsealSealer) Unseal(ctx context.Context, sealed *xkms.SealedData, opts *xkms.UnsealOptions) ([]byte, error) {
-	if s.armed.Load() {
-		return nil, s.err
-	}
-	return s.mockSealer.Unseal(ctx, sealed, opts)
-}
-
 // countingSealer records every Seal and Unseal the barrier makes once armed,
 // so a test can prove a hardware barrier is never probed or rewrapped.
 type countingSealer struct {
