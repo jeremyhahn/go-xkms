@@ -1,6 +1,7 @@
 <script lang="ts">
   import PageHeader from "$components/PageHeader.svelte";
   import Alert from "$components/Alert.svelte";
+  import Modal from "$components/Modal.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
   import { isB64 } from "$lib/b64.ts";
   import {
@@ -57,14 +58,24 @@
     }
   }
 
-  async function rotate(): Promise<void> {
-    if (!window.confirm(`Rotate the OTA image key of "${board.trim()}"? Images signed later use the new version.`)) return;
+  // Rotate asks through components/Modal.svelte, never window.confirm; the
+  // board and backend are taken when asked, so the dialog names the target.
+  let confirmRotate = $state<{ board: string; backend: string } | null>(null);
+
+  function rotate(): void {
+    confirmRotate = { board: board.trim(), backend: backend.trim() };
+  }
+
+  async function rotateConfirmed(): Promise<void> {
+    const t = confirmRotate;
+    confirmRotate = null;
+    if (t === null) return;
     busy = true;
     error = null;
     try {
-      const r = await rotateOtaKey(board.trim(), backend.trim());
+      const r = await rotateOtaKey(t.board, t.backend);
       keyResult = { keyId: r.key_id, version: r.key_version, pem: r.public_key_pem };
-      showToast("success", `OTA image key for "${board.trim()}" rotated.`);
+      showToast("success", `OTA image key for "${t.board}" rotated.`);
     } catch (e) {
       error = message(e);
     } finally {
@@ -167,4 +178,15 @@
       {/if}
     </div>
   </div>
+
+  {#if confirmRotate !== null}
+    <Modal open onClose={() => (confirmRotate = null)} labelledby="ota-rotate-title">
+      <h3 id="ota-rotate-title" class="text-lg font-semibold mb-4">Rotate the OTA image key</h3>
+      <p>Rotate the OTA image key of "{confirmRotate.board}"? Images signed later use the new version.</p>
+      <div class="modal-action">
+        <button class="btn btn-ghost" onclick={() => (confirmRotate = null)}>Cancel</button>
+        <button class="btn btn-warning" onclick={rotateConfirmed}>Rotate key</button>
+      </div>
+    </Modal>
+  {/if}
 </div>

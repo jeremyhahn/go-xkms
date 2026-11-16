@@ -2,6 +2,7 @@
   import PageHeader from "$components/PageHeader.svelte";
   import StatusBadge from "$components/StatusBadge.svelte";
   import Alert from "$components/Alert.svelte";
+  import Modal from "$components/Modal.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
   import {
     deleteRotationPolicy,
@@ -87,11 +88,21 @@
     });
   }
 
-  function remove(): Promise<void> {
-    const id = keyId.trim();
-    if (!window.confirm(`Remove the rotation policy of key "${id}"?`)) return Promise.resolve();
+  // Remove asks through components/Modal.svelte, never window.confirm; the
+  // key and backend are taken when asked, so the dialog names the target.
+  let confirmRemove = $state<{ id: string; backend: string } | null>(null);
+
+  function remove(): void {
+    confirmRemove = { id: keyId.trim(), backend: backend.trim() };
+  }
+
+  function removeConfirmed(): Promise<void> {
+    const t = confirmRemove;
+    confirmRemove = null;
+    if (t === null) return Promise.resolve();
+    const id = t.id;
     return run(async () => {
-      await deleteRotationPolicy(id, backend.trim());
+      await deleteRotationPolicy(id, t.backend);
       show(undefined);
       showToast("success", `Rotation policy of key "${id}" removed.`);
     });
@@ -163,4 +174,15 @@
       <button class="btn btn-ghost btn-sm text-error" onclick={remove} disabled={busy || !ready}>Remove</button>
     </div>
   </div>
+
+  {#if confirmRemove !== null}
+    <Modal open onClose={() => (confirmRemove = null)} labelledby="rotation-policy-remove-title">
+      <h3 id="rotation-policy-remove-title" class="text-lg font-semibold mb-4">Remove the rotation policy</h3>
+      <p>Remove the rotation policy of key "{confirmRemove.id}"?</p>
+      <div class="modal-action">
+        <button class="btn btn-ghost" onclick={() => (confirmRemove = null)}>Cancel</button>
+        <button class="btn btn-error" onclick={removeConfirmed}>Remove</button>
+      </div>
+    </Modal>
+  {/if}
 </div>

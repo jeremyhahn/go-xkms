@@ -145,9 +145,17 @@
     }
   }
 
-  async function remove(): Promise<void> {
-    const id = keyId.trim();
-    if (!window.confirm(`Remove the access policy of "${id}"? The key falls back to the default policy.`)) return;
+  // Remove asks through components/Modal.svelte, never window.confirm.
+  let confirmRemove = $state<string | null>(null);
+
+  function remove(): void {
+    confirmRemove = keyId.trim();
+  }
+
+  async function removeConfirmed(): Promise<void> {
+    const id = confirmRemove;
+    confirmRemove = null;
+    if (id === null) return;
     busy = true;
     error = null;
     formError = null;
@@ -271,4 +279,15 @@
       <button class="btn btn-warning" onclick={() => confirmWiden && put(confirmWiden)} disabled={busy}>Widen and save</button>
     </div>
   </Modal>
+{/if}
+
+{#if confirmRemove !== null}
+    <Modal open onClose={() => (confirmRemove = null)} labelledby="key-policy-remove-title">
+      <h3 id="key-policy-remove-title" class="text-lg font-semibold mb-4">Remove the access policy</h3>
+      <p>Remove the access policy of "{confirmRemove}"? The key falls back to the default policy.</p>
+      <div class="modal-action">
+        <button class="btn btn-ghost" onclick={() => (confirmRemove = null)}>Cancel</button>
+        <button class="btn btn-error" onclick={removeConfirmed}>Remove policy</button>
+      </div>
+    </Modal>
 {/if}

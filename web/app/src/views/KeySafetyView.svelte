@@ -3,6 +3,7 @@
   import PageHeader from "$components/PageHeader.svelte";
   import StatusBadge from "$components/StatusBadge.svelte";
   import Alert from "$components/Alert.svelte";
+  import Modal from "$components/Modal.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
   import {
     safetyCheck,
@@ -121,12 +122,21 @@
     await run(() => setKeySafety(req), `Usage limits set for "${req.key_id}".`);
   }
 
-  async function clearLimits(): Promise<void> {
+  function clearLimits(): void {
     if (!target()) return;
     const id = keyId.trim();
     const be = backend.trim();
-    if (!window.confirm(`Clear the usage limits of "${id}" on ${be}?`)) return;
-    await run(() => clearKeySafety(id, be), `Usage limits cleared for "${id}".`);
+    confirmClear = { id, backend: be };
+  }
+
+  // Clear asks through components/Modal.svelte, never window.confirm.
+  let confirmClear = $state<{ id: string; backend: string } | null>(null);
+
+  async function clearConfirmed(): Promise<void> {
+    const t = confirmClear;
+    confirmClear = null;
+    if (t === null) return;
+    await run(() => clearKeySafety(t.id, t.backend), `Usage limits cleared for "${t.id}".`);
   }
 
   onMount(() => {
@@ -214,4 +224,15 @@
 <div class="flex gap-2">
   <button class="btn btn-primary btn-sm" onclick={setLimits} disabled={busy}>Set limits</button>
   <button class="btn btn-ghost btn-sm text-error" onclick={clearLimits} disabled={busy}>Clear limits</button>
+
+  {#if confirmClear !== null}
+    <Modal open onClose={() => (confirmClear = null)} labelledby="key-safety-clear-title">
+      <h3 id="key-safety-clear-title" class="text-lg font-semibold mb-4">Clear usage limits</h3>
+      <p>Clear the usage limits of "{confirmClear.id}" on {confirmClear.backend}?</p>
+      <div class="modal-action">
+        <button class="btn btn-ghost" onclick={() => (confirmClear = null)}>Cancel</button>
+        <button class="btn btn-error" onclick={clearConfirmed}>Clear limits</button>
+      </div>
+    </Modal>
+  {/if}
 </div>

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import PageHeader from "$components/PageHeader.svelte";
   import Alert from "$components/Alert.svelte";
+  import Modal from "$components/Modal.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
   import {
     TRUST_ROOT_PURPOSES,
@@ -69,8 +70,41 @@
     }
   }
 
-  async function quarantine(r: TrustRoot): Promise<void> {
-    if (!window.confirm(`Quarantine trust root ${r.subject}? It is reclassified as synced.`)) return;
+  // Destructive actions ask through components/Modal.svelte, never
+  // window.confirm: `pending` holds the action until the dialog confirms it.
+  interface PendingConfirm {
+    title: string;
+    message: string;
+    label: string;
+    run: () => Promise<void>;
+  }
+  let pending = $state<PendingConfirm | null>(null);
+
+  async function confirmPending(): Promise<void> {
+    const p = pending;
+    pending = null;
+    if (p) await p.run();
+  }
+
+  function quarantine(r: TrustRoot): void {
+    pending = {
+      title: "Quarantine trust root",
+      message: `Quarantine trust root ${r.subject}? It is reclassified as synced.`,
+      label: "Quarantine",
+      run: () => quarantineConfirmed(r),
+    };
+  }
+
+  function remove(r: TrustRoot): void {
+    pending = {
+      title: "Delete trust root",
+      message: `Delete trust root ${r.subject}?`,
+      label: "Delete",
+      run: () => removeConfirmed(r),
+    };
+  }
+
+  async function quarantineConfirmed(r: TrustRoot): Promise<void> {
     try {
       await quarantineTrustRoot(r.fingerprint);
       showToast("success", `Trust root ${short(r.fingerprint)} quarantined.`);
@@ -80,8 +114,7 @@
     }
   }
 
-  async function remove(r: TrustRoot): Promise<void> {
-    if (!window.confirm(`Delete trust root ${r.subject}?`)) return;
+  async function removeConfirmed(r: TrustRoot): Promise<void> {
     try {
       await deleteTrustRoot(r.fingerprint);
       showToast("success", `Trust root ${short(r.fingerprint)} deleted.`);
@@ -174,4 +207,15 @@
       <button class="btn btn-primary btn-sm" onclick={doImport} disabled={importing || pem.trim() === ""}>Import</button>
     </div>
   </div>
+
+  {#if pending}
+    <Modal open onClose={() => (pending = null)} labelledby="trust-root-confirm-title">
+      <h3 id="trust-root-confirm-title" class="text-lg font-semibold mb-4">{pending.title}</h3>
+      <p>{pending.message}</p>
+      <div class="modal-action">
+        <button class="btn btn-ghost" onclick={() => (pending = null)}>Cancel</button>
+        <button class="btn btn-error" onclick={confirmPending}>{pending.label}</button>
+      </div>
+    </Modal>
+  {/if}
 </div>
