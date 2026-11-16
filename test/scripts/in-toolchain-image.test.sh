@@ -37,7 +37,11 @@ case $1 in
     : >"$FAKE_STATE/env"
     while [ "$#" -gt 0 ]; do
       case $1 in
-        --env) case $2 in *=*) printf '%s\n' "$2" >>"$FAKE_STATE/env" ;; esac; shift 2 ;;
+        # --env NAME takes NAME's value from the caller, as docker does.
+        --env) case $2 in
+            *=*) printf '%s\n' "$2" >>"$FAKE_STATE/env" ;;
+            *) if [ -n "${!2+x}" ]; then printf '%s=%s\n' "$2" "${!2}" >>"$FAKE_STATE/env"; fi ;;
+          esac; shift 2 ;;
         sh) if [ "${2:-}" = -c ]; then printf '%s' "$3" >"$FAKE_STATE/cmd"; break; fi; shift ;;
         *) shift ;;
       esac
@@ -53,6 +57,9 @@ EOF
 cat >"$WORK/bin/trivy" <<'EOF'
 #!/usr/bin/env bash
 printf 'TMPDIR=%s\nTRIVY_CACHE_DIR=%s\nargs=%s\n' "$TMPDIR" "$TRIVY_CACHE_DIR" "$*" >"$FAKE_STATE/trivy.out"
+for v in TRIVY_DB_REPOSITORY TRIVY_JAVA_DB_REPOSITORY TRIVY_INSECURE; do
+  if [ -n "${!v+x}" ]; then printf '%s=%s\n' "$v" "${!v}" >>"$FAKE_STATE/trivy.out"; fi
+done
 EOF
 chmod +x "$WORK/bin/docker" "$WORK/bin/trivy"
 
@@ -62,6 +69,7 @@ run() {
 	rm -rf "$FAKE_STATE"
 	mkdir -p "$FAKE_STATE"
 	OUT=$(cd "$WORK/src" && env -u GOPRIVATE -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+		-u TRIVY_DB_REPOSITORY -u TRIVY_JAVA_DB_REPOSITORY -u TRIVY_INSECURE \
 		PATH="$WORK/bin:$PATH" IN_IMAGE_CPUS=2 IN_IMAGE_NETWORK=bridge "$@" \
 		"$SCRIPT" toolchain:test trivy image --input it-image.tar --exit-code 1 2>&1)
 	RC=$?
@@ -102,6 +110,30 @@ run IN_IMAGE_SCRATCH=var/tmp
 eq "the script exits 2" "2" "$RC"
 eq "the error names the variable" "IN_IMAGE_SCRATCH must be an absolute path: var/tmp" "$OUT"
 eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
+
+# --- a bridge stage forwards the runner's Trivy database settings ------------
+lacks() { grep -q -- "^$3=" "$2" && no "$1" "no $3 in $2" "$(tr '\n' ' ' <"$2")" || ok "$1"; }
+section "Trivy database settings, bridge stage"
+run TRIVY_DB_REPOSITORY=registry.example.com/trivy-db TRIVY_JAVA_DB_REPOSITORY=registry.example.com/trivy-java-db TRIVY_INSECURE=true
+eq "the stage exits 0" "0" "$RC"
+has "trivy got TRIVY_DB_REPOSITORY" "$FAKE_STATE/trivy.out" "TRIVY_DB_REPOSITORY=registry.example.com/trivy-db"
+has "trivy got TRIVY_JAVA_DB_REPOSITORY" "$FAKE_STATE/trivy.out" "TRIVY_JAVA_DB_REPOSITORY=registry.example.com/trivy-java-db"
+has "trivy got TRIVY_INSECURE" "$FAKE_STATE/trivy.out" "TRIVY_INSECURE=true"
+has "the value is passed by name, not written into the arguments" "$FAKE_STATE/create.args" "TRIVY_DB_REPOSITORY"
+
+section "Trivy database settings unset, bridge stage"
+run
+eq "the stage exits 0" "0" "$RC"
+lacks "no TRIVY_DB_REPOSITORY reaches trivy" "$FAKE_STATE/trivy.out" TRIVY_DB_REPOSITORY
+lacks "no TRIVY_JAVA_DB_REPOSITORY reaches trivy" "$FAKE_STATE/trivy.out" TRIVY_JAVA_DB_REPOSITORY
+lacks "no TRIVY_INSECURE reaches trivy" "$FAKE_STATE/trivy.out" TRIVY_INSECURE
+
+section "Trivy database settings, offline stage"
+run IN_IMAGE_NETWORK=none TRIVY_DB_REPOSITORY=registry.example.com/trivy-db TRIVY_JAVA_DB_REPOSITORY=registry.example.com/trivy-java-db TRIVY_INSECURE=true
+eq "the stage exits 0" "0" "$RC"
+lacks "an offline stage gets no TRIVY_DB_REPOSITORY" "$FAKE_STATE/trivy.out" TRIVY_DB_REPOSITORY
+lacks "an offline stage gets no TRIVY_JAVA_DB_REPOSITORY" "$FAKE_STATE/trivy.out" TRIVY_JAVA_DB_REPOSITORY
+lacks "an offline stage gets no TRIVY_INSECURE" "$FAKE_STATE/trivy.out" TRIVY_INSECURE
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
