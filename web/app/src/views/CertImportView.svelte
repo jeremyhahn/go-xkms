@@ -52,12 +52,21 @@
     }
   }
 
+  // The import freezes its target and PEMs when it starts; the inputs stay
+  // disabled until it settles or the overwrite confirm is cancelled, and
+  // the store writes to the frozen values only.
+  type Pending = { id: string; backend: string; certPem: string; chainPem: string };
+  let pending = $state<Pending | null>(null);
+  const frozen = $derived(busy || confirming);
+
   async function startImport(): Promise<void> {
     if (!ready) return;
+    const p: Pending = { id: keyId.trim(), backend, certPem, chainPem };
+    pending = p;
     busy = true;
     error = null;
     try {
-      if (await getSDKClient().certs.exists(keyId.trim(), backend)) {
+      if (await getSDKClient().certs.exists(p.id, p.backend)) {
         confirming = true;
         return;
       }
@@ -70,30 +79,37 @@
     await store();
   }
 
+  function cancel(): void {
+    confirming = false;
+    pending = null;
+  }
+
   async function store(): Promise<void> {
-    const id = keyId.trim();
+    const p = pending;
+    if (p === null) return;
     confirming = false;
     busy = true;
     error = null;
     try {
       try {
-        await getSDKClient().certs.save(id, backend, { backend, certificate_pem: certPem });
+        await getSDKClient().certs.save(p.id, p.backend, { backend: p.backend, certificate_pem: p.certPem });
       } catch (e) {
         error = message(e);
         return;
       }
-      const chain = pemBlocks(chainPem);
+      const chain = pemBlocks(p.chainPem);
       if (chain.length > 0) {
         try {
-          await getSDKClient().certs.saveChain(id, { backend, cert_chain_pem: chain });
+          await getSDKClient().certs.saveChain(p.id, { backend: p.backend, cert_chain_pem: chain });
         } catch (e) {
           error = `The certificate was stored but the chain was not: ${message(e)}`;
           return;
         }
       }
-      showToast("success", `Certificate stored for key "${id}".`);
+      showToast("success", `Certificate stored for key "${p.id}".`);
     } finally {
       busy = false;
+      pending = null;
     }
   }
 
@@ -108,8 +124,8 @@
 {#if error}<Alert kind="error" class="mb-3"><span>{error}</span></Alert>{/if}
 
 <div class="space-y-3 max-w-2xl">
-  <input class="input input-bordered w-full" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} />
-  <select class="select select-bordered w-full" aria-label="Backend" bind:value={backend}>
+  <input class="input input-bordered w-full" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} disabled={frozen} />
+  <select class="select select-bordered w-full" aria-label="Backend" bind:value={backend} disabled={frozen}>
     <option value="">Select a backend</option>
     {#each backends as b (b.id)}
       <option value={b.id}>{b.id}</option>
@@ -121,6 +137,7 @@
     placeholder={BEGIN}
     rows="8"
     bind:value={certPem}
+    disabled={frozen}
   ></textarea>
   {#if certError}<p class="text-error text-sm">{certError}</p>{/if}
   <textarea
@@ -129,15 +146,16 @@
     placeholder="Chain PEM (optional, one or more certificates)"
     rows="8"
     bind:value={chainPem}
+    disabled={frozen}
   ></textarea>
   {#if chainError}<p class="text-error text-sm">{chainError}</p>{/if}
 
   {#if confirming}
     <Alert kind="warning">
-      <span>A certificate already exists for key "{keyId.trim()}". Overwrite it?</span>
+      <span>A certificate already exists for key "{pending?.id}". Overwrite it?</span>
     </Alert>
     <div class="flex gap-2">
-      <button class="btn btn-ghost" onclick={() => (confirming = false)} disabled={busy}>Cancel</button>
+      <button class="btn btn-ghost" onclick={cancel} disabled={busy}>Cancel</button>
       <button class="btn btn-warning" onclick={store} disabled={busy}>Confirm</button>
     </div>
   {:else}
