@@ -128,21 +128,20 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 	// Each Sign is admitted like XKMSService.Sign, under the tenant, key and
 	// caller captured here: a retained signer stops when the key is disabled,
 	// revoked or its policy expires, and every use is charged to the key.
+	// The signer stays paired with the version resolved here, the one Public
+	// returns: when admission follows the usage counters to a newer version,
+	// the Sign is refused rather than made under a key the caller never saw.
 	signCtx := context.WithoutCancel(ctx)
+	version := k.record.Current
 	sign := func(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 		use := *k
 		if err := s.admitKey(signCtx, &use, keypolicy.OpSign); err != nil {
 			return nil, err
 		}
-		cur, err := use.current()
-		if err != nil {
-			return nil, err
+		if use.record.Current != version {
+			return nil, &KeyVersionMissingError{KeyID: key.KeyID, Version: version}
 		}
-		backendSigner, err := use.backend.Signer(signCtx, cur.attrs)
-		if err != nil {
-			return nil, &ErrKeyOperation{Operation: "sign with repository signing key", KeyID: key.KeyID, Err: err}
-		}
-		return backendSigner.Sign(rand, digest, opts)
+		return signer.Sign(rand, digest, opts)
 	}
 	return opaqueSigner{signer: signer, sigAlg: cur.attrs.SignatureAlgorithm, sign: sign}, nil
 }
