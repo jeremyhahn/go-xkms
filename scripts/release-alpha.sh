@@ -198,9 +198,9 @@ max_version() {
 # gates it). $1 must be strictly less than $2; callers only ever pass
 # (CURRENT, NEXT) after version_gt has already confirmed that.
 bump_level() {
-	local cur=${1#v} nxt=${2#v} c1 c2 c3 n1 n2 n3
-	IFS='.' read -r c1 c2 c3 <<<"${cur%-alpha}"
-	IFS='.' read -r n1 n2 n3 <<<"${nxt%-alpha}"
+	local cur=${1#v} nxt=${2#v} c1 c2 n1 n2 _
+	IFS='.' read -r c1 c2 _ <<<"${cur%-alpha}"
+	IFS='.' read -r n1 n2 _ <<<"${nxt%-alpha}"
 	if ((10#$n1 != 10#$c1)); then
 		printf 'major'
 	elif ((10#$n2 != 10#$c2)); then
@@ -366,6 +366,17 @@ forge_api_url() {
 		return 0
 	fi
 	printf '%s/api/v1/repos/%s' "$base" "${repo#"$base"/}"
+}
+
+# pr_html_url prints the pull request's web URL from the forge's JSON response
+# in file $1: Gitea links it under /pulls/<n>, GitHub under /pull/<n>. The
+# user and repository objects the response embeds carry html_urls of their
+# own, none of which ends in /pull(s)/<n>. Empty when there is none.
+pr_html_url() {
+	local url
+	url=$(grep -oE '"html_url":"[^"]*/pulls?/[0-9]+"' "$1" | head -n 1) || return 0
+	url=${url#*:\"}
+	printf '%s' "${url%\"}"
 }
 
 # json_string prints $1 as a JSON string literal, escaping the backslash and
@@ -732,10 +743,6 @@ code=$(forge_api POST /pulls "$PR_REQUEST") || code=000
 [ "$code" = 201 ] ||
 	die "the forge refused to open the pull request (HTTP $code) although $BRANCH_NAME is pushed. Open it by hand, titled '$RELEASE_TITLE': $FORGE_REPO/compare/$RELEASE_BRANCH...$BRANCH_NAME"
 
-# The response's only html_url under /pulls/ is the pull request's own; the
-# user and repository objects it embeds carry html_urls of their own too.
-PR_URL=$(grep -oE '"html_url":"[^"]*/pulls/[0-9]+"' "$FORGE_RESPONSE") || PR_URL=""
-PR_URL=${PR_URL#*:\"}
-PR_URL=${PR_URL%\"}
+PR_URL=$(pr_html_url "$FORGE_RESPONSE")
 printf 'release-alpha: opened pull request "%s": %s\n' "$RELEASE_TITLE" "${PR_URL:-$FORGE_REPO/pulls}"
 printf 'release-alpha: once that pull request is reviewed and merged, run: make release-tag VERSION=%s\n' "${NEXT#v}"
