@@ -212,3 +212,66 @@ describe("TenantTpmView", () => {
     expect(vtpmStatus).not.toHaveBeenCalled();
   });
 });
+
+describe("TenantTpmView stale replies", () => {
+  it("shows the second tenant when the first tenant's reply lands last", async () => {
+    let resolveA: (r: TenantTPMModeResponse) => void = () => {};
+    getTPMMode.mockImplementation((id: string) =>
+      id === "t1"
+        ? new Promise<TenantTPMModeResponse>((r) => (resolveA = r))
+        : Promise.resolve({ tenant_id: "t2", mode: "shared" }),
+    );
+    vtpmStatus.mockResolvedValue({ tenant_id: "t1", running: true });
+
+    await choose("t1");
+    await fireEvent.change(screen.getByLabelText("Tenant"), { target: { value: "t2" } });
+    await waitFor(() => expect(screen.getByTestId("current-mode")).toHaveTextContent("shared"));
+
+    resolveA({ tenant_id: "t1", mode: "vtpm" });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.getByTestId("current-mode")).toHaveTextContent("shared");
+    expect(vtpmStatus).not.toHaveBeenCalled();
+    expect(screen.queryByText("Virtual TPM")).not.toBeInTheDocument();
+  });
+
+  it("drops a vTPM status that lands after the tenant changed", async () => {
+    let resolveStatus: (r: TenantVTPMStatusResponse) => void = () => {};
+    getTPMMode.mockImplementation((id: string) => Promise.resolve({ tenant_id: id, mode: "vtpm" }));
+    vtpmStatus.mockImplementation((id: string) =>
+      id === "t1"
+        ? new Promise<TenantVTPMStatusResponse>((r) => (resolveStatus = r))
+        : Promise.resolve({ tenant_id: "t2", running: false, pid: 7 }),
+    );
+
+    await choose("t1");
+    await waitFor(() => expect(vtpmStatus).toHaveBeenCalledWith("t1"));
+    await fireEvent.change(screen.getByLabelText("Tenant"), { target: { value: "t2" } });
+    expect(await screen.findByText("stopped")).toBeInTheDocument();
+
+    resolveStatus({ tenant_id: "t1", running: true, pid: 4242 });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.getByText("stopped")).toBeInTheDocument();
+    expect(screen.queryByText("4242")).not.toBeInTheDocument();
+  });
+
+  it("locks the tenant selector while a mode change is pending", async () => {
+    let resolveSet: (r: TenantTPMModeResponse) => void = () => {};
+    getTPMMode.mockResolvedValue({ tenant_id: "t1", mode: "none" });
+    setTPMMode.mockImplementation(() => new Promise<TenantTPMModeResponse>((r) => (resolveSet = r)));
+
+    await choose("t1");
+    await waitFor(() => expect(screen.getByTestId("current-mode")).toHaveTextContent("none"));
+    await fireEvent.change(screen.getByLabelText("New mode"), { target: { value: "shared" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Change mode", hidden: true }));
+
+    await waitFor(() => expect(setTPMMode).toHaveBeenCalled());
+    expect(screen.getByLabelText("Tenant")).toBeDisabled();
+    resolveSet({ tenant_id: "t1", mode: "shared" });
+    await waitFor(() => expect(screen.getByLabelText("Tenant")).not.toBeDisabled());
+  });
+});
