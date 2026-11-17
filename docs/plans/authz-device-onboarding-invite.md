@@ -99,6 +99,23 @@ v0.51.0-alpha and v0.58.2-alpha.
    Fix 4f0f00612: `auth.NewIdentityAuthorizer` decides on the original
    identity through the node's own authorizer; the module uses it under
    `WithNodeAuthorizer` (sdk/go `WithServiceModuleNodeAuthorizer`).
-- Open: pkg/server still builds `auth.NewAuthorizer(qrdbClient.RBAC())`, so
-  xkmsd's own service keeps the projection until it is handed the node
-  authorizer.
+
+## Slice 6 (lane row2091c): finish PR #2114
+
+- Merge c615e57d0: origin/main 81a1a5fb3.
+- Audit (security): test ce046ba16, fix 358a722fe. `CreateUser` decides
+  users:invite through `authorizeAudited`: allow and deny are both emitted;
+  a failed audit write returns `AuditGateError` and creates nothing. pkg/server
+  hands the service its audit sink.
+- xkmsd full identity: test 7961e2ecb, fix 873cad9ca. `initializeAuthorization`
+  builds `auth.NewNodeAuthorizer(qrdbClient.RBAC(), node.Authorizer())`, so
+  ScopePermissions count. This replaces slice 5's open note.
+- Surface: test fc14d1b3f, fix 5b8bd8b97. `WithAuthorization`,
+  `WithNodeAuthorizer`, their sdk/go re-exports, `auth.IdentityAuthorizer`,
+  `ErrNoPermissionLister`, `NewIdentityAuthorizer` and `WithRBAC` are removed.
+  A host sets its own service's authorizer: `auth.NewAuthorizer(nil)` when
+  auth is off, `auth.NewNodeAuthorizer` for the full identity. `hostStores`
+  wires the RBAC plane only when none is set (`XKMSService.Authorizer`).
+  `auth.NewNodeAuthorizer` and that accessor are the two new exports.
+- SPEC: 90aa9bf11 restores main's authz-device-onboarding row text. Its
+  revision is left to the owner or coordinator.
