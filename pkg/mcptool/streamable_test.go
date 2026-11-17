@@ -128,6 +128,59 @@ func TestStreamableHTTP_RejectsBadResponses(t *testing.T) {
 	}
 }
 
+// TestStreamableHTTP_ErrorStatusCarriesJSONRPCError: a JSON-RPC error sent
+// with an HTTP error status is the answer to the request, with its details;
+// an error for another request id, or a body that is no JSON-RPC error, is a
+// transport error.
+func TestStreamableHTTP_ErrorStatusCarriesJSONRPCError(t *testing.T) {
+	reply := func(status int, body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		}
+	}
+	const rejection = `"error":{"code":-32004,"message":"unsupported protocol version","data":{"supported":["1999-01-01"]}}`
+	for name, handler := range map[string]http.HandlerFunc{
+		"matching id": reply(http.StatusBadRequest, `{"jsonrpc":"2.0","id":1,`+rejection+`}`),
+		"null id":     reply(http.StatusBadRequest, `{"jsonrpc":"2.0","id":null,`+rejection+`}`),
+		"server error": reply(http.StatusInternalServerError,
+			`{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal error"}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(handler)
+			defer srv.Close()
+			tr := newStreamableHTTP(srv.URL, http.DefaultTransport, nil)
+			resp, err := tr.SendRequest(context.Background(), initRequest())
+			require.NoError(t, err)
+			require.NotNil(t, resp.Error)
+			assert.NotEmpty(t, resp.Error.Message)
+			assert.Equal(t, mcp.NewRequestId(int64(1)), resp.ID)
+		})
+	}
+	for name, handler := range map[string]http.HandlerFunc{
+		"other id":      reply(http.StatusBadRequest, `{"jsonrpc":"2.0","id":2,`+rejection+`}`),
+		"wrong version": reply(http.StatusBadRequest, `{"jsonrpc":"1.0","id":1,`+rejection+`}`),
+		"result":        reply(http.StatusBadRequest, `{"jsonrpc":"2.0","id":1,"result":{}}`),
+		"no message":    reply(http.StatusBadRequest, `{"jsonrpc":"2.0","id":1,"error":{"code":-32004}}`),
+		"bad json":      reply(http.StatusBadRequest, `{`),
+		"text body": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,` + rejection + `}`))
+		},
+		"accepted": reply(http.StatusAccepted, `{"jsonrpc":"2.0","id":1,`+rejection+`}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(handler)
+			defer srv.Close()
+			tr := newStreamableHTTP(srv.URL, http.DefaultTransport, nil)
+			_, err := tr.SendRequest(context.Background(), initRequest())
+			assert.Error(t, err)
+		})
+	}
+}
+
 // TestStreamableHTTP_ValidatesResponseID proves a JSON or event-stream
 // response is accepted only when its JSON-RPC version is 2.0 and its id is the
 // outstanding request's id (1); a different, missing or null id, or another
