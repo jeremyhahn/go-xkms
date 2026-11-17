@@ -759,6 +759,8 @@ jobs:
           # This workflow's own file: the route counts its runs only.
           RUNS_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/workflows/ci.yml/runs
           REPO_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          # CUSTOMIZE (go-xkms, #2240): the runs list of this workflow on github.com.
+          GH_RUNS_API: ${{ github.api_url }}/repos/${{ github.repository }}/actions/workflows/ci.yml/runs
           JOB_TOKEN: ${{ github.token }}
           # v1.30: a push to main reads the tree proof with it as well.
           BOT: ${{ (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.AGENT_TOKEN || '' }}
@@ -776,7 +778,7 @@ jobs:
             # first query is still waiting, in progress or done at the
             # second, and counted or finished. The other order lets a run
             # start between the two queries and be counted by neither.
-            for st in waiting in_progress; do
+            for st in ${RUN_STATES:-waiting in_progress}; do
               CODE=$(curl -sS --max-time 30 -o "$RUNNER_TEMP/runs.json" -w '%{http_code}' \
                 -H @<(printf 'Authorization: token %s\n' "$1") \
                 "$RUNS_API?event=push&branch=main&status=$st&limit=1") || CODE="curl exit $?"
@@ -830,7 +832,16 @@ jobs:
           elif [ "$EVENT" != schedule ]; then
             echo "not a schedule run: no check"
           elif [ "$SERVER" = https://github.com ]; then
-            echo "the github.com mirror has no bigdisk runner: no check"
+            # CUSTOMIZE (go-xkms, #2240): scheduled main runs share the bigdisk-docker
+            # pool with main's push runs on github.com too, so count them there with
+            # the job token (actions: read) through the GitHub REST API; never AGENT_TOKEN.
+            RUNS_API=$GH_RUNS_API RUN_STATES="requested queued pending waiting in_progress"
+            if [ -n "$JOB_TOKEN" ] && runs "$JOB_TOKEN"; then
+              echo "read with the job token"
+            else
+              verdict=unreadable
+              echo "::error::the GitHub Actions API gave no count (job token: ${CODE:-no job token}), so every bigdisk job skips and CI Gate fails"
+            fi
           elif [ -n "$JOB_TOKEN" ] && runs "$JOB_TOKEN"; then
             echo "read with the job token"
           elif job="${CODE:-no job token}"; [ -n "$BOT" ] && runs "$BOT"; then
@@ -1076,7 +1087,10 @@ jobs:
 
   image:
     name: Devcontainer image [lint, gosec, build, test]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    # CUSTOMIZE (go-xkms, #2240): schedule and workflow_dispatch runs on main
+    # also use the bigdisk-docker pool, not hosted-runner hours; fork PRs stay hosted.
+    # github.com has the bigdisk-docker pool (push run 43481870662 ran Integration on it); the preflight schedule guard counts main's active push runs there too, so a scheduled run defers to them.
+    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     # v1.30: only on the guard's `run` (not `refused`, not `proven`). It keeps
@@ -1209,6 +1223,7 @@ jobs:
       # CUSTOMIZE: nested modules (sdk/go, xkey) and variants (FIPS) are built
       # by `make build` itself, never by an extra step here.
       - name: make build
+        id: build
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
         # >>> CUSTOMIZE (go-xkms)
         # build-xkey-local runs `npm ci` against the npm registry.
@@ -1224,7 +1239,8 @@ jobs:
       # Tags matter here too: without them tag-gated packages are neither
       # tested nor counted. The integration stage is its own job below.
       - name: make coverage (unit tests and the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
+        # CUSTOMIZE (go-xkms, #2240): coverage does not run after a failed make build.
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' && steps.build.outcome != 'failure' }}
         # >>> CUSTOMIZE (go-xkms)
         # test-web runs `npm ci` against the npm registry.
         env:
@@ -1486,7 +1502,11 @@ jobs:
     # only on the schedule guard's `run`.
     needs: preflight   # v1.34
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    # CUSTOMIZE (go-xkms, #2240, ruling 740): schedule and workflow_dispatch runs
+    # on main also use the bigdisk-docker pool. Ruling 740 (11-16) supersedes
+    # InfoSec W-1 / DS-8215 for schedule and workflow_dispatch on main only;
+    # pushes, same-repo PRs and fork PRs keep their routing.
+    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1586,7 +1606,11 @@ jobs:
     needs: preflight   # v1.34
     # v1.30: a dispatch off main is refused, so soak runs only on `run`.
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.preflight.outputs.verdict == 'run' }}
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    # CUSTOMIZE (go-xkms, #2240, ruling 740): schedule and workflow_dispatch runs
+    # on main also use the bigdisk-docker pool. Ruling 740 (11-16) supersedes
+    # InfoSec W-1 / DS-8215 for schedule and workflow_dispatch on main only;
+    # pushes, same-repo PRs and fork PRs keep their routing.
+    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 210      # CUSTOMIZE (go-xkms): SOAK_MINUTES (30) plus one 180-minute iteration
     env:
       SOAK_MINUTES: 30        # CUSTOMIZE
