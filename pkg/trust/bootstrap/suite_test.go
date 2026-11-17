@@ -26,7 +26,7 @@ import (
 // newKeyEnclave admits a writable, zeroed enclave of n bytes through the
 // process allocator -- the destination EncodeP256StaticKey takes -- and
 // destroys it when the test ends.
-func newKeyEnclave(t *testing.T, n int) *enclave.MemoryEnclave {
+func newKeyEnclave(t *testing.T, n int) enclave.ByteAccess {
 	t.Helper()
 
 	alloc, err := enclave.ProcessAllocator()
