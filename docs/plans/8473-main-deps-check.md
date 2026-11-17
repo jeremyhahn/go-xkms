@@ -40,3 +40,4 @@
 - af2080g 11-17 (lane-verify: origin/main eb4da3f6a not an ancestor): origin/main eb4da3f6a merged (d94871d3e mcptool streamable transport, 0edde063d and eb4da3f6a CI, f422814e9 security-event evidence), no conflicts.
   - go build -mod=readonly in root, sdk/go, xkey, web/desktop: PASS; go test -race (codec tags) ./pkg/mcptool/... ./pkg/types/...: PASS.
   - make deps-check (merged tree): FAIL, golang.org/x/term v0.48.0 (root, xkey) and x/text v0.44.0 (root) now 7+ days old. Bumped, all four modules tidied (x/sync v0.25.0 indirect); make deps-check: PASS; readonly builds: PASS.
+  - Nested Module Tests, every step of the job (sdk/go, web/desktop, the xkey go test -race sets, go vet -tags ble, attestation) on the bumped tree: PASS.
