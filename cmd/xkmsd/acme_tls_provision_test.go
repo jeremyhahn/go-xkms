@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,5 +131,35 @@ func TestShippedConfig_ACMEListenerCertIssuedOnFirstStart(t *testing.T) {
 	}
 	if !bytes.Equal(certPEM, again) {
 		t.Error("second start re-issued the listener certificate, want the existing one reused")
+	}
+}
+
+// TestACMEListenerCert_OnlyOneFilePresentFails pins that a lone cert or key
+// is never paired with a fresh issue: start fails naming both paths and the
+// existing file is left as it was.
+func TestACMEListenerCert_OnlyOneFilePresentFails(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "acme.crt")
+	keyPath := filepath.Join(dir, "acme.key")
+	if err := os.WriteFile(certPath, []byte("placeholder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.ACMEConfig{ExternalURL: "https://acme.example.com", HTTPSAddr: "127.0.0.1:0"}
+	cfg.TLS.CertFile, cfg.TLS.KeyFile = certPath, keyPath
+	srv, _ := newEmbeddedQRDBServerWithCA(t)
+	err := ensureACMEListenerCert(context.Background(), srv.CA(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if !errors.Is(err, ErrACMEListenerCertPartial) {
+		t.Fatalf("ensureACMEListenerCert with only the cert present: %v, want ErrACMEListenerCertPartial", err)
+	}
+	for _, p := range []string{certPath, keyPath} {
+		if !strings.Contains(err.Error(), p) {
+			t.Errorf("error %q does not name %s", err, p)
+		}
+	}
+	if got, _ := os.ReadFile(certPath); string(got) != "placeholder" {
+		t.Error("existing cert file was overwritten")
+	}
+	if _, err := os.Stat(keyPath); err == nil {
+		t.Error("key file was created next to a lone cert")
 	}
 }
