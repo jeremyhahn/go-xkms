@@ -75,6 +75,8 @@ services:
       - /bin/sh
       - -c
       - |
+        # Fail loudly: any failed step stops the container with its name in the log.
+        set -e
         # Set UDP buffer sizes for QUIC
         echo "Configuring UDP buffers for QUIC..."
         echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo "Warning: Could not set rmem_max"
@@ -97,7 +99,9 @@ services:
         if [ -f /data/xkms/admin-cert.pem ] && [ -f /data/xkms/admin-key.pem ]; then
           echo "Node already initialized; skipping xkmsd init"
         else
-          /app/xkmsd init --config "$$XKMS_CONFIG" --hostname xkms-server --admin-factor mtls
+          echo "Running xkmsd init..."
+          /app/xkmsd init --config "$$XKMS_CONFIG" --hostname xkms-server --admin-factor mtls || { rc=$$?; echo "FATAL: xkmsd init failed (exit $$rc)"; exit $$rc; }
+          ls -la /data/xkms/
         fi
         echo "Starting xkms server..."
         # The barrier passphrase is init-only; the daemon never sees it.

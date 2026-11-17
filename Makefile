@@ -348,6 +348,24 @@ COMPOSE_NS := go-xkms-$(COMPOSE_RUN_ID)
 #                         silently falling back to its directory basename.
 compose = COMPOSE_PROJECT_NAME=$(COMPOSE_NS)-$(1) docker compose -p $(COMPOSE_NS)-$(1)
 
+# compose_trap installs the teardown of a compose integration stack:
+#   $(call compose_trap,<project>[,<extra compose args>]) && <test command>
+# compose_trap_cmd does the same for a full compose command line (one that may
+# begin with `cd <dir> &&`, hence each step runs in its own subshell).
+# On a non-zero exit (or INT/TERM) it prints `ps -a` and every service's logs
+# before `down -v`, so a container that exited during startup is visible in
+# the CI log instead of torn down silently. The test command's exit status is
+# preserved; `trap - EXIT INT TERM` keeps an INT/TERM from tearing down twice.
+compose_trap_cmd = trap 'rc=$$?; trap - EXIT INT TERM; \
+	if [ $$rc -ne 0 ]; then \
+		echo "--- compose stack failed (exit $$rc): service state and logs ---"; \
+		($(1) ps -a); \
+		($(1) logs --no-color --timestamps); \
+	fi; \
+	($(1) down -v --remove-orphans >/dev/null 2>&1); \
+	exit $$rc' EXIT INT TERM
+compose_trap = $(call compose_trap_cmd,$(call compose,$(1)) $(2))
+
 # An image TAG is daemon-global -- the project namespace does not reach it.
 # `docker build -t go-xkms-integration:latest` on one job retags that name for
 # every job on the host, so two runs building different commits race between
@@ -2026,7 +2044,7 @@ integration-test-storage: integration-test-storage-file integration-test-storage
 integration-test-storage-file:
 	@echo "$(CYAN)$(BOLD)→ Running file storage integration tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
-	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/storage && $(call compose_trap,storage) && \
 		$(call compose,storage) run --rm test-file
 	@echo "$(GREEN)✓ File storage integration tests complete$(RESET)"
 
@@ -2035,7 +2053,7 @@ integration-test-storage-file:
 integration-test-storage-memory:
 	@echo "$(CYAN)$(BOLD)→ Running memory storage integration tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
-	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/storage && $(call compose_trap,storage) && \
 		$(call compose,storage) run --rm test-memory
 	@echo "$(GREEN)✓ Memory storage integration tests complete$(RESET)"
 
@@ -2055,7 +2073,7 @@ integration-test-yubikey:
 integration-test-storage-hardware-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 hardware storage tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
-	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/storage && $(call compose_trap,storage) && \
 		$(call compose,storage) run --rm test-hardware-pkcs11
 	@echo "$(GREEN)✓ PKCS#11 hardware storage tests complete$(RESET)"
 
@@ -2066,7 +2084,7 @@ integration-test-storage-hardware-tpm2:
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
 	@cd test/integration/storage && $(call compose,storage) up -d tpm-simulator
 	@sleep 3
-	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/storage && $(call compose_trap,storage) && \
 		$(call compose,storage) run --rm test-hardware-tpm2
 	@echo "$(GREEN)✓ TPM2 hardware storage tests complete$(RESET)"
 
@@ -2197,7 +2215,7 @@ integration-test-symmetric:
 integration-test-pkcs8:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS8 integration tests...$(RESET)"
 	@cd test/integration/pkcs8 && $(call compose,pkcs8) down -v >/dev/null 2>&1 || true
-	@cd test/integration/pkcs8 && trap '$(call compose,pkcs8) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/pkcs8 && $(call compose_trap,pkcs8) && \
 		$(call compose,pkcs8) run --build --rm test
 	@echo "$(GREEN)✓ PKCS8 integration tests complete$(RESET)"
 
@@ -2212,7 +2230,7 @@ integration-test-pkcs11: integration-test-pkcs11-backend
 integration-test-pkcs11-backend:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS11/SoftHSM integration tests...$(RESET)"
 	@cd test/integration/pkcs11 && $(call compose,pkcs11) down -v >/dev/null 2>&1 || true
-	@cd test/integration/pkcs11 && trap '$(call compose,pkcs11) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/pkcs11 && $(call compose_trap,pkcs11) && \
 		$(call compose,pkcs11) run --build --rm test
 	@echo "$(GREEN)✓ PKCS11 integration tests complete$(RESET)"
 
@@ -2226,7 +2244,7 @@ integration-test-pkcs11-barrier:
 	@echo "$(CYAN)$(BOLD)→ Running TPM-sealed PKCS#11 barrier PIN integration tests (SoftHSM + swtpm)...$(RESET)"
 	@$(MAKE) --no-print-directory stage-gomodauth
 	@cd test/integration/pkcs11/barrier && $(call compose,pkcs11-barrier) down -v >/dev/null 2>&1 || true
-	@cd test/integration/pkcs11/barrier && trap '$(call compose,pkcs11-barrier) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/pkcs11/barrier && $(call compose_trap,pkcs11-barrier) && \
 		$(call compose,pkcs11-barrier) run --build --rm test \
 		go test -v -count=1 -tags='$(call go_tags,integration pkcs11 pkcs11_barrier codec_cbor codec_json codec_msgpack)' -timeout 15m \
 		./test/integration/pkcs11/barrier/...
@@ -2542,7 +2560,7 @@ integration-test-tpm2:
 	@cd test/integration/tpm2 && $(call compose,tpm2) up -d tpm-simulator
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
-	@cd test/integration/tpm2 && trap '$(call compose,tpm2) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/tpm2 && $(call compose_trap,tpm2) && \
 		$(call compose,tpm2) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test
 	@echo "$(GREEN)✓ TPM2 integration tests complete$(RESET)"
 
@@ -2555,7 +2573,7 @@ integration-test-peergate:
 	@echo "$(CYAN)$(BOLD)→ Running attested-caller gate integration tests (swtpm)...$(RESET)"
 	@$(MAKE) --no-print-directory stage-gomodauth
 	@cd test/integration/tpm2 && $(call compose,peergate) down -v >/dev/null 2>&1 || true
-	@cd test/integration/tpm2 && trap '$(call compose,peergate) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/tpm2 && $(call compose_trap,peergate) && \
 		$(call compose,peergate) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test \
 		go test -v -count=1 -tags='$(call go_tags,integration tpm2 codec_cbor codec_json codec_msgpack gms_pure_go)' -timeout 15m \
 		-run 'TestIntegration_PeerGate' ./test/integration/tpm2/...
@@ -2578,7 +2596,7 @@ integration-test-acme-tpm:
 	@cd test/integration/acme-tpm && $(call compose,acme-tpm) down -v >/dev/null 2>&1 || true
 	@cd test/integration/acme-tpm && $(call compose,acme-tpm) up -d --build tpm-simulator acme-server
 	@echo "$(CYAN)  Waiting for swtpm and the ACME server to be ready...$(RESET)"
-	@cd test/integration/acme-tpm && trap '$(call compose,acme-tpm) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/acme-tpm && $(call compose_trap,acme-tpm) && \
 		$(call compose,acme-tpm) run --build --rm test
 	@echo "$(GREEN)✓ ACME+TPM integration tests complete$(RESET)"
 
@@ -2593,7 +2611,7 @@ integration-test-challenges:
 	@cd test/integration/challenges && $(call compose,challenges) down -v >/dev/null 2>&1 || true
 	@cd test/integration/challenges && $(call compose,challenges) up -d --build acme-server
 	@echo "$(CYAN)  Waiting for the ACME server to be ready...$(RESET)"
-	@cd test/integration/challenges && trap '$(call compose,challenges) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/challenges && $(call compose_trap,challenges) && \
 		$(call compose,challenges) run --build --rm test
 	@echo "$(GREEN)✓ ACME challenge-framework integration tests complete$(RESET)"
 
@@ -2605,7 +2623,7 @@ test-tpm2-encryption:
 	@cd test/integration/tpm2 && $(call compose,tpm2) up -d tpm-simulator
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
-	@cd test/integration/tpm2 && trap '$(call compose,tpm2) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/tpm2 && $(call compose_trap,tpm2) && \
 		$(call compose,tpm2) run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test sh /app/test/integration/tpm2/run_capture_tests.sh
 	@echo "$(GREEN)✓ TPM2 encryption verification tests complete$(RESET)"
 
@@ -2629,7 +2647,7 @@ integration-test-awskms:
 	@echo "$(CYAN)$(BOLD)→ Running AWS KMS/Floci integration tests...$(RESET)"
 	@cd test/integration/awskms && $(call compose,awskms) down -v >/dev/null 2>&1 || true
 	@cd test/integration/awskms && $(call compose,awskms) up -d floci
-	@cd test/integration/awskms && trap '$(call compose,awskms) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/awskms && $(call compose_trap,awskms) && \
 		$(call compose,awskms) run --build --rm test
 	@echo "$(GREEN)✓ AWS KMS integration tests complete$(RESET)"
 
@@ -2638,7 +2656,7 @@ integration-test-awskms:
 integration-test-gcpkms:
 	@echo "$(CYAN)$(BOLD)→ Running GCP KMS integration tests (Floci emulator + mock client)...$(RESET)"
 	@cd test/integration/gcpkms && $(call compose,gcpkms) down -v >/dev/null 2>&1 || true
-	@cd test/integration/gcpkms && trap '$(call compose,gcpkms) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/gcpkms && $(call compose_trap,gcpkms) && \
 		$(call compose,gcpkms) run --build --rm test
 	@echo "$(GREEN)✓ GCP KMS integration tests complete$(RESET)"
 
@@ -2647,7 +2665,7 @@ integration-test-gcpkms:
 integration-test-azurekv:
 	@echo "$(CYAN)$(BOLD)→ Running Azure Key Vault integration tests...$(RESET)"
 	@cd test/integration/azurekv && $(call compose,azurekv) down -v >/dev/null 2>&1 || true
-	@cd test/integration/azurekv && trap '$(call compose,azurekv) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/azurekv && $(call compose_trap,azurekv) && \
 		$(call compose,azurekv) run --build --rm test
 	@echo "$(GREEN)✓ Azure Key Vault integration tests complete$(RESET)"
 
@@ -2658,7 +2676,7 @@ integration-test-vault:
 	@cd test/integration/vault && $(call compose,vault) down -v >/dev/null 2>&1 || true
 	@cd test/integration/vault && $(call compose,vault) up -d vault
 	@cd test/integration/vault && $(call compose,vault) build test
-	@cd test/integration/vault && trap '$(call compose,vault) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/vault && $(call compose_trap,vault) && \
 		$(call compose,vault) run --build --rm test
 	@echo "$(GREEN)✓ Vault integration tests complete$(RESET)"
 
@@ -2669,7 +2687,7 @@ integration-test-quantum:
 	@echo "$(YELLOW)Note: Testing ML-DSA signatures and ML-KEM key encapsulation$(RESET)"
 	@cd test/integration/quantum && $(call compose,quantum) down -v >/dev/null 2>&1 || true
 	@cd test/integration/quantum && $(call compose,quantum) build --no-cache quantum-test
-	@cd test/integration/quantum && trap '$(call compose,quantum) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/quantum && $(call compose_trap,quantum) && \
 		$(call compose,quantum) run --rm quantum-test
 	@echo "$(GREEN)✓ Quantum-safe integration tests complete$(RESET)"
 
@@ -2688,7 +2706,7 @@ ifeq ($(WITH_FROST),1)
 	@echo "$(YELLOW)Note: Testing FROST key generation, signing rounds, and CLI commands$(RESET)"
 	@cd test/integration/frost && $(call compose,frost) down -v >/dev/null 2>&1 || true
 	@cd test/integration/frost && $(call compose,frost) build frost-test
-	@cd test/integration/frost && trap '$(call compose,frost) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/frost && $(call compose_trap,frost) && \
 		$(call compose,frost) run --rm frost-test
 	@echo "$(GREEN)✓ FROST integration tests complete$(RESET)"
 else
@@ -3076,7 +3094,7 @@ integration-test-secretservice:
 integration-test-xkey-webauthn:
 	@echo "$(CYAN)$(BOLD)→ Running xkey Playwright WebAuthn integration tests...$(RESET)"
 	@cd xkey/test/integration/webauthn && $(call compose,xkey-webauthn) down -v >/dev/null 2>&1 || true
-	@cd xkey/test/integration/webauthn && trap '$(call compose,xkey-webauthn) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd xkey/test/integration/webauthn && $(call compose_trap,xkey-webauthn) && \
 		$(call compose,xkey-webauthn) run --rm webauthn-test
 	@echo "$(GREEN)✓ xkey Playwright WebAuthn integration tests complete$(RESET)"
 
@@ -3091,7 +3109,7 @@ integration-test-xkey-backends:
 integration-test-xkey-oidc:
 	@echo "$(CYAN)$(BOLD)→ Running xkey OIDC integration tests...$(RESET)"
 	@cd xkey/test/integration/oidc && $(call compose,xkey-oidc) down -v >/dev/null 2>&1 || true
-	@cd xkey/test/integration/oidc && trap '$(call compose,xkey-oidc) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd xkey/test/integration/oidc && $(call compose_trap,xkey-oidc) && \
 		$(call compose,xkey-oidc) run --rm test-runner
 	@echo "$(GREEN)✓ xkey OIDC integration tests complete$(RESET)"
 
@@ -3226,7 +3244,7 @@ integration-test-cli:
 	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
 	@cd $(API_TEST_DIR) && $(call compose,api) down -v >/dev/null 2>&1 || true
 	@cd $(API_TEST_DIR) && $(call compose,api) build
-	@cd $(API_TEST_DIR) && trap '$(call compose,api) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd $(API_TEST_DIR) && $(call compose_trap,api) && \
 		$(call compose,api) run --rm integration-tests
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
@@ -4849,7 +4867,7 @@ integration-test-api:
 	@echo "$(CYAN)  Cleaning up any existing containers...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) up --build --abort-on-container-exit --exit-code-from integration-tests
 	@echo "$(GREEN)$(BOLD)✓ API integration tests complete!$(RESET)"
 
@@ -4930,7 +4948,7 @@ integration-test-api-unix:
 	@echo "$(CYAN)$(BOLD)→ Running Unix socket protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
 		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/unix/... -timeout 10m"
 	@echo "$(GREEN)✓ Unix socket protocol integration tests complete$(RESET)"
@@ -4941,7 +4959,7 @@ integration-test-api-rest:
 	@echo "$(CYAN)$(BOLD)→ Running REST API protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
 		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/rest/... -timeout 10m"
 	@echo "$(GREEN)✓ REST API protocol integration tests complete$(RESET)"
@@ -4952,7 +4970,7 @@ integration-test-api-grpc:
 	@echo "$(CYAN)$(BOLD)→ Running gRPC protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
 		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/grpc/... -timeout 10m"
 	@echo "$(GREEN)✓ gRPC protocol integration tests complete$(RESET)"
@@ -4963,7 +4981,7 @@ integration-test-api-quic:
 	@echo "$(CYAN)$(BOLD)→ Running QUIC/HTTP3 protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
 		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/quic/... -timeout 10m"
 	@echo "$(GREEN)✓ QUIC/HTTP3 protocol integration tests complete$(RESET)"
@@ -4974,7 +4992,7 @@ integration-test-api-mcp:
 	@echo "$(CYAN)$(BOLD)→ Running MCP protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
 		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m"
 	@echo "$(GREEN)✓ MCP protocol integration tests complete$(RESET)"
@@ -4985,7 +5003,7 @@ integration-test-api-ssh:
 	@echo "$(CYAN)$(BOLD)→ Running SSH multi-protocol integration tests (xkey CLI vs xkmsd)...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
 		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && go build -tags='$(call go_tags,codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2,pkcs11 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'XkeySSH' -timeout 10m"
 	@echo "$(GREEN)✓ SSH multi-protocol integration tests complete$(RESET)"
@@ -5001,7 +5019,7 @@ integration-test-ssh-backends:
 	@# one it got rather than assuming 4566. Teardown is a trap, not a
 	@# trailing command: a cancelled job is killed by signal and would
 	@# otherwise leak the stack onto the host forever.
-	@trap '$(AWSKMS_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(AWSKMS_COMPOSE)) ; \
 		$(AWSKMS_COMPOSE) up -d --wait floci ; \
 		FLOCI_ENDPOINT=$$($(AWSKMS_COMPOSE) port floci 4566 | sed 's/^0\.0\.0\.0:/127.0.0.1:/') ; \
 		[ -n "$$FLOCI_ENDPOINT" ] || { echo "$(RED)✗ floci published no host port for 4566$(RESET)"; exit 1; } ; \
@@ -5025,7 +5043,7 @@ ifeq ($(WITH_FROST),1)
 	@echo "$(CYAN)$(BOLD)→ Running FROST API integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
 		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'FROST' -timeout 15m"
 	@echo "$(GREEN)✓ FROST API integration tests complete$(RESET)"
@@ -5040,7 +5058,7 @@ integration-test-api-parity:
 	@echo "$(CYAN)$(BOLD)→ Running API protocol parity tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
 		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m"
 	@echo "$(GREEN)✓ API protocol parity tests complete$(RESET)"
@@ -5072,7 +5090,7 @@ integration-test-sdk-go-remote:
 	@echo "$(CYAN)$(BOLD)→ Running Go SDK remote integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
 		sh -c "go test -v -tags='$(call go_tags,integration codec_cbor codec_json codec_msgpack)' ./test/integration/sdk/go/... -run 'TestSDKMultiProtocolRemote' -timeout 20m"
 	@echo "$(GREEN)✓ Go SDK remote integration tests complete$(RESET)"
@@ -5092,7 +5110,7 @@ AWSKMS_COMPOSE := $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/do
 integration-test-bootstrap:
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
-	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/bootstrap && $(call compose_trap,bootstrap) && \
 		$(call compose,bootstrap) run --build --rm test
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
@@ -5101,7 +5119,7 @@ integration-test-bootstrap:
 integration-test-acmeadmin: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running ACME admin plane integration tests...$(RESET)"
 	@cd test/integration/acmeadmin && $(call compose,acmeadmin) down -v >/dev/null 2>&1 || true
-	@cd test/integration/acmeadmin && trap '$(call compose,acmeadmin) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/acmeadmin && $(call compose_trap,acmeadmin) && \
 		$(call compose,acmeadmin) run --build --rm test
 	@echo "$(GREEN)✓ ACME admin plane integration tests complete$(RESET)"
 
@@ -5111,7 +5129,7 @@ integration-test-cluster: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running 3-node Raft cluster + standalone-server integration tests...$(RESET)"
 	@cd test/integration/cluster && bash gen-certs.sh
 	@cd test/integration/cluster && $(call compose,cluster) down -v >/dev/null 2>&1 || true
-	@cd test/integration/cluster && trap '$(call compose,cluster) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/cluster && $(call compose_trap,cluster) && \
 		$(call compose,cluster) run --build --rm test
 	@echo "$(GREEN)✓ Cluster integration tests complete$(RESET)"
 
@@ -5121,7 +5139,7 @@ integration-test-truststrap:
 	@echo "$(CYAN)$(BOLD)→ Running xkey TrustService truststrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) --profile xkey down -v >/dev/null 2>&1 || true
 	@cd test/integration/bootstrap && $(call compose,bootstrap) --profile xkey build xkey-truststrap-test
-	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) --profile xkey down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/bootstrap && $(call compose_trap,bootstrap,--profile xkey) && \
 		$(call compose,bootstrap) --profile xkey run --rm xkey-truststrap-test
 	@echo "$(GREEN)✓ xkey TrustService truststrap integration tests complete$(RESET)"
 
