@@ -22,6 +22,9 @@ import (
 // shortRoot is the preferred parent of the short directory.
 const shortRoot = "/tmp"
 
+// tmpVars are the variables Short points at the short directory for the run.
+var tmpVars = []string{"TMPDIR", "GOTMPDIR"}
+
 // Short makes one short directory (under /tmp, or under os.TempDir() when
 // /tmp is unusable), sets TMPDIR to it while run executes, then restores
 // TMPDIR and removes the directory. It returns run's exit code.
@@ -35,15 +38,24 @@ func Short(run func() int) int {
 		}
 	}
 
-	prev, had := os.LookupEnv("TMPDIR")
-	if err := os.Setenv("TMPDIR", dir); err != nil {
-		fmt.Fprintf(os.Stderr, "testtmp: setting TMPDIR: %v\n", err)
+	// t.TempDir prefers GOTMPDIR over TMPDIR, so both point at dir.
+	restore := make([]func(), 0, len(tmpVars))
+	for _, key := range tmpVars {
+		prev, had := os.LookupEnv(key)
+		if err := os.Setenv(key, dir); err != nil {
+			fmt.Fprintf(os.Stderr, "testtmp: setting %s: %v\n", key, err)
+		}
+		restore = append(restore, func() {
+			if had {
+				_ = os.Setenv(key, prev)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
 	}
 	defer func() {
-		if had {
-			_ = os.Setenv("TMPDIR", prev)
-		} else {
-			_ = os.Unsetenv("TMPDIR")
+		for _, r := range restore {
+			r()
 		}
 		if err := os.RemoveAll(dir); err != nil {
 			fmt.Fprintf(os.Stderr, "testtmp: removing %s: %v\n", dir, err)

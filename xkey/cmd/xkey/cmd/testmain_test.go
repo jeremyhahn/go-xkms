@@ -29,15 +29,24 @@ func shortTMPDIR(run func() int) int {
 		}
 	}
 
-	prev, had := os.LookupEnv("TMPDIR")
-	if err := os.Setenv("TMPDIR", dir); err != nil {
-		fmt.Fprintf(os.Stderr, "shortTMPDIR: setting TMPDIR: %v\n", err)
+	// t.TempDir prefers GOTMPDIR over TMPDIR, so both point at dir.
+	restore := make([]func(), 0, 2)
+	for _, key := range []string{"TMPDIR", "GOTMPDIR"} {
+		prev, had := os.LookupEnv(key)
+		if err := os.Setenv(key, dir); err != nil {
+			fmt.Fprintf(os.Stderr, "shortTMPDIR: setting %s: %v\n", key, err)
+		}
+		restore = append(restore, func() {
+			if had {
+				_ = os.Setenv(key, prev)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
 	}
 	defer func() {
-		if had {
-			_ = os.Setenv("TMPDIR", prev)
-		} else {
-			_ = os.Unsetenv("TMPDIR")
+		for _, r := range restore {
+			r()
 		}
 		if err := os.RemoveAll(dir); err != nil {
 			fmt.Fprintf(os.Stderr, "shortTMPDIR: removing %s: %v\n", dir, err)

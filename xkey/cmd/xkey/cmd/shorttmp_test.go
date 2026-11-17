@@ -44,6 +44,39 @@ func TestShortTMPDIR_socket_path_fits_under_a_deep_TMPDIR(t *testing.T) {
 	}
 }
 
+// TestShortTMPDIR_TempDir_is_short_under_a_deep_GOTMPDIR: t.TempDir prefers
+// GOTMPDIR, so a deep GOTMPDIR must not leak into the run.
+func TestShortTMPDIR_TempDir_is_short_under_a_deep_GOTMPDIR(t *testing.T) {
+	deep := filepath.Join(os.TempDir(), "a-deep-runner-work-directory-like-home-runner-_work-_temp-"+strings.Repeat("g", 40))
+	if len(deep) <= 90 {
+		t.Fatalf("deep GOTMPDIR %q is only %d bytes", deep, len(deep))
+	}
+	if err := os.MkdirAll(deep, 0o700); err != nil {
+		t.Fatalf("creating deep GOTMPDIR: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(deep) })
+	t.Setenv("TMPDIR", deep)
+	t.Setenv("GOTMPDIR", deep)
+
+	var sock string
+	code := shortTMPDIR(func() int {
+		sock = filepath.Join(t.TempDir(), "x/agent.sock")
+		return 0
+	})
+
+	if code != 0 {
+		t.Fatalf("shortTMPDIR returned %d, want 0", code)
+	}
+	if strings.HasPrefix(sock, deep) || len(sock) >= 104 {
+		t.Fatalf("socket path %q (%d bytes) is under the deep GOTMPDIR", sock, len(sock))
+	}
+	for _, key := range []string{"TMPDIR", "GOTMPDIR"} {
+		if got := os.Getenv(key); got != deep {
+			t.Fatalf("%s after shortTMPDIR = %q, want %q restored", key, got, deep)
+		}
+	}
+}
+
 func TestShortTMPDIR_returns_the_run_exit_code(t *testing.T) {
 	if got := shortTMPDIR(func() int { return 3 }); got != 3 {
 		t.Fatalf("shortTMPDIR returned %d, want 3", got)
