@@ -55,7 +55,15 @@ case "$1" in
     stdin=$(cat)
     echo "login-stdin-bytes ${#stdin}" >>"$FAKE_LOG"
     case "${FAKE_LOGIN:-ok}" in
-      ok) echo "Login Succeeded" ;;
+      ok)
+        # As the real CLI does, persist dummy auths in the config it ran with
+        # (#2243 lane-verify Codex P1-B), so a reused login config shows up.
+        cfg=${DOCKER_CONFIG:-$HOME/.docker}
+        mkdir -p "$cfg"
+        printf '{"auths":{"%s":{"auth":"ZHVtbXk6ZHVtbXk="}}}\n' "$2" >"$cfg/config.json"
+        echo "login-cfg $cfg" >>"$FAKE_LOG"
+        echo "Login Succeeded"
+        ;;
       refused) echo "Error response from daemon: login attempt to https://$2/v2/ failed with status: 401 Unauthorized" >&2; exit 1 ;;
       unreachable) echo "Error response from daemon: Get \"https://$2/v2/\": dial tcp: lookup $2: no such host" >&2; exit 1 ;;
       *) echo "Error response from daemon: something went wrong" >&2; exit 1 ;;
@@ -1112,6 +1120,21 @@ start_case "use: after a forge pull, the CI_IMAGE_REGISTRY push never sees the r
 run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 DOCKER_CONFIG="$RUNNER_CFG"
 called "docker pull --quiet $LAN_REF"
 lan_cfg_private push
+no_secret_printed
+# The forge read above is anonymous, so no login ran there. On GHCR the pull
+# logs in, and the login stub writes auths into its DOCKER_CONFIG: the LAN
+# push after it must run with a config that holds none.
+start_case "use: after a GHCR login and pull, the CI_IMAGE_REGISTRY push sees no auths"
+run_script 0 use toolchain "$GHCR_REPO@$DIGEST" -- "${RUN_TOKEN[@]}" "${GHCR[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 DOCKER_CONFIG="$RUNNER_CFG"
+called "docker login ghcr.io -u runner --password-stdin"
+called "docker pull --quiet $GHCR_REPO@$DIGEST"
+lan_cfg_private push
+login_cfg=$(grep '^login-cfg ' "$CALL_LOG" | cut -d' ' -f2-)
+if [ -n "$login_cfg" ] && ! grep -qF "docker-cfg push $LAN/" <(grep -F " $login_cfg files=" "$CALL_LOG"); then
+  pass "the LAN push did not run with the login's DOCKER_CONFIG"
+else
+  fail "login config '$login_cfg' reused: $(grep -F 'docker-cfg push' "$CALL_LOG")"
+fi
 no_secret_printed
 
 # #2243 Codex round 2, P1-1: a CI_IMAGE_REGISTRY hit is no way around the ref
