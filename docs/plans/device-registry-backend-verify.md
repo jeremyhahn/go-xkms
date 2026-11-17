@@ -62,6 +62,24 @@ Remaining for production use: the phone bridge that calls
 `RegisterPhoneBackend` must pass a Sender that reports its Noise
 session's remote static key; no such caller exists in this repository yet.
 
+## Codex review of 5ddccd65563c (lane row2093c, resumed)
+
+1. Security, backend_phone.go: the active phone backend was closed before
+   the replacement was checked, so a refused peer disabled the accepted
+   phone. The existing backend is now closed and swapped only after the
+   replacement passes. Test e2fd12724
+   (`TestRegisterPhoneBackend_RefusedReplacementKeepsActive`, fails
+   before), fix 578db7079.
+2. Performance, registry.go: `List` paged the whole `paired_devices`
+   collection and filtered by tenant in memory. Records now carry an
+   indexed `Tenant` field and `List` queries it. Test 42eca149b
+   (`TestListReadsOnlyTheTenant`, fails before: 604 values read for a
+   tenant of two), fix da2bb8920.
+3. docs/SPEC.md:87 (owner approval of the shipped status): still an owner
+   ask; this lane does not edit docs/SPEC.md. The row's citations name
+   `verifyPhoneDevice`, which 8dbd58fc8 removed, and stale line numbers;
+   they need refreshing with that approval.
+
 ## Out of scope
 
 - Permissions, routes and service verbs (row device-share-policy).
