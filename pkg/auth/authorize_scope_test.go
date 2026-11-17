@@ -23,14 +23,16 @@ func (d *scopeDecider) Authorize(_ context.Context, identity *Identity, resource
 	return &qrdbsdk.PermissionDeniedError{}
 }
 
-// TestIdentityAuthorizer_DecidesOnScopePermissions is SPEC row
+// TestNodeAuthorizer_DecidesOnScopePermissions is SPEC row
 // authz-device-onboarding for a delegated caller: a principal granted
 // users:invite only through ScopePermissions is allowed, because the
-// decision is made on the original trusted identity, not on the
-// Subject/TenantID/Roles projection the SDK RBAC client takes.
-func TestIdentityAuthorizer_DecidesOnScopePermissions(t *testing.T) {
+// decision is made by the node's authorizer on the original trusted
+// identity, not on the Subject/TenantID/Roles projection the SDK RBAC
+// client takes. The RBAC client here refuses everything, so an allow can
+// only come from the node's decision.
+func TestNodeAuthorizer_DecidesOnScopePermissions(t *testing.T) {
 	d := &scopeDecider{}
-	a := NewIdentityAuthorizer(d)
+	a := NewNodeAuthorizer(&fakeRBACClient{err: errors.New("projection refuses")}, d)
 	require.True(t, a.Enabled())
 
 	delegated := &Identity{
@@ -46,4 +48,21 @@ func TestIdentityAuthorizer_DecidesOnScopePermissions(t *testing.T) {
 	var denied *qrdbsdk.PermissionDeniedError
 	require.True(t, errors.As(a.Authorize(ctx, delegated, "users", "delete"), &denied))
 	require.ErrorIs(t, a.Authorize(ctx, nil, "users", "invite"), ErrUnauthenticated)
+}
+
+// TestNodeAuthorizer_Posture: without an RBAC client authorization is off,
+// as NewAuthorizer(nil); without a node authorizer the RBAC client decides,
+// as NewAuthorizer(rbac).
+func TestNodeAuthorizer_Posture(t *testing.T) {
+	ctx := context.Background()
+	id := &Identity{Subject: "operator", TenantID: qrdbsdk.SystemTenantID}
+
+	off := NewNodeAuthorizer(nil, &scopeDecider{})
+	require.False(t, off.Enabled())
+	require.NoError(t, off.Authorize(ctx, id, "users", "delete"))
+
+	rbacErr := errors.New("rbac refuses")
+	rbacOnly := NewNodeAuthorizer(&fakeRBACClient{err: rbacErr}, nil)
+	require.True(t, rbacOnly.Enabled())
+	require.Error(t, rbacOnly.Authorize(ctx, id, "users", "invite"))
 }

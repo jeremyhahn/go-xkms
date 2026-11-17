@@ -53,11 +53,12 @@ func TestModule_HostMount_InviteNeedsUsersInvite(t *testing.T) {
 }
 
 // TestModule_HostMount_AuthDisabledAllowsInvite is the other half of the
-// self-built posture: a host that runs with authorization disabled tells
-// the module so, and the service then keeps allowing every decision made
-// below the transport gate, as pkg/server's nil authorizer does. The qrdb
-// client's RBAC plane still evaluates roles, so wiring it regardless of the
-// host's posture would refuse an invitation the host allows.
+// self-built posture: the host owns the service it resolves, and a host
+// that runs with authorization disabled sets a disabled authorizer on it
+// (auth.NewAuthorizer(nil)), as pkg/server's is when RBAC is off. The
+// module keeps the host's choice, so every decision made below the
+// transport gate stays allowed; the qrdb client's RBAC plane still
+// evaluates roles and would refuse an invitation the host allows.
 func TestModule_HostMount_AuthDisabledAllowsInvite(t *testing.T) {
 	client := newHostNodeClient(t)
 	ctx := context.Background()
@@ -69,7 +70,8 @@ func TestModule_HostMount_AuthDisabledAllowsInvite(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	h := mountLikeHost(t, client, WithAuthorization(false))
+	h := mountLikeHost(t, client)
+	h.svc.SetAuthorizer(auth.NewAuthorizer(nil))
 	h.svc.SetUserClients(client.Users(), client.Roles())
 	h.module.hostStores(h.svc)
 
@@ -97,11 +99,14 @@ func (nodeScopeAuthorizer) Authorize(_ context.Context, identity *auth.Identity,
 
 // TestModule_HostMount_DelegatedInviteUsesNodeAuthorizer: a delegated caller
 // granted users:invite only through ScopePermissions gets its invitation
-// when the host hands the module its node authorizer, which decides on the
-// original identity; the SDK RBAC client drops ScopePermissions.
+// when the host sets its node's authorizer on the service it owns
+// (auth.NewNodeAuthorizer), which decides on the original identity; the
+// module keeps it rather than replacing it with the SDK RBAC client, which
+// drops ScopePermissions.
 func TestModule_HostMount_DelegatedInviteUsesNodeAuthorizer(t *testing.T) {
 	client := newHostNodeClient(t)
-	h := mountLikeHost(t, client, WithNodeAuthorizer(nodeScopeAuthorizer{}))
+	h := mountLikeHost(t, client)
+	h.svc.SetAuthorizer(auth.NewNodeAuthorizer(client.RBAC(), nodeScopeAuthorizer{}))
 	h.svc.SetUserClients(client.Users(), client.Roles())
 	h.module.hostStores(h.svc)
 
