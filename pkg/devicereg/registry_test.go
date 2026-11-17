@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -245,6 +246,63 @@ func TestListOrderedByID(t *testing.T) {
 	empty, err := r.List(ctx, "initech")
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("List of an empty tenant = %v, %v", empty, err)
+	}
+}
+
+// readCountKV counts the record values a caller reads, through Get or Scan.
+type readCountKV struct {
+	*qrdbsdk.MemoryKVStore
+	reads atomic.Int64
+}
+
+func (c *readCountKV) Get(ctx context.Context, key string) ([]byte, error) {
+	v, err := c.MemoryKVStore.Get(ctx, key)
+	if v != nil {
+		c.reads.Add(1)
+	}
+	return v, err
+}
+
+func (c *readCountKV) Scan(ctx context.Context, prefix string, fn func(string, []byte) error) error {
+	return c.MemoryKVStore.Scan(ctx, prefix, func(k string, v []byte) error {
+		c.reads.Add(1)
+		return fn(k, v)
+	})
+}
+
+// List reads only the tenant's own records, not every tenant's.
+func TestListReadsOnlyTheTenant(t *testing.T) {
+	ctx := context.Background()
+	kv := &readCountKV{MemoryKVStore: qrdbsdk.NewMemoryKVStore()}
+	r, err := NewRegistry(dao.NewStoreFactory(kv))
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	const others = 300
+	for i := range others {
+		if err := r.Pair(ctx, "globex", testDevice(fmt.Sprintf("g%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"a", "b"} {
+		if err := r.Pair(ctx, "acme", testDevice(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kv.reads.Store(0)
+	devices, err := r.List(ctx, "acme")
+	if err != nil || len(devices) != 2 {
+		t.Fatalf("List(acme) = %d devices, %v; want 2", len(devices), err)
+	}
+	if n := kv.reads.Load(); n > 2*2 {
+		t.Fatalf("List(acme) read %d values with %d other-tenant records; want at most 4", n, others)
+	}
+	kv.reads.Store(0)
+	if empty, err := r.List(ctx, "initech"); err != nil || len(empty) != 0 {
+		t.Fatalf("List(initech) = %v, %v", empty, err)
+	}
+	if n := kv.reads.Load(); n != 0 {
+		t.Fatalf("List of an empty tenant read %d values; want 0", n)
 	}
 }
 
