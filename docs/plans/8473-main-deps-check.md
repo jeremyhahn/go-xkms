@@ -41,3 +41,8 @@
   - go build -mod=readonly in root, sdk/go, xkey, web/desktop: PASS; go test -race (codec tags) ./pkg/mcptool/... ./pkg/types/...: PASS.
   - make deps-check (merged tree): FAIL, golang.org/x/term v0.48.0 (root, xkey) and x/text v0.44.0 (root) now 7+ days old. Bumped, all four modules tidied (x/sync v0.25.0 indirect); make deps-check: PASS; readonly builds: PASS.
   - Nested Module Tests, every step of the job (sdk/go, web/desktop, the xkey go test -race sets, go vet -tags ble, attestation) on the bumped tree: PASS.
+- af2080i 11-17 (CI "Integration [integration image]" red on 147308e9c, exit code 2, no annotation beyond the exit):
+  - The same job is red on main itself: eb4da3f6a, 0edde063d, d94871d3e and b7e5de659 (f422814e9 cancelled), per the public check-runs API. The red is inherited from main, not caused by this branch's bumps.
+  - make integration-test needs Docker (compose stacks in the integration image); this lane has no Docker and cannot read the job log (the logs API needs a forge token), so the failing sub-target is not known here.
+  - Native compile and run of ./test/integration/... (tags integration codec_cbor codec_json codec_msgpack): every package builds; all PASS except oidccredentials ("the barrier was never initialized; run xkmsd init over the node's data first"), which fails the same way on origin/main eb4da3f6a and is not in make integration-test.
+  - For the CA: the main-side Integration red needs its own main-fix lane with the job log (or Docker); #2080 cannot go green on Integration until main does.
