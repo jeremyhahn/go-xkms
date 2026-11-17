@@ -384,6 +384,60 @@ func TestStreamableHTTP_AnswersServerRequestsOnTheEventStream(t *testing.T) {
 	assert.Equal(t, float64(mcp.METHOD_NOT_FOUND), errObj["code"])
 }
 
+// TestStreamableHTTP_ValidatesResponseID proves a JSON or event-stream
+// response is accepted only when its JSON-RPC version is 2.0 and its id is the
+// outstanding request's id (1); a different, missing or null id, or another
+// version, fails the call instead of answering it.
+func TestStreamableHTTP_ValidatesResponseID(t *testing.T) {
+	// An event stream may carry responses to other requests, which the
+	// transport skips (TestStreamableHTTP_ResponsesCarryTheRequestID), so a
+	// stream with no response for this id ends without one.
+	const noneOnStream = "event stream ended without a response"
+	bodies := map[string]struct {
+		body     string
+		wantJSON string
+		wantSSE  string
+	}{
+		"matching id":   {body: `{"jsonrpc":"2.0","id":1,"result":{}}`},
+		"different id":  {body: `{"jsonrpc":"2.0","id":2,"result":{}}`, wantJSON: "does not match", wantSSE: noneOnStream},
+		"string id":     {body: `{"jsonrpc":"2.0","id":"1","result":{}}`, wantJSON: "does not match", wantSSE: noneOnStream},
+		"missing id":    {body: `{"jsonrpc":"2.0","result":{}}`, wantJSON: "not a JSON-RPC response", wantSSE: noneOnStream},
+		"null id":       {body: `{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse"}}`, wantJSON: "not a JSON-RPC response", wantSSE: noneOnStream},
+		"wrong version": {body: `{"jsonrpc":"1.0","id":1,"result":{}}`, wantJSON: "version", wantSSE: "version"},
+		"no version":    {body: `{"id":1,"result":{}}`, wantJSON: "version", wantSSE: "version"},
+	}
+	encodings := map[string]func(string) (string, string){
+		"json": func(b string) (string, string) { return "application/json", b },
+		"sse":  func(b string) (string, string) { return "text/event-stream", "data: " + b + "\n\n" },
+	}
+	for enc, encode := range encodings {
+		for name, tc := range bodies {
+			t.Run(enc+"/"+name, func(t *testing.T) {
+				contentType, payload := encode(tc.body)
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", contentType)
+					_, _ = w.Write([]byte(payload))
+				}))
+				defer srv.Close()
+				tr := newStreamableHTTP(srv.URL, http.DefaultTransport, nil)
+				resp, err := tr.SendRequest(context.Background(), initRequest())
+				want := tc.wantJSON
+				if enc == "sse" {
+					want = tc.wantSSE
+				}
+				if want == "" {
+					require.NoError(t, err)
+					assert.Equal(t, mcp.NewRequestId(int64(1)), resp.ID)
+					return
+				}
+				require.Error(t, err)
+				assert.Nil(t, resp)
+				assert.Contains(t, err.Error(), want)
+			})
+		}
+	}
+}
+
 func TestStreamableHTTP_NotificationErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -398,4 +452,60 @@ func TestStreamableHTTP_NotificationErrors(t *testing.T) {
 	assert.Error(t, bad.SendNotification(context.Background(), note), "an invalid URL fails before dialing")
 	_, err := bad.SendRequest(context.Background(), mcptransport.JSONRPCRequest{Params: func() {}})
 	assert.Error(t, err, "an unencodable message fails before dialing")
+}
+
+// TestStreamableHTTP_CloseInterruptsActiveRequests proves Close cancels a
+// request whose response the server holds open, with a background context:
+// a stalled response (no headers yet) and an unfinished event stream both
+// return an error once the transport is closed (every request derives from
+// the transport's lifetime context, which Close cancels).
+func TestStreamableHTTP_CloseInterruptsActiveRequests(t *testing.T) {
+	cases := map[string]func(w http.ResponseWriter){
+		"stalled response": func(http.ResponseWriter) {},
+		"open event stream": func(w http.ResponseWriter) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\"}\n\n"))
+			w.(http.Flusher).Flush()
+		},
+	}
+	for name, start := range cases {
+		t.Run(name, func(t *testing.T) {
+			arrived := make(chan struct{})
+			hold := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					return
+				}
+				start(w)
+				close(arrived)
+				select {
+				case <-r.Context().Done():
+				case <-hold:
+				}
+			}))
+			defer srv.Close()
+			defer close(hold)
+
+			tr := newStreamableHTTP(srv.URL, http.DefaultTransport, nil)
+			done := make(chan error, 1)
+			go func() {
+				_, err := tr.SendRequest(context.Background(), initRequest())
+				done <- err
+			}()
+			select {
+			case <-arrived:
+			case <-time.After(5 * time.Second):
+				t.Fatal("request never reached the server")
+			}
+
+			require.NoError(t, tr.Close())
+			select {
+			case err := <-done:
+				assert.Error(t, err, "the held request fails once the transport is closed")
+			case <-time.After(5 * time.Second):
+				t.Fatal("Close left the active request running")
+			}
+		})
+	}
 }

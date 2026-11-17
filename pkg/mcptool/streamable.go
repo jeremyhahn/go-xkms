@@ -141,6 +141,11 @@ func (s *streamableHTTP) sendRequest(ctx context.Context, request mcptransport.J
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusBadRequest {
+		if rpcErr := jsonRPCErrorResponse(resp, request.ID); rpcErr != nil {
+			return rpcErr, nil
+		}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mcp request %s: unexpected HTTP status %d", request.Method, resp.StatusCode)
 	}
@@ -178,6 +183,30 @@ func (s *streamableHTTP) sendRequest(ctx context.Context, request mcptransport.J
 	default:
 		return nil, fmt.Errorf("mcp request %s: unexpected content type %q", request.Method, mediaType)
 	}
+}
+
+// jsonRPCErrorResponse returns the JSON-RPC error response an HTTP 400 answer
+// carries for the request id (jsonrpc "2.0", an error and no result), or nil
+// when the answer is anything else. A server rejecting the protocol version
+// answers so (UNSUPPORTED_PROTOCOL_VERSION with its supported versions), and
+// the caller must see that error, not a bare HTTP status (#2081).
+func jsonRPCErrorResponse(resp *http.Response, id mcp.RequestId) *mcptransport.JSONRPCResponse {
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || mediaType != contentTypeJSON {
+		return nil
+	}
+	var msg wireMessage
+	if json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&msg) != nil {
+		return nil
+	}
+	if msg.Error == nil || msg.Result != nil || !msg.isResponse() || !msg.answers(id) {
+		return nil
+	}
+	out, err := msg.response()
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 // SendNotification posts one JSON-RPC notification; the server accepts it
@@ -311,7 +340,11 @@ func (s *streamableHTTP) readEventStream(ctx context.Context, body io.Reader, re
 		line := scanner.Text()
 		if !more || line == "" {
 			if data.Len() > 0 {
-				if resp := s.dispatchEvent(ctx, data.String(), request.ID); resp != nil {
+				resp, done, err := s.dispatchEvent(ctx, data.String(), request.ID)
+				if err != nil {
+					return nil, fmt.Errorf("mcp request %s: %w", request.Method, err)
+				}
+				if done {
 					return resp, nil
 				}
 				data.Reset()
@@ -336,30 +369,29 @@ func (s *streamableHTTP) readEventStream(ctx context.Context, body io.Reader, re
 
 // dispatchEvent handles one event's data. It returns the response when the
 // event carries one, and nil otherwise.
-func (s *streamableHTTP) dispatchEvent(ctx context.Context, data string, id mcp.RequestId) *mcptransport.JSONRPCResponse {
+func (s *streamableHTTP) dispatchEvent(ctx context.Context, data string, id mcp.RequestId) (resp *mcptransport.JSONRPCResponse, done bool, err error) {
 	var msg wireMessage
-	if err := json.Unmarshal([]byte(data), &msg); err != nil {
-		return nil
+	if json.Unmarshal([]byte(data), &msg) != nil {
+		return nil, false, nil
 	}
 	if msg.isResponse() {
 		if !msg.answers(id) {
 			// A response to another request: not this request's result.
-			return nil
+			return nil, false, nil
 		}
-		resp, err := msg.response()
-		if err != nil {
-			return nil
-		}
-		return resp
+		// The response to this request ends the stream, as a failure when
+		// it is not a JSON-RPC 2.0 response.
+		resp, err = msg.response()
+		return resp, true, err
 	}
 	if msg.Method != "" && msg.ID != nil && string(msg.ID) != "null" {
 		s.answerServerRequest(ctx, msg)
-		return nil
+		return nil, false, nil
 	}
 	if msg.Method != "" {
 		var notification mcp.JSONRPCNotification
-		if err := json.Unmarshal([]byte(data), &notification); err != nil {
-			return nil
+		if json.Unmarshal([]byte(data), &notification) != nil {
+			return nil, false, nil
 		}
 		s.mu.RLock()
 		handler := s.onNotification
@@ -368,7 +400,7 @@ func (s *streamableHTTP) dispatchEvent(ctx context.Context, data string, id mcp.
 			handler(notification)
 		}
 	}
-	return nil
+	return nil, false, nil
 }
 
 // serverRequestReply is the client's answer to a request the server sent on
@@ -438,6 +470,10 @@ func (m *wireMessage) answers(id mcp.RequestId) bool {
 // response converts the message to mcp-go's response type, keeping the wire
 // ID it arrived with. Callers check answers first.
 func (m *wireMessage) response() (*mcptransport.JSONRPCResponse, error) {
+	// A response answers a request only in JSON-RPC 2.0 (#2081).
+	if m.JSONRPC != mcp.JSONRPC_VERSION {
+		return nil, fmt.Errorf("response JSON-RPC version %q is not %q", m.JSONRPC, mcp.JSONRPC_VERSION)
+	}
 	var id mcp.RequestId
 	if err := json.Unmarshal(m.ID, &id); err != nil {
 		return nil, fmt.Errorf("decode response id: %w", err)

@@ -347,7 +347,8 @@ func workflowTriggers(on yaml.Node) []string {
 func TestCIDockerJobs_BigdiskForSameRepositoryHostedOtherwise(t *testing.T) {
 	wf := readRunnerWorkflow(t)
 	// sameRepo marks a push to main or a same-repository PR, the events
-	// ruling 442 sends to bigdisk-docker.
+	// ruling 442 sends to bigdisk-docker, and a schedule or workflow_dispatch
+	// run on main, which ruling 740 (#2240) sends there too.
 	cases := []struct {
 		name     string
 		ev       runnerEvent
@@ -359,13 +360,13 @@ func TestCIDockerJobs_BigdiskForSameRepositoryHostedOtherwise(t *testing.T) {
 		{"github.com PR with an empty head repository", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", ""}, false},
 		{"github.com push to refs/heads/main-x", runnerEvent{runnerGitHub, "push", "refs/heads/main-x", ""}, false},
 		{"github.com push to refs/tags/main", runnerEvent{runnerGitHub, "push", "refs/tags/main", ""}, false},
-		{"github.com workflow_dispatch", runnerEvent{runnerGitHub, "workflow_dispatch", "refs/heads/main", ""}, false},
-		{"github.com schedule", runnerEvent{runnerGitHub, "schedule", "refs/heads/main", ""}, false},
+		{"github.com workflow_dispatch", runnerEvent{runnerGitHub, "workflow_dispatch", "refs/heads/main", ""}, true},
+		{"github.com schedule", runnerEvent{runnerGitHub, "schedule", "refs/heads/main", ""}, true},
 		{"another forge push to main", runnerEvent{runnerOtherForge, "push", "refs/heads/main", ""}, true},
 		{"another forge same-repo PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", runnerRepository}, true},
 		{"another forge fork PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", "mallory/go-xkms"}, false},
-		{"another forge workflow_dispatch", runnerEvent{runnerOtherForge, "workflow_dispatch", "refs/heads/main", ""}, false},
-		{"another forge schedule", runnerEvent{runnerOtherForge, "schedule", "refs/heads/main", ""}, false},
+		{"another forge workflow_dispatch", runnerEvent{runnerOtherForge, "workflow_dispatch", "refs/heads/main", ""}, true},
+		{"another forge schedule", runnerEvent{runnerOtherForge, "schedule", "refs/heads/main", ""}, true},
 	}
 	for _, name := range dockerJobs {
 		j, ok := wf.Jobs[name]
