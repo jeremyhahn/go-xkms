@@ -22,12 +22,15 @@
     ciphertext: string;
     nonce: string;
     tag: string;
+    // The gcm_nonce_mode the item's encrypt reported; required, unchanged,
+    // to decrypt an AES-GCM ciphertext produced under fips140=only.
+    gcmNonceMode: string;
     aad: string;
     keyVersion: string;
   }
 
   function emptyRow(): Row {
-    return { plaintext: "", ciphertext: "", nonce: "", tag: "", aad: "", keyVersion: "" };
+    return { plaintext: "", ciphertext: "", nonce: "", tag: "", gcmNonceMode: "", aad: "", keyVersion: "" };
   }
 
   let keyId = $state("");
@@ -87,6 +90,7 @@
     if (r.aad !== "") item.additional_data = textToB64(r.aad);
     if (r.nonce.trim() !== "") item.nonce = r.nonce.trim();
     if (r.tag.trim() !== "") item.tag = r.tag.trim();
+    if (r.gcmNonceMode.trim() !== "") item.gcm_nonce_mode = r.gcmNonceMode.trim();
     if (r.keyVersion.trim() !== "") item.key_version = Number(r.keyVersion.trim());
     return item;
   }
@@ -161,7 +165,7 @@
         {#if mode === "encrypt"}
           <th scope="col">Plaintext</th>
         {:else}
-          <th scope="col">Ciphertext</th><th scope="col">Nonce</th><th scope="col">Tag</th><th scope="col">Key version</th>
+          <th scope="col">Ciphertext</th><th scope="col">Nonce</th><th scope="col">Tag</th><th scope="col">GCM nonce mode</th><th scope="col">Key version</th>
         {/if}
         <th scope="col">Additional data</th>
         <th scope="col"><span class="sr-only">Actions</span></th>
@@ -177,6 +181,7 @@
             <td><input class="input input-bordered input-sm w-full font-mono" aria-label={`Ciphertext ${i + 1}`} aria-invalid={row.ciphertext !== "" && !b64Ok(row.ciphertext, true)} bind:value={row.ciphertext} /></td>
             <td><input class="input input-bordered input-sm w-full font-mono" aria-label={`Nonce ${i + 1}`} aria-invalid={!b64Ok(row.nonce, false)} bind:value={row.nonce} /></td>
             <td><input class="input input-bordered input-sm w-full font-mono" aria-label={`Tag ${i + 1}`} aria-invalid={!b64Ok(row.tag, false)} bind:value={row.tag} /></td>
+            <td><input class="input input-bordered input-sm w-24 font-mono" aria-label={`GCM nonce mode ${i + 1}`} bind:value={row.gcmNonceMode} /></td>
             <td><input class="input input-bordered input-sm w-20" inputmode="numeric" aria-label={`Key version ${i + 1}`} aria-invalid={!versionOk(row.keyVersion)} bind:value={row.keyVersion} /></td>
           {/if}
           <td><input class="input input-bordered input-sm w-full" aria-label={`Additional data ${i + 1}`} bind:value={row.aad} /></td>
@@ -186,7 +191,7 @@
         </tr>
       {/each}
       {#if rows.length === 0}
-        <tr><td colspan="7" class="text-center text-base-content/60 py-6">No items. Add a row.</td></tr>
+        <tr><td colspan="8" class="text-center text-base-content/60 py-6">No items. Add a row.</td></tr>
       {/if}
     </tbody>
   </table>

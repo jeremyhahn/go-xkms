@@ -3,7 +3,7 @@
   import Alert from "$components/Alert.svelte";
   import { getSDKClient } from "$stores/sdkClient.ts";
   import { showToast } from "$stores/toast.svelte.ts";
-  import { decodePEM, encodePEM, downloadText } from "$lib/pem.ts";
+  import { decodePEM, downloadText } from "$lib/pem.ts";
   import { isB64 } from "$lib/b64.ts";
 
   // The TCG verbs of the CA: EK and AK certificates, and a TCG CSR signed
@@ -48,19 +48,20 @@
     return t === "" ? undefined : t;
   }
 
-  // A PEM key is sent as Base64 of its PEM text, a Base64 key as is. A PEM
-  // CSR is sent as the Base64 of its body (the DER).
-  function encodeInput(raw: string, csr: boolean): string | null {
+  // The CA takes keys and CSRs as DER (Base64 over JSON): a PEM input is sent
+  // as its body, a Base64 input as is.
+  function encodeInput(raw: string): string | null {
     const t = raw.trim();
     if (t.startsWith("-----BEGIN")) {
-      return csr ? t.split("\n").filter((l) => !l.startsWith("-----")).join("").trim() : encodePEM(t);
+      const body = t.split(/\r?\n/).filter((l) => !l.startsWith("-----")).map((l) => l.trim()).join("");
+      return isB64(body) ? body : null;
     }
     return isB64(t) ? t : null;
   }
 
   async function submit(): Promise<void> {
     clear();
-    const value = encodeInput(input, tab === "csr");
+    const value = encodeInput(input);
     if (value === null) {
       inputErr = "Input is neither PEM nor Base64.";
       return;

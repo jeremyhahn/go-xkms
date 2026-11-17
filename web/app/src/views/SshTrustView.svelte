@@ -5,7 +5,7 @@
   import Alert from "$components/Alert.svelte";
   import { getSDKClient } from "$stores/sdkClient.ts";
   import { showToast } from "$stores/toast.svelte.ts";
-  import type { SSHPin, SSHAuthorizedEntry, SSHAddKnownHostRequest, SSHAddAuthorizedKeyRequest } from "@go-xkms/sdk";
+  import type { SSHPin, SSHAuthorizedEntry, SSHAddKnownHostRequest, SSHAddAuthorizedKeyRequest, SSHVerifyKnownHostRequest } from "@go-xkms/sdk";
 
   // A confirm target carries the scope and owner the row was loaded from, so
   // editing the Scope/Owner inputs without Load never retargets a removal.
@@ -27,7 +27,7 @@
   let hFingerprint = $state("");
   let hAlgorithm = $state("");
   let vHost = $state("");
-  let vFingerprint = $state("");
+  let vPublicKey = $state("");
   let hostResult = $state<Result | null>(null);
 
   let kName = $state("");
@@ -91,8 +91,12 @@
   async function verifyHost(): Promise<void> {
     hostResult = null;
     try {
-      await getSDKClient().ssh.verifyKnownHost(vHost, { scope, owner, fingerprint: vFingerprint });
-      hostResult = { ok: true, message: `Fingerprint matches the pin for ${vHost}.` };
+      // The verify endpoint parses public_key (an authorized_keys line) and
+      // refuses a fingerprint-only body; the SDK request type still names
+      // fingerprint, so the body is built here.
+      const req = { scope, owner, public_key: vPublicKey.trim() } as unknown as SSHVerifyKnownHostRequest;
+      await getSDKClient().ssh.verifyKnownHost(vHost, req);
+      hostResult = { ok: true, message: `Host key matches the pin for ${vHost}.` };
     } catch (e) {
       if (statusOf(e) === 409) {
         hostResult = { ok: false, message: message(e) };
@@ -222,8 +226,8 @@
     </div>
     <div class="flex flex-wrap gap-2 mt-3">
       <input class="input input-bordered input-sm" aria-label="Host to verify" placeholder="Host" bind:value={vHost} />
-      <input class="input input-bordered input-sm" aria-label="Offered fingerprint" placeholder="SHA256:..." bind:value={vFingerprint} />
-      <button class="btn btn-sm" onclick={verifyHost} disabled={vHost === "" || vFingerprint === ""}>Verify host</button>
+      <input class="input input-bordered input-sm flex-1" aria-label="Offered public key" placeholder="ssh-ed25519 AAAA..." bind:value={vPublicKey} />
+      <button class="btn btn-sm" onclick={verifyHost} disabled={vHost === "" || vPublicKey.trim() === ""}>Verify host</button>
     </div>
     {#if hostResult}
       {#if hostResult.ok}
