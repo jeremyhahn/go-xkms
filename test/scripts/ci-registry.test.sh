@@ -83,7 +83,14 @@ case "$1" in
           [ "$i" != "$5" ] || { echo "$c"; break; }
         done
         ;;
-      *) echo "$FAKE_IMAGE_ID" ;;
+      *)
+        # FAKE_RETAG_ID: a tag (not a digest-pinned ref) now names another
+        # image, as after a concurrent push or rebuild of the content tag.
+        case "${*: -1}" in
+          *@sha256:*) echo "$FAKE_IMAGE_ID" ;;
+          *) echo "${FAKE_RETAG_ID:-$FAKE_IMAGE_ID}" ;;
+        esac
+        ;;
     esac
     ;;
   # FAKE_IMAGES: one "<repository> <tag> <id> <created>" line per name.
@@ -1111,6 +1118,36 @@ start_case "use: CI_IMAGE_REGISTRY=localhost is a registry host"
 run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY=localhost FAKE_LAN=localhost
 called "docker pull --quiet localhost/$TOOLCHAIN_TAG"
 not_called "docker-build-toolchain"
+
+# #2243 Codex round 3 P1-1: pull_ref runs inside an if, where errexit is off;
+# a failed private config must stop it before any login or pull, which would
+# otherwise read the runner's Docker config.
+start_case "use: no private Docker config for the forge pull: no pull, no login, builds on this runner"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" DOCKER_CONFIG="$RUNNER_CFG" TMPDIR="$WORK_DIR/no-such-tmp"
+not_called "docker pull"
+not_called "docker login"
+called "docker-build-toolchain"
+start_case "use: no private Docker config for a GHCR pull: no login, no pull, builds on this runner"
+run_script 0 use toolchain "$GHCR_REPO@$DIGEST" -- "${RUN_TOKEN[@]}" "${GHCR[@]}" DOCKER_CONFIG="$RUNNER_CFG" TMPDIR="$WORK_DIR/no-such-tmp"
+not_called "docker login"
+not_called "docker pull"
+called "docker-build-toolchain"
+no_secret_printed
+
+# Round 3 P1-2: the image whose digest was checked is the one held and run;
+# a retag of the content tag after the check changes nothing.
+RETAG_ID="sha256:$(printf '%064d' 0 | tr 0 b)"
+start_case "use: a CI_IMAGE_REGISTRY hit is held by the checked digest's image ID, never re-read from a tag"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_RETAG_ID="$RETAG_ID"
+called "docker image inspect -f {{.Id}} $LAN/go-xkms-toolchain@$DIGEST"
+called "docker tag $IMAGE_ID $TOOLCHAIN_TAG"
+called "docker create --pull never --name go-xkms-ci-hold-42-1-toolchain-"
+not_called "$RETAG_ID"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints the checked image's ID as TOOLCHAIN_IMAGE"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")', want TOOLCHAIN_IMAGE=$IMAGE_ID"
+fi
 
 # --------------------------------------------------------------------------
 if [ "$FAILURES" -eq 0 ]; then
