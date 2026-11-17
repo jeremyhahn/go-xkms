@@ -189,12 +189,27 @@ main_repo() {
 # private_config points DOCKER_CONFIG at a new directory removed on exit, so
 # a login reaches no other job and the host's credentials are never read.
 # The CLI plugins, buildx among them, stay reachable.
+#
+# #2243 Codex round 3 P1-1: pull_ref runs inside an if, where errexit is off,
+# so a failed mktemp must not leave DOCKER_CONFIG empty (Docker would read the
+# runner's config). make_private_config creates the directory and reports
+# failure; a caller runs it, checking its status, before private_config.
+private_cfg=""
+make_private_config() {
+  [ -z "$private_cfg" ] || return 0
+  local plugins=${DOCKER_CONFIG:-${HOME:-/nonexistent}/.docker}/cli-plugins dir
+  if ! dir=$(mktemp -d 2>/dev/null) || [ -z "$dir" ] || [ ! -d "$dir" ]; then
+    echo "==> cannot create a private Docker config" >&2
+    return 1
+  fi
+  private_cfg=$dir
+  cleanup+=("$private_cfg")
+  [ ! -d "$plugins" ] || ln -s "$plugins" "$private_cfg/cli-plugins" || true
+}
 private_config() {
-  local plugins=${DOCKER_CONFIG:-${HOME:-/nonexistent}/.docker}/cli-plugins
-  DOCKER_CONFIG=$(mktemp -d)
+  make_private_config || return 1
+  DOCKER_CONFIG=$private_cfg
   export DOCKER_CONFIG
-  cleanup+=("$DOCKER_CONFIG")
-  [ ! -d "$plugins" ] || ln -s "$plugins" "$DOCKER_CONFIG/cli-plugins"
 }
 
 # push_login logs in to host $1 to push: the release runner's credential on
@@ -548,7 +563,7 @@ publish() {
     warn "publish: RELEASE_REGISTRY ($host) is not the forge's registry ($(registry_host)), which pull requests resolve against: they will not find this image and build their own"
   fi
   scheme=$(registry_scheme "$host")
-  private_config
+  private_config || die "cannot create a private Docker config for the push"
   push_login "$host"
   remote_digest "$target" "$scheme" "$user" "$token" || rc=$?
   if [ "$rc" -eq 0 ]; then
@@ -632,6 +647,8 @@ pull_ref() {
   host=$(registry_host) || exit 1
   repos=$host/$(registry_owner)/
   [[ $ref == "$repos"* ]] || die "'$ref' is not under $repos, where main publishes"
+  # make_private_config is checked first, so private_config cannot fail here.
+  make_private_config || return 1
   private_config
   read_login "$host"
   for ((n = 1; n <= attempts; n++)); do
@@ -745,9 +762,13 @@ lan_pull() {
     docker image rm "$lanref" >/dev/null 2>&1 || true
     return 2
   fi
-  docker tag "$lanref" "$tag" || return 2
-  id=$(docker image inspect -f '{{.Id}}' "$tag" 2>/dev/null) || return 2
+  # #2243 Codex round 3 P1-2: the tags are mutable (a concurrent lan_push or a
+  # rebuild can move them); the image ID is read once, from the checked
+  # digest, and every later step names that ID.
+  [ -n "$digest" ] || { echo "==> $lanref has no digest; not used" >&2; return 2; }
+  id=$(docker image inspect -f '{{.Id}}' "${lanref%:*}@$digest" 2>/dev/null) || return 2
   [[ $id =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
+  docker tag "$id" "$tag" || return 2
   docker rm -f "$hold" >/dev/null 2>&1 || true
   docker create --pull never --name "$hold" "$id" true >/dev/null || return 2
   image=$id

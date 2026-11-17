@@ -947,7 +947,7 @@ start_case "use: CI_IMAGE_REGISTRY hit pulls the content tag, tags it locally, b
 run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
 stderr_has "pulled $LAN_TC $DIGEST"
 called "docker pull --quiet $LAN_TC"
-called "docker tag $LAN_TC $TOOLCHAIN_TAG"
+called "docker tag $IMAGE_ID $TOOLCHAIN_TAG"
 not_called "docker-build-toolchain"
 not_called "docker push"
 not_called "docker login"
@@ -1034,7 +1034,7 @@ fi
 start_case "use: a CI_IMAGE_REGISTRY hit whose digest is the ref's is used"
 run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
 stderr_has "pulled $LAN_TC $DIGEST"
-called "docker tag $LAN_TC $TOOLCHAIN_TAG"
+called "docker tag $IMAGE_ID $TOOLCHAIN_TAG"
 not_called "docker pull --quiet $LAN_REF"
 not_called "docker-build-toolchain"
 
