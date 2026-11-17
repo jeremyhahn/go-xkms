@@ -127,3 +127,12 @@ backends:
 barrier:
   enabled: true
   strategy: "passphrase"
+  # The node boots sealed and serves the pre-unseal window on server.host
+  # (0.0.0.0): the api test container reaches xkms-server over the compose
+  # network, which is the trusted test network here. Listening beyond
+  # loopback is acceptable only because this is a throwaway test server
+  # with a test passphrase over a disposable data volume; a deployment
+  # binds the window to loopback or a trusted management interface. Same
+  # precedent as configs/xkmsd-integration.yaml and
+  # test/integration/cluster/config.node.yaml.
+  sealed_window_allow_remote: true
