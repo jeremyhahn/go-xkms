@@ -3,6 +3,7 @@ package testsupport
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -25,6 +26,31 @@ func SocketDir(t testing.TB) string {
 	t.Cleanup(func() {
 		if err := os.RemoveAll(dir); err != nil {
 			t.Errorf("testsupport.SocketDir: remove %s: %v", dir, err)
+		}
+	})
+	return dir
+}
+
+// ShortTempDir returns a fresh mode-0700 directory directly under /tmp (under
+// os.TempDir on Windows, which has no /tmp) and removes it when the test ends.
+//
+// It is for a test that points TMPDIR at a private directory while the code
+// under test nests its own temp directory and a Unix socket beneath it (xkey
+// ssh connect's xkey-ssh-*/agent.sock): a SocketDir under a long runner TMPDIR
+// leaves too little of sun_path for those two extra levels.
+func ShortTempDir(t testing.TB) string {
+	t.Helper()
+	root := "/tmp"
+	if runtime.GOOS == "windows" {
+		root = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(root, "xk")
+	if err != nil {
+		t.Fatalf("testsupport.ShortTempDir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("testsupport.ShortTempDir: remove %s: %v", dir, err)
 		}
 	})
 	return dir

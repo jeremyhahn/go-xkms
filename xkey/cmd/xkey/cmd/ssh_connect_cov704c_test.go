@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 // c704cSSHRun is one run of the native ssh client.
@@ -48,7 +50,7 @@ func c704cKnownHostsFile(t *testing.T, args []string) string {
 func c704cSSHKeyConnect(t *testing.T) func(target string) error {
 	t.Helper()
 	withEmbeddedSSHStore(t)
-	t.Setenv("TMPDIR", privateTempDir(t))
+	t.Setenv("TMPDIR", testsupport.ShortTempDir(t))
 	gen, _ := sshTestCmd(t)
 	setSSHFlags(t, gen, map[string]string{
 		"scope": "user", "owner": "alice", "name": "laptop", "type": "ed25519",

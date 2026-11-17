@@ -24,6 +24,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/peer"
+
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 // TestEnrollWithCode_CACertError tests the CA certificate retrieval failure
@@ -247,7 +249,7 @@ func TestClient_ConnectDisconnectCycle(t *testing.T) {
 // TestSSHProxy_HandleConnection_ClientNotConnected tests that the SSH proxy
 // rejects connections when the client is not connected.
 func TestSSHProxy_HandleConnection_ClientNotConnected(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
 	proxy, _ := NewSSHProxy(socketPath, client, testLogger())

@@ -43,6 +43,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
@@ -385,7 +386,7 @@ func TestApp_RegisterPKCS11XKMSBackend_YubiKeyWithoutSOPIN(t *testing.T) {
 // callback only fires on its hourly ticker, never at Start()).
 func TestApp_PostDataDirStartup_Headless(t *testing.T) {
 	app := newMinimalApp(t)
-	sockDir := t.TempDir()
+	sockDir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(sockDir, 0o700))
 	sockPath := filepath.Join(sockDir, "xkey.sock")
 	t.Setenv(ipc.EnvSocketPath, sockPath)
@@ -475,7 +476,7 @@ func startReturningUserApp(t *testing.T, localAppAccess bool) (*App, string) {
 	t.Helper()
 	isolateAppEnv(t)
 
-	sockDir := filepath.Join(t.TempDir(), "run")
+	sockDir := filepath.Join(testsupport.SocketDir(t), "run")
 	require.NoError(t, os.Mkdir(sockDir, 0o700))
 	sockPath := filepath.Join(sockDir, "xkey.sock")
 	t.Setenv(ipc.EnvSocketPath, sockPath)
