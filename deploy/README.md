@@ -28,11 +28,11 @@ Create the configuration directory and file:
 
 ```bash
 sudo mkdir -p /etc/xkms
-sudo cp configs/config.yaml /etc/xkms/config.yaml
-sudo chmod 640 /etc/xkms/config.yaml
+sudo cp configs/xkmsd.yaml /etc/xkms/xkmsd.yaml
+sudo chmod 640 /etc/xkms/xkmsd.yaml
 ```
 
-Edit `/etc/xkms/config.yaml` to match your environment. See the main documentation for configuration options.
+Edit `/etc/xkms/xkmsd.yaml` to match your environment. See the main documentation for configuration options.
 
 ## systemd (Debian, Ubuntu, RHEL, Fedora, Arch, etc.)
 
@@ -59,9 +59,10 @@ Edit `/etc/xkms/config.yaml` to match your environment. See the main documentati
    sudo chmod 700 /var/lib/xkms/keys
    ```
 
-2. Install the service file:
+2. Install the service file (`configs/xkmsd.service` is the one xkmsd unit;
+   it runs `xkmsd --config /etc/xkms/xkmsd.yaml`):
    ```bash
-   sudo cp deploy/systemd/xkms.service /etc/systemd/system/
+   sudo cp configs/xkmsd.service /etc/systemd/system/
    sudo systemctl daemon-reload
    ```
 
@@ -76,22 +77,22 @@ Edit `/etc/xkms/config.yaml` to match your environment. See the main documentati
 
 ```bash
 # Enable service to start on boot
-sudo systemctl enable xkms
+sudo systemctl enable xkmsd
 
 # Start the service
-sudo systemctl start xkms
+sudo systemctl start xkmsd
 
 # Check status
-sudo systemctl status xkms
+sudo systemctl status xkmsd
 
 # View logs
-sudo journalctl -u xkms -f
+sudo journalctl -u xkmsd -f
 
 # Reload configuration (sends HUP signal)
-sudo systemctl reload xkms
+sudo systemctl reload xkmsd
 
 # Stop the service
-sudo systemctl stop xkms
+sudo systemctl stop xkmsd
 ```
 
 ## OpenRC (Alpine Linux, Gentoo)
@@ -209,7 +210,7 @@ for exactly which handler records which metric).
 
 Both the embedded xkmsd ACME server and the standalone TrustedCA expose
 these metrics on a `/metrics` endpoint - xkmsd's already-configured metrics
-server (`metrics.enabled`/`metrics.port`/`metrics.path` in `config.yaml`)
+server (`metrics.enabled`/`metrics.port`/`metrics.path` in `xkmsd.yaml`)
 gathers the ACME registry alongside its own, so there is one endpoint to
 scrape, not two.
 
@@ -255,7 +256,7 @@ its own copy (`metrics.RegisterRuntimeCollectors`, called once from
 1. Check the logs:
    ```bash
    # systemd
-   sudo journalctl -u xkms -e
+   sudo journalctl -u xkmsd -e
 
    # OpenRC
    sudo cat /var/log/xkms/xkms.log
@@ -263,7 +264,7 @@ its own copy (`metrics.RegisterRuntimeCollectors`, called once from
 
 2. Verify configuration:
    ```bash
-   sudo -u xkms xkmsd -config /etc/xkms/config.yaml -version
+   sudo -u xkms xkmsd --config /etc/xkms/xkmsd.yaml -version
    ```
 
 3. Check file permissions:

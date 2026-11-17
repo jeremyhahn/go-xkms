@@ -13,8 +13,11 @@
      --hostname kms.example.com --so-pin "$XKMS_SO_PIN" --admin-factor mtls
    ```
 
-3. Distribute `ca-bundle.pem` and the pin in `spki-pin.txt` to first-contact
-   clients (`xkmsctl bootstrap`).
+3. Distribute `/var/lib/xkms/ca-bundle.pem` (the bundle init writes under
+   `--data-dir`) and the pin in `/var/lib/xkms/spki-pin.txt` to first-contact
+   clients (`xkmsctl bootstrap`). `xkmsd run` advertises
+   `<datastore.path>/ca-bundle.pem`, so set `datastore.path` in `xkmsd.yaml` to
+   the same directory as `--data-dir`.
 4. Keep `admin-key.pem` private; it is the administrator's mTLS credential.
 5. Start the daemon: `xkmsd --config xkmsd.yaml`.
 
