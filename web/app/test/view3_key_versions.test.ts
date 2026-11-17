@@ -32,6 +32,7 @@ const rotateAll = vi.fn<(tenantId?: string) => Promise<RotateScopeKeysResponse>>
 
 vi.mock("../src/stores/sdkClient.ts", () => ({
   getSDKClient: () => ({
+    backends: { list: () => Promise.resolve({ backends: [{ id: "soft" }] }) },
     keys: { list: keysList, versions: { list, enable, disable, retire, enableAll, disableAll, rotateAll } },
   }),
   resetSDKClient: () => {},

@@ -6,7 +6,7 @@
   import Alert from "$components/Alert.svelte";
   import { getSDKClient } from "$stores/sdkClient.ts";
   import { showToast } from "$stores/toast.svelte.ts";
-  import type { PIVSlotStatus, GeneratePIVCSRRequest } from "@go-xkms/sdk";
+  import type { BackendInfo, PIVSlotStatus, GeneratePIVCSRRequest } from "@go-xkms/sdk";
 
   // The server takes "pem" or "der"; the console always works in PEM text,
   // which travels base64-encoded in the JSON body.
@@ -41,15 +41,47 @@
     return e instanceof Error ? e.message : String(e);
   }
 
+  // ListPIVSlotsHandler refuses an empty backend, so slots are listed for
+  // the selected backend (the first one until the operator picks another).
+  let backends = $state<BackendInfo[]>([]);
+  let backend = $state("");
+  let seq = 0;
+
+  async function loadBackends(): Promise<void> {
+    try {
+      backends = (await getSDKClient().backends.list()).backends;
+      const first = backends[0];
+      if (first) {
+        backend = first.id;
+        await load();
+      } else {
+        loading = false;
+      }
+    } catch (e) {
+      error = message(e);
+      loading = false;
+    }
+  }
+
+  function pickBackend(id: string): Promise<void> {
+    backend = id;
+    slots = [];
+    return load();
+  }
+
   async function load(): Promise<void> {
+    const n = ++seq;
+    const b = backend;
+    if (b === "") return;
     loading = true;
     error = null;
     try {
-      slots = (await getSDKClient().piv.listSlots()).slots;
+      const res = await getSDKClient().piv.listSlots(b);
+      if (n === seq) slots = res.slots;
     } catch (e) {
-      error = message(e);
+      if (n === seq) error = message(e);
     } finally {
-      loading = false;
+      if (n === seq) loading = false;
     }
   }
 
@@ -150,11 +182,20 @@
   }
 
   onMount(() => {
-    void load();
+    void loadBackends();
   });
 </script>
 
 <PageHeader title="PIV Slots" subtitle="Slot certificates and CSRs from slot keys" />
+
+<div class="flex flex-wrap items-center gap-2 mb-4">
+  <select class="select select-bordered select-sm" aria-label="Backend" value={backend} onchange={(e) => void pickBackend(e.currentTarget.value)}>
+    <option value="" disabled>Choose a backend</option>
+    {#each backends as b (b.id)}
+      <option value={b.id}>{b.id}</option>
+    {/each}
+  </select>
+</div>
 
 {#if loading}
   <div class="flex justify-center py-12"><span class="loading loading-spinner loading-lg"></span></div>

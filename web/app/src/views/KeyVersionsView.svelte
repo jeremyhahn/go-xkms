@@ -6,7 +6,7 @@
   import Alert from "$components/Alert.svelte";
   import { getSDKClient } from "$stores/sdkClient.ts";
   import { showToast } from "$stores/toast.svelte.ts";
-  import type { KeyInfo, ListKeyVersionsResponse, RotateScopeKeysResponse } from "@go-xkms/sdk";
+  import type { BackendInfo, KeyInfo, ListKeyVersionsResponse, RotateScopeKeysResponse } from "@go-xkms/sdk";
 
   let keys = $state<KeyInfo[]>([]);
   let keysError = $state<string | null>(null);
@@ -26,11 +26,40 @@
     return e instanceof Error ? e.message : String(e);
   }
 
-  async function loadKeys(): Promise<void> {
+  // ListKeysHandler refuses an empty backend, so keys are listed for the
+  // selected backend (the first one until the operator picks another).
+  let backends = $state<BackendInfo[]>([]);
+  let backend = $state("");
+  let keysSeq = 0;
+
+  async function loadBackends(): Promise<void> {
     try {
-      keys = (await getSDKClient().keys.list()).keys;
+      backends = (await getSDKClient().backends.list()).backends;
+      const first = backends[0];
+      if (first) await pickBackend(first.id);
     } catch (e) {
       keysError = msg(e);
+    }
+  }
+
+  async function pickBackend(id: string): Promise<void> {
+    backend = id;
+    keys = [];
+    selected = "";
+    void load();
+    await loadKeys();
+  }
+
+  async function loadKeys(): Promise<void> {
+    const n = ++keysSeq;
+    const b = backend;
+    keysError = null;
+    if (b === "") return;
+    try {
+      const res = await getSDKClient().keys.list(b);
+      if (n === keysSeq) keys = res.keys;
+    } catch (e) {
+      if (n === keysSeq) keysError = msg(e);
     }
   }
 
@@ -126,7 +155,7 @@
   }
 
   onMount(() => {
-    void loadKeys();
+    void loadBackends();
   });
 </script>
 
@@ -141,6 +170,12 @@
 {/if}
 
 <div class="flex flex-wrap items-center gap-2 mb-4">
+  <select class="select select-bordered select-sm" aria-label="Backend" value={backend} onchange={(e) => void pickBackend(e.currentTarget.value)}>
+    <option value="" disabled>Choose a backend</option>
+    {#each backends as b (b.id)}
+      <option value={b.id}>{b.id}</option>
+    {/each}
+  </select>
   <select class="select select-bordered select-sm" aria-label="Key" value={selected} onchange={(e) => { selected = e.currentTarget.value; void load(); }}>
     <option value="">Choose a key</option>
     {#each keys as k, i (`${k.backend}/${k.key_id}`)}

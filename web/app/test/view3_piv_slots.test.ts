@@ -29,6 +29,7 @@ const generateCSR = vi.fn<(slot: string, req: unknown) => Promise<GeneratePIVCSR
 
 vi.mock("../src/stores/sdkClient.ts", () => ({
   getSDKClient: () => ({
+    backends: { list: () => Promise.resolve({ backends: [{ id: "yubikey" }] }) },
     piv: { listSlots, getCertificate, storeCertificate, deleteCertificate, exportCertificate, generateCSR },
   }),
   resetSDKClient: () => {},
