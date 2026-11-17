@@ -16,6 +16,7 @@ package piv
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -179,6 +180,71 @@ func TestDecoyEnrollment_ShapeFollowsOneExemplar(t *testing.T) {
 	}
 	if seen["legacy"] == 0 || seen["stamped"] == 0 {
 		t.Fatalf("decoy shapes = %v, want both holder shapes", seen)
+	}
+}
+
+// TestDecoyEnrollment_DerivationWorkIndependentOfExemplar: go-qrdb derives
+// the decoy before it looks the holder up, so the key derivation work of a
+// decoy must not follow the exemplar it picks. In a mixed RSA/ECDSA roster
+// every username's decoy derives the same set of key shapes, in the same
+// order, whichever holder it mirrors.
+func TestDecoyEnrollment_DerivationWorkIndependentOfExemplar(t *testing.T) {
+	holder := func(user string, serial int64, alg string, key crypto.Signer) *qrdbsdk.AuthFactorEnrollment {
+		certPEM, err := issueSelfSignedCert(key, pkix.Name{CommonName: "PIV 9a"}, big.NewInt(serial), time.Now().UTC().Add(-30*24*time.Hour), defaultValidityDays)
+		if err != nil {
+			t.Fatalf("holder certificate: %v", err)
+		}
+		return &qrdbsdk.AuthFactorEnrollment{UserID: user, FactorName: FactorName, PublicKey: certPEM, Metadata: map[string]string{
+			"slot": "9a", "algorithm": alg, "cn": "PIV 9a", "ttl": "60",
+		}}
+	}
+	var roster []*qrdbsdk.AuthFactorEnrollment
+	for i := 0; i < 3; i++ {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("GenerateKey: %v", err)
+		}
+		roster = append(roster, holder("holder-ec-"+strconv.Itoa(i), int64(10+i), "ecdsap256", key))
+	}
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey: %v", err)
+	}
+	roster = append(roster, holder("holder-rsa", 20, "rsa2048", rsaKey))
+
+	var derived []decoy.KeyShape
+	orig := deriveDecoyKey
+	deriveDecoyKey = func(d *decoy.Deriver, purpose string, s decoy.KeyShape) (crypto.Signer, error) {
+		derived = append(derived, s)
+		return orig(d, purpose, s)
+	}
+	t.Cleanup(func() { deriveDecoyKey = orig })
+
+	f := New(Config{})
+	var want []decoy.KeyShape
+	picked := map[string]int{}
+	for i := 0; i < 24; i++ {
+		derived = nil
+		d := decoyFor(t, f, decoySeed, "stranger-"+strconv.Itoa(i), roster)
+		alg := d.Metadata["algorithm"]
+		picked[alg]++
+		if shape, ok := decoy.ShapeOfKey(parseCert(t, d.PublicKey).PublicKey); !ok || shape != decoyShapes[alg] {
+			t.Fatalf("decoy key shape %v does not match its algorithm %q", shape, alg)
+		}
+		if want == nil {
+			want = append([]decoy.KeyShape(nil), derived...)
+			continue
+		}
+		if !reflect.DeepEqual(derived, want) {
+			t.Fatalf("decoy for stranger-%d (%s) derived %v, the first derived %v: the work follows the exemplar", i, alg, derived, want)
+		}
+	}
+	if len(want) != 2 || !reflect.DeepEqual(map[decoy.KeyShape]bool{want[0]: true, want[1]: true},
+		map[decoy.KeyShape]bool{decoyShapes["ecdsap256"]: true, decoyShapes["rsa2048"]: true}) {
+		t.Fatalf("derived shapes %v, want one ecdsap256 and one rsa2048 per decoy", want)
+	}
+	if picked["ecdsap256"] == 0 || picked["rsa2048"] == 0 {
+		t.Fatalf("decoy algorithms = %v, want both roster algorithms", picked)
 	}
 }
 

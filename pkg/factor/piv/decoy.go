@@ -14,6 +14,7 @@
 package piv
 
 import (
+	"crypto"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
@@ -40,6 +41,12 @@ var decoyShapes = map[string]decoy.KeyShape{
 	"ecdsap256": {Algorithm: decoy.AlgorithmECDSA, Curve: "P-256"},
 	"ecdsap384": {Algorithm: decoy.AlgorithmECDSA, Curve: "P-384"},
 	"ed25519":   {Algorithm: decoy.AlgorithmEd25519},
+}
+
+// deriveDecoyKey derives one decoy key; a variable so a test can record the
+// derivation work a decoy does.
+var deriveDecoyKey = func(d *decoy.Deriver, purpose string, s decoy.KeyShape) (crypto.Signer, error) {
+	return d.Key(purpose, s)
 }
 
 // DecoyEnrollment returns the stand-in enrollment go-qrdb challenges userID
@@ -107,7 +114,7 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 	}
 	cn := "PIV " + slot
 
-	key, err := d.Key("key", decoyShapes[algorithm])
+	key, err := deriveDecoyKey(d, "key", decoyShapes[algorithm])
 	if err != nil {
 		return nil, err
 	}
