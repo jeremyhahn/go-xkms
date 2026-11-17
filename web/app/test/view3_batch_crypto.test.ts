@@ -99,6 +99,28 @@ describe("KeyBatchView", () => {
     await waitFor(() => expect(within(resultRows()[0]!).getByText("/w==")).toBeInTheDocument());
   });
 
+  it("sends the GCM nonce mode of each decrypt item unchanged", async () => {
+    request.mockResolvedValueOnce({ results: [{ plaintext: "aGk=" }, { plaintext: "aGk=" }] });
+
+    render(KeyBatchView);
+    await setKey("k1", "software");
+    await fireEvent.click(screen.getByRole("button", { name: "Decrypt" }));
+    await fireEvent.input(screen.getByLabelText("Ciphertext 1"), { target: { value: "Y3Q=" } });
+    await fireEvent.input(screen.getByLabelText("Nonce 1"), { target: { value: "bm4=" } });
+    await fireEvent.input(screen.getByLabelText("GCM nonce mode 1"), { target: { value: "random" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Add row" }));
+    await fireEvent.input(screen.getByLabelText("Ciphertext 2"), { target: { value: "Y3Q=" } });
+    await fireEvent.click(runButton());
+
+    await waitFor(() => expect(request).toHaveBeenCalledOnce());
+    expect(request).toHaveBeenCalledWith("POST", "/api/v1/keys/k1/decrypt-batch", {
+      body: {
+        backend: "software",
+        items: [{ ciphertext: "Y3Q=", nonce: "bm4=", gcm_nonce_mode: "random" }, { ciphertext: "Y3Q=" }],
+      },
+    });
+  });
+
   it("disables Run with no items and Add row at 100 items", async () => {
     render(KeyBatchView);
     await setKey("k1", "software");

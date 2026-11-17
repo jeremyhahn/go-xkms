@@ -163,23 +163,24 @@ describe("SshTrustView", () => {
     expect(removeKnownHost).not.toHaveBeenCalled();
   });
 
-  it("verifies a known host and shows the match", async () => {
+  it("verifies a known host by the offered public key line and shows the match", async () => {
     seed();
     verifyKnownHost.mockResolvedValue(undefined);
     await mounted();
 
+    // The verify endpoint parses public_key (an authorized_keys line); a
+    // fingerprint-only body is refused with "public_key is required".
     await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "git.example.com" } });
-    await fireEvent.input(screen.getByLabelText("Offered fingerprint"), { target: { value: "SHA256:pinnedpinned" } });
+    await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: " ssh-ed25519 AAAAC3Nza host " } });
     await fireEvent.click(screen.getByRole("button", { name: "Verify host" }));
 
-    await waitFor(() =>
-      expect(verifyKnownHost).toHaveBeenCalledWith("git.example.com", {
-        scope: "global",
-        owner: "default",
-        fingerprint: "SHA256:pinnedpinned",
-      }),
-    );
-    expect(await screen.findByText("Fingerprint matches the pin for git.example.com.")).toBeInTheDocument();
+    await waitFor(() => expect(verifyKnownHost).toHaveBeenCalledTimes(1));
+    expect(verifyKnownHost).toHaveBeenCalledWith("git.example.com", {
+      scope: "global",
+      owner: "default",
+      public_key: "ssh-ed25519 AAAAC3Nza host",
+    });
+    expect(await screen.findByText("Host key matches the pin for git.example.com.")).toBeInTheDocument();
   });
 
   it("shows a mismatch alert on a 409, not a toast", async () => {
@@ -190,7 +191,7 @@ describe("SshTrustView", () => {
     await mounted();
 
     await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "git.example.com" } });
-    await fireEvent.input(screen.getByLabelText("Offered fingerprint"), { target: { value: "SHA256:other" } });
+    await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: "ssh-ed25519 AAAAother" } });
     await fireEvent.click(screen.getByRole("button", { name: "Verify host" }));
 
     expect(await screen.findByText("Fingerprint mismatch")).toBeInTheDocument();
