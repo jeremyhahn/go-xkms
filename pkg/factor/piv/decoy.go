@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"sort"
 	"strconv"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -90,7 +91,16 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 	// certificates are the source of the OU.
 	var tenant string
 	var cohort []*x509.Certificate
-	if holders := rosterHolders(like, algorithm, slot, ttl); len(holders) > 0 {
+	holders := rosterHolders(like, algorithm, slot, ttl)
+	// The derivation and signing work covers every algorithm in the roster,
+	// whichever exemplar is picked: go-qrdb derives the decoy before it looks
+	// the holder up, so work that followed the exemplar's algorithm would let
+	// latency tell a holder from a stranger with the same certificate shape.
+	workAlgorithms := map[string]bool{algorithm: true}
+	for _, h := range holders {
+		workAlgorithms[h.shape.algorithm] = true
+	}
+	if len(holders) > 0 {
 		pickBytes, err := d.Bytes("tenant-ou", 8)
 		if err != nil {
 			return nil, err
@@ -114,10 +124,6 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 	}
 	cn := "PIV " + slot
 
-	key, err := deriveDecoyKey(d, "key", decoyShapes[algorithm])
-	if err != nil {
-		return nil, err
-	}
 	serialBytes, err := d.Bytes("serial", decoySerialSize)
 	if err != nil {
 		return nil, err
@@ -133,9 +139,24 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 			return nil, &decoy.DerivationError{Purpose: "certificate"}
 		}
 	}
-	certPEM, err := issueSelfSignedCert(decoy.Signer(key), subject, new(big.Int).SetBytes(serialBytes), notBefore, defaultValidityDays)
-	if err != nil {
-		return nil, &decoy.DerivationError{Purpose: "certificate"}
+	names := make([]string, 0, len(workAlgorithms))
+	for a := range workAlgorithms {
+		names = append(names, a)
+	}
+	sort.Strings(names)
+	var certPEM []byte
+	for _, a := range names {
+		key, err := deriveDecoyKey(d, "key", decoyShapes[a])
+		if err != nil {
+			return nil, err
+		}
+		pemBytes, err := issueSelfSignedCert(decoy.Signer(key), subject, new(big.Int).SetBytes(serialBytes), notBefore, defaultValidityDays)
+		if err != nil {
+			return nil, &decoy.DerivationError{Purpose: "certificate"}
+		}
+		if a == algorithm {
+			certPEM = pemBytes
+		}
 	}
 
 	metadata := map[string]string{
