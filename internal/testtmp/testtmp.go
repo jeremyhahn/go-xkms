@@ -26,8 +26,8 @@ const shortRoot = "/tmp"
 var tmpVars = []string{"TMPDIR", "GOTMPDIR"}
 
 // Short makes one short directory (under /tmp, or under os.TempDir() when
-// /tmp is unusable), sets TMPDIR to it while run executes, then restores
-// TMPDIR and removes the directory. It returns run's exit code.
+// /tmp is unusable), sets TMPDIR and GOTMPDIR to it while run executes,
+// then restores both and removes the directory. It returns run's exit code.
 func Short(run func() int) int {
 	dir, err := mkdirShort(shortRoot)
 	if err != nil {

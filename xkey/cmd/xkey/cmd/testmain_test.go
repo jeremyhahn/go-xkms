@@ -16,8 +16,7 @@ func TestMain(m *testing.M) { os.Exit(shortTMPDIR(m.Run)) }
 
 // shortTMPDIR is internal/testtmp.Short for this module, which requires a
 // go-xkms release without that package. It makes one short directory
-// (/tmp/xkNNNN, or under os.TempDir() when /tmp is unusable), sets TMPDIR to
-// it while run executes, then restores TMPDIR and removes the directory. It
+// (/tmp/xkNNNN, or under os.TempDir() when /tmp is unusable), sets TMPDIR and\n// GOTMPDIR to it while run executes, then restores both and removes the directory. It
 // returns run's exit code.
 func shortTMPDIR(run func() int) int {
 	dir, err := mkdirShortTMPDIR("/tmp")
