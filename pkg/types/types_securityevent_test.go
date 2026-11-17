@@ -23,11 +23,12 @@ import (
 // with the one added method.
 type securityEventStub struct {
 	KeyProvider
-	record []byte
+	record   []byte
+	evidence []byte
 }
 
-func (s securityEventStub) AttestSecurityEvents(_ context.Context, _ []byte) ([]byte, error) {
-	return s.record, nil
+func (s securityEventStub) AttestSecurityEvents(_ context.Context, _ []byte) (*SecurityEventEvidence, error) {
+	return &SecurityEventEvidence{ClaimsSet: s.record, Evidence: s.evidence}, nil
 }
 
 // The capability embeds KeyProvider, so a provider that has it is also a
@@ -37,15 +38,18 @@ var (
 	_ KeyProvider           = SecurityEventProvider(nil)
 )
 
+// TestSecurityEventProviderIsOptional also checks that the capability
+// returns the signed evidence beside the record: the Claims-Set alone
+// cannot be authenticated (owner ruling 7dbbb72 item 181 (b)).
 func TestSecurityEventProviderIsOptional(t *testing.T) {
-	var kp KeyProvider = securityEventStub{record: []byte{0xa0}}
+	var kp KeyProvider = securityEventStub{record: []byte{0xa0}, evidence: []byte{0xd2}}
 	sep, ok := kp.(SecurityEventProvider)
 	if !ok {
 		t.Fatal("a KeyProvider with AttestSecurityEvents is not a SecurityEventProvider")
 	}
 	got, err := sep.AttestSecurityEvents(context.Background(), []byte("nonce"))
-	if err != nil || !bytes.Equal(got, []byte{0xa0}) {
-		t.Fatalf("AttestSecurityEvents = %x, %v", got, err)
+	if err != nil || got == nil || !bytes.Equal(got.ClaimsSet, []byte{0xa0}) || !bytes.Equal(got.Evidence, []byte{0xd2}) {
+		t.Fatalf("AttestSecurityEvents = %+v, %v", got, err)
 	}
 	var plain KeyProvider = struct{ KeyProvider }{}
 	if _, ok := plain.(SecurityEventProvider); ok {
