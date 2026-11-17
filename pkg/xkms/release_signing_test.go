@@ -250,8 +250,12 @@ func TestRepositorySigner_RefusesAnUnusableVersion(t *testing.T) {
 		return &transport.KeyVersionRequest{Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, Version: n, TenantID: "tenant-a"}
 	}
 	cases := map[string]func(t *testing.T, svc *XKMSService, ctx context.Context){
-		"disabled": func(t *testing.T, svc *XKMSService, ctx context.Context) {
-			_, err := svc.DisableKeyVersion(ctx, version(1))
+		// The current version cannot be disabled or retired, so both follow a
+		// rotation.
+		"disabled after rotation": func(t *testing.T, svc *XKMSService, ctx context.Context) {
+			_, err := svc.RotateKey(ctx, &transport.RotateKeyRequest{Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, TenantID: "tenant-a"})
+			require.NoError(t, err)
+			_, err = svc.DisableKeyVersion(ctx, version(1))
 			require.NoError(t, err)
 		},
 		"retired after rotation": func(t *testing.T, svc *XKMSService, ctx context.Context) {
@@ -262,6 +266,11 @@ func TestRepositorySigner_RefusesAnUnusableVersion(t *testing.T) {
 		},
 		"deleted": func(t *testing.T, svc *XKMSService, ctx context.Context) {
 			require.NoError(t, svc.DeleteKey(ctx, "software", appraisal.ReleaseSigningKeyID))
+		},
+		// A new key under the same ID is not the key the signer reports.
+		"deleted and re-created": func(t *testing.T, svc *XKMSService, ctx context.Context) {
+			require.NoError(t, svc.DeleteKey(ctx, "software", appraisal.ReleaseSigningKeyID))
+			generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
 		},
 	}
 	for name, change := range cases {

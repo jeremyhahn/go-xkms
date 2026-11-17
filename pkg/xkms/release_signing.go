@@ -131,17 +131,41 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 	// The signer stays paired with the version resolved here, the one Public
 	// returns: when admission follows the usage counters to a newer version,
 	// the Sign is refused rather than made under a key the caller never saw.
+	//
+	// The key is resolved again on every Sign, so a version disabled or
+	// retired, or a key deleted, since the signer was obtained is refused
+	// even without a key policy store (admitKey alone reloads nothing then),
+	// and the signature comes from the backend key the version holds now,
+	// checked to be the key Public returns.
 	signCtx := context.WithoutCancel(ctx)
 	version := k.record.Current
 	sign := func(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-		use := *k
-		if err := s.admitKey(signCtx, &use, keypolicy.OpSign); err != nil {
+		use, err := s.resolveKeyOf(signCtx, b, backendName, k.keyID, &owner)
+		if err != nil {
 			return nil, err
 		}
 		if use.record.Current != version {
-			return nil, &KeyVersionMissingError{KeyID: key.KeyID, Version: version}
+			return nil, &KeyVersionMissingError{KeyID: k.keyID, Version: version}
 		}
-		return signer.Sign(rand, digest, opts)
+		v, err := use.use(version)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.admitKey(signCtx, use, keypolicy.OpSign); err != nil {
+			return nil, err
+		}
+		if use.record.Current != version {
+			return nil, &KeyVersionMissingError{KeyID: k.keyID, Version: version}
+		}
+		backendSigner, err := use.backend.Signer(signCtx, v.attrs)
+		if err != nil {
+			return nil, &ErrKeyOperation{Operation: "sign with repository signing key", KeyID: key.KeyID, Err: err}
+		}
+		pub, ok := backendSigner.Public().(interface{ Equal(crypto.PublicKey) bool })
+		if !ok || !pub.Equal(signer.Public()) {
+			return nil, &KeyVersionMissingError{KeyID: k.keyID, Version: version}
+		}
+		return backendSigner.Sign(rand, digest, opts)
 	}
 	return opaqueSigner{signer: signer, sigAlg: cur.attrs.SignatureAlgorithm, sign: sign}, nil
 }
