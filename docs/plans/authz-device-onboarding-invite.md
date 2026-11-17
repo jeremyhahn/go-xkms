@@ -119,3 +119,18 @@ v0.51.0-alpha and v0.58.2-alpha.
   `auth.NewNodeAuthorizer` and that accessor are the two new exports.
 - SPEC: 90aa9bf11 restores main's authz-device-onboarding row text. Its
   revision is left to the owner or coordinator.
+
+## Slice 7 (lane row2091c): Codex findings on f30418821
+
+- Merge 3b1fb9b73: origin/main a4d3c0924.
+- Audit on the self-built host (security): test ee1dd45e2, fix 946427788.
+  When `hostStores` wires the default authorizer, it also sets the
+  service's audit sink to the host node's audit plane: an unexported
+  `clientAuditSink` over `client.Audit()`, bound to `WithServiceContext`.
+  The users:invite denial now lands in the node's trail, and a failed write
+  returns `AuditGateError`. A host that sets its own authorizer also sets its
+  own sink (`SetAuditLogger`).
+- `.github/workflows/scans.yml` and `code-review.yml` (two findings): both
+  files are main's (ruling 742, #2245), merged in through main. After this
+  merge the branch does not change them (`git diff origin/main...HEAD --
+  .github` is empty), so no change was made in this row.
