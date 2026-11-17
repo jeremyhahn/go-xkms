@@ -238,11 +238,16 @@ func decode(blob []byte) (nonce, ciphertext []byte, err error) {
 		return nil, nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
 	}
 	if tag.Number != tagEncrypt0 {
-		return nil, nil, &errs.Joined{Lead: ErrMalformed, Detail: "not CBOR tag 16"}
+		return nil, nil, &errs.Detail{Err: ErrMalformed, Detail: "not CBOR tag 16"}
 	}
 	var msg encrypt0
 	if err := decMode.Unmarshal(tag.Content, &msg); err != nil {
 		return nil, nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+	}
+	// A ciphertext shorter than the tag is refused before the headers:
+	// README section 5 lists truncation first.
+	if len(msg.Ciphertext) < TagSize {
+		return nil, nil, &errs.Detail{Err: ErrTruncated, Detail: "ciphertext shorter than the GCM tag"}
 	}
 	if err := checkProtected(msg.Protected); err != nil {
 		return nil, nil, err
@@ -251,15 +256,12 @@ func decode(blob []byte) (nonce, ciphertext []byte, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(msg.Ciphertext) < TagSize {
-		return nil, nil, &errs.Joined{Lead: ErrTruncated, Detail: "ciphertext shorter than the GCM tag"}
-	}
 	canonical, err := encode(nonce, msg.Ciphertext)
 	if err != nil {
 		return nil, nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
 	}
 	if !bytes.Equal(canonical, blob) {
-		return nil, nil, &errs.Joined{Lead: ErrMalformed, Detail: "not core deterministic encoding"}
+		return nil, nil, &errs.Detail{Err: ErrMalformed, Detail: "not core deterministic encoding"}
 	}
 	return nonce, msg.Ciphertext, nil
 }
@@ -274,20 +276,20 @@ func checkProtected(protected []byte) error {
 	}
 	version, ok := intParameter(header, labelVersion)
 	if !ok {
-		return &errs.Joined{Lead: ErrHeader, Detail: "protected header has no integer version"}
+		return &errs.Detail{Err: ErrHeader, Detail: "protected header has no integer version"}
 	}
 	if version != Version {
 		return ErrVersion
 	}
 	algorithm, ok := intParameter(header, labelAlgorithm)
 	if !ok {
-		return &errs.Joined{Lead: ErrHeader, Detail: "protected header has no integer algorithm"}
+		return &errs.Detail{Err: ErrHeader, Detail: "protected header has no integer algorithm"}
 	}
 	if algorithm != algorithmA256GCM {
 		return ErrAlgorithm
 	}
 	if !bytes.Equal(protected, protectedHeader) {
-		return &errs.Joined{Lead: ErrHeader, Detail: "protected header carries another parameter or encoding"}
+		return &errs.Detail{Err: ErrHeader, Detail: "protected header carries another parameter or encoding"}
 	}
 	return nil
 }
@@ -301,11 +303,14 @@ func parseUnprotected(unprotected cbor.RawMessage) ([]byte, error) {
 	}
 	raw, ok := header[labelIV]
 	if !ok || len(header) != 1 {
-		return nil, &errs.Joined{Lead: ErrHeader, Detail: "unprotected header must hold the IV only"}
+		return nil, &errs.Detail{Err: ErrHeader, Detail: "unprotected header must hold the IV only"}
 	}
 	var nonce []byte
-	if err := decMode.Unmarshal(raw, &nonce); err != nil || len(nonce) != NonceSize {
+	if err := decMode.Unmarshal(raw, &nonce); err != nil {
 		return nil, &errs.Joined{Lead: ErrHeader, Detail: "IV must be a 12-byte string", Cause: err}
+	}
+	if len(nonce) != NonceSize {
+		return nil, &errs.Detail{Err: ErrHeader, Detail: "IV must be a 12-byte string"}
 	}
 	return nonce, nil
 }
