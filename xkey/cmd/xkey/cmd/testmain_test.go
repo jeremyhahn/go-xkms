@@ -16,8 +16,8 @@ func TestMain(m *testing.M) { os.Exit(shortTMPDIR(m.Run)) }
 
 // shortTMPDIR is internal/testtmp.Short for this module, which requires a
 // go-xkms release without that package. It makes one short directory
-// (/tmp/xkNNNN, or under os.TempDir() when /tmp is unusable), sets TMPDIR to
-// it while run executes, then restores TMPDIR and removes the directory. It
+// (/tmp/xkNNNN, or under os.TempDir() when /tmp is unusable), sets TMPDIR and
+// GOTMPDIR to it while run executes, then restores both and removes the directory. It
 // returns run's exit code.
 func shortTMPDIR(run func() int) int {
 	dir, err := mkdirShortTMPDIR("/tmp")
@@ -29,22 +29,43 @@ func shortTMPDIR(run func() int) int {
 		}
 	}
 
-	prev, had := os.LookupEnv("TMPDIR")
-	if err := os.Setenv("TMPDIR", dir); err != nil {
-		fmt.Fprintf(os.Stderr, "shortTMPDIR: setting TMPDIR: %v\n", err)
-	}
+	// t.TempDir() uses GOTMPDIR when set (src/testing/testing.go), and
+	// os.TempDir() uses TMPDIR: both must point at the short directory.
+	restore := setShortEnv(dir, "TMPDIR", "GOTMPDIR")
 	defer func() {
-		if had {
-			_ = os.Setenv("TMPDIR", prev)
-		} else {
-			_ = os.Unsetenv("TMPDIR")
-		}
+		restore()
 		if err := os.RemoveAll(dir); err != nil {
 			fmt.Fprintf(os.Stderr, "shortTMPDIR: removing %s: %v\n", dir, err)
 		}
 	}()
 
 	return run()
+}
+
+// setShortEnv sets each named variable to value and returns a func that
+// restores the previous values (unsetting those that were unset).
+func setShortEnv(value string, names ...string) (restore func()) {
+	type saved struct {
+		name, prev string
+		had        bool
+	}
+	prevs := make([]saved, 0, len(names))
+	for _, name := range names {
+		prev, had := os.LookupEnv(name)
+		prevs = append(prevs, saved{name: name, prev: prev, had: had})
+		if err := os.Setenv(name, value); err != nil {
+			fmt.Fprintf(os.Stderr, "shortTMPDIR: setting %s: %v\n", name, err)
+		}
+	}
+	return func() {
+		for _, s := range prevs {
+			if s.had {
+				_ = os.Setenv(s.name, s.prev)
+			} else {
+				_ = os.Unsetenv(s.name)
+			}
+		}
+	}
 }
 
 // mkdirShortTMPDIR creates root/xkNNNN with 4 random base-36 characters: 6

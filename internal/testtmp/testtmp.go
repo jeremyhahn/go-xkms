@@ -3,7 +3,7 @@
 // A unix socket path must fit in sun_path (108 bytes on Linux). Runners whose
 // TMPDIR is deep (for example /home/runner/_work/_temp) make t.TempDir()
 // return paths that, with a long test name and a socket file name, exceed it.
-// Short points TMPDIR at a short directory for the whole test run.
+// Short points TMPDIR and GOTMPDIR at a short directory for the whole test run.
 //
 // Use it from a package's TestMain:
 //
@@ -23,8 +23,8 @@ import (
 const shortRoot = "/tmp"
 
 // Short makes one short directory (under /tmp, or under os.TempDir() when
-// /tmp is unusable), sets TMPDIR to it while run executes, then restores
-// TMPDIR and removes the directory. It returns run's exit code.
+// /tmp is unusable), sets TMPDIR and GOTMPDIR to it while run executes, then
+// restores both and removes the directory. It returns run's exit code.
 func Short(run func() int) int {
 	dir, err := mkdirShort(shortRoot)
 	if err != nil {
@@ -35,22 +35,43 @@ func Short(run func() int) int {
 		}
 	}
 
-	prev, had := os.LookupEnv("TMPDIR")
-	if err := os.Setenv("TMPDIR", dir); err != nil {
-		fmt.Fprintf(os.Stderr, "testtmp: setting TMPDIR: %v\n", err)
-	}
+	// t.TempDir() uses GOTMPDIR when set (src/testing/testing.go), and
+	// os.TempDir() uses TMPDIR: both must point at the short directory.
+	restore := setEnv(dir, "TMPDIR", "GOTMPDIR")
 	defer func() {
-		if had {
-			_ = os.Setenv("TMPDIR", prev)
-		} else {
-			_ = os.Unsetenv("TMPDIR")
-		}
+		restore()
 		if err := os.RemoveAll(dir); err != nil {
 			fmt.Fprintf(os.Stderr, "testtmp: removing %s: %v\n", dir, err)
 		}
 	}()
 
 	return run()
+}
+
+// setEnv sets each named variable to value and returns a func that restores
+// the previous values (unsetting those that were unset).
+func setEnv(value string, names ...string) (restore func()) {
+	type saved struct {
+		name, prev string
+		had        bool
+	}
+	prevs := make([]saved, 0, len(names))
+	for _, name := range names {
+		prev, had := os.LookupEnv(name)
+		prevs = append(prevs, saved{name: name, prev: prev, had: had})
+		if err := os.Setenv(name, value); err != nil {
+			fmt.Fprintf(os.Stderr, "testtmp: setting %s: %v\n", name, err)
+		}
+	}
+	return func() {
+		for _, s := range prevs {
+			if s.had {
+				_ = os.Setenv(s.name, s.prev)
+			} else {
+				_ = os.Unsetenv(s.name)
+			}
+		}
+	}
 }
 
 // mkdirShort creates root/xkNNNN with 4 random base-36 characters: 6 bytes
