@@ -71,38 +71,29 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 	}
 	algorithm = decoy.Predominant(algorithms, algorithm)
 	slot := decoy.Predominant(decoy.NonEmpty(decoy.MetadataValues(like, "slot")), string(f.cfg.DefaultSlot))
-	cn := "PIV " + slot
+	ttl := decoy.Predominant(decoy.NonEmpty(decoy.MetadataValues(like, "ttl")), strconv.Itoa(f.cfg.ChallengeTTLSeconds))
 
-	key, err := d.Key("key", decoyShapes[algorithm])
-	if err != nil {
-		return nil, err
-	}
-	serialBytes, err := d.Bytes("serial", decoySerialSize)
-	if err != nil {
-		return nil, err
-	}
-	// The OU and the validity mirror one roster certificate, picked from the
-	// seed: the decoys carry the roster's mix (a roster with legacy OU-less
-	// holders yields OU-less decoys in the same share), and each decoy's
-	// NotBefore falls within its exemplar's cohort (the roster certificates
-	// with the same OU), so no decoy pairs an OU with a date only the other
-	// cohort has. Roster enrollments rebuilt by the ceremony carry no
-	// TenantID, so the certificates are the source.
-	subject := pkix.Name{CommonName: cn}
+	// Every observable shape field mirrors one roster holder, picked from the
+	// seed: its tenant OU, key algorithm, slot and TTL together, so the
+	// decoys carry the roster's mix (legacy OU-less holders yield OU-less
+	// decoys in the same share) and never a combination no holder has. The
+	// NotBefore falls within the exemplar's cohort (the holders of the same
+	// shape), so no decoy pairs a shape with a date only another cohort has.
+	// Roster enrollments rebuilt by the ceremony carry no TenantID, so the
+	// certificates are the source of the OU.
 	var tenant string
-	certs := decoy.Certificates(like)
-	cohort := certs
-	if len(certs) > 0 {
+	var cohort []*x509.Certificate
+	if holders := rosterHolders(like, algorithm, slot, ttl); len(holders) > 0 {
 		pickBytes, err := d.Bytes("tenant-ou", 8)
 		if err != nil {
 			return nil, err
 		}
-		pick := new(big.Int).Mod(new(big.Int).SetBytes(pickBytes), big.NewInt(int64(len(certs)))).Int64()
-		tenant = certOU(certs[pick])
-		cohort = make([]*x509.Certificate, 0, len(certs))
-		for _, c := range certs {
-			if certOU(c) == tenant {
-				cohort = append(cohort, c)
+		pick := new(big.Int).Mod(new(big.Int).SetBytes(pickBytes), big.NewInt(int64(len(holders)))).Int64()
+		exemplar := holders[pick].shape
+		tenant, algorithm, slot, ttl = exemplar.tenant, exemplar.algorithm, exemplar.slot, exemplar.ttl
+		for _, h := range holders {
+			if h.shape == exemplar {
+				cohort = append(cohort, h.cert)
 			}
 		}
 	} else {
@@ -114,11 +105,22 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 		}
 		tenant = decoy.Predominant(decoy.NonEmpty(tenants), "")
 	}
+	cn := "PIV " + slot
+
+	key, err := d.Key("key", decoyShapes[algorithm])
+	if err != nil {
+		return nil, err
+	}
+	serialBytes, err := d.Bytes("serial", decoySerialSize)
+	if err != nil {
+		return nil, err
+	}
 	from, to := decoy.NotBeforeSpan(cohort)
 	notBefore, err := d.Time("not-before", from, to)
 	if err != nil {
 		return nil, err
 	}
+	subject := pkix.Name{CommonName: cn}
 	if tenant != "" {
 		if subject, _, err = ca.StampTenant(tenant, subject, nil); err != nil {
 			return nil, &decoy.DerivationError{Purpose: "certificate"}
@@ -133,7 +135,7 @@ func (f *Factor) DecoyEnrollment(seed []byte, userID string, like []*qrdbsdk.Aut
 		"slot":      slot,
 		"algorithm": algorithm,
 		"cn":        cn,
-		"ttl":       decoy.Predominant(decoy.NonEmpty(decoy.MetadataValues(like, "ttl")), strconv.Itoa(f.cfg.ChallengeTTLSeconds)),
+		"ttl":       ttl,
 	}
 	return d.Enrollment(FactorName, like, certPEM, metadata)
 }
@@ -145,4 +147,47 @@ func certOU(c *x509.Certificate) string {
 		return ou[0]
 	}
 	return ""
+}
+
+// holderShape is the observable shape of one roster holder: the fields a
+// challenge exposes beside the certificate's key and dates.
+type holderShape struct {
+	tenant, algorithm, slot, ttl string
+}
+
+// rosterHolder is one roster enrollment holding a certificate, with its shape.
+type rosterHolder struct {
+	cert  *x509.Certificate
+	shape holderShape
+}
+
+// rosterHolders returns like's enrollments that hold a certificate of a
+// shape a decoy can derive. A field the enrollment lacks takes the given
+// roster-wide value, as the decoy would.
+func rosterHolders(like []*qrdbsdk.AuthFactorEnrollment, algorithm, slot, ttl string) []rosterHolder {
+	holders := make([]rosterHolder, 0, len(like))
+	for _, e := range like {
+		if e == nil {
+			continue
+		}
+		certs := decoy.Certificates([]*qrdbsdk.AuthFactorEnrollment{e})
+		if len(certs) == 0 {
+			continue
+		}
+		s := holderShape{tenant: certOU(certs[0]), algorithm: algorithm, slot: slot, ttl: ttl}
+		if a := e.Metadata["algorithm"]; a != "" {
+			if _, ok := decoyShapes[a]; !ok {
+				continue
+			}
+			s.algorithm = a
+		}
+		if v := e.Metadata["slot"]; v != "" {
+			s.slot = v
+		}
+		if v := e.Metadata["ttl"]; v != "" {
+			s.ttl = v
+		}
+		holders = append(holders, rosterHolder{cert: certs[0], shape: s})
+	}
+	return holders
 }
