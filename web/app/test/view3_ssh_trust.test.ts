@@ -429,3 +429,69 @@ describe("SshTrustView stale replies", () => {
     await waitFor(() => expect(screen.getByLabelText("Scope")).not.toBeDisabled());
   });
 });
+
+describe("SshTrustView verdicts after an edit", () => {
+  beforeEach(() => {
+    seed();
+  });
+
+  async function verifiedHost(): Promise<void> {
+    await mountedInScope();
+    verifyKnownHost.mockResolvedValue(undefined);
+    await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "git.example.com" } });
+    await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: hostKey } });
+    await fireEvent.click(screen.getByRole("button", { name: "Verify host" }));
+    expect(await screen.findByText("Fingerprint matches the pin for git.example.com.")).toBeInTheDocument();
+  }
+
+  it("hides a host match once the offered key is replaced, until it is verified again", async () => {
+    await verifiedHost();
+    await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: otherHostKey } });
+    expect(screen.queryByText(/Fingerprint matches/)).not.toBeInTheDocument();
+
+    await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: hostKey } });
+    expect(screen.getByText("Fingerprint matches the pin for git.example.com.")).toBeInTheDocument();
+  });
+
+  it("hides a host match once the scope or owner changes", async () => {
+    await verifiedHost();
+    await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "other" } });
+    expect(screen.queryByText(/Fingerprint matches/)).not.toBeInTheDocument();
+
+    await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "acme" } });
+    await fireEvent.input(screen.getByLabelText("Scope"), { target: { value: "user" } });
+    expect(screen.queryByText(/Fingerprint matches/)).not.toBeInTheDocument();
+  });
+
+  it("hides a host mismatch once the host changes", async () => {
+    await mountedInScope();
+    verifyKnownHost.mockRejectedValue(Object.assign(new Error("fingerprint differs"), { status: 409 }));
+    await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "git.example.com" } });
+    await fireEvent.input(screen.getByLabelText("Offered public key"), { target: { value: hostKey } });
+    await fireEvent.click(screen.getByRole("button", { name: "Verify host" }));
+    expect(await screen.findByText("fingerprint differs")).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByLabelText("Host to verify"), { target: { value: "other.example.com" } });
+    expect(screen.queryByText("fingerprint differs")).not.toBeInTheDocument();
+  });
+
+  it("hides an authorized-key match once the fingerprint, scope or owner changes", async () => {
+    await mountedInScope();
+    verifyAuthorizedKey.mockResolvedValue(entry);
+    const fp = screen.getByLabelText("Key fingerprint");
+    await fireEvent.input(fp, { target: { value: "SHA256:deploy" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Verify key" }));
+    expect(await screen.findByText("Fingerprint matches deploy.")).toBeInTheDocument();
+
+    await fireEvent.input(fp, { target: { value: "SHA256:other" } });
+    expect(screen.queryByText("Fingerprint matches deploy.")).not.toBeInTheDocument();
+    await fireEvent.input(fp, { target: { value: "SHA256:deploy" } });
+    expect(screen.getByText("Fingerprint matches deploy.")).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByLabelText("Scope"), { target: { value: "service" } });
+    expect(screen.queryByText("Fingerprint matches deploy.")).not.toBeInTheDocument();
+    await fireEvent.input(screen.getByLabelText("Scope"), { target: { value: "tenant" } });
+    await fireEvent.input(screen.getByLabelText("Owner"), { target: { value: "bob" } });
+    expect(screen.queryByText("Fingerprint matches deploy.")).not.toBeInTheDocument();
+  });
+});
