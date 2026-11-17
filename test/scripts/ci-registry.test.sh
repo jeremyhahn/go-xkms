@@ -103,11 +103,19 @@ case "$1" in
   pull)
     # FAKE_LAN: the CI_IMAGE_REGISTRY a case sets; its pulls answer FAKE_LAN_PULL_RC.
     if [ -n "${FAKE_LAN:-}" ]; then
-      case "$*" in *" $FAKE_LAN/"*) exit "${FAKE_LAN_PULL_RC:-0}" ;; esac
+      # FAKE_LAN_PULL_SLEEP: a stalled pull that never answers on its own.
+      case "$*" in *" $FAKE_LAN/"*)
+        [ -z "${FAKE_LAN_PULL_SLEEP:-}" ] || exec sleep "$FAKE_LAN_PULL_SLEEP"
+        exit "${FAKE_LAN_PULL_RC:-0}" ;;
+      esac
     fi
     exit "${FAKE_PULL_RC:-0}"
     ;;
-  push) exit "${FAKE_PUSH_RC:-0}" ;;
+  push)
+    # FAKE_PUSH_SLEEP: a stalled push that never answers on its own.
+    [ -z "${FAKE_PUSH_SLEEP:-}" ] || exec sleep "$FAKE_PUSH_SLEEP"
+    exit "${FAKE_PUSH_RC:-0}"
+    ;;
   create) exit "${FAKE_CREATE_RC:-0}" ;;
 esac
 exit 0
@@ -985,6 +993,37 @@ called "docker push $LAN_TC"
 stderr_has "miss, built, push failed"
 if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
   pass "prints TOOLCHAIN_IMAGE after a failed push"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+# Codex round 4 P1-2: the transfers are bounded by CI_IMAGE_TIMEOUT. A fake
+# pull or push that stalls for 30 s must end at the 1 s timeout; without the
+# timeout wrapper the case takes 30 s and fails its elapsed check.
+ended_within() {
+  if [ "$1" -lt 15 ]; then pass "ended in ${1}s"; else fail "took ${1}s: the transfer was not bounded"; fi
+}
+
+start_case "use: a stalled CI_IMAGE_REGISTRY pull ends at CI_IMAGE_TIMEOUT and builds on this runner"
+SECONDS=0
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" CI_IMAGE_TIMEOUT=1 FAKE_LAN_PULL_SLEEP=30
+ended_within "$SECONDS"
+called "docker pull --quiet $LAN_TC"
+called "docker-build-toolchain"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE after a stalled pull"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+start_case "use: a stalled CI_IMAGE_REGISTRY push ends at CI_IMAGE_TIMEOUT and the job stays green"
+SECONDS=0
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 CI_IMAGE_TIMEOUT=1 FAKE_PUSH_SLEEP=30
+ended_within "$SECONDS"
+called "docker push $LAN_TC"
+stderr_has "miss, built, push failed"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE after a stalled push"
 else
   fail "printed '$(cat "$WORK_DIR/stdout")'"
 fi

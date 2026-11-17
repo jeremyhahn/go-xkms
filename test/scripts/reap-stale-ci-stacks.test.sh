@@ -106,6 +106,9 @@ go-xkms-toolchain 1111111111111111 <none> $OLD 1577836800
 $LAN/go-xkms-toolchain 2222222222222222 <none> $NOW $NOW_UNIX
 go-xkms-toolchain 2222222222222222 <none> $NOW $NOW_UNIX
 $LAN/team/go-xkms-toolchain 0123456789abcdef <none> $OLD 1577836800
+team/go-xkms-toolchain 0123456789abcdef <none> $OLD 1577836800
+registry.example:5000/go-xkms-toolchain 0123456789abcdef <none> $OLD 1577836800
+localhost/go-xkms-toolchain 0123456789abcdef <none> $OLD 1577836800
 other-toolchain 0123456789abcdef <none> $OLD 1577836800
 go-xkms-toolchain-x 0123456789abcdef <none> $OLD 1577836800
 redis 7 <none> $OLD 1577836800
@@ -116,6 +119,13 @@ start_case "reap: a released CI_IMAGE_REGISTRY hit's two toolchain aliases are r
 run_reaper go-xkms-ci- FAKE_USED="$HELD"
 removed "$LAN/go-xkms-toolchain:0123456789abcdef"
 removed "go-xkms-toolchain:0123456789abcdef"
+removed "registry.example:5000/go-xkms-toolchain:0123456789abcdef"
+removed "localhost/go-xkms-toolchain:0123456789abcdef"
+
+# Codex round 4 P1-1: a first path element with no "." or ":" and not
+# "localhost" is a Docker Hub owner namespace, not a registry host.
+start_case "reap: a Docker Hub owner's toolchain image is not an alias"
+kept "team/go-xkms-toolchain:0123456789abcdef"
 
 start_case "reap: the aliases of an image a live hold uses are kept"
 kept "$LAN/go-xkms-toolchain:1111111111111111"
