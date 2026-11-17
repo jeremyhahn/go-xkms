@@ -172,7 +172,8 @@ done
 # content tag, <registry>/<name>toolchain:<hash> and <name>toolchain:<hash>,
 # where <name> is the prefix without its trailing "ci-" (go-xkms-ci- ->
 # go-xkms-toolchain). Both are reclaimed by the same rules; a name under an
-# owner path (<registry>/<owner>/...) is not one of them.
+# owner path (<registry>/<owner>/...) or a Docker Hub owner (<owner>/...) is
+# not one of them.
 alias=""
 case $prefix in *ci-) alias=${prefix%ci-}toolchain ;; esac
 while read -r repo tag digest; do
@@ -182,6 +183,12 @@ while read -r repo tag digest; do
       [ -n "$alias" ] || continue
       case $repo in "$alias" | */"$alias") ;; *) continue ;; esac
       [[ ${repo%/*} != */* ]] || continue
+      # Codex round 4 P1-1: the first element must be a registry host (a "."
+      # or ":" in it, or localhost), as lan_ref in scripts/ci-registry.sh
+      # checks; else it is a Docker Hub owner namespace, not our alias.
+      if [ "$repo" != "$alias" ]; then
+        case ${repo%/*} in *.* | *:* | localhost) ;; *) continue ;; esac
+      fi
       ;;
   esac
   refs=()
