@@ -1,4 +1,4 @@
-# code-review-template: v5.12.1 -- the code review in Gitea or GitHub CI for a pull request
+# code-review-template: v5.12.2 -- the code review in Gitea or GitHub CI for a pull request
 # that carries `code-review` and `task:ready`, routed by its labels through
 # route-labels (labels.md §2). Codex on the `codex` runner reviews every such
 # PR; `agent:opencode` adds an advisory COMMENT review by the opencode job on
@@ -28,6 +28,28 @@
 #   COORDINATOR_TURNS         the codex rounds the project coordinator has
 #                             on a `needs-coordinator` PR after the two-round
 #                             stop (v5.9.8, Tenant Agent m2185); default 3
+#
+# v5.12.2 (2026-11-17, Tenant Agent; go-trusted-platform ran 4 to 7 runs per
+# PR head, #2010 to #2015, and Codex's P1s on the v5.12.1 rollout PRs
+# go-xkms #2251, go-quicbaas #2515 and trusted-firmware #578):
+#   (1) ONE REVIEW, ONE GATE PER HEAD. Every `labeled` event starts a run,
+#       and the factory adds code-review, task:ready and dept:* (twice each)
+#       in the same second. The review job's GitHub group carried the run id
+#       (v5.9.7), so each run queued its own review on the one codex runner,
+#       and each run's gate held a hosted runner in the twin wait for up to
+#       75 minutes. The required context has been the gate since v5.11.0,
+#       so v5.9.7's reason is gone: the review job's group is the PR and its
+#       head on both forges (one review runs, one waits, a newer waiting run
+#       replaces an older one), and the scope job and the gate cancel an
+#       older run of their own on the same head (cancel-in-progress). The
+#       newest gate posts the head's `Code Review (codex)` check.
+#   (2) A SUCCESSFUL ROUND ENDS THE COORDINATOR HOLD. v5.12.1's gate holds on
+#       `needs-coordinator`, but a coordinator round that Codex approves left
+#       the label on, so the approved head could never pass. The posting step
+#       takes `needs-coordinator` off when it files an APPROVED verdict.
+#   (3) A SCOPE JOB THAT DID NOT FINISH IS NOT A PASS. When the scope job
+#       failed or was cancelled, the review job did not run, and the gate
+#       reused an older approval of the head. The gate now fails then.
 #
 # v5.12.1 (2026-11-17, Tenant Agent rulings 799, 804 and 805; Codex's P1s
 # on go-qrdb #1616, go-trusted-platform #1986 and trusted-firmware #572):
@@ -716,6 +738,11 @@ jobs:
   scope:
     name: Review scope (InfoSec guard)
     if: github.event.pull_request.state == 'open'
+    # v5.12.2: the newest event on a head runs the guard; an older one's is
+    # cancelled, and that run's review and gate with it.
+    concurrency:
+      group: ${{ format('code-review-scope-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+      cancel-in-progress: true
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     # The guard's python runs at most 240 s (its timeout -k 10 240).
     timeout-minutes: 10
@@ -1181,8 +1208,12 @@ jobs:
     # v5.3's, the PR and its head sha: a twin on the same sha waits for the
     # review in flight and its guard ends skip=reviewed, and Gitea cancels
     # the replaced head's runs on the push.
+    # v5.12.2: one group per PR and head on both forges, as on Gitea: one
+    # review runs, one waits, and a newer waiting run replaces an older one.
+    # The required context is the gate (v5.11.0), so a replaced review run
+    # leaves no missing required check; its run's gate is replaced too.
     concurrency:
-      group: ${{ github.server_url == 'https://github.com' && format('code-review-{0}-{1}-{2}', github.event.pull_request.number, github.event.pull_request.head.sha, github.run_id) || format('code-review-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+      group: ${{ format('code-review-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
       cancel-in-progress: false
     runs-on: codex  # lab-string-ok: the public label of the Codex review runner, read by the review tier only
     # The route, for the opencode job.
@@ -2783,6 +2814,12 @@ jobs:
             relabel "" needs-coordinator
             echo "Took owner-resume and needs-coordinator off PR $PR_NUM: round $ROUND's verdict records the resume."
           fi
+          # v5.12.2: an approval ends the coordinator hold, so the gate
+          # (v5.12.1) passes the approved head of a coordinator round.
+          if [ "$event" = APPROVED ]; then
+            relabel "" needs-coordinator
+            echo "Took needs-coordinator off PR $PR_NUM, if it was on: $REVIEWER approved $EVENT_SHA."
+          fi
 
       # ROOT. THE JOB'S STATUS IS NOT A VERDICT. A step exiting 0 says nothing
       # about whether Gitea recorded a review (go-luks2 #137 went green over a
@@ -3469,6 +3506,12 @@ jobs:
     name: Code Review (codex)
     needs: [scope, review]
     if: always()
+    # v5.12.2: one gate per head. A newer event's gate cancels an older one,
+    # which no longer holds a hosted runner in the twin wait; the newest
+    # gate's check is the head's `Code Review (codex)`.
+    concurrency:
+      group: ${{ format('code-review-gate-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+      cancel-in-progress: true
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     timeout-minutes: 80
     permissions:
@@ -3493,6 +3536,7 @@ jobs:
       # config half (.github/, .gitea/) is exempt only when SCOPE_SKIP is true.
       DOCS_PATHS: '^(docs/.+|(.+/)?[^/]+\.md|(.+/)?changelog\.d/.+)$'
       SCOPE_SKIP: ${{ needs.scope.outputs.skip }}
+      SCOPE_RESULT: ${{ needs.scope.result }}
       REVIEW_RESULT: ${{ needs.review.result }}
     steps:
       - name: Require a Codex approval of the head, or a no-review change
@@ -3606,6 +3650,10 @@ jobs:
           # keeps even an approval of the head from passing.
           [ "$REVIEW_RESULT" != failure ] ||
             fail "this run's Codex review job failed, so no earlier approval of $EVENT_SHA is reused (v5.12.1)"
+          # v5.12.2: a scope job that failed or was cancelled ran no review.
+          case "$SCOPE_RESULT" in
+            failure|cancelled) fail "this run's scope job ended $SCOPE_RESULT, so no review ran and no earlier approval of $EVENT_SHA is reused (v5.12.2)" ;;
+          esac
           labels=$(get "/pulls/$PR_NUM" | jq -r '.labels[]?.name') ||
             fail "cannot read the labels of PR $PR_NUM"
           for hold in needs-owner needs-coordinator; do
