@@ -12,7 +12,10 @@
   type Confirm =
     | { kind: "host"; host: string; scope: string; owner: string }
     | { kind: "key"; name: string; scope: string; owner: string };
-  type Result = { ok: boolean; message: string };
+  // A verdict carries the snapshot of the inputs it was verified for and is
+  // shown only while the inputs still equal it: an edit after a completed
+  // verify hides the earlier verdict until the new inputs are verified.
+  type Result = { ok: boolean; message: string; at: string };
 
   // Empty scope and owner list without a filter (every pin the caller may
   // read); pkg/scope accepts only tenant, user and service when one is set.
@@ -96,20 +99,30 @@
     }
   }
 
+  function hostInputs(): string {
+    return JSON.stringify({ host: vHost, scope, owner, public_key: vPublicKey.trim() });
+  }
+
+  function keyInputs(): string {
+    return JSON.stringify({ scope, owner, fingerprint: kFingerprint });
+  }
+
+  const shownHostResult = $derived(hostResult !== null && hostResult.at === hostInputs() ? hostResult : null);
+  const shownKeyResult = $derived(keyResult !== null && keyResult.at === keyInputs() ? keyResult : null);
+
   async function verifyHost(): Promise<void> {
     const mine = ++hostSeq;
     const req = { host: vHost, scope, owner, public_key: vPublicKey.trim() };
-    const at = JSON.stringify(req);
-    const current = () =>
-      mine === hostSeq && at === JSON.stringify({ host: vHost, scope, owner, public_key: vPublicKey.trim() });
+    const at = hostInputs();
+    const current = () => mine === hostSeq && at === hostInputs();
     hostResult = null;
     try {
       await getSDKClient().ssh.verifyKnownHost(req.host, { scope: req.scope, owner: req.owner, public_key: req.public_key });
-      if (current()) hostResult = { ok: true, message: `Fingerprint matches the pin for ${req.host}.` };
+      if (current()) hostResult = { ok: true, message: `Fingerprint matches the pin for ${req.host}.`, at };
     } catch (e) {
       if (!current()) return;
       if (statusOf(e) === 409) {
-        hostResult = { ok: false, message: message(e) };
+        hostResult = { ok: false, message: message(e), at };
       } else {
         showToast("error", message(e));
       }
@@ -136,17 +149,17 @@
   async function verifyKey(): Promise<void> {
     const mine = ++keySeq;
     const req = { scope, owner, fingerprint: kFingerprint };
-    const at = JSON.stringify(req);
-    const current = () => mine === keySeq && at === JSON.stringify({ scope, owner, fingerprint: kFingerprint });
+    const at = keyInputs();
+    const current = () => mine === keySeq && at === keyInputs();
     keyResult = null;
     try {
       const matched = await getSDKClient().ssh.verifyAuthorizedKey(req);
-      if (current()) keyResult = { ok: true, message: `Fingerprint matches ${matched.name}.` };
+      if (current()) keyResult = { ok: true, message: `Fingerprint matches ${matched.name}.`, at };
     } catch (e) {
       if (!current()) return;
       const status = statusOf(e);
       if (status === 409 || status === 404) {
-        keyResult = { ok: false, message: message(e) };
+        keyResult = { ok: false, message: message(e), at };
       } else {
         showToast("error", message(e));
       }
@@ -243,11 +256,11 @@
       <input class="input input-bordered input-sm flex-1" aria-label="Offered public key" placeholder="ssh-ed25519 AAAA..." bind:value={vPublicKey} />
       <button class="btn btn-sm" onclick={verifyHost} disabled={vHost === "" || vPublicKey.trim() === ""}>Verify host</button>
     </div>
-    {#if hostResult}
-      {#if hostResult.ok}
-        <Alert kind="success" class="mt-3"><span>{hostResult.message}</span></Alert>
+    {#if shownHostResult}
+      {#if shownHostResult.ok}
+        <Alert kind="success" class="mt-3"><span>{shownHostResult.message}</span></Alert>
       {:else}
-        <Alert kind="error" class="mt-3"><strong>Fingerprint mismatch</strong><span>{hostResult.message}</span></Alert>
+        <Alert kind="error" class="mt-3"><strong>Fingerprint mismatch</strong><span>{shownHostResult.message}</span></Alert>
       {/if}
     {/if}
   </section>
@@ -290,8 +303,8 @@
       <input class="input input-bordered input-sm" aria-label="Key fingerprint" placeholder="SHA256:..." bind:value={kFingerprint} />
       <button class="btn btn-sm" onclick={verifyKey} disabled={kFingerprint === ""}>Verify key</button>
     </div>
-    {#if keyResult}
-      <Alert kind={keyResult.ok ? "success" : "error"} class="mt-3"><span>{keyResult.message}</span></Alert>
+    {#if shownKeyResult}
+      <Alert kind={shownKeyResult.ok ? "success" : "error"} class="mt-3"><span>{shownKeyResult.message}</span></Alert>
     {/if}
   </section>
 {/if}
