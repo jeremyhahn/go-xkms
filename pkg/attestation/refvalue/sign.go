@@ -87,6 +87,11 @@ func Sign(ctx context.Context, unsigned []byte, signer crypto.Signer, alg cose.A
 	if err := parsed.Valid(); err != nil {
 		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
 	}
+	// Valid only checks that each tag is nonempty: the embedded tags are
+	// checked too, or a signed CoRIM could crash the appraisal that decodes it.
+	if err := checkTags(parsed.Tags); err != nil {
+		return nil, err
+	}
 	metaCBOR, err := corim.NewMeta().SetSigner(signerName, nil).ToCBOR()
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrSign, Cause: err}

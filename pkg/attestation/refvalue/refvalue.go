@@ -39,6 +39,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/x509"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -429,9 +430,9 @@ func buildManifest(signed *corim.SignedCorim) (*Manifest, error) {
 		if !ok {
 			continue // a CoSWID or CoTS tag carries no reference-value triples
 		}
-		var c comid.Comid
-		if err := c.FromCBOR(body); err != nil {
-			return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+		c, err := decodeCoMID(body)
+		if err != nil {
+			return nil, err
 		}
 		if c.Triples.ReferenceValues == nil {
 			continue
@@ -441,6 +442,48 @@ func buildManifest(signed *corim.SignedCorim) (*Manifest, error) {
 		}
 	}
 	return m, nil
+}
+
+// decodeCoMID decodes the body of an embedded CoMID tag. The body must be one
+// well-formed CBOR item with bounded container sizes first: the pinned comid
+// decoder indexes past the end of a bare tag head and panics. A panic the
+// decoder still raises on well-formed input is returned as ErrMalformed.
+func decodeCoMID(body []byte) (c *comid.Comid, err error) {
+	if err := wellformedMode.Wellformed(body); err != nil {
+		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			c, err = nil, &errs.Joined{Lead: ErrMalformed, Cause: fmt.Errorf("comid decoder: %v", r)}
+		}
+	}()
+	c = &comid.Comid{}
+	if err := c.FromCBOR(body); err != nil {
+		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+	}
+	return c, nil
+}
+
+// checkTags checks every embedded tag of an unsigned CoRIM before it is
+// signed: each tag is well-formed CBOR, and each CoMID decodes and is valid.
+func checkTags(tags []corim.Tag) error {
+	for _, tag := range tags {
+		if err := wellformedMode.Wellformed(tag); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		body, ok := bytes.CutPrefix(tag, corim.ComidTag)
+		if !ok {
+			continue
+		}
+		c, err := decodeCoMID(body)
+		if err != nil {
+			return err
+		}
+		if err := c.Valid(); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+	}
+	return nil
 }
 
 // convertReferenceValue maps one Veraison reference-value triple.
