@@ -113,3 +113,16 @@ match.
   `DeviceResolver` implementation is the caller's, e.g. go-quicbaas); the
   acme-issuance row's own "Open: nothing matches the 32 bytes" sentence
   (docs/SPEC.md:40) is now stale and is that row's edit.
+
+## Slice 5: Codex review of the lane tip
+
+- Fixed: `NewBackend` (`pkg/backend/avr/backend.go:194`) let a non-nil empty
+  `AttestationConfig.ApplicationReference` skip the 32-byte check, which left
+  the application unchecked. Now only nil means no reference; an empty slice is
+  refused with `dice.ErrInvalidApplicationReference`. Regression test
+  `TestNewBackendRefusesAnEmptyApplicationReference` (f1adf88d0, fix f57db64fa).
+- Open, for the owner: Codex asks for recorded owner approval of the SPEC.md
+  row 90 edits (the device-attest-01 match contract, records without a
+  reference left unchecked, and the `shipped` flip). They were made on the
+  coordinator's lane brief under LANE_POLICY_ALLOW docs/SPEC.md (ruling 650).
+  No owner approval is recorded in this lane, and the lane does not invent one.
