@@ -120,7 +120,7 @@ func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.J
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("mcp request %s: unexpected HTTP status %d", request.Method, resp.StatusCode)
+		return errorResponse(resp, request)
 	}
 	if request.Method == string(mcp.MethodInitialize) {
 		if id := resp.Header.Get(headerSessionID); id != "" {
@@ -151,6 +151,43 @@ func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.J
 	default:
 		return nil, fmt.Errorf("mcp request %s: unexpected content type %q", request.Method, mediaType)
 	}
+}
+
+// errorResponse returns the JSON-RPC error a server sends with an HTTP error
+// status, such as the UnsupportedProtocolVersionError an MCP server answers
+// with HTTP 400 and its list of supported versions, so the client sees the
+// typed error and can renegotiate. Any other answer with a status other than
+// 200 is a transport error.
+func errorResponse(resp *http.Response, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
+	statusErr := fmt.Errorf("mcp request %s: unexpected HTTP status %d", request.Method, resp.StatusCode)
+	if resp.StatusCode < 400 || resp.StatusCode >= 600 {
+		return nil, statusErr
+	}
+	mediaType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	if mediaType != contentTypeJSON {
+		return nil, statusErr
+	}
+	var msg wireMessage
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&msg); err != nil {
+		return nil, statusErr
+	}
+	if msg.Method != "" || msg.Result != nil || msg.Error == nil || msg.Error.Message == "" {
+		return nil, statusErr
+	}
+	// A server that could not read the request id answers with a null id
+	// (JSON-RPC 2.0, section 5); the error is still the answer to this request.
+	if len(msg.ID) == 0 || string(msg.ID) == "null" {
+		id, err := request.ID.MarshalJSON()
+		if err != nil {
+			return nil, statusErr
+		}
+		msg.ID = id
+	}
+	out, err := msg.response(request.ID)
+	if err != nil {
+		return nil, fmt.Errorf("mcp request %s: HTTP status %d: %w", request.Method, resp.StatusCode, err)
+	}
+	return out, nil
 }
 
 // SendNotification posts one JSON-RPC notification; the server accepts it
