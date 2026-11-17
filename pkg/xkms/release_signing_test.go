@@ -23,6 +23,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -237,6 +238,53 @@ func TestRepositorySigner_KeepsItsKeyAcrossRotation(t *testing.T) {
 		t.Fatalf("unexpected public key type %T", pub)
 	}
 	require.True(t, ok, "the retained signer signed under a key other than its Public()")
+}
+
+// TestRepositorySigner_RefusesAnUnusableVersion checks that a retained
+// signer stops signing once its key version is disabled or retired, or its
+// key deleted: the version is revalidated on every Sign, with or without a
+// key policy store.
+func TestRepositorySigner_RefusesAnUnusableVersion(t *testing.T) {
+	digest := sha256.Sum256([]byte("release"))
+	version := func(n uint32) *transport.KeyVersionRequest {
+		return &transport.KeyVersionRequest{Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, Version: n, TenantID: "tenant-a"}
+	}
+	cases := map[string]func(t *testing.T, svc *XKMSService, ctx context.Context){
+		"disabled": func(t *testing.T, svc *XKMSService, ctx context.Context) {
+			_, err := svc.DisableKeyVersion(ctx, version(1))
+			require.NoError(t, err)
+		},
+		"retired after rotation": func(t *testing.T, svc *XKMSService, ctx context.Context) {
+			_, err := svc.RotateKey(ctx, &transport.RotateKeyRequest{Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, TenantID: "tenant-a"})
+			require.NoError(t, err)
+			_, err = svc.RetireKeyVersion(ctx, version(1))
+			require.NoError(t, err)
+		},
+		"deleted": func(t *testing.T, svc *XKMSService, ctx context.Context) {
+			require.NoError(t, svc.DeleteKey(ctx, "software", appraisal.ReleaseSigningKeyID))
+		},
+	}
+	for name, change := range cases {
+		for _, withPolicies := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/policies=%v", name, withPolicies), func(t *testing.T) {
+				svc, _, ctx := releaseSigningService(t, "attestation_signing_keys:sign")
+				if withPolicies {
+					store, err := keypolicy.NewStore(testutil.NewMemoryDAOFactory())
+					require.NoError(t, err)
+					svc.SetKeyPolicyStore(store)
+				}
+				generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+				signer, err := svc.RepositorySigner(ctx, "acme/app")
+				require.NoError(t, err)
+				_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+				require.NoError(t, err, "sign before the change")
+
+				change(t, svc, ctx)
+				_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+				require.Error(t, err, "a retained signer signed with an unusable key version")
+			})
+		}
+	}
 }
 
 func TestCoseAlgorithm(t *testing.T) {
