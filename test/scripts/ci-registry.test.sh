@@ -1062,6 +1062,50 @@ called "docker pull --quiet $LAN_REF"
 lan_cfg_private push
 no_secret_printed
 
+# #2243 Codex round 2, P1-1: a CI_IMAGE_REGISTRY hit is no way around the ref
+# checks; a ref pull_ref would refuse is refused before any LAN pull.
+start_case "use: a ':latest' ref with a CI_IMAGE_REGISTRY hit is refused before any pull"
+run_script 1 use toolchain "$TOOLCHAIN_REPO:latest" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+stderr_has "is not a digest reference"
+not_called "docker pull"
+not_called "docker tag $LAN_TC"
+start_case "use: a ref outside the publishing namespace with a CI_IMAGE_REGISTRY hit is refused before any pull"
+run_script 1 use toolchain "$FORGE/jeremyhahn/go-xkms-ci-toolchain@$DIGEST" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+stderr_has "is not under $FORGE/example-ci-images/, where main publishes"
+not_called "docker pull"
+not_called "docker tag $LAN_TC"
+start_case "use: a ref in another registry with a CI_IMAGE_REGISTRY hit is refused before any pull"
+run_script 1 use toolchain "ghcr.io/jeremyhahn/go-xkms-ci-toolchain@$DIGEST" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+stderr_has "is not in this run's registry, $FORGE"
+not_called "docker pull"
+not_called "docker tag $LAN_TC"
+
+# P1-2: with no private config dir (mktemp fails), no LAN docker call runs.
+start_case "use: no private Docker config for CI_IMAGE_REGISTRY: no LAN pull or push, builds on this runner"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" DOCKER_CONFIG="$RUNNER_CFG" TMPDIR="$WORK_DIR/no-such-tmp"
+not_called "docker pull --quiet $LAN/"
+not_called "docker push"
+called "docker-build-toolchain"
+if grep -F "$LAN/" "$CALL_LOG" | grep -q '^docker-cfg'; then
+  fail "a CI_IMAGE_REGISTRY call ran: $(grep -F "docker-cfg" "$CALL_LOG")"
+else
+  pass "no CI_IMAGE_REGISTRY docker call ran without a private config"
+fi
+
+# P1-3: a single-label CI_IMAGE_REGISTRY would be read by Docker as a Docker Hub
+# namespace; it is rejected with a warning and treated as unset.
+start_case "use: a single-label CI_IMAGE_REGISTRY is rejected and treated as unset"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY=registry FAKE_LAN=registry
+stderr_has "CI_IMAGE_REGISTRY is a single-label name"
+not_called "registry/go-xkms-toolchain"
+not_called "docker pull"
+not_called "docker push"
+called "docker-build-toolchain"
+start_case "use: CI_IMAGE_REGISTRY=localhost is a registry host"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY=localhost FAKE_LAN=localhost
+called "docker pull --quiet localhost/$TOOLCHAIN_TAG"
+not_called "docker-build-toolchain"
+
 # --------------------------------------------------------------------------
 if [ "$FAILURES" -eq 0 ]; then
   echo "PASS: ci-registry.sh hands the CI images over by digest"
