@@ -613,14 +613,23 @@ hold_name() {
 # pull_ref pulls digest reference $1 from main's namespace in this run's
 # registry, with the run's token on GHCR and anonymously on the forge
 # (read_login), and holds it as $2, in at most $attempts attempts.
-pull_ref() {
-  local ref=$1 hold=$2 host repos backoff=${CI_REGISTRY_BACKOFF:-10} n
+# check_main_ref dies unless $1 is a digest reference under the publishing
+# namespace of this run's registry. use calls it before the CI_IMAGE_REGISTRY
+# path too, so a LAN hit is no way around it (#2243, Codex round 2 P1-1).
+check_main_ref() {
+  local ref=$1 host repos
   check_ref "$ref"
-  [[ $backoff =~ ^[0-9]+$ ]] || die "CI_REGISTRY_BACKOFF is not a number of seconds"
-  host=$(registry_host)
+  host=$(registry_host) || exit 1
   [ "${ref%%/*}" = "$host" ] || die "'$ref' is not in this run's registry, $host"
-  repos=$host/$(registry_owner)/
+  repos=$host/$(registry_owner)/ || exit 1
   [[ $ref == "$repos"* ]] || die "'$ref' is not under $repos, where main publishes"
+}
+
+pull_ref() {
+  local ref=$1 hold=$2 host backoff=${CI_REGISTRY_BACKOFF:-10} n
+  check_main_ref "$ref"
+  [[ $backoff =~ ^[0-9]+$ ]] || die "CI_REGISTRY_BACKOFF is not a number of seconds"
+  host=$(registry_host) || exit 1
   private_config
   read_login "$host"
   for ((n = 1; n <= attempts; n++)); do
@@ -673,6 +682,9 @@ hold_local() {
 lan_ref() {
   local reg=${CI_IMAGE_REGISTRY:-}
   [[ $reg =~ ^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?$ ]] || return 1
+  # #2243 round 2 P1-3: Docker reads a single-label name as a Docker Hub
+  # namespace, so a registry host has a dot or a port, or is localhost.
+  [[ $reg == *[.:]* || $reg == localhost ]] || return 1
   printf '%s/%s\n' "$reg" "$(content_tag "$1")"
 }
 
@@ -690,9 +702,16 @@ lan_cfg=""
 lan_config() {
   [ -z "$lan_cfg" ] || return 0
   local plugins=${DOCKER_CONFIG:-${HOME:-/nonexistent}/.docker}/cli-plugins
-  lan_cfg=$(mktemp -d)
+  local dir
+  # #2243 round 2 P1-2: with no private dir, DOCKER_CONFIG would be empty and
+  # Docker would read the runner's credentials; the caller skips the LAN.
+  if ! dir=$(mktemp -d 2>/dev/null) || [ -z "$dir" ] || [ ! -d "$dir" ]; then
+    echo "==> cannot create a private Docker config for CI_IMAGE_REGISTRY; not used" >&2
+    return 1
+  fi
+  lan_cfg=$dir
   cleanup+=("$lan_cfg")
-  [ ! -d "$plugins" ] || ln -s "$plugins" "$lan_cfg/cli-plugins"
+  [ ! -d "$plugins" ] || ln -s "$plugins" "$lan_cfg/cli-plugins" || true
 }
 
 # lan_pull <family> <hold> [ref]: 0 on a hit held, 1 when the registry is not
@@ -701,6 +720,10 @@ lan_config() {
 lan_pull() {
   local family=$1 hold=$2 ref=${3:-} lanref tag digest id want=""
   [[ $ref != *@sha256:* ]] || want=${ref##*@}
+  if [[ ${CI_IMAGE_REGISTRY} =~ ^[A-Za-z0-9-]+$ && ${CI_IMAGE_REGISTRY} != localhost ]]; then
+    echo "::warning::ci-registry: CI_IMAGE_REGISTRY is a single-label name, which Docker reads as a Docker Hub namespace; not used" >&2
+    return 1
+  fi
   if ! lanref=$(lan_ref "$family"); then
     echo "==> CI_IMAGE_REGISTRY is not a host[:port]; not used" >&2
     return 1
@@ -710,7 +733,8 @@ lan_pull() {
     return 1
   fi
   tag=${lanref#"$CI_IMAGE_REGISTRY"/}
-  lan_config
+  lan_config || return 1
+  [ -n "$lan_cfg" ] || return 1
   timeout "$(lan_timeout)" env DOCKER_CONFIG="$lan_cfg" docker pull --quiet "$lanref" >/dev/null 2>&1 || return 2
   digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$lanref" 2>/dev/null |
     while IFS= read -r d; do [[ $d != "${lanref%:*}@"* ]] || { echo "${d##*@}"; break; }; done)
@@ -733,7 +757,10 @@ lan_push() {
   local family=$1 src=$2 lanref what="built"
   lanref=$(lan_ref "$family") || return 0
   [ "$src" = "${lanref#"$CI_IMAGE_REGISTRY"/}" ] || what="pulled from the forge"
-  lan_config
+  if ! lan_config || [ -z "$lan_cfg" ]; then
+    echo "==> miss, $what, push failed" >&2
+    return 0
+  fi
   if docker tag "$src" "$lanref" && timeout "$(lan_timeout)" env DOCKER_CONFIG="$lan_cfg" docker push "$lanref" >/dev/null 2>&1; then
     echo "==> miss, $what and pushed $lanref" >&2
   else
@@ -753,7 +780,8 @@ use() {
     # DS-9239: a missing reference never turns the job red.
     echo "::warning::ci-registry: no $family image reference on a push to main; building it on this runner" >&2
   fi
-  # #2243: CI_IMAGE_REGISTRY comes first, before any GITHUB_SERVER_URL logic.
+  [ -z "$ref" ] || check_main_ref "$ref"
+  # #2243: CI_IMAGE_REGISTRY comes before the forge pull and the build.
   if [ -n "${CI_IMAGE_REGISTRY:-}" ]; then
     lan_pull "$family" "$hold" "$ref" && lan_rc=0 || lan_rc=$?
   fi

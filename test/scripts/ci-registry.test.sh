@@ -950,11 +950,17 @@ else
   fail "printed '$(cat "$WORK_DIR/stdout")'"
 fi
 
-start_case "use: CI_IMAGE_REGISTRY is read before GITHUB_SERVER_URL; a hit skips the forge pull"
-run_script 0 use toolchain "$FORGE/example-ci-images/go-xkms-ci-toolchain@$DIGEST" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" GITHUB_SERVER_URL=
+start_case "use: with no ref, a CI_IMAGE_REGISTRY hit needs no GITHUB_SERVER_URL and skips the forge pull"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" GITHUB_SERVER_URL=
 stderr_has "pulled $LAN_TC $DIGEST"
 not_called "docker pull --quiet $FORGE"
 not_called "docker-build-toolchain"
+# Codex round 2 P1-1: a ref is checked against GITHUB_SERVER_URL's registry
+# before the CI_IMAGE_REGISTRY path, so with no GITHUB_SERVER_URL it is refused.
+start_case "use: a ref with no GITHUB_SERVER_URL is refused before any CI_IMAGE_REGISTRY pull"
+run_script 1 use toolchain "$FORGE/example-ci-images/go-xkms-ci-toolchain@$DIGEST" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" GITHUB_SERVER_URL=
+stderr_has "GITHUB_SERVER_URL is empty"
+not_called "docker pull"
 
 start_case "use: CI_IMAGE_REGISTRY miss builds, tags and pushes the content tag"
 run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1
