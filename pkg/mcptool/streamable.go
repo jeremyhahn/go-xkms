@@ -119,6 +119,9 @@ func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.J
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusBadRequest {
+		return badRequest(resp, request)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mcp request %s: unexpected HTTP status %d", request.Method, resp.StatusCode)
 	}
@@ -370,6 +373,31 @@ func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) (*mcptrans
 }
 
 // wireMessage is the part of a JSON-RPC message the transport inspects.
+// badRequest handles an HTTP 400 answer to request. A server that rejects
+// the request at the protocol level, such as an unsupported protocol
+// version, says why in a JSON-RPC error response for the request's id: that
+// response is returned so the client sees the error's code and data. Any
+// other HTTP 400 is an HTTP error.
+func badRequest(resp *http.Response, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
+	statusErr := fmt.Errorf("mcp request %s: unexpected HTTP status %d", request.Method, resp.StatusCode)
+	mediaType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	if mediaType != contentTypeJSON {
+		return nil, statusErr
+	}
+	var msg wireMessage
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&msg); err != nil {
+		return nil, statusErr
+	}
+	if msg.Method != "" || msg.Error == nil || msg.Result != nil {
+		return nil, statusErr
+	}
+	rpcResp, err := msg.response(request.ID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", statusErr, err)
+	}
+	return rpcResp, nil
+}
+
 type wireMessage struct {
 	JSONRPC string                   `json:"jsonrpc"`
 	ID      json.RawMessage          `json:"id,omitempty"`
