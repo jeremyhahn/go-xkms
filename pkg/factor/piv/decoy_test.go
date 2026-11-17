@@ -130,6 +130,58 @@ func TestDecoyEnrollment_MirrorsMixedLegacyRoster(t *testing.T) {
 	}
 }
 
+// TestDecoyEnrollment_ShapeFollowsOneExemplar pins that a decoy's OU, key
+// algorithm and slot come from one roster holder together: with two legacy
+// OU-less P-256/9a holders and one stamped Ed25519/9c holder, no decoy is a
+// stamped P-256/9a or an OU-less Ed25519/9c, which no holder is.
+func TestDecoyEnrollment_ShapeFollowsOneExemplar(t *testing.T) {
+	stamped := enrollHolder(t, "holder-stamped", map[string]any{"algorithm": "ed25519", "slot": "9c"})
+	if stamped.Metadata["algorithm"] != "ed25519" || stamped.Metadata["slot"] != "9c" {
+		t.Fatalf("stamped holder metadata = %v, want ed25519 in 9c", stamped.Metadata)
+	}
+	legacy := func(user string, serial int64) *qrdbsdk.AuthFactorEnrollment {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("GenerateKey: %v", err)
+		}
+		certPEM, err := issueSelfSignedCert(key, pkix.Name{CommonName: "PIV 9a"}, big.NewInt(serial), time.Now().UTC().Add(-30*24*time.Hour), defaultValidityDays)
+		if err != nil {
+			t.Fatalf("legacy certificate: %v", err)
+		}
+		return &qrdbsdk.AuthFactorEnrollment{UserID: user, FactorName: FactorName, PublicKey: certPEM, Metadata: map[string]string{
+			"slot": "9a", "algorithm": "ecdsap256", "cn": "PIV 9a", "ttl": stamped.Metadata["ttl"],
+		}}
+	}
+	roster := []*qrdbsdk.AuthFactorEnrollment{legacy("holder-legacy-1", 7), legacy("holder-legacy-2", 8), stamped}
+
+	f := New(Config{})
+	seen := map[string]int{}
+	for i := 0; i < 200; i++ {
+		d := decoyFor(t, f, decoySeed, "stranger-"+strconv.Itoa(i), roster)
+		cert := parseCert(t, d.PublicKey)
+		alg, slot := d.Metadata["algorithm"], d.Metadata["slot"]
+		if shape, ok := decoy.ShapeOfKey(cert.PublicKey); !ok || shape != decoyShapes[alg] {
+			t.Fatalf("decoy key shape %v does not match its algorithm %q", shape, alg)
+		}
+		var combo string
+		switch ou := cert.Subject.OrganizationalUnit; {
+		case len(ou) == 0 && alg == "ecdsap256" && slot == "9a":
+			combo = "legacy"
+		case reflect.DeepEqual(ou, []string{"tenant-t"}) && alg == "ed25519" && slot == "9c":
+			combo = "stamped"
+		default:
+			t.Fatalf("decoy OU %v, algorithm %q, slot %q: no holder has this combination", ou, alg, slot)
+		}
+		if d.Metadata["cn"] != "PIV "+slot || cert.Subject.CommonName != "PIV "+slot {
+			t.Fatalf("decoy cn %q / %q, want PIV %s", d.Metadata["cn"], cert.Subject.CommonName, slot)
+		}
+		seen[combo]++
+	}
+	if seen["legacy"] == 0 || seen["stamped"] == 0 {
+		t.Fatalf("decoy shapes = %v, want both holder shapes", seen)
+	}
+}
+
 func parseCert(t *testing.T, pemBytes []byte) *x509.Certificate {
 	t.Helper()
 	block, _ := pem.Decode(pemBytes)
