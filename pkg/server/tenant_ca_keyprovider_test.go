@@ -284,9 +284,9 @@ type failSaveCertBackend struct {
 }
 
 func (b *failSaveCertBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
-	// Only the login CA certificate save fails; the provenance record the
-	// provisioning path writes first goes through.
-	if !strings.HasSuffix(keyID, tenantLoginCAProvenanceID) && b.fail.Add(-1) >= 0 {
+	// Only the login CA certificate save fails; the records the provisioning
+	// path writes first go through.
+	if strings.HasSuffix(keyID, tenantLoginCAKeyCN) && b.fail.Add(-1) >= 0 {
 		return errors.New("certificate store unavailable")
 	}
 	return b.Backend.SaveCert(ctx, keyID, cert)
@@ -453,6 +453,43 @@ func TestTenantCAKeyFactory_ProviderListsKeysWithoutTenant(t *testing.T) {
 	ids, err := f.TenantIDs(ctx)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, tenants, ids)
+}
+
+// failProvenanceSaveBackend fails the provenance record save while fail is
+// positive, the way a store that is down right after key generation does.
+type failProvenanceSaveBackend struct {
+	xkms.Backend
+	fail atomic.Int32
+}
+
+func (b *failProvenanceSaveBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
+	if strings.HasSuffix(keyID, tenantLoginCAProvenanceID) && b.fail.Add(-1) >= 0 {
+		return errors.New("certificate store unavailable")
+	}
+	return b.Backend.SaveCert(ctx, keyID, cert)
+}
+
+// A provisioning pass that generated the key but could not record its
+// provenance is finished by the next pass over the same key, once the store
+// is back, instead of being refused as a collision forever.
+func TestTenantCAKeyFactory_RecoversAfterFailedProvenanceSave(t *testing.T) {
+	ctx := context.Background()
+	_, base := newTenantCAKeyTestFactory(t)
+	flaky := &failProvenanceSaveBackend{Backend: base}
+	flaky.fail.Store(1)
+	f := newTenantCAKeyFactory()
+	require.NoError(t, f.Bind(flaky))
+
+	require.Error(t, f.EnsureTenant(ctx, "tenant-a"), "a failed provenance save must fail the pass")
+	before := tenantSignerPublic(t, base, "tenant-a").(*ecdsa.PublicKey)
+
+	require.NoError(t, f.EnsureTenant(ctx, "tenant-a"), "the next pass must recover the interrupted provisioning")
+	p, err := f.ProviderForTenant("tenant-a")
+	require.NoError(t, err)
+	cert, err := p.Certificate(ctx)
+	require.NoError(t, err)
+	assert.True(t, before.Equal(cert.PublicKey), "the recovery must keep the generated key")
+	assert.True(t, cert.IsCA)
 }
 
 // fixedSlotProvider reports what a YubiKey PIV backend configured with one
