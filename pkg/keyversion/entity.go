@@ -34,6 +34,13 @@ type Entity struct {
 type rotationClaim struct {
 	Token   string    `json:"token"`
 	Expires time.Time `json:"expires"`
+
+	// Version is the version number reserved for the claim: only its holder
+	// creates, removes or records the backend key under that version's
+	// name. Every later claim reserves a higher number, so a holder whose
+	// claim was taken over never touches its successor's key. A released
+	// claim keeps an empty Token and its Version as the floor for the next.
+	Version uint32 `json:"version,omitempty"`
 }
 
 // EntityID returns the entity's unique identifier.

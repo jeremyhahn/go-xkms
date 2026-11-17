@@ -148,14 +148,14 @@ func TestStoreClaim(t *testing.T) {
 	at := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 
 	// No record is stored: the claim stores the implicit record.
-	tok, err := s.Claim(ctx, "acme", "software", "k", nil)
+	tok, _, err := s.Claim(ctx, "acme", "software", "k", nil)
 	require.NoError(t, err)
-	_, err = s.Claim(ctx, "acme", "software", "k", nil)
+	_, _, err = s.Claim(ctx, "acme", "software", "k", nil)
 	require.ErrorIs(t, err, ErrVersionConflict, "the record is claimed")
 	read, found, err := s.Load(ctx, "acme", "software", "k")
 	require.NoError(t, err)
 	require.True(t, found)
-	_, err = s.Claim(ctx, "acme", "software", "k", read)
+	_, _, err = s.Claim(ctx, "acme", "software", "k", read)
 	require.ErrorIs(t, err, ErrVersionConflict, "the claim has not expired")
 
 	next := cloneRecord(read)
@@ -168,12 +168,12 @@ func TestStoreClaim(t *testing.T) {
 	moved.Versions[0].CreatedBy = "edited"
 	require.NoError(t, s.Put(ctx, "acme", moved))
 	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", tok, nil, next), ErrVersionConflict, "the record moved on")
-	_, err = s.Claim(ctx, "acme", "software", "k", moved)
+	_, _, err = s.Claim(ctx, "acme", "software", "k", moved)
 	require.ErrorIs(t, err, ErrVersionConflict, "Put kept the claim")
 
 	require.NoError(t, s.Release(ctx, "acme", "software", "k", tok))
 	require.NoError(t, s.Release(ctx, "acme", "software", "k", tok), "a released claim")
-	tok, err = s.Claim(ctx, "acme", "software", "k", moved)
+	tok, _, err = s.Claim(ctx, "acme", "software", "k", moved)
 	require.NoError(t, err)
 	next = cloneRecord(moved)
 	next.AddCurrent(2, at, "alice")
@@ -181,7 +181,7 @@ func TestStoreClaim(t *testing.T) {
 	got, _, err := s.Load(ctx, "acme", "software", "k")
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), got.Current)
-	_, err = s.Claim(ctx, "acme", "software", "k", got)
+	_, _, err = s.Claim(ctx, "acme", "software", "k", got)
 	require.NoError(t, err, "the write dropped the claim")
 }
 
@@ -192,7 +192,7 @@ func TestStoreClaimTakeover(t *testing.T) {
 	s, _ := newTestStore(t)
 	at := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 
-	old, err := s.Claim(ctx, "acme", "software", "k", nil)
+	old, _, err := s.Claim(ctx, "acme", "software", "k", nil)
 	require.NoError(t, err)
 	name, err := recordName("acme", "software", "k")
 	require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestStoreClaimTakeover(t *testing.T) {
 
 	read, _, err := s.Load(ctx, "acme", "software", "k")
 	require.NoError(t, err)
-	tok, err := s.Claim(ctx, "acme", "software", "k", read)
+	tok, _, err := s.Claim(ctx, "acme", "software", "k", read)
 	require.NoError(t, err, "the expired claim is taken over")
 
 	late := cloneRecord(read)

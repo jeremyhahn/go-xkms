@@ -445,6 +445,10 @@ type rotation struct {
 	key     crypto.PrivateKey
 }
 
+// claimReleaseTimeout bounds the release of a rotation's claim, which runs
+// detached from the request's cancellation.
+const claimReleaseTimeout = 30 * time.Second
+
 // rotateKey creates the next version of keyID in b, the view of the backend
 // registered as backendName, and makes it current. The new version is a new
 // backend key "K--v<n>" with the current version's algorithm and attributes
@@ -472,8 +476,6 @@ func (s *XKMSService) rotateKey(ctx context.Context, b Backend, backendName, key
 	if err != nil {
 		return nil, err
 	}
-	next := k.record.Next()
-	name := keyversion.Name(keyID, next)
 	// read is the record as read above (nil when none is stored), the
 	// expected value of the claim and of the write below; it is a copy, as
 	// k.record changes below.
@@ -490,12 +492,25 @@ func (s *XKMSService) rotateKey(ctx context.Context, b Backend, backendName, key
 	// until it records that version or releases the claim; it is taken only
 	// while the stored record is still the one read, so a rotation elsewhere
 	// fails with a *keyversion.VersionConflictError instead.
-	token, err := store.Claim(ctx, k.tenant, backendName, keyID, read)
+	//
+	// The claim reserves the version number to create (next): the record's
+	// next version, or a higher one when a rotation whose claim expired or
+	// was released reserved that number. A rotation that stalls past
+	// ClaimTTL and resumes therefore only removes or creates the key under
+	// its own reserved name, never under the name of the rotation that took
+	// its claim over, and fails to record it (Codex finding 2, #2218).
+	token, next, err := store.Claim(ctx, k.tenant, backendName, keyID, read)
 	if err != nil {
 		return nil, err
 	}
+	name := keyversion.Name(keyID, next)
+	// The claim is released even when the request's context is cancelled
+	// or past its deadline, under a bounded context of its own; otherwise
+	// it would refuse every rotation of the key until ClaimTTL.
 	release := func(err error) error {
-		return errors.Join(err, store.Release(ctx, k.tenant, backendName, keyID, token))
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReleaseTimeout)
+		defer cancel()
+		return errors.Join(err, store.Release(rctx, k.tenant, backendName, keyID, token))
 	}
 
 	// A backend key under the next version's name that the record does not

@@ -190,49 +190,63 @@ const ClaimTTL = 10 * time.Minute
 // claim with Release when it does not record it. A changed record, or a
 // claim another rotation holds and has not let expire (ClaimTTL), is a
 // *VersionConflictError (matching ErrVersionConflict).
-func (s *Store) Claim(ctx context.Context, tenant, backend, keyID string, expected *Record) (token string, err error) {
+//
+// version is the version number reserved for the claim, the only one whose
+// backend key name the holder may create, remove or record: expected's next
+// version, or a higher one when an earlier claim reserved that number. A
+// claim taken over from a holder that let it expire thus never shares a name
+// with that holder, which may still be running and may still remove the key
+// under its own reserved name.
+func (s *Store) Claim(ctx context.Context, tenant, backend, keyID string, expected *Record) (token string, version uint32, err error) {
 	name, err := recordName(tenant, backend, keyID)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
-		return "", &StoreError{Op: "claim", Key: name, Err: err}
+		return "", 0, &StoreError{Op: "claim", Key: name, Err: err}
 	}
 	claim := &rotationClaim{Token: hex.EncodeToString(nonce), Expires: s.clock().UTC().Add(ClaimTTL)}
 	conflict := &VersionConflictError{KeyID: keyID, Backend: backend}
 	if expected == nil {
-		stored, err := s.records.SaveIfAbsent(ctx, &Entity{Name: name, Record: *Implicit(keyID, backend), Claim: claim})
+		implicit := Implicit(keyID, backend)
+		claim.Version = implicit.Next()
+		stored, err := s.records.SaveIfAbsent(ctx, &Entity{Name: name, Record: *implicit, Claim: claim})
 		if err != nil {
-			return "", &StoreError{Op: "claim", Key: name, Err: err}
+			return "", 0, &StoreError{Op: "claim", Key: name, Err: err}
 		}
 		if !stored {
-			return "", conflict
+			return "", 0, conflict
 		}
-		return claim.Token, nil
+		return claim.Token, claim.Version, nil
 	}
 	current, err := s.records.GetByNaturalKey(ctx, name)
 	if qrdbsdk.IsDAONotFound(err) {
-		return "", conflict
+		return "", 0, conflict
 	}
 	if err != nil {
-		return "", &StoreError{Op: "get", Key: name, Err: err}
+		return "", 0, &StoreError{Op: "get", Key: name, Err: err}
 	}
-	if current.Claim != nil && s.clock().Before(current.Claim.Expires) {
-		return "", conflict
+	claim.Version = expected.Next()
+	if prior := current.Claim; prior != nil {
+		if prior.Token != "" && s.clock().Before(prior.Expires) {
+			return "", 0, conflict
+		}
+		// The prior holder may still run: never reuse its number.
+		claim.Version = max(claim.Version, prior.Version+1)
 	}
 	// The swap compares the stored record against expected itself, and
-	// against the expired claim, if any, it takes over.
+	// against the expired or released claim, if any, it takes over.
 	swapped, err := s.records.CompareAndSwap(ctx,
 		&Entity{ID: current.ID, Name: name, Record: *expected, Claim: current.Claim},
 		&Entity{ID: current.ID, Name: name, Record: *expected, Claim: claim})
 	if err != nil {
-		return "", &StoreError{Op: "claim", Key: name, Err: err}
+		return "", 0, &StoreError{Op: "claim", Key: name, Err: err}
 	}
 	if !swapped {
-		return "", conflict
+		return "", 0, conflict
 	}
-	return claim.Token, nil
+	return claim.Token, claim.Version, nil
 }
 
 // CompareAndPut stores next as the record of its key for tenant only while
@@ -276,16 +290,23 @@ func (s *Store) CompareAndPut(ctx context.Context, tenant, token string, expecte
 	if err != nil {
 		return &StoreError{Op: "get", Key: name, Err: err}
 	}
-	var claim *rotationClaim
-	if token != "" {
-		if current.Claim == nil || current.Claim.Token != token {
+	// A held claim records only the version reserved for it. Without a
+	// token the write goes through only while no claim is held, and it
+	// keeps a released claim's floor, as the claim's reservation still
+	// excludes a holder that may be running from its successor's name.
+	var claim, keep *rotationClaim
+	switch {
+	case token != "":
+		if current.Claim == nil || current.Claim.Token != token || next.Current != current.Claim.Version {
 			return conflict
 		}
 		claim = current.Claim
+	case current.Claim != nil && current.Claim.Token == "":
+		claim, keep = current.Claim, current.Claim
 	}
 	swapped, err := s.records.CompareAndSwap(ctx,
 		&Entity{ID: current.ID, Name: name, Record: *expected, Claim: claim},
-		&Entity{ID: current.ID, Name: name, Record: *next})
+		&Entity{ID: current.ID, Name: name, Record: *next, Claim: keep})
 	if err != nil {
 		return &StoreError{Op: "put", Key: name, Err: err}
 	}
@@ -314,8 +335,17 @@ func (s *Store) Release(ctx context.Context, tenant, backend, keyID, token strin
 		if current.Claim == nil || current.Claim.Token != token {
 			return nil
 		}
+		// The released claim keeps its reserved version as the floor for
+		// the next claim: the holder releasing it was refused, but a holder
+		// it took the claim over from may still remove its own key.
+		// Only a claim taken over (reserved past the record's next version)
+		// has such a holder before it.
+		var floor *rotationClaim
+		if current.Claim.Version > current.Record.Next() {
+			floor = &rotationClaim{Version: current.Claim.Version}
+		}
 		swapped, err := s.records.CompareAndSwap(ctx, current,
-			&Entity{ID: current.ID, Name: name, Record: current.Record})
+			&Entity{ID: current.ID, Name: name, Record: current.Record, Claim: floor})
 		if err != nil {
 			return &StoreError{Op: "release", Key: name, Err: err}
 		}
