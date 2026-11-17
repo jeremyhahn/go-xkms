@@ -19,6 +19,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
+	"github.com/jeremyhahn/go-xkms/internal/loginca"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -29,7 +30,7 @@ import (
 // (Key B) and of its certificate record. One key per tenant: the name is the
 // same under every tenant and the tenant scope tells the keys apart, so the
 // key ID is the tenant, as cakey.ProviderFactory requires.
-const tenantLoginCAKeyCN = xkms.LoginCAKeyCN
+const tenantLoginCAKeyCN = loginca.KeyCN
 
 // tenantLoginCAValidity is the lifetime of a tenant login CA certificate.
 const tenantLoginCAValidity = 10 * 365 * 24 * time.Hour
