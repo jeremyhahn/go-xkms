@@ -133,7 +133,7 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 		acme.StorageFactory(),
 		qrdbClient,
 		logger,
-		version,
+		Version,
 	)
 	if err != nil {
 		return &acmeInitError{Stage: "construct tenant-aware admin service", Err: err}
