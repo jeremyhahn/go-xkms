@@ -46,11 +46,10 @@ the row; the coordinator ruled the requirement text stays.
 - 0f15f7600 P1 (11-17): REST/gRPC mTLS fixtures sign the tenant claim
   (`testutil.GenerateTestTenantClientCert`), no-tenant cert refused on
   both transports (97490a71c). P2: changelog says no-OU certs are refused.
+- SPEC row 58 cites certIdentity at mtls.go:288-293 (fixed in slice 2).
 
 ## Open
 
-- docs/SPEC.md row 58 cites mtls.go:337-342; certIdentity is now at
-  288-293 (SPEC.md not edited in this slice).
 - The row text says the SPIFFE SAN "takes precedence over" the OU; go-qrdb
   refuses a disagreeing pair instead. Row wording is the owner's call.
 
