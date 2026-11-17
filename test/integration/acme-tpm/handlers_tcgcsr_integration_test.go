@@ -37,6 +37,7 @@ import (
 
 	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
@@ -542,9 +543,9 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 		// pkg/ca/attestation.go's local-attestation import (exercised by
 		// TestCAImportLocalAttestation*) persists evidence through the
 		// object store and refuses with ErrObjectStoreRequired when none is
-		// configured; qrdbsdk.NewMemoryStorage() is the same in-memory implementation
+		// configured; qrdbstorage.NewMemoryStorage() is the same in-memory implementation
 		// pkg/ca's own tests use (e.g. coverage_boost10_test.go).
-		ObjectStore: qrdbsdk.NewMemoryStorage(),
+		ObjectStore: qrdbstorage.NewMemoryStorage(),
 	}
 
 	ctx := context.Background()

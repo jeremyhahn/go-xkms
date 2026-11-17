@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -287,7 +288,7 @@ func TestGetSigner_GetCAKeyAttributesError_B11(t *testing.T) {
 func TestListRevocationBlobs_RevocationStoreScan_B11(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
 		TenantID: testTenant,
