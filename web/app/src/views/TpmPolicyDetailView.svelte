@@ -34,17 +34,31 @@
     return e instanceof Error ? e.message : String(e);
   }
 
-  async function refreshNames(): Promise<void> {
-    name = "";
-    names = [];
+  // The selection generation: every scope or policy pick starts a new one,
+  // and a list/load/objects/verify response from an older one is dropped, so
+  // policy A's detail or verdict never shows under policy B's selection.
+  let gen = 0;
+  // The policy the shown verdict was checked for.
+  let verdictName = $state("");
+
+  function clearDetail(): void {
+    gen++;
     policy = null;
     objects = null;
     verdict = null;
+  }
+
+  async function refreshNames(): Promise<void> {
+    name = "";
+    names = [];
+    clearDetail();
     error = null;
+    const g = gen;
     try {
-      names = await listPolicyNames(tenantId());
+      const got = await listPolicyNames(tenantId());
+      if (g === gen) names = got;
     } catch (e) {
-      error = message(e);
+      if (g === gen) error = message(e);
     }
   }
 
@@ -55,45 +69,43 @@
 
   function pickPolicy(value: string): void {
     name = value;
-    policy = null;
-    objects = null;
-    verdict = null;
+    clearDetail();
   }
 
-  async function load(): Promise<void> {
-    loadBusy = true;
+  // Runs one request for the current selection and applies its result only
+  // while that selection is still current.
+  async function forSelection<T>(
+    setBusy: (b: boolean) => void,
+    req: (n: string, t: string | undefined) => Promise<T>,
+    apply: (v: T, n: string) => void,
+  ): Promise<void> {
+    const g = gen;
+    const n = name;
+    setBusy(true);
     error = null;
     try {
-      policy = await loadPolicy(name, tenantId());
+      const v = await req(n, tenantId());
+      if (g === gen) apply(v, n);
     } catch (e) {
-      error = message(e);
+      if (g === gen) error = message(e);
     } finally {
-      loadBusy = false;
+      setBusy(false);
     }
   }
 
-  async function listObjects(): Promise<void> {
-    objectsBusy = true;
-    error = null;
-    try {
-      objects = await policyObjects(name, tenantId());
-    } catch (e) {
-      error = message(e);
-    } finally {
-      objectsBusy = false;
-    }
+  function load(): Promise<void> {
+    return forSelection((b) => (loadBusy = b), loadPolicy, (v) => (policy = v));
   }
 
-  async function verify(): Promise<void> {
-    verifyBusy = true;
-    error = null;
-    try {
-      verdict = await verifyPolicy(name, tenantId());
-    } catch (e) {
-      error = message(e);
-    } finally {
-      verifyBusy = false;
-    }
+  function listObjects(): Promise<void> {
+    return forSelection((b) => (objectsBusy = b), policyObjects, (v) => (objects = v));
+  }
+
+  function verify(): Promise<void> {
+    return forSelection((b) => (verifyBusy = b), verifyPolicy, (v, n) => {
+      verdict = v;
+      verdictName = n;
+    });
   }
 
   onMount(() => {
@@ -221,7 +233,7 @@
 {#if verdict}
   <div class="card bg-base-100 shadow-sm mb-4">
     <div class="card-body gap-2">
-      <h2 class="card-title">Live PCR check</h2>
+      <h2 class="card-title">Live PCR check of {verdictName}</h2>
       <div class="flex flex-wrap gap-2">
         <StatusBadge label={verdict.match ? "match" : "mismatch"} ok={verdict.match} />
         <StatusBadge label={verdict.approved ? "approved" : "not approved"} ok={verdict.approved} />

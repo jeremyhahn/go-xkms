@@ -40,31 +40,56 @@
     return e instanceof Error ? e.message : String(e);
   }
 
+  // The form defaults, restored when the target changes or has no policy.
+  function resetForm(): void {
+    enabled = false;
+    interval = 30;
+    unit = "days";
+    formErr = null;
+  }
+
   function show(policy: RotationPolicy | undefined): void {
     current = policy ?? null;
     loaded = true;
     if (policy) {
       enabled = policy.enabled;
       ({ value: interval, unit } = fromSeconds(policy.interval_seconds));
+    } else {
+      resetForm();
     }
   }
 
-  async function run(action: () => Promise<void>): Promise<void> {
+  // Each request takes the target generation; editing the key or backend
+  // starts a new one, resets the form and drops what is still pending, so
+  // one key's policy is never shown for, or saved to, another.
+  let gen = 0;
+
+  function targetChanged(): void {
+    gen++;
+    current = null;
+    loaded = false;
+    error = null;
+    resetForm();
+  }
+
+  async function run(action: (live: () => boolean) => Promise<void>): Promise<void> {
+    const g = gen;
+    const live = (): boolean => g === gen;
     busy = true;
     error = null;
     try {
-      await action();
+      await action(live);
     } catch (e) {
-      error = message(e);
+      if (live()) error = message(e);
     } finally {
       busy = false;
     }
   }
 
   function load(): Promise<void> {
-    return run(async () => {
+    return run(async (live) => {
       const res = await getRotationPolicy(keyId.trim(), backend.trim());
-      show(res.policy);
+      if (live()) show(res.policy);
     });
   }
 
@@ -81,9 +106,9 @@
     const policy = validate();
     if (!policy) return Promise.resolve();
     const id = keyId.trim();
-    return run(async () => {
+    return run(async (live) => {
       const res = await setRotationPolicy(id, backend.trim(), policy);
-      show(res.policy ?? policy);
+      if (live()) show(res.policy ?? policy);
       showToast("success", `Rotation policy of key "${id}" saved.`);
     });
   }
@@ -101,9 +126,9 @@
     confirmRemove = null;
     if (t === null) return Promise.resolve();
     const id = t.id;
-    return run(async () => {
+    return run(async (live) => {
       await deleteRotationPolicy(id, t.backend);
-      show(undefined);
+      if (live()) show(undefined);
       showToast("success", `Rotation policy of key "${id}" removed.`);
     });
   }
@@ -116,8 +141,8 @@
 <PageHeader title="Rotation Policy" subtitle="Scheduled rotation of a key: interval and versions kept" />
 
 <div class="flex flex-wrap items-end gap-2 mb-4">
-  <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} />
-  <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} />
+  <input class="input input-bordered input-sm" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} oninput={targetChanged} />
+  <input class="input input-bordered input-sm" aria-label="Backend" placeholder="Backend" bind:value={backend} oninput={targetChanged} />
   <button class="btn btn-sm" onclick={load} disabled={busy || !ready}>Load</button>
 </div>
 

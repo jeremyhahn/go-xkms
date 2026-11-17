@@ -88,22 +88,39 @@
     }
   }
 
+  // Each verify takes a generation and the inputs it checked; a result is
+  // shown only while it is the latest verify and the inputs still match, so
+  // an older success never replaces a newer mismatch or names another host.
+  let verifyGen = 0;
+
   async function verifyHost(): Promise<void> {
+    const gen = ++verifyGen;
+    const t = { host: vHost, scope, owner, key: vPublicKey.trim() };
+    const current = (): boolean =>
+      gen === verifyGen && t.host === vHost && t.scope === scope && t.owner === owner && t.key === vPublicKey.trim();
     hostResult = null;
     try {
       // The verify endpoint parses public_key (an authorized_keys line) and
       // refuses a fingerprint-only body; the SDK request type still names
       // fingerprint, so the body is built here.
-      const req = { scope, owner, public_key: vPublicKey.trim() } as unknown as SSHVerifyKnownHostRequest;
-      await getSDKClient().ssh.verifyKnownHost(vHost, req);
-      hostResult = { ok: true, message: `Host key matches the pin for ${vHost}.` };
+      const req = { scope: t.scope, owner: t.owner, public_key: t.key } as unknown as SSHVerifyKnownHostRequest;
+      await getSDKClient().ssh.verifyKnownHost(t.host, req);
+      if (current()) hostResult = { ok: true, message: `Host key matches the pin for ${t.host}.` };
     } catch (e) {
+      if (!current()) return;
       if (statusOf(e) === 409) {
         hostResult = { ok: false, message: message(e) };
       } else {
         showToast("error", message(e));
       }
     }
+  }
+
+  // A shown verdict belongs to the inputs it checked; editing any of them
+  // clears it and retires a pending verify.
+  function verifyInputsChanged(): void {
+    verifyGen++;
+    hostResult = null;
   }
 
   async function addKey(): Promise<void> {
@@ -177,8 +194,8 @@
 <PageHeader title="SSH Trust" subtitle="Known-host pins and authorized_keys entries" />
 
 <div class="flex flex-wrap items-end gap-2 mb-4">
-  <input class="input input-bordered input-sm" aria-label="Scope" placeholder="Scope" bind:value={scope} />
-  <input class="input input-bordered input-sm" aria-label="Owner" placeholder="Owner" bind:value={owner} />
+  <input class="input input-bordered input-sm" aria-label="Scope" placeholder="Scope" bind:value={scope} oninput={verifyInputsChanged} />
+  <input class="input input-bordered input-sm" aria-label="Owner" placeholder="Owner" bind:value={owner} oninput={verifyInputsChanged} />
   <button class="btn btn-sm" onclick={load} disabled={loading}>Load</button>
 </div>
 
@@ -225,8 +242,8 @@
       <button class="btn btn-primary btn-sm" onclick={addHost} disabled={busy || hHost === "" || hFingerprint === ""}>Add pin</button>
     </div>
     <div class="flex flex-wrap gap-2 mt-3">
-      <input class="input input-bordered input-sm" aria-label="Host to verify" placeholder="Host" bind:value={vHost} />
-      <input class="input input-bordered input-sm flex-1" aria-label="Offered public key" placeholder="ssh-ed25519 AAAA..." bind:value={vPublicKey} />
+      <input class="input input-bordered input-sm" aria-label="Host to verify" placeholder="Host" bind:value={vHost} oninput={verifyInputsChanged} />
+      <input class="input input-bordered input-sm flex-1" aria-label="Offered public key" placeholder="ssh-ed25519 AAAA..." bind:value={vPublicKey} oninput={verifyInputsChanged} />
       <button class="btn btn-sm" onclick={verifyHost} disabled={vHost === "" || vPublicKey.trim() === ""}>Verify host</button>
     </div>
     {#if hostResult}
