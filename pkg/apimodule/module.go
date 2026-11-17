@@ -52,7 +52,6 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -128,31 +127,6 @@ type QRDBClientResolver func() *qrdbsdk.Client
 func WithQRDBClient(resolve QRDBClientResolver) Option {
 	return func(m *Module) {
 		m.resolveQRDBClient = resolve
-	}
-}
-
-// WithAuthorization states the embedding host's authorization posture. A
-// self-built host wires its qrdb client's RBAC plane into the service so the
-// decisions made below the transport gate (users:invite on CreateUser,
-// ssh:service, ...) are enforced too. A host that runs with authorization
-// disabled passes false: the service then keeps a nil authorizer and allows
-// those decisions, as pkg/server does when RBAC is off. Unset, the module
-// enforces (fail closed).
-func WithAuthorization(enabled bool) Option {
-	return func(m *Module) {
-		m.authzDisabled = !enabled
-	}
-}
-
-// WithNodeAuthorizer hands the module the host node's own authorizer
-// (node.Node.Authorizer). The self-built service then decides on the
-// caller's original identity, so a delegated caller's ScopePermissions (a
-// token's scp claim, a service principal's declared permissions) count; the
-// qrdb client's RBAC plane, used without it, sees only Subject, TenantID,
-// Roles and Metadata. Ignored under WithAuthorization(false).
-func WithNodeAuthorizer(a auth.IdentityAuthorizer) Option {
-	return func(m *Module) {
-		m.nodeAuthorizer = a
 	}
 }
 
@@ -361,14 +335,6 @@ type Module struct {
 	resolveREST       RESTResolver
 	resolveMCP        MCPResolver
 	resolveQRDBClient QRDBClientResolver
-
-	// authzDisabled is WithAuthorization(false): the host runs with
-	// authorization off, so the self-built service keeps a nil authorizer.
-	authzDisabled bool
-
-	// nodeAuthorizer is WithNodeAuthorizer's: the host node's own
-	// authorizer, which decides on the caller's full identity.
-	nodeAuthorizer auth.IdentityAuthorizer
 
 	// serviceContext is WithServiceContext's binder, applied to every
 	// datastore the module opens (openDatastore).

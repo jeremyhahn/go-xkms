@@ -83,18 +83,6 @@ type ServiceModuleQRDBClientResolver = apimodule.QRDBClientResolver
 // disabled.
 var WithServiceModuleQRDBClient = apimodule.WithQRDBClient
 
-// WithServiceModuleAuthorization states the host's authorization posture.
-// With a qrdb client the module enforces the service's own RBAC decisions
-// (users:invite on CreateUser, ...) through the client's RBAC plane; a host
-// running with authorization disabled passes false so they stay allowed.
-// Unset, the module enforces.
-var WithServiceModuleAuthorization = apimodule.WithAuthorization
-
-// WithServiceModuleNodeAuthorizer hands the module the host node's own
-// authorizer (node.Node.Authorizer), so the service decides on the caller's
-// full identity and a delegated caller's ScopePermissions count.
-var WithServiceModuleNodeAuthorizer = apimodule.WithNodeAuthorizer
-
 // WithServiceModuleServiceContext wires the host's service-context binder:
 // every call the module's storage makes into the host's qrdb node --
 // database initialisation and each later DAO call -- runs on the context it

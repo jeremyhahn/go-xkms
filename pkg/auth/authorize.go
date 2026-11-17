@@ -15,7 +15,6 @@ package auth
 
 import (
 	"context"
-	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -34,38 +33,20 @@ import (
 type Authorizer struct {
 	rbac qrdbtransport.RBACClient
 
-	// decide, when set, makes every Authorize decision on the caller's
-	// original identity (NewIdentityAuthorizer); rbac then only lists.
-	decide IdentityAuthorizer
+	// node, when set, makes every Authorize decision on the caller's
+	// original identity (NewNodeAuthorizer); rbac then only lists.
+	node qrdbsdk.Authorizer
 }
 
-// IdentityAuthorizer decides on the full go-qrdb identity, as the node's own
-// authorizer (node.Node.Authorizer) does. Unlike the SDK RBACClient, whose
-// identity projection keeps only Subject, TenantID, Roles and Metadata, it
-// sees every grant the identity carries, ScopePermissions included: the
-// permissions a trusted issuance path (a token's scp claim, a service
-// principal) gives a delegated caller with no user record.
-type IdentityAuthorizer interface {
-	Authorize(ctx context.Context, identity *Identity, resource, action string) error
-}
-
-// ErrNoPermissionLister reports ListPermissions on an Authorizer built from
-// an IdentityAuthorizer alone, with no RBAC client to enumerate grants.
-var ErrNoPermissionLister = errors.New("auth: no RBAC client to list permissions")
-
-// NewIdentityAuthorizer returns an Authorizer that decides on the caller's
-// original identity through decide, so a delegated caller's ScopePermissions
-// count. A nil decide disables authorization, as NewAuthorizer(nil) does.
-// Chain WithRBAC to keep ListPermissions.
-func NewIdentityAuthorizer(decide IdentityAuthorizer) *Authorizer {
-	return &Authorizer{decide: decide}
-}
-
-// WithRBAC sets the RBAC client ListPermissions enumerates through and
-// returns a.
-func (a *Authorizer) WithRBAC(rbac qrdbtransport.RBACClient) *Authorizer {
-	a.rbac = rbac
-	return a
+// NewNodeAuthorizer returns an Authorizer whose decisions are made by the
+// host node's own authorizer (go-qrdb node.Node.Authorizer) on the caller's
+// full identity, so a delegated caller's ScopePermissions (a token's scp
+// claim, a service principal) count; the SDK RBAC client sees only Subject,
+// TenantID, Roles and Metadata. rbac lists permissions and sets the
+// posture: a nil rbac disables authorization, as NewAuthorizer(nil) does,
+// and a nil node leaves rbac deciding, as NewAuthorizer(rbac) does.
+func NewNodeAuthorizer(rbac qrdbtransport.RBACClient, node qrdbsdk.Authorizer) *Authorizer {
+	return &Authorizer{rbac: rbac, node: node}
 }
 
 // Authorizer satisfies go-qrdb's authorization contract, qrdbsdk.Authorizer.
@@ -82,7 +63,7 @@ func NewAuthorizer(rbac qrdbtransport.RBACClient) *Authorizer {
 // Enabled reports whether authorization is actively enforced. It is false
 // for a nil Authorizer or one without a backing RBAC client.
 func (a *Authorizer) Enabled() bool {
-	return a != nil && (a.rbac != nil || a.decide != nil)
+	return a != nil && a.rbac != nil
 }
 
 // Authorize reports whether identity may perform action on resource. It
@@ -105,7 +86,7 @@ func (a *Authorizer) Authorize(ctx context.Context, identity *Identity, resource
 	}
 
 	authzCtx, qid := bindIdentity(ctx, identity)
-	if a.decide != nil {
+	if a.node != nil {
 		// Decide on the original identity; only an unset tenant is filled
 		// in, on a copy, as bindIdentity does for the projection.
 		original := identity
@@ -114,7 +95,7 @@ func (a *Authorizer) Authorize(ctx context.Context, identity *Identity, resource
 			cp.TenantID = qid.TenantID
 			original = &cp
 		}
-		return a.decide.Authorize(authzCtx, original, resource, action)
+		return a.node.Authorize(authzCtx, original, resource, action)
 	}
 	return a.rbac.Authorize(authzCtx, qid, resource, action)
 }
@@ -141,9 +122,6 @@ func (a *Authorizer) ListPermissions(ctx context.Context, identity *Identity) ([
 		return nil, ErrUnauthenticated
 	}
 
-	if a.rbac == nil {
-		return nil, &PermissionListError{Err: ErrNoPermissionLister}
-	}
 	authzCtx, qid := bindIdentity(ctx, identity)
 	perms, err := a.rbac.ListPermissions(authzCtx, qid)
 	if err != nil {

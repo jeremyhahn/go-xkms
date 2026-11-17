@@ -1560,11 +1560,13 @@ func (s *Server) initializeAuthorization() error {
 		// The node's composed authorizer decides on the caller's full
 		// go-qrdb identity (ScopePermissions, RoleBindings); the SDK RBAC
 		// client's projection drops them. It stays the permission lister.
-		if s.qrdbNode != nil && s.qrdbNode.Authorizer() != nil {
-			s.rbacAuthorizer = auth.NewIdentityAuthorizer(s.qrdbNode.Authorizer()).WithRBAC(s.qrdbClient.RBAC())
-		} else {
-			s.rbacAuthorizer = auth.NewAuthorizer(s.qrdbClient.RBAC())
+		var node qrdbsdk.Authorizer
+		if s.qrdbNode != nil {
+			if na := s.qrdbNode.Authorizer(); na != nil {
+				node = na
+			}
 		}
+		s.rbacAuthorizer = auth.NewNodeAuthorizer(s.qrdbClient.RBAC(), node)
 		s.logger.Info("RBAC authorization enabled (qrdb-backed)")
 	} else {
 		s.rbacAuthorizer = nil
