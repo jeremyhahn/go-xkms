@@ -124,6 +124,8 @@ func TestVerify_Refusals(t *testing.T) {
 		{"evidence over another record", cs, dev.sign(nonce, mustDigest(t, []byte{0xa0})), nonce, dev.verifier(), securityevent.ErrDigestMismatch},
 		{"no nonce", cs, good, nil, dev.verifier(), securityevent.ErrNonceMismatch},
 		{"no verifier", cs, good, nonce, nil, securityevent.ErrEvidence},
+		{"matching one-byte nonce", cs, dev.sign([]byte{0x07}, dsd), []byte{0x07}, dev.verifier(), securityevent.ErrNonceMismatch},
+		{"matching seven-byte nonce", cs, dev.sign(nonce[:7], dsd), nonce[:7], dev.verifier(), securityevent.ErrNonceMismatch},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,6 +133,18 @@ func TestVerify_Refusals(t *testing.T) {
 				t.Fatalf("Verify err = %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestVerify_EightByteNonce checks the boundary: RFC 9711 §4.1 sets an
+// eight-byte minimum for a CBOR eat_nonce, so eight bytes are accepted.
+func TestVerify_EightByteNonce(t *testing.T) {
+	dev := newTestDevice(t)
+	cs := encodedRecord(t)
+	nonce := []byte("8-bytes!")
+	evidence := dev.sign(nonce, mustDigest(t, cs))
+	if _, err := securityevent.Verify(cs, evidence, nonce, dev.verifier()); err != nil {
+		t.Fatalf("Verify with an eight-byte nonce: %v", err)
 	}
 }
 
