@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -134,6 +135,11 @@ type XKMSService struct {
 	// means RBAC is off, and the service then honours the configured
 	// allow-all intent exactly as the transports do.
 	authorizer *auth.Authorizer
+
+	// auditLogger is the node audit sink the service records the
+	// decisions it makes below the transport gate on (authorizeAudited).
+	// Nil means auditing is off, as audit.Emit treats it.
+	auditLogger qrdbsdk.NodeAuditLogger
 
 	// escrow holds the configured external key-escrow agents (pkg/escrow).
 	// Nil when escrow is not configured, in which case every EscrowServicer
@@ -325,6 +331,43 @@ func (s *XKMSService) SetAuthorizer(a *auth.Authorizer) {
 // is allowed, as at the transport gate.
 func (s *XKMSService) AuthorizeCaller(ctx context.Context, resource, action string) error {
 	return s.authorizer.Authorize(ctx, auth.GetIdentity(ctx), resource, action)
+}
+
+// SetAuditLogger wires the node audit sink the service records its own
+// authorization decisions on (the ones made below the transport gate, such
+// as users:invite on CreateUser). Pass the sink the transports use; nil
+// means auditing is off. The service never closes it.
+func (s *XKMSService) SetAuditLogger(sink qrdbsdk.NodeAuditLogger) {
+	s.auditLogger = sink
+}
+
+// authorizeAudited is AuthorizeCaller with the decision recorded on the
+// audit chain, allow or deny (docs/audit-log/engineering.md: denials are
+// logged, always). A failed audit write fails the call with go-qrdb's
+// *AuditGateError rather than let the decision be acted on unaudited; the
+// refusal itself is returned unchanged otherwise.
+func (s *XKMSService) authorizeAudited(ctx context.Context, resource, action string) error {
+	identity := auth.GetIdentity(ctx)
+	err := s.authorizer.Authorize(ctx, identity, resource, action)
+
+	event := &audit.Event{
+		Timestamp: time.Now(),
+		Action:    action,
+		Resource:  resource,
+		Outcome:   audit.OutcomeAllow,
+		Details:   map[string]string{"layer": "service"},
+	}
+	if identity != nil {
+		event.Subject = identity.Subject
+	}
+	if err != nil {
+		event.Outcome = audit.OutcomeDeny
+		event.Details["reason"] = err.Error()
+	}
+	if auditErr := audit.Emit(ctx, s.auditLogger, event); auditErr != nil {
+		return auditErr
+	}
+	return err
 }
 
 // SetClusterClient wires the embedded qrdb node's cluster client into the

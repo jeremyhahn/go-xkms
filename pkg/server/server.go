@@ -919,6 +919,8 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// made below the route gate (XKMSService.AuthorizeCaller).
 		// A nil Authorizer means RBAC is disabled, as it does there.
 		svc.SetAuthorizer(s.rbacAuthorizer)
+		// Those decisions are audited on the transports' sink.
+		svc.SetAuditLogger(s.auditLogger)
 		// Tenant-scoped client certificates the CA signs carry their
 		// tenant as a SPIFFE SAN in the deployment's trust domain, the
 		// form qrdb's certificate-to-tenant rule reads (go-xkms#1240).
