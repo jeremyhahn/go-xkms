@@ -154,30 +154,8 @@ func fakeServerTrustPEM(server *httptest.Server) string {
 // accountAddCmd
 // =============================================================================
 
-func TestAccountAddCmd_Success(t *testing.T) {
-	viper.Reset()
-	setDefaults()
-	viper.Set("logging.level", "info")
-	viper.Set("storage.options.path", t.TempDir())
-
-	resetAccountAddFlags(t)
-	f := accountAddCmd.Flags()
-	_ = f.Set("directory", "https://ca.example.com/directory")
-	_ = f.Set("email", "add@example.com")
-
-	cmd := accountAddCmd
-	cmd.SetContext(context.Background())
-	buf := &bytes.Buffer{}
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-
-	if err := accountAddCmd.RunE(cmd, []string{"newacct"}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(buf.String(), "added successfully") {
-		t.Errorf("expected success message, got: %q", buf.String())
-	}
-}
+// The account add success path (registration against an ACME server and
+// the saved account) is TestAccountAddCmd_RegistersAndPersists.
 
 func TestAccountAddCmd_ValidationFailure(t *testing.T) {
 	viper.Reset()

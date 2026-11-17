@@ -15,13 +15,16 @@ package service
 
 import (
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/acme"
+	"gopkg.in/yaml.v3"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -36,6 +39,50 @@ type Config struct {
 	Accounts     map[string]*AccountConfig   `yaml:"accounts" json:"accounts" mapstructure:"accounts"`
 	Certificates map[string]*CertificateSpec `yaml:"certificates" json:"certificates" mapstructure:"certificates"`
 	Devices      map[string]*DeviceSpec      `yaml:"devices,omitempty" json:"devices,omitempty" mapstructure:"devices"`
+
+	// ConfigFile is the file this configuration was loaded from. When set,
+	// Save writes the configuration back to it (account registration
+	// persists the account there). It is never serialised.
+	ConfigFile string `yaml:"-" json:"-" mapstructure:"-"`
+}
+
+// ErrConfigNotPersistable is returned by Save when the configuration was
+// not loaded from a file.
+var ErrConfigNotPersistable = errors.New("configuration has no file to save to")
+
+// Save writes the configuration as YAML to ConfigFile with mode 0600 (the
+// file can hold EAB keys). The write goes to a temporary file in the same
+// directory that is then renamed over the target, so a failed write never
+// leaves a truncated configuration.
+func (c *Config) Save() error {
+	if c.ConfigFile == "" {
+		return ErrConfigNotPersistable
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshal configuration: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(c.ConfigFile), ".config-*.yaml")
+	if err != nil {
+		return fmt.Errorf("save configuration: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("save configuration: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("save configuration: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("save configuration: %w", err)
+	}
+	if err := os.Rename(tmpName, c.ConfigFile); err != nil {
+		return fmt.Errorf("save configuration: %w", err)
+	}
+	return nil
 }
 
 // AccountConfig holds per-account ACME settings including directory URL,
@@ -49,6 +96,9 @@ type AccountConfig struct {
 	EAB                 *EABConfig `yaml:"eab,omitempty" json:"eab,omitempty" mapstructure:"eab"`
 	TrustedRoots        []string   `yaml:"trusted_roots,omitempty" json:"trusted_roots,omitempty" mapstructure:"trusted_roots"`
 	RequestServerBundle bool       `yaml:"request_server_bundle,omitempty" json:"request_server_bundle,omitempty" mapstructure:"request_server_bundle"`
+	// AccountURL is the account URL (RFC 8555 §7.3 Location) the server
+	// returned when the account was registered.
+	AccountURL string `yaml:"account_url,omitempty" json:"account_url,omitempty" mapstructure:"account_url"`
 }
 
 // KeyConfig defines cryptographic key parameters for account or certificate keys.

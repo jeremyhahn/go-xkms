@@ -14,9 +14,11 @@
 package main
 
 import (
+	"errors"
 	"sort"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client/service"
 )
@@ -69,12 +71,23 @@ Examples:
 			return err
 		}
 
-		// Trigger ACME registration by requesting a client for this account.
-		if _, err := svc.Accounts().Client(cmd.Context(), name); err != nil {
+		// Register with the ACME server (newAccount); Register records the
+		// account URL and saves the configuration file. On any error the
+		// account is dropped again so nothing unregistered is kept.
+		acct, err := svc.Accounts().Register(cmd.Context(), name)
+		if err != nil {
+			if rmErr := svc.Accounts().Remove(cmd.Context(), name); rmErr != nil {
+				return errors.Join(err, rmErr)
+			}
 			return err
 		}
 
-		cmd.Printf("Account %q added successfully\n", name)
+		cmd.Printf("Account %q registered: %s\n", name, acct.AccountURL)
+		if viper.ConfigFileUsed() == "" {
+			cmd.Printf("No configuration file is in use, so the account was not saved; pass --config <file> to keep it\n")
+			return nil
+		}
+		cmd.Printf("Account %q added successfully to %s\n", name, viper.ConfigFileUsed())
 		return nil
 	},
 }
@@ -155,6 +168,9 @@ Examples:
 		cmd.Printf("Account: %s\n", name)
 		cmd.Printf("  Directory: %s\n", acct.DirectoryURL)
 		cmd.Printf("  Email: %s\n", acct.Email)
+		if acct.AccountURL != "" {
+			cmd.Printf("  Account URL: %s\n", acct.AccountURL)
+		}
 
 		if acct.Key != nil {
 			cmd.Printf("  Key Algorithm: %s\n", acct.Key.Algorithm)

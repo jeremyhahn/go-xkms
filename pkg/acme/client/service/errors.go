@@ -370,6 +370,25 @@ func (e ErrClientCreation) Unwrap() error {
 	return e.Err
 }
 
+// ErrAccountRegistration is returned when the ACME server does not register
+// an account (RFC 8555 §7.3 newAccount).
+type ErrAccountRegistration struct {
+	Account string
+	Err     error
+}
+
+func (e ErrAccountRegistration) Error() string {
+	return fmt.Sprintf("acme-client-service: registration failed for account %s: %s", e.Account, e.Err.Error())
+}
+
+func (e ErrAccountRegistration) Unwrap() error {
+	return e.Err
+}
+
+// errNoAccountURL is the cause when a newAccount response carries no
+// account URL (Location header).
+var errNoAccountURL = errors.New("server returned no account URL")
+
 // Sentinel causes wrapped by ErrDeployFailed when Deploy is called with an
 // incomplete or invalid DeployConfig. Callers can match a specific cause
 // with errors.Is, which walks ErrDeployFailed.Unwrap to reach these.

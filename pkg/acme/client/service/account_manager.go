@@ -57,6 +57,12 @@ type AccountManager interface {
 	// Client returns a cached or newly created ACME client for the named account.
 	Client(ctx context.Context, name string) (*client.Client, error)
 
+	// Register registers the named account with its ACME server
+	// (RFC 8555 §7.3 newAccount), records the account URL the server
+	// returned and, when the configuration was loaded from a file, saves
+	// it there. A server error is returned and nothing is saved.
+	Register(ctx context.Context, name string) (*AccountConfig, error)
+
 	// StorageFactory returns a cached or newly created storage factory for the named account.
 	StorageFactory(name string) (storage.Factory, error)
 }
@@ -191,6 +197,36 @@ func (am *accountManager) Client(ctx context.Context, name string) (*client.Clie
 }
 
 // StorageFactory returns a cached or newly created storage factory for the named account.
+// Register implements AccountManager.
+func (am *accountManager) Register(ctx context.Context, name string) (*AccountConfig, error) {
+	cfg, err := am.Get(name)
+	if err != nil {
+		return nil, err
+	}
+	c, err := am.Client(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	acct, err := c.RegisterAccount()
+	if err != nil {
+		return nil, ErrAccountRegistration{Account: name, Err: err}
+	}
+	if acct == nil || acct.URI == "" {
+		return nil, ErrAccountRegistration{Account: name, Err: errNoAccountURL}
+	}
+	cfg.AccountURL = acct.URI
+	if am.config.ConfigFile != "" {
+		if err := am.config.Save(); err != nil {
+			return nil, err
+		}
+	}
+	am.logger.InfoContext(ctx, "account registered",
+		slog.String("name", name),
+		slog.String("account_url", acct.URI),
+	)
+	return cfg, nil
+}
+
 func (am *accountManager) StorageFactory(name string) (storage.Factory, error) {
 	if _, err := am.Get(name); err != nil {
 		return nil, err
