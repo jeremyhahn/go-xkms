@@ -240,13 +240,13 @@ func TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick(t *testing.T
 
 	require.Eventually(t, func() bool {
 		return refreshes.Load() >= 4
-	}, 5*time.Second, 10*time.Millisecond, "fewer than 4 refresh ticks before the deadline")
+	}, slowStoreWait, 10*time.Millisecond, "fewer than 4 refresh ticks before the deadline")
 	close(stop)
 
 	select {
 	case err := <-done:
 		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(slowStoreWait):
 		t.Fatal("runAutoRefresh did not stop after its stop channel closed")
 	}
 
