@@ -154,9 +154,14 @@ digest in the signed evidence is trusted-firmware's change (trusted-firmware#335
 go-xkms's side is `pkg/attestation/securityevent/digest.go`: `DetachedDigest`
 (`:89`) builds the `[alg, digest]` array over the Claims-Set bytes as they are
 (SHA-256, SHA-384 or SHA-512, by COSE Algorithms integer or name), and
-`VerifyDetached` (`:102`) checks a record against the digest taken from
-evidence whose signature and `eat_nonce` the caller has already verified. It
-compares in constant time and only then decodes the record. A record whose
+`VerifyDetached` (`:102`) checks a record against a digest. It compares in
+constant time and only then decodes the record. `Verify`
+(`pkg/attestation/securityevent/verify.go:47`) is the Verifier's one entry
+point and checks the three bindings together: an `EvidenceVerifier` checks the
+device's signature on the evidence and yields its `eat_nonce` and digest
+(refused with `ErrEvidence`), the `eat_nonce` must equal the Verifier's
+challenge (`ErrNonceMismatch`), and the digest must cover the record
+(`VerifyDetached`). A record whose
 digest does not match is refused with `ErrDigestMismatch`. A malformed array
 is refused with `ErrMalformedDigest`, and any other algorithm with
 `ErrUnsupportedAlgorithm`.
@@ -164,11 +169,12 @@ is refused with `ErrMalformedDigest`, and any other algorithm with
 **Hook.** A backend registered with `RegisterExternalBackend`
 (`pkg/xkms/registry_external.go:54`, SPEC backend-registry) hands go-xkms the
 record through one optional capability on the backend contract,
-`types.SecurityEventProvider` (`pkg/types/types.go:1960`), in the
+`types.SecurityEventProvider` (`pkg/types/types.go:1974`), in the
 `types.AttestingKeyProvider` pattern (`pkg/types/types.go:1936`). It embeds
 `KeyProvider` and adds one method, `AttestSecurityEvents(ctx, nonce)`, which
-returns the record's encoded Claims-Set, or `ErrNotSupported` when the backend
-keeps no record. No backend implements it yet. The format is
+returns a `types.SecurityEventEvidence` (`pkg/types/types.go:1958`): the
+record's encoded Claims-Set and the signed evidence that binds it to `nonce`,
+for `Verify`. It returns `ErrNotSupported` when the backend keeps no record. No backend implements it yet. The format is
 `pkg/attestation/securityevent`: the claim key `ClaimKey`
 (`pkg/attestation/securityevent/claims.go:28`, -71765, CWT private use, go-xkms's
 own until EAT registers one), `Encode` (`:97`) and `Decode` (`:115`), which

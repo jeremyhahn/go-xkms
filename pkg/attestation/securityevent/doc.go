@@ -34,9 +34,12 @@
 // evidence, after the record's last entry, that carries the Verifier's
 // eat_nonce (RFC 9711 §4.1) and the record's Detached Submodule Digest
 // (RFC 9711 §4.2.18.2), and the record travels beside that evidence. The
-// Claims-Set alone is unauthenticated. DetachedDigest builds the digest and
-// VerifyDetached checks a record against the digest taken from evidence
-// whose signature and eat_nonce the caller has already verified; this
-// package neither signs nor verifies the evidence itself. A backend hands
-// the encoded Claims-Set over through types.SecurityEventProvider.
+// Claims-Set alone is unauthenticated. A backend hands the record and that
+// evidence over together through types.SecurityEventProvider, as a
+// types.SecurityEventEvidence. DetachedDigest builds the digest the device
+// signs. Verify authenticates a record: an EvidenceVerifier checks the
+// evidence's signature and yields its eat_nonce and digest, Verify checks
+// the eat_nonce against the challenge and the digest against the record
+// (VerifyDetached). The evidence format and its signature check belong to
+// the EvidenceVerifier; this package neither signs nor parses evidence.
 package securityevent
