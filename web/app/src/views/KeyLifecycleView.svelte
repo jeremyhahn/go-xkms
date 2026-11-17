@@ -14,8 +14,9 @@
 
   let keyId = $state("");
   let backend = $state("");
-  // Empty (null) targets the whole key; otherwise a version number >= 1.
-  let version = $state<number | null>(null);
+  // Empty targets the whole key; otherwise a version number >= 1. A cleared
+  // numeric input binds null or undefined depending on the Svelte release.
+  let version = $state<number | null | undefined>(null);
   let reason = $state("");
   let confirmId = $state("");
 
@@ -23,7 +24,7 @@
   let error = $state<string | null>(null);
   let result = $state<Result | null>(null);
 
-  const versionOk = $derived(version === null || (Number.isInteger(version) && version >= 1));
+  const versionOk = $derived(version == null || (Number.isInteger(version) && version >= 1));
   const keyReady = $derived(keyId.trim() !== "" && backend.trim() !== "");
   const canSetStatus = $derived(keyReady && versionOk && !busy);
   const canRevoke = $derived(keyReady && confirmId === keyId && !busy);
