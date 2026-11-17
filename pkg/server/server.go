@@ -1557,7 +1557,14 @@ func (s *Server) initializeAuthorization() error {
 	s.logger.Info("Initializing authorization...")
 
 	if s.config.Auth.EnableRBAC && s.qrdbClient != nil {
-		s.rbacAuthorizer = auth.NewAuthorizer(s.qrdbClient.RBAC())
+		// The node's composed authorizer decides on the caller's full
+		// go-qrdb identity (ScopePermissions, RoleBindings); the SDK RBAC
+		// client's projection drops them. It stays the permission lister.
+		if s.qrdbNode != nil && s.qrdbNode.Authorizer() != nil {
+			s.rbacAuthorizer = auth.NewIdentityAuthorizer(s.qrdbNode.Authorizer()).WithRBAC(s.qrdbClient.RBAC())
+		} else {
+			s.rbacAuthorizer = auth.NewAuthorizer(s.qrdbClient.RBAC())
+		}
 		s.logger.Info("RBAC authorization enabled (qrdb-backed)")
 	} else {
 		s.rbacAuthorizer = nil
