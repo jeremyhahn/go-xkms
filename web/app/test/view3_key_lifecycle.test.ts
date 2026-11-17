@@ -86,6 +86,25 @@ describe("KeyLifecycleView", () => {
     expect(await screen.findByText("enabled")).toBeInTheDocument();
   });
 
+  it("treats a cleared version as the whole key", async () => {
+    request.mockResolvedValue({ key_id: "k1", status: "disabled", timestamp: TS });
+
+    render(KeyLifecycleView);
+    await fillKey("k1");
+    const version = screen.getByLabelText("Version");
+    await fireEvent.input(version, { target: { value: "2" } });
+    expect(button("Disable").disabled).toBe(false);
+    await fireEvent.input(version, { target: { value: "" } });
+    expect(button("Enable").disabled).toBe(false);
+    expect(button("Disable").disabled).toBe(false);
+    await fireEvent.click(button("Disable"));
+
+    await waitFor(() => expect(request).toHaveBeenCalledOnce());
+    expect(request).toHaveBeenCalledWith("POST", "/api/v1/keys/k1/status", {
+      body: { backend: "software", status: "disabled" },
+    });
+  });
+
   it("revokes only after the confirmation equals the key ID", async () => {
     request.mockResolvedValue({ key_id: "k1", status: "revoked", timestamp: TS });
 
