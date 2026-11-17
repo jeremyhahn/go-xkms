@@ -10,7 +10,18 @@ import (
 
 // failingSocketDir is a directory name as long as the ones t.TempDir() makes
 // for the tests that failed on the self-hosted race pool.
-const failingSocketDir = "TestNewQRDBControlTransport_PlaintextBearerTLS_carries_the_token1234567890"
+// os.MkdirTemp appends the random suffix t.TempDir() appends.
+const failingSocketDir = "TestNewQRDBControlTransport_PlaintextBearerTLS_carries_the_token"
+
+// TestShort_dir_name_is_short pins the length of the short directory: a
+// pkg/api/unix test needs it at most 11 bytes ("/tmp/xk" plus 4).
+func TestShort_dir_name_is_short(t *testing.T) {
+	var dir string
+	Short(func() int { dir = os.TempDir(); return 0 })
+	if filepath.Dir(dir) == "/tmp" && len(dir) > 11 {
+		t.Fatalf("short directory %q is %d bytes, want at most 11", dir, len(dir))
+	}
+}
 
 func TestShort_unix_socket_binds_under_a_deep_TMPDIR(t *testing.T) {
 	deep := filepath.Join(os.TempDir(), "a-deep-runner-work-directory-like-home-runner-_work-_temp-"+strings.Repeat("x", 40))
