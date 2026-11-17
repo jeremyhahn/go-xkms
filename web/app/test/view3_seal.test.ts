@@ -251,4 +251,66 @@ describe("SealView without the backend list", () => {
     await waitFor(() => expect(unseal).toHaveBeenCalledOnce());
     expect(await screen.findByLabelText("Plaintext")).toHaveTextContent("hi");
   });
+
+  it("lets a caller with keys:encrypt type a backend and seal when both reads are refused", async () => {
+    backendsList.mockRejectedValue(new Error("permission denied: backends:list"));
+    capability.mockRejectedValue(new Error("permission denied: keys:get"));
+    seal.mockResolvedValue(sealed);
+    render(SealView);
+
+    expect(await screen.findByText("permission denied: backends:list")).toBeInTheDocument();
+    const field = screen.getByLabelText("Backend") as HTMLInputElement;
+    expect(field.tagName).toBe("INPUT");
+    await fireEvent.input(field, { target: { value: "software" } });
+    await fireEvent.change(field, { target: { value: "software" } });
+    await waitFor(() => expect(capability).toHaveBeenCalledWith("software"));
+    expect(await screen.findByText(/Could not check whether backend software can seal/)).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByLabelText("Text to seal"), { target: { value: "hello" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Seal" })).toBeEnabled());
+    await fireEvent.click(screen.getByRole("button", { name: "Seal" }));
+
+    await waitFor(() => expect(seal).toHaveBeenCalledOnce());
+    expect(seal.mock.calls[0]![0]).toEqual({ backend: "software", data: textToB64("hello") });
+  });
+
+  it("still refuses a typed backend the capability read says cannot seal", async () => {
+    backendsList.mockRejectedValue(new Error("permission denied"));
+    capability.mockResolvedValue({ can_seal: false, backend: "software" });
+    render(SealView);
+
+    const field = await screen.findByLabelText("Backend");
+    await fireEvent.input(field, { target: { value: "software" } });
+    await fireEvent.change(field, { target: { value: "software" } });
+    await fireEvent.input(screen.getByLabelText("Text to seal"), { target: { value: "hello" } });
+    expect(await screen.findByText("Backend software cannot seal.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Seal" })).toBeDisabled();
+  });
+});
+
+describe("SealView without the capability read", () => {
+  it("seals on a listed backend when the capability read (keys:get) is refused", async () => {
+    capability.mockRejectedValue(new Error("permission denied: keys:get"));
+    seal.mockResolvedValue(tpmSealed);
+    render(SealView);
+
+    await chooseBackend("tpm2");
+    await waitFor(() => expect(capability).toHaveBeenCalledWith("tpm2"));
+    expect(await screen.findByText(/Could not check whether backend tpm2 can seal/)).toBeInTheDocument();
+    await fireEvent.input(screen.getByLabelText("Text to seal"), { target: { value: "hello" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Seal" })).toBeEnabled());
+    await fireEvent.click(screen.getByRole("button", { name: "Seal" }));
+
+    await waitFor(() => expect(seal).toHaveBeenCalledOnce());
+    expect(seal.mock.calls[0]![0]).toEqual({ backend: "tpm2", data: textToB64("hello") });
+  });
+
+  it("keeps Seal disabled while the capability read is in flight", async () => {
+    capability.mockReturnValue(new Promise<CanSealResponse>(() => {}));
+    render(SealView);
+
+    await chooseBackend("tpm2");
+    await fireEvent.input(screen.getByLabelText("Text to seal"), { target: { value: "hello" } });
+    expect(screen.getByRole("button", { name: "Seal" })).toBeDisabled();
+  });
 });
