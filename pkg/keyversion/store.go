@@ -341,7 +341,7 @@ func (s *Store) Release(ctx context.Context, tenant, backend, keyID, token strin
 		// Only a claim taken over (reserved past the record's next version)
 		// has such a holder before it.
 		var floor *rotationClaim
-		if current.Claim.Version > current.Record.Next() {
+		if current.Claim.Version > current.Next() {
 			floor = &rotationClaim{Version: current.Claim.Version}
 		}
 		swapped, err := s.records.CompareAndSwap(ctx, current,
