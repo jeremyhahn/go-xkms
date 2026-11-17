@@ -134,3 +134,16 @@ v0.51.0-alpha and v0.58.2-alpha.
   files are main's (ruling 742, #2245), merged in through main. After this
   merge the branch does not change them (`git diff origin/main...HEAD --
   .github` is empty), so no change was made in this row.
+
+## Slice 8: host audit sink tenant and nil client
+
+- Merge c4fbc8a72: origin/main ce9413253.
+- Tenant trail (security): test 27a397a4c, fix 1d1782d1b. The embedded
+  node's `EmitAudit` (go-qrdb v0.51.0-alpha) needs no RBAC permission and
+  stamps the event with the tenant of the context it is emitted under.
+  Binding the write to `WithServiceContext` therefore moved tenant decisions
+  into the system trail. The sink now emits under the caller's context.
+- No audit client (reliability), same commits: `Client.Audit()` is nil on a
+  node built without an audit logger. `hostAuditSink` then returns the nil
+  sink (auditing off) instead of an adapter around a nil client, which
+  panicked on the first invitation.
