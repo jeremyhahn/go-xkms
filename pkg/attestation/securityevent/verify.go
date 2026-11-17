@@ -25,9 +25,13 @@ var (
 	ErrEvidence = errors.New("securityevent: evidence did not verify")
 
 	// ErrNonceMismatch reports evidence whose eat_nonce is not the
-	// Verifier's challenge, or a missing challenge.
+	// Verifier's challenge, or a challenge shorter than MinNonceLen.
 	ErrNonceMismatch = errors.New("securityevent: eat_nonce does not match the challenge")
 )
+
+// MinNonceLen is the shortest challenge Verify accepts: RFC 9711 §4.1
+// requires at least 64 bits of eat_nonce entropy, eight bytes in CBOR.
+const MinNonceLen = 8
 
 // EvidenceVerifier authenticates the device-signed EAT evidence that
 // travels with a security-event record (types.SecurityEventEvidence). It
@@ -41,15 +45,15 @@ type EvidenceVerifier func(evidence []byte) (eatNonce, dsd []byte, err error)
 // Verify authenticates a security-event record as owner ruling 7dbbb72
 // item 181 (b) binds it: verifyEvidence checks the device's signature on
 // evidence, the evidence's eat_nonce must equal nonce (the Verifier's
-// challenge, so the record is fresh), and its Detached Submodule Digest
+// challenge of at least MinNonceLen bytes, so the record is fresh), and its Detached Submodule Digest
 // must cover claimsSet. It returns the decoded record only when all three
 // hold.
 func Verify(claimsSet, evidence, nonce []byte, verifyEvidence EvidenceVerifier) (Record, error) {
 	if verifyEvidence == nil {
 		return Record{}, fmt.Errorf("%w: no evidence verifier", ErrEvidence)
 	}
-	if len(nonce) == 0 {
-		return Record{}, fmt.Errorf("%w: no challenge", ErrNonceMismatch)
+	if len(nonce) < MinNonceLen {
+		return Record{}, fmt.Errorf("%w: challenge is %d bytes, want at least %d", ErrNonceMismatch, len(nonce), MinNonceLen)
 	}
 	eatNonce, dsd, err := verifyEvidence(evidence)
 	if err != nil {

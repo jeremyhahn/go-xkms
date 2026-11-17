@@ -156,11 +156,12 @@ go-xkms's side is `pkg/attestation/securityevent/digest.go`: `DetachedDigest`
 (SHA-256, SHA-384 or SHA-512, by COSE Algorithms integer or name), and
 `VerifyDetached` (`:102`) checks a record against a digest. It compares in
 constant time and only then decodes the record. `Verify`
-(`pkg/attestation/securityevent/verify.go:47`) is the Verifier's one entry
+(`pkg/attestation/securityevent/verify.go:51`) is the Verifier's one entry
 point and checks the three bindings together: an `EvidenceVerifier` checks the
 device's signature on the evidence and yields its `eat_nonce` and digest
 (refused with `ErrEvidence`), the `eat_nonce` must equal the Verifier's
-challenge (`ErrNonceMismatch`), and the digest must cover the record
+challenge, which must be at least `MinNonceLen` (8) bytes as RFC 9711 §4.1
+requires (`ErrNonceMismatch`), and the digest must cover the record
 (`VerifyDetached`). A record whose
 digest does not match is refused with `ErrDigestMismatch`. A malformed array
 is refused with `ErrMalformedDigest`, and any other algorithm with
