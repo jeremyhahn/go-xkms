@@ -71,7 +71,8 @@ type AuthenticatedPhoneSender interface {
 // messages to/from the phone. The backend does not manage the transport
 // lifecycle -- the caller owns the Sender.
 //
-// If a phone backend is already registered, it is closed and replaced.
+// If a phone backend is already registered, it is closed and replaced only
+// after the new one passes every check; a refused call leaves it in place.
 //
 // Backend mode: the phone is accepted only when the device-registry record
 // named by backends.phone.tenant/device_id is active and its identity key is
@@ -85,15 +86,6 @@ func (s *Server) RegisterPhoneBackend(sender AuthenticatedPhoneSender) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	// Close existing phone backend if present.
-	if existing, ok := s.keyProviders["phone"]; ok {
-		if err := existing.Close(); err != nil {
-			s.logger.Warn("failed to close existing phone backend",
-				slog.Any("error", err))
-		}
-		delete(s.keyProviders, "phone")
-	}
 
 	// Build phone backend config from server config.
 	phoneCfg := s.config.Backends.Phone
@@ -165,6 +157,14 @@ func (s *Server) RegisterPhoneBackend(sender AuthenticatedPhoneSender) error {
 		return err
 	}
 
+	// Only now, with the replacement accepted, is the existing backend
+	// closed: a refused peer cannot disable the accepted phone.
+	if existing, ok := s.keyProviders["phone"]; ok {
+		if err := existing.Close(); err != nil {
+			s.logger.Warn("failed to close existing phone backend",
+				slog.Any("error", err))
+		}
+	}
 	s.keyProviders["phone"] = backend
 	s.logger.Info("phone backend registered",
 		"transport", phoneCfg.Transport,
