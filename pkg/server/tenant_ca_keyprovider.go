@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -36,6 +37,13 @@ const tenantLoginCAValidity = 10 * 365 * 24 * time.Hour
 // tenantLoginCAProvenanceID is the tenant-scoped certificate ID under which
 // the provisioning path records that it made the tenant's login CA key.
 const tenantLoginCAProvenanceID = tenantLoginCAKeyCN + ":provenance"
+
+// tenantLoginCAIntentID names the record the provisioning path saves before
+// it generates a tenant's login CA key. A key found without provenance but
+// with this record is a pass that stopped between generation and provenance,
+// which the next pass finishes over the same key; a key without either was
+// not made by this path and stays a collision.
+const tenantLoginCAIntentID = tenantLoginCAKeyCN + ":intent"
 
 // tenantLoginCAProvenanceWait bounds how long adoption waits for another
 // node's provisioning pass to record the provenance of a key it just made.
@@ -156,12 +164,11 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	attrs, err := tenantLoginCAKeyAttrs(context.Background(), base, tenantID)
 	if err == nil {
-		if !tenantLoginCAKeyProvisionedAttrs(context.Background(), scoped, attrs) {
-			return nil, fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCAKeyCollision)
-		}
-		// A key without its certificate is an earlier pass that stopped
-		// after the key: finish it over the same key.
-		if _, certErr := scoped.GetCert(context.Background(), tenantLoginCAKeyCN); certErr != nil {
+		// A key without its provenance or its certificate is an earlier
+		// pass that stopped after the key: EnsureTenant finishes it over the
+		// same key, or refuses a key this path did not make.
+		_, certErr := scoped.GetCert(context.Background(), tenantLoginCAKeyCN)
+		if certErr != nil || !tenantLoginCAKeyProvisionedAttrs(context.Background(), scoped, attrs) {
 			if err := f.EnsureTenant(context.Background(), tenantID); err != nil {
 				return nil, err
 			}
@@ -247,6 +254,9 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
 	}
+	if err := recordTenantLoginCAIntent(ctx, scoped, tenantID); err != nil {
+		return err
+	}
 	if _, err := scoped.GenerateECDSA(ctx, attrs); err != nil {
 		if !errors.Is(err, backend.ErrKeyAlreadyExists) {
 			return fmt.Errorf("tenant login CA key factory: generate key for tenant %q: %w", tenantID, err)
@@ -263,7 +273,12 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 	if err != nil {
 		return fmt.Errorf("tenant login CA key factory: signer for tenant %q: %w", tenantID, err)
 	}
-	// Record that this path made the key before anything else may use it.
+	return finishTenantLoginCAKey(ctx, scoped, tenantID, signer)
+}
+
+// finishTenantLoginCAKey records that this path made the key before anything
+// else may use it, then saves the login CA certificate.
+func finishTenantLoginCAKey(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string, signer crypto.Signer) error {
 	provenance, err := selfSignTenantLoginCA(tenantID, signer)
 	if err != nil {
 		return err
@@ -271,7 +286,36 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 	if err := scoped.SaveCert(ctx, tenantLoginCAProvenanceID, provenance); err != nil {
 		return fmt.Errorf("tenant login CA key factory: record key provenance for tenant %q: %w", tenantID, err)
 	}
+	// The intent has served its purpose once provenance is durable; a stale
+	// one left by a failed delete is harmless next to provenance.
+	_ = scoped.DeleteCert(ctx, tenantLoginCAIntentID)
 	return ensureTenantLoginCACert(ctx, scoped, tenantID, signer)
+}
+
+// recordTenantLoginCAIntent durably records, before the key exists, that
+// this path is about to generate the tenant's login CA key. The certificate
+// store holds certificates only, so the record is a throwaway self-signed
+// certificate over an ephemeral key that is never kept.
+func recordTenantLoginCAIntent(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string) error {
+	ephemeral, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("tenant login CA key factory: intent key for tenant %q: %w", tenantID, err)
+	}
+	record, err := selfSignTenantLoginCA(tenantID, ephemeral)
+	if err != nil {
+		return err
+	}
+	if err := scoped.SaveCert(ctx, tenantLoginCAIntentID, record); err != nil {
+		return fmt.Errorf("tenant login CA key factory: record provisioning intent for tenant %q: %w", tenantID, err)
+	}
+	return nil
+}
+
+// tenantLoginCAIntentRecorded reports whether a provisioning pass recorded
+// its intent to generate the tenant's login CA key.
+func tenantLoginCAIntentRecorded(ctx context.Context, scoped *xkms.TenantScopedBackend) bool {
+	exists, err := scoped.CertExists(ctx, tenantLoginCAIntentID)
+	return err == nil && exists
 }
 
 // adoptTenantLoginCAKey finishes the login CA over an existing key only when
@@ -291,6 +335,12 @@ func adoptTenantLoginCAKey(ctx context.Context, scoped *xkms.TenantScopedBackend
 	for !tenantLoginCAKeyProvisioned(ctx, scoped, signer.Public()) {
 		select {
 		case <-waitCtx.Done():
+			// No pass finished it in time. If this path recorded its intent
+			// before generating, the key is an interrupted provisioning:
+			// finish it over the same key. Otherwise it was not made here.
+			if tenantLoginCAIntentRecorded(ctx, scoped) {
+				return finishTenantLoginCAKey(ctx, scoped, tenantID, signer)
+			}
 			return fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCAKeyCollision)
 		case <-ticker.C:
 		}
@@ -334,7 +384,7 @@ func (f *tenantCAKeyFactory) RemoveTenant(ctx context.Context, tenantID string) 
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	var errs []error
-	for _, certID := range []string{tenantLoginCAKeyCN, tenantLoginCAProvenanceID} {
+	for _, certID := range []string{tenantLoginCAKeyCN, tenantLoginCAProvenanceID, tenantLoginCAIntentID} {
 		exists, err := scoped.CertExists(ctx, certID)
 		switch {
 		case err != nil:
