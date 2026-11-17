@@ -229,25 +229,27 @@ func TestRunAWSLogin_StateMismatch(t *testing.T) {
 		done <- runAWSLogin(cmd, &buf, "us-east-1", "default", false, true /* noBrowser */, "none", "", "", 0, "", false, false, "", "", callback)
 	}()
 
-	// Poll until the callback server is accepting connections, then deliver
-	// a code under a state runAWSLogin never generated.
+	// Retry the connection until the callback server accepts it (a refused
+	// dial returns at once, so this waits on the listener, not on a clock),
+	// then deliver a code under a state runAWSLogin never generated.
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/oauth/callback?code=test-code&state=mismatched-state"
-	require.Eventually(t, func() bool {
+	for {
 		resp, getErr := http.Get(url)
-		if getErr != nil {
-			return false
+		if getErr == nil {
+			require.NoError(t, resp.Body.Close())
+			break
 		}
-		defer resp.Body.Close()
-		return true
-	}, 5*time.Second, 20*time.Millisecond, "callback server never accepted a connection")
-
-	select {
-	case err := <-done:
-		require.Error(t, err)
-		assert.ErrorIs(t, err, aws.ErrStateMismatch)
-	case <-time.After(5 * time.Second):
-		t.Fatal("runAWSLogin did not return after the mismatched callback")
+		select {
+		case err := <-done:
+			t.Fatalf("runAWSLogin returned before its callback server accepted a connection: %v", err)
+		default:
+		}
+		time.Sleep(10 * time.Millisecond) // retry pace, not a deadline
 	}
+
+	err = <-done
+	require.Error(t, err)
+	assert.ErrorIs(t, err, aws.ErrStateMismatch)
 }
 
 // --- handleAWSOutput dispatch ---
@@ -329,7 +331,7 @@ func awsRefreshClient(t *testing.T, tokenURL string) *aws.Client {
 func awsAutoRefreshUntil(t *testing.T, client *aws.Client, output, credentialsFile, sessionStore string, ready func(log string) bool) string {
 	t.Helper()
 
-	log := &lockedBuffer{}
+	log := newEventLog(ready)
 	stop := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
@@ -337,17 +339,13 @@ func awsAutoRefreshUntil(t *testing.T, client *aws.Client, output, credentialsFi
 			output, "", sessionStore, "", 10*time.Millisecond, log, stop)
 	}()
 
-	reached := assert.Eventually(t, func() bool { return ready(log.String()) }, 5*time.Second, 10*time.Millisecond)
-	close(stop)
 	select {
+	case <-log.reached:
 	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("the AWS refresh loop did not stop after its stop channel closed")
+		t.Fatalf("the refresh loop returned (%v) before it got there; log:\n%s", err, log.String())
 	}
-	if !reached {
-		t.Fatalf("the refresh loop never got there; log:\n%s", log.String())
-	}
+	close(stop)
+	require.NoError(t, <-done)
 	return log.String()
 }
 
