@@ -167,8 +167,11 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 			// set already (auth.NewAuthorizer(nil) with authorization
 			// disabled, auth.NewNodeAuthorizer for its node's
 			// full-identity decision) is its choice and is kept.
+			// The decisions it then enforces are audited on the host
+			// node's own audit plane, so a refusal is never unrecorded.
 			if x.Authorizer() == nil {
 				x.SetAuthorizer(auth.NewAuthorizer(client.RBAC()))
+				x.SetAuditLogger(&clientAuditSink{audit: client.Audit(), bind: m.serviceContext})
 			}
 			// Without storage compose leaves every store-backed feature
 			// off and records why.
