@@ -112,12 +112,12 @@ backends:
     simulator_port: 2321
 
   pkcs11:
-    # PKCS#11 loads in-process: the server container's own SoftHSM2 install
-    # is used (Debian path); the token is initialized by the entrypoint.
-    enabled: true
+    # Off: a literal pin is refused as a protected target (#654), no api test
+    # uses this backend (PKCS#11 has its own suite); go-xkms#2262 tracks a
+    # resolvable pin reference for this config.
+    enabled: false
     library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
-    pin: "123456"
 
 # Encryption-at-rest. Required by the secure-by-default gate (the daemon has
 # no insecure override). There is no config-sourced boot-time secret any more

@@ -97,13 +97,14 @@ func TestCoverageRunsAsShardsThenOneThreshold(t *testing.T) {
 }
 
 // Coverage shard bounds (ruling 661(4)): a shard under -race outgrew the 90
-// min job, so the job gets 150 min. With 10 shards a healthy one finishes in
-// 16-28 min (#2183), so the shard's go test bound is 45m, about twice the
+// min job. With 10 shards a healthy one finishes in 16-28 min including the
+// image build (#2183), so the job gets 60 min (a shard that lost its runner
+// ran unbounded under 150) and the shard's go test bound is 45m, about twice the
 // slowest: a hung package panics with its goroutine dump well inside the
 // job's bound instead of the runner cancelling the job silently (shard 5/10
 // ran 151 min under the old 135m bound).
 const (
-	coverageJobTimeoutMinutes = 150
+	coverageJobTimeoutMinutes = 60
 	coverageShardTestTimeout  = 45 * time.Minute
 )
 

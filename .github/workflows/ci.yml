@@ -1264,7 +1264,7 @@ jobs:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: [preflight, ci-images]
     if: ${{ needs.preflight.outputs.verdict == 'run' }}
-    timeout-minutes: 150      # CUSTOMIZE (go-xkms, DS-8139, ruling 661(4)): one tenth of the unit suite under -race (shard 1 of 6 outran 150 min on the hosted runner)
+    timeout-minutes: 60       # CUSTOMIZE (go-xkms, DS-8139, ruling 661(4)): one tenth of the unit suite under -race; slowest healthy shard 28 min incl. the image build, so a lost runner is cut at 60 (#2183)
     permissions:
       contents: read
       packages: read
