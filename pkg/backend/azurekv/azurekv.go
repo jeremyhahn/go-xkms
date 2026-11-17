@@ -701,6 +701,12 @@ func (b *Backend) getKeyParameters(attrs *types.KeyAttributes) (azkeys.CreateKey
 
 // getSigningAlgorithm returns the appropriate Azure Key Vault signing algorithm for the key attributes.
 func (b *Backend) getSigningAlgorithm(attrs *types.KeyAttributes, opts crypto.SignerOpts) (azkeys.SignatureAlgorithm, error) {
+	// The digest's hash is the one opts names (the crypto.Signer contract);
+	// the key's recorded Hash is the fallback, and a listed key carries none.
+	hash := attrs.Hash
+	if opts != nil && opts.HashFunc() != 0 {
+		hash = opts.HashFunc()
+	}
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
 		// Check if PSS options were provided
@@ -717,9 +723,9 @@ func (b *Backend) getSigningAlgorithm(attrs *types.KeyAttributes, opts crypto.Si
 				return azkeys.SignatureAlgorithmPS256, nil // Default to PS256
 			}
 		}
-		// Use PKCS#1 v1.5 signature algorithm based on hash (from attrs or default to SHA256)
-		if attrs.Hash != 0 {
-			switch attrs.Hash {
+		// Use PKCS#1 v1.5 signature algorithm based on hash (from opts, then attrs, or default to SHA256)
+		if hash != 0 {
+			switch hash {
 			case crypto.SHA256:
 				return azkeys.SignatureAlgorithmRS256, nil
 			case crypto.SHA384:
@@ -733,8 +739,8 @@ func (b *Backend) getSigningAlgorithm(attrs *types.KeyAttributes, opts crypto.Si
 		return azkeys.SignatureAlgorithmRS256, nil // Default to RS256
 	case x509.ECDSA:
 		// Use ECDSA signature algorithm based on hash
-		if attrs.Hash != 0 {
-			switch attrs.Hash {
+		if hash != 0 {
+			switch hash {
 			case crypto.SHA256:
 				return azkeys.SignatureAlgorithmES256, nil
 			case crypto.SHA384:
