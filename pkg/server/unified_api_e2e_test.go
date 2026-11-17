@@ -141,9 +141,9 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 
 	// The Unix socket lives in a private runtime directory, as a daemon's
 	// would.
-	socketDir := t.TempDir()
+	socketDir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(socketDir, 0o700))
-	socketPath := filepath.Join(testsupport.SocketDir(t), "xkms.sock")
+	socketPath := filepath.Join(socketDir, "xkms.sock")
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
