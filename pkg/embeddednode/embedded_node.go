@@ -322,6 +322,10 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	// The CA stamps every client certificate's tenant into a SPIFFE SAN under
 	// this trust domain, so qrdb's mTLS authenticator pins the same one and
 	// rejects a SAN under a foreign trust domain.
+	// The same domain names go-qrdb's cluster-peer identities: qrdb stamps it
+	// into node certificates (spiffe://<domain>/node/<raftAddress>) and pins
+	// it in clusterkeys. Left empty, qrdb would fall back to its own
+	// "qrdb.cluster" while go-xkms issues node names under this one.
 	qcfg.Auth.ClusterTrustDomain = TrustDomain(cfg)
 
 	// go-qrdb wraps the unified REST handler in DaemonConfig.CORS outside

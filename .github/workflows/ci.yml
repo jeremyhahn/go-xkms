@@ -1,4 +1,16 @@
-# ci-template: v1.34.1 (customized)
+# ci-template: v1.34.1 + v1.42 hermetic gate (customized)
+# v1.42 hermetic gate only (owner ruling 742 (1), Tenant Agent ruling 754): the
+# CI Gate's outcome depends only on the tree under test. `make deps-check`,
+# `make security` (gosec, govulncheck, go mod verify, trivy fs) and the trivy
+# image scans of the integration and CLI images read the module proxy and
+# advisory databases, so they turned main red with no change to the tree and
+# every PR inherited it. They leave this workflow on every event and run in
+# .github/workflows/scans.yml, on a schedule and on workflow_dispatch on main.
+# `make gosec` reads only the tree and now runs in the image job on every
+# event but a docs-only PR. Nothing else of v1.35 to v1.42 is taken yet: the
+# v1.35 Signatures job, v1.36 host-local caches and in-toolchain-image.sh v6,
+# v1.37 timeouts, v1.38 release label, v1.39/v1.40 scoped deps-check and
+# v1.41 PR/main parity are the full catch-up, still to come.
 # go-xkms deviations from the template (#1773), one per line:
 #   - a ci-images job (ruling 169) publishes the toolchain and integration images on main and resolves main's on a pull request; every bigdisk job takes its image through scripts/ci-registry.sh use, not make docker-build;
 #   - so the v1.29.4/v1.29.5 Athens probe is a "Route the image build through Athens" step that exports GO_BUILD_PROXY to the job's environment ahead of ci-registry.sh, whose make docker-build-* reads it, in place of the template's ${bp:+"$bp"} argument;
@@ -7,7 +19,7 @@
 #   - CUSTOMIZE jobs static-analysis, build, nested-module-build, nested-module-test, build-raft, race and tpm2-simulator, each in CI Gate's needs and results;
 #   - the image job folds Lint into its stages (timeout 240), and the integration (180) and soak (210) jobs keep longer bounds;
 #   - scripts/in-toolchain-image.sh v4 already held the /var/tmp scratch volume (#1733) and keeps its CUSTOMIZE blocks; it takes v5's bridge GOPROXY (no `direct` entry, v1.34.1).
-#   - v1.30 fix 1 is ci-images (above): no publish-images job, no scripts/ci-image-cache.sh, and no separate lint job. The image job keeps Lint, the releasability test and deps-check, so it runs on a docs-only PR (its build and coverage steps skip there) and CI Gate checks it as `pr`, not `code`; gosec joins it on the PR tier (`make gosec`, v1.30 fix 5).
+#   - v1.30 fix 1 is ci-images (above): no publish-images job, no scripts/ci-image-cache.sh, and no separate lint job. The image job keeps Lint and the releasability test (and deps-check until the v1.42 hermetic gate moved it to scans.yml), so it runs on a docs-only PR (its build and coverage steps skip there) and CI Gate checks it as `pr`, not `code`; gosec joins it on the PR tier (`make gosec`, v1.30 fix 5).
 #   - the internal-name gate (v1.31 to v1.33.2) is a step of the lint-gates job, which is path-scoped by LINT_GATES_PATTERN (v1.30 fix 3, `scoped` in CI Gate).
 #   - v1.34's preflight job runs where changes, schedule-guard and arch-gates ran (the bigdisk pool for a push to main and a same-repository PR); arch-gates' layering steps are its last steps. v1.34's unit/race shard merge has nothing to merge: go-xkms has no shards.
 #   - the CUSTOMIZE full-tier jobs need ci-images, which carries the guard's verdict, so they skip with it on a refused, busy or proven run (v1.29.2 note).
@@ -926,7 +938,9 @@ jobs:
   # GO_BUILD_TAGS reaches every target as a make variable, so the tag set is
   # still written once. build, test and lint run with no network, on the
   # image's module cache; security and deps-check get one (IN_IMAGE_NETWORK=
-  # bridge) for the vulnerability databases and the module proxy.
+  # bridge) for the vulnerability databases and the module proxy. v1.42
+  # (ruling 742 (1)): security, deps-check and trivy image run in scans.yml,
+  # so no ci.yml stage needs the network for an advisory or a version lookup.
   #
   # v1.23: lint, assert-build-tags, build and coverage are the PR tier and run
   # on every event. security and trivy image are full tier only
@@ -1061,7 +1075,7 @@ jobs:
   # <<< CUSTOMIZE
 
   image:
-    name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
+    name: Devcontainer image [lint, gosec, build, test]
     runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
@@ -1119,32 +1133,16 @@ jobs:
       # >>> CUSTOMIZE (go-xkms, ruling 169)
       # The images come from ci-images: main's by digest, pulled and held
       # until Tear down, or, when main has not published this content, built
-      # on this runner with no push and held by image ID. The integration
-      # image is needed by the full tier's scan alone.
+      # on this runner with no push and held by image ID. v1.42 (ruling 742
+      # (1)): the integration image was needed by the full tier's trivy image
+      # scan alone, which moved to scans.yml, so this job no longer takes it
+      # (nor reads the Alpine package index its tag hashes).
       - name: Take the toolchain image
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
-
-      # v1.29: the Alpine package index checksum, which a locally built
-      # integration image's tag hashes (as in ci-images).
-      - name: Read the Alpine package index
-        if: ${{ env.CI_FULL_TIER == 'true' }}
-        run: |
-          APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")
-          export APK_BASE_IMAGES
-          sum=$(scripts/apk-index-sum.sh)
-          echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
-
-      - name: Take the integration image
-        if: ${{ env.CI_FULL_TIER == 'true' }}
-        env:
-          IT_REF: ${{ needs.ci-images.outputs.it_ref }}
-          CI_REGISTRY_USER: ${{ github.actor }}
-          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use it "$IT_REF" >> "$GITHUB_ENV"
       # <<< CUSTOMIZE
 
       # v1.22: bound this repo's cache volumes on the host before the stages
@@ -1186,10 +1184,11 @@ jobs:
       # <<< CUSTOMIZE
 
       # v1.30 (fix 5): gosec on the PR tier, through the developers' target,
-      # with no network. On the full tier make security runs it below, so it
-      # runs once per event.
-      - name: make gosec (PR tier)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER != 'true' && needs.preflight.outputs.docs_only != 'true' }}
+      # with no network. v1.42 (ruling 742 (1)): make security left this job,
+      # so gosec runs here on every event but a docs-only PR. It reads only
+      # the tree, so the gate stays hermetic.
+      - name: make gosec
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make gosec GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
       # v1.26.1 (Company Agent m1128 (9)): a docs-only PR skips make coverage, so
@@ -1221,77 +1220,18 @@ jobs:
       # The test stage (m601 (c)) is the coverage and coverage-threshold jobs
       # below (DS-8139).
 
-      # make security: gosec, govulncheck, go mod verify (devops.md §8), with
-      # trivy fs per the phase (§8a). The target owns gosec's flags and its
-      # memory bounds (GOMEMLIMIT, GOMAXPROCS, -concurrency; v1.6 to v1.8) and
-      # reports a kill by signal as a kill, not a finding. Nothing is uploaded
-      # to code scanning (m601 (d): CI runs on Gitea).
-      - name: make security
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make security GO_BUILD_TAGS='$GO_BUILD_TAGS'"
-
-      # Fails when a library, first-party or third-party, is behind its latest
-      # release without devops.md §9's documented reason (ci-standard.md §1).
-      # v1.28: a lint-class gate of seconds on the PR tier, every event, a
-      # docs-only PR included (ruling 219(3)); it was full tier only from v1.23.
-      - name: make deps-check
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" make deps-check
-
-      # The integration image is gated before any push to either registry
-      # (devops.md §8): --ignore-unfixed (v1.19) and --skip-dirs /opt/go/mod
-      # (v1.20). trivy fs and make security never take --ignore-unfixed.
-      # A PR builds no image for a registry, so the scan is full tier (v1.23).
-      - name: trivy image (integration image)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: |
-          docker save -o it-image.tar "$IT_IMAGE"
-          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
-            trivy image --input it-image.tar --ignore-unfixed --skip-dirs /opt/go/mod --severity CRITICAL,HIGH --exit-code 1
-      # >>> CUSTOMIZE (go-xkms)
-      # The CLI image (Dockerfile.cli) ships to users, so it is gated like the
-      # integration image. Its build needs the forge credentials as the
-      # gomodauth secret; the step removes the file, the image and the tar
-      # itself and keeps the scan's exit code.
-      - name: trivy image (CLI image)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: |
-          CLI_IMAGE="go-xkms-ci-cli:$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth-cli.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth-cli.env"; fi
-            done )
-          rc=0
-          DOCKER_BUILDKIT=1 docker buildx build --load \
-            --secret id=gomodauth,src="$RUNNER_TEMP/gomodauth-cli.env" \
-            --build-arg VERSION=dev --build-arg COMMIT="$GITHUB_SHA" \
-            -t "$CLI_IMAGE" -f Dockerfile.cli . || rc=$?
-          rm -f "$RUNNER_TEMP/gomodauth-cli.env"
-          if [ "$rc" -eq 0 ]; then
-            docker save -o cli-image.tar "$CLI_IMAGE" || rc=$?
-          fi
-          if [ "$rc" -eq 0 ]; then
-            scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
-              trivy image --input cli-image.tar --ignore-unfixed --severity CRITICAL,HIGH --exit-code 1 || rc=$?
-          fi
-          rm -f cli-image.tar
-          docker image rm -f "$CLI_IMAGE" >/dev/null 2>&1 || true
-          exit "$rc"
-      # <<< CUSTOMIZE
+      # v1.42 (ruling 742 (1)): `make security` (gosec, govulncheck, go mod
+      # verify, trivy fs), `make deps-check` and the trivy image scans of the
+      # integration image and of the CLI image (CUSTOMIZE, go-xkms) left this
+      # job. Each reads a module proxy or an advisory database that changes
+      # with no change to the tree. scans.yml runs them on a schedule and on
+      # dispatch on main and opens or updates ONE issue on a finding; gosec
+      # runs above on every event.
 
       - name: Tear down
         if: always()
         run: |
-          rm -f it-image.tar
-          scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" "${IT_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+          scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # >>> CUSTOMIZE (go-xkms, DS-8139, CA m2406(2))
   # The test stage: make coverage in the image job never finished on
@@ -1544,6 +1484,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: Install the gate tools at the toolchain image's pins
@@ -1985,6 +1926,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: Static analysis (native)
@@ -2123,6 +2065,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
@@ -2247,6 +2190,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: Build sdk/go, web/desktop and xkey (native)
@@ -2373,6 +2317,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
@@ -2512,6 +2457,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
@@ -2678,6 +2624,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
@@ -2782,6 +2729,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
