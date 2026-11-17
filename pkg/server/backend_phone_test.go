@@ -232,6 +232,38 @@ func TestRegisterPhoneBackend_RefusesOtherPeer(t *testing.T) {
 	assert.False(t, ok, "a phone authenticated as another device must not be registered")
 }
 
+// A replacement refused by the registry must leave the accepted phone's
+// backend registered and open: a rejected peer cannot disable it.
+func TestRegisterPhoneBackend_RefusedReplacementKeepsActive(t *testing.T) {
+	srv := newTestServerForPhone(t, newTestPhoneConfig(t))
+	var sent int
+	valid := &mockPhoneSender{sendFunc: func(_ context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+		sent++
+		return &pairingproto.Response{JSONRPC: "2.0", ID: req.ID}, nil
+	}}
+	require.NoError(t, srv.RegisterPhoneBackend(valid))
+	srv.mu.RLock()
+	accepted := srv.keyProviders["phone"]
+	srv.mu.RUnlock()
+	require.NotNil(t, accepted)
+	t.Cleanup(func() { _ = accepted.Close() })
+
+	phoneB, err := hex.DecodeString("99887766554433229988776655443322998877665544332299887766554433bb")
+	require.NoError(t, err)
+	err = srv.RegisterPhoneBackend(&mockPhoneSender{peerKey: phoneB})
+	require.ErrorIs(t, err, ErrPhoneDeviceRefused)
+
+	srv.mu.RLock()
+	current, ok := srv.keyProviders["phone"]
+	srv.mu.RUnlock()
+	require.True(t, ok, "the accepted phone must stay registered")
+	assert.Same(t, accepted, current, "the accepted phone's backend must not be replaced")
+
+	err = accepted.DeleteKey(context.Background(), &types.KeyAttributes{CN: "k1"})
+	assert.NotErrorIs(t, err, phonebackend.ErrBackendClosed)
+	assert.Equal(t, 1, sent, "the accepted phone's backend must still send")
+}
+
 // TestRegisterPhoneBackend_RevokeAfterRegister: revoking the device in the
 // registry after the phone registered refuses the next operation on the
 // retained backend before any request reaches the phone.
