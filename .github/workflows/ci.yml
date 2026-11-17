@@ -759,6 +759,8 @@ jobs:
           # This workflow's own file: the route counts its runs only.
           RUNS_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/workflows/ci.yml/runs
           REPO_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          # CUSTOMIZE (go-xkms, #2240): the runs list of this workflow on github.com.
+          GH_RUNS_API: ${{ github.api_url }}/repos/${{ github.repository }}/actions/workflows/ci.yml/runs
           JOB_TOKEN: ${{ github.token }}
           # v1.30: a push to main reads the tree proof with it as well.
           BOT: ${{ (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.AGENT_TOKEN || '' }}
@@ -776,7 +778,7 @@ jobs:
             # first query is still waiting, in progress or done at the
             # second, and counted or finished. The other order lets a run
             # start between the two queries and be counted by neither.
-            for st in waiting in_progress; do
+            for st in ${RUN_STATES:-waiting in_progress}; do
               CODE=$(curl -sS --max-time 30 -o "$RUNNER_TEMP/runs.json" -w '%{http_code}' \
                 -H @<(printf 'Authorization: token %s\n' "$1") \
                 "$RUNS_API?event=push&branch=main&status=$st&limit=1") || CODE="curl exit $?"
@@ -830,7 +832,16 @@ jobs:
           elif [ "$EVENT" != schedule ]; then
             echo "not a schedule run: no check"
           elif [ "$SERVER" = https://github.com ]; then
-            echo "the github.com mirror has no bigdisk runner: no check"
+            # CUSTOMIZE (go-xkms, #2240): scheduled main runs share the bigdisk-docker
+            # pool with main's push runs on github.com too, so count them there with
+            # the job token (actions: read) through the GitHub REST API; never AGENT_TOKEN.
+            RUNS_API=$GH_RUNS_API RUN_STATES="requested queued pending waiting in_progress"
+            if [ -n "$JOB_TOKEN" ] && runs "$JOB_TOKEN"; then
+              echo "read with the job token"
+            else
+              verdict=unreadable
+              echo "::error::the GitHub Actions API gave no count (job token: ${CODE:-no job token}), so every bigdisk job skips and CI Gate fails"
+            fi
           elif [ -n "$JOB_TOKEN" ] && runs "$JOB_TOKEN"; then
             echo "read with the job token"
           elif job="${CODE:-no job token}"; [ -n "$BOT" ] && runs "$BOT"; then
@@ -1078,7 +1089,7 @@ jobs:
     name: Devcontainer image [lint, gosec, build, test]
     # CUSTOMIZE (go-xkms, #2240): schedule and workflow_dispatch runs on main
     # also use the bigdisk-docker pool, not hosted-runner hours; fork PRs stay hosted.
-    # github.com has the bigdisk-docker pool (push run 43481870662 ran Integration on it); the schedule guard's 'no bigdisk runner' text at the l.821 echo is about its run-count check, not runner availability.
+    # github.com has the bigdisk-docker pool (push run 43481870662 ran Integration on it); the preflight schedule guard counts main's active push runs there too, so a scheduled run defers to them.
     runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
