@@ -617,19 +617,21 @@ hold_name() {
 # namespace of this run's registry. use calls it before the CI_IMAGE_REGISTRY
 # path too, so a LAN hit is no way around it (#2243, Codex round 2 P1-1).
 check_main_ref() {
-  local ref=$1 host repos
+  local ref=$1 host owner
   check_ref "$ref"
   host=$(registry_host) || exit 1
   [ "${ref%%/*}" = "$host" ] || die "'$ref' is not in this run's registry, $host"
-  repos=$host/$(registry_owner)/ || exit 1
-  [[ $ref == "$repos"* ]] || die "'$ref' is not under $repos, where main publishes"
+  owner=$(registry_owner) || exit 1
+  [[ $ref == "$host/$owner/"* ]] || die "'$ref' is not under $host/$owner/, where main publishes"
 }
 
 pull_ref() {
-  local ref=$1 hold=$2 host backoff=${CI_REGISTRY_BACKOFF:-10} n
+  local ref=$1 hold=$2 host repos backoff=${CI_REGISTRY_BACKOFF:-10} n
   check_main_ref "$ref"
   [[ $backoff =~ ^[0-9]+$ ]] || die "CI_REGISTRY_BACKOFF is not a number of seconds"
   host=$(registry_host) || exit 1
+  repos=$host/$(registry_owner)/
+  [[ $ref == "$repos"* ]] || die "'$ref' is not under $repos, where main publishes"
   private_config
   read_login "$host"
   for ((n = 1; n <= attempts; n++)); do
