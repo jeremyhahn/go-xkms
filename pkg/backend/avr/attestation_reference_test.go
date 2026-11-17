@@ -83,6 +83,19 @@ func TestNewBackendRefusesAMalformedApplicationReference(t *testing.T) {
 	assert.Contains(t, err.Error(), "got 31")
 }
 
+// An explicitly empty reference is not "no reference": it names no
+// application, so it is refused like any other wrong length rather than
+// silently leaving the application unchecked.
+func TestNewBackendRefusesAnEmptyApplicationReference(t *testing.T) {
+	cfg := testConfig()
+	cfg.Attestation = &AttestationConfig{ApplicationReference: []byte{}}
+
+	_, err := NewBackend(context.Background(), cfg, newTestDevice(secureElementLink()))
+
+	require.ErrorIs(t, err, dice.ErrInvalidApplicationReference)
+	assert.Contains(t, err.Error(), "got 0")
+}
+
 func TestNewBackendAcceptsAnApplicationReferenceWithoutATrustStore(t *testing.T) {
 	cfg := testConfig()
 	cfg.Attestation = &AttestationConfig{ApplicationReference: make([]byte, 32)}
