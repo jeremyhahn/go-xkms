@@ -33,6 +33,11 @@ logging:
 # first start.
 tls:
   enabled: true
+  # The administrator xkmsd init provisions logs in with an mTLS client
+  # certificate, so the handshake must ask for it. "verify" verifies a
+  # certificate when one is given; browser and ACME clients without one
+  # still connect. Validate refuses none while auth accepts mTLS.
+  client_auth: verify
 
 auth:
   enabled: true

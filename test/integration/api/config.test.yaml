@@ -32,7 +32,8 @@ tls:
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
   # No client auth for integration tests
-  client_auth: none
+  # The init mTLS administrator needs its certificate requested (issue #2254).
+  client_auth: verify
 
 # Adaptive authentication: anonymous until the first user is provisioned, then
 # enforced. This keeps the integration suites able to exercise the API without

@@ -49,6 +49,9 @@ func newServeTestConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := embeddedQRDBConfig(t)
 	cfg.TLS.Enabled = true
+	// An mTLS auth chain needs the handshake to ask for the client
+	// certificate (issue #2254), as the shipped configs/xkmsd.yaml does.
+	cfg.TLS.ClientAuth = "verify"
 	cfg.Auth = config.AuthConfig{Enabled: true, Type: "mtls"}
 	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
 	cfg.CA = &nativeca.MultiIdentityCAConfig{

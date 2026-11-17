@@ -40,7 +40,10 @@ tls:
   ca_file: ""
 
   # Client certificate verification (mTLS)
-  client_auth: "none"  # Options: none, request, require, verify, require_and_verify
+  # "verify" verifies a certificate when one is given, so the mTLS
+  # administrator xkmsd init provisions is accepted and clients without a
+  # certificate still connect. "none" is refused while auth accepts mTLS.
+  client_auth: "verify"  # Options: none, request, require, verify, require_and_verify
   client_cas: []
 
   # TLS version constraints

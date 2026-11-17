@@ -125,6 +125,7 @@ logging:
 
 tls:
   enabled: true
+  client_auth: "verify"
 
 auth:
   enabled: true
