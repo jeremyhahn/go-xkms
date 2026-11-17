@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -260,6 +261,21 @@ func flip(blob []byte, i int) []byte {
 	return out
 }
 
+// assertRefused checks that Unseal refused with want, returned no
+// plaintext, and gave an error whose message formats and leads with want's.
+func assertRefused(t *testing.T, plaintext []byte, err, want error) {
+	t.Helper()
+	if !errors.Is(err, want) {
+		t.Fatalf("Unseal: %v, want %v", err, want)
+	}
+	if plaintext != nil {
+		t.Fatalf("Unseal returned a plaintext with %v", err)
+	}
+	if msg := err.Error(); !strings.HasPrefix(msg, want.Error()) {
+		t.Fatalf("Unseal error %q does not lead with %q", msg, want.Error())
+	}
+}
+
 func TestUnsealErrors(t *testing.T) {
 	v := loadVectors(t)[0]
 	if len(v.plaintext) == 0 {
@@ -311,12 +327,7 @@ func TestUnsealErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			plaintext, err := opteeblob.Unseal(v.key, tt.ta, tt.blob)
-			if !errors.Is(err, tt.want) {
-				t.Fatalf("Unseal: %v, want %v", err, tt.want)
-			}
-			if plaintext != nil {
-				t.Fatalf("Unseal returned a plaintext with %v", err)
-			}
+			assertRefused(t, plaintext, err, tt.want)
 		})
 	}
 
@@ -325,4 +336,128 @@ func TestUnsealErrors(t *testing.T) {
 			t.Fatalf("Unseal: %v, want ErrAuthentication", err)
 		}
 	})
+}
+
+// TestUnsealEncodingErrors pins the §2 header bytes and §5's core
+// deterministic encoding beyond the nonce head TestUnsealErrors covers.
+func TestUnsealEncodingErrors(t *testing.T) {
+	v := loadVectors(t)[0]
+	iv := map[int64][]byte{5: v.nonce}
+	ciphertext := v.blob[len(v.blob)-len(v.plaintext)-opteeblob.TagSize:]
+	ciphertextStart := len(v.blob) - len(ciphertext)
+	if v.blob[ciphertextStart-2] != 0x58 {
+		t.Fatalf("vector 1's ciphertext head is %x, want a 58 xx head", v.blob[ciphertextStart-2:ciphertextStart])
+	}
+
+	// The ciphertext's bstr head written in three bytes instead of two.
+	wideCiphertext := append(bytes.Clone(v.blob[:ciphertextStart-2]), 0x59, 0x00, byte(len(ciphertext)))
+	wideCiphertext = append(wideCiphertext, ciphertext...)
+	// CBOR tag 16 written in two bytes instead of one.
+	wideTag := append([]byte{0xd8, 0x10}, v.blob[1:]...)
+	// The array of three written with an indefinite length.
+	indefinite := append([]byte{0xd0, 0x9f}, v.blob[2:]...)
+	indefinite = append(indefinite, 0xff)
+
+	tests := []struct {
+		name string
+		blob []byte
+		want error
+	}{
+		{"protected keys out of order", blobParts(t, 16, []byte{0xa2, 0x3a, 0x00, 0x01, 0x00, 0x00, 0x01, 0x01, 0x03}, iv, ciphertext), opteeblob.ErrHeader},
+		{"non-minimal version", blobParts(t, 16, []byte{0xa2, 0x01, 0x03, 0x3a, 0x00, 0x01, 0x00, 0x00, 0x18, 0x01}, iv, ciphertext), opteeblob.ErrHeader},
+		{"non-minimal algorithm", blobParts(t, 16, []byte{0xa2, 0x01, 0x18, 0x03, 0x3a, 0x00, 0x01, 0x00, 0x00, 0x01}, iv, ciphertext), opteeblob.ErrHeader},
+		{"non-minimal ciphertext head", wideCiphertext, opteeblob.ErrMalformed},
+		{"non-minimal tag head", wideTag, opteeblob.ErrMalformed},
+		{"indefinite-length array", indefinite, opteeblob.ErrMalformed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plaintext, err := opteeblob.Unseal(v.key, v.ta, tt.blob)
+			assertRefused(t, plaintext, err, tt.want)
+		})
+	}
+}
+
+// TestUnsealErrorOrder pins §5's order: a blob that breaks two rules is
+// refused with the error of the rule listed first.
+func TestUnsealErrorOrder(t *testing.T) {
+	v := loadVectors(t)[0]
+	iv := map[int64][]byte{5: v.nonce}
+	ciphertext := v.blob[len(v.blob)-len(v.plaintext)-opteeblob.TagSize:]
+	short := ciphertext[:opteeblob.TagSize-1]
+	version2 := encoded(t, map[int64]int64{1: 3, -65537: 2})
+	nonceStart := 3 + len(opteeblob.ProtectedHeader) + 3
+	nonMinimal := append(bytes.Clone(v.blob[:nonceStart-1]), 0x58, opteeblob.NonceSize)
+	nonMinimal = append(nonMinimal, v.blob[nonceStart:]...)
+
+	tests := []struct {
+		name string
+		key  []byte
+		blob []byte
+		want error
+	}{
+		{"short key before truncation", v.key[:31], v.blob[:10], opteeblob.ErrKeyLength},
+		{"short ciphertext before version", v.key, blobParts(t, 16, version2, iv, short), opteeblob.ErrTruncated},
+		{"short ciphertext before algorithm", v.key, blobParts(t, 16, encoded(t, map[int64]int64{1: 1, -65537: 1}), iv, short), opteeblob.ErrTruncated},
+		{"short ciphertext before IV", v.key, blobParts(t, 16, opteeblob.ProtectedHeader, map[int64][]byte{5: v.nonce[:11]}, short), opteeblob.ErrTruncated},
+		{"version before algorithm", v.key, blobParts(t, 16, encoded(t, map[int64]int64{1: 1, -65537: 2}), iv, ciphertext), opteeblob.ErrVersion},
+		{"version before extra parameter", v.key, blobParts(t, 16, encoded(t, map[int64]int64{1: 3, 3: 0, -65537: 2}), iv, ciphertext), opteeblob.ErrVersion},
+		{"algorithm before extra parameter", v.key, blobParts(t, 16, encoded(t, map[int64]int64{1: 1, 3: 0, -65537: 1}), iv, ciphertext), opteeblob.ErrAlgorithm},
+		{"version before IV", v.key, blobParts(t, 16, version2, map[int64][]byte{5: v.nonce[:11]}, ciphertext), opteeblob.ErrVersion},
+		{"encoding before authentication", flip(v.key, 0), nonMinimal, opteeblob.ErrMalformed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plaintext, err := opteeblob.Unseal(tt.key, v.ta, tt.blob)
+			assertRefused(t, plaintext, err, tt.want)
+		})
+	}
+}
+
+// TestUnsealDerivedKeyMismatch pins §1 through §5: a key derived from
+// another TA unique key, for another TA or under another label does not
+// unseal the blob.
+func TestUnsealDerivedKeyMismatch(t *testing.T) {
+	v := loadVectors(t)[0]
+	otherTA := opteeblob.TAUUID(flip(v.ta[:], 0))
+	otherUnique, err := opteeblob.DeriveKey(flip(v.taKey, 0), v.ta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forOtherTA, err := opteeblob.DeriveKey(v.taKey, otherTA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := bytes.Clone(v.info)
+	if got := len(info); got != 45 {
+		t.Fatalf("kdf_info is %d bytes, want 45", got)
+	}
+	if !bytes.Equal(info[:28], []byte("go-xkms optee-sealed-blob v1")) || info[28] != 0x00 || !bytes.Equal(info[29:], v.ta[:]) {
+		t.Fatalf("kdf_info = %x, want label || 00 || TA UUID", info)
+	}
+	info[27] = '2' // "go-xkms optee-sealed-blob v2"
+	otherLabel := rfc5869Key(v.taKey, info)
+
+	tests := []struct {
+		name string
+		key  []byte
+	}{
+		{"another TA unique key", otherUnique},
+		{"another TA", forOtherTA},
+		{"another label", otherLabel},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if bytes.Equal(tt.key, v.key) {
+				t.Fatal("the mismatched derivation gave the vector's key")
+			}
+			plaintext, err := opteeblob.Unseal(tt.key, v.ta, v.blob)
+			if !errors.Is(err, opteeblob.ErrAuthentication) {
+				t.Fatalf("Unseal: %v, want ErrAuthentication", err)
+			}
+			if plaintext != nil {
+				t.Fatal("Unseal returned a plaintext")
+			}
+		})
+	}
 }
