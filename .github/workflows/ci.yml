@@ -1309,14 +1309,14 @@ jobs:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: [preflight, ci-images]
     if: ${{ needs.preflight.outputs.verdict == 'run' }}
-    timeout-minutes: 150      # CUSTOMIZE (go-xkms, DS-8139, ruling 661(4)): one sixth of the unit suite under -race
+    timeout-minutes: 150      # CUSTOMIZE (go-xkms, DS-8139, ruling 661(4)): one tenth of the unit suite under -race (shard 1 of 6 outran 150 min on the hosted runner)
     permissions:
       contents: read
       packages: read
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         # make test's parts beside test-go (make coverage-extras, #2042): in
         # shard 1 they made it the one 85+ min job. test-nofrost alone is the
         # longest (564 s on 4 CPUs of the lane node, the rest 379 s, shard 1's
@@ -1355,7 +1355,7 @@ jobs:
         env:
           IN_IMAGE_NETWORK: bridge
           IN_IMAGE_EXPORT: ${{ !startsWith(matrix.shard, 'extras-') && format('build/coverage/shard-{0}.out', matrix.shard) || '' }}
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard SHARD=${{ matrix.shard }} SHARDS=6 GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard SHARD=${{ matrix.shard }} SHARDS=10 GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
       - name: Upload the shard profile (GitHub)
         if: ${{ success() && !startsWith(matrix.shard, 'extras-') && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
@@ -1425,7 +1425,7 @@ jobs:
 
       - name: make coverage-merge (the threshold)
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge SHARDS=6 GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge SHARDS=10 GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
 
       - name: Tear down
         if: always()
@@ -2131,6 +2131,7 @@ jobs:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
+          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           set -e
           sh .github/scripts/disk-usage.sh "before the build"
@@ -2367,6 +2368,7 @@ jobs:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
+          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           set -e
           (cd sdk/go && go test -race -timeout 60m -v -tags codec_json ./...)
@@ -2378,6 +2380,7 @@ jobs:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
+          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           set -e
           cd xkey
@@ -2492,6 +2495,7 @@ jobs:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
+          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
           TAGS: ${{ matrix.tags }}
         run: |
           set -e
@@ -2644,6 +2648,7 @@ jobs:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
+          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           set -e
           mkdir -p /tmp/softhsm2/tokens
@@ -2734,6 +2739,7 @@ jobs:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
+          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           make test-tpm2-simulator
 

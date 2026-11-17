@@ -13,7 +13,7 @@ import (
 )
 
 // coverageShards is the coverage job's shard count in ci.yml.
-const coverageShards = 6
+const coverageShards = 10
 
 // TestCoverageRunsAsShardsThenOneThreshold pins the unit suite to package
 // shards, each its own job with its own timeout, whose profiles one threshold
