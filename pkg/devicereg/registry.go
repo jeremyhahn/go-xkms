@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -39,9 +38,6 @@ const (
 
 	// maxIDLen is the longest device ID ValidateID accepts.
 	maxIDLen = 128
-
-	// listPageSize is the page size List reads records in.
-	listPageSize = 1000
 )
 
 // Device is one paired device of a tenant. Its field names follow the
@@ -94,8 +90,11 @@ func idChar(c byte) bool {
 // entity is a Device as the qrdb DAO stores it, keyed by the tenant-scoped
 // natural key.
 type entity struct {
-	ID     uint64 `json:"id"`
-	Key    string `json:"key"`
+	ID  uint64 `json:"id"`
+	Key string `json:"key"`
+	// Tenant is the record's tenant prefix, indexed so List reads only the
+	// tenant's own records.
+	Tenant string `json:"tenant" index:"true"`
 	Device Device `json:"device"`
 }
 
@@ -140,13 +139,17 @@ func (r *Registry) Pair(ctx context.Context, tenant string, device *Device) erro
 	if device == nil || len(device.IdentityKey) == 0 || device.RevokedAt != nil {
 		return fmt.Errorf("%w: a pair needs an unrevoked device with an identity key", ErrInvalidDevice)
 	}
+	prefix, err := tenantPrefix(tenant)
+	if err != nil {
+		return err
+	}
 	key, err := recordKey(tenant, device.ID)
 	if err != nil {
 		return err
 	}
 	record := *device
 	record.IdentityKey = bytes.Clone(device.IdentityKey)
-	stored, err := r.records.SaveIfAbsent(ctx, &entity{Key: key, Device: record})
+	stored, err := r.records.SaveIfAbsent(ctx, &entity{Key: key, Tenant: prefix, Device: record})
 	if err != nil {
 		return &StoreError{Op: "pair", ID: device.ID, Err: err}
 	}
@@ -175,16 +178,7 @@ func (r *Registry) List(ctx context.Context, tenant string) ([]*Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	var entities []*entity
-	query := qrdbsdk.PageQuery{Page: 1, PageSize: listPageSize}
-	err = r.records.ForEachPage(ctx, query, func(page qrdbsdk.PageResult[*entity]) error {
-		for _, e := range page.Entities {
-			if strings.HasPrefix(e.Key, prefix) {
-				entities = append(entities, e)
-			}
-		}
-		return nil
-	})
+	entities, err := r.records.Find(ctx).Where("Tenant = ?", prefix).Execute()
 	if err != nil {
 		return nil, &StoreError{Op: "list", Err: err}
 	}
