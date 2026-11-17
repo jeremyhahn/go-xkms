@@ -686,6 +686,47 @@ func TestGetKey_AllFormats(t *testing.T) {
 	}
 }
 
+// TestGetKey_P256NamesAlgorithm covers #2257: key get on a P-256 key printed
+// "Algorithm: 0" because the get path dropped the response's algorithm.
+func TestGetKey_P256NamesAlgorithm(t *testing.T) {
+	for _, format := range []string{"text", "json", "table"} {
+		t.Run(format, func(t *testing.T) {
+			mockClient := &mockKeyClient{
+				getKeyResp: &client.GetKeyResponse{
+					KeyInfo: client.KeyInfo{
+						KeyID:     "p256-key",
+						KeyType:   "signing",
+						Algorithm: "ECDSA",
+						Curve:     "P-256",
+						Backend:   "software",
+					},
+				},
+			}
+			buf := new(bytes.Buffer)
+			cfg := &Config{
+				Backend: "software",
+				ClientFactory: func(cfg *Config) (client.Client, error) {
+					return mockClient, nil
+				},
+			}
+
+			getKey(cfg, NewPrinter(format, buf), "p256-key")
+
+			output := buf.String()
+			for _, want := range []string{"ECDSA", "P-256"} {
+				if !strings.Contains(output, want) {
+					t.Errorf("key get output should name %q, got: %s", want, output)
+				}
+			}
+			for _, bad := range []string{"Algorithm: 0", "Algorithm:  0", `"algorithm": 0`, `"algorithm":0`} {
+				if strings.Contains(output, bad) {
+					t.Errorf("key get output prints %q, got: %s", bad, output)
+				}
+			}
+		})
+	}
+}
+
 // Test deleteKey function
 func TestDeleteKey_Success(t *testing.T) {
 	mockClient := &mockKeyClient{
