@@ -38,14 +38,14 @@ the row; the coordinator ruled the requirement text stays.
   claim or expect go-qrdb's refusal.
 - `TestMTLSAuthenticator_BoundUser_AsOnMain`: bound-user path unchanged.
 
-## Codex P1 on e6efbde90 fixed (2026-11-16)
+## Codex reviews fixed
 
-The PR had changed the bound-user path (`userIdentity`) beyond the row.
-Test c03110e74, fix 12c5b98c7: `userIdentity` is as on main (no
-certificate tenant check), `certTenant` and `auth.CertificateTenantMismatchError`
-removed, pkg/acme/admin keeps its own `CertificateTenantMismatchError` as
-on main. Bound-user refusal cases deleted from
-`TestMTLSAuthenticator_BoundUserTenant_QRDBRule`. HEAD after the docs commit.
+- e6efbde90 P1 (11-16): bound-user path (`userIdentity`) as on main;
+  test c03110e74, fix 12c5b98c7; refusal cases deleted from
+  `TestMTLSAuthenticator_BoundUserTenant_QRDBRule`.
+- 0f15f7600 P1 (11-17): REST/gRPC mTLS fixtures sign the tenant claim
+  (`testutil.GenerateTestTenantClientCert`), no-tenant cert refused on
+  both transports (97490a71c). P2: changelog says no-OU certs are refused.
 
 ## Open
 
