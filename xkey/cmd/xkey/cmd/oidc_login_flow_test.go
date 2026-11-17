@@ -141,7 +141,7 @@ func (f *oidcLoginFlow) authorizationURL(t *testing.T, issuer string) *url.URL {
 			}
 		}
 		return false
-	}, 10*time.Second, 20*time.Millisecond)
+	}, slowStoreWait, 20*time.Millisecond)
 	if !printed {
 		t.Fatalf("no authorization URL was printed; output:\n%s", f.out.String())
 	}
@@ -168,7 +168,7 @@ func (f *oidcLoginFlow) result(t *testing.T) error {
 	select {
 	case err := <-f.done:
 		return err
-	case <-time.After(10 * time.Second):
+	case <-time.After(slowStoreWait):
 		t.Fatal("the login did not finish after the callback")
 		return nil
 	}

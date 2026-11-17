@@ -239,13 +239,13 @@ func TestRunAWSLogin_StateMismatch(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		return true
-	}, 5*time.Second, 20*time.Millisecond, "callback server never accepted a connection")
+	}, slowStoreWait, 20*time.Millisecond, "callback server never accepted a connection")
 
 	select {
 	case err := <-done:
 		require.Error(t, err)
 		assert.ErrorIs(t, err, aws.ErrStateMismatch)
-	case <-time.After(5 * time.Second):
+	case <-time.After(slowStoreWait):
 		t.Fatal("runAWSLogin did not return after the mismatched callback")
 	}
 }
@@ -337,12 +337,12 @@ func awsAutoRefreshUntil(t *testing.T, client *aws.Client, output, credentialsFi
 			output, "", sessionStore, "", 10*time.Millisecond, log, stop)
 	}()
 
-	reached := assert.Eventually(t, func() bool { return ready(log.String()) }, 5*time.Second, 10*time.Millisecond)
+	reached := assert.Eventually(t, func() bool { return ready(log.String()) }, slowStoreWait, 10*time.Millisecond)
 	close(stop)
 	select {
 	case err := <-done:
 		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(slowStoreWait):
 		t.Fatal("the AWS refresh loop did not stop after its stop channel closed")
 	}
 	if !reached {
