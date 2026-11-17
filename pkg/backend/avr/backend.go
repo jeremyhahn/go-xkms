@@ -190,7 +190,9 @@ func (b *Backend) initAttestation() error {
 
 	// Refused here rather than at the first attestation: a reference of the
 	// wrong length can match no device, so every enrolment would fail.
-	if ref := b.config.Attestation.ApplicationReference; len(ref) > 0 {
+	// Only nil means "no reference": an empty, non-nil slice is a wrong
+	// length like any other, never a silent skip of the match.
+	if ref := b.config.Attestation.ApplicationReference; ref != nil {
 		if len(ref) != 32 {
 			return &errs.Detail{
 				Err:    dice.ErrInvalidApplicationReference,
