@@ -10,9 +10,16 @@
   let backends = $state<BackendInfo[]>([]);
   let error = $state<string | null>(null);
   let loading = $state(true);
+  // Set when backends:list is refused: the backend is typed, not picked.
+  let listRefused = $state(false);
 
   let backend = $state("");
+  // The capability read (keys:get) is advisory: POST /seal needs only
+  // keys:encrypt. null = not known (not checked, or the read was refused),
+  // and only a definite false blocks Seal.
   let canSeal = $state<boolean | null>(null);
+  let capChecking = $state(false);
+  let capError = $state<string | null>(null);
   let keyId = $state("");
   let text = $state("");
   let aad = $state("");
@@ -38,27 +45,39 @@
       backends = (await getSDKClient().backends.list()).backends;
     } catch (e) {
       error = message(e);
+      listRefused = true;
     } finally {
       loading = false;
     }
   }
 
-  async function checkCapability(): Promise<void> {
-    const id = backend;
+  function resetCapability(): void {
     canSeal = null;
+    capChecking = false;
+    capError = null;
+  }
+
+  async function checkCapability(): Promise<void> {
+    const id = backend.trim();
+    resetCapability();
     if (id === "") return;
+    capChecking = true;
     try {
       const resp = await getSDKClient().seal.capability(id);
-      if (backend === id) canSeal = resp.can_seal;
+      if (backend.trim() === id) canSeal = resp.can_seal;
     } catch (e) {
-      showToast("error", message(e));
+      if (backend.trim() === id) capError = message(e);
+    } finally {
+      if (backend.trim() === id) capChecking = false;
     }
   }
+
+  const sealReady = $derived(!busy && backend.trim() !== "" && text !== "" && !capChecking && canSeal !== false);
 
   async function doSeal(): Promise<void> {
     busy = true;
     try {
-      const req: SealRequest = { backend, data: textToB64(text) };
+      const req: SealRequest = { backend: backend.trim(), data: textToB64(text) };
       if (keyId !== "") req.key_id = keyId;
       if (aad !== "") req.aad = textToB64(aad);
       if (password !== "") req.password = password;
@@ -145,24 +164,39 @@
   <div class="grid gap-6 lg:grid-cols-2">
     <section class="space-y-3" aria-labelledby="seal-title">
       <h2 id="seal-title" class="text-lg font-semibold">Seal</h2>
-      <!-- A refused backend list only empties the picker; Unseal reads the
-           backend from the pasted result and needs no list. -->
+      <!-- A refused backend list turns the picker into a typed field; Unseal
+           reads the backend from the pasted result and needs no list. -->
       {#if error}<Alert kind="error"><span>{error}</span></Alert>{/if}
-      <select class="select select-bordered w-full" aria-label="Backend" bind:value={backend} onchange={checkCapability}>
-        <option value="" disabled>Choose a backend</option>
-        {#each backends as b (b.id)}
-          <option value={b.id}>{b.id}</option>
-        {/each}
-      </select>
+      {#if listRefused}
+        <input
+          class="input input-bordered w-full"
+          aria-label="Backend"
+          placeholder="Backend (e.g. tpm2)"
+          bind:value={backend}
+          oninput={resetCapability}
+          onchange={checkCapability}
+        />
+      {:else}
+        <select class="select select-bordered w-full" aria-label="Backend" bind:value={backend} onchange={checkCapability}>
+          <option value="" disabled>Choose a backend</option>
+          {#each backends as b (b.id)}
+            <option value={b.id}>{b.id}</option>
+          {/each}
+        </select>
+      {/if}
       {#if canSeal === false}
-        <p class="text-sm text-error">Backend {backend} cannot seal.</p>
+        <p class="text-sm text-error">Backend {backend.trim()} cannot seal.</p>
+      {:else if capError}
+        <p class="text-sm text-warning">
+          Could not check whether backend {backend.trim()} can seal ({capError}); the server checks when you seal.
+        </p>
       {/if}
       <input class="input input-bordered w-full" aria-label="Key ID" placeholder="Key ID (optional)" bind:value={keyId} />
       <textarea class="textarea textarea-bordered w-full" aria-label="Text to seal" placeholder="Text to seal" rows="3" bind:value={text}></textarea>
       <input class="input input-bordered w-full" aria-label="AAD" placeholder="AAD (optional)" bind:value={aad} />
       <input class="input input-bordered w-full" type="password" aria-label="Password" placeholder="Password (optional)" bind:value={password} />
       <input class="input input-bordered w-full" aria-label="TPM policy" placeholder="TPM policy (optional)" bind:value={tpmPolicy} />
-      <button class="btn btn-primary" onclick={doSeal} disabled={busy || backend === "" || text === "" || canSeal !== true}>Seal</button>
+      <button class="btn btn-primary" onclick={doSeal} disabled={!sealReady}>Seal</button>
       {#if result}
         <pre class="bg-base-200 rounded p-3 text-xs overflow-x-auto" aria-label="Seal result">{JSON.stringify(result, null, 2)}</pre>
         <button class="btn btn-ghost btn-sm" onclick={copyResult}>Copy</button>
