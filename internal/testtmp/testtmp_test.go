@@ -1,0 +1,70 @@
+package testtmp
+
+import (
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// failingSocketDir is a directory name as long as the ones t.TempDir() makes
+// for the tests that failed on the self-hosted race pool.
+const failingSocketDir = "TestNewQRDBControlTransport_PlaintextBearerTLS_carries_the_token1234567890"
+
+func TestShort_unix_socket_binds_under_a_deep_TMPDIR(t *testing.T) {
+	deep := filepath.Join(os.TempDir(), "a-deep-runner-work-directory-like-home-runner-_work-_temp-"+strings.Repeat("x", 40))
+	if len(deep) <= 80 {
+		t.Fatalf("deep TMPDIR %q is only %d bytes", deep, len(deep))
+	}
+	if err := os.MkdirAll(deep, 0o700); err != nil {
+		t.Fatalf("creating deep TMPDIR: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(deep) })
+	t.Setenv("TMPDIR", deep)
+
+	var short string
+	var bindErr error
+	code := Short(func() int {
+		short = os.TempDir()
+		dir, err := os.MkdirTemp(short, failingSocketDir)
+		if err != nil {
+			bindErr = err
+			return 1
+		}
+		sock := filepath.Join(dir, "001", "xkms.sock")
+		if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+			bindErr = err
+			return 1
+		}
+		ln, err := net.Listen("unix", sock)
+		if err != nil {
+			bindErr = err
+			return 1
+		}
+		_ = ln.Close()
+		return 0
+	})
+
+	if bindErr != nil {
+		t.Fatalf("binding a unix socket under the run's TMPDIR %q: %v", short, bindErr)
+	}
+	if code != 0 {
+		t.Fatalf("Short returned %d, want 0", code)
+	}
+	if got := os.Getenv("TMPDIR"); got != deep {
+		t.Fatalf("TMPDIR after Short = %q, want %q restored", got, deep)
+	}
+	if short == deep {
+		t.Fatalf("Short kept the deep TMPDIR %q for the run", deep)
+	}
+	if _, err := os.Stat(short); !os.IsNotExist(err) {
+		t.Fatalf("short directory %q still exists after Short (stat err %v)", short, err)
+	}
+}
+
+func TestShort_returns_the_run_exit_code(t *testing.T) {
+	if got := Short(func() int { return 3 }); got != 3 {
+		t.Fatalf("Short returned %d, want 3", got)
+	}
+}
