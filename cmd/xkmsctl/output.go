@@ -199,7 +199,7 @@ func (p *Printer) PrintKeyInfo(key *client.KeyAttributes) error {
 		info := map[string]interface{}{
 			"cn":        key.CN,
 			"type":      key.KeyType,
-			"algorithm": key.KeyAlgorithm,
+			"algorithm": key.KeyAlgorithm.String(),
 			"store":     key.StoreType,
 			"hash":      key.Hash,
 		}
@@ -210,7 +210,7 @@ func (p *Printer) PrintKeyInfo(key *client.KeyAttributes) error {
 			info["rsa_key_size"] = key.RSAAttributes.KeySize
 		}
 		if key.ECCAttributes != nil {
-			info["ecc_curve"] = key.ECCAttributes.Curve
+			info["ecc_curve"] = curveName(key.ECCAttributes.Curve)
 		}
 		return p.printJSON(info)
 	case OutputFormatTable, OutputFormatText:
@@ -227,7 +227,7 @@ func (p *Printer) PrintKeyInfo(key *client.KeyAttributes) error {
 			p.writer.printf("  RSA Size:  %d bits\n", key.RSAAttributes.KeySize)
 		}
 		if key.ECCAttributes != nil {
-			p.writer.printf("  ECC Curve: %s\n", key.ECCAttributes.Curve)
+			p.writer.printf("  ECC Curve: %s\n", curveName(key.ECCAttributes.Curve))
 		}
 		return p.writer.Err()
 	default:
