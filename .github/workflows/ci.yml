@@ -2125,13 +2125,22 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
+      # socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX (worst case 100 bytes with
+      # t.TempDir's 74 and /001/xkms.sock) and removes it in its last step.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+
       - name: Backend-tagged binaries and the acme-client GUI (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
-          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           set -e
           sh .github/scripts/disk-usage.sh "before the build"
@@ -2159,6 +2168,10 @@ jobs:
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # nested-module-build: sdk/go, xkey and web/desktop are separate modules
   # that `./...` from the root never enters, so they must still COMPILE on
@@ -2362,13 +2375,22 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
+      # socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX (worst case 100 bytes with
+      # t.TempDir's 74 and /001/xkms.sock) and removes it in its last step.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+
       - name: sdk/go and web/desktop tests (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
-          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           set -e
           (cd sdk/go && go test -race -timeout 60m -v -tags codec_json ./...)
@@ -2380,7 +2402,6 @@ jobs:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
-          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           set -e
           cd xkey
@@ -2404,6 +2425,10 @@ jobs:
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # build-raft: the default build is standalone; `-tags raft` is the
   # clustered configuration, and each leg tests a different half of
@@ -2489,13 +2514,22 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
+      # socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX (worst case 100 bytes with
+      # t.TempDir's 74 and /001/xkms.sock) and removes it in its last step.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+
       - name: Build, vet and test (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
-          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
           TAGS: ${{ matrix.tags }}
         run: |
           set -e
@@ -2506,6 +2540,10 @@ jobs:
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # race: the race detector over every backend, FROST included, on SoftHSM
   # with a token at slot 0 and the trusted-firmware simulators (sdk/go/tfwsim;
@@ -2642,13 +2680,22 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
+      # socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX (worst case 100 bytes with
+      # t.TempDir's 74 and /001/xkms.sock) and removes it in its last step.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+
       - name: Race detector, all backends including FROST (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
-          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           set -e
           mkdir -p /tmp/softhsm2/tokens
@@ -2663,6 +2710,10 @@ jobs:
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # tpm2-simulator: pkg/tpm2 against the in-process TPM simulator
   # (go-tpm-tools, cgo against libcrypto); pkg/tpm2/vtpm supervises swtpm.
@@ -2733,19 +2784,32 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # A per-job TMPDIR (#2183): the runner's _work/_temp made t.TempDir Unix
+      # socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX (worst case 100 bytes with
+      # t.TempDir's 74 and /001/xkms.sock) and removes it in its last step.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+
       - name: pkg/tpm2 on the simulator (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
-          TMPDIR: /tmp  # sun_path: t.TempDir under the runner's _work/_temp overflows a Unix socket path
         run: |
           make test-tpm2-simulator
 
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'
         run: scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # Job 8 (FIPS 140-3 gate) IS NOT HERE ON PURPOSE. Do not re-add it without
   # reading go-xkms #23 first. The code half landed; the job is withheld until
