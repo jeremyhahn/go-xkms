@@ -37,3 +37,6 @@
   - Nested Module Tests, every step of ci.yml:2187-2215 (sdk/go, web/desktop, the four xkey go test -race sets, go vet -tags ble): PASS.
   - Race Detector, ci.yml:2437-2440 (make agsim, then go test -race -p 2 with the job's tags over ./...): every package PASS except pkg/backend/pkcs11. There, TestEnclaveProvider_Conformance/KeyProtector_conformance and TestSupportedSoftHSM_ReportsTamperAsSealedDataAuthentication fail because this host has SoftHSM 2.6.1, which answers a GCM tag mismatch with CKR_GENERAL_ERROR. The test asks for 2.7+ (scripts/build-softhsm.sh). The cause is the host, not the branch; the CI image's SoftHSM decides it.
   - No code cause reproduces for either job. The lane cannot read the CI job logs (no forge credentials), so the next CI run on this tip decides.
+- af2080g 11-17 (lane-verify: origin/main eb4da3f6a not an ancestor): origin/main eb4da3f6a merged (d94871d3e mcptool streamable transport, 0edde063d and eb4da3f6a CI, f422814e9 security-event evidence), no conflicts.
+  - go build -mod=readonly in root, sdk/go, xkey, web/desktop: PASS; go test -race (codec tags) ./pkg/mcptool/... ./pkg/types/...: PASS.
+  - make deps-check (merged tree): FAIL, golang.org/x/term v0.48.0 (root, xkey) and x/text v0.44.0 (root) now 7+ days old. Bumped, all four modules tidied (x/sync v0.25.0 indirect); make deps-check: PASS; readonly builds: PASS.
