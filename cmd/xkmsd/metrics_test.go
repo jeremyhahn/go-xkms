@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	acmemetrics "github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
@@ -65,7 +66,7 @@ func TestXkmsdMetrics_ACMERegistryReachesServerMetrics(t *testing.T) {
 			Unix: true,
 		},
 		Unix: config.UnixConfig{
-			SocketPath: filepath.Join(tempDir, "xkms.sock"),
+			SocketPath: filepath.Join(testsupport.SocketDir(t), "xkms.sock"),
 		},
 		Logging:   config.LoggingConfig{Level: "error", Format: "json"},
 		TLS:       config.TLSConfig{Enabled: true},

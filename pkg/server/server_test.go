@@ -34,6 +34,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -62,13 +63,9 @@ func newServerWithCleanup(t testing.TB, cfg *config.Config, opts ...Option) (*Se
 func createMinimalConfig(t *testing.T) *config.Config {
 	t.Helper()
 	tempDir := t.TempDir()
-	// t.TempDir()'s per-call leaf directory is created with mode 0o777 (see
-	// testing.(*common).makeTempDir), so its effective mode depends on the
-	// process umask and can come out group- or world-writable (e.g. umask
-	// 002). This config uses tempDir as the Unix socket directory
-	// (Unix.SocketPath below) -- chmod it the way a real daemon's runtime
-	// directory would be.
-	require.NoError(t, os.Chmod(tempDir, 0700))
+	// The Unix socket (Unix.SocketPath below) lives in testsupport.SocketDir,
+	// a short mode-0700 directory directly under os.TempDir, so its path fits
+	// sun_path under a long runner TMPDIR.
 
 	return &config.Config{
 		Server: config.ServerConfig{
@@ -86,7 +83,7 @@ func createMinimalConfig(t *testing.T) *config.Config {
 			MCP:  false,
 		},
 		Unix: config.UnixConfig{
-			SocketPath: filepath.Join(tempDir, "xkms.sock"),
+			SocketPath: filepath.Join(testsupport.SocketDir(t), "xkms.sock"),
 		},
 		Logging: config.LoggingConfig{
 			Level:  "info",
@@ -1698,7 +1695,7 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 			GRPC: false,
 		},
 		Unix: config.UnixConfig{
-			SocketPath: filepath.Join(tempDir, "xkms.sock"),
+			SocketPath: filepath.Join(testsupport.SocketDir(t), "xkms.sock"),
 		},
 		Logging: config.LoggingConfig{
 			Level:  "info",
@@ -2716,7 +2713,7 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 			GRPC: false,
 		},
 		Unix: config.UnixConfig{
-			SocketPath: filepath.Join(tempDir, "xkms.sock"),
+			SocketPath: filepath.Join(testsupport.SocketDir(t), "xkms.sock"),
 		},
 		Logging: config.LoggingConfig{
 			Level:  "info",

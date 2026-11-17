@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	apitransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	mcptransport "github.com/jeremyhahn/go-xkms/pkg/api/transport/mcp"
@@ -142,7 +143,7 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 	// would.
 	socketDir := t.TempDir()
 	require.NoError(t, os.Chmod(socketDir, 0o700))
-	socketPath := filepath.Join(socketDir, "xkms.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "xkms.sock")
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
