@@ -21,7 +21,9 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -91,7 +93,7 @@ func (b *PKCS8Backend) Capabilities() types.Capabilities {
 // Exportable, Hash and KeyOrigin. There is a single supported shape; every
 // field is read directly from whatever record exists, with no
 // version-gated inference.
-const keyMetadataSchemaVersion = 2
+const keyMetadataSchemaVersion = 3
 
 // keyMetadata is the record persisted alongside a key's PKCS#8 bytes to carry
 // the attributes the key identifier cannot express.
@@ -142,6 +144,11 @@ type keyMetadata struct {
 	// service layer stamps it from the code path that ran, so that a relying
 	// party reading it is reading a fact rather than an assertion.
 	KeyOrigin string `json:"key_origin,omitempty"`
+
+	// BlobSHA256 binds the record to the one key blob it describes (see
+	// blobBinding). A record that does not match the blob stored under its
+	// identifier describes another key and is never applied (#2231).
+	BlobSHA256 string `json:"blob_sha256"`
 }
 
 // newKeyMetadata builds the current-schema record for attrs.
@@ -206,43 +213,100 @@ func (b *PKCS8Backend) loadKeyMetadata(ctx context.Context, keyID string) *keyMe
 			"schemaVersion", metadata.SchemaVersion, "want", keyMetadataSchemaVersion)
 		return nil
 	}
+	// The record applies only to the blob it is bound to: an orphan of an
+	// earlier key under this identifier, read before the current key's own
+	// record is written, must not lend it a tenant, export policy or origin.
+	blob, err := storage.GetKey(ctx, b.storage, keyID)
+	if err != nil || !recordBindsBlob(data, blob) {
+		slog.Debug("pkcs8: key metadata record is not bound to the stored key",
+			"keyID", keyID, "metaKey", metadataPath(keyID))
+		return nil
+	}
 	return &metadata
 }
 
-// clearOrphanedMetadata removes keyID's metadata record when keyID has no key
-// blob: such a record is the remnant of a delete interrupted between its two
-// storage calls (#2231), and a new key under keyID must not inherit it. A key
-// that still exists keeps its record.
-func (b *PKCS8Backend) clearOrphanedMetadata(ctx context.Context, keyID string) error {
-	exists, err := storage.KeyExists(ctx, b.storage, keyID)
-	if err != nil {
-		return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
-	}
-	if exists {
-		// A live key keeps its record; SaveKeyIfAbsent reports the clash.
-		return nil
-	}
-	orphaned, err := b.storage.Exists(ctx, metadataPath(keyID))
-	if err != nil {
-		return &errs.Wrapped{Msg: "failed to check key metadata", Err: err}
-	}
-	if !orphaned {
-		return nil
-	}
-	_, err = b.removeKeyMetadata(ctx, keyID)
-	return err
+// blobBindingPrefix domain-separates the digest that binds a metadata record
+// to the key blob it describes.
+const blobBindingPrefix = "go-xkms pkcs8 key-metadata blob binding v1\x00"
+
+// blobBinding returns the digest that binds a metadata record to blob.
+//
+// The blob and its record are two storage writes, so a record can outlive its
+// blob (a delete interrupted between them) and a new key under the same
+// identifier can be published before its own record is written (#2231). The
+// binding makes a record describe one blob only: a reader honours it only
+// when it matches the blob stored now, so an orphan is inert without anyone
+// deleting it, and no generator ever has to touch a record it did not write.
+// The blob is a freshly generated or imported private key, so its digest
+// discloses nothing about it.
+func blobBinding(blob []byte) string {
+	h := sha256.New()
+	h.Write([]byte(blobBindingPrefix))
+	h.Write(blob)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
-// removeKeyMetadata deletes keyID's metadata record and reports whether there
-// was none to delete.
-func (b *PKCS8Backend) removeKeyMetadata(ctx context.Context, keyID string) (missing bool, err error) {
-	if err := b.storage.Delete(ctx, metadataPath(keyID)); err != nil {
+// recordBindsBlob reports whether the encoded record data is a readable
+// current-schema record bound to blob.
+func recordBindsBlob(data, blob []byte) bool {
+	var metadata keyMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return false
+	}
+	return metadata.SchemaVersion == keyMetadataSchemaVersion &&
+		metadata.BlobSHA256 != "" && metadata.BlobSHA256 == blobBinding(blob)
+}
+
+// marshalBoundMetadata encodes attrs' record bound to blob.
+func marshalBoundMetadata(attrs *types.KeyAttributes, blob []byte) ([]byte, error) {
+	record := newKeyMetadata(attrs)
+	record.BlobSHA256 = blobBinding(blob)
+	data, err := json.Marshal(record)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to marshal key metadata", Err: err}
+	}
+	return data, nil
+}
+
+// removeUnboundMetadata deletes keyID's metadata record unless it is bound to
+// the key blob stored under keyID now, and reports whether it removed one.
+//
+// A record bound to the live blob belongs to a key another writer created
+// after this caller's blob delete; it is kept. Otherwise the delete is
+// conditioned on the record bytes read here wherever the storage offers a
+// guarded delete, so a record rewritten in between is never removed.
+func (b *PKCS8Backend) removeUnboundMetadata(ctx context.Context, keyID string) (removed bool, err error) {
+	metaKey := metadataPath(keyID)
+	record, err := b.storage.Get(ctx, metaKey)
+	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return true, nil
+			return false, nil
+		}
+		return false, &errs.Wrapped{Msg: "failed to read key metadata", Err: err}
+	}
+	live, err := storage.GetKey(ctx, b.storage, keyID)
+	switch {
+	case err == nil:
+		if recordBindsBlob(record, live) {
+			return false, nil
+		}
+	case !errors.Is(err, storage.ErrNotFound):
+		return false, &errs.Wrapped{Msg: "failed to read key", Err: err}
+	}
+	if cad, ok := b.storage.(storage.CompareAndDeleter); ok && storage.GuardedWritesUsable(b.storage) {
+		deleted, err := cad.CompareAndDelete(ctx, metaKey, record)
+		if err != nil {
+			return false, &errs.Wrapped{Msg: "failed to delete key metadata", Err: err}
+		}
+		return deleted, nil
+	}
+	if err := b.storage.Delete(ctx, metaKey); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, nil
 		}
 		return false, &errs.Wrapped{Msg: "failed to delete key metadata", Err: err}
 	}
-	return false, nil
+	return true, nil
 }
 
 // GenerateKey generates a new private key with the given attributes.
@@ -305,12 +369,9 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	if err != nil {
 		return nil, err
 	}
-	// A metadata record whose blob is missing is an orphan of an interrupted
-	// delete (#2231); clear it before the new key becomes visible so the key
-	// never reads, even briefly, as carrying the old tenant or Exportable flag.
-	if err := b.clearOrphanedMetadata(ctx, keyID); err != nil {
-		return nil, err
-	}
+	// A record left by an earlier key of this identifier is not touched: it
+	// is bound to that key's blob, so no reader applies it to this one, and a
+	// generator that loses SaveKeyIfAbsent must not touch the winner's record.
 	stored, err := storage.SaveKeyIfAbsent(ctx, b.storage, keyID, keyData)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to store key", Err: err}
@@ -322,9 +383,9 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	// Store the metadata record. It carries the attributes the key identifier
 	// cannot unambiguously encode -- the tenant above all -- so it is written
 	// in the same operation as the key material and rolled back with it.
-	metadataBytes, err := json.Marshal(newKeyMetadata(attrs))
+	metadataBytes, err := marshalBoundMetadata(attrs, keyData)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
+		return nil, err
 	}
 	metaKey := metadataPath(keyID)
 	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
@@ -394,18 +455,17 @@ func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 		blobMissing = true
 	}
 
-	// Remove the metadata record so a deleted key leaves no orphaned tenant or
-	// Exportable flag behind for a future key of the same identifier to
-	// inherit. The blob and the record are two storage calls, so a delete
-	// interrupted between them leaves the record alone; it is removed here
-	// even when the blob is already gone, which makes a retried delete finish
-	// the job (#2231). The blob goes first: a blob without its record would
-	// lose its tenant binding.
-	metaMissing, err := b.removeKeyMetadata(ctx, keyID)
+	// Remove the metadata record too. The blob and the record are two storage
+	// calls, so a delete interrupted between them leaves the record; it is
+	// removed here even when the blob is already gone, which makes a retried
+	// delete finish the job (#2231). A record bound to a blob stored now
+	// belongs to a key created since, and is kept. The blob goes first: a blob
+	// without its record would lose its tenant binding.
+	removed, err := b.removeUnboundMetadata(ctx, keyID)
 	if err != nil {
 		return err
 	}
-	if blobMissing && metaMissing {
+	if blobMissing && !removed {
 		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 	}
 
@@ -952,9 +1012,15 @@ func WriteKeyMetadata(ctx context.Context, store storage.Backend, keyID string, 
 	if attrs == nil {
 		return nil
 	}
-	data, err := json.Marshal(newKeyMetadata(attrs))
+	// The record is bound to the blob stored under keyID now, so it must be
+	// written after the key material.
+	blob, err := storage.GetKey(ctx, store, keyID)
 	if err != nil {
-		return &errs.Wrapped{Msg: "failed to marshal key metadata", Err: err}
+		return &errs.Wrapped{Msg: "failed to read key for its metadata record", Err: err}
+	}
+	data, err := marshalBoundMetadata(attrs, blob)
+	if err != nil {
+		return err
 	}
 	if err := store.Put(ctx, metadataPath(keyID), data); err != nil {
 		return &errs.Wrapped{Msg: "failed to store key metadata", Err: err}
