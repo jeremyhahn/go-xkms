@@ -50,6 +50,25 @@ type Store struct {
 
 	// locks holds one *sync.Mutex per record name.
 	locks sync.Map
+
+	// now is the store's clock (SetClock); nil means time.Now.
+	now func() time.Time
+}
+
+// SetClock sets the clock the store dates and expires rotation claims by
+// (ClaimTTL); nil restores time.Now. It is for tests that model a claim
+// expiring, or processes whose clocks differ, and must be set before the
+// store is used.
+func (s *Store) SetClock(now func() time.Time) {
+	s.now = now
+}
+
+// clock returns the store's current time.
+func (s *Store) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 // NewStore returns a Store whose DAO daos builds over DatabaseName.
@@ -180,7 +199,7 @@ func (s *Store) Claim(ctx context.Context, tenant, backend, keyID string, expect
 	if _, err := rand.Read(nonce); err != nil {
 		return "", &StoreError{Op: "claim", Key: name, Err: err}
 	}
-	claim := &rotationClaim{Token: hex.EncodeToString(nonce), Expires: time.Now().UTC().Add(ClaimTTL)}
+	claim := &rotationClaim{Token: hex.EncodeToString(nonce), Expires: s.clock().UTC().Add(ClaimTTL)}
 	conflict := &VersionConflictError{KeyID: keyID, Backend: backend}
 	if expected == nil {
 		stored, err := s.records.SaveIfAbsent(ctx, &Entity{Name: name, Record: *Implicit(keyID, backend), Claim: claim})
@@ -199,7 +218,7 @@ func (s *Store) Claim(ctx context.Context, tenant, backend, keyID string, expect
 	if err != nil {
 		return "", &StoreError{Op: "get", Key: name, Err: err}
 	}
-	if current.Claim != nil && time.Now().Before(current.Claim.Expires) {
+	if current.Claim != nil && s.clock().Before(current.Claim.Expires) {
 		return "", conflict
 	}
 	// The swap compares the stored record against expected itself, and
