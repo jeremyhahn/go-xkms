@@ -28,7 +28,6 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -204,9 +203,9 @@ func TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick(t *testing.T
 	// request only arrives once the third tick has finished saving through
 	// the store, and waiting on it avoids reading the loop's log buffer while
 	// the loop is still writing to it.
-	var refreshes atomic.Int32
+	refreshes := newEventCounter(4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		refreshes.Add(1)
+		refreshes.Add()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
 			AccessToken:  xkms.SecretBytes("rotated-access"),
@@ -238,17 +237,15 @@ func TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick(t *testing.T
 		done <- runAutoRefresh(server.URL, "client", store, defaultOIDCTokenStorePath, "", "", 10*time.Millisecond, &buf, oidc.TokenEncodingForm, stop)
 	}()
 
-	require.Eventually(t, func() bool {
-		return refreshes.Load() >= 4
-	}, slowStoreWait, 10*time.Millisecond, "fewer than 4 refresh ticks before the deadline")
-	close(stop)
-
+	// Wait for the fourth token request; a loop that returns early instead
+	// fails here rather than hanging.
 	select {
+	case <-refreshes.reached:
 	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(slowStoreWait):
-		t.Fatal("runAutoRefresh did not stop after its stop channel closed")
+		t.Fatalf("runAutoRefresh returned before its fourth tick: %v; log:\n%s", err, buf.String())
 	}
+	close(stop)
+	require.NoError(t, <-done)
 
 	// The loop has returned, so buf is no longer written concurrently.
 	require.GreaterOrEqual(t, strings.Count(buf.String(), "Token refreshed."), 3,

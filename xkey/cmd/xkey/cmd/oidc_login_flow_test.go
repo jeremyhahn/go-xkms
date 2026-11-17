@@ -115,12 +115,16 @@ func oidcFlowCmd(t *testing.T, flags map[string]string) (*cobra.Command, string)
 // browser: it reads the printed authorization URL and calls the redirect URL
 // the way the provider would send the browser there.
 type oidcLoginFlow struct {
-	out  *lockedBuffer
+	out  *eventLog // reached closes once an authorization URL line is printed
 	done chan error
 }
 
 func startOIDCLogin(cmd *cobra.Command) *oidcLoginFlow {
-	flow := &oidcLoginFlow{out: &lockedBuffer{}, done: make(chan error, 1)}
+	printed := func(log string) bool {
+		// Only complete lines count, so the URL is never read half written.
+		return strings.Contains(log[:strings.LastIndex(log, "\n")+1], "/authorize?")
+	}
+	flow := &oidcLoginFlow{out: newEventLog(printed), done: make(chan error, 1)}
 	cmd.SetOut(flow.out)
 	go func() { flow.done <- runOIDCLogin(cmd, nil) }()
 	return flow
@@ -132,19 +136,13 @@ func (f *oidcLoginFlow) authorizationURL(t *testing.T, issuer string) *url.URL {
 	t.Helper()
 
 	prefix := issuer + "/authorize?"
-	var found string
-	printed := assert.Eventually(t, func() bool {
-		for _, line := range strings.Split(f.out.String(), "\n") {
-			if strings.HasPrefix(line, prefix) {
-				found = line
-				return true
-			}
-		}
-		return false
-	}, slowStoreWait, 20*time.Millisecond)
-	if !printed {
-		t.Fatalf("no authorization URL was printed; output:\n%s", f.out.String())
+	select {
+	case <-f.out.reached:
+	case err := <-f.done:
+		t.Fatalf("the login returned (%v) without printing an authorization URL; output:\n%s", err, f.out.String())
 	}
+	found, ok := completeLineWithPrefix(f.out.String(), prefix)
+	require.True(t, ok, "no authorization URL under %s was printed; output:\n%s", prefix, f.out.String())
 
 	authURL, err := url.Parse(found)
 	require.NoError(t, err)
@@ -165,13 +163,7 @@ func (f *oidcLoginFlow) redirect(t *testing.T, authURL *url.URL, query url.Value
 func (f *oidcLoginFlow) result(t *testing.T) error {
 	t.Helper()
 
-	select {
-	case err := <-f.done:
-		return err
-	case <-time.After(slowStoreWait):
-		t.Fatal("the login did not finish after the callback")
-		return nil
-	}
+	return <-f.done
 }
 
 // TestRunOIDCLogin_CompletesTheCodeFlowForASavedProvider drives the whole
