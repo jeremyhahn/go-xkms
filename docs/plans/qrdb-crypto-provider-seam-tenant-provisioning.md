@@ -222,3 +222,30 @@ approval and the exported APIs) were not started.
   the software backend that returns no key at generation; the real cloud
   providers were not exercised.
 - Still open: findings 3 and 5.
+
+## Codex review round 1 on e23a7115e (lane row2083d)
+
+- Cloud KMS listing (P1, `tenant_ca_keyprovider.go:403`): the AWS KMS,
+  Azure Key Vault and GCP KMS providers list keys without TenantID. The
+  factory reads the tenant from the key name `qrdb-login-ca-<tenant>` and
+  refuses a listed TenantID that disagrees with it. Test 09d31a03a, fix
+  07f0e3855.
+- Failed provenance save (P1, `tenant_ca_keyprovider.go:270`):
+  `EnsureTenant` saves an intent record (`qrdb-login-ca:intent`) before it
+  generates the key and drops it once provenance is saved. A key with the
+  intent but no provenance is finished over the same key; a key with neither
+  is still a collision. The lazy path hands such a key to `EnsureTenant`.
+  Test 866a5e170, fix d7e273ef6.
+- Exported surface (P1, `reserved_keys.go:15`): the login CA key name moved
+  to `internal/loginca` and `ErrReservedKey` is unexported (8aee18946).
+  `pkcs11.Backend.FixedKeySlot` stays exported: pkg/server reaches it
+  through an interface assertion across packages. It needs owner approval or
+  a SPEC mention.
+- Still open, needing the owner:
+  - Migration of the tenant CAs go-qrdb already persisted (P1,
+    `qrdb_node.go:267`), the earlier finding 3.
+  - A cross-node atomic provisioning claim for PKCS#11 (P1,
+    `tenant_ca_keyprovider.go:249`), the earlier finding 5. It needs a
+    cluster-wide claim and a real PKCS#11 run; this lane runs no Docker.
+  - Owner approval of the SPEC row expansion at `docs/SPEC.md:118` (P1).
+    This lane may not edit docs/SPEC.md.
