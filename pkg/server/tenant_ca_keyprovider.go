@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -202,10 +203,10 @@ func (f *tenantCAKeyFactory) TenantIDs(ctx context.Context) ([]string, error) {
 	}
 	seen := make(map[string]struct{})
 	for _, attrs := range keys {
-		if attrs == nil || attrs.CN != tenantLoginCAKeyName(attrs.TenantID) {
+		id, ok := tenantLoginCAKeyTenant(attrs)
+		if !ok {
 			continue
 		}
-		id := scope.TenantName(attrs.TenantID)
 		if tenantLoginCAKeyProvisionedAttrs(ctx, xkms.NewTenantScopedBackend(base, id), attrs) {
 			seen[id] = struct{}{}
 		}
@@ -396,15 +397,37 @@ func tenantLoginCAKeyAttrs(ctx context.Context, base xkms.Backend, tenantID stri
 	if err != nil {
 		return nil, fmt.Errorf("tenant login CA key factory: list keys: %w", err)
 	}
-	// Compare normalized scopes: a backend may report a system key with an
-	// empty TenantID (tpm2 listSystemKeys) though it was made for "system".
 	want := scope.TenantName(tenantID)
 	for _, attrs := range keys {
-		if attrs != nil && attrs.CN == tenantLoginCAKeyName(tenantID) && scope.TenantName(attrs.TenantID) == want {
-			return attrs, nil
+		if id, ok := tenantLoginCAKeyTenant(attrs); ok && id == want {
+			found := *attrs
+			if found.TenantID == "" {
+				found.TenantID = tenantID
+			}
+			return &found, nil
 		}
 	}
 	return nil, errors.New("tenant login CA key factory: the tenant has no login CA key")
+}
+
+// tenantLoginCAKeyTenant reports which tenant a listed key is the login CA
+// key of. The tenant is in the key name: the AWS KMS, Azure Key Vault and GCP
+// KMS providers list keys without the TenantID they were generated under.
+// Scopes compare normalized, since a backend may also report a system key
+// with an empty TenantID (tpm2 listSystemKeys) though it was made for
+// "system"; a TenantID that disagrees with the name is not a match.
+func tenantLoginCAKeyTenant(attrs *types.KeyAttributes) (string, bool) {
+	if attrs == nil {
+		return "", false
+	}
+	id, ok := strings.CutPrefix(attrs.CN, tenantLoginCAKeyCN+"-")
+	if !ok || id == "" {
+		return "", false
+	}
+	if attrs.TenantID != "" && scope.TenantName(attrs.TenantID) != id {
+		return "", false
+	}
+	return id, true
 }
 
 // tenantLoginCAKeyName is the name a tenant's login CA key is generated
