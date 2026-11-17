@@ -7,7 +7,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"testing"
 )
+
+// TestMain keeps t.TempDir() short so unix socket paths fit in sun_path on
+// runners with a deep TMPDIR or GOTMPDIR (#2248).
+func TestMain(m *testing.M) { os.Exit(shortTMPDIR(m.Run)) }
 
 // shortTMPDIR is go-xkms internal/testtmp.Short for this module, which pins a
 // go-xkms release without that package. It makes one short directory
