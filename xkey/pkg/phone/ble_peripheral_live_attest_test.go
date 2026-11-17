@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // newTestPeripheralWithLiveAttest is newTestPeripheral, but lets the test
