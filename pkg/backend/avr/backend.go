@@ -24,6 +24,7 @@ import (
 
 	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -81,6 +82,10 @@ type Backend struct {
 	intermediates *x509.CertPool
 	// intermediateCerts is the same set as a chain, for dice.Verify.
 	intermediateCerts []*x509.Certificate
+	// applicationReference is the operator's attestation.application_reference,
+	// copied: the 32 bytes every alias certificate's application evidence
+	// must equal, or nil to skip the match.
+	applicationReference []byte
 
 	closed atomic.Bool
 }
@@ -181,6 +186,20 @@ func NewBackend(ctx context.Context, config *Config, device *tfw.Device) (*Backe
 func (b *Backend) initAttestation() error {
 	if b.config.Attestation == nil {
 		return nil
+	}
+
+	// Refused here rather than at the first attestation: a reference of the
+	// wrong length can match no device, so every enrolment would fail.
+	// Only nil means "no reference": an empty, non-nil slice is a wrong
+	// length like any other, never a silent skip of the match.
+	if ref := b.config.Attestation.ApplicationReference; ref != nil {
+		if len(ref) != 32 {
+			return &errs.Detail{
+				Err:    dice.ErrInvalidApplicationReference,
+				Detail: "attestation.application_reference: expected 32 bytes, got " + strconv.Itoa(len(ref)),
+			}
+		}
+		b.applicationReference = append([]byte(nil), ref...)
 	}
 
 	if len(b.config.Attestation.Intermediates) > 0 {
