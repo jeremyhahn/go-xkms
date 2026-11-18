@@ -238,6 +238,13 @@ type DeviceChallengeConfig struct {
 type StorageConfig struct {
 	Backend string                 `yaml:"backend" json:"backend" mapstructure:"backend"`
 	Options map[string]interface{} `yaml:"options" json:"options" mapstructure:"options"`
+
+	// KeyFile and SecretFile reference an object-storage credential (s3,
+	// azure, …) by file: the access key identifier and the secret. Options
+	// never carry a credential inline; go-qrdb refuses one. Empty means
+	// none: the provider uses its SDK's default credential chain.
+	KeyFile    string `yaml:"key_file,omitempty" json:"key_file,omitempty" mapstructure:"key_file"`
+	SecretFile string `yaml:"secret_file,omitempty" json:"secret_file,omitempty" mapstructure:"secret_file"`
 }
 
 // XKMSConfig defines the backend used for cryptographic key management.

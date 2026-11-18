@@ -37,6 +37,7 @@ require (
 	github.com/jeremyhahn/go-enclave v0.11.1-alpha
 	github.com/jeremyhahn/go-frost v0.3.1-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.2-alpha
+	github.com/jeremyhahn/go-objstore v0.9.1-alpha
 	github.com/jeremyhahn/go-qrdb v0.58.4-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.58.4-alpha
 	github.com/jeremyhahn/go-truststrap v0.7.1-alpha
@@ -172,7 +173,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgx/v5 v5.12.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
-	github.com/jeremyhahn/go-objstore v0.9.1-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.24.3-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.20.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect

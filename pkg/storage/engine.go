@@ -384,9 +384,25 @@ type EngineConfig struct {
 	Provider string
 
 	// Options carries provider-specific settings for EngineObjstore, passed
-	// verbatim to go-objstore (e.g. "path" for local, bucket/region/credentials
-	// for cloud providers).
+	// verbatim to go-objstore (e.g. "path" for local, bucket/region for cloud
+	// providers). They never carry a credential: go-qrdb refuses one inline
+	// with an ObjStoreCredentialSettingError; use CredentialFiles.
 	Options map[string]string
+
+	// CredentialFiles references the EngineObjstore provider's credential by
+	// file. Nil means none: the provider uses its SDK's default chain.
+	CredentialFiles *ObjStoreCredentialFiles
+}
+
+// ObjStoreCredentialFiles names the files holding an object-storage
+// credential: KeyFile the access key identifier, SecretFile the secret (a
+// provider whose only secret is one key, such as an Azure storage account
+// key, takes SecretFile alone). Each file must be owned by the process user
+// and accessible by nobody else. go-qrdb reads them into protected memory
+// for the open only.
+type ObjStoreCredentialFiles struct {
+	KeyFile    string
+	SecretFile string
 }
 
 // OpenEngine constructs a Backend backed by the go-qrdb storage engine selected
@@ -425,7 +441,14 @@ func OpenEngine(cfg EngineConfig) (Backend, error) {
 		if provider == "" {
 			provider = "local"
 		}
-		eng, err := qrdbstorage.NewObjStoreStorage(provider, cfg.Options)
+		var opts []qrdbstorage.ObjStoreOption
+		if f := cfg.CredentialFiles; f != nil {
+			opts = append(opts, qrdbstorage.WithObjStoreCredentialFiles(qrdbstorage.ObjStoreCredentialFiles{
+				KeyFile:    f.KeyFile,
+				SecretFile: f.SecretFile,
+			}))
+		}
+		eng, err := qrdbstorage.NewObjStoreStorage(provider, cfg.Options, opts...)
 		if err != nil {
 			return nil, &EngineError{Op: "open-objstore", Key: provider, Err: err}
 		}
