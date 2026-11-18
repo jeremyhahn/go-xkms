@@ -40,6 +40,7 @@ func newQRDBTestServer(t *testing.T) *Server {
 	t.Helper()
 
 	s := &Server{
+		ctx: context.Background(),
 		config: &config.Config{
 			Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		},

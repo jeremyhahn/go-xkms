@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -401,4 +402,17 @@ func (s *Server) stopQRDBNode() error {
 		}
 	}
 	return nil
+}
+
+// qrdbNodeContext returns the context the embedded qrdb node is built
+// with: the server's context, or context.Background when the server was
+// assembled without one (package fixtures that call
+// initializeQRDBStorage directly). Since go-qrdb v0.58.5 / go-enclave
+// v0.11.1 the seal-disabled barrier passes this context to
+// enclave.NewSealed, which dereferences a nil context.
+func (s *Server) qrdbNodeContext() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
 }
