@@ -130,23 +130,41 @@ func acmeListenerSANs(cfg *config.ACMEConfig) (dnsNames, ips []string) {
 	return dnsNames, ips
 }
 
-// listenerCertChainPEM is the leaf followed by any intermediates, so a client
-// that trusts only the root can build the chain.
+// listenerCertChainPEM is the leaf followed by the issuing CA's
+// intermediates, so a client that trusts only the root can build the chain.
+// IssueCertificateForKey returns the CA bundle (issuer up to the root) in
+// CACertificatePEM; ChainPEM is read too in case an issuer fills it. The
+// leaf itself, self-signed roots (clients hold those in their trust store)
+// and repeats are skipped.
 func listenerCertChainPEM(issued *nativeca.IssuedCertificate) []byte {
 	out := append([]byte(nil), issued.CertificatePEM...)
-	rest := issued.ChainPEM
-	for len(rest) > 0 {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			break
+	seen := map[string]bool{}
+	if issued.Certificate != nil {
+		seen[string(issued.Certificate.Raw)] = true
+	}
+	for _, bundle := range [][]byte{issued.CACertificatePEM, issued.ChainPEM} {
+		rest := bundle
+		for len(rest) > 0 {
+			var block *pem.Block
+			block, rest = pem.Decode(rest)
+			if block == nil {
+				break
+			}
+			if block.Type != "CERTIFICATE" || seen[string(block.Bytes)] {
+				continue
+			}
+			seen[string(block.Bytes)] = true
+			if c, err := x509.ParseCertificate(block.Bytes); err == nil && isSelfSigned(c) {
+				continue
+			}
+			out = append(out, pem.EncodeToMemory(block)...)
 		}
-		if issued.Certificate != nil && bytes.Equal(block.Bytes, issued.Certificate.Raw) {
-			continue
-		}
-		out = append(out, pem.EncodeToMemory(block)...)
 	}
 	return out
+}
+
+func isSelfSigned(c *x509.Certificate) bool {
+	return bytes.Equal(c.RawSubject, c.RawIssuer) && c.CheckSignatureFrom(c) == nil
 }
 
 func fileExists(path string) (bool, error) {
