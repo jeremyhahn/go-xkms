@@ -53,6 +53,12 @@ type AttestationConfig struct {
 	// device does not send them -- it has nowhere to keep them -- so an
 	// operator supplies them here.
 	Intermediates [][]byte `yaml:"intermediates" json:"intermediates"`
+
+	// ApplicationReference is the 32 bytes the device's application evidence
+	// (measurements claim 273) must equal, registered by the operator for the
+	// application the device is meant to run (SPEC.md:90). Nil skips the
+	// match; any other length is refused by NewBackend.
+	ApplicationReference []byte `yaml:"application_reference" json:"application_reference"`
 }
 
 // Attestation is what the device answered and what this host made of it.
@@ -213,6 +219,8 @@ func (b *Backend) checkAliasCertificate(der, nonce []byte) (*Attestation, error)
 		// backend whose documentation promises the one algorithm the element
 		// emits.
 		RequireDeviceSignedLeaf: true,
+		// The operator's registered application; nil leaves it unchecked.
+		ApplicationReference: b.applicationReference,
 	}
 	evidence, err := dice.Verify(chain, &opts)
 	if err != nil {

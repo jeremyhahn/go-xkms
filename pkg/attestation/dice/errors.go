@@ -195,6 +195,15 @@ var (
 	// is running.
 	ErrNoMeasurement = errors.New("dice: leaf DiceTcbInfo carries no firmware measurement")
 
+	// ErrApplicationEvidenceMismatch indicates VerifyOptions.ApplicationReference
+	// is set and the leaf's measurements claim does not carry that application
+	// evidence, or carries no measurements claim at all.
+	ErrApplicationEvidenceMismatch = errors.New("dice: leaf application evidence is not the registered reference")
+
+	// ErrInvalidApplicationReference indicates VerifyOptions.ApplicationReference
+	// is set to something other than 32 bytes: a configuration error.
+	ErrInvalidApplicationReference = errors.New("dice: application reference must be 32 bytes")
+
 	// ErrCriticalEvidenceUnreadable indicates a certificate in the chain marks
 	// a DICE evidence extension critical whose contents this verifier cannot
 	// decode.
