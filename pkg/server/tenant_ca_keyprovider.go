@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/internal/loginca"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -50,10 +51,18 @@ const tenantLoginCAIntentID = tenantLoginCAKeyCN + ":intent"
 // node's provisioning pass to record the provenance of a key it just made.
 const tenantLoginCAProvenanceWait = 2 * time.Second
 
+// tenantLoginCAClaimLease is how long a provisioning claim with no key behind
+// it is honoured before another pass may take it over.
+const tenantLoginCAClaimLease = 30 * time.Second
+
 // errTenantLoginCAKeyCollision is returned when a tenant holds a login CA key
 // that the provisioning path did not make. Such a key is never adopted; an
 // existing one needs an explicit migration.
 var errTenantLoginCAKeyCollision = errors.New("tenant login CA key factory: key collision: a " + tenantLoginCAKeyCN + " key exists without provisioning provenance")
+
+// errTenantLoginCAClaimHeld reports that another pass holds the tenant's
+// provisioning claim and its key did not appear in time; a later pass retries.
+var errTenantLoginCAClaimHeld = errors.New("tenant login CA key factory: another pass holds the provisioning claim")
 
 // errTenantCAKeyFactoryUnbound is returned while no backend is bound.
 var errTenantCAKeyFactoryUnbound = errors.New("tenant login CA key factory: no backend bound")
@@ -62,8 +71,13 @@ var errTenantCAKeyFactoryUnbound = errors.New("tenant login CA key factory: no b
 // tenant-scoped backend: every tenant's login CA (Key B) signature goes
 // through that tenant's xkms key, and go-qrdb generates no software Key B.
 type tenantCAKeyFactory struct {
-	mu      sync.RWMutex
-	base    xkms.Backend
+	mu   sync.RWMutex
+	base xkms.Backend
+	// claims holds one provisioning claim per tenant. It must be the
+	// storage every node shares: a PKCS#11 token does not refuse a second
+	// key with the same label, so only a claim taken with PutIfAbsent
+	// before generation keeps concurrent passes from each making a key.
+	claims  storage.Backend
 	tenants tenantLookup
 }
 
@@ -115,12 +129,16 @@ func newTenantCAKeyFactory() *tenantCAKeyFactory {
 }
 
 // Bind makes base the backend that holds every tenant's login CA key.
-func (f *tenantCAKeyFactory) Bind(base xkms.Backend) error {
+func (f *tenantCAKeyFactory) Bind(base xkms.Backend, claims storage.Backend) error {
 	if base == nil {
 		return errors.New("tenant login CA key factory: nil backend")
 	}
+	if claims == nil {
+		return errors.New("tenant login CA key factory: nil claim storage")
+	}
 	f.mu.Lock()
 	f.base = base
+	f.claims = claims
 	f.mu.Unlock()
 	return nil
 }
@@ -248,6 +266,18 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		// and a key this path did not make is never adopted.
 		return adoptTenantLoginCAKey(ctx, scoped, tenantID, existing)
 	}
+	claimed, err := f.claimTenantLoginCAKey(ctx, base, tenantID)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		// Another pass holds the claim and makes the key: adopt it.
+		existing, err := waitTenantLoginCAKey(ctx, base, tenantID)
+		if err != nil {
+			return err
+		}
+		return adoptTenantLoginCAKey(ctx, scoped, tenantID, existing)
+	}
 	attrs := &types.KeyAttributes{
 		CN:            tenantLoginCAKeyName(tenantID),
 		KeyType:       types.KeyTypeSigning,
@@ -275,6 +305,74 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		return fmt.Errorf("tenant login CA key factory: signer for tenant %q: %w", tenantID, err)
 	}
 	return finishTenantLoginCAKey(ctx, scoped, tenantID, signer)
+}
+
+// tenantLoginCAClaimKey is the shared-storage key of a tenant's provisioning
+// claim.
+func tenantLoginCAClaimKey(tenantID string) string {
+	return "tenant-login-ca/claims/" + tenantLoginCAKeyName(tenantID)
+}
+
+// claimTenantLoginCAKey takes the tenant's provisioning claim with an atomic
+// PutIfAbsent, so across nodes and concurrent requests one pass generates the
+// key. It reports false when another pass holds the claim. A claim older than
+// tenantLoginCAClaimLease with no key behind it is left by a pass that stopped
+// before generating; it is taken over with a compare-and-swap, so again only
+// one pass wins it. A storage error fails closed.
+func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkms.Backend, tenantID string) (bool, error) {
+	f.mu.RLock()
+	claims := f.claims
+	f.mu.RUnlock()
+	if claims == nil {
+		return false, errTenantCAKeyFactoryUnbound
+	}
+	key := tenantLoginCAClaimKey(tenantID)
+	claim := []byte(time.Now().UTC().Format(time.RFC3339Nano))
+	stored, err := claims.PutIfAbsent(ctx, key, claim)
+	if err != nil {
+		return false, fmt.Errorf("tenant login CA key factory: claim tenant %q: %w", tenantID, err)
+	}
+	if stored {
+		return true, nil
+	}
+	held, err := claims.Get(ctx, key)
+	if err != nil {
+		return false, fmt.Errorf("tenant login CA key factory: read claim of tenant %q: %w", tenantID, err)
+	}
+	if at, parseErr := time.Parse(time.RFC3339Nano, string(held)); parseErr == nil && time.Since(at) < tenantLoginCAClaimLease {
+		return false, nil
+	}
+	if _, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID); lookupErr == nil {
+		return false, nil
+	}
+	swapper, ok := claims.(storage.CompareAndSwapper)
+	if !ok {
+		return false, nil
+	}
+	swapped, _, err := swapper.CompareAndSwap(ctx, key, held, claim)
+	if err != nil {
+		return false, fmt.Errorf("tenant login CA key factory: take over claim of tenant %q: %w", tenantID, err)
+	}
+	return swapped, nil
+}
+
+// waitTenantLoginCAKey waits for the pass holding the tenant's claim to make
+// the key, and returns it.
+func waitTenantLoginCAKey(ctx context.Context, base xkms.Backend, tenantID string) (*types.KeyAttributes, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, tenantLoginCAProvenanceWait)
+	defer cancel()
+	ticker := time.NewTicker(tenantLoginCAProvenanceWait / 40)
+	defer ticker.Stop()
+	for {
+		if attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID); err == nil {
+			return attrs, nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return nil, fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCAClaimHeld)
+		case <-ticker.C:
+		}
+	}
 }
 
 // finishTenantLoginCAKey records that this path made the key before anything
@@ -403,6 +501,14 @@ func (f *tenantCAKeyFactory) RemoveTenant(ctx context.Context, tenantID string) 
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("tenant login CA key factory: remove tenant %q: %w", tenantID, errors.Join(errs...))
+	}
+	// The claim goes last: while any key or certificate remains, a new
+	// pass must not claim and generate beside it.
+	f.mu.RLock()
+	claims := f.claims
+	f.mu.RUnlock()
+	if err := claims.Delete(ctx, tenantLoginCAClaimKey(tenantID)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return fmt.Errorf("tenant login CA key factory: remove tenant %q: delete claim: %w", tenantID, err)
 	}
 	return nil
 }

@@ -56,10 +56,11 @@ func TestTenantCAKeyFactory_PKCS11ConcurrentPassesMakeOneKey(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, base.Close()) })
 
 	const passes = 8
+	claims := storage.New() // the shared storage every node's factory claims in
 	factories := make([]*tenantCAKeyFactory, passes)
 	for i := range factories {
 		factories[i] = newTenantCAKeyFactory()
-		require.NoError(t, factories[i].Bind(base))
+		require.NoError(t, factories[i].Bind(base, claims))
 	}
 
 	var (

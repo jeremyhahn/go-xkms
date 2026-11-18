@@ -32,7 +32,7 @@ func TestTenantCAKeyFactory_TPM2SystemKeyIsReused(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 
 	f := newTenantCAKeyFactory()
-	require.NoError(t, f.Bind(base))
+	require.NoError(t, f.Bind(base, storage.New()))
 	require.NoError(t, f.EnsureTenant(ctx, qrdbsdk.SystemTenantID))
 
 	pub, cert := tenantLoginCA(t, f, qrdbsdk.SystemTenantID)

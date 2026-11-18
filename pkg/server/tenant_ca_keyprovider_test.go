@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,7 +37,7 @@ func newTenantCAKeyTestFactory(t *testing.T, tenants ...string) (*tenantCAKeyFac
 	t.Cleanup(func() { _ = base.Close() })
 
 	f := newTenantCAKeyFactory()
-	require.NoError(t, f.Bind(base))
+	require.NoError(t, f.Bind(base, storage.New()))
 	for _, id := range tenants {
 		require.NoError(t, f.EnsureTenant(context.Background(), id))
 	}
@@ -113,7 +114,7 @@ func TestTenantCAKeyFactory_Unbound(t *testing.T) {
 	require.Error(t, err)
 	_, err = f.TenantIDs(context.Background())
 	require.Error(t, err)
-	require.Error(t, f.Bind(nil))
+	require.Error(t, f.Bind(nil, storage.New()))
 }
 
 func TestTenantCAKeyFactory_TenantIDs(t *testing.T) {
@@ -239,12 +240,13 @@ func TestTenantCAKeyFactory_RefusesKeyWithoutProvisioningProvenance(t *testing.T
 func TestTenantCAKeyFactory_ConcurrentNodesConverge(t *testing.T) {
 	ctx := context.Background()
 	baseA, baseB := sharedTenantCABackends(t)
+	claims := storage.New() // shared by the nodes, as the server's shared storage is
 	a := newTenantCAKeyFactory()
-	require.NoError(t, a.Bind(baseA))
+	require.NoError(t, a.Bind(baseA, claims))
 	b := newTenantCAKeyFactory()
 	stale := &staleListBackend{Backend: baseB}
 	stale.hide.Store(1)
-	require.NoError(t, b.Bind(stale))
+	require.NoError(t, b.Bind(stale, claims))
 
 	// Node A provisions first; node B had looked before A generated the key,
 	// so its generate collides with A's key.
@@ -298,7 +300,7 @@ func TestTenantCAKeyFactory_RetryAfterSaveCertFailure(t *testing.T) {
 	flaky := &failSaveCertBackend{Backend: base}
 	flaky.fail.Store(1)
 	f := newTenantCAKeyFactory()
-	require.NoError(t, f.Bind(flaky))
+	require.NoError(t, f.Bind(flaky, storage.New()))
 
 	require.Error(t, f.EnsureTenant(ctx, "tenant-a"), "a failed certificate save must fail provisioning")
 	before := tenantSignerPublic(t, base, "tenant-a").(*ecdsa.PublicKey)
@@ -321,7 +323,7 @@ func TestTenantCAKeyFactory_LazyRetryAfterSaveCertFailure(t *testing.T) {
 	flaky := &failSaveCertBackend{Backend: base}
 	flaky.fail.Store(1)
 	f := newTenantCAKeyFactory()
-	require.NoError(t, f.Bind(flaky))
+	require.NoError(t, f.Bind(flaky, storage.New()))
 	f.TrackTenants(&fakeTenantService{tenants: []string{"tenant-a"}})
 
 	_, err := f.ProviderForTenant("tenant-a")
@@ -369,7 +371,7 @@ func TestTenantCAKeyFactory_BackendWithoutPublicKeyAtGeneration(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 
 	f := newTenantCAKeyFactory()
-	require.NoError(t, f.Bind(base))
+	require.NoError(t, f.Bind(base, storage.New()))
 	tenants := []string{"tenant-a", "tenant-b"}
 	f.TrackTenants(&fakeTenantService{tenants: tenants})
 
@@ -428,7 +430,7 @@ func TestTenantCAKeyFactory_ProviderListsKeysWithoutTenant(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 
 	f := newTenantCAKeyFactory()
-	require.NoError(t, f.Bind(base))
+	require.NoError(t, f.Bind(base, storage.New()))
 	tenants := []string{"tenant-a", "tenant-b"}
 	f.TrackTenants(&fakeTenantService{tenants: tenants})
 
@@ -478,7 +480,7 @@ func TestTenantCAKeyFactory_RecoversAfterFailedProvenanceSave(t *testing.T) {
 	flaky := &failProvenanceSaveBackend{Backend: base}
 	flaky.fail.Store(1)
 	f := newTenantCAKeyFactory()
-	require.NoError(t, f.Bind(flaky))
+	require.NoError(t, f.Bind(flaky, storage.New()))
 
 	require.Error(t, f.EnsureTenant(ctx, "tenant-a"), "a failed provenance save must fail the pass")
 	before := tenantSignerPublic(t, base, "tenant-a").(*ecdsa.PublicKey)
@@ -521,7 +523,7 @@ func TestTenantCAKeyFactory_RefusesFixedSlotBackend(t *testing.T) {
 	_, base := newTenantCAKeyTestFactory(t)
 	piv := &fixedSlotBackend{Backend: base}
 	f := newTenantCAKeyFactory()
-	require.NoError(t, f.Bind(piv))
+	require.NoError(t, f.Bind(piv, storage.New()))
 
 	for _, tenant := range []string{"tenant-a", "tenant-b"} {
 		err := f.EnsureTenant(context.Background(), tenant)
@@ -564,4 +566,61 @@ func TestTenantCAKeyProviderOptions_NoCA(t *testing.T) {
 	if opts := s.tenantCAKeyProviderOptions(); len(opts) != 0 {
 		t.Fatalf("tenantCAKeyProviderOptions() returned %d options, want 0", len(opts))
 	}
+}
+
+// A pass that loses the provisioning claim must not generate: while the
+// claim holder has made no key, the pass reports the held claim and the
+// backend stays without a login CA key for the tenant.
+func TestTenantCAKeyFactory_HeldClaimWithoutKeyDoesNotGenerate(t *testing.T) {
+	ctx := context.Background()
+	f, base := newTenantCAKeyTestFactory(t)
+	held := []byte(time.Now().UTC().Format(time.RFC3339Nano))
+	stored, err := f.claims.PutIfAbsent(ctx, tenantLoginCAClaimKey("tenant-a"), held)
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	err = f.EnsureTenant(ctx, "tenant-a")
+	require.ErrorIs(t, err, errTenantLoginCAClaimHeld)
+	_, lookupErr := tenantLoginCAKeyAttrs(ctx, base, "tenant-a")
+	assert.Error(t, lookupErr, "a pass without the claim generated a key")
+}
+
+// A claim older than the lease with no key behind it was left by a pass that
+// stopped before generating; a later pass takes it over and provisions.
+func TestTenantCAKeyFactory_TakesOverStaleClaim(t *testing.T) {
+	ctx := context.Background()
+	f, _ := newTenantCAKeyTestFactory(t)
+	key := tenantLoginCAClaimKey("tenant-a")
+	stale := []byte(time.Now().Add(-2 * tenantLoginCAClaimLease).UTC().Format(time.RFC3339Nano))
+	stored, err := f.claims.PutIfAbsent(ctx, key, stale)
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	require.NoError(t, f.EnsureTenant(ctx, "tenant-a"))
+	pub, cert := tenantLoginCA(t, f, "tenant-a")
+	assert.True(t, pub.(*ecdsa.PublicKey).Equal(cert.PublicKey))
+	current, err := f.claims.Get(ctx, key)
+	require.NoError(t, err)
+	assert.NotEqual(t, stale, current, "the stale claim must be replaced by the pass that took it over")
+}
+
+// Removing a tenant releases its claim, so the tenant can be provisioned
+// again.
+func TestTenantCAKeyFactory_RemoveTenantReleasesClaim(t *testing.T) {
+	ctx := context.Background()
+	f, _ := newTenantCAKeyTestFactory(t, "tenant-a")
+	before, _ := tenantLoginCA(t, f, "tenant-a")
+
+	require.NoError(t, f.RemoveTenant(ctx, "tenant-a"))
+	_, err := f.claims.Get(ctx, tenantLoginCAClaimKey("tenant-a"))
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	require.NoError(t, f.EnsureTenant(ctx, "tenant-a"))
+	after, _ := tenantLoginCA(t, f, "tenant-a")
+	assert.False(t, before.(*ecdsa.PublicKey).Equal(after), "a removed tenant gets a new login CA key")
+}
+
+func TestTenantCAKeyFactory_BindRequiresClaimStorage(t *testing.T) {
+	_, base := newTenantCAKeyTestFactory(t)
+	require.Error(t, newTenantCAKeyFactory().Bind(base, nil))
 }

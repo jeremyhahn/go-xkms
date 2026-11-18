@@ -9,6 +9,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -191,6 +192,7 @@ func TestServer_AdoptTenantService_NoWrapWithoutFactory(t *testing.T) {
 
 	s.adoptTenantService(svc)
 	assert.Same(t, svc, s.tenantService)
+	useTenantCAClaimStorage(s)
 	require.NoError(t, s.provisionTenantCAKeys(context.Background()))
 }
 
@@ -225,6 +227,7 @@ func TestServer_ProvisionTenantCAKeys_BindsFactoryAfterBackends(t *testing.T) {
 	_, err := f.ProviderForTenant("tenant-a")
 	require.Error(t, err, "factory resolved a backend before the boot pass")
 
+	useTenantCAClaimStorage(s)
 	require.NoError(t, s.provisionTenantCAKeys(context.Background()))
 	_, err = f.ProviderForTenant("tenant-a")
 	require.NoError(t, err)
@@ -243,6 +246,7 @@ func TestServer_TenantCAKeys_ResolveDuringServerLockContention(t *testing.T) {
 		tenantService: &fakeTenantService{tenants: []string{"tenant-a"}},
 		backends:      map[string]xkms.Backend{"software": base},
 	}
+	useTenantCAClaimStorage(s)
 	require.NoError(t, s.provisionTenantCAKeys(context.Background()))
 
 	s.mu.Lock()
@@ -277,6 +281,7 @@ func TestServer_TenantCAKeys_NativeOnboardingGetsKey(t *testing.T) {
 		backends:     map[string]xkms.Backend{"software": base},
 	}
 	s.adoptTenantService(native)
+	useTenantCAClaimStorage(s)
 	require.NoError(t, s.provisionTenantCAKeys(ctx))
 
 	// The onboarding path: the unwrapped service creates the tenant.
@@ -341,6 +346,7 @@ func TestServer_TenantCAKeys_DeletedTenantWithdrawn(t *testing.T) {
 		backends:     map[string]xkms.Backend{"software": base},
 	}
 	s.adoptTenantService(native)
+	useTenantCAClaimStorage(s)
 	require.NoError(t, s.provisionTenantCAKeys(ctx))
 	_, caA := tenantLoginCA(t, f, "tenant-a")
 	_, caB := tenantLoginCA(t, f, "tenant-b")
@@ -374,4 +380,11 @@ func TestServer_TenantCAKeys_DeletedTenantWithdrawn(t *testing.T) {
 	exists, err := xkms.NewTenantScopedBackend(base, "tenant-a").CertExists(ctx, tenantLoginCAKeyCN)
 	require.NoError(t, err)
 	assert.False(t, exists, "tenant-a's login CA certificate outlived the tenant")
+}
+
+// useTenantCAClaimStorage gives a test server the shared storage the tenant
+// login CA factory takes its provisioning claims in.
+func useTenantCAClaimStorage(s *Server) {
+	claims := storage.New()
+	s.qrdbStorage.Store(&claims)
 }

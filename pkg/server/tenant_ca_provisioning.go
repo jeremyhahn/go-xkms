@@ -110,7 +110,7 @@ func (s *Server) provisionTenantCAKeys(ctx context.Context) error {
 	if err != nil {
 		return &TenantProvisionError{Err: err}
 	}
-	if err := s.tenantCAKeys.Bind(base); err != nil {
+	if err := s.tenantCAKeys.Bind(base, s.sharedStorage()); err != nil {
 		return &TenantProvisionError{Err: err}
 	}
 	s.tenantCAKeys.TrackTenants(s.tenantService)
