@@ -1,6 +1,7 @@
 package buildgates
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,6 +204,86 @@ func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 	}
 }
 
+// aptMakeArg is the build argument a Makefile build of an apt-based pool
+// image passes: the pool's cache when it names one, nothing on a hosted runner.
+const aptMakeArg = `$(if $(DEVCACHE_APT_PROXY),--build-arg APT_PROXY="$(DEVCACHE_APT_PROXY)")`
+
+var (
+	makeBuild = regexp.MustCompile(`docker (buildx )?build\s`)
+	makeFile  = regexp.MustCompile(`\s-f\s+(\S+)`)
+	makeDir   = regexp.MustCompile(`(?m)^DEVCONTAINER_DIR\s*:?=\s*(\S+)`)
+)
+
+// makefileCacheProblems: every Makefile docker build of an apt-based pool
+// image passes aptMakeArg. A build without -f builds the root Dockerfile; a
+// comment that names a build is not one.
+// It returns the problems and the number of such builds it checked.
+func makefileCacheProblems(mk string) ([]string, int) {
+	dir := ""
+	if m := makeDir.FindStringSubmatch(mk); m != nil {
+		dir = m[1]
+	}
+	logical := strings.ReplaceAll(mk, "\\\n", " ")
+	var problems []string
+	checked := 0
+	for i, line := range strings.Split(logical, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") || !makeBuild.MatchString(line) {
+			continue
+		}
+		df := "Dockerfile"
+		if m := makeFile.FindStringSubmatch(line); m != nil {
+			df = strings.ReplaceAll(m[1], "$(DEVCONTAINER_DIR)", dir)
+		}
+		for _, a := range aptBuilt {
+			if df != a {
+				continue
+			}
+			checked++
+			if !strings.Contains(line, aptMakeArg) {
+				problems = append(problems, fmt.Sprintf("Makefile logical line %d builds %s without %s", i+1, df, aptMakeArg))
+			}
+		}
+	}
+	return problems, checked
+}
+
+// TestPoolBuiltImagesMakefileArgs: the Makefile's builds of the apt-based pool
+// images take the apt cache. docker-build-test-image, which `make docker-test`
+// and the Docker Integration Tests workflow run on the pool, builds the root
+// Dockerfile directly, outside DEVCONTAINER_BUILD.
+func TestPoolBuiltImagesMakefileArgs(t *testing.T) {
+	problems, checked := makefileCacheProblems(readCacheFile(t, "Makefile"))
+	for _, p := range problems {
+		t.Error(p)
+	}
+	if checked < 2 {
+		t.Fatalf("checked %d Makefile builds; want at least DEVCONTAINER_BUILD and docker-build-test-image", checked)
+	}
+	for _, tc := range []struct {
+		name, proxy string
+		want        bool
+	}{
+		{name: "the pool names a cache", proxy: "http://apt-cache.test:3142", want: true},
+		{name: "a hosted runner names none", proxy: "", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("make", "-n", "docker-build-test-image", "DEVCACHE_APT_PROXY="+tc.proxy) // #nosec G204 -- a fixed target and a fixed value
+			cmd.Dir = cachesRoot
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("make -n docker-build-test-image: %v\n%s", err, out)
+			}
+			has := strings.Contains(string(out), "--build-arg APT_PROXY=")
+			if has != tc.want {
+				t.Fatalf("make -n docker-build-test-image DEVCACHE_APT_PROXY=%q passes APT_PROXY: %v; want %v\n%s", tc.proxy, has, tc.want, out)
+			}
+			if tc.want && !strings.Contains(string(out), `APT_PROXY="`+tc.proxy+`"`) {
+				t.Fatalf("make -n docker-build-test-image does not pass the pool's cache %s:\n%s", tc.proxy, out)
+			}
+		})
+	}
+}
+
 // TestCacheChecksCatchARegression: each check fails one broken form.
 func TestCacheChecksCatchARegression(t *testing.T) {
 	good := "FROM x AS a\nARG APT_PROXY=\nRUN " + aptProxyDef + "; \\\n    apt-get $p update && apt-get $p install -y curl\n"
@@ -215,6 +296,19 @@ func TestCacheChecksCatchARegression(t *testing.T) {
 		"no ARG":             "FROM x\nRUN " + aptProxyDef + "; apt-get $p update\n",
 	} {
 		if len(aptCacheProblems("f", bad)) == 0 {
+			t.Errorf("%s passed", name)
+		}
+	}
+	goodMk := "DEVCONTAINER_DIR := build/docker/devcontainer\nx:\n\tdocker buildx build --load \\\n\t\t" + aptMakeArg + " \\\n\t\t-t i -f Dockerfile .\n"
+	if p, n := makefileCacheProblems("# `docker build -t i` on one job retags that name\n" + goodMk); len(p) != 0 || n != 1 {
+		t.Fatalf("a correct Makefile build fails: %v (checked %d)", p, n)
+	}
+	for name, bad := range map[string]string{
+		"root image without the arg":         "x:\n\tdocker buildx build --load \\\n\t\t-t i -f Dockerfile .\n",
+		"no -f builds the root image":        "x:\n\tdocker build -t i .\n",
+		"devcontainer image without the arg": "DEVCONTAINER_DIR := build/docker/devcontainer\nB = docker buildx build \\\n\t-f $(DEVCONTAINER_DIR)/Dockerfile\n",
+	} {
+		if p, _ := makefileCacheProblems(bad); len(p) == 0 {
 			t.Errorf("%s passed", name)
 		}
 	}

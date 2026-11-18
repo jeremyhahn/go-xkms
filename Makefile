@@ -3722,6 +3722,7 @@ docker-build-test-image: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building Docker image...$(RESET)"
 	@DOCKER_BUILDKIT=1 docker buildx build --load \
 		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
+		$(if $(DEVCACHE_APT_PROXY),--build-arg APT_PROXY="$(DEVCACHE_APT_PROXY)") \
 		-t $(DOCKER_INTEGRATION_IMAGE) -f Dockerfile .
 	@echo "$(GREEN)✓ Docker image built: $(DOCKER_INTEGRATION_IMAGE)$(RESET)"
 
