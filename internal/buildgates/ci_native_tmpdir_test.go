@@ -19,7 +19,9 @@ const tmpdirTemplate = "/tmp/XXXXXX"
 // and the Nested Module Tests. Runner units on one host share /tmp, so a
 // fixed /tmp is not enough (Company Agent condition): every job with a native
 // (runner.environment == 'self-hosted') go test step first runs
-// mktemp -d /tmp/XXXXXX and exports it as TMPDIR through $GITHUB_ENV, and its
+// mktemp -d /tmp/XXXXXX and exports it as TMPDIR and GOTMPDIR (which
+// t.TempDir prefers in Go 1.27, and which the pool sets to _work/_temp)
+// through $GITHUB_ENV, and its
 // last step removes it under always(). No step pins TMPDIR in its env.
 func TestNativeGoTestJobsTakeAPerJobShortTMPDIR(t *testing.T) {
 	data, err := os.ReadFile(ciWorkflow)
@@ -49,7 +51,8 @@ func TestNativeGoTestJobsTakeAPerJobShortTMPDIR(t *testing.T) {
 				t.Errorf("job %s step %q pins TMPDIR in its env; it must come from the per-job mktemp step", name, s.Name)
 			}
 			if native(s) && strings.Contains(s.Run, "mktemp -d "+tmpdirTemplate) &&
-				strings.Contains(s.Run, `echo "TMPDIR=$d" >> "$GITHUB_ENV"`) && setup < 0 {
+				strings.Contains(s.Run, `echo "TMPDIR=$d" >> "$GITHUB_ENV"`) &&
+				strings.Contains(s.Run, `echo "GOTMPDIR=$d" >> "$GITHUB_ENV"`) && setup < 0 {
 				setup = i
 			}
 			runsTests := strings.Contains(s.Run, "go test ") || strings.Contains(s.Run, "make test")
@@ -62,7 +65,7 @@ func TestNativeGoTestJobsTakeAPerJobShortTMPDIR(t *testing.T) {
 		}
 		jobs = append(jobs, name)
 		if setup < 0 || setup > firstTest {
-			t.Errorf("job %s runs go test natively without a prior mktemp -d %s step exporting TMPDIR", name, tmpdirTemplate)
+			t.Errorf("job %s runs go test natively without a prior mktemp -d %s step exporting TMPDIR and GOTMPDIR", name, tmpdirTemplate)
 		}
 		last := job.Steps[len(job.Steps)-1]
 		if !strings.Contains(last.If, "always()") || !native(last) || !strings.Contains(last.Run, `rm -rf "$TMPDIR"`) {

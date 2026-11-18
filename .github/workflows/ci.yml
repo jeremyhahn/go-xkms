@@ -2117,6 +2117,7 @@ jobs:
         run: |
           d="$(mktemp -d /tmp/XXXXXX)"
           echo "TMPDIR=$d" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$d" >> "$GITHUB_ENV"
 
       - name: Backend-tagged binaries and the acme-client GUI (native)
         if: ${{ runner.environment == 'self-hosted' }}
@@ -2369,6 +2370,7 @@ jobs:
         run: |
           d="$(mktemp -d /tmp/XXXXXX)"
           echo "TMPDIR=$d" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$d" >> "$GITHUB_ENV"
 
       - name: sdk/go and web/desktop tests (native)
         if: ${{ runner.environment == 'self-hosted' }}
@@ -2509,6 +2511,7 @@ jobs:
         run: |
           d="$(mktemp -d /tmp/XXXXXX)"
           echo "TMPDIR=$d" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$d" >> "$GITHUB_ENV"
 
       - name: Build, vet and test (native)
         if: ${{ runner.environment == 'self-hosted' }}
@@ -2676,6 +2679,7 @@ jobs:
         run: |
           d="$(mktemp -d /tmp/XXXXXX)"
           echo "TMPDIR=$d" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$d" >> "$GITHUB_ENV"
 
       - name: Race detector, all backends including FROST (native)
         if: ${{ runner.environment == 'self-hosted' }}
@@ -2781,6 +2785,7 @@ jobs:
         run: |
           d="$(mktemp -d /tmp/XXXXXX)"
           echo "TMPDIR=$d" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$d" >> "$GITHUB_ENV"
 
       - name: pkg/tpm2 on the simulator (native)
         if: ${{ runner.environment == 'self-hosted' }}

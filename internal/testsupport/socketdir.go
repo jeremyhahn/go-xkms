@@ -45,17 +45,26 @@ func SocketDir(t testing.TB) string {
 	return dir
 }
 
-// RunWithShortTempDir runs m with TMPDIR pointed at a fresh mode-0700
-// directory directly under /tmp, removes it afterwards and returns m.Run's
-// exit code; call it from TestMain as os.Exit(testsupport.RunWithShortTempDir(m)).
+// RunWithShortTempDir runs m with TMPDIR and GOTMPDIR pointed at a fresh
+// mode-0700 directory directly under /tmp, removes it afterwards and returns
+// m.Run's exit code; call it from TestMain as
+// os.Exit(testsupport.RunWithShortTempDir(m)).
 //
 // It is for a package whose code under test binds its own Unix socket
 // beneath os.TempDir (ssh/agent's default session directory), where a test
 // cannot pass a SocketDir path in: under a long runner TMPDIR that socket's
-// path passes sun_path. On Windows, which has no /tmp, m runs unchanged.
+// path passes sun_path. GOTMPDIR is set too because t.TempDir prefers it over
+// TMPDIR (Go 1.27), and the self-hosted pool sets it to the runner's long
+// _work/_temp. On Windows, which has no /tmp, m runs unchanged.
 func RunWithShortTempDir(m *testing.M) int {
+	return runWithShortTempDir(m.Run)
+}
+
+// runWithShortTempDir is RunWithShortTempDir for any run function, so its own
+// test can drive it without a TestMain.
+func runWithShortTempDir(run func() int) int {
 	if runtime.GOOS == "windows" {
-		return m.Run()
+		return run()
 	}
 	dir, err := os.MkdirTemp("/tmp", "xt")
 	if err != nil {
@@ -67,9 +76,11 @@ func RunWithShortTempDir(m *testing.M) int {
 			fmt.Fprintf(os.Stderr, "testsupport.RunWithShortTempDir: remove %s: %v\n", dir, err)
 		}
 	}()
-	if err := os.Setenv("TMPDIR", dir); err != nil {
-		fmt.Fprintf(os.Stderr, "testsupport.RunWithShortTempDir: %v\n", err)
-		return 1
+	for _, key := range []string{"TMPDIR", "GOTMPDIR"} {
+		if err := os.Setenv(key, dir); err != nil {
+			fmt.Fprintf(os.Stderr, "testsupport.RunWithShortTempDir: %v\n", err)
+			return 1
+		}
 	}
-	return m.Run()
+	return run()
 }
