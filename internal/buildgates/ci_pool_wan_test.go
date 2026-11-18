@@ -26,7 +26,59 @@ type poolStep struct {
 	Name string            `yaml:"name"`
 	If   string            `yaml:"if"`
 	Uses string            `yaml:"uses"`
+	Run  string            `yaml:"run"`
 	Env  map[string]string `yaml:"env"`
+}
+
+// Ruling 869 (pending InfoSec's review of M-8): with the LAN-first proxy,
+// integrity rests on the checksum database. A pool job that runs Go natively
+// (a setup-go step that can run on the pool) sets -mod=readonly in its job
+// GOFLAGS and runs scripts/ci-go-integrity.sh as the step right after
+// setup-go, under the same if:; no step relaxes either.
+const poolIntegrityScript = "scripts/ci-go-integrity.sh"
+
+// poolSumdbEnv are the variables that exempt modules from the checksum
+// database or replace it.
+var poolSumdbEnv = []string{"GOSUMDB", "GONOSUMDB", "GONOSUMCHECK", "GOINSECURE", "GOPRIVATE"}
+
+func poolReadonly(flags string) bool {
+	return strings.Contains(" "+flags+" ", " -mod=readonly ") && !strings.Contains(" "+flags, " -insecure")
+}
+
+func poolIntegrityProblems(file, where string, wf poolWorkflow, job poolJob) []string {
+	setup := -1
+	for i, s := range job.Steps {
+		if strings.HasPrefix(s.Uses, "actions/setup-go@") && !strings.Contains(s.If, poolHostedOnly) {
+			setup = i
+			break
+		}
+	}
+	if setup < 0 {
+		return nil
+	}
+	var problems []string
+	flags, ok := job.Env["GOFLAGS"]
+	if !ok {
+		flags = wf.Env["GOFLAGS"]
+	}
+	if !poolReadonly(flags) {
+		problems = append(problems, where+": runs Go on the pool without -mod=readonly (and no -insecure) in its job GOFLAGS (ruling 869)")
+	}
+	if setup+1 >= len(job.Steps) || strings.TrimSpace(job.Steps[setup+1].Run) != poolIntegrityScript ||
+		job.Steps[setup+1].If != job.Steps[setup].If {
+		problems = append(problems, where+": the step after setup-go is not `"+poolIntegrityScript+"` under setup-go's if: (ruling 869)")
+	}
+	for _, s := range job.Steps {
+		for _, v := range poolSumdbEnv {
+			if _, set := s.Env[v]; set {
+				problems = append(problems, where+" step "+s.Name+": sets "+v+", which relaxes the checksum database (ruling 869)")
+			}
+		}
+		if f, set := s.Env["GOFLAGS"]; set && !poolReadonly(f) {
+			problems = append(problems, where+" step "+s.Name+": sets GOFLAGS without -mod=readonly or with -insecure (ruling 869)")
+		}
+	}
+	return problems
 }
 
 type poolJob struct {
@@ -76,6 +128,7 @@ func poolWANProblems(file string, data []byte) []string {
 		if _, ok := wf.Env["GOPROXY"]; ok {
 			problems = append(problems, file+": the workflow env sets GOPROXY, replacing the pool's LAN-first module proxy")
 		}
+		problems = append(problems, poolIntegrityProblems(file, where, wf, job)...)
 		if _, ok := job.Env["GOPROXY"]; ok {
 			problems = append(problems, where+": the job env sets GOPROXY, replacing the pool's LAN-first module proxy")
 		}
@@ -124,6 +177,11 @@ func TestPoolWANProblems(t *testing.T) {
 		{"a pool job sets GOPROXY", "jobs:\n  a:\n" + pool + "    env:\n      GOPROXY: https://proxy.golang.org\n    steps: []\n", "the job env sets GOPROXY"},
 		{"an expression that can reach the pool", "jobs:\n  a:\n    runs-on: ${{ cond && fromJSON('[\"self-hosted\",\"bigdisk\"]') || 'ubuntu-latest' }}\n    steps:\n      - name: s\n        env:\n          GOPROXY: x\n", "step s: sets GOPROXY"},
 		{"unparsable", "jobs: [", "not parseable"},
+		{"native Go without read-only modules", "jobs:\n  a:\n" + pool + "    steps:\n      - uses: actions/setup-go@0\n      - run: scripts/ci-go-integrity.sh\n", "without -mod=readonly"},
+		{"native Go without the integrity step", "jobs:\n  a:\n" + pool + "    env:\n      GOFLAGS: -mod=readonly\n    steps:\n      - uses: actions/setup-go@0\n      - run: go test ./...\n", "the step after setup-go is not"},
+		{"the integrity step under another if", "jobs:\n  a:\n" + pool + "    env:\n      GOFLAGS: -mod=readonly\n    steps:\n      - uses: actions/setup-go@0\n        if: x\n      - run: scripts/ci-go-integrity.sh\n", "the step after setup-go is not"},
+		{"a step exempts modules", "jobs:\n  a:\n" + pool + "    env:\n      GOFLAGS: -mod=readonly\n    steps:\n      - uses: actions/setup-go@0\n      - run: scripts/ci-go-integrity.sh\n      - name: t\n        env:\n          GONOSUMDB: github.com/x\n", "sets GONOSUMDB"},
+		{"a step drops read-only modules", "jobs:\n  a:\n" + pool + "    env:\n      GOFLAGS: -mod=readonly\n    steps:\n      - uses: actions/setup-go@0\n      - run: scripts/ci-go-integrity.sh\n      - name: t\n        env:\n          GOFLAGS: -mod=mod\n", "sets GOFLAGS without -mod=readonly"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			p := poolWANProblems("f.yml", []byte(c.body))
@@ -134,6 +192,7 @@ func TestPoolWANProblems(t *testing.T) {
 	}
 	for _, c := range []struct{ name, body string }{
 		{"a hosted job may set GOPROXY", "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: s\n        env:\n          GOPROXY: https://proxy.golang.org\n"},
+		{"native Go with read-only modules and the integrity step", "jobs:\n  a:\n" + pool + "    env:\n      GOFLAGS: -mod=readonly\n    steps:\n      - uses: actions/setup-go@0\n        if: c\n      - if: c\n        run: scripts/ci-go-integrity.sh\n      - run: go test ./...\n"},
 		{"a hosted-only step of a pool job may download", "jobs:\n  a:\n" + pool + "    steps:\n      - name: d\n        if: runner.environment == 'github-hosted'\n        uses: actions/download-artifact@0000\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

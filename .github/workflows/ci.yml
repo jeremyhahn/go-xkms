@@ -1295,6 +1295,7 @@ jobs:
       contents: read
       packages: read
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       # v1.22: the cache volumes' trust class (as in the image job).
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
@@ -1368,14 +1369,20 @@ jobs:
       # The bigdisk pool: the same target, natively. Go from setup-go at
       # GO_VERSION; the gate tools the toolchain image carries, at its pins
       # (scripts/tool-pins.sh GOLANGCI_VERSION, ACTIONLINT_VERSION), through the
-      # pool's GOPROXY, the LAN proxy first (ruling 862); GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the
-      # image sets them, so make runs in place and never shells out to Docker.
+      # pool's GOPROXY, the LAN proxy first (ruling 862); GOTOOLCHAIN=local
+      # and XKMS_NATIVE_BUILD=1 as the image sets them, so make runs in place
+      # and never shells out to Docker.
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
         with:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # Ruling 869: the module-integrity gate of a native Go job on the pool
+      # (checksum database on, no exemptions, -mod=readonly, no direct).
+      - name: Module integrity (ruling 869)
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
+        run: scripts/ci-go-integrity.sh
       - name: Install the gate tools at the toolchain image's pins
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
         env:
@@ -1767,6 +1774,7 @@ jobs:
       contents: read
       packages: read
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -1826,6 +1834,11 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # Ruling 869: the module-integrity gate of a native Go job on the pool
+      # (checksum database on, no exemptions, -mod=readonly, no direct).
+      - name: Module integrity (ruling 869)
+        if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
+        run: scripts/ci-go-integrity.sh
       - name: Static analysis (native)
         if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
         env:
@@ -1873,6 +1886,7 @@ jobs:
       packages: read
     timeout-minutes: 35   # #1587: ~2x 17m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -1965,6 +1979,11 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # Ruling 869: the module-integrity gate of a native Go job on the pool
+      # (checksum database on, no exemptions, -mod=readonly, no direct).
+      - name: Module integrity (ruling 869)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: scripts/ci-go-integrity.sh
       - name: Backend-tagged binaries and the acme-client GUI (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
@@ -2017,6 +2036,7 @@ jobs:
       packages: read
     timeout-minutes: 20   # #1587: ~2x 9.4m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2076,6 +2096,11 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # Ruling 869: the module-integrity gate of a native Go job on the pool
+      # (checksum database on, no exemptions, -mod=readonly, no direct).
+      - name: Module integrity (ruling 869)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: scripts/ci-go-integrity.sh
       - name: Build sdk/go, web/desktop and xkey (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
@@ -2121,6 +2146,7 @@ jobs:
       packages: read
     timeout-minutes: 110  # #1587: ~2x 55m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2203,6 +2229,11 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # Ruling 869: the module-integrity gate of a native Go job on the pool
+      # (checksum database on, no exemptions, -mod=readonly, no direct).
+      - name: Module integrity (ruling 869)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: scripts/ci-go-integrity.sh
       - name: sdk/go and web/desktop tests (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
@@ -2267,6 +2298,7 @@ jobs:
       matrix:
         tags: ["codec_json", "raft codec_json"]
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2328,6 +2360,11 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # Ruling 869: the module-integrity gate of a native Go job on the pool
+      # (checksum database on, no exemptions, -mod=readonly, no direct).
+      - name: Module integrity (ruling 869)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: scripts/ci-go-integrity.sh
       - name: Build, vet and test (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
@@ -2367,6 +2404,7 @@ jobs:
       packages: read
     timeout-minutes: 145  # #1587: ~2x 71m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2446,6 +2484,11 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # Ruling 869: the module-integrity gate of a native Go job on the pool
+      # (checksum database on, no exemptions, -mod=readonly, no direct).
+      - name: Module integrity (ruling 869)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: scripts/ci-go-integrity.sh
       - name: Race detector, all backends including FROST (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
@@ -2484,6 +2527,7 @@ jobs:
       packages: read
     timeout-minutes: 25   # #1587: ~2x 10.5m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2537,6 +2581,11 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # Ruling 869: the module-integrity gate of a native Go job on the pool
+      # (checksum database on, no exemptions, -mod=readonly, no direct).
+      - name: Module integrity (ruling 869)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: scripts/ci-go-integrity.sh
       - name: pkg/tpm2 on the simulator (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
