@@ -248,6 +248,10 @@ type KeyConfig struct {
 	ECC       *ECCConfig `yaml:"ecc,omitempty" json:"ecc,omitempty" mapstructure:"ecc"`
 	RSA       *RSAConfig `yaml:"rsa,omitempty" json:"rsa,omitempty" mapstructure:"rsa"`
 	Password  string     `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+	// File is a PEM PKCS#8 file holding the account's private key. When
+	// set, the account signs with that key instead of a generated one;
+	// registration writes it (mode 0600) next to the configuration file.
+	File string `yaml:"file,omitempty" json:"file,omitempty" mapstructure:"file"`
 }
 
 // ECCConfig holds elliptic curve cryptography parameters.
