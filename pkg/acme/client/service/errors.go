@@ -319,6 +319,20 @@ func (e ErrInvalidAccountConfig) Error() string {
 	return fmt.Sprintf("acme-client-service: invalid account config for %s: %s", e.Name, e.Reason)
 }
 
+// ErrUnsupportedAccountKeyStore is returned when an account names a key
+// store the client cannot sign through. The client has no TPM or PKCS#11
+// backend for account keys, and it never substitutes a software key for a
+// hardware store (docs/acme-issuance/cli.md), so such an account is refused
+// before any key is generated or any request reaches the server.
+type ErrUnsupportedAccountKeyStore struct {
+	Account string
+	Store   string
+}
+
+func (e ErrUnsupportedAccountKeyStore) Error() string {
+	return fmt.Sprintf("acme-client-service: account %s: key store %q is not supported for account keys (supported: software, file)", e.Account, e.Store)
+}
+
 // ErrInvalidCertSpec indicates the certificate spec validation failed.
 type ErrInvalidCertSpec struct {
 	Name   string
