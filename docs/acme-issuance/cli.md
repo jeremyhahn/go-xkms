@@ -65,18 +65,25 @@ namespace.
 | `--directory` | string | — | **yes** — ACME directory URL |
 | `--email` | string | — | **yes** — contact email |
 | `--key-algorithm` | string | `ECDSA` | no — `ECDSA`, `RSA`, `ED25519` |
-| `--key-store` | string | `software` | no — key storage backend |
+| `--key-store` | string | `software` | no — `software` or `file` |
 | `--key-curve` | string | `P-256` | no — `P-256`, `P-384`, `P-521` |
 
 ```
 trusted-acme-client account add prod \
     --directory https://kms.example.com:8443/api/v1/acme/directory \
     --email ops@example.com \
-    --key-algorithm ECDSA --key-curve P-384 --key-store tpm2
+    --key-algorithm ECDSA --key-curve P-384
 ```
 
-`--key-store tpm2` puts the **account key** in the TPM, which is the point: an
-account key in a file is a certificate-issuing capability sitting on disk.
+The account key is generated in process memory and is never written to
+disk. The client has no TPM or PKCS#11 backend for account keys, so any
+other `--key-store` (such as `tpm2` or `pkcs11`) is refused with
+`ErrUnsupportedAccountKeyStore` before any key is generated or any request
+is sent; the same check runs when a command builds the client for an
+account loaded from the configuration file
+(`pkg/acme/client/service/account_manager.go`, `checkAccountKeyStore`). A
+software key never stands in for a hardware one: an account key is a
+certificate-issuing capability.
 
 `account add` only stores this configuration locally; it makes no ACME
 `newAccount` request. The account is registered with the directory server
