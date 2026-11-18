@@ -14,7 +14,10 @@
 package main
 
 import (
+	"crypto/x509"
 	"errors"
+	"fmt"
+	"os"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -36,7 +39,8 @@ and stored in the configured key store.
 Examples:
   trusted-acme-client account add trusted-ca \
     --directory https://ca.internal:8443/directory \
-    --email admin@corp.com
+    --email admin@corp.com \
+    --trusted-roots /etc/xkms/ca-root.pem
 
   trusted-acme-client account add letsencrypt \
     --directory https://acme-v02.api.letsencrypt.org/directory \
@@ -56,6 +60,12 @@ Examples:
 		algorithm, _ := cmd.Flags().GetString("key-algorithm")
 		store, _ := cmd.Flags().GetString("key-store")
 		curve, _ := cmd.Flags().GetString("key-curve")
+		rootFiles, _ := cmd.Flags().GetStringSlice("trusted-roots")
+		requestBundle, _ := cmd.Flags().GetBool("request-server-bundle")
+		roots, err := readTrustedRoots(rootFiles)
+		if err != nil {
+			return err
+		}
 
 		cfg := &service.AccountConfig{
 			DirectoryURL: directory,
@@ -65,6 +75,10 @@ Examples:
 				Store:     store,
 				ECC:       &service.ECCConfig{Curve: curve},
 			},
+			// The account client uses no system roots: these are what it
+			// trusts for the directory's TLS certificate.
+			TrustedRoots:        roots,
+			RequestServerBundle: requestBundle,
 		}
 
 		if err := svc.Accounts().Add(cmd.Context(), name, cfg); err != nil {
@@ -221,9 +235,28 @@ func init() {
 	accountAddCmd.Flags().String("key-algorithm", "ECDSA", "key algorithm (ECDSA|RSA|ED25519)")
 	accountAddCmd.Flags().String("key-store", "software", "key storage backend")
 	accountAddCmd.Flags().String("key-curve", "P-256", "ECC curve for ECDSA keys (P-256|P-384|P-521)")
+	accountAddCmd.Flags().StringSlice("trusted-roots", nil, "PEM file(s) of the root CA(s) that issued the directory's TLS certificate (repeatable); system roots are not used")
+	accountAddCmd.Flags().Bool("request-server-bundle", false, "fetch the server's CA bundle and trust it (trust on first use)")
 
 	accountCmd.AddCommand(accountAddCmd)
 	accountCmd.AddCommand(accountListCmd)
 	accountCmd.AddCommand(accountShowCmd)
 	accountCmd.AddCommand(accountRemoveCmd)
+}
+
+// readTrustedRoots reads each PEM file named by --trusted-roots and returns
+// its contents; a file without a certificate is an error.
+func readTrustedRoots(paths []string) ([]string, error) {
+	roots := make([]string, 0, len(paths))
+	for _, p := range paths {
+		data, err := os.ReadFile(p) // #nosec G304 - path named by the operator
+		if err != nil {
+			return nil, fmt.Errorf("--trusted-roots: %w", err)
+		}
+		if !x509.NewCertPool().AppendCertsFromPEM(data) {
+			return nil, fmt.Errorf("--trusted-roots: %s holds no PEM certificate", p)
+		}
+		roots = append(roots, string(data))
+	}
+	return roots, nil
 }
