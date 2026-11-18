@@ -1295,6 +1295,7 @@ jobs:
       contents: read
       packages: read
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       # v1.22: the cache volumes' trust class (as in the image job).
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
@@ -1367,9 +1368,10 @@ jobs:
 
       # The bigdisk pool: the same target, natively. Go from setup-go at
       # GO_VERSION; the gate tools the toolchain image carries, at its pins
-      # (scripts/tool-pins.sh GOLANGCI_VERSION, ACTIONLINT_VERSION), from
-      # proxy.golang.org; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the
-      # image sets them, so make runs in place and never shells out to Docker.
+      # (scripts/tool-pins.sh GOLANGCI_VERSION, ACTIONLINT_VERSION), through the
+      # pool's GOPROXY, the LAN proxy first (ruling 862); GOTOOLCHAIN=local
+      # and XKMS_NATIVE_BUILD=1 as the image sets them, so make runs in place
+      # and never shells out to Docker.
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
         with:
@@ -1379,9 +1381,9 @@ jobs:
       - name: Install the gate tools at the toolchain image's pins
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
         run: |
+          scripts/ci-go-integrity.sh
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -1391,7 +1393,9 @@ jobs:
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
-        run: make lint-gates GO_BUILD_TAGS="$GO_BUILD_TAGS"
+        run: |
+          scripts/ci-go-integrity.sh
+          make lint-gates GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'
@@ -1768,6 +1772,7 @@ jobs:
       contents: read
       packages: read
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -1819,7 +1824,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
         with:
@@ -1829,10 +1835,10 @@ jobs:
       - name: Static analysis (native)
         if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           make vet-integration
           make secure-analyzer-selftest
@@ -1874,6 +1880,7 @@ jobs:
       packages: read
     timeout-minutes: 35   # #1587: ~2x 17m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -1958,7 +1965,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -1968,10 +1976,10 @@ jobs:
       - name: Backend-tagged binaries and the acme-client GUI (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           sh .github/scripts/disk-usage.sh "before the build"
           cache=$(go env GOCACHE)
@@ -2018,6 +2026,7 @@ jobs:
       packages: read
     timeout-minutes: 20   # #1587: ~2x 9.4m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2069,7 +2078,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2079,10 +2089,10 @@ jobs:
       - name: Build sdk/go, web/desktop and xkey (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           (cd sdk/go && go build ./...)
           (cd web/desktop && go build ./...)
@@ -2122,6 +2132,7 @@ jobs:
       packages: read
     timeout-minutes: 110  # #1587: ~2x 55m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2196,7 +2207,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2206,10 +2218,10 @@ jobs:
       - name: sdk/go and web/desktop tests (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           (cd sdk/go && go test -race -timeout 60m -v -tags codec_json ./...)
           (cd web/desktop && go test -race -timeout 60m -v ./...)
@@ -2217,10 +2229,10 @@ jobs:
       - name: xkey tests (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           cd xkey
           go test -race -timeout 60m -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
@@ -2269,6 +2281,7 @@ jobs:
       matrix:
         tags: ["codec_json", "raft codec_json"]
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2322,7 +2335,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2332,11 +2346,11 @@ jobs:
       - name: Build, vet and test (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
           TAGS: ${{ matrix.tags }}
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           go build -tags "$TAGS" ./...
           go vet -tags "$TAGS" ./pkg/server/... ./pkg/config/...
@@ -2369,6 +2383,7 @@ jobs:
       packages: read
     timeout-minutes: 145  # #1587: ~2x 71m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2440,7 +2455,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2450,10 +2466,10 @@ jobs:
       - name: Race detector, all backends including FROST (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           mkdir -p /tmp/softhsm2/tokens
           printf "directories.tokendir = /tmp/softhsm2/tokens\nobjectstore.backend = file\nlog.level = INFO\n" > /tmp/softhsm2.conf
@@ -2486,6 +2502,7 @@ jobs:
       packages: read
     timeout-minutes: 25   # #1587: ~2x 10.5m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2531,7 +2548,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2541,10 +2559,10 @@ jobs:
       - name: pkg/tpm2 on the simulator (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           make test-tpm2-simulator
 
       - name: Tear down
