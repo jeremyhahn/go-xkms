@@ -151,7 +151,11 @@ func (a *Adapter) doRequest(ctx context.Context, method, path string, body inter
 func parseErrorBody(statusCode int, body []byte) error {
 	var problem problemDetail
 	if len(body) > 0 {
-		if err := json.Unmarshal(body, &problem); err == nil && problem.Detail != "" {
+		err := json.Unmarshal(body, &problem)
+		if err == nil && problem.Type == admin.ProblemTypeTenantStatusUnsupported {
+			return admin.TenantStatusUnsupported()
+		}
+		if err == nil && problem.Detail != "" {
 			return caerrors.ConnectionFailureError("%s: %s (status %d)", problem.Title, problem.Detail, statusCode)
 		}
 	}
@@ -291,6 +295,9 @@ func (a *Adapter) DeleteTenant(ctx context.Context, tenantID string) error {
 
 // ListTenants lists all tenants.
 func (a *Adapter) ListTenants(ctx context.Context, req *admin.ListTenantsRequest) ([]*admin.TenantInfo, *admin.Pagination, error) {
+	if req.Status != "" {
+		return nil, nil, admin.TenantStatusUnsupported()
+	}
 	resp, err := a.doRequest(ctx, http.MethodGet, api.TenantListPath(req), nil)
 	if err != nil {
 		return nil, nil, err
