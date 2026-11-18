@@ -455,14 +455,31 @@ func (ca *CA) CAKeyAttributes(storeType types.StoreType) (*types.KeyAttributes, 
 //
 // Thread-safe: Yes
 func (ca *CA) CASigner(ctx context.Context, storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error) {
-	attrs, err := ca.CAKeyAttributes(storeType)
+	issuing := ca.config.IssuingIdentity()
+	if issuing == nil {
+		return nil, ErrInvalidConfig
+	}
+	configured := issuing.GetStoreType()
+	if storeType != "" && configured != storeType {
+		return nil, &errs.Detail{Err: ErrInvalidStoreType, Detail: fmt.Sprintf("requested store type %s does not match configured %s", storeType, configured)}
+	}
+	// The lookup allocates the key passwords; like getSigner, clear the
+	// ones it owns on every error path and scope them per Sign on success,
+	// so no CA-owned locked password outlives the call.
+	attrs, owned, err := ca.openCAKeyAttributes(ctx, issuing)
 	if err != nil {
 		return nil, err
 	}
 	if algo != x509.UnknownPublicKeyAlgorithm && attrs.KeyAlgorithm != algo {
+		owned.clear()
 		return nil, &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: fmt.Sprintf("CA key algorithm %v does not match requested %v", attrs.KeyAlgorithm, algo)}
 	}
-	return ca.keyStore.Signer(ctx, attrs)
+	signer, err := ca.keyStore.Signer(ctx, attrs)
+	if err != nil {
+		owned.clear()
+		return nil, err
+	}
+	return ca.passwordScoped(ctx, issuing, owned, signer), nil
 }
 
 // IdentityIssuer is implemented by CA instances that can issue from a
