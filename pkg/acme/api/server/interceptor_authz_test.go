@@ -100,6 +100,24 @@ func newTestGate() (*admin.PermissionGate, *qrdbRoleRBAC) {
 	return admin.NewPermissionGate(auth.NewAuthorizer(client), testLogger()), client
 }
 
+// wantRequested is the exact sequence of permissions the gate asks the
+// authorizer for: the declared permission, and for a role mutation the
+// rest of the role-administration family (role mutation stays SO-only
+// although go-qrdb v0.58.5 grants Admin roles:create and roles:update).
+func wantRequested(resource, action string) []string {
+	if resource == auth.ResourceRoles {
+		switch action {
+		case auth.ActionCreate:
+			return []string{"roles:create", "roles:update", "roles:delete"}
+		case auth.ActionUpdate:
+			return []string{"roles:update", "roles:create", "roles:delete"}
+		case auth.ActionDelete:
+			return []string{"roles:delete", "roles:create", "roles:update"}
+		}
+	}
+	return []string{resource + ":" + action}
+}
+
 // okHandler records that the handler ran.
 func okHandler(ran *bool) grpc.UnaryHandler {
 	return func(ctx context.Context, req interface{}) (interface{}, error) {
@@ -257,7 +275,7 @@ func TestUnaryAuthorizationInterceptor_RequestsExactPermission(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.True(t, ran)
-			assert.Equal(t, []string{tc.resource + ":" + tc.action}, client.requested)
+			assert.Equal(t, wantRequested(tc.resource, tc.action), client.requested)
 		})
 	}
 }

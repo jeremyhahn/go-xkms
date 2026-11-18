@@ -131,7 +131,7 @@ func TestAuthorizeMCPMethod_RequestsExactPermission(t *testing.T) {
 			})
 
 			require.NoError(t, s.authorizeMCPMethod(ctx, tc.method))
-			assert.Equal(t, []string{tc.resource + ":" + tc.action}, client.requested)
+			assert.Equal(t, wantRequested(tc.resource, tc.action), client.requested)
 		})
 	}
 }
