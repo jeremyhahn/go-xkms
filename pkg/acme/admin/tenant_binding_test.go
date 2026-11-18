@@ -53,8 +53,37 @@ func callerCtx(tenantID string) context.Context {
 		UserID:   "admin@" + tenantID,
 		Username: "admin@" + tenantID,
 		TenantID: tenantID,
-		Roles:    []string{qrdbsdk.RoleNameAdmin},
+		Roles: []string{
+			builtInRoleID(tenantID, qrdbsdk.RoleNameAdmin),
+			builtInRoleID(tenantID, qrdbsdk.RoleNameSO),
+		},
 	})
+}
+
+// builtInRoleID returns the ID of tenantID's built-in role name. A
+// production identity carries qrdb role IDs, and since go-qrdb v0.58.5
+// role and user writes resolve the caller's roles by ID.
+func builtInRoleID(tenantID, name string) string {
+	for _, r := range qrdbsdk.BuiltInRoles(tenantID) {
+		if r.Name == name {
+			return r.ID
+		}
+	}
+	return name
+}
+
+// seedBuiltInRoles reconciles the built-in roles of each tenant, as the
+// embedded node does for the platform tenant at first boot and tenant
+// creation does for a new tenant.
+func seedBuiltInRoles(t *testing.T, svc *TenantAwareAdminService, tenantIDs ...string) {
+	t.Helper()
+	for _, id := range tenantIDs {
+		ctx, err := bindTenantIAM(callerCtx(id), "seed built-in roles", id)
+		require.NoError(t, err)
+		_, err = svc.qrdbService.Roles().ReconcileBuiltInRoles(ctx,
+			&db.ReconcileRolesRequest{TenantID: id})
+		require.NoError(t, err)
+	}
 }
 
 // platformCtx returns a context carrying an administrator of the reserved
@@ -95,11 +124,15 @@ func newBindingFixture(t *testing.T) *bindingFixture {
 		_, err := svc.CreateTenant(ctx, CreateTenantRequest{ID: id, Name: id})
 		require.NoError(t, err)
 	}
+	seedBuiltInRoles(t, svc, qrdbsdk.SystemTenantID, boundTenantA, boundTenantB)
 
 	var err error
-	f.roleA, err = svc.CreateTenantRole(ctx, boundTenantA, &db.CreateRoleRequest{Name: "role-a", Permissions: []string{"kv:get"}})
+	// go-qrdb v0.58.5 lets a grantor grant only permissions it holds in the
+	// target tenant, which a platform caller's roles do not resolve in; each
+	// tenant's own admin creates its role.
+	f.roleA, err = svc.CreateTenantRole(callerCtx(boundTenantA), boundTenantA, &db.CreateRoleRequest{Name: "role-a", Permissions: []string{"acme_orders:read"}})
 	require.NoError(t, err)
-	f.roleB, err = svc.CreateTenantRole(ctx, boundTenantB, &db.CreateRoleRequest{Name: "role-b", Permissions: []string{"kv:get"}})
+	f.roleB, err = svc.CreateTenantRole(callerCtx(boundTenantB), boundTenantB, &db.CreateRoleRequest{Name: "role-b", Permissions: []string{"acme_orders:read"}})
 	require.NoError(t, err)
 	f.userA, err = svc.CreateTenantUser(ctx, boundTenantA, &db.CreateUserRequest{Username: "user-a", Name: "User A", Email: "user-a@example.com"})
 	require.NoError(t, err)
@@ -158,7 +191,7 @@ func TestTenantBinding_ForeignTenantRefusedAsNotFound(t *testing.T) {
 			return err
 		},
 		"create role": func() error {
-			_, err := svc.CreateTenantRole(ctx, boundTenantB, &db.CreateRoleRequest{Name: "planted", Permissions: []string{"kv:get"}})
+			_, err := svc.CreateTenantRole(ctx, boundTenantB, &db.CreateRoleRequest{Name: "planted", Permissions: []string{"acme_orders:read"}})
 			return err
 		},
 		"get role": func() error { _, err := svc.GetTenantRole(ctx, boundTenantB, f.roleB.ID); return err },
@@ -200,7 +233,7 @@ func TestTenantBinding_ForeignTenantRefusedAsNotFound(t *testing.T) {
 	assert.Equal(t, entities.TenantStatusActive, info.Status)
 	role, err := svc.GetTenantRole(pctx, boundTenantB, f.roleB.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"kv:get"}, role.Permissions)
+	assert.Equal(t, []string{"acme_orders:read"}, role.Permissions)
 	user, err := svc.GetTenantUser(pctx, boundTenantB, userBID)
 	require.NoError(t, err)
 	assert.Equal(t, "User B", user.Name)
@@ -208,7 +241,7 @@ func TestTenantBinding_ForeignTenantRefusedAsNotFound(t *testing.T) {
 	require.NoError(t, err)
 	roles, err := svc.ListTenantRoles(pctx, boundTenantB, &db.ListRolesRequest{})
 	require.NoError(t, err)
-	assert.Len(t, roles.Roles, 1, "no role may be planted in tenant-b")
+	assert.Len(t, roles.Roles, len(qrdbsdk.BuiltInRoles(boundTenantB))+1, "no role may be planted in tenant-b")
 	users, err := svc.ListTenantUsers(pctx, boundTenantB, &db.ListUsersRequest{})
 	require.NoError(t, err)
 	assert.Len(t, users.Users, 1, "no user may be planted in tenant-b")
@@ -256,7 +289,7 @@ func TestTenantBinding_ForeignRoleAndUserUnderOwnTenant(t *testing.T) {
 	pctx := platformCtx()
 	role, err := svc.GetTenantRole(pctx, boundTenantB, f.roleB.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"kv:get"}, role.Permissions)
+	assert.Equal(t, []string{"acme_orders:read"}, role.Permissions)
 	user, err := svc.GetTenantUser(pctx, boundTenantB, userBID)
 	require.NoError(t, err)
 	assert.Equal(t, "User B", user.Name)
@@ -293,9 +326,9 @@ func TestTenantBinding_TenantCallerManagesOwnTenant(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, svc.UpdateTenantStatus(ctx, boundTenantA, entities.TenantStatusActive))
 
-	role, err := svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleA.ID, Permissions: []string{"kv:put"}})
+	role, err := svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleA.ID, Permissions: []string{"acme_orders:list"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"kv:put"}, role.Permissions)
+	assert.Equal(t, []string{"acme_orders:list"}, role.Permissions)
 	user, err := svc.UpdateTenantUser(ctx, boundTenantA, &db.UpdateUserRequest{ID: f.userA.ID, Name: "Renamed A"})
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed A", user.Name)
