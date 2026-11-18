@@ -126,3 +126,22 @@ match.
   reference left unchecked, and the `shipped` flip). They were made on the
   coordinator's lane brief under LANE_POLICY_ALLOW docs/SPEC.md (ruling 650).
   No owner approval is recorded in this lane, and the lane does not invent one.
+
+## Slice 6: the SPEC row 90 approval, unresolved in the lane
+
+- Codex P1 (`docs/SPEC.md:90`, review of e61410f3f) asks for one of two edits:
+  record the owner's approval in the PR description, or revert the row edits
+  pending approval. Neither is open to this lane:
+  - No owner approval exists, so there is nothing true to record, and the
+    lane opens and edits no PR description (lane-verify ships the tip).
+  - The revert (status back to `in progress`, the contract text replaced by
+    the earlier "Open:" sentence) is a docs/SPEC.md edit. The lane's policy
+    guard refuses docs/SPEC.md edits without LANE_POLICY_ALLOW docs/SPEC.md,
+    which this lane's brief does not carry. The refused edit was not bypassed.
+- To close it: the owner records approval of the row 90 text on PR #2110, or
+  the coordinator seats a slice with LANE_POLICY_ALLOW docs/SPEC.md to revert
+  the row to `in progress` pending approval.
+- The code findings of the review are fixed (Slice 5). The CI Nested Module
+  Build failure was a proxy.golang.org stream error; the three nested builds
+  (sdk/go, web/desktop, xkey) pass natively on 213a2167c and need only a
+  run-level re-run.
