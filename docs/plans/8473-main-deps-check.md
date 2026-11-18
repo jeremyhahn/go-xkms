@@ -46,3 +46,7 @@
   - make integration-test needs Docker (compose stacks in the integration image); this lane has no Docker and cannot read the job log (the logs API needs a forge token), so the failing sub-target is not known here.
   - Native compile and run of ./test/integration/... (tags integration codec_cbor codec_json codec_msgpack): every package builds; all PASS except oidccredentials ("the barrier was never initialized; run xkmsd init over the node's data first"), which fails the same way on origin/main eb4da3f6a and is not in make integration-test.
   - For the CA: the main-side Integration red needs its own main-fix lane with the job log (or Docker); #2080 cannot go green on Integration until main does.
+- af2080j 11-18: origin/main 45e5a6c9b merged, no conflicts; go build -mod=readonly in root, sdk/go, xkey, web/desktop: PASS.
+  - make deps-check (merged tree): FAIL, now 7+ days old: cloud.google.com/go/kms v1.37.0, aws-sdk-go-v2 v1.48.0, aws-sdk-go-v2/service/sts v1.52.0 (root; aws-sdk-go-v2 also xkey), go-luks2 v1.0.3-alpha (root, xkey).
+  - Bumped kms, aws-sdk-go-v2 and sts; all four modules tidied. go-luks2 v1.0.3-alpha pulls go-enclave v0.11.1-alpha and fails to build under the go-enclave v0.8.0-alpha replace (undefined: enclave.ByteAccess), so it is held with a held: comment until #1995.
+  - make deps-check: PASS; readonly builds: PASS; go test (awskms, gcpkms tags) ./pkg/backend/awskms/... ./pkg/backend/gcpkms/...: PASS. test/integration/gcpkms needs its emulator on localhost:4588 (Docker), not in the lane.
