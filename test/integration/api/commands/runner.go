@@ -130,7 +130,8 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(r.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
-		return "mcp://" + r.MCPAddr
+		// The MCP listener is streamable HTTP over TLS: mcps://.
+		return "mcps://" + r.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""
@@ -141,11 +142,11 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 
 // needsClientTLS reports whether a CLI invocation over protocol dials one of
 // the server's TLS listeners and so carries the admin client credential and
-// the trust bundle: the Unix socket, REST over HTTPS, gRPC and QUIC. MCP
-// (mcp://) is plain TCP and embedded runs in process.
+// the trust bundle: the Unix socket, REST over HTTPS, gRPC, QUIC and MCP
+// (streamable HTTP over TLS, mcps://). Embedded runs in process.
 func needsClientTLS(protocol ProtocolType, restBaseURL string) bool {
 	switch protocol {
-	case ProtocolUnix, ProtocolGRPC, ProtocolQUIC:
+	case ProtocolUnix, ProtocolGRPC, ProtocolQUIC, ProtocolMCP:
 		return true
 	case ProtocolREST:
 		return strings.HasPrefix(restBaseURL, "https://")
@@ -227,7 +228,7 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 		// socket (the qrdb node's TLS listener), REST over HTTPS, gRPC and
 		// QUIC -- authenticates as the init-ceremony admin over mTLS and
 		// verifies the server against the suite's trust bundle.
-		// MCP uses plain TCP (mcp://), not TLS.
+		// MCP (mcps://) is streamable HTTP over TLS and carries them too.
 		if needsClientTLS(protocol, r.RESTBaseURL) {
 			tlsArgs, err := apiharness.ClientTLSArgs()
 			if err != nil {

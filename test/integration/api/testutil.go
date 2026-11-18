@@ -112,7 +112,7 @@ func loadCACertPool() *x509.CertPool {
 // credential fails the test.
 func cliTLSArgs(t testing.TB, serverURL string) []string {
 	t.Helper()
-	if strings.HasPrefix(serverURL, "mcp://") || strings.HasPrefix(serverURL, "http://") {
+	if strings.HasPrefix(serverURL, "http://") {
 		return nil
 	}
 	args, err := apiharness.ClientTLSArgs()
@@ -120,6 +120,20 @@ func cliTLSArgs(t testing.TB, serverURL string) []string {
 		t.Fatalf("admin mTLS credential for %q: %v", serverURL, err)
 	}
 	return args
+}
+
+// adminTLSConfig is the TLS configuration for the tests that build their own
+// HTTP, HTTP/3 or MCP client: it verifies the server against the suite's
+// trust bundle and presents the init-ceremony admin certificate
+// (apiharness.ClientTLSConfig), because every listener requires a client
+// certificate.
+func adminTLSConfig(t testing.TB) *tls.Config {
+	t.Helper()
+	cfg, err := apiharness.ClientTLSConfig()
+	if err != nil {
+		t.Fatalf("admin mTLS credential: %v", err)
+	}
+	return cfg
 }
 
 // isCLIAvailable checks if the CLI binary is available
@@ -369,7 +383,9 @@ func (cfg *TestConfig) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(cfg.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
-		return "mcp://" + cfg.MCPAddr
+		// The MCP listener is streamable HTTP over TLS on the unified
+		// server: mcps://, with the admin client certificate (cliTLSArgs).
+		return "mcps://" + cfg.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""

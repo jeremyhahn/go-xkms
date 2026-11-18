@@ -78,7 +78,8 @@ func (s *CLITestSuite) runCLI(serverURL string, args ...string) (string, string,
 	}
 
 	// The admin mTLS credential and the trust bundle on every TLS transport
-	// (unix, REST over HTTPS, gRPC, QUIC). MCP (mcp://) is plain TCP.
+	// (unix, REST over HTTPS, gRPC, QUIC, and MCP as streamable HTTP over
+	// TLS, mcps://).
 	prefixArgs = append(prefixArgs, cliTLSArgs(s.t, serverURL)...)
 
 	args = append(prefixArgs, args...)

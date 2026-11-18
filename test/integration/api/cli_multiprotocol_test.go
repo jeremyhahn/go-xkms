@@ -36,7 +36,8 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 	}
 
 	// The admin mTLS credential and the trust bundle on every TLS transport
-	// (unix, REST over HTTPS, gRPC, QUIC). MCP (mcp://) is plain TCP.
+	// (unix, REST over HTTPS, gRPC, QUIC, and MCP as streamable HTTP over
+	// TLS, mcps://).
 	prefixArgs = append(prefixArgs, cliTLSArgs(t, serverURL)...)
 
 	args = append(prefixArgs, args...)
@@ -568,8 +569,9 @@ func TestCLILocalFlag(t *testing.T) {
 }
 
 // TestCLIMCPProtocol tests MCP protocol specifically.
-// The SDK MCP transport communicates using JSON-RPC 2.0 over raw TCP,
-// matching the MCP server protocol.
+// The CLI's MCP transport (pkg/mcptool) speaks streamable HTTP over TLS
+// (mcps://) to the unified server's MCP listener, with the admin client
+// certificate.
 func TestCLIMCPProtocol(t *testing.T) {
 	cfg := LoadTestConfig()
 	requireCLI(t, cfg)
