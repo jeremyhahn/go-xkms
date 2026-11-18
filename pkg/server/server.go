@@ -1357,7 +1357,7 @@ func (s *Server) buildAuthenticator() error {
 		if !s.config.TLS.Enabled {
 			return ErrMTLSRequiresTLS
 		}
-		mtlsConfig := &auth.MTLSConfig{}
+		mtlsConfig := &auth.MTLSConfig{TrustDomain: s.TrustDomain()}
 		if us := s.mtlsUserStore(); us != nil {
 			mtlsConfig.UserStore = us
 		}
@@ -1434,7 +1434,7 @@ func (s *Server) createCompositeAuthenticator() (auth.Authenticator, error) {
 			if !s.config.TLS.Enabled {
 				return nil, ErrCompositeMTLSRequiresTLS
 			}
-			mtlsConfig := &auth.MTLSConfig{}
+			mtlsConfig := &auth.MTLSConfig{TrustDomain: s.TrustDomain()}
 			if us := s.mtlsUserStore(); us != nil {
 				mtlsConfig.UserStore = us
 			}
@@ -1480,7 +1480,7 @@ func (s *Server) deriveCompositeAuthenticator() (auth.Authenticator, error) {
 		derived = append(derived, "jwt")
 	}
 	if s.config.TLS.Enabled {
-		mtlsConfig := &auth.MTLSConfig{}
+		mtlsConfig := &auth.MTLSConfig{TrustDomain: s.TrustDomain()}
 		if us := s.mtlsUserStore(); us != nil {
 			mtlsConfig.UserStore = us
 		}
