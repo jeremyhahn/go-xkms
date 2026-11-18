@@ -195,6 +195,16 @@ func (tpm *TPM2) platformPCRBranchSessionOver(pcrs PCRSet, authPolicy []byte) (t
 		return tpm.platformPCRSessionOver(pcrs)
 	}
 	if pcrs.Mask() != tpm.config.PlatformPCRs.Mask() {
+		// An object sealed with a recovery PIN over the expanded selection
+		// carries PolicyOR(PolicyPCR(pcrs), PolicyAuthValue): open its PCR
+		// branch over the same selection.
+		orPolicy, err := platformPolicyDigestFromPin(pin)
+		if err != nil {
+			return nil, noopCloser, err
+		}
+		if bytes.Equal(orPolicy.Buffer, authPolicy) {
+			return tpm.platformORPCRSessionOver(pcrs)
+		}
 		// An object whose PCRSelection is not part of its policy (an AK's
 		// creation PCRs, say) keeps the platform set's session.
 		return tpm.platformPCRBranchSession(authPolicy)

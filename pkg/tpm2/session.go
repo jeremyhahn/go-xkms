@@ -607,6 +607,48 @@ func (tpm *TPM2) platformPCRSessionOver(pcrs PCRSet) (tpm2.Session, func() error
 	return session, closer, nil
 }
 
+// platformORPCRSessionOver opens the PCR branch of a PolicyOR(PolicyPCR,
+// PolicyAuthValue) policy whose PCR branch is bound to pcrs: it runs
+// PolicyPCR over pcrs and then PolicyOR over both branch digests, so an
+// object sealed with a recovery PIN over a selection wider than the platform
+// set opens without the PIN while every selected PCR is unchanged.
+func (tpm *TPM2) platformORPCRSessionOver(pcrs PCRSet) (tpm2.Session, func() error, error) {
+	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+	}
+	pcrDigest, err := tpm.platformPCRDigestOver(hashAlgID, pcrs)
+	if err != nil {
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+	}
+	branch1Digest, branch2Digest, err := platformPolicyBranchDigests(hashAlgID, pcrs, pcrDigest)
+	if err != nil {
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+	}
+	session, closer, err := tpm.startPolicySession(hashAlgID, nil)
+	if err != nil {
+		return nil, noopCloser, &errs.Joined{Lead: ErrPlatformPolicySession, Cause: err}
+	}
+	if err := tpm.platformPolicyPCROver(session, hashAlgID, pcrs, pcrDigest); err != nil {
+		tpm.closeSession(closer, "platform PCR branch policy")
+		return nil, noopCloser, err
+	}
+	_, err = tpm2.PolicyOr{
+		PolicySession: session.Handle(),
+		PHashList: tpm2.TPMLDigest{
+			Digests: []tpm2.TPM2BDigest{
+				{Buffer: branch1Digest},
+				{Buffer: branch2Digest},
+			},
+		},
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.closeSession(closer, "platform PCR branch policy")
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyOR execute: %v", err)}
+	}
+	return session, closer, nil
+}
+
 // NonceSession returns a policy session that has executed TPM2_PolicySecret
 // against the Endorsement hierarchy, proving hierarchyAuth through a salted
 // HMAC session (see hierarchyAuthSession). The caller must invoke the returned
