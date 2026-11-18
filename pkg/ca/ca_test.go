@@ -20,6 +20,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"errors"
 	"io"
 	"testing"
@@ -69,6 +70,77 @@ func TestCA_RepeatedSigningKeepsPasswordAllocationsBounded(t *testing.T) {
 	after := alloc.InUse()
 	require.LessOrEqual(t, after, before,
 		"%d signer lookups grew locked bytes from %d to %d", n, before, after)
+}
+
+// signerFailingKeyStore fails Signer when fail is set and delegates every
+// other call, so a test can drive CASigner down its backend-error path.
+type signerFailingKeyStore struct {
+	xkms.Backend
+	fail bool
+}
+
+func (s *signerFailingKeyStore) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	if s.fail {
+		return nil, errors.New("injected Signer failure")
+	}
+	return s.Backend.Signer(ctx, attrs)
+}
+
+// TestCA_RepeatedCASignerKeepsPasswordAllocationsBounded is the CASigner
+// counterpart of the getSigner regression: each CASigner lookup allocates a
+// fresh locked key password, and none of them, on success, on an algorithm
+// mismatch or on a backend error, may stay live after the call returns.
+func TestCA_RepeatedCASignerKeepsPasswordAllocationsBounded(t *testing.T) {
+	ctx := context.Background()
+	backend, _ := newPKCS8CABackend(t)
+
+	root := passwordProtectedIdentity(t, rootIdentity("PW CASigner CA"), "casigner-key-password")
+	parent, err := NewParentCA(&Params{
+		Identity:           []Identity{root},
+		KeyStore:           backend,
+		BackendForStore:    singleBackendFactory(backend),
+		RevocationStore:    storage.NewMemory(),
+		CertStore:          newInMemoryCertStore(t),
+		RequireKeyPassword: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, parent.Init(ctx))
+	ca, ok := parent.(*CA)
+	require.True(t, ok, "NewParentCA must return a *CA")
+	failing := &signerFailingKeyStore{Backend: ca.keyStore}
+	ca.keyStore = failing
+
+	alloc, err := enclave.ProcessAllocator()
+	require.NoError(t, err)
+
+	digest := sha256.Sum256([]byte("casigner"))
+	sign := func() {
+		t.Helper()
+		signer, err := ca.CASigner(ctx, "", x509.UnknownPublicKeyAlgorithm)
+		require.NoError(t, err)
+		_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+		require.NoError(t, err)
+	}
+
+	// Warm up once so lazily created state is not counted as a leak.
+	sign()
+
+	before := alloc.InUse()
+	const n = 50
+	for i := 0; i < n; i++ {
+		sign()
+
+		_, err := ca.CASigner(ctx, "", x509.DSA)
+		require.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
+
+		failing.fail = true
+		_, err = ca.CASigner(ctx, "", x509.UnknownPublicKeyAlgorithm)
+		failing.fail = false
+		require.Error(t, err)
+	}
+	after := alloc.InUse()
+	require.LessOrEqual(t, after, before,
+		"%d CASigner rounds grew locked bytes from %d to %d", n, before, after)
 }
 
 // lazyPasswordBackend wraps a CA backend so its signers read the key
