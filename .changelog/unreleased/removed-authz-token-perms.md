@@ -1,0 +1,1 @@
+ACME admin auth: `TokenClaims` (`pkg/acme/auth`) no longer has a `Permissions` field, and a `permissions` key in a token is ignored. No decision ever read it; authorization comes from the qrdb authorizer on the roles the token names (SPEC row authz-token-perms).
