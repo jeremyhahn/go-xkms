@@ -300,11 +300,12 @@ func sshClientWithHostKeys(cmd *cobra.Command) (sshsdk.Client, sshsdk.HostKeySto
 // reports false when the command runs on the local shared SSH store instead.
 func sshServerEndpoint(cmd *cobra.Command) (XKMSdEndpoint, bool, error) {
 	if server := strings.TrimSpace(commandFlagString(cmd, "server")); server != "" {
+		certFile, keyFile := resolveXKMSdTLSClientFiles(cmd)
 		endpoint, err := withXKMSdToken(XKMSdEndpoint{
 			URL:         server,
 			TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
-			TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),
-			TLSKeyFile:  strings.TrimSpace(os.Getenv(envXKMSdTLSKey)),
+			TLSCertFile: certFile,
+			TLSKeyFile:  keyFile,
 		})
 		if err != nil {
 			return XKMSdEndpoint{}, false, err
@@ -363,13 +364,20 @@ func sshUseServer(cmd *cobra.Command) (bool, error) {
 // quic→HTTP/3, mcp(s)→JSON-RPC) lives in the SDK so xkey and other consumers
 // share one code path.
 func sshClientForEndpoint(endpoint XKMSdEndpoint) (sshsdk.Client, func(), error) {
-	tlsConfig, err := endpoint.TLSConfig()
+	// The server trust comes from the endpoint's TLS config; the client
+	// certificate goes through the SDK's ServerOptions, which loads and
+	// checks the pair once and presents it on every TLS transport.
+	trust := endpoint
+	trust.TLSCertFile, trust.TLSKeyFile = "", ""
+	tlsConfig, err := trust.TLSConfig()
 	if err != nil {
 		return nil, nil, err
 	}
 	client, err := sshsdk.NewClientForServerWith(endpoint.URL, sshsdk.ServerOptions{
-		TLSConfig: tlsConfig,
-		Token:     endpoint.Token,
+		TLSConfig:   tlsConfig,
+		TLSCertFile: endpoint.TLSCertFile,
+		TLSKeyFile:  endpoint.TLSKeyFile,
+		Token:       endpoint.Token,
 	})
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
@@ -939,6 +947,8 @@ func init() {
 	// back to XKMSD_URL (REST) then the local embedded store.
 	SSHCmd.PersistentFlags().String("server", "", "Remote xkmsd URL (e.g. grpcs://host:9443, quic://host:8444, unix:///path/xkms.sock)")
 	SSHCmd.PersistentFlags().String("tls-ca", "", "TLS CA certificate file used to verify the server")
+	SSHCmd.PersistentFlags().String(tlsCertFlagName, "", "path to client certificate file for mTLS authentication (default $XKMSD_TLS_CERT)")
+	SSHCmd.PersistentFlags().String(tlsKeyFlagName, "", "path to client key file for mTLS authentication (default $XKMSD_TLS_KEY)")
 	SSHCmd.PersistentFlags().Bool("local", false, "use the local SSH store even when an xkmsd server is configured")
 
 	SSHCmd.AddCommand(sshKeysCmd)
