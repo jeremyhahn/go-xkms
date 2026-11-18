@@ -503,6 +503,24 @@ func TestPINProtocolV1_Decapsulate_InvalidPadding(t *testing.T) {
 			}
 		})
 	}
+
+	// In CBC, flipping bits in the second-to-last ciphertext block flips the
+	// same bits of the last plaintext block. XOR its last byte with the pad
+	// byte so the decrypted pad byte becomes 0, which is always invalid.
+	t.Run("encapsulated pad byte flipped to zero", func(t *testing.T) {
+		plaintext := []byte("test data for invalid padding test!")
+		ciphertext, err := authenticator.Encapsulate(plaintext)
+		if err != nil {
+			t.Fatalf("Encapsulate failed: %v", err)
+		}
+		padByte := byte(aesBlockSize - len(plaintext)%aesBlockSize)
+		ciphertext[len(ciphertext)-aesBlockSize-1] ^= padByte
+
+		_, err = authenticator.Decapsulate(ciphertext)
+		if !errors.Is(err, ErrInvalidPKCS7Padding) {
+			t.Errorf("expected ErrInvalidPKCS7Padding, got %v", err)
+		}
+	})
 }
 
 func TestPINProtocolV1_Authenticate_Success(t *testing.T) {
