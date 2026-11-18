@@ -488,10 +488,11 @@ TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost
 # its 140m timeout-minutes, so a hung test fails with a goroutine dump first.
 UNIT_TEST_TIMEOUT ?= 75m
 # Per-binary go test bound for one coverage shard (make coverage-shard, CI's
-# coverage job, ruling 661(4)): about twice the slowest healthy shard of 10
-# (16-28 min, #2183), so a hung package panics with its goroutine dump well
-# inside the job's 150-minute timeout-minutes instead of being cancelled.
-COVERAGE_SHARD_TIMEOUT ?= 45m
+# coverage job, ruling 661(4)): 30m, over ten times the slowest package
+# (128 s, #2183), so a hung test binary panics with its goroutine dump about
+# 48 minutes into the job, inside its 60-minute timeout-minutes, instead of
+# being cancelled.
+COVERAGE_SHARD_TIMEOUT ?= 30m
 TEST_FLAGS := -v -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS))"
 # FIPS variant. The `fips` tag has to join the SAME -tags list rather than
 # arrive as a second flag: go test keeps only the last -tags it is given, so

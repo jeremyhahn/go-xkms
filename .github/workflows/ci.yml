@@ -1296,6 +1296,16 @@ jobs:
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
 
+      # CUSTOMIZE (go-xkms, #2183): read-only resource snapshots around the
+      # toolchain image build, so a stalled shard shows whether the runner
+      # ran out of disk or memory during the build or a test hung after it.
+      - name: Runner resources (before the toolchain image)
+        if: always()
+        run: |
+          df -h / /tmp || true
+          free -m || true
+          docker system df || true
+
       - name: Take the toolchain image
         if: ${{ needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
         env:
@@ -1303,6 +1313,13 @@ jobs:
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+
+      - name: Runner resources (after the toolchain image)
+        if: always()
+        run: |
+          df -h / /tmp || true
+          free -m || true
+          docker system df || true
 
       # test-web runs `npm ci` against the npm registry (shard extras-other).
       - name: make coverage-shard
