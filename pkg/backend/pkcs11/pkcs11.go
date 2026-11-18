@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/internal/keyslot"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -153,12 +154,22 @@ func (b *Backend) Config() *Config {
 	return b.config
 }
 
-// FixedKeySlot reports whether every key this backend generates lands in one
+// fixedKeySlot reports whether every key this backend generates lands in one
 // slot: a YubiKey PIV token configured with Config.Slot, which resolveKeyID
 // returns before any name-based ID. Such a backend holds one key, not one
-// key per name.
-func (b *Backend) FixedKeySlot() bool {
+// key per name. Callers ask internal/keyslot.Fixed.
+func (b *Backend) fixedKeySlot() bool {
 	return b.config != nil && b.config.IsYubiKeyPIV() && b.config.Slot != nil
+}
+
+func init() {
+	keyslot.Register(func(provider any) (bool, bool) {
+		b, ok := provider.(*Backend)
+		if !ok {
+			return false, false
+		}
+		return b.fixedKeySlot(), true
+	})
 }
 
 // userPIN borrows the configured user PIN as a plain string, the shape

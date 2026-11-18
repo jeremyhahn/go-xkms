@@ -19,6 +19,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
+	"github.com/jeremyhahn/go-xkms/internal/keyslot"
 	"github.com/jeremyhahn/go-xkms/internal/loginca"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/scope"
@@ -156,7 +157,7 @@ func (f *tenantCAKeyFactory) backend() (xkms.Backend, error) {
 	// One key per tenant needs a backend that stores a key per name. A
 	// YubiKey PIV token configured with a slot puts every key in that slot,
 	// so each tenant's generate would overwrite the last tenant's login CA.
-	if p, ok := base.KeyProvider().(interface{ FixedKeySlot() bool }); ok && p.FixedKeySlot() {
+	if keyslot.Fixed(base.KeyProvider()) {
 		return nil, errTenantCAKeyFixedSlot
 	}
 	return base, nil
