@@ -141,7 +141,14 @@ func TestWebAuthnAddCredentialRequiresSession(t *testing.T) {
 	assertNoError(t, err, "Add-credential request failed")
 	defer resp.Body.Close()
 
-	assertEqual(t, http.StatusUnauthorized, resp.StatusCode, "an unauthenticated add-passkey must be refused")
+	// The harness client presents the admin mTLS certificate, so
+	// AuthenticationMiddleware authenticates the caller and the request
+	// reaches BeginAddCredential (pkg/webauthn/http/handler.go) with an
+	// identity. That identity is a certificate, not a passkey session, so
+	// webauthn.SessionAccountFromIdentity fails with ErrSessionAccountMismatch,
+	// which handleServiceError maps to 403 session_account_mismatch. 401 is
+	// only for a request with no identity at all.
+	assertEqual(t, http.StatusForbidden, resp.StatusCode, "an add-passkey without a webauthn session must be refused")
 }
 
 // TestWebAuthnBeginRegistration tests the begin registration endpoint
