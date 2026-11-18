@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,8 +106,25 @@ func openReady(ctx context.Context, client *http.Client, baseURL string, passphr
 // to an unseal post, recognised by its HTTP status.
 func lostUnsealRace(err error) bool {
 	var status *xkmsdtest.StatusError
-	return errors.As(err, &status) && status.Code == http.StatusConflict
+	if !errors.As(err, &status) {
+		return false
+	}
+	switch status.Code {
+	case http.StatusConflict:
+		return true
+	case http.StatusServiceUnavailable:
+		// Another package's TestMain unsealed between this caller's status
+		// read and its unseal post: the sealed-window listener has closed
+		// and answers 503 with code SEALED_WINDOW_CLOSED (barrier unsealed).
+		return strings.Contains(status.Body, sealedWindowClosedCode)
+	default:
+		return false
+	}
 }
+
+// sealedWindowClosedCode is the error code the sealed-window listener sends
+// once the barrier is unsealed and the listener is shutting down.
+const sealedWindowClosedCode = `"SEALED_WINDOW_CLOSED"`
 
 // AwaitReady polls baseURL's /health/ready, the probe the cluster stack waits
 // on, over client (anchored on the suite's CA, so only the verified server

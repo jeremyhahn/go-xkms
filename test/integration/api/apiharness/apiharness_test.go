@@ -34,6 +34,7 @@ import (
 // flag set and initialized_at absent.
 type racingWindow struct {
 	lostCode int
+	lostBody string
 	unseals  atomic.Int32
 	unsealed atomic.Bool
 }
@@ -51,8 +52,12 @@ func (w *racingWindow) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			rw.WriteHeader(http.StatusNoContent)
 			return
 		}
+		body := w.lostBody
+		if body == "" {
+			body = `{"error":"barrier is already unsealed"}`
+		}
 		rw.WriteHeader(w.lostCode)
-		_, _ = rw.Write([]byte(`{"error":"barrier is already unsealed"}`))
+		_, _ = rw.Write([]byte(body))
 	case "/health/ready":
 		if w.unsealed.Load() {
 			rw.WriteHeader(http.StatusOK)
@@ -105,5 +110,53 @@ func TestOpenReady_OtherUnsealErrorFails(t *testing.T) {
 	var status *xkmsdtest.StatusError
 	if !errors.As(err, &status) || status.Code != http.StatusInternalServerError {
 		t.Fatalf("second caller: openReady = %v, want the HTTP 500 *xkmsdtest.StatusError", err)
+	}
+}
+
+// TestOpenReady_SealedWindowClosedProceedsOnceReady covers the race the unix
+// package lost in CI: another package unsealed between this caller's status
+// read and its unseal post, so the closing sealed-window listener answers 503
+// SEALED_WINDOW_CLOSED. The barrier is open, so openReady must succeed.
+func TestOpenReady_SealedWindowClosedProceedsOnceReady(t *testing.T) {
+	window := &racingWindow{
+		lostCode: http.StatusServiceUnavailable,
+		lostBody: `{"error":"sealed-window listener closed: barrier unsealed","code":"SEALED_WINDOW_CLOSED"}`,
+	}
+	srv := httptest.NewServer(window)
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	for i := range 2 {
+		if err := openReady(ctx, srv.Client(), srv.URL, []byte(BarrierPassphrase)); err != nil {
+			t.Fatalf("caller %d: openReady = %v, want nil", i, err)
+		}
+	}
+	if got := window.unseals.Load(); got != 2 {
+		t.Fatalf("unseal posts = %d, want 2", got)
+	}
+}
+
+// TestOpenReady_OtherServiceUnavailableFails keeps a 503 without the
+// SEALED_WINDOW_CLOSED code an error: only an unsealed barrier is success.
+func TestOpenReady_OtherServiceUnavailableFails(t *testing.T) {
+	window := &racingWindow{
+		lostCode: http.StatusServiceUnavailable,
+		lostBody: `{"error":"unseal backend unavailable","code":"UNAVAILABLE"}`,
+	}
+	srv := httptest.NewServer(window)
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := openReady(ctx, srv.Client(), srv.URL, []byte(BarrierPassphrase)); err != nil {
+		t.Fatalf("first caller: openReady = %v, want nil", err)
+	}
+	err := openReady(ctx, srv.Client(), srv.URL, []byte(BarrierPassphrase))
+	var status *xkmsdtest.StatusError
+	if !errors.As(err, &status) || status.Code != http.StatusServiceUnavailable {
+		t.Fatalf("second caller: openReady = %v, want the HTTP 503 *xkmsdtest.StatusError", err)
 	}
 }
