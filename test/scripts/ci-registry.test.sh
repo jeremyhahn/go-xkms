@@ -60,7 +60,7 @@ case "$1" in
         # (#2243 lane-verify Codex P1-B), so a reused login config shows up.
         cfg=${DOCKER_CONFIG:-$HOME/.docker}
         mkdir -p "$cfg"
-        printf '{"auths":{"%s":{"auth":"ZHVtbXk6ZHVtbXk="}}}\n' "$2" >"$cfg/config.json"
+        printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$2" "$(printf 'stub:%s' "$$" | base64)" >"$cfg/config.json"
         echo "login-cfg $cfg" >>"$FAKE_LOG"
         echo "Login Succeeded"
         ;;
