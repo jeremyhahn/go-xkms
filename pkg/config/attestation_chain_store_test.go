@@ -119,3 +119,98 @@ func TestAttestationConfigVerifiers_ChainAnchoredOverPersistedStore(t *testing.T
 		t.Fatal("a chain anchored at a quarantined root still verifies")
 	}
 }
+
+// writeRootPEM writes root to a PEM file and returns its path.
+func writeRootPEM(t *testing.T, root *x509.Certificate) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "root.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root.Raw}), 0o600); err != nil {
+		t.Fatalf("write root: %v", err)
+	}
+	return path
+}
+
+// TestAttestationConfigVerifiers_StoreAuthoritativeOverConfigRoots: with a
+// store configured, the persisted store is the only anchor source for
+// chain appraisal. A root present in both the config file and the store is
+// refused once quarantined in the store, a root quarantined before startup
+// stays quarantined, and a config-only root is imported into the store once
+// under the format's purpose.
+func TestAttestationConfigVerifiers_StoreAuthoritativeOverConfigRoots(t *testing.T) {
+	ctx := context.Background()
+	newStore := func(t *testing.T) *truststore.DAOStore {
+		t.Helper()
+		store, err := compose.BuildTrustRootStore(testutil.NewMemoryDAOFactory())
+		if err != nil {
+			t.Fatalf("BuildTrustRootStore: %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		return store
+	}
+
+	t.Run("in both sources, quarantined after startup", func(t *testing.T) {
+		store := newStore(t)
+		root, leaf := issuedChain(t, "shared-tpm-root")
+		if err := store.Add(ctx, root, &truststore.AddCertificateOptions{Purpose: truststore.PurposeTPMManufacturer}); err != nil {
+			t.Fatalf("store.Add: %v", err)
+		}
+		cfg := &config.AttestationConfig{
+			Formats: map[string]*truststore.Config{"tpm2": {ExternalRootPaths: []string{writeRootPEM(t, root)}}},
+		}
+		verifiers, err := cfg.Verifiers(store)
+		if err != nil {
+			t.Fatalf("Verifiers(store): %v", err)
+		}
+		stmt := &attestation.AttestationStatement{Format: "tpm2", CertificateChain: []*x509.Certificate{leaf, root}}
+		if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err != nil {
+			t.Fatalf("chain refused before quarantine: %v", err)
+		}
+		if _, err := store.SetPurpose(ctx, truststore.Fingerprint(root), truststore.PurposeSynced); err != nil {
+			t.Fatalf("quarantine: %v", err)
+		}
+		if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err == nil {
+			t.Fatal("a root quarantined in the store still verifies through its config copy")
+		}
+	})
+
+	t.Run("quarantined in the store before startup", func(t *testing.T) {
+		store := newStore(t)
+		root, leaf := issuedChain(t, "prequarantined-tpm-root")
+		if err := store.Add(ctx, root, &truststore.AddCertificateOptions{Purpose: truststore.PurposeSynced}); err != nil {
+			t.Fatalf("store.Add: %v", err)
+		}
+		cfg := &config.AttestationConfig{
+			Formats: map[string]*truststore.Config{"tpm2": {ExternalRootPaths: []string{writeRootPEM(t, root)}}},
+		}
+		verifiers, err := cfg.Verifiers(store)
+		if err != nil {
+			t.Fatalf("Verifiers(store): %v", err)
+		}
+		stmt := &attestation.AttestationStatement{Format: "tpm2", CertificateChain: []*x509.Certificate{leaf, root}}
+		if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err == nil {
+			t.Fatal("startup import lifted the store quarantine of a configured root")
+		}
+	})
+
+	t.Run("config-only root is imported under the format purpose", func(t *testing.T) {
+		store := newStore(t)
+		root, leaf := issuedChain(t, "config-only-tpm-root")
+		cfg := &config.AttestationConfig{
+			Formats: map[string]*truststore.Config{"tpm2": {ExternalRootPaths: []string{writeRootPEM(t, root)}}},
+		}
+		verifiers, err := cfg.Verifiers(store)
+		if err != nil {
+			t.Fatalf("Verifiers(store): %v", err)
+		}
+		stmt := &attestation.AttestationStatement{Format: "tpm2", CertificateChain: []*x509.Certificate{leaf, root}}
+		if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err != nil {
+			t.Fatalf("imported config root refused: %v", err)
+		}
+		if _, err := store.SetPurpose(ctx, truststore.Fingerprint(root), truststore.PurposeSynced); err != nil {
+			t.Fatalf("config root not imported into the store: %v", err)
+		}
+		if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err == nil {
+			t.Fatal("an imported config root quarantined in the store still verifies")
+		}
+	})
+}
