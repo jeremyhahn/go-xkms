@@ -228,3 +228,47 @@ func TestCluster_NodeRestartRejoin(t *testing.T) {
 	// And the recovered node can serve crypto with the caught-up key.
 	signAndVerifyRoundTrip(t, ctx, followerURLStr, followerURLStr, keyID)
 }
+
+// TestCluster_LeaderSIGKILLKeepsAckedKey is the clustered case of #2252: a
+// key the leader acknowledged must survive the leader being SIGKILLed right
+// after the ack (no wait for replication first). A survivor must serve it
+// once a new leader is elected, and the killed node must still hold it after
+// it restarts.
+func TestCluster_LeaderSIGKILLKeepsAckedKey(t *testing.T) {
+	requireDocker(t)
+	nodes := nodeURLs(t)
+	ctx := context.Background()
+	waitAllReady(t, ctx, nodes)
+
+	leader := waitLeader(t, ctx, nodes)
+	leaderIdx := leaderNodeIndex(t, ctx, nodes)
+	t.Cleanup(func() { restoreCluster(t, ctx, nodes, leaderIdx) })
+
+	keyID := fmt.Sprintf("sigkill-acked-key-%d", time.Now().UnixNano())
+	code, body, err := genKey(ctx, leader, cryptoKeySpecs[0], keyID)
+	if err != nil || (code != http.StatusOK && code != http.StatusCreated) {
+		t.Fatalf("gen key on leader: status=%d err=%v body=%s", code, err, body)
+	}
+
+	// Acked: SIGKILL the leader at once (docker kill sends SIGKILL).
+	dockerAction(t, "kill", nodeContainer(t, leaderIdx))
+
+	for i, u := range nodes {
+		if i+1 == leaderIdx {
+			continue
+		}
+		nodeIdx := i + 1
+		poll(t, 60*time.Second, 1*time.Second, func() (bool, string) {
+			return keyExists(ctx, u, keyID),
+				fmt.Sprintf("acked key %q missing on survivor node%d after leader node%d SIGKILL", keyID, nodeIdx, leaderIdx)
+		})
+	}
+
+	startNode(t, ctx, nodes, leaderIdx)
+	restarted := nodes[leaderIdx-1]
+	poll(t, 60*time.Second, 1*time.Second, func() (bool, string) {
+		return keyExists(ctx, restarted, keyID),
+			fmt.Sprintf("acked key %q missing on node%d after SIGKILL and restart", keyID, leaderIdx)
+	})
+	signAndVerifyRoundTrip(t, ctx, restarted, restarted, keyID)
+}
