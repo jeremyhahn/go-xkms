@@ -1020,6 +1020,11 @@ jobs:
       # cannot read fails the step. The Dockerfile's FROM is ${GO_IMAGE}, with
       # no default on purpose, so the base is the pinned GO_IMAGE; it is
       # Debian, has no apk and reads `none`.
+      # Ruling 887: on a forge release or bigdisk runner, the LAN addresses are
+      # masked before ci-registry.sh publish builds and prints.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
       - name: Read the Alpine package index
         run: |
           APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")

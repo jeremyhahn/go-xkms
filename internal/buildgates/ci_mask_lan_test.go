@@ -26,10 +26,11 @@ const (
 
 // maskLANBuildStep is a step that builds or runs anything that could print
 // the environment: make, docker, go, or the image wrappers.
-var maskLANBuildStep = regexp.MustCompile(`(^|[\s;&|(` + "`" + `])(make|docker|go|scripts/in-toolchain-image\.sh|scripts/ci-image\.sh)(\s|$)`)
+var maskLANBuildStep = regexp.MustCompile(`(^|[\s;&|(` + "`" + `])(make|docker|go|scripts/in-toolchain-image\.sh|scripts/ci-image\.sh|scripts/ci-registry\.sh)(\s|$)`)
 
-// maskLANPoolLabel names a runs-on that can reach the pools.
-var maskLANPoolLabel = regexp.MustCompile(`self-hosted|bigdisk|codex|qwen`)
+// maskLANPoolLabel names a runs-on that can reach the pools; the release
+// runners are pool hosts too.
+var maskLANPoolLabel = regexp.MustCompile(`self-hosted|bigdisk|codex|qwen|release`)
 
 // maskLANProblems lists each pool job that builds without the mask step
 // before its first build step. A pool job that builds nothing (one that only
@@ -96,8 +97,10 @@ func TestCIPoolJobsMaskTheLANAddresses(t *testing.T) {
 		t.Fatalf("a masked pool job fails: %v", p)
 	}
 	for name, body := range map[string]string{
-		"no mask step":         pool + "      - run: make build\n",
-		"the mask after build": pool + "      - name: Build\n        run: docker build .\n      - run: " + maskLANScript + "\n",
+		"no mask step":                        pool + "      - run: make build\n",
+		"the mask after build":                pool + "      - name: Build\n        run: docker build .\n      - run: " + maskLANScript + "\n",
+		"a registry publish without the mask": pool + "      - run: ref=$(scripts/ci-registry.sh publish toolchain)\n",
+		"a release job without the mask":      "jobs:\n  a:\n    runs-on: ${{ github.event_name == 'push' && 'release' || 'ubuntu-latest' }}\n    steps:\n      - run: make build\n",
 	} {
 		if len(maskLANProblems([]byte(body))) == 0 {
 			t.Errorf("%s passed", name)

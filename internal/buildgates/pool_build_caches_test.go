@@ -137,9 +137,44 @@ func TestPoolBuiltImagesTakeTheLANCaches(t *testing.T) {
 	}
 }
 
-// TestPoolBuiltImagesComposeArgs: every compose service that builds one of
-// those Dockerfiles passes the pool's variable, and an apk one the context
-// its helper mount reads.
+// composeRE names a compose file: compose.yaml, docker-compose.yml and their
+// overlays (compose.ci.yaml, docker-compose.test.yml).
+var composeRE = regexp.MustCompile(`^(docker-)?compose(\.[a-z0-9-]+)*\.ya?ml$`)
+
+// composeFiles lists every compose file of the repository, relative to its
+// root: a service in any of them can build a pool image.
+func composeFiles(t *testing.T) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(cachesRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor") {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() && composeRE.MatchString(d.Name()) {
+			rel, err := filepath.Rel(cachesRoot, path)
+			if err != nil {
+				return err
+			}
+			files = append(files, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk the repository: %v", err)
+	}
+	if len(files) < 20 {
+		t.Fatalf("found %d compose files; want every one in the tree (at least 20): the walk found too little", len(files))
+	}
+	return files
+}
+
+// TestPoolBuiltImagesComposeArgs: every compose service, in any compose file
+// of the tree, that builds one of those Dockerfiles passes the pool's cache
+// as a build secret, and an apk one the context carrying scripts/; a caller
+// without that context makes BuildKit look for an image named after it.
 func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 	type build struct {
 		Context            string            `yaml:"context"`
@@ -149,10 +184,10 @@ func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 		AdditionalContexts map[string]string `yaml:"additional_contexts"`
 	}
 	var checked int
-	for _, f := range []string{"build/docker/devcontainer/compose.yaml", "test/integration/sdk/docker-compose.yml", "test/integration/api/docker-compose.yml"} {
+	for _, f := range composeFiles(t) {
 		var doc struct {
 			Services map[string]struct {
-				Build *build `yaml:"build"`
+				Build yaml.Node `yaml:"build"`
 			} `yaml:"services"`
 			Secrets map[string]struct {
 				Environment string `yaml:"environment"`
@@ -162,10 +197,18 @@ func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 			t.Fatalf("parse %s: %v", f, err)
 		}
 		for name, svc := range doc.Services {
-			if svc.Build == nil {
+			b := &build{}
+			switch svc.Build.Kind {
+			case 0:
 				continue
+			case yaml.ScalarNode:
+				b.Context = svc.Build.Value
+			default:
+				if err := svc.Build.Decode(b); err != nil {
+					t.Errorf("%s service %s: its build does not parse: %v", f, name, err)
+					continue
+				}
 			}
-			b := svc.Build
 			df := b.Dockerfile
 			if df == "" {
 				df = "Dockerfile"
