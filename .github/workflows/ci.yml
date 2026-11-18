@@ -1308,6 +1308,11 @@ jobs:
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
 
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
       # CUSTOMIZE (go-xkms, #2183): read-only resource snapshots around the
       # toolchain image build, so a stalled shard shows whether the runner
       # ran out of disk or memory during the build or a test hung after it.
@@ -1435,6 +1440,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Take the toolchain image
         if: ${{ needs.preflight.outputs.docs_only != 'true' }}
