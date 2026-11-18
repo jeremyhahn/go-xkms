@@ -4999,6 +4999,8 @@ integration-test-api-mcp:
 		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m"
 	@echo "$(GREEN)✓ MCP protocol integration tests complete$(RESET)"
 
+# pkcs11 is out of the api SSH backend matrix until go-xkms#2262 lets xkmsd
+# start a PIN-protected PKCS#11 backend; config.test.yaml disables it (#2183).
 .PHONY: integration-test-api-ssh
 ## integration-test-api-ssh: Run SSH multi-protocol integration tests driving the xkey CLI against xkmsd
 integration-test-api-ssh:
@@ -5007,7 +5009,7 @@ integration-test-api-ssh:
 	@$(API_COMPOSE) build
 	@$(call compose_trap_cmd,$(API_COMPOSE)) ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && go build -tags='$(call go_tags,codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2,pkcs11 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'XkeySSH' -timeout 10m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && go build -tags='$(call go_tags,codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'XkeySSH' -timeout 10m"
 	@echo "$(GREEN)✓ SSH multi-protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-ssh-backends

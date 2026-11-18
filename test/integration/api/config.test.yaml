@@ -112,9 +112,10 @@ backends:
     simulator_port: 2321
 
   pkcs11:
-    # Off: a literal pin is refused as a protected target (#654), no api test
-    # uses this backend (PKCS#11 has its own suite); go-xkms#2262 tracks a
-    # resolvable pin reference for this config.
+    # Off: a literal pin is refused as a protected target (#654). The api SSH
+    # matrix (make integration-test-api-ssh, XKMS_SSH_TEST_BACKENDS) runs
+    # software,tpm2 only until go-xkms#2262 lets xkmsd start a PIN-protected
+    # PKCS#11 backend from this config; PKCS#11 keeps its own suite.
     enabled: false
     library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
