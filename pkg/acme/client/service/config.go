@@ -14,7 +14,9 @@
 package service
 
 import (
+	"bytes"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,28 +43,163 @@ type Config struct {
 	Devices      map[string]*DeviceSpec      `yaml:"devices,omitempty" json:"devices,omitempty" mapstructure:"devices"`
 
 	// ConfigFile is the file this configuration was loaded from. When set,
-	// Save writes the configuration back to it (account registration
-	// persists the account there). It is never serialised.
+	// SaveAccount writes a registered account back to it. It is never
+	// serialised.
 	ConfigFile string `yaml:"-" json:"-" mapstructure:"-"`
 }
 
-// ErrConfigNotPersistable is returned by Save when the configuration was
-// not loaded from a file.
+// ErrConfigNotPersistable is returned by SaveAccount when the configuration
+// was not loaded from a file, or from one that is neither YAML nor JSON.
 var ErrConfigNotPersistable = errors.New("configuration has no file to save to")
 
-// Save writes the configuration as YAML to ConfigFile with mode 0600 (the
-// file can hold EAB keys). The write goes to a temporary file in the same
-// directory that is then renamed over the target, so a failed write never
-// leaves a truncated configuration.
-func (c *Config) Save() error {
+// SaveAccount writes accounts.<name> into ConfigFile and changes nothing
+// else in it: the in-memory configuration also holds flag, environment and
+// default values, which must not land in the operator's file. Other keys,
+// YAML comments, the file's format (YAML or JSON) and its mode are kept. The
+// write goes to a temporary file in the same directory that is then renamed
+// over the target (through a symlink to the file it names), so a failed
+// write never leaves a truncated configuration.
+func (c *Config) SaveAccount(name string) error {
 	if c.ConfigFile == "" {
 		return ErrConfigNotPersistable
 	}
-	data, err := yaml.Marshal(c)
-	if err != nil {
-		return fmt.Errorf("marshal configuration: %w", err)
+	acct := c.Accounts[name]
+	if acct == nil {
+		return fmt.Errorf("save configuration: account %q is not configured", name)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(c.ConfigFile), ".config-*.yaml")
+	path, err := filepath.EvalSymlinks(c.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("save configuration: %w", err)
+	}
+	var setAccount func([]byte, string, *AccountConfig) ([]byte, error)
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		setAccount = setYAMLAccount
+	case ".json":
+		setAccount = setJSONAccount
+	default:
+		return fmt.Errorf("%w: %s is neither YAML nor JSON", ErrConfigNotPersistable, c.ConfigFile)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("save configuration: %w", err)
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 - the file the configuration was loaded from
+	if err != nil {
+		return fmt.Errorf("save configuration: %w", err)
+	}
+	data, err := setAccount(raw, name, acct)
+	if err != nil {
+		return fmt.Errorf("save configuration %s: %w", c.ConfigFile, err)
+	}
+	return replaceFile(path, data, info.Mode().Perm())
+}
+
+// setYAMLAccount sets accounts.<name> in a YAML document, keeping every
+// other node and its comments.
+func setYAMLAccount(raw []byte, name string, acct *AccountConfig) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	if doc.Kind == 0 {
+		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, errors.New("top level is not a mapping")
+	}
+	var value yaml.Node
+	if err := value.Encode(acct); err != nil {
+		return nil, err
+	}
+	accounts, err := yamlMapping(doc.Content[0], "accounts")
+	if err != nil {
+		return nil, err
+	}
+	setYAMLKey(accounts, name, &value)
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// yamlMapping returns the mapping under key in m, creating it when the key
+// is absent or null.
+func yamlMapping(m *yaml.Node, key string) (*yaml.Node, error) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value != key {
+			continue
+		}
+		v := m.Content[i+1]
+		switch {
+		case v.Kind == yaml.MappingNode:
+			return v, nil
+		case v.Kind == yaml.ScalarNode && v.Tag == "!!null":
+			*v = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			return v, nil
+		default:
+			return nil, fmt.Errorf("%s is not a mapping", key)
+		}
+	}
+	v := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	setYAMLKey(m, key, v)
+	return v, nil
+}
+
+func setYAMLKey(m *yaml.Node, key string, value *yaml.Node) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = value
+			return
+		}
+	}
+	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
+}
+
+// setJSONAccount sets accounts.<name> in a JSON object, keeping its other
+// members.
+func setJSONAccount(raw []byte, name string, acct *AccountConfig) ([]byte, error) {
+	root := map[string]any{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := json.Unmarshal(raw, &root); err != nil {
+			return nil, err
+		}
+	}
+	accounts := map[string]any{}
+	if v, ok := root["accounts"]; ok && v != nil {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, errors.New("accounts is not an object")
+		}
+		accounts = m
+	}
+	encoded, err := json.Marshal(acct)
+	if err != nil {
+		return nil, err
+	}
+	var value any
+	if err := json.Unmarshal(encoded, &value); err != nil {
+		return nil, err
+	}
+	accounts[name] = value
+	root["accounts"] = accounts
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(out, '\n'), nil
+}
+
+// replaceFile writes data to a temporary file next to path with perm and
+// renames it over path.
+func replaceFile(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*")
 	if err != nil {
 		return fmt.Errorf("save configuration: %w", err)
 	}
@@ -72,14 +209,14 @@ func (c *Config) Save() error {
 		_ = tmp.Close()
 		return fmt.Errorf("save configuration: %w", err)
 	}
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := tmp.Chmod(perm); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("save configuration: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("save configuration: %w", err)
 	}
-	if err := os.Rename(tmpName, c.ConfigFile); err != nil {
+	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("save configuration: %w", err)
 	}
 	return nil
