@@ -206,7 +206,8 @@ approval and the exported APIs) were not started.
 - Finding 4 (cloud KMS default backends): fixed in lane row2083d, see
   below.
 - Still open: finding 3 (owner ask on CA migration when the factory is
-  enabled) and finding 5 (cross-node PKCS#11 provisioning claim).
+  enabled). Finding 5 (cross-node PKCS#11 provisioning claim) is fixed, see
+  the Codex round 1 section.
 
 ## Finding 4: backends that return no key at generation (lane row2083d)
 
@@ -238,14 +239,22 @@ approval and the exported APIs) were not started.
   Test 866a5e170, fix d7e273ef6.
 - Exported surface (P1, `reserved_keys.go:15`): the login CA key name moved
   to `internal/loginca` and `ErrReservedKey` is unexported (8aee18946).
-  `pkcs11.Backend.FixedKeySlot` stays exported: pkg/server reaches it
-  through an interface assertion across packages. It needs owner approval or
-  a SPEC mention.
-- Still open, needing the owner:
-  - Migration of the tenant CAs go-qrdb already persisted (P1,
-    `qrdb_node.go:267`), the earlier finding 3.
-  - A cross-node atomic provisioning claim for PKCS#11 (P1,
-    `tenant_ca_keyprovider.go:249`), the earlier finding 5. It needs a
-    cluster-wide claim and a real PKCS#11 run; this lane runs no Docker.
-  - Owner approval of the SPEC row expansion at `docs/SPEC.md:118` (P1).
-    This lane may not edit docs/SPEC.md.
+  `pkcs11.Backend.FixedKeySlot` is unexported as `fixedKeySlot`: the pkcs11
+  package registers a probe with `internal/keyslot` and the factory asks
+  `keyslot.Fixed`. Test 856fc0881, fix 29f665943.
+- PKCS#11 provisioning claim (P1, `tenant_ca_keyprovider.go:249`):
+  `Bind` takes the server's shared storage (`s.sharedStorage()`), and
+  `EnsureTenant` claims the tenant with `PutIfAbsent` at
+  `tenant-login-ca/claims/<key name>` before it generates. A pass that loses
+  the claim waits for the winner's key and adopts it; a claim older than
+  30 s with no key behind it is taken over by compare-and-swap; a storage
+  error fails closed; `RemoveTenant` releases the claim last. Verified on a
+  real PKCS#11 token (SoftHSM2): eight concurrent passes leave one key.
+  Test c2102af1f, fix 529431f9e.
+- SPEC row expansion (P1, `docs/SPEC.md:118`): reverted to main's text
+  (ff6dd1850) until the owner approves a row change.
+- Still open, needing the owner: migration of the tenant CAs go-qrdb already
+  persisted (P1, `qrdb_node.go:267`). The pinned go-qrdb `sdk/go` gives no
+  way to read, import or keep trusting the software Key B it stored, and
+  go-xkms may not reach into `go-qrdb/pkg/*`; a credential transition needs
+  a go-qrdb seam (item 144) or an owner design.
