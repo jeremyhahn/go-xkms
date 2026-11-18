@@ -752,11 +752,6 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 
 	protocols := getAvailableProtocols(t, suite.cfg)
 
-	destKeyDir := filepath.Join(suite.keyDir, "dest")
-	if err := os.MkdirAll(destKeyDir, 0755); err != nil {
-		t.Fatalf("Failed to create dest key directory: %v", err)
-	}
-
 	for _, proto := range protocols {
 		t.Run(string(proto), func(t *testing.T) {
 			serverURL := suite.cfg.GetServerURL(proto)
@@ -782,17 +777,16 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				}
 			})
 
-			// Test key copy
+			// key copy takes only --dest-backend, --dest-keydir and --algorithm
+			// (cmd/xkmsctl/key.go); the copy inherits the source's algorithm
+			// and curve. pkcs11 is disabled in config.test.yaml, so tpm2 is
+			// the other backend to copy into.
 			t.Run("key_copy", func(t *testing.T) {
 				args := []string{
 					"key", "copy", sourceKeyID, destKeyID,
 					"--backend", "software",
-					"--key-type", "signing",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
-					"--dest-backend", "software",
-					"--dest-keydir", destKeyDir,
+					"--dest-backend", "tpm2",
 					"--algorithm", "RSAES_OAEP_SHA_256",
 				}
 
@@ -800,7 +794,12 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				if err != nil {
 					t.Logf("stdout: %s", stdout)
 					t.Logf("stderr: %s", stderr)
-					t.Fatalf("key copy failed: %v", err)
+					t.Fatalf("key copy software->tpm2 failed: %v", err)
+				}
+
+				_, stderr, err = suite.runCLI(serverURL, "key", "get", destKeyID, "--backend", "tpm2")
+				if err != nil {
+					t.Fatalf("copied key %s not found on tpm2: %v - %s", destKeyID, err, stderr)
 				}
 
 				t.Logf("[%s] key copy passed", proto)
@@ -809,8 +808,8 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 			// Cleanup
 			suite.runCLI(serverURL, "key", "delete", sourceKeyID,
 				"--backend", "software",
-				"--key-type", "signing",
 				"--key-dir", suite.keyDir)
+			suite.runCLI(serverURL, "key", "delete", destKeyID, "--backend", "tpm2")
 		})
 	}
 }

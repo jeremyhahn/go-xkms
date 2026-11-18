@@ -686,28 +686,31 @@ func TestCLIComprehensiveKeyCopyOperation(t *testing.T) {
 				}
 			})
 
-			// Test key copy - uses positional args: copy <source-key-id> <dest-key-id>
+			// key copy <source-key-id> <dest-key-id> takes only --dest-backend,
+			// --dest-keydir and --algorithm (cmd/xkmsctl/key.go); the copy
+			// inherits the source's algorithm and curve. pkcs11 is disabled in
+			// config.test.yaml, so tpm2 is the other backend to copy into.
 			t.Run("key_copy", func(t *testing.T) {
 				stdout, stderr, err := suite.runCLI(serverURL,
 					"key", "copy", sourceKeyID, destKeyID,
-					"--dest-backend", "software",
-					"--key-type", "signing",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
+					"--backend", "software",
+					"--dest-backend", "tpm2",
 					"--algorithm", "RSAES_OAEP_SHA_256",
 				)
 				if err != nil {
-					t.Logf("[%s] key copy failed (may not be supported): %v\nstderr: %s", proto, err, stderr)
-					t.Fatal("key copy not implemented or requires multiple backends")
-					return
+					t.Fatalf("[%s] key copy software->tpm2 failed: %v\nstdout: %s\nstderr: %s", proto, err, stdout, stderr)
+				}
+				_, stderr, err = suite.runCLI(serverURL, "key", "get", destKeyID, "--backend", "tpm2")
+				if err != nil {
+					t.Fatalf("[%s] copied key %s not found on tpm2: %v\nstderr: %s", proto, destKeyID, err, stderr)
 				}
 				t.Logf("[%s] key copy passed: %s", proto, truncateOutput(stdout, 100))
 			})
 
 			// Cleanup
 			t.Run("cleanup", func(t *testing.T) {
-				_, _, _ = suite.runCLI(serverURL, "key", "delete", sourceKeyID)
-				_, _, _ = suite.runCLI(serverURL, "key", "delete", destKeyID)
+				_, _, _ = suite.runCLI(serverURL, "key", "delete", sourceKeyID, "--backend", "software")
+				_, _, _ = suite.runCLI(serverURL, "key", "delete", destKeyID, "--backend", "tpm2")
 			})
 		})
 	}
