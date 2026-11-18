@@ -8,26 +8,26 @@
 #   ACME_CLIENT  path of a headless acme-client built with
 #                -tags "codec_cbor codec_json codec_msgpack" (optional)
 #   WORK         scratch directory (default: a new mktemp -d)
-#   STRICT=1     exit 1 at the first gap instead of 0
+#   STRICT=1     exit 1 at the first failed step instead of running on
 #
-# Each step prints "OK step N" or "GAP step N: <call> -> <answer>". The ACME
-# path stops at its first gap and the certificate-authority path (SignCSR)
-# runs next. The script exits 0 when every step that works passed and the
-# run ended at a recorded gap; it exits 1 when the board is unreachable.
-# It never runs init, never changes the board's configuration and never
-# prints a token, key or secret.
+# Each step prints "OK step N" or "FAIL step N: <call> -> <answer>". The ACME
+# path stops at its first failed step and the certificate-authority path
+# (SignCSR) runs next. The script exits 0 only when no step failed; it exits
+# 1 when the board is unreachable or any step failed. It never runs init,
+# never changes the board's configuration and never prints a token, key or
+# secret.
 set -euo pipefail
 
 : "${BOARD:?export BOARD=host:port of the board}"
 ACME_DIR="${ACME_DIR:-https://${BOARD}/acme/directory}"
 WORK="${WORK:-$(mktemp -d)}"
 CA_PEM="$WORK/board-ca.pem"
-GAPS=0
+FAILS=0
 
 ok() { echo "OK step $1"; }
-gap() {
-	echo "GAP step $1: $2"
-	GAPS=$((GAPS + 1))
+fail() {
+	echo "FAIL step $1: $2"
+	FAILS=$((FAILS + 1))
 	if [[ "${STRICT:-0}" == "1" ]]; then exit 1; fi
 }
 
@@ -89,7 +89,7 @@ awk_free_split() {
 	if [[ -s "$CA_PEM" ]]; then
 		echo "board CA saved from the served chain"
 	else
-		echo "the board serves its leaf only: no CA in the chain, calls keep -k"
+		echo "the board serves its leaf only: no CA in the chain: curl keeps -k, step 2 fails"
 	fi
 }
 
@@ -101,17 +101,19 @@ step1_directory() {
 	echo "GET ${ACME_DIR#https://"$BOARD"}: HTTP ${code}"
 	json_keys "$WORK/directory.json"
 	if [[ "$code" != "200" ]]; then
-		gap 1 "GET directory -> HTTP ${code} $(body "$WORK/directory.json")"
+		fail 1 "GET directory -> HTTP ${code} $(body "$WORK/directory.json")"
 		return 1
 	fi
 	ok 1
 }
 
-# Step 2: new account. The nonce first (RFC 8555 7.2), then the headless
-# client's account add, which registers when a client is built.
+# Step 2: account. The nonce first (RFC 8555 7.2), then the headless
+# client's account, configured locally: account add sends no newAccount
+# (docs/acme-issuance/cli.md), the first order registers it. The client
+# trusts no system roots, so the account carries the board CA from step 0.
 step2_account() {
-	echo "== step 2: new account"
-	local code nonce_url
+	echo "== step 2: account"
+	local code nonce_url line
 	nonce_url="${ACME_DIR%/directory}/new-nonce"
 	if command -v jq >/dev/null 2>&1 && [[ -s "$WORK/directory.json" ]]; then
 		nonce_url=$(jq -r '.newNonce // empty' "$WORK/directory.json" 2>/dev/null || echo "$nonce_url")
@@ -119,34 +121,40 @@ step2_account() {
 	code=$(curl_board -o /dev/null -w '%{http_code}' -I "$nonce_url" || true)
 	echo "HEAD new-nonce: HTTP ${code}"
 	if [[ "$code" != "200" && "$code" != "204" ]]; then
-		gap 2 "HEAD new-nonce -> HTTP ${code}"
+		fail 2 "HEAD new-nonce -> HTTP ${code}"
+		return 1
+	fi
+	if [[ ! -s "$CA_PEM" ]]; then
+		fail 2 "no board CA from step 0: the client trusts no system roots, so it cannot reach ${ACME_DIR}"
 		return 1
 	fi
 	if [[ -z "${ACME_CLIENT:-}" ]]; then
-		gap 2 "ACME_CLIENT unset: new-account not attempted"
+		fail 2 "ACME_CLIENT unset: the account is not configured"
 		return 1
 	fi
 	mkdir -p "$WORK/client"
-	printf 'storage:\n  backend: filesystem\n  options:\n    path: %s/storage\nxkms:\n  backend: software\n  options:\n    path: %s/keys\n' \
-		"$WORK/client" "$WORK/client" >"$WORK/client/config.yaml"
-	if ! HOME="$WORK/client" "$ACME_CLIENT" -c "$WORK/client/config.yaml" --log-format text \
-		account add e2e --directory "$ACME_DIR" --email e2e@example.invalid >"$WORK/client/add.log" 2>&1; then
-		gap 2 "acme-client account add -> $(tail -n 1 "$WORK/client/add.log")"
-		return 1
-	fi
+	{
+		printf 'storage:\n  backend: filesystem\n  options:\n    path: %s/storage\n' "$WORK/client"
+		printf 'xkms:\n  backend: software\n  options:\n    path: %s/keys\n' "$WORK/client"
+		printf 'accounts:\n  e2e:\n    directory: %s\n    email: e2e@example.invalid\n' "$ACME_DIR"
+		printf '    key:\n      algorithm: ECDSA\n      store: software\n      ecc:\n        curve: P-256\n'
+		printf '    trusted_roots:\n      - |\n'
+		while IFS= read -r line; do printf '        %s\n' "$line"; done <"$CA_PEM"
+	} >"$WORK/client/config.yaml"
 	if ! HOME="$WORK/client" "$ACME_CLIENT" -c "$WORK/client/config.yaml" --log-format text \
 		account show e2e >"$WORK/client/show.log" 2>&1; then
-		gap 2 "acme-client account show after add -> $(tail -n 1 "$WORK/client/show.log")"
+		fail 2 "acme-client account show -> $(tail -n 1 "$WORK/client/show.log")"
 		return 1
 	fi
+	echo "account e2e configured with the board CA; newAccount is sent with the first order"
 	ok 2
 }
 
-# Steps 3 to 6 (order, challenge, finalize, certificate) need a registered
-# account; they are reported as not reached until steps 1 and 2 work.
+# Steps 3 to 6 (new account with the first order, challenge, finalize,
+# certificate) are reported as not reached until they are scripted.
 steps3to6_not_reached() {
 	local s
-	for s in "2 new-account (if step 1 failed)" "3 new-order" "4 challenge" "5 finalize" "6 certificate chain + tenant OU"; do
+	for s in "3 new-account + new-order" "4 challenge" "5 finalize" "6 certificate chain + tenant OU"; do
 		echo "NOT REACHED step ${s}"
 	done
 }
@@ -165,18 +173,16 @@ step_ca_signcsr() {
 		--data @"$WORK/signcsr.json" "https://${BOARD}/api/v1/ca/sign-csr" || true)
 	echo "POST /api/v1/ca/sign-csr: HTTP ${code}"
 	if [[ "$code" != "200" && "$code" != "201" ]]; then
-		gap ca "POST /api/v1/ca/sign-csr without credentials -> HTTP ${code} $(body "$WORK/signcsr.out")"
+		fail ca "POST /api/v1/ca/sign-csr without credentials -> HTTP ${code} $(body "$WORK/signcsr.out")"
 		return 1
 	fi
 	ok ca
 }
 
 step0_board
-if step1_directory && step2_account; then
-	echo "steps 3 to 6 are not scripted yet: extend here once step 2 works"
-else
-	steps3to6_not_reached
-fi
+step1_directory && step2_account || true
+steps3to6_not_reached
 step_ca_signcsr || true
-echo "== done: ${GAPS} gap(s); work dir ${WORK}"
+echo "== done: ${FAILS} failed step(s); work dir ${WORK}"
+if ((FAILS > 0)); then exit 1; fi
 exit 0
