@@ -397,21 +397,7 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 			continue
 		}
 
-		// Build overrides to replace hardcoded key IDs with unique ones
-		overrides := make(map[string]string)
-		for _, arg := range cmd.RequiredArgs {
-			if arg.Description == "Key ID" {
-				if uniqueID, ok := keyIDs[arg.Value]; ok {
-					overrides[arg.Description] = uniqueID
-				}
-			}
-			// Make CA issue CN unique per protocol+run to avoid "certificate
-			// already exists". Including the protocol prevents collisions when two
-			// RunAllCommandsForProtocol calls share a runID (coarse clock).
-			if arg.Flag == "cn" && cmd.Category == CategoryCA {
-				overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
-			}
-		}
+		overrides := runOverrides(cmd, protocol, runID, keyIDs)
 
 		// For key-verify, use the captured signature from key-sign
 		if cmd.Name == "key-verify" && capturedSignature != "" {
@@ -447,6 +433,43 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 	}
 
 	return results
+}
+
+// runOverrides replaces a command's fixed names with ones unique to this
+// protocol and run, so the server state one protocol's pass leaves behind
+// does not fail the next protocol's pass.
+func runOverrides(cmd CommandDefinition, protocol ProtocolType, runID int64, keyIDs map[string]string) map[string]string {
+	overrides := make(map[string]string)
+	for _, arg := range cmd.RequiredArgs {
+		if arg.Description == "Key ID" {
+			if uniqueID, ok := keyIDs[arg.Value]; ok {
+				overrides[arg.Description] = uniqueID
+			}
+		}
+		// Make CA issue CN unique per protocol+run to avoid "certificate
+		// already exists". Including the protocol prevents collisions when two
+		// RunAllCommandsForProtocol calls share a runID (coarse clock).
+		//
+		// The override is keyed by the flag: BuildCommandArgs looks a
+		// flagged argument up by Flag only, so the Description key this
+		// used to set never applied and every protocol issued the same CN.
+		// A unique subdomain keeps the CN a host name, and the SAN names the
+		// same host the CN does.
+		if arg.Flag == "cn" && cmd.Category == CategoryCA {
+			cn := fmt.Sprintf("%s-%d.%s", protocol, runID, arg.Value)
+			overrides[arg.Flag] = cn
+			overrides["sans"] = "DNS:" + cn
+		}
+		// The same holds for tpm-policy-create: the policy registry is shared
+		// by every protocol (and every run against one server), so a fixed
+		// name fails "tpmpolicy: policy already exists" after the first. The
+		// unique name keeps the fixed one as its prefix, so
+		// ExpectedOutputContains still matches.
+		if arg.IsPositional && cmd.Category == CategoryPolicy && arg.Description == "Policy name" {
+			overrides[arg.Description] = uniqueRunName(arg.Value, protocol, runID)
+		}
+	}
+	return overrides
 }
 
 // commandTagsAvailable checks if all required build tags are available
@@ -520,4 +543,11 @@ func uniqueKeyIDs(runID int64) map[string]string {
 		"test-symmetric-exportable": fmt.Sprintf("test-symmetric-exportable-%d", runID),
 		"test-symmetric-sensitive":  fmt.Sprintf("test-symmetric-sensitive-%d", runID),
 	}
+}
+
+// uniqueRunName makes a fixed command-table name unique per protocol and per
+// run: base-<protocol>-<runID>. Including the protocol keeps two
+// RunAllCommandsForProtocol calls that share a runID (coarse clock) apart.
+func uniqueRunName(base string, protocol ProtocolType, runID int64) string {
+	return fmt.Sprintf("%s-%s-%d", base, protocol, runID)
 }

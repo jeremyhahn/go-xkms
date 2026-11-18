@@ -119,6 +119,57 @@ func TestBuildCommandArgsOverrideReplacesValue(t *testing.T) {
 	assert.NotContains(t, argv, "2048")
 }
 
+// findCommand returns the table entry named name.
+func findCommand(t *testing.T, defs []CommandDefinition, name string) CommandDefinition {
+	t.Helper()
+	for _, def := range defs {
+		if def.Name == name {
+			return def
+		}
+	}
+	t.Fatalf("no command %q in the table", name)
+	return CommandDefinition{}
+}
+
+// TestRunOverridesMakeCANamesUniquePerProtocol pins the ca-issue CN and SAN to
+// differ per protocol and run. The CN override used to be keyed by the
+// argument's description, which BuildCommandArgs never reads for a flagged
+// argument, so every protocol issued test.example.com and all but the first
+// failed "ca: certificate already exists".
+func TestRunOverridesMakeCANamesUniquePerProtocol(t *testing.T) {
+	runner := &TestRunner{}
+	cmd := findCommand(t, CACommands(), "ca-issue")
+
+	rest := argvString(runner.BuildCommandArgs(cmd, runOverrides(cmd, ProtocolREST, 7, uniqueKeyIDs(7))))
+	grpc := argvString(runner.BuildCommandArgs(cmd, runOverrides(cmd, ProtocolGRPC, 7, uniqueKeyIDs(7))))
+	later := argvString(runner.BuildCommandArgs(cmd, runOverrides(cmd, ProtocolREST, 8, uniqueKeyIDs(8))))
+
+	wantCN := "--cn " + string(ProtocolREST) + "-7.test.example.com"
+	assert.Contains(t, rest, wantCN)
+	assert.Contains(t, rest, "--sans DNS:"+string(ProtocolREST)+"-7.test.example.com")
+	assert.NotContains(t, grpc, wantCN)
+	assert.NotContains(t, later, wantCN)
+}
+
+// TestRunOverridesMakePolicyNamesUniquePerProtocol pins the tpm-policy-create
+// name to differ per protocol and run while keeping the table's name as its
+// prefix, which ExpectedOutputContains matches.
+func TestRunOverridesMakePolicyNamesUniquePerProtocol(t *testing.T) {
+	runner := &TestRunner{}
+	cmd := findCommand(t, PolicyCommands(), "tpm-policy-create")
+
+	rest := runner.BuildCommandArgs(cmd, runOverrides(cmd, ProtocolREST, 7, uniqueKeyIDs(7)))
+	grpc := runner.BuildCommandArgs(cmd, runOverrides(cmd, ProtocolGRPC, 7, uniqueKeyIDs(7)))
+
+	restName := uniqueRunName("it-tpm-policy", ProtocolREST, 7)
+	assert.Contains(t, rest, restName)
+	assert.NotContains(t, grpc, restName)
+	assert.NotContains(t, rest, "it-tpm-policy")
+	for _, want := range cmd.ExpectedOutputContains {
+		assert.Contains(t, restName, want)
+	}
+}
+
 // TestKeyCommandsCoverTheProtectionFlags checks the command set actually
 // exercises both protection attributes.
 //
