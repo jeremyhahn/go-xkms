@@ -18,7 +18,7 @@ services:
     # scoped to the project -- so two runs can serve :8443 side by side.
     expose:
       - "8443/tcp"   # REST API (HTTP/2 over TCP)
-      - "8443/udp"   # QUIC/HTTP3 on the unified REST port (Alt-Svc h3)
+      - "8443/udp"   # QUIC/HTTP3 on the unified REST port (Alt-Svc h3); the quic tests dial it (KEYSTORE_QUIC_URL)
       - "9443"       # gRPC
       - "9444"       # MCP
       - "9090"       # Metrics
@@ -201,6 +201,12 @@ services:
       # Admin mTLS credential `xkmsd init` wrote (provisions test accounts).
       - XKMS_ADMIN_CERT=/xkms-data/xkms/admin-cert.pem
       - XKMS_ADMIN_KEY=/xkms-data/xkms/admin-key.pem
+      # Every CLI invocation presents the admin credential above on unix,
+      # rest, grpc and quic, and verifies the server against one bundle of
+      # KEYSTORE_TLS_CA, the ceremony root and, once the server has unsealed,
+      # the unified listener's persisted CA bundle (apiharness.ClientTLSArgs).
+      - XKMS_CEREMONY_CA=/xkms-data/xkms/ca-bundle.pem
+      - XKMS_UNIFIED_CA=/xkms-data/xkms/unified-tls/ca-bundle.pem
       # Test configuration
       - INTEGRATION_TIMEOUT=60s
       - GO_TEST_FLAGS=-v -tags=integration,frost
