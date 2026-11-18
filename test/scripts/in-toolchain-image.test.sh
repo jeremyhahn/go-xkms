@@ -103,6 +103,18 @@ eq "the script exits 2" "2" "$RC"
 eq "the error names the variable" "IN_IMAGE_SCRATCH must be an absolute path: var/tmp" "$OUT"
 eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
 
+# --- a bridge stage carries the Trivy mirrors, never TRIVY_INSECURE ----------
+# TRIVY_INSECURE turns off TLS verification for the database downloads, so
+# anyone on the path could serve a database that hides findings.
+section "Trivy mirror environment"
+run TRIVY_DB_REPOSITORY=mirror.example/trivy-db \
+	TRIVY_JAVA_DB_REPOSITORY=mirror.example/trivy-java-db TRIVY_INSECURE=true
+eq "the stage exits 0" "0" "$RC"
+has "TRIVY_DB_REPOSITORY travels" "$FAKE_STATE/create.args" "TRIVY_DB_REPOSITORY"
+has "TRIVY_JAVA_DB_REPOSITORY travels" "$FAKE_STATE/create.args" "TRIVY_JAVA_DB_REPOSITORY"
+eq "TRIVY_INSECURE never travels" "no" \
+	"$(grep -q TRIVY_INSECURE "$FAKE_STATE/create.args" && echo yes || echo no)"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
 exit $?
