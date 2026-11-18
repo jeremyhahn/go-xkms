@@ -25,10 +25,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/internal/keyslot"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -234,14 +236,14 @@ func TestBackend_FixedKeySlot(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fixed, ok := any(&Backend{config: tc.cfg}).(interface{ FixedKeySlot() bool })
-			if !ok {
-				t.Fatal("the backend does not report whether its key slot is fixed")
-			}
-			if got := fixed.FixedKeySlot(); got != tc.want {
-				t.Fatalf("FixedKeySlot() = %v, want %v", got, tc.want)
+			if got := keyslot.Fixed(&Backend{config: tc.cfg}); got != tc.want {
+				t.Fatalf("keyslot.Fixed() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+	// The answer is internal: the backend adds no exported method for it.
+	if _, ok := reflect.TypeOf(&Backend{}).MethodByName("FixedKeySlot"); ok {
+		t.Fatal("pkcs11.Backend exports FixedKeySlot")
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/internal/keyslot"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -498,8 +499,6 @@ func TestTenantCAKeyFactory_RecoversAfterFailedProvenanceSave(t *testing.T) {
 // slot reports: every key it generates lands in that slot, whatever its name.
 type fixedSlotProvider struct{ types.KeyProvider }
 
-func (fixedSlotProvider) FixedKeySlot() bool { return true }
-
 // fixedSlotBackend is a backend whose key provider has a fixed slot; it
 // counts the keys generated on it.
 type fixedSlotBackend struct {
@@ -522,6 +521,10 @@ func (b *fixedSlotBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAt
 func TestTenantCAKeyFactory_RefusesFixedSlotBackend(t *testing.T) {
 	_, base := newTenantCAKeyTestFactory(t)
 	piv := &fixedSlotBackend{Backend: base}
+	t.Cleanup(keyslot.Register(func(p any) (bool, bool) {
+		_, ok := p.(fixedSlotProvider)
+		return ok, ok
+	}))
 	f := newTenantCAKeyFactory()
 	require.NoError(t, f.Bind(piv, storage.New()))
 
