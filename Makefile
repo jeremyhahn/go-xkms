@@ -1855,25 +1855,34 @@ integration-test: clean-test-containers integration-test-software integration-te
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 # run-image-refs sets the shell variable refs to this run's images: each
-# image of a repository on XKMS_IMAGE_REPOS that carries XKMS_IMAGE_TAG.
-# clean-run-images removes them; check-run-images reads them.
-run-image-refs = refs=""; for repo in $(XKMS_IMAGE_REPOS); do refs="$$refs $$(docker images --filter=reference="$$repo:$(XKMS_IMAGE_TAG)" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)"; done
+# image of a repository on XKMS_IMAGE_REPOS that carries XKMS_IMAGE_TAG. Its
+# argument runs when docker cannot list them: clean-run-images passes `r=`
+# and removes what it found; check-run-images fails, since a listing that
+# fails would select nothing and check nothing.
+run-image-refs = refs=""; for repo in $(XKMS_IMAGE_REPOS); do r=$$(docker images --filter=reference="$$repo:$(XKMS_IMAGE_TAG)" --format '{{.Repository}}:{{.Tag}}') || $(1); refs="$$refs $$r"; done
 
 .PHONY: check-run-images
 ## check-run-images: Fail when an image this run built carries a private address (ruling 888)
-# The integration image and this run's images (run-image-refs) are read by
-# scripts/ci-image-history.sh, which fails on any RFC 1918 address in an
-# image's history or config. A pool build takes the LAN caches as BuildKit
-# secrets, which no history entry keeps; this proves it of every image the
-# pool built. With no per-run tag there is nothing to select, and it fails
-# rather than check nothing.
+# This run's images (run-image-refs), and the integration image when the
+# daemon holds it, are read by scripts/ci-image-history.sh, which fails on
+# any RFC 1918 address in an image's history or config. A pool build takes
+# the LAN caches as BuildKit secrets, which no history entry keeps; this
+# proves it of every image the pool built. The integration and soak jobs
+# never build IT_IMAGE, so an absent one is not read. It fails with no
+# per-run tag, when docker cannot list the run's images, and when there is
+# no image to check, rather than pass having checked nothing.
 check-run-images:
 	@if [ -z "$(XKMS_IMAGE_TAG)" ]; then \
 		echo "check-run-images: no per-run tag (XKMS_IMAGE_TAG): this run's images cannot be selected" >&2; \
 		exit 1; \
 	fi; \
-	$(run-image-refs); \
-	scripts/ci-image-history.sh '$(IT_IMAGE)' $$refs
+	$(call run-image-refs,{ echo "check-run-images: docker cannot list this run's images" >&2; exit 1; }); \
+	if docker image inspect '$(IT_IMAGE)' >/dev/null 2>&1; then refs="$(IT_IMAGE) $$refs"; fi; \
+	if [ -z "$$(echo $$refs)" ]; then \
+		echo "check-run-images: no image of this run (tag $(XKMS_IMAGE_TAG)) is on the daemon" >&2; \
+		exit 1; \
+	fi; \
+	scripts/ci-image-history.sh $$refs
 
 .PHONY: clean-run-images
 ## clean-run-images: Remove the images this CI run tagged (no-op for local builds)
@@ -1893,7 +1902,7 @@ clean-run-images:
 	@if [ -z "$(XKMS_IMAGE_TAG)" ]; then \
 		echo "$(CYAN)→ Local image tags; nothing to remove$(RESET)"; \
 	else \
-		$(run-image-refs); \
+		$(call run-image-refs,r=) 2>/dev/null; \
 		if [ -n "$$(echo $$refs)" ]; then docker rmi -f $$refs >/dev/null 2>&1 || true; fi; \
 		echo "$(GREEN)✓ Removed this run's images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
 	fi

@@ -33,7 +33,9 @@ case "$1 $2" in
 "history --no-trunc") f="$STUB_DIR/$n.history" ;;
 "image inspect") f="$STUB_DIR/$n.config" ;;
 images\ --filter=reference=*)
-	# the run's images: $STUB_DIR/images lists "<repo pattern>:<tag> <ref>" lines
+	# the run's images: $STUB_DIR/images lists "<repo pattern>:<tag> <ref>" lines;
+	# with $STUB_DIR/images-fail present the listing fails
+	[ ! -f "$STUB_DIR/images-fail" ] || { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
 	pattern=${2#--filter=reference=}
 	[ -f "$STUB_DIR/images" ] || exit 0
 	awk -v p="$pattern" '$1 == p { print $2 }' "$STUB_DIR/images"
@@ -176,6 +178,39 @@ func TestCheckRunImages(t *testing.T) {
 			}
 		})
 	}
+	// integration and soak never build IT_IMAGE (Codex P1 on #2273): a daemon
+	// without it is checked on the run's own images alone.
+	t.Run("no integration image on the daemon", func(t *testing.T) {
+		files := map[string]string{}
+		for k, v := range clean {
+			if !strings.HasPrefix(k, "go-xkms-ci-it_") {
+				files[k] = v
+			}
+		}
+		if out, err := runMake(t, historyStub(t, files), args...); err != nil {
+			t.Fatalf("make check-run-images fails when the daemon holds no integration image: %v\n%s", err, out)
+		}
+		files["go-xkms-swtpm_go-xkms-77.history"] = "RUN |1 APT_PROXY=http://192.168.77.7:3142 /bin/sh -c apt-get update"
+		if out, err := runMake(t, historyStub(t, files), args...); err == nil {
+			t.Fatalf("make check-run-images passes a dirty run image when the daemon holds no integration image:\n%s", out)
+		}
+	})
+	// A listing that fails selects nothing; the check must fail, not pass on
+	// the integration image alone (Codex P1 on #2273).
+	t.Run("the image listing fails", func(t *testing.T) {
+		files := map[string]string{"images-fail": ""}
+		for k, v := range clean {
+			files[k] = v
+		}
+		if out, err := runMake(t, historyStub(t, files), args...); err == nil {
+			t.Fatalf("make check-run-images passes when docker cannot list the run's images:\n%s", out)
+		}
+	})
+	t.Run("nothing to check", func(t *testing.T) {
+		if out, err := runMake(t, historyStub(t, map[string]string{}), args...); err == nil {
+			t.Fatalf("make check-run-images passes with no image of the run on the daemon:\n%s", out)
+		}
+	})
 	t.Run("no per-run tag", func(t *testing.T) {
 		if out, err := runMake(t, historyStub(t, clean), "check-run-images", "XKMS_IMAGE_TAG=", "IT_IMAGE=go-xkms-ci-it:abc"); err == nil {
 			t.Fatalf("make check-run-images passes with no per-run tag:\n%s", out)
