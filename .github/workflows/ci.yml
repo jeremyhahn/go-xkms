@@ -1378,16 +1378,12 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
-      # Ruling 869: the module-integrity gate of a native Go job on the pool
-      # (checksum database on, no exemptions, -mod=readonly, no direct).
-      - name: Module integrity (ruling 869)
-        if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
-        run: scripts/ci-go-integrity.sh
       - name: Install the gate tools at the toolchain image's pins
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
         env:
           GOTOOLCHAIN: local
         run: |
+          scripts/ci-go-integrity.sh
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -1397,7 +1393,9 @@ jobs:
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
-        run: make lint-gates GO_BUILD_TAGS="$GO_BUILD_TAGS"
+        run: |
+          scripts/ci-go-integrity.sh
+          make lint-gates GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'
@@ -1834,17 +1832,13 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
-      # Ruling 869: the module-integrity gate of a native Go job on the pool
-      # (checksum database on, no exemptions, -mod=readonly, no direct).
-      - name: Module integrity (ruling 869)
-        if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
-        run: scripts/ci-go-integrity.sh
       - name: Static analysis (native)
         if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           make vet-integration
           make secure-analyzer-selftest
@@ -1979,17 +1973,13 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
-      # Ruling 869: the module-integrity gate of a native Go job on the pool
-      # (checksum database on, no exemptions, -mod=readonly, no direct).
-      - name: Module integrity (ruling 869)
-        if: ${{ runner.environment == 'self-hosted' }}
-        run: scripts/ci-go-integrity.sh
       - name: Backend-tagged binaries and the acme-client GUI (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           sh .github/scripts/disk-usage.sh "before the build"
           cache=$(go env GOCACHE)
@@ -2096,17 +2086,13 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
-      # Ruling 869: the module-integrity gate of a native Go job on the pool
-      # (checksum database on, no exemptions, -mod=readonly, no direct).
-      - name: Module integrity (ruling 869)
-        if: ${{ runner.environment == 'self-hosted' }}
-        run: scripts/ci-go-integrity.sh
       - name: Build sdk/go, web/desktop and xkey (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           (cd sdk/go && go build ./...)
           (cd web/desktop && go build ./...)
@@ -2229,17 +2215,13 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
-      # Ruling 869: the module-integrity gate of a native Go job on the pool
-      # (checksum database on, no exemptions, -mod=readonly, no direct).
-      - name: Module integrity (ruling 869)
-        if: ${{ runner.environment == 'self-hosted' }}
-        run: scripts/ci-go-integrity.sh
       - name: sdk/go and web/desktop tests (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           (cd sdk/go && go test -race -timeout 60m -v -tags codec_json ./...)
           (cd web/desktop && go test -race -timeout 60m -v ./...)
@@ -2250,6 +2232,7 @@ jobs:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           cd xkey
           go test -race -timeout 60m -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
@@ -2360,11 +2343,6 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
-      # Ruling 869: the module-integrity gate of a native Go job on the pool
-      # (checksum database on, no exemptions, -mod=readonly, no direct).
-      - name: Module integrity (ruling 869)
-        if: ${{ runner.environment == 'self-hosted' }}
-        run: scripts/ci-go-integrity.sh
       - name: Build, vet and test (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
@@ -2372,6 +2350,7 @@ jobs:
           XKMS_NATIVE_BUILD: '1'
           TAGS: ${{ matrix.tags }}
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           go build -tags "$TAGS" ./...
           go vet -tags "$TAGS" ./pkg/server/... ./pkg/config/...
@@ -2484,17 +2463,13 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
-      # Ruling 869: the module-integrity gate of a native Go job on the pool
-      # (checksum database on, no exemptions, -mod=readonly, no direct).
-      - name: Module integrity (ruling 869)
-        if: ${{ runner.environment == 'self-hosted' }}
-        run: scripts/ci-go-integrity.sh
       - name: Race detector, all backends including FROST (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           mkdir -p /tmp/softhsm2/tokens
           printf "directories.tokendir = /tmp/softhsm2/tokens\nobjectstore.backend = file\nlog.level = INFO\n" > /tmp/softhsm2.conf
@@ -2581,17 +2556,13 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
-      # Ruling 869: the module-integrity gate of a native Go job on the pool
-      # (checksum database on, no exemptions, -mod=readonly, no direct).
-      - name: Module integrity (ruling 869)
-        if: ${{ runner.environment == 'self-hosted' }}
-        run: scripts/ci-go-integrity.sh
       - name: pkg/tpm2 on the simulator (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           make test-tpm2-simulator
 
       - name: Tear down
