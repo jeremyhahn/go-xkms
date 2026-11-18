@@ -10,6 +10,8 @@ Persistent flags on `xkey ssh` (inherited by every subcommand):
 |---|---|---|
 | `--server` | *(empty)* | Remote xkmsd URL, e.g. `grpcs://host:9443`, `quic://host:8444`, `unix:///path/xkms.sock` |
 | `--tls-ca` | *(empty)* | TLS CA certificate file used to verify the server |
+| `--tls-cert` | `$XKMSD_TLS_CERT` | Path to client certificate file for mTLS authentication (as `xkmsctl --tls-cert`) |
+| `--tls-key` | `$XKMSD_TLS_KEY` | Path to client key file for mTLS authentication (as `xkmsctl --tls-key`) |
 | `--local` | `false` | Use the local SSH store even when an xkmsd is configured |
 
 SSH switches between server and local the way `xkey oidc` does. Without
@@ -20,8 +22,12 @@ the command uses the local embedded store (see
 [engineering.md](engineering.md#configuration)). A server call presents
 `XKMSD_TOKEN`, or else the login `xkey auth login` stored for that server
 (bound to its TLS identity, so one login serves every transport), on every
-transport, plus the `XKMSD_TLS_CERT` / `XKMSD_TLS_KEY` client
-credential on TLS transports.
+transport, plus the `--tls-cert` / `--tls-key` client credential (else
+`XKMSD_TLS_CERT` / `XKMSD_TLS_KEY`) on every TLS transport (https,
+grpcs, unix, quic, mcps), so an mTLS-enforcing xkmsd authenticates the
+command by its certificate. The pair is loaded when the client is built: a
+half pair, an unreadable file or a mismatched pair is refused before any
+connection.
 
 The GUI follows the server connection: while xKey is connected to an
 xkmsd, the SSH key view lists, generates and deletes keys on the server
