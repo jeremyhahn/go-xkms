@@ -4,14 +4,15 @@
 # Stage 1: Builder stage - compile dependencies and prepare environment
 FROM golang:1.27.4-bookworm AS builder
 # Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
-# layer and no history entry), empty on a hosted runner.
+# layer and no history entry), empty on a hosted runner. With a proxy set,
+# apt's history log, which records the command line, goes to /dev/null.
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
 
 # Install build essentials and required packages for PKCS#11 and TPM testing
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -52,7 +53,8 @@ RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 # Stage 2: Test runtime environment
 FROM golang:1.27.4-bookworm
 # Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
-# layer and no history entry), empty on a hosted runner.
+# layer and no history entry), empty on a hosted runner. With a proxy set,
+# apt's history log, which records the command line, goes to /dev/null.
 
 LABEL maintainer="go-xkms"
 LABEL description="Integration testing environment for go-xkms with PKCS#11 and TPM 2.0 support"
@@ -65,7 +67,7 @@ ENV GOTOOLCHAIN=auto
 # go-qrdb), not gated by any backend tag -- this stage is also where the
 # module builds/tests below run.
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     opensc \
     swtpm \

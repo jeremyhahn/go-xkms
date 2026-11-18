@@ -33,7 +33,8 @@ ARG GO_BUILD_PROXY=https://proxy.golang.org,direct
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS tools
 # Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
-# layer and no history entry), empty on a hosted runner.
+# layer and no history entry), empty on a hosted runner. With a proxy set,
+# apt's history log, which records the command line, goes to /dev/null.
 ARG GO_BUILD_PROXY
 ARG TARGETARCH
 ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=${GO_BUILD_PROXY} GOBIN=/out
@@ -41,7 +42,7 @@ ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=${GO_BUILD_PROXY} GOBIN=/out
 # deb.debian.org reddened CI (run 58741). Repeated per FROM ${GO_IMAGE} stage.
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends xz-utils && \
     rm -rf /var/lib/apt/lists/*
 COPY scripts/tool-pins.sh /tmp/tool-pins.sh
@@ -106,12 +107,13 @@ RUN . /tmp/tool-pins.sh && \
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS native
 # Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
-# layer and no history entry), empty on a hosted runner.
+# layer and no history entry), empty on a hosted runner. With a proxy set,
+# apt's history log, which records the command line, goes to /dev/null.
 ENV GOTOOLCHAIN=local DEBIAN_FRONTEND=noninteractive
 # apt retries transient fetch errors (see the tools stage).
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     # Core build tools
     build-essential \
@@ -342,7 +344,8 @@ RUN for m in . sdk/go xkey web/desktop; do (cd "$m" && go mod verify) || exit 1;
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS base
 # Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
-# layer and no history entry), empty on a hosted runner.
+# layer and no history entry), empty on a hosted runner. With a proxy set,
+# apt's history log, which records the command line, goes to /dev/null.
 ENV DEBIAN_FRONTEND=noninteractive
 # apt retries transient fetch errors (see the tools stage); toolchain and
 # devcontainer, built FROM base, inherit the setting.
@@ -351,7 +354,7 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/ap
 # (linux-libc-dev among them): the integration image built on this stage is
 # gated by `trivy image --ignore-unfixed` (ci.yml).
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p upgrade -y && apt-get $p install -y --no-install-recommends \
     # Core build tools (needed for CGO)
     build-essential \
@@ -509,13 +512,14 @@ ENV GOPROXY=off
 # ---------------------------------------------------------------------------
 FROM base AS toolchain
 # Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
-# layer and no history entry), empty on a hosted runner.
+# layer and no history entry), empty on a hosted runner. With a proxy set,
+# apt's history log, which records the command line, goes to /dev/null.
 # XKMS_NATIVE_BUILD tells the Makefile every native dependency is in this
 # image and no Docker daemon is, so the CGO and xkey builds run in place
 # instead of in their builder images.
 ENV HOME=/tmp XKMS_NATIVE_BUILD=1
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
         bash \
         coreutils \
@@ -546,12 +550,13 @@ USER dev
 # ---------------------------------------------------------------------------
 FROM toolchain AS devcontainer
 # Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
-# layer and no history entry), empty on a hosted runner.
+# layer and no history entry), empty on a hosted runner. With a proxy set,
+# apt's history log, which records the command line, goes to /dev/null.
 LABEL maintainer="go-xkms"
 LABEL description="Development environment for go-xkms with ALL build and test dependencies"
 USER root
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     git-lfs \
     # Networking and testing tools

@@ -92,12 +92,12 @@ func TestCIImageHistoryScript(t *testing.T) {
 	for _, tc := range []struct {
 		name, history, config, want string
 	}{
-		{name: "an apk mirror build argument", history: "RUN |1 APK_MIRROR=http://192.168.101.12:3143/alpine /bin/sh -c apk-mirror add git", config: cleanConfig, want: "history entry 1"},
+		{name: "an apk mirror build argument", history: "RUN |1 APK_MIRROR=http://192.168.77.7:3143/alpine /bin/sh -c apk-mirror add git", config: cleanConfig, want: "history entry 1"},
 		{name: "an apt proxy in a later entry", history: cleanHistory + "\nRUN |1 APT_PROXY=http://10.20.30.40:3142 /bin/sh -c apt-get update", config: cleanConfig, want: "history entry 5"},
 		{name: "a 172.16/12 address", history: "ENV REG=172.20.0.5:5005", config: cleanConfig, want: "history entry 1"},
 		{name: "an address at the start of an entry", history: "192.168.1.1", config: cleanConfig, want: "history entry 1"},
 		{name: "an address in the config", history: cleanHistory, config: `{"Env":["GOPROXY=http://10.0.0.7:3000|https://proxy.golang.org"]}`, want: "config"},
-		{name: "an address in a label", history: cleanHistory, config: `{"Labels":{"cache":"192.168.101.12"}}`, want: "config"},
+		{name: "an address in a label", history: cleanHistory, config: `{"Labels":{"cache":"192.168.77.7"}}`, want: "config"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := runImageHistory(t, map[string]string{"a_1.history": tc.history, "a_1.config": tc.config}, "a:1")
@@ -116,7 +116,7 @@ func TestCIImageHistoryScript(t *testing.T) {
 	}
 	t.Run("every image is read", func(t *testing.T) {
 		files := map[string]string{"a_1.history": cleanHistory, "a_1.config": cleanConfig,
-			"b_2.history": "RUN |1 APK_MIRROR=http://192.168.101.12:3143/alpine x", "b_2.config": cleanConfig}
+			"b_2.history": "RUN |1 APK_MIRROR=http://192.168.77.7:3143/alpine x", "b_2.config": cleanConfig}
 		if out, err := runImageHistory(t, files, "a:1", "b:2"); err == nil || !strings.Contains(out, "b:2") {
 			t.Fatalf("a private address in the second image passes (%v):\n%s", err, out)
 		}
@@ -166,7 +166,7 @@ func TestCheckRunImages(t *testing.T) {
 			for k, v := range clean {
 				files[k] = v
 			}
-			files[dirty+".history"] = "RUN |1 APT_PROXY=http://192.168.101.12:3142 /bin/sh -c apt-get update"
+			files[dirty+".history"] = "RUN |1 APT_PROXY=http://192.168.77.7:3142 /bin/sh -c apt-get update"
 			out, err := runMake(t, historyStub(t, files), args...)
 			if err == nil {
 				t.Fatalf("make check-run-images passes with a private address in %s:\n%s", dirty, out)
@@ -181,6 +181,43 @@ func TestCheckRunImages(t *testing.T) {
 			t.Fatalf("make check-run-images passes with no per-run tag:\n%s", out)
 		}
 	})
+	// A soak iteration runs its suite with IT_PROJECT=<job project>-<i>, and
+	// the Makefile tags that iteration's images go-xkms-<run>-<i>: the check
+	// given the same IT_PROJECT selects exactly those (Codex P1 on #2273).
+	t.Run("an iteration's project selects its images", func(t *testing.T) {
+		files := map[string]string{
+			"images":                    "go-xkms-*:go-xkms-77-2 go-xkms-swtpm:go-xkms-77-2\ngo-xkms-*:go-xkms-77 go-xkms-swtpm:go-xkms-77",
+			"go-xkms-ci-it_abc.history": cleanHistory, "go-xkms-ci-it_abc.config": cleanConfig,
+			"go-xkms-swtpm_go-xkms-77.history": cleanHistory, "go-xkms-swtpm_go-xkms-77.config": cleanConfig,
+			"go-xkms-swtpm_go-xkms-77-2.history": "RUN |1 APT_PROXY=http://192.168.77.7:3142 /bin/sh -c apt-get update",
+			"go-xkms-swtpm_go-xkms-77-2.config":  cleanConfig,
+		}
+		if out, err := runMake(t, historyStub(t, files), "check-run-images", "IT_PROJECT=go-xkms-77-2", "IT_IMAGE=go-xkms-ci-it:abc"); err == nil || !strings.Contains(out, "go-xkms-77-2") {
+			t.Fatalf("make check-run-images IT_PROJECT=go-xkms-77-2 does not read the iteration's image (%v):\n%s", err, out)
+		}
+	})
+}
+
+var (
+	// suiteProject is the IT_PROJECT a suite step passes make; suiteVar
+	// resolves a shell variable it names to that variable's assignment.
+	suiteProject = regexp.MustCompile(`IT_PROJECT="([^"]+)"`)
+	suiteVar     = regexp.MustCompile(`^\$([A-Za-z_][A-Za-z0-9_]*)$`)
+)
+
+// suiteProjectOf is the project a suite step runs under, with a variable it
+// names resolved from the step's own assignment (the soak's p="...").
+func suiteProjectOf(run string) string {
+	m := suiteProject.FindStringSubmatch(run)
+	if m == nil {
+		return "$IT_PROJECT"
+	}
+	if v := suiteVar.FindStringSubmatch(m[1]); v != nil {
+		if a := regexp.MustCompile(`(?m)^\s*` + v[1] + `="([^"]+)"`).FindStringSubmatch(run); a != nil {
+			return a[1]
+		}
+	}
+	return m[1]
 }
 
 // poolCheckJobs are the ci.yml pool jobs that build images on GitHub: the
@@ -232,17 +269,30 @@ func poolCheckProblems(body []byte) []string {
 		if !strings.Contains(s.If, "runner.environment != 'github-hosted'") || !strings.Contains(s.If, "!cancelled()") {
 			problems = append(problems, name+": the image check runs under "+s.If+"; want !cancelled() and runner.environment != 'github-hosted'")
 		}
-		suite := false
+		suite := ""
 		for _, before := range job.Steps[:check] {
 			if suiteRun.MatchString(before.Run) {
-				suite = true
+				suite = before.Run
 			}
 			if strings.HasPrefix(before.Name, "Tear down") {
 				problems = append(problems, name+": "+before.Name+" runs before the image check: the images would be gone")
 			}
 		}
-		if !suite {
+		if suite == "" {
 			problems = append(problems, name+": the image check runs before the suite builds the images")
+			continue
+		}
+		// The check selects the images by the tag the Makefile derives from
+		// IT_PROJECT, so it runs under the suite's project: the job's own
+		// needs no argument; a per-iteration one is passed, in a loop.
+		project := suiteProjectOf(suite)
+		if project != "$IT_PROJECT" {
+			if !strings.Contains(s.Run, `IT_PROJECT="`+project+`"`) {
+				problems = append(problems, name+": the suite runs under IT_PROJECT="+project+" but the image check does not, so it selects another tag's images")
+			}
+			if strings.Contains(project, "$i") && !strings.Contains(s.Run, "for i in") {
+				problems = append(problems, name+": the suite runs one project per iteration but the image check does not loop over them")
+			}
 		}
 	}
 	return problems
@@ -281,6 +331,20 @@ func TestPoolBuildsCheckTheirImages(t *testing.T) {
 		"no suite builds the image":    wf(step("Name", "", "make -s it-image"), check, down),
 		"skipped when the suite fails": wf(suite, step("Check the images", "${{ runner.environment != 'github-hosted' }}", checkRunImagesCall), down),
 		"run on hosted runners":        wf(suite, step("Check the images", "${{ !cancelled() }}", checkRunImagesCall), down),
+	} {
+		if len(poolCheckProblems(bad)) == 0 {
+			t.Errorf("%s passed", name)
+		}
+	}
+	// The soak: one project per iteration, checked per iteration.
+	soak := "      - name: Soak\n        run: |\n          p=\"$IT_PROJECT-$i\"\n          make \"$SOAK_TARGET\" IT_PROJECT=\"$p\" IT_IMAGE=\"$IT_IMAGE\"\n"
+	loop := "      - name: Check the images\n        if: " + cond + "\n        run: |\n          for i in $(seq 1 3); do\n            " + checkRunImagesCall + " IT_IMAGE=\"$IT_IMAGE\" IT_PROJECT=\"$IT_PROJECT-$i\"\n          done\n"
+	if p := poolCheckProblems(wf(soak, loop, down)); len(p) != 0 {
+		t.Fatalf("a per-iteration check fails: %v", p)
+	}
+	for name, bad := range map[string][]byte{
+		"the job's project for a per-iteration suite": wf(soak, check, down),
+		"the iteration's project, no loop":            wf(soak, step("Check the images", cond, checkRunImagesCall+` IT_PROJECT="$IT_PROJECT-$i"`), down),
 	} {
 		if len(poolCheckProblems(bad)) == 0 {
 			t.Errorf("%s passed", name)

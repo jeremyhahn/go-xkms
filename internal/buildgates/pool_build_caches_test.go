@@ -22,9 +22,13 @@ import (
 // never as a build argument, whose value BuildKit records in the image
 // history. Nothing of either cache is left in a layer or a history entry.
 
+// aptProxyDef puts the proxy on apt-get's command line, which apt records in
+// /var/log/apt/history.log, a file of the image (Codex P1 on #2273): with a
+// proxy set it sends that log to /dev/null, so no layer keeps the address; a
+// hosted build, with none, keeps its history log.
 const (
 	cachesRoot   = "../.."
-	aptProxyDef  = `p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}`
+	aptProxyDef  = `p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}`
 	apkHelper    = "scripts/apk-mirror.sh"
 	apkHelperDst = "target=/usr/local/bin/apk-mirror"
 	aptSecret    = "--mount=type=secret,id=apt_proxy,env=APT_PROXY"
@@ -347,10 +351,11 @@ func TestCacheChecksCatchARegression(t *testing.T) {
 		t.Fatalf("a correct apt stage fails: %v", p)
 	}
 	for name, bad := range map[string]string{
-		"apt-get without $p":       "FROM x\nRUN " + aptSecret + " " + aptProxyDef + "; apt-get update\n",
-		"no p definition":          "FROM x\nRUN " + aptSecret + " apt-get $p update\n",
-		"no secret mount":          "FROM x\nRUN " + aptProxyDef + "; apt-get $p update\n",
-		"the proxy as a build arg": "FROM x\nARG APT_PROXY=\nRUN " + aptSecret + " " + aptProxyDef + "; apt-get $p update\n",
+		"apt-get without $p":                   "FROM x\nRUN " + aptSecret + " " + aptProxyDef + "; apt-get update\n",
+		"no p definition":                      "FROM x\nRUN " + aptSecret + " apt-get $p update\n",
+		"a proxy def that keeps apt's history": "FROM x\nRUN " + aptSecret + " p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; apt-get $p update\n",
+		"no secret mount":                      "FROM x\nRUN " + aptProxyDef + "; apt-get $p update\n",
+		"the proxy as a build arg":             "FROM x\nARG APT_PROXY=\nRUN " + aptSecret + " " + aptProxyDef + "; apt-get $p update\n",
 	} {
 		if len(aptCacheProblems("f", bad)) == 0 {
 			t.Errorf("%s passed", name)

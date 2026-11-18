@@ -1727,11 +1727,19 @@ jobs:
           done
           echo "soak: $i iterations in $SOAK_MINUTES min, all green"
 
-      # Ruling 888: no image this run built carries a private address in its
-      # history or config, whatever the suite's result.
+      # Ruling 888: no image any iteration built carries a private address in
+      # its history or config, whatever the soak's result. Each iteration ran
+      # under IT_PROJECT=<project>-<i>, whose tag selects its images.
       - name: Check the images carry no private address
         if: ${{ !cancelled() && runner.environment != 'github-hosted' }}
-        run: make check-run-images IT_IMAGE="$IT_IMAGE"
+        run: |
+          [ -s "$RUNNER_TEMP/soak-project" ] || exit 0
+          last=$(cat "$RUNNER_TEMP/soak-project")
+          rc=0
+          for i in $(seq 1 "${last##*-}"); do
+            make check-run-images IT_IMAGE="$IT_IMAGE" IT_PROJECT="$IT_PROJECT-$i" || rc=1
+          done
+          exit "$rc"
 
       # >>> CUSTOMIZE (go-xkms)
       # Every iteration's <project>-<suite> stacks and its devcontainer
