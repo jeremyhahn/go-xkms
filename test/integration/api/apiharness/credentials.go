@@ -15,6 +15,8 @@ package apiharness
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -79,11 +81,25 @@ func TrustBundleFile() (string, error) {
 }
 
 func writeTrustBundle() (string, error) {
+	bundle, err := trustBundlePEM()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("xkms-api-trust-%d.pem", os.Getpid()))
+	if err := os.WriteFile(path, bundle, 0o600); err != nil {
+		return "", fmt.Errorf("%w: write trust bundle: %w", ErrAdminCredential, err)
+	}
+	return path, nil
+}
+
+// trustBundlePEM concatenates the suite CA, the ceremony root and, when the
+// server has written it, the unified-TLS CA bundle.
+func trustBundlePEM() ([]byte, error) {
 	var bundle bytes.Buffer
 	for _, path := range []string{envOr(caFileEnv, defaultCAFile), envOr(ceremonyCAEnv, defaultCeremonyCA)} {
 		pem, err := os.ReadFile(path)
 		if err != nil {
-			return "", fmt.Errorf("%w: read CA %s: %w", ErrAdminCredential, path, err)
+			return nil, fmt.Errorf("%w: read CA %s: %w", ErrAdminCredential, path, err)
 		}
 		bundle.Write(pem)
 		bundle.WriteByte('\n')
@@ -95,13 +111,33 @@ func writeTrustBundle() (string, error) {
 		bundle.Write(pem)
 		bundle.WriteByte('\n')
 	case !errors.Is(err, fs.ErrNotExist):
-		return "", fmt.Errorf("%w: read CA %s: %w", ErrAdminCredential, unified, err)
+		return nil, fmt.Errorf("%w: read CA %s: %w", ErrAdminCredential, unified, err)
 	}
-	path := filepath.Join(os.TempDir(), fmt.Sprintf("xkms-api-trust-%d.pem", os.Getpid()))
-	if err := os.WriteFile(path, bundle.Bytes(), 0o600); err != nil {
-		return "", fmt.Errorf("%w: write trust bundle: %w", ErrAdminCredential, err)
+	return bundle.Bytes(), nil
+}
+
+// ClientTLSConfig is the in-process form of ClientTLSArgs, for the tests that
+// build their own HTTP, HTTP/3 or MCP client: it trusts the suite CA, the
+// ceremony root and the unified-TLS CA, and presents the init-ceremony admin
+// certificate, because every listener now requires a client certificate.
+func ClientTLSConfig() (*tls.Config, error) {
+	bundle, err := trustBundlePEM()
+	if err != nil {
+		return nil, err
 	}
-	return path, nil
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(bundle) {
+		return nil, fmt.Errorf("%w: trust bundle holds no certificate", ErrAdminCredential)
+	}
+	cert, err := tls.LoadX509KeyPair(AdminCertFile(), AdminKeyFile())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrAdminCredential, err)
+	}
+	return &tls.Config{
+		RootCAs:      pool,
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS13,
+	}, nil
 }
 
 // ClientTLSArgs returns the xkmsctl global flags that authenticate as the

@@ -14,12 +14,20 @@
 package apiharness
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // credentialFiles writes stand-in suite CA, ceremony root and admin
@@ -107,5 +115,68 @@ func TestClientTLSArgs_CarriesCAAndAdminCredential(t *testing.T) {
 	t.Setenv(adminKeyEnv, filepath.Join(t.TempDir(), "missing.pem"))
 	if _, err := ClientTLSArgs(); !errors.Is(err, ErrAdminCredential) {
 		t.Fatalf("ClientTLSArgs without the key = %v, want ErrAdminCredential", err)
+	}
+}
+
+// writeSelfSigned writes a self-signed ECDSA certificate and key as PEM.
+func writeSelfSigned(t *testing.T, certPath, keyPath string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "apiharness-test"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientTLSConfig_TrustsBundleAndPresentsAdminCertificate(t *testing.T) {
+	dir := t.TempDir()
+	cert, key := filepath.Join(dir, "admin-cert.pem"), filepath.Join(dir, "admin-key.pem")
+	writeSelfSigned(t, cert, key)
+	t.Setenv(caFileEnv, cert)
+	t.Setenv(ceremonyCAEnv, cert)
+	t.Setenv(unifiedCAEnv, filepath.Join(dir, "absent", "ca-bundle.pem"))
+	t.Setenv(adminCertEnv, cert)
+	t.Setenv(adminKeyEnv, key)
+
+	cfg, err := ClientTLSConfig()
+	if err != nil {
+		t.Fatalf("ClientTLSConfig = %v, want nil", err)
+	}
+	if cfg.RootCAs == nil || len(cfg.Certificates) != 1 {
+		t.Fatalf("config = %+v, want a root pool and one client certificate", cfg)
+	}
+	if cfg.InsecureSkipVerify {
+		t.Fatal("ClientTLSConfig must verify the server")
+	}
+
+	t.Setenv(adminKeyEnv, filepath.Join(dir, "missing.pem"))
+	if _, err := ClientTLSConfig(); !errors.Is(err, ErrAdminCredential) {
+		t.Fatalf("ClientTLSConfig without the key = %v, want ErrAdminCredential", err)
+	}
+	t.Setenv(adminKeyEnv, key)
+	t.Setenv(ceremonyCAEnv, filepath.Join(dir, "missing-root.pem"))
+	if _, err := ClientTLSConfig(); !errors.Is(err, ErrAdminCredential) {
+		t.Fatalf("ClientTLSConfig without the ceremony root = %v, want ErrAdminCredential", err)
 	}
 }

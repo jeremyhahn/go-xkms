@@ -17,7 +17,6 @@ package integration
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,13 +34,16 @@ type RESTClient struct {
 }
 
 // NewRESTClient creates a new REST API client with proper CA certificate verification
-func NewRESTClient(baseURL string) *RESTClient {
+func NewRESTClient(t testing.TB, baseURL string) *RESTClient {
+	t.Helper()
 	return &RESTClient{
 		baseURL: baseURL,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
+				// The REST listener requires a client certificate: present
+				// the init-ceremony admin credential (apiharness).
+				TLSClientConfig: adminTLSConfig(t),
 			},
 		},
 	}
@@ -77,7 +79,7 @@ func TestRESTHealth(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 
 	resp, err := client.doRequest("GET", "/health", nil)
 	assertNoError(t, err, "Health check request failed")
@@ -108,7 +110,7 @@ func TestRESTListBackends(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 
 	resp, err := client.doRequest("GET", "/api/v1/backends", nil)
 	assertNoError(t, err, "List backends request failed")
@@ -139,7 +141,7 @@ func TestRESTGenerateKey(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 	keyID := generateUniqueID("rest-key")
 
 	tests := []struct {
@@ -231,7 +233,7 @@ func TestRESTListKeys(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 	keyID := generateUniqueID("rest-list-key")
 
 	// Create a test key first
@@ -297,7 +299,7 @@ func TestRESTSignVerify(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 	keyID := generateUniqueID("rest-sign-key")
 
 	// Create a test key
@@ -380,7 +382,7 @@ func TestRESTDeleteKey(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 	keyID := generateUniqueID("rest-delete-key")
 
 	// Create a test key
@@ -434,7 +436,7 @@ func TestRESTErrorHandling(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 
 	tests := []struct {
 		name     string

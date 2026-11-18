@@ -33,9 +33,10 @@ type WebAuthnClient struct {
 }
 
 // NewWebAuthnClient creates a new WebAuthn API client
-func NewWebAuthnClient(baseURL string) *WebAuthnClient {
+func NewWebAuthnClient(t testing.TB, baseURL string) *WebAuthnClient {
+	t.Helper()
 	return &WebAuthnClient{
-		RESTClient: NewRESTClient(baseURL),
+		RESTClient: NewRESTClient(t, baseURL),
 	}
 }
 
@@ -91,7 +92,7 @@ func (c *WebAuthnClient) doWebAuthnRequestWithSession(method, path string, body 
 func requireWebAuthnEnabled(t *testing.T, cfg *TestConfig) {
 	t.Helper()
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 	resp, err := client.doRequest("POST", "/api/v1/webauthn/login/begin", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("WebAuthn login begin endpoint unreachable at %s: %v", cfg.RESTBaseURL, err)
@@ -115,7 +116,7 @@ func TestWebAuthnRegistrationStatusRemoved(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
 	resp, err := client.doRequest("GET", "/api/v1/webauthn/registration/status?email=unknown@example.com", nil)
 	assertNoError(t, err, "Registration status request failed")
 	defer resp.Body.Close()
@@ -135,7 +136,7 @@ func TestWebAuthnAddCredentialRequiresSession(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
 	resp, err := client.doRequest("POST", "/api/v1/webauthn/credentials/begin", map[string]interface{}{})
 	assertNoError(t, err, "Add-credential request failed")
 	defer resp.Body.Close()
@@ -152,7 +153,7 @@ func TestWebAuthnBeginRegistration(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
 	testEmail := fmt.Sprintf("test-%s@example.com", generateUniqueID("webauthn"))
 
 	t.Run("Begin registration with valid email", func(t *testing.T) {
@@ -257,7 +258,7 @@ func TestWebAuthnBeginLogin(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
 
 	t.Run("Begin login with discoverable credentials", func(t *testing.T) {
 		// Empty body for discoverable credentials flow
@@ -322,7 +323,7 @@ func TestWebAuthnFinishRegistration(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
 
 	t.Run("Finish registration missing session ID", func(t *testing.T) {
 		resp, err := client.doRequest("POST", "/api/v1/webauthn/registration/finish", map[string]interface{}{})
@@ -360,7 +361,7 @@ func TestWebAuthnFinishLogin(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
 
 	t.Run("Finish login missing session ID", func(t *testing.T) {
 		resp, err := client.doRequest("POST", "/api/v1/webauthn/login/finish", map[string]interface{}{})
@@ -398,7 +399,7 @@ func TestWebAuthnMethodNotAllowed(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
 
 	tests := []struct {
 		name   string
@@ -435,7 +436,7 @@ func TestWebAuthnRoutesMounted(t *testing.T) {
 	// Skip if WebAuthn is not enabled on the server
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
 
 	// Test that routes exist (even if they return errors, they shouldn't return 404)
 	routes := []struct {
