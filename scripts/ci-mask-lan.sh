@@ -2,7 +2,9 @@
 # scripts/ci-mask-lan.sh: mask the LAN addresses a pool runner's environment
 # names (Tenant Agent ruling 887: internal addresses stay out of public
 # repositories, and their CI logs count). The pool sets the DEVCACHE_*
-# package caches, GOPROXY's LAN module proxy and the LAN CI registry; a
+# package caches, GOPROXY's LAN module proxy and the LAN CI registry; on a
+# forge, the release registry (RELEASE_REGISTRY) and the forge's own host
+# (GITHUB_SERVER_URL), which the image publishing and resolving name. A
 # BuildKit build echoes its build arguments and `go env` prints GOPROXY.
 # Run before any step that builds: for each entry of those variables whose
 # host is a private IPv4 address, it prints ::add-mask:: for the entry, its
@@ -21,7 +23,7 @@ private() {
 
 for v in $(compgen -e); do
 	case $v in
-	DEVCACHE_* | GOPROXY | CI_REGISTRY | CI_IMAGE_REGISTRY) ;;
+	DEVCACHE_* | GOPROXY | CI_REGISTRY | CI_IMAGE_REGISTRY | RELEASE_REGISTRY | GITHUB_SERVER_URL) ;;
 	*) continue ;;
 	esac
 	IFS='|, ' read -ra entries <<<"${!v}"

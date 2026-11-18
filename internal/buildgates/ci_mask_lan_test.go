@@ -126,6 +126,10 @@ func TestCIMaskLANScript(t *testing.T) {
 		"DEVCACHE_APK_MIRROR=http://192.168.77.7:3143/alpine",
 		"GOPROXY=http://10.1.2.3:3300|https://proxy.golang.org,direct", // lab-string-ok: placeholder private address; the test proves ci-mask-lan.sh masks a private GOPROXY entry (ruling 910)
 		"CI_REGISTRY=172.20.0.5:5005",
+		// ci-registry.sh publishes to RELEASE_REGISTRY and resolves from the
+		// forge's own host, GITHUB_SERVER_URL (Codex P1 on #2273).
+		"RELEASE_REGISTRY=172.21.0.9:5443",
+		"GITHUB_SERVER_URL=http://10.9.8.7:8443",
 		"OTHER=http://192.168.9.9:1",
 	}
 	out, err := cmd.CombinedOutput()
@@ -138,6 +142,8 @@ func TestCIMaskLANScript(t *testing.T) {
 		"::add-mask::http://192.168.77.7:3143/alpine", "::add-mask::192.168.77.7:3143",
 		"::add-mask::http://10.1.2.3:3300", "::add-mask::10.1.2.3",
 		"::add-mask::172.20.0.5:5005", "::add-mask::172.20.0.5",
+		"::add-mask::172.21.0.9:5443", "::add-mask::172.21.0.9",
+		"::add-mask::http://10.9.8.7:8443", "::add-mask::10.9.8.7:8443", "::add-mask::10.9.8.7",
 	} {
 		if !slices.Contains(got, want) {
 			t.Errorf("no %q in\n%s", want, out)
@@ -147,5 +153,10 @@ func TestCIMaskLANScript(t *testing.T) {
 		if strings.Contains(l, "proxy.golang.org") || strings.Contains(l, "direct") || strings.Contains(l, "192.168.9.9") {
 			t.Errorf("masked %q: a public host, a keyword or a variable outside the list", l)
 		}
+	}
+	public := exec.Command("bash", script) // #nosec G204 -- the repository's own script
+	public.Env = []string{"PATH=" + os.Getenv("PATH"), "GITHUB_SERVER_URL=https://github.com"}
+	if out, err := public.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "" {
+		t.Errorf("on github.com the script masks %q (%v): want nothing", out, err)
 	}
 }
