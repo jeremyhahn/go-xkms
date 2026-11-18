@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
@@ -53,6 +54,12 @@ func resetAccountAddFlags(t *testing.T) {
 	_ = f.Set("key-algorithm", "ECDSA")
 	_ = f.Set("key-store", "software")
 	_ = f.Set("key-curve", "P-256")
+	if fl := f.Lookup("trusted-roots"); fl != nil {
+		if sv, ok := fl.Value.(pflag.SliceValue); ok {
+			_ = sv.Replace(nil)
+		}
+	}
+	_ = f.Set("request-server-bundle", "false")
 }
 
 // newFakeACMEServer starts an httptest TLS server implementing just enough of

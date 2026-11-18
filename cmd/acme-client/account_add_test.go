@@ -32,6 +32,17 @@ import (
 // resources and counts the new-account requests it receives.
 func fakeACMEServer(t *testing.T, newAccounts *atomic.Int32) *httptest.Server {
 	t.Helper()
+	return startFakeACMEServer(t, newAccounts, httptest.NewServer)
+}
+
+// fakeACMETLSServer is fakeACMEServer over HTTPS with httptest's own CA.
+func fakeACMETLSServer(t *testing.T, newAccounts *atomic.Int32) *httptest.Server {
+	t.Helper()
+	return startFakeACMEServer(t, newAccounts, httptest.NewTLSServer)
+}
+
+func startFakeACMEServer(t *testing.T, newAccounts *atomic.Int32, start func(http.Handler) *httptest.Server) *httptest.Server {
+	t.Helper()
 	var srv *httptest.Server
 	var nonce atomic.Int64
 	setNonce := func(w http.ResponseWriter) {
@@ -68,7 +79,7 @@ func fakeACMEServer(t *testing.T, newAccounts *atomic.Int32) *httptest.Server {
 			"orders":  srv.URL + "/account/42/orders",
 		})
 	})
-	srv = httptest.NewServer(mux)
+	srv = start(mux)
 	t.Cleanup(srv.Close)
 	return srv
 }
