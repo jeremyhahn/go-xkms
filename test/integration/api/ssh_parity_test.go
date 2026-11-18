@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/test/integration/api/apiharness"
 )
 
 // This suite drives the real xkey CLI binary against a running xkmsd over every
@@ -161,7 +163,12 @@ func (a sshAlgo) genArgs(scope, owner, name string) []string {
 func TestXkeySSHMultiProtocol(t *testing.T) {
 	cfg := LoadTestConfig()
 	bin := xkeyBinary(t)
-	tlsCA := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
+	// The trust bundle verifies every server listener (apiharness). xkey ssh
+	// takes no client-certificate flag, so it presents no admin credential.
+	tlsCA, err := apiharness.TrustBundleFile()
+	if err != nil {
+		t.Fatalf("trust bundle: %v", err)
+	}
 
 	// Remote protocols require a running server; embedded runs in-process.
 	for _, proto := range RemoteProtocols() {
@@ -240,7 +247,12 @@ func sshKeyLifecycle(t *testing.T, bin, serverURL, tlsCA, home, keyName string, 
 func TestXkeySSHBackendSelection(t *testing.T) {
 	cfg := LoadTestConfig()
 	bin := xkeyBinary(t)
-	tlsCA := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
+	// The trust bundle verifies every server listener (apiharness). xkey ssh
+	// takes no client-certificate flag, so it presents no admin credential.
+	tlsCA, err := apiharness.TrustBundleFile()
+	if err != nil {
+		t.Fatalf("trust bundle: %v", err)
+	}
 
 	backends := strings.Split(getEnv("XKMS_SSH_TEST_BACKENDS", "software"), ",")
 

@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/test/integration/api/apiharness"
 	"github.com/jeremyhahn/go-xkms/test/integration/api/commands"
 )
 
@@ -334,12 +335,15 @@ func checkQUICEndpoint(baseURL string) bool {
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {
 		return false
 	}
-	caFile := os.Getenv("KEYSTORE_TLS_CA")
-	if caFile == "" {
-		caFile = "/etc/xkms/certs/ca.crt"
+	// The server requires the admin mTLS credential on QUIC as on every
+	// TLS transport.
+	tlsArgs, err := apiharness.ClientTLSArgs()
+	if err != nil {
+		return false
 	}
 	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
-	cmd := exec.Command(binPath, "--server", "quic://"+host, "--tls-ca", caFile, "backends", "list")
+	args := append([]string{"--server", "quic://" + host}, tlsArgs...)
+	cmd := exec.Command(binPath, append(args, "backends", "list")...)
 	return cmd.Run() == nil
 }
 

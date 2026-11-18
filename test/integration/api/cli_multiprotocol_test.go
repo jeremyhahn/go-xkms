@@ -35,17 +35,9 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
-	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-	// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
-	needsTLS := strings.HasPrefix(serverURL, "https://") ||
-		strings.HasPrefix(serverURL, "grpc://") ||
-		strings.HasPrefix(serverURL, "grpcs://") ||
-		strings.HasPrefix(serverURL, "quic://")
-
-	if needsTLS {
-		caFile := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
-		prefixArgs = append(prefixArgs, "--tls-ca", caFile)
-	}
+	// The admin mTLS credential and the trust bundle on every TLS transport
+	// (unix, REST over HTTPS, gRPC, QUIC). MCP (mcp://) is plain TCP.
+	prefixArgs = append(prefixArgs, cliTLSArgs(t, serverURL)...)
 
 	args = append(prefixArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, args...)

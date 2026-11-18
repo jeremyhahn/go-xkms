@@ -30,6 +30,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/test/integration/api/apiharness"
 )
 
 // TestConfig holds configuration for integration tests
@@ -100,6 +102,24 @@ func loadCACertPool() *x509.CertPool {
 		return nil
 	}
 	return pool
+}
+
+// cliTLSArgs returns the xkmsctl flags that authenticate a CLI invocation
+// against serverURL as the init-ceremony admin over mTLS and verify the server
+// against the suite's trust bundle (apiharness.ClientTLSArgs). Every server
+// listener but plain MCP and plain HTTP is TLS: the Unix socket (also the
+// default when serverURL is empty), REST over HTTPS, gRPC and QUIC. A missing
+// credential fails the test.
+func cliTLSArgs(t testing.TB, serverURL string) []string {
+	t.Helper()
+	if strings.HasPrefix(serverURL, "mcp://") || strings.HasPrefix(serverURL, "http://") {
+		return nil
+	}
+	args, err := apiharness.ClientTLSArgs()
+	if err != nil {
+		t.Fatalf("admin mTLS credential for %q: %v", serverURL, err)
+	}
+	return args
 }
 
 // isCLIAvailable checks if the CLI binary is available
