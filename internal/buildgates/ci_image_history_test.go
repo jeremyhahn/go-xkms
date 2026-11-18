@@ -98,7 +98,7 @@ func TestCIImageHistoryScript(t *testing.T) {
 		{name: "an apt proxy in a later entry", history: cleanHistory + "\nRUN |1 APT_PROXY=http://10.20.30.40:3142 /bin/sh -c apt-get update", config: cleanConfig, want: "history entry 5"},
 		{name: "a 172.16/12 address", history: "ENV REG=172.20.0.5:5005", config: cleanConfig, want: "history entry 1"},
 		{name: "an address at the start of an entry", history: "192.168.1.1", config: cleanConfig, want: "history entry 1"},
-		{name: "an address in the config", history: cleanHistory, config: `{"Env":["GOPROXY=http://10.0.0.7:3000|https://proxy.golang.org"]}`, want: "config"},
+		{name: "an address in the config", history: cleanHistory, config: `{"Env":["PEER_URL=http://10.0.0.7:3000"]}`, want: "config"},
 		{name: "an address in a label", history: cleanHistory, config: `{"Labels":{"cache":"192.168.77.7"}}`, want: "config"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,7 +140,13 @@ func runMake(t *testing.T, stub string, args ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command("make", append([]string{"-s"}, args...)...) // #nosec G204 -- fixed targets
 	cmd.Dir = cachesRoot
-	cmd.Env = stubEnv(stub)
+	// make test-buildgates exports the outer run's XKMS_IMAGE_TAG; the target
+	// under test must derive its own, as a CI step's shell does.
+	for _, kv := range stubEnv(stub) {
+		if !strings.HasPrefix(kv, "XKMS_IMAGE_TAG=") && !strings.HasPrefix(kv, "COMPOSE_RUN_ID=") && !strings.HasPrefix(kv, "IT_PROJECT=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

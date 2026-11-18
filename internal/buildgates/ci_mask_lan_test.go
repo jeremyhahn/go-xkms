@@ -124,7 +124,7 @@ func TestCIMaskLANScript(t *testing.T) {
 		"PATH=" + os.Getenv("PATH"),
 		"DEVCACHE_APT_PROXY=http://192.168.77.7:3142",
 		"DEVCACHE_APK_MIRROR=http://192.168.77.7:3143/alpine",
-		"GOPROXY=http://10.1.2.3:3300|https://proxy.golang.org,direct",
+		"GOPROXY=http://10.1.2.3:3300|https://proxy.golang.org,direct", // lab-string-ok: placeholder private address; the test proves ci-mask-lan.sh masks a private GOPROXY entry (ruling 910)
 		"CI_REGISTRY=172.20.0.5:5005",
 		"OTHER=http://192.168.9.9:1",
 	}
