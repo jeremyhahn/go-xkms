@@ -229,6 +229,33 @@ func TestListTenantsHandler_InvalidPageParam(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestListTenantsHandler_StatusFilterRefused proves a status filter on the
+// tenant list answers 400 with the typed refusal, while the unfiltered list
+// still answers 200.
+func TestListTenantsHandler_StatusFilterRefused(t *testing.T) {
+	_, router := setupTenantTestHandlers(t)
+	require.Equal(t, http.StatusCreated, createTenantViaAPI(t, router, "alpha-org", "Alpha Organization").Code)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/?status=active", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&errResp))
+	assert.Contains(t, errResp.Error, "tenant status is not supported")
+
+	req = httptest.NewRequest(http.MethodGet, "/tenants/", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp listTenantsResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(t, resp.Tenants, 1)
+	assert.Equal(t, "alpha-org", resp.Tenants[0].ID)
+}
+
 func TestListTenantsHandler_WithTenants(t *testing.T) {
 	_, router := setupTenantTestHandlers(t)
 

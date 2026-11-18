@@ -107,6 +107,13 @@ type ProvisionedDevice struct {
 	// TrustAnchors.DICERoots, name the same UEID, and have signed the alias
 	// certificate.
 	DeviceIDCertificate []byte
+
+	// ApplicationReference is the 32-byte application evidence registered
+	// for the device. When set, the alias certificate's UCCS measurements
+	// claim (273) must carry exactly these bytes, at the challenge and again
+	// at finalization (dice.VerifyOptions.ApplicationReference); a differing
+	// one is dice.ErrApplicationEvidenceMismatch. Nil leaves it unchecked.
+	ApplicationReference []byte
 }
 
 // DICEPolicy is the policy a DICE alias certificate must meet. Each field is a
