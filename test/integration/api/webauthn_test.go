@@ -399,6 +399,9 @@ func TestWebAuthnMethodNotAllowed(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
+	// The client presents the admin mTLS credential, so the request clears
+	// authentication (an anonymous one is refused 401 first) and reaches the
+	// router, which answers the wrong verb with 405.
 	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
 
 	tests := []struct {

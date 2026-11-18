@@ -46,6 +46,12 @@ tls:
 auth:
   enabled: true
   type: "composite"
+  # Test-only: the WebAuthn, session and invite routes sit behind the login
+  # rate limiter (pkg/api/rest/routes.go), default 10/min per client. The
+  # suite runs every ceremony from one container address, so it would see
+  # 429 long before a test fails on its own merit. Production keeps 10.
+  session:
+    login_rate_per_min: 600
 
 # WebAuthn/FIDO2 authentication enabled for integration tests
 webauthn:
