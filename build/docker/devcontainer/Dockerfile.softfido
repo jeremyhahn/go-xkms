@@ -4,11 +4,14 @@
 # Uses uhid (userspace HID) when available, falls back to socket-based protocol
 
 FROM debian:bookworm-slim AS builder
+# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
+ARG APT_PROXY=
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+    apt-get $p update && apt-get $p install -y --no-install-recommends \
     git \
     build-essential \
     cmake \
@@ -49,11 +52,14 @@ RUN git clone --depth 1 https://github.com/nicholasgilpin/soft-webauthn.git || t
 
 # Runtime stage
 FROM debian:bookworm-slim
+# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
+ARG APT_PROXY=
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+    apt-get $p update && apt-get $p install -y --no-install-recommends \
     libcbor0.8 \
     libpcsclite1 \
     libssl3 \

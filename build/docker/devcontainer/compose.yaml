@@ -85,6 +85,7 @@ services:
       dockerfile: build/docker/devcontainer/Dockerfile
       target: devcontainer
       args:
+        APT_PROXY: ${DEVCACHE_APT_PROXY:-}
         GO_IMAGE: ${GO_IMAGE:?GO_IMAGE is unset; build through make, which exports scripts/tool-pins.sh}
       # The Dockerfile's modules stage resolves in-house modules from Gitea
       # tags through the gomodauth BuildKit secret (dependency-resolution.md
@@ -220,6 +221,11 @@ services:
     build:
       context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
+      args:
+        APK_MIRROR: ${DEVCACHE_APK_MIRROR:-}
+      # Ruling 886: scripts/apk-mirror.sh, bind-mounted by the Dockerfile.
+      additional_contexts:
+        scripts: ../../../scripts
     image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - swtpm-state:/var/lib/swtpm/tpmstate
@@ -239,6 +245,8 @@ services:
       # The SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418).
       additional_contexts:
         softhsm-pin: ../../../scripts
+      args:
+        APK_MIRROR: ${DEVCACHE_APK_MIRROR:-}
     image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - softhsm-tokens:/tokens
@@ -265,6 +273,8 @@ services:
       # `make stage-gomodauth` before building this service.
       secrets:
         - gomodauth
+      args:
+        APT_PROXY: ${DEVCACHE_APT_PROXY:-}
     image: go-xkms-server:${XKMS_IMAGE_TAG:-dev}
     # Published on an EPHEMERAL host port (host side 0), not a fixed one. A
     # published host port is a host-global resource: a fixed number means this
@@ -402,6 +412,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.softfido
+      args:
+        APT_PROXY: ${DEVCACHE_APT_PROXY:-}
     image: go-xkms-softfido:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - softfido-state:/var/lib/softfido

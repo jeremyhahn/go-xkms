@@ -3664,6 +3664,7 @@ GO_BUILD_PROXY_ARG = $(if $(GO_BUILD_PROXY),--build-arg "GO_BUILD_PROXY=$(GO_BUI
 DEVCONTAINER_BUILD = DOCKER_BUILDKIT=1 docker buildx build --load \
 	--build-arg GO_IMAGE=$(GO_IMAGE) \
 	$(GO_BUILD_PROXY_ARG) \
+	$(if $(DEVCACHE_APT_PROXY),--build-arg APT_PROXY="$(DEVCACHE_APT_PROXY)") \
 	--secret id=gomodauth,src=$(MODULE_ENV_FILE) \
 	-f $(DEVCONTAINER_DIR)/Dockerfile
 REQUIRE_BUILDX = @docker buildx version >/dev/null 2>&1 || { echo "docker buildx is required to build $(DEVCONTAINER_DIR)/Dockerfile" >&2; exit 1; }

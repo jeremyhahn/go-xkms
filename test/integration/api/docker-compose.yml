@@ -5,6 +5,7 @@ services:
       context: ../../..
       dockerfile: Dockerfile
       args:
+        - APT_PROXY=${DEVCACHE_APT_PROXY:-}
         - VERSION=${VERSION:-0.0.1-alpha}
       secrets:
         - gomodauth
@@ -90,6 +91,11 @@ services:
     build:
       context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
+      args:
+        APK_MIRROR: ${DEVCACHE_APK_MIRROR:-}
+      # Ruling 886: scripts/apk-mirror.sh, bind-mounted by the Dockerfile.
+      additional_contexts:
+        scripts: ../../../scripts
     image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-latest}
     expose:
       - "2321"  # TPM command port
@@ -112,6 +118,8 @@ services:
       # The SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418).
       additional_contexts:
         softhsm-pin: ../../../scripts
+      args:
+        APK_MIRROR: ${DEVCACHE_APK_MIRROR:-}
     image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - softhsm-tokens:/tokens
@@ -133,6 +141,8 @@ services:
       dockerfile: Dockerfile
       secrets:
         - gomodauth
+      args:
+        APT_PROXY: ${DEVCACHE_APT_PROXY:-}
     image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
     # Required for QUIC UDP buffer settings
     privileged: true

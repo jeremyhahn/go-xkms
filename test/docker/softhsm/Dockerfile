@@ -9,9 +9,12 @@
 
 # Build stage
 FROM alpine:3.24 AS builder
+# Ruling 886: the pool's LAN apk cache, empty on a hosted runner.
+ARG APK_MIRROR=
 
 # Install build dependencies
-RUN apk --no-cache upgrade && apk add --no-cache \
+RUN --mount=type=bind,from=softhsm-pin,source=apk-mirror.sh,target=/usr/local/bin/apk-mirror \
+    apk-mirror --no-cache upgrade && apk-mirror add --no-cache \
     build-base \
     automake \
     autoconf \
@@ -32,12 +35,15 @@ RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh /usr/local
 
 # Runtime stage
 FROM alpine:3.24
+# Ruling 886: the pool's LAN apk cache, empty on a hosted runner.
+ARG APK_MIRROR=
 
 # Install runtime dependencies only. SoftHSM is C++, and the builder stage
 # gets libstdc++/libgcc for free from build-base while this stage copies only
 # /usr/local -- so the C++ runtime must be installed here explicitly or
 # libsofthsm2.so and softhsm2-util cannot load (#227).
-RUN apk --no-cache upgrade && apk add --no-cache \
+RUN --mount=type=bind,from=softhsm-pin,source=apk-mirror.sh,target=/usr/local/bin/apk-mirror \
+    apk-mirror --no-cache upgrade && apk-mirror add --no-cache \
     openssl \
     p11-kit \
     p11-kit-server \
