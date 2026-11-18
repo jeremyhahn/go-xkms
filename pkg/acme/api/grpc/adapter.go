@@ -228,6 +228,9 @@ func (a *Adapter) DeleteTenant(ctx context.Context, tenantID string) error {
 
 // ListTenants lists all tenants.
 func (a *Adapter) ListTenants(ctx context.Context, req *admin.ListTenantsRequest) ([]*admin.TenantInfo, *admin.Pagination, error) {
+	if req.Status != "" {
+		return nil, nil, admin.TenantStatusUnsupported()
+	}
 	resp, err := a.client.ListTenants(a.withAuth(ctx), &pb.ListTenantsRequest{
 		Page:    int32(req.Page),
 		PerPage: int32(req.PerPage),
@@ -609,7 +612,7 @@ func (a *Adapter) GetOrder(_ context.Context, _ uint64, _ uint64) (*admin.OrderI
 
 // UpdateTenantStatus updates a tenant's status.
 func (a *Adapter) UpdateTenantStatus(_ context.Context, _ string, _ string) error {
-	return admin.ErrRESTOnly
+	return admin.TenantStatusUnsupported()
 }
 
 // CreateTenantRootCA creates a root CA for a tenant.

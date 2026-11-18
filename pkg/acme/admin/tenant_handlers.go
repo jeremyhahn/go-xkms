@@ -165,14 +165,16 @@ func (h *TenantHandlers) UpdateTenantStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate status value
-	validStatuses := map[string]bool{"active": true, "suspended": true, "deleted": true}
-	if !validStatuses[req.Status] {
-		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Status must be one of: active, suspended, deleted")
-		return
-	}
+	// The value is not judged here: the service refuses every tenant
+	// status (go-qrdb carries none, SPEC.md:129) and that refusal is the
+	// answer.
 
 	if err := h.service.UpdateTenantStatus(ctx, tenantID, req.Status); err != nil {
+		var unsupported *UnsupportedFieldError
+		if errors.As(err, &unsupported) {
+			writeProblem(w, http.StatusBadRequest, ProblemTypeTenantStatusUnsupported, unsupported.Error())
+			return
+		}
 		if errors.Is(err, ErrTenantNotFound) {
 			writeTenantNotFound(w)
 			return
