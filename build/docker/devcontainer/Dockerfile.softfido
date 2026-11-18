@@ -4,13 +4,14 @@
 # Uses uhid (userspace HID) when available, falls back to socket-based protocol
 
 FROM debian:bookworm-slim AS builder
-# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
-ARG APT_PROXY=
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner.
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies
-RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     git \
     build-essential \
@@ -52,13 +53,14 @@ RUN git clone --depth 1 https://github.com/nicholasgilpin/soft-webauthn.git || t
 
 # Runtime stage
 FROM debian:bookworm-slim
-# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
-ARG APT_PROXY=
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner.
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies
-RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     libcbor0.8 \
     libpcsclite1 \

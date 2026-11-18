@@ -1593,6 +1593,12 @@ jobs:
       - name: make integration-test (integration image)
         run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
+      # Ruling 888: no image this run built carries a private address in its
+      # history or config, whatever the suite's result.
+      - name: Check the images carry no private address
+        if: ${{ !cancelled() && runner.environment != 'github-hosted' }}
+        run: make check-run-images IT_IMAGE="$IT_IMAGE"
+
       - name: Tear down
         if: always()
         run: |
@@ -1715,6 +1721,13 @@ jobs:
             fi
           done
           echo "soak: $i iterations in $SOAK_MINUTES min, all green"
+
+      # Ruling 888: no image this run built carries a private address in its
+      # history or config, whatever the suite's result.
+      - name: Check the images carry no private address
+        if: ${{ !cancelled() && runner.environment != 'github-hosted' }}
+        run: make check-run-images IT_IMAGE="$IT_IMAGE"
+
       # >>> CUSTOMIZE (go-xkms)
       # Every iteration's <project>-<suite> stacks and its devcontainer
       # project, which `down -p "$p"` does not match (see the integration

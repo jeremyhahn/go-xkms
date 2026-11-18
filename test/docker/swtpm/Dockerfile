@@ -9,11 +9,12 @@
 
 # Build stage
 FROM alpine:3.24 AS builder
-# Ruling 886: the pool's LAN apk cache, empty on a hosted runner.
-ARG APK_MIRROR=
+# Ruling 888: the pool's LAN apk cache, the BuildKit secret apk_mirror (in no
+# layer and no history entry), empty on a hosted runner.
 
 # Install build dependencies
 RUN --mount=type=bind,from=scripts,source=apk-mirror.sh,target=/usr/local/bin/apk-mirror \
+    --mount=type=secret,id=apk_mirror,env=APK_MIRROR \
     apk-mirror --no-cache upgrade && apk-mirror add --no-cache \
     git \
     build-base \
@@ -53,11 +54,12 @@ RUN git clone https://github.com/stefanberger/swtpm.git && \
 
 # Runtime stage
 FROM alpine:3.24
-# Ruling 886: the pool's LAN apk cache, empty on a hosted runner.
-ARG APK_MIRROR=
+# Ruling 888: the pool's LAN apk cache, the BuildKit secret apk_mirror (in no
+# layer and no history entry), empty on a hosted runner.
 
 # Install runtime dependencies only
 RUN --mount=type=bind,from=scripts,source=apk-mirror.sh,target=/usr/local/bin/apk-mirror \
+    --mount=type=secret,id=apk_mirror,env=APK_MIRROR \
     apk-mirror --no-cache upgrade && apk-mirror add --no-cache \
     gnutls \
     libtasn1 \

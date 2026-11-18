@@ -32,15 +32,16 @@ ARG GO_BUILD_PROXY=https://proxy.golang.org,direct
 # tools: the pinned gate tools and release binaries, collected under /out.
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS tools
-# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
-ARG APT_PROXY=
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner.
 ARG GO_BUILD_PROXY
 ARG TARGETARCH
 ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=${GO_BUILD_PROXY} GOBIN=/out
 # apt retries transient fetch errors: one "Network is unreachable" reaching
 # deb.debian.org reddened CI (run 58741). Repeated per FROM ${GO_IMAGE} stage.
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
-RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends xz-utils && \
     rm -rf /var/lib/apt/lists/*
 COPY scripts/tool-pins.sh /tmp/tool-pins.sh
@@ -104,12 +105,13 @@ RUN . /tmp/tool-pins.sh && \
 # native: the libraries and tools built from source, staged for COPY.
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS native
-# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
-ARG APT_PROXY=
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner.
 ENV GOTOOLCHAIN=local DEBIAN_FRONTEND=noninteractive
 # apt retries transient fetch errors (see the tools stage).
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
-RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     # Core build tools
     build-essential \
@@ -339,8 +341,8 @@ RUN for m in . sdk/go xkey web/desktop; do (cd "$m" && go mod verify) || exit 1;
 # base: the Go toolchain, every native library and the verified module cache.
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS base
-# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
-ARG APT_PROXY=
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner.
 ENV DEBIAN_FRONTEND=noninteractive
 # apt retries transient fetch errors (see the tools stage); toolchain and
 # devcontainer, built FROM base, inherit the setting.
@@ -348,7 +350,8 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/ap
 # The upgrade takes the Debian security updates the pinned Go image predates
 # (linux-libc-dev among them): the integration image built on this stage is
 # gated by `trivy image --ignore-unfixed` (ci.yml).
-RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
     apt-get $p update && apt-get $p upgrade -y && apt-get $p install -y --no-install-recommends \
     # Core build tools (needed for CGO)
     build-essential \
@@ -505,13 +508,14 @@ ENV GOPROXY=off
 # toolchain: what every CI stage runs in (handbook ci-standard.md §2).
 # ---------------------------------------------------------------------------
 FROM base AS toolchain
-# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
-ARG APT_PROXY=
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner.
 # XKMS_NATIVE_BUILD tells the Makefile every native dependency is in this
 # image and no Docker daemon is, so the CGO and xkey builds run in place
 # instead of in their builder images.
 ENV HOME=/tmp XKMS_NATIVE_BUILD=1
-RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
         bash \
         coreutils \
@@ -541,12 +545,13 @@ USER dev
 # devcontainer: the interactive harness (compose.yaml, devcontainer.json).
 # ---------------------------------------------------------------------------
 FROM toolchain AS devcontainer
-# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
-ARG APT_PROXY=
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner.
 LABEL maintainer="go-xkms"
 LABEL description="Development environment for go-xkms with ALL build and test dependencies"
 USER root
-RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     git-lfs \
     # Networking and testing tools

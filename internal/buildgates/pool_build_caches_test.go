@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,14 +17,22 @@ import (
 // LAN caches every pool names (DEVCACHE_APT_PROXY, DEVCACHE_APK_MIRROR,
 // dept-infra hosts/ci-runners/build-package-caches.md); on a GitHub-hosted
 // runner the variables are unset and the builds go to the public mirrors as
-// before. Nothing of either cache is left in an image.
+// before. Ruling 888: each cache reaches the build as a BuildKit secret
+// (apt_proxy, apk_mirror), which the RUN mounts as APT_PROXY or APK_MIRROR,
+// never as a build argument, whose value BuildKit records in the image
+// history. Nothing of either cache is left in a layer or a history entry.
 
 const (
 	cachesRoot   = "../.."
 	aptProxyDef  = `p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}`
 	apkHelper    = "scripts/apk-mirror.sh"
 	apkHelperDst = "target=/usr/local/bin/apk-mirror"
+	aptSecret    = "--mount=type=secret,id=apt_proxy,env=APT_PROXY"
+	apkSecret    = "--mount=type=secret,id=apk_mirror,env=APK_MIRROR"
 )
+
+// cacheArg finds a build argument that would carry a cache into the history.
+var cacheArg = regexp.MustCompile(`(?m)^ARG (APT_PROXY|APK_MIRROR)\b`)
 
 // aptBuilt are the apt-based Dockerfiles the pool jobs build.
 var aptBuilt = []string{"build/docker/devcontainer/Dockerfile", "Dockerfile", "build/docker/devcontainer/Dockerfile.softfido"}
@@ -42,17 +51,22 @@ var (
 )
 
 // aptCacheProblems: every apt-get that fetches goes through $p, defined in its
-// RUN from APT_PROXY, which its stage declares.
+// RUN from APT_PROXY, which the RUN mounts from the secret apt_proxy; no
+// stage declares the cache as a build argument.
 func aptCacheProblems(name, df string) []string {
 	var problems []string
+	if m := cacheArg.FindString(df); m != "" {
+		problems = append(problems, name+" declares "+m+": a build argument's value is recorded in the image history (ruling 888)")
+	}
 	for _, stage := range cacheStage.Split(df, -1)[1:] {
 		head := strings.SplitN(stage, "\n", 2)[0]
-		uses := false
 		for _, run := range cacheRun.FindAllString(stage, -1) {
 			if !aptCall.MatchString(run) {
 				continue
 			}
-			uses = true
+			if !strings.Contains(run, aptSecret) {
+				problems = append(problems, name+" stage "+head+" has an apt RUN without "+aptSecret)
+			}
 			if aptBareCall.MatchString(run) {
 				problems = append(problems, name+" stage "+head+" runs apt-get without $p: it would not take the pool's apt cache")
 			}
@@ -60,34 +74,34 @@ func aptCacheProblems(name, df string) []string {
 				problems = append(problems, name+" stage "+head+" has an apt RUN that does not define "+aptProxyDef)
 			}
 		}
-		if uses && !regexp.MustCompile(`(?m)^ARG APT_PROXY\b`).MatchString(stage) {
-			problems = append(problems, name+" stage "+head+" uses $p without ARG APT_PROXY")
-		}
 	}
 	return problems
 }
 
 // apkCacheProblems: every apk call goes through the bind-mounted helper, from
-// the named context ctx, and its stage declares APK_MIRROR.
+// the named context ctx, with the secret apk_mirror mounted as APK_MIRROR; no
+// stage declares the cache as a build argument.
 func apkCacheProblems(name, df, ctx string) []string {
 	mount := "--mount=type=bind,from=" + ctx + ",source=apk-mirror.sh," + apkHelperDst
 	var problems []string
+	if m := cacheArg.FindString(df); m != "" {
+		problems = append(problems, name+" declares "+m+": a build argument's value is recorded in the image history (ruling 888)")
+	}
 	for _, stage := range cacheStage.Split(df, -1)[1:] {
 		head := strings.SplitN(stage, "\n", 2)[0]
 		if apkBareCall.MatchString(stage) {
 			problems = append(problems, name+" stage "+head+" runs apk directly: want apk-mirror, so a pool build takes the LAN apk cache")
 		}
-		uses := false
 		for _, run := range cacheRun.FindAllString(stage, -1) {
-			if apkHelperUse.MatchString(run) {
-				uses = true
-				if !strings.Contains(run, mount) {
-					problems = append(problems, name+" stage "+head+" runs apk-mirror without "+mount)
-				}
+			if !apkHelperUse.MatchString(run) {
+				continue
 			}
-		}
-		if uses && !regexp.MustCompile(`(?m)^ARG APK_MIRROR\b`).MatchString(stage) {
-			problems = append(problems, name+" stage "+head+" uses apk-mirror without ARG APK_MIRROR")
+			if !strings.Contains(run, mount) {
+				problems = append(problems, name+" stage "+head+" runs apk-mirror without "+mount)
+			}
+			if !strings.Contains(run, apkSecret) {
+				problems = append(problems, name+" stage "+head+" runs apk-mirror without "+apkSecret)
+			}
 		}
 	}
 	return problems
@@ -121,9 +135,6 @@ func TestPoolBuiltImagesTakeTheLANCaches(t *testing.T) {
 			t.Error(p)
 		}
 	}
-	if mk := readCacheFile(t, "Makefile"); !strings.Contains(mk, `$(if $(DEVCACHE_APT_PROXY),--build-arg APT_PROXY="$(DEVCACHE_APT_PROXY)")`) {
-		t.Error("DEVCONTAINER_BUILD does not pass the pool's DEVCACHE_APT_PROXY as APT_PROXY")
-	}
 }
 
 // TestPoolBuiltImagesComposeArgs: every compose service that builds one of
@@ -134,6 +145,7 @@ func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 		Context            string            `yaml:"context"`
 		Dockerfile         string            `yaml:"dockerfile"`
 		Args               yaml.Node         `yaml:"args"`
+		Secrets            []string          `yaml:"secrets"`
 		AdditionalContexts map[string]string `yaml:"additional_contexts"`
 	}
 	var checked int
@@ -142,6 +154,9 @@ func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 			Services map[string]struct {
 				Build *build `yaml:"build"`
 			} `yaml:"services"`
+			Secrets map[string]struct {
+				Environment string `yaml:"environment"`
+			} `yaml:"secrets"`
 		}
 		if err := yaml.Unmarshal([]byte(readCacheFile(t, f)), &doc); err != nil {
 			t.Fatalf("parse %s: %v", f, err)
@@ -156,10 +171,10 @@ func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 				df = "Dockerfile"
 			}
 			path := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(f), b.Context, df)))
-			var arg, ctx string
+			var secret, ctx string
 			switch {
 			case strings.HasSuffix(path, "test/docker/swtpm/Dockerfile"), strings.HasSuffix(path, "test/docker/softhsm/Dockerfile"):
-				arg = "APK_MIRROR=${DEVCACHE_APK_MIRROR:-}"
+				secret = "apk_mirror"
 				for k, v := range apkBuilt {
 					if strings.HasSuffix(path, k) {
 						ctx = v
@@ -168,11 +183,11 @@ func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 			default:
 				for _, a := range aptBuilt {
 					if path == a {
-						arg = "APT_PROXY=${DEVCACHE_APT_PROXY:-}"
+						secret = "apt_proxy"
 					}
 				}
 			}
-			if arg == "" {
+			if secret == "" {
 				continue
 			}
 			checked++
@@ -185,14 +200,17 @@ func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 					args = append(args, b.Args.Content[i].Value+"="+b.Args.Content[i+1].Value)
 				}
 			}
-			found := false
 			for _, a := range args {
-				if a == arg {
-					found = true
+				if strings.HasPrefix(a, "APT_PROXY=") || strings.HasPrefix(a, "APK_MIRROR=") {
+					t.Errorf("%s service %s passes %s as a build argument: its value is recorded in the image history (ruling 888)", f, name, a)
 				}
 			}
-			if !found {
-				t.Errorf("%s service %s builds %s without the build argument %s", f, name, path, arg)
+			if !slices.Contains(b.Secrets, secret) {
+				t.Errorf("%s service %s builds %s without the build secret %s", f, name, path, secret)
+			}
+			want := "DEVCACHE_" + strings.ToUpper(secret)
+			if got := doc.Secrets[secret].Environment; got != want {
+				t.Errorf("%s defines the secret %s from environment %q; want %s", f, secret, got, want)
 			}
 			if ctx != "" && !strings.HasSuffix(filepath.ToSlash(b.AdditionalContexts[ctx]), "/scripts") {
 				t.Errorf("%s service %s builds %s without additional_contexts %s pointing at scripts/: its apk-mirror mount would find nothing", f, name, path, ctx)
@@ -204,9 +222,10 @@ func TestPoolBuiltImagesComposeArgs(t *testing.T) {
 	}
 }
 
-// aptMakeArg is the build argument a Makefile build of an apt-based pool
-// image passes: the pool's cache when it names one, nothing on a hosted runner.
-const aptMakeArg = `$(if $(DEVCACHE_APT_PROXY),--build-arg APT_PROXY="$(DEVCACHE_APT_PROXY)")`
+// aptMakeFlag is the secret a Makefile build of an apt-based pool image
+// passes: the pool's cache, empty on a hosted runner where the variable is
+// unset.
+const aptMakeFlag = "--secret id=apt_proxy,env=DEVCACHE_APT_PROXY"
 
 var (
 	makeBuild = regexp.MustCompile(`docker (buildx )?build\s`)
@@ -215,7 +234,7 @@ var (
 )
 
 // makefileCacheProblems: every Makefile docker build of an apt-based pool
-// image passes aptMakeArg. A build without -f builds the root Dockerfile; a
+// image passes aptMakeFlag. A build without -f builds the root Dockerfile; a
 // comment that names a build is not one.
 // It returns the problems and the number of such builds it checked.
 func makefileCacheProblems(mk string) ([]string, int) {
@@ -239,8 +258,11 @@ func makefileCacheProblems(mk string) ([]string, int) {
 				continue
 			}
 			checked++
-			if !strings.Contains(line, aptMakeArg) {
-				problems = append(problems, fmt.Sprintf("Makefile logical line %d builds %s without %s", i+1, df, aptMakeArg))
+			if !strings.Contains(line, aptMakeFlag) {
+				problems = append(problems, fmt.Sprintf("Makefile logical line %d builds %s without %s", i+1, df, aptMakeFlag))
+			}
+			if strings.Contains(line, "--build-arg APT_PROXY") {
+				problems = append(problems, fmt.Sprintf("Makefile logical line %d passes APT_PROXY as a build argument: its value is recorded in the image history (ruling 888)", i+1))
 			}
 		}
 	}
@@ -248,9 +270,9 @@ func makefileCacheProblems(mk string) ([]string, int) {
 }
 
 // TestPoolBuiltImagesMakefileArgs: the Makefile's builds of the apt-based pool
-// images take the apt cache. docker-build-test-image, which `make docker-test`
-// and the Docker Integration Tests workflow run on the pool, builds the root
-// Dockerfile directly, outside DEVCONTAINER_BUILD.
+// images take the apt cache as a secret. docker-build-test-image, which
+// `make docker-test` runs, builds the root Dockerfile directly, outside
+// DEVCONTAINER_BUILD.
 func TestPoolBuiltImagesMakefileArgs(t *testing.T) {
 	problems, checked := makefileCacheProblems(readCacheFile(t, "Makefile"))
 	for _, p := range problems {
@@ -259,47 +281,39 @@ func TestPoolBuiltImagesMakefileArgs(t *testing.T) {
 	if checked < 2 {
 		t.Fatalf("checked %d Makefile builds; want at least DEVCONTAINER_BUILD and docker-build-test-image", checked)
 	}
-	for _, tc := range []struct {
-		name, proxy string
-		want        bool
-	}{
-		{name: "the pool names a cache", proxy: "http://apt-cache.test:3142", want: true},
-		{name: "a hosted runner names none", proxy: "", want: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command("make", "-n", "docker-build-test-image", "DEVCACHE_APT_PROXY="+tc.proxy) // #nosec G204 -- a fixed target and a fixed value
-			cmd.Dir = cachesRoot
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("make -n docker-build-test-image: %v\n%s", err, out)
-			}
-			has := strings.Contains(string(out), "--build-arg APT_PROXY=")
-			if has != tc.want {
-				t.Fatalf("make -n docker-build-test-image DEVCACHE_APT_PROXY=%q passes APT_PROXY: %v; want %v\n%s", tc.proxy, has, tc.want, out)
-			}
-			if tc.want && !strings.Contains(string(out), `APT_PROXY="`+tc.proxy+`"`) {
-				t.Fatalf("make -n docker-build-test-image does not pass the pool's cache %s:\n%s", tc.proxy, out)
-			}
-		})
+	for _, proxy := range []string{"http://apt-cache.test:3142", ""} {
+		cmd := exec.Command("make", "-n", "docker-build-test-image", "DEVCACHE_APT_PROXY="+proxy) // #nosec G204 -- a fixed target and a fixed value
+		cmd.Dir = cachesRoot
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("make -n docker-build-test-image: %v\n%s", err, out)
+		}
+		if !strings.Contains(string(out), aptMakeFlag) {
+			t.Errorf("make -n docker-build-test-image DEVCACHE_APT_PROXY=%q does not pass %s:\n%s", proxy, aptMakeFlag, out)
+		}
+		if strings.Contains(string(out), "--build-arg APT_PROXY") || strings.Contains(string(out), "apt-cache.test") {
+			t.Errorf("make -n docker-build-test-image passes the cache as a build argument or on its command line:\n%s", out)
+		}
 	}
 }
 
 // TestCacheChecksCatchARegression: each check fails one broken form.
 func TestCacheChecksCatchARegression(t *testing.T) {
-	good := "FROM x AS a\nARG APT_PROXY=\nRUN " + aptProxyDef + "; \\\n    apt-get $p update && apt-get $p install -y curl\n"
+	good := "FROM x AS a\nRUN " + aptSecret + " \\\n    " + aptProxyDef + "; \\\n    apt-get $p update && apt-get $p install -y curl\n"
 	if p := aptCacheProblems("f", good); len(p) != 0 {
 		t.Fatalf("a correct apt stage fails: %v", p)
 	}
 	for name, bad := range map[string]string{
-		"apt-get without $p": "FROM x\nARG APT_PROXY=\nRUN " + aptProxyDef + "; apt-get update\n",
-		"no p definition":    "FROM x\nARG APT_PROXY=\nRUN apt-get $p update\n",
-		"no ARG":             "FROM x\nRUN " + aptProxyDef + "; apt-get $p update\n",
+		"apt-get without $p":       "FROM x\nRUN " + aptSecret + " " + aptProxyDef + "; apt-get update\n",
+		"no p definition":          "FROM x\nRUN " + aptSecret + " apt-get $p update\n",
+		"no secret mount":          "FROM x\nRUN " + aptProxyDef + "; apt-get $p update\n",
+		"the proxy as a build arg": "FROM x\nARG APT_PROXY=\nRUN " + aptSecret + " " + aptProxyDef + "; apt-get $p update\n",
 	} {
 		if len(aptCacheProblems("f", bad)) == 0 {
 			t.Errorf("%s passed", name)
 		}
 	}
-	goodMk := "DEVCONTAINER_DIR := build/docker/devcontainer\nx:\n\tdocker buildx build --load \\\n\t\t" + aptMakeArg + " \\\n\t\t-t i -f Dockerfile .\n"
+	goodMk := "DEVCONTAINER_DIR := build/docker/devcontainer\nx:\n\tdocker buildx build --load \\\n\t\t" + aptMakeFlag + " \\\n\t\t-t i -f Dockerfile .\n"
 	if p, n := makefileCacheProblems("# `docker build -t i` on one job retags that name\n" + goodMk); len(p) != 0 || n != 1 {
 		t.Fatalf("a correct Makefile build fails: %v (checked %d)", p, n)
 	}
@@ -307,20 +321,22 @@ func TestCacheChecksCatchARegression(t *testing.T) {
 		"root image without the arg":         "x:\n\tdocker buildx build --load \\\n\t\t-t i -f Dockerfile .\n",
 		"no -f builds the root image":        "x:\n\tdocker build -t i .\n",
 		"devcontainer image without the arg": "DEVCONTAINER_DIR := build/docker/devcontainer\nB = docker buildx build \\\n\t-f $(DEVCONTAINER_DIR)/Dockerfile\n",
+		"the proxy as a build arg":           "x:\n\tdocker buildx build " + aptMakeFlag + ` --build-arg APT_PROXY="$(DEVCACHE_APT_PROXY)" -f Dockerfile .` + "\n",
 	} {
 		if p, _ := makefileCacheProblems(bad); len(p) == 0 {
 			t.Errorf("%s passed", name)
 		}
 	}
 	mount := "--mount=type=bind,from=scripts,source=apk-mirror.sh," + apkHelperDst
-	if p := apkCacheProblems("f", "FROM alpine\nARG APK_MIRROR=\nRUN "+mount+" \\\n    apk-mirror add --no-cache git\n", "scripts"); len(p) != 0 {
+	if p := apkCacheProblems("f", "FROM alpine\nRUN "+mount+" \\\n    "+apkSecret+" \\\n    apk-mirror add --no-cache git\n", "scripts"); len(p) != 0 {
 		t.Fatalf("a correct apk stage fails: %v", p)
 	}
 	for name, bad := range map[string]string{
-		"bare apk":          "FROM alpine\nARG APK_MIRROR=\nRUN apk --no-cache upgrade\n",
-		"no mount":          "FROM alpine\nARG APK_MIRROR=\nRUN apk-mirror add git\n",
-		"the wrong context": "FROM alpine\nARG APK_MIRROR=\nRUN --mount=type=bind,from=other,source=apk-mirror.sh," + apkHelperDst + " apk-mirror add git\n",
-		"no ARG APK_MIRROR": "FROM alpine\nRUN " + mount + " apk-mirror add git\n",
+		"bare apk":                  "FROM alpine\nRUN apk --no-cache upgrade\n",
+		"no mount":                  "FROM alpine\nRUN " + apkSecret + " apk-mirror add git\n",
+		"the wrong context":         "FROM alpine\nRUN --mount=type=bind,from=other,source=apk-mirror.sh," + apkHelperDst + " " + apkSecret + " apk-mirror add git\n",
+		"no secret mount":           "FROM alpine\nRUN " + mount + " apk-mirror add git\n",
+		"the mirror as a build arg": "FROM alpine\nARG APK_MIRROR=\nRUN " + mount + " " + apkSecret + " apk-mirror add git\n",
 	} {
 		if len(apkCacheProblems("f", bad, "scripts")) == 0 {
 			t.Errorf("%s passed", name)

@@ -3,14 +3,15 @@
 
 # Stage 1: Builder stage - compile dependencies and prepare environment
 FROM golang:1.27.4-bookworm AS builder
-# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
-ARG APT_PROXY=
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner.
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
 
 # Install build essentials and required packages for PKCS#11 and TPM testing
-RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -50,8 +51,8 @@ RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 # Stage 2: Test runtime environment
 FROM golang:1.27.4-bookworm
-# Ruling 886: the pool's LAN apt cache, empty on a hosted runner.
-ARG APT_PROXY=
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner.
 
 LABEL maintainer="go-xkms"
 LABEL description="Integration testing environment for go-xkms with PKCS#11 and TPM 2.0 support"
@@ -63,7 +64,8 @@ ENV GOTOOLCHAIN=auto
 # deps of the module graph itself (google/gousb, dolthub/go-icu-regex via
 # go-qrdb), not gated by any backend tag -- this stage is also where the
 # module builds/tests below run.
-RUN p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     opensc \
     swtpm \
