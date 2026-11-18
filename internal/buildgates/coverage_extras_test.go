@@ -96,6 +96,7 @@ func TestCoverageExtrasRunOnceOutsideTheShards(t *testing.T) {
 				Run  string            `yaml:"run"`
 				Uses string            `yaml:"uses"`
 				Env  map[string]string `yaml:"env"`
+				With map[string]string `yaml:"with"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -117,7 +118,9 @@ func TestCoverageExtrasRunOnceOutsideTheShards(t *testing.T) {
 		if strings.Contains(s.Run, "make coverage-shard") && !strings.Contains(s.Env["IN_IMAGE_EXPORT"], notExtras) {
 			t.Errorf("make coverage-shard step exports %q for the extras entry too", s.Env["IN_IMAGE_EXPORT"])
 		}
-		if strings.HasPrefix(s.Uses, "actions/upload-artifact@") && !strings.Contains(s.If, notExtras) {
+		// The profile upload only; coverage-diag-* uploads the shard log of
+		// every entry, extras included (#2183).
+		if strings.HasPrefix(s.Uses, "actions/upload-artifact@") && strings.HasPrefix(s.With["name"], "coverage-shard-") && !strings.Contains(s.If, notExtras) {
 			t.Errorf("upload step if %q also runs for the extras entry, which has no profile", s.If)
 		}
 	}

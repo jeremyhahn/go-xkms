@@ -1282,8 +1282,10 @@ jobs:
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
-      # Hosted runner on github.com has less than 24g: bound the container at 8g (Codex P1 on #2042).
-      IN_IMAGE_MEMORY: ${{ github.server_url == 'https://github.com' && '8g' || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '24g' || '') }}
+      # Hosted runner on github.com has less than 24g (16 GB): bound the container
+      # below it (Codex P1 on #2042). 12g, not 8g: an 8g cgroup on 4 CPUs peaked
+      # at 6.4 GiB and hit memory.max 3271 times in the heavy packages (#2183).
+      IN_IMAGE_MEMORY: ${{ github.server_url == 'https://github.com' && '12g' || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '24g' || '') }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -1322,12 +1324,46 @@ jobs:
           docker system df || true
 
       # test-web runs `npm ci` against the npm registry (shard extras-other).
+      # CUSTOMIZE (go-xkms, #2183): GitHub cuts a timed-out job's log at about
+      # 10,880 lines, so the shard's full output is tee'd to $RUNNER_TEMP, and a
+      # background sampler appends free -m and the toolchain container's
+      # memory.current, memory.events and docker stats every 60 s. Both files
+      # grow as the step runs, so the evidence exists however the step ends.
       - name: make coverage-shard
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        # CUSTOMIZE (go-xkms, #2183): the toolchain build takes up to ~14 min on
+        # hosted runners and the job bound is 60, so a stalled shard is cut here
+        # at 40; the step fails and the always() diagnostics upload below still
+        # runs inside the job bound, which a job-level timeout would skip.
+        timeout-minutes: 40
         env:
           IN_IMAGE_NETWORK: bridge
           IN_IMAGE_EXPORT: ${{ !startsWith(matrix.shard, 'extras-') && format('build/coverage/shard-{0}.out', matrix.shard) || '' }}
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard SHARD=${{ matrix.shard }} SHARDS=10 GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+        run: |
+          log="$RUNNER_TEMP/coverage-shard-${{ matrix.shard }}.log"
+          res="$RUNNER_TEMP/coverage-shard-${{ matrix.shard }}.resources.log"
+          (
+            while :; do
+              {
+                echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                free -m
+                for id in $(docker ps -q --filter "name=${CI_STACK_PREFIX}tc-"); do
+                  full=$(docker inspect -f '{{.Id}}' "$id")
+                  for cg in "/sys/fs/cgroup/system.slice/docker-$full.scope" "/sys/fs/cgroup/docker/$full"; do
+                    [ -r "$cg/memory.current" ] || continue
+                    echo "$cg memory.current $(cat "$cg/memory.current")"
+                    echo "$cg memory.events $(tr '\n' ' ' < "$cg/memory.events")"
+                  done
+                  docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}} pids={{.PIDs}}' "$id"
+                done
+              } >> "$res" 2>&1 || true
+              sleep 60
+            done
+          ) >/dev/null 2>&1 &
+          sampler=$!
+          trap 'pkill -P "$sampler" 2>/dev/null; kill "$sampler" 2>/dev/null || true' EXIT
+          set -o pipefail
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard SHARD=${{ matrix.shard }} SHARDS=10 GO_BUILD_TAGS='$GO_BUILD_TAGS'" 2>&1 | tee "$log"
 
       - name: Upload the shard profile (GitHub)
         if: ${{ success() && !startsWith(matrix.shard, 'extras-') && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
@@ -1337,6 +1373,23 @@ jobs:
           path: build/coverage/shard-${{ matrix.shard }}.out
           if-no-files-found: error
           retention-days: 3
+
+      # CUSTOMIZE (go-xkms, #2183): the shard log and resource samples, after a
+      # pass, a failure or the shard's own go test -timeout panic. A job-level
+      # timeout-minutes kills the job without running later steps, always() or
+      # not, which is why the step above writes both files incrementally and is
+      # cut at its own 40-minute bound inside the 60-minute one. The name is outside
+      # coverage-threshold's coverage-shard-* download pattern.
+      - name: Upload the shard log and resource samples (GitHub)
+        if: ${{ always() && needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-diag-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/coverage-shard-${{ matrix.shard }}.log
+            ${{ runner.temp }}/coverage-shard-${{ matrix.shard }}.resources.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Tear down
         if: always()

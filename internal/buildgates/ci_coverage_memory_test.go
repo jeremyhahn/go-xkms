@@ -107,7 +107,11 @@ func TestCoverageRunsAsShardsThenOneThreshold(t *testing.T) {
 // ran 151 min under the old 135m bound).
 const (
 	coverageJobTimeoutMinutes = 60
-	coverageShardTestTimeout  = 30 * time.Minute
+	// The make coverage-shard step's own bound: the toolchain build takes up
+	// to ~14 min, and a stalled step cut at 40 leaves the always() diagnostics
+	// upload room inside the job's 60 (#2183 part 23).
+	coverageShardStepTimeoutMinutes = 40
+	coverageShardTestTimeout        = 30 * time.Minute
 )
 
 func TestCoverageShardTimeoutsArePinned(t *testing.T) {
@@ -151,13 +155,15 @@ func TestCoverageShardTimeoutsArePinned(t *testing.T) {
 	}
 }
 
-// TestHostedCoverageJobsBoundMemoryAt8g guards the Codex P1 on #2042: the
+// TestHostedCoverageJobsBoundMemory guards the Codex P1 on #2042: the
 // workflow-level IN_IMAGE_MEMORY is 24g for the bigdisk pool, and the
-// coverage jobs on github.com's hosted runners (less memory) must not
-// inherit it, or in-toolchain-image.sh starts the container with
-// --memory=24g. Each job sets 8g on github.com and keeps the workflow value
-// elsewhere.
-func TestHostedCoverageJobsBoundMemoryAt8g(t *testing.T) {
+// coverage jobs on github.com's hosted runners (16 GB) must not inherit it,
+// or in-toolchain-image.sh starts the container with --memory=24g. Each job
+// sets its own bound on github.com and keeps the workflow value elsewhere:
+// 12g for the coverage shards, whose heavy packages pressed an 8g cgroup to
+// its limit in the #2183 repro (6.4 GiB peak, 3271 memory.max events), and
+// 8g for coverage-threshold.
+func TestHostedCoverageJobsBoundMemory(t *testing.T) {
 	data, err := os.ReadFile(ciWorkflow)
 	if err != nil {
 		t.Fatalf("read %s: %v", ciWorkflow, err)
@@ -174,7 +180,7 @@ func TestHostedCoverageJobsBoundMemoryAt8g(t *testing.T) {
 	workflowExpr := strings.TrimSpace(wf.Env["IN_IMAGE_MEMORY"])
 	workflowExpr = strings.TrimSuffix(strings.TrimPrefix(workflowExpr, "${{"), "}}")
 	workflowExpr = strings.TrimSpace(workflowExpr)
-	for _, name := range []string{"coverage", "coverage-threshold"} {
+	for name, hosted := range map[string]string{"coverage": "12g", "coverage-threshold": "8g"} {
 		job, ok := wf.Jobs[name]
 		if !ok {
 			t.Fatalf("ci.yml has no %s job", name)
@@ -184,8 +190,8 @@ func TestHostedCoverageJobsBoundMemoryAt8g(t *testing.T) {
 			t.Errorf("%s job does not set IN_IMAGE_MEMORY; it inherits the workflow's 24g on hosted runners", name)
 			continue
 		}
-		if !strings.Contains(v, "github.server_url == 'https://github.com'") || !strings.Contains(v, "'8g'") {
-			t.Errorf("%s job IN_IMAGE_MEMORY = %q, want 8g when github.server_url == 'https://github.com'", name, v)
+		if !strings.Contains(v, "github.server_url == 'https://github.com' && '"+hosted+"'") {
+			t.Errorf("%s job IN_IMAGE_MEMORY = %q, want %s when github.server_url == 'https://github.com'", name, v, hosted)
 		}
 		if !strings.Contains(v, "env.IN_IMAGE_MEMORY") && (workflowExpr == "" || !strings.Contains(v, workflowExpr)) {
 			t.Errorf("%s job IN_IMAGE_MEMORY = %q, want the workflow value (%q) off github.com", name, v, workflowExpr)
@@ -225,7 +231,8 @@ func TestCoverageShardProfileLeavesTheContainer(t *testing.T) {
 		if strings.Contains(s.Run, "make coverage-shard") {
 			export = s.Env["IN_IMAGE_EXPORT"]
 		}
-		if strings.HasPrefix(s.Uses, "actions/upload-artifact@") {
+		// The profile upload; coverage-diag-* carries the shard log (#2183).
+		if strings.HasPrefix(s.Uses, "actions/upload-artifact@") && strings.HasPrefix(s.With["name"], "coverage-shard-") {
 			uploads = append(uploads, s.With["path"])
 		}
 	}
@@ -261,6 +268,85 @@ func TestCoverageShardProfileLeavesTheContainer(t *testing.T) {
 	}
 	if !strings.Contains(text, "IN_IMAGE_EXPORT") {
 		t.Errorf("%s does not read IN_IMAGE_EXPORT", inToolchainImage)
+	}
+}
+
+// TestCoverageShardLeavesItsLogAndResourceSamples pins the #2183 stall
+// diagnostics: GitHub cuts a timed-out job's log at about 10,880 lines, so the
+// make coverage-shard step tees its output and samples memory every 60 s into
+// $RUNNER_TEMP, and an always() step uploads both files under a name outside
+// coverage-threshold's coverage-shard-* download pattern.
+func TestCoverageShardLeavesItsLogAndResourceSamples(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			TimeoutMinutes int `yaml:"timeout-minutes"`
+			Steps          []struct {
+				If             string            `yaml:"if"`
+				TimeoutMinutes int               `yaml:"timeout-minutes"`
+				Run            string            `yaml:"run"`
+				Uses           string            `yaml:"uses"`
+				With           map[string]string `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatalf("parse workflow: %v", err)
+	}
+	const logFile = "coverage-shard-${{ matrix.shard }}.log"
+	const resFile = "coverage-shard-${{ matrix.shard }}.resources.log"
+	var shardRun string
+	var shardTimeout int
+	var diag bool
+	for _, s := range wf.Jobs["coverage"].Steps {
+		if strings.Contains(s.Run, "make coverage-shard") {
+			shardRun = s.Run
+			shardTimeout = s.TimeoutMinutes
+		}
+		if strings.HasPrefix(s.Uses, "actions/upload-artifact@") && strings.HasPrefix(s.With["name"], "coverage-diag-") {
+			diag = true
+			if !strings.Contains(s.If, "always()") {
+				t.Errorf("diagnostics upload if = %q, want always()", s.If)
+			}
+			for _, f := range []string{logFile, resFile} {
+				if !strings.Contains(s.With["path"], "${{ runner.temp }}/"+f) {
+					t.Errorf("diagnostics upload path %q lacks %s", s.With["path"], f)
+				}
+			}
+			if s.With["if-no-files-found"] != "ignore" {
+				t.Errorf("diagnostics upload if-no-files-found = %q, want ignore", s.With["if-no-files-found"])
+			}
+		}
+	}
+	for _, want := range []string{
+		"set -o pipefail",
+		`| tee "$log"`,
+		`log="$RUNNER_TEMP/` + logFile + `"`,
+		`res="$RUNNER_TEMP/` + resFile + `"`,
+		"sleep 60",
+		"memory.current",
+		"memory.events",
+		"free -m",
+		`kill "$sampler"`,
+	} {
+		if !strings.Contains(shardRun, want) {
+			t.Errorf("make coverage-shard step does not contain %q", want)
+		}
+	}
+	if !diag {
+		t.Error("coverage job has no coverage-diag-* upload step")
+	}
+	// A job-level timeout skips the always() upload, so the step's own bound
+	// cuts a stalled shard first, leaving the upload room inside the job's.
+	jobTimeout := wf.Jobs["coverage"].TimeoutMinutes
+	if shardTimeout != coverageShardStepTimeoutMinutes {
+		t.Errorf("make coverage-shard step timeout-minutes = %d, want %d", shardTimeout, coverageShardStepTimeoutMinutes)
+	}
+	if shardTimeout <= 0 || shardTimeout >= jobTimeout {
+		t.Errorf("make coverage-shard step timeout-minutes = %d, want it below the job's %d", shardTimeout, jobTimeout)
 	}
 }
 
