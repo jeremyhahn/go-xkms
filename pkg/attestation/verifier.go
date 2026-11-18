@@ -192,6 +192,11 @@ func (v *Verifier) storeChainRoots() ([]*x509.Certificate, error) {
 	if v.store == nil || v.chainPurpose == "" {
 		return nil, nil
 	}
+	// CertificatesByPurpose only classifies; the quarantine is enforced here,
+	// as BuildTrustPool and DAOStore.Anchors do (docs/SPEC.md trust-roots).
+	if !truststore.IsAnchorPurpose(v.chainPurpose) {
+		return nil, &errs.Wrapped{Msg: "attestation: chain purpose " + string(v.chainPurpose), Err: truststore.ErrNotAnchorPurpose}
+	}
 	roots, err := v.store.CertificatesByPurpose(v.chainPurpose)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "attestation: trust store anchors", Err: err}
