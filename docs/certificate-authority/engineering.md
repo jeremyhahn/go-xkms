@@ -532,11 +532,15 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
   tenant's certificates — a system-tenant caller only the system/platform
   scope's own (`""`), never a tenant's (go-xkms#1406). `IssueCertificate` binds `req.TenantID`
   the same way before forwarding it, so a tenant-scoped caller cannot mint
-  a certificate attributed to a different tenant either. A certificate
-  issued through a path that never calls `signCSR` — the TCG device-identity
-  family (EK/AK/IDevID) and the CA's own root/intermediate certificates —
-  carries no record and so resolves to the system/platform scope, reachable
-  only by a system-tenant caller. `certs:revoke` (and `certs:generate`) is
+  a certificate attributed to a different tenant either. A TCG
+  device-identity certificate (EK/AK/IDevID) the CA signs records the
+  request's tenant the same way (`issueTCGCertificate`, `pkg/ca/tcg.go`;
+  empty for the system scope), so it is revocable only by that tenant, and a
+  system-tenant caller is refused for a tenant's EK/AK/IDevID certificate. A
+  certificate with no record — a TCG certificate signed by a caller-supplied
+  Signer, the CA's own root/intermediate certificates, and a certificate
+  issued before the record existed — resolves to the system/platform scope,
+  reachable only by a system-tenant caller. `certs:revoke` (and `certs:generate`) is
   the same permission on every transport (REST, gRPC, MCP); go-qrdb's
   built-in Admin role grants it by default in every tenant it is seeded
   into, including the system tenant, so both a system admin and a tenant
