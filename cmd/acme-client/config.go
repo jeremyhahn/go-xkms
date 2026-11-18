@@ -179,7 +179,6 @@ func buildServiceConfig() *service.Config {
 	if cfg.Devices == nil {
 		cfg.Devices = make(map[string]*service.DeviceSpec)
 	}
-	cfg.ConfigFile = viper.ConfigFileUsed()
 	return cfg
 }
 

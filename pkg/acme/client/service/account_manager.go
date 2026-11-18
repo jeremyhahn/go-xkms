@@ -21,12 +21,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -60,13 +56,6 @@ type AccountManager interface {
 
 	// Client returns a cached or newly created ACME client for the named account.
 	Client(ctx context.Context, name string) (*client.Client, error)
-
-	// Register registers the named account with its ACME server
-	// (RFC 8555 §7.3 newAccount), records the account URL the server
-	// returned and, when the configuration was loaded from a file, writes
-	// that account (and nothing else) back to it. A server error is
-	// returned and nothing is saved.
-	Register(ctx context.Context, name string) (*AccountConfig, error)
 
 	// StorageFactory returns a cached or newly created storage factory for the named account.
 	StorageFactory(name string) (storage.Factory, error)
@@ -158,7 +147,7 @@ func (am *accountManager) Client(ctx context.Context, name string) (*client.Clie
 	if cached, ok := am.clients.Load(name); ok {
 		return cached.(*client.Client), nil
 	}
-	signer, err := accountSigner(cfg.Key)
+	signer, err := generateSigner(cfg.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -199,49 +188,6 @@ func (am *accountManager) Client(ctx context.Context, name string) (*client.Clie
 	}
 	actual, _ := am.clients.LoadOrStore(name, c)
 	return actual.(*client.Client), nil
-}
-
-// Register implements AccountManager.
-func (am *accountManager) Register(ctx context.Context, name string) (*AccountConfig, error) {
-	cfg, err := am.Get(name)
-	if err != nil {
-		return nil, err
-	}
-	c, err := am.Client(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	acct, err := c.RegisterAccount()
-	if err != nil {
-		return nil, ErrAccountRegistration{Account: name, Err: err}
-	}
-	if acct == nil || acct.URI == "" {
-		return nil, ErrAccountRegistration{Account: name, Err: errNoAccountURL}
-	}
-	cfg.AccountURL = acct.URI
-	if am.config.ConfigFile != "" {
-		// Keep the signer so the next process is the same account.
-		written := ""
-		if cfg.Key != nil && cfg.Key.File == "" {
-			path, err := writeAccountKey(am.config.ConfigFile, name, c.AccountSigner())
-			if err != nil {
-				return nil, ErrAccountRegistration{Account: name, Err: err}
-			}
-			cfg.Key.File, written = path, path
-		}
-		if err := am.config.SaveAccount(name); err != nil {
-			if written != "" {
-				_ = os.Remove(written)
-				cfg.Key.File = ""
-			}
-			return nil, err
-		}
-	}
-	am.logger.InfoContext(ctx, "account registered",
-		slog.String("name", name),
-		slog.String("account_url", acct.URI),
-	)
-	return cfg, nil
 }
 
 // StorageFactory returns a cached or newly created storage factory for the named account.
@@ -354,68 +300,6 @@ func generateSigner(keyCfg *KeyConfig) (crypto.Signer, error) {
 		}
 	}
 	return generator(keyCfg)
-}
-
-// accountSigner loads the account key from keyCfg.File when one is
-// configured, and otherwise generates a fresh one. A configured file that
-// cannot be read is an error: a new key would be a different account.
-func accountSigner(keyCfg *KeyConfig) (crypto.Signer, error) {
-	if keyCfg == nil || keyCfg.File == "" {
-		return generateSigner(keyCfg)
-	}
-	data, err := os.ReadFile(keyCfg.File) // #nosec G304 - path from the account configuration
-	if err != nil {
-		return nil, fmt.Errorf("account key: %w", err)
-	}
-	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "PRIVATE KEY" {
-		return nil, fmt.Errorf("account key %s: no PEM PRIVATE KEY block", keyCfg.File)
-	}
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("account key %s: %w", keyCfg.File, err)
-	}
-	signer, ok := key.(crypto.Signer)
-	if !ok {
-		return nil, fmt.Errorf("account key %s: %T is not a signer", keyCfg.File, key)
-	}
-	return signer, nil
-}
-
-// writeAccountKey writes signer as PEM PKCS#8 to accounts/<name>.key beside
-// configFile with mode 0600, never over an existing file, and returns its
-// absolute path.
-func writeAccountKey(configFile, name string, signer crypto.Signer) (string, error) {
-	if name == "" || name == "." || name == ".." || name != filepath.Base(name) {
-		return "", fmt.Errorf("account name %q cannot name a key file", name)
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(signer)
-	if err != nil {
-		return "", fmt.Errorf("encode account key: %w", err)
-	}
-	cfgPath, err := filepath.Abs(configFile)
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(filepath.Dir(cfgPath), "accounts")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("create %s: %w", dir, err)
-	}
-	path := filepath.Join(dir, name+".key")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 - derived from the config path
-	if err != nil {
-		return "", fmt.Errorf("create account key: %w", err)
-	}
-	if _, err := f.Write(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return "", fmt.Errorf("write account key: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("write account key: %w", err)
-	}
-	return path, nil
 }
 
 // createStateBackend builds a storage.Backend for ACME client state from the

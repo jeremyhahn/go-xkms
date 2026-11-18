@@ -36,7 +36,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
@@ -54,12 +53,6 @@ func resetAccountAddFlags(t *testing.T) {
 	_ = f.Set("key-algorithm", "ECDSA")
 	_ = f.Set("key-store", "software")
 	_ = f.Set("key-curve", "P-256")
-	if fl := f.Lookup("trusted-roots"); fl != nil {
-		if sv, ok := fl.Value.(pflag.SliceValue); ok {
-			_ = sv.Replace(nil)
-		}
-	}
-	_ = f.Set("request-server-bundle", "false")
 }
 
 // newFakeACMEServer starts an httptest TLS server implementing just enough of
@@ -161,8 +154,30 @@ func fakeServerTrustPEM(server *httptest.Server) string {
 // accountAddCmd
 // =============================================================================
 
-// The account add success path (registration against an ACME server and
-// the saved account) is TestAccountAddCmd_RegistersAndPersists.
+func TestAccountAddCmd_Success(t *testing.T) {
+	viper.Reset()
+	setDefaults()
+	viper.Set("logging.level", "info")
+	viper.Set("storage.options.path", t.TempDir())
+
+	resetAccountAddFlags(t)
+	f := accountAddCmd.Flags()
+	_ = f.Set("directory", "https://ca.example.com/directory")
+	_ = f.Set("email", "add@example.com")
+
+	cmd := accountAddCmd
+	cmd.SetContext(context.Background())
+	buf := &bytes.Buffer{}
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+
+	if err := accountAddCmd.RunE(cmd, []string{"newacct"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "added successfully") {
+		t.Errorf("expected success message, got: %q", buf.String())
+	}
+}
 
 func TestAccountAddCmd_ValidationFailure(t *testing.T) {
 	viper.Reset()
