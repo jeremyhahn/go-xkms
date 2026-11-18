@@ -111,3 +111,21 @@ func TestVerifyChainAnchored_StoreErrorIsReturned(t *testing.T) {
 		t.Fatalf("VerifyChainAnchored error = %v, want the store error", err)
 	}
 }
+
+// A chain purpose that anchors nothing (the PurposeSynced quarantine) is
+// refused before the store is read: a root a paired device pushed never
+// anchors an attestation, even when the store lists it under that purpose.
+func TestVerifyChainAnchored_QuarantinedPurposeRefused(t *testing.T) {
+	synced := snapshotTestRoot(t, "synced root")
+	lister := &shiftingLister{roots: []*x509.Certificate{synced}}
+	v := attestation.NewVerifier(nil,
+		attestation.WithTrustStore(lister, nil),
+		attestation.WithChainPurpose(truststore.PurposeSynced))
+	stmt := &attestation.AttestationStatement{Format: "tpm2", CertificateChain: []*x509.Certificate{synced}}
+	if err := v.VerifyChainAnchored(stmt, nil); !errors.Is(err, truststore.ErrNotAnchorPurpose) {
+		t.Fatalf("VerifyChainAnchored error = %v, want ErrNotAnchorPurpose", err)
+	}
+	if lister.reads != 0 {
+		t.Fatalf("store read %d times, want 0 for a quarantined purpose", lister.reads)
+	}
+}
