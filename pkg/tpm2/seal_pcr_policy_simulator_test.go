@@ -256,6 +256,44 @@ func TestSeal_PlatformPolicy_BindsRequestedPCRSelection(t *testing.T) {
 	assert.Nil(t, out)
 }
 
+// A seal with a recovery PIN over a selection holding a PCR outside the
+// platform set must still open through the PCR branch without the PIN while
+// every selected PCR is unchanged, and refuse once that PCR is extended.
+func TestSealUnseal_PlatformPolicyWithPIN_ExtraPCRBranchOpensWithoutPIN(t *testing.T) {
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+
+	const extraPCR = 15
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, 7, extraPCR)
+	attrsFor := func(password types.Password) *types.KeyAttributes {
+		attrs := sealedKeyAttrsUnder(
+			platformPolicySRKAttrs(t, h, nil), "platform-policy-pin-extra-pcr", password)
+		attrs.TPMAttributes.PCRSelection = selection
+		return attrs
+	}
+
+	secret := []byte("pin-sealed-bound-to-pcr-7-and-15")
+	pin := mustPassword(t, []byte("object-recovery-pin"))
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: attrsFor(pin), Backend: h.Backend})
+	require.NoError(t, err)
+
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: attrsFor(nil), Backend: h.Backend})
+	require.NoError(t, err, "the PCR branch must open the object without the PIN")
+	require.Equal(t, secret, got)
+
+	h.extendPCR(t, extraPCR, []byte("post-seal-measurement"))
+
+	out, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: attrsFor(nil), Backend: h.Backend})
+	require.Error(t, err, "extending a selected PCR must close the PCR branch")
+	assert.Nil(t, out)
+}
+
 // TestSealUnseal_WrongSRKPINAfterExtend_Rejected proves the SRK's recovery path
 // still demands the SRK's auth value. The pin record removes the PCR coupling
 // of the OR digest; it does not remove the PIN requirement, which the TPM
