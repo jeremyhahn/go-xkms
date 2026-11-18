@@ -174,3 +174,16 @@ func TestEveryKeyIDIsUniquified(t *testing.T) {
 		}
 	}
 }
+
+// Every transport that dials a server TLS listener carries the admin client
+// credential and the trust bundle: the Unix socket is the qrdb node's TLS
+// listener, so it is among them (it never authenticated before).
+func TestNeedsClientTLSCoversEveryServerTransport(t *testing.T) {
+	for _, p := range []ProtocolType{ProtocolUnix, ProtocolGRPC, ProtocolQUIC} {
+		assert.True(t, needsClientTLS(p, "https://xkms-server:8443"), p)
+	}
+	assert.True(t, needsClientTLS(ProtocolREST, "https://xkms-server:8443"))
+	assert.False(t, needsClientTLS(ProtocolREST, "http://xkms-server:8443"))
+	assert.False(t, needsClientTLS(ProtocolMCP, "https://xkms-server:8443"))
+	assert.False(t, needsClientTLS(ProtocolEmbedded, "https://xkms-server:8443"))
+}

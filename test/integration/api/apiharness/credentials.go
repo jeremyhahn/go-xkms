@@ -1,0 +1,130 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package apiharness
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+// The admin mTLS credential `xkmsd init --admin-factor mtls` writes into the
+// server's data volume, which docker-compose.yml mounts read-only into the
+// integration-tests service at /xkms-data. The server requires a verified
+// client certificate (config.test.yaml: client_auth verify, auth enabled),
+// so every CLI invocation in the suite presents this credential.
+const (
+	adminCertEnv     = "XKMS_ADMIN_CERT"
+	defaultAdminCert = "/xkms-data/xkms/admin-cert.pem"
+	adminKeyEnv      = "XKMS_ADMIN_KEY"
+	defaultAdminKey  = "/xkms-data/xkms/admin-key.pem"
+
+	// ceremonyCAEnv names the ceremony root init writes beside the admin
+	// credential; it issues the admin certificate and the server's CA-backed
+	// serving certificates.
+	ceremonyCAEnv     = "XKMS_CEREMONY_CA"
+	defaultCeremonyCA = "/xkms-data/xkms/ca-bundle.pem"
+
+	// unifiedCAEnv names the bundle the server persists beside its unified
+	// listener's certificate once the CA-issued certificate replaces the
+	// bootstrap one (pkg/server/unified_tls.go). The Unix socket is that
+	// listener. The file exists only after the server has unsealed, so it is
+	// added when present.
+	unifiedCAEnv     = "XKMS_UNIFIED_CA"
+	defaultUnifiedCA = "/xkms-data/xkms/unified-tls/ca-bundle.pem"
+)
+
+// ErrAdminCredential reports that the admin credential or a trust anchor the
+// suite needs is missing or unreadable.
+var ErrAdminCredential = errors.New("apiharness: admin mTLS credential unavailable")
+
+var (
+	trustOnce sync.Once
+	trustPath string
+	trustErr  error
+)
+
+// AdminCertFile is the admin client certificate's path.
+func AdminCertFile() string { return envOr(adminCertEnv, defaultAdminCert) }
+
+// AdminKeyFile is the admin client key's path.
+func AdminKeyFile() string { return envOr(adminKeyEnv, defaultAdminKey) }
+
+// TrustBundleFile writes, once per process, one PEM bundle holding every CA
+// that can sign a certificate the server presents -- the suite CA that signs
+// the operator certificate (KEYSTORE_TLS_CA), the init ceremony root, and the
+// unified listener's persisted bundle when the server has written it -- and
+// returns its path. Verification stays on: the CLI checks the server's chain
+// against this bundle on every transport.
+func TrustBundleFile() (string, error) {
+	trustOnce.Do(func() {
+		trustPath, trustErr = writeTrustBundle()
+	})
+	return trustPath, trustErr
+}
+
+func writeTrustBundle() (string, error) {
+	var bundle bytes.Buffer
+	for _, path := range []string{envOr(caFileEnv, defaultCAFile), envOr(ceremonyCAEnv, defaultCeremonyCA)} {
+		pem, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("%w: read CA %s: %w", ErrAdminCredential, path, err)
+		}
+		bundle.Write(pem)
+		bundle.WriteByte('\n')
+	}
+	unified := envOr(unifiedCAEnv, defaultUnifiedCA)
+	pem, err := os.ReadFile(unified)
+	switch {
+	case err == nil:
+		bundle.Write(pem)
+		bundle.WriteByte('\n')
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("%w: read CA %s: %w", ErrAdminCredential, unified, err)
+	}
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("xkms-api-trust-%d.pem", os.Getpid()))
+	if err := os.WriteFile(path, bundle.Bytes(), 0o600); err != nil {
+		return "", fmt.Errorf("%w: write trust bundle: %w", ErrAdminCredential, err)
+	}
+	return path, nil
+}
+
+// ClientTLSArgs returns the xkmsctl global flags that authenticate as the
+// admin and verify the server: --tls-ca with the trust bundle, --tls-cert and
+// --tls-key with the admin credential. Callers pass them on every transport
+// that dials the server (unix, rest, grpc, quic).
+func ClientTLSArgs() ([]string, error) {
+	ca, err := TrustBundleFile()
+	if err != nil {
+		return nil, err
+	}
+	cert, key := AdminCertFile(), AdminKeyFile()
+	for _, path := range []string{cert, key} {
+		if _, err := os.Stat(path); err != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrAdminCredential, path, err)
+		}
+	}
+	return []string{"--tls-ca", ca, "--tls-cert", cert, "--tls-key", key}, nil
+}
+
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
+}

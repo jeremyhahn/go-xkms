@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/test/integration/api/apiharness"
 )
 
 // ProtocolType represents the communication protocol
@@ -76,7 +78,6 @@ type TestRunner struct {
 	Backend        string
 	Timeout        time.Duration
 	Verbose        bool
-	TLSCACert      string
 }
 
 // NewTestRunner creates a new test runner with default configuration
@@ -95,7 +96,6 @@ func NewTestRunner() *TestRunner {
 		Backend:        "software",
 		Timeout:        30 * time.Second,
 		Verbose:        getEnv("VERBOSE", "") != "",
-		TLSCACert:      getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
 	}
 }
 
@@ -136,6 +136,21 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 		return ""
 	default:
 		return ""
+	}
+}
+
+// needsClientTLS reports whether a CLI invocation over protocol dials one of
+// the server's TLS listeners and so carries the admin client credential and
+// the trust bundle: the Unix socket, REST over HTTPS, gRPC and QUIC. MCP
+// (mcp://) is plain TCP and embedded runs in process.
+func needsClientTLS(protocol ProtocolType, restBaseURL string) bool {
+	switch protocol {
+	case ProtocolUnix, ProtocolGRPC, ProtocolQUIC:
+		return true
+	case ProtocolREST:
+		return strings.HasPrefix(restBaseURL, "https://")
+	default:
+		return false
 	}
 }
 
@@ -208,14 +223,17 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 			prefixArgs = append(prefixArgs, "--server", serverURL)
 		}
 
-		// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-		// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
-		needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
-			protocol == ProtocolGRPC ||
-			protocol == ProtocolQUIC
-
-		if needsTLS && r.TLSCACert != "" {
-			prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
+		// Every transport that dials the server's TLS listeners -- the Unix
+		// socket (the qrdb node's TLS listener), REST over HTTPS, gRPC and
+		// QUIC -- authenticates as the init-ceremony admin over mTLS and
+		// verifies the server against the suite's trust bundle.
+		// MCP uses plain TCP (mcp://), not TLS.
+		if needsClientTLS(protocol, r.RESTBaseURL) {
+			tlsArgs, err := apiharness.ClientTLSArgs()
+			if err != nil {
+				t.Fatalf("admin mTLS credential for %s: %v", protocol, err)
+			}
+			prefixArgs = append(prefixArgs, tlsArgs...)
 		}
 	}
 
