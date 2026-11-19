@@ -17,7 +17,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"encoding/base64"
+	"encoding/binary"
+	"strconv"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -134,22 +141,72 @@ func TestLoginWiring_PIVLoginOverEmbeddedNode(t *testing.T) {
 			require.NotEmpty(t, rotated.RefreshToken)
 			assert.NotEqual(t, pair.RefreshToken, rotated.RefreshToken, "refresh must rotate the refresh token")
 
-			// (4) the re-check still refuses: an administrator disables the
-			// account after login, and its next refresh answers 401
-			// (go-xkms#2292). The administrator acts through the xkmsd REST
-			// API with the access token the rotation minted.
-			username := cert.Subject.CommonName
-			require.NotEmpty(t, username, "the first-boot admin certificate names its account")
-			disable := httptest.NewRequest(http.MethodPost, "/api/v1/users/"+username+"/disable", nil)
-			disable.Header.Set("Authorization", "Bearer "+rotated.AccessToken)
-			w = do(disable)
-			require.Equal(t, http.StatusOK, w.Code, "administrator disable: %s", w.Body.String())
+			// (4) an ordinary account refreshes, and the re-check still
+			// refuses once it is disabled (go-xkms#2292): an administrator
+			// creates the account through the xkmsd REST API, the account
+			// holds a passkey-style refresh token (subject = its user
+			// handle), its refresh rotates, the administrator disables it,
+			// and its next refresh answers 401. The bootstrap admin itself
+			// cannot be disabled (qrdb keeps it able to log in), so the
+			// account is a second user.
+			admin := func(method, path string, payload any) *httptest.ResponseRecorder {
+				var rd *bytes.Reader
+				if payload != nil {
+					raw, mErr := json.Marshal(payload)
+					require.NoError(t, mErr)
+					rd = bytes.NewReader(raw)
+				} else {
+					rd = bytes.NewReader(nil)
+				}
+				req := httptest.NewRequest(method, path, rd)
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+rotated.AccessToken)
+				return do(req)
+			}
+			const operator = "refresh-operator"
+			w = admin(http.MethodPost, "/api/v1/users", map[string]any{
+				"username":                operator,
+				"display_name":            "Refresh Operator",
+				"without_email_login_key": true,
+			})
+			require.Contains(t, []int{http.StatusOK, http.StatusCreated}, w.Code, "administrator create user: %s", w.Body.String())
+			var created struct {
+				User struct {
+					ID string `json:"id"`
+				} `json:"user"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created), w.Body.String())
 
-			body, err = json.Marshal(map[string]string{"refresh_token": rotated.RefreshToken})
+			uid, err := strconv.ParseUint(created.User.ID, 10, 64)
 			require.NoError(t, err)
-			refresh = httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
-			refresh.Header.Set("Content-Type", "application/json")
-			w = do(refresh)
+			var handle [8]byte
+			binary.BigEndian.PutUint64(handle[:], uid)
+			opPair, err := s.tokenIssuer.Mint(context.Background(), &auth.Identity{
+				Subject: base64.RawURLEncoding.EncodeToString(handle[:]),
+				// The administrator is the system tenant's, so is the account
+				// it created.
+				TenantID: qrdbsdk.SystemTenantID,
+				Metadata: map[string]string{auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle, "username": operator},
+			})
+			require.NoError(t, err)
+			refreshAs := func(rt string) *httptest.ResponseRecorder {
+				raw, mErr := json.Marshal(map[string]string{"refresh_token": rt})
+				require.NoError(t, mErr)
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(raw))
+				req.Header.Set("Content-Type", "application/json")
+				return do(req)
+			}
+			// Asked first of the issuer, so a refusal names its reason.
+			opDirect, err := s.tokenIssuer.Refresh(context.Background(), opPair.RefreshToken)
+			require.NoError(t, err, "issuer refresh for the active account")
+			w = refreshAs(opDirect.RefreshToken)
+			require.Equal(t, http.StatusOK, w.Code, "active user's refresh: %s", w.Body.String())
+			var opRotated loginWiringTokens
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &opRotated))
+
+			w = admin(http.MethodPost, "/api/v1/users/"+operator+"/disable", nil)
+			require.Equal(t, http.StatusOK, w.Code, "administrator disable: %s", w.Body.String())
+			w = refreshAs(opRotated.RefreshToken)
 			assert.Equal(t, http.StatusUnauthorized, w.Code, "refresh for a disabled user must be refused: %s", w.Body.String())
 		})
 	}
