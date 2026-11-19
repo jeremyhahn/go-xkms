@@ -261,11 +261,15 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		return err
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
-	if existing, err := tenantLoginCAKeyAttrs(ctx, base, tenantID); err == nil {
+	existing, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+	switch {
+	case err == nil:
 		// Keep the key, but a key alone is not a provisioned login CA: an
 		// earlier pass may have stopped before its certificate was saved,
 		// and a key this path did not make is never adopted.
 		return adoptTenantLoginCAKey(ctx, scoped, tenantID, existing)
+	case !errors.Is(err, errTenantLoginCAKeyNotFound):
+		return err
 	}
 	claimed, err := f.claimTenantLoginCAKey(ctx, base, tenantID)
 	if err != nil {
@@ -345,6 +349,8 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 	}
 	if _, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID); lookupErr == nil {
 		return false, nil
+	} else if !errors.Is(lookupErr, errTenantLoginCAKeyNotFound) {
+		return false, lookupErr
 	}
 	swapper, ok := claims.(storage.CompareAndSwapper)
 	if !ok {
@@ -365,8 +371,12 @@ func waitTenantLoginCAKey(ctx context.Context, base xkms.Backend, tenantID strin
 	ticker := time.NewTicker(tenantLoginCAProvenanceWait / 40)
 	defer ticker.Stop()
 	for {
-		if attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID); err == nil {
+		attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+		if err == nil {
 			return attrs, nil
+		}
+		if !errors.Is(err, errTenantLoginCAKeyNotFound) {
+			return nil, err
 		}
 		select {
 		case <-waitCtx.Done():
@@ -499,6 +509,9 @@ func (f *tenantCAKeyFactory) RemoveTenant(ctx context.Context, tenantID string) 
 		if delErr := base.DeleteKey(ctx, attrs); delErr != nil {
 			errs = append(errs, delErr)
 		}
+	} else if !errors.Is(lookupErr, errTenantLoginCAKeyNotFound) {
+		// The key may remain: keep the claim.
+		errs = append(errs, lookupErr)
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("tenant login CA key factory: remove tenant %q: %w", tenantID, errors.Join(errs...))
@@ -565,8 +578,14 @@ func tenantLoginCAKeyAttrs(ctx context.Context, base xkms.Backend, tenantID stri
 			return &found, nil
 		}
 	}
-	return nil, errors.New("tenant login CA key factory: the tenant has no login CA key")
+	return nil, errTenantLoginCAKeyNotFound
 }
+
+// errTenantLoginCAKeyNotFound is the only lookup result that proves the
+// tenant has no login CA key: any other lookup error (a key store outage, a
+// refused listing) leaves the key's presence unknown, and a pass must not
+// claim, record intent or generate on it.
+var errTenantLoginCAKeyNotFound = errors.New("tenant login CA key factory: the tenant has no login CA key")
 
 // tenantLoginCAKeyTenant reports which tenant a listed key is the login CA
 // key of. The tenant is in the key name: the AWS KMS, Azure Key Vault and GCP
