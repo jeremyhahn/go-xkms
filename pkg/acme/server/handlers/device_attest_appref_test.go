@@ -31,6 +31,11 @@ import (
 // devicePossessionCSR's measurements carry.
 var possessionApplicationEvidence, _ = hex.DecodeString("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 
+// possessionMeasurements is the measurements claim (273) carrying
+// possessionApplicationEvidence, in device-attest-01's pinned shape: the
+// test devices' alias certificates and possession requests both carry it.
+var possessionMeasurements, _ = hex.DecodeString("81821901025854a50050bcc710071a6653c1967ef0d3d5ede421016374667702a2181f6374667718210103a111a20782015820ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad1818636170700c00")
+
 // TestBindDeviceAttestationKey_ApplicationReference is SPEC.md:41's open item
 // at the finalize handler: a DICE possession request's application evidence
 // is matched against the reference the device's provisioning record

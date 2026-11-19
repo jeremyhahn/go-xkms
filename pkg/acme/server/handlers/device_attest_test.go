@@ -16,6 +16,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -67,7 +68,10 @@ func newDICEAliasCert(t *testing.T, key *ecdsa.PrivateKey, keyAuth string, ueid 
 	t.Helper()
 
 	extensions := []pkix.Extension{}
-	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{Nonce: deviceattest01.DICENonce(keyAuth)})
+	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{
+		Nonce: deviceattest01.DICENonce(keyAuth),
+		Other: map[int64][]byte{dice.ClaimMeasurements: bytes.Clone(possessionMeasurements)},
+	})
 	require.NoError(t, err)
 	extensions = append(extensions, uccs)
 
