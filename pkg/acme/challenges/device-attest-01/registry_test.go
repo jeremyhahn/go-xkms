@@ -307,31 +307,31 @@ func TestConfirmRegisteredDevice(t *testing.T) {
 	spki := spkiOf(t, deviceKey)
 
 	t.Run("an unchanged record confirms", func(t *testing.T) {
-		require.NoError(t, provisionedFor(t, deviceKey).ConfirmRegisteredDevice(ctx, ueid, spki))
+		require.NoError(t, provisionedFor(t, deviceKey).ConfirmRegisteredDevice(ctx, ueid, spki, nil))
 	})
 
 	t.Run("an unchanged DeviceID certificate confirms", func(t *testing.T) {
 		fixture := newDICEFixture(t, nil, true, true, true)
 		v := fixture.verifier(t, DICEPolicy{})
-		require.NoError(t, v.ConfirmRegisteredDevice(ctx, ueid, fixture.deviceID.RawSubjectPublicKeyInfo))
+		require.NoError(t, v.ConfirmRegisteredDevice(ctx, ueid, fixture.deviceID.RawSubjectPublicKeyInfo, nil))
 	})
 
 	t.Run("a withdrawn device is refused", func(t *testing.T) {
 		v := registryVerifier(t, TrustAnchors{Devices: testRegistry{}})
-		err := v.ConfirmRegisteredDevice(ctx, ueid, spki)
+		err := v.ConfirmRegisteredDevice(ctx, ueid, spki, nil)
 		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 		assert.ErrorIs(t, err, ErrDeviceNotProvisioned)
 	})
 
 	t.Run("a re-keyed device is refused", func(t *testing.T) {
-		err := provisionedFor(t, newP256Key(t)).ConfirmRegisteredDevice(ctx, ueid, spki)
+		err := provisionedFor(t, newP256Key(t)).ConfirmRegisteredDevice(ctx, ueid, spki, nil)
 		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 		assert.ErrorIs(t, err, ErrAttestedKeyMismatch)
 	})
 
 	t.Run("a DeviceID certificate that no longer parses is refused", func(t *testing.T) {
 		v := registryVerifier(t, TrustAnchors{Devices: testRegistry{ueid: {DeviceIDCertificate: []byte{0x30, 0x00}}}})
-		err := v.ConfirmRegisteredDevice(ctx, ueid, spki)
+		err := v.ConfirmRegisteredDevice(ctx, ueid, spki, nil)
 		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 		assert.ErrorIs(t, err, ErrProvisioningRecordInvalid)
 	})
