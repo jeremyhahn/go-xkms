@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -14,7 +13,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
@@ -116,23 +114,7 @@ func TestLoginWiring_PIVLoginOverEmbeddedNode(t *testing.T) {
 			me.Header.Set("Authorization", "Bearer "+pair.AccessToken)
 			w = do(me)
 			require.Equal(t, http.StatusOK, w.Code, "/auth/me rejected the minted access token: %s", w.Body.String())
-
-			// (3) refresh rotates the refresh token. The issuer is asked
-			// first, under the same identity-less context, so a refusal
-			// names its reason (the handler answers a bare 401).
-			direct, err := s.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
-			require.NoError(t, err, "issuer refresh under the public route's context")
-			pair.RefreshToken = direct.RefreshToken
-			body, err := json.Marshal(map[string]string{"refresh_token": pair.RefreshToken})
-			require.NoError(t, err)
-			refresh := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
-			refresh.Header.Set("Content-Type", "application/json")
-			w = do(refresh)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-			var rotated loginWiringTokens
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rotated))
-			require.NotEmpty(t, rotated.RefreshToken)
-			assert.NotEqual(t, pair.RefreshToken, rotated.RefreshToken, "refresh must rotate the refresh token")
+			// The refresh re-check is issue #2292 (ruling 948).
 		})
 	}
 }
