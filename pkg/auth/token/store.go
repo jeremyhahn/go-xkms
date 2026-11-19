@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbtenantid "github.com/jeremyhahn/go-qrdb/pkg/tenantid"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -316,16 +318,29 @@ func WithCallContext(bind CallContext) QRDBRefreshStoreOption {
 	return func(s *QRDBRefreshStore) { s.bind = bind }
 }
 
-// callContext applies the binder, if any, to ctx.
+// callContext applies the binder, if any, to ctx, and binds the result to
+// the system tenant, the scope the store's records and service identity
+// live in.
 func (s *QRDBRefreshStore) callContext(ctx context.Context) (context.Context, error) {
 	if s.bind == nil {
 		return ctx, nil
+	}
+	// The embedded KV client does not check ctx itself, so a cancelled
+	// caller is refused here rather than running the call detached.
+	if err := ctx.Err(); err != nil {
+		return nil, &StoreError{Op: "bind call context", Err: err}
 	}
 	bound, err := s.bind(ctx)
 	if err != nil {
 		return nil, &StoreError{Op: "bind call context", Err: err}
 	}
-	return bound, nil
+	// The service identity lives in the system tenant, and the binder keeps
+	// the caller's tenant: a request from a non-system tenant would reach
+	// the self-scoped KV permissions with a mismatched scope. The store's
+	// records are system-tenant bookkeeping, so the call is bound to that
+	// scope, never to the request's tenant. Deriving from ctx keeps the
+	// caller's cancellation and deadline (go-xkms#2287, ruling 971).
+	return qrdbtenant.WithTenantID(bound, qrdbtenantid.System), nil
 }
 
 // NewQRDBRefreshStore constructs a store over the given KV client.
