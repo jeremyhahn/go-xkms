@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -1170,6 +1172,32 @@ func TestDisableUser_RevokesOnlyTheUsersTenant(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rec, "t2's alice session must survive")
 	require.NoError(t, store.MarkRotated(ctx, "f2", "j2"))
+}
+
+// An admin of a non-system tenant disables a user: the request context
+// carries that tenant. On the embedded node that enforces authentication,
+// the refresh store's revoke must still run in its system-tenant scope and
+// revoke the user's records (go-xkms#2287, Tenant Agent ruling 971).
+func TestDisableUser_FromNonSystemTenant_RevokesOnTheEmbeddedNode(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 42, Username: "alice", TenantID: "t1"}, nil
+	}
+	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
+
+	node := barriertest.NewPrincipalNode(t)
+	store, err := token.NewQRDBRefreshStore(node.Client().KV(), token.WithCallContext(node.ServiceContext))
+	require.NoError(t, err)
+	anon := context.Background()
+	exp := time.Now().Add(time.Hour).Unix()
+	require.NoError(t, store.Save(anon, &token.Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: exp}))
+	svc.SetTokenIssuer(newTestTokenIssuerWithStore(t, store))
+
+	require.NoError(t, svc.DisableUser(qrdbtenant.WithTenantID(anon, "t1"), "alice"))
+
+	rec, err := store.Get(anon, "f1", "j1")
+	require.NoError(t, err)
+	assert.Nil(t, rec, "the disabled user's refresh record must be revoked")
 }
 
 // TestDisableUser_NoTokenIssuerConfiguredStillSucceeds proves a deployment
