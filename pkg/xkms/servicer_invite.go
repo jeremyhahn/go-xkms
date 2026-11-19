@@ -456,6 +456,9 @@ func (s *XKMSService) activateInviteUser(ctx context.Context, tenantID string, u
 		if u, gErr := s.getInviteUser(ctx, tenantID, userID); gErr == nil && u.Lifecycle == string(qrdbsdk.LifecycleActive) {
 			return nil
 		}
+		if errors.Is(err, ErrInviteUnusable) {
+			return ErrInviteUnusable
+		}
 		return &ErrUserOperation{Operation: "activate invited user", Err: err}
 	}
 	return nil
@@ -519,7 +522,20 @@ func (s *XKMSService) setInviteUserActive(ctx context.Context, tenantID string, 
 		_, err := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: string(qrdbsdk.LifecycleActive)})
 		return err
 	}
-	_, err := s.inviteUsers.UpdateUser(qrdbsdk.ContextWithTenant(ctx, tenantID), &qrdbsdk.UpdateUserRequest{ID: userID, Lifecycle: qrdbsdk.LifecycleActive})
+	// The ceremony checked the lifecycle before this call; an administrator
+	// may have disabled the account since. The guard judges the committed
+	// record the conditional commit swaps against, so only a still-pending
+	// account is activated: a disable is never undone.
+	_, err := s.inviteUsers.UpdateUser(qrdbsdk.ContextWithTenant(ctx, tenantID), &qrdbsdk.UpdateUserRequest{
+		ID:        userID,
+		Lifecycle: qrdbsdk.LifecycleActive,
+		Guard: func(prior, _ *qrdbsdk.User) error {
+			if prior.Lifecycle != qrdbsdk.LifecyclePending {
+				return ErrInviteUnusable
+			}
+			return nil
+		},
+	})
 	return err
 }
 
