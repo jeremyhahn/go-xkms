@@ -2550,8 +2550,11 @@ jobs:
       # another package in the 8g container). Alone, with -p 1 -parallel 2,
       # it cannot share the container with another test binary (DS-7817).
       # The exclusion above names its import path: keep the two in sync if
-      # the package moves or is renamed.
+      # the package moves or is renamed. Hosted runners only, as the step
+      # above: the bigdisk pool takes no toolchain image and has no Docker,
+      # and its native race step already covers this package.
       - name: Race detector, pkg/fido2/authenticator (-p 1, -parallel 2)
+        if: runner.environment == 'github-hosted'
         env:
           IN_IMAGE_NETWORK: bridge
         run: |
