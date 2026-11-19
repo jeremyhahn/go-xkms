@@ -57,7 +57,6 @@ import (
 	"strings"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
-	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -269,18 +268,11 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	baseURL := scheme + addr + endpointPath
 
-	httpClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
-	}
-
-	httpOpts := []mcptransport.StreamableHTTPCOption{mcptransport.WithHTTPBasicClient(httpClient)}
-	if headers := c.requestHeaders(); len(headers) > 0 {
-		httpOpts = append(httpOpts, mcptransport.WithHTTPHeaders(headers))
-	}
-	mcpClient, err := mcpclient.NewStreamableHttpClient(baseURL, httpOpts...)
-	if err != nil {
-		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
-	}
+	// Our own streamable HTTP transport, not mcp-go's: it never follows a
+	// redirect, so a Location header cannot send the request or the bearer
+	// token to another origin (GO-2026-6911).
+	httpTransport := newStreamableHTTP(baseURL, &http.Transport{TLSClientConfig: tlsConfig}, c.requestHeaders())
+	mcpClient := mcpclient.NewClient(httpTransport)
 
 	if startErr := mcpClient.Start(ctx); startErr != nil {
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", startErr)}

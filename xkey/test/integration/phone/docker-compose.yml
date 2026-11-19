@@ -31,6 +31,8 @@ services:
         go-qrdb: ../../../../../go-qrdb
         go-quicraft: ../../../../../go-quicraft
         softhsm-pin: ../../../../scripts
+      secrets:
+        - apt_proxy
     command: >
       sh -c "cd /workspace/xkey &&
              go build -o /tmp/xkey ./cmd/xkey &&
@@ -67,3 +69,9 @@ services:
         condition: service_healthy
       xkey-desktop:
         condition: service_started
+
+secrets:
+  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
+  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  apt_proxy:
+    environment: DEVCACHE_APT_PROXY
