@@ -364,6 +364,80 @@ func TestCredentialStore_RecoveredClaimFencesSlowClaimer(t *testing.T) {
 	assert.Equal(t, won.ID, owned[0].ID)
 }
 
+// TestCredentialStore_StaleClaimerCrashAfterSaveLeavesNoCredential: a slow
+// claimer whose claim was recovered saves its credential and crashes before
+// Commit, so its cleanup never runs. A restarted store must still expose
+// only the recoverer's credential, whether the recoverer has committed or
+// is still mid-ceremony (Codex round-5 P1, ruling 968).
+func TestCredentialStore_StaleClaimerCrashAfterSaveLeavesNoCredential(t *testing.T) {
+	ctx := context.Background()
+	won := &Credential{ID: []byte("recoverer-id"), UserID: uniquenessOwner}
+	late := &Credential{ID: []byte("slow-id"), UserID: uniquenessOwner}
+
+	assertOnlyWinner := func(t *testing.T, s *daoCredentialStore) {
+		t.Helper()
+		owned, err := s.GetByUserID(ctx, uniquenessOwner)
+		require.NoError(t, err)
+		require.Len(t, owned, 1)
+		assert.Equal(t, won.ID, owned[0].ID)
+		_, err = s.GetByCredentialID(ctx, late.ID)
+		require.ErrorIs(t, err, ErrCredentialNotFound)
+		got, err := s.GetByCredentialID(ctx, won.ID)
+		require.NoError(t, err)
+		assert.Equal(t, won.ID, got.ID)
+		_, err = s.ClaimFirstCredential(ctx, uniquenessOwner)
+		require.ErrorIs(t, err, ErrFirstCredentialClaimed, "the account keeps its committed first credential")
+	}
+
+	t.Run("recoverer committed first", func(t *testing.T) {
+		factory := newTestDAOFactory()
+		slow := newTestCredentialStore(t, factory)
+		slowClaim, err := slow.ClaimFirstCredential(ctx, uniquenessOwner)
+		require.NoError(t, err)
+
+		recoverer := newTestCredentialStore(t, factory)
+		recoverer.now = pastClaimLease()
+		claim, err := recoverer.ClaimFirstCredential(ctx, uniquenessOwner)
+		require.NoError(t, err)
+		require.NoError(t, claim.Save(ctx, won))
+		require.NoError(t, claim.Commit(ctx, won))
+
+		require.NoError(t, slowClaim.Save(ctx, late))
+		// crash: the slow claimer never reaches Commit or its cleanup.
+
+		restarted := newTestCredentialStore(t, factory)
+		restarted.now = pastClaimLease()
+		assertOnlyWinner(t, restarted)
+		require.ErrorIs(t, restarted.Update(ctx, late), ErrCredentialNotFound)
+	})
+
+	t.Run("recoverer still pending", func(t *testing.T) {
+		factory := newTestDAOFactory()
+		slow := newTestCredentialStore(t, factory)
+		slowClaim, err := slow.ClaimFirstCredential(ctx, uniquenessOwner)
+		require.NoError(t, err)
+
+		recoverer := newTestCredentialStore(t, factory)
+		recoverer.now = pastClaimLease()
+		claim, err := recoverer.ClaimFirstCredential(ctx, uniquenessOwner)
+		require.NoError(t, err)
+
+		require.NoError(t, slowClaim.Save(ctx, late))
+		// crash: the slow claimer never reaches Commit or its cleanup.
+
+		restarted := newTestCredentialStore(t, factory)
+		owned, err := restarted.GetByUserID(ctx, uniquenessOwner)
+		require.NoError(t, err)
+		require.Empty(t, owned, "a stale claimer's credential is never readable")
+		_, err = restarted.GetByCredentialID(ctx, late.ID)
+		require.ErrorIs(t, err, ErrCredentialNotFound)
+
+		require.NoError(t, claim.Save(ctx, won))
+		require.NoError(t, claim.Commit(ctx, won))
+		assertOnlyWinner(t, restarted)
+	})
+}
+
 // TestCredentialStore_ExpiredClaimWithCredentialIsNotRecovered proves a
 // ceremony that saved the credential but crashed before committing does not
 // let a second first credential in: the account already has a credential.
