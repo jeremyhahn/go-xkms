@@ -36,6 +36,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	sdkxkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -534,16 +537,64 @@ func TestTrustBootstrapXKMSd_ImportsToServer(t *testing.T) {
 // the bootstrap --timeout context, so an expired deadline stops it and files
 // nothing on the server.
 func TestTrustBootstrapXKMSd_ImportHonoursTimeout(t *testing.T) {
-	startTrustXKMSd(t)
-	bundlePEM := newTestCertificatePEM(t, "strotf expired bootstrap CA")
+	isolateXKMSdEndpoint(t)
+	isolateLocalTrustStore(t, "strotf local root")
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	// The connect succeeds; the server then holds TrustRootImport until the
+	// caller's deadline cancels it, so only the bootstrap context can end it.
+	reached := make(chan struct{})
+	serverErr := make(chan error, 1)
+	release := make(chan struct{})
+	stall := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if !strings.HasSuffix(info.FullMethod, "/TrustRootImport") {
+			return handler(ctx, req)
+		}
+		close(reached)
+		select {
+		case <-ctx.Done():
+			serverErr <- ctx.Err()
+			return nil, status.FromContextError(ctx.Err()).Err()
+		case <-release:
+			return nil, status.Error(codes.Aborted, "test released a stalled import")
+		}
+	}
+	svc := newTestXKMSService(t)
+	svc.SetTrustRootStore(newTrustRootTestStore(t))
+	address, _ := startTestXKMSdService(t, svc, stall)
+	xkmsdURL = address
+	// Registered after the server so it runs first: a stalled handler would
+	// otherwise block the server's GracefulStop.
+	t.Cleanup(func() { close(release) })
+
+	bundlePEM := newTestCertificatePEM(t, "strotf stalled bootstrap CA")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	<-ctx.Done()
 
-	var buf bytes.Buffer
-	err := runTrustBootstrapXKMSd(ctx, newTrustBootstrapTestCommand(t, &buf), bundlePEM, "expired.example")
-	require.Error(t, err, "an expired deadline stops the connect or the import")
+	done := make(chan error, 1)
+	go func() {
+		var buf bytes.Buffer
+		done <- runTrustBootstrapXKMSd(ctx, newTrustBootstrapTestCommand(t, &buf), bundlePEM, "stalled.example")
+	}()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stalled import outlived the bootstrap deadline")
+	}
+	select {
+	case <-reached:
+	default:
+		t.Fatal("the bootstrap never reached TrustRootImport")
+	}
+	require.ErrorIs(t, err, ErrTrustBootstrapFailed, "the import, not the connect, fails")
+	require.ErrorContains(t, err, "TrustRootImport", "the import ends at the bootstrap deadline")
+	select {
+	case cause := <-serverErr:
+		require.ErrorIs(t, cause, context.DeadlineExceeded, "the deadline cancels the server-side import")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the server-side import was never cancelled")
+	}
 
 	_, err = getServerTrustRoot(t, trustPEMFingerprint(t, bundlePEM))
 	require.Error(t, err, "an import past its deadline files nothing")
