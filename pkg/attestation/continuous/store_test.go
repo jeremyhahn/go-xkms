@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
@@ -108,6 +110,49 @@ func TestStore_LatestAndList(t *testing.T) {
 	}
 	if !latest.At.Equal(at.Add(2 * time.Minute)) {
 		t.Fatalf("LatestVerdict at %v, want the newest", latest.At)
+	}
+}
+
+// noScanDAO refuses a collection-wide page scan, so a read that walks
+// every tenant's verdicts fails.
+type noScanDAO struct {
+	qrdbsdk.GenericDAO[*verdictEntity]
+}
+
+func (noScanDAO) ForEachPage(context.Context, qrdbsdk.PageQuery, qrdbsdk.PagerFunc[*verdictEntity]) error {
+	return errors.New("collection-wide scan")
+}
+
+// TestStore_ReadsUseDeviceIndex reads one device's verdicts through the
+// device index, never by scanning every tenant's history (Codex P2, #2111).
+func TestStore_ReadsUseDeviceIndex(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 12, 1, 0, 0, 0, time.UTC)
+	for i, v := range []Verdict{
+		{Tenant: "acme", DeviceID: "dev-1", Verified: true, At: at},
+		{Tenant: "acme", DeviceID: "dev-2", Verified: true, At: at},
+		{Tenant: "other", DeviceID: "dev-1", Verified: true, At: at},
+		{Tenant: "acme", DeviceID: "dev-1", Verified: false, Cause: "pcr mismatch", At: at.Add(time.Minute)},
+	} {
+		if err := store.SaveVerdict(ctx, v); err != nil {
+			t.Fatalf("SaveVerdict %d: %v", i, err)
+		}
+	}
+	store.records = noScanDAO{store.records}
+	list, err := store.ListVerdicts(ctx, "acme", "dev-1")
+	if err != nil {
+		t.Fatalf("ListVerdicts: %v", err)
+	}
+	if len(list) != 2 || list[0].Tenant != "acme" || list[1].Cause != "pcr mismatch" {
+		t.Fatalf("ListVerdicts = %+v, want acme/dev-1's two verdicts oldest first", list)
+	}
+	latest, err := store.LatestVerdict(ctx, "acme", "dev-1")
+	if err != nil {
+		t.Fatalf("LatestVerdict: %v", err)
+	}
+	if latest.Cause != "pcr mismatch" {
+		t.Fatalf("LatestVerdict = %+v, want the newest", latest)
 	}
 }
 
