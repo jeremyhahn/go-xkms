@@ -15,6 +15,7 @@ package admin
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
@@ -436,19 +437,15 @@ func TestTenantCAClient_UpdateIntermediateCAStatus(t *testing.T) {
 }
 
 func TestTenantCAClient_UpdateTenantStatus(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mt := newMockTransportWithResponse(map[string]interface{}{})
-		c := newTenantCAClient(mt)
+	t.Run("refused without a request", func(t *testing.T) {
+		c := newTenantCAClient(refusingTransport(t))
 
-		err := c.UpdateTenantStatus(context.Background(), "tenant-1", "disabled")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		err := c.UpdateTenantStatus(context.Background(), "tenant-1", "suspended")
+		assertTenantStatusRefused(t, err)
 	})
 
 	t.Run("empty tenant ID", func(t *testing.T) {
-		mt := newMockTransportWithResponse(nil)
-		c := newTenantCAClient(mt)
+		c := newTenantCAClient(refusingTransport(t))
 
 		err := c.UpdateTenantStatus(context.Background(), "", "disabled")
 		if err == nil {
@@ -460,25 +457,39 @@ func TestTenantCAClient_UpdateTenantStatus(t *testing.T) {
 	})
 
 	t.Run("empty status", func(t *testing.T) {
-		mt := newMockTransportWithResponse(nil)
-		c := newTenantCAClient(mt)
+		c := newTenantCAClient(refusingTransport(t))
 
 		err := c.UpdateTenantStatus(context.Background(), "tenant-1", "")
-		if err == nil {
-			t.Fatal("expected error for empty status")
-		}
-		if !errors.IsInvalidInput(err) {
-			t.Errorf("expected invalid input error, got %v", err)
-		}
+		assertTenantStatusRefused(t, err)
 	})
+}
 
-	t.Run("transport error", func(t *testing.T) {
-		mt := newMockTransportWithError(errTestUnavailable)
-		c := newTenantCAClient(mt)
+// refusingTransport returns a transport that fails the test if any request
+// reaches it.
+func refusingTransport(t *testing.T) *mockTransport {
+	t.Helper()
+	return &mockTransport{
+		requestFunc: func(_ context.Context, service, method string, _ interface{}) (interface{}, error) {
+			t.Fatalf("unexpected request %s.%s", service, method)
+			return nil, nil
+		},
+	}
+}
 
-		err := c.UpdateTenantStatus(context.Background(), "tenant-1", "disabled")
-		if err == nil {
-			t.Fatal("expected error from transport")
-		}
-	})
+// assertTenantStatusRefused checks err is the typed tenant status refusal.
+func assertTenantStatusRefused(t *testing.T, err error) {
+	t.Helper()
+	if !stderrors.Is(err, ErrTenantStatusUnsupported) {
+		t.Fatalf("expected ErrTenantStatusUnsupported, got %v", err)
+	}
+	var unsupported *TenantStatusUnsupportedError
+	if !stderrors.As(err, &unsupported) {
+		t.Fatalf("expected *TenantStatusUnsupportedError, got %T", err)
+	}
+	if unsupported.Field != "status" {
+		t.Errorf("expected field status, got %q", unsupported.Field)
+	}
+	if !errors.IsInvalidInput(err) {
+		t.Errorf("expected invalid input error, got %v", err)
+	}
 }

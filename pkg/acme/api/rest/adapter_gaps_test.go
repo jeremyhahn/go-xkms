@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -157,16 +158,42 @@ func assertProblemSurfaced(t *testing.T, err error, wantStatus string) {
 	}
 }
 
+const tenantStatusProblemJSON = `{"type":"` + admin.ProblemTypeTenantStatusUnsupported + `","title":"Bad Request","detail":"admin: unsupported field \"status\"","status":400}`
+
+// assertTenantStatusUnsupported checks the SPEC.md:129 refusal reaches the
+// caller typed: the sentinel matches and the error names the status field.
+func assertTenantStatusUnsupported(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, admin.ErrTenantStatusUnsupported) {
+		t.Fatalf("error %v is not ErrTenantStatusUnsupported", err)
+	}
+	var ufe *admin.UnsupportedFieldError
+	if !errors.As(err, &ufe) || ufe.Field != "status" {
+		t.Fatalf("error %v is not an UnsupportedFieldError for status", err)
+	}
+}
+
+// TestListTenants_StatusFilterRefused: the status filter is refused with the
+// typed error before any request is sent.
+func TestListTenants_StatusFilterRefused(t *testing.T) {
+	srv, got := newCapturingServer(t, http.StatusOK, `{"tenants":[]}`)
+	a := newAdapterFor(t, srv)
+
+	_, _, err := a.ListTenants(context.Background(), &admin.ListTenantsRequest{Page: 1, PerPage: 10, Status: "active"})
+	assertTenantStatusUnsupported(t, err)
+	if got.Method != "" {
+		t.Errorf("a refused filter reached the server: %s %s", got.Method, got.Path)
+	}
+}
+
 // TestUpdateTenantStatus covers the tenant status transition: the PUT target,
 // the request body the server parses, and both error shapes.
 func TestUpdateTenantStatus(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		srv, got := newCapturingServer(t, http.StatusNoContent, nil)
+	t.Run("unsupported", func(t *testing.T) {
+		srv, got := newCapturingServer(t, http.StatusBadRequest, tenantStatusProblemJSON)
 		a := newAdapterFor(t, srv)
 
-		if err := a.UpdateTenantStatus(context.Background(), "tenant-1", "suspended"); err != nil {
-			t.Fatalf("UpdateTenantStatus: %v", err)
-		}
+		assertTenantStatusUnsupported(t, a.UpdateTenantStatus(context.Background(), "tenant-1", "suspended"))
 		if got.Method != http.MethodPut {
 			t.Errorf("method = %s, want PUT", got.Method)
 		}
