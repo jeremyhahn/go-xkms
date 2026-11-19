@@ -20,6 +20,17 @@ Browse to `https://<host>:8443/ui/`. Sign in with a passkey (enroll one
 first through the Register screen or `xkmsctl`) or a PIV/mTLS client
 certificate.
 
+**Invite links.** Creating a user (`POST /api/v1/users`) mints a single-use
+link `<public base URL>/#/invite/<tenant>/<token>`
+(`pkg/xkms/servicer_invite.go` `buildInviteURL`). Opening it shows the
+Accept your invitation screen (`web/app/src/views/InviteView.svelte`): the
+tenant, the invited address and a Register passkey button. The passkey is
+bound to the invite (`/api/v1/invites/<tenant>/<token>/fido2/begin` and
+`/finish`), then the console signs the new user in with it. A link that is
+unknown, expired or already used reads "This invite link is not valid". With
+`webauthn.enabled` off the screen says so and starts no ceremony. The base
+URL must point at the console mount, e.g. `https://<host>:8443/ui`.
+
 For local development, `xkmsd -c configs/xkmsd-local.yaml` needs no flags:
 that config already turns on TLS with a CA-minted certificate,
 `auth.type: adaptive` (anonymous only until the first user is provisioned,
