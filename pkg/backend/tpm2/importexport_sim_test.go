@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -403,6 +404,45 @@ func TestImportKey_PersistsUnderCN(t *testing.T) {
 	if !found {
 		t.Fatalf("imported key not enumerated by ListKeys: %+v", after)
 	}
+}
+
+// TestImportKey_NeverOverwritesExistingKey proves an import into the TPM
+// persists with a conditional create: a second, different key imported
+// under the same attributes is refused and the stored public key is still
+// the original one (Codex round-4 P1 on #2183, Tenant Agent ruling 952).
+func TestImportKey_NeverOverwritesExistingKey(t *testing.T) {
+	b := newSimBackend(t)
+	ctx := context.Background()
+
+	_, first := wrapMaterial(t, b, bytes.Repeat([]byte{0x11}, 32))
+	attrs := &types.KeyAttributes{CN: "import-no-overwrite", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, attrs, first); err != nil {
+		t.Fatalf("ImportKey (first): %v", err)
+	}
+	original := storedPublicBlob(t, b, attrs)
+
+	_, second := wrapMaterial(t, b, bytes.Repeat([]byte{0x22}, 32))
+	conflict := &types.KeyAttributes{CN: "import-no-overwrite", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, conflict, second); err == nil {
+		t.Fatal("ImportKey over an existing key succeeded; it must refuse (already exists)")
+	}
+
+	if got := storedPublicBlob(t, b, attrs); !bytes.Equal(got, original) {
+		t.Fatal("stored public key changed: the conflicting import overwrote the original key")
+	}
+}
+
+// storedPublicBlob returns the public area the backend's key store holds for attrs.
+func storedPublicBlob(t *testing.T, b *Backend, attrs *types.KeyAttributes) []byte {
+	t.Helper()
+	pub, err := b.keyBackend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		t.Fatalf("read stored public blob: %v", err)
+	}
+	if len(pub) == 0 {
+		t.Fatal("stored public blob is empty")
+	}
+	return bytes.Clone(pub)
 }
 
 // TestImportKey_HonorsExplicitParent verifies an explicitly supplied parent is
