@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/assert"
@@ -80,6 +81,55 @@ func TestQRDBRefreshStore_ServiceContext_AnonymousCaller(t *testing.T) {
 	rec, err = store.Get(ctx, "f2", "j2")
 	require.NoError(t, err)
 	assert.Nil(t, rec)
+}
+
+// A module request from a non-system tenant reaches the store with that
+// tenant bound to its context. The bookkeeping must still run in the store's
+// system-tenant scope, or the self-scoped KV permissions of the service
+// principal reject the mismatch (go-xkms#2287, Tenant Agent ruling 971).
+func TestQRDBRefreshStore_ServiceContext_NonSystemTenantCaller(t *testing.T) {
+	node := newAuthenticatingNode(t)
+	store, err := token.NewQRDBRefreshStore(node.Client().KV(), token.WithCallContext(node.ServiceContext))
+	require.NoError(t, err)
+	exp := time.Now().Add(time.Hour).Unix()
+	anon := context.Background()
+	tenantCtx := qrdbtenant.WithTenantID(context.Background(), "t1")
+
+	require.NoError(t, store.Save(anon, &token.Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: exp}))
+	rec, err := store.Get(tenantCtx, "f1", "j1")
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.NoError(t, store.MarkRotated(tenantCtx, "f1", "j1"))
+	require.NoError(t, store.RevokeFamily(tenantCtx, "f1"))
+	rec, err = store.Get(anon, "f1", "j1")
+	require.NoError(t, err)
+	assert.Nil(t, rec)
+
+	require.NoError(t, store.Save(anon, &token.Record{JTI: "j2", Family: "f2", Tenant: "t1", Subject: "bob", ExpiresAt: exp}))
+	require.NoError(t, store.RevokeBySubject(tenantCtx, "t1", "bob"))
+	rec, err = store.Get(anon, "f2", "j2")
+	require.NoError(t, err)
+	assert.Nil(t, rec)
+}
+
+// The bound call keeps the caller's cancellation: a cancelled request
+// context cancels the bookkeeping call instead of running it detached.
+func TestQRDBRefreshStore_ServiceContext_CancelledCaller(t *testing.T) {
+	node := newAuthenticatingNode(t)
+	store, err := token.NewQRDBRefreshStore(node.Client().KV(), token.WithCallContext(node.ServiceContext))
+	require.NoError(t, err)
+	exp := time.Now().Add(time.Hour).Unix()
+	require.NoError(t, store.Save(context.Background(), &token.Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: exp}))
+
+	ctx, cancel := context.WithCancel(qrdbtenant.WithTenantID(context.Background(), "t1"))
+	cancel()
+	err = store.RevokeFamily(ctx, "f1")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	rec, err := store.Get(context.Background(), "f1", "j1")
+	require.NoError(t, err)
+	assert.NotNil(t, rec, "a cancelled revoke must not run")
 }
 
 // TestQRDBRefreshStore_RevokeBySubject_TenantScoped revokes "alice" in one
