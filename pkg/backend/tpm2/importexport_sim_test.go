@@ -423,8 +423,12 @@ func TestImportKey_NeverOverwritesExistingKey(t *testing.T) {
 
 	_, second := wrapMaterial(t, b, bytes.Repeat([]byte{0x22}, 32))
 	conflict := &types.KeyAttributes{CN: "import-no-overwrite", KeyType: types.KeyTypeStorage}
-	if err := b.ImportKey(ctx, conflict, second); err == nil {
+	err := b.ImportKey(ctx, conflict, second)
+	if err == nil {
 		t.Fatal("ImportKey over an existing key succeeded; it must refuse (already exists)")
+	}
+	if !errors.Is(err, backend.ErrKeyAlreadyExists) {
+		t.Errorf("ImportKey conflict error = %v, want backend.ErrKeyAlreadyExists", err)
 	}
 
 	if got := storedPublicBlob(t, b, attrs); !bytes.Equal(got, original) {

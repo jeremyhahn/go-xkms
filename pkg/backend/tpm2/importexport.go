@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -243,8 +245,13 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 	attrs.StoreType = types.StoreTPM2
 
+	// Conditional create: an import never overwrites an existing key under
+	// the same attributes (the blob store's SaveIfAbsent path).
 	publicBlob := tpm2.New2B(*public)
-	if err := b.tpm.SaveKeyPair(attrs, outPrivate, publicBlob, b.keyBackend, true); err != nil {
+	if err := b.tpm.SaveKeyPair(attrs, outPrivate, publicBlob, b.keyBackend, false); err != nil {
+		if errors.Is(err, store.ErrBlobExists) {
+			return &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("import refused: key %q already exists", attrs.CN)}
+		}
 		return &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to persist imported key: %v", err)}
 	}
 	return nil
