@@ -1108,6 +1108,7 @@ test-scripts:
 	@bash test/scripts/xkey-build-tags.test.sh
 	@bash test/scripts/go-build-tags.test.sh
 	@bash test/scripts/gomodauth.test.sh
+	@bash test/scripts/go-caches-env.test.sh
 	@bash test/scripts/credential-ignores.test.sh
 	@bash test/scripts/no-credential-echo.test.sh
 	@bash test/scripts/ci-registry.test.sh
