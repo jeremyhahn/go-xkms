@@ -20,6 +20,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -112,6 +113,11 @@ func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 	}
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()
+	}
+	if m.serviceContext != nil {
+		// Login routes are public: the refresh store's KV bookkeeping
+		// runs as the node's service principal (go-xkms#2287).
+		hc.ServiceContext = token.CallContext(m.serviceContext)
 	}
 	if hc.QRDBClient != nil {
 		// WebAuthn credentials persist through the host datastore's DAO
