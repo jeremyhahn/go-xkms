@@ -437,6 +437,12 @@ var (
 	// the TenantService.
 	ErrTenantServiceNotConfigured = errors.New("keystore: tenant service not configured")
 
+	// ErrTenantStatusUnsupported is matched by a TenantUnsupportedFieldError
+	// naming the status field: a tenant status is a go-qrdb tenant field that
+	// go-qrdb does not carry yet, so a caller-set status, or one used as a
+	// list filter, is refused rather than applied.
+	ErrTenantStatusUnsupported = errors.New("keystore: tenant status is not supported")
+
 	// ErrTenantRecordsNotConfigured is returned when a tenant is created with
 	// CA issuance settings but no keeper of tenant records is wired to hold
 	// them (SetTenantRecords).
@@ -1170,6 +1176,26 @@ func (e *TenantDeletedError) Error() string { return qrdbsdk.ErrTenantMissing.Er
 
 // Unwrap returns qrdbsdk.ErrTenantMissing.
 func (e *TenantDeletedError) Unwrap() error { return qrdbsdk.ErrTenantMissing }
+
+// TenantUnsupportedFieldError is returned when a caller sets, or filters on,
+// a tenant field go-qrdb does not carry yet. Field names the refused field.
+type TenantUnsupportedFieldError struct {
+	Field string
+}
+
+// Error implements the error interface.
+func (e *TenantUnsupportedFieldError) Error() string {
+	return "keystore: tenant " + e.Field + " is not supported"
+}
+
+// Unwrap returns ErrTenantStatusUnsupported for the status field, nil for
+// any other.
+func (e *TenantUnsupportedFieldError) Unwrap() error {
+	if e.Field == "status" {
+		return ErrTenantStatusUnsupported
+	}
+	return nil
+}
 
 // PIVRekeyError is returned when a slot's previous key cannot be listed or
 // removed before the slot is re-keyed.
