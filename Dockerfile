@@ -12,7 +12,7 @@ ENV GOTOOLCHAIN=auto
 
 # Install build essentials and required packages for PKCS#11 and TPM testing
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -67,7 +67,7 @@ ENV GOTOOLCHAIN=auto
 # go-qrdb), not gated by any backend tag -- this stage is also where the
 # module builds/tests below run.
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     opensc \
     swtpm \
