@@ -19,11 +19,8 @@
 package integration
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -302,22 +299,10 @@ func checkUnixSocketExists(socketPath string) bool {
 }
 
 func checkHTTPEndpoint(url string) bool {
-	caFile := os.Getenv("KEYSTORE_TLS_CA")
-	if caFile == "" {
-		caFile = "/etc/xkms/certs/ca.crt"
-	}
-	pool := x509.NewCertPool()
-	if caPEM, err := os.ReadFile(caFile); err == nil {
-		pool.AppendCertsFromPEM(caPEM)
-	}
-	client := &http.Client{
-		Timeout: 3 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs: pool,
-			},
-		},
-	}
+	// The trust bundle is re-read on every dial: the server switches from
+	// the bootstrap certificate (KEYSTORE_TLS_CA) to the one its serving CA
+	// issued when it unseals.
+	client := apiharness.TrustedHTTPClient(3 * time.Second)
 	resp, err := client.Get(url) //nolint:noctx // simple health check
 	if err != nil {
 		return false

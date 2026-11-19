@@ -73,18 +73,27 @@ func Main(m *testing.M) {
 
 // Open unseals the barrier of the server at baseURL through its sealed window
 // and waits until the full server is ready. The window serves the configured
-// certificate (tls.cert_file), so the suite's CA is the anchor.
+// certificate (tls.cert_file), so the suite's CA is the anchor; once unsealed
+// the server presents the certificate its serving CA issued and persisted
+// under the unified-TLS data dir (XKMS_UNIFIED_CA). The client re-reads both
+// on every dial (TrustedHTTPClient), so AwaitReady verifies the switched
+// certificate.
 func Open(baseURL string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), BarrierTimeout)
 	defer cancel()
-	caFile := os.Getenv(caFileEnv)
-	if caFile == "" {
-		caFile = defaultCAFile
+	// The suite CA may not be on disk yet when the server is still starting.
+	for {
+		_, err := TrustPool()
+		if err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(ctx.Err(), err)
+		case <-time.After(readyPollInterval):
+		}
 	}
-	client, err := xkmsdtest.SealedWindowClient(ctx, caFile)
-	if err != nil {
-		return err
-	}
+	client := TrustedHTTPClient(15 * time.Second)
 	return openReady(ctx, client, baseURL, []byte(BarrierPassphrase))
 }
 

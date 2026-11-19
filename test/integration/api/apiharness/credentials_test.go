@@ -52,12 +52,12 @@ func credentialFiles(t *testing.T) string {
 	return dir
 }
 
-func TestWriteTrustBundle_HoldsSuiteCeremonyAndUnifiedCAs(t *testing.T) {
+func TestTrustBundleFile_HoldsSuiteCeremonyAndUnifiedCAs(t *testing.T) {
 	dir := credentialFiles(t)
 
-	path, err := writeTrustBundle()
+	path, err := TrustBundleFile()
 	if err != nil {
-		t.Fatalf("writeTrustBundle before unseal = %v, want nil", err)
+		t.Fatalf("TrustBundleFile before unseal = %v, want nil", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -72,9 +72,9 @@ func TestWriteTrustBundle_HoldsSuiteCeremonyAndUnifiedCAs(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(unifiedCAEnv, unified)
-	path, err = writeTrustBundle()
+	path, err = TrustBundleFile()
 	if err != nil {
-		t.Fatalf("writeTrustBundle after unseal = %v, want nil", err)
+		t.Fatalf("TrustBundleFile after unseal = %v, want nil", err)
 	}
 	got, err = os.ReadFile(path)
 	if err != nil {
@@ -85,12 +85,12 @@ func TestWriteTrustBundle_HoldsSuiteCeremonyAndUnifiedCAs(t *testing.T) {
 	}
 }
 
-func TestWriteTrustBundle_MissingCeremonyRootFails(t *testing.T) {
+func TestTrustBundleFile_MissingCeremonyRootFails(t *testing.T) {
 	dir := credentialFiles(t)
 	t.Setenv(ceremonyCAEnv, filepath.Join(dir, "missing.pem"))
 
-	if _, err := writeTrustBundle(); !errors.Is(err, ErrAdminCredential) {
-		t.Fatalf("writeTrustBundle = %v, want ErrAdminCredential", err)
+	if _, err := TrustBundleFile(); !errors.Is(err, ErrAdminCredential) {
+		t.Fatalf("TrustBundleFile = %v, want ErrAdminCredential", err)
 	}
 }
 

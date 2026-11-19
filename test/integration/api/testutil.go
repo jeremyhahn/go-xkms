@@ -89,16 +89,13 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// loadCACertPool loads the test CA certificate pool from the environment or default path.
-// Returns nil if the CA cert cannot be loaded (e.g., running outside Docker).
+// loadCACertPool loads the server trust bundle (apiharness.TrustPool): the
+// suite CA (KEYSTORE_TLS_CA) plus the ceremony root and the serving CA the
+// server persists under the unified-TLS data dir at unseal. Returns nil if
+// the suite CA cannot be loaded (e.g., running outside Docker).
 func loadCACertPool() *x509.CertPool {
-	caFile := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
-	caPEM, err := os.ReadFile(caFile)
+	pool, err := apiharness.TrustPool()
 	if err != nil {
-		return nil
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil
 	}
 	return pool
