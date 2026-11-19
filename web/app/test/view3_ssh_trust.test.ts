@@ -58,7 +58,7 @@ vi.mock("../src/stores/toast.svelte.ts", () => ({
 import SshTrustView from "../src/views/SshTrustView.svelte";
 
 const pin = {
-  scope: "global",
+  scope: "tenant",
   owner: "default",
   host: "git.example.com",
   fingerprint: "SHA256:pinnedpinned",
@@ -67,7 +67,7 @@ const pin = {
 };
 
 const entry: SSHAuthorizedEntry = {
-  scope: "global",
+  scope: "tenant",
   owner: "default",
   name: "deploy",
   line: "ssh-ed25519 AAAAC3Nz deploy@ci",
@@ -96,8 +96,8 @@ describe("SshTrustView", () => {
     seed();
     await mounted();
 
-    expect(listKnownHosts).toHaveBeenCalledWith("global", "default");
-    expect(listAuthorizedKeys).toHaveBeenCalledWith("global", "default");
+    expect(listKnownHosts).toHaveBeenCalledWith("tenant", "default");
+    expect(listAuthorizedKeys).toHaveBeenCalledWith("tenant", "default");
     expect(screen.getByText("ssh-ed25519")).toBeInTheDocument();
     expect(screen.getByText("SHA256:pinnedpinned")).toBeInTheDocument();
     expect(screen.getByText("2026-11-01T10:00:00Z")).toBeInTheDocument();
@@ -129,7 +129,7 @@ describe("SshTrustView", () => {
 
     await waitFor(() =>
       expect(addKnownHost).toHaveBeenCalledWith({
-        scope: "global",
+        scope: "tenant",
         owner: "default",
         host: "new.example.com",
         fingerprint: "SHA256:newnew",
@@ -148,7 +148,7 @@ describe("SshTrustView", () => {
     expect(await screen.findByText("Remove the pin for git.example.com?")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
 
-    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith("git.example.com", "global", "default"));
+    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith("git.example.com", "tenant", "default"));
   });
 
   it("cancelling the remove confirm calls nothing", async () => {
@@ -176,7 +176,7 @@ describe("SshTrustView", () => {
 
     await waitFor(() => expect(verifyKnownHost).toHaveBeenCalledTimes(1));
     expect(verifyKnownHost).toHaveBeenCalledWith("git.example.com", {
-      scope: "global",
+      scope: "tenant",
       owner: "default",
       public_key: "ssh-ed25519 AAAAC3Nza host",
     });
@@ -211,7 +211,7 @@ describe("SshTrustView", () => {
 
     await waitFor(() =>
       expect(addAuthorizedKey).toHaveBeenCalledWith({
-        scope: "global",
+        scope: "tenant",
         owner: "default",
         name: "ops",
         line: "ssh-ed25519 AAAAops ops@host",
@@ -232,7 +232,7 @@ describe("SshTrustView", () => {
 
     await waitFor(() =>
       expect(addAuthorizedKey).toHaveBeenCalledWith({
-        scope: "global",
+        scope: "tenant",
         owner: "default",
         name: "ops",
         line: "ssh-ed25519 AAAAops",
@@ -249,7 +249,7 @@ describe("SshTrustView", () => {
     expect(await screen.findByText("Remove the authorized key deploy?")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
 
-    await waitFor(() => expect(removeAuthorizedKey).toHaveBeenCalledWith("global", "default", "deploy"));
+    await waitFor(() => expect(removeAuthorizedKey).toHaveBeenCalledWith("tenant", "default", "deploy"));
   });
 
   it("verifies an authorized key and names the matched entry", async () => {
@@ -262,13 +262,48 @@ describe("SshTrustView", () => {
 
     await waitFor(() =>
       expect(verifyAuthorizedKey).toHaveBeenCalledWith({
-        scope: "global",
+        scope: "tenant",
         owner: "default",
         fingerprint: "SHA256:deploykey",
       }),
     );
     expect(await screen.findByText("Fingerprint matches deploy.")).toBeInTheDocument();
   });
+
+  it("discards an older authorized-key verify that resolves after a newer 404", async () => {
+    seed();
+    let resolveFirst: (e: SSHAuthorizedEntry) => void = () => {};
+    verifyAuthorizedKey
+      .mockImplementationOnce(() => new Promise<SSHAuthorizedEntry>((r) => { resolveFirst = r; }))
+      .mockRejectedValueOnce(Object.assign(new Error("no authorized key matches"), { status: 404 }));
+    await mounted();
+
+    await fireEvent.input(screen.getByLabelText("Key fingerprint"), { target: { value: "SHA256:deploykey" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Verify key" }));
+    await fireEvent.input(screen.getByLabelText("Key fingerprint"), { target: { value: "SHA256:other" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Verify key" }));
+    expect(await screen.findByText("no authorized key matches")).toBeInTheDocument();
+
+    resolveFirst(entry);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("Fingerprint matches deploy.")).not.toBeInTheDocument();
+    expect(screen.getByText("no authorized key matches")).toBeInTheDocument();
+  });
+
+  for (const label of ["Key fingerprint", "Scope", "Owner"]) {
+    it(`clears an authorized-key verdict when ${label} changes`, async () => {
+      seed();
+      verifyAuthorizedKey.mockResolvedValue(entry);
+      await mounted();
+
+      await fireEvent.input(screen.getByLabelText("Key fingerprint"), { target: { value: "SHA256:deploykey" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Verify key" }));
+      expect(await screen.findByText("Fingerprint matches deploy.")).toBeInTheDocument();
+
+      await fireEvent.input(screen.getByLabelText(label), { target: { value: "changed" } });
+      expect(screen.queryByText("Fingerprint matches deploy.")).not.toBeInTheDocument();
+    });
+  }
 
   it("shows an error alert when the known-host list fails", async () => {
     listKnownHosts.mockRejectedValue(new Error("ssh store unavailable"));
@@ -304,11 +339,11 @@ describe("SshTrustView", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Remove git.example.com" }));
     await screen.findByText("Remove the pin for git.example.com?");
     await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
-    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith("git.example.com", "global", "default"));
+    await waitFor(() => expect(removeKnownHost).toHaveBeenCalledWith("git.example.com", "tenant", "default"));
 
     await fireEvent.click(await screen.findByRole("button", { name: "Remove deploy" }));
     await screen.findByText("Remove the authorized key deploy?");
     await fireEvent.click(screen.getByRole("button", { name: "Confirm remove", hidden: true }));
-    await waitFor(() => expect(removeAuthorizedKey).toHaveBeenCalledWith("global", "default", "deploy"));
+    await waitFor(() => expect(removeAuthorizedKey).toHaveBeenCalledWith("tenant", "default", "deploy"));
   });
 });
