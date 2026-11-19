@@ -33,6 +33,7 @@ __export(index_exports, {
   HEADER_SESSION_ID: () => HEADER_SESSION_ID,
   HealthClient: () => HealthClient,
   HttpCore: () => HttpCore,
+  InvitesClient: () => InvitesClient,
   KeyVersionsClient: () => KeyVersionsClient,
   KeysClient: () => KeysClient,
   OIDCDeviceLoginError: () => OIDCDeviceLoginError,
@@ -485,6 +486,41 @@ var CapabilitiesClient = class {
   /** GET {authPaths.capabilities} -> { "<capability>": boolean, ... } */
   get() {
     return this.http.request("GET", this.paths.capabilities);
+  }
+};
+
+// src/clients/invites.ts
+var INVITES_BASE = "/api/v1/invites";
+var InvitesClient = class {
+  constructor(http) {
+    __publicField(this, "http", http);
+  }
+  path(tenant, token, suffix = "") {
+    return `${INVITES_BASE}/${encodeURIComponent(tenant)}/${encodeURIComponent(token)}${suffix}`;
+  }
+  /** GET /api/v1/invites/{tenant}/{token} */
+  get(tenant, token) {
+    return this.http.request("GET", this.path(tenant, token), { auth: false });
+  }
+  /**
+   * POST /api/v1/invites/{tenant}/{token}/fido2/begin. Returns the creation
+   * options envelope (the same shape the self-service registration begin
+   * returns) for a CredentialProvider.createCredential call.
+   */
+  async beginRegistration(tenant, token) {
+    const resp = await this.http.request(
+      "POST",
+      this.path(tenant, token, "/fido2/begin"),
+      { auth: false, body: {} }
+    );
+    return { sessionId: resp.session_id, options: JSON.parse(resp.options_json) };
+  }
+  /** POST /api/v1/invites/{tenant}/{token}/fido2/finish */
+  finishRegistration(tenant, token, sessionId, credential) {
+    return this.http.request("POST", this.path(tenant, token, "/fido2/finish"), {
+      auth: false,
+      body: { session_id: sessionId, attestation_json: JSON.stringify(credential) }
+    });
   }
 };
 
@@ -1480,6 +1516,7 @@ var XkmsClient = class {
     __publicField(this, "authPaths");
     __publicField(this, "health");
     __publicField(this, "capabilities");
+    __publicField(this, "invites");
     __publicField(this, "auth");
     __publicField(this, "backends");
     __publicField(this, "keys");
@@ -1502,6 +1539,7 @@ var XkmsClient = class {
     this.authPaths = resolveAuthPaths(config.authPaths);
     this.health = new HealthClient(this.http);
     this.capabilities = new CapabilitiesClient(this.http, this.authPaths);
+    this.invites = new InvitesClient(this.http);
     this.auth = new AuthClient(this.http, this.authPaths);
     this.backends = new BackendsClient(this.http);
     this.keys = new KeysClient(this.http);
@@ -1857,6 +1895,7 @@ async function unlockWithXkey(fingerprints, win = window, timeoutMs = XKEY_UNLOC
   HEADER_SESSION_ID,
   HealthClient,
   HttpCore,
+  InvitesClient,
   KeyVersionsClient,
   KeysClient,
   OIDCDeviceLoginError,

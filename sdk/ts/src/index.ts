@@ -107,6 +107,8 @@ export {
 
 export { HealthClient } from './clients/health.js';
 export { CapabilitiesClient } from './clients/capabilities.js';
+export { InvitesClient } from './clients/invites.js';
+export type { InviteInfo, InviteRegistrationResult } from './clients/invites.js';
 export { AuthClient, HEADER_SESSION_ID } from './clients/auth.js';
 export { BackendsClient } from './clients/backends.js';
 export { KeysClient } from './clients/keys.js';

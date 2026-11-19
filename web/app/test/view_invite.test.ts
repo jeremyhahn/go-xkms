@@ -38,6 +38,12 @@ vi.mock("../src/lib/auth.ts", () => ({
   getAuthContext: () => ({ provider: { createCredential, getAssertion } }),
 }));
 
+const setAuthenticated = vi.fn();
+vi.mock("@go-xkms/svelte-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@go-xkms/svelte-auth")>()),
+  setAuthenticated: (t: unknown) => setAuthenticated(t),
+}));
+
 vi.mock("../src/stores/session.svelte.ts", () => ({
   loadSession: () => loadSession(),
 }));
@@ -108,6 +114,7 @@ describe("InviteView", () => {
     expect(invitesFinish).toHaveBeenCalledWith("t1", "tok", "s1", { id: "cred" });
     expect(loginBegin).toHaveBeenCalledWith({ email: "ada@example.com" });
     expect(loginFinish).toHaveBeenCalledWith("s2", { id: "cred" });
+    expect(setAuthenticated).toHaveBeenCalledWith({ access_token: "at", refresh_token: "rt" });
     expect(loadSession).toHaveBeenCalled();
   });
 

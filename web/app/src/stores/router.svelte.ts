@@ -24,6 +24,7 @@ export type RouteName =
   | "login"
   | "tenantEntitlements"
   | "register"
+  | "invite"
   | "platformSecretNames"
   | "backends"
   | "sshKeyImport"
@@ -154,6 +155,23 @@ export function parseHash(hash: string): Route {
   const name = staticRoutes[path];
   if (name !== undefined) {
     return { name, params: {}, hash };
+  }
+  // Invite links built by servicer_invite.go buildInviteURL:
+  // /#/invite/<PathEscape(tenant)>/<PathEscape(token)>.
+  const invite = /^\/invite\/([^/]+)\/([^/]+)$/.exec(path);
+  if (invite) {
+    try {
+      return {
+        name: "invite",
+        params: {
+          tenant: decodeURIComponent(invite[1] ?? ""),
+          token: decodeURIComponent(invite[2] ?? ""),
+        },
+        hash,
+      };
+    } catch {
+      return { name: "not-found", params: {}, hash };
+    }
   }
   return { name: "not-found", params: {}, hash };
 }

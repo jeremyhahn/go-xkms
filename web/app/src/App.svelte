@@ -9,6 +9,7 @@
   import LoginView from "$views/LoginView.svelte";
   import UserCertBindingView from "$views/UserCertBindingView.svelte";
   import RegisterView from "$views/RegisterView.svelte";
+  import InviteView from "$views/InviteView.svelte";
   import PlatformSecretNamesView from "$views/PlatformSecretNamesView.svelte";
   import DashboardView from "$views/DashboardView.svelte";
   import TrustBundleView from "$views/TrustBundleView.svelte";
@@ -79,6 +80,8 @@
   <!-- Signed out: only the two credential-acquisition screens exist. -->
   {#if routerStore.name === "register"}
     <RegisterView />
+  {:else if routerStore.name === "invite"}
+    <InviteView tenant={routerStore.params.tenant ?? ""} token={routerStore.params.token ?? ""} />
   {:else}
     <LoginView />
   {/if}
@@ -156,6 +159,8 @@
     {:else if routerStore.name === "settings"}
       <SettingsView />
     {:else if routerStore.name === "platformSecretNames"}<PlatformSecretNamesView />
+    {:else if routerStore.name === "invite"}
+      <InviteView tenant={routerStore.params.tenant ?? ""} token={routerStore.params.token ?? ""} />
     {:else if routerStore.name === "login" || routerStore.name === "register"}
       <!-- Already authenticated; send credential screens to the dashboard. -->
       {(navigateTo("/dashboard"), "")}
