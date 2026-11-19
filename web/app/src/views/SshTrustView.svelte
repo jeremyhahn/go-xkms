@@ -14,7 +14,7 @@
     | { kind: "key"; name: string; scope: string; owner: string };
   type Result = { ok: boolean; message: string };
 
-  let scope = $state("global");
+  let scope = $state("tenant");
   let owner = $state("default");
   let pins = $state<SSHPin[]>([]);
   let entries = $state<SSHAuthorizedEntry[]>([]);
@@ -46,7 +46,7 @@
   }
 
   // The scope and owner the displayed tables were loaded from.
-  let loadedScope = $state("global");
+  let loadedScope = $state("tenant");
   let loadedOwner = $state("default");
 
   async function load(): Promise<void> {
@@ -123,6 +123,17 @@
     hostResult = null;
   }
 
+  function keyInputsChanged(): void {
+    keyVerifyGen++;
+    keyResult = null;
+  }
+
+  // Scope and owner feed both verifies.
+  function scopeOwnerChanged(): void {
+    verifyInputsChanged();
+    keyInputsChanged();
+  }
+
   async function addKey(): Promise<void> {
     busy = true;
     try {
@@ -140,12 +151,21 @@
     }
   }
 
+  // verifyKey uses the same generation guard as verifyHost: only the latest
+  // verify, with unchanged inputs, may set keyResult.
+  let keyVerifyGen = 0;
+
   async function verifyKey(): Promise<void> {
+    const gen = ++keyVerifyGen;
+    const t = { scope, owner, fingerprint: kFingerprint };
+    const current = (): boolean =>
+      gen === keyVerifyGen && t.scope === scope && t.owner === owner && t.fingerprint === kFingerprint;
     keyResult = null;
     try {
-      const matched = await getSDKClient().ssh.verifyAuthorizedKey({ scope, owner, fingerprint: kFingerprint });
-      keyResult = { ok: true, message: `Fingerprint matches ${matched.name}.` };
+      const matched = await getSDKClient().ssh.verifyAuthorizedKey(t);
+      if (current()) keyResult = { ok: true, message: `Fingerprint matches ${matched.name}.` };
     } catch (e) {
+      if (!current()) return;
       const status = statusOf(e);
       if (status === 409 || status === 404) {
         keyResult = { ok: false, message: message(e) };
@@ -186,6 +206,8 @@
   );
 
   // Mount-time load with the default scope and owner; later loads are explicit (Load).
+  // The scope must be one pkg/scope parses (tenant, user, service): the SSH
+  // list endpoints refuse anything else.
   onMount(() => {
     void load();
   });
@@ -194,8 +216,8 @@
 <PageHeader title="SSH Trust" subtitle="Known-host pins and authorized_keys entries" />
 
 <div class="flex flex-wrap items-end gap-2 mb-4">
-  <input class="input input-bordered input-sm" aria-label="Scope" placeholder="Scope" bind:value={scope} oninput={verifyInputsChanged} />
-  <input class="input input-bordered input-sm" aria-label="Owner" placeholder="Owner" bind:value={owner} oninput={verifyInputsChanged} />
+  <input class="input input-bordered input-sm" aria-label="Scope" placeholder="Scope" bind:value={scope} oninput={scopeOwnerChanged} />
+  <input class="input input-bordered input-sm" aria-label="Owner" placeholder="Owner" bind:value={owner} oninput={scopeOwnerChanged} />
   <button class="btn btn-sm" onclick={load} disabled={loading}>Load</button>
 </div>
 
@@ -290,7 +312,7 @@
       <button class="btn btn-primary btn-sm" onclick={addKey} disabled={busy || kName === "" || kLine === ""}>Add key</button>
     </div>
     <div class="flex flex-wrap gap-2 mt-3">
-      <input class="input input-bordered input-sm" aria-label="Key fingerprint" placeholder="SHA256:..." bind:value={kFingerprint} />
+      <input class="input input-bordered input-sm" aria-label="Key fingerprint" placeholder="SHA256:..." bind:value={kFingerprint} oninput={keyInputsChanged} />
       <button class="btn btn-sm" onclick={verifyKey} disabled={kFingerprint === ""}>Verify key</button>
     </div>
     {#if keyResult}
