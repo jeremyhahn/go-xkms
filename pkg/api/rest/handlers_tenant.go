@@ -181,7 +181,8 @@ func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Reque
 	// List through the XKMS tenant service so prefix-isolated (default)
 	// tenants — which are not in the barrier registry — are included,
 	// consistent with the create/get paths. The service already confines a
-	// tenant-scoped caller to its own tenant and applies the status filter.
+	// tenant-scoped caller to its own tenant and refuses a status filter
+	// (go-qrdb carries no tenant status yet), which answers 400.
 	details, err := h.xkmsService.ListTenantDetails(r.Context(), r.URL.Query().Get("status"))
 	if err != nil {
 		handleTenantError(w, err)
@@ -317,6 +318,8 @@ func (h *TenantHandlers) UpdateTenantQuotasHandler(w http.ResponseWriter, r *htt
 // the appropriate error response.
 func handleTenantError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, xkms.ErrTenantStatusUnsupported):
+		writeError(w, err, http.StatusBadRequest)
 	case errors.Is(err, seal.ErrTenantNotFound):
 		writeError(w, err, http.StatusNotFound)
 	case errors.Is(err, seal.ErrTenantAlreadyExists):
