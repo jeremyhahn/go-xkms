@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -208,6 +209,93 @@ func TestTakeToolchainStepsAreBoundedAndPoolAware(t *testing.T) {
 		if !strings.Contains(s, poolSecretEnv) {
 			t.Errorf("step %d %q does not read the pool registry (%s)", i, takeToolchain, poolSecretEnv)
 		}
+	}
+}
+
+// workflowJobs returns the names of the jobs under ci.yml's top-level jobs:.
+func workflowJobs(src string) []string {
+	var out []string
+	in := false
+	for _, line := range strings.Split(src, "\n") {
+		if line == "jobs:" {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if len(line) > 0 && line[0] != ' ' && line[0] != '#' {
+			break
+		}
+		if m := regexp.MustCompile(`^  ([A-Za-z0-9_-]+):\s*$`).FindStringSubmatch(line); m != nil {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
+// jobNeeds returns the jobs a job block lists under needs:, inline or as a list.
+func jobNeeds(block string) []string {
+	lines := strings.Split(block, "\n")
+	for i, line := range lines {
+		rest, ok := strings.CutPrefix(line, "    needs:")
+		if !ok {
+			continue
+		}
+		rest, _, _ = strings.Cut(rest, "#")
+		rest = strings.TrimSpace(rest)
+		if rest != "" {
+			rest = strings.Trim(rest, "[]")
+			var out []string
+			for _, n := range strings.Split(rest, ",") {
+				out = append(out, strings.TrimSpace(n))
+			}
+			return out
+		}
+		var out []string
+		for _, next := range lines[i+1:] {
+			item, ok := strings.CutPrefix(next, "      - ")
+			if !ok {
+				break
+			}
+			item, _, _ = strings.Cut(item, "#")
+			out = append(out, strings.TrimSpace(item))
+		}
+		return out
+	}
+	return nil
+}
+
+// TestToolchainConsumersNeedCIImagesAndTakeItBounded: every job that runs
+// `scripts/ci-registry.sh use` (the coverage jobs included) needs ci-images,
+// whose output is the reference it takes, and runs it only in a "Take the
+// toolchain image" step, which the test above holds to timeout-minutes: 30
+// and the pool registry secret. A consumer step under another name, or a job
+// without needs: ci-images, would wait unbounded or build on its own runner.
+func TestToolchainConsumersNeedCIImagesAndTakeItBounded(t *testing.T) {
+	src := readWorkflow(t)
+	useLine := regexp.MustCompile(`(?m)^[^#\n]*scripts/ci-registry\.sh use `)
+	consumers := 0
+	for _, job := range workflowJobs(src) {
+		block := jobBlock(src, job)
+		uses := len(useLine.FindAllString(block, -1))
+		if uses == 0 {
+			continue
+		}
+		consumers++
+		if !slices.Contains(jobNeeds(block), "ci-images") {
+			t.Errorf("job %s runs ci-registry.sh use but does not need ci-images (needs %v)", job, jobNeeds(block))
+		}
+		taken := 0
+		for _, s := range stepBlocks(block, takeToolchain) {
+			taken += len(useLine.FindAllString(s, -1))
+		}
+		if taken != uses {
+			t.Errorf("job %s runs ci-registry.sh use %d times, %d of them in a %q step", job, uses, taken, takeToolchain)
+		}
+	}
+	if consumers < 5 {
+		t.Fatalf("found %d jobs that run ci-registry.sh use", consumers)
 	}
 }
 
