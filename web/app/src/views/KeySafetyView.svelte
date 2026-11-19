@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
   import PageHeader from "$components/PageHeader.svelte";
   import StatusBadge from "$components/StatusBadge.svelte";
   import Alert from "$components/Alert.svelte";
@@ -135,8 +135,12 @@
     await run(() => clearKeySafety(id, be), `Usage limits cleared for "${id}".`);
   }
 
-  onMount(() => {
-    if (canGet) void load();
+  // The session can arrive after mount: load the first time keys:get holds.
+  let loadedOnce = false;
+  $effect(() => {
+    if (!canGet || loadedOnce) return;
+    loadedOnce = true;
+    untrack(() => void load());
   });
 </script>
 
