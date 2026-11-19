@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // SignReleaseCoRIMRequest and SignReleaseCoRIMResponse are the appraisal
@@ -167,7 +168,7 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 		}
 		return backendSigner.Sign(rand, digest, opts)
 	}
-	return opaqueSigner{signer: signer, sigAlg: cur.attrs.SignatureAlgorithm, sign: sign}, nil
+	return opaqueSigner{signer: signer, sigAlg: cur.attrs.SignatureAlgorithm, store: cur.attrs.StoreType, sign: sign}, nil
 }
 
 // opaqueSigner exposes only Public and Sign of a backend signer. A software
@@ -178,7 +179,10 @@ func (s *XKMSService) resolutionSigner(ctx context.Context, tenant string, key *
 type opaqueSigner struct {
 	signer crypto.Signer
 	sigAlg x509.SignatureAlgorithm
-	sign   func(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error)
+	// store is the backend kind the key lives in; it decides whether an
+	// RSA key with no recorded signature algorithm can sign PSS.
+	store types.StoreType
+	sign  func(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error)
 }
 
 // Public returns the backend key's public half.
@@ -245,6 +249,25 @@ func releaseAlgorithm(signer crypto.Signer) (cose.Algorithm, error) {
 	sigAlg := x509.UnknownSignatureAlgorithm
 	if o, ok := signer.(opaqueSigner); ok {
 		sigAlg = o.sigAlg
+		// An RSA key listed without a signature algorithm signs with the
+		// padding the options name on these backends, so PS256 is what it
+		// produces when go-cose asks for it. GCP KMS fixes the padding in
+		// the key, and an unknown backend is not trusted to honour PSS.
+		if _, isRSA := signer.Public().(*rsa.PublicKey); isRSA &&
+			sigAlg == x509.UnknownSignatureAlgorithm && honoursPSSOptions(o.store) {
+			sigAlg = x509.SHA256WithRSAPSS
+		}
 	}
 	return coseAlgorithm(signer.Public(), sigAlg)
+}
+
+// honoursPSSOptions reports whether an RSA key of the store signs RSASSA-PSS
+// when its Sign is given *rsa.PSSOptions, whatever padding its listing
+// records.
+func honoursPSSOptions(store types.StoreType) bool {
+	switch store {
+	case types.StoreSoftware, types.StorePKCS11, types.StoreAWSKMS, types.StoreAzureKV:
+		return true
+	}
+	return false
 }
