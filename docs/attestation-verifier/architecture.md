@@ -317,7 +317,8 @@ manifest that verification returned.
 `pkg/attestation/appraisal` is the Verifier role of RFC 9334 §3. It appraises
 TPM evidence against a tenant's endorsements and signed reference values, and
 returns an attestation result. It moved here from go-quicbaas (#1608), and
-go-quicbaas now re-exports it.
+go-quicbaas is to re-export it; no tagged go-quicbaas does yet (v0.16.1-alpha
+requires go-xkms v0.49.0-alpha, which predates the move).
 
 - **Store.** `NewStore` (`pkg/attestation/appraisal/store.go:82`) keeps
   endorsements and reference values in the qrdb DAO database `attestation`,
