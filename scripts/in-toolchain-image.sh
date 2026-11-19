@@ -209,12 +209,8 @@ if [ "$network" = bridge ]; then
   # dev-cache ghcr mirror on the LAN first, the public ones after) travel
   # with the stage, so `make security` and `trivy image` fetch the vulnerability
   # and Java databases from the LAN instead of the internet.
-  # TRIVY_INSECURE never travels: it turns off TLS verification for those
-  # downloads, so anyone on the path could serve a doctored database that
-  # hides findings from the security gate. A mirror without a trusted
-  # certificate fails over to the public repositories later in the list.
   for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 \
-    TRIVY_DB_REPOSITORY TRIVY_JAVA_DB_REPOSITORY; do
+    TRIVY_DB_REPOSITORY TRIVY_JAVA_DB_REPOSITORY TRIVY_INSECURE; do
     if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
   done
 fi
