@@ -131,8 +131,12 @@ from the `backend` query parameter. The REST route is at
 `pkg/api/rest/routes.go:197` (handler `pkg/api/rest/handlers_ota_image.go:134`),
 the MCP method at `pkg/api/mcp/server.go:275` (handler
 `pkg/api/mcp/handlers_ota_image.go:97`), and the server-side method on
-`transport.Servicer` at `pkg/api/transport/servicer.go:124`. The gRPC RPC,
-`transport.Client` and `xkmsctl` do not carry it yet.
+`transport.Servicer` at `pkg/api/transport/servicer.go:124`. The gRPC RPC
+is at `pkg/api/grpc/proto/xkmsv1/xkms.proto:78` (service method
+`pkg/api/grpc/service_ota_image.go:120`), and the client method on
+`transport.Client` at `pkg/api/transport/client.go:79`, carried by every
+client transport (gRPC, Unix, embedded, REST, QUIC and MCP). `xkmsctl key
+ota-image export <board-id>` calls it (`cmd/xkmsctl/key_ota_image.go:73`).
 
 Where each call is defined:
 

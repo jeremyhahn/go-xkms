@@ -652,7 +652,11 @@ board's record is its key ID, `OTAImageKeyID(boardID)`; the response,
 The check is `requireES256KeyVersion` (`:145-166`), which also returns the
 version number; a board with no key returns `ErrKeyNotFound`, and after a
 rotate the export follows the new version (`ota_image_keys_test.go:514`).
-The gRPC, REST, MCP and CLI wiring of the export is not done yet.
+Every transport carries the export: REST
+(`GET /api/v1/ota-image-keys/{board}/public-key`), MCP
+(`xkms.exportOTAImagePublicKey`), the gRPC and Unix RPC
+`ExportOTAImagePublicKey`, QUIC, the embedded SDK and `xkmsctl key ota-image
+export`, all under `keys:get` ([api.md](api.md#per-board-ota-image-keys)).
 
 **One key per board.** A second create for the same board returns
 `ErrKeyAlreadyExists`. That holds after a rotate too
