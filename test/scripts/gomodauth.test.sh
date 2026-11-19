@@ -44,10 +44,17 @@ for f in "$@"; do
 done
 EOF
 
+# GO_CACHE_ENV: the caller's Go cache settings, each only when the caller set
+# it, so an env -i sub-make never falls back to $HOME/go (#2295).
+GO_CACHE_ENV=()
+for v in GOMODCACHE GOPATH GOFLAGS GOPROXY GOSUMDB GOCACHE; do
+	if [ -n "${!v+x}" ]; then GO_CACHE_ENV+=("$v=${!v}"); fi
+done
+
 # via_make ENV... — runs the probe from a make recipe (so it sees make's
 # exported environment) and stages the gomodauth secret into $WORK.
 via_make() {
-	env -i PATH="$PATH" HOME="$HOME" "$@" \
+	env -i PATH="$PATH" HOME="$HOME" "${GO_CACHE_ENV[@]}" "$@" \
 		make -s --no-print-directory -C "$ROOT" \
 		GOMODAUTH_FILE="$WORK/gomodauth.env" \
 		--eval "__gomodauth_probe: ; @bash $PROBE $ROOT ${COMPOSE_FILES[*]}" \
@@ -132,13 +139,13 @@ expect_all GOPRIVATE "" none
 eq "none: gomodauth secret is empty" "" "$(cat "$WORK/gomodauth.env")"
 
 section "compose loaded directly (devcontainer.json, no make)"
-env -i FORGE_MODULE_TOKEN=local-token GITEA_HOST=gitea.example.com \
+env -i "${GO_CACHE_ENV[@]}" FORGE_MODULE_TOKEN=local-token GITEA_HOST=gitea.example.com \
 	bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
 expect_all GIT_CONFIG_COUNT 1 direct
 expect_all GIT_CONFIG_KEY_0 "$TOKEN_KEY" direct
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" direct
 expect_all GOPRIVATE "$GLOB" direct
-env -i bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
+env -i "${GO_CACHE_ENV[@]}" bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
 expect_all GIT_CONFIG_COUNT "" direct-public
 expect_all GOPRIVATE "" direct-public
 
