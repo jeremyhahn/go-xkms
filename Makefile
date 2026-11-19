@@ -781,7 +781,7 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping integration-test-web$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Running web console e2e (live server tier)...$(RESET)"
-	@cd test/integration/web && npm ci --silent && npx playwright install --with-deps chromium && npx playwright test
+	@cd test/integration/web && npm ci --silent && npx playwright install --with-deps chromium && npx playwright test && npx playwright test -c playwright.node.config.ts
 	@echo "$(GREEN)✓ web e2e (live tier) passed$(RESET)"
 endif
 
