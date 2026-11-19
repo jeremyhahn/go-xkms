@@ -518,7 +518,7 @@ func runSSHKeysGenerate(cmd *cobra.Command, _ []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	if algo == "" {
 		algo = "ed25519"
@@ -560,7 +560,7 @@ func runSSHKeysImport(cmd *cobra.Command, args []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	if name == "" {
 		name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -726,7 +726,7 @@ func runSSHHostKeysAdd(cmd *cobra.Command, _ []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 
 	client, closer, err := sshClient(cmd)
@@ -781,7 +781,7 @@ func runSSHHostKeysRemove(cmd *cobra.Command, _ []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	client, closer, err := sshClient(cmd)
 	if err != nil {
@@ -809,7 +809,7 @@ func runSSHAuthorizedAdd(cmd *cobra.Command, args []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	if name == "" {
 		return ErrSSHMissingKeyName
@@ -863,7 +863,7 @@ func runSSHAuthorizedRemove(cmd *cobra.Command, _ []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	client, closer, err := sshClient(cmd)
 	if err != nil {
@@ -895,13 +895,27 @@ func readKeySelector(cmd *cobra.Command) (string, string, string, error) {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	return scope, owner, name, nil
 }
 
 // defaultOwner returns a sensible default owner identifier. We prefer
 // the $USER env var, then the Unix login, falling back to "default".
+// sshDefaultOwner is the owner an ssh subcommand sends when --owner is
+// unset. Against a server it is empty: the server serves an empty
+// user-scope owner as the authenticated caller itself (ruling 937), whose
+// policy subject -- after account binding, the qrdb account id -- no client
+// can know, so a local $USER would only name somebody else. The embedded
+// (--local / no server) store has no authenticated caller and addresses
+// every asset by a named owner, so only there does it keep defaultOwner.
+func sshDefaultOwner(cmd *cobra.Command) string {
+	if server, err := sshUseServer(cmd); err == nil && server {
+		return ""
+	}
+	return defaultOwner()
+}
+
 func defaultOwner() string {
 	if v := strings.TrimSpace(os.Getenv("USER")); v != "" {
 		return v
@@ -975,7 +989,7 @@ func init() {
 		sshKeysGetCmd, sshKeysDeleteCmd, sshKeysExportCmd,
 	} {
 		c.Flags().String("scope", "", "Scope (tenant|user|service) — defaults to user")
-		c.Flags().String("owner", "", "Owner identifier — defaults to $USER")
+		c.Flags().String("owner", "", "Owner identifier — defaults to you on a server, $USER in the local store")
 	}
 	sshKeysGenerateCmd.Flags().String("name", "", "Key name (required)")
 	sshKeysGenerateCmd.Flags().String("type", "ed25519", "Key algorithm (ed25519, rsa, ecdsa-p256, ecdsa-p384, ecdsa-p521)")
@@ -993,7 +1007,7 @@ func init() {
 	// Host-key flags.
 	for _, c := range []*cobra.Command{sshHostKeysAddCmd, sshHostKeysListCmd, sshHostKeysRemoveCmd} {
 		c.Flags().String("scope", "", "Scope — defaults to user")
-		c.Flags().String("owner", "", "Owner identifier — defaults to $USER")
+		c.Flags().String("owner", "", "Owner identifier — defaults to you on a server, $USER in the local store")
 	}
 	sshHostKeysAddCmd.Flags().String("host", "", "Target host (required)")
 	sshHostKeysAddCmd.Flags().String("key", "", "Host key as an authorized_keys-format line (required unless --file)")
@@ -1004,7 +1018,7 @@ func init() {
 	// Authorized flags.
 	for _, c := range []*cobra.Command{sshAuthorizedAddCmd, sshAuthorizedListCmd, sshAuthorizedRemoveCmd} {
 		c.Flags().String("scope", "", "Scope — defaults to user")
-		c.Flags().String("owner", "", "Owner identifier — defaults to $USER")
+		c.Flags().String("owner", "", "Owner identifier — defaults to you on a server, $USER in the local store")
 	}
 	sshAuthorizedAddCmd.Flags().String("name", "", "Entry name (required)")
 	sshAuthorizedRemoveCmd.Flags().String("name", "", "Entry name (required)")
