@@ -62,7 +62,7 @@ func (b *SoftwareBackend) exportTPM2Duplicate(ctx context.Context, attrs *types.
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get private key", Err: err}
 	}
-	public, sensitive, err := tpm2DuplicateAreas(privateKey)
+	public, sensitive, err := tpm2DuplicateAreas(privateKey, attrs.KeyType)
 	if err != nil {
 		return nil, err
 	}
@@ -91,18 +91,18 @@ func (b *SoftwareBackend) exportTPM2Duplicate(ctx context.Context, attrs *types.
 }
 
 // tpm2DuplicateAreas builds the importable public and sensitive areas of an
-// RSA or ECDSA private key: a user-auth signing key with FixedTPM and
-// FixedParent clear (TPM2_Import refuses either set) and null schemes, so
-// the TPM signs with the scheme each Sign call names.
-func tpm2DuplicateAreas(privateKey any) (*tpm2.TPMTPublic, *tpm2.TPMTSensitive, error) {
+// RSA or ECDSA private key: a user-auth key with FixedTPM and FixedParent
+// clear (TPM2_Import refuses either set) and null schemes, so the TPM uses
+// the scheme each Sign or Decrypt call names. The object attributes follow
+// the key's purpose (tpm2DuplicateAttributes).
+func tpm2DuplicateAreas(privateKey any, keyType types.KeyType) (*tpm2.TPMTPublic, *tpm2.TPMTSensitive, error) {
+	attrs, err := tpm2DuplicateAttributes(keyType)
+	if err != nil {
+		return nil, nil, err
+	}
 	obfuscation := make([]byte, sha256.Size)
 	if _, err := rand.Read(obfuscation); err != nil {
 		return nil, nil, &errs.Wrapped{Msg: "read obfuscation value", Err: err}
-	}
-	attrs := tpm2.TPMAObject{
-		UserWithAuth: true,
-		SignEncrypt:  true,
-		NoDA:         true,
 	}
 
 	switch key := privateKey.(type) {
@@ -178,6 +178,25 @@ func tpm2DuplicateAreas(privateKey any) (*tpm2.TPMTPublic, *tpm2.TPMTSensitive, 
 }
 
 // tpm2ECCCurve maps a NIST curve to its TPM 2.0 curve identifier.
+// tpm2DuplicateAttributes maps a key purpose to the TPM object attributes of
+// its duplicate: encryption keys get Decrypt (RSA decrypt, ECDH), signing
+// purposes get SignEncrypt, and a purpose a TPM asymmetric object cannot
+// honour (HMAC, secret, storage, an unset type, ...) is refused rather than
+// guessed.
+func tpm2DuplicateAttributes(keyType types.KeyType) (tpm2.TPMAObject, error) {
+	attrs := tpm2.TPMAObject{UserWithAuth: true, NoDA: true}
+	switch keyType {
+	case types.KeyTypeEncryption:
+		attrs.Decrypt = true
+	case types.KeyTypeSigning, types.KeyTypeTLS, types.KeyTypeCA,
+		types.KeyTypeAttestation, types.KeyTypeIDevID, types.KeyTypeLDevID:
+		attrs.SignEncrypt = true
+	default:
+		return tpm2.TPMAObject{}, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("TPM2_DUPLICATE does not carry keys of purpose %v", keyType)}
+	}
+	return attrs, nil
+}
+
 func tpm2ECCCurve(curve elliptic.Curve) (tpm2.TPMECCCurve, error) {
 	switch curve {
 	case elliptic.P256():
