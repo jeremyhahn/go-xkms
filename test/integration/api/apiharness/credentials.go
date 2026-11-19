@@ -15,14 +15,17 @@ package apiharness
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
+	"time"
 )
 
 // The admin mTLS credential `xkmsd init --admin-factor mtls` writes into the
@@ -55,38 +58,40 @@ const (
 // suite needs is missing or unreadable.
 var ErrAdminCredential = errors.New("apiharness: admin mTLS credential unavailable")
 
-var (
-	trustOnce sync.Once
-	trustPath string
-	trustErr  error
-)
-
 // AdminCertFile is the admin client certificate's path.
 func AdminCertFile() string { return envOr(adminCertEnv, defaultAdminCert) }
 
 // AdminKeyFile is the admin client key's path.
 func AdminKeyFile() string { return envOr(adminKeyEnv, defaultAdminKey) }
 
-// TrustBundleFile writes, once per process, one PEM bundle holding every CA
-// that can sign a certificate the server presents -- the suite CA that signs
-// the operator certificate (KEYSTORE_TLS_CA), the init ceremony root, and the
-// unified listener's persisted bundle when the server has written it -- and
-// returns its path. Verification stays on: the CLI checks the server's chain
-// against this bundle on every transport.
+// TrustBundleFile writes one PEM bundle holding every CA that can sign a
+// certificate the server presents -- the suite CA that signs the operator
+// certificate (KEYSTORE_TLS_CA), the init ceremony root, and the unified
+// listener's persisted bundle when the server has written it -- and returns
+// its path. It re-reads the CAs and rewrites the bundle on every call, so a
+// serving CA the server persists at unseal is trusted by the next caller.
+// Verification stays on: the CLI checks the server's chain against this
+// bundle on every transport.
 func TrustBundleFile() (string, error) {
-	trustOnce.Do(func() {
-		trustPath, trustErr = writeTrustBundle()
-	})
-	return trustPath, trustErr
-}
-
-func writeTrustBundle() (string, error) {
 	bundle, err := trustBundlePEM()
 	if err != nil {
 		return "", err
 	}
 	path := filepath.Join(os.TempDir(), fmt.Sprintf("xkms-api-trust-%d.pem", os.Getpid()))
-	if err := os.WriteFile(path, bundle, 0o600); err != nil {
+	// A rename replaces the bundle atomically, so a concurrent CLI run reads
+	// either the old or the new bundle, never a partial one.
+	tmp, err := os.CreateTemp(os.TempDir(), "xkms-api-trust-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("%w: write trust bundle: %w", ErrAdminCredential, err)
+	}
+	_, werr := tmp.Write(bundle)
+	cerr := tmp.Close()
+	if err := errors.Join(werr, cerr); err != nil {
+		_ = os.Remove(tmp.Name()) // best effort; the write error is the one reported
+		return "", fmt.Errorf("%w: write trust bundle: %w", ErrAdminCredential, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		_ = os.Remove(tmp.Name()) // best effort; the rename error is the one reported
 		return "", fmt.Errorf("%w: write trust bundle: %w", ErrAdminCredential, err)
 	}
 	return path, nil
@@ -95,8 +100,30 @@ func writeTrustBundle() (string, error) {
 // trustBundlePEM concatenates the suite CA, the ceremony root and, when the
 // server has written it, the unified-TLS CA bundle.
 func trustBundlePEM() ([]byte, error) {
+	return readBundle(
+		[]string{envOr(caFileEnv, defaultCAFile), envOr(ceremonyCAEnv, defaultCeremonyCA)},
+		[]string{envOr(unifiedCAEnv, defaultUnifiedCA)},
+	)
+}
+
+// serverTrustPEM is the bundle that verifies the server across its unseal:
+// the suite CA, which signs the sealed window's bootstrap certificate, is
+// required; the ceremony root and the unified-TLS CA bundle, which the
+// serving certificate chains to once the server has unsealed, are added when
+// present. Unlike trustBundlePEM it needs no ceremony root, so it serves
+// before the admin credential exists.
+func serverTrustPEM() ([]byte, error) {
+	return readBundle(
+		[]string{envOr(caFileEnv, defaultCAFile)},
+		[]string{envOr(ceremonyCAEnv, defaultCeremonyCA), envOr(unifiedCAEnv, defaultUnifiedCA)},
+	)
+}
+
+// readBundle concatenates the required CA files, failing on any it cannot
+// read, and the optional ones that exist.
+func readBundle(required, optional []string) ([]byte, error) {
 	var bundle bytes.Buffer
-	for _, path := range []string{envOr(caFileEnv, defaultCAFile), envOr(ceremonyCAEnv, defaultCeremonyCA)} {
+	for _, path := range required {
 		pem, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("%w: read CA %s: %w", ErrAdminCredential, path, err)
@@ -104,16 +131,56 @@ func trustBundlePEM() ([]byte, error) {
 		bundle.Write(pem)
 		bundle.WriteByte('\n')
 	}
-	unified := envOr(unifiedCAEnv, defaultUnifiedCA)
-	pem, err := os.ReadFile(unified)
-	switch {
-	case err == nil:
-		bundle.Write(pem)
-		bundle.WriteByte('\n')
-	case !errors.Is(err, fs.ErrNotExist):
-		return nil, fmt.Errorf("%w: read CA %s: %w", ErrAdminCredential, unified, err)
+	for _, path := range optional {
+		pem, err := os.ReadFile(path)
+		switch {
+		case err == nil:
+			bundle.Write(pem)
+			bundle.WriteByte('\n')
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, fmt.Errorf("%w: read CA %s: %w", ErrAdminCredential, path, err)
+		}
 	}
 	return bundle.Bytes(), nil
+}
+
+// TrustPool reads the server trust bundle (the suite CA, plus the ceremony
+// root and the unified-TLS CA when present) from disk now. A caller that
+// outlives the server's unseal re-reads it, or uses TrustedHTTPClient.
+func TrustPool() (*x509.CertPool, error) {
+	bundle, err := serverTrustPEM()
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(bundle) {
+		return nil, fmt.Errorf("%w: trust bundle holds no certificate", ErrAdminCredential)
+	}
+	return pool, nil
+}
+
+// TrustedHTTPClient returns a client that verifies the server against
+// TrustPool re-read on every TLS dial, so it keeps verifying the server when
+// unsealing switches it from the bootstrap certificate to the one the
+// serving CA issued.
+func TrustedHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{DialTLSContext: dialTrusted},
+	}
+}
+
+func dialTrusted(ctx context.Context, network, addr string) (net.Conn, error) {
+	pool, err := TrustPool()
+	if err != nil {
+		return nil, err
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &tls.Dialer{Config: &tls.Config{RootCAs: pool, ServerName: host, MinVersion: tls.VersionTLS13}}
+	return dialer.DialContext(ctx, network, addr)
 }
 
 // ClientTLSConfig is the in-process form of ClientTLSArgs, for the tests that
