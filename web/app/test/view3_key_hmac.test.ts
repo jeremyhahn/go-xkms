@@ -49,6 +49,25 @@ function verifyBtn(): HTMLButtonElement {
   return screen.getByRole("button", { name: "Verify" }) as HTMLButtonElement;
 }
 
+describe("KeyHmacView verify hex case", () => {
+  // "DEADBEEF" and "DeadBeef" are also valid base64; they must still be
+  // decoded as hex, the bytes the operator typed.
+  for (const mac of ["DEADBEEF", "DeadBeef"]) {
+    it(`decodes the hex MAC ${mac} case-insensitively`, async () => {
+      request.mockResolvedValue({ valid: true });
+      render(KeyHmacView);
+      await fill();
+      await fireEvent.input(screen.getByLabelText("MAC"), { target: { value: mac } });
+      await fireEvent.click(verifyBtn());
+
+      await waitFor(() => expect(request).toHaveBeenCalledOnce());
+      expect(request).toHaveBeenCalledWith("POST", "/api/v1/keys/mac1/hmac/verify", {
+        body: { backend: "software", key_id: "mac1", data: "YWJj", mac: "3q2+7w==" },
+      });
+    });
+  }
+});
+
 describe("KeyHmacView compute", () => {
   it("posts the key, backend, base64 data and hash and renders the MAC", async () => {
     request.mockResolvedValue({ mac: "3q2+7w==", hash: "sha256", key_version: 2 });
