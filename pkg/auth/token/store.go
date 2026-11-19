@@ -53,6 +53,12 @@ type Record struct {
 	// Family groups all refresh tokens descended from a single login.
 	Family string `json:"family"`
 
+	// Tenant is the tenant of the identity the token refreshes. Usernames are
+	// unique only within a tenant, so a subject revoke matches Tenant and
+	// Subject together. A record without a tenant cannot be attributed: the
+	// stores refuse to save it, and refuse and delete one found in storage.
+	Tenant string `json:"tenant"`
+
 	// Subject is the identity the token refreshes.
 	Subject string `json:"subject"`
 
@@ -103,13 +109,15 @@ type RefreshStore interface {
 	// slip a successor past the sweep.
 	RevokeFamily(ctx context.Context, family string) error
 
-	// RevokeBySubject revokes every family whose Record.Subject equals
-	// subject, exactly as RevokeFamily revokes one -- so a user-lifecycle
-	// change (disable, delete) ends every session the account holds, no
-	// matter which login flow minted it. It is idempotent: a subject with no
-	// live family is a no-op success, matching RevokeFamily's own logout
-	// semantics.
-	RevokeBySubject(ctx context.Context, subject string) error
+	// RevokeBySubject revokes every family whose Record.Tenant equals tenant
+	// and whose Record.Subject equals subject, exactly as RevokeFamily
+	// revokes one -- so a user-lifecycle change (disable, delete) ends every
+	// session the account holds, no matter which login flow minted it, and
+	// never a session of the same username in another tenant. An empty
+	// tenant or subject is an error and revokes nothing. It is idempotent: an
+	// account with no live family is a no-op success, matching
+	// RevokeFamily's own logout semantics.
+	RevokeBySubject(ctx context.Context, tenant, subject string) error
 }
 
 // refreshKey builds the KV key for a record.
@@ -157,6 +165,9 @@ func NewMemoryRefreshStore() *MemoryRefreshStore {
 func (s *MemoryRefreshStore) Save(_ context.Context, rec *Record) error {
 	if rec == nil {
 		return &NilInputError{Field: "record"}
+	}
+	if rec.Tenant == "" {
+		return &NilInputError{Field: "record tenant"}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,13 +217,16 @@ func (s *MemoryRefreshStore) RevokeFamily(_ context.Context, family string) erro
 }
 
 // RevokeBySubject implements RefreshStore.
-func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, tenant, subject string) error {
+	if err := checkRevokeAccount(tenant, subject); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	families := make(map[string]struct{})
 	for _, rec := range s.records {
-		if rec.Subject == subject {
+		if rec.Tenant == tenant && rec.Subject == subject {
 			families[rec.Family] = struct{}{}
 		}
 	}
@@ -254,6 +268,19 @@ func (s *MemoryRefreshStore) sweepLocked() {
 // expired reports whether the record's refresh window has passed.
 func expired(rec *Record) bool {
 	return time.Now().Unix() >= rec.ExpiresAt
+}
+
+// checkRevokeAccount refuses a subject revoke that does not name both the
+// tenant and the subject: an unscoped revoke could end another tenant's
+// sessions.
+func checkRevokeAccount(tenant, subject string) error {
+	if tenant == "" {
+		return &NilInputError{Field: "tenant"}
+	}
+	if subject == "" {
+		return &NilInputError{Field: "subject"}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +363,9 @@ func (s *QRDBRefreshStore) Save(ctx context.Context, rec *Record) error {
 	if rec == nil {
 		return &NilInputError{Field: "record"}
 	}
+	if rec.Tenant == "" {
+		return &NilInputError{Field: "record tenant"}
+	}
 	ctx, err := s.callContext(ctx)
 	if err != nil {
 		return err
@@ -401,6 +431,14 @@ func (s *QRDBRefreshStore) load(ctx context.Context, family, jti string) (*Recor
 		// Lazy TTL: drop the tombstone; deletion failure is non-fatal because
 		// the record is already treated as absent by every reader.
 		_ = s.kv.Delete(ctx, refreshKey(family, jti)) // best-effort cleanup of an already-expired record; the explicit `_ =` already satisfies errcheck
+		return nil, nil, nil
+	}
+	if rec.Tenant == "" {
+		// A record without a tenant cannot be attributed to an account, so no
+		// tenant-scoped revoke could ever end it: refuse it and do not keep it.
+		if err := s.kv.Delete(ctx, refreshKey(family, jti)); err != nil && !isNotFound(err) {
+			return nil, nil, &StoreError{Op: "delete", Err: err}
+		}
 		return nil, nil, nil
 	}
 	return &rec, data, nil
@@ -490,7 +528,10 @@ func (s *QRDBRefreshStore) revokeFamily(ctx context.Context, family string) erro
 // have to stay consistent with RevokeFamily's own delete-by-prefix sweep,
 // and a lifecycle change is rare enough next to a refresh that the scan's
 // cost is the right place to pay it.
-func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, tenant, subject string) error {
+	if err := checkRevokeAccount(tenant, subject); err != nil {
+		return err
+	}
 	ctx, err := s.callContext(ctx)
 	if err != nil {
 		return err
@@ -506,7 +547,9 @@ func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) 
 		if err := json.Unmarshal(data, &rec); err != nil {
 			return &StoreError{Op: "decode", Err: err}
 		}
-		if rec.Subject == subject {
+		// A record without a tenant never matches: it is refused and deleted
+		// when it is next read, and never revoked across tenants.
+		if rec.Tenant == tenant && rec.Subject == subject {
 			families[rec.Family] = struct{}{}
 		}
 	}

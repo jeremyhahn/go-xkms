@@ -42,7 +42,7 @@ func TestQRDBRefreshStore_NoServiceContext_Unauthenticated(t *testing.T) {
 	require.NoError(t, err)
 
 	err = store.Save(context.Background(), &token.Record{
-		JTI: "j1", Family: "f1", Subject: "alice", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	})
 	require.ErrorIs(t, err, qrdbsdk.ErrUnauthenticated)
 }
