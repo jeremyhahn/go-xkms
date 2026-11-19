@@ -830,6 +830,9 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 		cfg.CA = hc.XKMSService
 	}
 
+	if hc.NodeUsers != nil {
+		hc.XKMSService.SetInviteUserClient(auth.NewNodeUserClient(hc.NodeUsers))
+	}
 	if hc.QRDBClient != nil {
 		cfg.AuthUserStore = auth.NewQRDBUserStore(hc.QRDBClient.Users())
 

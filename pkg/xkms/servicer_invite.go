@@ -195,7 +195,7 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.users == nil {
+	if s.inviteStore == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
 	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
@@ -206,7 +206,7 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.inviteUserClient().GetUser(ctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -228,7 +228,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.webauthnService == nil || s.users == nil {
+	if s.inviteStore == nil || s.webauthnService == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
 	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
@@ -239,7 +239,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.inviteUserClient().GetUser(ctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -266,7 +266,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.webauthnService == nil || s.users == nil {
+	if s.inviteStore == nil || s.webauthnService == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
 	// Looked up (not redeemed) BEFORE the ceremony is validated: the
@@ -313,7 +313,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.users == nil {
+	if s.inviteStore == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
 	if _, err := s.getCA(); err != nil {
@@ -350,7 +350,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrPIVCertRejected{Err: err}
 	}
 
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.inviteUserClient().GetUser(ctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -359,7 +359,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	}
 
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	if _, err := s.users.AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+	if _, err := s.inviteUserClient().AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
 		return nil, &ErrUserOperation{Operation: "bind piv certificate", Err: err}
 	}
 
@@ -385,13 +385,44 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 // go-quicbaas's ActivateFIDO2Finish / PIVActivator.Activate.
 func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) error {
 	active := string(qrdbsdk.LifecycleActive)
-	if _, err := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: active}); err != nil {
-		if u, gErr := s.users.GetUser(ctx, userID); gErr == nil && u != nil && u.Lifecycle == active {
+	if _, err := s.inviteUserClient().UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: active}); err != nil {
+		if u, gErr := s.inviteUserClient().GetUser(ctx, userID); gErr == nil && u != nil && u.Lifecycle == active {
 			return nil
 		}
 		return &ErrUserOperation{Operation: "activate invited user", Err: err}
 	}
 	return nil
+}
+
+// InviteUserClient is the part of qrdbtransport.UserClient the invite
+// routes call: they read the invited user, bind a PIV certificate to it and
+// activate it.
+type InviteUserClient interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error)
+	UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
+	AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+}
+
+// SetInviteUserClient wires the user client the invite routes use. The
+// invite routes are public, so their request context carries no qrdb
+// credentials: on an embedded node that enforces authentication, the user
+// client SetUserClients wires (the datastore client's) is refused there
+// with qrdb/auth: unauthenticated, which GetInvite reported as an unusable
+// link (ruling 973 (2)). xkmsd and a host with an embedded node pass the
+// node's user service (auth.NodeUserClient). The user an invite call acts
+// on is the one the invite record names, never one the caller chooses.
+func (s *XKMSService) SetInviteUserClient(users InviteUserClient) { s.inviteUsers = users }
+
+// inviteUserClient is SetInviteUserClient's client, or SetUserClients'
+// when none is set; nil when neither is.
+func (s *XKMSService) inviteUserClient() InviteUserClient {
+	if s.inviteUsers != nil {
+		return s.inviteUsers
+	}
+	if s.users == nil {
+		return nil
+	}
+	return s.users
 }
 
 // caRootPool builds the trust-root pool PIV invite activation verifies

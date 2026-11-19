@@ -936,6 +936,9 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		}
 		if s.passwordStore != nil && s.qrdbClient != nil {
 			svc.SetUserClients(s.qrdbClient.Users(), s.qrdbClient.Roles())
+			if src := s.nodeUserSource(); src != nil {
+				svc.SetInviteUserClient(auth.NewNodeUserClient(src))
+			}
 		}
 		if s.pkcs11StateStore != nil {
 			svc.SetPKCS11StateStore(s.pkcs11StateStore)
