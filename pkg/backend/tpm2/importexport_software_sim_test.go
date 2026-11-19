@@ -126,3 +126,66 @@ func TestSoftwareExportKeyTo_TPM2Duplicate_ImportsAndSigns(t *testing.T) {
 		t.Fatalf("non-exportable export error = %v, want ErrKeyNotExportable", err)
 	}
 }
+
+// An RSA encryption key copied by TPM2_DUPLICATE carries the Decrypt
+// attribute, so the TPM opens an RSA-OAEP ciphertext sealed to the source
+// public key (Codex round-4 P1 on #2183: the copy was a signing-only object).
+func TestSoftwareExportKeyTo_TPM2Duplicate_EncryptionKeyDecryptsOAEP(t *testing.T) {
+	b := newSimBackend(t)
+	ctx := context.Background()
+
+	sw, err := software.NewBackend(&software.Config{KeyStorage: storage.New()})
+	if err != nil {
+		t.Fatalf("software.NewBackend: %v", err)
+	}
+	t.Cleanup(func() { _ = sw.Close() })
+	swIE := sw.(backend.ImportExportBackend)
+
+	src := &types.KeyAttributes{
+		CN: "dup-rsa-enc", KeyType: types.KeyTypeEncryption, StoreType: types.StoreSoftware,
+		KeyAlgorithm: x509.RSA, Exportable: true, Hash: crypto.SHA256,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+	}
+	priv, err := sw.GenerateKey(ctx, src)
+	if err != nil {
+		t.Fatalf("software GenerateKey: %v", err)
+	}
+	srcPub, ok := priv.(crypto.Signer).Public().(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("source public key is %T, want *rsa.PublicKey", priv.(crypto.Signer).Public())
+	}
+
+	dst := &types.KeyAttributes{
+		CN: "dup-rsa-enc-copy", KeyType: types.KeyTypeEncryption, StoreType: types.StoreTPM2,
+		KeyAlgorithm: x509.RSA, Hash: crypto.SHA256,
+		RSAAttributes: src.RSAAttributes,
+	}
+	params, err := b.GetImportParameters(ctx, dst, backend.WrappingAlgorithmTPM2Duplicate)
+	if err != nil {
+		t.Fatalf("GetImportParameters: %v", err)
+	}
+	wrapped, err := swIE.ExportKeyTo(ctx, src, params)
+	if err != nil {
+		t.Fatalf("software ExportKeyTo(TPM2_DUPLICATE): %v", err)
+	}
+	if err := b.ImportKey(ctx, dst, wrapped); err != nil {
+		t.Fatalf("tpm2 ImportKey: %v", err)
+	}
+
+	plaintext := []byte("sealed to the source, opened by the copy")
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, srcPub, plaintext, nil)
+	if err != nil {
+		t.Fatalf("EncryptOAEP: %v", err)
+	}
+	dec, err := b.Decrypter(ctx, dst)
+	if err != nil {
+		t.Fatalf("tpm2 Decrypter: %v", err)
+	}
+	got, err := dec.Decrypt(rand.Reader, ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA256})
+	if err != nil {
+		t.Fatalf("OAEP decrypt with the imported key: %v", err)
+	}
+	if string(got) != string(plaintext) {
+		t.Fatalf("decrypted %q, want %q", got, plaintext)
+	}
+}
