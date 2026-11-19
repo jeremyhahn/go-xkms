@@ -141,7 +141,7 @@ func (tpm *TPM2) objectSession(
 		return tpm.passwordKeySession(keyAttrs)
 	}
 	if keyAuthValue(keyAttrs) == nil {
-		pcrs, err := tpm.sealPCRSet(keyAttrs)
+		pcrs, err := tpm.objectPCRSet(keyAttrs, backend)
 		if err != nil {
 			return nil, noopCloser, err
 		}
@@ -248,6 +248,33 @@ func (tpm *TPM2) sealPCRSet(keyAttrs *types.KeyAttributes) (PCRSet, error) {
 		return platform, nil
 	}
 	return PCRSetFromMask(union), nil
+}
+
+// objectPCRSet returns the PCRs the PolicyPCR branch of an existing object
+// covers. The selection recorded in the platform policy pin beside the
+// object's blobs wins, so an Unseal whose attributes were reconstructed from
+// the key ID (and so carry no PCRSelection) still opens an object sealed
+// over an extra PCR; the digest is computed from the live values of those
+// PCRs. With no pin in the platform bank, it is sealPCRSet of the caller's
+// attributes (an inline blob's selection comes in through them, see
+// applySealedPCRSelection).
+func (tpm *TPM2) objectPCRSet(keyAttrs *types.KeyAttributes, backend store.KeyBackend) (PCRSet, error) {
+	// The pin only names the selection here: the PCR branch never depends
+	// on its digest, so an unreadable record falls back to the caller's
+	// selection and the TPM decides.
+	pin, err := tpm.loadPlatformPolicyPin(keyAttrs, backend)
+	if err != nil {
+		tpm.logger.Debug("tpm: platform policy pin unreadable; using the requested PCR selection",
+			slog.String("cn", keyAttrs.CN), slog.String("error", err.Error()))
+		pin = nil
+	}
+	if pin != nil && pin.PCRSelect != 0 {
+		bank, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+		if err == nil && uint16(bank) == pin.PCRBank {
+			return PCRSetFromMask(pin.PCRSelect), nil
+		}
+	}
+	return tpm.sealPCRSet(keyAttrs)
 }
 
 // platformPCRPolicyDigest returns the PolicyPCR branch of the platform
