@@ -185,3 +185,85 @@ func generateInvitePIVLeaves(t *testing.T, n int) (*x509.Certificate, []*x509.Ce
 	}
 	return caCert, leaves
 }
+
+const inviteDisableRaceChildEnv = "XKMS_INVITE_DISABLE_RACE_CHILD"
+
+// disableBeforeActivationUsers is the embedded node's user service with an
+// administrator's disable injected at the activation call: after the
+// WebAuthn ceremony was validated (and its lifecycle check passed) and
+// before the activation reaches the store.
+type disableBeforeActivationUsers struct {
+	qrdbNodeInviteUsers
+	fired bool
+}
+
+func (u *disableBeforeActivationUsers) UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error) {
+	if !u.fired && req.Lifecycle == qrdbsdk.LifecycleActive {
+		u.fired = true
+		if _, err := u.UserServicer.UpdateUser(ctx, &qrdbsdk.UpdateUserRequest{ID: req.ID, Lifecycle: qrdbsdk.LifecycleDisabled}); err != nil {
+			return nil, err
+		}
+	}
+	return u.UserServicer.UpdateUser(ctx, req)
+}
+
+// TestFinishInviteRegistration_DisableDuringActivationStaysDisabled pins
+// the Codex round-5 P1 on servicer_invite.go (ruling 968): an account an
+// administrator disables after the invitation ceremony was validated and
+// before the activation commits stays disabled on the real qrdb user
+// store, the redemption fails, and the invitation is not spent. It runs in
+// a child process, as the other standalone-node tests do.
+func TestFinishInviteRegistration_DisableDuringActivationStaysDisabled(t *testing.T) {
+	if os.Getenv(inviteDisableRaceChildEnv) == "1" {
+		disableDuringInviteActivation(t)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestFinishInviteRegistration_DisableDuringActivationStaysDisabled$", "-test.count=1")
+	cmd.Env = append(os.Environ(), inviteDisableRaceChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "disable-during-activation child process failed:\n%s", out)
+}
+
+func disableDuringInviteActivation(t *testing.T) {
+	ctx := context.Background()
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, node.Close()) })
+
+	users := node.UserService()
+	sysCtx := qrdbsdk.ContextWithTenant(ctx, inviteFixtureTenant)
+	account, err := users.CreateUser(sysCtx, &qrdbuser.CreateUserRequest{
+		Username: inviteFixtureEmail, Email: inviteFixtureEmail, Name: "Invitee",
+		TenantID: inviteFixtureTenant, Pending: true,
+	})
+	require.NoError(t, err)
+
+	// The WebAuthn side reads the fixture's accounts: give the fixture's
+	// pending account the real account's ID so both sides name one account.
+	f := newInviteFixture(t)
+	f.accounts[0].ID = account.ID
+	f.svc.SetInviteUserService(&disableBeforeActivationUsers{qrdbNodeInviteUsers: qrdbNodeInviteUsers{UserServicer: users}})
+	info, err := f.svc.createInvite(ctx, inviteFixtureTenant, account.ID, f.inviteTTL)
+	require.NoError(t, err)
+
+	begin, err := f.beginRegistration(inviteFixtureTenant, info.Token)
+	require.NoError(t, err)
+	attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+	_, err = f.finishRegistration(inviteFixtureTenant, info.Token, begin.SessionID, attestation)
+	require.ErrorIs(t, err, ErrInviteUnusable, "an activation over a disabled account must be refused")
+
+	got, err := users.GetUser(sysCtx, account.ID)
+	require.NoError(t, err)
+	assert.Equal(t, qrdbsdk.LifecycleDisabled, got.Lifecycle, "the administrator's disable must stand")
+	_, err = f.svc.inviteStore.Lookup(ctx, inviteFixtureTenant, info.Token)
+	require.NoError(t, err, "a refused activation must not spend the invitation")
+}
