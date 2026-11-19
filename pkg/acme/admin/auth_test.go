@@ -75,11 +75,11 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	assert.Equal(t, []string{"admin"}, identity.Roles)
 }
 
-// TestAuthMiddleware_TokenPermissionsGrantNothing proves a permission listed
-// in the token's claims is never an authorization input: behind the
-// middleware, the gate admits or refuses on the caller's qrdb role grants
-// alone, whatever the token claims to hold.
-func TestAuthMiddleware_TokenPermissionsGrantNothing(t *testing.T) {
+// TestAuthMiddleware_RoleGrantsDecide proves the token's claims are never an
+// authorization input beyond the roles they name: they carry no permission
+// list, and behind the middleware the gate admits or refuses on the caller's
+// qrdb role grants alone.
+func TestAuthMiddleware_RoleGrantsDecide(t *testing.T) {
 	for name, tc := range map[string]struct {
 		role string
 		want int
@@ -90,12 +90,11 @@ func TestAuthMiddleware_TokenPermissionsGrantNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			client := auth.NewMemoryClient()
 			client.AddToken("token", &auth.TokenClaims{
-				Valid:       true,
-				UserID:      "user-123",
-				TenantID:    qrdbsdk.SystemTenantID,
-				Roles:       []string{tc.role},
-				Permissions: []string{qrdbsdk.PermissionTenantsListCross.String()},
-				ExpiresAt:   time.Now().Add(time.Hour),
+				Valid:     true,
+				UserID:    "user-123",
+				TenantID:  qrdbsdk.SystemTenantID,
+				Roles:     []string{tc.role},
+				ExpiresAt: time.Now().Add(time.Hour),
 			})
 
 			gate := newEnforcingGate()
