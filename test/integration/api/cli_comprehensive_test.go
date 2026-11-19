@@ -691,13 +691,14 @@ func TestCLIComprehensiveKeyCopyOperation(t *testing.T) {
 			// key copy <source-key-id> <dest-key-id> takes only --dest-backend,
 			// --dest-keydir and --algorithm (cmd/xkmsctl/key.go); the copy
 			// inherits the source's algorithm and curve. pkcs11 is disabled in
-			// config.test.yaml, so tpm2 is the other backend to copy into.
+			// config.test.yaml, so tpm2 is the other backend to copy into. A
+			// TPM imports only TCG duplication blobs: TPM2_DUPLICATE.
 			t.Run("key_copy", func(t *testing.T) {
 				stdout, stderr, err := suite.runCLI(serverURL,
 					"key", "copy", sourceKeyID, destKeyID,
 					"--backend", "software",
 					"--dest-backend", "tpm2",
-					"--algorithm", "RSAES_OAEP_SHA_256",
+					"--algorithm", "TPM2_DUPLICATE",
 				)
 				if err != nil {
 					t.Fatalf("[%s] key copy software->tpm2 failed: %v\nstdout: %s\nstderr: %s", proto, err, stdout, stderr)
@@ -707,6 +708,14 @@ func TestCLIComprehensiveKeyCopyOperation(t *testing.T) {
 					t.Fatalf("[%s] copied key %s not found on tpm2: %v\nstderr: %s", proto, destKeyID, err, stderr)
 				}
 				t.Logf("[%s] key copy passed: %s", proto, truncateOutput(stdout, 100))
+			})
+
+			t.Run("copy_signs_as_source", func(t *testing.T) {
+				assertTPM2CopySignsAsSource(t, suite, serverURL, destKeyID, sourceKeyID, "--backend", "software")
+			})
+
+			t.Run("tpm2_to_software_refused", func(t *testing.T) {
+				assertTPM2CopyOutRefused(t, suite, serverURL, string(proto))
 			})
 
 			// Cleanup

@@ -788,14 +788,15 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 			// key copy takes only --dest-backend, --dest-keydir and --algorithm
 			// (cmd/xkmsctl/key.go); the copy inherits the source's algorithm
 			// and curve. pkcs11 is disabled in config.test.yaml, so tpm2 is
-			// the other backend to copy into.
+			// the other backend to copy into. A TPM imports only TCG
+			// duplication blobs, so the copy names TPM2_DUPLICATE.
 			t.Run("key_copy", func(t *testing.T) {
 				args := []string{
 					"key", "copy", sourceKeyID, destKeyID,
 					"--backend", "software",
 					"--key-dir", suite.keyDir,
 					"--dest-backend", "tpm2",
-					"--algorithm", "RSAES_OAEP_SHA_256",
+					"--algorithm", "TPM2_DUPLICATE",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
@@ -813,12 +814,100 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				t.Logf("[%s] key copy passed", proto)
 			})
 
+			t.Run("copy_signs_as_source", func(t *testing.T) {
+				assertTPM2CopySignsAsSource(t, suite, serverURL, destKeyID, sourceKeyID,
+					"--backend", "software", "--key-dir", suite.keyDir)
+			})
+
+			t.Run("tpm2_to_software_refused", func(t *testing.T) {
+				assertTPM2CopyOutRefused(t, suite, serverURL, string(proto))
+			})
+
 			// Cleanup
 			suite.runCLI(serverURL, "key", "delete", sourceKeyID,
 				"--backend", "software",
 				"--key-dir", suite.keyDir)
 			suite.runCLI(serverURL, "key", "delete", destKeyID, "--backend", "tpm2")
 		})
+	}
+}
+
+// assertTPM2CopySignsAsSource signs with the tpm2 copy and verifies the
+// signature with the software source key: the copy holds the source's
+// private key, so the source public key verifies what the TPM signed.
+// sourceArgs locate the source key (--backend and, where used, --key-dir).
+func assertTPM2CopySignsAsSource(t *testing.T, suite *CLITestSuite, serverURL, copyKeyID, sourceKeyID string, sourceArgs ...string) {
+	t.Helper()
+	const data = "signed by the tpm2 copy, verified by the software source"
+
+	stdout, stderr, err := suite.runCLI(serverURL,
+		"key", "sign", copyKeyID, data, "--backend", "tpm2", "--hash", "sha256")
+	if err != nil {
+		t.Fatalf("sign with tpm2 copy %s failed: %v\nstdout: %s\nstderr: %s", copyKeyID, err, stdout, stderr)
+	}
+	signature := strings.TrimSpace(stdout)
+	if _, err := base64.StdEncoding.DecodeString(signature); signature == "" || err != nil {
+		t.Fatalf("tpm2 copy signature is not base64 (%v): %q", err, signature)
+	}
+
+	args := append([]string{"key", "verify", sourceKeyID, data, signature}, sourceArgs...)
+	args = append(args, "--hash", "sha256")
+	stdout, stderr, err = suite.runCLI(serverURL, args...)
+	if err != nil {
+		t.Fatalf("source %s does not verify the copy's signature: %v\nstdout: %s\nstderr: %s", sourceKeyID, err, stdout, stderr)
+	}
+	if !strings.Contains(strings.ToLower(stdout+stderr), "valid") {
+		t.Fatalf("verify with the source key did not report a valid signature: %s", stdout+stderr)
+	}
+}
+
+// assertTPM2CopyOutRefused copies a tpm2 key to software and expects the
+// typed refusal (TPM keys are hardware-bound): a 4xx-class error, never an
+// internal error, and no key created on the destination.
+func assertTPM2CopyOutRefused(t *testing.T, suite *CLITestSuite, serverURL, proto string) {
+	t.Helper()
+	srcID := generateUniqueID("test-copy-tpm2-src-" + proto)
+	dstID := generateUniqueID("test-copy-tpm2-dst-" + proto)
+	t.Cleanup(func() {
+		_, _, _ = suite.runCLI(serverURL, "key", "delete", srcID, "--backend", "tpm2")
+		_, _, _ = suite.runCLI(serverURL, "key", "delete", dstID, "--backend", "software")
+	})
+
+	if _, stderr, err := suite.runCLI(serverURL,
+		"key", "generate", srcID,
+		"--backend", "tpm2",
+		"--key-type", "signing",
+		"--key-algorithm", "ecdsa",
+		"--curve", "P-256",
+	); err != nil {
+		t.Fatalf("tpm2 source key generate failed: %v\nstderr: %s", err, stderr)
+	}
+
+	stdout, stderr, err := suite.runCLI(serverURL,
+		"key", "copy", srcID, dstID,
+		"--backend", "tpm2",
+		"--dest-backend", "software",
+		"--algorithm", "RSAES_OAEP_SHA_256",
+	)
+	if err == nil {
+		t.Fatalf("tpm2->software copy succeeded; want the hardware-bound refusal\nstdout: %s", stdout)
+	}
+	out := strings.ToLower(stdout + stderr)
+	if strings.Contains(out, "internal") {
+		t.Fatalf("tpm2->software copy refusal is an internal error, want 4xx: %s", stdout+stderr)
+	}
+	refused := false
+	for _, marker := range []string{"hardware-bound", "not exportable", "forbidden", "permission", "403"} {
+		if strings.Contains(out, marker) {
+			refused = true
+			break
+		}
+	}
+	if !refused {
+		t.Fatalf("tpm2->software copy error is not the typed refusal: %s", stdout+stderr)
+	}
+	if _, _, err := suite.runCLI(serverURL, "key", "get", dstID, "--backend", "software"); err == nil {
+		t.Fatalf("refused copy created %s on software", dstID)
 	}
 }
 
