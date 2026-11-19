@@ -23,7 +23,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -144,20 +143,19 @@ func sshServerURL(cfg *TestConfig, proto ProtocolType) string {
 // reports that refusal as "key not found" (pkg/ssh/tenancy/ops.go:134-137).
 //
 //   - embedded (no server): the local store has no caller binding, "default".
-//   - unix://: the socket authenticates by peer credentials as "uid:<uid>"
-//     (pkg/api/unix/peercred.go:198-203). The server reads the connecting
-//     process's effective uid from the kernel; the compose services share no
-//     user namespace remap, so that is this process's os.Geteuid().
-//   - TLS schemes: the admin certificate's subject, its CommonName
-//     (pkg/auth/mtls.go:294, :344; the first-boot admin user is bound under
-//     the same name, :263), read from the apiharness admin credential.
+//   - every server scheme, unix:// included: the admin certificate's
+//     CommonName, read from the apiharness admin credential. That is the
+//     subject of an unbound certificate (pkg/auth/mtls.go:294, :344); a
+//     certificate bound to a qrdb user takes the user's name instead (:263),
+//     which this assumes the first-boot admin shares with its CommonName. The suite's unix socket is the qrdb node's TLS listener,
+//     which authenticates the client certificate like the TCP listeners;
+//     the peer-credential "uid:<uid>" identity (pkg/api/unix/peercred.go:202)
+//     belongs to the plaintext pkg/api/unix server, which this suite does
+//     not dial.
 func sshUserOwner(t *testing.T, serverURL string) string {
 	t.Helper()
-	switch {
-	case serverURL == "":
+	if serverURL == "" {
 		return "default"
-	case strings.HasPrefix(serverURL, "unix://"):
-		return "uid:" + strconv.Itoa(os.Geteuid())
 	}
 	certPEM, err := os.ReadFile(apiharness.AdminCertFile())
 	if err != nil {
