@@ -147,6 +147,9 @@ func (c *tenantClient) List(ctx context.Context, req *ListTenantsRequest) (*List
 	if req == nil {
 		req = &ListTenantsRequest{}
 	}
+	if req.Status != "" {
+		return nil, NewTenantStatusUnsupported("admin.tenant.List")
+	}
 
 	raw, err := c.transport.Request(ctx, tenantService, "list", req)
 	if err != nil {

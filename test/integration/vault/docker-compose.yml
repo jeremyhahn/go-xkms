@@ -7,7 +7,7 @@ services:
       - IPC_LOCK
     environment:
       - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
+      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+github.com/jeremyhahn/*}}
       - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
       - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${FORGE_MODULE_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
       - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}

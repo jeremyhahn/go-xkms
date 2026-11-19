@@ -1,6 +1,6 @@
 # Lightweight builder for go-xkms server and library builds
 # Provides all CGO dependencies (libusb, PKCS#11) for portable binaries
-FROM golang:1.27.3-bookworm
+FROM golang:1.27.4-bookworm
 
 ENV GOTOOLCHAIN=auto
 ENV GOFLAGS="-buildvcs=false"

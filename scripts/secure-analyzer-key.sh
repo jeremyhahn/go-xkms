@@ -104,6 +104,11 @@ process_diagnostics() {
 	moduledir="$3"
 	while IFS= read -r diagline; do
 		[ -n "$diagline" ] || continue
+		# A cold module cache makes go vet report each module it fetches.
+		# Skip exactly that line shape and nothing broader.
+		if printf '%s\n' "$diagline" | grep -Eq '^go: downloading [^ ]+ v[^ ]+$'; then
+			continue
+		fi
 		if ! printf '%s\n' "$diagline" | grep -Eq '^[^:]+\.go:[0-9]+:[0-9]+: '; then
 			# Not a diagnostic line (a build failure, a tool-start failure, a
 			# panic) -- never suppressible, always a hard failure.

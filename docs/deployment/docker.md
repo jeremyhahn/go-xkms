@@ -24,7 +24,7 @@ All images follow security best practices:
 - Non-root user (appuser, UID 1000)
 - `debian:bookworm-slim` runtime base, matching the builder's libc. The
   binaries are built with `CGO_ENABLED=1` (required for PKCS#11) under
-  `golang:1.27.3-bookworm`, so they are glibc-linked and cannot execute on a
+  `golang:1.27.4-bookworm`, so they are glibc-linked and cannot execute on a
   musl base such as Alpine. Each runtime stage runs `apt-get upgrade` so a
   rebuild picks up security advisories rather than freezing the base's
   packages.

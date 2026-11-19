@@ -12,7 +12,7 @@ without a merged pull request in between — that is the whole point.
 ### Before anything reaches `main`: CI-only gates must pass
 
 `make test` and `make lint` are not the whole gate. CI's `Lint`, `Static
-Analysis` and `Architecture Gates` jobs run checks no local default target
+Analysis` and `Preflight` (its architecture gates) jobs run checks no local default target
 does — `make fmt-check`, `make secure-analyzer` (go-qrdb's secure-memory
 analyzer over every module and tag set), `make secure-analyzer-selftest`,
 `make vet-integration`, `make check-public-literals`, and the sdk/go-only

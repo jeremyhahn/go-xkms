@@ -7,7 +7,7 @@
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
-| Go | as in `go.mod` (1.27.3) | |
+| Go | as in `go.mod` (1.27.4) | |
 | Node.js + npm | 20+ | Only to rebuild the SPAs. Vite 6 needs a current Node LTS |
 | Wails CLI | v2 | Optional: `wails dev` / `wails build` from `cmd/acme-client` |
 | cgo | enabled | Desktop (`-tags gui`) builds only |

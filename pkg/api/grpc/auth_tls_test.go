@@ -471,7 +471,17 @@ func TestGRPCServer_mTLS_ClientCertRequired(t *testing.T) {
 		t.Fatalf("Failed to generate server certificate: %v", err)
 	}
 
-	clientCert, err := testutil.GenerateTestClientCert(ca, "test-client")
+	// The certificate-only mTLS path names a tenant only through
+	// qrdbsdk.TenantFromClientCert: the signed certificate carries the OU
+	// and the agreeing SPIFFE SAN.
+	clientCert, err := testutil.GenerateTestTenantClientCert(ca, "test-client", "acme")
+	if err != nil {
+		t.Fatalf("Failed to generate client certificate: %v", err)
+	}
+
+	// A CA-signed certificate with no tenant claim passes the handshake but
+	// names no tenant, so the authenticator refuses it.
+	noTenantCert, err := testutil.GenerateTestClientCert(ca, "no-tenant-client")
 	if err != nil {
 		t.Fatalf("Failed to generate client certificate: %v", err)
 	}
@@ -495,11 +505,19 @@ func TestGRPCServer_mTLS_ClientCertRequired(t *testing.T) {
 	// Create mTLS authenticator
 	authenticator := auth.NewMTLSAuthenticator(nil)
 
+	// The server serves the backends of the xkms service setupTestXKMS
+	// initialized.
+	xkmsService, err := xkms.Get()
+	if err != nil {
+		t.Fatalf("Failed to get xkms service: %v", err)
+	}
+
 	// Create gRPC server with mTLS
 	cfg := &ServerConfig{
 		Port:           0,
 		TLSConfig:      tlsConfig,
 		Authenticator:  authenticator,
+		XKMSService:    xkmsService,
 		EnableLogging:  false,
 		EnableRecovery: true,
 		Logger:         newDiscardLogger(),
@@ -586,6 +604,30 @@ func TestGRPCServer_mTLS_ClientCertRequired(t *testing.T) {
 		}
 		// The error should be related to TLS handshake or authentication
 		t.Logf("Got expected error: %v", err)
+	})
+
+	// Test with a client certificate that names no tenant (refused)
+	t.Run("ClientCertWithoutTenant", func(t *testing.T) {
+		creds := credentials.NewTLS(&tls.Config{
+			RootCAs:      caCertPoolClient,
+			Certificates: []tls.Certificate{noTenantCert.TLSCert},
+		})
+
+		conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
+		if err != nil {
+			t.Fatalf("Failed to connect with client cert: %v", err)
+		}
+		defer func() { _ = conn.Close() }()
+
+		client := pb.NewKeystoreServiceClient(conn)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_, err = client.ListBackends(ctx, &pb.ListBackendsRequest{})
+		if status.Code(err) != codes.Unauthenticated {
+			t.Errorf("Expected Unauthenticated, got %v", err)
+		}
 	})
 }
 
