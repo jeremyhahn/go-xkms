@@ -15,6 +15,7 @@ services:
         - VERSION=${VERSION:-0.0.1-alpha}
       secrets:
         - gomodauth
+        - apt_proxy
     image: go-xkms-bootstrap:${XKMS_IMAGE_TAG:-latest}
     ports:
       - "${XKMS_HOST_REST_PORT:-0}:8443"
@@ -85,6 +86,7 @@ services:
       dockerfile: Dockerfile
       secrets:
         - gomodauth
+        - apt_proxy
     image: go-xkms-bootstrap:${XKMS_IMAGE_TAG:-latest}
     user: root
     volumes:
@@ -213,3 +215,7 @@ networks:
 secrets:
   gomodauth:
     file: ../../../build/docker/devcontainer/gomodauth.env
+  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
+  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  apt_proxy:
+    environment: DEVCACHE_APT_PROXY
