@@ -216,6 +216,29 @@ describe("KeyAccessPolicyView", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a future afternoon", FUTURE + 15 * 3600 + 37 * 60 + 11],
+    ["later today", Math.floor(Date.now() / 1000) + 60],
+  ])("keeps a loaded non-midnight expiry (%s) when another field is edited", async (_label, at) => {
+    request.mockImplementation((method: string) =>
+      Promise.resolve(
+        method === "GET"
+          ? { policy: { key_id: "k1", version: 2, expires_at: at }, timestamp: 1 }
+          : { key_id: "k1", policy_version: 3, timestamp: 1 },
+      ),
+    );
+
+    render(KeyAccessPolicyView);
+    await selectKey();
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(await screen.findByText("Version 2")).toBeInTheDocument();
+    await addPrincipal("Allowed", "svc-a");
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request.mock.calls[1]![2].body.policy).toEqual({ allowed_principals: ["svc-a"], expires_at: at });
+  });
+
   it("shows a load failure in an error alert", async () => {
     request.mockRejectedValue(new Error("key not found"));
 
