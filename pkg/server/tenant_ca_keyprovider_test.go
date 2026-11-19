@@ -553,8 +553,25 @@ func TestTenantCAKeyFactory_SignatureVerifies(t *testing.T) {
 	assert.True(t, ecdsa.VerifyASN1(pub, digest[:], sig), "the provider's signature does not verify with the xkms public key")
 }
 
-func TestTenantCAKeyProviderOptions(t *testing.T) {
+// An existing cluster-CA deployment keeps go-qrdb's persisted tenant login
+// CAs on upgrade: without the explicit opt-in the factory is not wired, so
+// login certificates those CAs issued keep their trusted issuer (Codex P1,
+// review 5935040469).
+func TestTenantCAKeyProviderOptions_NotOptedIn(t *testing.T) {
 	s := &Server{config: &config.Config{CA: ca.DefaultMultiIdentityCAConfigWithIntermediate()}}
+	if opts := s.tenantCAKeyProviderOptions(); len(opts) != 0 {
+		t.Fatalf("tenantCAKeyProviderOptions() returned %d options without the opt-in, want 0", len(opts))
+	}
+	if s.tenantCAKeys != nil {
+		t.Fatal("the tenant CA key factory was bound without the opt-in")
+	}
+}
+
+func TestTenantCAKeyProviderOptions(t *testing.T) {
+	s := &Server{config: &config.Config{
+		CA:        ca.DefaultMultiIdentityCAConfigWithIntermediate(),
+		Datastore: config.DatastoreConfig{TenantLoginCAKeys: true},
+	}}
 	if opts := s.tenantCAKeyProviderOptions(); len(opts) != 1 {
 		t.Fatalf("tenantCAKeyProviderOptions() returned %d options, want 1", len(opts))
 	}
