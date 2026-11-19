@@ -624,6 +624,108 @@ func TestTenantCAKeyFactory_TakesOverStaleClaim(t *testing.T) {
 	assert.NotEqual(t, stale, current, "the stale claim must be replaced by the pass that took it over")
 }
 
+// listFailBackend fails every ListKeys with err, the way a key store that is
+// down or refuses the caller does, and counts what the provisioning path
+// writes through it.
+type listFailBackend struct {
+	xkms.Backend
+	err       error
+	saves     atomic.Int32
+	generated atomic.Int32
+}
+
+func (b *listFailBackend) ListKeys(context.Context) ([]*types.KeyAttributes, error) {
+	return nil, b.err
+}
+
+func (b *listFailBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
+	b.saves.Add(1)
+	return b.Backend.SaveCert(ctx, keyID, cert)
+}
+
+func (b *listFailBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	b.generated.Add(1)
+	return b.Backend.GenerateECDSA(ctx, attrs)
+}
+
+// A key lookup that fails is not a missing key: the pass reports the
+// failure and neither claims, records intent nor generates (Codex P1,
+// review 5972263613).
+func TestTenantCAKeyFactory_LookupFailureIsNotAbsence(t *testing.T) {
+	ctx := context.Background()
+	_, base := newTenantCAKeyTestFactory(t)
+	outage := errors.New("key store unavailable")
+	broken := &listFailBackend{Backend: base, err: outage}
+	f := newTenantCAKeyFactory()
+	require.NoError(t, f.Bind(broken, storage.New()))
+
+	err := f.EnsureTenant(ctx, "tenant-a")
+	require.ErrorIs(t, err, outage)
+	assert.Zero(t, broken.saves.Load(), "a pass that could not look the key up recorded provisioning intent")
+	assert.Zero(t, broken.generated.Load(), "a pass that could not look the key up generated a key")
+	_, err = f.claims.Get(ctx, tenantLoginCAClaimKey("tenant-a"))
+	assert.ErrorIs(t, err, storage.ErrNotFound, "a pass that could not look the key up took the claim")
+}
+
+// delayedProvisionerBackend stalls its provisioner after the claim: on the
+// first intent record it runs pause, the way a process that is descheduled
+// past the claim lease does, and it counts the keys generated through it.
+type delayedProvisionerBackend struct {
+	xkms.Backend
+	pause     func()
+	once      sync.Once
+	generated atomic.Int32
+}
+
+func (b *delayedProvisionerBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
+	if strings.HasSuffix(keyID, tenantLoginCAIntentID) {
+		b.once.Do(b.pause)
+	}
+	return b.Backend.SaveCert(ctx, keyID, cert)
+}
+
+func (b *delayedProvisionerBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	b.generated.Add(1)
+	return b.Backend.GenerateECDSA(ctx, attrs)
+}
+
+// A claim older than the lease does not prove its owner stopped: a
+// provisioner delayed past the lease, whose claim another node took over,
+// must not generate once it resumes, and converges on the key the new
+// owner made (Codex P1, review 5972263613).
+func TestTenantCAKeyFactory_FencesDelayedProvisioner(t *testing.T) {
+	ctx := context.Background()
+	baseA, baseB := sharedTenantCABackends(t)
+	claims := storage.New() // shared by the nodes, as the server's shared storage is
+	key := tenantLoginCAClaimKey("tenant-a")
+	b := newTenantCAKeyFactory()
+	require.NoError(t, b.Bind(baseB, claims))
+	var errB error
+	delayed := &delayedProvisionerBackend{Backend: baseA}
+	delayed.pause = func() {
+		// A's claim ages past the lease while A is stalled.
+		held, err := claims.Get(ctx, key)
+		require.NoError(t, err)
+		owner := ""
+		if i := strings.IndexByte(string(held), ' '); i >= 0 {
+			owner = string(held[i:])
+		}
+		aged := time.Now().Add(-2*tenantLoginCAClaimLease).UTC().Format(time.RFC3339Nano) + owner
+		require.NoError(t, claims.Put(ctx, key, []byte(aged)))
+		errB = b.EnsureTenant(ctx, "tenant-a")
+	}
+	a := newTenantCAKeyFactory()
+	require.NoError(t, a.Bind(delayed, claims))
+
+	require.NoError(t, a.EnsureTenant(ctx, "tenant-a"))
+	require.NoError(t, errB, "the node that took over the stale claim must provision")
+	assert.Zero(t, delayed.generated.Load(), "the provisioner whose claim was taken over generated a key")
+	pubA, certA := tenantLoginCA(t, a, "tenant-a")
+	pubB, certB := tenantLoginCA(t, b, "tenant-a")
+	assert.True(t, pubA.(*ecdsa.PublicKey).Equal(pubB), "both nodes must resolve the one persisted key")
+	assert.True(t, certA.Equal(certB))
+}
+
 // Removing a tenant releases its claim, so the tenant can be provisioned
 // again.
 func TestTenantCAKeyFactory_RemoveTenantReleasesClaim(t *testing.T) {
