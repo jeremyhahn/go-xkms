@@ -207,8 +207,8 @@ func (r *verdictRecorder) VerifyRegisteredDevice(ctx context.Context, leaf *x509
 	return verified, r.record(err)
 }
 
-func (r *verdictRecorder) ConfirmRegisteredDevice(ctx context.Context, ueid string, attestedSPKI []byte) error {
-	return r.record(r.TrustAnchorVerifier.ConfirmRegisteredDevice(ctx, ueid, attestedSPKI))
+func (r *verdictRecorder) ConfirmRegisteredDevice(ctx context.Context, ueid string, attestedSPKI []byte, leaf *x509.Certificate) error {
+	return r.record(r.TrustAnchorVerifier.ConfirmRegisteredDevice(ctx, ueid, attestedSPKI, leaf))
 }
 
 func (r *verdictRecorder) record(err error) error {

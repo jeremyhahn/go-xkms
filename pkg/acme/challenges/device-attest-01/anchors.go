@@ -109,9 +109,14 @@ type ProvisionedDevice struct {
 	DeviceIDCertificate []byte
 
 	// ApplicationReference is the 32-byte application evidence registered
-	// for the device: the value the possession request's measurements must
-	// carry at finalize (VerifiedAttestation.VerifyPossessionCSR). A record
-	// whose reference is set with any other length is refused.
+	// for the device. When set, the alias certificate's UCCS measurements
+	// claim (273) must carry exactly these bytes, at the challenge and again
+	// at finalization (dice.VerifyOptions.ApplicationReference); a differing
+	// one is dice.ErrApplicationEvidenceMismatch. It is also the value the
+	// possession request's measurements must carry at finalize
+	// (VerifiedAttestation.VerifyPossessionCSR), where a device registered
+	// without one is refused. A record whose reference is set with any other
+	// length is refused.
 	ApplicationReference []byte
 }
 

@@ -104,9 +104,10 @@ type RegisteredDeviceVerifier interface {
 	VerifyRegisteredDevice(ctx context.Context, leaf *x509.Certificate, keyAuthorization string) (*VerifiedAttestation, error)
 
 	// ConfirmRegisteredDevice re-queries the registry at finalization and
-	// refuses a device whose record is gone or whose key is no longer
-	// attestedSPKI.
-	ConfirmRegisteredDevice(ctx context.Context, ueid string, attestedSPKI []byte) error
+	// refuses a device whose record is gone, whose key is no longer
+	// attestedSPKI, or whose registered application reference the leaf's
+	// application evidence no longer matches.
+	ConfirmRegisteredDevice(ctx context.Context, ueid string, attestedSPKI []byte, leaf *x509.Certificate) error
 
 	// RegisteredApplicationReference re-queries the registry at
 	// finalization for the device's registered application reference: nil
@@ -139,13 +140,13 @@ func (v *TrustAnchorVerifier) VerifyRegisteredDevice(ctx context.Context, leaf *
 		return nil, err
 	}
 	if len(record.DeviceIDCertificate) > 0 {
-		return v.verifyEndorsedDevice(leaf, record.DeviceIDCertificate, ueid, keyAuthorization)
+		return v.verifyEndorsedDevice(leaf, record, ueid, keyAuthorization)
 	}
-	return v.verifyRawKeyDevice(leaf, record.DeviceIDKey, keyAuthorization)
+	return v.verifyRawKeyDevice(leaf, record, keyAuthorization)
 }
 
 // ConfirmRegisteredDevice implements RegisteredDeviceVerifier.
-func (v *TrustAnchorVerifier) ConfirmRegisteredDevice(ctx context.Context, ueid string, attestedSPKI []byte) error {
+func (v *TrustAnchorVerifier) ConfirmRegisteredDevice(ctx context.Context, ueid string, attestedSPKI []byte, leaf *x509.Certificate) error {
 	record, err := v.resolve(ctx, ueid)
 	if err != nil {
 		return err
@@ -156,6 +157,21 @@ func (v *TrustAnchorVerifier) ConfirmRegisteredDevice(ctx context.Context, ueid 
 	}
 	if !bytes.Equal(current, attestedSPKI) {
 		return notAuthorized(&errs.Detail{Err: ErrAttestedKeyMismatch, Detail: "the provisioned DeviceID key changed after the challenge was validated"})
+	}
+	if record.ApplicationReference == nil {
+		return nil
+	}
+	// The registered application may have changed since the challenge; the
+	// leaf it validated is held to the reference the record holds now.
+	if leaf == nil {
+		return notAuthorized(&errs.Detail{Err: dice.ErrApplicationEvidenceMismatch, Detail: "no leaf to read the application evidence from"})
+	}
+	claims, err := dice.UccsFromCertificate(leaf)
+	if err != nil {
+		return notAuthorized(&errs.Joined{Lead: dice.ErrApplicationEvidenceMismatch, Cause: err})
+	}
+	if err := dice.VerifyApplicationReference(claims, record.ApplicationReference); err != nil {
+		return notAuthorized(err)
 	}
 	return nil
 }
@@ -177,7 +193,7 @@ func (v *TrustAnchorVerifier) resolve(ctx context.Context, ueid string) (*Provis
 		return nil, notAuthorized(&errs.Detail{Err: ErrProvisioningRecordInvalid, Detail: "a record carries exactly one of a DeviceID key and a DeviceID certificate"})
 	}
 	if record.ApplicationReference != nil && len(record.ApplicationReference) != ApplicationReferenceSize {
-		return nil, notAuthorized(&errs.Detail{Err: ErrProvisioningRecordInvalid, Detail: "a registered application reference is 32 bytes"})
+		return nil, notAuthorized(&errs.Joined{Lead: ErrProvisioningRecordInvalid, Cause: dice.ErrInvalidApplicationReference})
 	}
 	return record, nil
 }
@@ -199,7 +215,8 @@ func (v *TrustAnchorVerifier) RegisteredApplicationReference(ctx context.Context
 
 // verifyRawKeyDevice is the raw-key path: the leaf must carry the provisioned
 // key and be signed by it before its claims are checked.
-func (v *TrustAnchorVerifier) verifyRawKeyDevice(leaf *x509.Certificate, deviceIDKey []byte, keyAuthorization string) (*VerifiedAttestation, error) {
+func (v *TrustAnchorVerifier) verifyRawKeyDevice(leaf *x509.Certificate, record *ProvisionedDevice, keyAuthorization string) (*VerifiedAttestation, error) {
+	deviceIDKey := record.DeviceIDKey
 	key, err := provisionedKey(deviceIDKey)
 	if err != nil {
 		return nil, notAuthorized(err)
@@ -213,7 +230,7 @@ func (v *TrustAnchorVerifier) verifyRawKeyDevice(leaf *x509.Certificate, deviceI
 	// No roots: the signature check above is the anchor. It is not a trusted
 	// root, so the root type reads unreported (CA m452); only the endorsed
 	// DeviceID path below reports one.
-	rootType, err := v.verifyDICEClaims([]*x509.Certificate{leaf}, nil, keyAuthorization)
+	rootType, err := v.verifyDICEClaims([]*x509.Certificate{leaf}, nil, keyAuthorization, record.ApplicationReference)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +240,8 @@ func (v *TrustAnchorVerifier) verifyRawKeyDevice(leaf *x509.Certificate, deviceI
 // verifyEndorsedDevice is the endorsement path: the provisioned DeviceID
 // certificate must name the leaf's UEID, and the two must anchor in the DICE
 // roots together.
-func (v *TrustAnchorVerifier) verifyEndorsedDevice(leaf *x509.Certificate, deviceIDDER []byte, ueid, keyAuthorization string) (*VerifiedAttestation, error) {
+func (v *TrustAnchorVerifier) verifyEndorsedDevice(leaf *x509.Certificate, record *ProvisionedDevice, ueid, keyAuthorization string) (*VerifiedAttestation, error) {
+	deviceIDDER := record.DeviceIDCertificate
 	if v.dicePool == nil {
 		return nil, notAuthorized(&errs.Detail{Err: ErrNoTrustAnchors, Detail: "a DeviceID certificate anchors in the DICE roots, and none is configured"})
 	}
@@ -238,7 +256,7 @@ func (v *TrustAnchorVerifier) verifyEndorsedDevice(leaf *x509.Certificate, devic
 	if endorsed != ueid {
 		return nil, notAuthorized(&errs.Detail{Err: ErrDeviceEndorsementInvalid, Detail: "the DeviceID certificate names ueid " + endorsed + ", not " + ueid})
 	}
-	rootType, err := v.verifyDICEClaims([]*x509.Certificate{leaf, deviceID}, v.dicePool, keyAuthorization)
+	rootType, err := v.verifyDICEClaims([]*x509.Certificate{leaf, deviceID}, v.dicePool, keyAuthorization, record.ApplicationReference)
 	if err != nil {
 		if errors.Is(err, dice.ErrChainVerificationFailed) {
 			return nil, notAuthorized(&errs.Joined{Lead: ErrDeviceEndorsementInvalid, Cause: err})
@@ -258,9 +276,11 @@ func (v *TrustAnchorVerifier) verifyEndorsedDevice(leaf *x509.Certificate, devic
 // base64url characters -- so the raw form cannot be carried by a conforming
 // UCCS claims set at all. Hashing is what Apple's device-attest-01 profile
 // does, for the same reason.
-func (v *TrustAnchorVerifier) verifyDICEClaims(chain []*x509.Certificate, roots *x509.CertPool, keyAuthorization string) (dice.RootType, error) {
+func (v *TrustAnchorVerifier) verifyDICEClaims(chain []*x509.Certificate, roots *x509.CertPool, keyAuthorization string, applicationReference []byte) (dice.RootType, error) {
 	evidence, err := dice.Verify(chain, &dice.VerifyOptions{
-		TrustedRoots: roots,
+		// The registered application, when the record holds one.
+		ApplicationReference: applicationReference,
+		TrustedRoots:         roots,
 		// The identity is read from the Ueid, so it is not optional.
 		RequireUeid:             true,
 		ExpectedNonce:           DICENonce(keyAuthorization),
@@ -336,11 +356,15 @@ func (v *VerifiedAttestation) ConfirmRegistration(ctx context.Context, verifier 
 	if !ok {
 		return notAuthorized(ErrNoDeviceResolver)
 	}
-	ueid, err := v.DeviceIdentity()
+	leaf, err := v.verifiedLeaf()
 	if err != nil {
 		return notAuthorized(err)
 	}
-	return registry.ConfirmRegisteredDevice(ctx, ueid, v.AttestedSPKI)
+	ueid, err := DeviceIdentityFromCertificate(v.Format, leaf)
+	if err != nil {
+		return notAuthorized(err)
+	}
+	return registry.ConfirmRegisteredDevice(ctx, ueid, v.AttestedSPKI, leaf)
 }
 
 // ApplicationReference returns, for FormatDICE, the application reference
