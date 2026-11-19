@@ -62,6 +62,13 @@ var (
 )
 
 // AdminCertFile is the admin client certificate's path.
+// AdminUsername is the qrdb user `xkmsd init` binds the first-boot admin
+// credential to (cmd/xkmsd/init_ceremony.go adminUsername). A bound mTLS
+// caller's subject is that user's Username (pkg/auth/mtls.go), not the
+// certificate's CommonName, so a user-scoped call by the admin credential
+// names this owner.
+const AdminUsername = "administrator"
+
 func AdminCertFile() string { return envOr(adminCertEnv, defaultAdminCert) }
 
 // AdminKeyFile is the admin client key's path.

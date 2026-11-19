@@ -17,8 +17,6 @@ package integration
 
 import (
 	"bytes"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"os"
 	"os/exec"
@@ -143,11 +141,11 @@ func sshServerURL(cfg *TestConfig, proto ProtocolType) string {
 // reports that refusal as "key not found" (pkg/ssh/tenancy/ops.go:134-137).
 //
 //   - embedded (no server): the local store has no caller binding, "default".
-//   - every server scheme, unix:// included: the admin certificate's
-//     CommonName, read from the apiharness admin credential. That is the
-//     subject of an unbound certificate (pkg/auth/mtls.go:294, :344); a
-//     certificate bound to a qrdb user takes the user's name instead (:263),
-//     which this assumes the first-boot admin shares with its CommonName. The suite's unix socket is the qrdb node's TLS listener,
+//   - every server scheme, unix:// included: apiharness.AdminUsername.
+//     `xkmsd init` binds the admin credential to that qrdb user
+//     (cmd/xkmsd/init_ceremony.go adminUsername), and a bound certificate's
+//     subject is the user's Username (pkg/auth/mtls.go:264), not its
+//     CommonName. The suite's unix socket is the qrdb node's TLS listener,
 //     which authenticates the client certificate like the TCP listeners;
 //     the peer-credential "uid:<uid>" identity (pkg/api/unix/peercred.go:202)
 //     belongs to the plaintext pkg/api/unix server, which this suite does
@@ -157,22 +155,7 @@ func sshUserOwner(t *testing.T, serverURL string) string {
 	if serverURL == "" {
 		return "default"
 	}
-	certPEM, err := os.ReadFile(apiharness.AdminCertFile())
-	if err != nil {
-		t.Fatalf("read admin certificate: %v", err)
-	}
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		t.Fatalf("admin certificate %s holds no PEM block", apiharness.AdminCertFile())
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Fatalf("parse admin certificate: %v", err)
-	}
-	if cert.Subject.CommonName == "" {
-		t.Fatalf("admin certificate %s has no CommonName", apiharness.AdminCertFile())
-	}
-	return cert.Subject.CommonName
+	return apiharness.AdminUsername
 }
 
 // sshAlgo describes an SSH algorithm to exercise in the parity matrix, with the
