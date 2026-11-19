@@ -356,6 +356,45 @@ func TestUnseal_PlatformPolicy_ExtraPCR_RecoversSealedSelection(t *testing.T) {
 	}
 }
 
+// An inline blob's own PCR selection wins over the pin a later seal stored
+// under the same CN: overwriting the store must not lock out a retained blob.
+func TestUnseal_PlatformPolicy_InlineBlobKeepsSelectionAfterCNOverwrite(t *testing.T) {
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-overwrite-pin")))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(15))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(14))
+
+	cn := "platform-policy-inline-overwrite"
+	seal := func(secret []byte, pcrs ...uint) *types.SealedData {
+		attrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+		attrs.TPMAttributes.PCRSelection = PolicyPCRSelection(tpm2.TPMAlgSHA256, pcrs...)
+		sealed, err := h.TPM.Seal(context.Background(), secret,
+			&types.SealOptions{KeyAttributes: attrs, Backend: h.Backend})
+		require.NoError(t, err)
+		return sealed
+	}
+	secretA := []byte("inline-blob-a-bound-to-pcr-7-and-15")
+	sealedA := seal(secretA, 7, 15)
+	sealedB := seal([]byte("blob-b-bound-to-pcr-7-and-14"), 7, 14)
+	require.NotNil(t, sealedB)
+
+	t.Run("recovered selection", func(t *testing.T) {
+		attrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+		got, err := h.TPM.Unseal(context.Background(), sealedA,
+			&types.UnsealOptions{KeyAttributes: attrs, Backend: h.Backend})
+		require.NoError(t, err, "blob A's metadata selection must open blob A")
+		require.Equal(t, secretA, got)
+	})
+	t.Run("explicit selection", func(t *testing.T) {
+		attrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+		attrs.TPMAttributes.PCRSelection = PolicyPCRSelection(tpm2.TPMAlgSHA256, 7, 15)
+		got, err := h.TPM.Unseal(context.Background(), sealedA,
+			&types.UnsealOptions{KeyAttributes: attrs, Backend: h.Backend})
+		require.NoError(t, err, "blob A's explicit selection must open blob A")
+		require.Equal(t, secretA, got)
+	})
+}
+
 // TestSealUnseal_WrongSRKPINAfterExtend_Rejected proves the SRK's recovery path
 // still demands the SRK's auth value. The pin record removes the PCR coupling
 // of the OR digest; it does not remove the PIN requirement, which the TPM
