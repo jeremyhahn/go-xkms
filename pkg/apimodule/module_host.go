@@ -85,6 +85,23 @@ func (m *Module) restServer() (*rest.Server, error) {
 		return nil, nil
 	}
 
+	hc, err := m.hostConfig(x)
+	if err != nil {
+		return nil, err
+	}
+	srv, err := rest.NewHostServer(context.Background(), hc)
+	if err != nil {
+		return nil, &HostBuildError{Err: err}
+	}
+	if !m.selfREST.CompareAndSwap(nil, srv) {
+		srv = m.selfREST.Load()
+	}
+	return srv, nil
+}
+
+// hostConfig builds the self-built REST surface's HostConfig from the
+// module's host inputs.
+func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 	stores := m.hostStores(x)
 	hc := &rest.HostConfig{
 		XKMSService:   x,
@@ -109,15 +126,7 @@ func (m *Module) restServer() (*rest.Server, error) {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
 	}
-
-	srv, err := rest.NewHostServer(context.Background(), hc)
-	if err != nil {
-		return nil, &HostBuildError{Err: err}
-	}
-	if !m.selfREST.CompareAndSwap(nil, srv) {
-		srv = m.selfREST.Load()
-	}
-	return srv, nil
+	return hc, nil
 }
 
 // selfBuilds reports whether the module composes its own surfaces from host
