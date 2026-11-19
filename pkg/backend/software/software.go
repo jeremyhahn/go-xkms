@@ -810,6 +810,11 @@ func (b *SoftwareBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttri
 		return nil, ErrStorageClosed
 	}
 
+	// A TPM destination imports only TCG duplication blobs (ruling 932).
+	if dstParams.Algorithm == backend.WrappingAlgorithmTPM2Duplicate {
+		return b.exportTPM2Duplicate(ctx, attrs, dstParams)
+	}
+
 	if !isValidWrappingAlgorithm(dstParams.Algorithm) {
 		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: dstParams.Algorithm.String()}
 	}

@@ -66,7 +66,29 @@ const (
 	// for the same reason the GCP constants above do: every wrapping
 	// algorithm this project speaks shares one vocabulary and one type.
 	WrappingAlgorithmVaultTransitBYOK WrappingAlgorithm = "VAULT_TRANSIT_BYOK_RSA_OAEP_SHA256_AES256_GCM96"
+
+	// WrappingAlgorithmTPM2Duplicate is a TCG TPM2_Duplicate blob (TPM 2.0
+	// Library Part 1 §23.3) built for the destination TPM's storage parent:
+	// an outer wrap keyed by a seed the parent's public key encapsulates, no
+	// inner wrap. It is the only form TPM2_Import accepts, so a tpm2
+	// destination asks for it. ImportParameters.ImportToken carries the
+	// parent's marshaled TPMT_PUBLIC.
+	WrappingAlgorithmTPM2Duplicate WrappingAlgorithm = "TPM2_DUPLICATE"
 )
+
+// TPM2DuplicationBlob is the JSON form of WrappedKeyMaterial.WrappedKey for
+// WrappingAlgorithmTPM2Duplicate. The tpm2 backend writes it in WrapKey and
+// reads it in ImportKey; the software backend writes it in ExportKeyTo.
+type TPM2DuplicationBlob struct {
+	// Public is the marshaled TPMTPublic of the duplicated object.
+	Public []byte `json:"public"`
+
+	// Duplicate is the outer-wrapped private area (the duplication blob).
+	Duplicate []byte `json:"duplicate"`
+
+	// EncSecret is the seed protected by the parent's asymmetric algorithm.
+	EncSecret []byte `json:"enc_secret"`
+}
 
 // ImportParameters contains the parameters needed to import a key into a backend.
 // These parameters are typically obtained from GetImportParameters and may have

@@ -45,21 +45,12 @@ const tpmDuplicateMetaKey = "tpm2_duplicate_blob"
 // key material, encrypts it to the parent (SRK) public key with
 // TPM2_CreateDuplicate, and serializes the three resulting fields here.
 // UnwrapKey/ImportKey feed them back into TPM2_Import under the SRK.
-type duplicationBlob struct {
-	// Public is the marshaled TPMTPublic of the duplicated sealed object.
-	Public []byte `json:"public"`
-
-	// Duplicate is the outer-wrapped private area (the duplication blob).
-	Duplicate []byte `json:"duplicate"`
-
-	// EncSecret is the seed protected by the SRK's asymmetric algorithm.
-	EncSecret []byte `json:"enc_secret"`
-}
+type duplicationBlob = backend.TPM2DuplicationBlob
 
 // importExportAlgorithm is the wrapping-algorithm label reported by the TPM2
 // backend's import/export surface. It denotes the TCG duplication protocol
 // (labeled encapsulation under the parent storage key), not an RSA family.
-const importExportAlgorithm = backend.WrappingAlgorithm("TPM2_DUPLICATE")
+const importExportAlgorithm = backend.WrappingAlgorithmTPM2Duplicate
 
 // srkPublicContents reads the public area of this backend's own storage
 // parent (b.srkAttrs -- the Platform SRK, see NewBackend) and returns its
@@ -102,7 +93,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("TPM2 import requires algorithm %s, got %s", importExportAlgorithm, algorithm)}
 	}
 
-	name, pub, err := b.srkPublicContents()
+	_, pub, err := b.srkPublicContents()
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +108,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 
 	return &backend.ImportParameters{
 		WrappingPublicKey: pubKey,
-		ImportToken:       name.Buffer,
+		ImportToken:       tpm2.Marshal(pub),
 		Algorithm:         importExportAlgorithm,
 		KeySpec:           "TPM2_KEYEDHASH",
 	}, nil
