@@ -267,52 +267,38 @@ func TestTenantAwareAdminService_DeleteTenant_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestTenantAwareAdminService_UpdateTenantStatus_Validation(t *testing.T) {
-	logger := slog.Default()
-	qrdbSvc := newTestQRDB(t)
+	service := mustTenantAwareAdminService(t, nil, nil, newTestQRDB(t), slog.Default(), "1.0.0")
 
-	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
+	err := service.UpdateTenantStatus(context.Background(), "", "active")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tenant ID is required")
 
-	tests := []struct {
-		name     string
-		tenantID string
-		status   string
-		wantErr  bool
-		errMsg   string
-	}{
-		{
-			name:     "empty tenant ID",
-			tenantID: "",
-			status:   "active",
-			wantErr:  true,
-			errMsg:   "tenant ID is required",
-		},
-		{
-			name:     "empty status",
-			tenantID: "tenant-123",
-			status:   "",
-			wantErr:  true,
-			errMsg:   "status is required",
-		},
-		{
-			name:     "invalid status",
-			tenantID: "tenant-123",
-			status:   "unknown",
-			wantErr:  true,
-			errMsg:   "invalid status",
-		},
+	// Any status, empty or unknown included, is refused with the typed error.
+	for _, status := range []string{"", "unknown", entities.TenantStatusActive} {
+		assertTenantStatusUnsupported(t, service.UpdateTenantStatus(context.Background(), "tenant-123", status))
 	}
+}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := service.UpdateTenantStatus(context.Background(), tc.tenantID, tc.status)
-			if tc.wantErr {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tc.errMsg)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
+// assertTenantStatusUnsupported checks the SPEC.md:129 refusal: the sentinel
+// matches and the typed error names the status field.
+func assertTenantStatusUnsupported(t *testing.T, err error) {
+	t.Helper()
+	require.ErrorIs(t, err, ErrTenantStatusUnsupported)
+	var ufe *UnsupportedFieldError
+	require.ErrorAs(t, err, &ufe)
+	assert.Equal(t, "status", ufe.Field)
+	assert.Equal(t, tenantStatusUnsupportedReason, ufe.Reason)
+}
+
+// markTenantDeleted sets the internal deleted marker straight through the
+// tenant DAO: no caller-facing path writes a tenant status (SPEC.md:129).
+func markTenantDeleted(t *testing.T, service *TenantAwareAdminService, tenantID string) {
+	t.Helper()
+	ctx := context.Background()
+	tenant, err := service.tenantDAO.Get(ctx, entities.StringToEntityID(tenantID))
+	require.NoError(t, err)
+	tenant.Status = entities.TenantStatusDeleted
+	require.NoError(t, service.tenantDAO.Save(ctx, tenant))
 }
 
 func TestValidTenantStatuses(t *testing.T) {
@@ -2259,48 +2245,12 @@ func TestTenantAwareAdminService_ListTenants_WithTenantDAO(t *testing.T) {
 	assert.Equal(t, 10, pagination.PerPage)
 }
 
-func TestTenantAwareAdminService_ListTenants_WithStatusFilter(t *testing.T) {
-	service := newTenantAwareTestService(t)
-	ctx := context.Background()
+func TestTenantAwareAdminService_ListTenants_StatusFilterRefusedWithoutTenantService(t *testing.T) {
+	service := mustTenantAwareAdminService(t, nil, nil, nil, slog.Default(), "1.0.0")
 
-	// Create tenants
-	for i := 0; i < 3; i++ {
-		_, err := service.CreateTenant(ctx, CreateTenantRequest{
-			ID:   fmt.Sprintf("status-filter-%d", i),
-			Name: fmt.Sprintf("Tenant %d", i),
-		})
-		require.NoError(t, err)
-	}
-
-	// Suspend one tenant
-	err := service.UpdateTenantStatus(ctx, "status-filter-1", entities.TenantStatusSuspended)
-	require.NoError(t, err)
-
-	// List only active tenants
-	tenants, pagination, err := service.ListTenants(ctx, ListTenantsRequest{
-		Page:    1,
-		PerPage: 10,
-		Status:  entities.TenantStatusActive,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 2, len(tenants))
-	assert.Equal(t, 2, pagination.Total)
-
-	// Verify all returned tenants are active
-	for _, tenant := range tenants {
-		assert.Equal(t, entities.TenantStatusActive, tenant.Status)
-	}
-
-	// List suspended tenants
-	tenants, pagination, err = service.ListTenants(ctx, ListTenantsRequest{
-		Page:    1,
-		PerPage: 10,
-		Status:  entities.TenantStatusSuspended,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, len(tenants))
-	assert.Equal(t, 1, pagination.Total)
-	assert.Equal(t, "status-filter-1", tenants[0].ID)
+	// The status filter is refused before the tenant service is consulted.
+	_, _, err := service.ListTenants(context.Background(), ListTenantsRequest{Status: entities.TenantStatusActive})
+	assertTenantStatusUnsupported(t, err)
 }
 
 func TestTenantAwareAdminService_ListTenants_EmptyResult(t *testing.T) {
@@ -2370,16 +2320,14 @@ func TestTenantAwareAdminService_GetTenant_DeletedTenantReturnsNotFound(t *testi
 	service := newTenantAwareTestService(t)
 	ctx := context.Background()
 
-	// Create and then soft-delete a tenant via status update
+	// Create and then soft-delete a tenant
 	_, err := service.CreateTenant(ctx, CreateTenantRequest{
 		ID:   "tenant-soft-deleted",
 		Name: "Soft Deleted",
 	})
 	require.NoError(t, err)
 
-	// Set status to deleted
-	err = service.UpdateTenantStatus(ctx, "tenant-soft-deleted", entities.TenantStatusDeleted)
-	require.NoError(t, err)
+	markTenantDeleted(t, service, "tenant-soft-deleted")
 
 	// GetTenant should return ErrTenantNotFound for deleted tenants
 	_, err = service.GetTenant(ctx, "tenant-soft-deleted")
@@ -2437,42 +2385,39 @@ func TestTenantAwareAdminService_DeleteTenant_NotFoundWithDAO(t *testing.T) {
 	assert.Equal(t, ErrTenantNotFound, err)
 }
 
-func TestTenantAwareAdminService_UpdateTenantStatus_SuccessWithDAO(t *testing.T) {
+func TestTenantAwareAdminService_UpdateTenantStatus_RefusedRecordUnchanged(t *testing.T) {
 	service := newTenantAwareTestService(t)
 	ctx := context.Background()
 
-	// Create tenant
 	_, err := service.CreateTenant(ctx, CreateTenantRequest{
 		ID:   "tenant-status-update",
 		Name: "Status Update Tenant",
 	})
 	require.NoError(t, err)
 
-	// Update to suspended
-	err = service.UpdateTenantStatus(ctx, "tenant-status-update", entities.TenantStatusSuspended)
-	require.NoError(t, err)
+	for _, status := range []string{
+		entities.TenantStatusSuspended,
+		entities.TenantStatusDeleted,
+		entities.TenantStatusActive,
+	} {
+		assertTenantStatusUnsupported(t, service.UpdateTenantStatus(ctx, "tenant-status-update", status))
+	}
 
-	// Verify status changed
 	tenant, err := service.GetTenant(ctx, "tenant-status-update")
 	require.NoError(t, err)
-	assert.Equal(t, entities.TenantStatusSuspended, tenant.Status)
-
-	// Update back to active
-	err = service.UpdateTenantStatus(ctx, "tenant-status-update", entities.TenantStatusActive)
-	require.NoError(t, err)
-
-	tenant, err = service.GetTenant(ctx, "tenant-status-update")
-	require.NoError(t, err)
 	assert.Equal(t, entities.TenantStatusActive, tenant.Status)
+	assert.Equal(t, "Status Update Tenant", tenant.Name)
 }
 
-func TestTenantAwareAdminService_UpdateTenantStatus_NotFoundWithDAO(t *testing.T) {
+func TestTenantAwareAdminService_UpdateTenantStatus_RefusedBeforeStorage(t *testing.T) {
 	service := newTenantAwareTestService(t)
 	ctx := context.Background()
 
+	// The refusal comes before any storage read: an unknown tenant is refused
+	// with the typed error, not reported missing.
 	err := service.UpdateTenantStatus(ctx, "nonexistent-for-status", entities.TenantStatusActive)
-	require.Error(t, err)
-	assert.Equal(t, ErrTenantNotFound, err)
+	assertTenantStatusUnsupported(t, err)
+	assert.NotErrorIs(t, err, ErrTenantNotFound)
 }
 
 func TestTenantAwareAdminService_GetTenantEABDAO_NoStorageFactory(t *testing.T) {
@@ -2564,37 +2509,32 @@ func TestTenantAwareAdminService_DeleteTenant_WithRBACAndKVCleanup(t *testing.T)
 	assert.Equal(t, ErrTenantNotFound, err)
 }
 
-func TestTenantAwareAdminService_UpdateTenantStatus_AllTransitions(t *testing.T) {
+func TestTenantAwareAdminService_ListTenants_StatusFilterRefused(t *testing.T) {
 	service := newTenantAwareTestService(t)
 	ctx := context.Background()
 
-	// Create tenant
 	_, err := service.CreateTenant(ctx, CreateTenantRequest{
-		ID:   "tenant-transitions",
-		Name: "Transition Tenant",
+		ID:   "tenant-filter-refused",
+		Name: "Filter Refused Tenant",
 	})
 	require.NoError(t, err)
 
-	// active -> suspended
-	err = service.UpdateTenantStatus(ctx, "tenant-transitions", entities.TenantStatusSuspended)
-	require.NoError(t, err)
-	tenant, err := service.GetTenant(ctx, "tenant-transitions")
-	require.NoError(t, err)
-	assert.Equal(t, entities.TenantStatusSuspended, tenant.Status)
+	for _, status := range []string{
+		entities.TenantStatusActive,
+		entities.TenantStatusSuspended,
+		entities.TenantStatusDeleted,
+		"unknown",
+	} {
+		tenants, pagination, err := service.ListTenants(ctx, ListTenantsRequest{Page: 1, PerPage: 10, Status: status})
+		assertTenantStatusUnsupported(t, err)
+		assert.Nil(t, tenants)
+		assert.Nil(t, pagination)
+	}
 
-	// suspended -> active
-	err = service.UpdateTenantStatus(ctx, "tenant-transitions", entities.TenantStatusActive)
+	tenants, _, err := service.ListTenants(ctx, ListTenantsRequest{Page: 1, PerPage: 10})
 	require.NoError(t, err)
-	tenant, err = service.GetTenant(ctx, "tenant-transitions")
-	require.NoError(t, err)
-	assert.Equal(t, entities.TenantStatusActive, tenant.Status)
-
-	// active -> deleted
-	err = service.UpdateTenantStatus(ctx, "tenant-transitions", entities.TenantStatusDeleted)
-	require.NoError(t, err)
-	// deleted tenant should not be found
-	_, err = service.GetTenant(ctx, "tenant-transitions")
-	assert.Equal(t, ErrTenantNotFound, err)
+	require.Len(t, tenants, 1)
+	assert.Equal(t, "tenant-filter-refused", tenants[0].ID)
 }
 
 func TestTenantAwareAdminService_UpdateIntermediateCAStatus_WithTenantDAO(t *testing.T) {
