@@ -67,10 +67,11 @@ export function b64ToHex(b64: string): string {
 }
 
 // macToB64 returns the MAC as standard base64, or null when it is neither
-// hex (only [0-9a-f], even length) nor base64.
+// hex (only [0-9a-fA-F], even length) nor base64. Hex wins: a hex MAC is
+// also valid base64 and would otherwise decode to different bytes.
 export function macToB64(mac: string): string | null {
   const t = mac.trim();
-  if (t !== "" && t.length % 2 === 0 && /^[0-9a-f]+$/.test(t)) {
+  if (t !== "" && t.length % 2 === 0 && /^[0-9a-f]+$/i.test(t)) {
     const bytes = new Uint8Array(t.length / 2);
     for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(t.slice(2 * i, 2 * i + 2), 16);
     return bytesToB64(bytes);
