@@ -1097,6 +1097,7 @@ test-scripts:
 	@bash test/scripts/retry.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
+	@bash test/scripts/softhsm-lib.test.sh
 	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/ensure-server-ca.test.sh
 	@bash test/scripts/socket-probe.test.sh
