@@ -58,6 +58,13 @@ user client, and were not refused. /health*, /api/v1/algorithms,
 6. Playwright spec test/integration/web/tests/passkey-node.spec.ts.
 7. docs/plans/2292.md and the changelog.
 
+## Status
+
+Slices 1-5 and 7 are done: the xkmsd and apimodule host paths both carry
+the node's user service (`apimodule.WithNodeUsers`, with a test over an
+auth-enforcing node), and a 500's cause logs at Error through the server
+logger. Slice 6 (the Playwright spec) is still open.
+
 ## Out of scope
 
 docs/SPEC.md, .github/workflows/, web/app/, pkg/embeddednode/serviceprincipal/.
