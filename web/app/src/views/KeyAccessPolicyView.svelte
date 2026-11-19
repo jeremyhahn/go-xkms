@@ -26,6 +26,8 @@
   let newAllowed = $state("");
   let newDenied = $state("");
   let expiry = $state("");
+  // The expiry as loaded: its date-field value and the exact timestamp.
+  let loadedExpiry: { date: string; at: number } | null = null;
   let maxUsage = $state("");
   let rotationRequired = $state(false);
   let requireMfa = $state(false);
@@ -52,6 +54,7 @@
     allowed = [...(p?.allowed_principals ?? [])];
     denied = [...(p?.denied_principals ?? [])];
     expiry = p?.expires_at ? new Date(p.expires_at * 1000).toISOString().slice(0, 10) : "";
+    loadedExpiry = p?.expires_at ? { date: expiry, at: p.expires_at } : null;
     maxUsage = p?.max_usage_count ? String(p.max_usage_count) : "";
     rotationRequired = p?.rotation_required ?? false;
     requireMfa = p?.require_mfa ?? false;
@@ -78,7 +81,11 @@
     if (operations.length > 0) policy.allowed_operations = operations;
     if (allowed.length > 0) policy.allowed_principals = [...allowed];
     if (denied.length > 0) policy.denied_principals = [...denied];
-    if (expiry !== "") {
+    if (expiry !== "" && loadedExpiry !== null && expiry === loadedExpiry.date) {
+      // The date field shows only the day: an unedited expiry keeps the
+      // loaded timestamp, time of day included.
+      policy.expires_at = loadedExpiry.at;
+    } else if (expiry !== "") {
       const at = Math.floor(Date.parse(`${expiry}T00:00:00Z`) / 1000);
       if (!Number.isFinite(at) || at * 1000 <= Date.now()) return "Expiry must be in the future.";
       policy.expires_at = at;
