@@ -4,7 +4,7 @@ ENV GOTOOLCHAIN=auto
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install Go from the official tarball.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     ca-certificates curl \
     && GOVERSION=$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -1) \
     && curl -fsSL "https://go.dev/dl/${GOVERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz \
@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 
 # Install build dependencies. Ubuntu 24.04 has gcc-13 natively.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     kmod \
     usbutils \
     build-essential \
