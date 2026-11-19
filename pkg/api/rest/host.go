@@ -317,8 +317,11 @@ func (a *WebAuthnTokenAdapter) GenerateToken(ctx context.Context, user webauthn.
 
 // GenerateTokenPair implements webauthn.TokenPairGenerator.
 func (a *WebAuthnTokenAdapter) GenerateTokenPair(ctx context.Context, user webauthn.User) (string, string, error) {
-	pair, err := a.issuer.Mint(ctx, a.identityFor(user))
+	identity := a.identityFor(user)
+	pair, err := a.issuer.Mint(ctx, identity)
 	if err != nil {
+		slog.Default().DebugContext(ctx, "webauthn login: token mint failed",
+			"user", identity.Subject, "tenant", identity.TenantID, "error", err.Error())
 		return "", "", err
 	}
 	return pair.AccessToken, pair.RefreshToken, nil
