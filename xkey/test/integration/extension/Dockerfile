@@ -4,7 +4,7 @@ FROM golang:1.27.4-bookworm AS go-builder
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     libusb-1.0-0-dev pkg-config gcc libc-dev \
     libgtk-3-dev libwebkit2gtk-4.0-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -47,7 +47,7 @@ FROM node:22-bookworm
 
 # Install runtime dependencies for xkey binary (CGO-linked shared libraries).
 # The xkey binary links against Wails GUI libs even in CLI mode.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     libusb-1.0-0 \
     libgtk-3-0 \
     libwebkit2gtk-4.0-37 \
