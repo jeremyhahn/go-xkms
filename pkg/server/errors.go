@@ -51,6 +51,11 @@ var (
 	// the embedded qrdb node has completed boot (a sealed node, for example).
 	ErrQRDBNodeNotServing = errors.New("server: the embedded qrdb node has not completed boot")
 
+	// ErrQRDBNodeNoCertActivator is returned by PIV invitation redemption
+	// when the embedded node's user service lacks qrdb's conditional
+	// first-credential activation (qrdbuser.CertActivator).
+	ErrQRDBNodeNoCertActivator = errors.New("server: the embedded qrdb node's user service cannot activate with a certificate binding")
+
 	// ErrBootstrapCABundleUnavailable is returned by the GET /v1/ca/bootstrap
 	// provider before Start has computed the CA bundle.
 	ErrBootstrapCABundleUnavailable = errors.New("server: the bootstrap CA bundle is not available yet")

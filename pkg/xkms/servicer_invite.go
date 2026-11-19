@@ -26,6 +26,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 
+	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -377,7 +378,9 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	if err := requireSystemTenantInvite(req.TenantID); err != nil {
 		return nil, err
 	}
-	if s.inviteStore == nil || !s.inviteUsersConfigured() {
+	// PIV redemption needs the node's conditional activation, which only
+	// the embedded node's user service (InviteUserService) carries.
+	if s.inviteStore == nil || s.inviteUsers == nil {
 		return nil, ErrNotConfigured
 	}
 	if _, err := s.getCA(); err != nil {
@@ -414,21 +417,22 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrPIVCertRejected{Err: err}
 	}
 
-	u, err := s.getInviteUser(ctx, req.TenantID, userID)
-	if err != nil {
-		return nil, ErrInviteUnusable
-	}
-	if u.Lifecycle != string(qrdbsdk.LifecyclePending) {
+	// The account must be the invitation's, in the invitation's tenant.
+	if _, err := s.getInviteUser(ctx, req.TenantID, userID); err != nil {
 		return nil, ErrInviteUnusable
 	}
 
+	// One conditional commit binds the certificate and activates the
+	// account, and only while it is pending with no binding: of concurrent
+	// redemptions exactly one binds its certificate (Codex round-4 P1,
+	// ruling 952); every other one is the opaque unusable answer.
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	if err := s.bindInviteCert(ctx, req.TenantID, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
-		return nil, &ErrUserOperation{Operation: "bind piv certificate", Err: err}
-	}
-
-	if err := s.activateInviteUser(ctx, req.TenantID, userID); err != nil {
-		return nil, err
+	if _, err := s.inviteUsers.ActivateWithCertBinding(qrdbsdk.ContextWithTenant(ctx, req.TenantID), userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+		var notPending *qrdbuser.AccountNotPendingError
+		if errors.As(err, &notPending) {
+			return nil, ErrInviteUnusable
+		}
+		return nil, &ErrUserOperation{Operation: "activate invited user with piv certificate", Err: err}
 	}
 	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
 		return nil, &ErrUserOperation{Operation: "redeem invite", Err: err}
@@ -463,10 +467,16 @@ func (s *XKMSService) activateInviteUser(ctx context.Context, tenantID string, u
 // writes in the tenant the context names without authorizing a caller, so
 // the invitation token, validated first, is the only authority redemption
 // acts on.
+//
+// ActivateWithCertBinding is qrdb's conditional first-credential
+// activation (qrdbuser.CertActivator): it binds the certificate to a
+// pending account holding no binding and activates it in one commit, and
+// refuses any other account with *qrdbuser.AccountNotPendingError. PIV
+// redemption needs it so concurrent redemptions bind one certificate.
 type InviteUserService interface {
 	GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error)
 	UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error)
-	AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbsdk.User, error)
+	ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbsdk.User, error)
 }
 
 // inviteAccount is what redemption reads of the account an invitation names.
@@ -510,16 +520,6 @@ func (s *XKMSService) setInviteUserActive(ctx context.Context, tenantID string, 
 		return err
 	}
 	_, err := s.inviteUsers.UpdateUser(qrdbsdk.ContextWithTenant(ctx, tenantID), &qrdbsdk.UpdateUserRequest{ID: userID, Lifecycle: qrdbsdk.LifecycleActive})
-	return err
-}
-
-// bindInviteCert binds thumbprint to the invited account of tenantID.
-func (s *XKMSService) bindInviteCert(ctx context.Context, tenantID string, userID uint64, thumbprint string, notAfterUnix int64) error {
-	if s.inviteUsers == nil {
-		_, err := s.users.AddCertBinding(ctx, userID, thumbprint, notAfterUnix)
-		return err
-	}
-	_, err := s.inviteUsers.AddCertBinding(qrdbsdk.ContextWithTenant(ctx, tenantID), userID, thumbprint, notAfterUnix)
 	return err
 }
 

@@ -40,6 +40,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
 
+	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
@@ -1710,13 +1711,19 @@ func (n nodeInviteUsers) UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUser
 	return users.UpdateUser(ctx, req)
 }
 
-// AddCertBinding implements xkms.InviteUserService.
-func (n nodeInviteUsers) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbsdk.User, error) {
+// ActivateWithCertBinding implements xkms.InviteUserService through the
+// node's tenant-routed user service, which implements qrdb's conditional
+// first-credential activation (qrdbuser.CertActivator).
+func (n nodeInviteUsers) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbsdk.User, error) {
 	users := n.node.UserService()
 	if users == nil {
 		return nil, ErrQRDBNodeNotServing
 	}
-	return users.AddCertBinding(ctx, userID, thumbprint, notAfterUnix)
+	activator, ok := users.(qrdbuser.CertActivator)
+	if !ok {
+		return nil, ErrQRDBNodeNoCertActivator
+	}
+	return activator.ActivateWithCertBinding(ctx, userID, thumbprint, notAfterUnix)
 }
 
 // initializeKeyVersionStore builds the key-version record store through
