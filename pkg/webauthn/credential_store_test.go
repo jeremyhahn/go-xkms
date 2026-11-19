@@ -296,6 +296,109 @@ func TestNewCredentialStore_NilFactory(t *testing.T) {
 	require.ErrorIs(t, err, dao.ErrNilFactory)
 }
 
+// pastClaimLease returns a clock that reads after every first-credential
+// claim lease taken now has expired.
+func pastClaimLease() func() time.Time {
+	return func() time.Time { return time.Now().Add(firstCredentialClaimLease + time.Minute) }
+}
+
+// TestCredentialStore_CrashedFirstCredentialClaimIsRecovered is the Codex
+// round-4 P1 fault/restart regression (ruling 952): a ceremony claims the
+// account's first credential and crashes before the credential save — it
+// neither commits nor releases. A restarted store over the same datastore,
+// after the claim's lease, can claim again and enrol the first credential;
+// the orphan claim does not block the account for ever.
+func TestCredentialStore_CrashedFirstCredentialClaimIsRecovered(t *testing.T) {
+	ctx := context.Background()
+	factory := newTestDAOFactory()
+
+	_, err := newTestCredentialStore(t, factory).ClaimFirstCredential(ctx, uniquenessOwner)
+	require.NoError(t, err)
+	// crash: the claim is never committed nor released.
+
+	restarted := newTestCredentialStore(t, factory)
+	_, err = restarted.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.ErrorIs(t, err, ErrFirstCredentialClaimed, "a claim inside its lease may belong to a live ceremony")
+
+	restarted.now = pastClaimLease()
+	claim, err := restarted.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.NoError(t, err, "an expired, uncommitted claim must not block the account")
+	cred := &Credential{ID: []byte("recovered-id"), UserID: uniquenessOwner}
+	require.NoError(t, restarted.Save(ctx, cred))
+	require.NoError(t, claim.Commit(ctx, cred))
+
+	owned, err := restarted.GetByUserID(ctx, uniquenessOwner)
+	require.NoError(t, err)
+	require.Len(t, owned, 1)
+
+	_, err = restarted.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.ErrorIs(t, err, ErrFirstCredentialClaimed, "a committed claim is never recovered")
+}
+
+// TestCredentialStore_RecoveredClaimFencesSlowClaimer proves the fence: a
+// live claimer slower than its lease, whose claim another ceremony
+// recovered, loses at commit, and the credential it saved is removed — the
+// account ends with exactly the recoverer's first credential.
+func TestCredentialStore_RecoveredClaimFencesSlowClaimer(t *testing.T) {
+	ctx := context.Background()
+	factory := newTestDAOFactory()
+	slow := newTestCredentialStore(t, factory)
+	slowClaim, err := slow.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.NoError(t, err)
+
+	recoverer := newTestCredentialStore(t, factory)
+	recoverer.now = pastClaimLease()
+	claim, err := recoverer.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.NoError(t, err)
+	won := &Credential{ID: []byte("recoverer-id"), UserID: uniquenessOwner}
+	require.NoError(t, recoverer.Save(ctx, won))
+	require.NoError(t, claim.Commit(ctx, won))
+
+	late := &Credential{ID: []byte("slow-id"), UserID: uniquenessOwner}
+	require.NoError(t, slow.Save(ctx, late))
+	require.ErrorIs(t, slowClaim.Commit(ctx, late), ErrFirstCredentialClaimed)
+
+	owned, err := slow.GetByUserID(ctx, uniquenessOwner)
+	require.NoError(t, err)
+	require.Len(t, owned, 1)
+	assert.Equal(t, won.ID, owned[0].ID)
+}
+
+// TestCredentialStore_ExpiredClaimWithCredentialIsNotRecovered proves a
+// ceremony that saved the credential but crashed before committing does not
+// let a second first credential in: the account already has a credential.
+func TestCredentialStore_ExpiredClaimWithCredentialIsNotRecovered(t *testing.T) {
+	ctx := context.Background()
+	factory := newTestDAOFactory()
+	crashed := newTestCredentialStore(t, factory)
+	_, err := crashed.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.NoError(t, err)
+	require.NoError(t, crashed.Save(ctx, &Credential{ID: []byte("saved-id"), UserID: uniquenessOwner}))
+
+	restarted := newTestCredentialStore(t, factory)
+	restarted.now = pastClaimLease()
+	_, err = restarted.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.ErrorIs(t, err, ErrFirstCredentialClaimed)
+}
+
+// TestCredentialStore_ReleaseLeavesARecoveredClaim proves a slow claimer's
+// release cannot delete the claim another ceremony recovered from it.
+func TestCredentialStore_ReleaseLeavesARecoveredClaim(t *testing.T) {
+	ctx := context.Background()
+	factory := newTestDAOFactory()
+	slowClaim, err := newTestCredentialStore(t, factory).ClaimFirstCredential(ctx, uniquenessOwner)
+	require.NoError(t, err)
+
+	recoverer := newTestCredentialStore(t, factory)
+	recoverer.now = pastClaimLease()
+	_, err = recoverer.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.NoError(t, err)
+
+	require.NoError(t, slowClaim.Release(ctx))
+	_, err = newTestCredentialStore(t, factory).ClaimFirstCredential(ctx, uniquenessOwner)
+	require.ErrorIs(t, err, ErrFirstCredentialClaimed, "the recoverer's live claim must survive the slow release")
+}
+
 // TestFinishRegistration_RefusesCredentialOwnedByAnotherAccount drives the
 // attack end to end: a credential ID already enrolled on one account cannot
 // be enrolled on a second account through a real ceremony.
