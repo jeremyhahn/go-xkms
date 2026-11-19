@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -25,8 +24,6 @@ const (
 
 	// maxDeviceIDLen bounds a device ID.
 	maxDeviceIDLen = 253
-
-	listPageSize = 1000
 )
 
 // StoreConfig configures a Store.
@@ -42,8 +39,11 @@ type Store struct {
 }
 
 type verdictEntity struct {
-	ID      uint64  `json:"id"`
-	Key     string  `json:"key"`
+	ID  uint64 `json:"id"`
+	Key string `json:"key"`
+	// Device is the tenant-scoped device prefix; indexed so a read
+	// selects one device's verdicts without a collection scan.
+	Device  string  `json:"device" index:"true"`
 	Verdict Verdict `json:"verdict"`
 }
 
@@ -78,7 +78,7 @@ func (s *Store) SaveVerdict(ctx context.Context, v Verdict) error {
 		return err
 	}
 	key := fmt.Sprintf("%s%020d-%s", prefix, v.At.UnixNano(), rand.Text())
-	if err := s.records.Save(ctx, &verdictEntity{Key: key, Verdict: v}); err != nil {
+	if err := s.records.Save(ctx, &verdictEntity{Key: key, Device: prefix, Verdict: v}); err != nil {
 		return &StoreError{Op: "save", Key: key, Err: err}
 	}
 	return nil
@@ -90,26 +90,9 @@ func (s *Store) ListVerdicts(ctx context.Context, tenant, deviceID string) ([]Ve
 	if err != nil {
 		return nil, err
 	}
-	// ForEachPage scans each page separately, without a shared snapshot
-	// (go-qrdb v0.51.0-alpha has no snapshot or cursor iteration), so a
-	// concurrent append can shift an already read record onto the next
-	// page. A verdict ID is unique, so the first copy of each is kept.
-	var entities []*verdictEntity
-	seen := make(map[uint64]struct{})
-	query := qrdbsdk.PageQuery{Page: 1, PageSize: listPageSize}
-	err = s.records.ForEachPage(ctx, query, func(page qrdbsdk.PageResult[*verdictEntity]) error {
-		for _, e := range page.Entities {
-			if !strings.HasPrefix(e.Key, prefix) {
-				continue
-			}
-			if _, dup := seen[e.ID]; dup {
-				continue
-			}
-			seen[e.ID] = struct{}{}
-			entities = append(entities, e)
-		}
-		return nil
-	})
+	// The indexed Device field selects one device's verdicts; no other
+	// tenant's or device's history is read.
+	entities, err := s.records.Find(ctx).Where("Device = ?", prefix).Execute()
 	if err != nil {
 		return nil, &StoreError{Op: "list", Key: prefix, Err: err}
 	}

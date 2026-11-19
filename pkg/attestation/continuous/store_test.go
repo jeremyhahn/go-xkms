@@ -29,7 +29,7 @@ func TestStore_ListVerdictsNoDuplicatesUnderConcurrentAppends(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	base := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
-	const tenant, want = "acme", listPageSize
+	const tenant, want = "acme", 1000
 	for i := 0; i < want; i++ {
 		v := Verdict{Tenant: tenant, DeviceID: "dev-1", At: base.Add(time.Duration(i) * time.Millisecond)}
 		if err := store.SaveVerdict(ctx, v); err != nil {
@@ -40,7 +40,7 @@ func TestStore_ListVerdictsNoDuplicatesUnderConcurrentAppends(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		defer close(done)
-		for i := 0; i < 3*listPageSize; i++ {
+		for i := 0; i < 3*want; i++ {
 			select {
 			case <-stop:
 				return
