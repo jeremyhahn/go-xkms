@@ -136,6 +136,87 @@ func TestDialClient_HandshakeError(t *testing.T) {
 	}
 }
 
+// TestDialClient_CancelDuringHandshakeClosesConn cancels a context that has
+// no deadline while the peer has accepted but never sends a banner: the
+// handshake deadline alone would hold the socket open for the full Timeout.
+func TestDialClient_CancelDuringHandshakeClosesConn(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, aerr := ln.Accept()
+		if aerr != nil {
+			close(accepted)
+			return
+		}
+		accepted <- conn
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dialErr := make(chan error, 1)
+	addr := ln.Addr().(*net.TCPAddr)
+	go func() {
+		_, derr := DialClient(ctx, ClientParams{
+			Host:            "127.0.0.1",
+			Port:            addr.Port,
+			User:            "u",
+			Signer:          testSigner(t),
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Timeout:         30 * time.Second,
+		})
+		dialErr <- derr
+	}()
+
+	var peer net.Conn
+	select {
+	case peer = <-accepted:
+		if peer == nil {
+			t.Fatal("Accept failed")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("peer never accepted the connection")
+	}
+	defer peer.Close()
+
+	cancel()
+
+	select {
+	case err = <-dialErr:
+	case <-time.After(2 * time.Second):
+		t.Fatal("DialClient did not return within 2s of cancellation")
+	}
+	var te *TimeoutError
+	if !errors.As(err, &te) {
+		t.Fatalf("expected TimeoutError, got %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected the error to wrap context.Canceled, got %v", err)
+	}
+
+	// The client wrote its version banner; drain until the close shows.
+	if derr := peer.SetReadDeadline(time.Now().Add(2 * time.Second)); derr != nil {
+		t.Fatalf("SetReadDeadline: %v", derr)
+	}
+	buf := make([]byte, 256)
+	for {
+		_, rerr := peer.Read(buf)
+		if rerr == nil {
+			continue
+		}
+		var ne net.Error
+		if errors.As(rerr, &ne) && ne.Timeout() {
+			t.Fatal("peer did not observe the close within 2s")
+		}
+		return
+	}
+}
+
 // closeFailConn is a net.Conn whose Close returns err.
 type closeFailConn struct {
 	net.Conn
