@@ -90,23 +90,52 @@ way it does are in [architecture.md](architecture.md#possession-at-finalize-the-
 | `PossessionIdentifierType` | `permanent-identifier` (`possession.go:85`). |
 | `OIDExtensionRequest` | PKCS#9 extensionRequest, 1.2.840.113549.1.9.14 (`possession.go:90`). |
 | `PossessionRequest{Claims, DeviceID, ApplicationEvidence, PublicKey}` | What a request states: the claims set its UCCS evidence carries, whose `Nonce` is `b`, that set's ueid, and the 32 bytes of application evidence its measurements (273) carry (`possession.go:132`). `Identifier()` is `{permanent-identifier, hex(DeviceID)}` (`:151`). |
-| `BuildPossessionCRI(pub, claims, nonce) ([]byte, error)` | The DER CertificationRequestInfo the device signs (`possession.go:192`). `claims` is the alias certificate's claims set; `claims.Nonce` is replaced by `nonce`, and `Other` is carried verbatim. Refuses, with `ErrPossessionCSRMalformed`, a key that is not P-256, a nonce that is not 32 bytes, and a claims set that is not exactly ueid (256) and measurements (273) beside the nonce (`possessionSet`, `:243-263`); a 273 that is not the ruled shape is also `ErrPossessionMeasurementsShape` (`applicationEvidence`, `:362`). |
-| `AssemblePossessionCSR(cri, signature) ([]byte, error)` | Wraps a device's DER ECDSA signature with ecdsa-with-SHA256 (`possession.go:268`). Refuses a request info that is not one DER value (`ErrPossessionCSRMalformed`) and a signature that is not one DER ECDSA-Sig-Value (`ErrPossessionSignatureInvalid`). It does not verify the signature; finalize does. |
-| `SignPossessionCSR(signer, claims, nonce) ([]byte, error)` | Builds, signs and assembles in one call for a key behind a `crypto.Signer` (`possession.go:292`). A signer that fails is `ErrPossessionSigningFailed`. |
-| `ParsePossessionCSR(*x509.CertificateRequest) (*PossessionRequest, error)` | Reverses the template exactly (`possession.go:663`): reads the whole claims set out of the UCCS evidence, rebuilds the CertificationRequestInfo from it and refuses the request with `ErrPossessionCSRMalformed` unless the bytes are identical, so no extra attribute, extension, claim, subject, other identifier or criticality survives. Holds 273 to the ruled shape through the same parser as `BuildPossessionCRI` and returns its 32 bytes as `ApplicationEvidence`. Does not check the signature. |
+| `BuildPossessionCRI(pub, claims, nonce) ([]byte, error)` | The DER CertificationRequestInfo the device signs (`possession.go:192`). `claims` is the alias certificate's claims set; `claims.Nonce` is replaced by `nonce`, and `Other` is carried verbatim. Refuses, with `ErrPossessionCSRMalformed`, a key that is not P-256, a nonce that is not 32 bytes, and a claims set that is not exactly ueid (256) and measurements (273) beside the nonce (`possessionSet`, `:239-259`); a 273 that is not the ruled shape is also `ErrPossessionMeasurementsShape`, wrapping `dice.ErrMeasurementsShape` (`dice.ApplicationEvidence`, called at `:254`). |
+| `AssemblePossessionCSR(cri, signature) ([]byte, error)` | Wraps a device's DER ECDSA signature with ecdsa-with-SHA256 (`possession.go:292`). Refuses a request info that is not one DER value (`ErrPossessionCSRMalformed`) and a signature that is not one DER ECDSA-Sig-Value (`ErrPossessionSignatureInvalid`). It does not verify the signature; finalize does. |
+| `SignPossessionCSR(signer, claims, nonce) ([]byte, error)` | Builds, signs and assembles in one call for a key behind a `crypto.Signer` (`possession.go:316`). A signer that fails is `ErrPossessionSigningFailed`. |
+| `ParsePossessionCSR(*x509.CertificateRequest) (*PossessionRequest, error)` | Reverses the template exactly (`possession.go:342`): reads the whole claims set out of the UCCS evidence, rebuilds the CertificationRequestInfo from it and refuses the request with `ErrPossessionCSRMalformed` unless the bytes are identical, so no extra attribute, extension, claim, subject, other identifier or criticality survives. Holds 273 to the ruled shape through the same parser as `BuildPossessionCRI` and returns its 32 bytes as `ApplicationEvidence`. Does not check the signature. |
 | `(*VerifiedAttestation).VerifyPossessionCSR(csr, orderIdentifiers) error` | The four finalize checks, in order: signature (`:386`), key (`:389`), nonce (`:392`), identifiers (`:395`). Refuses a non-`dice` record with `ErrKeyBindingUnavailable` and a nil record with `ErrNoVerifiedAttestation` (`possession.go:370`). |
 
-The measurements claim (273) has one ruled shape (`possession.go:265-288`):
+The measurements claim (273) has one ruled shape, read by
+`dice.ApplicationEvidence(measurements []byte) ([]byte, error)`
+(`pkg/attestation/dice/measurements.go:128`, shape comment `:32-53`):
 one `[258, bstr .cbor CoSWID]` entry whose evidence CoSWID holds one file
 `"app"` with the hash-entry `[1 (sha-256), 32 bytes]`. Those 32 bytes are the
 application evidence, opaque to go-xkms. The CoSWID's tag-id (text or a
 16-byte UUID), tag-version (integer), software-name (text) and entity (one
 entity-entry, text entity-name, a role or role list holding tag-creator) are the
-producer's (RFC 9393 §2.3, CA m463): `producerFields` (`:443`) and `tagCreator`
-(`:479`) check their presence and CBOR type, never their value. Any other
-field (`onlyFields`, used by `evidenceFile` `:531`) and any encoding other than
-RFC 8949 core deterministic (`deterministic`, `:399`) is refused. Nothing
-matches the 32 bytes against a registered reference yet.
+producer's (RFC 9393 §2.3, CA m463): `producerFields` and `tagCreator`
+(`measurements.go`) check their presence and CBOR type, never their value. Any
+other field (`onlyFields`, used by `evidenceFile`) and any encoding other than
+RFC 8949 core deterministic (`deterministic`) is refused with
+`dice.ErrMeasurementsShape` (`measurements.go:30`); device-attest-01 wraps it in
+`ErrPossessionMeasurementsShape`, so `errors.Is` holds for both.
+
+Any DICE verifier can hold a device to its registered application:
+`dice.VerifyOptions.ApplicationReference []byte`
+(`pkg/attestation/dice/verify.go:59`), when set, makes `dice.Verify` read the
+leaf's 273 after the nonce check (`verify.go:250`, `VerifyApplicationReference`
+`:285`) and compare its 32 bytes in constant time. A differing or missing claim
+is `ErrApplicationEvidenceMismatch`, a claim not of the shape
+`ErrMeasurementsShape`, and a reference that is not 32 bytes
+`ErrInvalidApplicationReference`. Nil checks nothing. The AVR backend sets it
+from the operator's `attestation.application_reference`
+(`AttestationConfig.ApplicationReference`, `pkg/backend/avr/attestation.go:61`):
+`initAttestation` refuses one that is neither empty nor 32 bytes with
+`ErrInvalidApplicationReference` (`pkg/backend/avr/backend.go:196`), and
+`checkAliasCertificate` passes it to `dice.Verify` (`attestation.go:223`).
+
+device-attest-01 reads the reference from the device's registry record,
+`ProvisionedDevice.ApplicationReference`
+(`pkg/acme/challenges/device-attest-01/anchors.go:116`). The resolver refuses a
+record whose reference is neither nil nor 32 bytes as
+`ErrProvisioningRecordInvalid`, and `verifyDICEClaims` (`registry.go:259`)
+passes it to `dice.Verify` on the raw-key and the endorsed path. At
+finalization `ConfirmRegisteredDevice` (`registry.go:144`) re-reads the record
+and holds the recorded alias certificate's 273 to the reference it carries
+now, through `dice.VerifyApplicationReference`, so a reference changed after
+the challenge refuses the order under `ErrDeviceNotAuthorized`. A record with
+no reference leaves the application unchecked.
 
 The ACME client mints the request for a `dice` device:
 `AttestedKey.Format` selects it (`pkg/acme/client/tpm.go`), and
