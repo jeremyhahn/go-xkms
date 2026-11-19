@@ -2,6 +2,7 @@ package token_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -57,7 +58,7 @@ func TestQRDBRefreshStore_ServiceContext_AnonymousCaller(t *testing.T) {
 	ctx := context.Background()
 	exp := time.Now().Add(time.Hour).Unix()
 
-	require.NoError(t, store.Save(ctx, &token.Record{JTI: "j1", Family: "f1", Subject: "alice", ExpiresAt: exp}))
+	require.NoError(t, store.Save(ctx, &token.Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: exp}))
 	rec, err := store.Get(ctx, "f1", "j1")
 	require.NoError(t, err)
 	require.NotNil(t, rec)
@@ -74,9 +75,52 @@ func TestQRDBRefreshStore_ServiceContext_AnonymousCaller(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, rec)
 
-	require.NoError(t, store.Save(ctx, &token.Record{JTI: "j2", Family: "f2", Subject: "bob", ExpiresAt: exp}))
-	require.NoError(t, store.RevokeBySubject(ctx, "bob"))
+	require.NoError(t, store.Save(ctx, &token.Record{JTI: "j2", Family: "f2", Tenant: "t1", Subject: "bob", ExpiresAt: exp}))
+	require.NoError(t, store.RevokeBySubject(ctx, "t1", "bob"))
 	rec, err = store.Get(ctx, "f2", "j2")
 	require.NoError(t, err)
 	assert.Nil(t, rec)
+}
+
+// TestQRDBRefreshStore_RevokeBySubject_TenantScoped revokes "alice" in one
+// tenant on the embedded node and checks the other tenant's "alice" keeps
+// her refresh family (Tenant Agent ruling 962).
+func TestQRDBRefreshStore_RevokeBySubject_TenantScoped(t *testing.T) {
+	node := newAuthenticatingNode(t)
+	store, err := token.NewQRDBRefreshStore(node.Client().KV(), token.WithCallContext(node.ServiceContext))
+	require.NoError(t, err)
+	token.AssertTenantScopedRevoke(t, context.Background(), store)
+}
+
+// TestQRDBRefreshStore_RecordWithoutTenant_FailsClosed writes a record that
+// carries no tenant straight into QRDB: no tenant-scoped revoke matches it,
+// and the store refuses it on read and rotate and deletes it.
+func TestQRDBRefreshStore_RecordWithoutTenant_FailsClosed(t *testing.T) {
+	node := newAuthenticatingNode(t)
+	store, err := token.NewQRDBRefreshStore(node.Client().KV(), token.WithCallContext(node.ServiceContext))
+	require.NoError(t, err)
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour).Unix()
+
+	require.Error(t, store.Save(ctx, &token.Record{JTI: "j0", Family: "f0", Subject: "alice", ExpiresAt: exp}))
+
+	sctx, err := node.ServiceContext(ctx)
+	require.NoError(t, err)
+	raw, err := json.Marshal(map[string]any{"jti": "j0", "family": "f0", "subject": "alice", "expires_at": exp})
+	require.NoError(t, err)
+	key := token.RefreshKeyForTest("f0", "j0")
+	require.NoError(t, node.Client().KV().Put(sctx, key, raw))
+
+	require.NoError(t, store.RevokeBySubject(ctx, "t1", "alice"))
+	require.NoError(t, store.RevokeBySubject(ctx, "t2", "alice"))
+	require.Error(t, store.RevokeBySubject(ctx, "", "alice"))
+	require.Error(t, store.RevokeBySubject(ctx, "t1", ""))
+
+	rec, err := store.Get(ctx, "f0", "j0")
+	require.NoError(t, err)
+	assert.Nil(t, rec, "a record without a tenant is refused")
+	require.Error(t, store.MarkRotated(ctx, "f0", "j0"), "a record without a tenant never rotates")
+
+	_, err = node.Client().KV().Get(sctx, key)
+	require.Error(t, err, "a record without a tenant is not kept")
 }
