@@ -301,11 +301,13 @@ func (s *XKMSService) revokeUserSessions(ctx context.Context, u *qrdbtransport.U
 	if s.tokenIssuer == nil {
 		return
 	}
-	if err := s.tokenIssuer.RevokeBySubject(ctx, u.Username); err != nil {
+	// Usernames are unique only within a tenant: the revoke is scoped to the
+	// user's own tenant so it never ends another tenant's sessions.
+	if err := s.tokenIssuer.RevokeBySubject(ctx, u.TenantID, u.Username); err != nil {
 		log.Printf("xkms: revoke refresh sessions for user %q failed: %v", u.Username, err)
 	}
 	handle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(u.ID))
-	if err := s.tokenIssuer.RevokeBySubject(ctx, handle); err != nil {
+	if err := s.tokenIssuer.RevokeBySubject(ctx, u.TenantID, handle); err != nil {
 		log.Printf("xkms: revoke webauthn refresh sessions for user %q failed: %v", u.Username, err)
 	}
 }
