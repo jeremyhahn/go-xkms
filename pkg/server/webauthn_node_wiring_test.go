@@ -106,7 +106,7 @@ func TestPublicRouteWiring_WebAuthnBeginOverAuthNode(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "registration/begin: %s", w.Body.String())
 
 	w = do(jsonRequest(t, http.MethodPost, "/api/v1/webauthn/login/begin", map[string]string{"email": email}))
-	require.NotEqual(t, http.StatusInternalServerError, w.Code, "login/begin: %s", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "login/begin: %s", w.Body.String())
 	require.NotContains(t, w.Body.String(), "unauthenticated")
 }
 
