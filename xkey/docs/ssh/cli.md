@@ -47,7 +47,18 @@ the connection goes, it returns to the local store.
 | `export` | Print the `authorized_keys`-format public half |
 
 Shared flags (`generate`, `import`, `list`, `get`, `delete`, `export`):
-`--scope` (default `user`), `--owner` (default `$USER`/`$LOGNAME`).
+`--scope` (default `user`), `--owner` (see below).
+
+**Owner default.** Against a server (`--server` or a configured xkmsd
+address, without `--local`), an unset `--owner` sends no owner, and the
+server serves a user-scope request with an empty owner as the
+authenticated caller itself, under its policy subject: after account
+binding that is the caller's qrdb account id (a passkey caller keeps its
+handle), which no client can learn (pkg/ssh/tenancy `caller.ownerOf`).
+An explicit `--owner` naming anyone else is refused and answered as
+"key not found". In the local store (no server, or `--local`) there is no
+authenticated caller, and `--owner` defaults to `$USER`, then `$LOGNAME`,
+then `default` (xkey/cmd/xkey/cmd/ssh.go `sshDefaultOwner`).
 
 | Flag | Applies to | Default | Description |
 |---|---|---|---|
@@ -78,7 +89,7 @@ from stdin otherwise (see `sshPassphraseProvider`, `ssh.go`).
 | `list` (`ls`) | List pinned host keys |
 | `remove` (`rm`, `delete`) | Remove a pin |
 
-Shared flags: `--scope` (default `user`), `--owner` (default `$USER`).
+Shared flags: `--scope` (default `user`), `--owner` (default: you on a server, `$USER` in the local store; see Owner default above).
 
 | Flag | Applies to | Default | Description |
 |---|---|---|---|
@@ -105,7 +116,7 @@ from a fingerprint alone (`ErrSSHMissingHostKey`).
 | `list` (`ls`) | List entries |
 | `remove` (`rm`, `delete`) | Remove an entry by `--name` |
 
-Shared flags: `--scope` (default `user`), `--owner` (default `$USER`).
+Shared flags: `--scope` (default `user`), `--owner` (default: you on a server, `$USER` in the local store; see Owner default above).
 `--name` is required on `add` and `remove`.
 
 ```bash

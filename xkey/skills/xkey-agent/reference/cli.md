@@ -2133,7 +2133,7 @@ Usage: `xkey ssh authorized-keys add [line] [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--name` | string |  | Entry name (required) |
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope — defaults to user |
 
 ## xkey ssh authorized-keys list
@@ -2146,7 +2146,7 @@ Aliases: ls
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope — defaults to user |
 
 ## xkey ssh authorized-keys remove
@@ -2160,7 +2160,7 @@ Aliases: rm, delete
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--name` | string |  | Entry name (required) |
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope — defaults to user |
 
 ## xkey ssh connect
@@ -2216,7 +2216,7 @@ Usage: `xkey ssh host-keys add [flags]`
 | `--file` | string |  | Read the host key from a file instead of --key |
 | `--host` | string |  | Target host (required) |
 | `--key` | string |  | Host key as an authorized_keys-format line (required unless --file) |
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope — defaults to user |
 | `--source` | string |  | Provenance tag (manual, cert, ...) |
 
@@ -2230,7 +2230,7 @@ Aliases: ls
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope — defaults to user |
 
 ## xkey ssh host-keys remove
@@ -2244,7 +2244,7 @@ Aliases: rm, delete
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--host` | string |  | Target host (required) |
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope — defaults to user |
 
 ## xkey ssh keys
@@ -2264,7 +2264,7 @@ Aliases: rm, remove
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--name` | string |  | Key name (required) |
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope (tenant\|user\|service) — defaults to user |
 
 ## xkey ssh keys export
@@ -2276,7 +2276,7 @@ Usage: `xkey ssh keys export [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--name` | string |  | Key name (required) |
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope (tenant\|user\|service) — defaults to user |
 
 ## xkey ssh keys generate
@@ -2291,7 +2291,7 @@ Usage: `xkey ssh keys generate [flags]`
 | `--bits` | int | 0 | RSA key size (default 4096 for rsa) |
 | `--comment` | string |  | Free-form key comment |
 | `--name` | string |  | Key name (required) |
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope (tenant\|user\|service) — defaults to user |
 | `--type` | string | ed25519 | Key algorithm (ed25519, rsa, ecdsa-p256, ecdsa-p384, ecdsa-p521) |
 
@@ -2304,7 +2304,7 @@ Usage: `xkey ssh keys get [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--name` | string |  | Key name (required) |
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope (tenant\|user\|service) — defaults to user |
 
 ## xkey ssh keys import
@@ -2317,7 +2317,7 @@ Usage: `xkey ssh keys import [file] [flags]`
 |---|---|---|---|
 | `--comment` | string |  | Free-form key comment |
 | `--name` | string |  | Key name (defaults to the imported file's basename) |
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope (tenant\|user\|service) — defaults to user |
 
 ## xkey ssh keys list
@@ -2330,7 +2330,7 @@ Aliases: ls
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--owner` | string |  | Owner identifier — defaults to $USER |
+| `--owner` | string |  | Owner identifier — defaults to you on a server, $USER in the local store |
 | `--scope` | string |  | Scope (tenant\|user\|service) — defaults to user |
 
 ## xkey ssh local
