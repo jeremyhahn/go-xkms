@@ -301,8 +301,6 @@ func (h *Handler) handleLoginFinishError(w http.ResponseWriter, err error) {
 // authenticator interop failure surfaces only as "verification failed" with no
 // way to tell a bad signature from a user-handle or origin mismatch.
 func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
-	h.logger.Debug("webauthn service error", "error", err)
-
 	switch {
 	case errors.Is(err, webauthn.ErrSessionNotFound):
 		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidSession, "session not found")
@@ -331,8 +329,15 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 	case webauthn.IsSessionLimit(err):
 		h.writeError(w, http.StatusServiceUnavailable, ErrorCodeSessionLimit, "too many unfinished ceremonies; retry later")
 	default:
+		// A 500 is the server's failure: its cause is logged at Error so an
+		// operator at the default level sees it (ruling 973 (4)). Service
+		// errors wrap lookup and storage failures, never the challenge or a
+		// credential.
+		h.logger.Error("webauthn: internal error", "error", err)
 		h.writeError(w, http.StatusInternalServerError, ErrorCodeInternalError, "internal server error")
+		return
 	}
+	h.logger.Debug("webauthn service error", "error", err)
 }
 
 // writeJSON writes a JSON response.
