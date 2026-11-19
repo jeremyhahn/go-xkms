@@ -24,6 +24,11 @@ services:
     build:
       context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
+      # Ruling 886: scripts/apk-mirror.sh, bind-mounted by the Dockerfile.
+      additional_contexts:
+        scripts: ../../../scripts
+      secrets:
+        - apk_mirror
     image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-latest}
     expose:
       - "2321" # TPM command port
@@ -44,6 +49,7 @@ services:
       dockerfile: Dockerfile
       secrets:
         - gomodauth
+        - apt_proxy
     image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
     # config.acme-tpm.yaml is read from the source tree this image already
     # COPYs into /workspace, not bind-mounted (the swtpm test EK root its
@@ -91,6 +97,7 @@ services:
       dockerfile: Dockerfile
       secrets:
         - gomodauth
+        - apt_proxy
     image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       tpm-simulator:
@@ -162,3 +169,9 @@ volumes:
 secrets:
   gomodauth:
     file: ../../../build/docker/devcontainer/gomodauth.env
+  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
+  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  apk_mirror:
+    environment: DEVCACHE_APK_MIRROR
+  apt_proxy:
+    environment: DEVCACHE_APT_PROXY
