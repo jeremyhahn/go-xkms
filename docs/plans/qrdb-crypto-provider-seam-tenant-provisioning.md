@@ -253,8 +253,10 @@ approval and the exported APIs) were not started.
   Test c2102af1f, fix 529431f9e.
 - SPEC row expansion (P1, `docs/SPEC.md:118`): reverted to main's text
   (ff6dd1850) until the owner approves a row change.
-- Still open, needing the owner: migration of the tenant CAs go-qrdb already
-  persisted (P1, `qrdb_node.go:267`). The pinned go-qrdb `sdk/go` gives no
-  way to read, import or keep trusting the software Key B it stored, and
-  go-xkms may not reach into `go-qrdb/pkg/*`; a credential transition needs
-  a go-qrdb seam (item 144) or an owner design.
+- Upgrade of the tenant CAs go-qrdb already persisted (P1,
+  `qrdb_node.go:267`): the factory is wired only on the explicit opt-in
+  `datastore.tenant-login-ca-keys` (default false), so an upgraded
+  deployment keeps go-qrdb's Key B and its login certificates. The operator
+  turns it on for a fresh deployment or after re-issuing login credentials.
+  An in-place migration still needs a go-qrdb seam (item 144): the pinned
+  `sdk/go` gives no way to read, import or keep trusting the stored Key B.
