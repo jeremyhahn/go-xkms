@@ -34,9 +34,10 @@ func TestModule_HostConfig_RefreshStoreWritesUnderAnonymousContext(t *testing.T)
 	store, err := token.NewQRDBRefreshStore(hc.QRDBClient.KV(), token.WithCallContext(hc.ServiceContext))
 	require.NoError(t, err)
 	ctx := context.Background()
-	rec := &token.Record{JTI: "j1", Family: "f1", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	rec := &token.Record{JTI: "j1", Family: "f1", Tenant: "system", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	require.NoError(t, store.Save(ctx, rec))
 	got, err := store.Get(ctx, "f1", "j1")
 	require.NoError(t, err)
 	require.Equal(t, "admin", got.Subject)
+	require.Equal(t, "system", got.Tenant)
 }
