@@ -133,6 +133,24 @@ func TestLoginWiring_PIVLoginOverEmbeddedNode(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rotated))
 			require.NotEmpty(t, rotated.RefreshToken)
 			assert.NotEqual(t, pair.RefreshToken, rotated.RefreshToken, "refresh must rotate the refresh token")
+
+			// (4) the re-check still refuses: an administrator disables the
+			// account after login, and its next refresh answers 401
+			// (go-xkms#2292). The administrator acts through the xkmsd REST
+			// API with the access token the rotation minted.
+			username := cert.Subject.CommonName
+			require.NotEmpty(t, username, "the first-boot admin certificate names its account")
+			disable := httptest.NewRequest(http.MethodPost, "/api/v1/users/"+username+"/disable", nil)
+			disable.Header.Set("Authorization", "Bearer "+rotated.AccessToken)
+			w = do(disable)
+			require.Equal(t, http.StatusOK, w.Code, "administrator disable: %s", w.Body.String())
+
+			body, err = json.Marshal(map[string]string{"refresh_token": rotated.RefreshToken})
+			require.NoError(t, err)
+			refresh = httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
+			refresh.Header.Set("Content-Type", "application/json")
+			w = do(refresh)
+			assert.Equal(t, http.StatusUnauthorized, w.Code, "refresh for a disabled user must be refused: %s", w.Body.String())
 		})
 	}
 }
