@@ -91,6 +91,7 @@ services:
       # §6), as xkms-server does; the Makefile stages it before every `up`.
       secrets:
         - gomodauth
+        - apt_proxy
     image: go-xkms-dev:${XKMS_IMAGE_TAG:-latest}
     # Privileged mode required for QEMU with KVM acceleration
     privileged: true
@@ -220,6 +221,11 @@ services:
     build:
       context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
+      # Ruling 886: scripts/apk-mirror.sh, bind-mounted by the Dockerfile.
+      additional_contexts:
+        scripts: ../../../scripts
+      secrets:
+        - apk_mirror
     image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - swtpm-state:/var/lib/swtpm/tpmstate
@@ -239,6 +245,8 @@ services:
       # The SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418).
       additional_contexts:
         softhsm-pin: ../../../scripts
+      secrets:
+        - apk_mirror
     image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - softhsm-tokens:/tokens
@@ -265,6 +273,7 @@ services:
       # `make stage-gomodauth` before building this service.
       secrets:
         - gomodauth
+        - apt_proxy
     image: go-xkms-server:${XKMS_IMAGE_TAG:-dev}
     # Published on an EPHEMERAL host port (host side 0), not a fixed one. A
     # published host port is a host-global resource: a fixed number means this
@@ -402,6 +411,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.softfido
+      secrets:
+        - apt_proxy
     image: go-xkms-softfido:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - softfido-state:/var/lib/softfido
@@ -440,3 +451,9 @@ networks:
 secrets:
   gomodauth:
     file: ./gomodauth.env
+  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
+  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  apk_mirror:
+    environment: DEVCACHE_APK_MIRROR
+  apt_proxy:
+    environment: DEVCACHE_APT_PROXY
