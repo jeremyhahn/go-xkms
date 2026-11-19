@@ -22,6 +22,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net/url"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -243,6 +244,23 @@ func GenerateTestServerCert(ca *TestCA, dnsNames ...string) (*TestCertificate, e
 //	    t.Fatalf("Failed to generate client cert: %v", err)
 //	}
 func GenerateTestClientCert(ca *TestCA, commonName string) (*TestCertificate, error) {
+	return generateClientCert(ca, commonName, "")
+}
+
+// GenerateTestTenantClientCert generates a client certificate signed by the
+// CA that names tenant the way go-qrdb's qrdbsdk.TenantFromClientCert reads
+// it: Subject OU tenant and the SPIFFE SAN spiffe://<tenant>/user/<CN>, both
+// in the signed DER, so the claim holds over a real TLS handshake.
+func GenerateTestTenantClientCert(ca *TestCA, commonName, tenant string) (*TestCertificate, error) {
+	if tenant == "" {
+		return nil, &errs.Message{Msg: "tenant is required"}
+	}
+	return generateClientCert(ca, commonName, tenant)
+}
+
+// generateClientCert signs a client certificate; a non-empty tenant adds the
+// Subject OU and the agreeing SPIFFE SAN.
+func generateClientCert(ca *TestCA, commonName, tenant string) (*TestCertificate, error) {
 	// Generate private key
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -273,6 +291,10 @@ func GenerateTestClientCert(ca *TestCA, commonName string) (*TestCertificate, er
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
+	}
+	if tenant != "" {
+		template.Subject.OrganizationalUnit = []string{tenant}
+		template.URIs = []*url.URL{{Scheme: "spiffe", Host: tenant, Path: "/user/" + commonName}}
 	}
 
 	// Sign with CA

@@ -420,8 +420,7 @@ func TestCoverageBoost_GetTenant_DeletedTenant(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = service.UpdateTenantStatus(context.Background(), "tenant-deleted", entities.TenantStatusDeleted)
-	require.NoError(t, err)
+	markTenantDeleted(t, service, "tenant-deleted")
 
 	// Getting a deleted tenant should return ErrTenantNotFound
 	_, err = service.GetTenant(context.Background(), "tenant-deleted")
@@ -662,8 +661,7 @@ func TestCoverageBoost_UpdateTenant_DeletedTenant(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = service.UpdateTenantStatus(context.Background(), "tenant-to-delete", entities.TenantStatusDeleted)
-	require.NoError(t, err)
+	markTenantDeleted(t, service, "tenant-to-delete")
 
 	// Updating a deleted tenant should return ErrTenantDeleted
 	_, err = service.UpdateTenant(context.Background(), "tenant-to-delete", UpdateTenantRequest{Name: "New Name"})

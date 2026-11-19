@@ -99,6 +99,10 @@ type MTLSAuthenticator struct {
 
 	// userStore is an optional store for mapping certificate fingerprints to users
 	userStore UserStore
+
+	// trustDomain is the cluster SPIFFE trust domain handed to
+	// qrdbsdk.TenantFromClientCert.
+	trustDomain string
 }
 
 // MTLSConfig configures the mTLS authenticator.
@@ -122,6 +126,13 @@ type MTLSConfig struct {
 	// fail closed: with a store configured, no identity is ever derived from
 	// certificate fields.
 	UserStore UserStore
+
+	// TrustDomain is the cluster SPIFFE trust domain the deployment's CA
+	// issues under, passed to qrdbsdk.TenantFromClientCert: a certificate
+	// that names a tenant (it carries a Subject OU) names it only when its
+	// first OU and its SPIFFE SAN trust domain agree, and no tenant may be
+	// the cluster trust domain. Empty skips only the cluster checks.
+	TrustDomain string
 }
 
 // Compile-time interface check
@@ -145,6 +156,7 @@ func NewMTLSAuthenticator(config *MTLSConfig) *MTLSAuthenticator {
 		extractMetadata: config.ExtractMetadata,
 		extractSubject:  config.ExtractSubject,
 		userStore:       config.UserStore,
+		trustDomain:     config.TrustDomain,
 	}
 }
 
@@ -209,7 +221,7 @@ func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certif
 	if a.userStore != nil {
 		return a.userIdentity(ctx, cert)
 	}
-	return a.certIdentity(cert), nil
+	return a.certIdentity(cert)
 }
 
 // userIdentity resolves the client certificate to its bound user through the
@@ -270,24 +282,27 @@ func (a *MTLSAuthenticator) userIdentity(ctx context.Context, cert *x509.Certifi
 }
 
 // certIdentity builds a certificate-only identity for an authenticator with no
-// UserStore: Subject from the configured extractor, TenantID from the first
-// OU, and no roles.
-func (a *MTLSAuthenticator) certIdentity(cert *x509.Certificate) *Identity {
+// UserStore: Subject from the configured extractor, TenantID from
+// qrdbsdk.TenantFromClientCert with no go-xkms rule on top, and no roles.
+// A certificate go-qrdb refuses is refused with go-qrdb's error.
+func (a *MTLSAuthenticator) certIdentity(cert *x509.Certificate) (*Identity, error) {
+	tenantID, err := qrdbsdk.TenantFromClientCert(cert, a.trustDomain)
+	if err != nil {
+		return nil, err
+	}
+	tenantID = qrdbsdk.NormalizeTenantID(tenantID)
 	identity := &Identity{
 		Subject:  a.extractSubject(cert),
 		Metadata: a.certMetadataMap(cert),
 	}
 
-	// Extract tenant from first OU if present
-	if len(cert.Subject.OrganizationalUnit) > 0 {
-		identity.TenantID = cert.Subject.OrganizationalUnit[0]
-	}
+	identity.TenantID = tenantID
 
 	identity.Metadata["auth_method"] = qrdbsdk.MethodMTLS
 	identity.Metadata["cert_serial"] = cert.SerialNumber.String()
 	identity.Metadata["cert_issuer"] = cert.Issuer.String()
 
-	return identity
+	return identity, nil
 }
 
 // certMetadataMap converts the configured certificate metadata extractor's
