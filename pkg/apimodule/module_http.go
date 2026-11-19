@@ -15,6 +15,7 @@ package apimodule
 
 import (
 	"net/http"
+	"strings"
 	"sync/atomic"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -38,10 +39,12 @@ type RESTResolver func() *rest.Server
 // uiPrefix (a normalized mount prefix, e.g. "/ui"). The SPA is public by
 // design (a login page must render before authentication) and late-binds
 // through the REST resolver like every other route. redirectRoot also
-// registers GET / as a redirect to the prefix.
+// registers GET / as a redirect to the prefix. One trailing slash is
+// trimmed, so the webui.NormalizePrefix form "/ui/" registers "/ui" and
+// "/ui/*" rather than "/ui/" and "/ui//*" (#2286).
 func WithWebUI(uiPrefix string, redirectRoot bool) Option {
 	return func(m *Module) {
-		m.uiPrefix = uiPrefix
+		m.uiPrefix = strings.TrimSuffix(uiPrefix, "/")
 		m.uiRedirectRoot = redirectRoot
 	}
 }
