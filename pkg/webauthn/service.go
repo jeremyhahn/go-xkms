@@ -661,9 +661,9 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 
 	// Convert and store credential
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
-	var release func(context.Context) error
+	var claim FirstCredentialClaim
 	if firstCredential {
-		release, err = s.creds.ClaimFirstCredential(ctx, user.WebAuthnID())
+		claim, err = s.creds.ClaimFirstCredential(ctx, user.WebAuthnID())
 		if errors.Is(err, ErrFirstCredentialClaimed) {
 			return nil, ErrRegistrationRefused
 		}
@@ -672,12 +672,23 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 		}
 	}
 	if err := s.creds.Save(ctx, cred); err != nil {
-		if release != nil {
-			if relErr := release(context.WithoutCancel(ctx)); relErr != nil {
+		if claim != nil {
+			if relErr := claim.Release(context.WithoutCancel(ctx)); relErr != nil {
 				s.logger.Error("release first-credential claim after a failed save", "error", relErr)
 			}
 		}
 		return nil, WrapError("save credential", err)
+	}
+	if claim != nil {
+		// The claim's lease ran out and another ceremony recovered it:
+		// Commit removed this credential, so the account keeps only the
+		// recoverer's.
+		if err := claim.Commit(context.WithoutCancel(ctx), cred); err != nil {
+			if errors.Is(err, ErrFirstCredentialClaimed) {
+				return nil, ErrRegistrationRefused
+			}
+			return nil, WrapError("commit first credential", err)
+		}
 	}
 
 	// Add credential to user
