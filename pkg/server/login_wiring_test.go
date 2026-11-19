@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,10 +61,20 @@ func TestLoginWiring_PIVLoginOverEmbeddedNode(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			xkms.Reset()
 			t.Cleanup(xkms.Reset)
+			// Debug-level server log, so a rejection names its reason.
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			t.Cleanup(func() { slog.SetDefault(prev) })
 
 			cfg := qrdbBarrierConfig(t)
 			cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
 			cfg.Auth.EnableRBAC = rbac
+			// No operator JWT key: the built-in token issuer's key verifies
+			// the pairs it mints, as on an xkmsd without auth.jwt.public_key_file.
+			cfg.Auth.Type = "composite"
+			if cfg.Auth.JWT != nil {
+				cfg.Auth.JWT.PublicKeyFile = ""
+			}
 			cfg.TLS.ClientAuth = "request"
 			cfg.TLS.ServerCN = "localhost"
 			cfg.Auth.PIVLogin = &config.PIVLoginConfig{Enabled: true, AllowUnattested: true}
@@ -104,9 +115,14 @@ func TestLoginWiring_PIVLoginOverEmbeddedNode(t *testing.T) {
 			me := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 			me.Header.Set("Authorization", "Bearer "+pair.AccessToken)
 			w = do(me)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Equal(t, http.StatusOK, w.Code, "/auth/me rejected the minted access token: %s", w.Body.String())
 
-			// (3) refresh rotates the refresh token.
+			// (3) refresh rotates the refresh token. The issuer is asked
+			// first, under the same identity-less context, so a refusal
+			// names its reason (the handler answers a bare 401).
+			direct, err := s.tokenIssuer.Refresh(context.Background(), pair.RefreshToken)
+			require.NoError(t, err, "issuer refresh under the public route's context")
+			pair.RefreshToken = direct.RefreshToken
 			body, err := json.Marshal(map[string]string{"refresh_token": pair.RefreshToken})
 			require.NoError(t, err)
 			refresh := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
