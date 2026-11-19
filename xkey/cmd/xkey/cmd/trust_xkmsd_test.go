@@ -544,10 +544,14 @@ func TestTrustBootstrapXKMSd_ImportHonoursTimeout(t *testing.T) {
 	// caller's deadline cancels it, so only the bootstrap context can end it.
 	reached := make(chan struct{})
 	serverErr := make(chan error, 1)
+	serverDeadline := make(chan time.Time, 1)
 	release := make(chan struct{})
 	stall := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if !strings.HasSuffix(info.FullMethod, "/TrustRootImport") {
 			return handler(ctx, req)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			serverDeadline <- dl
 		}
 		close(reached)
 		select {
@@ -591,9 +595,20 @@ func TestTrustBootstrapXKMSd_ImportHonoursTimeout(t *testing.T) {
 	require.ErrorContains(t, err, "TrustRootImport", "the import ends at the bootstrap deadline")
 	select {
 	case cause := <-serverErr:
-		require.ErrorIs(t, cause, context.DeadlineExceeded, "the deadline cancels the server-side import")
+		// The server sees DeadlineExceeded when its propagated deadline
+		// fires first, Canceled when the client's RST_STREAM wins the race.
+		require.True(t, errors.Is(cause, context.DeadlineExceeded) || errors.Is(cause, context.Canceled),
+			"the deadline cancels the server-side import, got %v", cause)
 	case <-time.After(5 * time.Second):
 		t.Fatal("the server-side import was never cancelled")
+	}
+
+	select {
+	case dl := <-serverDeadline:
+		want, _ := ctx.Deadline()
+		require.False(t, dl.After(want.Add(time.Second)), "the import carries the bootstrap deadline")
+	default:
+		t.Fatal("the server-side import had no deadline: --timeout was not passed to TrustRootImport")
 	}
 
 	_, err = getServerTrustRoot(t, trustPEMFingerprint(t, bundlePEM))
