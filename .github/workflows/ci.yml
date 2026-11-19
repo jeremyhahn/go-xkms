@@ -1369,7 +1369,9 @@ jobs:
 
       - name: Take the toolchain image
         if: ${{ needs.preflight.outputs.docs_only != 'true' && github.server_url == 'https://github.com' }}
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1492,7 +1494,9 @@ jobs:
 
       - name: Take the toolchain image
         if: ${{ needs.preflight.outputs.docs_only != 'true' }}
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
