@@ -102,10 +102,10 @@ func (s *XKMSService) CreateTenantDetail(ctx context.Context, req *transport.Cre
 	// A tenant's ID is its SVIDs' trust domain (pkg/spiffe BuildURI); refuse
 	// one that can never be, before go-qrdb records the tenant.
 	if err := spiffe.ValidateTrustDomain(tenantID); err != nil {
-		return nil, fmt.Errorf("tenant ID: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidTenantID, err)
 	}
 	if td := s.SPIFFETrustDomain(); td != "" && tenantID == td {
-		return nil, fmt.Errorf("tenant ID %q: %w", tenantID, spiffe.ErrTenantIsClusterTrustDomain)
+		return nil, fmt.Errorf("%w %q: %w", ErrInvalidTenantID, tenantID, spiffe.ErrTenantIsClusterTrustDomain)
 	}
 	if !qrdbsdk.IdentityIsSystemTenant(auth.GetIdentity(ctx)) {
 		return nil, refuseTenant(ctx, "create tenant", tenantID)
