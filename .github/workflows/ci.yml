@@ -673,6 +673,12 @@ env:
   # event pulls main's copy by digest or builds its own with no push
   # (scripts/ci-registry.sh, docs/testing/docker-testing.md "CI images").
   CI_PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+  # #2299: whether this run is a same-repo pull request. Its ci-images job
+  # runs on the self-hosted docker pool and, when main has not published
+  # this content, builds each CI image once and pushes it to the pool
+  # registry (the CI_IMAGE_REGISTRY secret); its consumers pull that image
+  # by digest and never build their own. Main and fork PRs keep GHCR.
+  CI_POOL: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
   # The namespace the CI images live in. On the forge, the repository
   # variable CI_REGISTRY_OWNER: the release runner's registry user and public,
   # since Gitea 1.27 lets only a user namespace's owner or an admin write it
@@ -994,14 +1000,17 @@ jobs:
     # schedule guard's `run`; every CUSTOMIZE job needs this one, so it skips
     # with it.
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
+    # #2299: a same-repo pull request runs on the self-hosted docker pool,
+    # where it builds the images main has not published, once, for every
+    # consumer job.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || (github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk') }}
     timeout-minutes: 120
     permissions:
       contents: read
       packages: write
     outputs:
-      toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
-      it_ref: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
+      toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
+      it_ref: ${{ steps.publish.outputs.it_ref || steps.pool.outputs.it_ref || steps.resolve.outputs.it_ref }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -1025,6 +1034,18 @@ jobs:
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
 
+      # #2299: the pool registry is a secret; mask it, and its host, before
+      # any step prints an image reference.
+      - name: Mask the pool registry
+        if: ${{ env.CI_POOL == 'true' }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          [ -n "$reg" ] || { echo "::error::the CI_IMAGE_REGISTRY secret is empty"; exit 1; }
+          echo "::add-mask::$reg"
+          echo "::add-mask::${reg%%/*}"
+
       - name: Read the Alpine package index
         run: |
           APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")
@@ -1038,7 +1059,7 @@ jobs:
       # to GHCR with the run's token.
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
-        if: ${{ env.CI_PUBLISH == 'true' }}
+        if: ${{ env.CI_PUBLISH == 'true' || env.CI_POOL == 'true' }}
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org" >> "$GITHUB_ENV"
@@ -1071,17 +1092,38 @@ jobs:
           ref=$(scripts/ci-registry.sh resolve it)
           echo "it_ref=$ref" >> "$GITHUB_OUTPUT"
 
+      # #2299: on a same-repo pull request, an image main has not published
+      # is built here once, on the pool, and pushed to the pool registry;
+      # the reference names no registry (a job output holding a secret is
+      # dropped), and each consumer's `use` adds it back from the secret.
+      - name: Build the CI images on the pool
+        id: pool
+        if: ${{ env.CI_POOL == 'true' }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
+          TOOLCHAIN_REF: ${{ steps.resolve.outputs.toolchain_ref }}
+          IT_REF: ${{ steps.resolve.outputs.it_ref }}
+        run: |
+          if [ -z "$TOOLCHAIN_REF" ]; then
+            ref=$(scripts/ci-registry.sh pool toolchain)
+            echo "toolchain_ref=$ref" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$IT_REF" ]; then
+            ref=$(scripts/ci-registry.sh pool it)
+            echo "it_ref=$ref" >> "$GITHUB_OUTPUT"
+          fi
+
       # A published reference is always a digest; a resolved one is a digest
-      # or "".
+      # or "" (never "" on a same-repo pull request: the pool built it).
       - name: Validate the image references
         env:
-          TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
-          IT_REF: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
+          TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
+          IT_REF: ${{ steps.publish.outputs.it_ref || steps.pool.outputs.it_ref || steps.resolve.outputs.it_ref }}
         run: |
           re='^[^@ ]+@sha256:[0-9a-f]{64}$'
           for v in TOOLCHAIN_REF IT_REF; do
             ref=${!v}
-            if [ -z "$ref" ] && [ "$CI_PUBLISH" != true ]; then
+            if [ -z "$ref" ] && [ "$CI_PUBLISH" != true ] && [ "$CI_POOL" != true ]; then
               echo "$v is empty: the consumers build the image on their runners"
               continue
             fi
@@ -1162,7 +1204,9 @@ jobs:
       # scan alone, which moved to scans.yml, so this job no longer takes it
       # (nor reads the Alpine package index its tag hashes).
       - name: Take the toolchain image
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1362,7 +1406,9 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: ${{ runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' }}
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1856,7 +1902,9 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: ${{ runner.environment == 'github-hosted' && needs.preflight.outputs.docs_only != 'true' }}
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1969,7 +2017,9 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2120,7 +2170,9 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2231,7 +2283,9 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2385,7 +2439,9 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2492,7 +2548,9 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2616,7 +2674,9 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
