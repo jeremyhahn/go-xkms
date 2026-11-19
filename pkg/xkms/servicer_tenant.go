@@ -174,7 +174,7 @@ func (s *XKMSService) GetTenantDetail(ctx context.Context, tenantID string) (*tr
 }
 
 // ListTenants returns the registered tenants the caller may see, as
-// ListTenantDetails does for every status.
+// ListTenantDetails does with no status filter.
 func (s *XKMSService) ListTenants(ctx context.Context) (*transport.ListTenantsResponse, error) {
 	details, err := s.ListTenantDetails(ctx, "")
 	if err != nil {
@@ -191,13 +191,17 @@ func (s *XKMSService) ListTenants(ctx context.Context) (*transport.ListTenantsRe
 // their CA records: every tenant for a system-tenant caller, only its own
 // tenant for any other. Filtering here rather than in each transport keeps
 // tenant enumeration under the same single owner as the per-tenant binding.
-// A non-empty status keeps only the tenants in that lifecycle status
-// (TenantDetail.Status); tenants whose record marks them deleted are never
+// A non-empty status is refused with *TenantUnsupportedFieldError
+// (ErrTenantStatusUnsupported) before any tenant is read, until go-qrdb
+// carries a tenant status; tenants whose record marks them deleted are never
 // listed.
 //
 // Requires the composed TenantService; returns ErrTenantServiceNotConfigured
 // otherwise.
 func (s *XKMSService) ListTenantDetails(ctx context.Context, status string) ([]transport.TenantDetail, error) {
+	if status != "" {
+		return nil, &TenantUnsupportedFieldError{Field: "status"}
+	}
 	if s.tenantService == nil {
 		return nil, ErrTenantServiceNotConfigured
 	}
@@ -220,9 +224,7 @@ func (s *XKMSService) ListTenantDetails(ctx context.Context, status string) ([]t
 			}
 			return nil, err
 		}
-		if status == "" || detail.Status() == status {
-			details = append(details, *detail)
-		}
+		details = append(details, *detail)
 	}
 	return details, nil
 }
