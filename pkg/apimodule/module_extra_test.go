@@ -20,6 +20,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -202,6 +203,77 @@ func TestModule_WithWebUI_ComposingServer503(t *testing.T) {
 	ui(w, httptest.NewRequest(http.MethodGet, "/ui/", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Contains(t, w.Body.String(), "still composing")
+}
+
+// TestModule_WithWebUI_TrailingSlashPrefix proves the production prefix shape
+// works: pkg/server passes webui.NormalizePrefix output, which always ends in
+// "/", so WithWebUI must not register "/ui/" and "/ui//*" (#2286 item 1).
+// Routed through a real chi router, the assets, the index and the bare prefix
+// must all resolve, and the root redirect must point at the trimmed prefix.
+func TestModule_WithWebUI_TrailingSlashPrefix(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html":    &fstest.MapFile{Data: []byte("<html>xkms ui</html>")},
+		"assets/app.js": &fstest.MapFile{Data: []byte("console.log('xkms')")},
+	}
+	srv, err := rest.NewServer(&rest.Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Backends:      map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
+		UI: &rest.UIOptions{
+			Enabled:    true,
+			PathPrefix: "/ui/",
+			Assets:     fsys,
+		},
+	})
+	require.NoError(t, err)
+
+	m, err := NewModule(func() *xkms.XKMSService { return nil },
+		WithRESTServer(func() *rest.Server { return srv }),
+		WithWebUI("/ui/", true))
+	require.NoError(t, err)
+
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+
+	router := chi.NewRouter()
+	var sawUI, sawUIWildcard bool
+	for _, rec := range *recs {
+		assert.NotContains(t, rec.pattern, "//", "route pattern %q must not contain //", rec.pattern)
+		if rec.method != http.MethodGet {
+			continue
+		}
+		switch rec.pattern {
+		case "/ui":
+			sawUI = true
+		case "/ui/*":
+			sawUIWildcard = true
+		case "/":
+		default:
+			continue
+		}
+		router.Get(rec.pattern, rec.handler)
+	}
+	require.True(t, sawUI, "GET /ui must be registered")
+	require.True(t, sawUIWildcard, "GET /ui/* must be registered")
+
+	serve := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w
+	}
+
+	assets := serve("/ui/assets/app.js")
+	assert.Equal(t, http.StatusOK, assets.Code)
+	assert.Contains(t, assets.Body.String(), "console.log")
+
+	index := serve("/ui/")
+	assert.Equal(t, http.StatusOK, index.Code)
+	assert.Contains(t, index.Body.String(), "xkms ui")
+
+	assert.NotEqual(t, http.StatusNotFound, serve("/ui").Code)
+
+	root := serve("/")
+	assert.Equal(t, http.StatusFound, root.Code)
+	assert.Equal(t, "/ui", root.Header().Get("Location"))
 }
 
 // TestAdminModule_RegisterHTTP_RootRedirect proves WithAdminWebUI's
