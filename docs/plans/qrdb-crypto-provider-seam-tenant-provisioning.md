@@ -260,3 +260,28 @@ approval and the exported APIs) were not started.
   turns it on for a fresh deployment or after re-issuing login credentials.
   An in-place migration still needs a go-qrdb seam (item 144): the pinned
   `sdk/go` gives no way to read, import or keep trusting the stored Key B.
+
+## Codex review round 2 on 788848d67 (lane cr2106b)
+
+- Lookup failures (P1, `tenant_ca_keyprovider.go:264`): `tenantLoginCAKeyAttrs`
+  returns `errTenantLoginCAKeyNotFound` only when the listing succeeded
+  without the key. Any other error (a key store outage, a refused listing)
+  stops `EnsureTenant`, the claim takeover, the wait and `RemoveTenant`
+  (which keeps the claim): no claim, intent or key on an unknown state.
+  Test `TestTenantCAKeyFactory_LookupFailureIsNotAbsence`.
+- Claim fencing (P1, `tenant_ca_keyprovider.go:353`): a claim value is
+  `<time> <owner token>`. Right before generating, the owner runs
+  `fenceTenantLoginCAClaim`: it checks the claim still names its token and
+  renews the lease by compare-and-swap, so a renewal and a takeover never
+  both win. A pass that lost its claim adopts the new owner's key instead of
+  generating; the generate runs under a context that ends with the renewed
+  lease. Test `TestTenantCAKeyFactory_FencesDelayedProvisioner` (two backend
+  instances over shared stores; the first pass stalls past the lease after
+  claiming while the second takes over and provisions).
+- Limit: a pass stalled for longer than the lease between the renewal and
+  the backend's generate call, on a backend that ignores the context, can
+  still generate beside the new owner. Closing that needs the key backend to
+  refuse a fenced generate, which PKCS#11 has no primitive for.
+- Not acted on (owner rulings needed): finding 3 (PKCS#11 tenant key naming
+  compatibility) and finding 4 (owner approval of
+  `datastore.tenant-login-ca-keys`).
