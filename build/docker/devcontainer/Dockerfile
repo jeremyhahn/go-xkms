@@ -42,7 +42,7 @@ ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=${GO_BUILD_PROXY} GOBIN=/out
 # deb.debian.org reddened CI (run 58741). Repeated per FROM ${GO_IMAGE} stage.
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends xz-utils && \
     rm -rf /var/lib/apt/lists/*
 COPY scripts/tool-pins.sh /tmp/tool-pins.sh
@@ -113,7 +113,7 @@ ENV GOTOOLCHAIN=local DEBIAN_FRONTEND=noninteractive
 # apt retries transient fetch errors (see the tools stage).
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     # Core build tools
     build-essential \
@@ -354,7 +354,7 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/ap
 # (linux-libc-dev among them): the integration image built on this stage is
 # gated by `trivy image --ignore-unfixed` (ci.yml).
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p upgrade -y && apt-get $p install -y --no-install-recommends \
     # Core build tools (needed for CGO)
     build-essential \
@@ -519,7 +519,7 @@ FROM base AS toolchain
 # instead of in their builder images.
 ENV HOME=/tmp XKMS_NATIVE_BUILD=1
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
         bash \
         coreutils \
@@ -556,7 +556,7 @@ LABEL maintainer="go-xkms"
 LABEL description="Development environment for go-xkms with ALL build and test dependencies"
 USER root
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
-    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
     apt-get $p update && apt-get $p install -y --no-install-recommends \
     git-lfs \
     # Networking and testing tools
