@@ -251,14 +251,21 @@ func (tpm *TPM2) sealPCRSet(keyAttrs *types.KeyAttributes) (PCRSet, error) {
 }
 
 // objectPCRSet returns the PCRs the PolicyPCR branch of an existing object
-// covers. The selection recorded in the platform policy pin beside the
-// object's blobs wins, so an Unseal whose attributes were reconstructed from
-// the key ID (and so carry no PCRSelection) still opens an object sealed
-// over an extra PCR; the digest is computed from the live values of those
-// PCRs. With no pin in the platform bank, it is sealPCRSet of the caller's
-// attributes (an inline blob's selection comes in through them, see
-// applySealedPCRSelection).
+// covers. A PCRSelection in the attributes wins: the caller named it, or
+// applySealedPCRSelection recovered it from an inline blob's own metadata,
+// and a pin under the same CN may be a later seal's. With no selection, the
+// one recorded in the platform policy pin beside the object's blobs is used,
+// so an Unseal whose attributes were reconstructed from the key ID still
+// opens an object sealed over an extra PCR; the digest is computed from the
+// live values of those PCRs. With neither, it is the platform PCR set.
 func (tpm *TPM2) objectPCRSet(keyAttrs *types.KeyAttributes, backend store.KeyBackend) (PCRSet, error) {
+	// A selection in the attributes (the caller's, or an inline blob's own
+	// recovered by applySealedPCRSelection) belongs to this object; a pin
+	// stored under the CN may belong to a later seal that overwrote it.
+	if keyAttrs.TPMAttributes != nil &&
+		len(keyAttrs.TPMAttributes.PCRSelection.PCRSelections) > 0 {
+		return tpm.sealPCRSet(keyAttrs)
+	}
 	// The pin only names the selection here: the PCR branch never depends
 	// on its digest, so an unreadable record falls back to the caller's
 	// selection and the TPM decides.
