@@ -15,10 +15,18 @@
 #   2. xkmsd is built with the "ui" tag plus the software-only tag set the
 #      webauthn-browser test uses (no pkcs11/HSM dependency; the SPA doesn't
 #      need it).
+#
+# XKMS_E2E_CONFIG (default config.yaml), XKMS_E2E_PORT (default 18463) and
+# XKMS_E2E_RUNTIME (default .runtime) select the daemon a Playwright config
+# boots; playwright.node.config.ts uses config-node.yaml on its own port and
+# state directory.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../../.. && pwd)"
+CONFIG="$(pwd)/${XKMS_E2E_CONFIG:-config.yaml}"
+PORT="${XKMS_E2E_PORT:-18463}"
+RUNTIME="${XKMS_E2E_RUNTIME:-.runtime}"
 
 XKMSD_BIN="${XKMS_XKMSD_BIN:-}"
 BUILD_TAGS="ui pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack"
@@ -34,31 +42,31 @@ if [[ -z "${XKMSD_BIN}" ]]; then
   }
 
   echo "[run-server] building xkmsd (ui + software-only tags)..." >&2
-  XKMSD_BIN="./.runtime/xkmsd"
-  mkdir -p ./.runtime
+  XKMSD_BIN="./${RUNTIME}/xkmsd"
+  mkdir -p "./${RUNTIME}"
   ( cd "${REPO_ROOT}" && CGO_ENABLED=1 go build -tags "${BUILD_TAGS}" \
-      -o "test/integration/web/.runtime/xkmsd" ./cmd/xkmsd/ )
+      -o "test/integration/web/${RUNTIME}/xkmsd" ./cmd/xkmsd/ )
 fi
 
 # Clean keystore/CA/audit state for a deterministic run.
-rm -rf ./.runtime/data ./.runtime/storage ./.runtime/ca
-mkdir -p ./.runtime/data/software ./.runtime/ca
+rm -rf "./${RUNTIME}/data" "./${RUNTIME}/storage" "./${RUNTIME}/ca"
+mkdir -p "./${RUNTIME}/data/software" "./${RUNTIME}/ca"
 
 # Initialize the barrier as an operator does before a first boot: the SO PIN
 # becomes its passphrase and travels in the environment, never in the config.
 SO_PIN="${XKMS_TEST_SO_PIN:-e2e-web-console-so-pin}"
-XKMS_SO_PIN="${SO_PIN}" "${XKMSD_BIN}" init --config "$(pwd)/config.yaml" \
-  --data-dir "$(pwd)/.runtime/storage" --hostname localhost --admin-factor mtls >&2
+XKMS_SO_PIN="${SO_PIN}" "${XKMSD_BIN}" init --config "${CONFIG}" \
+  --data-dir "$(pwd)/${RUNTIME}/storage" --hostname localhost --admin-factor mtls >&2
 
-echo "[run-server] launching ${XKMSD_BIN} on https://localhost:18463 (UI at /ui/)" >&2
-env -u XKMS_SO_PIN XKMS_CONFIG="$(pwd)/config.yaml" "${XKMSD_BIN}" &
+echo "[run-server] launching ${XKMSD_BIN} on https://localhost:${PORT} (UI at /ui/)" >&2
+env -u XKMS_SO_PIN XKMS_CONFIG="${CONFIG}" "${XKMSD_BIN}" &
 server=$!
 trap 'kill "${server}" 2>/dev/null || true' EXIT INT TERM
 
 # The daemon boots sealed; open its barrier through the sealed window with the
 # helper that unseals the compose xkms-server.
-XKMS_SERVER_WINDOW_URL="https://localhost:18463" \
-  XKMS_SERVER_STATE_DIR="$(pwd)/.runtime" \
+XKMS_SERVER_WINDOW_URL="https://localhost:${PORT}" \
+  XKMS_SERVER_STATE_DIR="$(pwd)/${RUNTIME}" \
   XKMS_SERVER_BARRIER_SECRET="${SO_PIN}" \
   bash "${REPO_ROOT}/build/docker/devcontainer/scripts/open-server-barrier.sh" >&2
 wait "${server}"
