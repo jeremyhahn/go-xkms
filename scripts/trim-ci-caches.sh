@@ -20,6 +20,17 @@
 # stopped) mounts is never removed; `docker volume rm` refuses one in use in any
 # case.
 #
+# When the total is still over the bound with only in-use volumes left (Tenant
+# Agent ruling 966 (4): one host's gobuild volume reached 57G), they are
+# trimmed inside, largest first, by a one-shot <image> container with the same
+# limits mounting the volume read-write, by whole cache entries:
+#   gobuild   the files of whole xx/ entry directories, oldest directory mtime
+#             first, until under the bound; `go clean -cache` when the volume
+#             alone is over the bound;
+#   golangci  emptied whole, as `golangci-lint cache clean` does;
+#   gomod     never trimmed inside (no per-file age trims of the module cache):
+#             reported, and removed whole only once no container uses it.
+#
 # <max-gib> defaults to CI_CACHE_MAX_GIB, else 32: the bound for this repo's
 # volumes, both trust classes together, on one host.
 #
@@ -66,14 +77,17 @@ for vol in $(docker volume ls -q --filter "name=${prefix}cache-"); do
 done
 echo "caches: $((total / 1024 / 1024)) GiB of ${max_gib} GiB for prefix '$prefix'"
 
+dry=${REAP_DRY_RUN:-0}
 removed=0
+inuse=$(mktemp)
+trap 'rm -f "$list" "$inuse"' EXIT
 while read -r kib vol; do
   [ "$total" -gt "$max_kib" ] || break
   if [ -n "$(docker ps -aq --filter "volume=$vol")" ]; then
-    echo "keep  $vol ($((kib / 1024)) MiB, in use)"
+    echo "$kib $vol" >> "$inuse"
     continue
   fi
-  if [ "${REAP_DRY_RUN:-0}" = 1 ]; then
+  if [ "$dry" = 1 ]; then
     echo "dry   docker volume rm $vol ($((kib / 1024)) MiB)"
   elif docker volume rm "$vol" >/dev/null 2>&1; then
     echo "trim  $vol ($((kib / 1024)) MiB)"
@@ -85,5 +99,85 @@ while read -r kib vol; do
   removed=$((removed + 1))
 done < <(sort -rn "$list")
 
-echo "trim: $removed volume(s), $((total / 1024 / 1024)) GiB left for prefix '$prefix'"
+# In-use volumes (ruling 966 (4)): a volume a container mounts cannot be
+# removed, so while the total is still over the bound trim inside it, through a
+# one-shot container of <image> mounting it read-write, by whole cache entries.
+
+# Empty the files of whole build-cache entry directories (xx/, two hex digits),
+# oldest directory mtime first, until <need> KiB are freed; the directories
+# stay, so a concurrent build can still write into them. Prints the KiB freed.
+# shellcheck disable=SC2016 # expanded by the in-volume shell, not here
+gobuild_trim='dir=$1 need=$2 freed=0
+cd "$dir" || exit 1
+for e in $(ls -1dtr -- [0-9a-f][0-9a-f] 2>/dev/null); do
+  [ "$freed" -lt "$need" ] || break
+  [ -d "$e" ] || continue
+  before=$(du -sk -- "$e" | cut -f1)
+  find "$e" -type f -exec rm -f {} + || continue
+  after=$(du -sk -- "$e" | cut -f1)
+  freed=$((freed + ${before:-0} - ${after:-0}))
+done
+echo "$freed"'
+# golangci-lint cache clean: the whole cache directory's content goes.
+# shellcheck disable=SC2016
+golangci_clean='find "$1" -mindepth 1 -maxdepth 1 -exec rm -rf {} + && echo cleaned'
+
+# in_volume <volume> <args...>: run <args> in <image> with <volume> on /c, read-write.
+in_volume() {
+  local vol=$1
+  shift
+  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+    --user "$uid:$uid" -v "$vol:/c" "$@" 2>/dev/null
+}
+
+trimmed=0
+while read -r kib vol; do
+  [ "$total" -gt "$max_kib" ] || break
+  need=$((total - max_kib))
+  case $vol in
+    *-gobuild)
+      if [ "$kib" -gt "$max_kib" ]; then
+        if [ "$dry" = 1 ]; then
+          echo "dry   go clean -cache in $vol ($((kib / 1024)) MiB, in use)"
+          freed=$kib
+        elif in_volume "$vol" -e GOCACHE=/c --entrypoint go "$image" clean -cache >/dev/null; then
+          echo "trim  go clean -cache in $vol ($((kib / 1024)) MiB, in use)"
+          freed=$kib
+        else
+          echo "warn  go clean -cache in $vol failed"
+          continue
+        fi
+      elif [ "$dry" = 1 ]; then
+        echo "dry   trim oldest entries in $vol ($((need / 1024)) MiB of $((kib / 1024)) MiB, in use)"
+        freed=$need
+      else
+        freed=$(in_volume "$vol" --entrypoint sh "$image" -c "$gobuild_trim" trim-ci-cache /c "$need")
+        case $freed in
+          '' | *[!0-9]*) echo "warn  $vol: trim inside failed"; continue ;;
+        esac
+        echo "trim  oldest entries in $vol ($((freed / 1024)) MiB freed, in use)"
+      fi
+      ;;
+    *-golangci)
+      if [ "$dry" = 1 ]; then
+        echo "dry   golangci-lint cache clean in $vol ($((kib / 1024)) MiB, in use)"
+      elif [ "$(in_volume "$vol" --entrypoint sh "$image" -c "$golangci_clean" trim-ci-cache /c)" = cleaned ]; then
+        echo "trim  golangci-lint cache clean in $vol ($((kib / 1024)) MiB, in use)"
+      else
+        echo "warn  $vol: cache clean failed"
+        continue
+      fi
+      freed=$kib
+      ;;
+    *)
+      # The module cache is never trimmed per file: only removed whole, unused.
+      echo "keep  $vol ($((kib / 1024)) MiB, in use; not trimmed inside)"
+      continue
+      ;;
+  esac
+  total=$((total - freed))
+  trimmed=$((trimmed + 1))
+done < <(sort -rn "$inuse")
+
+echo "trim: $removed volume(s) removed, $trimmed trimmed inside, $((total / 1024 / 1024)) GiB left for prefix '$prefix'"
 exit 0
