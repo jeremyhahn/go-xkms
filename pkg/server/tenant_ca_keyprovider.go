@@ -628,7 +628,10 @@ func selfSignTenantLoginCA(tenantID string, signer crypto.Signer) (*x509.Certifi
 // under the same condition as the cluster CA provider. The boot pass binds the
 // factory to the server's default backend.
 func (s *Server) tenantCAKeyProviderOptions() []qrdbnode.NodeOption {
-	if !s.trustedCAIsClusterCA() {
+	// An explicit opt-in: wiring the factory replaces the tenant login CAs
+	// go-qrdb already persisted, which would strand the login certificates
+	// they issued on an upgrade (see config.DatastoreConfig.TenantLoginCAKeys).
+	if !s.config.Datastore.TenantLoginCAKeys || !s.trustedCAIsClusterCA() {
 		return nil
 	}
 	f := newTenantCAKeyFactory()
