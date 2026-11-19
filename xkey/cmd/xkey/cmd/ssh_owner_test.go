@@ -23,6 +23,16 @@ type ownerRecorder struct {
 
 func newOwnerRecorder(t *testing.T) *ownerRecorder {
 	t.Helper()
+	rec, url := serveOwnerRecorder(t)
+	xkmsdURL = url
+	return rec
+}
+
+// serveOwnerRecorder starts the recording server and trusts its CA, but
+// leaves the global xkmsd URL alone, so a test can name the server with
+// the ssh --server flag only.
+func serveOwnerRecorder(t *testing.T) (*ownerRecorder, string) {
+	t.Helper()
 	rec := &ownerRecorder{}
 	srv, caFile := serveridtest.NewTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(r.Body)
@@ -43,8 +53,7 @@ func newOwnerRecorder(t *testing.T) *ownerRecorder {
 		_, _ = w.Write([]byte(`{"scope":"user","owner":"116704235864723456","name":"laptop","algorithm":"ed25519"}`))
 	}))
 	t.Setenv(envXKMSdTLSCA, caFile)
-	xkmsdURL = srv.URL
-	return rec
+	return rec, srv.URL
 }
 
 // Against a server an unset --owner sends no owner: the server serves the
@@ -94,4 +103,42 @@ func TestSSHOwner_EmbeddedKeepsLocalDefault(t *testing.T) {
 	assert.Equal(t, "", sshDefaultOwner(cmd))
 	setSSHFlags(t, cmd, map[string]string{"local": "true"})
 	assert.Equal(t, "alice", sshDefaultOwner(cmd))
+}
+
+// TestSSHOwner_ServerFlagSendsNone checks that naming the server with the
+// ssh --server flag alone (no global xkmsd URL, env or config) is the same
+// remote decision for the owner default as for the client: an unset
+// --owner sends no owner (ruling 937).
+func TestSSHOwner_ServerFlagSendsNone(t *testing.T) {
+	withEmbeddedSSHStore(t)
+	t.Setenv("USER", "alice")
+	rec, url := serveOwnerRecorder(t)
+	require.Empty(t, resolveXKMSdURL(), "the server is named by --server only")
+
+	gen, _ := sshTestCmd(t)
+	setSSHFlags(t, gen, map[string]string{"scope": "user", "name": "laptop", "server": url})
+	assert.Equal(t, "", sshDefaultOwner(gen))
+	require.NoError(t, runSSHKeysGenerate(gen, nil))
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.Equal(t, []string{""}, rec.owners, "generate sends an empty owner, not $USER")
+}
+
+// TestSSHOwner_ServerFlagWithLocalKeepsDefault checks that --local wins over
+// --server for both decisions: the command runs on the local store and the
+// owner defaults to $USER; nothing reaches the server.
+func TestSSHOwner_ServerFlagWithLocalKeepsDefault(t *testing.T) {
+	withEmbeddedSSHStore(t)
+	t.Setenv("USER", "alice")
+	rec, url := serveOwnerRecorder(t)
+
+	gen, _ := sshTestCmd(t)
+	setSSHFlags(t, gen, map[string]string{"scope": "user", "name": "laptop", "server": url, "local": "true"})
+	assert.Equal(t, "alice", sshDefaultOwner(gen))
+	require.NoError(t, runSSHKeysGenerate(gen, nil))
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.Empty(t, rec.paths, "--local keeps the command off the server")
 }
