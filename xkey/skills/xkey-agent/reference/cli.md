@@ -2115,6 +2115,8 @@ Inherited by subcommands:
 | `--local` | bool | false | use the local SSH store even when an xkmsd server is configured |
 | `--server` | string |  | Remote xkmsd URL (e.g. grpcs://host:9443, quic://host:8444, unix:///path/xkms.sock) |
 | `--tls-ca` | string |  | TLS CA certificate file used to verify the server |
+| `--tls-cert` | string |  | path to client certificate file for mTLS authentication (default $XKMSD_TLS_CERT) |
+| `--tls-key` | string |  | path to client key file for mTLS authentication (default $XKMSD_TLS_KEY) |
 
 ## xkey ssh authorized-keys
 
