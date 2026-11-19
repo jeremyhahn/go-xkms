@@ -3,11 +3,9 @@ package apimodule
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -18,7 +16,9 @@ import (
 // module must hand the REST host its WithServiceContext binder, so the
 // store's KV writes run as the node's service principal against an
 // embedded node that enforces authentication.
-func TestModule_HostConfig_RefreshStoreWritesUnderAnonymousContext(t *testing.T) {
+// The module hands its service context to the REST host config; the host's
+// own use of it is covered by rest.TestNewHostServer_IssuerMintsUnderAnonymousContext.
+func TestModule_HostConfig_CarriesServiceContext(t *testing.T) {
 	node := barriertest.NewPrincipalNode(t)
 	svc := &xkms.XKMSService{}
 	m, err := NewModule(func() *xkms.XKMSService { return svc },
@@ -30,14 +30,7 @@ func TestModule_HostConfig_RefreshStoreWritesUnderAnonymousContext(t *testing.T)
 	require.NoError(t, err)
 	require.NotNil(t, hc.QRDBClient)
 	require.NotNil(t, hc.ServiceContext, "the module must pass its service context to the REST host")
-
-	store, err := token.NewQRDBRefreshStore(hc.QRDBClient.KV(), token.WithCallContext(hc.ServiceContext))
+	ctx, err := hc.ServiceContext(context.Background())
 	require.NoError(t, err)
-	ctx := context.Background()
-	rec := &token.Record{JTI: "j1", Family: "f1", Tenant: "system", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour).Unix()}
-	require.NoError(t, store.Save(ctx, rec))
-	got, err := store.Get(ctx, "f1", "j1")
-	require.NoError(t, err)
-	require.Equal(t, "admin", got.Subject)
-	require.Equal(t, "system", got.Tenant)
+	require.NotNil(t, ctx)
 }
