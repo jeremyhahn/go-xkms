@@ -449,6 +449,62 @@ func storedPublicBlob(t *testing.T, b *Backend, attrs *types.KeyAttributes) []by
 	return bytes.Clone(pub)
 }
 
+// failPublicBlobOnce is a key store that fails the next public-blob write,
+// the storage fault (or crash) between the two writes of a key pair.
+type failPublicBlobOnce struct {
+	store.KeyBackend
+	fail bool
+}
+
+func (f *failPublicBlobOnce) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	if f.fail && ext == store.FSEXT_PUBLIC_BLOB {
+		f.fail = false
+		return errors.New("injected public blob write fault")
+	}
+	return f.KeyBackend.Save(attrs, data, ext, overwrite)
+}
+
+// TestImportKey_RetryRepairsIncompletePair proves a create-only import whose
+// public-blob write failed after the private blob was stored is an
+// incomplete import a retry repairs: the retry succeeds and the key loads.
+// A complete key under the same attributes still refuses a different import
+// (Codex round-5 P1 on #2183, Tenant Agent ruling 968).
+func TestImportKey_RetryRepairsIncompletePair(t *testing.T) {
+	b := newSimBackend(t)
+	ctx := context.Background()
+	faulty := &failPublicBlobOnce{KeyBackend: b.keyBackend, fail: true}
+	b.keyBackend = faulty
+
+	_, wrapped := wrapMaterial(t, b, bytes.Repeat([]byte{0x44}, 32))
+	attrs := &types.KeyAttributes{CN: "import-incomplete-pair", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, attrs, wrapped); err == nil {
+		t.Fatal("ImportKey succeeded although the public blob write failed")
+	}
+	if _, err := faulty.Get(attrs, store.FSEXT_PRIVATE_BLOB); err != nil {
+		t.Fatalf("fault did not leave the private blob behind (test precondition): %v", err)
+	}
+
+	retry := &types.KeyAttributes{CN: "import-incomplete-pair", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, retry, wrapped); err != nil {
+		t.Fatalf("retry of the incomplete import: %v", err)
+	}
+	loaded, err := b.tpm.LoadKeyPair(retry, nil, b.keyBackend)
+	if err != nil {
+		t.Fatalf("load the repaired key pair: %v", err)
+	}
+	b.tpm.Flush(loaded.ObjectHandle)
+	original := storedPublicBlob(t, b, retry)
+
+	_, other := wrapMaterial(t, b, bytes.Repeat([]byte{0x55}, 32))
+	conflict := &types.KeyAttributes{CN: "import-incomplete-pair", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, conflict, other); !errors.Is(err, backend.ErrKeyAlreadyExists) {
+		t.Fatalf("import over the complete key error = %v, want backend.ErrKeyAlreadyExists", err)
+	}
+	if got := storedPublicBlob(t, b, retry); !bytes.Equal(got, original) {
+		t.Fatal("stored public key changed: the conflicting import overwrote the complete key")
+	}
+}
+
 // TestImportKey_HonorsExplicitParent verifies an explicitly supplied parent is
 // preserved rather than being overwritten by the SRK default.
 func TestImportKey_HonorsExplicitParent(t *testing.T) {
