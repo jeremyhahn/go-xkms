@@ -52,6 +52,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -141,6 +142,19 @@ func WithQRDBClient(resolve QRDBClientResolver) Option {
 func WithServiceContext(bind qrdbstorage.CallContext) Option {
 	return func(m *Module) {
 		m.serviceContext = bind
+	}
+}
+
+// WithNodeUsers wires the host's embedded go-qrdb node as the user source
+// the module's public routes (WebAuthn ceremonies, invite redemption, the
+// refresh re-check) look users up through. Those routes' request context
+// carries no qrdb credentials, so on a node that enforces authentication the
+// qrdb client's user calls are refused there (ruling 973). A host that
+// embeds a node passes it (*node.Node satisfies auth.NodeUserSource); a
+// host that dials a remote qrdb leaves it unset.
+func WithNodeUsers(node auth.NodeUserSource) Option {
+	return func(m *Module) {
+		m.nodeUsers = node
 	}
 }
 
@@ -335,6 +349,9 @@ type Module struct {
 	resolveREST       RESTResolver
 	resolveMCP        MCPResolver
 	resolveQRDBClient QRDBClientResolver
+
+	// nodeUsers is WithNodeUsers' embedded node; nil without one.
+	nodeUsers auth.NodeUserSource
 
 	// serviceContext is WithServiceContext's binder, applied to every
 	// datastore the module opens (openDatastore).

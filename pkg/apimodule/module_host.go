@@ -92,6 +92,7 @@ func (m *Module) restServer() (*rest.Server, error) {
 		PIVLogin:      m.pivLogin,
 		PasswordStore: stores.PasswordStore,
 		SSHClient:     stores.SSH,
+		NodeUsers:     m.nodeUsers,
 	}
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()
