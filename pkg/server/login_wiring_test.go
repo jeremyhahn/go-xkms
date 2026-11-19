@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -115,6 +117,41 @@ func TestLoginWiring_PIVLoginOverEmbeddedNode(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rotated))
 			require.NotEmpty(t, rotated.RefreshToken)
 			assert.NotEqual(t, pair.RefreshToken, rotated.RefreshToken, "refresh must rotate the refresh token")
+		})
+	}
+}
+
+// TestLoginWiring_WebAuthnFinishReachesMint is the WebAuthn side of
+// go-xkms#2287 on the same wiring: the finish step of a ceremony calls the
+// token generator xkmsd wires (rest.WebAuthnTokenAdapter over the server's
+// issuer) with the public route's identity-less context. Before the fix
+// Mint failed at the refresh store put.
+func TestLoginWiring_WebAuthnFinishReachesMint(t *testing.T) {
+	for _, rbac := range []bool{false, true} {
+		name := "rbac_off"
+		if rbac {
+			name = "rbac_on"
+		}
+		t.Run(name, func(t *testing.T) {
+			xkms.Reset()
+			t.Cleanup(xkms.Reset)
+
+			cfg := qrdbBarrierConfig(t)
+			cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
+			cfg.Auth.EnableRBAC = rbac
+			cfg.TLS.ServerCN = "localhost"
+
+			s, err := New(cfg)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = s.Shutdown() })
+			require.NotNil(t, s.qrdbNode, "the wiring under test is the embedded node")
+			require.NotNil(t, s.tokenIssuer, "New must build the token issuer")
+
+			gen := rest.NewWebAuthnTokenAdapter(s.tokenIssuer, "")
+			access, refresh, err := gen.GenerateTokenPair(context.Background(), webauthn.NewDefaultUserFromEmail("admin@example.com", "admin"))
+			require.NoError(t, err)
+			require.NotEmpty(t, access)
+			require.NotEmpty(t, refresh)
 		})
 	}
 }
