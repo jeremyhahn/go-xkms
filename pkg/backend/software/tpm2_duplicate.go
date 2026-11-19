@@ -142,6 +142,12 @@ func tpm2DuplicateAreas(privateKey any) (*tpm2.TPMTPublic, *tpm2.TPMTSensitive, 
 			return nil, nil, err
 		}
 		size := (key.Curve.Params().BitSize + 7) / 8
+		// Bytes is the fixed-length big-endian private scalar (size bytes for
+		// the NIST curves tpm2ECCCurve admits); the D field is deprecated.
+		scalar, err := key.Bytes()
+		if err != nil {
+			return nil, nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("TPM2_DUPLICATE private scalar: %v", err)}
+		}
 		public := &tpm2.TPMTPublic{
 			Type:             tpm2.TPMAlgECC,
 			NameAlg:          tpm2.TPMAlgSHA256,
@@ -161,7 +167,7 @@ func tpm2DuplicateAreas(privateKey any) (*tpm2.TPMTPublic, *tpm2.TPMTSensitive, 
 			SensitiveType: tpm2.TPMAlgECC,
 			SeedValue:     tpm2.TPM2BDigest{Buffer: obfuscation},
 			Sensitive: tpm2.NewTPMUSensitiveComposite(tpm2.TPMAlgECC, &tpm2.TPM2BECCParameter{
-				Buffer: key.D.FillBytes(make([]byte, size)),
+				Buffer: scalar,
 			}),
 		}
 		return public, sensitive, nil
