@@ -669,6 +669,10 @@ build-web: build-sdk-ts
 ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping build-web$(RESET)"
 else
+	@# svelte-auth resolves its @go-xkms/sdk devDependency (file:..) only through
+	@# its own node_modules, so install it before the web/app build (#2286).
+	@echo "$(CYAN)$(BOLD)→ Installing @go-xkms/svelte-auth dependencies...$(RESET)"
+	@cd $(SVELTE_AUTH_DIR) && npm ci --silent
 	@echo "$(CYAN)$(BOLD)→ Installing web/app dependencies...$(RESET)"
 	@cd $(WEB_APP_DIR) && npm ci --silent
 	@# npm rewrites file: deps to relative symlinks; force absolute symlinks so
@@ -1107,6 +1111,7 @@ test-scripts:
 	@bash test/scripts/credential-ignores.test.sh
 	@bash test/scripts/no-credential-echo.test.sh
 	@bash test/scripts/ci-registry.test.sh
+	@bash test/scripts/build-web-deps.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
