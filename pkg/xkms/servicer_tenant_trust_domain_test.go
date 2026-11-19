@@ -47,6 +47,7 @@ func TestCreateTenantDetail_RefusesNonTrustDomainID(t *testing.T) {
 			_, err := svc.CreateTenantDetail(context.Background(), &transport.CreateTenantRequest{ID: tc.id, Name: "Tenant"}, nil)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, tc.want)
+			assert.ErrorIs(t, err, ErrInvalidTenantID, "transports classify the refusal as the caller's bad input")
 			assert.Empty(t, fake.createID, "go-qrdb CreateTenant must not be called on a refusal")
 		})
 	}
