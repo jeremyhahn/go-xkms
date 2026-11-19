@@ -269,7 +269,36 @@ func expired(rec *Record) bool {
 // CompareAndSwap and revocation with PutIfAbsent, both evaluated inside the
 // Raft state machine, so two nodes cannot both win.
 type QRDBRefreshStore struct {
-	kv qrdbtransport.GuardedKVClient
+	kv   qrdbtransport.GuardedKVClient
+	bind CallContext
+}
+
+// CallContext derives the context the store's own KV calls run under from
+// the caller's context. pkg/server and apimodule pass the embedded node's
+// ServiceContext, so the bookkeeping runs as the node's service principal
+// even on public routes whose request context carries no identity
+// (go-xkms#2287). It has the shape of qrdbstorage.CallContext.
+type CallContext func(context.Context) (context.Context, error)
+
+// QRDBRefreshStoreOption configures a QRDBRefreshStore.
+type QRDBRefreshStoreOption func(*QRDBRefreshStore)
+
+// WithCallContext sets the binder applied to every KV call the store makes.
+// A nil binder keeps the caller's context.
+func WithCallContext(bind CallContext) QRDBRefreshStoreOption {
+	return func(s *QRDBRefreshStore) { s.bind = bind }
+}
+
+// callContext applies the binder, if any, to ctx.
+func (s *QRDBRefreshStore) callContext(ctx context.Context) (context.Context, error) {
+	if s.bind == nil {
+		return ctx, nil
+	}
+	bound, err := s.bind(ctx)
+	if err != nil {
+		return nil, &StoreError{Op: "bind call context", Err: err}
+	}
+	return bound, nil
 }
 
 // NewQRDBRefreshStore constructs a store over the given KV client.
@@ -281,7 +310,7 @@ type QRDBRefreshStore struct {
 // second refresh can slip between — so construction fails instead. There is
 // deliberately no degraded non-atomic path: a refresh store that cannot
 // arbitrate a race is a refresh store that mints two live successors.
-func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
+func NewQRDBRefreshStore(kv qrdbtransport.KVClient, opts ...QRDBRefreshStoreOption) (*QRDBRefreshStore, error) {
 	if kv == nil {
 		return nil, &NilInputError{Field: "kv"}
 	}
@@ -289,7 +318,11 @@ func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
 	if !ok {
 		return nil, &GuardedKVUnsupportedError{ClientType: fmt.Sprintf("%T", kv)}
 	}
-	return &QRDBRefreshStore{kv: guarded}, nil
+	s := &QRDBRefreshStore{kv: guarded}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // Save implements RefreshStore.
@@ -302,6 +335,10 @@ func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
 func (s *QRDBRefreshStore) Save(ctx context.Context, rec *Record) error {
 	if rec == nil {
 		return &NilInputError{Field: "record"}
+	}
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -330,6 +367,10 @@ func (s *QRDBRefreshStore) Save(ctx context.Context, rec *Record) error {
 
 // Get implements RefreshStore.
 func (s *QRDBRefreshStore) Get(ctx context.Context, family, jti string) (*Record, error) {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rec, _, err := s.load(ctx, family, jti)
 	if err != nil {
 		return nil, err
@@ -367,6 +408,10 @@ func (s *QRDBRefreshStore) load(ctx context.Context, family, jti string) (*Recor
 
 // MarkRotated implements RefreshStore.
 func (s *QRDBRefreshStore) MarkRotated(ctx context.Context, family, jti string) error {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
 	rec, current, err := s.load(ctx, family, jti)
 	if err != nil {
 		return err
@@ -398,6 +443,15 @@ func (s *QRDBRefreshStore) MarkRotated(ctx context.Context, family, jti string) 
 
 // RevokeFamily implements RefreshStore.
 func (s *QRDBRefreshStore) RevokeFamily(ctx context.Context, family string) error {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
+	return s.revokeFamily(ctx, family)
+}
+
+// revokeFamily is RevokeFamily under an already bound context.
+func (s *QRDBRefreshStore) revokeFamily(ctx context.Context, family string) error {
 	tombstone, err := json.Marshal(&revocation{
 		Family:    family,
 		ExpiresAt: time.Now().Add(RevocationTombstoneTTL).Unix(),
@@ -437,6 +491,10 @@ func (s *QRDBRefreshStore) RevokeFamily(ctx context.Context, family string) erro
 // and a lifecycle change is rare enough next to a refresh that the scan's
 // cost is the right place to pay it.
 func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
 	entries, err := s.kv.Scan(ctx, refreshPrefix)
 	if err != nil {
 		return &StoreError{Op: "scan", Err: err}
@@ -453,7 +511,7 @@ func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) 
 		}
 	}
 	for family := range families {
-		if err := s.RevokeFamily(ctx, family); err != nil {
+		if err := s.revokeFamily(ctx, family); err != nil {
 			return err
 		}
 	}
