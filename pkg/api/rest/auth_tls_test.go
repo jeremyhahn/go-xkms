@@ -440,7 +440,17 @@ func TestRESTServer_mTLS_ClientCertRequired(t *testing.T) {
 		t.Fatalf("Failed to generate server certificate: %v", err)
 	}
 
-	clientCert, err := testutil.GenerateTestClientCert(ca, "test-client")
+	// The certificate-only mTLS path names a tenant only through
+	// qrdbsdk.TenantFromClientCert: the signed certificate carries the OU
+	// and the agreeing SPIFFE SAN.
+	clientCert, err := testutil.GenerateTestTenantClientCert(ca, "test-client", "acme")
+	if err != nil {
+		t.Fatalf("Failed to generate client certificate: %v", err)
+	}
+
+	// A CA-signed certificate with no tenant claim passes the handshake but
+	// names no tenant, so the authenticator refuses it.
+	noTenantCert, err := testutil.GenerateTestClientCert(ca, "no-tenant-client")
 	if err != nil {
 		t.Fatalf("Failed to generate client certificate: %v", err)
 	}
@@ -543,6 +553,28 @@ func TestRESTServer_mTLS_ClientCertRequired(t *testing.T) {
 			t.Error("Expected error when connecting without client cert, but got none")
 		}
 		// The error should be a TLS handshake failure
+	})
+
+	// Test with a client certificate that names no tenant (refused)
+	t.Run("ClientCertWithoutTenant", func(t *testing.T) {
+		clientNoTenant := &http.Client{
+			Timeout: 5 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					RootCAs:      caCertPoolClient,
+					Certificates: []tls.Certificate{noTenantCert.TLSCert},
+				},
+			},
+		}
+		resp, err := clientNoTenant.Get(baseURL + "/api/v1/backends")
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", resp.StatusCode)
+		}
 	})
 
 	// Stop server
