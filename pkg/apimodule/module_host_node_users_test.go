@@ -110,10 +110,12 @@ func TestModuleHost_NodeUsers_FreshInviteRedeemsOverAuthNode(t *testing.T) {
 	defer cancel()
 	users := auth.NewNodeUserClient(m.nodeUsers)
 	user, err := users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
-		Username:             "invitee",
-		Email:                "invitee@example.com",
-		Name:                 "Invitee",
-		WithoutEmailLoginKey: true,
+		Username: "invitee",
+		Email:    "invitee@example.com",
+		Name:     "Invitee",
+		// Pending, as xkms CreateUser makes an invited user: invite
+		// registration refuses a user that is already active.
+		Pending: true,
 	})
 	require.NoError(t, err)
 	token, _, err := stores.Invite.Create(ctx, strconv.FormatUint(user.ID, 10), qrdbsdk.SystemTenantID, time.Hour)
