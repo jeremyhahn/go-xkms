@@ -25,9 +25,22 @@ import (
 )
 
 // QRDBUserStoreOptions configures the adapter pair at construction time.
+// QRDBUsers is the part of qrdbtransport.UserClient the WebAuthn user
+// store calls.
+type QRDBUsers interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error)
+	GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error)
+	CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error)
+	UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
+	DeleteUser(ctx context.Context, id uint64) error
+}
+
 type QRDBUserStoreOptions struct {
 	// Users is the qrdb user client, used for create/get/list of users.
-	Users qrdbtransport.UserClient
+	// On an embedded node it is the node's user service
+	// (auth.NodeUserClient): the ceremony routes are public, so their
+	// request context carries no qrdb credentials (ruling 973).
+	Users QRDBUsers
 
 	// DAOFactory is the injected go-qrdb DAO factory the credential store
 	// builds its DAO from. Its default store must support atomic
@@ -46,7 +59,7 @@ type QRDBUserStoreOptions struct {
 // user's credentials are read from, and deleted through, the credential
 // store it was built with.
 type qrdbUserStore struct {
-	users    qrdbtransport.UserClient
+	users    QRDBUsers
 	creds    CredentialStore
 	tenantID string
 }

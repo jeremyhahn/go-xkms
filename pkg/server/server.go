@@ -1526,6 +1526,7 @@ func (s *Server) initializeWebAuthnService() error {
 	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
 		Config:      s.webauthnConfig,
 		QRDBClient:  ds.Client(),
+		NodeUsers:   s.nodeUserSource(),
 		DAOFactory:  ds.DAOFactory(),
 		TenantID:    webAuthnSystemTenant,
 		TokenIssuer: s.tokenIssuer,
@@ -1658,6 +1659,19 @@ func (n nodeCertUsers) UserByCertThumbprint(ctx context.Context, thumbprint stri
 		return nil, ErrQRDBNodeNotServing
 	}
 	return users.UserByCertThumbprint(ctx, thumbprint)
+}
+
+// nodeUserSource returns the embedded node as the user source the public
+// routes (WebAuthn ceremonies, invite redemption, the refresh re-check) look
+// users up through, the way nodeCertUsers resolves certificates: those
+// routes' request context carries no qrdb credentials, so the datastore
+// client's user calls are refused on a node that enforces authentication
+// (ruling 973). Nil when xkmsd hosts no embedded node.
+func (s *Server) nodeUserSource() auth.NodeUserSource {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	return s.qrdbNode
 }
 
 // initializeKeyVersionStore builds the key-version record store through
