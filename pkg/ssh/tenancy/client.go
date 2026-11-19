@@ -29,7 +29,9 @@
 //   - scope=tenant is owned by the tenant whose ID is the owner, and every
 //     user of that tenant may address it;
 //   - scope=user is owned by the principal whose subject is the owner, in
-//     the caller's tenant, and only that principal may address it;
+//     the caller's tenant, and only that principal may address it; an
+//     empty user-scope owner means the authenticated caller itself (its
+//     auth.PolicySubject);
 //   - scope=service is owned by a workload in the caller's tenant, and only
 //     a caller holding the explicit ssh:service permission may address it
 //     (Options.Permissions; with none wired the scope is closed).
@@ -151,7 +153,7 @@ func (c *client) Session() sdkssh.SessionClient { return &sessionClient{c: c} }
 // pins are both addressed by (KeyScope, KeyOwner), so one binding covers
 // both.
 func (c *client) Console(ctx context.Context, req sdkssh.ConsoleConnectRequest, cfg sdkssh.ConsoleConfig) (sdkssh.ConsoleSession, error) {
-	p, err := c.serve(ctx, req.KeyScope, req.KeyOwner)
+	p, err := c.serve(ctx, req.KeyScope, &req.KeyOwner)
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +202,19 @@ func (a caller) target(sc pkgscope.Scope, owner string) scope.Target {
 		return scope.Target{TenantID: owner, Scope: sc}
 	}
 	return scope.Target{TenantID: a.principal.TenantID, Scope: sc, Owner: owner}
+}
+
+// ownerOf resolves the owner a request addresses. A user-scope request
+// with an empty owner means the authenticated caller itself, owned by its
+// auth.PolicySubject (ruling 937): an account-bound caller's Subject is
+// the qrdb account id, which no client can learn. Every other request,
+// and an unauthenticated caller, keeps the owner it named, so
+// scope.Principal.Authorize judges it unchanged.
+func (a caller) ownerOf(sc pkgscope.Scope, owner string) string {
+	if owner == "" && sc == pkgscope.User && a.principal.Authenticated {
+		return a.principal.Subject
+	}
+	return owner
 }
 
 // authorize applies the xkms scope rule (scope.Principal.Authorize) to a
@@ -252,9 +267,10 @@ type partition struct {
 }
 
 // serve binds a request addressing (rawScope, owner) to the caller and opens
-// the partition that serves it. An unrecognized scope is answered as the SDK
-// answers it for every caller.
-func (c *client) serve(ctx context.Context, rawScope, owner string) (partition, error) {
+// the partition that serves it. *owner is resolved in place (caller.ownerOf),
+// so the request the partition serves carries the owner that was authorized.
+// An unrecognized scope is answered as the SDK answers it for every caller.
+func (c *client) serve(ctx context.Context, rawScope string, owner *string) (partition, error) {
 	sc, err := pkgscope.Parse(rawScope)
 	if err != nil {
 		return partition{}, &sdkssh.InvalidScopeError{Value: rawScope}
@@ -281,9 +297,10 @@ type binding struct {
 }
 
 // bind resolves the binding of a request addressing (sc, owner).
-func (c *client) bind(ctx context.Context, sc pkgscope.Scope, owner string) (binding, error) {
+func (c *client) bind(ctx context.Context, sc pkgscope.Scope, owner *string) (binding, error) {
 	who := callerOf(ctx)
-	if refusal := c.authorize(ctx, who, sc, owner); refusal != nil {
+	*owner = who.ownerOf(sc, *owner)
+	if refusal := c.authorize(ctx, who, sc, *owner); refusal != nil {
 		return binding{refusal: refusal}, nil
 	}
 	tenantID, err := partitionTenant(who)
