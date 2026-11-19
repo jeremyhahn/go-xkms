@@ -26,6 +26,8 @@ services:
         go-quicraft: ../../../../../go-quicraft
       args:
         - VERSION=${VERSION:-0.0.1-dev}
+      secrets:
+        - apt_proxy
     image: go-xkms-pkcs11-server:${XKMS_IMAGE_TAG:-latest}
     ports:
       - "0:9443"       # gRPC
@@ -215,3 +217,9 @@ volumes:
 networks:
   xkms-pkcs11:
     driver: bridge
+
+secrets:
+  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
+  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  apt_proxy:
+    environment: DEVCACHE_APT_PROXY
