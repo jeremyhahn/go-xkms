@@ -33,6 +33,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -220,8 +221,47 @@ func (f *inviteFixture) getInvite(tenantID, token string) (*xkmstransport.GetInv
 	return f.svc.GetInvite(context.Background(), &xkmstransport.GetInviteRequest{TenantID: tenantID, Token: token})
 }
 
+// activatePIV redeems through the fixture's InviteUserService: PIV
+// redemption needs the node's conditional activation, which the client
+// path lacks.
 func (f *inviteFixture) activatePIV(tenantID, token string, certPEM []byte) (*xkmstransport.ActivateInvitePIVResponse, error) {
+	f.svc.SetInviteUserService(fixtureInviteUsers{f: f})
 	return f.svc.ActivateInvitePIV(context.Background(), &xkmstransport.ActivateInvitePIVRequest{TenantID: tenantID, Token: token, CertPEM: string(certPEM)})
+}
+
+// fixtureInviteUsers is the fixture's accounts as an InviteUserService.
+// ActivateWithCertBinding refuses a non-pending account the way qrdb's
+// conditional activation does.
+type fixtureInviteUsers struct{ f *inviteFixture }
+
+func (u fixtureInviteUsers) account(id uint64) (*qrdbsdk.User, error) {
+	a, err := u.f.users.GetUser(context.Background(), id)
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbsdk.User{ID: a.ID, Username: a.Username, Email: a.Email, Name: a.Name, TenantID: a.TenantID, Lifecycle: qrdbsdk.Lifecycle(a.Lifecycle)}, nil
+}
+
+func (u fixtureInviteUsers) GetUser(_ context.Context, id uint64) (*qrdbsdk.User, error) {
+	return u.account(id)
+}
+
+func (u fixtureInviteUsers) UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error) {
+	if _, err := u.f.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: req.ID, Lifecycle: string(req.Lifecycle)}); err != nil {
+		return nil, err
+	}
+	return u.account(req.ID)
+}
+
+func (u fixtureInviteUsers) ActivateWithCertBinding(ctx context.Context, userID uint64, _ string, _ int64) (*qrdbsdk.User, error) {
+	a, err := u.account(userID)
+	if err != nil {
+		return nil, err
+	}
+	if a.Lifecycle != qrdbsdk.LifecyclePending {
+		return nil, &qrdbuser.AccountNotPendingError{ID: userID, Lifecycle: a.Lifecycle}
+	}
+	return u.UpdateUser(ctx, &qrdbsdk.UpdateUserRequest{ID: userID, Lifecycle: qrdbsdk.LifecycleActive})
 }
 
 func TestBeginInviteRegistration_Success(t *testing.T) {
