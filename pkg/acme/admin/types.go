@@ -79,7 +79,8 @@ func IsValidationError(err error) bool {
 	return errors.Is(err, ErrInvalidRequest) ||
 		errors.Is(err, ErrInvalidTenantID) ||
 		errors.Is(err, ErrInvalidEABPurpose) ||
-		errors.Is(err, ErrInvalidKeyAlgorithm)
+		errors.Is(err, ErrInvalidKeyAlgorithm) ||
+		errors.Is(err, ErrTenantStatusUnsupported)
 }
 
 // IsAlreadyExistsError returns true if the error indicates a resource already exists.
@@ -401,6 +402,42 @@ type ListTenantsRequest struct {
 	Page    int    `json:"page,omitempty"`
 	PerPage int    `json:"per_page,omitempty"`
 	Status  string `json:"status,omitempty"`
+}
+
+// tenantStatusUnsupportedReason is why go-xkms refuses a tenant status: the
+// status is a go-qrdb tenant field (SPEC.md:129) and the pinned go-qrdb
+// carries none, so a status kept here would not be enforced.
+const tenantStatusUnsupportedReason = "go-qrdb v0.51.0-alpha has no tenant status"
+
+// ProblemTypeTenantStatusUnsupported is the stable problem type the admin
+// REST surface answers (400) when a caller sets a tenant status or filters
+// by one.
+const ProblemTypeTenantStatusUnsupported = "urn:trusted-ca:error:tenant-status-unsupported"
+
+// ErrTenantStatusUnsupported matches (errors.Is) the UnsupportedFieldError
+// returned for a tenant status, set or used as a list filter.
+var ErrTenantStatusUnsupported = errors.New("admin: tenant status is not supported")
+
+// UnsupportedFieldError refuses a request field go-xkms cannot honour.
+type UnsupportedFieldError struct {
+	Field  string
+	Reason string
+}
+
+// Error names the field and the reason it is refused.
+func (e *UnsupportedFieldError) Error() string {
+	return fmt.Sprintf("admin: unsupported field %q: %s", e.Field, e.Reason)
+}
+
+// Is matches ErrTenantStatusUnsupported for the status field.
+func (e *UnsupportedFieldError) Is(target error) bool {
+	return target == ErrTenantStatusUnsupported && e.Field == "status"
+}
+
+// TenantStatusUnsupported is the refusal for a tenant status, set or used as
+// a filter.
+func TenantStatusUnsupported() *UnsupportedFieldError {
+	return &UnsupportedFieldError{Field: "status", Reason: tenantStatusUnsupportedReason}
 }
 
 // TenantCAStatusInfo represents tenant CA status
