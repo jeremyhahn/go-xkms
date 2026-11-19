@@ -797,7 +797,12 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		ECCAttributes:      srcAttrs.ECCAttributes,
 		SymmetricAlgorithm: srcAttrs.SymmetricAlgorithm,
 	}
+	// A TPM imports only TCG duplication blobs, so a tpm2 destination
+	// defaults to TPM2_DUPLICATE; every other destination to RSA-OAEP.
 	algorithm := backend.WrappingAlgorithmRSAES_OAEP_SHA_256
+	if dstB.Type() == types.StoreTPM2 {
+		algorithm = backend.WrappingAlgorithmTPM2Duplicate
+	}
 	if req.Algorithm != "" {
 		algorithm = backend.WrappingAlgorithm(req.Algorithm)
 	}
