@@ -5379,7 +5379,8 @@ bench-cert-compare:
 # ==============================================================================
 
 # Get all packages dynamically (excluding cmd and test dirs)
-PKG_DIRS := $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
+# Deferred (=): a parse must not run go list, which fills the module cache (#2295).
+PKG_DIRS = $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
 
 # Explicit xkey E2E targets that would otherwise be caught by test-% pattern.
 .PHONY: test-fido2-pkcs11
