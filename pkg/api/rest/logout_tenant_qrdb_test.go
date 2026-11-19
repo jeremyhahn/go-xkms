@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -35,7 +35,7 @@ func TestAuthLogout_FromNonSystemTenant_RevokesOnTheEmbeddedNode(t *testing.T) {
 	pair, err := issuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "t1"})
 	require.NoError(t, err)
 
-	tenantCtx := qrdbtenant.WithTenantID(context.Background(), "t1")
+	tenantCtx := qrdbsdk.ContextWithTenant(context.Background(), "t1")
 	post := func(path, refresh string) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(authRefreshRequest{RefreshToken: refresh})
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)).WithContext(tenantCtx)

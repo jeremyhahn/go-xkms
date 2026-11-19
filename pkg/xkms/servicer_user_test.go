@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -1193,7 +1192,7 @@ func TestDisableUser_FromNonSystemTenant_RevokesOnTheEmbeddedNode(t *testing.T) 
 	require.NoError(t, store.Save(anon, &token.Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: exp}))
 	svc.SetTokenIssuer(newTestTokenIssuerWithStore(t, store))
 
-	require.NoError(t, svc.DisableUser(qrdbtenant.WithTenantID(anon, "t1"), "alice"))
+	require.NoError(t, svc.DisableUser(qrdbsdk.ContextWithTenant(anon, "t1"), "alice"))
 
 	rec, err := store.Get(anon, "f1", "j1")
 	require.NoError(t, err)

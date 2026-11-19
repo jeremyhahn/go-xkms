@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/assert"
@@ -93,7 +92,7 @@ func TestQRDBRefreshStore_ServiceContext_NonSystemTenantCaller(t *testing.T) {
 	require.NoError(t, err)
 	exp := time.Now().Add(time.Hour).Unix()
 	anon := context.Background()
-	tenantCtx := qrdbtenant.WithTenantID(context.Background(), "t1")
+	tenantCtx := qrdbsdk.ContextWithTenant(context.Background(), "t1")
 
 	require.NoError(t, store.Save(anon, &token.Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: exp}))
 	rec, err := store.Get(tenantCtx, "f1", "j1")
@@ -121,7 +120,7 @@ func TestQRDBRefreshStore_ServiceContext_CancelledCaller(t *testing.T) {
 	exp := time.Now().Add(time.Hour).Unix()
 	require.NoError(t, store.Save(context.Background(), &token.Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: exp}))
 
-	ctx, cancel := context.WithCancel(qrdbtenant.WithTenantID(context.Background(), "t1"))
+	ctx, cancel := context.WithCancel(qrdbsdk.ContextWithTenant(context.Background(), "t1"))
 	cancel()
 	err = store.RevokeFamily(ctx, "f1")
 	require.Error(t, err)

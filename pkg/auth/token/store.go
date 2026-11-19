@@ -22,8 +22,7 @@ import (
 	"sync"
 	"time"
 
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
-	qrdbtenantid "github.com/jeremyhahn/go-qrdb/pkg/tenantid"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -340,7 +339,7 @@ func (s *QRDBRefreshStore) callContext(ctx context.Context) (context.Context, er
 	// records are system-tenant bookkeeping, so the call is bound to that
 	// scope, never to the request's tenant. Deriving from ctx keeps the
 	// caller's cancellation and deadline (go-xkms#2287, ruling 971).
-	return qrdbtenant.WithTenantID(bound, qrdbtenantid.System), nil
+	return qrdbsdk.ContextWithTenant(bound, qrdbsdk.SystemTenantID), nil
 }
 
 // NewQRDBRefreshStore constructs a store over the given KV client.
