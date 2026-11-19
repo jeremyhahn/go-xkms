@@ -22,7 +22,30 @@ from server-side state.
 
 ## Public-route qrdb calls
 
-Filled in as the routes are traced (route, handler, qrdb call, context, fix).
+From pkg/api/rest/routes.go, routes with Auth: RouteAuthPublic. Before the
+fix every user call below ran through the datastore client under the
+anonymous request context, refused by an auth-enforcing node with
+qrdb/auth: unauthenticated. After it they run through the embedded node's
+user service (auth.NodeUserClient, the nodeCertUsers path), wired as
+NodeUsers on xkmsd (Server.nodeUserSource) and on a host
+(rest.HostConfig.NodeUsers, apimodule.WithNodeUsers). No service-principal
+call and no serviceprincipal permission is added.
+
+| Route | Handler | qrdb call | Fixed in |
+|---|---|---|---|
+| POST /api/v1/webauthn/registration/begin, /finish | webauthnHandler.BeginRegistration/FinishRegistration | qrdbUserStore GetUserByEmail, CreateUser, UpdateUser | fix(webauthn) |
+| POST /api/v1/webauthn/login/begin, /finish | webauthnHandler.BeginLogin/FinishLogin | qrdbUserStore GetUserByEmail, GetUser | fix(webauthn) |
+| POST /api/v1/webauthn/sdk/{registration,authentication}/{begin,finish} | handleSDK* | same user store | fix(webauthn) |
+| GET /api/v1/invites/{tenant_id}/{token} | handleGetInvite | XKMSService.GetInvite: GetUser | fix(xkms) |
+| POST /api/v1/invites/{tenant_id}/{token}/fido2/{begin,finish} | handleInviteBeginFIDO2/FinishFIDO2 | GetUser, UpdateUser (activate) | fix(xkms) |
+| POST /api/v1/invites/{tenant_id}/{token}/piv/activate | handleInviteActivatePIV | GetUser, AddCertBinding, UpdateUser | fix(xkms) |
+| POST /api/v1/auth/refresh | handleAuthRefresh | QRDBUserResolver GetUser/GetUserByUsername | fix(auth) |
+| POST /api/v1/auth/login/piv | handlePIVLogin | UserByCertThumbprint via nodeCertUsers | already node-backed (#2287) |
+
+Invite and credential KV reads (invite store, WebAuthn credential DAO,
+refresh-token store) run through the datastore's service context, not the
+user client, and were not refused. /health*, /api/v1/algorithms,
+/api/v1/capabilities and /v1/ca/bootstrap make no qrdb user call.
 
 ## Slices
 
