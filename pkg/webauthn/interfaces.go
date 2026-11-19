@@ -116,11 +116,27 @@ type CredentialStore interface {
 	// account's first credential. The claim is a create-if-absent in the
 	// shared store, so across sessions and replicas exactly one caller wins
 	// it; every other caller gets ErrFirstCredentialClaimed and must store
-	// nothing. The winner stores its credential and, if that fails, calls
-	// release so a later attempt can claim again. The claim stays in place
+	// nothing. The winner saves its credential and then calls Commit; if the
+	// save fails it calls Release so a later attempt can claim again. A claim
+	// that is neither committed nor released (the ceremony crashed) is
+	// recovered by a later claimer once its lease has expired, provided the
+	// account still has no credential. The committed claim stays in place
 	// while the account holds credentials; removing its last credential
 	// drops it.
-	ClaimFirstCredential(ctx context.Context, userID []byte) (release func(context.Context) error, err error)
+	ClaimFirstCredential(ctx context.Context, userID []byte) (FirstCredentialClaim, error)
+}
+
+// FirstCredentialClaim is a won CredentialStore.ClaimFirstCredential.
+type FirstCredentialClaim interface {
+	// Commit makes the claim permanent once cred, the account's first
+	// credential, is saved. If the claim was recovered by another ceremony
+	// meanwhile (this one outlived the claim's lease), Commit removes cred
+	// and returns ErrFirstCredentialClaimed: only the recoverer's credential
+	// stays.
+	Commit(ctx context.Context, cred *Credential) error
+	// Release drops the claim after a failed save. It drops only this
+	// claim, never one another ceremony recovered from it.
+	Release(ctx context.Context) error
 }
 
 // JWTGenerator is an optional interface for generating tokens after
