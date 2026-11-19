@@ -380,6 +380,26 @@ func TestGetImportParameters_SoftwareBackendKeyNotFound(t *testing.T) {
 	svc := setupServiceTest(t)
 	defer xkms.Reset()
 
+	// GetImportParameters opens the ceremony for a key that is about to be
+	// imported, so the software backend never looks the key ID up: an ID
+	// with no stored key is the normal case and must not be refused.
+	resp, err := svc.GetImportParameters(context.Background(), &pb.GetImportParametersRequest{
+		KeyId:             "nonexistent-import-key",
+		Backend:           "software",
+		WrappingAlgorithm: "RSAES_OAEP_SHA_256",
+		KeyType:           "rsa",
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.WrappingPublicKey)
+	assert.NotEmpty(t, resp.ImportToken)
+}
+
+func TestGetImportParameters_SoftwareBackendUnsupportedAlgorithm(t *testing.T) {
+	svc := setupServiceTest(t)
+	defer xkms.Reset()
+
+	// A wrapping algorithm the software backend does not offer is the
+	// caller's bad argument (backend.ErrInvalidAlgorithm -> InvalidArgument).
 	_, err := svc.GetImportParameters(context.Background(), &pb.GetImportParametersRequest{
 		KeyId:             "nonexistent-import-key",
 		Backend:           "software",
@@ -389,8 +409,7 @@ func TestGetImportParameters_SoftwareBackendKeyNotFound(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	// Software backend supports import/export but the key does not exist
-	assert.True(t, st.Code() == codes.NotFound || st.Code() == codes.Internal, "expected NotFound or Internal, got %v", st.Code())
+	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
 // ===================== ExportKeyMaterial tests =====================
