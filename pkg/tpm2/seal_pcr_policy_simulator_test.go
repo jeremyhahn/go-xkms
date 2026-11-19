@@ -294,6 +294,68 @@ func TestSealUnseal_PlatformPolicyWithPIN_ExtraPCRBranchOpensWithoutPIN(t *testi
 	assert.Nil(t, out)
 }
 
+// An Unseal whose attributes are reconstructed from the key ID (no
+// PCRSelection, as defaultUnsealKeyAttributes builds them) must recover the
+// selection the object was sealed over: from the pin recorded in the key
+// store, or, for portable inline blobs read against a store holding no
+// record, from the sealed data's metadata. Extending the extra PCR must
+// still close the object (Codex review 5959969020 P1).
+func TestUnseal_PlatformPolicy_ExtraPCR_RecoversSealedSelection(t *testing.T) {
+	const extraPCR = 15
+	selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, 7, extraPCR)
+
+	for _, tc := range []struct {
+		name   string
+		inline bool
+	}{
+		{name: "key store pin", inline: false},
+		{name: "inline blobs, empty store", inline: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSimHarness(t, platformPolicySRKConfig())
+			createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+			require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+				"the test needs a selected PCR outside the platform set")
+
+			cn := "platform-policy-default-unseal-extra-pcr"
+			sealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+			sealAttrs.TPMAttributes.PCRSelection = selection
+
+			secret := []byte("default-unseal-bound-to-pcr-7-and-15")
+			sealed, err := h.TPM.Seal(context.Background(), secret,
+				&types.SealOptions{KeyAttributes: sealAttrs, Backend: h.Backend})
+			require.NoError(t, err)
+
+			backend := h.Backend
+			if tc.inline {
+				factory, ferr := store.NewStorageFactory(h.Logger, t.TempDir())
+				require.NoError(t, ferr)
+				t.Cleanup(func() { _ = factory.Close() })
+				backend = factory.KeyBackend()
+			} else {
+				sealed.TPMPublic, sealed.TPMPrivate = nil, nil
+			}
+
+			// Reconstructed attributes: the selection is not repeated.
+			reconstructed := func() *types.KeyAttributes {
+				return sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+			}
+
+			got, err := h.TPM.Unseal(context.Background(), sealed,
+				&types.UnsealOptions{KeyAttributes: reconstructed(), Backend: backend})
+			require.NoError(t, err, "reconstructed attributes must open the unchanged object")
+			require.Equal(t, secret, got)
+
+			h.extendPCR(t, extraPCR, []byte("post-seal-measurement"))
+
+			out, err := h.TPM.Unseal(context.Background(), sealed,
+				&types.UnsealOptions{KeyAttributes: reconstructed(), Backend: backend})
+			require.Error(t, err, "extending the extra PCR must close the object")
+			assert.Nil(t, out)
+		})
+	}
+}
+
 // TestSealUnseal_WrongSRKPINAfterExtend_Rejected proves the SRK's recovery path
 // still demands the SRK's auth value. The pin record removes the PCR coupling
 // of the OR digest; it does not remove the PIN requirement, which the TPM
