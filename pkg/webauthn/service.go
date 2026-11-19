@@ -671,7 +671,11 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 			return nil, WrapError("claim first credential", err)
 		}
 	}
-	if err := s.creds.Save(ctx, cred); err != nil {
+	save := s.creds.Save
+	if claim != nil {
+		save = claim.Save
+	}
+	if err := save(ctx, cred); err != nil {
 		if claim != nil {
 			if relErr := claim.Release(context.WithoutCancel(ctx)); relErr != nil {
 				s.logger.Error("release first-credential claim after a failed save", "error", relErr)

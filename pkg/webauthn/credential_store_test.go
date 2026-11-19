@@ -324,7 +324,7 @@ func TestCredentialStore_CrashedFirstCredentialClaimIsRecovered(t *testing.T) {
 	claim, err := restarted.ClaimFirstCredential(ctx, uniquenessOwner)
 	require.NoError(t, err, "an expired, uncommitted claim must not block the account")
 	cred := &Credential{ID: []byte("recovered-id"), UserID: uniquenessOwner}
-	require.NoError(t, restarted.Save(ctx, cred))
+	require.NoError(t, claim.Save(ctx, cred))
 	require.NoError(t, claim.Commit(ctx, cred))
 
 	owned, err := restarted.GetByUserID(ctx, uniquenessOwner)
@@ -351,11 +351,11 @@ func TestCredentialStore_RecoveredClaimFencesSlowClaimer(t *testing.T) {
 	claim, err := recoverer.ClaimFirstCredential(ctx, uniquenessOwner)
 	require.NoError(t, err)
 	won := &Credential{ID: []byte("recoverer-id"), UserID: uniquenessOwner}
-	require.NoError(t, recoverer.Save(ctx, won))
+	require.NoError(t, claim.Save(ctx, won))
 	require.NoError(t, claim.Commit(ctx, won))
 
 	late := &Credential{ID: []byte("slow-id"), UserID: uniquenessOwner}
-	require.NoError(t, slow.Save(ctx, late))
+	require.NoError(t, slowClaim.Save(ctx, late))
 	require.ErrorIs(t, slowClaim.Commit(ctx, late), ErrFirstCredentialClaimed)
 
 	owned, err := slow.GetByUserID(ctx, uniquenessOwner)
@@ -445,14 +445,22 @@ func TestCredentialStore_ExpiredClaimWithCredentialIsNotRecovered(t *testing.T) 
 	ctx := context.Background()
 	factory := newTestDAOFactory()
 	crashed := newTestCredentialStore(t, factory)
-	_, err := crashed.ClaimFirstCredential(ctx, uniquenessOwner)
+	claim, err := crashed.ClaimFirstCredential(ctx, uniquenessOwner)
 	require.NoError(t, err)
-	require.NoError(t, crashed.Save(ctx, &Credential{ID: []byte("saved-id"), UserID: uniquenessOwner}))
+	saved := &Credential{ID: []byte("saved-id"), UserID: uniquenessOwner}
+	require.NoError(t, claim.Save(ctx, saved))
 
 	restarted := newTestCredentialStore(t, factory)
 	restarted.now = pastClaimLease()
 	_, err = restarted.ClaimFirstCredential(ctx, uniquenessOwner)
 	require.ErrorIs(t, err, ErrFirstCredentialClaimed)
+
+	// The crashed claimer's own claim is rolled forward: its credential is
+	// the account's first.
+	owned, err := restarted.GetByUserID(ctx, uniquenessOwner)
+	require.NoError(t, err)
+	require.Len(t, owned, 1)
+	assert.Equal(t, saved.ID, owned[0].ID)
 }
 
 // TestCredentialStore_ReleaseLeavesARecoveredClaim proves a slow claimer's

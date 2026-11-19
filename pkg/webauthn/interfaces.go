@@ -128,6 +128,11 @@ type CredentialStore interface {
 
 // FirstCredentialClaim is a won CredentialStore.ClaimFirstCredential.
 type FirstCredentialClaim interface {
+	// Save persists cred, the account's first credential, bound to this
+	// claim: no read returns it until Commit succeeds, so a ceremony that
+	// outlived its claim and crashed before Commit leaves no usable
+	// credential.
+	Save(ctx context.Context, cred *Credential) error
 	// Commit makes the claim permanent once cred, the account's first
 	// credential, is saved. If the claim was recovered by another ceremony
 	// meanwhile (this one outlived the claim's lease), Commit removes cred

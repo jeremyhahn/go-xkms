@@ -117,7 +117,24 @@ func (s *faultyCredStore) Delete(ctx context.Context, credID []byte) error {
 }
 
 func (s *faultyCredStore) ClaimFirstCredential(ctx context.Context, userID []byte) (FirstCredentialClaim, error) {
-	return s.inner.ClaimFirstCredential(ctx, userID)
+	claim, err := s.inner.ClaimFirstCredential(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &faultyClaim{FirstCredentialClaim: claim, store: s}, nil
+}
+
+// faultyClaim fails a claim-bound save with its store's saveErr.
+type faultyClaim struct {
+	FirstCredentialClaim
+	store *faultyCredStore
+}
+
+func (c *faultyClaim) Save(ctx context.Context, cred *Credential) error {
+	if c.store.saveErr != nil {
+		return c.store.saveErr
+	}
+	return c.FirstCredentialClaim.Save(ctx, cred)
 }
 
 func (s *faultyCredStore) DeleteByUserID(ctx context.Context, userID []byte) error {

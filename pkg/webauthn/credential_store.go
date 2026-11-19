@@ -39,6 +39,11 @@ type credentialEntity struct {
 	CredentialID string      `json:"credential_id"`
 	UserID       string      `json:"user_id" index:"true"`
 	Credential   *Credential `json:"credential"`
+	// ClaimToken binds a first credential to the claim it was saved under.
+	// Such a credential is readable only while the user's claim is
+	// committed with this token, so a stale claimer's save stays invisible
+	// even if it crashes before its cleanup.
+	ClaimToken string `json:"claim_token,omitempty"`
 }
 
 // EntityID returns the entity's ID.
@@ -157,14 +162,25 @@ func (s *daoCredentialStore) ClaimFirstCredential(ctx context.Context, userID []
 	if !held.Pending || s.now().UnixNano() < held.ExpiresAt {
 		return nil, ErrFirstCredentialClaimed
 	}
-	owned, err := s.GetByUserID(ctx, userID)
+	saved, err := s.creds.Find(ctx).Where("UserID = ?", claim.UserID).Execute()
 	if err != nil {
 		return nil, WrapError("claim first credential", err)
 	}
-	if len(owned) > 0 {
-		// The crashed claimer saved its credential but never committed:
-		// the account has its first credential.
-		return nil, ErrFirstCredentialClaimed
+	for _, e := range saved {
+		switch e.ClaimToken {
+		case "":
+			// A credential saved outside any claim: the account has one.
+			return nil, ErrFirstCredentialClaimed
+		case held.Token:
+			// The crashed claimer saved its credential but never committed:
+			// roll its claim forward so the account keeps that credential.
+			committed := &firstCredentialClaimEntity{ID: held.ID, UserID: held.UserID, Token: held.Token}
+			if _, err := s.claims.CompareAndSwap(ctx, held, committed); err != nil && !qrdbsdk.IsDAONotFound(err) {
+				return nil, WrapError("commit first-credential claim", err)
+			}
+			return nil, ErrFirstCredentialClaimed
+		}
+		// Saved under an older claim that lost: never readable, ignored.
 	}
 	claim.ID = held.ID
 	swapped, err := s.claims.CompareAndSwap(ctx, held, claim)
@@ -188,7 +204,9 @@ type daoFirstCredentialClaim struct {
 // ceremony recovered the claim: then the credential this claimer saved is
 // removed and ErrFirstCredentialClaimed returned.
 func (c *daoFirstCredentialClaim) Commit(ctx context.Context, cred *Credential) error {
-	committed := &firstCredentialClaimEntity{ID: c.claim.ID, UserID: c.claim.UserID}
+	// The committed claim keeps the token: it is what makes the credential
+	// saved under this claim readable.
+	committed := &firstCredentialClaimEntity{ID: c.claim.ID, UserID: c.claim.UserID, Token: c.claim.Token}
 	swapped, err := c.store.claims.CompareAndSwap(ctx, c.claim, committed)
 	if err != nil && !qrdbsdk.IsDAONotFound(err) {
 		return WrapError("commit first-credential claim", err)
@@ -196,10 +214,16 @@ func (c *daoFirstCredentialClaim) Commit(ctx context.Context, cred *Credential) 
 	if swapped {
 		return nil
 	}
-	if err := c.store.removeFencedCredential(ctx, cred); err != nil {
+	if err := c.store.removeFencedCredential(ctx, cred, c.claim.Token); err != nil {
 		return err
 	}
 	return ErrFirstCredentialClaimed
+}
+
+// Save persists cred, the account's first credential, bound to this claim:
+// it stays unreadable until Commit makes this claim the committed one.
+func (c *daoFirstCredentialClaim) Save(ctx context.Context, cred *Credential) error {
+	return c.store.save(ctx, cred, c.claim.Token)
 }
 
 // Release deletes this pending claim only if it is still this claimer's:
@@ -214,18 +238,18 @@ func (c *daoFirstCredentialClaim) Release(ctx context.Context) error {
 // removeFencedCredential deletes the credential a claimer fenced out of its
 // claim saved. It deletes only that record, compared as read, and never
 // drops the account's claim, which now belongs to the recoverer.
-func (s *daoCredentialStore) removeFencedCredential(ctx context.Context, cred *Credential) error {
+func (s *daoCredentialStore) removeFencedCredential(ctx context.Context, cred *Credential, token string) error {
 	if cred == nil {
 		return nil
 	}
-	e, err := s.get(ctx, cred.ID)
+	e, err := s.getRaw(ctx, cred.ID)
 	if err != nil {
 		if errors.Is(err, ErrCredentialNotFound) {
 			return nil
 		}
 		return err
 	}
-	if e.UserID != encodeID(cred.UserID) {
+	if e.UserID != encodeID(cred.UserID) || e.ClaimToken != token {
 		return nil
 	}
 	if _, err := s.creds.DeleteIfMatch(ctx, e); err != nil && !qrdbsdk.IsDAONotFound(err) {
@@ -254,10 +278,18 @@ func (s *daoCredentialStore) dropClaim(ctx context.Context, userID string) error
 // — to this account or any other — is refused with
 // ErrCredentialAlreadyExists and the stored record is left untouched.
 func (s *daoCredentialStore) Save(ctx context.Context, cred *Credential) error {
+	return s.save(ctx, cred, "")
+}
+
+// save persists cred, bound to the first-credential claim token when token
+// is not empty.
+func (s *daoCredentialStore) save(ctx context.Context, cred *Credential, token string) error {
 	if cred == nil || len(cred.ID) == 0 {
 		return ErrInvalidCredential
 	}
-	stored, err := s.creds.SaveIfAbsent(ctx, newCredentialEntity(cred))
+	e := newCredentialEntity(cred)
+	e.ClaimToken = token
+	stored, err := s.creds.SaveIfAbsent(ctx, e)
 	if err != nil {
 		return WrapError("persist credential", err)
 	}
@@ -270,12 +302,17 @@ func (s *daoCredentialStore) Save(ctx context.Context, cred *Credential) error {
 // GetByUserID returns all credentials for a user, or an empty slice when the
 // user has none.
 func (s *daoCredentialStore) GetByUserID(ctx context.Context, userID []byte) ([]*Credential, error) {
-	entities, err := s.creds.Find(ctx).Where("UserID = ?", encodeID(userID)).Execute()
+	userKey := encodeID(userID)
+	entities, err := s.creds.Find(ctx).Where("UserID = ?", userKey).Execute()
 	if err != nil {
 		return nil, WrapError("list user credentials", err)
 	}
-	creds := make([]*Credential, 0, len(entities))
-	for _, e := range entities {
+	readable, err := s.visible(ctx, userKey, entities)
+	if err != nil {
+		return nil, err
+	}
+	creds := make([]*Credential, 0, len(readable))
+	for _, e := range readable {
 		creds = append(creds, e.Credential)
 	}
 	return creds, nil
@@ -309,6 +346,7 @@ func (s *daoCredentialStore) Update(ctx context.Context, cred *Credential) error
 		return ErrCredentialOwnerMismatch
 	}
 	next := newCredentialEntity(cred)
+	next.ClaimToken = existing.ClaimToken
 	next.SetEntityID(existing.EntityID())
 	swapped, err := s.creds.CompareAndSwap(ctx, existing, next)
 	if err != nil {
@@ -334,7 +372,11 @@ func (s *daoCredentialStore) Delete(ctx context.Context, credID []byte) error {
 	if err != nil {
 		return WrapError("list user credentials", err)
 	}
-	if len(remaining) == 0 {
+	readable, err := s.visible(ctx, e.UserID, remaining)
+	if err != nil {
+		return err
+	}
+	if len(readable) == 0 {
 		return s.dropClaim(ctx, e.UserID)
 	}
 	return nil
@@ -356,6 +398,22 @@ func (s *daoCredentialStore) DeleteByUserID(ctx context.Context, userID []byte) 
 
 // get loads the entity for credID, verified against its natural key.
 func (s *daoCredentialStore) get(ctx context.Context, credID []byte) (*credentialEntity, error) {
+	e, err := s.getRaw(ctx, credID)
+	if err != nil {
+		return nil, err
+	}
+	visible, err := s.visible(ctx, e.UserID, []*credentialEntity{e})
+	if err != nil {
+		return nil, err
+	}
+	if len(visible) == 0 {
+		return nil, ErrCredentialNotFound
+	}
+	return e, nil
+}
+
+// getRaw reads a credential entity whether or not it is readable.
+func (s *daoCredentialStore) getRaw(ctx context.Context, credID []byte) (*credentialEntity, error) {
 	if len(credID) == 0 {
 		return nil, ErrCredentialNotFound
 	}
@@ -367,6 +425,48 @@ func (s *daoCredentialStore) get(ctx context.Context, credID []byte) (*credentia
 		return nil, WrapError("read credential", err)
 	}
 	return e, nil
+}
+
+// visible keeps the readable entities of one user: those saved outside a
+// first-credential claim, and the one saved under the user's committed
+// claim. A credential a stale claimer saved under a claim that was
+// recovered from it is never readable.
+func (s *daoCredentialStore) visible(ctx context.Context, userID string, entities []*credentialEntity) ([]*credentialEntity, error) {
+	out := make([]*credentialEntity, 0, len(entities))
+	var committed *string
+	for _, e := range entities {
+		if e.ClaimToken == "" {
+			out = append(out, e)
+			continue
+		}
+		if committed == nil {
+			token, err := s.committedClaimToken(ctx, userID)
+			if err != nil {
+				return nil, err
+			}
+			committed = &token
+		}
+		if *committed != "" && e.ClaimToken == *committed {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// committedClaimToken returns the token of the user's committed
+// first-credential claim, or "" when the claim is absent or pending.
+func (s *daoCredentialStore) committedClaimToken(ctx context.Context, userID string) (string, error) {
+	claim, err := s.claims.GetByNaturalKey(ctx, userID)
+	if err != nil {
+		if qrdbsdk.IsDAONotFound(err) {
+			return "", nil
+		}
+		return "", WrapError("read first-credential claim", err)
+	}
+	if claim.Pending {
+		return "", nil
+	}
+	return claim.Token, nil
 }
 
 // encodeID renders an arbitrary-byte credential or user ID in the lossless
