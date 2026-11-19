@@ -1,7 +1,7 @@
 # authz-object-owner: object tenancy by go-qrdb's OwnTenant
 
-Row: authz-object-owner (docs/SPEC.md). The row is in progress: the tenant
-half is shipped, the owner half waits on go-qrdb (slice 2 below).
+Row: authz-object-owner (docs/SPEC.md). The SPEC row stays planned (slice 4):
+the tenant half is shipped, the owner half waits on go-qrdb.
 
 ## Objective
 
@@ -63,4 +63,11 @@ object-owner ABAC decision above. No code change; checks: go test of
 sdk/go v0.58.3-alpha and v0.58.4-alpha (latest on the proxy, 2026-11-14)
 add `SystemRoleIDs`, `TenantFromCert` and `DelegationPolicy` (tenant cert
 delegation, #1186) beyond v0.58.2-alpha: no object-owner ABAC decision. The
-owner and ServiceAccess half stays blocked; the row stays in progress.
+owner and ServiceAccess half stays blocked.
+
+## Slice 4: SPEC row restored pending owner approval (Codex P1)
+
+Codex review 5951392029: slice 2's rewrite of the `authz-object-owner`
+requirements had no recorded owner approval. docs/SPEC.md is back to
+main's row text (status planned); the status flip and tenant-step
+citations wait for the owner's approval. Docs-only revert, no test.
