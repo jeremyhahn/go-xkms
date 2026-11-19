@@ -45,7 +45,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tobischo/gokeepasslib/v3 v3.7.1
 	github.com/wailsapp/wails/v2 v2.17.1
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
 	google.golang.org/grpc v1.85.0

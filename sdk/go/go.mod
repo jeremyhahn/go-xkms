@@ -12,7 +12,7 @@ require (
 	github.com/mark3labs/mcp-go v1.5.0
 	github.com/quic-go/quic-go v0.65.0
 	github.com/stretchr/testify v1.12.1
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )

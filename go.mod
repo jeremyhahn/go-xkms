@@ -63,7 +63,7 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	github.com/zmap/zcrypto v0.0.0-20261025225231-4cf7949d2321
 	github.com/zmap/zlint/v3 v3.7.3
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.38.0
 	golang.org/x/sys v0.50.0
