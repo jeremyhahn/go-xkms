@@ -60,7 +60,7 @@ func authenticateMinted(t *testing.T, issuerKeyed *WebAuthnTokenAdapter, accessT
 // email — the key the ceremony itself is keyed by — reaches the identity the
 // minted token authenticates as.
 func TestWebAuthnTokenAdapter_IdentityCarriesEmail(t *testing.T) {
-	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "tenant-a")
+	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "tenant-a", nil)
 	user := webauthn.NewDefaultUser([]byte("user-1"), "alice@example.com", "Alice")
 
 	id := adapter.identityFor(user)
@@ -82,7 +82,7 @@ func TestWebAuthnTokenAdapter_IdentityCarriesEmail(t *testing.T) {
 // through JWTAuthenticator's own narrower claim-to-metadata mapping -- never
 // has to guess the encoding at refresh time.
 func TestWebAuthnTokenAdapter_IdentityDeclaresUserHandleSubjectKind(t *testing.T) {
-	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "tenant-a")
+	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "tenant-a", nil)
 	user := webauthn.NewDefaultUser([]byte("user-1"), "alice@example.com", "Alice")
 
 	id := adapter.identityFor(user)
@@ -97,7 +97,7 @@ func TestWebAuthnTokenAdapter_IdentityDeclaresUserHandleSubjectKind(t *testing.T
 // TestWebAuthnTokenAdapter_IdentityOmitsEmptyEmail proves a user without an
 // email yields no key at all, on the identity and in the minted token.
 func TestWebAuthnTokenAdapter_IdentityOmitsEmptyEmail(t *testing.T) {
-	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "")
+	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "", nil)
 	user := webauthn.NewDefaultUser([]byte("user-2"), "", "Nameless")
 
 	id := adapter.identityFor(user)

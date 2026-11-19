@@ -145,7 +145,7 @@ func TestLoginWiring_WebAuthnFinishReachesMint(t *testing.T) {
 			require.NotNil(t, s.qrdbNode, "the wiring under test is the embedded node")
 			require.NotNil(t, s.tokenIssuer, "New must build the token issuer")
 
-			gen := rest.NewWebAuthnTokenAdapter(s.tokenIssuer, "")
+			gen := rest.NewWebAuthnTokenAdapter(s.tokenIssuer, "", nil)
 			access, refresh, err := gen.GenerateTokenPair(context.Background(), webauthn.NewDefaultUserFromEmail("admin@example.com", "admin"))
 			require.NoError(t, err)
 			require.NotEmpty(t, access)

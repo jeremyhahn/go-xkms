@@ -268,15 +268,21 @@ var _ token.UserResolver = (*auth.QRDBUserResolver)(nil)
 type WebAuthnTokenAdapter struct {
 	issuer   *token.Issuer
 	tenantID string
+	logger   *slog.Logger
 }
 
 // NewWebAuthnTokenAdapter builds the adapter around issuer, scoping minted
-// identities to tenantID (DefaultWebAuthnTenant when empty).
-func NewWebAuthnTokenAdapter(issuer *token.Issuer, tenantID string) *WebAuthnTokenAdapter {
+// identities to tenantID (DefaultWebAuthnTenant when empty). Mint failures
+// are logged through logger, the host's configured logger; nil selects
+// slog.Default().
+func NewWebAuthnTokenAdapter(issuer *token.Issuer, tenantID string, logger *slog.Logger) *WebAuthnTokenAdapter {
 	if tenantID == "" {
 		tenantID = DefaultWebAuthnTenant
 	}
-	return &WebAuthnTokenAdapter{issuer: issuer, tenantID: tenantID}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &WebAuthnTokenAdapter{issuer: issuer, tenantID: tenantID, logger: logger}
 }
 
 // identityFor maps a WebAuthn user onto the auth identity carried in tokens.
@@ -320,7 +326,7 @@ func (a *WebAuthnTokenAdapter) GenerateTokenPair(ctx context.Context, user webau
 	identity := a.identityFor(user)
 	pair, err := a.issuer.Mint(ctx, identity)
 	if err != nil {
-		slog.Default().DebugContext(ctx, "webauthn login: token mint failed",
+		a.logger.DebugContext(ctx, "webauthn login: token mint failed",
 			"user", identity.Subject, "tenant", identity.TenantID, "error", err.Error())
 		return "", "", err
 	}
@@ -451,7 +457,7 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		AuditLogger:     p.AuditLogger,
 	}
 	if p.TokenIssuer != nil {
-		params.JWTGenerator = NewWebAuthnTokenAdapter(p.TokenIssuer, tenantID)
+		params.JWTGenerator = NewWebAuthnTokenAdapter(p.TokenIssuer, tenantID, logger)
 	} else {
 		logger.Warn("WebAuthn service has no token issuer: ceremony tokens will not authenticate API requests")
 	}
