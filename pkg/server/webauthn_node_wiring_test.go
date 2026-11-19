@@ -29,6 +29,7 @@ func publicRouteWiring(t *testing.T) (do func(*http.Request) *httptest.ResponseR
 	xkms.Reset()
 	t.Cleanup(xkms.Reset)
 
+	openRegistration := true
 	cfg := qrdbBarrierConfig(t)
 	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
 	cfg.Auth.Type = "composite"
@@ -43,6 +44,9 @@ func publicRouteWiring(t *testing.T) (do func(*http.Request) *httptest.ResponseR
 		RPID:          "localhost",
 		RPDisplayName: "Test",
 		RPOrigins:     []string{"https://localhost"},
+		// Open sign-up, so registration/begin for a new email reaches the
+		// user lookup and answers 200 rather than the invite-only refusal.
+		AllowPublicRegistration: &openRegistration,
 	}
 
 	s, err := New(cfg)
