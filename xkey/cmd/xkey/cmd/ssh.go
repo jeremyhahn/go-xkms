@@ -299,6 +299,10 @@ func sshClientWithHostKeys(cmd *cobra.Command) (sshsdk.Client, sshsdk.HostKeySto
 // sshServerEndpoint resolves the xkmsd endpoint an SSH command acts on. It
 // reports false when the command runs on the local shared SSH store instead.
 func sshServerEndpoint(cmd *cobra.Command) (XKMSdEndpoint, bool, error) {
+	useServer, err := sshUseServer(cmd)
+	if err != nil || !useServer {
+		return XKMSdEndpoint{}, false, err
+	}
 	if server := strings.TrimSpace(commandFlagString(cmd, "server")); server != "" {
 		certFile, keyFile := resolveXKMSdTLSClientFiles(cmd)
 		endpoint, err := withXKMSdToken(XKMSdEndpoint{
@@ -311,11 +315,6 @@ func sshServerEndpoint(cmd *cobra.Command) (XKMSdEndpoint, bool, error) {
 			return XKMSdEndpoint{}, false, err
 		}
 		return endpoint, true, nil
-	}
-
-	useServer, err := sshUseServer(cmd)
-	if err != nil || !useServer {
-		return XKMSdEndpoint{}, false, err
 	}
 	endpoint, err := resolveXKMSdEndpoint(cmd)
 	if err != nil {
@@ -346,17 +345,24 @@ func openLocalSSHClient() (sshsdk.Client, *sshsdk.Stores, func(), error) {
 	return client, stores, closeSSHQuiet(client, backend), nil
 }
 
-// sshUseServer reports whether an SSH command acts on the server's SSH
-// keys: an xkmsd is configured and --local was not given.
+// sshUseServer is the single rule for whether an SSH command acts on the
+// server's SSH keys rather than the local shared store: --local always keeps
+// it local; otherwise --server, or a configured xkmsd URL (global flag, env
+// or config), makes it remote. sshServerEndpoint (the client) and
+// sshDefaultOwner (the owner default) both decide through it, so a command
+// that talks to the server never sends the local $USER default.
 func sshUseServer(cmd *cobra.Command) (bool, error) {
-	if resolveXKMSdURL() == "" {
-		return false, nil
-	}
 	local, err := commandFlagBool(cmd, "local")
 	if err != nil {
 		return false, err
 	}
-	return !local, nil
+	if local {
+		return false, nil
+	}
+	if strings.TrimSpace(commandFlagString(cmd, "server")) != "" {
+		return true, nil
+	}
+	return resolveXKMSdURL() != "", nil
 }
 
 // sshClientForEndpoint constructs the SDK SSH client for an xkmsd endpoint.
