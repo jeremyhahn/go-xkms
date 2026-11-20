@@ -33,7 +33,8 @@ the row touched on the branch tip.
    "Branch next: PCRs match, approved: true". Fails before slice 2.
 2. Integration set: commands.go tpm-policy-create builds the two named
    branches; tpm-policy-verify expects both branch lines; tpm-policy-update
-   keeps no --branch (it re-captures every branch).
+   passes --branch next and --reference-values (the unsigned live re-capture
+   was removed for Codex review 5990277145, ruling 1002).
 3. Gate runs of ./pkg/api, ./pkg/tpm2/policy, the binding tests in
    ./pkg/tpm2, TestTPMPolicy in ./pkg/server and ./cmd/xkmsctl, sdk/go TPM,
    xkey TestTPMPolicy; go vet -tags integration ./test/integration/api/...;
