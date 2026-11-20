@@ -265,7 +265,6 @@ func TestTPMPolicyNameCmds(t *testing.T) {
 		want    string
 	}{
 		{tpmPolicyGetCmd, "get", &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, "TPM Policy:"},
-		{tpmPolicyUpdateCmd, "update", &client.TPMPolicyUpdateRequest{TenantID: "acme", Name: "boot"}, "TPM Policy Updated"},
 		{tpmPolicyRevokeCmd, "revoke", &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, "TPM Policy Revoked"},
 		{tpmPolicyObjectsCmd, "objects", &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, "key/a"},
 	}
@@ -312,6 +311,26 @@ func TestTPMPolicyUpdateCmd_UnreadableReferenceValues(t *testing.T) {
 	_, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"boot"}, map[string]string{"branch": "next", "reference-values": missing})
 	assert.Equal(t, 1, code)
 	assert.Empty(t, mock.requests)
+}
+
+// TestTPMPolicyUpdateCmd_NeedsSignedBranch proves an update without both
+// --branch and --reference-values (an unsigned live re-capture) is refused
+// before any request is sent: only a signed CoRIM updates a policy.
+func TestTPMPolicyUpdateCmd_NeedsSignedBranch(t *testing.T) {
+	corim := filepath.Join(t.TempDir(), "boot.corim")
+	require.NoError(t, os.WriteFile(corim, []byte{0xd2, 0x84}, 0o600))
+	for name, flags := range map[string]map[string]string{
+		"no flags":              {},
+		"branch only":           {"branch": "next"},
+		"reference values only": {"reference-values": corim},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "boot"}}
+			_, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"boot"}, flags)
+			assert.Equal(t, 1, code)
+			assert.Empty(t, mock.requests)
+		})
+	}
 }
 
 // TestTPMPolicyVerifyCmd reports each branch and succeeds only when every
