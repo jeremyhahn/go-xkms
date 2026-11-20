@@ -78,3 +78,39 @@ The response contains names only. No API returns a credential's value.
 Under a hardware or cloud strategy the value is stored as the platform
 secret `credentials/<name>`, but the platform-secrets commands refuse that
 name with a permission error and leave it out of their listing.
+
+## Backend PIN strategy (in progress, #2262)
+
+> **Status: in progress.** The resolution and the config keys below are
+> built; xkmsd does not yet call them at start-up, unseal or seal (the
+> next slice of [`../plans/2262.md`](../plans/2262.md)).
+
+The PIN of a PIN-protected PKCS#11 backend (`backends.pkcs11.pin`,
+`rng.pkcs11.pin`) is resolved by `pinselect.ResolveBackendPIN`
+(`pkg/pinselect/backendpin.go`) under one strategy
+(`pkg/config/backend_pin.go`):
+
+```yaml
+backend_pin:
+  strategy: auto     # auto (default), tpm2, sealed or manual
+  minimum: tpm2      # optional: refuse to start below it
+```
+
+| Strategy | Where the PIN lives | When the backend starts |
+|---|---|---|
+| `auto` | `tpm2` when a TPM 2.0 is present, otherwise `sealed` (the i.MX 95 selects `sealed`) | as the chosen strategy |
+| `tpm2` | sealed to the TPM | at start |
+| `sealed` | sealed under the barrier, released at unseal | after unseal |
+| `manual` | never stored: supplied with the unseal request, memory only, zeroized at seal | after unseal; stops at seal |
+
+- `pkcs11` is refused: PKCS#11 is never the store of its own PIN, and
+  `sealed` is refused when the barrier key itself is on that backend
+  (`ErrBackendPINSelfStore`).
+- The first resolution persists the concrete strategy in
+  `<data dir>/pin/backend-strategy`; later starts use it, a configured
+  strategy that disagrees is refused (`BackendPINMismatchError`).
+- An unavailable strategy fails closed (`BackendPINUnavailableError`); it
+  never downgrades, for example from `tpm2` to `sealed` when the TPM is
+  gone.
+- `minimum` orders `sealed` < `tpm2` < `manual`
+  (`BackendPINBelowMinimumError`).
