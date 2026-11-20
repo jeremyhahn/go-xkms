@@ -163,9 +163,15 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) (*Res
 
 // TrustAnchorCount returns the number of trust anchors configured on the
 // verifier. A verifier with zero anchors cannot establish hardware provenance
-// and is rejected by VerifyChainAnchored.
+// and is rejected by VerifyChainAnchored. A store-backed verifier counts the
+// store's roots of its chain purpose as read now (quarantined roots excluded);
+// a store read error counts as zero, so registration fails closed.
 func (v *Verifier) TrustAnchorCount() int {
-	return len(v.trustedRoots)
+	stored, err := v.storeChainRoots()
+	if err != nil {
+		return 0
+	}
+	return len(v.trustedRoots) + len(stored)
 }
 
 // anchors returns the effective trust anchor set: the anchors the verifier was
