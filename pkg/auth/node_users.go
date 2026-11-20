@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
@@ -72,7 +73,20 @@ func (c *NodeUserClient) GetUserByUsername(ctx context.Context, tenantID, userna
 	if err != nil {
 		return nil, err
 	}
-	return nodeUser(users.GetUserByUsername(ctx, tenantID, username))
+	return nodeUser(users.GetUserByUsername(bindTenant(ctx, tenantID), tenantID, username))
+}
+
+// bindTenant binds tenantID on ctx for the node's routing user service,
+// which acts on the caller's tenant and, on the anonymous public routes,
+// would otherwise default to the system tenant. Callers pass a tenant from
+// server-side state (the validated refresh token's claims, the invite
+// record, the configured WebAuthn scope), never a caller-chosen one. An
+// empty tenantID leaves ctx unchanged.
+func bindTenant(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return qrdbtenant.WithTenantID(ctx, tenantID)
 }
 
 // GetUserByEmail retrieves a user by tenant-scoped email login key.
@@ -81,7 +95,7 @@ func (c *NodeUserClient) GetUserByEmail(ctx context.Context, tenantID, email str
 	if err != nil {
 		return nil, err
 	}
-	return nodeUser(users.GetUserByEmail(ctx, tenantID, email))
+	return nodeUser(users.GetUserByEmail(bindTenant(ctx, tenantID), tenantID, email))
 }
 
 // CreateUser creates a passwordless user.

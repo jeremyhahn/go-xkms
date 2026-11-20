@@ -26,6 +26,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -202,6 +203,7 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if err != nil {
 		return nil, classifyInviteError(err)
 	}
+	ctx = bindInviteTenant(ctx, req.TenantID)
 	userID, err := inviteUserID(entity)
 	if err != nil {
 		return nil, err
@@ -235,6 +237,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, classifyInviteError(err)
 	}
+	ctx = bindInviteTenant(ctx, req.TenantID)
 	userID, err := inviteUserID(entity)
 	if err != nil {
 		return nil, err
@@ -276,6 +279,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if _, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token); err != nil {
 		return nil, classifyInviteError(err)
 	}
+	ctx = bindInviteTenant(ctx, req.TenantID)
 
 	parsed, err := protocol.ParseCredentialCreationResponseBody(strings.NewReader(req.AttestationJSON))
 	if err != nil {
@@ -328,6 +332,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	if err != nil {
 		return nil, classifyInviteError(err)
 	}
+	ctx = bindInviteTenant(ctx, req.TenantID)
 	userID, err := inviteUserID(entity)
 	if err != nil {
 		return nil, err
@@ -423,6 +428,18 @@ func (s *XKMSService) inviteUserClient() InviteUserClient {
 		return nil
 	}
 	return s.users
+}
+
+// bindInviteTenant binds the tenant an invite record was found in on ctx,
+// once inviteStore.Lookup has validated it there. The invite routes are
+// anonymous, so the embedded node's user service would otherwise route the
+// invited user's by-ID reads and writes to the system tenant. An empty
+// tenant leaves ctx unchanged.
+func bindInviteTenant(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return qrdbtenant.WithTenantID(ctx, tenantID)
 }
 
 // caRootPool builds the trust-root pool PIV invite activation verifies
