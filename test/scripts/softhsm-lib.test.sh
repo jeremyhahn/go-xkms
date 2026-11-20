@@ -74,7 +74,7 @@ eq "exit 0" 0 "$rc"
 eq "prints the cache module" "$CACHE/usr/lib/softhsm/libsofthsm2.so" "$out"
 eq "the pinned release is built once" 1 "$(built)"
 if [ -f "$CACHE/usr/lib/softhsm/libsofthsm2.so" ]; then ok "the cache holds the module"; else no "the cache holds the module" "a file" "missing"; fi
-eq "no temporary build directory is left" "cache" "$(ls -A "$WORK" | grep '^cache' | tr '\n' ' ' | tr -d ' ')"
+eq "no temporary build directory is left" "" "$(ls -A "$WORK" | grep '^cache\.tmp\.' | tr '\n' ' ' | tr -d ' ')"
 
 section "an existing cache build is reused without rebuilding"
 rm -f "$WORK/built"
@@ -83,6 +83,64 @@ rc=$?
 eq "exit 0" 0 "$rc"
 eq "prints the cache module" "$CACHE/usr/lib/softhsm/libsofthsm2.so" "$out"
 eq "nothing is rebuilt" 0 "$(built)"
+
+# A slow build script that, like scripts/build-softhsm.sh, changes directory
+# before installing, records the DESTDIR it was given, and takes long enough
+# that two invocations on a cold cache overlap.
+SLOW="$WORK/slow-build-softhsm.sh"
+cat >"$SLOW" <<EOF
+#!/bin/sh
+SOFTHSM_VERSION=2.7.0
+echo build >>"$WORK/built"
+echo "\${DESTDIR}" >>"$WORK/destdirs"
+sleep 1
+cd /
+mkdir -p "\${DESTDIR}\$1/bin" "\${DESTDIR}\$1/lib/softhsm"
+printf '#!/bin/sh\necho 2.7.0\n' >"\${DESTDIR}\$1/bin/softhsm2-util"
+chmod +x "\${DESTDIR}\$1/bin/softhsm2-util"
+: >"\${DESTDIR}\$1/lib/softhsm/libsofthsm2.so"
+EOF
+chmod +x "$SLOW"
+
+section "two concurrent invocations on a cold cache build once and share it"
+CC="$WORK/ccache"
+rm -rf "$CC" "$WORK/built" "$WORK/destdirs"
+# Each invocation checks, right after it returns, that the module it printed
+# is still there: a second invocation must never remove a published cache.
+cc_run() {
+	PATH="$SYS/bin:/usr/bin:/bin" STUB_VERSION=2.6.1 SOFTHSM_CACHE="$CC" \
+		SOFTHSM_BUILD_SCRIPT="$SLOW" bash "$SCRIPT" >"$WORK/cc.$1" 2>/dev/null
+	echo $? >"$WORK/cc.$1.rc"
+	sleep 2
+	[ -f "$(cat "$WORK/cc.$1")" ] && echo present >"$WORK/cc.$1.still" || echo missing >"$WORK/cc.$1.still"
+}
+cc_run 1 &
+p1=$!
+cc_run 2 &
+p2=$!
+wait "$p1" "$p2"
+want="$CC/usr/lib/softhsm/libsofthsm2.so"
+for i in 1 2; do
+	eq "invocation $i: exit 0" 0 "$(cat "$WORK/cc.$i.rc")"
+	eq "invocation $i: prints the cache module" "$want" "$(cat "$WORK/cc.$i")"
+	eq "invocation $i: its module stays in place" present "$(cat "$WORK/cc.$i.still")"
+done
+eq "the pinned release is built once" 1 "$(built)"
+eq "no temporary build directory is left" "" "$(ls -A "$WORK" | grep '^ccache\.tmp\.' | tr '\n' ' ' | tr -d ' ')"
+
+section "a relative SOFTHSM_CACHE resolves to an absolute path"
+rm -f "$WORK/built" "$WORK/destdirs"
+mkdir -p "$WORK/pkg"
+out=$(cd "$WORK/pkg" && PATH="$SYS/bin:/usr/bin:/bin" STUB_VERSION=2.6.1 SOFTHSM_CACHE=rel/softhsm \
+	SOFTHSM_BUILD_SCRIPT="$SLOW" bash "$SCRIPT" 2>"$WORK/stderr")
+rc=$?
+eq "exit 0" 0 "$rc"
+eq "prints an absolute module path" "$WORK/pkg/rel/softhsm/usr/lib/softhsm/libsofthsm2.so" "$out"
+case "$(cat "$WORK/destdirs" 2>/dev/null)" in
+/*) ok "the build script gets an absolute DESTDIR" ;;
+*) no "the build script gets an absolute DESTDIR" "/..." "$(cat "$WORK/destdirs" 2>/dev/null)" ;;
+esac
+if [ -f "$WORK/pkg/rel/softhsm/usr/lib/softhsm/libsofthsm2.so" ]; then ok "the cache holds the module"; else no "the cache holds the module" "a file" "missing"; fi
 
 section "a failed build leaves no cache and fails"
 rm -rf "$CACHE" "$WORK/built"
