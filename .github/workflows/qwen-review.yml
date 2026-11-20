@@ -67,7 +67,7 @@ jobs:
     # event would queue on the qwen runner's single slot. The guard re-checks the
     # LIVE labels; this reads the event's.
     if: contains(github.event.pull_request.labels.*.name, 'agent:opencode')
-    runs-on: qwen
+    runs-on: qwen  # self-hosted: hardware: the GPU host that serves the model
     timeout-minutes: 55
     steps:
       - name: Check the token, the request, the head and the model

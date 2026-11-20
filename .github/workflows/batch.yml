@@ -1,4 +1,4 @@
-# batch-template: v1.1 — token-free CPU work on GitHub-hosted runners: fuzz,
+# batch-template: v1.3 — token-free CPU work on GitHub-hosted runners: fuzz,
 # race-full, soak, bench. Dispatch only; never in a merge gate.
 #
 # Owner order 2026-10-12 10:43 EDT (relayed by the Company Agent 17:24Z):
