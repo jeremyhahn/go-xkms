@@ -13,6 +13,12 @@ LDFLAGS := -X github.com/jeremyhahn/go-xkms/pkg/cli.Version=$(VERSION) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.GitCommit=$(GIT_COMMIT) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.BuildDate=$(BUILD_DATE)
 
+# -trimpath on every go build/test (#2309, DS-9612): without it cmd/go hashes
+# the package directory into each action ID, so every lane and verify clone
+# builds new keys and the shared Go build cache grows without reuse. The
+# filter-out keeps the flag single across recursive and env -i sub-makes.
+export GOFLAGS := $(strip $(filter-out -trimpath,$(GOFLAGS)) -trimpath)
+
 # Every pinned tool version and download checksum: GO_IMAGE, GOLANGCI_VERSION,
 # ACTIONLINT_VERSION, TRIVY_VERSION and the rest. One file, also sourced by the
 # devcontainer image (build/docker/devcontainer/Dockerfile). GO_IMAGE is

@@ -1305,7 +1305,7 @@ jobs:
       contents: read
       packages: read
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       # v1.22: the cache volumes' trust class (as in the image job).
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
@@ -1818,7 +1818,7 @@ jobs:
       contents: read
       packages: read
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -1931,7 +1931,7 @@ jobs:
       packages: read
     timeout-minutes: 35   # #1587: ~2x 17m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2082,7 +2082,7 @@ jobs:
       packages: read
     timeout-minutes: 20   # #1587: ~2x 9.4m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2193,7 +2193,7 @@ jobs:
       packages: read
     timeout-minutes: 110  # #1587: ~2x 55m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2347,7 +2347,7 @@ jobs:
       matrix:
         tags: ["codec_json", "raft codec_json"]
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2454,7 +2454,7 @@ jobs:
       packages: read
     timeout-minutes: 145  # #1587: ~2x 71m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2578,7 +2578,7 @@ jobs:
       packages: read
     timeout-minutes: 25   # #1587: ~2x 10.5m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
