@@ -439,8 +439,10 @@ func TestCIImageDigest_RevertedConsumerFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", ciWorkflow, err)
 	}
-	take := `run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"`
-	revert := `run: docker image inspect "$TOOLCHAIN_REF" >/dev/null 2>&1 || make docker-build-toolchain TOOLCHAIN_IMAGE="$TOOLCHAIN_REF"`
+	// The take step's run is a block (#2302: it masks the registry first);
+	// the revert swaps its last line.
+	take := `scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"`
+	revert := `docker image inspect "$TOOLCHAIN_REF" >/dev/null 2>&1 || make docker-build-toolchain TOOLCHAIN_IMAGE="$TOOLCHAIN_REF"`
 	src := string(data)
 	if !strings.Contains(src, take) {
 		t.Fatalf("%s has no %q to revert", ciWorkflow, take)

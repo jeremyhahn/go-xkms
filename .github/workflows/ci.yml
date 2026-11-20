@@ -1043,8 +1043,10 @@ jobs:
         run: |
           reg=${CI_IMAGE_REGISTRY%/}
           [ -n "$reg" ] || { echo "::error::the CI_IMAGE_REGISTRY secret is empty"; exit 1; }
+          host=${reg%%/*}
           echo "::add-mask::$reg"
-          echo "::add-mask::${reg%%/*}"
+          echo "::add-mask::$host"
+          echo "::add-mask::${host%%:*}"
 
       - name: Read the Alpine package index
         run: |
@@ -1210,7 +1212,17 @@ jobs:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
       # <<< CUSTOMIZE
 
       # v1.22: bound this repo's cache volumes on the host before the stages
@@ -1412,7 +1424,17 @@ jobs:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # v1.22: bound this repo's cache volumes (as in the image job). It never
       # fails the job and keeps every volume a container mounts.
@@ -1908,7 +1930,17 @@ jobs:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Static analysis (toolchain image)
         if: ${{ runner.environment == 'github-hosted' && needs.preflight.outputs.docs_only != 'true' }}
@@ -2023,7 +2055,17 @@ jobs:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # This job writes the shared cache volumes too, so it bounds them first,
       # as the image job does (ci-standard.md §6). It never fails the job.
@@ -2176,7 +2218,17 @@ jobs:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Build sdk/go, web/desktop and xkey (toolchain image)
         if: runner.environment == 'github-hosted'
@@ -2289,7 +2341,17 @@ jobs:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: sdk/go and web/desktop tests (toolchain image)
         if: runner.environment == 'github-hosted'
@@ -2445,7 +2507,17 @@ jobs:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Build, vet and test (toolchain image)
         if: runner.environment == 'github-hosted'
@@ -2554,7 +2626,17 @@ jobs:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # -timeout 75m, not the 10m default (#1587: above this job's slowest
       # green run, 71m, forge API, last 60 CI runs, 2026-10-17, and below its
@@ -2680,7 +2762,17 @@ jobs:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: pkg/tpm2 on the simulator (toolchain image)
         if: runner.environment == 'github-hosted'
