@@ -351,10 +351,16 @@ func TestCIImagesBuildsOnceOnThePoolForSameRepoPRs(t *testing.T) {
 const poolStubDocker = `#!/bin/sh
 echo "docker $*" >> "$STUB_DIR/calls"
 case "$1" in
-  pull) case "$*" in *@sha256:*) exit 0 ;; *) exit 1 ;; esac ;;
+  pull)
+    case "$*" in
+      *@sha256:*) exit 0 ;;
+      *) [ "${STUB_POOL_HAS_TAG:-}" = true ] && exit 0; exit 1 ;;
+    esac ;;
   image)
     case "$*" in
-      *RepoDigests*) echo "reg.example:5000/ci/go-xkms-ci-toolchain@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
+      *RepoDigests*)
+        echo "reg.example:5000/ci/go-xkms-ci-toolchain@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        echo "reg.example:5000/ci/go-xkms-ci-it@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" ;;
       *) echo "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ;;
     esac ;;
 esac
@@ -448,6 +454,34 @@ func TestCIRegistryPoolBuildsOnceAndPushes(t *testing.T) {
 	}
 	if strings.Contains(stdout+stderr, "reg.example") {
 		t.Errorf("pool printed the registry address:\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+}
+
+// TestCIRegistryPoolReusesAPublishedImage pins pool()'s cache hit: when the
+// content-hash tag already pulls from the pool registry, pool returns that
+// image's digest and neither builds, tags nor pushes (#2302 Codex P1).
+func TestCIRegistryPoolReusesAPublishedImage(t *testing.T) {
+	for family, hex := range map[string]string{"toolchain": "a", "it": "c"} {
+		t.Run(family, func(t *testing.T) {
+			stdout, stderr, calls, err := runPoolRegistry(t,
+				[]string{"CI_POOL=true", "CI_IMAGE_REGISTRY=reg.example:5000/ci", "STUB_POOL_HAS_TAG=true"},
+				"pool", family)
+			if err != nil {
+				t.Fatalf("pool %s failed: %v\n%s", family, err, stderr)
+			}
+			if !strings.Contains(calls, "docker pull --quiet reg.example:5000/ci/go-xkms-ci-"+family+":0123456789abcdef") {
+				t.Errorf("pool did not look up the hash tag in the pool registry:\n%s", calls)
+			}
+			for _, forbidden := range []string{"docker-build-", "docker build", "docker tag", "docker push"} {
+				if strings.Contains(calls, forbidden) {
+					t.Errorf("pool ran %q although the image is in the pool registry:\n%s", forbidden, calls)
+				}
+			}
+			want := "go-xkms-ci-" + family + "@sha256:" + strings.Repeat(hex, 64)
+			if strings.TrimSpace(stdout) != want {
+				t.Errorf("pool printed %q, want the existing digest reference %q", stdout, want)
+			}
+		})
 	}
 }
 
