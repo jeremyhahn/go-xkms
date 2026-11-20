@@ -98,10 +98,11 @@ export function diffMetadata(before: EditableMetadata, after: EditableMetadata):
   // The server ignores an empty name or description, so an emptied field is no change.
   if (after.name !== "" && after.name !== before.name) changes.name = after.name;
   if (after.description !== "" && after.description !== before.description) changes.description = after.description;
-  const tags: Record<string, string> = {};
-  for (const [k, v] of Object.entries(after.tags)) {
-    if (!Object.hasOwn(before.tags, k) || before.tags[k] !== v) tags[k] = v;
-  }
+  // Object.fromEntries defines own properties, so a "__proto__" tag is kept
+  // (an assignment on {} would run the inherited setter instead).
+  const tags: Record<string, string> = Object.fromEntries(
+    Object.entries(after.tags).filter(([k, v]) => !Object.hasOwn(before.tags, k) || before.tags[k] !== v),
+  );
   if (Object.keys(tags).length > 0) changes.tags = tags;
   // Own-property checks: a tag named "constructor" or "toString" must not
   // match the inherited Object.prototype member.

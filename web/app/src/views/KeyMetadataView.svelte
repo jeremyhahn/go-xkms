@@ -32,10 +32,11 @@
   let rows = $state<TagRow[]>([]);
 
   function edits(): EditableMetadata {
-    const tags: Record<string, string> = {};
-    for (const r of rows) {
-      if (r.key !== "") tags[r.key] = r.value;
-    }
+    // Object.fromEntries defines own properties: tags[k] = v on {} would run
+    // the inherited __proto__ setter and drop a tag of that name.
+    const tags: Record<string, string> = Object.fromEntries(
+      rows.filter((r) => r.key !== "").map((r) => [r.key, r.value]),
+    );
     return { name, description, tags };
   }
 
