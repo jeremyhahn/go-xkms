@@ -195,6 +195,15 @@ func (tpm *TPM2) platformKeySessionOver(
 	if err != nil {
 		return nil, noopCloser, err
 	}
+	if pin == nil && len(authPolicy) > 0 &&
+		pcrs.Mask() != tpm.config.PlatformPCRs.Mask() {
+		// No record: an object sealed before the expanded selection
+		// carries the platform set's PolicyOR, not this selection's.
+		if expanded, err := platformPolicyDigestFromPin(live); err == nil &&
+			!bytes.Equal(expanded.Buffer, authPolicy) {
+			return tpm.platformPolicySession(keyAuth, nil)
+		}
+	}
 	return tpm.platformPolicySession(keyAuth, live)
 }
 
