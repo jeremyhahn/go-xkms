@@ -1,8 +1,10 @@
 package buildgates
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -80,8 +82,34 @@ func runnerProblems(body []byte) []string {
 	return problems
 }
 
+// workflowFiles lists the workflow files in dir, as GitHub discovers them.
+func workflowFiles(dir string) ([]string, error) {
+	return filepath.Glob(filepath.Join(dir, "*.yml"))
+}
+
+func TestWorkflowFilesFindsBothExtensions(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.yml", "b.yaml", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("jobs: {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := workflowFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range files {
+		names = append(names, filepath.Base(f))
+	}
+	sort.Strings(names)
+	if got := strings.Join(names, ","); got != "a.yml,b.yaml" {
+		t.Fatalf("workflowFiles found %q; want a.yml,b.yaml", got)
+	}
+}
+
 func TestCIJobsRunHostedFirst(t *testing.T) {
-	files, err := filepath.Glob(filepath.Join(cachesRoot, ".github", "workflows", "*.yml"))
+	files, err := workflowFiles(filepath.Join(cachesRoot, ".github", "workflows"))
 	if err != nil || len(files) < 5 {
 		t.Fatalf("found %d workflow files (%v); want every one", len(files), err)
 	}
