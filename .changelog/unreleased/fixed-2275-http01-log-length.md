@@ -1,0 +1,1 @@
+- **http-01 challenge handler logs the key authorization's length, never its value (#2275)** — `challengeHandlerHTTPx` in `pkg/acme/challenges/http-01` wrote the whole key authorization into the failed-write error log and the served-request debug log; a 32 MiB key authorization made a 32 MiB log line. Both sites now log `key-authorization-length`.
