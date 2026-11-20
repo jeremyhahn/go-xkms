@@ -33,6 +33,9 @@
   let newAllowed = $state("");
   let newDenied = $state("");
   let expiry = $state("");
+  // The stored expires_at and the date it shows as: the date editor holds
+  // only a day, so an untouched Expiry saves the exact stored time.
+  let keptExpiry: { date: string; at: number } | null = null;
   let maxUsage = $state("");
   let rotationRequired = $state(false);
 
@@ -54,6 +57,7 @@
     allowed = [...(p?.allowed_principals ?? [])];
     denied = [...(p?.denied_principals ?? [])];
     expiry = p?.expires_at ? new Date(p.expires_at * 1000).toISOString().slice(0, 10) : "";
+    keptExpiry = p?.expires_at ? { date: expiry, at: p.expires_at } : null;
     maxUsage = p?.max_usage_count ? String(p.max_usage_count) : "";
     rotationRequired = p?.rotation_required ?? false;
   }
@@ -85,7 +89,10 @@
     if (allowed.length > 0) policy.allowed_principals = [...allowed];
     if (denied.length > 0) policy.denied_principals = [...denied];
     if (expiry !== "") {
-      const at = Math.floor(Date.parse(`${expiry}T00:00:00Z`) / 1000);
+      const at =
+        keptExpiry !== null && keptExpiry.date === expiry
+          ? keptExpiry.at
+          : Math.floor(Date.parse(`${expiry}T00:00:00Z`) / 1000);
       if (!Number.isFinite(at) || at * 1000 <= Date.now()) return "Expiry must be in the future.";
       policy.expires_at = at;
     }
@@ -160,6 +167,8 @@
       if (n === seq) {
         version = res.policy_version;
         loadedRestricted = policy.allowed_operations !== undefined;
+        const at = policy.expires_at;
+        keptExpiry = at ? { date: new Date(at * 1000).toISOString().slice(0, 10), at } : null;
       }
       showToast("success", `Access policy for "${id}" saved (version ${res.policy_version}).`);
     } catch (e) {
