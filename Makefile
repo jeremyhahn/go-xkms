@@ -4284,7 +4284,10 @@ lint-gates: fmt-check check-insecure-tls check-public-literals check-test-helper
 ## lint: Run actionlint over the workflows, then golangci-lint across every module (LINT_MODULES), plus the root module's backend and raft tag sets
 lint: actionlint
 	@echo "$(CYAN)$(BOLD)→ Running linters...$(RESET)"
-	@GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
+	@# golangci-lint's cgocall re-reads cgo files by their build paths, which
+	@# -trimpath makes module-relative (#2309): lint without it.
+	@export GOFLAGS="$(filter-out -trimpath,$(GOFLAGS))"; \
+	GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
 	if [ ! -x "$$GOLANGCI_LINT_BIN" ]; then \
 		echo "$(RED)✗ golangci-lint is required but not installed$(RESET)"; \
 		echo "$(YELLOW)  Install with: make install-tools$(RESET)"; \
