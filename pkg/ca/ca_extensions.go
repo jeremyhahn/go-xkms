@@ -455,14 +455,31 @@ func (ca *CA) CAKeyAttributes(storeType types.StoreType) (*types.KeyAttributes, 
 //
 // Thread-safe: Yes
 func (ca *CA) CASigner(ctx context.Context, storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error) {
-	attrs, err := ca.CAKeyAttributes(storeType)
+	issuing := ca.config.IssuingIdentity()
+	if issuing == nil {
+		return nil, ErrInvalidConfig
+	}
+	configured := issuing.GetStoreType()
+	if storeType != "" && configured != storeType {
+		return nil, &errs.Detail{Err: ErrInvalidStoreType, Detail: fmt.Sprintf("requested store type %s does not match configured %s", storeType, configured)}
+	}
+	// The lookup allocates the key passwords; like getSigner, clear the
+	// ones it owns on every error path and scope them per Sign on success,
+	// so no CA-owned locked password outlives the call.
+	attrs, owned, err := ca.openCAKeyAttributes(ctx, issuing)
 	if err != nil {
 		return nil, err
 	}
 	if algo != x509.UnknownPublicKeyAlgorithm && attrs.KeyAlgorithm != algo {
+		owned.clear()
 		return nil, &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: fmt.Sprintf("CA key algorithm %v does not match requested %v", attrs.KeyAlgorithm, algo)}
 	}
-	return ca.keyStore.Signer(ctx, attrs)
+	signer, err := ca.keyStore.Signer(ctx, attrs)
+	if err != nil {
+		owned.clear()
+		return nil, err
+	}
+	return ca.passwordScoped(ctx, issuing, owned, signer), nil
 }
 
 // IdentityIssuer is implemented by CA instances that can issue from a
@@ -510,19 +527,21 @@ func (ca *CA) IssuerForIdentity(ctx context.Context, cn string) (crypto.Signer, 
 		return nil, nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("identity %q certificate: %v", cn, err)}
 	}
 
-	attrs, err := ca.getCAKeyAttributes(ctx, identity)
+	attrs, owned, err := ca.openCAKeyAttributes(ctx, identity)
 	if err != nil {
 		return nil, nil, err
 	}
 	backend, err := ca.resolveKeyBackend(attrs.StoreType)
 	if err != nil {
+		owned.clear()
 		return nil, nil, err
 	}
 	signer, err := backend.Signer(ctx, attrs)
 	if err != nil {
+		owned.clear()
 		return nil, nil, &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("identity %q key: %v", cn, err)}
 	}
-	return signer, cert, nil
+	return ca.passwordScoped(ctx, identity, owned, signer), cert, nil
 }
 
 // =============================================================================
@@ -1123,10 +1142,12 @@ func certTenantStorageKey(serial *big.Int) string {
 // CertificateTenant to refuse a revoke request from a caller bound to a
 // different tenant (go-xkms#1229).
 //
-// TCG device-identity certificates (EK/AK/IDevID) and the CA's own
-// root/intermediate certificates do not go through signCSR and so carry no
-// record; CertificateTenant reports the system/platform scope for them,
-// which only a system-tenant caller may address.
+// TCG device-identity certificates (EK, AK, IAK, IDevID, LAK) this CA signs
+// record the request's tenant through issueTCGCertificate. The CA's own
+// root/intermediate certificates, and TCG certificates signed with a
+// caller-supplied Signer, carry no record; CertificateTenant reports the
+// system/platform scope for them, which only a system-tenant caller may
+// address.
 func (ca *CA) recordCertTenant(ctx context.Context, serial *big.Int, tenantID string) error {
 	if serial == nil {
 		return ErrInvalidCertificate
@@ -1148,7 +1169,8 @@ func (ca *CA) recordCertTenant(ctx context.Context, serial *big.Int, tenantID st
 // CertificateTenant returns the tenant recorded at issuance for the
 // certificate identified by serial, or the system/platform scope ("") when
 // no record exists -- either because the certificate was issued through a
-// path that does not record one (TCG device identity, CA hierarchy) or
+// path that does not record one (CA hierarchy, caller-signed TCG
+// certificates) or
 // because it predates this recording. Either way, only a cross-tenant caller
 // may then act on it; see recordCertTenant.
 //
