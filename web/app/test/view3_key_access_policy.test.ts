@@ -64,6 +64,27 @@ async function addPrincipal(kind: "Allowed" | "Denied", name: string): Promise<v
 }
 
 describe("KeyAccessPolicyView", () => {
+  it("keeps the newly selected key's form when an earlier delete completes", async () => {
+    let finish: (v: unknown) => void = () => {};
+    request.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(KeyAccessPolicyView);
+    await selectKey();
+    await fireEvent.click(screen.getByRole("button", { name: "Remove policy" }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith("DELETE", PATH, expect.anything()));
+
+    await fireEvent.input(screen.getByPlaceholderText("Key ID"), { target: { value: "k2" } });
+    await fireEvent.click(screen.getByLabelText("verify"));
+    await addPrincipal("Allowed", "svc-k2");
+
+    finish({ timestamp: 1 });
+    await waitFor(() => expect(toasts.some((t) => t.kind === "success")).toBe(true));
+    expect(screen.getByLabelText("verify")).toBeChecked();
+    expect(screen.getByText("svc-k2")).toBeInTheDocument();
+    expect(screen.queryByText("No access policy set (default applies)")).toBeNull();
+  });
+
   it("loads a key's policy into the form and shows its version", async () => {
     request.mockResolvedValue({
       policy: {

@@ -55,6 +55,59 @@ function rewrapButton(): HTMLButtonElement {
 }
 
 describe("KeyRewrapView", () => {
+  it("passes the source decryption options through to the rewrap request", async () => {
+    request.mockResolvedValue(response);
+    render(KeyRewrapView);
+    await fillSource();
+    await fill("Mode", "cbc-pad");
+    await fill("Padding", "oaep");
+    await fill("OAEP hash", "SHA-256");
+    await fill("OAEP label", "lbl");
+    await fill("Tag size", "12");
+    await fill("Key version", "3");
+    await fireEvent.click(rewrapButton());
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(request).toHaveBeenCalledWith("POST", "/api/v1/keys/rewrap", {
+      body: {
+        source: {
+          backend: "software",
+          key_id: "k1",
+          ciphertext: "Y3Q=",
+          mode: "cbc-pad",
+          padding: "oaep",
+          hash: "SHA-256",
+          label: "bGJs",
+          tag_size: 12,
+          key_version: 3,
+        },
+      },
+    });
+  });
+
+  it("carries the key version of a pasted EncryptResponse", async () => {
+    request.mockResolvedValue(response);
+    render(KeyRewrapView);
+    await fillSource(JSON.stringify({ ciphertext: "Y3Q=", nonce: "bm4=", key_version: 4 }));
+    await fireEvent.click(rewrapButton());
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(request).toHaveBeenCalledWith("POST", "/api/v1/keys/rewrap", {
+      body: { source: { backend: "software", key_id: "k1", ciphertext: "Y3Q=", nonce: "bm4=", key_version: 4 } },
+    });
+  });
+
+  it("refuses a tag size or key version that is not a positive integer", async () => {
+    render(KeyRewrapView);
+    await fillSource();
+    await fill("Tag size", "1.5");
+    await fireEvent.click(rewrapButton());
+    expect(screen.getByText(/tag size must be a positive integer/i)).toBeTruthy();
+    await fill("Tag size", "");
+    await fill("Key version", "-1");
+    await fireEvent.click(rewrapButton());
+    expect(screen.getByText(/key version must be a positive integer/i)).toBeTruthy();
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("rewraps in place under the source key's current version", async () => {
     request.mockResolvedValue(response);
     render(KeyRewrapView);
