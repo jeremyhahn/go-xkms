@@ -82,9 +82,18 @@ func runnerProblems(body []byte) []string {
 	return problems
 }
 
-// workflowFiles lists the workflow files in dir, as GitHub discovers them.
+// workflowFiles lists the workflow files in dir as GitHub discovers them:
+// both the .yml and the .yaml extension.
 func workflowFiles(dir string) ([]string, error) {
-	return filepath.Glob(filepath.Join(dir, "*.yml"))
+	var files []string
+	for _, ext := range []string{"*.yml", "*.yaml"} {
+		found, err := filepath.Glob(filepath.Join(dir, ext))
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, found...)
+	}
+	return files, nil
 }
 
 func TestWorkflowFilesFindsBothExtensions(t *testing.T) {
