@@ -26,7 +26,8 @@ func CommandFamilies() []CommandCategory {
 		CategoryVersion, CategoryBackends, CategoryBackend, CategoryKey,
 		CategoryCert, CategoryTLS, CategoryFrost, CategoryFIDO2,
 		CategoryUser, CategoryAdmin, CategorySealing, CategoryCA,
-		CategoryPolicy,
+		CategoryPolicy, CategoryTenant, CategoryAuth, CategoryCredential,
+		CategoryOIDC,
 	}
 }
 
@@ -47,8 +48,11 @@ func SkipReason(cmd CommandDefinition, protocol ProtocolType, enabledTags []stri
 			return fmt.Sprintf("requires build tags %v", cmd.BuildTags), true
 		}
 	}
+	if cmd.Skip != "" {
+		return cmd.Skip, true
+	}
 	if cmd.RequiresSetup {
-		return "requires prior setup (workflow tests; later #2321 slices)", true
+		return skipChain, true
 	}
 	return "", false
 }
