@@ -137,3 +137,25 @@ func TestIntegrationTestRunsBootstrapFirst(t *testing.T) {
 			"costs minutes, not hours; prerequisites are %q", prereqs)
 	}
 }
+
+// TestIntegrationTestBootstrapStagesGomodauth pins the Codex P1 on PR #2300:
+// the bootstrap compose file reads the gitignored build secret
+// build/docker/devcontainer/gomodauth.env, and with bootstrap first no
+// earlier suite stages it, so the target must depend on stage-gomodauth.
+func TestIntegrationTestBootstrapStagesGomodauth(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot, "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	prereqs, ok := makePrerequisites(string(data), "integration-test-bootstrap")
+	if !ok {
+		t.Fatal("Makefile has no integration-test-bootstrap: rule")
+	}
+	for _, p := range prereqs {
+		if p == "stage-gomodauth" {
+			return
+		}
+	}
+	t.Errorf("integration-test-bootstrap must depend on stage-gomodauth so "+
+		"the compose build secret exists on a fresh checkout; prerequisites are %q", prereqs)
+}
