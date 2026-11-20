@@ -5027,7 +5027,7 @@ AWSKMS_COMPOSE := $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/do
 
 .PHONY: integration-test-bootstrap
 ## integration-test-bootstrap: Run bootstrap integration tests (DANE/TLSA, Noise, SPKI, Direct, Auto)
-integration-test-bootstrap:
+integration-test-bootstrap: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
 	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
