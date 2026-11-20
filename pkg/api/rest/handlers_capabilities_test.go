@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -96,20 +97,56 @@ func TestCapabilities_NoDeploymentFingerprint(t *testing.T) {
 // a CA, SSH client, barrier registry or password store reports each of those
 // subsystems off in /auth/me's capabilities map, so the console never offers a control whose route answers
 // 501 (ruling 972 (1)).
+// gatedGuards names, per console capability flag, the one predicate both
+// Routes() (each gated route's Enabled) and capabilityFlags (/auth/me) read.
+var gatedGuards = map[string]func(*Server) bool{
+	"ca":        (*Server).hasCA,
+	"ssh":       (*Server).hasSSH,
+	"tenants":   (*Server).hasTenants,
+	"passwords": (*Server).hasPasswords,
+	"webauthn":  (*Server).hasWebAuthn,
+}
+
+// routeServed reports whether the server's real router serves method+path:
+// an unregistered route answers chi's bare 404 page.
+func routeServed(t *testing.T, s *Server, method, pattern string) bool {
+	t.Helper()
+	path := pattern
+	for strings.Contains(path, "{") {
+		open := strings.Index(path, "{")
+		end := strings.Index(path[open:], "}")
+		require.Positive(t, end, pattern)
+		path = path[:open] + "x" + path[open+end+1:]
+	}
+	w := httptest.NewRecorder()
+	s.server.Handler.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+	return !(w.Code == http.StatusNotFound && w.Body.String() == "404 page not found\n")
+}
+
 func TestCapabilities_GatedSubsystemsOffWithoutConfig(t *testing.T) {
-	flags := newCapabilitiesTestServer(t, nil).capabilityFlags()
-	for _, key := range []string{"ca", "ssh", "tenants", "passwords", "webauthn"} {
+	server := newCapabilitiesTestServer(t, nil)
+	flags := server.capabilityFlags()
+	for key, guard := range gatedGuards {
+		assert.False(t, guard(server), key)
 		assert.False(t, flags[key], key)
+	}
+	// Each flag that reads false matches a route the server does not serve.
+	for _, spec := range Routes() {
+		if flag := capabilityForRoute(spec.Pattern); flag != "" && spec.Enabled != nil {
+			assert.False(t, routeServed(t, server, spec.Method, spec.Pattern), "%s %s served with %s off", spec.Method, spec.Pattern, flag)
+		}
 	}
 }
 
 // wireGatedSubsystems gives the server a handler for each gated subsystem,
-// the state NewServer leaves when the matching config is present.
+// the state NewServer leaves when the matching config is present, and
+// rebuilds the router so the gated routes are mounted as NewServer would.
 func wireGatedSubsystems(s *Server) {
 	s.caHandlers = &CAHandlers{}
 	s.sshHandlers = &SSHHandlers{}
 	s.tenantHandlers = &TenantHandlers{}
 	s.passwordHandlers = &PasswordHandlers{}
+	s.server.Handler = s.setupRouter()
 }
 
 func TestCapabilities_GatedSubsystemsOnWhenWired(t *testing.T) {
@@ -117,7 +154,16 @@ func TestCapabilities_GatedSubsystemsOnWhenWired(t *testing.T) {
 	wireGatedSubsystems(server)
 	flags := server.capabilityFlags()
 	for _, key := range []string{"ca", "ssh", "tenants", "passwords"} {
+		assert.True(t, gatedGuards[key](server), key)
 		assert.True(t, flags[key], key)
+	}
+	// Each flag that reads true matches routes the server really serves.
+	for _, spec := range Routes() {
+		flag := capabilityForRoute(spec.Pattern)
+		if flag == "" || flag == "webauthn" || spec.Enabled == nil {
+			continue
+		}
+		assert.True(t, routeServed(t, server, spec.Method, spec.Pattern), "%s %s not served with %s on", spec.Method, spec.Pattern, flag)
 	}
 }
 
@@ -160,7 +206,12 @@ func TestCapabilities_FlagsAgreeWithRouteGuards(t *testing.T) {
 				continue
 			}
 			checked[flag]++
+			// The route is gated by the very predicate the flag reads.
+			assert.Equal(t, reflect.ValueOf(gatedGuards[flag]).Pointer(), reflect.ValueOf(spec.Enabled).Pointer(),
+				"%s %s is not gated by the %s guard", spec.Method, spec.Pattern, flag)
 			assert.Equal(t, spec.Enabled(server), flags[flag], "%s: %s %s vs %s", name, spec.Method, spec.Pattern, flag)
+			// And the real router agrees with the flag.
+			assert.Equal(t, flags[flag], routeServed(t, server, spec.Method, spec.Pattern), "%s: %s %s served vs %s", name, spec.Method, spec.Pattern, flag)
 		}
 		for _, flag := range []string{"ca", "ssh", "tenants", "passwords", "webauthn"} {
 			assert.Positive(t, checked[flag], "%s: no route gated by %s", name, flag)
