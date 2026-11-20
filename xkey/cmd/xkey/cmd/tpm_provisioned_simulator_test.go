@@ -53,6 +53,16 @@ type sharedTPM struct {
 // closes it when the test ends.
 func (sharedTPM) Close() error { return nil }
 
+// SetPlatformKeyStore forwards to the simulator so `tpm srk enroll` and the
+// fido2 tpm2 backend can attach the Platform key store through the wrapper.
+func (s sharedTPM) SetPlatformKeyStore(pks xkms.PlatformKeyStorer) {
+	if setter, ok := s.TrustedPlatformModule.(interface {
+		SetPlatformKeyStore(xkms.PlatformKeyStorer)
+	}); ok {
+		setter.SetPlatformKeyStore(pks)
+	}
+}
+
 // provisionedSimulator is an open, provisioned simulator plus the CA that
 // issued its EK certificate, so tests can issue further certificates for
 // TPM-resident keys.
@@ -1119,7 +1129,7 @@ func TestRunLAKCreate_WithoutPlatformSRK(t *testing.T) {
 	setVar(t, &lakCreateForce, false)
 	stdout, _, err := runTPMSubcommand(runLAKCreate)
 	require.ErrorIs(t, err, ErrLAKPlatformSRKNotEnrolled)
-	assert.ErrorContains(t, err, "xkey setup wizard")
+	assert.ErrorContains(t, err, "xkey tpm srk enroll")
 	assert.NotContains(t, stdout, "Creating Local Attestation Key")
 }
 

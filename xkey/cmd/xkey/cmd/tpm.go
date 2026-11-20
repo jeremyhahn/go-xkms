@@ -108,6 +108,7 @@ func init() {
 	// Add subcommands
 	tpmCmd.AddCommand(tpmInfoCmd)
 	tpmCmd.AddCommand(tpmInstallCmd)
+	tpmCmd.AddCommand(tpmSRKCmd)
 	tpmCmd.AddCommand(tpmProvisionCmd)
 	tpmCmd.AddCommand(tpmEKCmd)
 	tpmCmd.AddCommand(tpmIAKCmd)
