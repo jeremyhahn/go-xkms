@@ -54,8 +54,15 @@ const tenantLoginCAProvenanceWait = 2 * time.Second
 
 // tenantLoginCAClaimLease is how long a provisioning claim with no key behind
 // it is honoured before another pass may take it over. A claim marked
-// generating is never taken over.
+// generating is taken over only once its holder has also stopped renewing it
+// (see tenantLoginCAClaimRenew).
 const tenantLoginCAClaimLease = 30 * time.Second
+
+// tenantLoginCAClaimRenew is how often a pass renews its generating claim
+// while its generate is in flight. A generating claim past its lease is taken
+// over only when it stays unchanged for two renewal intervals: its holder is
+// then gone, for a live holder renews it however long its generate takes.
+const tenantLoginCAClaimRenew = time.Second
 
 // errTenantLoginCAKeyCollision is returned when a tenant holds a login CA key
 // that the provisioning path did not make. Such a key is never adopted; an
@@ -299,11 +306,14 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		// claim over: that pass makes the key.
 		return adoptOtherTenantLoginCAKey(ctx, base, scoped, tenantID)
 	}
-	// The claim now says a generate is in flight, and no pass takes it over
-	// however long the generate takes: a backend may ignore the context
-	// (PKCS#11 waits on the token's mutex without a deadline), so no lease
-	// bounds when this pass can still make its key.
-	if _, err := scoped.GenerateECDSA(ctx, attrs); err != nil {
+	// The claim now says a generate is in flight, and this pass renews it
+	// however long the generate takes, so no pass takes it over: a backend
+	// may ignore the context (PKCS#11 waits on the token's mutex without a
+	// deadline), so no lease bounds when this pass can still make its key.
+	stopRenew := f.renewTenantLoginCAGenerating(ctx, tenantID, owner, generating)
+	_, err = scoped.GenerateECDSA(ctx, attrs)
+	generating = stopRenew()
+	if err != nil {
 		if !errors.Is(err, backend.ErrKeyAlreadyExists) {
 			// The generate returned, so it makes no key any more: put back
 			// a plain claim, which a later pass may take over once its
@@ -337,7 +347,8 @@ func tenantLoginCAClaimKey(tenantID string) string {
 // key. It returns the pass's owner token, or "" when another pass holds the
 // claim. A claim older than tenantLoginCAClaimLease with no key behind it may
 // be left by a pass that stopped before generating; unless it is marked
-// generating (see fenceTenantLoginCAClaim), it is taken over with a
+// generating (see fenceTenantLoginCAClaim) and still renewed by a live
+// owner, it is taken over with a
 // compare-and-swap, so again only one pass wins it, and the earlier owner is
 // fenced by fenceTenantLoginCAClaim. A storage or key lookup error fails
 // closed.
@@ -367,9 +378,19 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 		return "", nil
 	}
 	if tenantLoginCAClaimGenerating(held) {
-		// Its owner may still be inside a generate that no lease bounds:
-		// taking over could make a second key beside the one it makes.
-		return "", nil
+		// Its owner may still be inside a generate that no lease bounds,
+		// and taking over could make a second key beside the one it makes;
+		// but a live owner renews the claim. Watch it for two renewal
+		// intervals: a claim still unchanged was left by a pass that died
+		// before its key was made, and the compare-and-swap below fails if
+		// the owner renewed it after all.
+		timer := time.NewTimer(2 * tenantLoginCAClaimRenew)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timer.C:
+		}
 	}
 	if _, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID); lookupErr == nil {
 		return "", nil
@@ -396,7 +417,8 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 // its owner stopped: a pass delayed past the lease may have lost the claim
 // to a takeover, and it must not generate beside the new owner's key. The
 // mark is a compare-and-swap on the owner's own claim, so a takeover and the
-// mark never both succeed; a generating claim is never taken over.
+// mark never both succeed; a generating claim is not taken over while its
+// owner renews it (see renewTenantLoginCAGenerating).
 func (f *tenantCAKeyFactory) fenceTenantLoginCAClaim(ctx context.Context, tenantID, owner string) ([]byte, bool, error) {
 	claims, err := f.claimStorage()
 	if err != nil {
@@ -429,8 +451,8 @@ func (f *tenantCAKeyFactory) fenceTenantLoginCAClaim(ctx context.Context, tenant
 
 // releaseTenantLoginCAGenerating turns the pass's generating claim back
 // into a plain one after a generate that failed, so a later pass may take it
-// over once the lease runs out. A failed write leaves the claim generating:
-// the tenant then waits for RemoveTenant rather than risk a second key.
+// over once the lease runs out. A failed write leaves the claim generating,
+// no longer renewed: a later pass takes it over once its lease runs out.
 func (f *tenantCAKeyFactory) releaseTenantLoginCAGenerating(ctx context.Context, tenantID, owner string, generating []byte) {
 	claims, err := f.claimStorage()
 	if err != nil {
@@ -438,6 +460,55 @@ func (f *tenantCAKeyFactory) releaseTenantLoginCAGenerating(ctx context.Context,
 	}
 	if swapper, ok := claims.(storage.CompareAndSwapper); ok {
 		_, _, _ = swapper.CompareAndSwap(ctx, tenantLoginCAClaimKey(tenantID), generating, tenantLoginCAClaim(owner, time.Now()))
+	}
+}
+
+// renewTenantLoginCAGenerating renews the pass's generating claim every
+// tenantLoginCAClaimRenew until the returned stop is called, so a pass whose
+// generate is still in flight is told apart from one that died: only an
+// unrenewed generating claim is taken over. The renewals outlive a cancelled
+// context, for the generate may too. Stop returns the claim last written. A
+// claim the pass no longer owns is left alone.
+func (f *tenantCAKeyFactory) renewTenantLoginCAGenerating(ctx context.Context, tenantID, owner string, generating []byte) func() []byte {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return func() []byte { return generating }
+	}
+	swapper, ok := claims.(storage.CompareAndSwapper)
+	if !ok {
+		return func() []byte { return generating }
+	}
+	ctx = context.WithoutCancel(ctx)
+	key := tenantLoginCAClaimKey(tenantID)
+	stop := make(chan struct{})
+	done := make(chan []byte, 1)
+	go func() {
+		current := generating
+		ticker := time.NewTicker(tenantLoginCAClaimRenew)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				done <- current
+				return
+			case <-ticker.C:
+			}
+			held, err := claims.Get(ctx, key)
+			if err != nil {
+				continue
+			}
+			if _, heldOwner, parseErr := parseTenantLoginCAClaim(held); parseErr != nil || heldOwner != owner || !tenantLoginCAClaimGenerating(held) {
+				continue
+			}
+			renewed := tenantLoginCAGeneratingClaim(owner, time.Now())
+			if swapped, _, err := swapper.CompareAndSwap(ctx, key, held, renewed); err == nil && swapped {
+				current = renewed
+			}
+		}
+	}()
+	return func() []byte {
+		close(stop)
+		return <-done
 	}
 }
 
