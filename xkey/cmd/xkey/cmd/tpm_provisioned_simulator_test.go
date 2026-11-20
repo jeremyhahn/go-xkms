@@ -132,8 +132,10 @@ func shareProvisionedSimulatorTPM(t *testing.T, tpm xkms.TrustedPlatformModule, 
 	sim := &provisionedSimulator{tpm: tpm, caCert: caCert, caKey: caKey}
 
 	savedOpen, savedOpenForEKCert, savedOpenForEKRestore, savedOpenWithPCROverrides := openTPM, openTPMForEKCert, openTPMForEKRestore, openTPMForProvisioningWithPCROverrides
+	savedOpenForDevice := openTPMForDevice
 	t.Cleanup(func() {
 		openTPM, openTPMForEKCert, openTPMForEKRestore, openTPMForProvisioningWithPCROverrides = savedOpen, savedOpenForEKCert, savedOpenForEKRestore, savedOpenWithPCROverrides
+		openTPMForDevice = savedOpenForDevice
 	})
 	shared := sharedTPM{tpm}
 	openTPM = func() (xkms.TrustedPlatformModule, error) {
@@ -145,6 +147,10 @@ func shareProvisionedSimulatorTPM(t *testing.T, tpm xkms.TrustedPlatformModule, 
 		return shared, nil
 	}
 	openTPMForEKRestore = openTPMForEKCert
+	openTPMForDevice = func(string) (xkms.TrustedPlatformModule, error) {
+		require.Equal(t, ekCertHandle, ekCertHandleRSA, "openTPMForDevice opens the TPM for the RSA EK certificate index")
+		return shared, nil
+	}
 	openTPMForProvisioningWithPCROverrides = func(pcrBank string, goldenPCRs, platformPCRs []uint) (xkms.TrustedPlatformModule, error) {
 		sim.pcrBank, sim.goldenPCRs, sim.platformPCRs = pcrBank, goldenPCRs, platformPCRs
 		return shared, nil
