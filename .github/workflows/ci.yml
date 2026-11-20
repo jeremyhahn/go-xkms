@@ -1,4 +1,16 @@
-# ci-template: v1.34.1 (customized)
+# ci-template: v1.34.1 + v1.42 hermetic gate (customized)
+# v1.42 hermetic gate only (owner ruling 742 (1), Tenant Agent ruling 754): the
+# CI Gate's outcome depends only on the tree under test. `make deps-check`,
+# `make security` (gosec, govulncheck, go mod verify, trivy fs) and the trivy
+# image scans of the integration and CLI images read the module proxy and
+# advisory databases, so they turned main red with no change to the tree and
+# every PR inherited it. They leave this workflow on every event and run in
+# .github/workflows/scans.yml, on a schedule and on workflow_dispatch on main.
+# `make gosec` reads only the tree and now runs in the image job on every
+# event but a docs-only PR. Nothing else of v1.35 to v1.42 is taken yet: the
+# v1.35 Signatures job, v1.36 host-local caches and in-toolchain-image.sh v6,
+# v1.37 timeouts, v1.38 release label, v1.39/v1.40 scoped deps-check and
+# v1.41 PR/main parity are the full catch-up, still to come.
 # go-xkms deviations from the template (#1773), one per line:
 #   - a ci-images job (ruling 169) publishes the toolchain and integration images on main and resolves main's on a pull request; every bigdisk job takes its image through scripts/ci-registry.sh use, not make docker-build;
 #   - so the v1.29.4/v1.29.5 Athens probe is a "Route the image build through Athens" step that exports GO_BUILD_PROXY to the job's environment ahead of ci-registry.sh, whose make docker-build-* reads it, in place of the template's ${bp:+"$bp"} argument;
@@ -7,7 +19,7 @@
 #   - CUSTOMIZE jobs static-analysis, build, nested-module-build, nested-module-test, build-raft, race and tpm2-simulator, each in CI Gate's needs and results;
 #   - the image job folds Lint into its stages (timeout 240), and the integration (180) and soak (210) jobs keep longer bounds;
 #   - scripts/in-toolchain-image.sh v4 already held the /var/tmp scratch volume (#1733) and keeps its CUSTOMIZE blocks; it takes v5's bridge GOPROXY (no `direct` entry, v1.34.1).
-#   - v1.30 fix 1 is ci-images (above): no publish-images job, no scripts/ci-image-cache.sh, and no separate lint job. The image job keeps Lint, the releasability test and deps-check, so it runs on a docs-only PR (its build and coverage steps skip there) and CI Gate checks it as `pr`, not `code`; gosec joins it on the PR tier (`make gosec`, v1.30 fix 5).
+#   - v1.30 fix 1 is ci-images (above): no publish-images job, no scripts/ci-image-cache.sh, and no separate lint job. The image job keeps Lint and the releasability test (and deps-check until the v1.42 hermetic gate moved it to scans.yml), so it runs on a docs-only PR (its build and coverage steps skip there) and CI Gate checks it as `pr`, not `code`; gosec joins it on the PR tier (`make gosec`, v1.30 fix 5).
 #   - the internal-name gate (v1.31 to v1.33.2) is a step of the lint-gates job, which is path-scoped by LINT_GATES_PATTERN (v1.30 fix 3, `scoped` in CI Gate).
 #   - v1.34's preflight job runs where changes, schedule-guard and arch-gates ran (the bigdisk pool for a push to main and a same-repository PR); arch-gates' layering steps are its last steps. v1.34's unit/race shard merge has nothing to merge: go-xkms has no shards.
 #   - the CUSTOMIZE full-tier jobs need ci-images, which carries the guard's verdict, so they skip with it on a refused, busy or proven run (v1.29.2 note).
@@ -184,7 +196,7 @@
 # changed kept its cached image after Alpine shipped a fix, and `trivy image`
 # stayed red on a fixed CVE until an unrelated file moved (go-enclave main
 # fd83b79ce, CVE-2026-92392, libcurl 8.23.0-r0). A new step, "Read the Alpine
-# package index", runs scripts/apk-index-sum.sh (v1, ships beside this file)
+# package index", runs scripts/apk-index-sum.sh (v3 with apk-mirror.sh, both beside this file)
 # and puts its value in APK_INDEX_SUM. Every job that names the integration
 # image (image, lint-gates, integration, soak) runs it before "Name the
 # integration image", so none waits for the image job's serial stages. The
@@ -747,6 +759,8 @@ jobs:
           # This workflow's own file: the route counts its runs only.
           RUNS_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/actions/workflows/ci.yml/runs
           REPO_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          # CUSTOMIZE (go-xkms, #2240): the runs list of this workflow on github.com.
+          GH_RUNS_API: ${{ github.api_url }}/repos/${{ github.repository }}/actions/workflows/ci.yml/runs
           JOB_TOKEN: ${{ github.token }}
           # v1.30: a push to main reads the tree proof with it as well.
           BOT: ${{ (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.AGENT_TOKEN || '' }}
@@ -764,7 +778,7 @@ jobs:
             # first query is still waiting, in progress or done at the
             # second, and counted or finished. The other order lets a run
             # start between the two queries and be counted by neither.
-            for st in waiting in_progress; do
+            for st in ${RUN_STATES:-waiting in_progress}; do
               CODE=$(curl -sS --max-time 30 -o "$RUNNER_TEMP/runs.json" -w '%{http_code}' \
                 -H @<(printf 'Authorization: token %s\n' "$1") \
                 "$RUNS_API?event=push&branch=main&status=$st&limit=1") || CODE="curl exit $?"
@@ -818,7 +832,16 @@ jobs:
           elif [ "$EVENT" != schedule ]; then
             echo "not a schedule run: no check"
           elif [ "$SERVER" = https://github.com ]; then
-            echo "the github.com mirror has no bigdisk runner: no check"
+            # CUSTOMIZE (go-xkms, #2240): scheduled main runs share the bigdisk-docker
+            # pool with main's push runs on github.com too, so count them there with
+            # the job token (actions: read) through the GitHub REST API; never AGENT_TOKEN.
+            RUNS_API=$GH_RUNS_API RUN_STATES="requested queued pending waiting in_progress"
+            if [ -n "$JOB_TOKEN" ] && runs "$JOB_TOKEN"; then
+              echo "read with the job token"
+            else
+              verdict=unreadable
+              echo "::error::the GitHub Actions API gave no count (job token: ${CODE:-no job token}), so every bigdisk job skips and CI Gate fails"
+            fi
           elif [ -n "$JOB_TOKEN" ] && runs "$JOB_TOKEN"; then
             echo "read with the job token"
           elif job="${CODE:-no job token}"; [ -n "$BOT" ] && runs "$BOT"; then
@@ -926,7 +949,9 @@ jobs:
   # GO_BUILD_TAGS reaches every target as a make variable, so the tag set is
   # still written once. build, test and lint run with no network, on the
   # image's module cache; security and deps-check get one (IN_IMAGE_NETWORK=
-  # bridge) for the vulnerability databases and the module proxy.
+  # bridge) for the vulnerability databases and the module proxy. v1.42
+  # (ruling 742 (1)): security, deps-check and trivy image run in scans.yml,
+  # so no ci.yml stage needs the network for an advisory or a version lookup.
   #
   # v1.23: lint, assert-build-tags, build and coverage are the PR tier and run
   # on every event. security and trivy image are full tier only
@@ -995,6 +1020,11 @@ jobs:
       # cannot read fails the step. The Dockerfile's FROM is ${GO_IMAGE}, with
       # no default on purpose, so the base is the pinned GO_IMAGE; it is
       # Debian, has no apk and reads `none`.
+      # Ruling 887: on a forge release or bigdisk runner, the LAN addresses are
+      # masked before ci-registry.sh publish builds and prints.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
       - name: Read the Alpine package index
         run: |
           APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")
@@ -1061,8 +1091,11 @@ jobs:
   # <<< CUSTOMIZE
 
   image:
-    name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    name: Devcontainer image [lint, gosec, build, test]
+    # CUSTOMIZE (go-xkms, #2240): schedule and workflow_dispatch runs on main
+    # also use the bigdisk-docker pool, not hosted-runner hours; fork PRs stay hosted.
+    # github.com has the bigdisk-docker pool (push run 43481870662 ran Integration on it); the preflight schedule guard counts main's active push runs there too, so a scheduled run defers to them.
+    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     # v1.30: only on the guard's `run` (not `refused`, not `proven`). It keeps
@@ -1096,6 +1129,11 @@ jobs:
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
 
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
@@ -1119,32 +1157,16 @@ jobs:
       # >>> CUSTOMIZE (go-xkms, ruling 169)
       # The images come from ci-images: main's by digest, pulled and held
       # until Tear down, or, when main has not published this content, built
-      # on this runner with no push and held by image ID. The integration
-      # image is needed by the full tier's scan alone.
+      # on this runner with no push and held by image ID. v1.42 (ruling 742
+      # (1)): the integration image was needed by the full tier's trivy image
+      # scan alone, which moved to scans.yml, so this job no longer takes it
+      # (nor reads the Alpine package index its tag hashes).
       - name: Take the toolchain image
         env:
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
-
-      # v1.29: the Alpine package index checksum, which a locally built
-      # integration image's tag hashes (as in ci-images).
-      - name: Read the Alpine package index
-        if: ${{ env.CI_FULL_TIER == 'true' }}
-        run: |
-          APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")
-          export APK_BASE_IMAGES
-          sum=$(scripts/apk-index-sum.sh)
-          echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
-
-      - name: Take the integration image
-        if: ${{ env.CI_FULL_TIER == 'true' }}
-        env:
-          IT_REF: ${{ needs.ci-images.outputs.it_ref }}
-          CI_REGISTRY_USER: ${{ github.actor }}
-          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use it "$IT_REF" >> "$GITHUB_ENV"
       # <<< CUSTOMIZE
 
       # v1.22: bound this repo's cache volumes on the host before the stages
@@ -1186,10 +1208,11 @@ jobs:
       # <<< CUSTOMIZE
 
       # v1.30 (fix 5): gosec on the PR tier, through the developers' target,
-      # with no network. On the full tier make security runs it below, so it
-      # runs once per event.
-      - name: make gosec (PR tier)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER != 'true' && needs.preflight.outputs.docs_only != 'true' }}
+      # with no network. v1.42 (ruling 742 (1)): make security left this job,
+      # so gosec runs here on every event but a docs-only PR. It reads only
+      # the tree, so the gate stays hermetic.
+      - name: make gosec
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make gosec GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
       # v1.26.1 (Company Agent m1128 (9)): a docs-only PR skips make coverage, so
@@ -1210,6 +1233,7 @@ jobs:
       # CUSTOMIZE: nested modules (sdk/go, xkey) and variants (FIPS) are built
       # by `make build` itself, never by an extra step here.
       - name: make build
+        id: build
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
         # >>> CUSTOMIZE (go-xkms)
         # build-xkey-local runs `npm ci` against the npm registry.
@@ -1225,7 +1249,8 @@ jobs:
       # Tags matter here too: without them tag-gated packages are neither
       # tested nor counted. The integration stage is its own job below.
       - name: make coverage (unit tests and the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
+        # CUSTOMIZE (go-xkms, #2240): coverage does not run after a failed make build.
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' && steps.build.outcome != 'failure' }}
         # >>> CUSTOMIZE (go-xkms)
         # test-web runs `npm ci` against the npm registry.
         env:
@@ -1233,77 +1258,18 @@ jobs:
         # <<< CUSTOMIZE
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
 
-      # make security: gosec, govulncheck, go mod verify (devops.md §8), with
-      # trivy fs per the phase (§8a). The target owns gosec's flags and its
-      # memory bounds (GOMEMLIMIT, GOMAXPROCS, -concurrency; v1.6 to v1.8) and
-      # reports a kill by signal as a kill, not a finding. Nothing is uploaded
-      # to code scanning (m601 (d): CI runs on Gitea).
-      - name: make security
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make security GO_BUILD_TAGS='$GO_BUILD_TAGS'"
-
-      # Fails when a library, first-party or third-party, is behind its latest
-      # release without devops.md §9's documented reason (ci-standard.md §1).
-      # v1.28: a lint-class gate of seconds on the PR tier, every event, a
-      # docs-only PR included (ruling 219(3)); it was full tier only from v1.23.
-      - name: make deps-check
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" make deps-check
-
-      # The integration image is gated before any push to either registry
-      # (devops.md §8): --ignore-unfixed (v1.19) and --skip-dirs /opt/go/mod
-      # (v1.20). trivy fs and make security never take --ignore-unfixed.
-      # A PR builds no image for a registry, so the scan is full tier (v1.23).
-      - name: trivy image (integration image)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: |
-          docker save -o it-image.tar "$IT_IMAGE"
-          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
-            trivy image --input it-image.tar --ignore-unfixed --skip-dirs /opt/go/mod --severity CRITICAL,HIGH --exit-code 1
-      # >>> CUSTOMIZE (go-xkms)
-      # The CLI image (Dockerfile.cli) ships to users, so it is gated like the
-      # integration image. Its build needs the forge credentials as the
-      # gomodauth secret; the step removes the file, the image and the tar
-      # itself and keeps the scan's exit code.
-      - name: trivy image (CLI image)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.CI_FULL_TIER == 'true' }}
-        env:
-          IN_IMAGE_NETWORK: bridge
-        run: |
-          CLI_IMAGE="go-xkms-ci-cli:$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth-cli.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth-cli.env"; fi
-            done )
-          rc=0
-          DOCKER_BUILDKIT=1 docker buildx build --load \
-            --secret id=gomodauth,src="$RUNNER_TEMP/gomodauth-cli.env" \
-            --build-arg VERSION=dev --build-arg COMMIT="$GITHUB_SHA" \
-            -t "$CLI_IMAGE" -f Dockerfile.cli . || rc=$?
-          rm -f "$RUNNER_TEMP/gomodauth-cli.env"
-          if [ "$rc" -eq 0 ]; then
-            docker save -o cli-image.tar "$CLI_IMAGE" || rc=$?
-          fi
-          if [ "$rc" -eq 0 ]; then
-            scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
-              trivy image --input cli-image.tar --ignore-unfixed --severity CRITICAL,HIGH --exit-code 1 || rc=$?
-          fi
-          rm -f cli-image.tar
-          docker image rm -f "$CLI_IMAGE" >/dev/null 2>&1 || true
-          exit "$rc"
-      # <<< CUSTOMIZE
+      # v1.42 (ruling 742 (1)): `make security` (gosec, govulncheck, go mod
+      # verify, trivy fs), `make deps-check` and the trivy image scans of the
+      # integration image and of the CLI image (CUSTOMIZE, go-xkms) left this
+      # job. Each reads a module proxy or an advisory database that changes
+      # with no change to the tree. scans.yml runs them on a schedule and on
+      # dispatch on main and opens or updates ONE issue on a finding; gosec
+      # runs above on every event.
 
       - name: Tear down
         if: always()
         run: |
-          rm -f it-image.tar
-          scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" "${IT_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+          scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and
@@ -1339,6 +1305,7 @@ jobs:
       contents: read
       packages: read
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       # v1.22: the cache volumes' trust class (as in the image job).
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
@@ -1360,6 +1327,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       # A source check on the runner's shell: no make recipe runs here.
       - name: Does the Makefile define lint-gates?
@@ -1411,9 +1383,10 @@ jobs:
 
       # The bigdisk pool: the same target, natively. Go from setup-go at
       # GO_VERSION; the gate tools the toolchain image carries, at its pins
-      # (scripts/tool-pins.sh GOLANGCI_VERSION, ACTIONLINT_VERSION), from
-      # proxy.golang.org; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the
-      # image sets them, so make runs in place and never shells out to Docker.
+      # (scripts/tool-pins.sh GOLANGCI_VERSION, ACTIONLINT_VERSION), through the
+      # pool's GOPROXY, the LAN proxy first (ruling 862); GOTOOLCHAIN=local
+      # and XKMS_NATIVE_BUILD=1 as the image sets them, so make runs in place
+      # and never shells out to Docker.
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
         with:
@@ -1423,9 +1396,9 @@ jobs:
       - name: Install the gate tools at the toolchain image's pins
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
         run: |
+          scripts/ci-go-integrity.sh
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -1435,7 +1408,9 @@ jobs:
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
-        run: make lint-gates GO_BUILD_TAGS="$GO_BUILD_TAGS"
+        run: |
+          scripts/ci-go-integrity.sh
+          make lint-gates GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'
@@ -1546,7 +1521,11 @@ jobs:
     # only on the schedule guard's `run`.
     needs: preflight   # v1.34
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    # CUSTOMIZE (go-xkms, #2240, ruling 740): schedule and workflow_dispatch runs
+    # on main also use the bigdisk-docker pool. Ruling 740 (11-16) supersedes
+    # InfoSec W-1 / DS-8215 for schedule and workflow_dispatch on main only;
+    # pushes, same-repo PRs and fork PRs keep their routing.
+    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1571,6 +1550,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
@@ -1614,6 +1598,12 @@ jobs:
       - name: make integration-test (integration image)
         run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
+      # Ruling 888: no image this run built carries a private address in its
+      # history or config, whatever the suite's result.
+      - name: Check the images carry no private address
+        if: ${{ !cancelled() && runner.environment != 'github-hosted' }}
+        run: make check-run-images IT_IMAGE="$IT_IMAGE"
+
       - name: Tear down
         if: always()
         run: |
@@ -1646,7 +1636,11 @@ jobs:
     needs: preflight   # v1.34
     # v1.30: a dispatch off main is refused, so soak runs only on `run`.
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.preflight.outputs.verdict == 'run' }}
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    # CUSTOMIZE (go-xkms, #2240, ruling 740): schedule and workflow_dispatch runs
+    # on main also use the bigdisk-docker pool. Ruling 740 (11-16) supersedes
+    # InfoSec W-1 / DS-8215 for schedule and workflow_dispatch on main only;
+    # pushes, same-repo PRs and fork PRs keep their routing.
+    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 210      # CUSTOMIZE (go-xkms): SOAK_MINUTES (30) plus one 180-minute iteration
     env:
       SOAK_MINUTES: 30        # CUSTOMIZE
@@ -1669,6 +1663,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
@@ -1727,6 +1726,21 @@ jobs:
             fi
           done
           echo "soak: $i iterations in $SOAK_MINUTES min, all green"
+
+      # Ruling 888: no image any iteration built carries a private address in
+      # its history or config, whatever the soak's result. Each iteration ran
+      # under IT_PROJECT=<project>-<i>, whose tag selects its images.
+      - name: Check the images carry no private address
+        if: ${{ !cancelled() && runner.environment != 'github-hosted' }}
+        run: |
+          [ -s "$RUNNER_TEMP/soak-project" ] || exit 0
+          last=$(cat "$RUNNER_TEMP/soak-project")
+          rc=0
+          for i in $(seq 1 "${last##*-}"); do
+            make check-run-images IT_IMAGE="$IT_IMAGE" IT_PROJECT="$IT_PROJECT-$i" || rc=1
+          done
+          exit "$rc"
+
       # >>> CUSTOMIZE (go-xkms)
       # Every iteration's <project>-<suite> stacks and its devcontainer
       # project, which `down -p "$p"` does not match (see the integration
@@ -1804,6 +1818,7 @@ jobs:
       contents: read
       packages: read
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -1819,6 +1834,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -1855,7 +1875,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
         with:
@@ -1865,10 +1886,10 @@ jobs:
       - name: Static analysis (native)
         if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           make vet-integration
           make secure-analyzer-selftest
@@ -1910,6 +1931,7 @@ jobs:
       packages: read
     timeout-minutes: 35   # #1587: ~2x 17m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -1925,6 +1947,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -1994,7 +2021,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2004,10 +2032,10 @@ jobs:
       - name: Backend-tagged binaries and the acme-client GUI (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           sh .github/scripts/disk-usage.sh "before the build"
           cache=$(go env GOCACHE)
@@ -2054,6 +2082,7 @@ jobs:
       packages: read
     timeout-minutes: 20   # #1587: ~2x 9.4m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2069,6 +2098,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -2105,7 +2139,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2115,10 +2150,10 @@ jobs:
       - name: Build sdk/go, web/desktop and xkey (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           (cd sdk/go && go build ./...)
           (cd web/desktop && go build ./...)
@@ -2158,6 +2193,7 @@ jobs:
       packages: read
     timeout-minutes: 110  # #1587: ~2x 55m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2173,6 +2209,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -2232,7 +2273,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2242,10 +2284,10 @@ jobs:
       - name: sdk/go and web/desktop tests (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           (cd sdk/go && go test -race -timeout 60m -v -tags codec_json ./...)
           (cd web/desktop && go test -race -timeout 60m -v ./...)
@@ -2253,10 +2295,10 @@ jobs:
       - name: xkey tests (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           cd xkey
           go test -race -timeout 60m -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
@@ -2305,6 +2347,7 @@ jobs:
       matrix:
         tags: ["codec_json", "raft codec_json"]
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2320,6 +2363,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -2358,7 +2406,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2368,11 +2417,11 @@ jobs:
       - name: Build, vet and test (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
           TAGS: ${{ matrix.tags }}
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           go build -tags "$TAGS" ./...
           go vet -tags "$TAGS" ./pkg/server/... ./pkg/config/...
@@ -2405,6 +2454,7 @@ jobs:
       packages: read
     timeout-minutes: 145  # #1587: ~2x 71m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2420,6 +2470,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -2476,7 +2531,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2486,10 +2542,10 @@ jobs:
       - name: Race detector, all backends including FROST (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           set -e
           mkdir -p /tmp/softhsm2/tokens
           printf "directories.tokendir = /tmp/softhsm2/tokens\nobjectstore.backend = file\nlog.level = INFO\n" > /tmp/softhsm2.conf
@@ -2522,6 +2578,7 @@ jobs:
       packages: read
     timeout-minutes: 25   # #1587: ~2x 10.5m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2537,6 +2594,11 @@ jobs:
             echo "::add-mask::$val"
             case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
           done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -2567,7 +2629,8 @@ jobs:
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
       # Go from setup-go at GO_VERSION; the runner image carries the toolchain
       # image's packages; GOTOOLCHAIN=local and XKMS_NATIVE_BUILD=1 as the image
-      # sets them; modules from proxy.golang.org (the image's are prefetched).
+      # sets them; modules from the pool's GOPROXY, the LAN proxy first (ruling
+      # 862: a step's own public GOPROXY sent them over the WAN).
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
@@ -2577,10 +2640,10 @@ jobs:
       - name: pkg/tpm2 on the simulator (native)
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          GOPROXY: https://proxy.golang.org
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
         run: |
+          scripts/ci-go-integrity.sh
           make test-tpm2-simulator
 
       - name: Tear down

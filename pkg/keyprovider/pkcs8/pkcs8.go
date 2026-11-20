@@ -783,6 +783,8 @@ func (b *PKCS8Backend) encodeKey(privateKey crypto.PrivateKey, password types.Pa
 	if password != nil {
 		passwordBytes = password.Bytes()
 	}
+	// Bytes returns a copy this function owns; wipe it on every return.
+	defer func() { clear(passwordBytes) }()
 
 	// Encode the key
 	if len(passwordBytes) > 0 {
@@ -820,6 +822,8 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 	if password != nil {
 		passwordBytes = password.Bytes()
 	}
+	// Bytes returns a copy this function owns; wipe it on every return.
+	defer func() { clear(passwordBytes) }()
 
 	var privateKey crypto.PrivateKey
 
@@ -827,7 +831,15 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 	if len(passwordBytes) > 0 {
 		privateKey, err = pkcs8.ParsePKCS8PrivateKey(keyData, passwordBytes)
 		if err != nil {
-			return nil, &errs.Detail{Err: ErrKeyDecodingFailed, Detail: fmt.Sprintf("%v", err)}
+			// A key written as plaintext before its password was configured
+			// still loads where plaintext keys are allowed. A fail-closed
+			// backend never falls back: a plaintext key in its storage is
+			// refused, not trusted.
+			plain, plainErr := x509.ParsePKCS8PrivateKey(keyData)
+			if !b.allowPlaintext || plainErr != nil {
+				return nil, &errs.Detail{Err: ErrKeyDecodingFailed, Detail: fmt.Sprintf("%v", err)}
+			}
+			privateKey = plain
 		}
 	} else {
 		// Try unencrypted PKCS#8

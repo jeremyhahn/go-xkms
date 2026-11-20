@@ -186,6 +186,7 @@ Tenant barrier status is the same `BarrierStatus` shape as the system barrier.
 | operation needs an unsealed tenant barrier | 409 | `FailedPrecondition` | JSON-RPC internal error |
 | tenant not found — **including cross-tenant access** | 404 | `NotFound` | `JSONRPCCodeNotFound` |
 | tenant-scoped caller changes a plan, even its own | 404 | `NotFound` | `JSONRPCCodeNotFound` |
+| `status` filter on the tenant list (go-qrdb carries no tenant status yet; `xkms.ErrTenantStatusUnsupported`) | 400 | — | — |
 | tenancy not configured | route absent (404) | `Unimplemented` | JSON-RPC internal error |
 
 Cross-tenant access is deliberately **not distinguishable from not-found** on
@@ -217,7 +218,9 @@ uses; see [`../key-management/api.md`](../key-management/api.md)
 query parameters and the **400** an invalid one gets. With no `page`
 parameter every tenant is returned whole, which is the common case given
 deployments' typically small tenant counts. Tenant-scoped list operations
-elsewhere page normally too.
+elsewhere page normally too. A `status` query parameter is refused with
+**400** (`*xkms.TenantUnsupportedFieldError`) until go-qrdb carries a tenant
+status.
 
 ## Versioning and deprecation
 
