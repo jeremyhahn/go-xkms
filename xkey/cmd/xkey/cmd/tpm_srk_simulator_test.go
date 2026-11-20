@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -277,6 +278,51 @@ func TestTPMSRKEnrollFreshOpenIdempotent(t *testing.T) {
 	openFreshSRKTPM(t, sim)
 	_, err = runSRKEnroll(t, "", "--pin-file", writeSRKPINFile(t, "test-wrong-pin"))
 	require.ErrorIs(t, err, ErrTPMSRKEnrolledOtherPIN)
+
+	require.NoError(t, createSRKCredential(t, sim, pinFile, ""))
+}
+
+// TestTPMSRKEnrollConcurrentSerializesOnLock covers Codex review 6000753682
+// (P1): two first enrolments race on one storage directory. The second blocks
+// on the enrolment lock while the first enrols PIN A, then re-probes the SRK
+// under the lock and refuses with ErrTPMSRKEnrolledOtherPIN; PIN A survives.
+func TestTPMSRKEnrollConcurrentSerializesOnLock(t *testing.T) {
+	sim := installTPMForSRK(t)
+	pinFile := writeSRKPINFile(t, testSRKUserPIN)
+	otherPINFile := writeSRKPINFile(t, "test-other-pin")
+
+	unlock, err := lockSRKEnrollment()
+	require.NoError(t, err)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			unlock()
+		}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, runErr := runSRKEnroll(t, "", "--pin-file", otherPINFile)
+		done <- runErr
+	}()
+
+	select {
+	case runErr := <-done:
+		t.Fatalf("enrolment ran while another process held the enrolment lock: %v", runErr)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// The lock holder enrols first, as the winning process would.
+	require.NoError(t, enrollPlatformSRKLocked(io.Discard, testSRKUserPIN, ""))
+	unlock()
+	released = true
+
+	select {
+	case runErr := <-done:
+		require.ErrorIs(t, runErr, ErrTPMSRKEnrolledOtherPIN)
+	case <-time.After(2 * time.Minute):
+		t.Fatal("the second enrolment never acquired the released lock")
+	}
 
 	require.NoError(t, createSRKCredential(t, sim, pinFile, ""))
 }
