@@ -137,32 +137,36 @@
 
 <PageHeader title="Seal" subtitle="Seal and unseal data with a backend key or a TPM policy" />
 
-{#if loading}
-  <div class="flex justify-center py-12"><span class="loading loading-spinner loading-lg"></span></div>
-{:else if error}
-  <Alert kind="error"><span>{error}</span></Alert>
-{:else}
-  <div class="grid gap-6 lg:grid-cols-2">
+<!-- Unseal needs no backend list (the backend comes from the pasted
+     result), so only the Seal form waits on, or reports, the list: a
+     caller without backends:list can still unseal (Codex P1 on #2200). -->
+<div class="grid gap-6 lg:grid-cols-2">
     <section class="space-y-3" aria-labelledby="seal-title">
       <h2 id="seal-title" class="text-lg font-semibold">Seal</h2>
-      <select class="select select-bordered w-full" aria-label="Backend" bind:value={backend} onchange={checkCapability}>
-        <option value="" disabled>Choose a backend</option>
-        {#each backends as b (b.id)}
-          <option value={b.id}>{b.id}</option>
-        {/each}
-      </select>
-      {#if canSeal === false}
-        <p class="text-sm text-error">Backend {backend} cannot seal.</p>
-      {/if}
-      <input class="input input-bordered w-full" aria-label="Key ID" placeholder="Key ID (optional)" bind:value={keyId} />
-      <textarea class="textarea textarea-bordered w-full" aria-label="Text to seal" placeholder="Text to seal" rows="3" bind:value={text}></textarea>
-      <input class="input input-bordered w-full" aria-label="AAD" placeholder="AAD (optional)" bind:value={aad} />
-      <input class="input input-bordered w-full" type="password" aria-label="Password" placeholder="Password (optional)" bind:value={password} />
-      <input class="input input-bordered w-full" aria-label="TPM policy" placeholder="TPM policy (optional)" bind:value={tpmPolicy} />
-      <button class="btn btn-primary" onclick={doSeal} disabled={busy || backend === "" || text === "" || canSeal !== true}>Seal</button>
-      {#if result}
-        <pre class="bg-base-200 rounded p-3 text-xs overflow-x-auto" aria-label="Seal result">{JSON.stringify(result, null, 2)}</pre>
-        <button class="btn btn-ghost btn-sm" onclick={copyResult}>Copy</button>
+      {#if loading}
+        <div class="flex justify-center py-12"><span class="loading loading-spinner loading-lg"></span></div>
+      {:else if error}
+        <Alert kind="error"><span>{error}</span></Alert>
+      {:else}
+        <select class="select select-bordered w-full" aria-label="Backend" bind:value={backend} onchange={checkCapability}>
+          <option value="" disabled>Choose a backend</option>
+          {#each backends as b (b.id)}
+            <option value={b.id}>{b.id}</option>
+          {/each}
+        </select>
+        {#if canSeal === false}
+          <p class="text-sm text-error">Backend {backend} cannot seal.</p>
+        {/if}
+        <input class="input input-bordered w-full" aria-label="Key ID" placeholder="Key ID (optional)" bind:value={keyId} />
+        <textarea class="textarea textarea-bordered w-full" aria-label="Text to seal" placeholder="Text to seal" rows="3" bind:value={text}></textarea>
+        <input class="input input-bordered w-full" aria-label="AAD" placeholder="AAD (optional)" bind:value={aad} />
+        <input class="input input-bordered w-full" type="password" aria-label="Password" placeholder="Password (optional)" bind:value={password} />
+        <input class="input input-bordered w-full" aria-label="TPM policy" placeholder="TPM policy (optional)" bind:value={tpmPolicy} />
+        <button class="btn btn-primary" onclick={doSeal} disabled={busy || backend === "" || text === "" || canSeal !== true}>Seal</button>
+        {#if result}
+          <pre class="bg-base-200 rounded p-3 text-xs overflow-x-auto" aria-label="Seal result">{JSON.stringify(result, null, 2)}</pre>
+          <button class="btn btn-ghost btn-sm" onclick={copyResult}>Copy</button>
+        {/if}
       {/if}
     </section>
 
@@ -177,5 +181,4 @@
         <pre class="bg-base-200 rounded p-3 text-sm whitespace-pre-wrap" aria-label="Plaintext">{plaintext}</pre>
       {/if}
     </section>
-  </div>
-{/if}
+</div>
