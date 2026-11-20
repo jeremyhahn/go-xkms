@@ -370,7 +370,7 @@ func (d *Decrypter) Decrypt(jweString string, privateKey interface{}) ([]byte, e
 	}
 
 	// Parse JWE with all supported algorithms
-	jwe, err := jose.ParseEncrypted(jweString, []jose.KeyAlgorithm{
+	jwe, err := jose.ParseEncryptedCompact(jweString, []jose.KeyAlgorithm{
 		jose.RSA_OAEP,
 		jose.RSA_OAEP_256,
 		jose.ECDH_ES,

@@ -1103,6 +1103,57 @@ func TestParseJWS_MissingURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "JWS url header does not match request URL")
 }
 
+// compactJWSRequest signs payload like createJWSRequest but sends the JWS in
+// compact serialization, which RFC 8555 section 6.2 does not allow.
+func compactJWSRequest(t *testing.T, service *RestService, key *TestKey, url string, useKID bool, accountID uint64) (*http.Request, []byte) {
+	t.Helper()
+	nonce, err := service.GetNonceService().Generate()
+	require.NoError(t, err)
+	opts := &jose.SignerOptions{
+		NonceSource:  &staticNonceSource{nonce: nonce},
+		ExtraHeaders: map[jose.HeaderKey]interface{}{"url": url},
+	}
+	if useKID {
+		opts.ExtraHeaders["kid"] = fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, accountID)
+	} else {
+		opts.EmbedJWK = true
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: key.PrivateKey}, opts)
+	require.NoError(t, err)
+	jws, err := signer.Sign([]byte(`{"test":"data"}`))
+	require.NoError(t, err)
+	compact, err := jws.CompactSerialize()
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, url, strings.NewReader(compact))
+	req.Header.Set("Content-Type", "application/jose+json")
+	return req, []byte(compact)
+}
+
+// TestParseSignedRequest_FlattenedJSONOnly pins RFC 8555 section 6.2: the ACME
+// handlers accept the flattened JSON serialization and reject a compact JWS.
+func TestParseSignedRequest_FlattenedJSONOnly(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+	key := generateTestKey(t)
+	url := service.baseRESTURI + "/acme/new-account"
+
+	_, _, err := service.parseJWS(createJWSRequest(t, service, key, url, map[string]interface{}{"test": "data"}, false, 0))
+	require.NoError(t, err, "flattened JSON JWS must be accepted")
+
+	req, _ := compactJWSRequest(t, service, key, url, false, 0)
+	_, _, err = service.parseJWS(req)
+	require.Error(t, err, "compact JWS must be rejected by parseJWS")
+
+	account := createTestAccount(t, service, key)
+	orderURL := service.baseRESTURI + "/acme/new-order"
+	req, body := compactJWSRequest(t, service, key, orderURL, true, account.ID)
+	_, _, err = service.parseKID(req.Context(), req)
+	require.Error(t, err, "compact JWS must be rejected by parseKID")
+
+	_, ok := peekJWSKeyID(body)
+	require.False(t, ok, "peekJWSKeyID must not read a kid from a compact JWS")
+}
+
 // Helper functions
 
 func setupTestLogger() *slog.Logger {
