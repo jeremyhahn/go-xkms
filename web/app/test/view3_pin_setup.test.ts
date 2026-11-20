@@ -149,7 +149,8 @@ describe("PinSetupView", () => {
   });
 
   it("reports a rejected user PIN with a lockout warning and clears the input", async () => {
-    verifyUser.mockRejectedValue(new ApiError(401, "invalid PIN"));
+    // The PIN handler's 401 body names qrdb's ErrPINInvalid (handlers_pin.go).
+    verifyUser.mockRejectedValue(new ApiError(401, "pin: invalid PIN"));
     render(PinSetupView);
 
     await fireEvent.click(screen.getByRole("radio", { name: "User" }));
@@ -164,10 +165,13 @@ describe("PinSetupView", () => {
     assertNoPinLeak();
   });
 
-  // Only an explicit invalid-PIN answer (401) is a verdict on the PIN; a
-  // lockout, an unavailable manager, a refusal or a network failure says
-  // nothing about it and must show its cause instead (Codex P1 on #2206).
+  // Only the PIN handler's invalid-PIN answer is a verdict on the PIN; a
+  // lockout, an unavailable manager, a refusal, a rejected session (a 401
+  // from AuthenticationMiddleware, before the PIN handler runs) or a network
+  // failure says nothing about it and must show its cause instead (Codex
+  // P1s on #2206).
   it.each([
+    ["a rejected session", new ApiError(401, "invalid or expired token"), "invalid or expired token"],
     ["a locked PIN", new ApiError(429, "PIN locked"), "PIN locked"],
     ["an unavailable PIN manager", new ApiError(503, "PIN manager not configured"), "PIN manager not configured"],
     ["a permission refusal", new ApiError(403, "forbidden"), "forbidden"],
