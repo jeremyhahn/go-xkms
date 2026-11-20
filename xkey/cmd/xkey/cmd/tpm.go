@@ -268,14 +268,16 @@ func configuredPlatformPCRs() xkms.TPMPCRSet {
 }
 
 // newConfiguredTPM2 opens the TPM with config through xkms.NewTPM2, over the
-// persistent key store newTPMParams opens. The TPM it returns closes that
-// store with itself; when NewTPM2 returns no TPM, the store is closed here.
-// Like NewTPM2, it may return a live TPM with ErrTPMNotInitialized.
+// persistent key store newTPMParams opens. The TPM owns that store
+// (TPMParams.StorageCloser): its Close closes the store too. When NewTPM2
+// returns no TPM, the store is closed here. Like NewTPM2, it may return a
+// live TPM with ErrTPMNotInitialized.
 func newConfiguredTPM2(config *xkms.TPMConfig) (xkms.TrustedPlatformModule, error) {
 	params, storage, err := newTPMParams(config)
 	if err != nil {
 		return nil, err
 	}
+	params.StorageCloser = storage
 	tpm, err := xkms.NewTPM2(params)
 	if tpm == nil {
 		if closeErr := storage.Close(); closeErr != nil {
@@ -283,20 +285,7 @@ func newConfiguredTPM2(config *xkms.TPMConfig) (xkms.TrustedPlatformModule, erro
 		}
 		return nil, err
 	}
-	return storageClosingTPM{TrustedPlatformModule: tpm, storage: storage}, err
-}
-
-// storageClosingTPM is a TPM that also closes the key store it was opened
-// over: TPM2.Close closes only the TPM transport, and the store's file
-// engine holds a lock-file descriptor until its factory is closed.
-type storageClosingTPM struct {
-	xkms.TrustedPlatformModule
-	storage tpmStorageCloser
-}
-
-// Close closes the TPM, then its key store, and joins their errors.
-func (t storageClosingTPM) Close() error {
-	return errors.Join(t.TrustedPlatformModule.Close(), t.storage.Close())
+	return tpm, err
 }
 
 // tpmStorageCloser is the part of the TPM key-store factory the TPM's owner
@@ -307,7 +296,8 @@ type tpmStorageCloser interface {
 
 // newTPMParams wraps config with the logger the `tpm` commands log through
 // and the persistent key store, whose closer it returns: the caller closes
-// it after the TPM (newConfiguredTPM2 does).
+// it after the TPM (newConfiguredTPM2 hands it to the TPM, whose Close
+// closes it).
 func newTPMParams(config *xkms.TPMConfig) (*xkms.TPMParams, tpmStorageCloser, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
