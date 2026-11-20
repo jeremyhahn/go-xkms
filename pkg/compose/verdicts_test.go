@@ -56,7 +56,11 @@ func TestBuild_VerdictsNeedTheDAOFactory(t *testing.T) {
 	assert.NotNil(t, full.Verdicts)
 }
 
-func TestWire_ServesStoredVerdictsWithoutEngine(t *testing.T) {
+// TestWire_ComposesReattestationEngine pins docs/SPEC.md:81: a composed
+// host serves stored verdicts AND re-attests on demand, so ReattestDevice
+// must reach an engine rather than answer ErrNotConfigured (Codex review
+// 5972482169 P1).
+func TestWire_ComposesReattestationEngine(t *testing.T) {
 	svc := hostdeps.NewService(t)
 	req := &transport.AttestationVerdictRequest{DeviceID: "dev-1"}
 
@@ -74,5 +78,6 @@ func TestWire_ServesStoredVerdictsWithoutEngine(t *testing.T) {
 	assert.Empty(t, resp.Verdicts)
 
 	_, err = svc.ReattestDevice(platformCtx(), req)
-	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
+	assert.NotErrorIs(t, err, xkms.ErrNotConfigured,
+		"a composed host must wire a re-attestation engine")
 }
