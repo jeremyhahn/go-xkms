@@ -16,7 +16,8 @@
 # stdout is only the path.
 #
 # Environment:
-#	SOFTHSM_CACHE         cache directory
+#	SOFTHSM_CACHE         cache directory; a relative path is taken from the
+#	                      working directory, and <cache>.lock serialises builds
 #	                      (default $HOME/.cache/go-xkms/softhsm-<pinned version>)
 #	SOFTHSM_BUILD_SCRIPT  build script (default scripts/build-softhsm.sh)
 #
@@ -55,16 +56,36 @@ if util=$(command -v softhsm2-util 2>/dev/null); then
 	fi
 fi
 
+# Resolve the cache to an absolute path first: the build script changes
+# directory before it installs into DESTDIR, and Go test processes load the
+# printed module from their own package directories.
+mkdir -p "$(dirname "${cache}")"
+cache="$(cd "$(dirname "${cache}")" && pwd)/$(basename "${cache}")"
 lib="${cache}/usr/lib/softhsm/libsofthsm2.so"
 cached_util="${cache}/usr/bin/softhsm2-util"
-if [ -f "${lib}" ] && [ -x "${cached_util}" ] && [ "$("${cached_util}" --version 2>/dev/null || true)" = "${pinned}" ]; then
+
+# cached -- the cache holds a complete build of the pinned release.
+cached() {
+	[ -f "${lib}" ] && [ -x "${cached_util}" ] && [ "$("${cached_util}" --version 2>/dev/null || true)" = "${pinned}" ]
+}
+
+if cached; then
+	echo "${lib}"
+	exit 0
+fi
+
+# Hold a lock beside the cache across the recheck, build and publication, so
+# invocations sharing a cache build it once and never remove one another's
+# published cache; a cache published while this one waited is reused.
+exec 9>"${cache}.lock"
+flock 9
+if cached; then
 	echo "${lib}"
 	exit 0
 fi
 
 # Build into a sibling directory and rename it into place, so a failed or
 # interrupted build never leaves a cache that looks complete.
-mkdir -p "$(dirname "${cache}")"
 tmp=$(mktemp -d "${cache}.tmp.XXXXXX")
 trap 'rm -rf "${tmp}"' EXIT INT TERM
 echo "softhsm-lib.sh: SoftHSM ${MIN_VERSION}+ not installed; building ${pinned} into ${cache}" >&2
