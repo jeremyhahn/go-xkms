@@ -155,8 +155,10 @@
       const id = keyId.trim();
       const at = target();
       const res = await setKeyPolicy(id, backend.trim(), policy);
-      version = res.policy_version;
-      if (at === target()) loadedFor = at;
+      if (at === target()) {
+        version = res.policy_version;
+        loadedFor = at;
+      }
       showToast("success", `Access policy for "${id}" saved (version ${res.policy_version}).`);
     } catch (e) {
       error = message(e);
@@ -172,9 +174,14 @@
     error = null;
     formError = null;
     try {
+      const at = target();
       await deleteKeyPolicy(id, backend.trim());
-      fill(undefined);
-      version = "default";
+      // The user may have selected another key while the delete ran: only
+      // reset the form when it still holds the key the delete was for.
+      if (at === target()) {
+        fill(undefined);
+        version = "default";
+      }
       showToast("success", `Access policy for "${id}" removed.`);
     } catch (e) {
       error = message(e);

@@ -4,7 +4,7 @@
   import Alert from "$components/Alert.svelte";
   import { showToast } from "$stores/toast.svelte.ts";
   import { isB64, textToB64 } from "$lib/b64.ts";
-  import { parseCiphertextInput, rewrap, type RewrapRequest, type RewrapResponse } from "$lib/keyRewrap.ts";
+  import { parseCiphertextInput, parsePositiveInt, rewrap, type RewrapRequest, type RewrapResponse } from "$lib/keyRewrap.ts";
 
   let backend = $state("");
   let keyId = $state("");
@@ -12,6 +12,13 @@
   let nonce = $state("");
   let tag = $state("");
   let additionalData = $state("");
+  // Source decryption options (DecryptRequest); empty ones are omitted.
+  let mode = $state("");
+  let padding = $state("");
+  let hash = $state("");
+  let label = $state("");
+  let tagSize = $state("");
+  let keyVersion = $state("");
   let targetBackend = $state("");
   let targetKeyId = $state("");
 
@@ -34,6 +41,16 @@
       source[name] = v;
     }
     if (additionalData !== "") source.additional_data = textToB64(additionalData);
+    for (const [name, value] of [["mode", mode], ["padding", padding], ["hash", hash]] as const) {
+      if (value.trim() !== "") source[name] = value.trim();
+    }
+    if (label !== "") source.label = textToB64(label);
+    const size = parsePositiveInt(tagSize);
+    if (size === null) return "The tag size must be a positive integer.";
+    if (size !== undefined) source.tag_size = size;
+    const ver = parsePositiveInt(keyVersion);
+    if (ver === null) return "The key version must be a positive integer.";
+    if (ver !== undefined) source.key_version = ver;
     const req: RewrapRequest = { source };
     if (targetKeyId.trim() !== "") req.target_key_id = targetKeyId.trim();
     if (targetBackend.trim() !== "") req.target_backend = targetBackend.trim();
@@ -84,6 +101,14 @@
       <input class="input input-bordered w-full font-mono" aria-label="Nonce" placeholder="Nonce (base64, optional)" bind:value={nonce} />
       <input class="input input-bordered w-full font-mono" aria-label="Tag" placeholder="Tag (base64, optional)" bind:value={tag} />
       <input class="input input-bordered w-full" aria-label="Additional data" placeholder="Additional data (text, optional)" bind:value={additionalData} />
+      <div class="grid gap-2 sm:grid-cols-2">
+        <input class="input input-bordered w-full" aria-label="Mode" placeholder="Cipher mode, e.g. cbc-pad (optional)" bind:value={mode} />
+        <input class="input input-bordered w-full" aria-label="Key version" placeholder="Key version (optional)" inputmode="numeric" bind:value={keyVersion} />
+        <input class="input input-bordered w-full" aria-label="Tag size" placeholder="Tag size in bytes (optional)" inputmode="numeric" bind:value={tagSize} />
+        <input class="input input-bordered w-full" aria-label="Padding" placeholder="RSA padding: pkcs1v15 or oaep (optional)" bind:value={padding} />
+        <input class="input input-bordered w-full" aria-label="OAEP hash" placeholder="OAEP hash, e.g. SHA-256 (optional)" bind:value={hash} />
+        <input class="input input-bordered w-full" aria-label="OAEP label" placeholder="OAEP label (text, optional)" bind:value={label} />
+      </div>
       {#if inputError}<p class="text-error text-sm" role="alert">{inputError}</p>{/if}
     </div>
   </section>

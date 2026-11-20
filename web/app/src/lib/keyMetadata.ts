@@ -100,10 +100,12 @@ export function diffMetadata(before: EditableMetadata, after: EditableMetadata):
   if (after.description !== "" && after.description !== before.description) changes.description = after.description;
   const tags: Record<string, string> = {};
   for (const [k, v] of Object.entries(after.tags)) {
-    if (before.tags[k] !== v) tags[k] = v;
+    if (!Object.hasOwn(before.tags, k) || before.tags[k] !== v) tags[k] = v;
   }
   if (Object.keys(tags).length > 0) changes.tags = tags;
-  const removed = Object.keys(before.tags).filter((k) => !(k in after.tags));
+  // Own-property checks: a tag named "constructor" or "toString" must not
+  // match the inherited Object.prototype member.
+  const removed = Object.keys(before.tags).filter((k) => !Object.hasOwn(after.tags, k));
   if (removed.length > 0) changes.remove_tags = removed;
   return changes;
 }

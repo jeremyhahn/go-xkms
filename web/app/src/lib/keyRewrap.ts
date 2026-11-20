@@ -29,6 +29,16 @@ export interface RewrapSource {
   gcm_nonce_mode?: string;
   iv?: string;
   mode?: string;
+  /** RSA decryption scheme: "pkcs1v15" (default) or "oaep". */
+  padding?: string;
+  /** OAEP digest, e.g. "SHA-256"; used only with padding "oaep". */
+  hash?: string;
+  /** OAEP label, base64; used only with padding "oaep". */
+  label?: string;
+  /** AEAD tag length in bytes the ciphertext was produced with. */
+  tag_size?: number;
+  /** The key version to decrypt with; omitted tries every enabled version. */
+  key_version?: number;
 }
 
 /**
@@ -56,7 +66,14 @@ export interface RewrapResponse {
 }
 
 /** The source byte fields a ciphertext box can carry. */
-export type CiphertextFields = Pick<RewrapSource, "ciphertext" | "nonce" | "tag" | "iv" | "gcm_nonce_mode">;
+export type CiphertextFields = Pick<RewrapSource, "ciphertext" | "nonce" | "tag" | "iv" | "gcm_nonce_mode" | "key_version">;
+
+/** Parses an optional positive integer form field: undefined when empty, null when invalid. */
+export function parsePositiveInt(text: string): number | undefined | null {
+  const t = text.trim();
+  if (t === "") return undefined;
+  return /^[1-9][0-9]*$/.test(t) && Number.isSafeInteger(Number(t)) ? Number(t) : null;
+}
 
 export function rewrap(req: RewrapRequest): Promise<RewrapResponse> {
   return getSDKClient().http.request<RewrapResponse>("POST", "/api/v1/keys/rewrap", { body: req });
@@ -92,6 +109,10 @@ export function parseCiphertextInput(text: string): CiphertextFields | string {
   }
   if (typeof rec.gcm_nonce_mode === "string" && rec.gcm_nonce_mode !== "") {
     out.gcm_nonce_mode = rec.gcm_nonce_mode;
+  }
+  // The version the ciphertext was produced under selects the decrypt key version.
+  if (typeof rec.key_version === "number" && Number.isSafeInteger(rec.key_version) && rec.key_version > 0) {
+    out.key_version = rec.key_version;
   }
   return out;
 }
