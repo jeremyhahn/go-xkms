@@ -112,7 +112,9 @@ func withProvisionedSimulatorTPMForECCert(t *testing.T) *provisionedSimulator {
 
 	config, err := newTPMConfig("", true, ekCertHandleEC)
 	require.NoError(t, err)
-	tpm, err := xkms.NewTPM2(newTPMParams(config))
+	params, err := newTPMParams(config)
+	require.NoError(t, err)
+	tpm, err := xkms.NewTPM2(params)
 	require.ErrorIs(t, err, xkms.ErrTPMNotInitialized)
 	return shareProvisionedSimulatorTPM(t, tpm, ekCertHandleEC)
 }

@@ -98,7 +98,8 @@ func openFreshSRKTPM(t *testing.T, sim *provisionedSimulator) {
 	t.Helper()
 	config, err := newTPMConfig("", tpmCfg.useSimulator, ekCertHandleRSA)
 	require.NoError(t, err)
-	params := newTPMParams(config)
+	params, err := newTPMParams(config)
+	require.NoError(t, err)
 	params.Transport = sendOnlyTransport{tpm: sim.tpm.Transport()}
 	fresh, err := xkms.NewTPM2(params)
 	if err != nil && !errors.Is(err, xkms.ErrTPMNotInitialized) {
@@ -169,16 +170,22 @@ func createSRKCredential(t *testing.T, sim *provisionedSimulator, pinFile, stdin
 	return nil
 }
 
-// srkPolicyRecords lists the platform policy records (".policy") the TPM
-// key store under the data dir holds.
+// srkPolicyRecords lists the records the persistent TPM key store under
+// <dataDir>/tpm holds (its file names are content hashes; dot files are the
+// store's own format and lock files). `tpm srk enroll` creates no key in it,
+// so a record there is the Platform SRK's enrolment policy record.
 func srkPolicyRecords(t *testing.T) []string {
 	t.Helper()
 	var records []string
-	err := filepath.WalkDir(os.Getenv("XKEY_DATA_DIR"), func(path string, d fs.DirEntry, err error) error {
+	root := filepath.Join(os.Getenv("XKEY_DATA_DIR"), "tpm")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if errors.Is(err, fs.ErrNotExist) && path == root {
+			return fs.SkipDir
+		}
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && strings.HasSuffix(path, ".policy") {
+		if d.Type().IsRegular() && !strings.HasPrefix(d.Name(), ".") {
 			records = append(records, path)
 		}
 		return nil
@@ -211,6 +218,11 @@ func TestTPMSRKEnrollPINStdin(t *testing.T) {
 	out, err := runSRKEnroll(t, testSRKUserPIN+"\n", "--pin-stdin")
 	require.NoError(t, err)
 	assert.NotContains(t, out, testSRKUserPIN)
+
+	// After a PCR change only the PIN branch of the SRK policy is open, so
+	// the key is created only if --pin-stdin's PIN became the SRK auth.
+	update := sha256.Sum256([]byte("kernel-update"))
+	require.NoError(t, sim.tpm.ExtendPCR(11, "sha256", update[:]))
 
 	require.NoError(t, createSRKCredential(t, sim, "", testSRKUserPIN+"\n"))
 }

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -168,7 +169,11 @@ func openConfiguredTPMForEKRestore(ekCertHandle uint32) (xkms.TrustedPlatformMod
 		return nil, err
 	}
 
-	tpm, err := xkms.NewTPM2(newTPMParams(config))
+	params, err := newTPMParams(config)
+	if err != nil {
+		return nil, err
+	}
+	tpm, err := xkms.NewTPM2(params)
 	if err != nil {
 		if errors.Is(err, xkms.ErrTPMNotInitialized) {
 			return tpm, ErrTPMNotInitialized
@@ -190,7 +195,11 @@ func openProvisionedTPMForDevice(device string) (xkms.TrustedPlatformModule, err
 		return nil, err
 	}
 
-	tpm, err := xkms.NewTPM2(newTPMParams(config))
+	params, err := newTPMParams(config)
+	if err != nil {
+		return nil, err
+	}
+	tpm, err := xkms.NewTPM2(params)
 	if err != nil {
 		if errors.Is(err, xkms.ErrTPMNotInitialized) {
 			err = ErrTPMNotInitialized
@@ -267,14 +276,37 @@ func configuredPlatformPCRs() xkms.TPMPCRSet {
 }
 
 // newTPMParams wraps config with the logger the `tpm` commands log through.
-func newTPMParams(config *xkms.TPMConfig) *xkms.TPMParams {
+func newTPMParams(config *xkms.TPMConfig) (*xkms.TPMParams, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
-	return &xkms.TPMParams{
-		Config: config,
-		Logger: logger,
+	backend, err := tpmKeyBackend(logger)
+	if err != nil {
+		return nil, err
 	}
+	return &xkms.TPMParams{
+		Backend: backend,
+		Config:  config,
+		Logger:  logger,
+	}, nil
+}
+
+// tpmKeyBackend is this host's persistent TPM key store, under
+// <dataDir>/tpm: the store localtpm.OpenDevice gives the TPM. The TPM
+// records a platform-policy primary's enrolment PCR digest there (the
+// Platform SRK's, at `tpm srk enroll`), and every later process reads it
+// back to open sessions after a PCR change; with no backend nothing is
+// recorded and child keys fail TPM_RC_POLICY_FAIL after a kernel update.
+func tpmKeyBackend(logger *slog.Logger) (xkms.TPMKeyBackend, error) {
+	dataDir, err := resolveDataDir("")
+	if err != nil {
+		return nil, err
+	}
+	factory, err := xkms.NewTPMStorageFactory(logger, filepath.Join(dataDir, "tpm"))
+	if err != nil {
+		return nil, err
+	}
+	return factory.KeyBackend(), nil
 }
 
 // discardTPM closes a TPM an open helper is about to return err for and
@@ -320,7 +352,11 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 	applyPCROverrides(config, pcrBank, goldenPCRs, platformPCRs)
 
 	// For provisioning, we accept ErrNotInitialized since we're about to initialize
-	tpm, err := xkms.NewTPM2(newTPMParams(config))
+	params, err := newTPMParams(config)
+	if err != nil {
+		return nil, err
+	}
+	tpm, err := xkms.NewTPM2(params)
 	if err != nil && !errors.Is(err, xkms.ErrTPMNotInitialized) {
 		return nil, discardTPM(tpm, err)
 	}

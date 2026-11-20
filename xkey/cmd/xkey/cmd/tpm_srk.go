@@ -102,11 +102,9 @@ func runTPMSRKEnroll(cmd *cobra.Command, _ []string) error {
 	defer func() { _ = tpm.Close() }()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	memStorage, err := xkms.NewMemoryBackend()
-	if err != nil {
-		return fmt.Errorf("%w: key storage: %w", ErrTPMSRKEnrollFailed, err)
-	}
-	keyBackend, err := xkms.NewTPMBackendBlobStore(logger, memStorage)
+	// The platform key store keeps its keys in the same persistent TPM key
+	// store the TPM records the Platform SRK's enrolment policy in.
+	keyBackend, err := tpmKeyBackend(logger)
 	if err != nil {
 		return fmt.Errorf("%w: key storage: %w", ErrTPMSRKEnrollFailed, err)
 	}
