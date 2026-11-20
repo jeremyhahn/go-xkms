@@ -34,6 +34,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -1619,4 +1621,82 @@ func TestIssueEKCertificate_RefusesMalformedManufacturer(t *testing.T) {
 	if cert != nil {
 		t.Error("no certificate may be issued for a malformed manufacturer code")
 	}
+}
+
+// requireRecordedTenant asserts that CertificateTenant reports want for the
+// certificate encoded in der.
+func requireRecordedTenant(t *testing.T, ca *CA, der []byte, want string) {
+	t.Helper()
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	got, err := ca.CertificateTenant(context.Background(), cert.SerialNumber)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+// TestIssueEKAndAKCertificate_RecordTheIssuingTenant proves that EK and AK
+// certificates signed by this CA record the request's tenant, so a tenant can
+// revoke and list its own device certificates (go-xkms#1764).
+func TestIssueEKAndAKCertificate_RecordTheIssuingTenant(t *testing.T) {
+	ca := setupTestCA(t)
+	pubDER, err := x509.MarshalPKIXPublicKey(generateTestECDSAKey(t).Public())
+	require.NoError(t, err)
+
+	ekDER, err := ca.IssueEKCertificateRaw(context.Background(), "ek-tenant", "Test Org", pubDER, "tenant-a")
+	require.NoError(t, err)
+	requireRecordedTenant(t, ca, ekDER, "tenant-a")
+
+	akDER, err := ca.IssueAKCertificateRaw(context.Background(), "ak-tenant", "Test Org", pubDER, "tenant-b")
+	require.NoError(t, err)
+	requireRecordedTenant(t, ca, akDER, "tenant-b")
+}
+
+// TestSignTCGCSRIDevID_RecordsTheIssuingTenant proves that the IAK and IDevID
+// certificates of one enrollment both record the request's tenant.
+func TestSignTCGCSRIDevID_RecordsTheIssuingTenant(t *testing.T) {
+	ca := setupTestCA(t)
+	device := buildSoftwareTCGCSR(t, softwareCSRModel, softwareCSRSerial)
+	// trustSoftwareCSREKCertificate replaces the whole configuration; keep
+	// this CA's issuing configuration and take only the EK trust anchors.
+	config := ca.config
+	trustSoftwareCSREKCertificate(t, ca, device)
+	config.TCGConfig = ca.config.TCGConfig
+	ca.config = config
+
+	request := &CertificateRequest{
+		TenantID: "tenant-a",
+		Subject:  Subject{CommonName: softwareCSRModel + "-" + softwareCSRSerial},
+	}
+	iakDER, idevidDER, err := ca.SignTCGCSRIDevID(context.Background(), device.csr, request)
+	require.NoError(t, err)
+	requireRecordedTenant(t, ca, iakDER, "tenant-a")
+	requireRecordedTenant(t, ca, idevidDER, "tenant-a")
+}
+
+// TestIssueEKCertificate_CallerSignedRecordsNoTenant proves that a
+// certificate signed with a caller-supplied Signer belongs to another issuer
+// and so carries no tenant record: CertificateTenant reports the system scope.
+func TestIssueEKCertificate_CallerSignedRecordsNoTenant(t *testing.T) {
+	ca := setupTestCA(t)
+	signerKey := generateTestECDSAKey(t)
+	request := createTestCertRequest(t, signerKey, createSelfSignedCACert(t, signerKey))
+
+	cert, err := ca.IssueEKCertificate(context.Background(), request, generateTestECDSAKey(t).Public())
+	require.NoError(t, err)
+	requireRecordedTenant(t, ca, cert.Raw, "")
+}
+
+// TestIssueEKCertificate_TenantRecordFailureFailsIssuance proves that a
+// failure persisting the tenant record fails the issuance, as in signCSR,
+// rather than handing out a certificate no tenant can address.
+func TestIssueEKCertificate_TenantRecordFailureFailsIssuance(t *testing.T) {
+	ca := setupTestCA(t)
+	injected := errors.New("injected tenant-record put failure")
+	ca.revocationStore = &revokeFailingRevocationStore{Backend: ca.revocationStore, failPut: injected}
+	pubDER, err := x509.MarshalPKIXPublicKey(generateTestECDSAKey(t).Public())
+	require.NoError(t, err)
+
+	certDER, err := ca.IssueEKCertificateRaw(context.Background(), "ek-record-fail", "Test Org", pubDER, "tenant-a")
+	require.ErrorIs(t, err, injected)
+	assert.Nil(t, certDER)
 }
