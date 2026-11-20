@@ -150,8 +150,10 @@ type configRootImporter interface {
 	Add(ctx context.Context, cert *x509.Certificate, opts *truststore.AddCertificateOptions) error
 }
 
-// configRootSource tags the store entries imported from the config file.
-const configRootSource = "config"
+// configRootSource tags the store entries imported from the config file. A
+// removed config root leaves a tombstone in the store, so this import does
+// not bring it back (DAOStore.Delete).
+const configRootSource = truststore.SourceConfig
 
 // importConfigRoots adds each config-file root to the store under purpose,
 // keyed by fingerprint. A root the store already holds keeps its entry and

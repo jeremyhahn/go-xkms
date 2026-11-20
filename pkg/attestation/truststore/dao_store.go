@@ -94,12 +94,18 @@ func (s *DAOStore) Add(ctx context.Context, cert *x509.Certificate, opts *AddCer
 	}
 
 	fp := Fingerprint(cert)
-	exists, err := s.exists(ctx, s.computeID(fp))
-	if err != nil {
+	existing, err := s.dao.Get(ctx, s.computeID(fp))
+	switch {
+	case err == nil:
+		// A removed config root's tombstone refuses the config import
+		// (the removal persists) but not an operator's add.
+		if !isTombstone(existing) || source == SourceConfig {
+			return ErrCertificateExists
+		}
+		// Still a config root: removing it again leaves a tombstone.
+		source = SourceConfig
+	case !qrdbsdk.IsDAONotFound(err):
 		return err
-	}
-	if exists {
-		return ErrCertificateExists
 	}
 
 	block := &pem.Block{
@@ -125,18 +131,6 @@ func (s *DAOStore) Add(ctx context.Context, cert *x509.Certificate, opts *AddCer
 	entity.SetEntityID(s.computeID(fp))
 
 	return s.dao.Save(ctx, entity)
-}
-
-// exists reports whether the store holds the entity id.
-func (s *DAOStore) exists(ctx context.Context, id uint64) (bool, error) {
-	_, err := s.dao.Get(ctx, id)
-	if err == nil {
-		return true, nil
-	}
-	if qrdbsdk.IsDAONotFound(err) {
-		return false, nil
-	}
-	return false, err
 }
 
 // ImportPEM adds every certificate of a PEM bundle with opts (see Add),
@@ -178,6 +172,9 @@ func (s *DAOStore) SetPurpose(ctx context.Context, fingerprint string, purpose C
 		}
 		return nil, err
 	}
+	if isTombstone(entity) {
+		return nil, ErrCertificateNotFound
+	}
 	entity.Purpose = string(purpose)
 	if err := s.dao.Save(ctx, entity); err != nil {
 		return nil, err
@@ -215,6 +212,9 @@ func (s *DAOStore) Get(ctx context.Context, fingerprint string) (*x509.Certifica
 			return nil, nil, ErrCertificateNotFound
 		}
 		return nil, nil, err
+	}
+	if isTombstone(entity) {
+		return nil, nil, ErrCertificateNotFound
 	}
 
 	cert, parseErr := parsePEMBytes([]byte(entity.PEM))
@@ -307,12 +307,23 @@ func (s *DAOStore) Delete(ctx context.Context, fingerprint string) error {
 
 	entityID := s.computeID(fingerprint)
 
-	_, err := s.dao.Get(ctx, entityID)
+	entity, err := s.dao.Get(ctx, entityID)
 	if err != nil {
 		if qrdbsdk.IsDAONotFound(err) {
 			return ErrCertificateNotFound
 		}
 		return err
+	}
+	if isTombstone(entity) {
+		return ErrCertificateNotFound
+	}
+	if entity.Source == SourceConfig {
+		// Keep a tombstone so the next config import does not bring the
+		// removed root back (docs/SPEC.md trust-roots: the store is
+		// authoritative).
+		tomb := &TrustCertEntity{Fingerprint: entity.Fingerprint, Source: SourceConfigRemoved, AddedAt: time.Now().UTC()}
+		tomb.SetEntityID(entityID)
+		return s.dao.Save(ctx, tomb)
 	}
 
 	stub := &TrustCertEntity{}
@@ -325,7 +336,31 @@ func (s *DAOStore) Page(ctx context.Context, query qrdbsdk.PageQuery) (qrdbsdk.P
 	if s.closed.Load() {
 		return qrdbsdk.PageResult[*TrustCertEntity]{}, ErrStoreClosed
 	}
-	return s.dao.Page(ctx, query)
+	result, err := s.dao.Page(ctx, query)
+	if err != nil {
+		return result, err
+	}
+	live := result.Entities[:0]
+	for _, entity := range result.Entities {
+		if !isTombstone(entity) {
+			live = append(live, entity)
+		}
+	}
+	result.Entities = live
+	return result, nil
+}
+
+// SourceConfig marks a root imported from the attestation config file.
+const SourceConfig = "config"
+
+// SourceConfigRemoved marks the tombstone a removed config root leaves: no
+// purpose and no PEM, so no read returns it and nothing anchors on it; it
+// only stops the config import from adding the root again.
+const SourceConfigRemoved = "config-removed"
+
+// isTombstone reports whether entity is a removed config root's tombstone.
+func isTombstone(entity *TrustCertEntity) bool {
+	return entity != nil && entity.Source == SourceConfigRemoved
 }
 
 // Close marks the store as closed. The underlying DAO does not need
