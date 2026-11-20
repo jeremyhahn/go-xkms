@@ -115,6 +115,19 @@ type CommandDefinition struct {
 	// Unsupported, when set, is why no cell can run the command in the
 	// integration environment (e.g. no DNS zone serving TLSA records).
 	Unsupported string
+	// SetupSteps names the commands (by Name) that set this command up. They
+	// come earlier in AllCommands, so one ordered pass runs them first; a
+	// RequiresSetup command with SetupSteps runs in the matrix and is skipped,
+	// naming the step, only when a step did not pass in the same run.
+	SetupSteps []string
+
+	// SkipWhenOutputContains lists failure output that means the cell cannot
+	// run on this backend (e.g. no attestation); the cell is then skipped with
+	// SkipWhenReason instead of failing.
+	SkipWhenOutputContains []string
+
+	// SkipWhenReason is the skip reason logged for SkipWhenOutputContains.
+	SkipWhenReason string
 
 	// ExpectedOutputContains are strings that should be in successful output
 	ExpectedOutputContains []string
@@ -123,6 +136,14 @@ type CommandDefinition struct {
 	// every transport (e.g. the integration stack cannot serve it).
 	Skip string
 }
+
+// MatrixWorkDir is the placeholder an argument value uses for the per-run
+// working directory the runner creates; it holds MatrixKeyMaterialFile.
+const MatrixWorkDir = "{{workdir}}"
+
+// MatrixKeyMaterialFile is the raw AES-256 key material file the runner
+// writes into MatrixWorkDir before the run, for key wrap and import.
+const MatrixKeyMaterialFile = "key-material.bin"
 
 // ArgDefinition defines a command argument
 type ArgDefinition struct {
@@ -356,6 +377,65 @@ func KeyCommands() []CommandDefinition {
 				{Flag: "hash", Value: "SHA-256", Description: "Hash algorithm"},
 			},
 		},
+		// Lifecycle verbs (#2321 slice f) run between key-verify and
+		// key-delete, so test-key still exists and the version verbs see the
+		// versions key-rotate made.
+		keyServerCommand("key-rotate", "Rotate a key to a new version", []string{"key", "rotate"},
+			[]string{"key-generate-rsa"}, keyIDArg("test-key")),
+		keyServerCommand("key-versions", "List the versions of a key", []string{"key", "versions"},
+			[]string{"key-rotate"}, keyIDArg("test-key")),
+		keyServerCommand("key-version-disable", "Disable key version 1", []string{"key", "version", "disable"},
+			[]string{"key-rotate"}, keyIDArg("test-key"), versionArg("1")),
+		keyServerCommand("key-version-enable", "Re-enable key version 1", []string{"key", "version", "enable"},
+			[]string{"key-version-disable"}, keyIDArg("test-key"), versionArg("1")),
+		keyServerCommand("key-version-disable-all", "Disable every version of a key", []string{"key", "version", "disable-all"},
+			[]string{"key-rotate"}, keyIDArg("test-key")),
+		keyServerCommand("key-version-enable-all", "Re-enable every version of a key", []string{"key", "version", "enable-all"},
+			[]string{"key-version-disable-all"}, keyIDArg("test-key")),
+		keyServerCommand("key-version-retire", "Retire key version 1", []string{"key", "version", "retire"},
+			[]string{"key-version-enable-all"}, keyIDArg("test-key"), versionArg("1")),
+		{
+			Name:           "key-rotate-all",
+			Category:       CategoryKey,
+			Command:        []string{"key", "rotate-all"},
+			Description:    "Rotate every key of the caller's tenant",
+			RequiresServer: true,
+			RequiresSetup:  true,
+			SetupSteps:     []string{"key-generate-rsa"},
+		},
+		// Import path: the runner writes raw AES-256 material into the work
+		// dir; get-import-params fetches the wrapping key, wrap seals the
+		// material under it, unwrap opens it again and import stores it.
+		keyServerCommand("key-get-import-params", "Fetch the wrapping key for an AES-256 import", []string{"key", "get-import-params"},
+			nil, keyIDArg("test-import-key"),
+			ArgDefinition{Flag: "key-algorithm", Value: "aes", Description: "Key algorithm"},
+			ArgDefinition{Flag: "key-size", Value: "256", Description: "Key size"},
+			ArgDefinition{Flag: "output", Value: MatrixWorkDir + "/import-params.json", Description: "Params output"}),
+		keyServerCommand("key-wrap", "Wrap key material under the import parameters", []string{"key", "wrap"},
+			[]string{"key-get-import-params"},
+			fileArg(MatrixWorkDir+"/"+MatrixKeyMaterialFile, "Key material file"),
+			fileArg(MatrixWorkDir+"/import-params.json", "Params file"),
+			fileArg(MatrixWorkDir+"/wrapped.json", "Wrapped output file")),
+		keyServerCommand("key-unwrap", "Unwrap the wrapped key material", []string{"key", "unwrap"},
+			[]string{"key-wrap"},
+			fileArg(MatrixWorkDir+"/wrapped.json", "Wrapped input file"),
+			fileArg(MatrixWorkDir+"/import-params.json", "Params file"),
+			fileArg(MatrixWorkDir+"/unwrapped.bin", "Unwrapped output file")),
+		keyServerCommand("key-import", "Import the wrapped AES-256 key", []string{"key", "import"},
+			[]string{"key-wrap"}, keyIDArg("test-import-key"),
+			fileArg(MatrixWorkDir+"/wrapped.json", "Wrapped input file"),
+			ArgDefinition{Flag: "key-type", Value: "aes", Description: "Key type"},
+			ArgDefinition{Flag: "aes-key-size", Value: "256", Description: "AES key size"}),
+		keyServerCommand("key-export", "Export an exportable key wrapped for transport", []string{"key", "export"},
+			[]string{"key-generate-symmetric-exportable"}, keyIDArg("test-symmetric-exportable"),
+			fileArg(MatrixWorkDir+"/exported.json", "Export output file")),
+		func() CommandDefinition {
+			def := keyServerCommand("key-attest", "Attest a key", []string{"key", "attest"},
+				[]string{"key-generate-rsa"}, keyIDArg("test-key"))
+			def.SkipWhenOutputContains = []string{"not supported", "unsupported", "does not support", "Unimplemented", "not implemented"}
+			def.SkipWhenReason = "backend has no key attestation (tpm2/pkcs11 backends attest)"
+			return def
+		}(),
 		{
 			Name:            "key-delete",
 			Category:        CategoryKey,
@@ -369,6 +449,40 @@ func KeyCommands() []CommandDefinition {
 			},
 		},
 	}
+}
+
+// keyServerCommand declares a key command that runs against the server's
+// backend and key dir. A non-empty setup marks it RequiresSetup with those
+// SetupSteps, which run earlier in the same pass.
+func keyServerCommand(name, description string, command, setup []string, args ...ArgDefinition) CommandDefinition {
+	return CommandDefinition{
+		Name:            name,
+		Category:        CategoryKey,
+		Command:         command,
+		Description:     description,
+		RequiresBackend: true,
+		RequiresKeyDir:  true,
+		RequiresServer:  true,
+		RequiresSetup:   len(setup) > 0,
+		SetupSteps:      setup,
+		RequiredArgs:    args,
+	}
+}
+
+// keyIDArg is the positional key ID; the runner maps it to the run's unique ID.
+func keyIDArg(id string) ArgDefinition {
+	return ArgDefinition{Value: id, Description: "Key ID", IsPositional: true}
+}
+
+// versionArg is the positional key version number.
+func versionArg(version string) ArgDefinition {
+	return ArgDefinition{Value: version, Description: "Version", IsPositional: true}
+}
+
+// fileArg is a positional file path; description must be unique per command
+// because the runner overrides positional values by description.
+func fileArg(path, description string) ArgDefinition {
+	return ArgDefinition{Value: path, Description: description, IsPositional: true}
 }
 
 // CertCommands returns certificate-related commands
@@ -669,6 +783,7 @@ func SealingCommands() []CommandDefinition {
 // creates, so they carry RequiresSetup like the sealing workflow's
 // unseal/can-seal above.
 func PolicyCommands() []CommandDefinition {
+	create := []string{"tpm-policy-create"}
 	return []CommandDefinition{
 		{
 			Name:           "tpm-policy-create",
@@ -685,74 +800,76 @@ func PolicyCommands() []CommandDefinition {
 			},
 			ExpectedOutputContains: []string{"it-tpm-policy"},
 		},
+		expectPolicyName(policyCommand("tpm-policy-list", "List TPM policies", []string{"tpm", "policy", "list"}, create, false)),
+		expectPolicyName(policyCommand("tpm-policy-get", "Show a TPM policy", []string{"tpm", "policy", "get"}, create, true)),
+		policyCommand("tpm-policy-verify", "Compare a TPM policy with the live PCR values",
+			[]string{"tpm", "policy", "verify"}, create, true),
+		func() CommandDefinition {
+			def := policyCommand("tpm-policy-describe", "Set a TPM policy's description",
+				[]string{"tpm", "policy", "describe"}, create, true)
+			def.RequiredArgs = append(def.RequiredArgs,
+				ArgDefinition{Value: "integration matrix policy", Description: "Description text", IsPositional: true})
+			return def
+		}(),
+		expectPolicyName(policyCommand("tpm-policy-objects", "List the objects bound to a TPM policy",
+			[]string{"tpm", "policy", "objects"}, create, true)),
+		policyCommand("tpm-policy-revoke", "Withdraw a TPM policy's approval",
+			[]string{"tpm", "policy", "revoke"}, create, true),
+		// update after revoke: it re-captures the PCRs and re-approves.
+		expectPolicyName(policyCommand("tpm-policy-update", "Re-capture a TPM policy and re-approve it",
+			[]string{"tpm", "policy", "update"}, []string{"tpm-policy-revoke"}, true)),
+		policyCommand("tpm-policy-auto-unseal", "Mark a TPM policy as the auto-unseal barrier",
+			[]string{"tpm", "policy", "auto-unseal"}, create, true),
+		func() CommandDefinition {
+			def := policyCommand("tpm-policy-auto-unseal-disable", "Clear the auto-unseal mark",
+				[]string{"tpm", "policy", "auto-unseal"}, []string{"tpm-policy-auto-unseal"}, true)
+			def.OptionalArgs = []ArgDefinition{{Flag: "disable", Description: "Clear the mark", IsBoolean: true}}
+			return def
+		}(),
 		{
-			Name:                   "tpm-policy-list",
-			Category:               CategoryPolicy,
-			Command:                []string{"tpm", "policy", "list"},
-			Description:            "List TPM policies",
-			RequiresServer:         true,
-			RequiresSetup:          true,
-			ExpectedOutputContains: []string{"it-tpm-policy"},
+			// The ECDSA key survives KeyCommands (key-delete removes test-key).
+			Name:            "key-policy",
+			Category:        CategoryPolicy,
+			Command:         []string{"key", "policy"},
+			Description:     "Show the TPM policy a key is bound to",
+			RequiresBackend: true,
+			RequiresKeyDir:  true,
+			RequiresServer:  true,
+			RequiresSetup:   true,
+			SetupSteps:      []string{"key-generate-ecdsa"},
+			RequiredArgs:    []ArgDefinition{keyIDArg("test-ecdsa-key")},
 		},
-		{
-			Name:           "tpm-policy-get",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "get"},
-			Description:    "Show a TPM policy",
-			RequiresServer: true,
-			RequiresSetup:  true,
-			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
-			},
-			ExpectedOutputContains: []string{"it-tpm-policy"},
-		},
-		{
-			Name:           "tpm-policy-verify",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "verify"},
-			Description:    "Compare a TPM policy with the live PCR values",
-			RequiresServer: true,
-			RequiresSetup:  true,
-			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
-			},
-		},
-		{
-			Name:           "tpm-policy-update",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "update"},
-			Description:    "Re-capture a TPM policy and re-approve it",
-			RequiresServer: true,
-			RequiresSetup:  true,
-			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
-			},
-			ExpectedOutputContains: []string{"it-tpm-policy"},
-		},
-		{
-			Name:           "tpm-policy-objects",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "objects"},
-			Description:    "List the objects bound to a TPM policy",
-			RequiresServer: true,
-			RequiresSetup:  true,
-			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
-			},
-			ExpectedOutputContains: []string{"it-tpm-policy"},
-		},
-		{
-			Name:           "tpm-policy-delete",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "delete"},
-			Description:    "Delete a TPM policy",
-			RequiresServer: true,
-			RequiresSetup:  true,
-			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
-			},
-		},
+		policyCommand("tpm-authority-rotate", "Rotate the TPM policy authority key",
+			[]string{"tpm", "authority", "rotate"}, create, false),
+		// delete last: every verb above needs the policy.
+		policyCommand("tpm-policy-delete", "Delete a TPM policy", []string{"tpm", "policy", "delete"}, create, true),
 	}
+}
+
+// policyCommand declares a TPM policy command that runs after its setup
+// steps; named commands take the policy name as their positional argument.
+func policyCommand(name, description string, command, setup []string, named bool) CommandDefinition {
+	def := CommandDefinition{
+		Name:           name,
+		Category:       CategoryPolicy,
+		Command:        command,
+		Description:    description,
+		RequiresServer: true,
+		RequiresSetup:  true,
+		SetupSteps:     setup,
+	}
+	if named {
+		def.RequiredArgs = []ArgDefinition{
+			{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
+		}
+	}
+	return def
+}
+
+// expectPolicyName makes def pass only when its output names the policy.
+func expectPolicyName(def CommandDefinition) CommandDefinition {
+	def.ExpectedOutputContains = []string{"it-tpm-policy"}
+	return def
 }
 
 // acmeNoAdminAPI is the skip reason of every acme cell: the integration
