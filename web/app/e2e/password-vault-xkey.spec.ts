@@ -69,8 +69,13 @@ test.describe('Password vault key factors via the xKey extension', () => {
     });
     await emulateExtension(page, { unlocked: true });
     await page.goto('/#/passwords');
+    // The passwords view mounts once the session's capabilities are known
+    // (RouteGate), so wait for it to show the locked vault before the mock
+    // reports the vault unlocked.
+    const unlock = page.getByRole('button', { name: 'Unlock with xKey' });
+    await expect(unlock).toBeVisible();
     state.unlocked = true;
-    await page.getByRole('button', { name: 'Unlock with xKey' }).click();
+    await unlock.click();
 
     await expect(page.getByText('Vault unlocked by xKey.')).toBeVisible();
     const requests = await page.evaluate(() => (window as unknown as { __xkeyRequests: { type: string; fingerprints?: string[] }[] }).__xkeyRequests);
