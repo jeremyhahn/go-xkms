@@ -16,6 +16,8 @@
 // between REST, gRPC, QUIC, MCP, and Unix socket interfaces.
 package commands
 
+import "slices"
+
 // CommandCategory represents a category of commands
 type CommandCategory string
 
@@ -28,6 +30,7 @@ const (
 	CategoryFIDO2    CommandCategory = "fido2"
 	CategoryUser     CommandCategory = "user"
 	CategoryAdmin    CommandCategory = "admin"
+	CategoryACME     CommandCategory = "acme"
 	CategoryVersion  CommandCategory = "version"
 	CategoryBackends CommandCategory = "backends"
 	CategorySealing  CommandCategory = "sealing"
@@ -76,6 +79,10 @@ type CommandDefinition struct {
 
 	// ExpectedOutputContains are strings that should be in successful output
 	ExpectedOutputContains []string
+
+	// Skip, when non-empty, is the reason the matrix skips this command on
+	// every transport (e.g. the integration stack cannot serve it).
+	Skip string
 }
 
 // ArgDefinition defines a command argument
@@ -101,17 +108,20 @@ type ArgDefinition struct {
 
 // AllCommands returns all CLI commands for testing
 func AllCommands() []CommandDefinition {
-	return append(append(append(append(append(append(append(append(append(
+	return slices.Concat(
 		BackendCommands(),
-		KeyCommands()...),
-		CertCommands()...),
-		TLSCommands()...),
-		FrostCommands()...),
-		FIDO2Commands()...),
-		SealingCommands()...),
-		CACommands()...),
-		PolicyCommands()...),
-		VersionCommands()...)
+		KeyCommands(),
+		CertCommands(),
+		TLSCommands(),
+		FrostCommands(),
+		FIDO2Commands(),
+		SealingCommands(),
+		CACommands(),
+		PolicyCommands(),
+		ACMECommands(),
+		AdminCommands(),
+		VersionCommands(),
+	)
 }
 
 // VersionCommands returns version-related commands
@@ -687,6 +697,114 @@ func PolicyCommands() []CommandDefinition {
 			RequiredArgs: []ArgDefinition{
 				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
 			},
+		},
+	}
+}
+
+// acmeNoAdminAPI is the skip reason of every acme cell: the integration
+// compose stack runs no ACME server, so --acme-server has nothing to reach.
+const acmeNoAdminAPI = "integration stack serves no ACME admin API (--acme-server); needs an ACME service in docker-compose.yml (#2321)"
+
+// adminFirstUser is the skip reason of the mutating admin cells: the stack's
+// adaptive auth is anonymous only until the first user exists, so admin
+// create would lock every other suite out of the shared server.
+const adminFirstUser = "admin create provisions the first user, which ends the stack's anonymous adaptive auth for every other suite; needs a dedicated stack with an mTLS operator cert (#2321)"
+
+// acmeCmd builds one acme matrix entry, skipped with acmeNoAdminAPI.
+func acmeCmd(name string, parts []string, desc string, positional ...ArgDefinition) CommandDefinition {
+	return CommandDefinition{
+		Name:           name,
+		Category:       CategoryACME,
+		Command:        parts,
+		Description:    desc,
+		RequiresServer: true,
+		RequiredArgs: append([]ArgDefinition{
+			{Flag: "acme-server", Value: "https://acme:8443", Description: "ACME admin API address"},
+		}, positional...),
+		Skip: acmeNoAdminAPI,
+	}
+}
+
+// ACMECommands returns the acme family (cmd/xkmsctl/acme*.go). The chained
+// cells (eab create -> get -> list -> delete, account/cert get on a seeded
+// order) are RequiresSetup.
+func ACMECommands() []CommandDefinition {
+	account := ArgDefinition{Flag: "", Value: "it-acme-account", Description: "ACME account ID", IsPositional: true}
+	serial := ArgDefinition{Flag: "", Value: "it-acme-serial", Description: "Certificate serial", IsPositional: true}
+	eab := ArgDefinition{Flag: "", Value: "it-acme-eab", Description: "EAB key ID", IsPositional: true}
+
+	cmds := []CommandDefinition{
+		acmeCmd("acme-account-list", []string{"acme", "account", "list"}, "List ACME accounts"),
+		acmeCmd("acme-account-get", []string{"acme", "account", "get"}, "Show an ACME account", account),
+		acmeCmd("acme-account-disable", []string{"acme", "account", "disable"}, "Disable an ACME account", account),
+		acmeCmd("acme-cert-list", []string{"acme", "cert", "list"}, "List ACME-issued certificates"),
+		acmeCmd("acme-cert-get", []string{"acme", "cert", "get"}, "Show an ACME-issued certificate", serial),
+		acmeCmd("acme-cert-revoke", []string{"acme", "cert", "revoke"}, "Revoke an ACME-issued certificate", serial),
+		acmeCmd("acme-eab-create", []string{"acme", "eab", "create"}, "Create an EAB key"),
+		acmeCmd("acme-eab-get", []string{"acme", "eab", "get"}, "Show an EAB key", eab),
+		acmeCmd("acme-eab-list", []string{"acme", "eab", "list"}, "List EAB keys"),
+		acmeCmd("acme-eab-delete", []string{"acme", "eab", "delete"}, "Delete an EAB key", eab),
+		acmeCmd("acme-status", []string{"acme", "status"}, "Show ACME server status"),
+		acmeCmd("acme-stats", []string{"acme", "stats"}, "Show ACME server statistics"),
+	}
+	for i := range cmds {
+		switch cmds[i].Name {
+		case "acme-account-get", "acme-account-disable", "acme-cert-get", "acme-cert-revoke",
+			"acme-eab-get", "acme-eab-list", "acme-eab-delete":
+			cmds[i].RequiresSetup = true
+		}
+	}
+
+	gui := acmeCmd("acme-gui", []string{"acme", "gui"}, "Open the ACME admin GUI")
+	gui.BuildTags = []string{"gui"}
+	gui.Skip = "acme gui opens a Wails desktop window (-tags gui); no display in the integration stack"
+	return append(cmds, gui)
+}
+
+// AdminCommands returns the admin family (cmd/xkmsctl/admin.go). list and
+// status are read-only and run on every transport; the create -> get ->
+// disable -> enable -> delete chain is skipped with adminFirstUser.
+func AdminCommands() []CommandDefinition {
+	user := ArgDefinition{Flag: "", Value: "it-admin", Description: "Admin username", IsPositional: true}
+	chained := func(name, verb, desc string) CommandDefinition {
+		return CommandDefinition{
+			Name:           name,
+			Category:       CategoryAdmin,
+			Command:        []string{"admin", verb},
+			Description:    desc,
+			RequiresServer: true,
+			RequiresSetup:  true,
+			RequiredArgs:   []ArgDefinition{user},
+			Skip:           adminFirstUser,
+		}
+	}
+
+	create := chained("admin-create", "create", "Create an mTLS administrator")
+	create.RequiresSetup = false
+	create.RequiredArgs = append(create.RequiredArgs,
+		ArgDefinition{Flag: "method", Value: "mtls", Description: "Enrollment method"},
+		ArgDefinition{Flag: "cert-file", Value: "/etc/xkms/certs/operator.crt", Description: "Operator certificate"},
+	)
+
+	return []CommandDefinition{
+		create,
+		chained("admin-get", "get", "Show an administrator"),
+		chained("admin-disable", "disable", "Disable an administrator"),
+		chained("admin-enable", "enable", "Enable an administrator"),
+		chained("admin-delete", "delete", "Delete an administrator"),
+		{
+			Name:           "admin-list",
+			Category:       CategoryAdmin,
+			Command:        []string{"admin", "list"},
+			Description:    "List administrator accounts",
+			RequiresServer: true,
+		},
+		{
+			Name:           "admin-status",
+			Category:       CategoryAdmin,
+			Command:        []string{"admin", "status"},
+			Description:    "Show administrator status",
+			RequiresServer: true,
 		},
 	}
 }
