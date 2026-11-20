@@ -272,16 +272,20 @@ approval and the exported APIs) were not started.
 - Claim fencing (P1, `tenant_ca_keyprovider.go:353`): a claim value is
   `<time> <owner token>`. Right before generating, the owner runs
   `fenceTenantLoginCAClaim`: it checks the claim still names its token and
-  renews the lease by compare-and-swap, so a renewal and a takeover never
-  both win. A pass that lost its claim adopts the new owner's key instead of
-  generating; the generate runs under a context that ends with the renewed
-  lease. Test `TestTenantCAKeyFactory_FencesDelayedProvisioner` (two backend
-  instances over shared stores; the first pass stalls past the lease after
-  claiming while the second takes over and provisions).
-- Limit: a pass stalled for longer than the lease between the renewal and
-  the backend's generate call, on a backend that ignores the context, can
-  still generate beside the new owner. Closing that needs the key backend to
-  refuse a fenced generate, which PKCS#11 has no primitive for.
+  marks it `<time> <owner token> generating` by compare-and-swap, so the mark
+  and a takeover never both win. A pass that lost its claim adopts the new
+  owner's key instead of generating. Test
+  `TestTenantCAKeyFactory_FencesDelayedProvisioner` (two backend instances
+  over shared stores; the first pass stalls past the lease after claiming
+  while the second takes over and provisions).
+- No takeover while a generate is in flight (P1, Codex review 5985869980):
+  a backend may ignore the generate's context (PKCS#11 waits on the token's
+  mutex without a deadline), so no lease bounds it. A claim marked
+  generating is never taken over; a generate that returns an error puts a
+  plain claim back. A pass that dies mid-generate leaves the tenant waiting
+  for `RemoveTenant`, never a second key. Test
+  `TestTenantCAKeyFactory_NoTakeoverWhileGenerateInFlight` (the first pass
+  stalls inside a context-ignoring generate after the mark).
 - Not acted on (owner rulings needed): finding 3 (PKCS#11 tenant key naming
   compatibility) and finding 4 (owner approval of
   `datastore.tenant-login-ca-keys`).
