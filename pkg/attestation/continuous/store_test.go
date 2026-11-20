@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
@@ -113,20 +115,38 @@ func TestStore_LatestAndList(t *testing.T) {
 	}
 }
 
-// noScanDAO refuses a collection-wide page scan, so a read that walks
-// every tenant's verdicts fails.
-type noScanDAO struct {
-	qrdbsdk.GenericDAO[*verdictEntity]
+// scanGuardKV is the backing store of a test that must not walk a
+// collection: once armed, every Scan or List through it fails the test. It
+// embeds the memory store so the index, atomic and batch capabilities the
+// DAO asserts for stay visible.
+type scanGuardKV struct {
+	*qrdbsdk.MemoryKVStore
+	t     testing.TB
+	armed atomic.Bool
 }
 
-func (noScanDAO) ForEachPage(context.Context, qrdbsdk.PageQuery, qrdbsdk.PagerFunc[*verdictEntity]) error {
-	return errors.New("collection-wide scan")
+func (s *scanGuardKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	if s.armed.Load() {
+		s.t.Errorf("collection-wide Scan(%q) after fixture setup", prefix)
+	}
+	return s.MemoryKVStore.Scan(ctx, prefix, fn)
+}
+
+func (s *scanGuardKV) List(ctx context.Context, prefix string) ([]string, error) {
+	if s.armed.Load() {
+		s.t.Errorf("collection-wide List(%q) after fixture setup", prefix)
+	}
+	return s.MemoryKVStore.List(ctx, prefix)
 }
 
 // TestStore_ReadsUseDeviceIndex reads one device's verdicts through the
 // device index, never by scanning every tenant's history (Codex P2, #2111).
 func TestStore_ReadsUseDeviceIndex(t *testing.T) {
-	store := newTestStore(t)
+	kv := &scanGuardKV{MemoryKVStore: qrdbsdk.NewMemoryKVStore(), t: t}
+	store, err := NewStore(StoreConfig{DAOs: dao.NewStoreFactory(kv)})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
 	ctx := context.Background()
 	at := time.Date(2026, 11, 12, 1, 0, 0, 0, time.UTC)
 	for i, v := range []Verdict{
@@ -139,7 +159,7 @@ func TestStore_ReadsUseDeviceIndex(t *testing.T) {
 			t.Fatalf("SaveVerdict %d: %v", i, err)
 		}
 	}
-	store.records = noScanDAO{store.records}
+	kv.armed.Store(true)
 	list, err := store.ListVerdicts(ctx, "acme", "dev-1")
 	if err != nil {
 		t.Fatalf("ListVerdicts: %v", err)
