@@ -2664,6 +2664,7 @@ func (s *Server) ModuleRESTServer() *rest.Server {
 // (pkg/apimodule), so both surfaces are built from identical wiring.
 func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	restConfig := &rest.Config{
+		Logger:          s.logger,
 		Host:            s.config.Server.Host,
 		Port:            s.config.Server.RESTPort,
 		Backends:        s.backends,
