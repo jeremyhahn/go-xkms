@@ -80,6 +80,19 @@ func (s *qrdbUserStore) scope(ctx context.Context) context.Context {
 	return qrdbtenant.WithTenantID(ctx, s.tenantID)
 }
 
+// credentialScope clears any tenant binding on ctx for the credential
+// store's calls. The credential DAO is system bookkeeping: the production
+// datastore runs it as the system service principal but keeps an explicit
+// tenant binding, and under RBAC qrdb refuses a system principal acting in
+// another tenant. The tenant scope binds for the user service must not
+// reach it.
+func credentialScope(ctx context.Context) context.Context {
+	if _, ok := qrdbtenant.IDFromContext(ctx); !ok {
+		return ctx
+	}
+	return qrdbtenant.WithTenantID(ctx, "")
+}
+
 // NewQRDBUserStoreAdapter constructs the (UserStore, CredentialStore) pair
 // xkms's WebAuthn relying party runs on: users are go-qrdb's user records,
 // and credentials are go-qrdb DAO entities built from the injected factory.
