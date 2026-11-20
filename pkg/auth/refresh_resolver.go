@@ -146,7 +146,10 @@ func (r *QRDBUserResolver) lookup(ctx context.Context, id *Identity) (*qrdbtrans
 		if !ok {
 			return nil, ErrRefreshSubjectNotFound
 		}
-		u, err := r.users.GetUser(ctx, uid)
+		// The by-id lookup carries no tenant of its own: bind the validated
+		// refresh token's tenant, or a routing user service resolves the
+		// anonymous refresh route in the system tenant.
+		u, err := r.users.GetUser(bindTenant(ctx, id.TenantID), uid)
 		if err != nil {
 			if errors.As(err, &notFound) {
 				return nil, ErrRefreshSubjectNotFound
