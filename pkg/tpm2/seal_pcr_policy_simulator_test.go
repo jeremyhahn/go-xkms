@@ -435,6 +435,42 @@ func TestUnseal_PlatformPolicy_PasswordLegacyPinKeepsRecordedPolicy(t *testing.T
 	require.Equal(t, secret, got)
 }
 
+// The same pre-expansion object, unsealed from its inline blobs against an
+// empty key backend (no recorded pin) with the extra PCR in the attributes,
+// must open too: its authPolicy is the platform set's PolicyOR.
+func TestUnseal_PlatformPolicy_PasswordLegacyInlineNoPin(t *testing.T) {
+	const extraPCR = 15
+	const testPIN = "legacy-inline-test-password"
+
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	cn := "platform-policy-password-legacy-inline"
+	legacyAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+
+	secret := []byte("password-unseal-legacy-inline-no-pin")
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: legacyAttrs, Backend: h.Backend})
+	require.NoError(t, err)
+
+	factory, err := store.NewStorageFactory(h.Logger, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = factory.Close() })
+
+	unsealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+	unsealAttrs.TPMAttributes.PCRSelection = PolicyPCRSelection(tpm2.TPMAlgSHA256, append(
+		append([]uint(nil), h.TPM.config.PlatformPCRs...), extraPCR)...)
+
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: unsealAttrs, Backend: factory.KeyBackend()})
+	require.NoError(t, err, "the correct password must open a pre-expansion inline blob")
+	require.Equal(t, secret, got)
+}
+
 func TestUnseal_PlatformPolicy_InlineBlobKeepsSelectionAfterCNOverwrite(t *testing.T) {
 	h := newSimHarness(t, platformPolicySRKConfig())
 	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-overwrite-pin")))
