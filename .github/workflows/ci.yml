@@ -197,7 +197,7 @@
 # changed kept its cached image after Alpine shipped a fix, and `trivy image`
 # stayed red on a fixed CVE until an unrelated file moved (go-enclave main
 # fd83b79ce, CVE-2026-92392, libcurl 8.23.0-r0). A new step, "Read the Alpine
-# package index", runs scripts/apk-index-sum.sh (v1, ships beside this file)
+# package index", runs scripts/apk-index-sum.sh (v3 with apk-mirror.sh, both beside this file)
 # and puts its value in APK_INDEX_SUM. Every job that names the integration
 # image (image, lint-gates, integration, soak) runs it before "Name the
 # integration image", so none waits for the image job's serial stages. The
