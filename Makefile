@@ -1097,6 +1097,7 @@ test-scripts:
 	@bash test/scripts/retry.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
+	@bash test/scripts/softhsm-lib.test.sh
 	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/ensure-server-ca.test.sh
 	@bash test/scripts/socket-probe.test.sh
@@ -1698,7 +1699,12 @@ test-pkcs11-tagged:
 coverage-pkcs11-tagged:
 	@echo "$(CYAN)→ Generating pkcs11-tagged coverage report...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@CGO_ENABLED=1 $(GO) test -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(PKCS11_TAGGED_TAGS))" \
+	@# SoftHSM 2.7.0+ reports PKCS#11 tamper (#1418); on an older host SoftHSM
+	@# (the lane-verify image's distro 2.6.1) softhsm-lib.sh builds the pinned
+	@# release once into a user cache and points the suites at it (#1420).
+	@lib=$$(scripts/softhsm-lib.sh) || exit 1; \
+	echo "  SoftHSM module: $${lib:-internal/softhsmtest default}"; \
+	SOFTHSM2_LIB=$$lib CGO_ENABLED=1 $(GO) test -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(PKCS11_TAGGED_TAGS))" \
 		-coverprofile=$(COVERAGE_DIR)/pkcs11-tagged.raw -covermode=atomic $(PKCS11_TAGGED_PKGS)
 	@grep -v -E "/mocks/|_test\.go" $(COVERAGE_DIR)/pkcs11-tagged.raw > $(COVERAGE_DIR)/pkcs11-tagged.out
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/pkcs11-tagged.out -o $(COVERAGE_DIR)/pkcs11-tagged.html
