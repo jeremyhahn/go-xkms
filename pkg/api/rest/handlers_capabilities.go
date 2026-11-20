@@ -26,16 +26,9 @@ type capabilitiesResponse struct {
 	WebAuthnEnabled bool   `json:"webauthn_enabled"`
 	PIVLoginEnabled bool   `json:"piv_login_enabled"`
 	UIEnabled       bool   `json:"ui_enabled"`
-	// One flag per subsystem whose routes answer 501 when it is absent, so
-	// the console disables the control instead (ruling 972 (1)). Each is the
-	// same predicate routes.go gates the subsystem's routes with.
-	CAEnabled        bool `json:"ca_enabled"`
-	SSHEnabled       bool `json:"ssh_enabled"`
-	TenantsEnabled   bool `json:"tenants_enabled"`
-	PasswordsEnabled bool `json:"passwords_enabled"`
 }
 
-// Route guards shared by Routes() and the capabilities response: one
+// Route guards shared by Routes() and capabilityFlags (/auth/me): one
 // predicate per subsystem, so the flag the console reads can never disagree
 // with whether the route is served.
 
@@ -48,13 +41,9 @@ func (s *Server) hasPasswords() bool { return s.passwordHandlers != nil }
 // handleCapabilities serves the unauthenticated login-page capability flags.
 func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, capabilitiesResponse{
-		Version:          s.handlers.Version,
-		WebAuthnEnabled:  s.hasWebAuthn(),
-		PIVLoginEnabled:  s.pivLogin != nil && s.pivLogin.Enabled,
-		UIEnabled:        s.ui != nil && s.ui.Enabled && s.ui.Assets != nil,
-		CAEnabled:        s.hasCA(),
-		SSHEnabled:       s.hasSSH(),
-		TenantsEnabled:   s.hasTenants(),
-		PasswordsEnabled: s.hasPasswords(),
+		Version:         s.handlers.Version,
+		WebAuthnEnabled: s.hasWebAuthn(),
+		PIVLoginEnabled: s.pivLogin != nil && s.pivLogin.Enabled,
+		UIEnabled:       s.ui != nil && s.ui.Enabled && s.ui.Assets != nil,
 	}, http.StatusOK)
 }

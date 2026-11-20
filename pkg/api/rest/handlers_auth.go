@@ -677,16 +677,16 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 // scanner cannot fingerprint the deployment shape.
 func (s *Server) capabilityFlags() map[string]bool {
 	return map[string]bool{
-		"webauthn":         s.webauthnHandler != nil,
+		"webauthn":         s.hasWebAuthn(),
 		"piv_login":        s.pivLogin != nil && s.pivLogin.Enabled,
 		"rbac":             s.rbacMiddleware != nil,
-		"ca":               s.caHandlers != nil,
-		"tenants":          s.tenantHandlers != nil,
-		"passwords":        s.passwordHandlers != nil,
+		"ca":               s.hasCA(),
+		"tenants":          s.hasTenants(),
+		"passwords":        s.hasPasswords(),
 		"platform":         s.platformHandlers != nil,
 		"tpm_policies":     s.xkmsService != nil && s.xkmsService.TPMPolicyService() != nil,
 		"oidc_credentials": s.xkmsService != nil && s.xkmsService.OIDCCredentialService() != nil,
-		"ssh":              s.sshHandlers != nil,
+		"ssh":              s.hasSSH(),
 		"frost":            frostEnabled,
 		"cluster":          s.xkmsService != nil && s.xkmsService.Clustered(),
 		"trust_roots":      s.trustRootHandlers != nil,
