@@ -149,7 +149,7 @@ jobs:
 
   integration:
     name: Integration Tests
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code

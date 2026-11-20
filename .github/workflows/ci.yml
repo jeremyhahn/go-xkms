@@ -351,7 +351,7 @@
 # COVERAGE_THRESHOLD, m601 (c)), security, deps-check (new, ci-standard.md
 # §1) and trivy image on the integration image (it leaves the CUSTOMIZE note).
 # The integration stage stays its own job, `make integration-test` in the
-# integration image. Both run on bigdisk (ubuntu-latest on github.com).
+# integration image. Both run on ubuntu-latest (ruling 999).
 # setup-go, the runner tool installs and the SARIF upload (m601 (d): CI runs
 # on Gitea) are gone, and with them GO_VERSION: the image pins Go. The tag
 # assertion moves to scripts/assert-build-tags.sh (ships beside this file).
@@ -727,13 +727,11 @@ jobs:
   # xkmsctl and xkey depend only on sdk/go) are further steps in this job.
   # A source check with grep, not a stage: it runs on the runner's shell.
   # v1.23: a lint-class check, so it stays on the PR tier.
-  # Routing (m2475): a push to main and a pull_request from this repository
-  # run on the bigdisk pool; fork PRs, dispatch and the schedule stay on
-  # ubuntu-latest. The job needs git, curl, jq, grep and sed only, and its
+  # Runner (ruling 999): ubuntu-latest for every event. The job needs git, curl, jq, grep and sed only, and its
   # checkout keeps no token.
   preflight:
     name: Preflight [changed files, schedule guard, architecture gates]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 10       # v1.34: the three jobs had 5 each
@@ -971,10 +969,7 @@ jobs:
   # file writes run silent, and lint steps and `make check-public-literals`
   # report path and line only (ci-standard.md §5, Company Agent m605 item 8).
   #
-  # Runners: the image and integration jobs run on bigdisk (Docker and the disk
-  # for the image builds) and CI Gate on ci-gate; on the github.com mirror all
-  # are ubuntu-latest, which has Docker (devops.md §1: host-specific choices
-  # are guarded on github.server_url).
+  # Runners (ruling 999): every job runs on ubuntu-latest, which has Docker.
   # >>> CUSTOMIZE (go-xkms, ruling 169; the go-qrdb #1135 pattern)
   # The CI images, once per run. A push to main builds each image whose
   # content hash main has not published yet and pushes it from the release
@@ -994,7 +989,7 @@ jobs:
     # schedule guard's `run`; every CUSTOMIZE job needs this one, so it skips
     # with it.
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
       contents: read
@@ -1092,10 +1087,8 @@ jobs:
 
   image:
     name: Devcontainer image [lint, gosec, build, test]
-    # CUSTOMIZE (go-xkms, #2240): schedule and workflow_dispatch runs on main
-    # also use the bigdisk-docker pool, not hosted-runner hours; fork PRs stay hosted.
-    # github.com has the bigdisk-docker pool (push run 43481870662 ran Integration on it); the preflight schedule guard counts main's active push runs there too, so a scheduled run defers to them.
-    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    # Runner (ruling 999): ubuntu-latest for every event; no measured reason to self-host.
+    runs-on: ubuntu-latest
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     # v1.30: only on the guard's `run` (not `refused`, not `proven`). It keeps
@@ -1286,16 +1279,15 @@ jobs:
   # v1.29.1 (ruling 226(15), 108 repair): the step fails fast. `make
   # lint-gates` runs without `-k`, so the first failing gate ends the step
   # and the job; the gates after it run on the next push.
-  # Routing (2026-11-10): a push to main and a pull_request from this
-  # repository run on the bigdisk pool [self-hosted, linux, x64, bigdisk];
-  # fork PRs, workflow_dispatch and the schedule stay on ubuntu-latest. The
+  # Runner (ruling 999): ubuntu-latest for every event; the self-hosted steps
+  # below are inert until the template drops them. The retired
   # pool is a single-use container with no Docker, so the toolchain-image
   # steps are hosted-only and the pool runs the same make target natively
   # (setup-go at GO_VERSION, the image's tool pins via go install,
   # XKMS_NATIVE_BUILD=1). The probe and the releasability gate run on both.
   lint-gates:
     name: Lint Gates [toolchain image]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: [preflight, ci-images] # v1.29.3; v1.30; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.26: never on a draft. v1.29.3: on a schedule run, only on the
     # schedule guard's `run`.
@@ -1521,11 +1513,8 @@ jobs:
     # only on the schedule guard's `run`.
     needs: preflight   # v1.34
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    # CUSTOMIZE (go-xkms, #2240, ruling 740): schedule and workflow_dispatch runs
-    # on main also use the bigdisk-docker pool. Ruling 740 (11-16) supersedes
-    # InfoSec W-1 / DS-8215 for schedule and workflow_dispatch on main only;
-    # pushes, same-repo PRs and fork PRs keep their routing.
-    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    # Runner (ruling 999): ubuntu-latest for every event; no measured reason to self-host.
+    runs-on: ubuntu-latest
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1636,11 +1625,8 @@ jobs:
     needs: preflight   # v1.34
     # v1.30: a dispatch off main is refused, so soak runs only on `run`.
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.preflight.outputs.verdict == 'run' }}
-    # CUSTOMIZE (go-xkms, #2240, ruling 740): schedule and workflow_dispatch runs
-    # on main also use the bigdisk-docker pool. Ruling 740 (11-16) supersedes
-    # InfoSec W-1 / DS-8215 for schedule and workflow_dispatch on main only;
-    # pushes, same-repo PRs and fork PRs keep their routing.
-    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    # Runner (ruling 999): ubuntu-latest for every event; no measured reason to self-host.
+    runs-on: ubuntu-latest
     timeout-minutes: 210      # CUSTOMIZE (go-xkms): SOAK_MINUTES (30) plus one 180-minute iteration
     env:
       SOAK_MINUTES: 30        # CUSTOMIZE
@@ -1795,21 +1781,20 @@ jobs:
 
   # >>> CUSTOMIZE (go-xkms)
   # The go-xkms suites the unit run does not reach. Every job runs in the
-  # toolchain image on bigdisk (rulings 145/146); ubuntu-latest on github.com.
+  # toolchain image on ubuntu-latest (ruling 999).
   #
   # static-analysis: the two whole-module sweeps that run beside Lint.
   # vet-integration compiles every test/integration suite once per distinct
   # build-tag combination (go-xkms#650); the suites themselves run in the
   # integration job. secure-analyzer-selftest proves the gate goes red on a
   # known violation before secure-analyzer sweeps the tree (go-xkms#549).
-  # Routing (m2475): a push to main and a pull_request from this repository
-  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
-  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Runner (ruling 999): ubuntu-latest for every event; the self-hosted steps
+  # below are inert until the template drops them. The retired pool had no
   # Docker, so the toolchain-image steps are hosted-only and the pool runs the
   # same commands natively (needs the runner image's package set).
   static-analysis:
     name: Static Analysis
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 120  # #1587: ~2x 58m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     # DS-3164: a docs-only PR compiles nothing, so the sweeps skip at step
     # level and the job still reports success to CI Gate.
@@ -1916,14 +1901,13 @@ jobs:
   # gui-tagged suites then run without `production` (Wails' stub, no webview)
   # and with codec_json, which acme-client's DAO layer needs from go-qrdb's
   # codec registry.
-  # Routing (m2475): a push to main and a pull_request from this repository
-  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
-  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Runner (ruling 999): ubuntu-latest for every event; the self-hosted steps
+  # below are inert until the template drops them. The retired pool had no
   # Docker, so the toolchain-image steps are hosted-only and the pool runs the
   # same commands natively (needs the runner image's package set).
   build:
     name: Build (all backends, acme-client GUI)
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }}   # v1.26
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
@@ -2067,14 +2051,13 @@ jobs:
   # that `./...` from the root never enters, so they must still COMPILE on
   # every PR. `go vet` for all three runs in Lint (Makefile LINT_MODULES); the
   # race suites are nested-module-test, on the full tier.
-  # Routing (m2475): a push to main and a pull_request from this repository
-  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
-  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Runner (ruling 999): ubuntu-latest for every event; the self-hosted steps
+  # below are inert until the template drops them. The retired pool had no
   # Docker, so the toolchain-image steps are hosted-only and the pool runs the
   # same commands natively (needs the runner image's package set).
   nested-module-build:
     name: Nested Module Build (sdk/go, xkey, web/desktop)
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }}   # v1.26
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
@@ -2177,14 +2160,13 @@ jobs:
   # tests included (#31); ./pkg/phone/ runs whole under -race, never a named
   # list (#79, #27). pkg/attestation is the device attestation decision
   # (#130), named because a silent deletion there is the most expensive.
-  # Routing (m2475): a push to main and a pull_request from this repository
-  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
-  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Runner (ruling 999): ubuntu-latest for every event; the self-hosted steps
+  # below are inert until the template drops them. The retired pool had no
   # Docker, so the toolchain-image steps are hosted-only and the pool runs the
   # same commands natively (needs the runner image's package set).
   nested-module-test:
     name: Nested Module Tests (sdk/go, xkey, web/desktop)
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
@@ -2325,14 +2307,13 @@ jobs:
   # build-raft: the default build is standalone; `-tags raft` is the
   # clustered configuration, and each leg tests a different half of
   # pkg/config, pkg/xkms and pkg/embeddednode.
-  # Routing (m2475): a push to main and a pull_request from this repository
-  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
-  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Runner (ruling 999): ubuntu-latest for every event; the self-hosted steps
+  # below are inert until the template drops them. The retired pool had no
   # Docker, so the toolchain-image steps are hosted-only and the pool runs the
   # same commands natively (needs the runner image's package set).
   build-raft:
     name: Build & Test (raft tag matrix, ${{ matrix.tags }})
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     # #1587: ~2x 13m, slowest green (forge API, last 60 CI runs, 2026-10-17;
@@ -2438,14 +2419,13 @@ jobs:
   # and eight in parallel OOM-killed the job (#1389). The PR tier's race
   # check is make coverage (make test runs -race); this job adds the backend
   # tag set and stays full tier.
-  # Routing (m2475): a push to main and a pull_request from this repository
-  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
-  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Runner (ruling 999): ubuntu-latest for every event; the self-hosted steps
+  # below are inert until the template drops them. The retired pool had no
   # Docker, so the toolchain-image steps are hosted-only and the pool runs the
   # same commands natively (needs the runner image's package set).
   race:
     name: Race Detector
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
@@ -2562,14 +2542,13 @@ jobs:
 
   # tpm2-simulator: pkg/tpm2 against the in-process TPM simulator
   # (go-tpm-tools, cgo against libcrypto); pkg/tpm2/vtpm supervises swtpm.
-  # Routing (m2475): a push to main and a pull_request from this repository
-  # run on the bigdisk pool [self-hosted, linux, x64, bigdisk]; fork PRs,
-  # workflow_dispatch and the schedule stay on ubuntu-latest. The pool has no
+  # Runner (ruling 999): ubuntu-latest for every event; the self-hosted steps
+  # below are inert until the template drops them. The retired pool had no
   # Docker, so the toolchain-image steps are hosted-only and the pool runs the
   # same commands natively (needs the runner image's package set).
   tpm2-simulator:
     name: TPM2 Simulator Tests
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # v1.26: never on a draft PR, ci:full or not.
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     needs: ci-images      # CUSTOMIZE (go-xkms, ruling 169)
@@ -2671,7 +2650,7 @@ jobs:
     # CA m2475 (2h): the gate runs on the self-hosted bigdisk pool (main pushes
     # and same-repo PRs), so it never waits in the hosted queue and always
     # reports; it needs no Docker. Fork PRs stay on ubuntu-latest.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # v1.29.3: on a schedule run the schedule guard decides. `busy` skips the
     # gate, so `CI / CI Gate (schedule)` posts `skipped` (Gitea 1.27.1 posts a
     # skipped job as `skipped`, not `success`), never a green nightly. Every
