@@ -1,0 +1,84 @@
+# xkmsd config for the live web-console E2E tier with passkeys OFF
+# (tests/capability-gating.spec.ts, ruling 972 (1)). It matches config.yaml
+# except for its own port and state directory (run-server.sh boots it beside
+# the default daemon, see playwright.config.ts) and webauthn.enabled: false.
+server:
+  host: "127.0.0.1"
+  rest_port: 18464
+
+protocols:
+  unix: false
+  rest: true
+  grpc: false
+  quic: false
+  mcp: false
+  noise: false
+
+logging:
+  level: "info"
+  format: "json"
+
+tls:
+  enabled: true
+  server_cn: "localhost"
+
+auth:
+  enabled: true
+  type: "composite"
+
+# Initialized and unsealed by run-server.sh, as for config.yaml.
+barrier:
+  enabled: true
+  strategy: "passphrase"
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: false
+
+health:
+  enabled: true
+  path: "/health"
+
+datastore:
+  engine: file
+  path: "./.runtime/webauthn-off/storage"
+
+default_backend: "software"
+
+backends:
+  software:
+    enabled: true
+    path: "./.runtime/webauthn-off/data/software"
+
+ca:
+  identity:
+    - subject:
+        cn: "xkms Web E2E Root CA"
+        organization: "go-xkms Web E2E"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: "./.runtime/webauthn-off/ca"
+
+# Passkeys off: the console must show the disabled state naming this setting,
+# and no control may reach a route that answers 501.
+webauthn:
+  enabled: false
+
+ui:
+  enabled: true
