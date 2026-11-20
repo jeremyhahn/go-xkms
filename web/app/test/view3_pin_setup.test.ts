@@ -40,6 +40,16 @@ const NEW_SO = "90817263";
 const NEW_USER = "55443322";
 const TYPED = [DEFAULT_SO, NEW_SO, NEW_USER];
 
+// Shaped as the SDK's XkmsApiError: a status-carrying Error.
+class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "XkmsApiError";
+    this.status = status;
+  }
+}
+
 function input(label: string): HTMLInputElement {
   return screen.getByLabelText(label) as HTMLInputElement;
 }
@@ -139,7 +149,7 @@ describe("PinSetupView", () => {
   });
 
   it("reports a rejected user PIN with a lockout warning and clears the input", async () => {
-    verifyUser.mockRejectedValue(new Error("invalid PIN"));
+    verifyUser.mockRejectedValue(new ApiError(401, "invalid PIN"));
     render(PinSetupView);
 
     await fireEvent.click(screen.getByRole("radio", { name: "User" }));
@@ -150,6 +160,31 @@ describe("PinSetupView", () => {
     expect(verifySO).not.toHaveBeenCalled();
     expect(await screen.findByText("PIN not verified")).toBeInTheDocument();
     expect(screen.getByText(/counts toward the PIN lockout/)).toBeInTheDocument();
+    expect(input("PIN to verify").value).toBe("");
+    assertNoPinLeak();
+  });
+
+  // Only an explicit invalid-PIN answer (401) is a verdict on the PIN; a
+  // lockout, an unavailable manager, a refusal or a network failure says
+  // nothing about it and must show its cause instead (Codex P1 on #2206).
+  it.each([
+    ["a locked PIN", new ApiError(429, "PIN locked"), "PIN locked"],
+    ["an unavailable PIN manager", new ApiError(503, "PIN manager not configured"), "PIN manager not configured"],
+    ["a permission refusal", new ApiError(403, "forbidden"), "forbidden"],
+    ["a network failure", new TypeError("Failed to fetch"), "Failed to fetch"],
+  ])("reports %s as a verification error, not a wrong PIN", async (_name, err, text) => {
+    verifySO.mockRejectedValue(err);
+    render(PinSetupView);
+
+    await fireEvent.click(screen.getByRole("radio", { name: "SO" }));
+    await type("PIN to verify", NEW_SO);
+    await fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+    await waitFor(() => expect(verifySO).toHaveBeenCalledOnce());
+    expect(await screen.findByText("PIN verification could not run")).toBeInTheDocument();
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.queryByText("PIN not verified")).not.toBeInTheDocument();
+    expect(screen.queryByText(/counts toward the PIN lockout/)).not.toBeInTheDocument();
     expect(input("PIN to verify").value).toBe("");
     assertNoPinLeak();
   });
