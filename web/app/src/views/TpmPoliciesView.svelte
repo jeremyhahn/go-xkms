@@ -153,16 +153,6 @@
     }
   }
 
-  async function update(name: string): Promise<void> {
-    try {
-      await getSDKClient().tpmPolicies.update(name);
-      showToast("success", `TPM policy "${name}" re-captured and re-approved.`);
-      await load();
-    } catch (e) {
-      showToast("error", e instanceof Error ? e.message : String(e));
-    }
-  }
-
   async function revoke(name: string): Promise<void> {
     try {
       await getSDKClient().tpmPolicies.revoke(name);
@@ -302,7 +292,6 @@
             </td>
             <td class="text-right whitespace-nowrap">
               <button class="btn btn-ghost btn-xs" onclick={() => verify(p.name)}>Verify</button>
-              <button class="btn btn-ghost btn-xs" onclick={() => update(p.name)}>Update</button>
               <button class="btn btn-ghost btn-xs" onclick={() => revoke(p.name)}>Revoke</button>
               <button class="btn btn-ghost btn-xs text-error" onclick={() => del(p.name)}>Delete</button>
             </td>
@@ -502,7 +491,8 @@
       <h3 id="rotate-authority-title" class="text-lg font-semibold mb-4">Rotate policy authority?</h3>
       <p class="text-sm text-base-content/70">
         Every existing policy approval is invalidated. Approved policies must be re-approved
-        (update) before their objects can be used again.
+        (updated from a signed CoRIM with xkmsctl tpm policy update) before their objects can be
+        used again.
       </p>
       <div class="modal-action">
         <button class="btn btn-ghost" onclick={() => (showRotateConfirm = false)} disabled={rotateBusy}>

@@ -1287,6 +1287,11 @@ var (
 	// signed reference values".
 	ErrReadReferenceValuesFailed = errors.New("failed to read the signed reference values")
 
+	// ErrTPMPolicyUpdateNeedsSignedBranch is returned when "tpm policy
+	// update" lacks --branch or --reference-values: a policy is updated only
+	// one named branch at a time, from a signed CoRIM, never by live capture.
+	ErrTPMPolicyUpdateNeedsSignedBranch = errors.New("--branch and --reference-values are both required: a TPM policy is updated only from a signed CoRIM")
+
 	// ErrRevokeTPMPolicyFailed is the sentinel error "failed to revoke TPM policy".
 	ErrRevokeTPMPolicyFailed = errors.New("failed to revoke TPM policy")
 
