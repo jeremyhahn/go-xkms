@@ -845,13 +845,32 @@ func (s *Service) DeleteUser(ctx context.Context, userID []byte) error {
 }
 
 // UserStoreTenant is the tenant the relying party resolves accounts in: the
-// configured tenant of its user store, or "" when the store declares none
-// (the system tenant).
-func (s *Service) UserStoreTenant() string {
-	if scoped, ok := s.users.(interface{ TenantID() string }); ok {
-		return scoped.TenantID()
+// configured tenant of its user store. A store that names none is a
+// *UserStoreTenantUnsetError, never the system tenant (ruling 1041 (1)).
+func (s *Service) UserStoreTenant() (string, error) {
+	return userStoreTenant(s.users)
+}
+
+// UserStoreTenantUnsetError reports a user store that names no tenant. Such
+// a store is refused, never read as the system tenant: the fallback reopened
+// the cross-tenant invite hole (ruling 1041 (1)).
+type UserStoreTenantUnsetError struct{}
+
+func (*UserStoreTenantUnsetError) Error() string {
+	return "webauthn: user store names no tenant"
+}
+
+// userStoreTenant returns the tenant users resolves accounts in, or a
+// *UserStoreTenantUnsetError when users is nil or names none.
+func userStoreTenant(users UserStore) (string, error) {
+	if users == nil {
+		return "", &UserStoreTenantUnsetError{}
 	}
-	return ""
+	tenant := users.TenantID()
+	if tenant == "" {
+		return "", &UserStoreTenantUnsetError{}
+	}
+	return tenant, nil
 }
 
 // Config returns the service configuration.

@@ -48,6 +48,11 @@ func (s *faultyUserStore) GetByID(ctx context.Context, userID []byte) (User, err
 	return s.inner.GetByID(ctx, userID)
 }
 
+// TenantID delegates to the wrapped store.
+func (s *faultyUserStore) TenantID() string {
+	return s.inner.TenantID()
+}
+
 func (s *faultyUserStore) GetByEmail(ctx context.Context, email string) (User, error) {
 	if s.getByEmailErr != nil {
 		return nil, s.getByEmailErr
