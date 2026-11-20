@@ -1097,6 +1097,7 @@ test-scripts:
 	@bash test/scripts/retry.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
+	@bash test/scripts/softhsm-lib.test.sh
 	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/ensure-server-ca.test.sh
 	@bash test/scripts/socket-probe.test.sh
@@ -1108,6 +1109,7 @@ test-scripts:
 	@bash test/scripts/xkey-build-tags.test.sh
 	@bash test/scripts/go-build-tags.test.sh
 	@bash test/scripts/gomodauth.test.sh
+	@bash test/scripts/go-caches-env.test.sh
 	@bash test/scripts/credential-ignores.test.sh
 	@bash test/scripts/no-credential-echo.test.sh
 	@bash test/scripts/ci-registry.test.sh
@@ -1698,7 +1700,12 @@ test-pkcs11-tagged:
 coverage-pkcs11-tagged:
 	@echo "$(CYAN)→ Generating pkcs11-tagged coverage report...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@CGO_ENABLED=1 $(GO) test -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(PKCS11_TAGGED_TAGS))" \
+	@# SoftHSM 2.7.0+ reports PKCS#11 tamper (#1418); on an older host SoftHSM
+	@# (the lane-verify image's distro 2.6.1) softhsm-lib.sh builds the pinned
+	@# release once into a user cache and points the suites at it (#1420).
+	@lib=$$(scripts/softhsm-lib.sh) || exit 1; \
+	echo "  SoftHSM module: $${lib:-internal/softhsmtest default}"; \
+	SOFTHSM2_LIB=$$lib CGO_ENABLED=1 $(GO) test -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(PKCS11_TAGGED_TAGS))" \
 		-coverprofile=$(COVERAGE_DIR)/pkcs11-tagged.raw -covermode=atomic $(PKCS11_TAGGED_PKGS)
 	@grep -v -E "/mocks/|_test\.go" $(COVERAGE_DIR)/pkcs11-tagged.raw > $(COVERAGE_DIR)/pkcs11-tagged.out
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/pkcs11-tagged.out -o $(COVERAGE_DIR)/pkcs11-tagged.html
@@ -5379,7 +5386,8 @@ bench-cert-compare:
 # ==============================================================================
 
 # Get all packages dynamically (excluding cmd and test dirs)
-PKG_DIRS := $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
+# Deferred (=): a parse must not run go list, which fills the module cache (#2295).
+PKG_DIRS = $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
 
 # Explicit xkey E2E targets that would otherwise be caught by test-% pattern.
 .PHONY: test-fido2-pkcs11
