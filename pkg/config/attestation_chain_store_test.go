@@ -214,3 +214,88 @@ func TestAttestationConfigVerifiers_StoreAuthoritativeOverConfigRoots(t *testing
 		}
 	})
 }
+
+// TestAttestationConfigVerifiers_RemovedConfigRootStaysRemoved: a config
+// root is imported into the store once. Removing it from the store must
+// survive a rebuild of the verifiers (the next startup) while the root is
+// still in the config file: the rebuild must not import it again, and a
+// root quarantined and then removed must not come back as trusted. An
+// operator may still add it back on purpose.
+func TestAttestationConfigVerifiers_RemovedConfigRootStaysRemoved(t *testing.T) {
+	ctx := context.Background()
+	setup := func(t *testing.T, cn string) (*truststore.DAOStore, *config.AttestationConfig, *x509.Certificate, *attestation.AttestationStatement) {
+		t.Helper()
+		store, err := compose.BuildTrustRootStore(testutil.NewMemoryDAOFactory())
+		if err != nil {
+			t.Fatalf("BuildTrustRootStore: %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		root, leaf := issuedChain(t, cn)
+		cfg := &config.AttestationConfig{
+			Formats: map[string]*truststore.Config{"tpm2": {ExternalRootPaths: []string{writeRootPEM(t, root)}}},
+		}
+		stmt := &attestation.AttestationStatement{Format: "tpm2", CertificateChain: []*x509.Certificate{leaf, root}}
+		verifiers, err := cfg.Verifiers(store)
+		if err != nil {
+			t.Fatalf("Verifiers(store): %v", err)
+		}
+		if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err != nil {
+			t.Fatalf("imported config root refused: %v", err)
+		}
+		return store, cfg, root, stmt
+	}
+	rebuildRefuses := func(t *testing.T, store *truststore.DAOStore, cfg *config.AttestationConfig, root *x509.Certificate, stmt *attestation.AttestationStatement) {
+		t.Helper()
+		verifiers, err := cfg.Verifiers(store)
+		if err != nil {
+			t.Fatalf("rebuild Verifiers(store): %v", err)
+		}
+		if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err == nil {
+			t.Fatal("a removed config root anchors again after a rebuild")
+		}
+		if _, _, err := store.Get(ctx, truststore.Fingerprint(root)); err == nil {
+			t.Fatal("the rebuild imported a removed config root again")
+		}
+	}
+
+	t.Run("import, remove, rebuild", func(t *testing.T) {
+		store, cfg, root, stmt := setup(t, "removed-config-tpm-root")
+		if err := store.Delete(ctx, truststore.Fingerprint(root)); err != nil {
+			t.Fatalf("remove: %v", err)
+		}
+		rebuildRefuses(t, store, cfg, root, stmt)
+		rebuildRefuses(t, store, cfg, root, stmt)
+	})
+
+	t.Run("quarantine, remove, rebuild", func(t *testing.T) {
+		store, cfg, root, stmt := setup(t, "quarantined-removed-tpm-root")
+		if _, err := store.SetPurpose(ctx, truststore.Fingerprint(root), truststore.PurposeSynced); err != nil {
+			t.Fatalf("quarantine: %v", err)
+		}
+		if err := store.Delete(ctx, truststore.Fingerprint(root)); err != nil {
+			t.Fatalf("remove: %v", err)
+		}
+		rebuildRefuses(t, store, cfg, root, stmt)
+	})
+
+	t.Run("operator adds a removed config root back", func(t *testing.T) {
+		store, cfg, root, stmt := setup(t, "readded-config-tpm-root")
+		if err := store.Delete(ctx, truststore.Fingerprint(root)); err != nil {
+			t.Fatalf("remove: %v", err)
+		}
+		if err := store.Add(ctx, root, &truststore.AddCertificateOptions{Purpose: truststore.PurposeTPMManufacturer}); err != nil {
+			t.Fatalf("re-add: %v", err)
+		}
+		verifiers, err := cfg.Verifiers(store)
+		if err != nil {
+			t.Fatalf("rebuild Verifiers(store): %v", err)
+		}
+		if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err != nil {
+			t.Fatalf("a root the operator added back is refused: %v", err)
+		}
+		if err := store.Delete(ctx, truststore.Fingerprint(root)); err != nil {
+			t.Fatalf("remove again: %v", err)
+		}
+		rebuildRefuses(t, store, cfg, root, stmt)
+	})
+}
