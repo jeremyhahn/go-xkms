@@ -65,12 +65,17 @@ func newCeremonySurface(t *testing.T) *ceremonySurface {
 		rpOrigin      = "https://localhost"
 	)
 
+	// Registration is invite-only by default (Config.AllowPublicRegistration);
+	// the ceremony registers a new email, so the harness opens sign-up the
+	// way pkg/webauthn/client's openRegistrationService does.
+	allowPublicRegistration := true
 	stores := webauthntest.NewStores(t)
 	webauthnSvc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
-			RPID:          rpID,
-			RPDisplayName: rpDisplayName,
-			RPOrigins:     []string{rpOrigin},
+			RPID:                    rpID,
+			RPDisplayName:           rpDisplayName,
+			RPOrigins:               []string{rpOrigin},
+			AllowPublicRegistration: &allowPublicRegistration,
 		},
 		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
