@@ -16,6 +16,8 @@
 package cmd
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -23,6 +25,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // openStorageFDs counts this process's open file descriptors on a path
@@ -82,4 +86,46 @@ func TestOpenTPM_FailureReleasesKeyStore(t *testing.T) {
 	require.Nil(t, tpm)
 
 	require.Zero(t, openStorageFDs(t, dir), "key store still open after a failed open")
+}
+
+// TestOpenTPM_AttachesPlatformKeyStore is Codex P1 (round 6) on #2305: a TPM
+// opened through the production open path (newConfiguredTPM2) still takes a
+// Platform key store, and closing it releases its key store.
+func TestOpenTPM_AttachesPlatformKeyStore(t *testing.T) {
+	dir := tpmStorageDir(t)
+
+	tpm, err := openTPMForProvisioning()
+	require.NoError(t, err)
+	// The simulator is a process singleton: a TPM left open on a failed
+	// assertion would block every later simulator test.
+	tpmOpen := true
+	t.Cleanup(func() {
+		if tpmOpen {
+			_ = tpm.Close()
+		}
+	})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	storage, err := tpmStorageFactory(logger)
+	require.NoError(t, err)
+
+	pks, attachErr := xkms.AttachPlatformKeyStore(logger, tpm, storage.KeyBackend())
+	require.NoError(t, storage.Close())
+	tpmOpen = false
+	require.NoError(t, tpm.Close())
+	require.NoError(t, attachErr)
+	require.NotNil(t, pks)
+	require.Zero(t, openStorageFDs(t, dir), "key store still open after TPM Close")
+}
+
+// TestTPMSRKEnroll_ProductionOpen runs `xkey tpm srk enroll` over the TPM the
+// command's own open function returns, not a test wrapper: the enrolment
+// attaches the Platform key store and leaves no key store open.
+func TestTPMSRKEnroll_ProductionOpen(t *testing.T) {
+	dir := tpmStorageDir(t)
+	setVar(t, &openTPM, openTPMForProvisioning)
+
+	out, err := runSRKEnroll(t, "", "--pin-file", writeSRKPINFile(t, testSRKUserPIN))
+	require.NoError(t, err)
+	require.Contains(t, out, "Platform SRK enrolled")
+	require.Zero(t, openStorageFDs(t, dir), "key store still open after srk enroll")
 }
