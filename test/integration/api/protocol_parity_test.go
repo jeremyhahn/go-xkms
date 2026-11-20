@@ -234,6 +234,15 @@ func TestAllCommandsAllProtocols(t *testing.T) {
 			keyDir := commands.CreateTempKeyDir(t)
 			localRunner := runner.WithKeyDir(keyDir).WithBackend("software")
 
+			// Name every (family, transport) cell that runs no command.
+			for _, family := range commands.CommandFamilies() {
+				cell := commands.MatrixCellFor(family, protocol, enabledTags)
+				if cell.Runs == 0 {
+					allResults[protocol].skipped++
+					t.Logf("Skipped cell (%s, %s): %s", family, protocol, cell.Reason)
+				}
+			}
+
 			results := localRunner.RunAllCommandsForProtocol(t, protocol, enabledTags)
 
 			var failedNames []string
@@ -265,7 +274,7 @@ func TestAllCommandsAllProtocols(t *testing.T) {
 	t.Log("\n=== Protocol Parity Summary ===")
 	for _, protocol := range protocols {
 		r := allResults[protocol]
-		t.Logf("[%s] Passed: %d, Failed: %d, Skipped: %d",
+		t.Logf("[%s] Passed: %d, Failed: %d, Skipped cells: %d",
 			protocol, r.passed, r.failed, r.skipped)
 	}
 }

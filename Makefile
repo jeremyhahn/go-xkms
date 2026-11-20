@@ -4853,9 +4853,8 @@ integration-test-api-kill:
 	@echo "$(GREEN)✓ All integration test containers killed$(RESET)"
 
 .PHONY: integration-test-api-all
-## integration-test-api-all: Run ALL API protocol integration tests (Unix, REST, gRPC, QUIC)
-## MCP is excluded: SDK transport speaks HTTP but MCP server speaks JSON-RPC over TCP.
-integration-test-api-all: integration-test-api-kill integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic integration-test-api-ssh
+## integration-test-api-all: Run ALL API protocol integration tests (Unix, REST, gRPC, QUIC, MCP)
+integration-test-api-all: integration-test-api-kill integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic integration-test-api-mcp integration-test-api-ssh
 	@echo "$(GREEN)$(BOLD)✓ All API protocol integration tests complete!$(RESET)"
 
 .PHONY: integration-test-api-unix
