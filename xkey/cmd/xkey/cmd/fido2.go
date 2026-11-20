@@ -223,7 +223,12 @@ type FIDO2Config struct {
 	// PlatformSRKPIN is the user PIN, the Platform SRK auth the tpm2
 	// backend creates credential keys under (`xkey tpm srk enroll`). It
 	// comes from --pin-stdin, --pin-file or XKEY_PIN, or a terminal prompt.
-	PlatformSRKPIN    string
+	PlatformSRKPIN string
+	// PlatformSRKPINErr is set when a PIN source was named but failed
+	// (unreadable or empty --pin-file, --pin-stdin with --set-pin-stdin).
+	// The tpm2 backend refuses to start on it rather than fall back to an
+	// empty auth.
+	PlatformSRKPINErr error
 	AttestationFormat string
 
 	// Phone backend configuration
@@ -596,7 +601,6 @@ func buildFIDO2Config() *FIDO2Config {
 		UserPresenceTimeout: viper.GetDuration("fido2.timeout"),
 		Backend:             viper.GetString("fido2.backend"),
 		TPMDevice:           viper.GetString("fido2.tpm_device"),
-		PlatformSRKPIN:      resolveFIDO2PlatformSRKPIN(),
 		AttestationFormat:   viper.GetString("fido2.attestation"),
 		PhoneDevice:         viper.GetString("fido2.phone_device"),
 		PasswordStorePath:   viper.GetString("fido2.password_store"),
@@ -615,6 +619,7 @@ func buildFIDO2Config() *FIDO2Config {
 		CDPHost:         viper.GetString("fido2.cdp_host"),
 		CDPPort:         viper.GetInt("fido2.cdp_port"),
 	}
+	cfg.PlatformSRKPIN, cfg.PlatformSRKPINErr = resolveFIDO2PlatformSRKPIN()
 
 	return cfg
 }
@@ -670,28 +675,29 @@ func resolveFIDO2SetPINSecret() *secure.Secret {
 
 // resolveFIDO2PlatformSRKPIN resolves the user PIN used as the Platform SRK
 // auth for --backend tpm2: --pin-stdin, then --pin-file, then XKEY_PIN.
-// Errors name the source, never the value.
-func resolveFIDO2PlatformSRKPIN() string {
+// Errors name the source, never the value. A named source that fails is an
+// error (ErrFIDO2PlatformSRKPIN); with no source named the PIN is empty.
+func resolveFIDO2PlatformSRKPIN() (string, error) {
 	fromStdin := viper.GetBool("fido2.pin_stdin")
 	if fromStdin && viper.GetBool("fido2.set_pin_stdin") {
-		slog.Default().Error("fido2: --pin-stdin and --set-pin-stdin cannot both read standard input; use --pin-file")
-		return ""
+		return "", fmt.Errorf("%w: %w", ErrFIDO2PlatformSRKPIN, ErrFIDO2PlatformSRKPINBothStdin)
 	}
 	var (
 		secret []byte
 		err    error
+		source = "--pin-stdin or XKEY_PIN"
 	)
 	if path := viper.GetString("fido2.pin_file"); !fromStdin && path != "" {
+		source = "--pin-file"
 		secret, err = srkUserPINSource.secretFromFile(path)
 	} else {
 		secret, err = srkUserPINSource.resolveBytesFrom(fromStdin)
 	}
 	if err != nil {
-		slog.Default().Error("fido2: failed to resolve the Platform SRK PIN", "error", err)
-		return ""
+		return "", fmt.Errorf("%w: %s: %w", ErrFIDO2PlatformSRKPIN, source, err)
 	}
 	defer enclave.Wipe(secret)
-	return string(secret)
+	return string(secret), nil
 }
 
 // fido2PINSecret seals s into a *secure.Secret for FIDO2Config.PIN. An
@@ -1981,6 +1987,13 @@ func createFIDO2XKMSSoftwareKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (k
 // createFIDO2TPM2KeyBackend creates a TPM2-backed FIDO2 key backend by wrapping
 // the go-xkms TPM2 backend with BackendAdapter.
 func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybackend.FIDO2KeyBackend, error) {
+	// A named PIN source that failed stops here, before any TPM open or
+	// auth: falling back to an empty auth would fail later as an unrelated
+	// TPM auth error.
+	if cfg.PlatformSRKPINErr != nil {
+		return nil, cfg.PlatformSRKPINErr
+	}
+
 	logger.Info("opening TPM device", slog.String("device", cfg.TPMDevice))
 
 	// The TPM `tpm install` provisioned, opened with the same SSRK, EK, IAK,
@@ -2030,6 +2043,16 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 // ErrFIDO2TPMPlatformSRKAuth indicates the user PIN did not unlock the
 // Platform SRK enrolled by `xkey tpm srk enroll`.
 var ErrFIDO2TPMPlatformSRKAuth = errors.New("fido2: Platform SRK auth failed: check the user PIN given to `xkey tpm srk enroll`")
+
+var (
+	// ErrFIDO2PlatformSRKPIN indicates a named Platform SRK PIN source
+	// (--pin-file, --pin-stdin, XKEY_PIN) could not be read.
+	ErrFIDO2PlatformSRKPIN = errors.New("fido2: read the Platform SRK PIN")
+
+	// ErrFIDO2PlatformSRKPINBothStdin indicates --pin-stdin and
+	// --set-pin-stdin were both given; only one can read standard input.
+	ErrFIDO2PlatformSRKPINBothStdin = errors.New("--pin-stdin and --set-pin-stdin cannot both read standard input; use --pin-file")
+)
 
 // loadFIDO2PlatformSRKAuth verifies the user PIN against the Platform SRK
 // and loads it as the SRK auth credential keys are created under. With no
