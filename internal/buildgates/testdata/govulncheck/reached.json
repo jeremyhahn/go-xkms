@@ -1,0 +1,55 @@
+{
+  "config": {
+    "protocol_version": "v1.0.0",
+    "scanner_name": "govulncheck",
+    "scan_level": "symbol"
+  }
+}
+{
+  "osv": {
+    "id": "GO-2026-6911"
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6911",
+    "fixed_version": "",
+    "trace": [
+      {
+        "module": "github.com/mark3labs/mcp-go",
+        "version": "v0.0.0",
+        "package": "github.com/mark3labs/mcp-go/client/transport",
+        "function": "Start",
+        "receiver": "*StreamableHTTP"
+      },
+      {
+        "module": "github.com/jeremyhahn/go-xkms",
+        "package": "github.com/jeremyhahn/go-xkms/pkg/acme/api/swagger",
+        "function": "AssetHandler"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-0001",
+    "trace": [
+      {
+        "module": "example.com/imported",
+        "version": "v1.0.0",
+        "package": "example.com/imported/pkg"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-0002",
+    "trace": [
+      {
+        "module": "example.com/required",
+        "version": "v1.0.0"
+      }
+    ]
+  }
+}
