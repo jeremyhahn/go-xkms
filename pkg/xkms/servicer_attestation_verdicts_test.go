@@ -16,8 +16,12 @@ package xkms
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
@@ -206,4 +210,84 @@ func TestAttestationVerdicts_TenantIsolation(t *testing.T) {
 	if len(list.Verdicts) != 0 {
 		t.Fatalf("List as tenant B: got %d verdicts, want 0", len(list.Verdicts))
 	}
+}
+
+// spySource counts the quotes the engine collects through it.
+type spySource struct{ collects atomic.Int32 }
+
+func (s *spySource) Collect(_ context.Context, _, _ string, _ []byte) (*appraisal.AppraiseQuoteRequest, error) {
+	s.collects.Add(1)
+	return &appraisal.AppraiseQuoteRequest{}, nil
+}
+
+// verdictAuthorizer grants exactly grants through an RBAC-backed Authorizer.
+func verdictAuthorizer(grants ...string) *auth.Authorizer {
+	granted := grantedRBAC{recordingRBAC: &recordingRBAC{}, grants: map[string]bool{}}
+	for _, g := range grants {
+		granted.grants[g] = true
+	}
+	return auth.NewAuthorizer(granted)
+}
+
+// TestAttestationVerdicts_PermissionBeforeSubsystem: a caller without the
+// verdict permission gets the permission refusal, never a subsystem error,
+// and the re-attestation engine is never driven (Codex P1 on #2111).
+func TestAttestationVerdicts_PermissionBeforeSubsystem(t *testing.T) {
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "viewer", TenantID: "tenant-a"})
+	req := &transport.AttestationVerdictRequest{DeviceID: "dev-1"}
+
+	unconfigured := &XKMSService{}
+	unconfigured.SetAuthorizer(verdictAuthorizer())
+
+	spy := &spySource{}
+	store := newVerdictStore(t)
+	clock := &verdictClock{now: time.Unix(1_700_000_000, 0)}
+	engine, err := continuous.NewEngine(continuous.Config{
+		Store:     store,
+		Source:    spy,
+		Appraiser: verdictAppraiser{verified: true},
+		Now:       clock.Now,
+	})
+	require.NoError(t, err)
+	configured := &XKMSService{}
+	configured.SetContinuousAttestation(engine, store)
+	configured.SetAuthorizer(verdictAuthorizer())
+
+	for name, svc := range map[string]*XKMSService{"unconfigured": unconfigured, "configured": configured} {
+		calls := map[string]func(*transport.AttestationVerdictRequest) error{
+			"attestation_verdicts:list": func(r *transport.AttestationVerdictRequest) error {
+				_, err := svc.ListAttestationVerdicts(ctx, r)
+				return err
+			},
+			"attestation_verdicts:get": func(r *transport.AttestationVerdictRequest) error {
+				_, err := svc.GetLatestAttestationVerdict(ctx, r)
+				return err
+			},
+			"attestation_verdicts:create": func(r *transport.AttestationVerdictRequest) error {
+				_, err := svc.ReattestDevice(ctx, r)
+				return err
+			},
+		}
+		for perm, call := range calls {
+			for _, r := range []*transport.AttestationVerdictRequest{req, {}, nil} {
+				err := call(r)
+				require.ErrorIs(t, err, errGrantMissing, "%s %s", name, perm)
+				assert.NotErrorIs(t, err, ErrNotConfigured, "%s %s", name, perm)
+				var refusal *VerdictPermissionError
+				require.ErrorAs(t, err, &refusal, "%s %s", name, perm)
+				assert.Equal(t, perm, refusal.Permission, "%s", name)
+				assert.Contains(t, refusal.Error(), perm, "%s", name)
+			}
+		}
+	}
+	assert.Zero(t, spy.collects.Load(), "a refused caller must not drive the engine")
+
+	_, err = store.LatestVerdict(ctx, "tenant-a", "dev-1")
+	var notFound *continuous.VerdictNotFoundError
+	require.ErrorAs(t, err, &notFound, "a refused re-attest must not record a verdict")
+
+	configured.SetAuthorizer(verdictAuthorizer("attestation_verdicts:create"))
+	_, err = configured.ReattestDevice(ctx, req)
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), spy.collects.Load())
 }

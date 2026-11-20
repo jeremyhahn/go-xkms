@@ -16,7 +16,11 @@ package xkms
 import (
 	"context"
 	"errors"
+	"sort"
+	"sync"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport/embedded"
@@ -1458,4 +1462,82 @@ func (*mockXKMSService) DeleteSigningKeyBinding(context.Context, *transport.Dele
 }
 func (*mockXKMSService) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, nil
+}
+
+// sdkEvidenceFetcher records every device the engine collects evidence from.
+type sdkEvidenceFetcher struct {
+	mu        sync.Mutex
+	collected []string
+}
+
+func (f *sdkEvidenceFetcher) Collect(_ context.Context, tenant, deviceID string, _ []byte) (*AppraiseAttestationQuoteRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.collected = append(f.collected, tenant+"/"+deviceID)
+	return &AppraiseAttestationQuoteRequest{}, nil
+}
+
+// sdkDeviceLister is the composing product's device inventory.
+type sdkDeviceLister map[string][]string
+
+func (l sdkDeviceLister) Tenants(context.Context) ([]string, error) {
+	tenants := make([]string, 0, len(l))
+	for t := range l {
+		tenants = append(tenants, t)
+	}
+	return tenants, nil
+}
+
+func (l sdkDeviceLister) Devices(_ context.Context, tenant string) ([]string, error) {
+	return l[tenant], nil
+}
+
+type sdkVerifyingAppraiser struct{}
+
+func (sdkVerifyingAppraiser) AppraiseQuote(context.Context, string, *AppraiseAttestationQuoteRequest) (*AttestationAppraisalResult, error) {
+	return &AttestationAppraisalResult{Verified: true}, nil
+}
+
+// TestContinuousAttestation_CallerFetcherAndLister: the engine seam of ruling
+// 1003 (2) is reachable from the SDK alone; the engine re-attests through the
+// caller's fetcher and visits the devices the caller's lister names.
+func TestContinuousAttestation_CallerFetcherAndLister(t *testing.T) {
+	store, err := NewAttestationVerdictStore(AttestationVerdictStoreConfig{DAOs: NewStoreDAOFactory(qrdbsdk.NewMemoryKVStore())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetcher := &sdkEvidenceFetcher{}
+	lister := sdkDeviceLister{"acme": {"dev-1", "dev-2"}, "globex": {"dev-9"}}
+	engine, err := NewContinuousAttestationEngine(
+		ContinuousAttestationConfig{Store: store, Appraiser: sdkVerifyingAppraiser{}},
+		WithAttestationEvidence(fetcher, lister),
+	)
+	if err != nil {
+		t.Fatalf("NewContinuousAttestationEngine: %v", err)
+	}
+	ctx := context.Background()
+	if err := engine.Pass(ctx); err != nil {
+		t.Fatalf("Pass: %v", err)
+	}
+	sort.Strings(fetcher.collected)
+	want := []string{"acme/dev-1", "acme/dev-2", "globex/dev-9"}
+	if len(fetcher.collected) != len(want) {
+		t.Fatalf("collected %v, want %v", fetcher.collected, want)
+	}
+	for i := range want {
+		if fetcher.collected[i] != want[i] {
+			t.Fatalf("collected %v, want %v", fetcher.collected, want)
+		}
+	}
+	latest, err := store.LatestVerdict(ctx, "globex", "dev-9")
+	if err != nil {
+		t.Fatalf("LatestVerdict: %v", err)
+	}
+	if !latest.Verified {
+		t.Fatalf("latest verdict %+v, want verified", latest)
+	}
+
+	if _, err := NewContinuousAttestationEngine(ContinuousAttestationConfig{Store: store, Appraiser: sdkVerifyingAppraiser{}}); err == nil {
+		t.Fatal("an engine without a caller-supplied fetcher must be refused")
+	}
 }
