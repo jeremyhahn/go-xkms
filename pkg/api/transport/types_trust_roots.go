@@ -21,7 +21,9 @@ type TrustRoot struct {
 
 	// Purpose is the root's classification: "general", "user-ca",
 	// "bootstrap-ca", "tpm-manufacturer", "android-hardware",
-	// "idevid-issuer", "image-signer", or "synced" for a quarantined root.
+	// "idevid-issuer", "image-signer", "yubikey-attestation",
+	// "apple-attestation", "dice-attestation", or "synced" for a
+	// quarantined root.
 	Purpose string `json:"purpose"`
 
 	Subject   string `json:"subject"`
