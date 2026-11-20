@@ -915,9 +915,11 @@ jobs:
             fi
           fi
           echo "docs only: $docs_only; lint-gates: $lint_gates; full-tier paths: $full_paths"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "lint_gates=$lint_gates" >> "$GITHUB_OUTPUT"
-          echo "full_paths=$full_paths" >> "$GITHUB_OUTPUT"
+          {
+            echo "docs_only=$docs_only"
+            echo "lint_gates=$lint_gates"
+            echo "full_paths=$full_paths"
+          } >> "$GITHUB_OUTPUT"
 
       - name: No direct go-objstore import outside the storage seam
         run: |
