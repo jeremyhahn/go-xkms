@@ -147,7 +147,44 @@ func (tpm *TPM2) objectSession(
 		}
 		return tpm.platformPCRBranchSessionOver(pcrs, authPolicy)
 	}
-	return tpm.platformKeySession(keyAttrs, backend)
+	pcrs, err := tpm.objectPCRSet(keyAttrs, backend)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	return tpm.platformKeySessionOver(keyAttrs, backend, pcrs)
+}
+
+// platformKeySessionOver opens the password branch of an object sealed to
+// the platform policy whose PolicyPCR branch covers pcrs. PolicyOR is built
+// over the stored pin when it records the same selection; otherwise (no pin,
+// as for inline blobs unsealed against an empty key backend, or a pin a later
+// seal under the same CN wrote over another selection) over pcrs' live
+// values, so an object sealed over an expanded selection still opens with its
+// password while those PCRs are unchanged.
+func (tpm *TPM2) platformKeySessionOver(
+	keyAttrs *types.KeyAttributes,
+	backend store.KeyBackend,
+	pcrs PCRSet) (tpm2.Session, func() error, error) {
+
+	keyAuth := keyAuthValue(keyAttrs)
+	if len(keyAuth) == 0 {
+		return tpm.platformKeySession(keyAttrs, backend)
+	}
+	pin, err := tpm.loadPlatformPolicyPin(keyAttrs, backend)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	if pin != nil && pin.PCRSelect == pcrs.Mask() {
+		return tpm.platformPolicySession(keyAuth, pin)
+	}
+	if pin == nil && pcrs.Mask() == tpm.config.PlatformPCRs.Mask() {
+		return tpm.platformPolicySession(keyAuth, nil)
+	}
+	live, err := tpm.capturePlatformPolicyPinOver(pcrs)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	return tpm.platformPolicySession(keyAuth, live)
 }
 
 // objectAuthPolicy returns the authPolicy of the loaded object at handle,
