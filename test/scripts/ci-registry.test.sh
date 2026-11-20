@@ -20,6 +20,12 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT_UNDER_TEST="$REPO_ROOT/scripts/ci-registry.sh"
+# GO_CACHE_ENV: the caller's Go cache settings, each only when the caller set
+# it, so the env -i make never falls back to $HOME/go (#2295).
+GO_CACHE_ENV=()
+for v in GOMODCACHE GOPATH GOFLAGS GOPROXY GOSUMDB GOCACHE; do
+  if [ -n "${!v+x}" ]; then GO_CACHE_ENV+=("$v=${!v}"); fi
+done
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -309,6 +315,7 @@ run_script() {
       FAKE_MANIFEST_BODY="$MANIFEST" \
       FAKE_MANIFEST_DIGEST="$MANIFEST_DIGEST" \
       CI_REGISTRY_OWNER=example-ci-images \
+      "${GO_CACHE_ENV[@]}" \
       "${envs[@]}" \
       bash "$SCRIPT_UNDER_TEST" "${args[@]}" >"$WORK_DIR/stdout" 2>"$WORK_DIR/stderr"
   )

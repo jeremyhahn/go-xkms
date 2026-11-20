@@ -14,10 +14,12 @@
 package http01
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -314,6 +316,65 @@ func TestChallengeHandlerHTTPx_WriteError(t *testing.T) {
 	w := &failingWriter{}
 
 	handler(w, req)
+}
+
+// captureSlog swaps slog.Default for a Debug-level text handler writing to
+// the returned buffer and restores the previous logger on cleanup.
+func captureSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// TestChallengeHandlerHTTPx_WriteErrorLogsLengthNotValue checks that a failed
+// write logs the key authorization's length, never its value (#2275).
+func TestChallengeHandlerHTTPx_WriteErrorLogsLengthNotValue(t *testing.T) {
+	buf := captureSlog(t)
+	keyAuth := "secret-key-authorization-value.thumbprint-2275"
+	handler := challengeHandlerHTTPx(keyAuth)
+
+	req := httptest.NewRequest(http.MethodGet, wellKnownChallengePath+"test-token", nil)
+	handler(&failingWriter{}, req)
+
+	out := buf.String()
+	if strings.Contains(out, keyAuth) {
+		t.Fatalf("log carries the key authorization value: %q", out)
+	}
+	want := fmt.Sprintf("key-authorization-length=%d", len(keyAuth))
+	if !strings.Contains(out, want) {
+		t.Fatalf("log lacks %q: %q", want, out)
+	}
+}
+
+// TestChallengeHandlerHTTPx_ServeLogsLengthNotValue checks that a served
+// request's Debug line logs the key authorization's length, never its value
+// (#2275).
+func TestChallengeHandlerHTTPx_ServeLogsLengthNotValue(t *testing.T) {
+	buf := captureSlog(t)
+	keyAuth := "secret-key-authorization-value.thumbprint-2275"
+	handler := challengeHandlerHTTPx(keyAuth)
+
+	req := httptest.NewRequest(http.MethodGet, wellKnownChallengePath+"test-token", nil)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Body.String() != keyAuth {
+		t.Fatalf("body = %q, want %q", rec.Body.String(), keyAuth)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Served key authorization") {
+		t.Fatalf("no Debug line for the served request: %q", out)
+	}
+	if strings.Contains(out, keyAuth) {
+		t.Fatalf("log carries the key authorization value: %q", out)
+	}
+	want := fmt.Sprintf("key-authorization-length=%d", len(keyAuth))
+	if !strings.Contains(out, want) {
+		t.Fatalf("log lacks %q: %q", want, out)
+	}
 }
 
 func TestVerify_HTTPStatusCodes(t *testing.T) {

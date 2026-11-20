@@ -1947,12 +1947,9 @@ func createFIDO2XKMSSoftwareKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (k
 func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybackend.FIDO2KeyBackend, error) {
 	logger.Info("opening TPM device", slog.String("device", cfg.TPMDevice))
 
-	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
-		Config: &xkms.TPMConfig{
-			Device: cfg.TPMDevice,
-		},
-		Logger: logger,
-	})
+	// The TPM `tpm install` provisioned, opened with the same SSRK, EK, IAK,
+	// IDevID and LAK configuration every `tpm` command uses (ruling 988).
+	tpm, err := openTPMForDevice(cfg.TPMDevice)
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2TPMOpenFailed, err)
 	}
