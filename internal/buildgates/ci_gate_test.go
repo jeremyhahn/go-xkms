@@ -24,6 +24,7 @@ const gateJob = "ci-gate"
 // collapsing whitespace and dropping a ${{ }} wrapper, so a folded `if: >-`
 // matches.
 const fullTierIf = "github.event_name != 'pull_request' ||" +
+	" needs.preflight.outputs.full_paths == 'true' ||" +
 	" contains(github.event.pull_request.labels.*.name, 'ci:full')"
 
 // fullTierEnv is the workflow's CI_FULL_TIER env, which CI Gate's FULL_TIER
@@ -176,7 +177,7 @@ func gateTiers(gate job) (map[string]string, []string) {
 			tiers[name] = tier
 		}
 	}
-	if want := "${{ env.CI_FULL_TIER }}"; fullTier != want {
+	if want := "${{ env.CI_FULL_TIER == 'true' || needs.preflight.outputs.full_paths == 'true' }}"; fullTier != want {
 		problems = append(problems, fmt.Sprintf("CI Gate FULL_TIER is %q, want %q", fullTier, want))
 	}
 	if want := "${{ " + nightlyIf + " }}"; nightly != want {
@@ -361,7 +362,7 @@ jobs:
   race:
     needs: [build]
     if: >-
-      ${{ (github.event_name != 'pull_request' ||
+      ${{ (github.event_name != 'pull_request' || needs.preflight.outputs.full_paths == 'true' ||
       contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     timeout-minutes: 30
   soak:
@@ -380,7 +381,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - env:
-          FULL_TIER: ${{ env.CI_FULL_TIER }}
+          FULL_TIER: ${{ env.CI_FULL_TIER == 'true' || needs.preflight.outputs.full_paths == 'true' }}
           NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           DRAFT: ${{ github.event.pull_request.draft == true }}
         run: |
@@ -426,7 +427,7 @@ func TestCIGateTiersCatchEachMismatch(t *testing.T) {
 		{"scoped job without its path scope", " && needs.preflight.outputs.lint_gates != 'false' }}", " }}", "lint-gates is tagged scoped but its if:"},
 		{"scoped job without the guard in needs", "  lint-gates:\n    needs: [preflight]\n", "  lint-gates:\n", "lint-gates is tagged scoped but its if:"},
 		{"scoped job tagged pr", `"${{ needs.lint-gates.result }}" scoped`, `"${{ needs.lint-gates.result }}" pr`, "lint-gates is tagged pr but its if:"},
-		{"FULL_TIER not read from CI_FULL_TIER", "FULL_TIER: ${{ env.CI_FULL_TIER }}", "FULL_TIER: ${{ github.event_name != 'pull_request' }}", "CI Gate FULL_TIER is"},
+		{"FULL_TIER not read from CI_FULL_TIER", "FULL_TIER: ${{ env.CI_FULL_TIER == 'true' || needs.preflight.outputs.full_paths == 'true' }}", "FULL_TIER: ${{ github.event_name != 'pull_request' }}", "CI Gate FULL_TIER is"},
 		{"CI_FULL_TIER drifts from the full tier", "CI_FULL_TIER: ${{ (github.event_name != 'pull_request' &&", "CI_FULL_TIER: ${{ (github.event_name == 'push' &&", "env.CI_FULL_TIER is"},
 		{"CI_FULL_TIER takes a dispatch off main", "CI_FULL_TIER: ${{ (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'))", "CI_FULL_TIER: ${{ (github.event_name != 'pull_request')", "env.CI_FULL_TIER is"},
 		{"NIGHTLY drifts from the nightly if", "NIGHTLY: ${{ github.event_name == 'schedule' || ", "NIGHTLY: ${{ ", "CI Gate NIGHTLY is"},
