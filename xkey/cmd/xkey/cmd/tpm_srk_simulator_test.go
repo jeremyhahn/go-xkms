@@ -98,8 +98,9 @@ func openFreshSRKTPM(t *testing.T, sim *provisionedSimulator) {
 	t.Helper()
 	config, err := newTPMConfig("", tpmCfg.useSimulator, ekCertHandleRSA)
 	require.NoError(t, err)
-	params, err := newTPMParams(config)
+	params, storage, err := newTPMParams(config)
 	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, storage.Close()) })
 	params.Transport = sendOnlyTransport{tpm: sim.tpm.Transport()}
 	fresh, err := xkms.NewTPM2(params)
 	if err != nil && !errors.Is(err, xkms.ErrTPMNotInitialized) {
