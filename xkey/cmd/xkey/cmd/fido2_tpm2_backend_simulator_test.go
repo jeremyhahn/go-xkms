@@ -14,10 +14,11 @@ import (
 // use (SSRK, EK, IAK, IDevID, LAK), and so creates credential keys under the
 // provisioned SRK.
 func TestCreateFIDO2TPM2KeyBackendOpensProvisionedTPM(t *testing.T) {
-	installTPMForSRK(t)
+	sim := installTPMForSRK(t)
+	pinFile := writeSRKPINFile(t, testSRKUserPIN)
 
-	_, err := runSRKEnroll(t, "", "--pin-file", writeSRKPINFile(t, testSRKUserPIN))
+	_, err := runSRKEnroll(t, "", "--pin-file", pinFile)
 	require.NoError(t, err)
 
-	require.NoError(t, createSRKCredential(t, testSRKUserPIN))
+	require.NoError(t, createSRKCredential(t, sim, pinFile, ""))
 }
