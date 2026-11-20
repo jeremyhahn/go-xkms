@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -155,6 +156,27 @@ func TestEmbeddedNodeStorageConfig_PinsSPIFFETrustDomain(t *testing.T) {
 	}}
 	qcfg = EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{})
 	assert.Equal(t, "example.org", qcfg.Auth.SPIFFETrustDomain)
+}
+
+// A relative datastore path (the webauthn-browser harness uses
+// "./.runtime/storage") must reach qrdb as an absolute path: qrdb refuses a
+// relative volume pool path, and without the default pool registration has
+// nowhere to write (ruling 1009).
+func TestEmbeddedNodeStorageConfig_ResolvesRelativeDatastorePath(t *testing.T) {
+	const rel = "./.runtime/storage"
+	abs, err := filepath.Abs(rel)
+	require.NoError(t, err)
+
+	cfg := &config.Config{}
+	cfg.Datastore.Path = rel
+	qcfg := EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{Enabled: true})
+
+	require.Len(t, qcfg.Storage.VolumePools, 1)
+	pool := qcfg.Storage.VolumePools[0].Path
+	assert.True(t, filepath.IsAbs(pool), "volume pool path %q is not absolute", pool)
+	assert.Equal(t, filepath.Join(abs, "tenant-volumes"), pool)
+	assert.True(t, filepath.IsAbs(qcfg.Raft.DataDir), "raft data dir %q is not absolute", qcfg.Raft.DataDir)
+	assert.Equal(t, abs, qcfg.Raft.DataDir)
 }
 
 // TestOpenEmbeddedNode_OverridesFactorRegistryAndAuditSink proves that a
