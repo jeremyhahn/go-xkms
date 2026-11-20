@@ -10,10 +10,10 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.5.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.1
 	github.com/aws/aws-sdk-go-v2 v1.48.0
-	github.com/aws/aws-sdk-go-v2/config v1.33.9
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.9
-	github.com/aws/aws-sdk-go-v2/service/kms v1.61.5
-	github.com/aws/aws-sdk-go-v2/service/route53 v1.70.4
+	github.com/aws/aws-sdk-go-v2/config v1.33.18
+	github.com/aws/aws-sdk-go-v2/credentials v1.21.0
+	github.com/aws/aws-sdk-go-v2/service/kms v1.62.6
+	github.com/aws/aws-sdk-go-v2/service/route53 v1.71.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.52.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/cloudflare/circl v1.6.5
@@ -70,8 +70,8 @@ require (
 	golang.org/x/term v0.48.0
 	golang.org/x/text v0.44.0
 	golang.org/x/time v0.16.0
-	google.golang.org/api v0.305.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b
+	google.golang.org/api v0.314.0
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261104224025-d1e00e9f33ab
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -82,7 +82,7 @@ require (
 	cel.dev/expr v0.25.3 // indirect
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.24.1-0.20261001053825-dbc26066f70a // indirect
-	cloud.google.com/go/auth/oauth2adapt v0.3.0 // indirect
+	cloud.google.com/go/auth/oauth2adapt v0.3.1 // indirect
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	cloud.google.com/go/iam v1.14.0 // indirect
 	cloud.google.com/go/longrunning v1.5.0 // indirect
@@ -108,16 +108,16 @@ require (
 	github.com/awnumar/memcall v0.5.0 // indirect
 	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.8 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.3 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.9 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.12 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.12 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.12 // indirect
 	github.com/aws/aws-sdk-go-v2/service/glacier v1.35.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.25 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.12 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.10.4 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.38.4 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.13.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.39.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.5 // indirect
 	github.com/aws/smithy-go v1.28.9 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
@@ -166,7 +166,7 @@ require (
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/s2a-go v0.1.11 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.3.23 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.3.25 // indirect
 	github.com/googleapis/gax-go/v2 v2.27.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/gtank/ristretto255 v0.2.0 // indirect
@@ -272,7 +272,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
-	golang.org/x/mod v0.42.0 // indirect
+	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261009151841-97e8ea77aa2a // indirect
 	golang.org/x/tools v0.52.0 // indirect
