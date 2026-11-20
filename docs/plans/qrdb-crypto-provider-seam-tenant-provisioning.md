@@ -289,3 +289,16 @@ approval and the exported APIs) were not started.
 - Not acted on (owner rulings needed): finding 3 (PKCS#11 tenant key naming
   compatibility) and finding 4 (owner approval of
   `datastore.tenant-login-ca-keys`).
+- Codex review 5990957839, PKCS#11 tenant key IDs (P1): only the tenant
+  login CA key takes the `tenant=<tenant>/` token ID; every other tenant key
+  keeps `<CN>.<algorithm>`, the ID its existing object has. Test
+  `TestCreateKeyID_ExistingTenantKeysKeepTheirID`.
+- Codex review 5990957839, takeover fencing (P1): the renewal-based takeover
+  is gone. Claim owners carry `<token>/<process>/<pid>/<host>`; a generating
+  claim is taken over only on proof its holder stopped (a returned pass of
+  this process, or an earlier process on this host whose PID no longer runs
+  or is this process's own). A holder on another host stays held until
+  `RemoveTenant`. Tests `TestTenantCAKeyFactory_NoTakeoverWhileRenewalsFailDuringGenerate`,
+  `TestTenantLoginCAHolderStopped`, `TestTenantCAKeyFactory_ReconcilesGeneratingClaimOfGoneHolder`.
+- Codex review 5990957839, `datastore.tenant-login-ca-keys` scope (P1): not
+  acted on; needs owner approval of the setting or a SPEC row change.
