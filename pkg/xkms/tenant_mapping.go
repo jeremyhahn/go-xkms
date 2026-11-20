@@ -48,20 +48,22 @@ func tenantInfoToTransport(info *qrdbsdk.ServiceTenantInfo) transport.TenantInfo
 // tenantQuotasToTransport maps the service-layer quota set onto the wire DTO.
 func tenantQuotasToTransport(q *qrdbsdk.Quotas) *transport.TenantQuotas {
 	return &transport.TenantQuotas{
-		MaxDatabases:         q.MaxDatabases,
-		MaxRaftGroups:        q.MaxRaftGroups,
-		MaxReplicasPerGroup:  q.MaxReplicasPerGroup,
-		MaxTotalReplicas:     q.MaxTotalReplicas,
-		MaxCollections:       q.MaxCollections,
-		MaxKeys:              q.MaxKeys,
-		MaxStorageBytes:      q.MaxStorageBytes,
-		MaxDatabaseSizeBytes: q.MaxDatabaseSizeBytes,
-		MaxUsers:             q.MaxUsers,
-		MaxRoles:             q.MaxRoles,
-		MaxCertificates:      q.MaxCertificates,
-		MaxBackups:           q.MaxBackups,
-		MaxVectorDims:        q.MaxVectorDims,
-		MaxTSMetrics:         q.MaxTSMetrics,
+		MaxDatabases:          q.MaxDatabases,
+		MaxRaftGroups:         q.MaxRaftGroups,
+		MaxReplicasPerGroup:   q.MaxReplicasPerGroup,
+		MaxTotalReplicas:      q.MaxTotalReplicas,
+		MaxCollections:        q.MaxCollections,
+		MaxKeys:               q.MaxKeys,
+		MaxStorageBytes:       q.MaxStorageBytes,
+		MaxDatabaseSizeBytes:  q.MaxDatabaseSizeBytes,
+		MaxUsers:              q.MaxUsers,
+		MaxRoles:              q.MaxRoles,
+		MaxCertificates:       q.MaxCertificates,
+		MaxBackups:            q.MaxBackups,
+		MaxVectorDims:         q.MaxVectorDims,
+		MaxTSMetrics:          q.MaxTSMetrics,
+		SystemBarrierQuota:    q.SystemBarrierQuota,
+		MaxDedicatedWALGroups: q.MaxDedicatedWALGroups,
 	}
 }
 
@@ -73,6 +75,9 @@ func tenantEntitlementsToTransport(e *qrdbsdk.Entitlements) *transport.TenantEnt
 		AllowDedicatedRaft:        e.AllowDedicatedRaft,
 		AllowVolumeStorage:        e.AllowVolumeStorage,
 		AllowSystemManagedBarrier: e.AllowSystemManagedBarrier,
+		AllowedBarrierModes:       e.AllowedBarrierModes,
+		AllowDedicatedWAL:         e.AllowDedicatedWAL,
+		AllowedVolumePools:        e.AllowedVolumePools,
 	}
 }
 
@@ -85,6 +90,9 @@ func transportToEntitlements(e transport.TenantEntitlements) *qrdbsdk.Entitlemen
 		AllowDedicatedRaft:        e.AllowDedicatedRaft,
 		AllowVolumeStorage:        e.AllowVolumeStorage,
 		AllowSystemManagedBarrier: e.AllowSystemManagedBarrier,
+		AllowedBarrierModes:       e.AllowedBarrierModes,
+		AllowDedicatedWAL:         e.AllowDedicatedWAL,
+		AllowedVolumePools:        e.AllowedVolumePools,
 	}
 }
 
@@ -92,19 +100,21 @@ func transportToEntitlements(e transport.TenantEntitlements) *qrdbsdk.Entitlemen
 // update.
 func transportToQuotas(q transport.TenantQuotas) *qrdbsdk.Quotas {
 	return &qrdbsdk.Quotas{
-		MaxDatabases:         q.MaxDatabases,
-		MaxRaftGroups:        q.MaxRaftGroups,
-		MaxReplicasPerGroup:  q.MaxReplicasPerGroup,
-		MaxTotalReplicas:     q.MaxTotalReplicas,
-		MaxCollections:       q.MaxCollections,
-		MaxKeys:              q.MaxKeys,
-		MaxStorageBytes:      q.MaxStorageBytes,
-		MaxDatabaseSizeBytes: q.MaxDatabaseSizeBytes,
-		MaxUsers:             q.MaxUsers,
-		MaxRoles:             q.MaxRoles,
-		MaxCertificates:      q.MaxCertificates,
-		MaxBackups:           q.MaxBackups,
-		MaxVectorDims:        q.MaxVectorDims,
-		MaxTSMetrics:         q.MaxTSMetrics,
+		MaxDatabases:          q.MaxDatabases,
+		MaxRaftGroups:         q.MaxRaftGroups,
+		MaxReplicasPerGroup:   q.MaxReplicasPerGroup,
+		MaxTotalReplicas:      q.MaxTotalReplicas,
+		MaxCollections:        q.MaxCollections,
+		MaxKeys:               q.MaxKeys,
+		MaxStorageBytes:       q.MaxStorageBytes,
+		MaxDatabaseSizeBytes:  q.MaxDatabaseSizeBytes,
+		MaxUsers:              q.MaxUsers,
+		MaxRoles:              q.MaxRoles,
+		MaxCertificates:       q.MaxCertificates,
+		MaxBackups:            q.MaxBackups,
+		MaxVectorDims:         q.MaxVectorDims,
+		MaxTSMetrics:          q.MaxTSMetrics,
+		SystemBarrierQuota:    q.SystemBarrierQuota,
+		MaxDedicatedWALGroups: q.MaxDedicatedWALGroups,
 	}
 }

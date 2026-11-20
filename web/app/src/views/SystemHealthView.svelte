@@ -31,6 +31,19 @@
     return String(e);
   }
 
+  // A failing readiness probe answers 503 with its full HealthCheckResponse
+  // (ReadinessHandler, pkg/api/rest/health_handlers.go); the SDK keeps that
+  // parsed body as the error envelope. Recover it so the failing checks show.
+  function healthBodyOf(e: unknown): HealthCheckResponse | null {
+    if (typeof e !== "object" || e === null || !("envelope" in e)) return null;
+    const env = (e as { envelope: unknown }).envelope;
+    if (typeof env !== "object" || env === null) return null;
+    const body = env as Partial<HealthCheckResponse>;
+    if (typeof body.status !== "string" || body.status === "") return null;
+    if (body.checks !== undefined && !Array.isArray(body.checks)) return null;
+    return body as HealthCheckResponse;
+  }
+
   function isOk(status: string): boolean {
     return OK_STATUSES.has(status.toLowerCase());
   }
@@ -46,8 +59,11 @@
     const health = getSDKClient().health;
     // allSettled: one failed probe must not hide the others or the algorithms.
     const [l, r, s, a] = await Promise.allSettled([health.live(), health.ready(), health.startup(), health.algorithms()]);
-    const settle = (p: PromiseSettledResult<HealthCheckResponse>): ProbeState =>
-      p.status === "fulfilled" ? { resp: p.value, error: null } : { resp: null, error: messageOf(p.reason) };
+    const settle = (p: PromiseSettledResult<HealthCheckResponse>): ProbeState => {
+      if (p.status === "fulfilled") return { resp: p.value, error: null };
+      const body = healthBodyOf(p.reason);
+      return body ? { resp: body, error: null } : { resp: null, error: messageOf(p.reason) };
+    };
     results = { live: settle(l), ready: settle(r), startup: settle(s) };
     if (a.status === "fulfilled") {
       algs = a.value;

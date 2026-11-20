@@ -48,15 +48,16 @@
   }
 
   // Returns the full quota set, or null after recording an inline error for
-  // each field that is not a whole number of 0 or more. Empty means 0.
+  // each field that is not a whole number of -1 or more. go-qrdb's quota
+  // contract: -1 is unlimited, 0 the system default. Empty means 0.
   function collect(): TenantQuotas | null {
     const quotas = {} as TenantQuotas;
     const errs: Record<string, string> = {};
     for (const f of fields) {
       const raw = (values[f] ?? "").trim();
       const n = raw === "" ? 0 : Number(raw);
-      if (!Number.isSafeInteger(n) || n < 0) {
-        errs[f] = `${f} must be a whole number of 0 or more.`;
+      if (!Number.isSafeInteger(n) || n < -1) {
+        errs[f] = `${f} must be a whole number: -1 (unlimited), 0 (system default) or more.`;
       } else {
         quotas[f] = n;
       }
@@ -103,7 +104,7 @@
       </select>
     </label>
     <p class="text-sm text-base-content/70">
-      Save sends the whole quota set and replaces the stored one; an empty field is sent as 0.
+      Save sends the whole quota set and replaces the stored one; an empty field is sent as 0 (system default); -1 means unlimited.
     </p>
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
       {#each fields as f (f)}
@@ -112,7 +113,7 @@
           <input
             class="input input-bordered input-sm"
             type="number"
-            min="0"
+            min="-1"
             step="1"
             aria-label={f}
             placeholder="0"

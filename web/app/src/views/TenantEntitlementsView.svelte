@@ -11,7 +11,7 @@
     | "allow_volume_storage"
     | "allow_system_managed_barrier"
     | "allow_dedicated_wal";
-  type ListField = "allowed_isolation_modes" | "allowed_barrier_modes";
+  type ListField = "allowed_isolation_modes" | "allowed_barrier_modes" | "allowed_volume_pools";
 
   const flags: Flag[] = [
     "allow_dedicated_raft",
@@ -19,7 +19,9 @@
     "allow_system_managed_barrier",
     "allow_dedicated_wal",
   ];
-  const lists: ListField[] = ["allowed_isolation_modes", "allowed_barrier_modes"];
+  // allowed_volume_pools: the first pool is the tenant's default; an empty
+  // list entitles no pool, so the replace must carry the pool grants.
+  const lists: ListField[] = ["allowed_isolation_modes", "allowed_barrier_modes", "allowed_volume_pools"];
 
   let tenants = $state<TenantInfoResponse[]>([]);
   let loading = $state(true);
@@ -32,7 +34,11 @@
     allow_system_managed_barrier: false,
     allow_dedicated_wal: false,
   });
-  let text = $state<Record<ListField, string>>({ allowed_isolation_modes: "", allowed_barrier_modes: "" });
+  let text = $state<Record<ListField, string>>({
+    allowed_isolation_modes: "",
+    allowed_barrier_modes: "",
+    allowed_volume_pools: "",
+  });
   // undefined = nothing saved yet; null = the reply carried no entitlements.
   let returned = $state<TenantEntitlements | null | undefined>(undefined);
 
@@ -71,6 +77,7 @@
       allow_system_managed_barrier: checked.allow_system_managed_barrier,
       allowed_barrier_modes: split(text.allowed_barrier_modes),
       allow_dedicated_wal: checked.allow_dedicated_wal,
+      allowed_volume_pools: split(text.allowed_volume_pools),
     };
     try {
       const res = await getSDKClient().tenants.updateEntitlements(tenantId, { tenant_id: tenantId, entitlements });
