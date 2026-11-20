@@ -107,7 +107,9 @@ func (c *NodeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 	if req == nil {
 		return nil, errors.New("auth: nil create user request")
 	}
-	return nodeUser(users.CreateUser(ctx, &qrdbsdk.CreateUserRequest{
+	// The routing user service creates only in the caller's tenant: bind
+	// the request's tenant, which callers take from server-side state.
+	return nodeUser(users.CreateUser(bindTenant(ctx, req.TenantID), &qrdbsdk.CreateUserRequest{
 		Username:             req.Username,
 		Email:                req.Email,
 		WithoutEmailLoginKey: req.WithoutEmailLoginKey,

@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
@@ -62,6 +63,21 @@ type qrdbUserStore struct {
 	users    QRDBUsers
 	creds    CredentialStore
 	tenantID string
+}
+
+// scope binds the store's configured tenant on ctx for the user service's
+// by-id calls (GetUser, UpdateUser, DeleteUser), which carry no tenant of
+// their own: on the anonymous public routes a routing user service would
+// otherwise act in the system tenant. A tenant the caller already bound (a
+// validated invite's) is kept.
+func (s *qrdbUserStore) scope(ctx context.Context) context.Context {
+	if s.tenantID == "" {
+		return ctx
+	}
+	if id, ok := qrdbtenant.IDFromContext(ctx); ok && id != "" {
+		return ctx
+	}
+	return qrdbtenant.WithTenantID(ctx, s.tenantID)
 }
 
 // NewQRDBUserStoreAdapter constructs the (UserStore, CredentialStore) pair
@@ -117,6 +133,7 @@ func UserIDFromHandle(handle []byte) (uint64, error) {
 // GetByID retrieves the user by webauthn handle. The handle is the
 // 8-byte big-endian form of the qrdb uint64 user id.
 func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error) {
+	ctx = s.scope(ctx)
 	if len(userID) == 0 {
 		return nil, ErrUserNotFound
 	}
@@ -139,6 +156,7 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 // surfaced as a WebAuthn login that verified correctly and then failed to
 // resolve a principal (go-xkms #185, go-quicbaas #359).
 func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, error) {
+	ctx = s.scope(ctx)
 	if email == "" {
 		return nil, ErrUserNotFound
 	}
@@ -156,6 +174,7 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 // no Name field — which made this store a second source of truth for an
 // identity qrdb already owned. Both now live in the record itself.
 func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (User, error) {
+	ctx = s.scope(ctx)
 	if email == "" {
 		return nil, &QRDBAdapterConfigError{Field: "email"}
 	}
@@ -176,6 +195,7 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 // credentials, so Save is a near no-op for the user record. A display-name
 // change is an update to the qrdb record, not a write to a parallel key.
 func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
+	ctx = s.scope(ctx)
 	if user == nil {
 		return &QRDBAdapterConfigError{Field: "user"}
 	}
@@ -201,6 +221,7 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 // caller, since an orphaned credential would go on referencing a user that
 // no longer exists.
 func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
+	ctx = s.scope(ctx)
 	id, err := UserIDFromHandle(userID)
 	if err != nil {
 		return err
