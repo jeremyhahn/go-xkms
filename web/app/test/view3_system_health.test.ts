@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
-import type { AlgorithmsResponse, HealthCheckResponse } from "@go-xkms/sdk";
+import { parseErrorEnvelope, type AlgorithmsResponse, type HealthCheckResponse } from "@go-xkms/sdk";
 
 const live = vi.fn<() => Promise<HealthCheckResponse>>();
 const ready = vi.fn<() => Promise<HealthCheckResponse>>();
@@ -116,6 +116,31 @@ describe("SystemHealthView", () => {
     expect(within(start).getByText("migrations")).toBeInTheDocument();
 
     expect(screen.queryAllByRole("alert")).toHaveLength(0);
+  });
+
+  it("shows the checks of a failed readiness probe from the handler's 503 body", async () => {
+    allOk();
+    // The body ReadinessHandler writes with 503 (pkg/api/rest/health_handlers.go),
+    // turned into the error the SDK's HTTP client throws.
+    const body = JSON.stringify({
+      status: "unhealthy",
+      message: "One or more checks failed",
+      checks: [
+        { name: "db", status: "unhealthy", message: "Connection refused" },
+        { name: "cache", status: "healthy", message: "Connected" },
+      ],
+    });
+    ready.mockRejectedValue(parseErrorEnvelope(503, "Service Unavailable", body));
+
+    render(SystemHealthView);
+
+    const readiness = await screen.findByRole("region", { name: "Readiness" });
+    expect(await within(readiness).findByText("db")).toBeInTheDocument();
+    expect(within(readiness).getByText("Connection refused")).toBeInTheDocument();
+    expect(within(readiness).getByText("cache")).toBeInTheDocument();
+    expect(within(readiness).getByText("One or more checks failed")).toBeInTheDocument();
+    expect(within(readiness).getAllByText("unhealthy").length).toBeGreaterThanOrEqual(2);
+    expect(within(readiness).getAllByRole("row")).toHaveLength(3); // header + 2 checks
   });
 
   it("lists signing and key-encapsulation algorithms with a post-quantum badge only where set", async () => {

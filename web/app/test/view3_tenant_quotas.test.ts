@@ -145,7 +145,27 @@ describe("TenantQuotasView", () => {
     expect(result.textContent).not.toContain("undefined");
   });
 
-  it.each(["-1", "1.5"])("rejects %s inline and does not call updateQuotas", async (bad) => {
+  it("sends -1 (unlimited) as -1, as the go-qrdb quota contract defines it", async () => {
+    list.mockResolvedValue(tenantsReply);
+    const quotas = { ...zeroQuotas(), max_keys: -1, system_barrier_quota: -1, max_dedicated_wal_groups: 3 };
+    updateQuotas.mockResolvedValue({
+      tenant: { id: "t-acme", name: "Acme", quotas, created_at: "", updated_at: "" },
+    });
+
+    render(TenantQuotasView);
+    await chooseTenant("t-acme");
+    expect(screen.getByLabelText("max_keys")).toHaveAttribute("min", "-1");
+    await fireEvent.input(screen.getByLabelText("max_keys"), { target: { value: "-1" } });
+    await fireEvent.input(screen.getByLabelText("system_barrier_quota"), { target: { value: "-1" } });
+    await fireEvent.input(screen.getByLabelText("max_dedicated_wal_groups"), { target: { value: "3" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateQuotas).toHaveBeenCalledTimes(1));
+    expect(updateQuotas).toHaveBeenCalledWith("t-acme", { tenant_id: "t-acme", quotas });
+    expect(screen.queryByText(/must be a whole number/)).toBeNull();
+  });
+
+  it.each(["-2", "1.5"])("rejects %s inline and does not call updateQuotas", async (bad) => {
     list.mockResolvedValue(tenantsReply);
 
     render(TenantQuotasView);
@@ -153,7 +173,9 @@ describe("TenantQuotasView", () => {
     await fireEvent.input(screen.getByLabelText("max_keys"), { target: { value: bad } });
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByText("max_keys must be a whole number of 0 or more.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("max_keys must be a whole number: -1 (unlimited), 0 (system default) or more."),
+    ).toBeInTheDocument();
     expect(updateQuotas).not.toHaveBeenCalled();
   });
 

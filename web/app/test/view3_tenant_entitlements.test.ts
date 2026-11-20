@@ -108,9 +108,35 @@ describe("TenantEntitlementsView", () => {
         allow_system_managed_barrier: false,
         allowed_barrier_modes: [],
         allow_dedicated_wal: true,
+        allowed_volume_pools: [],
       },
     });
     await waitFor(() => expect(toasts).toEqual([{ kind: "success", message: expect.stringContaining("acme") }]));
+  });
+
+  it("sends the barrier modes and the volume pool grants, default pool first", async () => {
+    list.mockResolvedValue(tenants);
+    updateEntitlements.mockResolvedValue(
+      tenantInfo({ allowed_barrier_modes: ["tpm2"], allowed_volume_pools: ["fast", "bulk"], allow_dedicated_wal: true }),
+    );
+
+    render(TenantEntitlementsView);
+    await chooseTenant("t-acme");
+
+    await fireEvent.click(screen.getByLabelText("allow_dedicated_wal"));
+    await fireEvent.input(screen.getByLabelText("allowed_barrier_modes"), { target: { value: "tpm2" } });
+    await fireEvent.input(screen.getByLabelText("allowed_volume_pools"), { target: { value: "fast, bulk" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateEntitlements).toHaveBeenCalledOnce());
+    const sent = updateEntitlements.mock.calls[0]?.[1].entitlements;
+    expect(sent?.allowed_barrier_modes).toEqual(["tpm2"]);
+    expect(sent?.allowed_volume_pools).toEqual(["fast", "bulk"]);
+    expect(sent?.allow_dedicated_wal).toBe(true);
+
+    const result = await screen.findByRole("region", { name: "Returned entitlements" });
+    expect(within(result).getByTestId("allowed_volume_pools")).toHaveTextContent("fast, bulk");
+    expect(within(result).getByTestId("allow_dedicated_wal")).toHaveTextContent("true");
   });
 
   it("renders the entitlements the server returned", async () => {
