@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // continuousAttestation pairs the re-attestation engine with the store its
@@ -41,7 +42,12 @@ func (s *XKMSService) SetContinuousAttestation(engine *continuous.Engine, store 
 
 // verdictSubsystem returns the wired subsystem, the caller's tenant and the
 // requested device, or ErrNotConfigured.
-func (s *XKMSService) verdictSubsystem(ctx context.Context, req *transport.AttestationVerdictRequest) (*continuousAttestation, string, string, error) {
+func (s *XKMSService) verdictSubsystem(ctx context.Context, action string, req *transport.AttestationVerdictRequest) (*continuousAttestation, string, string, error) {
+	// The permission is checked first: a refused caller never reaches the
+	// verdict subsystem, nor learns whether it is configured.
+	if err := s.AuthorizeCaller(ctx, auth.ResourceAttestationVerdicts, action); err != nil {
+		return nil, "", "", &VerdictPermissionError{Permission: auth.ResourceAttestationVerdicts + ":" + action, Err: err}
+	}
 	ca := s.verdicts.load()
 	if ca == nil {
 		return nil, "", "", ErrNotConfigured
@@ -52,9 +58,27 @@ func (s *XKMSService) verdictSubsystem(ctx context.Context, req *transport.Attes
 	return ca, callerTenant(ctx), req.DeviceID, nil
 }
 
+// VerdictPermissionError refuses a verdict call by a caller without the
+// permission it requires. It matches the authorizer's refusal under
+// errors.Is.
+type VerdictPermissionError struct {
+	// Permission is the resource:action the call requires.
+	Permission string
+	// Err is the authorizer's refusal.
+	Err error
+}
+
+// Error reports the permission and the refusal.
+func (e *VerdictPermissionError) Error() string {
+	return "attestation: the verdict call requires " + e.Permission + ": " + e.Err.Error()
+}
+
+// Unwrap returns the authorizer's refusal.
+func (e *VerdictPermissionError) Unwrap() error { return e.Err }
+
 // ListAttestationVerdicts returns the device's verdicts, oldest first.
 func (s *XKMSService) ListAttestationVerdicts(ctx context.Context, req *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
-	ca, tenant, deviceID, err := s.verdictSubsystem(ctx, req)
+	ca, tenant, deviceID, err := s.verdictSubsystem(ctx, auth.ActionList, req)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +92,7 @@ func (s *XKMSService) ListAttestationVerdicts(ctx context.Context, req *transpor
 // GetLatestAttestationVerdict returns the device's newest verdict, or a
 // *continuous.VerdictNotFoundError.
 func (s *XKMSService) GetLatestAttestationVerdict(ctx context.Context, req *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
-	ca, tenant, deviceID, err := s.verdictSubsystem(ctx, req)
+	ca, tenant, deviceID, err := s.verdictSubsystem(ctx, auth.ActionGet, req)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +101,7 @@ func (s *XKMSService) GetLatestAttestationVerdict(ctx context.Context, req *tran
 
 // ReattestDevice re-attests the device now and returns the stored verdict.
 func (s *XKMSService) ReattestDevice(ctx context.Context, req *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
-	ca, tenant, deviceID, err := s.verdictSubsystem(ctx, req)
+	ca, tenant, deviceID, err := s.verdictSubsystem(ctx, auth.ActionCreate, req)
 	if err != nil {
 		return nil, err
 	}
