@@ -785,6 +785,56 @@ func TestTenantCAKeyFactory_NoTakeoverWhileGenerateInFlight(t *testing.T) {
 	assert.True(t, certA.Equal(certB))
 }
 
+// renewFailingClaims is a node's view of the shared claim storage that, once
+// cut, refuses every compare-and-swap: the node lost access to claim storage.
+type renewFailingClaims struct {
+	storage.Backend
+	cut atomic.Bool
+}
+
+func (s *renewFailingClaims) CompareAndSwap(ctx context.Context, key string, expected, newValue []byte) (bool, []byte, error) {
+	if s.cut.Load() {
+		return false, nil, errors.New("claim storage unreachable")
+	}
+	return s.Backend.(storage.CompareAndSwapper).CompareAndSwap(ctx, key, expected, newValue)
+}
+
+// TestTenantCAKeyFactory_NoTakeoverWhileRenewalsFailDuringGenerate: a live
+// pass whose generate is in flight loses access to claim storage, so its
+// renewals fail for longer than the lease. Its unchanged claim proves
+// nothing about its generate, which may still make the key: another node
+// must not take the claim over and generate a second key beside it.
+func TestTenantCAKeyFactory_NoTakeoverWhileRenewalsFailDuringGenerate(t *testing.T) {
+	ctx := context.Background()
+	baseA, baseB := sharedTenantCABackends(t)
+	claims := storage.New() // shared by the nodes, as the server's shared storage is
+	key := tenantLoginCAClaimKey("tenant-a")
+	nodeB := &stalledGenerateBackend{Backend: baseB}
+	b := newTenantCAKeyFactory()
+	require.NoError(t, b.Bind(nodeB, claims))
+	claimsA := &renewFailingClaims{Backend: claims}
+	var errB error
+	nodeA := &stalledGenerateBackend{Backend: baseA}
+	nodeA.pause = func() {
+		// A's renewals now fail, and its claim ages past the lease while
+		// its generate is still in flight.
+		claimsA.cut.Store(true)
+		held, err := claims.Get(ctx, key)
+		require.NoError(t, err)
+		_, rest, _ := strings.Cut(string(held), " ")
+		aged := time.Now().Add(-2*tenantLoginCAClaimLease).UTC().Format(time.RFC3339Nano) + " " + rest
+		require.NoError(t, claims.Put(ctx, key, []byte(aged)))
+		errB = b.EnsureTenant(ctx, "tenant-a")
+	}
+	a := newTenantCAKeyFactory()
+	require.NoError(t, a.Bind(nodeA, claimsA))
+
+	_ = a.EnsureTenant(ctx, "tenant-a")
+	require.ErrorIs(t, errB, errTenantLoginCAClaimHeld, "the claim of a pass whose generate is in flight must stay held while its renewals fail")
+	assert.Zero(t, nodeB.generated.Load(), "a node took over the claim of a pass whose generate was in flight and generated a second key")
+	assert.EqualValues(t, 1, nodeA.generated.Load())
+}
+
 // TestTenantCAKeyFactory_ReconcilesGeneratingClaimOfGoneHolder: a pass that
 // died after marking its claim generating, before its key was made, leaves a
 // generating claim whose lease is never renewed again. The next provisioning
