@@ -180,6 +180,27 @@ describe("BackendDiagnosticsView errors", () => {
     expect(await screen.findByText("backends unavailable")).toBeInTheDocument();
   });
 
+  // A backends:read caller may check status and self-test a known backend
+  // without backends:list (Codex P1 on #2206): a refused list leaves a typed
+  // backend input, as SealView does.
+  it("keeps a typed backend for status and self-test when backends.list() is refused (backends:read only)", async () => {
+    list.mockRejectedValue(Object.assign(new Error("permission denied: backends:list"), { status: 403 }));
+    route();
+    render(BackendDiagnosticsView);
+
+    expect(await screen.findByText(/permission denied: backends:list/)).toBeInTheDocument();
+    await fireEvent.input(screen.getByLabelText("Backend ID"), { target: { value: "tpm0" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Check status" }));
+
+    expect(await screen.findByText("/dev/tpmrm0")).toBeInTheDocument();
+    expect(request).toHaveBeenCalledWith("GET", "/api/v1/backend/status", { query: { backend: "tpm0" } });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Run self-test" }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith("POST", "/api/v1/backend/test", { body: { backend: "tpm0" } }),
+    );
+  });
+
   it("shows a status failure", async () => {
     route({ status: () => Promise.reject(new Error("tpm not responding")) });
     render(BackendDiagnosticsView);
