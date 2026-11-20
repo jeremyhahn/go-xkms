@@ -71,8 +71,14 @@
 
   // Only the server's explicit invalid-PIN answer (401 from the PIN
   // handlers) is a verdict on the PIN itself.
+  // The PIN handler answers a wrong PIN with 401 and qrdb's ErrPINInvalid
+  // message (pkg/api/rest/handlers_pin.go). AuthenticationMiddleware also
+  // answers 401 when it rejects the session, before any PIN is checked, so
+  // the status alone is no verdict: the PIN handler's message is the key.
+  const INVALID_PIN_MESSAGE = "pin: invalid PIN";
+
   function isInvalidPIN(e: unknown): boolean {
-    return e instanceof Error && (e as { status?: unknown }).status === 401;
+    return e instanceof Error && (e as { status?: unknown }).status === 401 && e.message.endsWith(INVALID_PIN_MESSAGE);
   }
 
   async function verify(): Promise<void> {
