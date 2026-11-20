@@ -38,7 +38,7 @@ func registryMaskProblems(name, job string) []string {
 	for _, s := range jobSteps(job) {
 		reads := strings.Contains(s, poolSecretEnv)
 		call := strings.Index(s, poolRegistrySh)
-		if call >= 0 && !masked && !(reads && hasRegistryMasks(s[:call])) {
+		if call >= 0 && !masked && (!reads || !hasRegistryMasks(s[:call])) {
 			return []string{name + ": step " + stepTitle(s) + " calls " + poolRegistrySh +
 				" before the job masks the registry, host:port and bare host"}
 		}
