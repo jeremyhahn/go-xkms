@@ -80,12 +80,10 @@ func TestCapabilities_NoDeploymentFingerprint(t *testing.T) {
 	w := getCapabilities(t, server)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// Booleans only: one per subsystem the console gates a control on
-	// (ruling 972 (1)), never a host name, path, key id or backend list.
-	keys := []string{
-		"version", "webauthn_enabled", "piv_login_enabled", "ui_enabled",
-		"ca_enabled", "ssh_enabled", "tenants_enabled", "passwords_enabled",
-	}
+	// Only what a login screen needs. Which optional subsystems (CA, SSH,
+	// tenants, passwords, ...) this deployment wired is reported to an
+	// authenticated caller only, in /auth/me's capabilities map.
+	keys := []string{"version", "webauthn_enabled", "piv_login_enabled", "ui_enabled"}
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
 	assert.Len(t, raw, len(keys))
@@ -94,24 +92,14 @@ func TestCapabilities_NoDeploymentFingerprint(t *testing.T) {
 	}
 }
 
-// decodeCapabilities serves GET /api/v1/capabilities and decodes the body.
-func decodeCapabilities(t *testing.T, s *Server) map[string]any {
-	t.Helper()
-	w := getCapabilities(t, s)
-	require.Equal(t, http.StatusOK, w.Code)
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
-	return raw
-}
-
 // TestCapabilities_GatedSubsystemsOffWithoutConfig: a server built without
 // a CA, SSH client, barrier registry or password store reports each of those
-// subsystems off, so the console never offers a control whose route answers
+// subsystems off in /auth/me's capabilities map, so the console never offers a control whose route answers
 // 501 (ruling 972 (1)).
 func TestCapabilities_GatedSubsystemsOffWithoutConfig(t *testing.T) {
-	raw := decodeCapabilities(t, newCapabilitiesTestServer(t, nil))
-	for _, key := range []string{"ca_enabled", "ssh_enabled", "tenants_enabled", "passwords_enabled"} {
-		assert.Equal(t, false, raw[key], key)
+	flags := newCapabilitiesTestServer(t, nil).capabilityFlags()
+	for _, key := range []string{"ca", "ssh", "tenants", "passwords", "webauthn"} {
+		assert.False(t, flags[key], key)
 	}
 }
 
@@ -127,9 +115,9 @@ func wireGatedSubsystems(s *Server) {
 func TestCapabilities_GatedSubsystemsOnWhenWired(t *testing.T) {
 	server := newCapabilitiesTestServer(t, nil)
 	wireGatedSubsystems(server)
-	raw := decodeCapabilities(t, server)
-	for _, key := range []string{"ca_enabled", "ssh_enabled", "tenants_enabled", "passwords_enabled"} {
-		assert.Equal(t, true, raw[key], key)
+	flags := server.capabilityFlags()
+	for _, key := range []string{"ca", "ssh", "tenants", "passwords"} {
+		assert.True(t, flags[key], key)
 	}
 }
 
@@ -141,15 +129,15 @@ func capabilityForRoute(pattern string) string {
 		// Served with or without the CA subsystem (bootstrap bundle).
 		return ""
 	case strings.HasPrefix(pattern, "/api/v1/ca/"):
-		return "ca_enabled"
+		return "ca"
 	case strings.HasPrefix(pattern, "/xkms/v1/ssh/"):
-		return "ssh_enabled"
+		return "ssh"
 	case strings.HasPrefix(pattern, "/api/v1/tenants/") && !strings.Contains(pattern, "/tpm"):
-		return "tenants_enabled"
+		return "tenants"
 	case strings.HasPrefix(pattern, "/api/v1/passwords/"), strings.HasPrefix(pattern, "/api/v1/password-vault"):
-		return "passwords_enabled"
+		return "passwords"
 	case strings.HasPrefix(pattern, "/api/v1/webauthn/"):
-		return "webauthn_enabled"
+		return "webauthn"
 	}
 	return ""
 }
@@ -164,7 +152,7 @@ func TestCapabilities_FlagsAgreeWithRouteGuards(t *testing.T) {
 	wireGatedSubsystems(on)
 
 	for name, server := range map[string]*Server{"off": off, "on": on} {
-		raw := decodeCapabilities(t, server)
+		flags := server.capabilityFlags()
 		checked := map[string]int{}
 		for _, spec := range Routes() {
 			flag := capabilityForRoute(spec.Pattern)
@@ -172,9 +160,9 @@ func TestCapabilities_FlagsAgreeWithRouteGuards(t *testing.T) {
 				continue
 			}
 			checked[flag]++
-			assert.Equal(t, spec.Enabled(server), raw[flag], "%s: %s %s vs %s", name, spec.Method, spec.Pattern, flag)
+			assert.Equal(t, spec.Enabled(server), flags[flag], "%s: %s %s vs %s", name, spec.Method, spec.Pattern, flag)
 		}
-		for _, flag := range []string{"ca_enabled", "ssh_enabled", "tenants_enabled", "passwords_enabled", "webauthn_enabled"} {
+		for _, flag := range []string{"ca", "ssh", "tenants", "passwords", "webauthn"} {
 			assert.Positive(t, checked[flag], "%s: no route gated by %s", name, flag)
 		}
 	}
