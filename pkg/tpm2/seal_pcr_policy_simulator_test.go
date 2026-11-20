@@ -397,6 +397,44 @@ func TestUnseal_PlatformPolicy_InlinePasswordExpandedSelection(t *testing.T) {
 
 // An inline blob's own PCR selection wins over the pin a later seal stored
 // under the same CN: overwriting the store must not lock out a retained blob.
+// Before the expanded selection, a seal with the platform policy and a
+// password ignored the caller's extra PCRs: the object carries
+// PolicyOR(PolicyPCR(platform set), PolicyAuthValue) and its stored pin
+// covers the platform set alone. Sealing without the extra selection
+// reproduces that object exactly. Unsealing it with the attributes it was
+// sealed with (extra PCR included) must still open with the correct
+// password: the recorded pin matches the object's authPolicy and wins over
+// the expanded selection.
+func TestUnseal_PlatformPolicy_PasswordLegacyPinKeepsRecordedPolicy(t *testing.T) {
+	const extraPCR = 15
+	const testPIN = "legacy-pin-test-password"
+
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	cn := "platform-policy-password-legacy-pin"
+	// The previous policy calculation: no extra selection reaches the seal.
+	legacyAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+
+	secret := []byte("password-unseal-bound-to-recorded-pin")
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: legacyAttrs, Backend: h.Backend})
+	require.NoError(t, err)
+
+	unsealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+	unsealAttrs.TPMAttributes.PCRSelection = PolicyPCRSelection(tpm2.TPMAlgSHA256, append(
+		append([]uint(nil), h.TPM.config.PlatformPCRs...), extraPCR)...)
+
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: unsealAttrs, Backend: h.Backend})
+	require.NoError(t, err, "the correct password must open an object sealed under the recorded pin")
+	require.Equal(t, secret, got)
+}
+
 func TestUnseal_PlatformPolicy_InlineBlobKeepsSelectionAfterCNOverwrite(t *testing.T) {
 	h := newSimHarness(t, platformPolicySRKConfig())
 	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-overwrite-pin")))
