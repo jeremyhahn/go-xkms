@@ -64,3 +64,4 @@
   - make deps-check (merged tree): FAIL, golang.org/x/crypto v0.58.0 -> v0.59.0 (sdk/go, xkey) now 7+ days old. Bumped in all four modules and tidied; make deps-check: PASS; go build -mod=readonly in root, sdk/go, xkey, web/desktop: PASS.
   - go test -race (codec tags) ./pkg/acme/server/... ./pkg/encoding/... ./pkg/crypto/... ./internal/buildgates/... and sdk/go ./...: PASS.
   - Integration [integration image] on 147308e9c: main's red (TestRandVariousSizesIntegration flake, fixed by #2288) and needs Docker; not this lane's. Devcontainer runner loss likewise.
+- mm2080a 11-20 (rulings 951, 1015): main 1aaa7b58a merged (no conflicts, carries #2304); `git merge-base --is-ancestor 1aaa7b58a HEAD` holds. go build (codec tags) ./..., go test -race on pkg/acme/server/handlers and pkg/encoding/jwe, make lint: PASS. Integration and image jobs need Docker; CI runs them.
