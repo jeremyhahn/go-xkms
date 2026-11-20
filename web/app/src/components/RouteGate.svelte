@@ -15,24 +15,16 @@
 
 <!--
   RouteGate mounts a view only when the server serves its routes (ruling
-  972 (1)). A view gated on a subsystem the server reports off renders the
+  972 (1)), per the session's /auth/me capabilities (App.svelte loads the
+  session once signed in). A view gated on a subsystem reported off renders the
   disabled state naming the setting to turn on; it never mounts, so it never
   calls a route that would answer 501. Ungated views render at once.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import {
-    SUBSYSTEM_OFF,
-    loadCapabilities,
-    routeOffFlag,
-    routePending,
-  } from "$stores/capabilities.svelte.ts";
+  import { SUBSYSTEM_OFF, routeOffFlag, routePending } from "$stores/capabilities.svelte.ts";
 
   let { route, children }: { route: string; children: Snippet } = $props();
-
-  $effect(() => {
-    void loadCapabilities();
-  });
 
   const off = $derived(routeOffFlag(route));
   const pending = $derived(routePending(route));
