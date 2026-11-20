@@ -41,6 +41,9 @@ const (
 	CategoryAuth       CommandCategory = "auth"
 	CategoryCredential CommandCategory = "credential"
 	CategoryOIDC       CommandCategory = "oidc"
+	CategoryPassword   CommandCategory = "password"
+	CategoryPIN        CommandCategory = "pin"
+	CategoryPIV        CommandCategory = "piv"
 )
 
 // Skip reasons shared by the account families (row #2321 slice c).
@@ -140,6 +143,9 @@ func AllCommands() []CommandDefinition {
 		AuthCommands(),
 		CredentialCommands(),
 		OIDCCommands(),
+		PasswordCommands(),
+		PINCommands(),
+		PIVCommands(),
 	)
 }
 
