@@ -233,6 +233,32 @@ func (s *Service) BeginInviteRegistration(ctx context.Context, email string) (*p
 		}
 		return nil, "", WrapError("get user by email", err)
 	}
+	return s.beginInviteRegistrationFor(ctx, user)
+}
+
+// BeginInviteRegistrationForUser starts the invite enrolment ceremony for
+// the account whose WebAuthn handle is userHandle, resolved by id in the
+// tenant the caller bound on ctx (a validated invite's). Unlike
+// BeginInviteRegistration it never re-resolves an email in the store's
+// configured scope, which would miss a non-system invite's account or find
+// another tenant's account with the same email.
+func (s *Service) BeginInviteRegistrationForUser(ctx context.Context, userHandle []byte) (*protocol.CredentialCreation, string, error) {
+	if !s.configured {
+		return nil, "", ErrNotConfigured
+	}
+	user, err := s.users.GetByID(ctx, userHandle)
+	if err != nil {
+		if IsUserNotFound(err) {
+			return nil, "", ErrRegistrationRefused
+		}
+		return nil, "", WrapError("get user by id", err)
+	}
+	return s.beginInviteRegistrationFor(ctx, user)
+}
+
+// beginInviteRegistrationFor starts the ceremony for a pending account
+// that holds no credential yet.
+func (s *Service) beginInviteRegistrationFor(ctx context.Context, user User) (*protocol.CredentialCreation, string, error) {
 	if user.Lifecycle() != qrdbsdk.LifecyclePending {
 		return nil, "", ErrRegistrationRefused
 	}

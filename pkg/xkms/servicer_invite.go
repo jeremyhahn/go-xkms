@@ -242,12 +242,14 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.inviteUserClient().GetUser(ctx, userID)
-	if err != nil {
+	if _, err := s.inviteUserClient().GetUser(ctx, userID); err != nil {
 		return nil, ErrInviteUnusable
 	}
 
-	options, sessionID, err := s.webauthnService.BeginInviteRegistration(ctx, u.Email)
+	// The invite's own account, by id, in the invite's validated tenant
+	// (bound on ctx): never re-resolve its email in the WebAuthn store's
+	// configured scope.
+	options, sessionID, err := s.webauthnService.BeginInviteRegistrationForUser(ctx, xkmswebauthn.HandleFromUserID(userID))
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable
