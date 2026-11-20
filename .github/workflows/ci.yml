@@ -1237,10 +1237,13 @@ jobs:
 
   image:
     name: Devcontainer image [lint, gosec, build, test]
-    # v1.48 (ruling 1024; replaces the #2240 routing): ubuntu-latest, or the
-    # bigdisk-docker pool when the preflight's `runner_docker` reports the
-    # hosted pool full.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    # CUSTOMIZE (go-xkms, #2240/#2241; kept over the v1.48 Docker-job routing,
+    # pinned by internal/buildgates/ci_sched_devcontainer_test.go): push,
+    # schedule and workflow_dispatch runs on main and same-repository pull
+    # requests share the self-hosted bigdisk-docker pool (the devcontainer
+    # image build and its cached layers need the bigdisk volume); fork pull
+    # requests run on ubuntu-latest.
+    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     # v1.30: only on the guard's `run` (not `refused`, not `proven`). It keeps
