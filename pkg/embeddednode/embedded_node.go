@@ -327,7 +327,10 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	// "qrdb.cluster" while go-xkms issues node names under this one.
 	qcfg.Auth.ClusterTrustDomain = TrustDomain(cfg)
 
-	qcfg.Raft.DataDir = cfg.Datastore.Path
+	// qrdb refuses a relative volume pool path, so a relative datastore path
+	// (resolved against the working directory) reaches qrdb absolute.
+	dataDir := absDatastorePath(cfg.Datastore.Path)
+	qcfg.Raft.DataDir = dataDir
 
 	// Engine selects the local qrdb database backend directly from the
 	// global datastore configuration -- never hardcoded. An empty Engine (a
@@ -355,10 +358,10 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 		if cfg.Barrier.RootKeyPath != "" {
 			qcfg.Seal.RootKeyPath = cfg.Barrier.RootKeyPath
 		}
-		if cfg.Datastore.Path != "" && len(qcfg.Storage.VolumePools) == 0 {
+		if dataDir != "" && len(qcfg.Storage.VolumePools) == 0 {
 			qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{{
 				Name: "default",
-				Path: filepath.Join(cfg.Datastore.Path, "tenant-volumes"),
+				Path: filepath.Join(dataDir, "tenant-volumes"),
 			}}
 		}
 	} else {
@@ -366,6 +369,23 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	}
 
 	return qcfg
+}
+
+// absDatastorePath resolves a relative datastore path against the working
+// directory. An empty path stays empty (the in-memory engine). When the
+// working directory cannot be read, it logs the error and keeps the
+// configured path, so qrdb reports the relative path it refuses.
+func absDatastorePath(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		slog.Error("embedded node: cannot resolve datastore path to an absolute path",
+			"path", path, "error", err)
+		return path
+	}
+	return abs
 }
 
 // NewEmbeddedAuditSink builds the compliance-grade audit sink an embedded
