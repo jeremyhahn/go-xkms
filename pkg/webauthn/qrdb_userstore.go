@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -147,6 +146,7 @@ func UserIDFromHandle(handle []byte) (uint64, error) {
 // GetByID retrieves the user by webauthn handle. The handle is the
 // 8-byte big-endian form of the qrdb uint64 user id.
 func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error) {
+	ctx = s.scope(ctx)
 	if len(userID) == 0 {
 		return nil, ErrUserNotFound
 	}
@@ -154,35 +154,11 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
-	ctx, err = s.accountScope(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
 	u, err := s.users.GetUser(ctx, id)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
 	return s.materialize(ctx, u)
-}
-
-// accountScope binds the tenant of the account behind handle. A caller
-// that bound a tenant keeps it; otherwise the account's passkeys name it
-// (login routes carry no tenant; ruling 1019), and an account without one
-// falls back to the configured tenant.
-func (s *qrdbUserStore) accountScope(ctx context.Context, handle []byte) (context.Context, error) {
-	if id, ok := qrdbtenant.IDFromContext(ctx); ok && id != "" {
-		return ctx, nil
-	}
-	creds, err := s.creds.GetByUserID(ctx, handle)
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range creds {
-		if c != nil && c.TenantID != "" {
-			return qrdbtenant.WithTenantID(ctx, c.TenantID), nil
-		}
-	}
-	return s.scope(ctx), nil
 }
 
 // GetByEmail looks up a user by the canonical tenant-scoped email login key.
@@ -193,38 +169,11 @@ func (s *qrdbUserStore) accountScope(ctx context.Context, handle []byte) (contex
 // surfaced as a WebAuthn login that verified correctly and then failed to
 // resolve a principal (go-xkms #185, go-quicbaas #359).
 func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, error) {
+	ctx = s.scope(ctx)
 	if email == "" {
 		return nil, ErrUserNotFound
 	}
-	_, callerBound := qrdbtenant.IDFromContext(ctx)
-	ctx = s.scope(ctx)
 	u, err := s.users.GetUserByEmail(ctx, s.tenantID, email)
-	if err == nil {
-		return s.materialize(ctx, u)
-	}
-	err = mapNotFound(err)
-	if callerBound || !errors.Is(err, ErrUserNotFound) {
-		return nil, err
-	}
-	// Not in the configured tenant: the account's passkeys name its tenant
-	// (ruling 1019). An email registered in more than one other tenant is
-	// ambiguous and stays not found.
-	finder, ok := s.creds.(interface {
-		tenantsForEmail(context.Context, string) ([]string, error)
-	})
-	if !ok {
-		return nil, err
-	}
-	tenants, tErr := finder.tenantsForEmail(ctx, email)
-	if tErr != nil {
-		return nil, tErr
-	}
-	tenants = slices.DeleteFunc(tenants, func(t string) bool { return t == s.tenantID })
-	if len(tenants) != 1 {
-		return nil, err
-	}
-	ctx = qrdbtenant.WithTenantID(ctx, tenants[0])
-	u, err = s.users.GetUserByEmail(ctx, tenants[0], email)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
@@ -259,15 +208,10 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 // credentials, so Save is a near no-op for the user record. A display-name
 // change is an update to the qrdb record, not a write to a parallel key.
 func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
+	ctx = s.scope(ctx)
 	if user == nil {
 		return &QRDBAdapterConfigError{Field: "user"}
 	}
-	if tu, ok := user.(tenantUser); ok && tu.TenantID() != "" {
-		if id, bound := qrdbtenant.IDFromContext(ctx); !bound || id == "" {
-			ctx = qrdbtenant.WithTenantID(ctx, tu.TenantID())
-		}
-	}
-	ctx = s.scope(ctx)
 	dn := user.DisplayName()
 	if dn == "" {
 		return nil
@@ -321,11 +265,6 @@ func (s *qrdbUserStore) materialize(ctx context.Context, u *qrdbtransport.User) 
 	// active — only qrdbsdk.LifecycleActive authenticates.
 	user.SetLifecycle(qrdbsdk.Lifecycle(u.Lifecycle))
 	user.SetAuthMethods(u.AuthMethods)
-	if id, ok := qrdbtenant.IDFromContext(ctx); ok {
-		user.SetTenantID(id)
-	} else {
-		user.SetTenantID(s.tenantID)
-	}
 
 	// A read failure is returned, never skipped: a user handed back with
 	// silently FEWER credentials than they have would make the

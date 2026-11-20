@@ -17,8 +17,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"slices"
-	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -37,7 +35,6 @@ type credentialEntity struct {
 	ID           uint64      `json:"id"`
 	CredentialID string      `json:"credential_id"`
 	UserID       string      `json:"user_id" index:"true"`
-	Email        string      `json:"email,omitempty" index:"true"`
 	Credential   *Credential `json:"credential"`
 }
 
@@ -198,35 +195,6 @@ func newCredentialEntity(cred *Credential) *credentialEntity {
 	return &credentialEntity{
 		CredentialID: encodeID(cred.ID),
 		UserID:       encodeID(cred.UserID),
-		Email:        emailKey(cred.Email),
 		Credential:   cred,
 	}
-}
-
-// emailKey is the credential index form of an account's login email.
-func emailKey(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
-// tenantsForEmail returns the distinct tenants whose accounts registered a
-// credential under email. An email sign-in carries no tenant; this is how
-// it finds the account's (ruling 1019).
-func (s *daoCredentialStore) tenantsForEmail(ctx context.Context, email string) ([]string, error) {
-	ctx = credentialScope(ctx)
-	key := emailKey(email)
-	if key == "" {
-		return nil, nil
-	}
-	entities, err := s.creds.Find(ctx).Where("Email = ?", key).Execute()
-	if err != nil {
-		return nil, WrapError("find credentials by email", err)
-	}
-	var tenants []string
-	for _, e := range entities {
-		if e.Credential == nil || e.Credential.TenantID == "" || slices.Contains(tenants, e.Credential.TenantID) {
-			continue
-		}
-		tenants = append(tenants, e.Credential.TenantID)
-	}
-	return tenants, nil
 }

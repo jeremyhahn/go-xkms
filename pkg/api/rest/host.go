@@ -307,12 +307,6 @@ func (a *WebAuthnTokenAdapter) identityFor(user webauthn.User) *auth.Identity {
 	if email := user.Email(); email != "" {
 		id.Metadata["email"] = email
 	}
-	// The token names the account's own tenant, resolved at login from its
-	// credential or user handle (ruling 1019); the configured tenant is
-	// only the fallback for an account that does not know its tenant.
-	if tu, ok := user.(interface{ TenantID() string }); ok && tu.TenantID() != "" {
-		id.TenantID = tu.TenantID()
-	}
 	if roleUser, ok := user.(interface{ GetRole() string }); ok {
 		if role := roleUser.GetRole(); role != "" {
 			id.Roles = []string{role}

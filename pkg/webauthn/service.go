@@ -461,10 +461,6 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 
 	// Convert and store credential
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
-	if tu, ok := user.(tenantUser); ok {
-		cred.TenantID = tu.TenantID()
-	}
-	cred.Email = user.WebAuthnName()
 	if err := s.creds.Save(ctx, cred); err != nil {
 		return nil, WrapError("save credential", err)
 	}
