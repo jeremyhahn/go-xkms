@@ -159,7 +159,7 @@ jobs:
   # Job 2: Integration Tests
   integration-test:
     name: Integration Tests
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ubuntu-latest
 
     steps:
       # DELIBERATE divergence from ci-template v1: the template's
