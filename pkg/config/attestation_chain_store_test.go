@@ -299,3 +299,110 @@ func TestAttestationConfigVerifiers_RemovedConfigRootStaysRemoved(t *testing.T) 
 		rebuildRefuses(t, store, cfg, root, stmt)
 	})
 }
+
+// TestAttestationConfigVerifiers_OperatorRootAlsoInConfigStaysRemoved proves
+// a root an operator imported before the config listed it is still a config
+// root: removing it (directly, or after a quarantine) survives a verifier
+// rebuild, which would otherwise import it from the config file again.
+func TestAttestationConfigVerifiers_OperatorRootAlsoInConfigStaysRemoved(t *testing.T) {
+	ctx := context.Background()
+	for _, quarantineFirst := range []bool{false, true} {
+		name := "remove"
+		if quarantineFirst {
+			name = "quarantine, remove"
+		}
+		t.Run(name, func(t *testing.T) {
+			store, err := compose.BuildTrustRootStore(testutil.NewMemoryDAOFactory())
+			if err != nil {
+				t.Fatalf("BuildTrustRootStore: %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			root, leaf := issuedChain(t, "operator-and-config-tpm-root")
+			if err := store.Add(ctx, root, &truststore.AddCertificateOptions{Purpose: truststore.PurposeTPMManufacturer, Source: "operator"}); err != nil {
+				t.Fatalf("operator import: %v", err)
+			}
+			cfg := &config.AttestationConfig{
+				Formats: map[string]*truststore.Config{"tpm2": {ExternalRootPaths: []string{writeRootPEM(t, root)}}},
+			}
+			stmt := &attestation.AttestationStatement{Format: "tpm2", CertificateChain: []*x509.Certificate{leaf, root}}
+			verifiers, err := cfg.Verifiers(store)
+			if err != nil {
+				t.Fatalf("Verifiers(store): %v", err)
+			}
+			if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err != nil {
+				t.Fatalf("operator root refused: %v", err)
+			}
+			fp := truststore.Fingerprint(root)
+			if quarantineFirst {
+				if _, err := store.SetPurpose(ctx, fp, truststore.PurposeSynced); err != nil {
+					t.Fatalf("quarantine: %v", err)
+				}
+			}
+			if err := store.Delete(ctx, fp); err != nil {
+				t.Fatalf("remove: %v", err)
+			}
+			for i := 0; i < 2; i++ {
+				verifiers, err = cfg.Verifiers(store)
+				if err != nil {
+					t.Fatalf("rebuild Verifiers(store): %v", err)
+				}
+				if err := verifiers["tpm2"].VerifyChainAnchored(stmt, nil); err == nil {
+					t.Fatal("a removed root anchors again after a rebuild")
+				}
+				if _, _, err := store.Get(ctx, fp); err == nil {
+					t.Fatal("the rebuild imported a removed root again")
+				}
+			}
+		})
+	}
+}
+
+// TestAttestationConfigVerifiers_EveryChainFormatAppraisesTheStore proves
+// the chain formats beyond TPM and Android anchor on their store purpose: a
+// root imported into the store anchors their chains, and quarantining a
+// config-listed root there revokes it.
+func TestAttestationConfigVerifiers_EveryChainFormatAppraisesTheStore(t *testing.T) {
+	ctx := context.Background()
+	for format, purpose := range map[string]truststore.CertPurpose{
+		"yubikey-piv":     "yubikey-attestation",
+		"apple-appattest": "apple-attestation",
+	} {
+		t.Run(format, func(t *testing.T) {
+			store, err := compose.BuildTrustRootStore(testutil.NewMemoryDAOFactory())
+			if err != nil {
+				t.Fatalf("BuildTrustRootStore: %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			configRoot, configLeaf := issuedChain(t, format+"-config-root")
+			storeRoot, storeLeaf := issuedChain(t, format+"-store-root")
+			if err := store.Add(ctx, storeRoot, &truststore.AddCertificateOptions{Purpose: purpose, Source: "operator"}); err != nil {
+				t.Fatalf("import store root: %v", err)
+			}
+			cfg := &config.AttestationConfig{
+				Formats: map[string]*truststore.Config{format: {ExternalRootPaths: []string{writeRootPEM(t, configRoot)}}},
+			}
+			verifiers, err := cfg.Verifiers(store)
+			if err != nil {
+				t.Fatalf("Verifiers(store): %v", err)
+			}
+			storeStmt := &attestation.AttestationStatement{Format: format, CertificateChain: []*x509.Certificate{storeLeaf, storeRoot}}
+			if err := verifiers[format].VerifyChainAnchored(storeStmt, nil); err != nil {
+				t.Fatalf("a root imported into the store does not anchor %s: %v", format, err)
+			}
+			configStmt := &attestation.AttestationStatement{Format: format, CertificateChain: []*x509.Certificate{configLeaf, configRoot}}
+			if err := verifiers[format].VerifyChainAnchored(configStmt, nil); err != nil {
+				t.Fatalf("the config root does not anchor %s: %v", format, err)
+			}
+			if _, err := store.SetPurpose(ctx, truststore.Fingerprint(configRoot), truststore.PurposeSynced); err != nil {
+				t.Fatalf("quarantine config root: %v", err)
+			}
+			verifiers, err = cfg.Verifiers(store)
+			if err != nil {
+				t.Fatalf("rebuild Verifiers(store): %v", err)
+			}
+			if err := verifiers[format].VerifyChainAnchored(configStmt, nil); err == nil {
+				t.Fatalf("a quarantined config root still anchors %s", format)
+			}
+		})
+	}
+}
