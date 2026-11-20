@@ -176,7 +176,7 @@ func (s *XKMSService) createInvite(ctx context.Context, tenantID string, userID 
 		return nil, ErrNotConfigured
 	}
 	ttl := s.effectiveInviteTTL(requestedTTL)
-	token, entity, err := s.inviteStore.Create(ctx, strconv.FormatUint(userID, 10), tenantID, ttl)
+	token, entity, err := s.inviteStore.Create(inviteStoreContext(ctx), strconv.FormatUint(userID, 10), tenantID, ttl)
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "create invite", Err: err}
 	}
@@ -199,7 +199,7 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if s.inviteStore == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
-	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
+	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
 	if err != nil {
 		return nil, classifyInviteError(err)
 	}
@@ -233,7 +233,10 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if s.inviteStore == nil || s.webauthnService == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
-	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
+	if err := s.ensureInviteTenantServed(req.TenantID); err != nil {
+		return nil, err
+	}
+	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
 	if err != nil {
 		return nil, classifyInviteError(err)
 	}
@@ -274,11 +277,14 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if s.inviteStore == nil || s.webauthnService == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
+	if err := s.ensureInviteTenantServed(req.TenantID); err != nil {
+		return nil, err
+	}
 	// Looked up (not redeemed) BEFORE the ceremony is validated: the
 	// expensive, failure-prone work must not burn a single-use token when it
 	// fails, and a caller whose attestation is rejected can retry with a
 	// working authenticator instead of needing to be re-invited.
-	if _, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token); err != nil {
+	if _, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
 		return nil, classifyInviteError(err)
 	}
 	ctx = bindInviteTenant(ctx, req.TenantID)
@@ -304,7 +310,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if err := s.activateInviteUser(ctx, userID); err != nil {
 		return nil, err
 	}
-	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
+	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
 		return nil, &ErrUserOperation{Operation: "redeem invite", Err: err}
 	}
 	return &transport.FinishInviteRegistrationResponse{UserID: userID}, nil
@@ -330,7 +336,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	// reason FinishInviteRegistration looks up first: an unauthenticated
 	// caller posting an arbitrary certificate must not be able to burn, or
 	// probe the state of, a token that was never theirs.
-	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
+	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
 	if err != nil {
 		return nil, classifyInviteError(err)
 	}
@@ -373,7 +379,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	if err := s.activateInviteUser(ctx, userID); err != nil {
 		return nil, err
 	}
-	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
+	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
 		return nil, &ErrUserOperation{Operation: "redeem invite", Err: err}
 	}
 	return &transport.ActivateInvitePIVResponse{UserID: userID}, nil
@@ -442,6 +448,35 @@ func bindInviteTenant(ctx context.Context, tenantID string) context.Context {
 		return ctx
 	}
 	return qrdbtenant.WithTenantID(ctx, tenantID)
+}
+
+// inviteStoreContext is the context every invite store call runs on. The
+// invitations live in system storage, written and read as the node's
+// service principal, whatever tenant the invited account is in: the
+// invite's tenant binding (bindInviteTenant), which the user operations of
+// the same request need, must not reach it, or an RBAC-enforcing node
+// refuses the call ("identity not in target tenant").
+func inviteStoreContext(ctx context.Context) context.Context {
+	return qrdbtenant.WithTenantID(ctx, qrdbsdk.SystemTenantID)
+}
+
+// ensureInviteTenantServed refuses invitation enrolment for an account
+// outside the tenant the relying party serves (ruling 1029 B): the passkey
+// login ceremony resolves accounts in that one tenant, so a passkey enrolled
+// elsewhere could never sign in. An empty tenant on either side is the
+// system tenant.
+func (s *XKMSService) ensureInviteTenantServed(inviteTenant string) error {
+	served := s.webauthnService.UserStoreTenant()
+	if served == "" {
+		served = qrdbsdk.SystemTenantID
+	}
+	if inviteTenant == "" {
+		inviteTenant = qrdbsdk.SystemTenantID
+	}
+	if inviteTenant != served {
+		return ErrInviteTenantNotServed
+	}
+	return nil
 }
 
 // caRootPool builds the trust-root pool PIV invite activation verifies

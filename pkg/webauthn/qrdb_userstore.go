@@ -80,6 +80,12 @@ func (s *qrdbUserStore) scope(ctx context.Context) context.Context {
 	return qrdbtenant.WithTenantID(ctx, s.tenantID)
 }
 
+// TenantID is the tenant the store resolves accounts in when the caller
+// binds none: the relying party's configured tenant.
+func (s *qrdbUserStore) TenantID() string {
+	return s.tenantID
+}
+
 // credentialScope clears any tenant binding on ctx for the credential
 // store's calls. The credential DAO is system bookkeeping: the production
 // datastore runs it as the system service principal but keeps an explicit

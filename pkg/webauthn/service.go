@@ -844,6 +844,16 @@ func (s *Service) DeleteUser(ctx context.Context, userID []byte) error {
 	return s.users.Delete(ctx, userID)
 }
 
+// UserStoreTenant is the tenant the relying party resolves accounts in: the
+// configured tenant of its user store, or "" when the store declares none
+// (the system tenant).
+func (s *Service) UserStoreTenant() string {
+	if scoped, ok := s.users.(interface{ TenantID() string }); ok {
+		return scoped.TenantID()
+	}
+	return ""
+}
+
 // Config returns the service configuration.
 func (s *Service) Config() *Config {
 	return s.config
