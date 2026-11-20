@@ -85,6 +85,19 @@ type inviteFixture struct {
 	tenant    string
 }
 
+// tenantTokenGen is the fixture's post-login token generator: the token
+// names the tenant of the account it is minted for, as the REST token
+// adapter puts it in the minted identity.
+type tenantTokenGen struct{}
+
+func (tenantTokenGen) GenerateToken(_ context.Context, user webauthn.User) (string, error) {
+	tenant := ""
+	if tu, ok := user.(interface{ TenantID() string }); ok {
+		tenant = tu.TenantID()
+	}
+	return "tenant=" + tenant, nil
+}
+
 const inviteFixtureQRDBUserID = uint64(42)
 const inviteFixtureEmail = "invitee@example.com"
 const inviteFixtureTenant = "system"
@@ -154,6 +167,7 @@ func newInviteFixtureIn(t *testing.T, tenant string) *inviteFixture {
 		UserStore:       waStores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
 		CredentialStore: waStores.Credentials,
+		JWTGenerator:    tenantTokenGen{},
 	})
 	require.NoError(t, err)
 	svc.SetWebAuthn(waSvc)
