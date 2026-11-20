@@ -44,7 +44,9 @@ package embeddednode
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -388,6 +390,22 @@ func absDatastorePath(path string) string {
 	return abs
 }
 
+// ProvisionVolumePools creates every volume pool directory qcfg names,
+// owner-only (0700). qrdb's volume Open stats the pool path and refuses a
+// missing directory, which would leave the pool unserved on a clean start
+// (a fresh datastore path). Call it before the node is constructed.
+func ProvisionVolumePools(qcfg *qrdbsdk.DaemonConfig) error {
+	for _, pool := range qcfg.Storage.VolumePools {
+		if pool.Path == "" {
+			continue
+		}
+		if err := os.MkdirAll(pool.Path, 0o700); err != nil {
+			return fmt.Errorf("embedded node: creating volume pool %q directory %q: %w", pool.Name, pool.Path, err)
+		}
+	}
+	return nil
+}
+
 // NewEmbeddedAuditSink builds the compliance-grade audit sink an embedded
 // qrdb node is constructed with. When file audit is configured
 // (Auth.Audit.Enabled with a Path) it returns the HMAC-chained file logger;
@@ -480,6 +498,9 @@ func OpenEmbeddedNode(ctx context.Context, opts EmbeddedNodeOptions) (*qrdbnode.
 // The caller owns sealRes and releases it whether or not this succeeds.
 func openEmbeddedNodeWithSeal(ctx context.Context, opts EmbeddedNodeOptions, sealRes ResolvedNodeSeal) (*qrdbnode.Node, error) {
 	qcfg := EmbeddedNodeStorageConfig(opts.Config, sealRes)
+	if err := ProvisionVolumePools(qcfg); err != nil {
+		return nil, err
+	}
 
 	auditSink := opts.AuditSink
 	if auditSink == nil {
