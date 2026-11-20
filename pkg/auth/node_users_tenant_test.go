@@ -30,7 +30,16 @@ func (routingUsers) lookup(ctx context.Context, requested string) (*qrdbsdk.User
 	if eff != tenantTestTenant {
 		return nil, errors.New("user not found")
 	}
-	return &qrdbsdk.User{ID: 7, Username: "alice", Email: "alice@acme.example", TenantID: eff}, nil
+	return &qrdbsdk.User{ID: 7, Username: "alice", Email: "alice@acme.example", TenantID: eff, Lifecycle: qrdbsdk.LifecycleActive}, nil
+}
+
+// GetUser acts, like go-qrdb's routing user service, on the tenant bound on
+// ctx: an unbound (anonymous) context resolves in the system tenant.
+func (r routingUsers) GetUser(ctx context.Context, id uint64) (*qrdbsdk.User, error) {
+	if id != 7 {
+		return nil, errors.New("user not found")
+	}
+	return r.lookup(ctx, "")
 }
 
 func (r routingUsers) GetUserByUsername(ctx context.Context, tenantID, _ string) (*qrdbsdk.User, error) {
@@ -60,4 +69,19 @@ func TestNodeUserClient_NonSystemTenantLookups(t *testing.T) {
 	u, err = c.GetUserByEmail(ctx, tenantTestTenant, "alice@acme.example")
 	require.NoError(t, err)
 	require.Equal(t, tenantTestTenant, u.TenantID)
+}
+
+// TestQRDBUserResolver_NonSystemUserHandleRefresh refreshes a passkey
+// session of a non-system tenant: the anonymous refresh route must bind the
+// validated token's tenant before the by-id lookup (Codex 5989079760).
+func TestQRDBUserResolver_NonSystemUserHandleRefresh(t *testing.T) {
+	resolver := NewQRDBUserResolver(NewNodeUserClient(routingSource{}))
+
+	fresh, err := resolver.ResolveUser(context.Background(), &Identity{
+		Subject:  webAuthnHandleSubject(7),
+		TenantID: tenantTestTenant,
+		Metadata: map[string]string{SubjectKindMetadataKey: SubjectKindUserHandle},
+	})
+	require.NoError(t, err)
+	require.Equal(t, tenantTestTenant, fresh.TenantID)
 }
