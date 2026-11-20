@@ -104,7 +104,7 @@ func MatrixCellFor(family CommandCategory, protocol ProtocolType, enabledTags []
 	switch {
 	case cell.Runs > 0:
 	case len(reasons) == 0:
-		cell.Reason = "no command definitions in AllCommands yet (#2321 slice f)"
+		cell.Reason = "no command definitions in AllCommands yet (#2321 slice g)"
 	default:
 		cell.Reason = strings.Join(reasons, "; ")
 	}
