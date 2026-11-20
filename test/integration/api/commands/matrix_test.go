@@ -123,6 +123,64 @@ func TestMatrix_ACMEAndAdminFamilies(t *testing.T) {
 	}
 }
 
+// TestMatrix_AccountFamilies checks that every tenant, user, auth, credential
+// and oidc subcommand of row #2321 slice (c) has a definition, that each
+// family is a matrix row, and that every cell of it runs or names a reason.
+func TestMatrix_AccountFamilies(t *testing.T) {
+	want := map[CommandCategory][]string{
+		CategoryTenant: {
+			"tenant create", "tenant list", "tenant show",
+			"tenant update-entitlements", "tenant update-quotas", "tenant delete",
+		},
+		CategoryUser: {
+			"user register", "user login", "user list", "user get", "user update",
+			"user disable", "user enable", "user status", "user credentials",
+			"user bind-cert", "user delete", "user invite redeem",
+		},
+		CategoryAuth: {
+			"auth login", "auth factor list", "auth factor add", "auth factor remove",
+			"auth factor rotate", "auth factor relabel",
+		},
+		CategoryCredential: {
+			"credential submit", "credential list", "credential strategy", "credential rotate",
+		},
+		CategoryOIDC: {
+			"oidc templates", "oidc create", "oidc import", "oidc list", "oidc get",
+			"oidc token", "oidc refresh", "oidc login", "oidc delete",
+		},
+	}
+	have := map[string]CommandDefinition{}
+	for _, cmd := range AllCommands() {
+		have[strings.Join(cmd.Command, " ")] = cmd
+	}
+	for family, cmds := range want {
+		if !slices.Contains(CommandFamilies(), family) {
+			t.Errorf("family %s is not a matrix row", family)
+		}
+		for _, c := range cmds {
+			def, ok := have[c]
+			if !ok {
+				t.Errorf("no definition for %q", c)
+				continue
+			}
+			if def.Category != family {
+				t.Errorf("%q: category %s, want %s", c, def.Category, family)
+			}
+		}
+		for _, p := range CLIProtocols() {
+			cell := MatrixCellFor(family, p, nil)
+			if cell.Runs == 0 && cell.Reason == "" {
+				t.Errorf("cell (%s, %s) neither runs nor names a reason", family, p)
+			}
+		}
+	}
+
+	skipped := CommandDefinition{Name: "w", Category: CategoryOIDC, Skip: "browser flow"}
+	if r, skip := SkipReason(skipped, ProtocolREST, nil); !skip || r != "browser flow" {
+		t.Errorf("Skip command: skip=%v reason=%q", skip, r)
+	}
+}
+
 // TestRunCommandWithProtocol_EmbeddedArgs checks the embedded prefix:
 // one --transport embedded and the runner's key directory.
 func TestRunCommandWithProtocol_EmbeddedArgs(t *testing.T) {
