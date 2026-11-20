@@ -63,18 +63,30 @@
   let verifyRole = $state<"so" | "user">("user");
   let verifyPin = $state("");
   let verified = $state<boolean | null>(null);
+  // Set when verification could not run (lockout, unavailable manager,
+  // refusal, network): that says nothing about the PIN, so it is shown as
+  // its cause and never as "PIN not verified".
+  let verifyErr = $state<string | null>(null);
   let verifyBusy = $state(false);
+
+  // Only the server's explicit invalid-PIN answer (401 from the PIN
+  // handlers) is a verdict on the PIN itself.
+  function isInvalidPIN(e: unknown): boolean {
+    return e instanceof Error && (e as { status?: unknown }).status === 401;
+  }
 
   async function verify(): Promise<void> {
     verified = null;
+    verifyErr = null;
     verifyBusy = true;
     const pin = verifyPin;
     try {
       const client = getSDKClient().pin;
       await (verifyRole === "so" ? client.verifySO({ pin }) : client.verifyUser({ pin }));
       verified = true;
-    } catch {
-      verified = false;
+    } catch (e) {
+      if (isInvalidPIN(e)) verified = false;
+      else verifyErr = message(e);
     } finally {
       verifyPin = "";
       verifyBusy = false;
@@ -125,6 +137,11 @@
         <Alert kind="error">
           <span>PIN not verified</span>
           <span>Each failed attempt counts toward the PIN lockout.</span>
+        </Alert>
+      {:else if verifyErr !== null}
+        <Alert kind="error">
+          <span>PIN verification could not run</span>
+          <span>{verifyErr}</span>
         </Alert>
       {/if}
       <div class="flex gap-4" role="radiogroup" aria-label="PIN to verify against">
