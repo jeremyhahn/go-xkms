@@ -269,6 +269,19 @@ func TestCreateKeyID_TenantScoped(t *testing.T) {
 	}
 }
 
+// Only the tenant login CA key, which this release provisions fresh, takes
+// the tenant-scoped token ID. Every other tenant key keeps the ID its token
+// object was created under, so an upgraded node still signs, decrypts and
+// deletes it with the same tenant and attributes.
+func TestCreateKeyID_ExistingTenantKeysKeepTheirID(t *testing.T) {
+	for _, tenant := range []string{"tenant-a", "tenant-b"} {
+		attrs := &types.KeyAttributes{CN: "app-signing", KeyAlgorithm: x509.ECDSA, TenantID: tenant}
+		if got := createKeyID(attrs); got != "app-signing.ecdsa" {
+			t.Errorf("createKeyID(tenant %q, CN app-signing) = %q, want the ID existing token objects carry", tenant, got)
+		}
+	}
+}
+
 // TestBackend_Close verifies that Close is idempotent and handles various states.
 func TestBackend_Close(t *testing.T) {
 	t.Run("close without context", func(t *testing.T) {
