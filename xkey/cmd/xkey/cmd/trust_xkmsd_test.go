@@ -591,7 +591,10 @@ func TestTrustBootstrapXKMSd_ImportHonoursTimeout(t *testing.T) {
 	require.ErrorContains(t, err, "TrustRootImport", "the import ends at the bootstrap deadline")
 	select {
 	case cause := <-serverErr:
-		require.ErrorIs(t, cause, context.DeadlineExceeded, "the deadline cancels the server-side import")
+		// The server sees the client's deadline as its own deadline or, when
+		// the client resets the stream first, as a cancellation.
+		require.True(t, errors.Is(cause, context.DeadlineExceeded) || errors.Is(cause, context.Canceled),
+			"the deadline cancels the server-side import, got %v", cause)
 	case <-time.After(5 * time.Second):
 		t.Fatal("the server-side import was never cancelled")
 	}
