@@ -15,7 +15,9 @@
   let macIn = $state("");
 
   let computed = $state<GenerateHMACResponse | null>(null);
-  let valid = $state<boolean | null>(null);
+  // A verdict belongs to the inputs it was computed from: it shows only
+  // while those inputs are current (Codex P1 on #2200).
+  let verdict = $state<{ inputs: string; valid: boolean } | null>(null);
   let computeErr = $state<string | null>(null);
   let verifyErr = $state<string | null>(null);
   let computing = $state(false);
@@ -26,6 +28,8 @@
   const noVerify = lacks("keys", "verify");
   const ready = $derived(keyId.trim() !== "" && backend.trim() !== "" && data !== "");
   const macHex = $derived(computed ? b64ToHex(computed.mac) : "");
+  const verifyInputs = $derived(JSON.stringify([keyId, backend, data, dataIsB64, hash, macIn]));
+  const valid = $derived(verdict !== null && verdict.inputs === verifyInputs ? verdict.valid : null);
 
   function message(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -59,7 +63,8 @@
 
   async function verify(): Promise<void> {
     verifyErr = null;
-    valid = null;
+    verdict = null;
+    const inputs = verifyInputs;
     const d = dataB64((m) => (verifyErr = m));
     if (d === null) return;
     const mac = macToB64(macIn);
@@ -69,9 +74,11 @@
     }
     verifying = true;
     try {
-      valid = (await verifyHmac(keyId.trim(), backend.trim(), d, mac, hash || undefined)).valid;
+      const res = await verifyHmac(keyId.trim(), backend.trim(), d, mac, hash || undefined);
+      // Inputs edited while pending: the response is for stale inputs.
+      if (inputs === verifyInputs) verdict = { inputs, valid: res.valid };
     } catch (e) {
-      verifyErr = message(e);
+      if (inputs === verifyInputs) verifyErr = message(e);
     } finally {
       verifying = false;
     }
