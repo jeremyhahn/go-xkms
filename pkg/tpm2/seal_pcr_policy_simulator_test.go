@@ -356,6 +356,45 @@ func TestUnseal_PlatformPolicy_ExtraPCR_RecoversSealedSelection(t *testing.T) {
 	}
 }
 
+// An object sealed with the platform policy, a password and an extra PCR
+// carries PolicyOR(PolicyPCR({7,11,15}), PolicyAuthValue). Its inline blobs,
+// unsealed against an empty key backend with the same password and
+// unchanged PCRs, must open: the password session's PolicyOR is built over
+// the selection recovered from the blob, not the platform set alone.
+func TestUnseal_PlatformPolicy_InlinePasswordExpandedSelection(t *testing.T) {
+	const extraPCR = 15
+	const testPIN = "expanded-sel-test-pin"
+
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, append(
+		append([]uint(nil), h.TPM.config.PlatformPCRs...), extraPCR)...)
+
+	cn := "platform-policy-inline-password-expanded-pcr"
+	sealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+	sealAttrs.TPMAttributes.PCRSelection = selection
+
+	secret := []byte("password-unseal-bound-to-expanded-selection")
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: sealAttrs, Backend: h.Backend})
+	require.NoError(t, err)
+
+	factory, err := store.NewStorageFactory(h.Logger, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = factory.Close() })
+
+	unsealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: unsealAttrs, Backend: factory.KeyBackend()})
+	require.NoError(t, err, "the correct password must open the inline blobs")
+	require.Equal(t, secret, got)
+}
+
 // An inline blob's own PCR selection wins over the pin a later seal stored
 // under the same CN: overwriting the store must not lock out a retained blob.
 func TestUnseal_PlatformPolicy_InlineBlobKeepsSelectionAfterCNOverwrite(t *testing.T) {
