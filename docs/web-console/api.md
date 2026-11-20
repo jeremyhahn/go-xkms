@@ -26,6 +26,12 @@ at `/auth/me` below, so an anonymous caller cannot fingerprint which
 optional subsystems (FROST, tenants, ...) this deployment
 wired.
 
+The sign-in and enrolment panels read `webauthn_enabled` and
+`piv_login_enabled` from here and show a disabled state naming the setting
+when a method is off; RegisterPanel never calls
+`/api/v1/webauthn/registration/begin` then. Screens behind sign-in gate on
+`/auth/me`'s `capabilities` instead (ruling 972 (1), see engineering.md).
+
 ## Session plane
 
 | Route | Auth | Purpose |

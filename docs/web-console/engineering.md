@@ -98,7 +98,11 @@ it in a goroutine. Typed error: `LaunchError{Reason, Err}`.
   permission), and a
   `capabilities` map from `capabilityFlags()` (`webauthn`, `piv_login`,
   `rbac`, `ca`, `tenants`, `passwords`, `platform`,
-  `tpm_policies`, `oidc_credentials`, `cluster`, `ssh`, `frost`, `factors`, `trust_roots`).
+  `tpm_policies`, `oidc_credentials`, `cluster`, `ssh`, `frost`, `trust_roots`).
+  `webauthn`, `ca`, `ssh`, `tenants` and `passwords` come from the `hasX`
+  guards in `handlers_capabilities.go`, the same predicates `routes.go` gates
+  those routes with, so a flag never disagrees with whether its route is
+  served (`TestCapabilities_FlagsAgreeWithRouteGuards`).
 - `POST /api/v1/auth/login/piv`, `POST /api/v1/auth/refresh`,
   `GET /api/v1/auth/validate`, `POST /api/v1/auth/logout`.
 
@@ -108,6 +112,15 @@ it in a goroutine. Typed error: `LaunchError{Reason, Err}`.
   server would refuse.** A `requires` gate checks `permissions[resource:action]`;
   a `capability` gate checks `capabilities[name]`. Both read from the same
   `GET /api/v1/auth/me` response, cached in `session.svelte.ts`.
+- **No console view leads to a 501 (ruling 972 (1)).** `App.svelte` wraps
+  the router in `RouteGate`; a route listed in `ROUTE_CAPABILITY`
+  (`web/app/src/stores/capabilities.svelte.ts`) whose `/auth/me` flag is
+  false renders `SUBSYSTEM_OFF` (what is off, the setting to turn on) and
+  never mounts the view. A failed session load gates nothing. In
+  `@go-xkms/svelte-auth`, `LoginPanel` and `RegisterPanel` read the public
+  capabilities through one helper (`src/capabilities.ts`) and show the same
+  disabled state naming `webauthn.enabled` or `auth.piv_login.enabled`;
+  `RegisterPanel` makes no registration request while passkeys are off.
 - **`pkg/webui.MountChi` falls back to `index.html` for every unresolved
   path**, so client-side routes (`#/keys`, `#/users`, ...) work on a
   hard refresh without a server-side route per screen.

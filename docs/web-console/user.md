@@ -157,6 +157,14 @@ for any one of them and disables the controls the identity lacks. Hiding is a co
 enforcement authority, and any view you reach anyway (a stale link, a typed
 hash route) still renders the 403 it gets back.
 
+A screen whose subsystem this server does not run (CA, SSH, tenants,
+passwords, Add Passkey without WebAuthn) never calls a route that would
+answer 501: reached by a link or a typed hash route, it shows what is off and
+the setting to turn on (for example "Add a ca: section to xkmsd.yaml and
+restart xkmsd.") instead of the screen. The sign-in and enrolment screens do
+the same for passkeys and certificates, naming `webauthn.enabled` and
+`auth.piv_login.enabled`.
+
 Cluster membership and status, and per-user auth factors, are go-qrdb's
 services and have no console page: use `xkmsctl cluster` and
 `xkmsctl auth factor`.
@@ -188,8 +196,10 @@ services and have no console page: use `xkmsctl cluster` and
 |---|---|---|
 | `https://host:8443/ui/` 404s | Binary built without the `ui` tag | Rebuild with `make build-ui` |
 | Daemon exits at startup with a `gaps: [...]` log line | Secure-by-default refused an insecure config | Fix the named control, or run `xkmsd init` |
-| Login screen offers no passkey option | `webauthn_enabled: false` in `/api/v1/capabilities` | The server has no WebAuthn RP configured |
-| Login screen offers no certificate option | `piv_login_enabled: false` | `auth.piv_login.enabled` is off, or `tls.client_auth` does not request client certs |
+| Login screen shows "Passkey sign-in is off" | `webauthn_enabled: false` in `/api/v1/capabilities` | Set `webauthn.enabled: true` (with an RP id and origins) in `xkmsd.yaml` |
+| Enrol / Create account shows "Passkey sign-up is off" | Same flag: passkey sign-up needs the WebAuthn RP | Set `webauthn.enabled: true` in `xkmsd.yaml` |
+| Login screen shows "Certificate sign-in is off" | `piv_login_enabled: false` | Set `auth.piv_login.enabled: true`, and have `tls.client_auth` request client certs |
+| A screen shows "... is off on this server" | The subsystem is not wired (`capabilities` in `/api/v1/auth/me`) | Apply the setting the screen names and restart `xkmsd` |
 | Desktop app: "remote mode requires XKMS_SERVER_URL or a saved bookmark" | Neither set | Set `XKMS_SERVER_URL`, or save a bookmark from inside the app once connected |
 | Desktop standalone: nothing loads | `XKMS_CONFIG` config itself fails secure-by-default validation | Same fix as the server-hosted refusal above — the standalone engine is the same `pkg/server.Server` |
 

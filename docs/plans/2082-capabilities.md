@@ -13,26 +13,31 @@ implemented": RegisterPanel called registration/begin without reading
 
 ## Subsystem to setting
 
-| capability flag      | route(s) gated                    | setting named in the UI       |
-|----------------------|-----------------------------------|-------------------------------|
-| webauthn_enabled     | /api/v1/webauthn/*                | webauthn.enabled              |
-| piv_login_enabled    | /api/v1/auth/piv/*                | auth.piv_login.enabled        |
-| ca_enabled           | /api/v1/ca/* (not /ca/bundle)     | ca (section in xkmsd.yaml)    |
-| ssh_enabled          | /xkms/v1/ssh/keys*                | xkms (XKMS service)           |
-| tenants_enabled      | /api/v1/tenants/                  | node barrier registry         |
-| passwords_enabled    | /api/v1/passwords*, vault         | password store                |
+| flag (where)                          | route(s) gated                | setting named in the UI       |
+|---------------------------------------|-------------------------------|-------------------------------|
+| webauthn_enabled (public)             | /api/v1/webauthn/*            | webauthn.enabled              |
+| piv_login_enabled (public)            | /api/v1/auth/piv/*            | auth.piv_login.enabled        |
+| ca (/auth/me)                         | /api/v1/ca/* (not /ca/bundle) | ca (section in xkmsd.yaml)    |
+| ssh (/auth/me)                        | /xkms/v1/ssh/keys*            | storage (DAO factory)         |
+| tenants (/auth/me)                    | /api/v1/tenants/              | node barrier registry (node:) |
+| passwords (/auth/me)                  | /api/v1/passwords*, vault     | storage (DAO factory)         |
+| webauthn (/auth/me)                   | add-passkey view              | webauthn.enabled              |
 
-Each flag is computed from the same condition as the route's Enabled guard in
-routes.go (one helper per subsystem, used by both), never a second source of
-truth. The response also carries `settings`: flag name to the setting string,
-so the UI names the setting the server reports.
+The public `GET /api/v1/capabilities` keeps only the login-page flags, so an
+anonymous caller cannot fingerprint which subsystems the deployment wired;
+the console's gated views sit behind sign-in and read the session's
+`/auth/me` capabilities map. capabilityFlags (handlers_auth.go) uses the
+same hasX guard as the route's Enabled in routes.go, never a second source
+of truth. The setting text lives in the UI (svelte-auth `capabilities.ts`,
+web/app `stores/capabilities.svelte.ts`).
 
 ## Slices (each its own commit, test before fix)
 
 1. docs(plans): this file.
-2. test(api/rest): capabilities reports each gated subsystem false on a server
-   without it and true with it, from the real server wiring.
-3. fix(api/rest): capabilities flags + guard helpers shared with routes.go.
+2. test(api/rest): /auth/me reports each gated subsystem false on a server
+   without it and true with it, in agreement with each route guard; the
+   public capabilities stay coarse.
+3. fix(api/rest): guard helpers shared by routes.go and capabilityFlags.
 4. test(svelte-auth): RegisterPanel with webauthn_enabled false renders the
    disabled state naming webauthn.enabled and makes no registration/begin
    request; both panels read the same capabilities helper.
