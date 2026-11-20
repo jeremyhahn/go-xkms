@@ -50,6 +50,14 @@ func (d *Datastore) callContext(ctx context.Context) (context.Context, error) {
 	return bound, nil
 }
 
+// CallContext derives the context a call into go-qrdb runs on, as the
+// datastore's own calls do (WithCallContext). A host passes it to a
+// component that calls the qrdb client directly -- the WebAuthn relying
+// party's user calls -- so those run as the same principal.
+func (d *Datastore) CallContext(ctx context.Context) (context.Context, error) {
+	return d.callContext(ctx)
+}
+
 // kvStore returns the DAO store over client: the SDK's own adapter, built
 // over transport clients that run on the bound context when the datastore
 // has one.

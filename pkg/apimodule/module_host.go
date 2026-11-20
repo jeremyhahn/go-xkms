@@ -104,6 +104,8 @@ func (m *Module) restServer() (*rest.Server, error) {
 			return nil, &HostBuildError{Err: err}
 		}
 		hc.DAOFactory = ds.DAOFactory()
+		// The relying party's qrdb user calls run on the same binder.
+		hc.QRDBCallContext = ds.CallContext
 	}
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)

@@ -1527,6 +1527,7 @@ func (s *Server) initializeWebAuthnService() error {
 		Config:      s.webauthnConfig,
 		QRDBClient:  ds.Client(),
 		DAOFactory:  ds.DAOFactory(),
+		CallContext: ds.CallContext,
 		TenantID:    webAuthnSystemTenant,
 		TokenIssuer: s.tokenIssuer,
 		Logger:      s.logger,

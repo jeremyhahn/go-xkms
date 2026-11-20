@@ -356,6 +356,13 @@ type WebAuthnServiceParams struct {
 	// Defaults to DefaultWebAuthnTenant.
 	TenantID string
 
+	// CallContext derives the context the relying party's qrdb user calls
+	// run on (webauthn.QRDBUserStoreOptions.CallContext). A host over an
+	// embedded node that enforces authentication passes the binder its
+	// datastore runs on (datastore.Datastore.CallContext); nil runs the
+	// calls on the request context, which such a node refuses.
+	CallContext func(context.Context) (context.Context, error)
+
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
@@ -416,9 +423,10 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      p.QRDBClient.Users(),
-		DAOFactory: p.DAOFactory,
-		TenantID:   tenantID,
+		Users:       p.QRDBClient.Users(),
+		DAOFactory:  p.DAOFactory,
+		TenantID:    tenantID,
+		CallContext: p.CallContext,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
@@ -635,6 +643,12 @@ type HostConfig struct {
 	// datastore; nil leaves the WebAuthn routes unmounted.
 	DAOFactory *qrdbsdk.DAOFactory
 
+	// QRDBCallContext derives the context the WebAuthn relying party's
+	// qrdb user calls run on (WebAuthnServiceParams.CallContext): the
+	// binder the host's datastore runs on. Nil runs them on the request
+	// context.
+	QRDBCallContext func(context.Context) (context.Context, error)
+
 	// WebAuthn enables the WebAuthn ceremony routes when non-nil. Requires
 	// QRDBClient and DAOFactory; without them the routes stay unmounted.
 	WebAuthn *webauthn.Config
@@ -804,6 +818,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				QRDBClient:               hc.QRDBClient,
 				DAOFactory:               hc.DAOFactory,
 				TenantID:                 tenantID,
+				CallContext:              hc.QRDBCallContext,
 				TokenIssuer:              cfg.TokenIssuer,
 				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
 				Logger:                   logger,

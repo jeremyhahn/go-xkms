@@ -331,6 +331,10 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 	case webauthn.IsSessionLimit(err):
 		h.writeError(w, http.StatusServiceUnavailable, ErrorCodeSessionLimit, "too many unfinished ceremonies; retry later")
 	default:
+		// The client sees only internal_error; the operator needs the cause.
+		// Service errors name the failing step and wrap storage errors, never
+		// secret values.
+		h.logger.Error("webauthn internal error", "error", err)
 		h.writeError(w, http.StatusInternalServerError, ErrorCodeInternalError, "internal server error")
 	}
 }
