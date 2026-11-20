@@ -4410,12 +4410,12 @@ gosec:
 	fi
 
 .PHONY: vuln
-## vuln: Run govulncheck to scan for known vulnerabilities
+## vuln: Run govulncheck; fail on reached vulnerabilities outside .govulncheck-allow
 vuln:
 	@echo "$(CYAN)$(BOLD)→ Running vulnerability scan with govulncheck...$(RESET)"
 	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
 	if [ -x "$$GOVULNCHECK_BIN" ]; then \
-		$$GOVULNCHECK_BIN$(call go_tags_flag,) ./... || { \
+		GOVULNCHECK_BIN="$$GOVULNCHECK_BIN" bash scripts/govulncheck-allow.sh$(call go_tags_flag,) ./... || { \
 			echo "$(RED)✗ govulncheck found reachable vulnerabilities$(RESET)"; \
 			exit 1; \
 		}; \
