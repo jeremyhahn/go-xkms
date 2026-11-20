@@ -84,7 +84,9 @@ func (m *mockTCGCA) IssueLAKCertificateRaw(
 	certifyInfo, signature []byte,
 	signatureAlgorithm x509.SignatureAlgorithm,
 	lakPublicArea, nonce []byte,
+	tenantID string,
 ) ([]byte, error) {
+	m.tenant = tenantID
 	return m.lakCertDER, m.lakCertErr
 }
 
@@ -613,6 +615,18 @@ func TestIssueLAKCertificate_Success(t *testing.T) {
 	assert.Equal(t, certDER, resp.CertificateDER)
 	assert.NotEmpty(t, resp.CertificatePEM)
 	assert.NotEmpty(t, resp.SerialNumber)
+}
+
+// TestIssueLAKCertificate_ForwardsCallerTenant proves a transport-issued LAK
+// is recorded for the authenticated tenant, so that tenant (and not a
+// system-tenant caller) owns and may revoke it.
+func TestIssueLAKCertificate_ForwardsCallerTenant(t *testing.T) {
+	tcg := &mockTCGCA{lakCertDER: createTestCertDER(t)}
+	svc := setupServiceWithTCGCA(t, tcg)
+
+	_, err := svc.IssueLAKCertificate(contextWithTenant("tenant-1"), validLAKRequest())
+	require.NoError(t, err)
+	assert.Equal(t, "tenant-1", tcg.tenant, "the LAK must be issued for the caller's tenant")
 }
 
 func TestIssueLAKCertificate_NilRequest(t *testing.T) {
