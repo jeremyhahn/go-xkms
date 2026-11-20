@@ -156,26 +156,33 @@ func resolveSRKEnrollPINs(cmd *cobra.Command) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if userPIN != "" {
-		return userPIN, soPIN, nil
-	}
-	if !pinInputIsTerminal() {
-		return "", "", ErrTPMSRKNoPIN
-	}
-
+	// Each PIN prompts only when its own source is empty and stdin is a
+	// terminal: a supplied user PIN must not skip the SO PIN prompt, which
+	// a TPM with owner auth needs. No terminal and no SO source means an
+	// empty SO PIN.
+	terminal := pinInputIsTerminal()
 	prompts := cmd.ErrOrStderr()
-	userPIN, err = readPIN(prompts, "User PIN: ")
-	if err != nil {
-		return "", "", err
+	if userPIN == "" {
+		if !terminal {
+			return "", "", ErrTPMSRKNoPIN
+		}
+		userPIN, err = readPIN(prompts, "User PIN: ")
+		if err != nil {
+			return "", "", err
+		}
 	}
-	if soPIN == "" {
-		soPIN, err = readOptionalPIN(prompts, "SO PIN (empty if 'tpm install' ran without --auth): ")
+	if soPIN == "" && terminal {
+		soPIN, err = readSRKOptionalPIN(prompts, "SO PIN (empty if 'tpm install' ran without --auth): ")
 		if err != nil {
 			return "", "", err
 		}
 	}
 	return userPIN, soPIN, nil
 }
+
+// readSRKOptionalPIN reads the optional SO PIN at enrolment; a variable so
+// tests can stand in for the terminal.
+var readSRKOptionalPIN = readOptionalPIN
 
 // readOptionalPIN prompts at the terminal with no echo and accepts an
 // empty answer.
