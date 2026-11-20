@@ -90,3 +90,67 @@ func TestCIWorkflowGOFLAGSTrimpath(t *testing.T) {
 		}
 	}
 }
+
+// ciJobBlock returns the text of the top-level job id in ci.yml, from its
+// "  id:" line up to the next two-space-indented key.
+func ciJobBlock(t *testing.T, ci, id string) string {
+	t.Helper()
+	start := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(id) + `:\s*$`).FindStringIndex(ci)
+	if start == nil {
+		t.Fatalf("ci.yml has no job %q", id)
+	}
+	rest := ci[start[1]:]
+	if end := regexp.MustCompile(`(?m)^  \S`).FindStringIndex(rest); end != nil {
+		rest = rest[:end[0]]
+	}
+	return rest
+}
+
+// TestCIFullTierOnBuildFiles pins ruling 1041(4): a PR that changes a
+// Makefile, a go.mod/go.sum or ci.yml (a build-flag change) runs the full
+// matrix without the ci:full label.
+func TestCIFullTierOnBuildFiles(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatalf("read ci.yml: %v", err)
+	}
+	ci := string(data)
+
+	m := regexp.MustCompile(`(?m)^\s+FULL_TIER_PATTERN:\s*'([^']*)'`).FindStringSubmatch(ci)
+	if m == nil {
+		t.Fatal("ci.yml env lacks FULL_TIER_PATTERN")
+	}
+	pat, err := regexp.Compile(m[1])
+	if err != nil {
+		t.Fatalf("FULL_TIER_PATTERN %q: %v", m[1], err)
+	}
+	for _, p := range []string{"Makefile", "go.mod", "go.sum", "sdk/go/go.mod", "xkey/go.sum", ".github/workflows/ci.yml"} {
+		if !pat.MatchString(p) {
+			t.Errorf("FULL_TIER_PATTERN does not select %s", p)
+		}
+	}
+	for _, p := range []string{"pkg/xkms/errors.go", "docs/SPEC.md"} {
+		if pat.MatchString(p) {
+			t.Errorf("FULL_TIER_PATTERN selects %s", p)
+		}
+	}
+
+	ifRe := regexp.MustCompile(`(?m)^    if:\s*(.*)$`)
+	needsRe := regexp.MustCompile(`(?m)^    needs:\s*(.*)$`)
+	for _, id := range []string{"integration", "nested-module-test", "build-raft", "race", "tpm2-simulator"} {
+		block := ciJobBlock(t, ci, id)
+		cond := ifRe.FindStringSubmatch(block)
+		if cond == nil || !strings.Contains(cond[1], "needs.preflight.outputs.full_paths == 'true'") {
+			t.Errorf("job %s if: does not select on full_paths", id)
+		}
+		needs := needsRe.FindStringSubmatch(block)
+		if needs == nil || !strings.Contains(needs[1], "preflight") {
+			t.Errorf("job %s does not need preflight", id)
+		}
+	}
+
+	gate := regexp.MustCompile(`(?m)^\s+FULL_TIER:\s*(.*)$`).FindStringSubmatch(ci)
+	if gate == nil || !strings.Contains(gate[1], "needs.preflight.outputs.full_paths == 'true'") {
+		t.Error("CI Gate FULL_TIER does not read full_paths")
+	}
+}
