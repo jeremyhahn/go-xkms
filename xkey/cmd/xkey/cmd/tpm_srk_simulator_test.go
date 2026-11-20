@@ -108,7 +108,7 @@ func openFreshSRKTPM(t *testing.T, sim *provisionedSimulator) {
 	}
 	require.NotNil(t, fresh)
 	t.Cleanup(func() { assert.NoError(t, fresh.Close()) })
-	shared := sharedTPM{fresh}
+	shared := newSharedTPM(t, fresh)
 	openTPM = func() (xkms.TrustedPlatformModule, error) { return shared, nil }
 	openTPMForDevice = func(string) (xkms.TrustedPlatformModule, error) { return shared, nil }
 }

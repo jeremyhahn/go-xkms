@@ -47,6 +47,15 @@ import (
 // re-manufactures it, which would discard every provisioned key.
 type sharedTPM struct {
 	xkms.TrustedPlatformModule
+	// fatalf fails the test (t.Fatalf) when the wrapped TPM cannot take
+	// a Platform key store, so a lost setter is a failure, not a skip.
+	fatalf func(format string, args ...any)
+}
+
+// newSharedTPM wraps tpm for the open hooks; t fails the test if the
+// wrapped TPM lacks SetPlatformKeyStore.
+func newSharedTPM(t *testing.T, tpm xkms.TrustedPlatformModule) sharedTPM {
+	return sharedTPM{TrustedPlatformModule: tpm, fatalf: t.Fatalf}
 }
 
 // Close leaves the shared simulator open; withProvisionedSimulatorTPM
@@ -152,7 +161,7 @@ func shareProvisionedSimulatorTPM(t *testing.T, tpm xkms.TrustedPlatformModule, 
 		openTPM, openTPMForEKCert, openTPMForEKRestore, openTPMForProvisioningWithPCROverrides = savedOpen, savedOpenForEKCert, savedOpenForEKRestore, savedOpenWithPCROverrides
 		openTPMForDevice = savedOpenForDevice
 	})
-	shared := sharedTPM{tpm}
+	shared := newSharedTPM(t, tpm)
 	openTPM = func() (xkms.TrustedPlatformModule, error) {
 		require.Equal(t, ekCertHandle, ekCertHandleRSA, "openTPM opens the TPM for the RSA EK certificate index")
 		return shared, nil
@@ -631,7 +640,7 @@ func withUnprovisionedSimulatorTPMForECCert(t *testing.T) (xkms.TrustedPlatformM
 	t.Cleanup(func() { openTPMForEKRestore = saved })
 	openTPMForEKRestore = func(handle uint32) (xkms.TrustedPlatformModule, error) {
 		require.Equal(t, uint32(ekCertHandleEC), handle, "EK certificate index the TPM is opened for")
-		return sharedTPM{tpm}, ErrTPMNotInitialized
+		return newSharedTPM(t, tpm), ErrTPMNotInitialized
 	}
 	return tpm, rsaCert
 }
@@ -1509,7 +1518,7 @@ func TestRunTPMProvision_TakesOwnershipWithTheSuppliedHierarchyAuth(t *testing.T
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, tpm.Close()) })
 			setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, []uint) (xkms.TrustedPlatformModule, error) {
-				return sharedTPM{tpm}, nil
+				return newSharedTPM(t, tpm), nil
 			})
 			setVar(t, &provisionConfirm, true)
 			setVar(t, &provisionHierarchyAuth, tt.flagAuth)

@@ -45,7 +45,7 @@ func withUnprovisionedSimulatorTPM(t *testing.T) xkms.TrustedPlatformModule {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, tpm.Close()) })
 
-	shared := sharedTPM{tpm}
+	shared := newSharedTPM(t, tpm)
 	setVar(t, &openTPM, func() (xkms.TrustedPlatformModule, error) { return shared, nil })
 	setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, []uint) (xkms.TrustedPlatformModule, error) {
 		return shared, nil

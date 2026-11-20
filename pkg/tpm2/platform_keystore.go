@@ -196,6 +196,12 @@ type platformKeyStoreSetter interface {
 	SetPlatformKeyStore(pks PlatformKeyStorer)
 }
 
+// Compile-time check, in a file with no build tag: a *TPM2 whose setter is
+// renamed, re-typed or moved behind a tag breaks every build, rather than
+// AttachPlatformKeyStore failing at run time with
+// ErrPlatformKeyStoreNotAttachable (#2325).
+var _ platformKeyStoreSetter = (*TPM2)(nil)
+
 // AttachPlatformKeyStore returns the PlatformKeyStore tpm already carries or,
 // when it has none, creates one over backend from tpm's own configuration
 // and attaches it. It is the one way xkmsd and xKey give a TPM its
