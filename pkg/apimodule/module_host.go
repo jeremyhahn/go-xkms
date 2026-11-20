@@ -20,6 +20,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -111,6 +112,12 @@ func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 		PasswordStore: stores.PasswordStore,
 		SSHClient:     stores.SSH,
 		NodeUsers:     m.nodeUsers,
+	}
+	if m.serviceContext != nil {
+		// The refresh store binds its KV calls through the node's
+		// service context; without it minting a token on an
+		// auth-enforcing node fails saving the refresh record.
+		hc.ServiceContext = token.CallContext(m.serviceContext)
 	}
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()
