@@ -30,6 +30,7 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/internal/keyslot"
+	"github.com/jeremyhahn/go-xkms/internal/loginca"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -2016,18 +2017,26 @@ func createKeyID(attrs *types.KeyAttributes) string {
 	} else {
 		id = fmt.Sprintf("%s.%s", attrs.CN, strings.ToLower(attrs.KeyAlgorithm.String()))
 	}
-	// A CN is unique only within a tenant: a tenant key's token ID carries
-	// its tenant, so two tenants' keys of one name are two objects. System
-	// keys keep the unscoped ID, which every existing token object has.
-	if !scope.IsSystem(attrs.TenantID) {
+	// Every tenant's login CA key has one CN, so its token ID carries its
+	// tenant: two tenants' login CA keys are two objects. Only that key,
+	// which no earlier release made, takes the scoped ID; every other key
+	// keeps the unscoped ID its existing token object was created under, so
+	// an upgrade still resolves it. System keys are never scoped.
+	if isLoginCAKeyCN(attrs.CN) && !scope.IsSystem(attrs.TenantID) {
 		id = tenantKeyIDPrefix + attrs.TenantID + "/" + id
 	}
 	return id
 }
 
-// tenantKeyIDPrefix opens the token ID (CKA_ID and CKA_LABEL) of a tenant
-// key: "tenant=<tenant>/<CN>.<algorithm>".
+// tenantKeyIDPrefix opens the token ID (CKA_ID and CKA_LABEL) of a tenant's
+// login CA key: "tenant=<tenant>/<CN>.<algorithm>".
 const tenantKeyIDPrefix = "tenant="
+
+// isLoginCAKeyCN reports whether cn names a tenant login CA key: the shared
+// name, alone or followed by "-" and the tenant.
+func isLoginCAKeyCN(cn string) bool {
+	return cn == loginca.KeyCN || strings.HasPrefix(cn, loginca.KeyCN+"-")
+}
 
 // decodeListedLabel fills ka from a listed key's CKA_KEY_TYPE and CKA_LABEL,
 // the tenant included.
