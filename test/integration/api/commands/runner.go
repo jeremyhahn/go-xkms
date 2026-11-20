@@ -15,6 +15,7 @@ package commands
 
 import (
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
@@ -377,10 +378,29 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 	// Track signature from key-sign for use in key-verify
 	var capturedSignature string
 
+	// Per-run work dir for file arguments, seeded with raw AES-256 material
+	// for key wrap/import (#2321 slice f).
+	workDir := t.TempDir()
+	material := make([]byte, 32)
+	if _, err := rand.Read(material); err != nil {
+		t.Fatalf("key material: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, MatrixKeyMaterialFile), material, 0o600); err != nil {
+		t.Fatalf("write key material: %v", err)
+	}
+
+	// Commands that passed in this run; a SetupSteps command runs only after
+	// all its steps passed.
+	passed := map[string]bool{}
+
 	for _, cmd := range AllCommands() {
 		// Skip commands this cell cannot run, naming the reason
 		if reason, skip := SkipReason(cmd, protocol, enabledTags); skip {
 			t.Logf("Skipping (%s, %s) %s: %s", cmd.Category, protocol, cmd.Name, reason)
+			continue
+		}
+		if step, ok := failedSetupStep(cmd, passed); ok {
+			t.Logf("Skipping (%s, %s) %s: setup step %s did not pass", cmd.Category, protocol, cmd.Name, step)
 			continue
 		}
 
@@ -398,6 +418,13 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 			if arg.Flag == "cn" && cmd.Category == CategoryCA {
 				overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
 			}
+			if strings.Contains(arg.Value, MatrixWorkDir) {
+				key := arg.Flag
+				if arg.IsPositional {
+					key = arg.Description
+				}
+				overrides[key] = strings.ReplaceAll(arg.Value, MatrixWorkDir, workDir)
+			}
 		}
 
 		// For key-verify, use the captured signature from key-sign
@@ -409,12 +436,17 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 		if !cmd.RequiresServer {
 			result := r.RunCommandTest(t, protocol, cmd, overrides)
 			results = append(results, result)
+			passed[cmd.Name] = result.Passed
 			continue
 		}
 
 		t.Run(cmd.Name, func(t *testing.T) {
 			result := r.RunCommandTest(t, protocol, cmd, overrides)
+			if reason, skip := unsupportedOnBackend(cmd, result); skip {
+				t.Skipf("(%s, %s) %s: %s", cmd.Category, protocol, cmd.Name, reason)
+			}
 			results = append(results, result)
+			passed[cmd.Name] = result.Passed
 
 			// Capture signature from key-sign output for use in key-verify
 			if cmd.Name == "key-sign" && result.Passed {
@@ -489,5 +521,6 @@ func uniqueKeyIDs(runID int64) map[string]string {
 
 		"test-symmetric-exportable": fmt.Sprintf("test-symmetric-exportable-%d", runID),
 		"test-symmetric-sensitive":  fmt.Sprintf("test-symmetric-sensitive-%d", runID),
+		"test-import-key":           fmt.Sprintf("test-import-key-%d", runID),
 	}
 }

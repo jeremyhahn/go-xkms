@@ -47,8 +47,35 @@ func SkipReason(cmd CommandDefinition, protocol ProtocolType, enabledTags []stri
 			return fmt.Sprintf("requires build tags %v", cmd.BuildTags), true
 		}
 	}
-	if cmd.RequiresSetup {
+	if cmd.RequiresSetup && len(cmd.SetupSteps) == 0 {
 		return "requires prior setup (workflow tests; later #2321 slices)", true
+	}
+	return "", false
+}
+
+// failedSetupStep returns the first SetupSteps entry of cmd that has not
+// passed in this run.
+func failedSetupStep(cmd CommandDefinition, passed map[string]bool) (string, bool) {
+	for _, step := range cmd.SetupSteps {
+		if !passed[step] {
+			return step, true
+		}
+	}
+	return "", false
+}
+
+// unsupportedOnBackend reports a failed result whose output carries one of
+// cmd.SkipWhenOutputContains: the backend lacks the capability, so the cell
+// is skipped with cmd.SkipWhenReason.
+func unsupportedOnBackend(cmd CommandDefinition, result *TestResult) (string, bool) {
+	if result.Passed {
+		return "", false
+	}
+	output := result.Stdout + result.Stderr
+	for _, marker := range cmd.SkipWhenOutputContains {
+		if strings.Contains(output, marker) {
+			return cmd.SkipWhenReason, true
+		}
 	}
 	return "", false
 }
