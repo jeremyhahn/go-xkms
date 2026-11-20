@@ -18,6 +18,8 @@
   let loading = $state(true);
 
   let selected = $state("");
+  // typedId is the backend ID typed when backends.list() is refused.
+  let typedId = $state("");
   let status = $state<BackendStatusResponse | null>(null);
   let statusError = $state<string | null>(null);
   let algorithms = $state<string[] | null>(null);
@@ -95,24 +97,37 @@
 
 {#if loading}
   <div class="flex justify-center py-12"><span class="loading loading-spinner loading-lg"></span></div>
-{:else if listError}
-  <Alert kind="error"><span>{listError}</span></Alert>
 {:else}
+  {#if listError}
+    <!-- Enumeration needs backends:list; status and self-test need only
+         backends:read, so a refused list leaves a typed backend input. -->
+    <Alert kind="warning" class="mb-3"><span>Backends could not be listed: {listError}. Enter a backend ID.</span></Alert>
+  {/if}
   <div class="flex flex-wrap items-end gap-3 mb-4">
-    <label class="form-control">
-      <span class="label-text mb-1">Backend</span>
-      <select
-        class="select select-bordered select-sm"
-        aria-label="Backend"
-        value={selected}
-        onchange={(e) => void choose((e.currentTarget as HTMLSelectElement).value)}
-      >
-        <option value="">Choose a backend</option>
-        {#each backends as b (b.id)}
-          <option value={b.id}>{b.id}</option>
-        {/each}
-      </select>
-    </label>
+    {#if listError}
+      <label class="form-control">
+        <span class="label-text mb-1">Backend ID</span>
+        <input class="input input-bordered input-sm" aria-label="Backend ID" bind:value={typedId} />
+      </label>
+      <button class="btn btn-sm" onclick={() => void choose(typedId.trim())} disabled={typedId.trim() === ""}>
+        Check status
+      </button>
+    {:else}
+      <label class="form-control">
+        <span class="label-text mb-1">Backend</span>
+        <select
+          class="select select-bordered select-sm"
+          aria-label="Backend"
+          value={selected}
+          onchange={(e) => void choose((e.currentTarget as HTMLSelectElement).value)}
+        >
+          <option value="">Choose a backend</option>
+          {#each backends as b (b.id)}
+            <option value={b.id}>{b.id}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
     <button class="btn btn-primary btn-sm" onclick={runTest} disabled={selected === "" || testing}>
       {#if testing}<span class="loading loading-spinner loading-xs"></span>{/if}
       Run self-test

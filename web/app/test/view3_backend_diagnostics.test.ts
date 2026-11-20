@@ -177,7 +177,7 @@ describe("BackendDiagnosticsView errors", () => {
     route();
     render(BackendDiagnosticsView);
 
-    expect(await screen.findByText("backends unavailable")).toBeInTheDocument();
+    expect(await screen.findByText(/backends unavailable/)).toBeInTheDocument();
   });
 
   // A backends:read caller may check status and self-test a known backend
