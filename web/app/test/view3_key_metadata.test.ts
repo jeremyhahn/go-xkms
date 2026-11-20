@@ -147,6 +147,24 @@ describe("KeyMetadataView", () => {
     });
   });
 
+  // A JSON-decoded "__proto__" tag is an own property; rebuilding the tags
+  // with tags[k] = v on {} would hit the inherited setter and drop it, so an
+  // unrelated edit sent remove_tags: ["__proto__"] (Codex P1 on #2206).
+  it("keeps an untouched __proto__ tag when saving an unrelated edit", async () => {
+    const tags = JSON.parse('{"__proto__":"p","team":"a"}') as Record<string, string>;
+    await load(metadata({ tags }));
+    request.mockResolvedValueOnce({ metadata: metadata({ tags, description: "new" }), timestamp: 1700000200 });
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await fireEvent.input(screen.getByLabelText("Description"), { target: { value: "new" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request).toHaveBeenLastCalledWith("PUT", PATH, {
+      body: { backend: "software", key_id: "k1", description: "new" },
+    });
+  });
+
   it("keeps Save disabled while nothing has changed", async () => {
     await load();
 

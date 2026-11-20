@@ -32,4 +32,12 @@ describe("diffMetadata", () => {
     });
     expect(diffMetadata(after, { ...after, tags: { ...after.tags } })).toEqual({});
   });
+
+  it("returns a changed __proto__ tag as an own property of the tags map", () => {
+    const before = { ...base, tags: JSON.parse('{"__proto__":"a"}') as Record<string, string> };
+    const after = { ...base, tags: JSON.parse('{"__proto__":"b"}') as Record<string, string> };
+    const changes = diffMetadata(before, after);
+    expect(Object.hasOwn(changes.tags ?? {}, "__proto__")).toBe(true);
+    expect(JSON.stringify(changes)).toBe('{"tags":{"__proto__":"b"}}');
+  });
 });
