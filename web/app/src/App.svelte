@@ -48,6 +48,7 @@
   import UsersView from "$views/UsersView.svelte";
   import AddPasskeyView from "$views/AddPasskeyView.svelte";
   import TenantsView from "$views/TenantsView.svelte";
+  import RouteGate from "$components/RouteGate.svelte";
   import TenantTpmView from "$views/TenantTpmView.svelte";
   import PasswordsView from "$views/PasswordsView.svelte";
   import PasswordAccessModeView from "$views/PasswordAccessModeView.svelte";
@@ -87,6 +88,9 @@
   {/if}
 {:else}
   <AppShell>
+    <!-- Ruling 972 (1): a view whose subsystem the server reports off shows
+         the setting to turn on instead of mounting (stores/capabilities). -->
+    <RouteGate route={routerStore.name}>
     {#if routerStore.name === "dashboard"}
       <DashboardView />
     {:else if routerStore.name === "trustBundle"}<TrustBundleView />
@@ -168,6 +172,7 @@
     {:else}
       <PlaceholderView title="Not found" />
     {/if}
+    </RouteGate>
   </AppShell>
 {/if}
 
