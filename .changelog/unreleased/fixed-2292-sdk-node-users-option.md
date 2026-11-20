@@ -1,0 +1,1 @@
+- **The Go SDK can wire the embedded node's user service.** `WithServiceModuleNodeUsers` (with the `ServiceModuleNodeUserSource` alias) re-exports `apimodule.WithNodeUsers`, so a host building on `NewServiceModule` resolves users on its public WebAuthn, invite and refresh routes through the node instead of reaching go-qrdb with no credentials.
