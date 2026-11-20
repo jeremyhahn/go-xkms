@@ -669,6 +669,10 @@ build-web: build-sdk-ts
 ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping build-web$(RESET)"
 else
+	@# svelte-auth resolves its @go-xkms/sdk devDependency (file:..) only through
+	@# its own node_modules, so install it before the web/app build (#2286).
+	@echo "$(CYAN)$(BOLD)→ Installing @go-xkms/svelte-auth dependencies...$(RESET)"
+	@cd $(SVELTE_AUTH_DIR) && npm ci --silent
 	@echo "$(CYAN)$(BOLD)→ Installing web/app dependencies...$(RESET)"
 	@cd $(WEB_APP_DIR) && npm ci --silent
 	@# npm rewrites file: deps to relative symlinks; force absolute symlinks so
@@ -1104,9 +1108,11 @@ test-scripts:
 	@bash test/scripts/xkey-build-tags.test.sh
 	@bash test/scripts/go-build-tags.test.sh
 	@bash test/scripts/gomodauth.test.sh
+	@bash test/scripts/go-caches-env.test.sh
 	@bash test/scripts/credential-ignores.test.sh
 	@bash test/scripts/no-credential-echo.test.sh
 	@bash test/scripts/ci-registry.test.sh
+	@bash test/scripts/build-web-deps.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
@@ -5373,7 +5379,8 @@ bench-cert-compare:
 # ==============================================================================
 
 # Get all packages dynamically (excluding cmd and test dirs)
-PKG_DIRS := $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
+# Deferred (=): a parse must not run go list, which fills the module cache (#2295).
+PKG_DIRS = $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
 
 # Explicit xkey E2E targets that would otherwise be caught by test-% pattern.
 .PHONY: test-fido2-pkcs11
