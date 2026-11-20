@@ -151,7 +151,7 @@ func (tpm *TPM2) objectSession(
 	if err != nil {
 		return nil, noopCloser, err
 	}
-	return tpm.platformKeySessionOver(keyAttrs, backend, pcrs)
+	return tpm.platformKeySessionOver(keyAttrs, backend, pcrs, authPolicy)
 }
 
 // platformKeySessionOver opens the password branch of an object sealed to
@@ -164,7 +164,8 @@ func (tpm *TPM2) objectSession(
 func (tpm *TPM2) platformKeySessionOver(
 	keyAttrs *types.KeyAttributes,
 	backend store.KeyBackend,
-	pcrs PCRSet) (tpm2.Session, func() error, error) {
+	pcrs PCRSet,
+	authPolicy []byte) (tpm2.Session, func() error, error) {
 
 	keyAuth := keyAuthValue(keyAttrs)
 	if len(keyAuth) == 0 {
@@ -176,6 +177,16 @@ func (tpm *TPM2) platformKeySessionOver(
 	}
 	if pin != nil && pin.PCRSelect == pcrs.Mask() {
 		return tpm.platformPolicySession(keyAuth, pin)
+	}
+	// A pin recorded over another selection still belongs to this object
+	// when its PolicyOR is the object's authPolicy: an object sealed before
+	// the expanded selection carries the platform set's policy, and the
+	// recorded pin opens it.
+	if pin != nil && len(authPolicy) > 0 {
+		if recorded, err := platformPolicyDigestFromPin(pin); err == nil &&
+			bytes.Equal(recorded.Buffer, authPolicy) {
+			return tpm.platformPolicySession(keyAuth, pin)
+		}
 	}
 	if pin == nil && pcrs.Mask() == tpm.config.PlatformPCRs.Mask() {
 		return tpm.platformPolicySession(keyAuth, nil)
