@@ -317,12 +317,12 @@ type Params struct {
 }
 
 type TPM2 struct {
-	algID     tpm2.TPMAlgID
+	algID tpm2.TPMAlgID
 	// storageCloser is Params.StorageCloser: Close closes it last.
 	storageCloser io.Closer
-	backend   store.KeyBackend
-	certStore store.CertificateStorer
-	config    *Config
+	backend       store.KeyBackend
+	certStore     store.CertificateStorer
+	config        *Config
 	// deviceCaps caches the algorithm and curve sets this TPM reports. The
 	// answer cannot change while the device is open, and the pointer is
 	// published atomically so concurrent callers share one snapshot without a
@@ -513,14 +513,14 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	tpm := &TPM2{
 		algID:         algID,
 		storageCloser: params.StorageCloser,
-		logger:     params.Logger,
-		backend:    params.Backend,
-		certStore:  params.CertStore,
-		config:     params.Config,
-		device:     device,
-		conn:       conn,
-		fqdn:       params.FQDN,
-		httpClient: params.HTTPClient,
+		logger:        params.Logger,
+		backend:       params.Backend,
+		certStore:     params.CertStore,
+		config:        params.Config,
+		device:        device,
+		conn:          conn,
+		fqdn:          params.FQDN,
+		httpClient:    params.HTTPClient,
 		// hash:         hash,
 		simulator: sim,
 		tracker:   tracker,
