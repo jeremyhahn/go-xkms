@@ -15,6 +15,7 @@ package commands
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -71,6 +72,54 @@ func TestMatrix_SkipReasons(t *testing.T) {
 		if r, skip := SkipReason(plain, p, nil); skip {
 			t.Errorf("key command skipped on %s: %s", p, r)
 		}
+	}
+}
+
+// TestMatrix_ACMEAndAdminFamilies checks that every acme and admin
+// subcommand has a matrix cell on every transport that runs or names its
+// skip reason (#2321 slice b).
+func TestMatrix_ACMEAndAdminFamilies(t *testing.T) {
+	want := map[string]bool{
+		"acme account list": false, "acme account get": false, "acme account disable": false,
+		"acme cert list": false, "acme cert get": false, "acme cert revoke": false,
+		"acme eab create": false, "acme eab get": false, "acme eab delete": false, "acme eab list": false,
+		"acme status": false, "acme stats": false, "acme gui": false,
+		"admin create": false, "admin list": false, "admin get": false, "admin disable": false,
+		"admin enable": false, "admin delete": false, "admin status": false,
+	}
+	for _, cmd := range AllCommands() {
+		key := strings.Join(cmd.Command, " ")
+		if _, ok := want[key]; !ok {
+			continue
+		}
+		want[key] = true
+		for _, p := range CLIProtocols() {
+			if r, skip := SkipReason(cmd, p, nil); skip && r == "" {
+				t.Errorf("%s on %s skipped without a reason", key, p)
+			}
+		}
+	}
+	for key, found := range want {
+		if !found {
+			t.Errorf("%s has no matrix entry", key)
+		}
+	}
+
+	// Read-only admin cells run on every transport.
+	for _, cmd := range AdminCommands() {
+		if cmd.Name != "admin-list" && cmd.Name != "admin-status" {
+			continue
+		}
+		for _, p := range CLIProtocols() {
+			if r, skip := SkipReason(cmd, p, nil); skip {
+				t.Errorf("%s skipped on %s: %s", cmd.Name, p, r)
+			}
+		}
+	}
+
+	explicit := CommandDefinition{Name: "w", Category: CategoryACME, Skip: "no ACME admin API"}
+	if r, skip := SkipReason(explicit, ProtocolREST, nil); !skip || r != "no ACME admin API" {
+		t.Errorf("explicit skip: skip=%v reason=%q", skip, r)
 	}
 }
 
