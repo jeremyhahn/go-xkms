@@ -11,10 +11,12 @@ import (
 
 	"github.com/descope/virtualwebauthn"
 	"github.com/go-webauthn/webauthn/protocol"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -109,4 +111,67 @@ func TestWebAuthnCeremony_NonSystemTenantOverRBACNode(t *testing.T) {
 	pair, _, err := svc.FinishLoginPair(ctx, sessionID, nil, parsedAs)
 	require.NoError(t, err, "finish login in a non-system tenant")
 	require.NotEmpty(t, pair.AccessToken)
+}
+
+// TestInviteRedemption_RPTenantOverRBACNode drives a full invitation
+// enrolment (create, begin, finish) for an account in the relying party's
+// own non-system tenant over an embedded node with enable_rbac on. The user
+// operations run in the invite's tenant; the invitation itself lives in
+// system storage, so its redemption must not carry the invite's tenant
+// binding (Codex P1 on #2296, ruling 1029 B).
+func TestInviteRedemption_RPTenantOverRBACNode(t *testing.T) {
+	const tenantID = "acme-invite"
+	s := tenantCeremonyNode(t, tenantID)
+
+	ds := s.datastore.Load()
+	require.NotNil(t, ds)
+	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
+		Config:      s.webauthnConfig,
+		QRDBClient:  ds.Client(),
+		NodeUsers:   s.nodeUserSource(),
+		DAOFactory:  ds.DAOFactory(),
+		TenantID:    tenantID,
+		TokenIssuer: s.tokenIssuer,
+		Logger:      s.logger,
+		AuditLogger: s.auditLogger,
+	})
+	require.NoError(t, err)
+	s.xkmsService.SetWebAuthn(svc)
+
+	// The administrator creates the account (an authenticated call); the
+	// enrolment that follows is the invitee's, on the public routes.
+	adminRole, err := s.qrdbNode.Services().Role.GetRoleByName(
+		qrdbsdk.ContextWithTenant(context.Background(), tenantID), tenantID, qrdbsdk.RoleNameAdmin)
+	require.NoError(t, err)
+	adminCtx := qrdbsdk.ContextWithTenant(auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "admin@" + tenantID, TenantID: tenantID, Roles: []string{adminRole.ID},
+	}), tenantID)
+	ctx := context.Background()
+	created, err := s.xkmsService.CreateUser(adminCtx, &transport.CreateUserRequest{
+		Username: "invitee@example.com", Email: "invitee@example.com",
+		DisplayName: "Invitee", TenantID: tenantID,
+	})
+	require.NoError(t, err, "create the invited account")
+	require.NotNil(t, created.Invite)
+	token := created.Invite.Token
+
+	begin, err := s.xkmsService.BeginInviteRegistration(ctx, &transport.BeginInviteRegistrationRequest{TenantID: tenantID, Token: token})
+	require.NoError(t, err, "begin invite enrolment")
+	var creation protocol.CredentialCreation
+	require.NoError(t, json.Unmarshal([]byte(begin.OptionsJSON), &creation))
+	raw, err := json.Marshal(creation.Response)
+	require.NoError(t, err)
+	attOpts, err := virtualwebauthn.ParseAttestationOptions(string(raw))
+	require.NoError(t, err)
+	rp := virtualwebauthn.RelyingParty{Name: "Test", ID: "localhost", Origin: "https://localhost"}
+	attestation := virtualwebauthn.CreateAttestationResponse(rp, virtualwebauthn.NewAuthenticator(),
+		virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2), *attOpts)
+
+	_, err = s.xkmsService.FinishInviteRegistration(ctx, &transport.FinishInviteRegistrationRequest{
+		TenantID: tenantID, Token: token, SessionID: begin.SessionID, AttestationJSON: attestation,
+	})
+	require.NoError(t, err, "finish invite enrolment, redeeming the invitation")
+
+	_, err = s.xkmsService.GetInvite(ctx, &transport.GetInviteRequest{TenantID: tenantID, Token: token})
+	require.ErrorIs(t, err, xkms.ErrInviteUnusable, "the invitation is spent")
 }

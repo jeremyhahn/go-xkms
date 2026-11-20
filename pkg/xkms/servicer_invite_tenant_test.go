@@ -50,21 +50,27 @@ func inviteCallerTenant(ctx context.Context) string {
 // non-system tenant's invite (Codex 5989079760): the ceremony must resolve
 // the invite's own account in the invite's validated tenant, not re-resolve
 // the email in the WebAuthn store's configured (system) scope.
-func TestInviteRegistration_NonSystemTenant(t *testing.T) {
+func TestInviteRegistration_OutsideRPTenantRefused(t *testing.T) {
+	// Ruling 1029 (B): the relying party serves one tenant (the fixture's
+	// WebAuthn stores are scoped to webauthntest.TenantID, "system"). An
+	// account invited into another tenant could enrol a passkey it can never
+	// sign in with, so enrolment is refused with a typed error and leaves
+	// the account pending with no credential.
 	const tenant = "acme"
 	f := newInviteFixtureIn(t, tenant)
 	token := f.mintInvite(t)
 
-	begin, err := f.beginRegistration(tenant, token)
-	require.NoError(t, err)
-	require.Contains(t, begin.OptionsJSON, inviteFixtureEmail)
+	_, err := f.beginRegistration(tenant, token)
+	require.ErrorIs(t, err, ErrInviteTenantNotServed)
 
-	attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
-	result, err := f.finishRegistration(tenant, token, begin.SessionID, attestation)
-	require.NoError(t, err)
-	require.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+	_, err = f.finishRegistration(tenant, token, "no-session", `{}`)
+	require.ErrorIs(t, err, ErrInviteTenantNotServed)
 
 	u, err := f.users.GetUser(qrdbtenant.WithTenantID(context.Background(), tenant), inviteFixtureQRDBUserID)
 	require.NoError(t, err)
-	require.Equal(t, string(qrdbsdk.LifecycleActive), u.Lifecycle)
+	require.Equal(t, string(qrdbsdk.LifecyclePending), u.Lifecycle, "a refused enrolment activates nothing")
+
+	// The invitation was not redeemed: it still resolves.
+	_, err = f.svc.GetInvite(context.Background(), &xkmstransport.GetInviteRequest{TenantID: tenant, Token: token})
+	require.NoError(t, err)
 }
