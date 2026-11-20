@@ -121,6 +121,11 @@ func withProvisionedSimulatorTPMForECCert(t *testing.T) *provisionedSimulator {
 
 func withSimulatorTPMCfg(t *testing.T) {
 	t.Helper()
+	// newTPMParams opens the persistent key store under the data dir; keep
+	// it per test so no blob outlives the run in the home data dir.
+	if os.Getenv("XKEY_DATA_DIR") == "" {
+		t.Setenv("XKEY_DATA_DIR", t.TempDir())
+	}
 	withTPMCfg(t, func(c *tpmConfig) {
 		c.device = ""
 		c.useSimulator = true
