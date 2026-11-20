@@ -726,6 +726,65 @@ func TestTenantCAKeyFactory_FencesDelayedProvisioner(t *testing.T) {
 	assert.True(t, certA.Equal(certB))
 }
 
+// stalledGenerateBackend stalls its provisioner inside the generate call,
+// after the claim's lease was renewed: the first GenerateECDSA runs pause
+// before it generates, and it ignores its context, the way a PKCS#11
+// generate waiting on the token's mutex does. It counts the keys generated
+// through it.
+type stalledGenerateBackend struct {
+	xkms.Backend
+	pause     func()
+	once      sync.Once
+	generated atomic.Int32
+}
+
+func (b *stalledGenerateBackend) GenerateECDSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	if b.pause != nil {
+		b.once.Do(b.pause)
+	}
+	b.generated.Add(1)
+	return b.Backend.GenerateECDSA(context.Background(), attrs)
+}
+
+// A pass that renewed its lease and then stalls in a generate that ignores
+// its context may still make its key: however long the stall, no other node
+// takes the claim over and generates a second key beside it (Codex P1,
+// review 5985869980).
+func TestTenantCAKeyFactory_NoTakeoverWhileGenerateInFlight(t *testing.T) {
+	ctx := context.Background()
+	baseA, baseB := sharedTenantCABackends(t)
+	claims := storage.New() // shared by the nodes, as the server's shared storage is
+	key := tenantLoginCAClaimKey("tenant-a")
+	nodeB := &stalledGenerateBackend{Backend: baseB}
+	b := newTenantCAKeyFactory()
+	require.NoError(t, b.Bind(nodeB, claims))
+	var errB error
+	nodeA := &stalledGenerateBackend{Backend: baseA}
+	nodeA.pause = func() {
+		// A's renewed claim ages past the lease while A's generate is
+		// stuck, and no key is visible yet.
+		held, err := claims.Get(ctx, key)
+		require.NoError(t, err)
+		_, rest, _ := strings.Cut(string(held), " ")
+		aged := time.Now().Add(-2*tenantLoginCAClaimLease).UTC().Format(time.RFC3339Nano) + " " + rest
+		require.NoError(t, claims.Put(ctx, key, []byte(aged)))
+		errB = b.EnsureTenant(ctx, "tenant-a")
+	}
+	a := newTenantCAKeyFactory()
+	require.NoError(t, a.Bind(nodeA, claims))
+
+	require.NoError(t, a.EnsureTenant(ctx, "tenant-a"))
+	require.ErrorIs(t, errB, errTenantLoginCAClaimHeld, "the claim of a pass whose generate is in flight must stay held")
+	assert.Zero(t, nodeB.generated.Load(), "a node took over the claim of a pass whose generate was in flight and generated a second key")
+	assert.EqualValues(t, 1, nodeA.generated.Load())
+
+	require.NoError(t, b.EnsureTenant(ctx, "tenant-a"))
+	pubA, certA := tenantLoginCA(t, a, "tenant-a")
+	pubB, certB := tenantLoginCA(t, b, "tenant-a")
+	assert.True(t, pubA.(*ecdsa.PublicKey).Equal(pubB), "both nodes must resolve the one persisted key")
+	assert.True(t, certA.Equal(certB))
+}
+
 // Removing a tenant releases its claim, so the tenant can be provisioned
 // again.
 func TestTenantCAKeyFactory_RemoveTenantReleasesClaim(t *testing.T) {
