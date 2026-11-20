@@ -233,12 +233,14 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if s.inviteStore == nil || s.webauthnService == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
-	if err := s.ensureInviteTenantServed(req.TenantID); err != nil {
-		return nil, err
-	}
 	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
 	if err != nil {
 		return nil, classifyInviteError(err)
+	}
+	// After the lookup: an unknown invite answers the same for any tenant,
+	// so the refusal does not reveal the served tenant (ruling 1041 (2)).
+	if err := s.ensureInviteTenantServed(req.TenantID); err != nil {
+		return nil, err
 	}
 	ctx = bindInviteTenant(ctx, req.TenantID)
 	userID, err := inviteUserID(entity)
@@ -277,15 +279,16 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if s.inviteStore == nil || s.webauthnService == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
-	if err := s.ensureInviteTenantServed(req.TenantID); err != nil {
-		return nil, err
-	}
 	// Looked up (not redeemed) BEFORE the ceremony is validated: the
 	// expensive, failure-prone work must not burn a single-use token when it
 	// fails, and a caller whose attestation is rejected can retry with a
 	// working authenticator instead of needing to be re-invited.
 	if _, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
 		return nil, classifyInviteError(err)
+	}
+	// After the lookup, as in BeginInviteRegistration (ruling 1041 (2)).
+	if err := s.ensureInviteTenantServed(req.TenantID); err != nil {
+		return nil, err
 	}
 	ctx = bindInviteTenant(ctx, req.TenantID)
 
@@ -466,9 +469,11 @@ func inviteStoreContext(ctx context.Context) context.Context {
 // elsewhere could never sign in. An empty tenant on either side is the
 // system tenant.
 func (s *XKMSService) ensureInviteTenantServed(inviteTenant string) error {
-	served := s.webauthnService.UserStoreTenant()
-	if served == "" {
-		served = qrdbsdk.SystemTenantID
+	// A user store that names no tenant fails closed: it is never read as
+	// the system tenant (ruling 1041 (1)).
+	served, err := s.webauthnService.UserStoreTenant()
+	if err != nil {
+		return errors.Join(ErrInviteTenantNotServed, err)
 	}
 	if inviteTenant == "" {
 		inviteTenant = qrdbsdk.SystemTenantID
