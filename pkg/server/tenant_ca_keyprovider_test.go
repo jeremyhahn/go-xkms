@@ -785,6 +785,71 @@ func TestTenantCAKeyFactory_NoTakeoverWhileGenerateInFlight(t *testing.T) {
 	assert.True(t, certA.Equal(certB))
 }
 
+// TestTenantCAKeyFactory_ReconcilesGeneratingClaimOfGoneHolder: a pass that
+// died after marking its claim generating, before its key was made, leaves a
+// generating claim whose lease is never renewed again. The next provisioning
+// pass (the next boot) must take it over and make the one key, not refuse it
+// forever.
+func TestTenantCAKeyFactory_ReconcilesGeneratingClaimOfGoneHolder(t *testing.T) {
+	ctx := context.Background()
+	base, _ := sharedTenantCABackends(t)
+	claims := storage.New()
+	key := tenantLoginCAClaimKey("tenant-a")
+	gone := tenantLoginCAGeneratingClaim("gone-holder", time.Now().Add(-2*tenantLoginCAClaimLease))
+	stored, err := claims.PutIfAbsent(ctx, key, gone)
+	require.NoError(t, err)
+	require.True(t, stored)
+	node := &stalledGenerateBackend{Backend: base}
+	f := newTenantCAKeyFactory()
+	require.NoError(t, f.Bind(node, claims))
+
+	require.NoError(t, f.EnsureTenant(ctx, "tenant-a"), "a generating claim whose holder is gone must not block provisioning")
+	assert.EqualValues(t, 1, node.generated.Load(), "the pass that took the claim over makes exactly one key")
+	pub, cert := tenantLoginCA(t, f, "tenant-a")
+	assert.True(t, pub.(*ecdsa.PublicKey).Equal(cert.PublicKey))
+	current, err := claims.Get(ctx, key)
+	require.NoError(t, err)
+	_, owner, err := parseTenantLoginCAClaim(current)
+	require.NoError(t, err)
+	assert.NotEqual(t, "gone-holder", owner, "the gone holder's claim must be taken over")
+
+	require.NoError(t, f.EnsureTenant(ctx, "tenant-a"))
+	assert.EqualValues(t, 1, node.generated.Load(), "a later pass adopts the key")
+}
+
+// TestTenantCAKeyFactory_NoTakeoverOfRenewingGeneratingClaim: a generating
+// claim read past its lease is not taken over while its holder still renews
+// it: the holder is alive and its generate may yet make the key.
+func TestTenantCAKeyFactory_NoTakeoverOfRenewingGeneratingClaim(t *testing.T) {
+	ctx := context.Background()
+	base, _ := sharedTenantCABackends(t)
+	claims := storage.New()
+	key := tenantLoginCAClaimKey("tenant-a")
+	aged := tenantLoginCAGeneratingClaim("live-holder", time.Now().Add(-2*tenantLoginCAClaimLease))
+	require.NoError(t, claims.Put(ctx, key, aged))
+	renewed := make(chan struct{})
+	go func() {
+		defer close(renewed)
+		// The live holder renews its generating claim, as it does while
+		// its generate is in flight, within its renewal interval.
+		time.Sleep(500 * time.Millisecond)
+		_ = claims.Put(ctx, key, tenantLoginCAGeneratingClaim("live-holder", time.Now()))
+	}()
+	node := &stalledGenerateBackend{Backend: base}
+	f := newTenantCAKeyFactory()
+	require.NoError(t, f.Bind(node, claims))
+
+	err := f.EnsureTenant(ctx, "tenant-a")
+	<-renewed
+	require.ErrorIs(t, err, errTenantLoginCAClaimHeld, "the claim of a live, renewing holder must stay held")
+	assert.Zero(t, node.generated.Load(), "a pass took over the claim of a live holder and generated a second key")
+	current, err := claims.Get(ctx, key)
+	require.NoError(t, err)
+	_, owner, err := parseTenantLoginCAClaim(current)
+	require.NoError(t, err)
+	assert.Equal(t, "live-holder", owner)
+}
+
 // Removing a tenant releases its claim, so the tenant can be provisioned
 // again.
 func TestTenantCAKeyFactory_RemoveTenantReleasesClaim(t *testing.T) {
