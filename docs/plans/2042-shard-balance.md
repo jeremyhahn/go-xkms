@@ -1,0 +1,7 @@
+# #2042 coverage shard balance
+
+- Timing: PR #2042 run at f9a92b8316ff (19:16Z): shards 2-6 passed in 22-27 min; shard 1/6 still running at 20:41Z (85 min); main's make coverage lost its runner after 101 min. Cause: shard 1 runs its package slice plus every other make test part (shell, !frost, pkcs11, web, wailsjs), all under -p=1.
+- Plan: time each extra part on the lane node; move the extras out of shard 1 into their own matrix entries (`make coverage-shard SHARD=extras-*`, i.e. `make coverage-extras`), which write no profile; coverage-threshold still merges every profile (the six package shards'); -p=1 stays in every shard; buildgates test first, then the Makefile + ci.yml change.
+- Results (lane node, `taskset -c 0-3`, so 4 CPUs as on a hosted runner; no /usr/bin/time on the node, so bash wall clock): shard 1's package slice alone 695 s; test-nofrost 564 s, check-wailsjs 160 s, test-web 87 s, test-pkcs11 68 s, test-scripts 64 s (extras 943 s).
+- Calibration: the hosted package shards take 22-27 min, which puts a hosted runner at about 2-3x this node. One extras entry would then take about 30-50 min, so the extras run as two entries: extras-nofrost (test-nofrost, about 20-25 min hosted) and extras-other (the other four, 379 s, about 15 min hosted). Shard 1 drops to its slice (about 25 min).
+- Checks: buildgates, actionlint v1.7.7, in-toolchain-image.test.sh and make lint pass.

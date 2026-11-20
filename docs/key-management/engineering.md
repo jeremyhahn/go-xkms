@@ -559,6 +559,36 @@ copies asserted only `backend.ImportBackend` for the destination, but they
 wrapped under the source's token (plain `ExportKey`), so a copy between two
 backend instances never succeeded on them anyway.
 
+### Key copy between software and tpm2
+
+A TPM imports only TCG duplication blobs, so a copy into a tpm2 backend
+wraps under `backend.WrappingAlgorithmTPM2Duplicate` ("TPM2_DUPLICATE").
+`CopyKey` uses it by default when the destination's store type is tpm2 and
+the request names no algorithm (`pkg/xkms/servicer_key.go`); REST, gRPC and
+MCP require an algorithm, so their callers name it (`xkmsctl key copy ...
+--dest-backend tpm2 --algorithm TPM2_DUPLICATE`).
+
+- tpm2 `GetImportParameters` returns the SRK as `WrappingPublicKey` and the
+  SRK's marshaled `TPMT_PUBLIC` as `ImportToken`
+  (`pkg/backend/tpm2/importexport.go`).
+- software `ExportKeyTo` with that algorithm builds the RSA or ECDSA key's
+  public and sensitive areas (user-auth signing key, FixedTPM and FixedParent
+  clear, null schemes) and wraps them with go-tpm's
+  `tpm2.ImportEncapsulationKey` and `tpm2.CreateDuplicate`, the helpers the
+  tpm2 backend's `WrapKey` already uses
+  (`pkg/backend/software/tpm2_duplicate.go`). The blob is
+  `backend.TPM2DuplicationBlob`, the JSON both backends share. Symmetric
+  keys and other key types are refused with `backend.ErrInvalidAlgorithm`; a
+  non-exportable key with `backend.ErrKeyNotExportable`.
+- tpm2 `ImportKey` runs `TPM2_Import` under the SRK and the copy signs as
+  the source key.
+
+The reverse pair is refused: tpm2 `ExportKeyTo` returns
+`backend.ErrExportToUnsupported` (TPM keys are hardware-bound). REST maps it
+to 403 and `backend.ErrInvalidAlgorithm` to 400
+(`pkg/api/rest/errors_keyops.go`); gRPC and MCP read the same classes from
+`apierrors.ImportExportSentinelClasses` (PermissionDenied, InvalidArgument).
+
 `mapKeyOpError` gained two classifications for causes the service wraps
 rather than replaces. `xkms.ErrBackendNameValidation` is 400 /
 `InvalidArgument`. REST falls back to `mapErrorToStatusCode`, so a wrapped

@@ -90,8 +90,9 @@ func TestConnect_VersionRejectedWithHTTP400IsNotALegacyServer(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	require.NotEmpty(t, methods)
-	assert.NotContains(t, methods, string(mcp.MethodInitialize), "a version rejection must not fall back to the legacy handshake")
+	// Sessions open with a bare initialize (row 11, #2183): the rejection
+	// ends Connect, with no second handshake.
+	assert.Equal(t, []string{string(mcp.MethodInitialize)}, methods, "a version rejection ends the handshake")
 }
 
 // The transport returns an HTTP 400 JSON-RPC error response as the response,

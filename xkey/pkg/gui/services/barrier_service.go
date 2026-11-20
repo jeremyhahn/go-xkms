@@ -187,6 +187,18 @@ func (s *BarrierService) SetLastStrategy(strategy string) {
 	s.mu.Unlock()
 }
 
+// sealStrategy reports the barrier's sealing strategy: the live barrier's
+// own when it is open, otherwise the one from the last Initialize/Unseal or
+// the persisted config (SetLastStrategy). Empty when none is known.
+func (s *BarrierService) sealStrategy() xkms.StrategyID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.barrier != nil {
+		return s.barrier.Status().Strategy
+	}
+	return xkms.StrategyID(s.lastStrategy)
+}
+
 // SetAuditLogger sets the audit logger for security event logging.
 func (s *BarrierService) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
@@ -365,7 +377,7 @@ func (s *BarrierService) Initialize(password, strategyID string) (err error) {
 		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
 		return errors.Join(credErr, closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, xkms.DestroySealCredentials(creds)) }()
 
 	if initErr := barrier.Initialize(ctx, creds); initErr != nil {
 		closeErr := base.Close()
@@ -436,7 +448,7 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 			s.mu.Unlock()
 			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
 		}
-		defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+		defer func() { err = errors.Join(err, xkms.DestroySealCredentials(creds)) }()
 
 		if err := s.barrier.Unseal(ctx, creds); err != nil {
 			s.mu.Unlock()
@@ -507,7 +519,7 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 		s.mu.Unlock()
 		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID}), closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, xkms.DestroySealCredentials(creds)) }()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		closeErr := base.Close()
@@ -560,10 +572,11 @@ func (s *BarrierService) Seal() error {
 }
 
 // ChangePassword re-seals the barrier root key with new credentials.
-// The barrier must be initialized and unsealed. For hardware-backed
-// strategies this is a no-op because those strategies do not use
-// password-derived wrapping keys.
-func (s *BarrierService) ChangePassword(newPassword string) (err error) {
+// The barrier must be initialized and unsealed, and currentPassword must be
+// the credential it is sealed with now: the barrier verifies it before
+// re-wrapping (go-qrdb#631). For hardware-backed strategies this is a no-op
+// because those strategies do not use password-derived wrapping keys.
+func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -573,15 +586,20 @@ func (s *BarrierService) ChangePassword(newPassword string) (err error) {
 
 	ctx := s.context()
 	// CredentialsFor: ChangePassword is a no-op for hardware-backed
-	// strategies, which are called with an empty newPassword by design (see
+	// strategies, which are called with empty passwords by design (see
 	// the doc comment above); NewCredentials would reject that empty input.
+	current, credErr := xkms.CredentialsFor(ctx, []byte(currentPassword))
+	if credErr != nil {
+		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
+	}
+	defer func() { err = errors.Join(err, xkms.DestroySealCredentials(current)) }()
 	creds, credErr := xkms.CredentialsFor(ctx, []byte(newPassword))
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, xkms.DestroySealCredentials(creds)) }()
 
-	if err := s.barrier.ChangePassword(ctx, creds); err != nil {
+	if err := s.barrier.ChangePassword(ctx, current, creds); err != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)
 	}
 

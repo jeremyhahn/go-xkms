@@ -34,6 +34,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 func setupConsole(t *testing.T) *SSHConsoleService {
@@ -250,7 +251,7 @@ func newTestEd25519Key(t *testing.T) (ssh.PublicKey, ed25519.PrivateKey) {
 // until the test ends.
 func serveTestAgent(t *testing.T, keyring sshagent.Agent) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "agent.sock")
+	sock := filepath.Join(testsupport.SocketDir(t), "agent.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

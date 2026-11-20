@@ -36,7 +36,7 @@ type keysClient struct {
 // owner the caller owns; otherwise nothing is generated -- not even on a
 // hardware backend -- and the refusal is the not-found answer for the key.
 func (k *keysClient) Generate(ctx context.Context, req sdkssh.GenerateRequest) (*sdkssh.Key, error) {
-	p, err := k.c.serve(ctx, req.Scope, req.Owner)
+	p, err := k.c.serve(ctx, req.Scope, &req.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func (k *keysClient) Generate(ctx context.Context, req sdkssh.GenerateRequest) (
 
 // Import implements sdkssh.KeysClient, bound as Generate is.
 func (k *keysClient) Import(ctx context.Context, req sdkssh.ImportRequest, provider secure.PassphraseProvider) (*sdkssh.Key, error) {
-	p, err := k.c.serve(ctx, req.Scope, req.Owner)
+	p, err := k.c.serve(ctx, req.Scope, &req.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (k *keysClient) Import(ctx context.Context, req sdkssh.ImportRequest, provi
 
 // Get implements sdkssh.KeysClient.
 func (k *keysClient) Get(ctx context.Context, req sdkssh.GetKeyRequest) (*sdkssh.Key, error) {
-	p, err := k.c.serve(ctx, req.Scope, req.Owner)
+	p, err := k.c.serve(ctx, req.Scope, &req.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func (k *keysClient) List(ctx context.Context, req sdkssh.ListKeysRequest) ([]*s
 
 // Delete implements sdkssh.KeysClient.
 func (k *keysClient) Delete(ctx context.Context, req sdkssh.DeleteKeyRequest) error {
-	p, err := k.c.serve(ctx, req.Scope, req.Owner)
+	p, err := k.c.serve(ctx, req.Scope, &req.Owner)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (k *keysClient) Delete(ctx context.Context, req sdkssh.DeleteKeyRequest) er
 
 // ExportPublic implements sdkssh.KeysClient.
 func (k *keysClient) ExportPublic(ctx context.Context, req sdkssh.ExportRequest) (*sdkssh.PublicKey, error) {
-	p, err := k.c.serve(ctx, req.Scope, req.Owner)
+	p, err := k.c.serve(ctx, req.Scope, &req.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (k *keysClient) ExportPublic(ctx context.Context, req sdkssh.ExportRequest)
 // Signer implements sdkssh.KeysClient. The signer resolves a backend-backed
 // key in the partition tenant's backend namespace.
 func (k *keysClient) Signer(ctx context.Context, req sdkssh.GetKeyRequest) (gossh.Signer, error) {
-	p, err := k.c.serve(ctx, req.Scope, req.Owner)
+	p, err := k.c.serve(ctx, req.Scope, &req.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +150,7 @@ type knownHostsClient struct {
 // owner the caller owns; otherwise the refusal is the not-found answer for
 // the pin.
 func (h *knownHostsClient) Add(ctx context.Context, req sdkssh.AddKnownHostRequest) error {
-	p, err := h.c.serve(ctx, req.Scope, req.Owner)
+	p, err := h.c.serve(ctx, req.Scope, &req.Owner)
 	if err != nil {
 		return err
 	}
@@ -183,7 +183,7 @@ func (h *knownHostsClient) List(ctx context.Context, req sdkssh.ListKnownHostsRe
 
 // Remove implements sdkssh.KnownHostsClient.
 func (h *knownHostsClient) Remove(ctx context.Context, req sdkssh.RemoveKnownHostRequest) error {
-	p, err := h.c.serve(ctx, req.Scope, req.Owner)
+	p, err := h.c.serve(ctx, req.Scope, &req.Owner)
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func (h *knownHostsClient) Remove(ctx context.Context, req sdkssh.RemoveKnownHos
 
 // Verify implements sdkssh.KnownHostsClient.
 func (h *knownHostsClient) Verify(ctx context.Context, scope, owner, host string, received gossh.PublicKey) error {
-	p, err := h.c.serve(ctx, scope, owner)
+	p, err := h.c.serve(ctx, scope, &owner)
 	if err != nil {
 		return err
 	}
@@ -208,7 +208,7 @@ func (h *knownHostsClient) Verify(ctx context.Context, scope, owner, host string
 // Callback implements sdkssh.KnownHostsClient. A callback over pins the
 // caller does not own rejects every host as unpinned.
 func (h *knownHostsClient) Callback(ctx context.Context, scope, owner string) gossh.HostKeyCallback {
-	p, err := h.c.serve(ctx, scope, owner)
+	p, err := h.c.serve(ctx, scope, &owner)
 	if err != nil {
 		return func(string, net.Addr, gossh.PublicKey) error { return err }
 	}
@@ -235,7 +235,7 @@ type authorizedKeysClient struct {
 // its own key login to another tenant's or user's account -- and the refusal
 // is the not-found answer for the entry.
 func (a *authorizedKeysClient) Add(ctx context.Context, req sdkssh.AddAuthorizedKeyRequest) error {
-	p, err := a.c.serve(ctx, req.Scope, req.Owner)
+	p, err := a.c.serve(ctx, req.Scope, &req.Owner)
 	if err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func (a *authorizedKeysClient) Add(ctx context.Context, req sdkssh.AddAuthorized
 
 // Get implements sdkssh.AuthorizedKeysClient.
 func (a *authorizedKeysClient) Get(ctx context.Context, scope, owner, name string) (*sdkssh.AuthorizedEntry, error) {
-	p, err := a.c.serve(ctx, scope, owner)
+	p, err := a.c.serve(ctx, scope, &owner)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,7 @@ func (a *authorizedKeysClient) List(ctx context.Context, req sdkssh.ListAuthoriz
 
 // Remove implements sdkssh.AuthorizedKeysClient.
 func (a *authorizedKeysClient) Remove(ctx context.Context, scope, owner, name string) error {
-	p, err := a.c.serve(ctx, scope, owner)
+	p, err := a.c.serve(ctx, scope, &owner)
 	if err != nil {
 		return err
 	}
@@ -300,7 +300,7 @@ func (a *authorizedKeysClient) Emit(ctx context.Context, req sdkssh.EmitRequest)
 
 // Verify implements sdkssh.AuthorizedKeysClient.
 func (a *authorizedKeysClient) Verify(ctx context.Context, scope, owner string, received gossh.PublicKey) (*sdkssh.AuthorizedEntry, error) {
-	p, err := a.c.serve(ctx, scope, owner)
+	p, err := a.c.serve(ctx, scope, &owner)
 	if err != nil {
 		return nil, err
 	}
@@ -325,10 +325,8 @@ type sessionClient struct {
 // the caller's, and must live in one partition: a session never combines one
 // tenant's key with another tenant's pins.
 func (s *sessionClient) Dial(ctx context.Context, req sdkssh.SessionDialRequest) (sdkssh.Session, error) {
-	key, err := s.c.serve(ctx, req.KeyScope, req.KeyOwner)
-	if err != nil {
-		return nil, err
-	}
+	// The host-key pins default to the key's own scope and owner as named,
+	// before an empty user-scope owner resolves to the caller.
 	hostScope, hostOwner := req.KeyScope, req.KeyOwner
 	if req.HostKeyScope != "" {
 		hostScope = req.HostKeyScope
@@ -336,10 +334,15 @@ func (s *sessionClient) Dial(ctx context.Context, req sdkssh.SessionDialRequest)
 	if req.HostKeyOwner != "" {
 		hostOwner = req.HostKeyOwner
 	}
-	pins, err := s.c.serve(ctx, hostScope, hostOwner)
+	key, err := s.c.serve(ctx, req.KeyScope, &req.KeyOwner)
 	if err != nil {
 		return nil, err
 	}
+	pins, err := s.c.serve(ctx, hostScope, &hostOwner)
+	if err != nil {
+		return nil, err
+	}
+	req.HostKeyScope, req.HostKeyOwner = hostScope, hostOwner
 	p := key
 	if !pins.allowed || pins.tenantID != key.tenantID {
 		p = partition{client: s.c.empty, refusal: pins.refusal}

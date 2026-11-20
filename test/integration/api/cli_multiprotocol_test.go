@@ -35,17 +35,10 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
-	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-	// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
-	needsTLS := strings.HasPrefix(serverURL, "https://") ||
-		strings.HasPrefix(serverURL, "grpc://") ||
-		strings.HasPrefix(serverURL, "grpcs://") ||
-		strings.HasPrefix(serverURL, "quic://")
-
-	if needsTLS {
-		caFile := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
-		prefixArgs = append(prefixArgs, "--tls-ca", caFile)
-	}
+	// The admin mTLS credential and the trust bundle on every TLS transport
+	// (unix, REST over HTTPS, gRPC, QUIC, and MCP as streamable HTTP over
+	// TLS, mcps://).
+	prefixArgs = append(prefixArgs, cliTLSArgs(t, serverURL)...)
 
 	args = append(prefixArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, args...)
@@ -576,8 +569,9 @@ func TestCLILocalFlag(t *testing.T) {
 }
 
 // TestCLIMCPProtocol tests MCP protocol specifically.
-// The SDK MCP transport communicates using JSON-RPC 2.0 over raw TCP,
-// matching the MCP server protocol.
+// The CLI's MCP transport (pkg/mcptool) speaks streamable HTTP over TLS
+// (mcps://) to the unified server's MCP listener, with the admin client
+// certificate.
 func TestCLIMCPProtocol(t *testing.T) {
 	cfg := LoadTestConfig()
 	requireCLI(t, cfg)

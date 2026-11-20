@@ -91,7 +91,7 @@ func TestGRPCServer_ExclusivePeersRefusesUnlistedSameUID(t *testing.T) {
 // TestGRPCServer_UnaryInterceptorsRunAfterAdmission proves an embedder's
 // interceptor sees every unary RPC from an admitted peer and can refuse it.
 func TestGRPCServer_UnaryInterceptorsRunAfterAdmission(t *testing.T) {
-	socketPath := filepath.Join(privateSocketDir(t), "exclusive-intercept.sock")
+	socketPath := filepath.Join(privateSocketDir(t), "intercept.sock")
 	var seen []string
 	deny := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		seen = append(seen, info.FullMethod)

@@ -54,6 +54,17 @@ var NewCredentials = qrdbsdk.NewCredentials
 // credentials supplied") rather than an error.
 var CredentialsFor = qrdbsdk.CredentialsFor
 
+// DestroyCredentials wipes c's secret. It is nil-safe: the zero Credentials
+// CredentialsFor returns for an empty secret (a hardware or auto-unseal
+// factor, a passphrase that derives nothing) carry a nil Secret, and there is
+// nothing to destroy.
+func DestroyCredentials(c Credentials) error {
+	if c.Secret == nil {
+		return nil
+	}
+	return c.Secret.Destroy()
+}
+
 // MustCredentials is NewCredentials for fixtures; it panics where
 // NewCredentials would return an error.
 var MustCredentials = qrdbsdk.MustCredentials

@@ -1153,7 +1153,20 @@ func (tpm *TPM2) SaveKeyPair(
 	if backend == nil {
 		backend = tpm.backend
 	}
+	// The private blob is written first and the public blob last, so a key is
+	// complete only once its public blob exists. A create-only save that
+	// finds a private blob without a public blob meets an incomplete earlier
+	// save (a storage fault or crash between the two writes): that pair
+	// cannot load, so the retry replaces it. A complete pair still refuses.
 	err := backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, overwrite)
+	if err != nil && !overwrite && errors.Is(err, store.ErrBlobExists) {
+		if _, perr := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB); !errors.Is(perr, store.ErrBlobNotFound) {
+			return err
+		}
+		tpm.logger.Warn("tpm: replacing an incomplete key pair (private blob without public blob)",
+			slog.String("cn", keyAttrs.CN))
+		err = backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, true)
+	}
 	if err != nil {
 		return err
 	}

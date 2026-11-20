@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -45,21 +47,12 @@ const tpmDuplicateMetaKey = "tpm2_duplicate_blob"
 // key material, encrypts it to the parent (SRK) public key with
 // TPM2_CreateDuplicate, and serializes the three resulting fields here.
 // UnwrapKey/ImportKey feed them back into TPM2_Import under the SRK.
-type duplicationBlob struct {
-	// Public is the marshaled TPMTPublic of the duplicated sealed object.
-	Public []byte `json:"public"`
-
-	// Duplicate is the outer-wrapped private area (the duplication blob).
-	Duplicate []byte `json:"duplicate"`
-
-	// EncSecret is the seed protected by the SRK's asymmetric algorithm.
-	EncSecret []byte `json:"enc_secret"`
-}
+type duplicationBlob = backend.TPM2DuplicationBlob
 
 // importExportAlgorithm is the wrapping-algorithm label reported by the TPM2
 // backend's import/export surface. It denotes the TCG duplication protocol
 // (labeled encapsulation under the parent storage key), not an RSA family.
-const importExportAlgorithm = backend.WrappingAlgorithm("TPM2_DUPLICATE")
+const importExportAlgorithm = backend.WrappingAlgorithmTPM2Duplicate
 
 // srkPublicContents reads the public area of this backend's own storage
 // parent (b.srkAttrs -- the Platform SRK, see NewBackend) and returns its
@@ -102,7 +95,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("TPM2 import requires algorithm %s, got %s", importExportAlgorithm, algorithm)}
 	}
 
-	name, pub, err := b.srkPublicContents()
+	_, pub, err := b.srkPublicContents()
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +110,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 
 	return &backend.ImportParameters{
 		WrappingPublicKey: pubKey,
-		ImportToken:       name.Buffer,
+		ImportToken:       tpm2.Marshal(pub),
 		Algorithm:         importExportAlgorithm,
 		KeySpec:           "TPM2_KEYEDHASH",
 	}, nil
@@ -252,8 +245,13 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 	attrs.StoreType = types.StoreTPM2
 
+	// Conditional create: an import never overwrites an existing key under
+	// the same attributes (the blob store's SaveIfAbsent path).
 	publicBlob := tpm2.New2B(*public)
-	if err := b.tpm.SaveKeyPair(attrs, outPrivate, publicBlob, b.keyBackend, true); err != nil {
+	if err := b.tpm.SaveKeyPair(attrs, outPrivate, publicBlob, b.keyBackend, false); err != nil {
+		if errors.Is(err, store.ErrBlobExists) {
+			return &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("import refused: key %q already exists", attrs.CN)}
+		}
 		return &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to persist imported key: %v", err)}
 	}
 	return nil

@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
@@ -349,6 +350,13 @@ func (s *PINService) ChangeSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 // is false: the user may not change their own PIN even when it is set.
 // An SO resetting the PIN goes through SetUserPIN instead, which this
 // field does not gate.
+//
+// When a barrier service is wired, the change commits only when the current
+// user PIN verifiably seals the barrier; the barrier is then rewrapped from
+// the current to the new PIN. Otherwise ChangeUserPIN returns an error
+// wrapping ErrBarrierNotPINSealed and the cause, before the PIN backend is
+// called: a barrier sealed with its own password must have its credential
+// changed separately (pending go-xkms #2098).
 func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -373,6 +381,81 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 		return err
 	}
 
+	// Order matters (Codex P1 pin_service.go:393): the barrier check below
+	// tests the current PIN in software, outside any retry counter, so it
+	// must never see a PIN the backend has not authenticated. First refuse
+	// an invalid replacement PIN, so the answer cannot depend on the
+	// current PIN; then authenticate the current PIN through the backend's
+	// retry-enforced verification (TPM2 dictionary-attack protection,
+	// PKCS#11 token lockout), which counts a wrong guess and honours
+	// lockout, returning its error unchanged.
+	if err := validateReplacementUserPIN(newUserPIN); err != nil {
+		s.log.Warn("ChangeUserPIN: replacement PIN rejected", "error", err)
+		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+			"operation": "change",
+			"type":      "user_pin",
+			"reason":    "invalid_new_pin",
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
+		return err
+	}
+	if err := svc.VerifyUserPIN(currentUserPIN); err != nil {
+		s.log.Warn("ChangeUserPIN: current PIN not authenticated", "strategy", svc.Strategy(), "error", err)
+		// A locked backend is audited as the login path audits it (the
+		// lockout event security monitoring keys on), not as a failed
+		// attempt; a plain wrong PIN keeps the failed-attempt audit.
+		locked, auditErr := s.auditUserPINLockout(svc)
+		if auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
+		if locked {
+			return err
+		}
+		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+			"operation": "change",
+			"type":      "user_pin",
+			"reason":    "current_pin_rejected",
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
+		return err
+	}
+
+	// Confirm BEFORE the PIN backend commits that the current user PIN
+	// seals the barrier. Any other outcome (credential mismatch, strategy or
+	// enclave failure, storage error, uninitialized barrier) refuses the
+	// change while nothing has changed yet: a barrier sealed with its own
+	// password cannot be told apart from a failing PIN-bound one until
+	// go-qrdb reports distinct operational errors (go-xkms #2098).
+	//
+	// Only a passphrase barrier can be sealed by the user PIN. A hardware or
+	// external strategy (TPM2, PKCS#11, cloud KMS) is not, so it is neither
+	// probed here nor rewrapped below: its PIN change rests on the backend's
+	// retry-enforced verify above. An unknown strategy (nothing initialized
+	// or recorded) stays on the passphrase path and is refused there.
+	bsvc := s.barrierSvc.Load()
+	if bsvc != nil {
+		if strategy := bsvc.sealStrategy(); strategy != "" && strategy != xkms.StrategyPassphrase {
+			s.log.Debug("ChangeUserPIN: barrier not PIN-sealed by strategy; skipping barrier check", "barrier_strategy", strategy)
+			bsvc = nil
+		}
+	}
+	if bsvc != nil {
+		if err := verifyBarrierSealedWithPIN(bsvc, currentUserPIN); err != nil {
+			s.log.Error("ChangeUserPIN: barrier not confirmed sealed by the user PIN", "error", err)
+			refused := &SentinelCauseError{Sentinel: ErrBarrierNotPINSealed, Cause: err}
+			if auditErr := s.logPINOperation(audit.OpPINFailed, false, refused, map[string]any{
+				"operation": "barrier_check",
+				"type":      "user_pin",
+				"reason":    "not_confirmed",
+			}); auditErr != nil {
+				return errors.Join(refused, auditErr)
+			}
+			return refused
+		}
+	}
+
 	s.log.Debug("ChangeUserPIN: attempting PIN change", "strategy", svc.Strategy())
 
 	if err := svc.ChangeUserPIN(currentUserPIN, newUserPIN); err != nil {
@@ -394,10 +477,10 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 		return auditErr
 	}
 
-	// Re-seal the barrier root key with the new password so that
-	// the next unseal after restart uses the updated credential.
-	if bsvc := s.barrierSvc.Load(); bsvc != nil {
-		if err := bsvc.ChangePassword(newUserPIN); err != nil {
+	// Re-seal the PIN-sealed barrier root key with the new PIN so that the
+	// next unseal after restart uses the updated credential.
+	if bsvc != nil {
+		if err := bsvc.ChangePassword(currentUserPIN, newUserPIN); err != nil {
 			s.log.Error("ChangeUserPIN: barrier re-seal failed", "error", err)
 			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 				"operation": "barrier_reseal",
@@ -410,6 +493,58 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 		s.log.Info("ChangeUserPIN: barrier re-sealed with new PIN")
 	}
 	return nil
+}
+
+// verifyBarrierSealedWithPIN returns nil only when bsvc's barrier root key
+// is confirmed sealed under pin, without changing the barrier: go-qrdb's
+// VerifyCredentials unseals a candidate root key from the persisted blob and
+// compares it with the live one. Every other outcome is an error: no
+// barrier, a sealed barrier, an unreadable blob, or a credential mismatch.
+// go-qrdb v0.58.4 turns every UnsealRootKey failure (a strategy or enclave
+// failure included) into its credential-mismatch error, so a mismatch does
+// not prove the barrier is sealed by some other credential; the caller
+// refuses on every error and logs the cause unchanged.
+func verifyBarrierSealedWithPIN(bsvc *BarrierService, pin string) (err error) {
+	bsvc.mu.Lock()
+	defer bsvc.mu.Unlock()
+
+	if bsvc.barrier == nil {
+		return ErrBarrierNotInitialized
+	}
+	ctx := bsvc.context()
+	// CredentialsFor: a hardware-backed barrier may be checked with an
+	// empty PIN; NewCredentials would refuse that input.
+	creds, err := xkms.CredentialsFor(ctx, []byte(pin))
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, xkms.DestroySealCredentials(creds)) }()
+
+	return bsvc.barrier.VerifyCredentials(ctx, creds)
+}
+
+// errReplacementPINAccepted is what replacementPINProbe returns once
+// go-qrdb's PIN service has accepted the replacement PIN.
+var errReplacementPINAccepted = errors.New("pin_service: replacement PIN accepted")
+
+// replacementPINProbe is a PIN backend that commits nothing: go-qrdb's
+// Service.ChangeUserPIN validates the replacement PIN before it calls the
+// backend, so reaching ChangeUserPIN here means the PIN passed. No other
+// method is ever called; the embedded interface is nil.
+type replacementPINProbe struct{ qrdbsdk.PINBackend }
+
+func (replacementPINProbe) ChangeUserPIN(_, _ string) error { return errReplacementPINAccepted }
+
+// validateReplacementUserPIN applies go-qrdb's own replacement-PIN rules
+// (its unexported length validator, reached through Service.ChangeUserPIN
+// on a probe backend) without touching the real backend, so the rules are
+// never copied here and cannot drift from the commit path.
+func validateReplacementUserPIN(newUserPIN string) error {
+	err := qrdbsdk.NewPINService(replacementPINProbe{}, slog.Default()).ChangeUserPIN("", newUserPIN)
+	if errors.Is(err, errReplacementPINAccepted) {
+		return nil
+	}
+	return err
 }
 
 // VerifyUserPIN verifies the provided user PIN.
@@ -444,13 +579,8 @@ func (s *PINService) VerifyUserPIN(userPIN string) (retErr error) {
 			return auditErr
 		}
 		// Check if this verification failure resulted in lockout.
-		if status := svc.GetLockoutStatus(); status != nil && status.IsLocked {
-			if auditErr := s.logPINOperation(audit.OpPINLocked, false, nil, map[string]any{
-				"type":            "user_pin",
-				"failed_attempts": status.FailedAttempts,
-			}); auditErr != nil {
-				return auditErr
-			}
+		if _, auditErr := s.auditUserPINLockout(svc); auditErr != nil {
+			return auditErr
 		}
 		return err
 	}
@@ -566,6 +696,21 @@ func (s *PINService) VerifyFIDO2Hash(hash []byte) bool {
 // logPINOperation logs a PIN operation to the audit log. Every PIN
 // operation is SeveritySecurity, so the caller must propagate a non-nil
 // return and fail the request rather than proceed unaudited.
+// auditUserPINLockout records the OpPINLocked event when the backend reports
+// the user PIN locked after a refused verification, and reports whether it
+// was locked. VerifyUserPIN and ChangeUserPIN share it so a lockout reached
+// through either is audited the same way.
+func (s *PINService) auditUserPINLockout(svc *qrdbsdk.PINService) (bool, error) {
+	status := svc.GetLockoutStatus()
+	if status == nil || !status.IsLocked {
+		return false, nil
+	}
+	return true, s.logPINOperation(audit.OpPINLocked, false, nil, map[string]any{
+		"type":            "user_pin",
+		"failed_attempts": status.FailedAttempts,
+	})
+}
+
 func (s *PINService) logPINOperation(op audit.OperationType, success bool, err error, details map[string]any) error {
 	logger := s.getAuditLogger()
 	if logger == nil {

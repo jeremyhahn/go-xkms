@@ -35,6 +35,7 @@ import (
 	apigrpc "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-xkms/sdk/go/internal/testsupport"
 )
 
 // authRecorder records the authorization metadata of every RPC.
@@ -99,7 +100,7 @@ func listKeys(t *testing.T, client sdkssh.Client) {
 func serveUnixTLS(t *testing.T) (string, *x509.CertPool, *authRecorder) {
 	t.Helper()
 	cert, pool := selfSignedLoopbackCert(t)
-	sock := filepath.Join(t.TempDir(), "xkms.sock")
+	sock := filepath.Join(testsupport.SocketDir(t), "xkms.sock")
 	lis, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

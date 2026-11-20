@@ -24,6 +24,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	sshagent "golang.org/x/crypto/ssh/agent"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/local"
 )
 
@@ -43,14 +44,14 @@ func newTestEd25519Key(t *testing.T) (ssh.PublicKey, ed25519.PrivateKey) {
 	return sshPub, priv
 }
 
-// serveTestAgent serves keyring on a fresh unix socket under t.TempDir()
+// serveTestAgent serves keyring on a fresh unix socket under testsupport.SocketDir
 // until the test ends, mirroring pkg/ssh/agent/agent_test.go's harness but
 // against the reference golang.org/x/crypto/ssh/agent.Keyring rather than
 // this repo's own read-only agent.Agent (DialAgent is a generic ssh-agent
 // client and must work against any RFC-conformant agent implementation).
 func serveTestAgent(t *testing.T, keyring sshagent.Agent) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "agent.sock")
+	sock := filepath.Join(testsupport.SocketDir(t), "agent.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -136,7 +137,7 @@ func TestDialAgent_EmptyPath(t *testing.T) {
 // TestDialAgent_BadPath covers the dial-failure AgentUnavailableError
 // branch: a socket path with nothing listening on it.
 func TestDialAgent_BadPath(t *testing.T) {
-	_, err := local.DialAgent(filepath.Join(t.TempDir(), "no-such-agent.sock"))
+	_, err := local.DialAgent(filepath.Join(testsupport.SocketDir(t), "no-such-agent.sock"))
 	var unavailable *local.AgentUnavailableError
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("expected *AgentUnavailableError, got %T: %v", err, err)
@@ -147,7 +148,7 @@ func TestDialAgent_BadPath(t *testing.T) {
 // failure: the socket is listening, but the peer does not speak the
 // ssh-agent protocol, so the client's initial Signers() request fails.
 func TestDialAgent_ProtocolFailure(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "not-an-agent.sock")
+	sock := filepath.Join(testsupport.SocketDir(t), "not-an-agent.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

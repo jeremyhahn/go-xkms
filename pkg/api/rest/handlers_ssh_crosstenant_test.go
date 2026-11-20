@@ -337,6 +337,33 @@ func TestSSHREST_OwnersKeepAccess(t *testing.T) {
 	assert.NotContains(t, body, `"b-key"`)
 }
 
+// An empty user-scope owner passes REST validation and reaches tenancy,
+// which serves it as the caller's PolicySubject (ruling 937): on the body
+// (generate) and on the path (/keys/user//{name}) alike. A foreign owner is
+// still answered as a miss.
+func TestSSHREST_EmptyUserOwnerIsCaller(t *testing.T) {
+	client := newSSHTenancyClient(t)
+	router := sshRESTRouter(t, client)
+	bound := &auth.Identity{Subject: "116704235864723456", TenantID: sshTenantA}
+
+	status, body := sshRESTCall(t, router, bound, http.MethodPost, "/xkms/v1/ssh/keys",
+		sdkssh.GenerateRequest{Scope: "user", Name: "mine", Algorithm: "ed25519"})
+	require.Equal(t, http.StatusCreated, status, body)
+	assert.Contains(t, body, `"owner":"116704235864723456"`)
+
+	status, body = sshRESTCall(t, router, bound, http.MethodGet, "/xkms/v1/ssh/keys/user//mine", nil)
+	require.Equal(t, http.StatusOK, status, body)
+	assert.Contains(t, body, `"owner":"116704235864723456"`)
+	status, body = sshRESTCall(t, router, bound, http.MethodPost, "/xkms/v1/ssh/keys/user//mine/sign", map[string][]byte{"digest": []byte("payload")})
+	require.Equal(t, http.StatusOK, status, body)
+
+	status, body = sshRESTCall(t, router, bound, http.MethodPost, "/xkms/v1/ssh/keys",
+		sdkssh.GenerateRequest{Scope: "user", Owner: "someone-else", Name: "theirs", Algorithm: "ed25519"})
+	assert.NotEqual(t, http.StatusCreated, status, body)
+	status, body = sshRESTCall(t, router, bound, http.MethodGet, "/xkms/v1/ssh/keys/user/someone-else/theirs", nil)
+	assert.Equal(t, http.StatusNotFound, status, body)
+}
+
 // requireSSHOwnersIntact proves every seeded asset survived, each read back
 // through its owner.
 func requireSSHOwnersIntact(t *testing.T, client sdkssh.Client) {
