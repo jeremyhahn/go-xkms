@@ -19,7 +19,6 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,11 +77,9 @@ var flagReaderKinds = map[string]string{
 func collectFlagReads(t *testing.T) []flagRead {
 	t.Helper()
 
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller: could not resolve this test file's path")
-	}
-	dir := filepath.Dir(thisFile)
+	// go test runs in the package directory. runtime.Caller is not used:
+	// under -trimpath (#2309) it yields the module path, not a disk path.
+	dir := "."
 
 	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
