@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
 
@@ -34,4 +35,36 @@ func TestGetInvite_NonSystemTenantBindsInviteTenant(t *testing.T) {
 	meta, err := f.svc.GetInvite(context.Background(), &xkmstransport.GetInviteRequest{TenantID: tenantID, Token: info.Token})
 	require.NoError(t, err)
 	require.Equal(t, inviteFixtureEmail, meta.Email)
+}
+
+// inviteCallerTenant is the tenant a go-qrdb routing user service acts on:
+// the one bound on ctx, else system.
+func inviteCallerTenant(ctx context.Context) string {
+	if id, ok := qrdbtenant.IDFromContext(ctx); ok && id != "" {
+		return id
+	}
+	return "system"
+}
+
+// TestInviteRegistration_NonSystemTenant enrols a FIDO2 credential through a
+// non-system tenant's invite (Codex 5989079760): the ceremony must resolve
+// the invite's own account in the invite's validated tenant, not re-resolve
+// the email in the WebAuthn store's configured (system) scope.
+func TestInviteRegistration_NonSystemTenant(t *testing.T) {
+	const tenant = "acme"
+	f := newInviteFixtureIn(t, tenant)
+	token := f.mintInvite(t)
+
+	begin, err := f.beginRegistration(tenant, token)
+	require.NoError(t, err)
+	require.Contains(t, begin.OptionsJSON, inviteFixtureEmail)
+
+	attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+	result, err := f.finishRegistration(tenant, token, begin.SessionID, attestation)
+	require.NoError(t, err)
+	require.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+
+	u, err := f.users.GetUser(qrdbtenant.WithTenantID(context.Background(), tenant), inviteFixtureQRDBUserID)
+	require.NoError(t, err)
+	require.Equal(t, string(qrdbsdk.LifecycleActive), u.Lifecycle)
 }

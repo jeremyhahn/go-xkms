@@ -82,6 +82,7 @@ type inviteFixture struct {
 	users     *mockUserClient
 	rp        virtualwebauthn.RelyingParty
 	inviteTTL time.Duration
+	tenant    string
 }
 
 const inviteFixtureQRDBUserID = uint64(42)
@@ -92,6 +93,14 @@ const inviteFixtureTenant = "system"
 // the qrdb mock.
 func newInviteFixture(t *testing.T) *inviteFixture {
 	t.Helper()
+	return newInviteFixtureIn(t, inviteFixtureTenant)
+}
+
+// newInviteFixtureIn builds the fixture with the pending account owned by
+// tenant. The qrdb mock's by-id calls act, like go-qrdb's routing user
+// service, on the tenant bound on ctx (system when unbound).
+func newInviteFixtureIn(t *testing.T, tenant string) *inviteFixture {
+	t.Helper()
 	setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
@@ -99,11 +108,11 @@ func newInviteFixture(t *testing.T) *inviteFixture {
 	// qrdb side: mockUserClient tracks the pending account by qrdb id.
 	qrdbUser := &qrdbtransport.User{
 		ID: inviteFixtureQRDBUserID, Username: inviteFixtureEmail, Email: inviteFixtureEmail,
-		Name: "Invitee", TenantID: inviteFixtureTenant, Lifecycle: string(qrdbsdk.LifecyclePending),
+		Name: "Invitee", TenantID: tenant, Lifecycle: string(qrdbsdk.LifecyclePending),
 	}
 	users := &mockUserClient{
-		getUser: func(_ context.Context, id uint64) (*qrdbtransport.User, error) {
-			if id != qrdbUser.ID {
+		getUser: func(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+			if id != qrdbUser.ID || inviteCallerTenant(ctx) != qrdbUser.TenantID {
 				return nil, &qrdbtransport.UserNotFoundError{ID: id}
 			}
 			return qrdbUser, nil
@@ -114,8 +123,8 @@ func newInviteFixture(t *testing.T) *inviteFixture {
 			}
 			return qrdbUser, nil
 		},
-		updateUser: func(_ context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
-			if req.ID != qrdbUser.ID {
+		updateUser: func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+			if req.ID != qrdbUser.ID || inviteCallerTenant(ctx) != qrdbUser.TenantID {
 				return nil, &qrdbtransport.UserNotFoundError{ID: req.ID}
 			}
 			if req.Lifecycle != "" {
@@ -157,13 +166,14 @@ func newInviteFixture(t *testing.T) *inviteFixture {
 		svc: svc, users: users,
 		rp:        virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
 		inviteTTL: time.Hour,
+		tenant:    tenant,
 	}
 }
 
 // mintInvite issues a token for the fixture's pending account.
 func (f *inviteFixture) mintInvite(t *testing.T) string {
 	t.Helper()
-	info, err := f.svc.createInvite(context.Background(), inviteFixtureTenant, inviteFixtureQRDBUserID, f.inviteTTL)
+	info, err := f.svc.createInvite(context.Background(), f.tenant, inviteFixtureQRDBUserID, f.inviteTTL)
 	require.NoError(t, err)
 	require.NotEmpty(t, info.Token)
 	return info.Token
