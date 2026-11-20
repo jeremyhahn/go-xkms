@@ -44,6 +44,12 @@ const (
 	CategoryPassword   CommandCategory = "password"
 	CategoryPIN        CommandCategory = "pin"
 	CategoryPIV        CommandCategory = "piv"
+	CategoryPlatform   CommandCategory = "platform"
+	CategoryServer     CommandCategory = "server"
+	CategoryAlgorithms CommandCategory = "algorithms"
+	CategoryCluster    CommandCategory = "cluster"
+	CategoryRebalance  CommandCategory = "rebalance"
+	CategoryBootstrap  CommandCategory = "bootstrap"
 )
 
 // Skip reasons shared by the account families (row #2321 slice c).
@@ -94,6 +100,22 @@ type CommandDefinition struct {
 	// Commands with RequiresSetup=true are skipped in standalone tests but run in workflow tests
 	RequiresSetup bool
 
+	// Workflow names the ordered workflow test that runs this command with
+	// its setup (e.g. platform put before get). The matrix counts it as a
+	// run; the standalone run leaves it to that test.
+	Workflow string
+
+	// Transports, when set, are the only transports the command runs on;
+	// every other cell is skipped with TransportSkip as the reason.
+	Transports []ProtocolType
+
+	// TransportSkip names why a transport outside Transports cannot run it.
+	TransportSkip string
+
+	// Unsupported, when set, is why no cell can run the command in the
+	// integration environment (e.g. no DNS zone serving TLSA records).
+	Unsupported string
+
 	// ExpectedOutputContains are strings that should be in successful output
 	ExpectedOutputContains []string
 
@@ -125,6 +147,7 @@ type ArgDefinition struct {
 
 // AllCommands returns all CLI commands for testing
 func AllCommands() []CommandDefinition {
+	// Order matters: the standalone run executes commands in this order.
 	return slices.Concat(
 		BackendCommands(),
 		KeyCommands(),
@@ -146,6 +169,12 @@ func AllCommands() []CommandDefinition {
 		PasswordCommands(),
 		PINCommands(),
 		PIVCommands(),
+		ServerCommands(),
+		AlgorithmsCommands(),
+		PlatformCommands(),
+		ClusterCommands(),
+		RebalanceCommands(),
+		BootstrapCommands(),
 	)
 }
 

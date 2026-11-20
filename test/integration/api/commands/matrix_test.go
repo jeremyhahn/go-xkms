@@ -181,6 +181,131 @@ func TestMatrix_AccountFamilies(t *testing.T) {
 	}
 }
 
+// sliceEVerbs lists every xkmsctl verb of #2321 slice (e) by family: each
+// must have a command definition, and so a cell on every transport.
+var sliceEVerbs = map[CommandCategory][][]string{
+	CategoryPlatform: {
+		{"platform", "put"}, {"platform", "get"}, {"platform", "delete"},
+		{"platform", "list"}, {"platform", "reseal"}, {"platform", "status"},
+	},
+	CategoryServer:     {{"status"}},
+	CategoryAlgorithms: {{"algorithms"}},
+	CategoryCluster: {
+		{"cluster", "status"}, {"cluster", "members"}, {"cluster", "add"}, {"cluster", "remove"},
+	},
+	CategoryRebalance: {
+		{"rebalance", "stats"}, {"rebalance", "plan"}, {"rebalance", "execute"}, {"rebalance", "report"},
+	},
+	CategoryBootstrap: {
+		{"bootstrap", "auto"}, {"bootstrap", "show-keys"},
+		{"bootstrap", "noise", "generate-key"}, {"bootstrap", "noise", "show-key"},
+		{"bootstrap", "noise", "show-spki-pin"}, {"bootstrap", "noise", "generate-p256-key"},
+		{"bootstrap", "noise", "show-p256-key"},
+		{"bootstrap", "dane", "generate-tlsa"}, {"bootstrap", "dane", "verify-tlsa"},
+		{"bootstrap", "dane", "show-tlsa"},
+		{"bootstrap", "spki", "show-pin"},
+	},
+}
+
+// TestMatrix_SliceEFamilies: every slice (e) verb has a definition in its
+// family, the family is in the matrix, and on every transport the verb runs
+// or names why it cannot.
+func TestMatrix_SliceEFamilies(t *testing.T) {
+	allTags := []string{"frost", "fido2"}
+	for family, verbs := range sliceEVerbs {
+		if !slices.Contains(CommandFamilies(), family) {
+			t.Errorf("family %s is not in CommandFamilies", family)
+		}
+		defs := CommandsByCategory(family)
+		for _, verb := range verbs {
+			var found []CommandDefinition
+			for _, def := range defs {
+				if slices.Equal(def.Command, verb) {
+					found = append(found, def)
+				}
+			}
+			if len(found) == 0 {
+				t.Errorf("family %s: no command definition for %v", family, verb)
+				continue
+			}
+			for _, def := range found {
+				for _, p := range CLIProtocols() {
+					if r, skip := MatrixSkipReason(def, p, allTags); skip && r == "" {
+						t.Errorf("(%s, %s) %s skipped without a reason", family, p, def.Name)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestMatrix_SliceETransports pins which transports each slice (e) family
+// runs on, and the reason every other cell names.
+func TestMatrix_SliceETransports(t *testing.T) {
+	allTags := []string{"frost", "fido2"}
+	runsOn := func(family CommandCategory, p ProtocolType) MatrixCell {
+		return MatrixCellFor(family, p, allTags)
+	}
+	for _, p := range CLIProtocols() {
+		for _, family := range []CommandCategory{CategoryPlatform, CategoryServer, CategoryAlgorithms} {
+			if cell := runsOn(family, p); cell.Runs != len(sliceEVerbs[family]) {
+				t.Errorf("(%s, %s): %d of %d verbs run (%s)", family, p, cell.Runs, len(sliceEVerbs[family]), cell.Reason)
+			}
+		}
+		for _, family := range []CommandCategory{CategoryCluster, CategoryRebalance} {
+			cell := runsOn(family, p)
+			switch p {
+			case ProtocolUnix, ProtocolGRPC:
+				if cell.Runs != len(sliceEVerbs[family]) {
+					t.Errorf("(%s, %s): %d of %d verbs run (%s)", family, p, cell.Runs, len(sliceEVerbs[family]), cell.Reason)
+				}
+			default:
+				if cell.Runs != 0 || !strings.Contains(cell.Reason, ReasonQRDBControlPlane) {
+					t.Errorf("(%s, %s): runs=%d reason=%q, want the control-plane reason", family, p, cell.Runs, cell.Reason)
+				}
+			}
+		}
+
+		// Bootstrap: show-keys is an SDK call and runs everywhere; the local
+		// verbs run once, on the embedded cell, and name the reason elsewhere.
+		for _, def := range CommandsByCategory(CategoryBootstrap) {
+			r, skip := MatrixSkipReason(def, p, allTags)
+			sdk := slices.Equal(def.Command, []string{"bootstrap", "show-keys"})
+			switch {
+			case sdk && skip:
+				t.Errorf("(bootstrap, %s) %s skipped: %s", p, def.Name, r)
+			case !sdk && def.Unsupported == "" && p == ProtocolEmbedded && skip:
+				t.Errorf("(bootstrap, %s) %s skipped: %s", p, def.Name, r)
+			case !sdk && p != ProtocolEmbedded && r != ReasonNoSDKTransport && def.Unsupported == "":
+				t.Errorf("(bootstrap, %s) %s: reason %q, want %q", p, def.Name, r, ReasonNoSDKTransport)
+			}
+		}
+	}
+}
+
+// TestMatrix_WorkflowCommands: a workflow command is counted as a run in the
+// matrix but left out of the standalone run, which names its workflow.
+func TestMatrix_WorkflowCommands(t *testing.T) {
+	wf := CommandDefinition{Name: "w", Category: CategoryPlatform, Workflow: "TestCLIPlatformMatrix"}
+	if _, skip := MatrixSkipReason(wf, ProtocolREST, nil); skip {
+		t.Error("workflow command must count as a matrix run")
+	}
+	if r, skip := SkipReason(wf, ProtocolREST, nil); !skip || !strings.Contains(r, "TestCLIPlatformMatrix") {
+		t.Errorf("standalone run of a workflow command: skip=%v reason=%q", skip, r)
+	}
+	only := CommandDefinition{Name: "o", Category: CategoryCluster, Transports: []ProtocolType{ProtocolUnix}, TransportSkip: "because"}
+	if r, skip := MatrixSkipReason(only, ProtocolMCP, nil); !skip || r != "because" {
+		t.Errorf("transport-restricted command on mcp: skip=%v reason=%q", skip, r)
+	}
+	if _, skip := MatrixSkipReason(only, ProtocolUnix, nil); skip {
+		t.Error("transport-restricted command must run on its transport")
+	}
+	never := CommandDefinition{Name: "n", Category: CategoryBootstrap, Unsupported: "no DNS"}
+	if r, skip := MatrixSkipReason(never, ProtocolEmbedded, nil); !skip || r != "no DNS" {
+		t.Errorf("unsupported command: skip=%v reason=%q", skip, r)
+	}
+}
+
 // TestRunCommandWithProtocol_EmbeddedArgs checks the embedded prefix:
 // one --transport embedded and the runner's key directory.
 func TestRunCommandWithProtocol_EmbeddedArgs(t *testing.T) {
