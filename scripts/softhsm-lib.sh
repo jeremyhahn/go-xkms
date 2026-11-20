@@ -8,9 +8,9 @@
 #
 # SoftHSM 2.7.0 is the minimum that reports PKCS#11 tamper (#1418, see
 # scripts/build-softhsm.sh). When the softhsm2-util on PATH reports 2.7.0 or
-# newer, the module installed beside it is printed (empty when it is not in
-# the usual layout, so internal/softhsmtest falls back to its candidates).
-# Otherwise -- a distribution 2.6.1, or no SoftHSM at all -- the pinned
+# newer, the module of that utility's own installation (symlinks resolved) is
+# printed. Otherwise -- a distribution 2.6.1, no SoftHSM at all, or a newer
+# utility whose installation holds no module -- the pinned
 # release is built once, without root, into a user cache and that module is
 # printed; a later call reuses the cache. Build output goes to stderr, so
 # stdout is only the path.
@@ -44,15 +44,17 @@ at_least() {
 if util=$(command -v softhsm2-util 2>/dev/null); then
 	version=$("${util}" --version 2>/dev/null || true)
 	if [ -n "${version}" ] && at_least "${version}"; then
-		for dir in "$(dirname "${util}")/../lib/softhsm" "$(dirname "${util}")/../lib64/softhsm" \
-			/usr/lib/softhsm /usr/lib/x86_64-linux-gnu/softhsm /usr/lib/aarch64-linux-gnu/softhsm \
-			/usr/lib64/softhsm /usr/local/lib/softhsm /opt/homebrew/lib/softhsm; do
+		# Only the module of the utility's own installation matches its
+		# version: follow symlinks to that installation and look inside its
+		# prefix, never in unrelated system library directories.
+		prefix=$(dirname "$(dirname "$(readlink -f "${util}")")")
+		for dir in "${prefix}/lib/softhsm" "${prefix}/lib64/softhsm" "${prefix}"/lib/*-linux-gnu/softhsm; do
 			if [ -f "${dir}/libsofthsm2.so" ]; then
-				echo "$(cd "${dir}" && pwd)/libsofthsm2.so"
+				echo "$(cd "${dir}" && pwd -P)/libsofthsm2.so"
 				exit 0
 			fi
 		done
-		exit 0
+		echo "softhsm-lib.sh: no module in the installation of ${util}; using the pinned build" >&2
 	fi
 fi
 
