@@ -11,9 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -54,15 +57,26 @@ const tenantLoginCAProvenanceWait = 2 * time.Second
 
 // tenantLoginCAClaimLease is how long a provisioning claim with no key behind
 // it is honoured before another pass may take it over. A claim marked
-// generating is taken over only once its holder has also stopped renewing it
-// (see tenantLoginCAClaimRenew).
+// generating is never taken over on time: an unchanged claim does not prove
+// its holder's generate stopped (a backend may ignore the generate's context,
+// and a live holder may lose claim storage). Only proof that the holder's
+// process ended lets a pass take it over (see tenantLoginCAHolderStopped).
 const tenantLoginCAClaimLease = 30 * time.Second
 
-// tenantLoginCAClaimRenew is how often a pass renews its generating claim
-// while its generate is in flight. A generating claim past its lease is taken
-// over only when it stays unchanged for two renewal intervals: its holder is
-// then gone, for a live holder renews it however long its generate takes.
-const tenantLoginCAClaimRenew = time.Second
+// tenantLoginCAProcess names this process in the claims its passes take:
+// a claim another process on this host left is that process's, and the
+// process is gone once its PID no longer runs or is this process's own.
+var tenantLoginCAProcess = func() string {
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", nonce)
+}()
+
+// tenantLoginCALiveOwners holds the claim owners of this process's passes
+// that are still running, so a claim of this process is known to be live.
+var tenantLoginCALiveOwners sync.Map
 
 // errTenantLoginCAKeyCollision is returned when a tenant holds a login CA key
 // that the provisioning path did not make. Such a key is never adopted; an
@@ -287,6 +301,7 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		// Another pass holds the claim and makes the key: adopt it.
 		return adoptOtherTenantLoginCAKey(ctx, base, scoped, tenantID)
 	}
+	defer tenantLoginCALiveOwners.Delete(owner)
 	attrs := &types.KeyAttributes{
 		CN:            tenantLoginCAKeyName(tenantID),
 		KeyType:       types.KeyTypeSigning,
@@ -306,13 +321,11 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		// claim over: that pass makes the key.
 		return adoptOtherTenantLoginCAKey(ctx, base, scoped, tenantID)
 	}
-	// The claim now says a generate is in flight, and this pass renews it
-	// however long the generate takes, so no pass takes it over: a backend
-	// may ignore the context (PKCS#11 waits on the token's mutex without a
-	// deadline), so no lease bounds when this pass can still make its key.
-	stopRenew := f.renewTenantLoginCAGenerating(ctx, tenantID, owner, generating)
+	// The claim now says a generate is in flight, and no pass takes it
+	// over while this pass runs: a backend may ignore the context (PKCS#11
+	// waits on the token's mutex without a deadline), so no lease bounds
+	// when this pass can still make its key.
 	_, err = scoped.GenerateECDSA(ctx, attrs)
-	generating = stopRenew()
 	if err != nil {
 		if !errors.Is(err, backend.ErrKeyAlreadyExists) {
 			// The generate returned, so it makes no key any more: put back
@@ -361,6 +374,15 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 	if err != nil {
 		return "", err
 	}
+	// The owner is live before its claim is written; a pass that wins the
+	// claim keeps it live until EnsureTenant returns.
+	tenantLoginCALiveOwners.Store(owner, struct{}{})
+	won := false
+	defer func() {
+		if !won {
+			tenantLoginCALiveOwners.Delete(owner)
+		}
+	}()
 	key := tenantLoginCAClaimKey(tenantID)
 	claim := tenantLoginCAClaim(owner, time.Now())
 	stored, err := claims.PutIfAbsent(ctx, key, claim)
@@ -368,6 +390,7 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 		return "", fmt.Errorf("tenant login CA key factory: claim tenant %q: %w", tenantID, err)
 	}
 	if stored {
+		won = true
 		return owner, nil
 	}
 	held, err := claims.Get(ctx, key)
@@ -379,17 +402,11 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 	}
 	if tenantLoginCAClaimGenerating(held) {
 		// Its owner may still be inside a generate that no lease bounds,
-		// and taking over could make a second key beside the one it makes;
-		// but a live owner renews the claim. Watch it for two renewal
-		// intervals: a claim still unchanged was left by a pass that died
-		// before its key was made, and the compare-and-swap below fails if
-		// the owner renewed it after all.
-		timer := time.NewTimer(2 * tenantLoginCAClaimRenew)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-timer.C:
+		// and an unchanged claim does not prove it stopped: taking over
+		// could make a second key beside the one it makes. Take it over
+		// only on proof that its owner's process ended.
+		if _, heldOwner, _ := parseTenantLoginCAClaim(held); !tenantLoginCAHolderStopped(heldOwner) {
+			return "", nil
 		}
 	}
 	if _, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID); lookupErr == nil {
@@ -408,6 +425,7 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 	if !swapped {
 		return "", nil
 	}
+	won = true
 	return owner, nil
 }
 
@@ -417,8 +435,8 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 // its owner stopped: a pass delayed past the lease may have lost the claim
 // to a takeover, and it must not generate beside the new owner's key. The
 // mark is a compare-and-swap on the owner's own claim, so a takeover and the
-// mark never both succeed; a generating claim is not taken over while its
-// owner renews it (see renewTenantLoginCAGenerating).
+// mark never both succeed; a generating claim is taken over only once its
+// owner provably stopped (see tenantLoginCAHolderStopped).
 func (f *tenantCAKeyFactory) fenceTenantLoginCAClaim(ctx context.Context, tenantID, owner string) ([]byte, bool, error) {
 	claims, err := f.claimStorage()
 	if err != nil {
@@ -463,55 +481,6 @@ func (f *tenantCAKeyFactory) releaseTenantLoginCAGenerating(ctx context.Context,
 	}
 }
 
-// renewTenantLoginCAGenerating renews the pass's generating claim every
-// tenantLoginCAClaimRenew until the returned stop is called, so a pass whose
-// generate is still in flight is told apart from one that died: only an
-// unrenewed generating claim is taken over. The renewals outlive a cancelled
-// context, for the generate may too. Stop returns the claim last written. A
-// claim the pass no longer owns is left alone.
-func (f *tenantCAKeyFactory) renewTenantLoginCAGenerating(ctx context.Context, tenantID, owner string, generating []byte) func() []byte {
-	claims, err := f.claimStorage()
-	if err != nil {
-		return func() []byte { return generating }
-	}
-	swapper, ok := claims.(storage.CompareAndSwapper)
-	if !ok {
-		return func() []byte { return generating }
-	}
-	ctx = context.WithoutCancel(ctx)
-	key := tenantLoginCAClaimKey(tenantID)
-	stop := make(chan struct{})
-	done := make(chan []byte, 1)
-	go func() {
-		current := generating
-		ticker := time.NewTicker(tenantLoginCAClaimRenew)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				done <- current
-				return
-			case <-ticker.C:
-			}
-			held, err := claims.Get(ctx, key)
-			if err != nil {
-				continue
-			}
-			if _, heldOwner, parseErr := parseTenantLoginCAClaim(held); parseErr != nil || heldOwner != owner || !tenantLoginCAClaimGenerating(held) {
-				continue
-			}
-			renewed := tenantLoginCAGeneratingClaim(owner, time.Now())
-			if swapped, _, err := swapper.CompareAndSwap(ctx, key, held, renewed); err == nil && swapped {
-				current = renewed
-			}
-		}
-	}()
-	return func() []byte {
-		close(stop)
-		return <-done
-	}
-}
-
 // claimStorage returns the bound claim storage.
 func (f *tenantCAKeyFactory) claimStorage() (storage.Backend, error) {
 	f.mu.RLock()
@@ -530,7 +499,55 @@ func newTenantLoginCAClaimOwner() (string, error) {
 	if _, err := rand.Read(token[:]); err != nil {
 		return "", fmt.Errorf("tenant login CA key factory: claim owner token: %w", err)
 	}
-	return fmt.Sprintf("%x", token), nil
+	host, _ := os.Hostname()
+	return tenantLoginCAClaimOwner(fmt.Sprintf("%x", token), tenantLoginCAProcess, os.Getpid(), host), nil
+}
+
+// tenantLoginCAClaimOwner is a claim owner: the pass's token, then the
+// process, PID and host it runs in, so a later pass can tell whether the
+// holder's process ended. No part holds a space or a "/".
+func tenantLoginCAClaimOwner(token, process string, pid int, host string) string {
+	return fmt.Sprintf("%s/%s/%d/%s", token, process, pid, tenantLoginCAClaimHost(host))
+}
+
+// tenantLoginCAClaimHost is host as a claim owner carries it.
+func tenantLoginCAClaimHost(host string) string {
+	return strings.NewReplacer(" ", "_", "/", "_").Replace(host)
+}
+
+// tenantLoginCAHolderStopped reports whether the pass that wrote a generating
+// claim as owner provably stopped, so its generate can make no key any more.
+// Only the holder's own host can prove it: a pass of this process is stopped
+// once it returned; a pass of another process on this host is stopped once
+// that process's PID no longer runs, or is this process's own (a restart
+// that reused it). Anything else, a holder on another host included, is not
+// proof, and its claim stays held.
+func tenantLoginCAHolderStopped(owner string) bool {
+	parts := strings.SplitN(owner, "/", 4)
+	if len(parts) != 4 {
+		return false
+	}
+	process, host := parts[1], parts[3]
+	pid, err := strconv.Atoi(parts[2])
+	if err != nil || pid <= 0 || process == "" || tenantLoginCAProcess == "" {
+		return false
+	}
+	thisHost, err := os.Hostname()
+	if err != nil || thisHost == "" || tenantLoginCAClaimHost(thisHost) != host {
+		return false
+	}
+	if process == tenantLoginCAProcess {
+		_, live := tenantLoginCALiveOwners.Load(owner)
+		return !live
+	}
+	if pid == os.Getpid() {
+		return true
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone)
 }
 
 // tenantLoginCAClaim is a claim value: the time it was taken or last

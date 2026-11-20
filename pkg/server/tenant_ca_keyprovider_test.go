@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -835,6 +836,21 @@ func TestTenantCAKeyFactory_NoTakeoverWhileRenewalsFailDuringGenerate(t *testing
 	assert.EqualValues(t, 1, nodeA.generated.Load())
 }
 
+// TestTenantLoginCAHolderStopped: only the holder's own host proves its pass
+// stopped.
+func TestTenantLoginCAHolderStopped(t *testing.T) {
+	host, err := os.Hostname()
+	require.NoError(t, err)
+	assert.True(t, tenantLoginCAHolderStopped(tenantLoginCAClaimOwner("t", "earlier-process", os.Getpid(), host)), "an earlier process under this PID is gone")
+	assert.False(t, tenantLoginCAHolderStopped(tenantLoginCAClaimOwner("t", "earlier-process", os.Getpid(), host+"-other")), "a holder on another host is never proven stopped")
+	assert.False(t, tenantLoginCAHolderStopped("bare-token"), "an owner without process and host proves nothing")
+	live := tenantLoginCAClaimOwner("t", tenantLoginCAProcess, os.Getpid(), host)
+	tenantLoginCALiveOwners.Store(live, struct{}{})
+	assert.False(t, tenantLoginCAHolderStopped(live), "a running pass of this process is live")
+	tenantLoginCALiveOwners.Delete(live)
+	assert.True(t, tenantLoginCAHolderStopped(live), "a returned pass of this process is stopped")
+}
+
 // TestTenantCAKeyFactory_ReconcilesGeneratingClaimOfGoneHolder: a pass that
 // died after marking its claim generating, before its key was made, leaves a
 // generating claim whose lease is never renewed again. The next provisioning
@@ -845,7 +861,12 @@ func TestTenantCAKeyFactory_ReconcilesGeneratingClaimOfGoneHolder(t *testing.T) 
 	base, _ := sharedTenantCABackends(t)
 	claims := storage.New()
 	key := tenantLoginCAClaimKey("tenant-a")
-	gone := tenantLoginCAGeneratingClaim("gone-holder", time.Now().Add(-2*tenantLoginCAClaimLease))
+	// The holder ran in an earlier process on this host, which this process
+	// replaced under its PID (a restarted container): it provably stopped.
+	host, err := os.Hostname()
+	require.NoError(t, err)
+	goneHolder := tenantLoginCAClaimOwner("gone-holder", "earlier-process", os.Getpid(), host)
+	gone := tenantLoginCAGeneratingClaim(goneHolder, time.Now().Add(-2*tenantLoginCAClaimLease))
 	stored, err := claims.PutIfAbsent(ctx, key, gone)
 	require.NoError(t, err)
 	require.True(t, stored)
@@ -861,7 +882,7 @@ func TestTenantCAKeyFactory_ReconcilesGeneratingClaimOfGoneHolder(t *testing.T) 
 	require.NoError(t, err)
 	_, owner, err := parseTenantLoginCAClaim(current)
 	require.NoError(t, err)
-	assert.NotEqual(t, "gone-holder", owner, "the gone holder's claim must be taken over")
+	assert.NotEqual(t, goneHolder, owner, "the gone holder's claim must be taken over")
 
 	require.NoError(t, f.EnsureTenant(ctx, "tenant-a"))
 	assert.EqualValues(t, 1, node.generated.Load(), "a later pass adopts the key")
