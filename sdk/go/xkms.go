@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport/embedded"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport/grpc"
@@ -660,3 +661,50 @@ type (
 	AttestationVerdict              = transport.AttestationVerdict
 	ListAttestationVerdictsResponse = transport.ListAttestationVerdictsResponse
 )
+
+// Continuous attestation engine seam (ruling 1003 (2)). The composing
+// product supplies the evidence fetcher and the device lister; go-xkms
+// neither reaches devices nor owns a device registry. Wire the engine and
+// its store on a service with (*XKMSService).SetContinuousAttestation.
+type (
+	// AttestationEvidenceFetcher collects a device's quote evidence.
+	AttestationEvidenceFetcher = continuous.EvidenceSource
+	// AttestationDeviceLister names the tenants and devices a scheduled
+	// pass visits.
+	AttestationDeviceLister = continuous.Inventory
+	// AttestationVerdictAppraiser appraises quote evidence.
+	AttestationVerdictAppraiser = continuous.Appraiser
+	// AttestationVerdictStore keeps the verdicts.
+	AttestationVerdictStore = continuous.Store
+	// AttestationVerdictStoreConfig configures an AttestationVerdictStore.
+	AttestationVerdictStoreConfig = continuous.StoreConfig
+	// ContinuousAttestationEngine re-attests devices on demand and on a
+	// schedule.
+	ContinuousAttestationEngine = continuous.Engine
+	// ContinuousAttestationConfig configures a ContinuousAttestationEngine.
+	ContinuousAttestationConfig = continuous.Config
+)
+
+// NewAttestationVerdictStore opens the verdict store.
+var NewAttestationVerdictStore = continuous.NewStore
+
+// ContinuousAttestationOption sets part of an engine's configuration.
+type ContinuousAttestationOption func(*ContinuousAttestationConfig)
+
+// WithAttestationEvidence passes the caller's fetcher and lister through to
+// the engine as its evidence source and inventory.
+func WithAttestationEvidence(fetcher AttestationEvidenceFetcher, lister AttestationDeviceLister) ContinuousAttestationOption {
+	return func(cfg *ContinuousAttestationConfig) {
+		cfg.Source = fetcher
+		cfg.Inventory = lister
+	}
+}
+
+// NewContinuousAttestationEngine builds an engine from cfg with opts
+// applied in order.
+func NewContinuousAttestationEngine(cfg ContinuousAttestationConfig, opts ...ContinuousAttestationOption) (*ContinuousAttestationEngine, error) {
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return continuous.NewEngine(cfg)
+}
