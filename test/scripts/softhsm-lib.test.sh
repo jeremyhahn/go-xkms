@@ -19,7 +19,8 @@ no() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n    want: %s\n    got:  %s\n' "$1"
 eq() { [ "$2" = "$3" ] && ok "$1" || no "$1" "$2" "$3"; }
 section() { printf '\n%s\n' "$1"; }
 
-WORK=$(mktemp -d)
+# Canonical, so paths the helper resolves with readlink -f compare equal.
+WORK=$(cd "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$WORK"' EXIT
 
 # A system SoftHSM whose softhsm2-util reports $STUB_VERSION, with its module
@@ -65,6 +66,39 @@ for v in 2.7.0 2.7.1 2.10.0; do
 	eq "$v: nothing is built" 0 "$(built)"
 done
 if [ -e "$CACHE" ]; then no "no cache is created" "absent" "present"; else ok "no cache is created"; fi
+
+# A 2.7.0 softhsm2-util reached through a symlink in another bin directory,
+# whose sibling lib directory holds an unrelated older (2.6.1) module: the
+# helper must follow the link to the utility's own installation.
+NEW="$WORK/new"
+LINK="$WORK/link"
+mkdir -p "$NEW/bin" "$NEW/lib/softhsm" "$LINK/bin" "$LINK/lib/softhsm"
+printf '#!/bin/sh\necho 2.7.0\n' >"$NEW/bin/softhsm2-util"
+chmod +x "$NEW/bin/softhsm2-util"
+echo 2.6.1 >"$LINK/lib/softhsm/libsofthsm2.so"
+ln -s "$NEW/bin/softhsm2-util" "$LINK/bin/softhsm2-util"
+LCACHE="$WORK/lcache"
+link_run() {
+	PATH="$LINK/bin:/usr/bin:/bin" SOFTHSM_CACHE="$LCACHE" \
+		SOFTHSM_BUILD_SCRIPT="$BUILD" bash "$SCRIPT" 2>"$WORK/stderr"
+}
+
+section "a symlinked newer utility selects the module of its own installation"
+: >"$NEW/lib/softhsm/libsofthsm2.so"
+rm -f "$WORK/built"
+out=$(link_run)
+rc=$?
+eq "exit 0" 0 "$rc"
+eq "prints the module beside the resolved utility" "$NEW/lib/softhsm/libsofthsm2.so" "$out"
+eq "nothing is built" 0 "$(built)"
+
+section "a symlinked newer utility without its own module selects the cache build"
+rm -f "$NEW/lib/softhsm/libsofthsm2.so" "$WORK/built"
+out=$(link_run)
+rc=$?
+eq "exit 0" 0 "$rc"
+eq "prints the cache module, not the unrelated older one" "$LCACHE/usr/lib/softhsm/libsofthsm2.so" "$out"
+eq "the pinned release is built once" 1 "$(built)"
 
 section "a system SoftHSM older than 2.7.0 selects the cache build"
 rm -f "$WORK/built"
