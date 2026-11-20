@@ -1,0 +1,1 @@
+- **The CLI protocol matrix covers MCP and embedded.** `TestAllCommandsAllProtocols` now runs every xkmsctl command over MCP and embedded as well as unix, REST, gRPC and QUIC, logs each (family, transport) cell it skips with its reason, and `make integration-test-api-all` runs the MCP integration tests (row cli-protocol-matrix, slice a).
