@@ -16,6 +16,7 @@ package xkms
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
@@ -89,6 +90,16 @@ var WithServiceModuleQRDBClient = apimodule.WithQRDBClient
 // derives. Pass an embedded node's Node.ServiceContext; a node that enforces
 // authentication refuses the module's storage without it.
 var WithServiceModuleServiceContext = apimodule.WithServiceContext
+
+// ServiceModuleNodeUserSource is the embedded qrdb node's user service
+// accessor WithServiceModuleNodeUsers takes (an embedded node satisfies it).
+type ServiceModuleNodeUserSource = auth.NodeUserSource
+
+// WithServiceModuleNodeUsers wires the embedded node's user service. The
+// public WebAuthn ceremony, invite redemption and refresh re-check routes
+// carry no qrdb credentials, so without it their user lookups reach go-qrdb
+// unauthenticated and fail closed. Pass the embedded node.
+var WithServiceModuleNodeUsers = apimodule.WithNodeUsers
 
 // ServiceModuleWebAuthnConfig is the operator-facing WebAuthn configuration
 // shape (rp_id, rp_origins, rp_display_name, ...) -- the same section
