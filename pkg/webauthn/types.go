@@ -91,6 +91,15 @@ type Credential struct {
 
 	// LastUsedAt is when the credential was last used for authentication.
 	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+
+	// TenantID is the qrdb tenant of the account that owns the credential.
+	// Login routes carry no tenant, so a sign-in resolves the account's
+	// tenant from its credential (ruling 1019).
+	TenantID string `json:"tenant_id,omitempty"`
+
+	// Email is the owning account's login key at registration, kept so an
+	// email sign-in can find the account's tenant.
+	Email string `json:"email,omitempty"`
 }
 
 // CredentialFlags contains authenticator capability flags.
@@ -179,7 +188,19 @@ type DefaultUser struct {
 	sessionData []byte
 	lifecycle   qrdbsdk.Lifecycle
 	authMethods []string
+	tenantID    string
 }
+
+// tenantUser is a User that knows the qrdb tenant its account lives in.
+type tenantUser interface {
+	TenantID() string
+}
+
+// TenantID returns the qrdb tenant the account lives in ("" when unknown).
+func (u *DefaultUser) TenantID() string { return u.tenantID }
+
+// SetTenantID records the qrdb tenant the account lives in.
+func (u *DefaultUser) SetTenantID(tenantID string) { u.tenantID = tenantID }
 
 // NewDefaultUser creates a new DefaultUser with the given parameters. The
 // account starts active with no auth-method restriction; a store that tracks
