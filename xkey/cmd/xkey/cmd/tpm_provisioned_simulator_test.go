@@ -69,7 +69,9 @@ func (s sharedTPM) SetPlatformKeyStore(pks xkms.PlatformKeyStorer) {
 		SetPlatformKeyStore(xkms.PlatformKeyStorer)
 	}); ok {
 		setter.SetPlatformKeyStore(pks)
+		return
 	}
+	s.fatalf("sharedTPM: the wrapped %T has no SetPlatformKeyStore; the Platform key store would be dropped", s.TrustedPlatformModule)
 }
 
 // provisionedSimulator is an open, provisioned simulator plus the CA that

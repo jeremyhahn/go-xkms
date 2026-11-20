@@ -16,6 +16,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -62,7 +63,15 @@ var (
 
 	// ErrPINInputFileEmpty indicates the PIN file's first line was empty.
 	ErrPINInputFileEmpty = errors.New("pin: the PIN file carried no PIN on its first line")
+
+	// ErrPINInputFilePermissions indicates the PIN file's mode lets its
+	// group or other users access it; it must be 0600 or stricter.
+	ErrPINInputFilePermissions = errors.New("pin: the PIN file is accessible to group or other users; it must be 0600 or stricter")
 )
+
+// pinFileForbiddenPerm is the mode bits a PIN file must not carry: any
+// group or other access.
+const pinFileForbiddenPerm os.FileMode = 0o077
 
 // pinFlagFile and soPINFlagFile name the PIN file flags. The flag value is
 // a path, never the PIN, so it is safe on the command line.
@@ -304,21 +313,50 @@ func (p pinSource) secretFromStdin(read func() ([]byte, error)) ([]byte, error) 
 
 // secretFromFile reads the first line of the file at path, without its
 // trailing newline, as the PIN. Errors name the file flag, never the value.
+//
+// The file must be 0600 or stricter, as the pkcs11 config check requires
+// of a file that names a PIN: a PIN file another user or group can read is
+// refused with ErrPINInputFilePermissions, never read. The mode is checked
+// on the open descriptor, so a swap between check and read cannot pass.
 func (p pinSource) secretFromFile(path string) ([]byte, error) {
-	data, readErr := os.ReadFile(path) // #nosec G304 -- operator-named PIN file
+	f, openErr := os.Open(path) // #nosec G304 -- operator-named PIN file
+	if openErr != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPINInputFileRead, Cause: openErr}
+	}
+	defer func() { _ = f.Close() }()
+	info, statErr := f.Stat()
+	if statErr != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPINInputFileRead, Cause: statErr}
+	}
+	if perm := info.Mode().Perm(); perm&pinFileForbiddenPerm != 0 {
+		return nil, &SentinelCauseError{
+			Sentinel: ErrPINInputFilePermissions,
+			Cause:    fmt.Errorf("--%s has mode %04o; chmod 600 it", p.fileFlag, perm),
+		}
+	}
+	data, readErr := io.ReadAll(f)
 	if readErr != nil {
+		enclave.Wipe(data)
 		return nil, &SentinelCauseError{Sentinel: ErrPINInputFileRead, Cause: readErr}
 	}
+	return p.pinFromFileData(data)
+}
+
+// pinFromFileData returns the first line of data, without its trailing
+// "\r\n" or "\n", as a new slice the caller owns, and wipes all of data:
+// the lines after the PIN are as secret as the PIN, so no part of the read
+// buffer outlives the call, on success or error.
+func (p pinSource) pinFromFileData(data []byte) ([]byte, error) {
+	defer enclave.Wipe(data)
 	line := data
 	if i := bytes.IndexByte(line, '\n'); i >= 0 {
 		line = line[:i]
 	}
-	secret := bytes.TrimRight(line, "\r")
-	if len(secret) == 0 {
-		enclave.Wipe(data)
+	line = bytes.TrimRight(line, "\r")
+	if len(line) == 0 {
 		return nil, &SentinelCauseError{Sentinel: ErrPINInputFileEmpty, Cause: errors.New("--" + p.fileFlag)}
 	}
-	return secret, nil
+	return bytes.Clone(line), nil
 }
 
 // resolveBytesFrom is resolveBytes for a caller that has already determined
