@@ -26,7 +26,7 @@ func CommandFamilies() []CommandCategory {
 		CategoryVersion, CategoryBackends, CategoryBackend, CategoryKey,
 		CategoryCert, CategoryTLS, CategoryFrost, CategoryFIDO2,
 		CategoryUser, CategoryAdmin, CategorySealing, CategoryCA,
-		CategoryPolicy,
+		CategoryPolicy, CategoryPassword, CategoryPIN, CategoryPIV,
 	}
 }
 

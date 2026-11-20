@@ -33,6 +33,9 @@ const (
 	CategorySealing  CommandCategory = "sealing"
 	CategoryCA       CommandCategory = "ca"
 	CategoryPolicy   CommandCategory = "policy"
+	CategoryPassword CommandCategory = "password"
+	CategoryPIN      CommandCategory = "pin"
+	CategoryPIV      CommandCategory = "piv"
 )
 
 // CommandDefinition defines a CLI command with its arguments and expected behavior
@@ -101,7 +104,7 @@ type ArgDefinition struct {
 
 // AllCommands returns all CLI commands for testing
 func AllCommands() []CommandDefinition {
-	return append(append(append(append(append(append(append(append(append(
+	return append(append(append(append(append(append(append(append(append(append(append(append(
 		BackendCommands(),
 		KeyCommands()...),
 		CertCommands()...),
@@ -111,6 +114,9 @@ func AllCommands() []CommandDefinition {
 		SealingCommands()...),
 		CACommands()...),
 		PolicyCommands()...),
+		PasswordCommands()...),
+		PINCommands()...),
+		PIVCommands()...),
 		VersionCommands()...)
 }
 
