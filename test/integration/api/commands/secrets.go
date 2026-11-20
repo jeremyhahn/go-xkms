@@ -130,8 +130,8 @@ func PasswordCommands() []CommandDefinition {
 			Name: "password-generate", Category: CategoryPassword,
 			Command:        []string{"password", "generate"},
 			Description:    "Generate a random password",
-			RequiresServer: true,
-			OptionalArgs:   []ArgDefinition{flagArg("length", "24", "Password length")},
+			RequiresServer: true, RequiresSetup: true,
+			OptionalArgs: []ArgDefinition{flagArg("length", "24", "Password length")},
 		},
 		{
 			Name: "password-vault-enroll", Category: CategoryPassword,
@@ -197,8 +197,10 @@ func PINCommands() []CommandDefinition {
 			Name: "pin-so-set", Category: CategoryPIN,
 			Command:        []string{"pin", "so-set"},
 			Description:    "Set the SO PIN",
-			RequiresServer: true,
-			RequiredArgs:   []ArgDefinition{flagArg("new-pin", SecretsSOPIN, "New SO PIN")},
+			RequiresServer: true, RequiresSetup: true,
+			RequiredArgs: []ArgDefinition{flagArg("new-pin", SecretsSOPIN, "New SO PIN")},
+			// Sent only when overridden: a second so-set needs the current PIN.
+			OptionalArgs: []ArgDefinition{flagArg("current-pin", "", "Current SO PIN")},
 		},
 		{
 			Name: "pin-so-verify", Category: CategoryPIN,
