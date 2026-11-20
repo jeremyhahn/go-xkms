@@ -39,6 +39,12 @@
     type CredentialProvider,
   } from '../provider.ts';
   import { setAuthenticated, type AuthTokens } from '../stores/auth.svelte.ts';
+  import {
+    REGISTRATION_DISABLED_MESSAGE,
+    methodOff,
+    readAuthCapabilities,
+    type AuthCapabilities,
+  } from '../capabilities.ts';
 
   interface Props {
     /** Credential source (browser WebAuthn or an injected desktop provider). */
@@ -77,6 +83,26 @@
   let busy = $state(false);
   let errorMessage = $state('');
 
+  // Passkey sign-up needs webauthn on the server. The same capabilities
+  // helper and key as LoginPanel (ruling 972 (1)): with webauthn_enabled
+  // false the panel shows a disabled state naming the setting and never
+  // calls registration/begin, which would answer 501. A failed probe leaves
+  // the form available.
+  let caps: AuthCapabilities = $state(null);
+  let probe: Promise<AuthCapabilities> = Promise.resolve(null);
+  const registrationOff = $derived(methodOff(caps, 'passkey'));
+
+  $effect(() => {
+    let cancelled = false;
+    probe = readAuthCapabilities(client);
+    void probe.then((c) => {
+      if (!cancelled) caps = c;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
   async function handleSubmit(): Promise<void> {
     if (busy) return;
     const trimmedIdentifier = identifier.trim();
@@ -88,6 +114,12 @@
 
     busy = true;
     errorMessage = '';
+    // A submit racing the capabilities probe waits for it: begin is never
+    // called while webauthn is off.
+    if (methodOff(await probe, 'passkey')) {
+      busy = false;
+      return;
+    }
     stage = 'ceremony';
 
     try {
@@ -193,7 +225,14 @@
       </div>
     {/if}
 
-    {#if stage === 'form'}
+    {#if registrationOff}
+      <div
+        class="alert py-2 px-3 text-sm"
+        role="status"
+        data-testid="svelte-auth-register-disabled"
+      >{REGISTRATION_DISABLED_MESSAGE}</div>
+
+    {:else if stage === 'form'}
       <div class="flex flex-col gap-3">
         <label class="form-control">
           <div class="label">

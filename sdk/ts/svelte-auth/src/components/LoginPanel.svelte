@@ -53,6 +53,11 @@
     type CredentialProvider,
   } from '../provider.ts';
   import {
+    SIGN_IN_DISABLED_MESSAGE,
+    methodOff,
+    readAuthCapabilities,
+  } from '../capabilities.ts';
+  import {
     authConfig,
     isAuthStoreConfigured,
     setAuthenticated,
@@ -115,13 +120,13 @@
   // disabled sends the operator down a path that can only fail — the
   // capabilities endpoint exists precisely to prevent that.
   //
-  // Capability keys map to methods: webauthn_enabled -> passkey,
-  // piv_login_enabled -> certificate. A key the server omits is treated as
-  // enabled, so an older daemon that reports neither still offers both.
-  const CAPABILITY_FOR: Record<AuthMethod, string> = {
-    passkey: 'webauthn_enabled',
-    certificate: 'piv_login_enabled',
-  };
+  // Capability keys map to methods (AUTH_CAPABILITY, shared with
+  // RegisterPanel): webauthn_enabled -> passkey, piv_login_enabled ->
+  // certificate. A key the server omits, or a failed probe, leaves the method
+  // offered so the operator is never locked out. A method the server turned
+  // off is listed in `serverOff` and shown as a disabled note naming the
+  // setting to turn on (ruling 972 (1)).
+  let serverOff = $state<AuthMethod[]>([]);
 
   $effect(() => {
     let cancelled = false;
@@ -134,20 +139,11 @@
         offered = ['passkey'];
       }
 
-      // A capabilities probe that fails must not lock the operator out, so an
-      // error here leaves the provider's list untouched.
-      let caps: Record<string, boolean> | null = null;
-      try {
-        caps = (await client.capabilities?.get()) ?? null;
-      } catch {
-        caps = null;
-      }
+      const caps = await readAuthCapabilities(client);
 
       if (cancelled) return;
-      methods =
-        caps === null
-          ? offered
-          : offered.filter((m) => caps[CAPABILITY_FOR[m]] !== false);
+      methods = offered.filter((m) => !methodOff(caps, m));
+      serverOff = offered.filter((m) => methodOff(caps, m));
     })();
 
     return () => {
@@ -365,6 +361,15 @@
           />
         </div>
       {/if}
+
+      <!-- Methods the server turned off: name the setting (ruling 972 (1)). -->
+      {#each serverOff as off (off)}
+        <div
+          class="alert py-2 px-3 text-sm"
+          role="status"
+          data-testid="svelte-auth-login-disabled-{off}"
+        >{SIGN_IN_DISABLED_MESSAGE[off]}</div>
+      {/each}
 
       <!-- Passkey option -->
       {#if methods.includes('passkey')}
