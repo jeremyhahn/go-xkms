@@ -120,7 +120,7 @@ func routeServed(t *testing.T, s *Server, method, pattern string) bool {
 	}
 	w := httptest.NewRecorder()
 	s.server.Handler.ServeHTTP(w, httptest.NewRequest(method, path, nil))
-	return !(w.Code == http.StatusNotFound && w.Body.String() == "404 page not found\n")
+	return w.Code != http.StatusNotFound || w.Body.String() != "404 page not found\n"
 }
 
 func TestCapabilities_GatedSubsystemsOffWithoutConfig(t *testing.T) {
