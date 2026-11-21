@@ -105,7 +105,9 @@ func TestKeyPolicyCellsPerTransport(t *testing.T) {
 				if skip && reason == "" {
 					t.Errorf("(%s, %s) %s skipped without a reason", def.Category, protocol, def.Name)
 				}
-				if skip && def.RequiresSetup {
+				// The policy verbs are a named skip: the matrix server has no
+				// TPM policy service, so their setup cannot run either.
+				if skip && def.RequiresSetup && !strings.Contains(reason, ReasonNoPolicyService) {
 					t.Errorf("(%s, %s) %s skipped for setup: %s", def.Category, protocol, def.Name, reason)
 				}
 			}

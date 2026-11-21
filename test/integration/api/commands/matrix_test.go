@@ -295,7 +295,14 @@ func TestMatrix_SliceETransports(t *testing.T) {
 		return MatrixCellFor(family, p, allTags)
 	}
 	for _, p := range CLIProtocols() {
-		for _, family := range []CommandCategory{CategoryPlatform, CategoryServer, CategoryAlgorithms} {
+		if cell := runsOn(CategoryPlatform, p); p == ProtocolEmbedded {
+			if cell.Runs != 0 || !strings.Contains(cell.Reason, ReasonEmbeddedNoPlatformStore) {
+				t.Errorf("(platform, embedded): runs=%d reason=%q, want the no-platform-store reason", cell.Runs, cell.Reason)
+			}
+		} else if cell.Runs != len(sliceEVerbs[CategoryPlatform]) {
+			t.Errorf("(platform, %s): %d of %d verbs run (%s)", p, cell.Runs, len(sliceEVerbs[CategoryPlatform]), cell.Reason)
+		}
+		for _, family := range []CommandCategory{CategoryServer, CategoryAlgorithms} {
 			if cell := runsOn(family, p); cell.Runs != len(sliceEVerbs[family]) {
 				t.Errorf("(%s, %s): %d of %d verbs run (%s)", family, p, cell.Runs, len(sliceEVerbs[family]), cell.Reason)
 			}
