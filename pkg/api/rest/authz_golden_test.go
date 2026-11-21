@@ -273,6 +273,8 @@ var goldenRESTPermissions = map[string]string{
 	"GET /api/v1/attestation/reference-values/entry":    "attestation_reference_values:get",
 	"DELETE /api/v1/attestation/reference-values/entry": "attestation_reference_values:delete",
 	"POST /api/v1/attestation/appraise":                 "attestation_verifier:verify",
+	"POST /api/v1/attestation/appraise/android-key":     "attestation_verifier:verify",
+	"POST /api/v1/attestation/appraise/ek-certificate":  "attestation_verifier:verify",
 	"POST /api/v1/peer-attestation/challenge":           "peer_attestation:challenge",
 	"POST /api/v1/peer-attestation/evidence":            "peer_attestation:submit",
 }

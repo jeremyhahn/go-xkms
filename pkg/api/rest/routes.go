@@ -490,6 +490,8 @@ func Routes() []RouteSpec {
 	permIf("GET", "/attestation/reference-values/entry", auth.ResourceAttestationReferenceValues, auth.ActionGet, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.GetReferenceValuesHandler })
 	permIf("DELETE", "/attestation/reference-values/entry", auth.ResourceAttestationReferenceValues, auth.ActionDelete, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.DeleteReferenceValuesHandler })
 	permIf("POST", "/attestation/appraise", auth.ResourceAttestationVerifier, auth.ActionVerify, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.AppraiseHandler })
+	permIf("POST", "/attestation/appraise/android-key", auth.ResourceAttestationVerifier, auth.ActionVerify, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.AppraiseAndroidKeyHandler })
+	permIf("POST", "/attestation/appraise/ek-certificate", auth.ResourceAttestationVerifier, auth.ActionVerify, hasAppraiser, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.AppraiseEKCertificateHandler })
 
 	// --- Server-side OIDC credentials (pkg/oidc/credential).
 	// oidc_credentials:* is an xkms-owned permission family

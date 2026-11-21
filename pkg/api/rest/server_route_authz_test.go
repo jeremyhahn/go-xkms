@@ -155,6 +155,8 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodGet, "/api/v1/attestation/reference-values/entry?name=golden", "attestation_reference_values", "get"},
 	{http.MethodDelete, "/api/v1/attestation/reference-values/entry?name=golden", "attestation_reference_values", "delete"},
 	{http.MethodPost, "/api/v1/attestation/appraise", "attestation_verifier", "verify"},
+	{http.MethodPost, "/api/v1/attestation/appraise/android-key", "attestation_verifier", "verify"},
+	{http.MethodPost, "/api/v1/attestation/appraise/ek-certificate", "attestation_verifier", "verify"},
 	{http.MethodPost, "/api/v1/peer-attestation/challenge", "peer_attestation", "challenge"},
 	{http.MethodPost, "/api/v1/peer-attestation/evidence", "peer_attestation", "submit"},
 

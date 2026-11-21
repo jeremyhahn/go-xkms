@@ -130,3 +130,23 @@ func (h *AttestationAppraisalHandlers) AppraiseHandler(w http.ResponseWriter, r 
 	resp, err := h.servicer.AppraiseAttestationQuote(r.Context(), &req)
 	respondAppraisal(w, resp, err, http.StatusOK)
 }
+
+// AppraiseAndroidKeyHandler handles POST /api/v1/attestation/appraise/android-key.
+func (h *AttestationAppraisalHandlers) AppraiseAndroidKeyHandler(w http.ResponseWriter, r *http.Request) {
+	var req transport.AppraiseAndroidKeyAttestationRequest
+	if !decodeAppraisal(w, r, &req) {
+		return
+	}
+	resp, err := h.servicer.AppraiseAndroidKeyAttestation(r.Context(), &req)
+	respondAppraisal(w, resp, err, http.StatusOK)
+}
+
+// AppraiseEKCertificateHandler handles POST /api/v1/attestation/appraise/ek-certificate.
+func (h *AttestationAppraisalHandlers) AppraiseEKCertificateHandler(w http.ResponseWriter, r *http.Request) {
+	var req transport.AppraiseEKCertificateRequest
+	if !decodeAppraisal(w, r, &req) {
+		return
+	}
+	resp, err := h.servicer.AppraiseEKCertificate(r.Context(), &req)
+	respondAppraisal(w, resp, err, http.StatusOK)
+}

@@ -15,7 +15,6 @@ package wire
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -25,10 +24,12 @@ import (
 // values are collections of the caller's tenant; a record is named by the
 // AttestationNameParam query parameter.
 const (
-	AttestationEndorsementsPath         = "/api/v1/attestation/endorsements"
-	AttestationReferenceValuesPath      = "/api/v1/attestation/reference-values"
-	AttestationReferenceValuesEntryPath = AttestationReferenceValuesPath + "/entry"
-	AttestationAppraisePath             = "/api/v1/attestation/appraise"
+	AttestationEndorsementsPath          = "/api/v1/attestation/endorsements"
+	AttestationReferenceValuesPath       = "/api/v1/attestation/reference-values"
+	AttestationReferenceValuesEntryPath  = AttestationReferenceValuesPath + "/entry"
+	AttestationAppraisePath              = "/api/v1/attestation/appraise"
+	AttestationAppraiseAndroidKeyPath    = AttestationAppraisePath + "/android-key"
+	AttestationAppraiseEKCertificatePath = AttestationAppraisePath + "/ek-certificate"
 )
 
 // AttestationNameParam names a record; AttestationKindParam filters the
@@ -141,14 +142,26 @@ func (c AttestationAppraisalClient) AppraiseAttestationQuote(ctx context.Context
 	return &resp, nil
 }
 
-// AppraiseAndroidKeyAttestation is a placeholder the REST commit of row
-// 1660 slice A replaces.
-func (c AttestationAppraisalClient) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
-	return nil, errors.ErrUnsupported
+// AppraiseAndroidKeyAttestation appraises an Android key attestation chain.
+func (c AttestationAppraisalClient) AppraiseAndroidKeyAttestation(ctx context.Context, req *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	var resp transport.AttestationResult
+	if err := callJSON(ctx, c.Do, http.MethodPost, AttestationAppraiseAndroidKeyPath, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
-// AppraiseEKCertificate is a placeholder the REST commit of row 1660
-// slice A replaces.
-func (c AttestationAppraisalClient) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
-	return nil, errors.ErrUnsupported
+// AppraiseEKCertificate appraises a TPM endorsement key certificate.
+func (c AttestationAppraisalClient) AppraiseEKCertificate(ctx context.Context, req *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	var resp transport.AttestationResult
+	if err := callJSON(ctx, c.Do, http.MethodPost, AttestationAppraiseEKCertificatePath, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
