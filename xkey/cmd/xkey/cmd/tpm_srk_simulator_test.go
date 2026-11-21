@@ -282,6 +282,47 @@ func TestTPMSRKEnrollShortPINLeavesNoSRK(t *testing.T) {
 	assert.NotContains(t, out, "already enrolled")
 }
 
+// closeCountingTPM counts Close calls on the shared simulator TPM.
+type closeCountingTPM struct {
+	sharedTPM
+	closes *int
+}
+
+func (c closeCountingTPM) Close() error {
+	*c.closes++
+	return nil
+}
+
+// TestFIDO2TPM2BackendCloseClosesTPM: the fido2 tpm2 backend owns the TPM it
+// opened, so its Close closes that TPM once, and a second Close is a no-op.
+func TestFIDO2TPM2BackendCloseClosesTPM(t *testing.T) {
+	sim := installTPMForSRK(t)
+	pinFile := writeSRKPINFile(t, testSRKUserPIN)
+	_, err := runSRKEnroll(t, "", "--pin-file", pinFile)
+	require.NoError(t, err)
+
+	openFreshSRKTPM(t, sim)
+	closes := 0
+	savedOpenForDevice := openTPMForDevice
+	t.Cleanup(func() { openTPMForDevice = savedOpenForDevice })
+	openTPMForDevice = func(string) (xkms.TrustedPlatformModule, error) {
+		return closeCountingTPM{sharedTPM: newSharedTPM(t, sim.tpm), closes: &closes}, nil
+	}
+	setViperForTest(t, "fido2.pin_file", pinFile)
+	setViperForTest(t, "fido2.pin_stdin", false)
+	cfg := &FIDO2Config{TPMDevice: ""}
+	cfg.PlatformSRKPIN, cfg.PlatformSRKPINErr = resolveFIDO2PlatformSRKPIN()
+
+	backend, err := createFIDO2TPM2KeyBackend(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	require.Equal(t, 0, closes, "the TPM stays open while the backend is in use")
+
+	require.NoError(t, backend.Close())
+	assert.Equal(t, 1, closes, "Close closes the TPM the backend opened")
+	require.NoError(t, backend.Close())
+	assert.Equal(t, 1, closes, "a second Close does not close the TPM again")
+}
+
 // TestTPMSRKEnrollFreshOpenIdempotent: enrolling again from a fresh open of
 // an already-enrolled TPM (a second process) verifies the PIN and never
 // re-creates the SRK; another PIN is refused.
