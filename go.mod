@@ -36,7 +36,7 @@ require (
 	github.com/jeremyhahn/go-codec v1.5.1-alpha
 	github.com/jeremyhahn/go-enclave v0.11.1-alpha
 	github.com/jeremyhahn/go-frost v0.3.0-alpha
-	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
+	github.com/jeremyhahn/go-luks2 v1.0.3-alpha
 	github.com/jeremyhahn/go-qrdb v0.58.5-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.58.5-alpha
 	github.com/jeremyhahn/go-truststrap v0.7.1-alpha
