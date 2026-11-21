@@ -36,7 +36,7 @@ services:
       secrets:
         - gomodauth
         - apt_proxy
-    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    image: go-xkms-integration-acme-server:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - acme-data:/data
     environment:
@@ -64,7 +64,7 @@ services:
       secrets:
         - gomodauth
         - apt_proxy
-    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    image: go-xkms-integration-test:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       acme-server:
         condition: service_healthy
