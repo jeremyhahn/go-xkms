@@ -1,0 +1,1 @@
+CI moves to template v1.53: main runs share one group per event, so a newer main push cancels the older run; fork pull requests run on hosted runners only; a cancelled main run posts a skipped gate; the LAN mask covers host names.
