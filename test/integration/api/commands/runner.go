@@ -15,11 +15,13 @@ package commands
 
 import (
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,19 +39,18 @@ const (
 	ProtocolEmbedded ProtocolType = "embedded"
 )
 
-// AllProtocols returns all supported protocols including embedded mode.
-// MCP is excluded because the SDK transport speaks HTTP but the MCP server
-// speaks JSON-RPC 2.0 over raw TCP — a protocol mismatch that must be
-// resolved before MCP can participate in integration tests.
+// AllProtocols returns the protocols of the per-protocol command tests.
+// The CLI matrix uses CLIProtocols, which also covers MCP.
 func AllProtocols() []ProtocolType {
 	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolEmbedded}
 }
 
-// CLIProtocols returns protocols supported by the CLI for remote server connections.
-// This includes all network protocols that require a running server.
-// MCP is excluded due to SDK transport / server protocol mismatch (HTTP vs JSON-RPC).
+// CLIProtocols returns every SDK transport the CLI matrix runs over
+// (docs/SPEC.md row cli-protocol-matrix): the network transports, MCP
+// (JSON-RPC 2.0 over TCP through the SDK MCP client transport) and embedded
+// (in-process, --transport embedded).
 func CLIProtocols() []ProtocolType {
-	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
+	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP, ProtocolEmbedded}
 }
 
 // RemoteProtocols returns protocols that require a remote server connection.
@@ -130,7 +131,9 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(r.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
-		return "mcp://" + r.MCPAddr
+		// The integration server serves MCP on its TLS listener (tls.enabled
+		// in config.test.yaml); mcp:// would make the SDK speak plaintext.
+		return "mcps://" + r.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""
@@ -196,31 +199,44 @@ func (r *TestRunner) RunCommand(t *testing.T, args ...string) (string, string, e
 func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType, args ...string) (string, string, error) {
 	t.Helper()
 
-	// Build prefix args with server URL and TLS options
+	return r.RunCommand(t, r.protocolArgs(protocol, args)...)
+}
+
+// protocolArgs prefixes args with the flags that select protocol: the
+// server URL and TLS CA for a network transport, or --transport embedded
+// and the runner's key directory for embedded (each once: a RequiresLocal
+// command already carries --transport embedded, a RequiresKeyDir one its
+// --key-dir).
+func (r *TestRunner) protocolArgs(protocol ProtocolType, args []string) []string {
 	prefixArgs := []string{}
 
-	// For embedded protocol, use --transport embedded instead of server URL
 	if protocol == ProtocolEmbedded {
-		prefixArgs = append(prefixArgs, "--transport", "embedded")
-	} else {
-		serverURL := r.GetServerURL(protocol)
-		if serverURL != "" {
-			prefixArgs = append(prefixArgs, "--server", serverURL)
+		if !slices.Contains(args, "--transport") {
+			prefixArgs = append(prefixArgs, "--transport", "embedded")
 		}
-
-		// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-		// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
-		needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
-			protocol == ProtocolGRPC ||
-			protocol == ProtocolQUIC
-
-		if needsTLS && r.TLSCACert != "" {
-			prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
+		if r.KeyDir != "" && !slices.Contains(args, "--key-dir") {
+			prefixArgs = append(prefixArgs, "--key-dir", r.KeyDir)
 		}
+		return append(prefixArgs, args...)
 	}
 
-	args = append(prefixArgs, args...)
-	return r.RunCommand(t, args...)
+	serverURL := r.GetServerURL(protocol)
+	if serverURL != "" {
+		prefixArgs = append(prefixArgs, "--server", serverURL)
+	}
+
+	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC,
+	// QUIC, MCP over mcps://).
+	needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
+		protocol == ProtocolGRPC ||
+		protocol == ProtocolQUIC ||
+		protocol == ProtocolMCP
+
+	if needsTLS && r.TLSCACert != "" {
+		prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
+	}
+
+	return append(prefixArgs, args...)
 }
 
 // BuildCommandArgs builds the full argument list for a command definition
@@ -365,16 +381,29 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 	// Track signature from key-sign for use in key-verify
 	var capturedSignature string
 
+	// Per-run work dir for file arguments, seeded with raw AES-256 material
+	// for key wrap/import (#2321 slice f).
+	workDir := t.TempDir()
+	material := make([]byte, 32)
+	if _, err := rand.Read(material); err != nil {
+		t.Fatalf("key material: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, MatrixKeyMaterialFile), material, 0o600); err != nil {
+		t.Fatalf("write key material: %v", err)
+	}
+
+	// Commands that passed in this run; a SetupSteps command runs only after
+	// all its steps passed.
+	passed := map[string]bool{}
+
 	for _, cmd := range AllCommands() {
-		// Skip commands that require unavailable build tags
-		if !r.commandTagsAvailable(cmd, enabledTags) {
-			t.Logf("Skipping %s: requires build tags %v", cmd.Name, cmd.BuildTags)
+		// Skip commands this cell cannot run, naming the reason
+		if reason, skip := SkipReason(cmd, protocol, enabledTags); skip {
+			t.Logf("Skipping (%s, %s) %s: %s", cmd.Category, protocol, cmd.Name, reason)
 			continue
 		}
-
-		// Skip commands that require prior setup (tested in workflow tests instead)
-		if cmd.RequiresSetup {
-			t.Logf("Skipping %s: requires prior setup (tested in workflow tests)", cmd.Name)
+		if step, ok := failedSetupStep(cmd, passed); ok {
+			t.Logf("Skipping (%s, %s) %s: setup step %s did not pass", cmd.Category, protocol, cmd.Name, step)
 			continue
 		}
 
@@ -392,6 +421,13 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 			if arg.Flag == "cn" && cmd.Category == CategoryCA {
 				overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
 			}
+			if strings.Contains(arg.Value, MatrixWorkDir) {
+				key := arg.Flag
+				if arg.IsPositional {
+					key = arg.Description
+				}
+				overrides[key] = strings.ReplaceAll(arg.Value, MatrixWorkDir, workDir)
+			}
 		}
 
 		// For key-verify, use the captured signature from key-sign
@@ -403,12 +439,17 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 		if !cmd.RequiresServer {
 			result := r.RunCommandTest(t, protocol, cmd, overrides)
 			results = append(results, result)
+			passed[cmd.Name] = result.Passed
 			continue
 		}
 
 		t.Run(cmd.Name, func(t *testing.T) {
 			result := r.RunCommandTest(t, protocol, cmd, overrides)
+			if reason, skip := unsupportedOnBackend(cmd, result); skip {
+				t.Skipf("(%s, %s) %s: %s", cmd.Category, protocol, cmd.Name, reason)
+			}
 			results = append(results, result)
+			passed[cmd.Name] = result.Passed
 
 			// Capture signature from key-sign output for use in key-verify
 			if cmd.Name == "key-sign" && result.Passed {
@@ -428,23 +469,6 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 	}
 
 	return results
-}
-
-// commandTagsAvailable checks if all required build tags are available
-func (r *TestRunner) commandTagsAvailable(cmd CommandDefinition, enabledTags []string) bool {
-	for _, requiredTag := range cmd.BuildTags {
-		found := false
-		for _, enabledTag := range enabledTags {
-			if requiredTag == enabledTag {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
 }
 
 // Helper functions
@@ -500,5 +524,6 @@ func uniqueKeyIDs(runID int64) map[string]string {
 
 		"test-symmetric-exportable": fmt.Sprintf("test-symmetric-exportable-%d", runID),
 		"test-symmetric-sensitive":  fmt.Sprintf("test-symmetric-sensitive-%d", runID),
+		"test-import-key":           fmt.Sprintf("test-import-key-%d", runID),
 	}
 }
