@@ -67,6 +67,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
+	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -133,7 +134,17 @@ type Server struct {
 	mu           sync.RWMutex
 	backends     map[string]xkms.Backend
 	keyProviders map[string]types.KeyProvider
-	logger       *slog.Logger
+
+	// backendPIN holds the PKCS#11 backend PIN under the resolved
+	// backend_pin strategy (#2262); nil when no PKCS#11 backend is enabled.
+	backendPIN *pinselect.BackendPIN
+	// backendPINProbe reports (TPM present, barrier available) for the
+	// backend PIN resolution; nil uses the configured backends and barrier.
+	backendPINProbe func() (tpmPresent, barrierAvailable bool)
+	// pkcs11PINOpener opens the PKCS#11 backend with a released PIN; nil
+	// uses the build's PKCS#11 opener.
+	pkcs11PINOpener func(pin []byte) (types.KeyProvider, error)
+	logger          *slog.Logger
 
 	// sshClient is the shared SSH SDK client wired into every transport. It
 	// is built once, lazily, via ensureSSHClient.
@@ -746,6 +757,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "config secret resolution", Err: err}
 	}
 
+	// Resolve the backend PIN strategy (#2262) beside the secret registry:
+	// a refused resolution stops start-up (fail closed).
+	if err := s.resolveBackendPIN(); err != nil {
+		abortAfterStorage("backend PIN strategy")
+		return nil, &ErrServiceInit{Service: "backend PIN strategy", Err: err}
+	}
+
 	// Initialize backends
 	if err := s.initializeBackends(); err != nil {
 		abortAfterStorage("backends")
@@ -1168,7 +1186,13 @@ func (s *Server) initializeBackends() error {
 		return &ErrBackendInit{Backend: "TPM2", Err: err}
 	}
 
-	if err := s.initPKCS11Backend(); err != nil {
+	// With a backend PIN strategy (#2262) the PKCS#11 backend starts here,
+	// after unseal, with the held PIN (manual waits for UnsealBackendPIN).
+	if s.backendPIN != nil {
+		if err := s.startPKCS11AfterUnseal(); err != nil {
+			return err
+		}
+	} else if err := s.initPKCS11Backend(); err != nil {
 		return &ErrBackendInit{Backend: "PKCS#11", Err: err}
 	}
 
