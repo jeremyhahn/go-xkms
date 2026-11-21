@@ -486,10 +486,10 @@ func TestKeyWrapCmd_BadParamsJSON(t *testing.T) {
 	}
 }
 
-func TestKeyWrapCmd_UnexpectedWrappingKeyType(t *testing.T) {
-	// A JSON-round-tripped interface{} field decodes to a string, not []byte,
-	// so wrapKey's type assertion fails deterministically — this exercises
-	// the closure's full file-parsing path plus that named-function branch.
+func TestKeyWrapCmd_MissingWrappingKey(t *testing.T) {
+	// The import-params file carries the wrapping public key as bytes
+	// (import_params_file.go); without one key wrap exits before it
+	// reaches the client.
 	withGlobalConfig(t, newKeyRunConfig("text", &mockKeyClient{}))
 	dir := t.TempDir()
 	keyMat := filepath.Join(dir, "keymat.bin")
@@ -497,7 +497,7 @@ func TestKeyWrapCmd_UnexpectedWrappingKeyType(t *testing.T) {
 		t.Fatal(err)
 	}
 	params := filepath.Join(dir, "params.json")
-	if err := os.WriteFile(params, []byte(`{"WrappingPublicKey":"cHVia2V5","Algorithm":"RSAES_OAEP_SHA_256"}`), 0600); err != nil {
+	if err := os.WriteFile(params, []byte(`{"Algorithm":"RSAES_OAEP_SHA_256"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	code := captureExit(t, func() {

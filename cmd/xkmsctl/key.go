@@ -1111,7 +1111,7 @@ func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 
 	// If output file is specified, save params to file
 	if outputFile != "" {
-		paramsData, err := json.MarshalIndent(params, "", "  ")
+		paramsData, err := encodeImportParams(params)
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrSerializeImportParametersFailed, Err: err})
 			return
@@ -1166,15 +1166,15 @@ var keyWrapCmd = &cobra.Command{
 			return
 		}
 
-		var params client.ImportParameters
-		if err := json.Unmarshal(paramsData, &params); err != nil {
+		params, err := decodeImportParams(paramsData)
+		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrDeserializeImportParametersFailed, Err: err})
 			return
 		}
 
 		printVerbose("Using wrapping algorithm: %s", params.Algorithm)
 
-		wrapKey(cfg, printer, keyMaterial, &params, outputFile)
+		wrapKey(cfg, printer, keyMaterial, params, outputFile)
 	},
 }
 
@@ -1196,11 +1196,9 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.I
 	printVerbose("Connected to xkmsd")
 
 	// Prepare wrap key request - params.WrappingPublicKey should already be in the right format
-	var wrappingPubKeyBytes []byte
-	if pubKey, ok := params.WrappingPublicKey.([]byte); ok {
-		wrappingPubKeyBytes = pubKey
-	} else {
-		handleError(&WrappedDetailError{Sentinel: ErrWrappingKeyUnexpectedType, Detail: fmt.Sprintf("%T", params.WrappingPublicKey)})
+	wrappingPubKeyBytes, err := wrappingKeyBytes(params)
+	if err != nil {
+		handleError(err)
 		return
 	}
 
@@ -1281,15 +1279,15 @@ var keyUnwrapCmd = &cobra.Command{
 			return
 		}
 
-		var params client.ImportParameters
-		if err := json.Unmarshal(paramsData, &params); err != nil {
+		params, err := decodeImportParams(paramsData)
+		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrDeserializeImportParametersFailed, Err: err})
 			return
 		}
 
 		printVerbose("Using wrapping algorithm: %s", params.Algorithm)
 
-		unwrapKey(cfg, printer, &wrapped, &params, outputFile)
+		unwrapKey(cfg, printer, &wrapped, params, outputFile)
 	},
 }
 
