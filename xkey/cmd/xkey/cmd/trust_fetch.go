@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/url"
@@ -196,6 +197,11 @@ func executeTrustFetch(cmd *cobra.Command, target string) (err error) {
 		return &SentinelCauseError{Sentinel: ErrTrustFetchFailed, Cause: err}
 	}
 
+	if resolveXKMSdURL() != "" {
+		return importFetchedBundleXKMSd(cmd, target, bundle.Certificates, fmt.Sprint(bundle.LeafSPKI),
+			string(addOpts.Purpose), addOpts.Source, installSystem)
+	}
+
 	store, err := openTrustStore()
 	if err != nil {
 		return err
@@ -268,6 +274,34 @@ func executeTrustFetch(cmd *cobra.Command, target string) (err error) {
 		}
 	}
 
+	return nil
+}
+
+// importFetchedBundleXKMSd is the server-mode tail of executeTrustFetch:
+// the fetched bundle goes to the xkmsd trust-root store (docs/SPEC.md
+// trust-roots) and --install-system installs each fetched self-signed root
+// from the server's copy. The local FileStore is never opened.
+func importFetchedBundleXKMSd(cmd *cobra.Command, target string, certs []*x509.Certificate, leafSPKI, purpose, source string, installSystem bool) error {
+	added, skipped, err := importTrustCertsXKMSd(cmd, certs, purpose, source)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrTrustFetchFailed, Cause: err}
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+		"Bundle fetched from %s\n  certificates: %d (added: %d, skipped: %d)\n  leaf SPKI:    %s\n",
+		target, len(certs), added, skipped, leafSPKI)
+
+	if !installSystem {
+		return nil
+	}
+	for _, cert := range certs {
+		if !cert.IsCA || !certIsSelfSigned(cert.Subject.String(), cert.Issuer.String()) {
+			continue
+		}
+		if err := runTrustInstallXKMSd(cmd, truststore.Fingerprint(cert)); err != nil {
+			return &SentinelCauseError{Sentinel: ErrTrustFetchFailed, Cause: err}
+		}
+	}
 	return nil
 }
 

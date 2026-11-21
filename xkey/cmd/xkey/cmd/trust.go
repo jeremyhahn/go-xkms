@@ -820,6 +820,37 @@ func runTrustAddXKMSd(cmd *cobra.Command, pemFile string, pemData []byte, purpos
 	return nil
 }
 
+// importTrustCertsXKMSd imports fetched certificates into the xkmsd
+// trust-root store (docs/SPEC.md trust-roots: against a server xkey uses
+// the server's store) and returns the server's added/skipped counts. It
+// never opens the local FileStore.
+func importTrustCertsXKMSd(cmd *cobra.Command, certs []*x509.Certificate, purpose, source string) (added, skipped int, err error) {
+	var pemData []byte
+	for _, cert := range certs {
+		pemData = append(pemData, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})...)
+	}
+
+	client, err := connectXKMSdClient(cmd)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	resp, err := client.TrustRootImport(trustCommandContext(cmd), &transport.TrustRootImportRequest{
+		PEM:     string(pemData),
+		Purpose: purpose,
+		Source:  source,
+	})
+	if err != nil {
+		return 0, 0, fmt.Errorf("TrustRootImport: %w", err)
+	}
+	return int(resp.Added), int(resp.Skipped), nil
+}
+
 // runTrustRemoveXKMSd deletes a root from the server's trust-root store. It
 // never falls back to the local store.
 func runTrustRemoveXKMSd(cmd *cobra.Command, fingerprint string) (err error) {
