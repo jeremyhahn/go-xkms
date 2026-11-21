@@ -85,6 +85,30 @@ type ResolveSigningKeyRequest struct {
 	Repository string `json:"repository"`
 }
 
+// SignReleaseCoRIMRequest names the repository whose signing key signs an
+// unsigned CoRIM.
+type SignReleaseCoRIMRequest struct {
+	// Repository is the repository the reference values belong to; its key
+	// is the tenant's release key unless a binding names another.
+	Repository string `json:"repository"`
+
+	// CoRIM is the CBOR encoding of the unsigned CoRIM.
+	CoRIM []byte `json:"corim"`
+
+	// SignerName is the corim-meta signer name. Empty means Repository.
+	SignerName string `json:"signer_name,omitempty"`
+}
+
+// SignReleaseCoRIMResponse carries the signed CoRIM and the key that signed it.
+type SignReleaseCoRIMResponse struct {
+	// SignedCoRIM is the COSE_Sign1 encoding of the signed CoRIM.
+	SignedCoRIM []byte `json:"signed_corim"`
+
+	// KeyID and Backend name the repository key that signed it.
+	KeyID   string `json:"key_id"`
+	Backend string `json:"backend"`
+}
+
 // SigningKeyResolution is the key that signs a repository.
 type SigningKeyResolution struct {
 	Repository string `json:"repository"`

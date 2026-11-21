@@ -25,10 +25,20 @@ import (
 // Repository is the repository every call of Calls names.
 const Repository = "acme/app"
 
+// Service is the client side of the signing-key and release-signing methods.
+type Service interface {
+	transport.SigningKeyService
+	transport.ReleaseSigningService
+}
+
 // Calls returns one call of every signing-key method of svc, by method name,
 // each returning only its error.
-func Calls(ctx context.Context, svc transport.SigningKeyService) map[string]func() error {
+func Calls(ctx context.Context, svc Service) map[string]func() error {
 	return map[string]func() error{
+		"SignReleaseCoRIM": func() error {
+			_, err := svc.SignReleaseCoRIM(ctx, &transport.SignReleaseCoRIMRequest{Repository: Repository, CoRIM: []byte{0xa0}})
+			return err
+		},
 		"SetSigningKeyBinding": func() error {
 			_, err := svc.SetSigningKeyBinding(ctx, &transport.SetSigningKeyBindingRequest{Repository: Repository, KeyID: "app-release"})
 			return err

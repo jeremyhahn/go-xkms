@@ -3174,7 +3174,7 @@ integration-test-cli-local:
 .PHONY: integration-test-signing
 ## integration-test-signing: Run signing package integration tests (runs in devcontainer)
 integration-test-signing:
-	$(call run_in_devcontainer,$(GO) test -v -tags=$(call go_tags,integration) ./test/integration/signing/... -timeout 5m,integration-test-signing)
+	$(call run_in_devcontainer,$(GO) test -v -tags='$(call go_tags,integration$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/signing/... -timeout 10m,integration-test-signing)
 
 .PHONY: integration-test-opaque
 ## integration-test-opaque: Run opaque key package integration tests (runs in devcontainer)

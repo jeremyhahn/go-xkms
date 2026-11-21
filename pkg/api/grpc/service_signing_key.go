@@ -125,3 +125,18 @@ func (s *Service) ResolveSigningKey(ctx context.Context, req *pb.ResolveSigningK
 		return pbconv.SigningKeyResolutionToProto(resolution), nil
 	})
 }
+
+// SignReleaseCoRIM signs a CoRIM with the repository's key in the caller's
+// tenant (attestation_signing_keys:sign).
+func (s *Service) SignReleaseCoRIM(ctx context.Context, req *pb.SignReleaseCoRIMRequest) (*pb.SignReleaseCoRIMResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceAttestationSigningKeys, auth.ActionSign, req.GetRepository()); err != nil {
+		return nil, err
+	}
+	return signingKeyCall(s, func(x *xkms.XKMSService) (*pb.SignReleaseCoRIMResponse, error) {
+		signed, err := x.SignReleaseCoRIM(ctx, pbconv.SignReleaseCoRIMRequestFromProto(req))
+		if err != nil {
+			return nil, err
+		}
+		return pbconv.SignReleaseCoRIMResponseToProto(signed), nil
+	})
+}

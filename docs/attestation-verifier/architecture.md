@@ -393,6 +393,17 @@ certificate chains to.
   an attestation whose signing certificate carries another key with
   `image.ErrSigningKeyMismatch`. The certificate must still chain to the
   configured roots.
+- **Signing.** The same key is the default signer.
+  `XKMSService.RepositorySigner` (`pkg/xkms/release_signing.go:90`) checks
+  `attestation_signing_keys:sign`, resolves the caller tenant's key for the
+  repository and returns the tenant-scoped backend's `crypto.Signer`, so the
+  private key never leaves the backend. `SignReleaseCoRIM` (`:61`) signs an
+  unsigned CoRIM with it through `refvalue.Sign`
+  (`pkg/attestation/refvalue/sign.go:44`, COSE_Sign1 with the CoRIM meta
+  header). `image.NewRepositorySigner`
+  (`pkg/image/repository_signer.go:20`) builds an image signer over it when
+  the config names no `Signer`. `sdk/go` re-exports both as
+  `SignReleaseCoRIMRequest` and `NewRepositoryImageSigner`.
 - **Service and transports.** `XKMSService` serves the five verbs (set,
   get, list, delete, resolve) on the caller's tenant
   (`pkg/xkms/servicer_signing_keys.go`). Each verb checks its

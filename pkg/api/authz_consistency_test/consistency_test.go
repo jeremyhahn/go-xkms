@@ -303,6 +303,7 @@ var canonicalCapabilities = map[string]capability{
 	"attestation.signingKey.list":    {GRPC: "ListSigningKeyBindings", MCP: "attestation.signing_key.list", REST: "GET /api/v1/attestation/signing-keys"},
 	"attestation.signingKey.delete":  {GRPC: "DeleteSigningKeyBinding", MCP: "attestation.signing_key.delete", REST: "DELETE /api/v1/attestation/signing-keys/binding"},
 	"attestation.signingKey.resolve": {GRPC: "ResolveSigningKey", MCP: "attestation.signing_key.resolve", REST: "GET /api/v1/attestation/signing-keys/resolve"},
+	"attestation.signingKey.sign":    {GRPC: "SignReleaseCoRIM", MCP: "attestation.signing_key.sign", REST: "POST /api/v1/attestation/signing-keys/sign"},
 	"peer.attestation.challenge":     {GRPC: "PeerAttestationChallenge", MCP: "peer.attestation.challenge", REST: "POST /api/v1/peer-attestation/challenge"},
 	"peer.attestation.submit":        {GRPC: "SubmitPeerAttestation", MCP: "peer.attestation.submit", REST: "POST /api/v1/peer-attestation/evidence"},
 }

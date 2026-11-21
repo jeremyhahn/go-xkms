@@ -198,6 +198,7 @@ const (
 	KeystoreService_ListSigningKeyBindings_FullMethodName       = "/xkms.v1.KeystoreService/ListSigningKeyBindings"
 	KeystoreService_DeleteSigningKeyBinding_FullMethodName      = "/xkms.v1.KeystoreService/DeleteSigningKeyBinding"
 	KeystoreService_ResolveSigningKey_FullMethodName            = "/xkms.v1.KeystoreService/ResolveSigningKey"
+	KeystoreService_SignReleaseCoRIM_FullMethodName             = "/xkms.v1.KeystoreService/SignReleaseCoRIM"
 	KeystoreService_PKCS11StatePut_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StatePut"
 	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName       = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
 	KeystoreService_PKCS11StateCAS_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StateCAS"
@@ -681,6 +682,9 @@ type KeystoreServiceClient interface {
 	DeleteSigningKeyBinding(ctx context.Context, in *DeleteSigningKeyBindingRequest, opts ...grpc.CallOption) (*DeleteSigningKeyBindingResponse, error)
 	// ResolveSigningKey returns the key that signs a repository.
 	ResolveSigningKey(ctx context.Context, in *ResolveSigningKeyRequest, opts ...grpc.CallOption) (*SigningKeyResolution, error)
+	// SignReleaseCoRIM signs a CoRIM with the key of a repository: the
+	// caller tenant's release key unless a binding names another.
+	SignReleaseCoRIM(ctx context.Context, in *SignReleaseCoRIMRequest, opts ...grpc.CallOption) (*SignReleaseCoRIMResponse, error)
 	PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error)
@@ -2513,6 +2517,16 @@ func (c *keystoreServiceClient) ResolveSigningKey(ctx context.Context, in *Resol
 	return out, nil
 }
 
+func (c *keystoreServiceClient) SignReleaseCoRIM(ctx context.Context, in *SignReleaseCoRIMRequest, opts ...grpc.CallOption) (*SignReleaseCoRIMResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SignReleaseCoRIMResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_SignReleaseCoRIM_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PKCS11StatePutResponse)
@@ -3372,6 +3386,9 @@ type KeystoreServiceServer interface {
 	DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBindingRequest) (*DeleteSigningKeyBindingResponse, error)
 	// ResolveSigningKey returns the key that signs a repository.
 	ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error)
+	// SignReleaseCoRIM signs a CoRIM with the key of a repository: the
+	// caller tenant's release key unless a binding names another.
+	SignReleaseCoRIM(context.Context, *SignReleaseCoRIMRequest) (*SignReleaseCoRIMResponse, error)
 	PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error)
@@ -3978,6 +3995,9 @@ func (UnimplementedKeystoreServiceServer) DeleteSigningKeyBinding(context.Contex
 }
 func (UnimplementedKeystoreServiceServer) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResolveSigningKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) SignReleaseCoRIM(context.Context, *SignReleaseCoRIMRequest) (*SignReleaseCoRIMResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SignReleaseCoRIM not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PKCS11StatePut not implemented")
@@ -7276,6 +7296,24 @@ func _KeystoreService_ResolveSigningKey_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_SignReleaseCoRIM_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SignReleaseCoRIMRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).SignReleaseCoRIM(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_SignReleaseCoRIM_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).SignReleaseCoRIM(ctx, req.(*SignReleaseCoRIMRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PKCS11StatePut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PKCS11StatePutRequest)
 	if err := dec(in); err != nil {
@@ -8738,6 +8776,10 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResolveSigningKey",
 			Handler:    _KeystoreService_ResolveSigningKey_Handler,
+		},
+		{
+			MethodName: "SignReleaseCoRIM",
+			Handler:    _KeystoreService_SignReleaseCoRIM_Handler,
 		},
 		{
 			MethodName: "PKCS11StatePut",

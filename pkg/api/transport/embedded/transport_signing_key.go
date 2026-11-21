@@ -61,3 +61,11 @@ func (t *Transport) ResolveSigningKey(ctx context.Context, req *transport.Resolv
 	}
 	return t.service.ResolveSigningKey(ctx, req)
 }
+
+// SignReleaseCoRIM implements transport.ReleaseSigningService.
+func (t *Transport) SignReleaseCoRIM(ctx context.Context, req *transport.SignReleaseCoRIMRequest) (*transport.SignReleaseCoRIMResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.SignReleaseCoRIM(ctx, req)
+}

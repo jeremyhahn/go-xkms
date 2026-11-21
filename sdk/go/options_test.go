@@ -1550,3 +1550,7 @@ func (*mockService) DeleteSigningKeyBinding(context.Context, *DeleteAttestationS
 func (*mockService) ResolveSigningKey(context.Context, *ResolveAttestationSigningKeyRequest) (*AttestationSigningKeyResolution, error) {
 	return nil, nil
 }
+
+func (*mockService) SignReleaseCoRIM(context.Context, *SignReleaseCoRIMRequest) (*SignReleaseCoRIMResponse, error) {
+	return nil, nil
+}

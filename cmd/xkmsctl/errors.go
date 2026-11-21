@@ -845,6 +845,30 @@ var (
 	// image".
 	ErrSignOTAImageFailed = errors.New("failed to sign the OTA image")
 
+	// ErrSignReleaseCoRIMFailed is the sentinel error "failed to sign the
+	// release CoRIM".
+	ErrSignReleaseCoRIMFailed = errors.New("failed to sign the release CoRIM")
+
+	// ErrSetSigningKeyBindingFailed is the sentinel error "failed to set the
+	// signing-key binding".
+	ErrSetSigningKeyBindingFailed = errors.New("failed to set the signing-key binding")
+
+	// ErrGetSigningKeyBindingFailed is the sentinel error "failed to get the
+	// signing-key binding".
+	ErrGetSigningKeyBindingFailed = errors.New("failed to get the signing-key binding")
+
+	// ErrListSigningKeyBindingsFailed is the sentinel error "failed to list
+	// the signing-key bindings".
+	ErrListSigningKeyBindingsFailed = errors.New("failed to list the signing-key bindings")
+
+	// ErrDeleteSigningKeyBindingFailed is the sentinel error "failed to
+	// delete the signing-key binding".
+	ErrDeleteSigningKeyBindingFailed = errors.New("failed to delete the signing-key binding")
+
+	// ErrResolveSigningKeyFailed is the sentinel error "failed to resolve the
+	// signing key".
+	ErrResolveSigningKeyFailed = errors.New("failed to resolve the signing key")
+
 	// ErrChangeKeyVersionFailed is the sentinel error "failed to change the
 	// key version".
 	ErrChangeKeyVersionFailed = errors.New("failed to change the key version")

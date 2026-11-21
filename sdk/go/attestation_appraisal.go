@@ -15,6 +15,8 @@ package xkms
 
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
+	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // The attestation Verifier: appraisal of TPM evidence against a tenant's
@@ -128,6 +130,28 @@ type (
 // AttestationReleaseSigningKeyID is the key ID of a tenant's release signing
 // key.
 const AttestationReleaseSigningKeyID = appraisal.ReleaseSigningKeyID
+
+// Release signing: XKMSService.SignReleaseCoRIM signs an unsigned CoRIM with
+// a repository's signing key through its backend crypto.Signer.
+type (
+	// SignReleaseCoRIMRequest names the repository and the unsigned CoRIM.
+	SignReleaseCoRIMRequest = pkgxkms.SignReleaseCoRIMRequest
+	// SignReleaseCoRIMResponse is the signed CoRIM and the key that signed it.
+	SignReleaseCoRIMResponse = pkgxkms.SignReleaseCoRIMResponse
+)
+
+// SignCoRIM signs an unsigned CoRIM (CBOR) with any crypto.Signer under a
+// COSE algorithm; the result verifies with refvalue.VerifySigned.
+var SignCoRIM = refvalue.Sign
+
+var (
+	// ErrCoRIMNilSigner reports a SignCoRIM call without a signer.
+	ErrCoRIMNilSigner = refvalue.ErrNilSigner
+	// ErrCoRIMUnsupportedKey reports a signer key COSE cannot sign with.
+	ErrCoRIMUnsupportedKey = refvalue.ErrUnsupportedKey
+	// ErrCoRIMSign reports a failure of the signer itself.
+	ErrCoRIMSign = refvalue.ErrSign
+)
 
 // Appraisal: evidence in, an attestation result out.
 type (
