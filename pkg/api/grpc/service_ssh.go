@@ -24,6 +24,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	pkgsshkeys "github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -179,7 +180,12 @@ func (s *Service) SSHSign(ctx context.Context, req *pb.SSHSignRequest) (*pb.SSHS
 	if err != nil {
 		return nil, sshStatus(err)
 	}
-	sig, err := signer.Sign(rand.Reader, req.GetDigest())
+	// A named algorithm signs through ssh.AlgorithmSigner (RFC 8332 §3); a
+	// refused one is the caller's error, not the server's.
+	sig, err := pkgsshkeys.SignWithAlgorithm(signer, rand.Reader, req.GetDigest(), req.GetAlgorithm())
+	if pkgsshkeys.IsSignatureAlgorithmRefusal(err) {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	if err != nil {
 		return nil, sshStatus(err)
 	}

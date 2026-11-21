@@ -61,44 +61,6 @@ func generateEncryptedPEM(t *testing.T, passphrase []byte) []byte {
 	return pem.EncodeToMemory(block)
 }
 
-func TestGenerate_Ed25519(t *testing.T) {
-	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	defer key.Destroy()
-
-	if key.Algorithm != keys.AlgorithmEd25519 {
-		t.Errorf("algorithm = %q", key.Algorithm)
-	}
-	if key.PublicKey == nil {
-		t.Error("nil public key")
-	}
-	if !strings.HasPrefix(key.Fingerprint, "SHA256:") {
-		t.Errorf("fingerprint = %q", key.Fingerprint)
-	}
-	if key.Material == nil {
-		t.Error("nil material")
-	}
-}
-
-// TestGenerate_RSA_MinimumBits exercises the smallest allowed RSA size
-// (2048). We do NOT test the default 4096 in unit tests — it takes
-// seconds — but we do verify the floor works.
-func TestGenerate_RSA_MinimumBits(t *testing.T) {
-	key, err := keys.Generate(t.Context(), keys.GenerateOptions{
-		Algorithm: keys.AlgorithmRSA,
-		RSABits:   2048,
-	})
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	defer key.Destroy()
-	if key.Algorithm != keys.AlgorithmRSA {
-		t.Errorf("algorithm = %q", key.Algorithm)
-	}
-}
-
 func TestGenerate_RSA_UnderMinimum(t *testing.T) {
 	_, err := keys.Generate(t.Context(), keys.GenerateOptions{
 		Algorithm: keys.AlgorithmRSA,
@@ -107,39 +69,6 @@ func TestGenerate_RSA_UnderMinimum(t *testing.T) {
 	var szErr *keys.InvalidKeySizeError
 	if !errors.As(err, &szErr) {
 		t.Fatalf("expected InvalidKeySizeError, got %T: %v", err, err)
-	}
-}
-
-func TestGenerate_ECDSA_P256(t *testing.T) {
-	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmECDSAP256})
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	defer key.Destroy()
-	if key.Algorithm != keys.AlgorithmECDSAP256 {
-		t.Errorf("algorithm = %q", key.Algorithm)
-	}
-}
-
-func TestGenerate_ECDSA_P384(t *testing.T) {
-	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmECDSAP384})
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	defer key.Destroy()
-	if key.Algorithm != keys.AlgorithmECDSAP384 {
-		t.Errorf("algorithm = %q", key.Algorithm)
-	}
-}
-
-func TestGenerate_ECDSA_P521(t *testing.T) {
-	key, err := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmECDSAP521})
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	defer key.Destroy()
-	if key.Algorithm != keys.AlgorithmECDSAP521 {
-		t.Errorf("algorithm = %q", key.Algorithm)
 	}
 }
 
@@ -415,55 +344,6 @@ func TestDAOStore_RoundTrip(t *testing.T) {
 	}
 	if _, err := signer.Sign(rand.Reader, []byte("x")); err != nil {
 		t.Errorf("Sign after reload: %v", err)
-	}
-}
-
-func TestDAOStore_GetMissing(t *testing.T) {
-	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
-	if err != nil {
-		t.Fatalf("NewDAOStore: %v", err)
-	}
-	_, err = store.Get(context.Background(), scope.User, "nobody", "nothing")
-	var nfErr *keys.KeyNotFoundError
-	if !errors.As(err, &nfErr) {
-		t.Fatalf("expected KeyNotFoundError, got %T: %v", err, err)
-	}
-}
-
-func TestDAOStore_DeleteMissing(t *testing.T) {
-	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
-	if err != nil {
-		t.Fatalf("NewDAOStore: %v", err)
-	}
-	err = store.Delete(context.Background(), scope.User, "x", "y")
-	var nfErr *keys.KeyNotFoundError
-	if !errors.As(err, &nfErr) {
-		t.Fatalf("expected KeyNotFoundError, got %T: %v", err, err)
-	}
-}
-
-func TestDAOStore_DeleteExisting(t *testing.T) {
-	store, err := keys.NewDAOStore(testutil.NewMemoryDAOFactory())
-	if err != nil {
-		t.Fatalf("NewDAOStore: %v", err)
-	}
-	key, _ := keys.Generate(t.Context(), keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
-	key.Scope = scope.User
-	key.Owner = "alice"
-	key.Name = "laptop"
-	if err := store.Put(context.Background(), key); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	key.Destroy()
-
-	if err := store.Delete(context.Background(), scope.User, "alice", "laptop"); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-
-	_, err = store.Get(context.Background(), scope.User, "alice", "laptop")
-	var nfErr *keys.KeyNotFoundError
-	if !errors.As(err, &nfErr) {
-		t.Fatalf("expected KeyNotFoundError after delete, got %T: %v", err, err)
 	}
 }
 

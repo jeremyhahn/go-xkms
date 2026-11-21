@@ -256,6 +256,9 @@ type mcpSignParams struct {
 	Owner  string `json:"owner"`
 	Name   string `json:"name"`
 	Digest []byte `json:"digest"`
+	// Algorithm is the SSH signature algorithm (RFC 8332 §3); empty keeps
+	// the key's default.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 // mcpSignResult mirrors SSHSignResult / gossh.Signature fields.
@@ -435,15 +438,24 @@ type mcpSigner struct {
 func (s *mcpSigner) PublicKey() gossh.PublicKey { return s.pub }
 
 // Sign forwards the digest to the server and returns the assembled
-// gossh.Signature. The rand parameter is ignored — signing is
+// gossh.Signature in the key's default signature algorithm.
+func (s *mcpSigner) Sign(rand io.Reader, data []byte) (*gossh.Signature, error) {
+	return s.SignWithAlgorithm(rand, data, "")
+}
+
+// SignWithAlgorithm implements ssh.AlgorithmSigner: it forwards the digest
+// and the signature algorithm (RFC 8332 §3, e.g. rsa-sha2-256 for an RSA
+// key) to the server, which signs with that algorithm. An empty algorithm
+// keeps the key's default. The rand parameter is ignored — signing is
 // performed server-side.
-func (s *mcpSigner) Sign(_ io.Reader, data []byte) (*gossh.Signature, error) {
+func (s *mcpSigner) SignWithAlgorithm(_ io.Reader, data []byte, algorithm string) (*gossh.Signature, error) {
 	var result mcpSignResult
 	if err := s.c.call(context.Background(), "ssh.keys.sign", mcpSignParams{
-		Scope:  s.scope,
-		Owner:  s.owner,
-		Name:   s.name,
-		Digest: data,
+		Scope:     s.scope,
+		Owner:     s.owner,
+		Name:      s.name,
+		Digest:    data,
+		Algorithm: algorithm,
 	}, &result); err != nil {
 		return nil, err
 	}
@@ -627,10 +639,11 @@ func (s *mcpSessionClient) Dial(ctx context.Context, req SessionDialRequest) (Se
 // ----------------------------------------------------------------------------
 
 var (
-	_ Client               = (*mcpClient)(nil)
-	_ KeysClient           = (*mcpKeysClient)(nil)
-	_ KnownHostsClient     = (*mcpKnownHostsClient)(nil)
-	_ AuthorizedKeysClient = (*mcpAuthorizedKeysClient)(nil)
-	_ SessionClient        = (*mcpSessionClient)(nil)
-	_ gossh.Signer         = (*mcpSigner)(nil)
+	_ Client                = (*mcpClient)(nil)
+	_ KeysClient            = (*mcpKeysClient)(nil)
+	_ KnownHostsClient      = (*mcpKnownHostsClient)(nil)
+	_ AuthorizedKeysClient  = (*mcpAuthorizedKeysClient)(nil)
+	_ SessionClient         = (*mcpSessionClient)(nil)
+	_ gossh.Signer          = (*mcpSigner)(nil)
+	_ gossh.AlgorithmSigner = (*mcpSigner)(nil)
 )

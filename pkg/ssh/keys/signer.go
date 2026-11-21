@@ -15,6 +15,7 @@ package keys
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync/atomic"
 
@@ -243,4 +244,58 @@ func (s *persistentSigner) SignWithAlgorithm(rand io.Reader, data []byte, algori
 		return as.SignWithAlgorithm(rand, data, algorithm)
 	}
 	return s.inner.Sign(rand, data)
+}
+
+// rsaSignatureAlgorithms are the signature algorithms RFC 8332 §3 allows
+// for an ssh-rsa public key.
+var rsaSignatureAlgorithms = map[string]bool{
+	ssh.KeyAlgoRSA:       true,
+	ssh.KeyAlgoRSASHA256: true,
+	ssh.KeyAlgoRSASHA512: true,
+}
+
+// SignWithAlgorithm signs data with signer under the requested signature
+// algorithm. It is the server half of a remote signer: the client's
+// ssh.AlgorithmSigner names the algorithm on the wire, and the server signs
+// with it here.
+//
+// An empty algorithm keeps the signer's default (signer.Sign). Otherwise
+// the algorithm must be allowed for the key type — ssh-rsa, rsa-sha2-256 or
+// rsa-sha2-512 for an RSA key (RFC 8332 §3), the key's own type for every
+// other key — or *SignatureAlgorithmError is returned, and the signer must
+// be an ssh.AlgorithmSigner or *AlgorithmSignerError is returned.
+func SignWithAlgorithm(signer ssh.Signer, rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
+	if signer == nil {
+		return nil, &NilInputError{Field: "signer"}
+	}
+	if algorithm == "" {
+		return signer.Sign(rand, data)
+	}
+	keyType := signer.PublicKey().Type()
+	if !signatureAlgorithmAllowed(keyType, algorithm) {
+		return nil, &SignatureAlgorithmError{Algorithm: algorithm, KeyType: keyType}
+	}
+	as, ok := signer.(ssh.AlgorithmSigner)
+	if !ok {
+		return nil, &AlgorithmSignerError{KeyType: keyType}
+	}
+	return as.SignWithAlgorithm(rand, data, algorithm)
+}
+
+// signatureAlgorithmAllowed reports whether algorithm may sign with a key
+// of keyType.
+func signatureAlgorithmAllowed(keyType, algorithm string) bool {
+	if keyType == ssh.KeyAlgoRSA {
+		return rsaSignatureAlgorithms[algorithm]
+	}
+	return algorithm == keyType
+}
+
+// IsSignatureAlgorithmRefusal reports whether err is a SignWithAlgorithm
+// refusal of the requested algorithm, which a transport answers as a bad
+// request.
+func IsSignatureAlgorithmRefusal(err error) bool {
+	var algErr *SignatureAlgorithmError
+	var signerErr *AlgorithmSignerError
+	return errors.As(err, &algErr) || errors.As(err, &signerErr)
 }
