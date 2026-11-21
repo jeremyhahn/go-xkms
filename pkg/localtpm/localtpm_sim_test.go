@@ -28,8 +28,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/localtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/localtpmtest"
+	tpmpolicy "github.com/jeremyhahn/go-xkms/pkg/tpm2/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/vaultkey"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // simPCR is the PCR the test policy selects: an application PCR a
@@ -171,16 +173,20 @@ func TestHost_ServesThePolicyAPI(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "boot", objectPolicy.Policy)
 
-	// Drift, verify, re-approve.
+	// Drift, verify; an update without a signed named branch is refused and
+	// leaves the drift reported (the host has no reference-value signer, so
+	// a signed branch update stops at the missing signer).
 	require.NoError(t, host.TPM().ExtendPCR(simPCR, "sha256", []byte("platform change")))
 	verified, err := host.TPMPolicyVerify(ctx, boot)
 	require.NoError(t, err)
 	assert.False(t, verified.Match)
 	_, err = host.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot"})
-	require.NoError(t, err)
+	require.ErrorIs(t, err, xkms.ErrTPMPolicyBranchUpdate)
+	_, err = host.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{Name: "boot", Branch: "branch-1", ReferenceValues: []byte{0xd2, 0x84, 0x43, 0xa1, 0x01, 0x26}})
+	require.ErrorIs(t, err, tpmpolicy.ErrNoReferenceSigner)
 	verified, err = host.TPMPolicyVerify(ctx, boot)
 	require.NoError(t, err)
-	assert.True(t, verified.Match)
+	assert.False(t, verified.Match)
 
 	revoked, err := host.TPMPolicyRevoke(ctx, boot)
 	require.NoError(t, err)

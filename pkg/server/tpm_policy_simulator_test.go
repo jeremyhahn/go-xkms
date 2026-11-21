@@ -172,9 +172,13 @@ func TestTPMPolicy_EndToEnd(t *testing.T) {
 	assert.True(t, verified.Match)
 	assert.True(t, verified.Approved)
 
-	updated, err := svc.TPMPolicyUpdate(sys, &transport.TPMPolicyUpdateRequest{Name: "boot"})
+	// An update names a branch and carries its signed reference values; the
+	// signed named-branch path is TestTPMPolicy_VerifyReportsReference below.
+	_, err = svc.TPMPolicyUpdate(sys, &transport.TPMPolicyUpdateRequest{Name: "boot"})
+	require.ErrorIs(t, err, xkms.ErrTPMPolicyBranchUpdate, "an update without a signed named branch is refused")
+	unchanged, err := svc.TPMPolicyGet(sys, &transport.TPMPolicyRequest{Name: "boot"})
 	require.NoError(t, err)
-	assert.Greater(t, updated.Epoch, created.Epoch, "an update re-approves at the next epoch")
+	assert.Equal(t, created.Epoch, unchanged.Epoch, "a refused update leaves the approval at its epoch")
 	signWith(t, svc, qrdbsdk.SystemTenantID, "boot-signer-a", pubA)
 
 	list, err := svc.ListKeys(sys, "tpm2")
