@@ -63,6 +63,19 @@ const (
 // SkipReason reports whether the standalone run (RunAllCommandsForProtocol)
 // skips cmd on protocol, and why. enabledTags are the build tags the test
 // binary was built with. A Workflow command is left to its workflow test.
+// CAParitySkip reports whether the CA parity tests (ca_parity_test.go) skip
+// protocol, and why. It applies the CACommands transport restriction, so a
+// transport that serves no CA (embedded: ReasonEmbeddedNoCA) is skipped
+// before any ca verb runs.
+func CAParitySkip(protocol ProtocolType) (string, bool) {
+	for _, cmd := range CACommands() {
+		if len(cmd.Transports) > 0 && !slices.Contains(cmd.Transports, protocol) {
+			return cmd.TransportSkip, true
+		}
+	}
+	return "", false
+}
+
 func SkipReason(cmd CommandDefinition, protocol ProtocolType, enabledTags []string) (string, bool) {
 	if reason, skip := MatrixSkipReason(cmd, protocol, enabledTags); skip {
 		return reason, true
