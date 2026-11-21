@@ -115,14 +115,22 @@ func (t *Transport) AppraiseAttestationQuote(ctx context.Context, req *transport
 	return s.AppraiseAttestationQuote(ctx, req)
 }
 
-// AppraiseAndroidKeyAttestation is a placeholder the embedded commit of
-// row 1660 slice A replaces.
-func (t *Transport) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
-	return nil, errors.ErrUnsupported
+// AppraiseAndroidKeyAttestation appraises an Android key attestation chain
+// in-process under the tenant's android-root endorsements.
+func (t *Transport) AppraiseAndroidKeyAttestation(ctx context.Context, req *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	s, err := t.appraisalService()
+	if err != nil {
+		return nil, err
+	}
+	return s.AppraiseAndroidKeyAttestation(ctx, req)
 }
 
-// AppraiseEKCertificate is a placeholder the embedded commit of row 1660
-// slice A replaces.
-func (t *Transport) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
-	return nil, errors.ErrUnsupported
+// AppraiseEKCertificate appraises a TPM endorsement key certificate
+// in-process under the tenant's ek-root endorsements.
+func (t *Transport) AppraiseEKCertificate(ctx context.Context, req *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	s, err := t.appraisalService()
+	if err != nil {
+		return nil, err
+	}
+	return s.AppraiseEKCertificate(ctx, req)
 }

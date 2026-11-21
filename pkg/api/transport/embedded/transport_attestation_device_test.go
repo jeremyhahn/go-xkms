@@ -76,6 +76,7 @@ func TestTransport_AppraiseDeviceEvidence_Unavailable(t *testing.T) {
 
 	disconnected, err := New(&deviceAppraisalService{})
 	require.NoError(t, err)
+	require.NoError(t, disconnected.Close())
 	_, err = disconnected.AppraiseAndroidKeyAttestation(ctx, &transport.AppraiseAndroidKeyAttestationRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 	_, err = disconnected.AppraiseEKCertificate(ctx, &transport.AppraiseEKCertificateRequest{})
