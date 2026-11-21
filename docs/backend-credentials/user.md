@@ -81,9 +81,13 @@ name with a permission error and leave it out of their listing.
 
 ## Backend PIN strategy (in progress, #2262)
 
-> **Status: in progress.** The resolution and the config keys below are
-> built; xkmsd does not yet call them at start-up, unseal or seal (the
-> next slice of [`../plans/2262.md`](../plans/2262.md)).
+> **Status: in progress.** xkmsd resolves and persists the strategy at
+> start-up (fail closed), starts the PKCS#11 backend after unseal under
+> `sealed`, zeroizes the held PIN at shutdown, and reports the strategy as
+> `backend_pin_strategy` in `GET /api/v1/credentials/strategy` (REST and
+> MCP; not yet gRPC). Not yet wired: the manual PIN on the unseal request
+> (the go-qrdb sealed window carries no backend PIN) and the PKCS#11 open
+> before the Raft node starts. See [`../plans/2262.md`](../plans/2262.md).
 
 The PIN of a PIN-protected PKCS#11 backend (`backends.pkcs11.pin`,
 `rng.pkcs11.pin`) is resolved by `pinselect.ResolveBackendPIN`
