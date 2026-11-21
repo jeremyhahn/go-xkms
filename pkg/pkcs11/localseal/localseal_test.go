@@ -361,3 +361,33 @@ func TestController_Rekey_WrongOldPINWhileSealedSurfacesError(t *testing.T) {
 	assert.Error(t, err, "rekeying a sealed barrier with the wrong old PIN must fail")
 	assert.True(t, ctrl.barrier.IsSealed(), "a failed rekey must leave the barrier sealed")
 }
+
+// TestController_Rekey_WrongOldPINWhileUnsealedSurfacesError pins the
+// go-qrdb v0.58.5 ChangePassword contract: the current passphrase is checked
+// even when the barrier is already unsealed, so holding an unsealed session
+// is not enough to replace the PIN. A wrong old PIN must fail and leave the
+// old PIN as the one that opens the barrier.
+func TestController_Rekey_WrongOldPINWhileUnsealedSurfacesError(t *testing.T) {
+	base := storage.NewMemory()
+	ctx := context.Background()
+	ctrl, sealed, err := New(base, testRootKeyPath, nil)
+	require.NoError(t, err)
+	require.NoError(t, ctrl.Unseal([]byte("correct-pin")))
+	require.NoError(t, sealed.Put(ctx, "keys/priv", []byte("material")))
+
+	err = ctrl.Rekey([]byte("wrong-pin"), []byte("new-pin"))
+	assert.Error(t, err, "rekeying an unsealed barrier with the wrong old PIN must fail")
+	assert.False(t, ctrl.barrier.IsSealed(), "a failed rekey must leave an unsealed barrier unsealed")
+	require.NoError(t, ctrl.Seal())
+
+	ctrlOld, sealedOld, err := New(base, testRootKeyPath, nil)
+	require.NoError(t, err)
+	require.NoError(t, ctrlOld.Unseal([]byte("correct-pin")), "the old PIN must still open the barrier")
+	got, err := sealedOld.Get(ctx, "keys/priv")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("material"), got)
+
+	ctrlNew, _, err := New(base, testRootKeyPath, nil)
+	require.NoError(t, err)
+	assert.Error(t, ctrlNew.Unseal([]byte("new-pin")), "the new PIN must not open the barrier after a refused rekey")
+}
