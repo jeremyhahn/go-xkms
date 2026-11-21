@@ -154,3 +154,45 @@ func TestCIFullTierOnBuildFiles(t *testing.T) {
 		t.Error("CI Gate FULL_TIER does not read full_paths")
 	}
 }
+
+// TestCIFullTierFailsClosed pins Codex round 2 on #2322: on a pull_request
+// the preflight diff step starts with full_paths=true and sets it false only
+// after the git diff succeeded and no changed file matched FULL_TIER_PATTERN,
+// so a failed diff (missing merge base, unavailable commit) runs the full tier.
+func TestCIFullTierFailsClosed(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatalf("read ci.yml: %v", err)
+	}
+	ci := string(data)
+	start := strings.Index(ci, "        id: diff\n")
+	if start < 0 {
+		t.Fatal("ci.yml lacks the preflight diff step")
+	}
+	end := strings.Index(ci[start:], ">> \"$GITHUB_OUTPUT\"")
+	if end < 0 {
+		t.Fatal("diff step does not write GITHUB_OUTPUT")
+	}
+	step := ci[start : start+end]
+
+	diffAt := strings.Index(step, "if files=$(git diff ")
+	if diffAt < 0 {
+		t.Fatal("diff step lacks the guarded git diff")
+	}
+	before, after := step[:diffAt], step[diffAt:]
+
+	prRe := regexp.MustCompile(`if \[ "\$EVENT" = pull_request \][^\n]*; then\n\s+full_paths=true\n`)
+	if !prRe.MatchString(before) {
+		t.Error("diff step does not set full_paths=true on a pull_request before the git diff")
+	}
+	clearRe := regexp.MustCompile(`if ! printf '%s\\n' "\$files" \| grep -qE "\$FULL_TIER_PATTERN"; then\n\s+full_paths=false\n`)
+	if !clearRe.MatchString(after) {
+		t.Error("diff step does not clear full_paths only when the diff found no FULL_TIER_PATTERN file")
+	}
+	if strings.Count(after, "full_paths=false") != 1 {
+		t.Error("diff step sets full_paths=false outside the successful-diff no-match branch")
+	}
+	if strings.Contains(after, "full_paths=true") {
+		t.Error("diff step still sets full_paths=true after the git diff (fail open)")
+	}
+}
