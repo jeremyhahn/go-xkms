@@ -28,10 +28,12 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/jeremyhahn/go-enclave"
+	pkgkeybackend "github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
@@ -2049,7 +2051,30 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 	// there, is what lets NewAuthenticator tell the two apart (see
 	// FIDO2AttestingKeyBackend's doc comment).
 	adapter := keybackend.NewBackendAdapter(backend, xkms.BackendTypeTPM2)
-	return keybackend.NewTPM2AttestingBackend(adapter, tpm, keyBackend), nil
+	return &ownedTPM2KeyBackend{
+		TPM2AttestingBackend: keybackend.NewTPM2AttestingBackend(adapter, tpm, keyBackend),
+		tpm:                  tpm,
+	}, nil
+}
+
+// ownedTPM2KeyBackend is the fido2 tpm2 key backend that owns the TPM
+// createFIDO2TPM2KeyBackend opened: the backend over an external TPM leaves
+// it open, so Close closes the backend and then the TPM (which closes the
+// key store it was opened over). Close runs once; later calls return nil.
+type ownedTPM2KeyBackend struct {
+	// The SDK re-exports the constructor but not the type it returns.
+	*pkgkeybackend.TPM2AttestingBackend
+	tpm       xkms.TrustedPlatformModule
+	closeOnce sync.Once
+}
+
+// Close closes the backend and the TPM it owns, joining their errors.
+func (b *ownedTPM2KeyBackend) Close() error {
+	var err error
+	b.closeOnce.Do(func() {
+		err = errors.Join(b.TPM2AttestingBackend.Close(), b.tpm.Close())
+	})
+	return err
 }
 
 // ErrFIDO2TPMPlatformSRKAuth indicates the user PIN did not unlock the
