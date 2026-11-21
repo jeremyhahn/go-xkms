@@ -1,6 +1,6 @@
 # go-xkms roadmap
 
-> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-11-20
+> **Status: REFERENCE** · Owner: Software Department · Last verified: 2026-11-21
 
 ## Mission
 
