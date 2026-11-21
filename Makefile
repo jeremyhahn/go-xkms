@@ -1113,6 +1113,7 @@ test-scripts:
 	@bash test/scripts/credential-ignores.test.sh
 	@bash test/scripts/no-credential-echo.test.sh
 	@bash test/scripts/ci-registry.test.sh
+	@bash test/scripts/reap-stale-ci-stacks.test.sh
 	@bash test/scripts/build-web-deps.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
