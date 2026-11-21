@@ -182,13 +182,18 @@ while read -r kib vol; do
       ;;
   esac
   # A concurrent build can refill a cleaned volume: remeasure it and count what
-  # is left, not what the clean meant to free, before trimming further.
-  left=
-  [ "$dry" = 1 ] || left=$(size "$vol")
-  case $left in
-    '' | *[!0-9]*) total=$((total - freed)) ;;
-    *) total=$((total - kib + left)) ;;
-  esac
+  # is left, not what the clean meant to free, before trimming further. A dry
+  # run never remeasures and previews by what the clean would free; a failed
+  # remeasure keeps the volume's previous size, as nothing proves it shrank.
+  if [ "$dry" = 1 ]; then
+    total=$((total - freed))
+  else
+    left=$(size "$vol")
+    case $left in
+      '' | *[!0-9]*) echo "warn  $vol: remeasure failed; counting its previous size" ;;
+      *) total=$((total - kib + left)) ;;
+    esac
+  fi
   trimmed=$((trimmed + 1))
 done < <(sort -rn "$inuse")
 
