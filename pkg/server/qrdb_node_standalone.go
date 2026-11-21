@@ -16,6 +16,8 @@
 package server
 
 import (
+	"context"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
@@ -34,7 +36,13 @@ var ErrClusterRequiresRaftBuild = embeddednode.ErrClusterRequiresRaftBuild
 // under `-tags raft`. If cluster.enabled is set in this build, pkg/embeddednode
 // fails loudly rather than silently running unclustered.
 func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbserver.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
-	res, err := embeddednode.NewNode(s.ctx, &embeddednode.NodeOptions{
+	// go-enclave v0.11.1 sealed buffers read the context: a Server built
+	// without one (tests construct Server literals) falls back to Background.
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	res, err := embeddednode.NewNode(ctx, &embeddednode.NodeOptions{
 		QRDB:          qcfg,
 		Cluster:       embeddednode.ClusterOptions{Enabled: s.config.Cluster.Enabled},
 		Logger:        s.logger,
