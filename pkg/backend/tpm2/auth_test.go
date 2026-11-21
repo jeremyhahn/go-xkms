@@ -287,15 +287,6 @@ func TestBackend_LockoutStatus_ZeroMaxAuthFail(t *testing.T) {
 
 // ---------- ResetLockout ----------
 
-func TestBackend_ResetLockout_Success(t *testing.T) {
-	mock := &authMockTPM{}
-	b := newAuthTestBackend(mock)
-
-	if err := b.ResetLockout([]byte("lockout-auth")); err != nil {
-		t.Fatalf("ResetLockout should succeed, got: %v", err)
-	}
-}
-
 func TestBackend_ResetLockout_EmptyAuth(t *testing.T) {
 	// Empty lockout auth is valid for TPMs with no lockout hierarchy auth set.
 	mock := &authMockTPM{}

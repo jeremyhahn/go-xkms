@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/stretchr/testify/require"
@@ -122,6 +123,12 @@ func runFailedAttemptCrossProcessWorker(t *testing.T, dir string) {
 	defer func() { _ = backend.Close() }()
 
 	s := NewModuleStorage(backend)
+	// The spends of all worker processes queue on one cross-process
+	// flock. With a slow runner disk (CI on 2026-11-19 saw 1.1 s per
+	// fsync) the queue ahead of one spend can pass the 10 s product
+	// default. This test checks for lost updates, not lock latency,
+	// so the workers get a deadline a slow disk cannot hit.
+	s.SetTimeout(2 * time.Minute)
 	for i := 0; i < count; i++ {
 		_, admitted, err := s.SpendFailedAttempt(0, CKU_USER, uint32(limit))
 		require.NoError(t, err)
