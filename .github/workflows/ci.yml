@@ -900,16 +900,19 @@ jobs:
           # miss LINT_GATES_PATTERN; any doubt runs the job.
           # CUSTOMIZE (go-xkms, ruling 1041(4)): full_paths is true on a PR
           # with a changed file matching FULL_TIER_PATTERN; it selects the full
-          # tier. A failed diff leaves it false (a ci:full run is full anyway).
+          # tier. It fails closed (Codex round 2, #2322): true on an unlabelled
+          # PR until a successful diff shows no FULL_TIER_PATTERN file, so a
+          # failed diff (missing merge base, unavailable commit) runs it.
           docs_only=false lint_gates=true full_paths=false
           if [ "$EVENT" = pull_request ] && [ "$CI_FULL_TIER" != true ]; then
+            full_paths=true
             if files=$(git diff --name-only --no-renames "$BASE...$HEAD") && [ -n "$files" ]; then
               if ! printf '%s\n' "$files" | grep -qvE "$DOCS_ONLY_PATTERN"; then
                 docs_only=true
               fi
               printf '%s\n' "$files" | grep -qE "$LINT_GATES_PATTERN" || lint_gates=false
-              if printf '%s\n' "$files" | grep -qE "$FULL_TIER_PATTERN"; then
-                full_paths=true
+              if ! printf '%s\n' "$files" | grep -qE "$FULL_TIER_PATTERN"; then
+                full_paths=false
               fi
               printf '%s\n' "$files"
             fi
