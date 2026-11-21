@@ -181,7 +181,14 @@ while read -r kib vol; do
       continue
       ;;
   esac
-  total=$((total - freed))
+  # A concurrent build can refill a cleaned volume: remeasure it and count what
+  # is left, not what the clean meant to free, before trimming further.
+  left=
+  [ "$dry" = 1 ] || left=$(size "$vol")
+  case $left in
+    '' | *[!0-9]*) total=$((total - freed)) ;;
+    *) total=$((total - kib + left)) ;;
+  esac
   trimmed=$((trimmed + 1))
 done < <(sort -rn "$inuse")
 
