@@ -255,6 +255,13 @@ func (v *Verifier) verifyChain(stmt *AttestationStatement, opts *VerifyOptions) 
 	if err != nil {
 		return nil, err
 	}
+	// A store-backed chain purpose whose last root was quarantined or
+	// removed must not fall back to the structural-only check: that would
+	// let a withdrawn or caller-minted chain verify. Only a verifier built
+	// without any anchor source stays structural-only.
+	if len(anchors) == 0 && v.store != nil && v.chainPurpose != "" {
+		return nil, ErrNoTrustAnchors
+	}
 	return verifyChainOver(stmt, anchors, now)
 }
 

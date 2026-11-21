@@ -45,18 +45,6 @@ const (
 	// images; image verification anchors signer chains on them.
 	PurposeImageSigner CertPurpose = "image-signer"
 
-	// PurposeYubiKeyAttestation identifies the Yubico PIV attestation root
-	// CA certificates that anchor yubikey-piv attestation chains.
-	PurposeYubiKeyAttestation CertPurpose = "yubikey-attestation"
-
-	// PurposeAppleAttestation identifies the Apple App Attest root CA
-	// certificates that anchor apple-appattest attestation chains.
-	PurposeAppleAttestation CertPurpose = "apple-attestation"
-
-	// PurposeDICEAttestation identifies the device-manufacturer roots that
-	// anchor DICE alias-certificate chains.
-	PurposeDICEAttestation CertPurpose = "dice-attestation"
-
 	// PurposeSynced identifies certificates received from a paired device
 	// through sync (remote.syncTrustStore, "xkey device sync", CA sync).
 	//
@@ -72,17 +60,14 @@ const (
 
 // validPurposes provides O(1) lookup for certificate purpose validation.
 var validPurposes = map[CertPurpose]bool{
-	PurposeGeneral:            true,
-	PurposeTPMManufacturer:    true,
-	PurposeAndroidHardware:    true,
-	PurposeUserCA:             true,
-	PurposeBootstrapCA:        true,
-	PurposeIDevIDIssuer:       true,
-	PurposeImageSigner:        true,
-	PurposeYubiKeyAttestation: true,
-	PurposeAppleAttestation:   true,
-	PurposeDICEAttestation:    true,
-	PurposeSynced:             true,
+	PurposeGeneral:         true,
+	PurposeTPMManufacturer: true,
+	PurposeAndroidHardware: true,
+	PurposeUserCA:          true,
+	PurposeBootstrapCA:     true,
+	PurposeIDevIDIssuer:    true,
+	PurposeImageSigner:     true,
+	PurposeSynced:          true,
 }
 
 // IsValidPurpose reports whether the given purpose is a recognized

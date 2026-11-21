@@ -140,12 +140,6 @@ func formatChainPurpose(format string) (truststore.CertPurpose, bool) {
 		return truststore.PurposeTPMManufacturer, true
 	case strings.HasPrefix(format, "android"):
 		return truststore.PurposeAndroidHardware, true
-	case strings.HasPrefix(format, "yubikey"):
-		return truststore.PurposeYubiKeyAttestation, true
-	case strings.HasPrefix(format, "apple"):
-		return truststore.PurposeAppleAttestation, true
-	case format == "dice":
-		return truststore.PurposeDICEAttestation, true
 	}
 	return "", false
 }

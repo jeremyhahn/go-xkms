@@ -370,6 +370,11 @@ type Server struct {
 	// attestation verifiers. See initializeTrustRootStore.
 	trustRoots *truststore.DAOStore
 
+	// peerTrustRoots publishes trustRoots to the attested-caller gate's
+	// anchor source, which runs on the node's goroutines and is built
+	// before the store opens.
+	peerTrustRoots atomic.Pointer[truststore.DAOStore]
+
 	// keyPolicies is the key-policy record store. See
 	// initializeKeyPolicyStore.
 	keyPolicies *keypolicy.Store
@@ -1710,6 +1715,7 @@ func (s *Server) initializeTrustRootStore() error {
 		return &ErrStorageCreate{Resource: "trust root storage", Err: err}
 	}
 	s.trustRoots = store
+	s.peerTrustRoots.Store(store)
 	s.logger.Info("xkms feature on", "feature", compose.FeatureTrustRoots)
 	return nil
 }

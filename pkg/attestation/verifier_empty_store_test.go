@@ -40,6 +40,10 @@ func TestVerify_EmptyStorePoolRefused(t *testing.T) {
 			}
 			minted := snapshotTestRoot(t, "caller-minted root")
 			stmt.CertificateChain = []*x509.Certificate{minted}
+			stmt.AttestingKeyPublic = minted.PublicKey
+			stmt.AttestedKeyPublic = minted.PublicKey
+			stmt.Signature = []byte{0x01}
+			stmt.SignatureAlgorithm = x509.ECDSAWithSHA256
 			if err := v.VerifyChain(stmt, nil); !errors.Is(err, attestation.ErrNoTrustAnchors) {
 				t.Fatalf("VerifyChain of a minted chain: got %v, want ErrNoTrustAnchors", err)
 			}

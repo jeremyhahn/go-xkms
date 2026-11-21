@@ -357,16 +357,13 @@ func TestAttestationConfigVerifiers_OperatorRootAlsoInConfigStaysRemoved(t *test
 	}
 }
 
-// TestAttestationConfigVerifiers_EveryChainFormatAppraisesTheStore proves
-// the chain formats beyond TPM and Android anchor on their store purpose: a
-// root imported into the store anchors their chains, and quarantining a
-// config-listed root there revokes it.
-func TestAttestationConfigVerifiers_EveryChainFormatAppraisesTheStore(t *testing.T) {
+// TestAttestationConfigVerifiers_FormatsWithoutAStorePurposeKeepConfigAnchors
+// proves the chain formats the docs/trust-roots/api.md taxonomy names no
+// purpose for (yubikey-piv, apple-appattest, dice) anchor on their configured
+// roots only: the store does not widen them (SPEC row 2185 scope).
+func TestAttestationConfigVerifiers_FormatsWithoutAStorePurposeKeepConfigAnchors(t *testing.T) {
 	ctx := context.Background()
-	for format, purpose := range map[string]truststore.CertPurpose{
-		"yubikey-piv":     "yubikey-attestation",
-		"apple-appattest": "apple-attestation",
-	} {
+	for _, format := range []string{"yubikey-piv", "apple-appattest"} {
 		t.Run(format, func(t *testing.T) {
 			store, err := compose.BuildTrustRootStore(testutil.NewMemoryDAOFactory())
 			if err != nil {
@@ -375,7 +372,7 @@ func TestAttestationConfigVerifiers_EveryChainFormatAppraisesTheStore(t *testing
 			t.Cleanup(func() { _ = store.Close() })
 			configRoot, configLeaf := issuedChain(t, format+"-config-root")
 			storeRoot, storeLeaf := issuedChain(t, format+"-store-root")
-			if err := store.Add(ctx, storeRoot, &truststore.AddCertificateOptions{Purpose: purpose, Source: "operator"}); err != nil {
+			if err := store.Add(ctx, storeRoot, &truststore.AddCertificateOptions{Purpose: truststore.PurposeGeneral, Source: "operator"}); err != nil {
 				t.Fatalf("import store root: %v", err)
 			}
 			cfg := &config.AttestationConfig{
@@ -385,23 +382,13 @@ func TestAttestationConfigVerifiers_EveryChainFormatAppraisesTheStore(t *testing
 			if err != nil {
 				t.Fatalf("Verifiers(store): %v", err)
 			}
-			storeStmt := &attestation.AttestationStatement{Format: format, CertificateChain: []*x509.Certificate{storeLeaf, storeRoot}}
-			if err := verifiers[format].VerifyChainAnchored(storeStmt, nil); err != nil {
-				t.Fatalf("a root imported into the store does not anchor %s: %v", format, err)
-			}
 			configStmt := &attestation.AttestationStatement{Format: format, CertificateChain: []*x509.Certificate{configLeaf, configRoot}}
 			if err := verifiers[format].VerifyChainAnchored(configStmt, nil); err != nil {
 				t.Fatalf("the config root does not anchor %s: %v", format, err)
 			}
-			if _, err := store.SetPurpose(ctx, truststore.Fingerprint(configRoot), truststore.PurposeSynced); err != nil {
-				t.Fatalf("quarantine config root: %v", err)
-			}
-			verifiers, err = cfg.Verifiers(store)
-			if err != nil {
-				t.Fatalf("rebuild Verifiers(store): %v", err)
-			}
-			if err := verifiers[format].VerifyChainAnchored(configStmt, nil); err == nil {
-				t.Fatalf("a quarantined config root still anchors %s", format)
+			storeStmt := &attestation.AttestationStatement{Format: format, CertificateChain: []*x509.Certificate{storeLeaf, storeRoot}}
+			if err := verifiers[format].VerifyChainAnchored(storeStmt, nil); err == nil {
+				t.Fatalf("a store root anchored %s, which has no store purpose", format)
 			}
 		})
 	}
