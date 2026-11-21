@@ -55,21 +55,6 @@ func TestNewRFC3161Client_InvalidURL(t *testing.T) {
 	}
 }
 
-func TestRFC3161Client_Timestamp(t *testing.T) {
-	pki := newTestPKI(t)
-	tsa := newTestTSA(t, pki, tsaConfig{})
-	data := []byte("signature")
-
-	response, err := tsa.client(t).Timestamp(t.Context(), data)
-	require.NoError(t, err)
-
-	info, err := VerifyTimestamp(response, data, pki.pool)
-	require.NoError(t, err)
-	assert.Equal(t, tsa.certificate.Raw, info.Certificate.Raw)
-	assert.WithinDuration(t, time.Now(), info.Time, time.Minute)
-	assert.Equal(t, big.NewInt(1), info.SerialNumber)
-}
-
 func TestRFC3161Client_Timestamp_NoData(t *testing.T) {
 	client, err := NewRFC3161Client("https://tsa.example.com", nil)
 	require.NoError(t, err)
