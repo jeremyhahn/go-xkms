@@ -34,6 +34,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -139,7 +140,19 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 		WithoutEmailLoginKey: true,
 	})
 	require.NoError(t, err)
-	f.roleB, err = client.Roles().CreateRole(ctxB, &qrdbtransport.CreateRoleRequest{
+	// go-qrdb's grant rule: a grantor may grant only permissions it holds,
+	// and the oracle's Admin and SO roles hold no kv permission. The seeder
+	// also holds the tenant's Operator and User roles, which carry them.
+	seedB := qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{
+		Subject:  "admin-plane-seeder",
+		TenantID: bindingTenantB,
+		Roles: []string{
+			qrdbsdk.SystemRoleID(bindingTenantB, qrdbsdk.RoleNameSO),
+			qrdbsdk.SystemRoleID(bindingTenantB, qrdbsdk.RoleNameOperator),
+			qrdbsdk.SystemRoleID(bindingTenantB, qrdbsdk.RoleNameUser),
+		},
+	}), bindingTenantB)
+	f.roleB, err = client.Roles().CreateRole(seedB, &qrdbtransport.CreateRoleRequest{
 		Name:        "victim-role-1225",
 		TenantID:    bindingTenantB,
 		Permissions: []string{"kv:get"},
