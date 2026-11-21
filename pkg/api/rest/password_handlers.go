@@ -217,7 +217,11 @@ type PasswordStoreAccessModeResponse struct {
 
 // PasswordStoreStatusResponse is the response for the password store status endpoint.
 type PasswordStoreStatusResponse struct {
-	Available     bool   `json:"available"`
+	Available bool `json:"available"`
+	// AccessMode is the store's effective access mode, fixed when the store
+	// was composed; the console offers only this mode on the access-mode
+	// endpoint, since any other answers 501.
+	AccessMode    string `json:"access_mode,omitempty"`
 	IsLocked      bool   `json:"is_locked"`
 	BarrierSealed bool   `json:"barrier_sealed"`
 	PasswordCount int    `json:"password_count"`
@@ -424,6 +428,26 @@ func (h *PasswordHandlers) LockHandler(w http.ResponseWriter, r *http.Request) {
 	h.writeStatus(w, r, "Store locked successfully", "Store locked but failed to get status")
 }
 
+// passwordAccessModeReader is the servicer's read of the caller's effective
+// access mode, the one mode PasswordStoreSetAccessMode accepts.
+type passwordAccessModeReader interface {
+	PasswordAccessMode(ctx context.Context) (staticpw.AccessMode, error)
+}
+
+// effectiveAccessMode reports the caller's effective access mode, or "" when
+// the servicer does not expose it or the store has no switchable mode.
+func (h *PasswordHandlers) effectiveAccessMode(ctx context.Context) string {
+	reader, ok := h.servicer.(passwordAccessModeReader)
+	if !ok {
+		return ""
+	}
+	mode, err := reader.PasswordAccessMode(ctx)
+	if err != nil {
+		return ""
+	}
+	return string(mode)
+}
+
 // StatusHandler handles GET /api/v1/password-vault/session requests. It reports the
 // caller's view of its store: whether its personal session is locked, the
 // barrier's seal state, and how many entries it can read now.
@@ -436,6 +460,7 @@ func (h *PasswordHandlers) StatusHandler(w http.ResponseWriter, r *http.Request)
 
 	writeJSON(w, PasswordStoreStatusResponse{
 		Available:     true,
+		AccessMode:    h.effectiveAccessMode(r.Context()),
 		IsLocked:      status.IsLocked,
 		BarrierSealed: status.BarrierSealed,
 		PasswordCount: status.PasswordCount,
@@ -454,6 +479,7 @@ func (h *PasswordHandlers) writeStatus(w http.ResponseWriter, r *http.Request, m
 
 	writeJSON(w, PasswordStoreStatusResponse{
 		Available:     true,
+		AccessMode:    h.effectiveAccessMode(r.Context()),
 		IsLocked:      status.IsLocked,
 		BarrierSealed: status.BarrierSealed,
 		PasswordCount: status.PasswordCount,

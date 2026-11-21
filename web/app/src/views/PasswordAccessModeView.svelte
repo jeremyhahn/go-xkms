@@ -29,10 +29,18 @@
   let busy = $state(false);
   let selected = $state<Mode | "">("");
   let confirming = $state(false);
-  // The status carries no mode, so the view shows only the mode it set itself.
-  let current = $state<string | null>(null);
+  // The store's mode is fixed when it is composed (a tenant store is
+  // session_based); the access-mode endpoint answers 501 for any other mode,
+  // so only the effective mode is selectable. A server that reports no mode
+  // gets no choice at all: every request could be a 501.
+  const effective = $derived<string | null>(status?.access_mode ?? null);
+  let setMode = $state<string | null>(null);
+  const current = $derived(setMode ?? effective);
+  const selectable = (m: Mode): boolean => effective !== null && m === effective;
 
-  const canApply = $derived(status?.available === true && selected !== "" && !busy);
+  const canApply = $derived(
+    status?.available === true && selected !== "" && selectable(selected) && !busy,
+  );
 
   async function load(): Promise<void> {
     loading = true;
@@ -52,7 +60,7 @@
     error = null;
     try {
       const res = await getSDKClient().passwords.setAccessMode({ mode: selected });
-      current = res.mode;
+      setMode = res.mode;
       showToast("success", res.message);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -86,7 +94,14 @@
   {/if}
 
   <p class="mb-4" data-testid="current-mode">
-    Mode set in this session: <span class="font-mono">{current ?? "not known"}</span>
+    Effective mode: <span class="font-mono">{current ?? "not known"}</span>
+  </p>
+  <p class="mb-4 text-sm text-base-content/70" data-testid="mode-fixed">
+    {#if effective}
+      This store's mode is fixed when it is set up as <span class="font-mono">{effective}</span>; other modes cannot be selected.
+    {:else}
+      This server does not report the store's mode, so no mode can be selected.
+    {/if}
   </p>
 
   {#if error}
@@ -105,7 +120,7 @@
           aria-label={m.label}
           value={m.value}
           bind:group={selected}
-          disabled={busy}
+          disabled={busy || !selectable(m.value)}
         />
         <div>
           <span class="font-medium">{m.label}</span>

@@ -206,6 +206,8 @@ export interface PasswordStoreStatusResponse {
   barrier_sealed: boolean;
   password_count: number;
   message: string;
+  /** The store's effective access mode, fixed at composition; absent on older servers. */
+  access_mode?: string;
 }
 
 export interface PasswordGenerateRequest {
