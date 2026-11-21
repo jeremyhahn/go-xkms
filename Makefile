@@ -10,8 +10,15 @@ VERSION := $(shell cat VERSION 2>/dev/null || echo "0.0.1-alpha")
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -X github.com/jeremyhahn/go-xkms/pkg/cli.Version=$(VERSION) \
+           -X github.com/jeremyhahn/go-xkms/pkg/xkms.buildVersion=$(VERSION) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.GitCommit=$(GIT_COMMIT) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.BuildDate=$(BUILD_DATE)
+
+# -trimpath on every go build/test (#2309, DS-9612): without it cmd/go hashes
+# the package directory into each action ID, so every lane and verify clone
+# builds new keys and the shared Go build cache grows without reuse. The
+# filter-out keeps the flag single across recursive and env -i sub-makes.
+export GOFLAGS := $(strip $(filter-out -trimpath,$(GOFLAGS)) -trimpath)
 
 # Every pinned tool version and download checksum: GO_IMAGE, GOLANGCI_VERSION,
 # ACTIONLINT_VERSION, TRIVY_VERSION and the rest. One file, also sourced by the
@@ -4282,7 +4289,10 @@ lint-gates: fmt-check check-insecure-tls check-public-literals check-test-helper
 ## lint: Run actionlint over the workflows, then golangci-lint across every module (LINT_MODULES), plus the root module's backend and raft tag sets
 lint: actionlint
 	@echo "$(CYAN)$(BOLD)→ Running linters...$(RESET)"
-	@GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
+	@# golangci-lint's cgocall re-reads cgo files by their build paths, which
+	@# -trimpath makes module-relative (#2309): lint without it.
+	@export GOFLAGS="$(filter-out -trimpath,$(GOFLAGS))"; \
+	GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
 	if [ ! -x "$$GOLANGCI_LINT_BIN" ]; then \
 		echo "$(RED)✗ golangci-lint is required but not installed$(RESET)"; \
 		echo "$(YELLOW)  Install with: make install-tools$(RESET)"; \
