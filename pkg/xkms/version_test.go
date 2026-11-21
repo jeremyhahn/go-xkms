@@ -14,9 +14,74 @@
 package xkms
 
 import (
+	"runtime/debug"
 	"strings"
 	"testing"
 )
+
+// TestLibraryVersion_FromBuildInfo: when go-xkms is imported by another
+// application, debug.BuildInfo.Main is that application, so the library
+// version must come from the go-xkms entry in Deps (Codex round 1 at
+// 043aaf2e3 on #2322).
+func TestLibraryVersion_FromBuildInfo(t *testing.T) {
+	const mod = "github.com/jeremyhahn/go-xkms"
+	app := debug.Module{Path: "example.com/app", Version: "v9.9.9"}
+	tests := []struct {
+		name string
+		info *debug.BuildInfo
+		want string
+	}{
+		{
+			name: "imported dependency",
+			info: &debug.BuildInfo{Main: app, Deps: []*debug.Module{
+				{Path: "example.com/other", Version: "v1.0.0"},
+				{Path: mod, Version: "v0.64.2-alpha"},
+			}},
+			want: "v0.64.2-alpha",
+		},
+		{
+			name: "replaced dependency",
+			info: &debug.BuildInfo{Main: app, Deps: []*debug.Module{
+				{Path: mod, Version: "v0.64.2-alpha", Replace: &debug.Module{Path: "example.com/fork", Version: "v0.64.3-alpha"}},
+			}},
+			want: "v0.64.3-alpha",
+		},
+		{
+			name: "local directory replace",
+			info: &debug.BuildInfo{Main: app, Deps: []*debug.Module{
+				{Path: mod, Version: "v0.64.2-alpha", Replace: &debug.Module{Path: "../go-xkms"}},
+			}},
+			want: "unknown",
+		},
+		{
+			name: "no go-xkms dependency",
+			info: &debug.BuildInfo{Main: app},
+			want: "unknown",
+		},
+		{
+			name: "go-xkms main module",
+			info: &debug.BuildInfo{Main: debug.Module{Path: mod, Version: "v0.65.0"}},
+			want: "v0.65.0",
+		},
+		{
+			name: "go-xkms devel build",
+			info: &debug.BuildInfo{Main: debug.Module{Path: mod, Version: "(devel)"}},
+			want: "unknown",
+		},
+		{
+			name: "nil info",
+			info: nil,
+			want: "unknown",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := libraryVersion(tt.info); got != tt.want {
+				t.Fatalf("libraryVersion() = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestVersion(t *testing.T) {
 	// Version() reports the linker-set buildVersion (unset under go test)

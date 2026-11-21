@@ -13,7 +13,10 @@
 
 package xkms
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestVersion_FromLinkerVariable: the Makefile sets buildVersion with
 // -ldflags -X (#2309, Codex round 3 on #2322). Under -trimpath the source
@@ -46,7 +49,7 @@ func TestVersion_UnsetLinkerVariable(t *testing.T) {
 	if got == "" {
 		t.Fatal("Version() is empty with the linker variable unset; want \"unknown\"")
 	}
-	if got != "unknown" && got != moduleVersion() {
-		t.Fatalf("Version() = %q with the linker variable unset; want \"unknown\" or the module version", got)
+	if got != "unknown" && (!strings.HasPrefix(got, "v") || strings.Contains(got, "(devel)")) {
+		t.Fatalf("Version() = %q with the linker variable unset; want \"unknown\" or a go-xkms module version", got)
 	}
 }
