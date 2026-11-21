@@ -40,7 +40,7 @@ func TestCITemplateV153MainEventGroup(t *testing.T) {
 	for _, want := range []*regexp.Regexp{
 		regexp.MustCompile(`\A# ci-template: v1\.53 runner selection on v1\.34\.1 \+ v1\.42 hermetic gate \(customized\)\n`),
 		regexp.MustCompile(`(?m)^# v1\.52 `),
-		regexp.MustCompile(`(?m)^# v1\.53 \(handbook 88c10e76\): `),
+		regexp.MustCompile(`(?m)^# v1\.53 \(handbook 17803e85\): `),
 		regexp.MustCompile(`(?m)^concurrency:\n  group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.event_name == 'schedule' && format\('schedule-\{0\}', github\.repository\) \|\| github\.ref == 'refs/heads/main' && format\('main-\{0\}', github\.event_name\) \|\| github\.ref \}\}\n  cancel-in-progress: true\n`),
 		regexp.MustCompile(`(?m)^    if: \$\{\{ \(startsWith\(github\.event_name, 'pull_request'\) && always\(\) \|\| !cancelled\(\)\) && \(github\.event_name != 'schedule' \|\| needs\.preflight\.outputs\.verdict != 'busy'\) \}\}\n`),
 	} {
