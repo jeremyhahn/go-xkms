@@ -520,6 +520,12 @@ func (m *MockCertificateAuthority) ImportIssuingCAs(ctx context.Context, cert *x
 	return args.Error(0)
 }
 
+// ImportIssuingCAsInto imports issuing CAs via AIA into a caller-owned store.
+func (m *MockCertificateAuthority) ImportIssuingCAsInto(ctx context.Context, cert *x509.Certificate, store certstore.CertStore) error {
+	args := m.Called(ctx, cert, store)
+	return args.Error(0)
+}
+
 // ParseBundle parses a PEM-encoded certificate bundle.
 func (m *MockCertificateAuthority) ParseBundle(bundle []byte) ([]*x509.Certificate, error) {
 	args := m.Called(bundle)
