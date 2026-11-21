@@ -42,6 +42,7 @@ const available: PasswordStoreStatusResponse = {
   barrier_sealed: false,
   password_count: 3,
   message: "",
+  access_mode: "session_based",
 };
 
 const notImplemented = "The wired password store cannot enforce the requested access mode";
@@ -71,7 +72,7 @@ describe("PasswordAccessModeView", () => {
   it("mount: calls status once and shows the store state", async () => {
     await mountAvailable();
     expect(status).toHaveBeenCalledTimes(1);
-    expect(screen.getByText(/not known/i)).toBeTruthy();
+    expect(screen.getByTestId("current-mode").textContent).toContain("session_based");
   });
 
   it("mount: an unavailable store shows an info alert and disables Apply", async () => {
@@ -86,7 +87,7 @@ describe("PasswordAccessModeView", () => {
   it("validation: Apply stays disabled until a mode is chosen", async () => {
     await mountAvailable();
     expect(applyButton().disabled).toBe(true);
-    await fireEvent.click(screen.getByLabelText(/pin per operation/i));
+    await fireEvent.click(screen.getByLabelText(/session based/i));
     await waitFor(() => expect(applyButton().disabled).toBe(false));
   });
 
@@ -115,32 +116,45 @@ describe("PasswordAccessModeView", () => {
     expect(toasts).toHaveLength(0);
   });
 
-  it("pin per operation: confirm sets pin_per_operation", async () => {
-    setAccessMode.mockResolvedValue({ mode: "pin_per_operation", message: "access mode set to pin_per_operation" });
+  // PasswordStoreSetAccessMode fixes the mode at composition time: a tenant
+  // store is session_based and any other mode can only answer 501, so the
+  // view never offers it (docs/web-console/engineering.md no-501 invariant).
+  it("session_based store: PIN per operation is disabled, explained, and never requested", async () => {
     await mountAvailable();
-    await chooseAndApply(/pin per operation/i);
-    expect((await screen.findByTestId("confirm-mode")).textContent).toContain("pin_per_operation");
-    await fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(setAccessMode).toHaveBeenCalledWith({ mode: "pin_per_operation" }));
-    expect(setAccessMode).toHaveBeenCalledTimes(1);
-    await waitFor(() =>
-      expect(toasts).toContainEqual({ kind: "success", message: "access mode set to pin_per_operation" }),
-    );
+    const pin = screen.getByLabelText(/pin per operation/i) as HTMLInputElement;
+    expect(pin.disabled).toBe(true);
+    expect((screen.getByLabelText(/session based/i) as HTMLInputElement).disabled).toBe(false);
+    expect(screen.getByTestId("mode-fixed").textContent).toMatch(/session_based/);
+    await fireEvent.click(pin);
+    expect(applyButton().disabled).toBe(true);
+    expect(setAccessMode).not.toHaveBeenCalled();
   });
 
-  it("errors: a rejected call shows the message and keeps the earlier mode", async () => {
-    setAccessMode.mockResolvedValueOnce({ mode: "session_based", message: "ok" });
+  it("pin_per_operation store: session based is disabled instead", async () => {
+    status.mockResolvedValue({ ...available, access_mode: "pin_per_operation" });
+    render(PasswordAccessModeView);
+    await waitFor(() => expect(applyButton()).toBeTruthy());
+    expect((screen.getByLabelText(/session based/i) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText(/pin per operation/i) as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("a server that reports no mode offers no choice", async () => {
+    status.mockResolvedValue({ ...available, access_mode: undefined });
+    render(PasswordAccessModeView);
+    await waitFor(() => expect(applyButton()).toBeTruthy());
+    expect((screen.getByLabelText(/session based/i) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText(/pin per operation/i) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText(/not known/i)).toBeTruthy();
+    expect(applyButton().disabled).toBe(true);
+  });
+
+  it("errors: a rejected call shows the message and keeps the effective mode", async () => {
+    setAccessMode.mockRejectedValueOnce(new Error(notImplemented));
     await mountAvailable();
     await chooseAndApply(/session based/i);
     await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(screen.getByTestId("current-mode").textContent).toContain("session_based"));
-
-    setAccessMode.mockRejectedValueOnce(new Error(notImplemented));
-    await chooseAndApply(/pin per operation/i);
-    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(screen.getByText(notImplemented)).toBeTruthy());
     expect(screen.getByTestId("current-mode").textContent).toContain("session_based");
-    expect(screen.getByTestId("current-mode").textContent).not.toContain("pin_per_operation");
-    expect(toasts.filter((t) => t.kind === "success")).toHaveLength(1);
+    expect(toasts.filter((t) => t.kind === "success")).toHaveLength(0);
   });
 });
