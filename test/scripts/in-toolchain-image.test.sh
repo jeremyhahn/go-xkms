@@ -44,6 +44,13 @@ case $1 in
     done
     exit 0 ;;
   start)
+    # FAKE_LOCK: a cache volume's lock file; records whether the stage runs
+    # under a lock that keeps the trim's exclusive flock out.
+    if [ -n "${FAKE_LOCK:-}" ]; then
+      if [ ! -e "$FAKE_LOCK" ]; then echo missing
+      elif flock -n -x "$FAKE_LOCK" true; then echo free
+      else echo held; fi >"$FAKE_STATE/lock"
+    fi
     mapfile -t envs <"$FAKE_STATE/env"
     # The caller's Go caches, each only when set, before the container's -e
     # values (#2295).
@@ -68,7 +75,8 @@ run() {
 	rm -rf "$FAKE_STATE"
 	mkdir -p "$FAKE_STATE"
 	OUT=$(cd "$WORK/src" && env -u GOPRIVATE -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
-		PATH="$WORK/bin:$PATH" IN_IMAGE_CPUS=2 IN_IMAGE_NETWORK=bridge "$@" \
+		PATH="$WORK/bin:$PATH" IN_IMAGE_CPUS=2 IN_IMAGE_NETWORK=bridge \
+		CI_CACHE_LOCK_DIR="$WORK/locks" "$@" \
 		"$SCRIPT" toolchain:test trivy image --input it-image.tar --exit-code 1 2>&1)
 	RC=$?
 }
@@ -108,6 +116,23 @@ run IN_IMAGE_SCRATCH=var/tmp
 eq "the script exits 2" "2" "$RC"
 eq "the error names the variable" "IN_IMAGE_SCRATCH must be an absolute path: var/tmp" "$OUT"
 eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
+
+# --- each cache volume is held shared for the whole run ----------------------
+# scripts/trim-ci-caches.sh takes a volume's lock exclusively before it cleans
+# or unlinks anything in it, so a held lock keeps it off a running build.
+section "cache volume locks"
+for v in gobuild golangci gomod; do
+	run FAKE_LOCK="$WORK/locks/src-ci-cache-pr-$v.lock"
+	eq "the stage exits 0 ($v)" "0" "$RC"
+	eq "the $v volume's lock is held while the stage runs" "held" "$(cat "$FAKE_STATE/lock" 2>/dev/null)"
+done
+run FAKE_LOCK="$WORK/locks/src-ci-cache-pr-gobuild.lock"
+eq "the lock is released when the script exits" "free" \
+	"$(if flock -n -x "$WORK/locks/src-ci-cache-pr-gobuild.lock" true; then echo free; else echo held; fi)"
+run CI_CACHE_LOCK_DIR=/proc/no-such-lock-dir
+eq "an unwritable lock dir never blocks the build" "0" "$RC"
+eq "it warns and runs unlocked" "yes" \
+	"$(case $OUT in *"in-toolchain-image: warn: cache lock dir /proc/no-such-lock-dir"*) echo yes ;; *) echo no ;; esac)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

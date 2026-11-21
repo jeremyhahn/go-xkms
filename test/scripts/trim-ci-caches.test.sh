@@ -26,7 +26,10 @@ FAKE_BIN="$WORK_DIR/bin"
 CALL_LOG="$WORK_DIR/docker-calls.log"
 SIZES="$WORK_DIR/sizes"
 VOLROOT="$WORK_DIR/volumes"
-mkdir -p "$FAKE_BIN"
+# The host-wide volume locks scripts/in-toolchain-image.sh holds shared for a
+# build's whole run (CI_CACHE_LOCK_DIR/<volume>.lock).
+LOCK_DIR="$WORK_DIR/locks"
+mkdir -p "$FAKE_BIN" "$LOCK_DIR"
 
 cat > "$FAKE_BIN/docker" <<'FAKE'
 #!/bin/bash
@@ -119,6 +122,7 @@ run_script() {
             DOCKER_HOST="tcp://127.0.0.1:1" \
             FAKE_DOCKER_LOG="$CALL_LOG" FAKE_SIZES="$SIZES" \
             FAKE_INUSE="$inuse" FAKE_ROOT="$VOLROOT" \
+            CI_CACHE_LOCK_DIR="$LOCK_DIR" \
             "$@" \
             bash "$SCRIPT_UNDER_TEST" p-ci- toolchain:test 1 >"$WORK_DIR/stdout" 2>"$WORK_DIR/stderr"
     )
@@ -326,6 +330,58 @@ if grep -q "2 GiB left" "$WORK_DIR/stdout"; then
     pass "the unmeasured volume keeps its previous size in the total"
 else
     fail "the reported total subtracts a clean it could not measure"
+fi
+
+# --------------------------------------------------------------------------
+start_case "a volume a running build holds is skipped; another in-use one is trimmed"
+# A build holds the gobuild volume's shared lock (it may be linking from it),
+# so neither go clean -cache nor an unlink touches it; golangci is cleaned and
+# refilled to 0 KiB, so the report counts gobuild's 1100000 KiB (1 GiB left).
+setup "p-ci-cache-t-gobuild 1100000" "p-ci-cache-t-golangci 300000"
+entry p-ci-cache-t-gobuild aa "2026-01-01"
+entry p-ci-cache-t-golangci ab "2026-05-01"
+echo "p-ci-cache-t-golangci 0" > "$WORK_DIR/after"
+exec 9>>"$LOCK_DIR/p-ci-cache-t-gobuild.lock"
+flock -s 9
+run_script 0 "p-ci-cache-t-gobuild p-ci-cache-t-golangci" FAKE_AFTER="$WORK_DIR/after"
+if rw_mounted p-ci-cache-t-gobuild || grep -q -- "clean -cache" "$CALL_LOG" ||
+   ! has_files p-ci-cache-t-gobuild; then
+    fail "trimmed a volume a running build holds"
+else
+    pass "no clean and no unlink in the held volume"
+fi
+if grep -q "^skip  p-ci-cache-t-gobuild: a build holds it$" "$WORK_DIR/stdout"; then
+    pass "the skip names the held volume"
+else
+    fail "no skip line for the held volume"
+fi
+if rw_mounted p-ci-cache-t-golangci && ! has_files p-ci-cache-t-golangci; then
+    pass "an unlocked in-use volume is still trimmed"
+else
+    fail "the unlocked in-use volume was not trimmed"
+fi
+if grep -q "1 GiB left" "$WORK_DIR/stdout"; then
+    pass "the held volume keeps its size in the total"
+else
+    fail "the reported total drops the held volume"
+fi
+exec 9>&-
+
+# --------------------------------------------------------------------------
+start_case "once the build releases the lock, the volume is trimmed"
+setup "p-ci-cache-t-gobuild 1100000" "p-ci-cache-t-golangci 300000"
+entry p-ci-cache-t-gobuild aa "2026-01-01"
+entry p-ci-cache-t-golangci ab "2026-05-01"
+run_script 0 "p-ci-cache-t-gobuild p-ci-cache-t-golangci"
+if rw_mounted p-ci-cache-t-gobuild && grep -q -- "clean -cache" "$CALL_LOG"; then
+    pass "go clean -cache in the released volume"
+else
+    fail "the released volume was not trimmed"
+fi
+if grep -q "^skip " "$WORK_DIR/stdout"; then
+    fail "skipped a volume no build holds"
+else
+    pass "no skip once the lock is free"
 fi
 
 # --------------------------------------------------------------------------
