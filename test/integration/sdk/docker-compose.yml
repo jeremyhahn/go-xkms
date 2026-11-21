@@ -23,7 +23,7 @@ services:
       secrets:
         - gomodauth
         - apt_proxy
-    image: go-xkms-sdk-test:${XKMS_IMAGE_TAG:-latest}
+    image: go-xkms-sdk-test-xkms-server:${XKMS_IMAGE_TAG:-latest}
     ports:
       - "0:8443"       # REST API (HTTPS)
       - "0:9443"       # gRPC
@@ -142,7 +142,7 @@ services:
       secrets:
         - gomodauth
         - apt_proxy
-    image: go-xkms-sdk-test:${XKMS_IMAGE_TAG:-latest}
+    image: go-xkms-sdk-test-sdk-tests:${XKMS_IMAGE_TAG:-latest}
     # Required for QUIC UDP buffer settings
     privileged: true
     user: root

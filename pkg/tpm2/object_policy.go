@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -61,7 +62,11 @@ func (tpm *TPM2) bindObjectPolicy(
 	var pin *store.PlatformPolicyPin
 	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
 		var err error
-		pin, err = tpm.capturePlatformPolicyPin()
+		pcrs, err := tpm.sealPCRSet(keyAttrs)
+		if err != nil {
+			return nil, nil, err
+		}
+		pin, err = tpm.capturePlatformPolicyPinOver(pcrs)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -136,9 +141,70 @@ func (tpm *TPM2) objectSession(
 		return tpm.passwordKeySession(keyAttrs)
 	}
 	if keyAuthValue(keyAttrs) == nil {
-		return tpm.platformPCRBranchSession(authPolicy)
+		pcrs, err := tpm.objectPCRSet(keyAttrs, backend)
+		if err != nil {
+			return nil, noopCloser, err
+		}
+		return tpm.platformPCRBranchSessionOver(pcrs, authPolicy)
 	}
-	return tpm.platformKeySession(keyAttrs, backend)
+	pcrs, err := tpm.objectPCRSet(keyAttrs, backend)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	return tpm.platformKeySessionOver(keyAttrs, backend, pcrs, authPolicy)
+}
+
+// platformKeySessionOver opens the password branch of an object sealed to
+// the platform policy whose PolicyPCR branch covers pcrs. PolicyOR is built
+// over the stored pin when it records the same selection; otherwise (no pin,
+// as for inline blobs unsealed against an empty key backend, or a pin a later
+// seal under the same CN wrote over another selection) over pcrs' live
+// values, so an object sealed over an expanded selection still opens with its
+// password while those PCRs are unchanged.
+func (tpm *TPM2) platformKeySessionOver(
+	keyAttrs *types.KeyAttributes,
+	backend store.KeyBackend,
+	pcrs PCRSet,
+	authPolicy []byte) (tpm2.Session, func() error, error) {
+
+	keyAuth := keyAuthValue(keyAttrs)
+	if len(keyAuth) == 0 {
+		return tpm.platformKeySession(keyAttrs, backend)
+	}
+	pin, err := tpm.loadPlatformPolicyPin(keyAttrs, backend)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	if pin != nil && pin.PCRSelect == pcrs.Mask() {
+		return tpm.platformPolicySession(keyAuth, pin)
+	}
+	// A pin recorded over another selection still belongs to this object
+	// when its PolicyOR is the object's authPolicy: an object sealed before
+	// the expanded selection carries the platform set's policy, and the
+	// recorded pin opens it.
+	if pin != nil && len(authPolicy) > 0 {
+		if recorded, err := platformPolicyDigestFromPin(pin); err == nil &&
+			bytes.Equal(recorded.Buffer, authPolicy) {
+			return tpm.platformPolicySession(keyAuth, pin)
+		}
+	}
+	if pin == nil && pcrs.Mask() == tpm.config.PlatformPCRs.Mask() {
+		return tpm.platformPolicySession(keyAuth, nil)
+	}
+	live, err := tpm.capturePlatformPolicyPinOver(pcrs)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	if pin == nil && len(authPolicy) > 0 &&
+		pcrs.Mask() != tpm.config.PlatformPCRs.Mask() {
+		// No record: an object sealed before the expanded selection
+		// carries the platform set's PolicyOR, not this selection's.
+		if expanded, err := platformPolicyDigestFromPin(live); err == nil &&
+			!bytes.Equal(expanded.Buffer, authPolicy) {
+			return tpm.platformPolicySession(keyAuth, nil)
+		}
+	}
+	return tpm.platformPolicySession(keyAuth, live)
 }
 
 // objectAuthPolicy returns the authPolicy of the loaded object at handle,
@@ -167,14 +233,112 @@ func (tpm *TPM2) objectAuthPolicy(handle tpm2.TPMHandle) ([]byte, error) {
 // choice only selects which session to build: the TPM still checks the
 // session against the object, so a wrong choice can only fail.
 func (tpm *TPM2) platformPCRBranchSession(authPolicy []byte) (tpm2.Session, func() error, error) {
-	pcrPolicy, err := tpm.platformPCRPolicyDigest()
+	return tpm.platformPCRBranchSessionOver(tpm.config.PlatformPCRs, authPolicy)
+}
+
+// platformPCRBranchSessionOver is platformPCRBranchSession for an object
+// whose PolicyPCR branch covers pcrs (sealPCRSet) rather than the configured
+// platform set.
+func (tpm *TPM2) platformPCRBranchSessionOver(pcrs PCRSet, authPolicy []byte) (tpm2.Session, func() error, error) {
+	pin, err := tpm.capturePlatformPolicyPinOver(pcrs)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	pcrPolicy, err := platformPCRPolicyDigestFromPin(pin)
 	if err != nil {
 		return nil, noopCloser, err
 	}
 	if bytes.Equal(pcrPolicy.Buffer, authPolicy) {
-		return tpm.platformPCRSession()
+		return tpm.platformPCRSessionOver(pcrs)
+	}
+	if pcrs.Mask() != tpm.config.PlatformPCRs.Mask() {
+		// An object sealed with a recovery PIN over the expanded selection
+		// carries PolicyOR(PolicyPCR(pcrs), PolicyAuthValue): open its PCR
+		// branch over the same selection.
+		orPolicy, err := platformPolicyDigestFromPin(pin)
+		if err != nil {
+			return nil, noopCloser, err
+		}
+		if bytes.Equal(orPolicy.Buffer, authPolicy) {
+			return tpm.platformORPCRSessionOver(pcrs)
+		}
+		// An object whose PCRSelection is not part of its policy (an AK's
+		// creation PCRs, say) keeps the platform set's session.
+		return tpm.platformPCRBranchSession(authPolicy)
 	}
 	return tpm.PlatformPolicySession(nil)
+}
+
+// sealPCRSet returns the PCRs the PolicyPCR branch of an object sealed to
+// the platform policy covers: the configured platform set joined with the
+// caller's keyAttrs.TPMAttributes.PCRSelection (#2226). With no selection,
+// or one inside the platform set, it is the platform set itself, so such an
+// object's policy digest is unchanged. A selection in a bank other than the
+// platform bank cannot join the platform PolicyPCR and is refused.
+func (tpm *TPM2) sealPCRSet(keyAttrs *types.KeyAttributes) (PCRSet, error) {
+	platform := tpm.config.PlatformPCRs
+	if keyAttrs.TPMAttributes == nil ||
+		len(keyAttrs.TPMAttributes.PCRSelection.PCRSelections) == 0 {
+		return platform, nil
+	}
+	bank, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+	}
+	selection := keyAttrs.TPMAttributes.PCRSelection
+	for _, s := range selection.PCRSelections {
+		if s.Hash == bank {
+			continue
+		}
+		for _, b := range s.PCRSelect {
+			if b != 0 {
+				return nil, &errs.Detail{
+					Err: ErrPlatformPolicyDigestCompute,
+					Detail: fmt.Sprintf("sealed PCR selection in bank 0x%04x, platform bank 0x%04x",
+						uint16(s.Hash), uint16(bank)),
+				}
+			}
+		}
+	}
+	union := platform.Mask() | pcrSetFromSelection(selection, bank).Mask()
+	if union == platform.Mask() {
+		return platform, nil
+	}
+	return PCRSetFromMask(union), nil
+}
+
+// objectPCRSet returns the PCRs the PolicyPCR branch of an existing object
+// covers. A PCRSelection in the attributes wins: the caller named it, or
+// applySealedPCRSelection recovered it from an inline blob's own metadata,
+// and a pin under the same CN may be a later seal's. With no selection, the
+// one recorded in the platform policy pin beside the object's blobs is used,
+// so an Unseal whose attributes were reconstructed from the key ID still
+// opens an object sealed over an extra PCR; the digest is computed from the
+// live values of those PCRs. With neither, it is the platform PCR set.
+func (tpm *TPM2) objectPCRSet(keyAttrs *types.KeyAttributes, backend store.KeyBackend) (PCRSet, error) {
+	// A selection in the attributes (the caller's, or an inline blob's own
+	// recovered by applySealedPCRSelection) belongs to this object; a pin
+	// stored under the CN may belong to a later seal that overwrote it.
+	if keyAttrs.TPMAttributes != nil &&
+		len(keyAttrs.TPMAttributes.PCRSelection.PCRSelections) > 0 {
+		return tpm.sealPCRSet(keyAttrs)
+	}
+	// The pin only names the selection here: the PCR branch never depends
+	// on its digest, so an unreadable record falls back to the caller's
+	// selection and the TPM decides.
+	pin, err := tpm.loadPlatformPolicyPin(keyAttrs, backend)
+	if err != nil {
+		tpm.logger.Debug("tpm: platform policy pin unreadable; using the requested PCR selection",
+			slog.String("cn", keyAttrs.CN), slog.String("error", err.Error()))
+		pin = nil
+	}
+	if pin != nil && pin.PCRSelect != 0 {
+		bank, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+		if err == nil && uint16(bank) == pin.PCRBank {
+			return PCRSetFromMask(pin.PCRSelect), nil
+		}
+	}
+	return tpm.sealPCRSet(keyAttrs)
 }
 
 // platformPCRPolicyDigest returns the PolicyPCR branch of the platform

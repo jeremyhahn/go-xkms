@@ -71,6 +71,7 @@ func TestIssueLAKCertificateRaw_Success(t *testing.T) {
 		certifyInfo, sig,
 		x509.ECDSAWithSHA256,
 		lakPubArea, nonce,
+		"tenant-a",
 	)
 	if err != nil {
 		t.Fatalf("IssueLAKCertificateRaw() returned unexpected error: %v", err)
@@ -93,6 +94,54 @@ func TestIssueLAKCertificateRaw_Success(t *testing.T) {
 	}
 }
 
+// TestIssueLAKCertificateRaw_RecordsTenant proves the raw adapter carries the
+// caller's tenant into the LAK's CertificateRequest, so the issued LAK is
+// owned by that tenant (CertificateTenant, the ownership a revocation is
+// checked against) and not by the system scope.
+func TestIssueLAKCertificateRaw_RecordsTenant(t *testing.T) {
+	ca := setupTestCA(t)
+
+	iakKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate iak key: %v", err)
+	}
+	iakCertDER := issueInternalTestIAK(t, ca, iakKey)
+
+	lakKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate lak key: %v", err)
+	}
+	lakPubArea := lakFixturePublicArea(t, &lakKey.PublicKey)
+	nonce := []byte("nonce-TestIssueLAKCertificateRaw_RecordsTenant")
+	certifyInfo, sig := buildLAKCertifyEvidence(t, iakKey, lakPubArea, nonce)
+
+	const tenant = "tenant-lak"
+	certDER, err := ca.IssueLAKCertificateRaw(
+		context.Background(),
+		"id:49465800", "NPCT6xx", "7.2.3.1",
+		iakCertDER,
+		certifyInfo, sig,
+		x509.ECDSAWithSHA256,
+		lakPubArea, nonce,
+		tenant,
+	)
+	if err != nil {
+		t.Fatalf("IssueLAKCertificateRaw() returned unexpected error: %v", err)
+	}
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatalf("parse issued LAK certificate: %v", err)
+	}
+
+	owner, err := ca.CertificateTenant(context.Background(), cert.SerialNumber)
+	if err != nil {
+		t.Fatalf("CertificateTenant() returned unexpected error: %v", err)
+	}
+	if owner != tenant {
+		t.Errorf("LAK owner = %q, want the issuing tenant %q", owner, tenant)
+	}
+}
+
 func TestIssueLAKCertificateRaw_InvalidIAKCertificateDER(t *testing.T) {
 	ca := setupTestCA(t)
 
@@ -103,6 +152,7 @@ func TestIssueLAKCertificateRaw_InvalidIAKCertificateDER(t *testing.T) {
 		[]byte("certify-info"), []byte("signature"),
 		x509.ECDSAWithSHA256,
 		[]byte("lak-public-area"), []byte("nonce"),
+		"tenant-a",
 	)
 	if err == nil {
 		t.Fatal("IssueLAKCertificateRaw() error = nil, want a parse error for garbage IAK certificate DER")
