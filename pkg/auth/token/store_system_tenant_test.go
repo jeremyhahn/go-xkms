@@ -21,6 +21,8 @@ import (
 	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // rbacServiceBind models Node.ServiceContext on an RBAC-enforcing node: it
@@ -50,10 +52,42 @@ func TestQRDBRefreshStore_RevokeBySubjectFromNonSystemRequest(t *testing.T) {
 
 	// DisableUser on a non-system request.
 	tenantCtx := qrdbtenant.WithTenantID(context.Background(), "acme")
-	require.NoError(t, issuer.RevokeBySubject(tenantCtx, testIdentity().Subject))
+	require.NoError(t, issuer.RevokeBySubject(tenantCtx, testIdentity().TenantID, testIdentity().Subject))
 
 	// After re-enable, the old refresh token stays refused.
 	_, err = issuer.Refresh(context.Background(), pair.RefreshToken)
 	var revokedErr *RefreshRevokedError
 	require.ErrorAs(t, err, &revokedErr)
+}
+
+// TestQRDBRefreshStore_RevokeBySubjectIsTenantScoped is PR #2296's Codex
+// round-5 P1: every tenant's refresh bookkeeping shares the system store and
+// usernames are tenant-scoped, so disabling alice in tenant A must leave
+// alice in tenant B and alice in the system tenant signed in.
+func TestQRDBRefreshStore_RevokeBySubjectIsTenantScoped(t *testing.T) {
+	store, err := NewQRDBRefreshStore(newGuardedMemoryKV(), WithCallContext(rbacServiceBind))
+	require.NoError(t, err)
+	issuer := newIssuerWithStore(t, store)
+
+	alice := func(tenantID string) *auth.Identity {
+		return &auth.Identity{Subject: "alice", TenantID: tenantID, Metadata: map[string]string{"username": "alice"}}
+	}
+	pairA, err := issuer.Mint(context.Background(), alice("tenant-a"))
+	require.NoError(t, err)
+	pairB, err := issuer.Mint(context.Background(), alice("tenant-b"))
+	require.NoError(t, err)
+	pairSys, err := issuer.Mint(context.Background(), alice(qrdbsdk.SystemTenantID))
+	require.NoError(t, err)
+
+	tenantCtx := qrdbtenant.WithTenantID(context.Background(), "tenant-a")
+	require.NoError(t, issuer.RevokeBySubject(tenantCtx, "tenant-a", "alice"))
+
+	_, err = issuer.Refresh(context.Background(), pairA.RefreshToken)
+	var revokedErr *RefreshRevokedError
+	require.ErrorAs(t, err, &revokedErr, "tenant A alice is revoked")
+
+	_, err = issuer.Refresh(context.Background(), pairB.RefreshToken)
+	require.NoError(t, err, "tenant B alice stays signed in")
+	_, err = issuer.Refresh(context.Background(), pairSys.RefreshToken)
+	require.NoError(t, err, "system-tenant alice stays signed in")
 }
