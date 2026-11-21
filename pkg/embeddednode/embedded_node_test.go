@@ -147,17 +147,19 @@ func TestTrustDomain(t *testing.T) {
 	assert.Equal(t, "example.org", TrustDomain(cfg))
 }
 
-// The qrdb mTLS authenticator pins the SPIFFE trust domain the CA issues
-// client certificates under, so a SAN under a foreign trust domain is rejected.
-func TestEmbeddedNodeStorageConfig_PinsSPIFFETrustDomain(t *testing.T) {
+// go-qrdb v0.58.5 makes each tenant its own SPIFFE trust domain
+// (spiffe://<tenantID>/...) and its mTLS authenticator refuses a tenant equal
+// to the cluster trust domain, so the cluster trust domain is the one value
+// the embedded node pins.
+func TestEmbeddedNodeStorageConfig_PinsClusterTrustDomain(t *testing.T) {
 	qcfg := EmbeddedNodeStorageConfig(&config.Config{}, ResolvedNodeSeal{})
-	assert.Equal(t, DefaultTrustDomain, qcfg.Auth.SPIFFETrustDomain)
+	assert.Equal(t, DefaultTrustDomain, qcfg.Auth.EffectiveClusterTrustDomain())
 
 	cfg := &config.Config{Cluster: config.ClusterConfig{
 		RaftEnrollment: config.RaftEnrollmentConfig{TrustDomain: "example.org"},
 	}}
 	qcfg = EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{})
-	assert.Equal(t, "example.org", qcfg.Auth.SPIFFETrustDomain)
+	assert.Equal(t, "example.org", qcfg.Auth.EffectiveClusterTrustDomain())
 }
 
 // A relative datastore path (the webauthn-browser harness uses
