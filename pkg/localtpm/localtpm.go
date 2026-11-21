@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/dao"
@@ -111,6 +112,12 @@ type Params struct {
 	// returns the function that releases it.
 	Lock func() (func(), error)
 
+	// ReferenceSigner is the reference-value signer's endorsement a signed
+	// CoRIM must verify under before a policy branch is updated from it. Nil
+	// leaves those updates unavailable: they are refused with
+	// tpmpolicy.ErrNoReferenceSigner.
+	ReferenceSigner *refvalue.VerifyOptions
+
 	// Logger receives the service's lifecycle events. Nil selects
 	// slog.Default().
 	Logger *slog.Logger
@@ -184,6 +191,8 @@ func Open(p Params) (*Policies, error) {
 		Backend: backend,
 		DAOs:    dao.NewStoreFactory(registryKV),
 		Logger:  logger,
+
+		ReferenceSigner: p.ReferenceSigner,
 	})
 	if err != nil {
 		return nil, &BuildError{Err: errors.Join(err, l.closeStores())}

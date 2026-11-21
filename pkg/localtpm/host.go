@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -27,6 +28,10 @@ import (
 
 // DeviceParams open the host's TPM with its own key store.
 type DeviceParams struct {
+	// ReferenceSigner, when set, is passed to Open by OpenHost (see
+	// Params.ReferenceSigner); OpenDevice does not use it.
+	ReferenceSigner *refvalue.VerifyOptions
+
 	// DataDir is the client's data directory. The TPM's own key store is
 	// kept in "<DataDir>/tpm".
 	DataDir string
@@ -151,6 +156,8 @@ func OpenHost(p DeviceParams, openStore func(dir string) (storage.Backend, error
 		DataDir:   p.DataDir,
 		OpenStore: openStore,
 		Logger:    p.Logger,
+
+		ReferenceSigner: p.ReferenceSigner,
 	})
 	if err != nil {
 		return nil, errors.Join(err, device.Close())
