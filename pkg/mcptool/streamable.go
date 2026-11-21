@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -438,4 +439,227 @@ func (m *wireMessage) response(id mcp.RequestId) (*mcptransport.JSONRPCResponse,
 		Result:  m.Result,
 		Error:   m.Error,
 	}, nil
+}
+
+// discoverProbeTimeout bounds the server/discover probe: a server that
+// predates the method may never answer it.
+const discoverProbeTimeout = 10 * time.Second
+
+// streamSession is the MCP client session that Client drives over the
+// go-xkms streamable transport: the handshake (server/discover, falling back
+// to the legacy initialize handshake) and tools/call. It replaces mcp-go's
+// client.Client, which calls its transport through an interface. In a
+// binary that links go-qrdb that interface can also hold mcp-go's
+// transport.StreamableHTTP, which follows a Location header with the bearer
+// token (GO-2026-6911), so every client.Client call is a reachable path to
+// it. streamSession only ever calls *streamableHTTP.
+type streamSession struct {
+	t          *streamableHTTP
+	clientInfo mcp.Implementation
+
+	mu              sync.RWMutex
+	protocolVersion string
+	nextID          int64
+}
+
+var _ Session = (*streamSession)(nil)
+
+func newStreamSession(t *streamableHTTP, clientInfo mcp.Implementation) *streamSession {
+	return &streamSession{t: t, clientInfo: clientInfo}
+}
+
+// initialize negotiates the protocol version the way mcp-go's
+// client.Client.Initialize does: a modern preferred version is probed with
+// server/discover; a server that rejects it while naming the versions it
+// supports is modern, and the probe is retried once at the best mutual
+// version; any other failure means a legacy server, which gets the
+// initialize handshake.
+func (s *streamSession) initialize(ctx context.Context, preferred string) error {
+	if preferred == "" || mcp.IsModernProtocol(preferred) {
+		modern, err := s.negotiateModern(ctx, preferred)
+		if err == nil || modern {
+			return err
+		}
+	}
+	return s.initializeLegacy(ctx, preferred)
+}
+
+func (s *streamSession) negotiateModern(ctx context.Context, preferred string) (bool, error) {
+	if preferred == "" {
+		preferred = mcp.LATEST_PROTOCOL_VERSION
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, discoverProbeTimeout)
+	defer cancel()
+
+	s.setVersion(preferred)
+	modern := false
+	var err error
+	for attempt := range 2 {
+		var raw *json.RawMessage
+		raw, err = s.send(probeCtx, string(mcp.MethodServerDiscover), mcp.DiscoverParams{})
+		if err == nil {
+			var result mcp.DiscoverResult
+			if err = json.Unmarshal(*raw, &result); err != nil {
+				err = fmt.Errorf("decode server/discover result: %w", err)
+				break
+			}
+			sent := s.version()
+			switch {
+			case slices.Contains(result.SupportedVersions, sent):
+			case mcp.IsModernProtocol(mcp.NegotiateMutuallySupportedVersion(result.SupportedVersions)):
+				s.setVersion(mcp.NegotiateMutuallySupportedVersion(result.SupportedVersions))
+			default:
+				s.setVersion("")
+				return true, fmt.Errorf("server/discover result lists no modern version this client supports: %v", result.SupportedVersions)
+			}
+			return true, nil
+		}
+		var unsupported mcp.UnsupportedProtocolVersionError
+		if !errors.As(err, &unsupported) || unsupported.Supported == nil {
+			break
+		}
+		modern = true
+		if attempt > 0 {
+			break
+		}
+		negotiated := mcp.NegotiateMutuallySupportedVersion(unsupported.Supported)
+		if !mcp.IsModernProtocol(negotiated) {
+			break
+		}
+		s.setVersion(negotiated)
+	}
+	s.setVersion("")
+	return modern, err
+}
+
+func (s *streamSession) initializeLegacy(ctx context.Context, preferred string) error {
+	if preferred == "" || mcp.IsModernProtocol(preferred) {
+		preferred = mcp.LATEST_LEGACY_PROTOCOL_VERSION
+	}
+	params := struct {
+		ProtocolVersion string                 `json:"protocolVersion"`
+		ClientInfo      mcp.Implementation     `json:"clientInfo"`
+		Capabilities    mcp.ClientCapabilities `json:"capabilities"`
+	}{ProtocolVersion: preferred, ClientInfo: s.clientInfo}
+	raw, err := s.send(ctx, string(mcp.MethodInitialize), params)
+	if err != nil {
+		return err
+	}
+	var result mcp.InitializeResult
+	if err := json.Unmarshal(*raw, &result); err != nil {
+		return fmt.Errorf("decode initialize result: %w", err)
+	}
+	if !mcp.IsValidProtocolVersion(result.ProtocolVersion) {
+		return mcp.UnsupportedProtocolVersionError{Version: result.ProtocolVersion}
+	}
+	s.setVersion(result.ProtocolVersion)
+	return s.t.SendNotification(ctx, mcp.JSONRPCNotification{
+		JSONRPC:      mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{Method: string(mcp.MethodNotificationInitialized)},
+	})
+}
+
+// CallTool implements Session.
+func (s *streamSession) CallTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	raw, err := s.send(ctx, string(mcp.MethodToolsCall), request.Params)
+	if err != nil {
+		return nil, err
+	}
+	return mcp.ParseCallToolResult(raw)
+}
+
+// Close implements Session.
+func (s *streamSession) Close() error {
+	return s.t.Close()
+}
+
+func (s *streamSession) version() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.protocolVersion
+}
+
+// setVersion records the protocol version in effect; the transport mirrors
+// it in the Mcp-Protocol-Version header.
+func (s *streamSession) setVersion(version string) {
+	s.mu.Lock()
+	s.protocolVersion = version
+	s.mu.Unlock()
+	s.t.SetProtocolVersion(version)
+}
+
+// send posts one request and returns its result. On a modern connection the
+// params carry the protocol metadata in _meta and the standard Mcp-* headers
+// go on the POST (SEP-2575, SEP-2243).
+func (s *streamSession) send(ctx context.Context, method string, params any) (*json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	version := s.version()
+	var header http.Header
+	if mcp.IsModernProtocol(version) {
+		var err error
+		if params, err = s.withMeta(version, params); err != nil {
+			return nil, err
+		}
+		encoded, err := json.Marshal(params)
+		if err != nil {
+			return nil, fmt.Errorf("mcp request %s: encode params: %w", method, err)
+		}
+		if standard := mcp.StandardHeaders(version, mcp.MCPMethod(method), encoded); len(standard) > 0 {
+			header = make(http.Header, len(standard))
+			for name, value := range standard {
+				header.Set(name, value)
+			}
+		}
+	}
+	s.mu.Lock()
+	s.nextID++
+	id := s.nextID
+	s.mu.Unlock()
+
+	resp, err := s.t.SendRequest(ctx, mcptransport.JSONRPCRequest{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      mcp.NewRequestId(id),
+		Method:  method,
+		Params:  params,
+		Header:  header,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, resp.Error.AsError()
+	}
+	return &resp.Result, nil
+}
+
+// withMeta merges the per-request protocol metadata of a modern connection
+// into params' _meta.
+func (s *streamSession) withMeta(version string, params any) (map[string]json.RawMessage, error) {
+	fields := map[string]json.RawMessage{}
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("mcp: encode params: %w", err)
+	}
+	if string(encoded) != "null" {
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			return nil, fmt.Errorf("mcp: params are not a JSON object: %w", err)
+		}
+	}
+	meta := map[string]any{}
+	if raw, ok := fields["_meta"]; ok {
+		_ = json.Unmarshal(raw, &meta)
+	}
+	meta[mcp.MetaKeyProtocolVersion] = version
+	meta[mcp.MetaKeyClientCapabilities] = mcp.ClientCapabilities{}
+	if s.clientInfo.Name != "" {
+		meta[mcp.MetaKeyClientInfo] = s.clientInfo
+	}
+	encodedMeta, err := json.Marshal(meta)
+	if err != nil {
+		return nil, fmt.Errorf("mcp: encode _meta: %w", err)
+	}
+	fields["_meta"] = encodedMeta
+	return fields, nil
 }

@@ -56,7 +56,6 @@ import (
 	"os"
 	"strings"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -215,9 +214,17 @@ func WithErrorClassifier(classify ErrorClassifier) ClientOption {
 // state; Call is the sole request path once Connect succeeds.
 type Client struct {
 	config    *transport.Config
-	client    *mcpclient.Client
+	client    Session
 	connected bool
 	classify  ErrorClassifier
+}
+
+// Session is the MCP session a Client calls tools on. Connect builds one on
+// the go-xkms streamable transport; mcp-go's in-process client also
+// satisfies it, for tests that pass one to NewClientWithSession.
+type Session interface {
+	CallTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	Close() error
 }
 
 // NewClient constructs a Client for cfg. cfg must be non-nil; callers apply
@@ -238,7 +245,7 @@ func NewClient(cfg *transport.Config, opts ...ClientOption) *Client {
 // connected state, skipping Connect's HTTP dial and MCP handshake. This is a
 // deliberate escape hatch for exactly that scenario, not a general
 // constructor: production callers use NewClient and Connect.
-func NewClientWithSession(cfg *transport.Config, session *mcpclient.Client, opts ...ClientOption) *Client {
+func NewClientWithSession(cfg *transport.Config, session Session, opts ...ClientOption) *Client {
 	c := NewClient(cfg, opts...)
 	c.client = session
 	c.connected = true
@@ -268,31 +275,21 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	baseURL := scheme + addr + endpointPath
 
-	// Our own streamable HTTP transport, not mcp-go's: it never follows a
-	// redirect, so a Location header cannot send the request or the bearer
-	// token to another origin (GO-2026-6911).
+	// Our own streamable HTTP transport and session, not mcp-go's: the
+	// transport never follows a redirect, so a Location header cannot send
+	// the request or the bearer token to another origin, and no call goes
+	// through mcp-go's client.Client, whose transport interface can resolve
+	// to the vulnerable transport.StreamableHTTP (GO-2026-6911).
 	httpTransport := newStreamableHTTP(baseURL, &http.Transport{TLSClientConfig: tlsConfig}, c.requestHeaders())
-	mcpClient := mcpclient.NewClient(httpTransport)
-
-	if startErr := mcpClient.Start(ctx); startErr != nil {
-		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", startErr)}
-	}
-
-	initReq := mcp.InitializeRequest{
-		Params: mcp.InitializeParams{
-			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			ClientInfo:      mcp.Implementation{Name: clientName, Version: clientVersion},
-			Capabilities:    mcp.ClientCapabilities{},
-		},
-	}
-	if _, initErr := mcpClient.Initialize(ctx, initReq); initErr != nil {
-		if closeErr := mcpClient.Close(); closeErr != nil {
+	session := newStreamSession(httpTransport, mcp.Implementation{Name: clientName, Version: clientVersion})
+	if initErr := session.initialize(ctx, mcp.LATEST_PROTOCOL_VERSION); initErr != nil {
+		if closeErr := session.Close(); closeErr != nil {
 			return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("initialize failed: %v (close error: %v)", initErr, closeErr)}
 		}
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("initialize failed: %v", initErr)}
 	}
 
-	c.client = mcpClient
+	c.client = session
 	c.connected = true
 	return nil
 }
