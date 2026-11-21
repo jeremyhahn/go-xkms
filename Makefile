@@ -10,6 +10,7 @@ VERSION := $(shell cat VERSION 2>/dev/null || echo "0.0.1-alpha")
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -X github.com/jeremyhahn/go-xkms/pkg/cli.Version=$(VERSION) \
+           -X github.com/jeremyhahn/go-xkms/pkg/xkms.buildVersion=$(VERSION) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.GitCommit=$(GIT_COMMIT) \
            -X github.com/jeremyhahn/go-xkms/pkg/cli.BuildDate=$(BUILD_DATE)
 

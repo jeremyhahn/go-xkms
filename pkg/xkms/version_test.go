@@ -14,14 +14,12 @@
 package xkms
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestVersion(t *testing.T) {
-	// The Version() function reads from the VERSION file in the project root
+	// Version() reports the linker-set buildVersion (unset under go test)
 	version := Version()
 
 	// Should not be empty
@@ -38,28 +36,6 @@ func TestVersion(t *testing.T) {
 	}
 
 	t.Logf("Library version: %s", version)
-}
-
-func TestVersion_WithVersionFile(t *testing.T) {
-	// Create a temporary VERSION file for testing
-	tempDir := t.TempDir()
-	versionFile := filepath.Join(tempDir, "VERSION")
-
-	testVersion := "v1.2.3-test"
-	err := os.WriteFile(versionFile, []byte(testVersion), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test VERSION file: %v", err)
-	}
-
-	// Note: We can't easily test this without modifying the function
-	// to accept a path parameter, but we can verify the current behavior
-	version := Version()
-
-	// Version should be either the real version or "unknown"
-	// depending on whether VERSION file exists in the project root
-	if version == "" {
-		t.Error("Version() should never return empty string")
-	}
 }
 
 func TestVersion_Consistency(t *testing.T) {
@@ -94,9 +70,8 @@ func TestVersion_NotEmpty(t *testing.T) {
 	}
 }
 
-func TestVersion_CallerEdgeCase(t *testing.T) {
-	// The Version function uses runtime.Caller internally
-	// This test ensures it handles the path correctly
+func TestVersion_Readable(t *testing.T) {
+	// Version reports the linker-set value, the module version or "unknown"
 	version := Version()
 
 	// Version should be either a valid version string or "unknown"
@@ -152,7 +127,7 @@ func TestVersion_ValidFormat(t *testing.T) {
 
 	// Version should either be "unknown" or follow a version format
 	if version == "unknown" {
-		t.Log("VERSION file not found or empty, got 'unknown' as expected")
+		t.Log("no linker version set, got 'unknown' as expected")
 		return
 	}
 
