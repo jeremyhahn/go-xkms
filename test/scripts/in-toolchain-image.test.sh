@@ -94,6 +94,15 @@ has "trivy's TMPDIR follows IN_IMAGE_SCRATCH" "$FAKE_STATE/trivy.out" "TMPDIR=$W
 has "trivy's cache follows IN_IMAGE_SCRATCH" "$FAKE_STATE/trivy.out" "TRIVY_CACHE_DIR=$WORK/scratch/trivy"
 has "GOTMPDIR follows IN_IMAGE_SCRATCH" "$FAKE_STATE/create.args" "GOTMPDIR=$WORK/scratch"
 
+# --- GOFLAGS: the caller's flags (-trimpath, #2309) survive the -p cap -------
+section "GOFLAGS"
+run GOFLAGS=-trimpath
+eq "the stage exits 0" "0" "$RC"
+has "the caller's GOFLAGS are kept before -p" "$FAKE_STATE/create.args" "GOFLAGS=-trimpath -p=2"
+run GOFLAGS=
+eq "the stage exits 0" "0" "$RC"
+has "with no caller GOFLAGS only -p is set" "$FAKE_STATE/create.args" "GOFLAGS=-p=2"
+
 # --- a missing scratch directory fails by name, before trivy runs ------------
 section "missing scratch directory"
 run IN_IMAGE_SCRATCH="$WORK/missing"
