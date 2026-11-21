@@ -18,10 +18,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -32,6 +34,8 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -326,4 +330,43 @@ func TestModule_HostMount_NoQRDBClientLeavesStoresOff(t *testing.T) {
 		reasons = append(reasons, reason.Error())
 	}
 	assert.Contains(t, strings.Join(reasons, "\n"), "compose: passwords is off: no DAO factory was supplied")
+}
+
+// recordingEvidenceSource counts the evidence fetches the caller's engine
+// makes and fails each one, so a re-attestation that reaches it is visible.
+type recordingEvidenceSource struct{ calls atomic.Int32 }
+
+var errHostEvidence = errors.New("host evidence source reached")
+
+func (r *recordingEvidenceSource) Collect(context.Context, string, string, []byte) (*appraisal.AppraiseQuoteRequest, error) {
+	r.calls.Add(1)
+	return nil, errHostEvidence
+}
+
+type hostAppraiser struct{}
+
+func (hostAppraiser) AppraiseQuote(context.Context, string, *appraisal.AppraiseQuoteRequest) (*appraisal.AttestationResult, error) {
+	return nil, errors.New("not reached")
+}
+
+// TestModule_HostMount_KeepsCallerAttestationEngine: a host that wired its
+// own engine with SetContinuousAttestation keeps it after the module
+// composes its stores on the first request (docs/SPEC.md:81).
+func TestModule_HostMount_KeepsCallerAttestationEngine(t *testing.T) {
+	h := newFullHostMount(t)
+	store, err := continuous.NewStore(continuous.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
+	require.NoError(t, err)
+	source := &recordingEvidenceSource{}
+	engine, err := continuous.NewEngine(continuous.Config{Store: store, Source: source, Appraiser: hostAppraiser{}})
+	require.NoError(t, err)
+	h.svc.SetContinuousAttestation(engine, store)
+
+	w := h.call(t, http.MethodGet, "/api/v1/credentials/strategy", "/api/v1/credentials/strategy", nil, nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NotNil(t, h.module.HostStores())
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{TenantID: tenantUser.TenantID})
+	_, err = h.svc.ReattestDevice(ctx, &transport.AttestationVerdictRequest{DeviceID: "device-1"})
+	require.NotErrorIs(t, err, xkms.ErrNotConfigured)
+	assert.Positive(t, source.calls.Load(), "the caller's evidence source was not reached")
 }
