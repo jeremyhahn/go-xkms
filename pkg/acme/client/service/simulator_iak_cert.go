@@ -105,7 +105,7 @@ func ProvisionSimulatorIAKCertificate(tpm xkmssdk.TrustedPlatformModule) error {
 	if err != nil {
 		return &errs.Wrapped{Msg: "acme-client-service: failed to parse IAK certificate", Err: err}
 	}
-	if err := tpm.ProvisionIAKCert(cert); err != nil {
+	if err := tpm.ProvisionIAKCert(nil, cert); err != nil {
 		return &errs.Wrapped{Msg: "acme-client-service: failed to provision IAK certificate", Err: err}
 	}
 	return nil
