@@ -158,6 +158,30 @@ type AuthorizationList struct {
 	// (go-xkms#132).
 	Origin int
 
+	// NoAuthRequired is true when the list carries noAuthRequired (tag
+	// 503): the key needs no user authentication at all.
+	NoAuthRequired bool
+
+	// UserAuthType is the userAuthType mask (tag 504), UserAuth*
+	// constants. Read it only when HasUserAuthType is true: an absent tag
+	// must not read as a claim (go-xkms#132).
+	UserAuthType int
+
+	// HasUserAuthType reports whether the list carried tag 504.
+	HasUserAuthType bool
+
+	// AuthTimeout is the authTimeout in seconds (tag 505). Read it only
+	// when HasAuthTimeout is true; its presence, with any value, means one
+	// authentication unlocks the key for a time window instead of per use.
+	AuthTimeout int
+
+	// HasAuthTimeout reports whether the list carried tag 505.
+	HasAuthTimeout bool
+
+	// AllowWhileOnBody is true when the list carries allowWhileOnBody
+	// (tag 506): the key stays usable while the device is on-body.
+	AllowWhileOnBody bool
+
 	// RootOfTrust contains device boot state information, if present.
 	RootOfTrust *RootOfTrust
 
@@ -377,6 +401,20 @@ const (
 	tagOrigin                   = 702
 	tagRootOfTrust              = 704
 	tagAttestationApplicationID = 709
+
+	// KeyMint user-authentication tags (engineering.md step 5).
+	tagNoAuthRequired   = 503 // [503] EXPLICIT NULL
+	tagUserAuthType     = 504 // [504] EXPLICIT INTEGER
+	tagAuthTimeout      = 505 // [505] EXPLICIT INTEGER
+	tagAllowWhileOnBody = 506 // [506] EXPLICIT NULL
+)
+
+// Well-known userAuthType values (KeyMint HardwareAuthenticatorType, a bit
+// mask).
+const (
+	// UserAuthBiometric is the FINGERPRINT bit: the key needs a biometric
+	// (class 3) authentication.
+	UserAuthBiometric = 2
 )
 
 // Well-known key-origin values (KeyMint tag ORIGIN / keymaster_key_origin_t).
@@ -513,6 +551,11 @@ func parseAuthorizationList(rawVal asn1.RawValue) AuthorizationList {
 
 	authList.Purpose = findPurpose(rawVal.FullBytes)
 
+	_, authList.NoAuthRequired = findTagged(rawVal.FullBytes, tagNoAuthRequired)
+	_, authList.AllowWhileOnBody = findTagged(rawVal.FullBytes, tagAllowWhileOnBody)
+	authList.UserAuthType, authList.HasUserAuthType = findTaggedInt(rawVal.FullBytes, tagUserAuthType)
+	authList.AuthTimeout, authList.HasAuthTimeout = findTaggedInt(rawVal.FullBytes, tagAuthTimeout)
+
 	return authList
 }
 
@@ -522,10 +565,17 @@ func parseAuthorizationList(rawVal asn1.RawValue) AuthorizationList {
 // does not decode; the caller must treat that as "no claim", never as
 // OriginGenerated, because zero is also OriginGenerated's value.
 func findOrigin(data []byte) (origin int, ok bool) {
+	return findTaggedInt(data, tagOrigin)
+}
+
+// findTagged returns the explicit body of the first context-specific
+// element with the given tag in a DER AuthorizationList, and whether one
+// was present. A tag that is absent never reads as a claim (go-xkms#132).
+func findTagged(data []byte, tag int) (body []byte, ok bool) {
 	var outer asn1.RawValue
 	rest, err := asn1.Unmarshal(data, &outer)
 	if err != nil || len(rest) > 0 {
-		return 0, false
+		return nil, false
 	}
 
 	remaining := outer.Bytes
@@ -535,18 +585,25 @@ func findOrigin(data []byte) (origin int, ok bool) {
 		if err != nil {
 			break
 		}
-		if elem.Class != asn1.ClassContextSpecific || elem.Tag != tagOrigin {
-			continue
+		if elem.Class == asn1.ClassContextSpecific && elem.Tag == tag {
+			return elem.Bytes, true
 		}
-
-		var value int
-		if _, unmarshalErr := asn1.Unmarshal(elem.Bytes, &value); unmarshalErr != nil {
-			return 0, false
-		}
-		return value, true
 	}
 
-	return 0, false
+	return nil, false
+}
+
+// findTaggedInt locates [tag] EXPLICIT INTEGER in a DER AuthorizationList.
+// ok is false when the tag is absent or its body is not an INTEGER.
+func findTaggedInt(data []byte, tag int) (value int, ok bool) {
+	body, found := findTagged(data, tag)
+	if !found {
+		return 0, false
+	}
+	if _, err := asn1.Unmarshal(body, &value); err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 // findPurpose walks the AuthorizationList for tag 1 and decodes the EXPLICIT

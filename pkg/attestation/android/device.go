@@ -46,6 +46,11 @@ var (
 	// (tag 1) does not include SIGN (go-xkms#132).
 	ErrKeyPurposeNotSign = errors.New("android: key purpose does not include sign")
 
+	// ErrUserAuthNotPerUse is returned when the key's user-authentication
+	// policy is not a hardware-enforced biometric check on every use
+	// (tags 503 to 506, engineering.md step 5).
+	ErrUserAuthNotPerUse = errors.New("android: key does not require per-use biometric authentication")
+
 	// ErrNilApplicationMatcher is returned when RequireAttestedApplication
 	// is given no application policy to match against.
 	ErrNilApplicationMatcher = errors.New("android: nil application matcher")
@@ -122,6 +127,33 @@ func RequireAttestedKeyOrigin(desc *KeyDescription) error {
 	}
 	if !slices.Contains(tee.Purpose, PurposeSign) {
 		return &errs.Detail{Err: ErrKeyPurposeNotSign, Detail: fmt.Sprintf("got %v", tee.Purpose)}
+	}
+	return nil
+}
+
+// RequirePerUseUserAuth enforces the phone-verify-user key policy
+// (xkey/docs/phone-hsm/engineering.md step 5): the TEE enforces
+// userAuthType BIOMETRIC with no authTimeout and no allowWhileOnBody, so
+// every signature needs a fresh biometric, and neither list carries
+// noAuthRequired. Any other policy returns ErrUserAuthNotPerUse.
+func RequirePerUseUserAuth(desc *KeyDescription) error {
+	if desc == nil {
+		return ErrNilKeyDescription
+	}
+	tee := desc.TeeEnforced
+	switch {
+	case !tee.HasUserAuthType:
+		return &errs.Detail{Err: ErrUserAuthNotPerUse, Detail: "teeEnforced userAuthType absent"}
+	case tee.UserAuthType != UserAuthBiometric:
+		return &errs.Detail{Err: ErrUserAuthNotPerUse, Detail: fmt.Sprintf("teeEnforced userAuthType %d, want %d", tee.UserAuthType, UserAuthBiometric)}
+	case tee.HasAuthTimeout:
+		return &errs.Detail{Err: ErrUserAuthNotPerUse, Detail: fmt.Sprintf("teeEnforced authTimeout %d present", tee.AuthTimeout)}
+	case tee.AllowWhileOnBody:
+		return &errs.Detail{Err: ErrUserAuthNotPerUse, Detail: "teeEnforced allowWhileOnBody present"}
+	case tee.NoAuthRequired:
+		return &errs.Detail{Err: ErrUserAuthNotPerUse, Detail: "teeEnforced noAuthRequired present"}
+	case desc.SoftwareEnforced.NoAuthRequired:
+		return &errs.Detail{Err: ErrUserAuthNotPerUse, Detail: "softwareEnforced noAuthRequired present"}
 	}
 	return nil
 }
