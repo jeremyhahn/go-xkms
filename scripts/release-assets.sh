@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# release-assets.sh — the release workflow's view of a Gitea release's assets.
+# release-assets.sh — the release workflow's view of a GitHub or Gitea release's assets.
 #
 # Usage:
 #	scripts/release-assets.sh list
@@ -10,12 +10,16 @@
 #	scripts/release-assets.sh download        DIR [GLOB]
 #	scripts/release-assets.sh upload          FILE...
 #
-# Environment (all required except DRY_RUN):
-#	RELEASE_API   Gitea API root, e.g. http://forge.example.invalid/api/v1 (github.api_url)
+# Environment (all required except DRY_RUN, RELEASE_FORGE, RELEASE_UPLOAD_API):
+#	RELEASE_API   API root (github.api_url): https://api.github.com on GitHub,
+#	              e.g. http://forge.example.invalid/api/v1 on Gitea
 #	RELEASE_REPO  owner/repo (github.repository)
 #	RELEASE_TAG   the tag whose release is addressed, e.g. v0.11.0-alpha
 #	RELEASE_TOKEN a token allowed to read and write that release's assets
 #	DRY_RUN       when 1, upload prints its decisions and changes nothing
+#	RELEASE_FORGE github|gitea; default github when RELEASE_API's host is
+#	              api.github.com, else gitea
+#	RELEASE_UPLOAD_API GitHub uploads root, default https://uploads.github.com
 #
 # Why this exists (#447). The generic release action deletes an existing asset
 # and re-uploads it, and Gitea answers the re-upload with 404, so a workflow
@@ -32,7 +36,7 @@
 # through the API, never against what this run happens to have built.
 set -euo pipefail
 
-usage() { sed -n '3,17p' "$0" >&2; exit 2; }
+usage() { sed -n '3,22p' "$0" >&2; exit 2; }
 
 need_env() {
 	local v
@@ -42,6 +46,30 @@ need_env() {
 			exit 2
 		fi
 	done
+	release_forge
+}
+
+# release_forge sets FORGE to github or gitea. RELEASE_FORGE wins when set;
+# otherwise the API root's host decides by the rule release-alpha.sh's
+# forge_repo_url / forge_api_url apply: GitHub is github.com (whose API host
+# is api.github.com), every other host is a Gitea.
+FORGE=
+release_forge() {
+	local host
+	case "${RELEASE_FORGE:-}" in
+	github | gitea) FORGE=$RELEASE_FORGE ;;
+	"")
+		host=${RELEASE_API#*://}
+		host=${host%%/*}
+		host=${host##*@}
+		host=${host%%:*}
+		if [[ $host == api.github.com ]]; then FORGE=github; else FORGE=gitea; fi
+		;;
+	*)
+		echo "release-assets: RELEASE_FORGE must be github or gitea, not ${RELEASE_FORGE}" >&2
+		exit 2
+		;;
+	esac
 }
 
 api() {
@@ -157,9 +185,44 @@ cmd_verify_complete() {
 }
 
 download_asset() {
-	# download_asset URL DEST — the download URL honours the token header.
-	local url="$1" dest="$2"
+	# download_asset ID URL DEST — on Gitea the download URL honours the
+	# token header; on GitHub a private asset's browser URL does not, so it
+	# is read from the API by asset id as application/octet-stream (curl
+	# drops the Authorization header on the redirect to the storage host).
+	local id="$1" url="$2" dest="$3"
+	if [ "$FORGE" = github ]; then
+		curl -sS --fail -L -H "Authorization: token ${RELEASE_TOKEN}" \
+			-H "Accept: application/octet-stream" -o "$dest" \
+			"${RELEASE_API}/repos/${RELEASE_REPO}/releases/assets/${id}"
+		return
+	fi
 	curl -sS --fail -L -H "Authorization: token ${RELEASE_TOKEN}" -o "$dest" "$url"
+}
+
+# delete_asset RELEASE_ID ASSET_ID — GitHub addresses an asset by its id
+# alone, Gitea under its release.
+delete_asset() {
+	local rid="$1" id="$2"
+	if [ "$FORGE" = github ]; then
+		api DELETE "/repos/${RELEASE_REPO}/releases/assets/${id}" >/dev/null
+		return
+	fi
+	api DELETE "/repos/${RELEASE_REPO}/releases/${rid}/assets/${id}" >/dev/null
+}
+
+# upload_asset RELEASE_ID NAME FILE — GitHub takes the raw file as the body
+# on its uploads host, Gitea a multipart form on the API host.
+upload_asset() {
+	local rid="$1" name="$2" file="$3"
+	if [ "$FORGE" = github ]; then
+		curl -sS --fail-with-body -X POST \
+			-H "Authorization: token ${RELEASE_TOKEN}" \
+			-H "Content-Type: application/octet-stream" \
+			--data-binary "@${file}" \
+			"${RELEASE_UPLOAD_API:-https://uploads.github.com}/repos/${RELEASE_REPO}/releases/${rid}/assets?name=${name}" >/dev/null
+		return
+	fi
+	api POST "/repos/${RELEASE_REPO}/releases/${rid}/assets?name=${name}" -F "attachment=@${file}" >/dev/null
 }
 
 # download DIR [GLOB] — every asset (or those matching GLOB) into DIR.
@@ -170,7 +233,7 @@ cmd_download() {
 	while IFS=$'\t' read -r id name size url; do
 		# shellcheck disable=SC2254
 		case "$name" in
-		$glob) download_asset "$url" "${dir}/${name}"; echo "downloaded ${name} (${size} bytes)" ;;
+		$glob) download_asset "$id" "$url" "${dir}/${name}"; echo "downloaded ${name} (${size} bytes)" ;;
 		esac
 	done < <(release_assets)
 }
@@ -184,7 +247,7 @@ plan_upload() {
 	while IFS=$'\t' read -r id aname size url; do
 		[ "$aname" = "$name" ] || continue
 		tmp="$(mktemp)"
-		download_asset "$url" "$tmp"
+		download_asset "$id" "$url" "$tmp"
 		if [ "$(sha256_of "$tmp")" = "$(sha256_of "$file")" ]; then
 			rm -f "$tmp"; echo "skip"; return 0
 		fi
@@ -210,13 +273,13 @@ cmd_upload() {
 			id="${plan#replace }"
 			echo "${name}: present with a different SHA-256, replacing asset ${id}"
 			if [ "${DRY_RUN:-0}" != 1 ]; then
-				api DELETE "/repos/${RELEASE_REPO}/releases/${rid}/assets/${id}" >/dev/null
-				api POST "/repos/${RELEASE_REPO}/releases/${rid}/assets?name=${name}" -F "attachment=@${file}" >/dev/null
+				delete_asset "$rid" "$id"
+				upload_asset "$rid" "$name" "$file"
 			fi ;;
 		add)
 			echo "${name}: absent, uploading"
 			if [ "${DRY_RUN:-0}" != 1 ]; then
-				api POST "/repos/${RELEASE_REPO}/releases/${rid}/assets?name=${name}" -F "attachment=@${file}" >/dev/null
+				upload_asset "$rid" "$name" "$file"
 			fi ;;
 		esac
 	done
