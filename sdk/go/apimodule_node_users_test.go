@@ -14,53 +14,95 @@
 package xkms
 
 import (
-	"reflect"
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
-	"unsafe"
 
+	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/hostdeps"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// fakeNodeUsers is a node user source the SDK test can identify.
-type fakeNodeUsers struct{ id string }
+// countingNodeUsers is a node user source over a real node that counts how
+// often the module consults it.
+type countingNodeUsers struct {
+	inner ServiceModuleNodeUserSource
+	calls atomic.Int32
+}
 
-func (*fakeNodeUsers) UserService() qrdbsdk.UserServicer { return nil }
+func (c *countingNodeUsers) UserService() qrdbsdk.UserServicer {
+	c.calls.Add(1)
+	return c.inner.UserService()
+}
 
-// nodeUsersOf reads the module's wired node user source (an unexported
-// field) so the test asserts the option's effect, not only that it compiles.
-func nodeUsersOf(t *testing.T, module any) ServiceModuleNodeUserSource {
+// registrationBegin builds a self-hosted module over an authentication-
+// enforcing node with the given extra options and posts a WebAuthn
+// registration begin to it.
+func registrationBegin(t *testing.T, extra func(node ServiceModuleNodeUserSource) []ServiceModuleOption) *httptest.ResponseRecorder {
 	t.Helper()
-	field := reflect.ValueOf(module).Elem().FieldByName("nodeUsers")
-	require.True(t, field.IsValid(), "module has no nodeUsers field")
-	value := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Interface()
-	if value == nil {
-		return nil
+	svc := hostdeps.NewService(t)
+	node := barriertest.NewPrincipalNode(t)
+	opts := extra(node)
+	allow := true
+	base := []ServiceModuleOption{
+		WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return node.Client() }),
+		WithServiceModuleServiceContext(node.ServiceContext),
+		WithServiceModuleWebAuthn(&config.WebAuthnConfig{
+			RPID:                    "example.com",
+			RPOrigins:               []string{"https://example.com"},
+			AllowPublicRegistration: &allow,
+		}),
 	}
-	return value.(ServiceModuleNodeUserSource)
+	module, err := NewServiceModule(func() *pkgxkms.XKMSService { return svc }, append(base, opts...)...)
+	require.NoError(t, err)
+
+	mux := chi.NewRouter()
+	gate := func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}
+	module.RegisterHTTP(qrdbsdk.NewModuleHTTPRegistrar(mux,
+		func(method, pattern string, _ qrdbsdk.Permission, _ http.HandlerFunc) {
+			mux.MethodFunc(method, pattern, gate)
+		},
+		func(method, pattern string, h http.HandlerFunc) { mux.MethodFunc(method, pattern, h) },
+		func(method, pattern string, h http.HandlerFunc) { mux.MethodFunc(method, pattern, h) }))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin",
+		bytes.NewReader([]byte(`{"email":"passkey-user@example.com","display_name":"Passkey User"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	return w
 }
 
 // TestWithServiceModuleNodeUsers_WiresNodeUserSource proves a host building
 // on the SDK can hand the embedded node's user service to the module, so the
-// public WebAuthn and invite routes resolve users through it.
+// public WebAuthn routes resolve users through it.
 func TestWithServiceModuleNodeUsers_WiresNodeUserSource(t *testing.T) {
-	fake := &fakeNodeUsers{id: "node"}
-	module, err := NewServiceModule(func() *pkgxkms.XKMSService { return nil },
-		WithServiceModuleNodeUsers(fake))
-	require.NoError(t, err)
-
-	got := nodeUsersOf(t, module)
-	require.NotNil(t, got)
-	assert.Same(t, fake, got.(*fakeNodeUsers))
+	users := &countingNodeUsers{}
+	w := registrationBegin(t, func(node ServiceModuleNodeUserSource) []ServiceModuleOption {
+		users.inner = node
+		return []ServiceModuleOption{WithServiceModuleNodeUsers(users)}
+	})
+	require.Equal(t, http.StatusOK, w.Code, "registration/begin: %s", w.Body.String())
+	assert.Positive(t, users.calls.Load(), "the module must resolve users through the wired source")
 }
 
 // TestWithServiceModuleNodeUsers_UnsetLeavesNone is the negative case: a
-// module built without the option has no node user source.
+// module built without the option never consults the source.
 func TestWithServiceModuleNodeUsers_UnsetLeavesNone(t *testing.T) {
-	module, err := NewServiceModule(func() *pkgxkms.XKMSService { return nil })
-	require.NoError(t, err)
-	assert.Nil(t, nodeUsersOf(t, module))
+	users := &countingNodeUsers{}
+	registrationBegin(t, func(node ServiceModuleNodeUserSource) []ServiceModuleOption {
+		users.inner = node
+		return nil
+	})
+	assert.Zero(t, users.calls.Load())
 }
