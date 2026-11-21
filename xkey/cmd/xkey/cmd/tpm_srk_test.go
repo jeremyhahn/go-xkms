@@ -96,7 +96,9 @@ func TestSRKEnrollmentLockIsExclusive(t *testing.T) {
 
 	unlock, err := lockSRKEnrollment()
 	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(dataDir, "tpm", srkEnrollLockName))
+	assert.FileExists(t, filepath.Join(dataDir, srkEnrollLockName))
+	assert.NoDirExists(t, filepath.Join(dataDir, "tpm"),
+		"the lock must not land inside the platform storage directory")
 
 	acquired := make(chan func(), 1)
 	go func() {
