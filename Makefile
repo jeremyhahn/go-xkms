@@ -4979,7 +4979,7 @@ integration-test-api-parity:
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'Parity|AllProtocols|PlatformMatrix|SecretsMatrix|EmbeddedProtocol' -timeout 20m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'Parity|AllProtocols|PlatformMatrix|SecretsMatrix|ClusterMatrix|BootstrapMatrix|EmbeddedProtocol' -timeout 20m"
 	@echo "$(GREEN)✓ API protocol parity tests complete$(RESET)"
 
 .PHONY: integration-test-sdk-go
