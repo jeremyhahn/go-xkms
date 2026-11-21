@@ -669,6 +669,10 @@ build-web: build-sdk-ts
 ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping build-web$(RESET)"
 else
+	@# svelte-auth resolves its @go-xkms/sdk devDependency (file:..) only through
+	@# its own node_modules, so install it before the web/app build (#2286).
+	@echo "$(CYAN)$(BOLD)→ Installing @go-xkms/svelte-auth dependencies...$(RESET)"
+	@cd $(SVELTE_AUTH_DIR) && npm ci --silent
 	@echo "$(CYAN)$(BOLD)→ Installing web/app dependencies...$(RESET)"
 	@cd $(WEB_APP_DIR) && npm ci --silent
 	@# npm rewrites file: deps to relative symlinks; force absolute symlinks so
@@ -1093,6 +1097,7 @@ test-scripts:
 	@bash test/scripts/retry.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
+	@bash test/scripts/softhsm-lib.test.sh
 	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/ensure-server-ca.test.sh
 	@bash test/scripts/socket-probe.test.sh
@@ -1104,9 +1109,11 @@ test-scripts:
 	@bash test/scripts/xkey-build-tags.test.sh
 	@bash test/scripts/go-build-tags.test.sh
 	@bash test/scripts/gomodauth.test.sh
+	@bash test/scripts/go-caches-env.test.sh
 	@bash test/scripts/credential-ignores.test.sh
 	@bash test/scripts/no-credential-echo.test.sh
 	@bash test/scripts/ci-registry.test.sh
+	@bash test/scripts/build-web-deps.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
@@ -1692,7 +1699,12 @@ test-pkcs11-tagged:
 coverage-pkcs11-tagged:
 	@echo "$(CYAN)→ Generating pkcs11-tagged coverage report...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@CGO_ENABLED=1 $(GO) test -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(PKCS11_TAGGED_TAGS))" \
+	@# SoftHSM 2.7.0+ reports PKCS#11 tamper (#1418); on an older host SoftHSM
+	@# (the lane-verify image's distro 2.6.1) softhsm-lib.sh builds the pinned
+	@# release once into a user cache and points the suites at it (#1420).
+	@lib=$$(scripts/softhsm-lib.sh) || exit 1; \
+	echo "  SoftHSM module: $${lib:-internal/softhsmtest default}"; \
+	SOFTHSM2_LIB=$$lib CGO_ENABLED=1 $(GO) test -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(PKCS11_TAGGED_TAGS))" \
 		-coverprofile=$(COVERAGE_DIR)/pkcs11-tagged.raw -covermode=atomic $(PKCS11_TAGGED_PKGS)
 	@grep -v -E "/mocks/|_test\.go" $(COVERAGE_DIR)/pkcs11-tagged.raw > $(COVERAGE_DIR)/pkcs11-tagged.out
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/pkcs11-tagged.out -o $(COVERAGE_DIR)/pkcs11-tagged.html
@@ -1854,6 +1866,36 @@ coverage-xkmsctl:
 integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
+# run-image-refs sets the shell variable refs to this run's images: each
+# image of a repository on XKMS_IMAGE_REPOS that carries XKMS_IMAGE_TAG. Its
+# argument runs when docker cannot list them: clean-run-images passes `r=`
+# and removes what it found; check-run-images fails, since a listing that
+# fails would select nothing and check nothing.
+run-image-refs = refs=""; for repo in $(XKMS_IMAGE_REPOS); do r=$$(docker images --filter=reference="$$repo:$(XKMS_IMAGE_TAG)" --format '{{.Repository}}:{{.Tag}}') || $(1); refs="$$refs $$r"; done
+
+.PHONY: check-run-images
+## check-run-images: Fail when an image this run built carries a private address (ruling 888)
+# This run's images (run-image-refs), and the integration image when the
+# daemon holds it, are read by scripts/ci-image-history.sh, which fails on
+# any RFC 1918 address in an image's history or config. A pool build takes
+# the LAN caches as BuildKit secrets, which no history entry keeps; this
+# proves it of every image the pool built. The integration and soak jobs
+# never build IT_IMAGE, so an absent one is not read. It fails with no
+# per-run tag, when docker cannot list the run's images, and when there is
+# no image to check, rather than pass having checked nothing.
+check-run-images:
+	@if [ -z "$(XKMS_IMAGE_TAG)" ]; then \
+		echo "check-run-images: no per-run tag (XKMS_IMAGE_TAG): this run's images cannot be selected" >&2; \
+		exit 1; \
+	fi; \
+	$(call run-image-refs,{ echo "check-run-images: docker cannot list this run's images" >&2; exit 1; }); \
+	if docker image inspect '$(IT_IMAGE)' >/dev/null 2>&1; then refs="$(IT_IMAGE) $$refs"; fi; \
+	if [ -z "$$(echo $$refs)" ]; then \
+		echo "check-run-images: no image of this run (tag $(XKMS_IMAGE_TAG)) is on the daemon" >&2; \
+		exit 1; \
+	fi; \
+	scripts/ci-image-history.sh $$refs
+
 .PHONY: clean-run-images
 ## clean-run-images: Remove the images this CI run tagged (no-op for local builds)
 # `docker image prune -f` only reaps UNTAGGED images, so the per-run tags
@@ -1872,10 +1914,7 @@ clean-run-images:
 	@if [ -z "$(XKMS_IMAGE_TAG)" ]; then \
 		echo "$(CYAN)→ Local image tags; nothing to remove$(RESET)"; \
 	else \
-		refs=""; \
-		for repo in $(XKMS_IMAGE_REPOS); do \
-			refs="$$refs $$(docker images --filter=reference="$$repo:$(XKMS_IMAGE_TAG)" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)"; \
-		done; \
+		$(call run-image-refs,r=) 2>/dev/null; \
 		if [ -n "$$(echo $$refs)" ]; then docker rmi -f $$refs >/dev/null 2>&1 || true; fi; \
 		echo "$(GREEN)✓ Removed this run's images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
 	fi
@@ -3664,6 +3703,7 @@ GO_BUILD_PROXY_ARG = $(if $(GO_BUILD_PROXY),--build-arg "GO_BUILD_PROXY=$(GO_BUI
 DEVCONTAINER_BUILD = DOCKER_BUILDKIT=1 docker buildx build --load \
 	--build-arg GO_IMAGE=$(GO_IMAGE) \
 	$(GO_BUILD_PROXY_ARG) \
+	--secret id=apt_proxy,env=DEVCACHE_APT_PROXY \
 	--secret id=gomodauth,src=$(MODULE_ENV_FILE) \
 	-f $(DEVCONTAINER_DIR)/Dockerfile
 REQUIRE_BUILDX = @docker buildx version >/dev/null 2>&1 || { echo "docker buildx is required to build $(DEVCONTAINER_DIR)/Dockerfile" >&2; exit 1; }
@@ -3721,6 +3761,7 @@ docker-build-test-image: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building Docker image...$(RESET)"
 	@DOCKER_BUILDKIT=1 docker buildx build --load \
 		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
+		--secret id=apt_proxy,env=DEVCACHE_APT_PROXY \
 		-t $(DOCKER_INTEGRATION_IMAGE) -f Dockerfile .
 	@echo "$(GREEN)✓ Docker image built: $(DOCKER_INTEGRATION_IMAGE)$(RESET)"
 
@@ -5344,7 +5385,8 @@ bench-cert-compare:
 # ==============================================================================
 
 # Get all packages dynamically (excluding cmd and test dirs)
-PKG_DIRS := $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
+# Deferred (=): a parse must not run go list, which fills the module cache (#2295).
+PKG_DIRS = $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
 
 # Explicit xkey E2E targets that would otherwise be caught by test-% pattern.
 .PHONY: test-fido2-pkcs11
