@@ -54,3 +54,12 @@ T="codec_cbor codec_json codec_msgpack", go test -count=1 -race -tags "$T":
 - sdk/go: . ./transport/...: pass.
 - xkey: ./pkg/gui/... ./pkg/pairing/... ./cmd/xkey/...: pass.
 - make lint: pass (0 issues on every module and tag set; actionlint ok).
+
+## SPEC text slice (lane rw2101a)
+
+- Merge: main 852146763 merged into the row branch (0ac35e09d), ruling 1015.
+- SPEC commit 1f08d126d: docs/SPEC.md row attestation-verifier names the REST, embedded, MCP, QUIC, gRPC and Unix socket transports, USB `ErrNotSupported`, `AttestationAppraisalService` in `transport.Client` and the xkmsctl verbs.
+- Citations checked at HEAD: `pkg/api/rest/routes.go` `/attestation/*` routes, `pkg/api/mcp/server.go` `attestation.*` tools, gRPC `AppraiseAttestationQuote`, USB `transport_attestation_appraisal.go`, `pkg/api/transport/client.go` and the `sdk/go/transport/client.go` alias, `attestationAppraiseCmd` with the endorsement and reference-values commands.
+- The xkey clause (`device_attest.go:261`, `tpm_ek.go:402`) stays: those calls build trust pools and verify chains in-process; they are not appraisals.
+- Open question for the coordinator: must xkey appraise through the remote Client before the row ships?
+- `refs/fold/attestation-verifier/lane/test/1794-attestation` (3707b8bca41f) is not in the lane clone, so the fold is left to the coordinator.
