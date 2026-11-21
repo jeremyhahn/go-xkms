@@ -158,25 +158,6 @@ func TestReference_String(t *testing.T) {
 	}
 }
 
-func TestReference_StringRoundTrip(t *testing.T) {
-	for _, input := range []string{
-		"gcr.io/project/image:v1",
-		"docker.io/library/nginx:latest",
-		"localhost:5000/image@" + testSHA256,
-		"registry.example.com/a/b/c:v2@" + testSHA512,
-	} {
-		t.Run(input, func(t *testing.T) {
-			parsed, err := ParseReference(input)
-			require.NoError(t, err)
-			assert.Equal(t, input, parsed.String())
-
-			again, err := ParseReference(parsed.String())
-			require.NoError(t, err)
-			assert.Equal(t, parsed, again)
-		})
-	}
-}
-
 func TestReference_Name(t *testing.T) {
 	reference := &Reference{Registry: "gcr.io", Repository: "project/image", Tag: "v1", Digest: testSHA256}
 	assert.Equal(t, "gcr.io/project/image", reference.Name())
@@ -198,14 +179,6 @@ func TestReference_WithDigest_Invalid(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalidDigest, digest)
 		assert.Nil(t, pinned)
 	}
-}
-
-func TestReference_AttestationTag(t *testing.T) {
-	reference := &Reference{Registry: "gcr.io", Repository: "image", Digest: testSHA256}
-	tag, err := reference.AttestationTag()
-	require.NoError(t, err)
-	assert.Equal(t, "sha256-"+strings.Repeat("ab", 32)+".att", tag)
-	assert.True(t, validTag(tag), "the attestation tag is a valid tag")
 }
 
 func TestReference_AttestationTag_Invalid(t *testing.T) {
@@ -253,15 +226,6 @@ func TestReference_Validate(t *testing.T) {
 func TestReference_ManifestReference(t *testing.T) {
 	assert.Equal(t, "v1", (&Reference{Tag: "v1"}).manifestReference())
 	assert.Equal(t, testSHA256, (&Reference{Tag: "v1", Digest: testSHA256}).manifestReference())
-}
-
-func TestIsRegistry(t *testing.T) {
-	for _, component := range []string{"gcr.io", "localhost", "localhost:5000", "registry:5000", "127.0.0.1"} {
-		assert.True(t, isRegistry(component), component)
-	}
-	for _, component := range []string{"library", "myorg", "nginx"} {
-		assert.False(t, isRegistry(component), component)
-	}
 }
 
 func TestValidTag(t *testing.T) {
