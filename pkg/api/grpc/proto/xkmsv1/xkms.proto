@@ -1024,6 +1024,52 @@ service KeystoreService {
     option (qrdb.v1.permission) = "attestation_signing_keys:get";
   }
 
+  // ==================== Attestation Verifier ====================
+  // The Verifier's trust anchors, reference values and the appraisal verb
+  // (pkg/attestation/appraisal). Every call acts on the caller's tenant.
+
+  // PutAttestationEndorsement stores a trust anchor.
+  rpc PutAttestationEndorsement(PutAttestationEndorsementRequest) returns (AttestationEndorsement) {
+    option (qrdb.v1.permission) = "attestation_endorsements:create";
+  }
+
+  // ListAttestationEndorsements lists the trust anchors, optionally by kind.
+  rpc ListAttestationEndorsements(ListAttestationEndorsementsRequest) returns (ListAttestationEndorsementsResponse) {
+    option (qrdb.v1.permission) = "attestation_endorsements:list";
+  }
+
+  // DeleteAttestationEndorsement removes a trust anchor.
+  rpc DeleteAttestationEndorsement(DeleteAttestationEndorsementRequest) returns (DeleteAttestationEndorsementResponse) {
+    option (qrdb.v1.permission) = "attestation_endorsements:delete";
+  }
+
+  // PutAttestationReferenceValues verifies a signed CoRIM and stores its
+  // reference values.
+  rpc PutAttestationReferenceValues(PutAttestationReferenceValuesRequest) returns (AttestationReferenceValues) {
+    option (qrdb.v1.permission) = "attestation_reference_values:create";
+  }
+
+  // GetAttestationReferenceValues returns stored reference values.
+  rpc GetAttestationReferenceValues(GetAttestationReferenceValuesRequest) returns (AttestationReferenceValues) {
+    option (qrdb.v1.permission) = "attestation_reference_values:get";
+  }
+
+  // ListAttestationReferenceValues lists the stored reference values.
+  rpc ListAttestationReferenceValues(ListAttestationReferenceValuesRequest) returns (ListAttestationReferenceValuesResponse) {
+    option (qrdb.v1.permission) = "attestation_reference_values:list";
+  }
+
+  // DeleteAttestationReferenceValues removes stored reference values.
+  rpc DeleteAttestationReferenceValues(DeleteAttestationReferenceValuesRequest) returns (DeleteAttestationReferenceValuesResponse) {
+    option (qrdb.v1.permission) = "attestation_reference_values:delete";
+  }
+
+  // AppraiseAttestationQuote appraises a TPM quote and returns the
+  // attestation result.
+  rpc AppraiseAttestationQuote(AppraiseAttestationQuoteRequest) returns (AttestationResult) {
+    option (qrdb.v1.permission) = "attestation_verifier:verify";
+  }
+
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
@@ -4609,6 +4655,124 @@ message SigningKeyResolution {
   // default is true when no binding names the repository, so the key is
   // the tenant's release key.
   bool default = 4;
+}
+
+// AttestationEndorsement is a Verifier trust anchor: an attestation-key root
+// or a reference-value signer, as a PEM certificate or a pinned PEM public key.
+message AttestationEndorsement {
+  string name = 1;
+  // kind is "reference-signer" or "ak-root".
+  string kind = 2;
+  bytes certificate_pem = 3;
+  bytes public_key_pem = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// PutAttestationEndorsementRequest stores a trust anchor.
+message PutAttestationEndorsementRequest {
+  string name = 1;
+  string kind = 2;
+  bytes certificate_pem = 3;
+  bytes public_key_pem = 4;
+}
+
+// ListAttestationEndorsementsRequest lists the trust anchors; an empty kind
+// lists every kind.
+message ListAttestationEndorsementsRequest {
+  string kind = 1;
+}
+
+// ListAttestationEndorsementsResponse holds the trust anchors.
+message ListAttestationEndorsementsResponse {
+  repeated AttestationEndorsement endorsements = 1;
+}
+
+// DeleteAttestationEndorsementRequest names the trust anchor to remove.
+message DeleteAttestationEndorsementRequest {
+  string name = 1;
+}
+
+// DeleteAttestationEndorsementResponse confirms a trust anchor was removed.
+message DeleteAttestationEndorsementResponse {}
+
+// AttestationReferenceValues are stored reference values from a signed CoRIM.
+message AttestationReferenceValues {
+  string name = 1;
+  string manifest_id = 2;
+  string profile = 3;
+  string signer = 4;
+  // repository, when set, is the repository the reference values belong to.
+  string repository = 5;
+  google.protobuf.Timestamp not_before = 6;
+  google.protobuf.Timestamp not_after = 7;
+  // pcr_indices are the PCR indices the reference values cover, ascending.
+  repeated uint32 pcr_indices = 8;
+  google.protobuf.Timestamp stored_at = 9;
+  // signed_corim is the COSE_Sign1 signed CoRIM as stored.
+  bytes signed_corim = 10;
+}
+
+// PutAttestationReferenceValuesRequest stores a signed CoRIM.
+message PutAttestationReferenceValuesRequest {
+  string name = 1;
+  bytes signed_corim = 2;
+  string repository = 3;
+}
+
+// GetAttestationReferenceValuesRequest names stored reference values.
+message GetAttestationReferenceValuesRequest {
+  string name = 1;
+}
+
+// ListAttestationReferenceValuesRequest lists the stored reference values.
+message ListAttestationReferenceValuesRequest {}
+
+// ListAttestationReferenceValuesResponse holds the stored reference values.
+message ListAttestationReferenceValuesResponse {
+  repeated AttestationReferenceValues reference_values = 1;
+}
+
+// DeleteAttestationReferenceValuesRequest names the reference values to remove.
+message DeleteAttestationReferenceValuesRequest {
+  string name = 1;
+}
+
+// DeleteAttestationReferenceValuesResponse confirms reference values were removed.
+message DeleteAttestationReferenceValuesResponse {}
+
+// AppraiseAttestationQuoteRequest carries a TPM quote to appraise.
+message AppraiseAttestationQuoteRequest {
+  // ak_certificate_pem is the attestation-key certificate, leaf first.
+  bytes ak_certificate_pem = 1;
+  // quote is the marshaled TPMS_ATTEST.
+  bytes quote = 2;
+  bytes signature = 3;
+  bytes nonce = 4;
+  map<uint32, bytes> pcrs = 5;
+  // event_log is the TCG crypto-agile event log. Optional.
+  bytes event_log = 6;
+  // reference_values names the stored reference values to compare against.
+  string reference_values = 7;
+}
+
+// AttestationAppraisalCheck is one check of an appraisal.
+message AttestationAppraisalCheck {
+  string name = 1;
+  // outcome is "pass", "forged", "absent" or "skipped".
+  string outcome = 2;
+  string reason = 3;
+}
+
+// AttestationResult is the Verifier's attestation result for one appraisal.
+message AttestationResult {
+  bool verified = 1;
+  bool cryptographic_failure = 2;
+  repeated AttestationAppraisalCheck checks = 3;
+  string reference_values = 4;
+  string manifest_id = 5;
+  string signer = 6;
+  string baseline_source = 7;
+  google.protobuf.Timestamp appraised_at = 8;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================

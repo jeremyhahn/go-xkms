@@ -58,20 +58,22 @@ type Server struct {
 	tenantGate      *TenantGate
 
 	// Custodian handlers
-	tenantHandlers          *TenantHandlers
-	passwordHandlers        *PasswordHandlers
-	pkcs11StateHandlers     *PKCS11StateHandlers
-	platformHandlers        *SealStoreHandlers
-	tpmPolicyHandlers       *TPMPolicyHandlers
-	trustRootHandlers       *TrustRootHandlers
-	oidcCredentialHandlers  *OIDCCredentialHandlers
-	signingKeyHandlers      *SigningKeyHandlers
-	peerAttestationHandlers *PeerAttestationHandlers
-	credentialHandlers      *CredentialHandlers
-	bootstrapHandlers       *BootstrapHandlers
-	caHandlers              *CAHandlers
-	sshHandlers             *SSHHandlers
-	sshClient               sdkssh.Client
+	tenantHandlers         *TenantHandlers
+	passwordHandlers       *PasswordHandlers
+	pkcs11StateHandlers    *PKCS11StateHandlers
+	platformHandlers       *SealStoreHandlers
+	tpmPolicyHandlers      *TPMPolicyHandlers
+	trustRootHandlers      *TrustRootHandlers
+	oidcCredentialHandlers *OIDCCredentialHandlers
+	signingKeyHandlers     *SigningKeyHandlers
+	// attestationAppraisalHandlers serves the attestation Verifier.
+	attestationAppraisalHandlers *AttestationAppraisalHandlers
+	peerAttestationHandlers      *PeerAttestationHandlers
+	credentialHandlers           *CredentialHandlers
+	bootstrapHandlers            *BootstrapHandlers
+	caHandlers                   *CAHandlers
+	sshHandlers                  *SSHHandlers
+	sshClient                    sdkssh.Client
 
 	// cors carries the CORS policy for the router; nil disables CORS
 	// entirely (no headers emitted — correct for the same-origin web UI).
@@ -457,6 +459,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		server.trustRootHandlers = NewTrustRootHandlers(cfg.XKMSService)
 		server.oidcCredentialHandlers = NewOIDCCredentialHandlers(cfg.XKMSService)
 		server.signingKeyHandlers = NewSigningKeyHandlers(cfg.XKMSService)
+		server.attestationAppraisalHandlers = NewAttestationAppraisalHandlers(cfg.XKMSService)
 		server.peerAttestationHandlers = NewPeerAttestationHandlers(cfg.XKMSService)
 		server.credentialHandlers = NewCredentialHandlers(cfg.XKMSService, log)
 	}

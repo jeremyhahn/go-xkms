@@ -47,9 +47,10 @@ type mockClient struct {
 	// it.
 	transport.TrustRootService
 
-	// SigningKeyService completes transport.Client; these tests never call
-	// it.
+	// SigningKeyService and AttestationAppraisalService complete
+	// transport.Client; these tests never call them.
 	transport.SigningKeyService
+	transport.AttestationAppraisalService
 
 	listBackendsFn func(ctx context.Context) (*transport.ListBackendsResponse, error)
 	getBackendFn   func(ctx context.Context, id string) (*transport.BackendInfo, error)

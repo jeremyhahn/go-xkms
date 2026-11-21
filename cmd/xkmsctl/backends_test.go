@@ -1188,3 +1188,27 @@ func (*mockBackendsClient) DeleteSigningKeyBinding(context.Context, *transport.D
 func (*mockBackendsClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, nil
 }
+func (*mockBackendsClient) PutAttestationEndorsement(context.Context, *transport.PutAttestationEndorsementRequest) (*transport.AttestationEndorsement, error) {
+	return nil, nil
+}
+func (*mockBackendsClient) ListAttestationEndorsements(context.Context, *transport.ListAttestationEndorsementsRequest) (*transport.ListAttestationEndorsementsResponse, error) {
+	return nil, nil
+}
+func (*mockBackendsClient) DeleteAttestationEndorsement(context.Context, *transport.DeleteAttestationEndorsementRequest) error {
+	return nil
+}
+func (*mockBackendsClient) PutAttestationReferenceValues(context.Context, *transport.PutAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*mockBackendsClient) GetAttestationReferenceValues(context.Context, *transport.GetAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*mockBackendsClient) ListAttestationReferenceValues(context.Context) (*transport.ListAttestationReferenceValuesResponse, error) {
+	return nil, nil
+}
+func (*mockBackendsClient) DeleteAttestationReferenceValues(context.Context, *transport.DeleteAttestationReferenceValuesRequest) error {
+	return nil
+}
+func (*mockBackendsClient) AppraiseAttestationQuote(context.Context, *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}

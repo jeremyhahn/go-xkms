@@ -554,6 +554,7 @@ var (
 	_ TPMPolicyService            = (*stubClient)(nil)
 	_ TenantService               = (*stubClient)(nil)
 	_ CredentialManagementService = (*stubClient)(nil)
+	_ AttestationAppraisalService = (*stubClient)(nil)
 )
 
 // TestClientComposesAllSubInterfaces verifies that a value satisfying the
@@ -583,6 +584,10 @@ func TestClientComposesAllSubInterfaces(t *testing.T) {
 		{"TenantService", func() bool { var v TenantService = c; return v != nil }},
 		{"CredentialManagementService", func() bool {
 			var v CredentialManagementService = c
+			return v != nil
+		}},
+		{"AttestationAppraisalService", func() bool {
+			var v AttestationAppraisalService = c
 			return v != nil
 		}},
 	}
@@ -684,5 +689,29 @@ func (*stubClient) DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBin
 	return nil
 }
 func (*stubClient) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*stubClient) PutAttestationEndorsement(context.Context, *PutAttestationEndorsementRequest) (*AttestationEndorsement, error) {
+	return nil, nil
+}
+func (*stubClient) ListAttestationEndorsements(context.Context, *ListAttestationEndorsementsRequest) (*ListAttestationEndorsementsResponse, error) {
+	return nil, nil
+}
+func (*stubClient) DeleteAttestationEndorsement(context.Context, *DeleteAttestationEndorsementRequest) error {
+	return nil
+}
+func (*stubClient) PutAttestationReferenceValues(context.Context, *PutAttestationReferenceValuesRequest) (*AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*stubClient) GetAttestationReferenceValues(context.Context, *GetAttestationReferenceValuesRequest) (*AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*stubClient) ListAttestationReferenceValues(context.Context) (*ListAttestationReferenceValuesResponse, error) {
+	return nil, nil
+}
+func (*stubClient) DeleteAttestationReferenceValues(context.Context, *DeleteAttestationReferenceValuesRequest) error {
+	return nil
+}
+func (*stubClient) AppraiseAttestationQuote(context.Context, *AppraiseAttestationQuoteRequest) (*AttestationResult, error) {
 	return nil, nil
 }

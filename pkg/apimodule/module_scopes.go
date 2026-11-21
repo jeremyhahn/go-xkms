@@ -153,6 +153,22 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// is ScopeSelf; xkms owns these names too.
 		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionGet),
 		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionList),
+
+		// attestation_endorsements:*, attestation_reference_values:* and
+		// attestation_verifier:verify are the attestation Verifier's verbs
+		// (pkg/attestation/appraisal, go-xkms#1660): storing, reading,
+		// listing and removing a tenant's trust anchors and signed CoRIM
+		// baselines, and appraising a TPM quote against them. The service
+		// binds every call to the caller's own tenant, so each is ScopeSelf;
+		// qrdb does not declare these names, xkms owns them.
+		qrdbsdk.Permission(auth.ResourceAttestationEndorsements + ":" + auth.ActionCreate),
+		qrdbsdk.Permission(auth.ResourceAttestationEndorsements + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourceAttestationEndorsements + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceAttestationReferenceValues + ":" + auth.ActionCreate),
+		qrdbsdk.Permission(auth.ResourceAttestationReferenceValues + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourceAttestationReferenceValues + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceAttestationReferenceValues + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceAttestationVerifier + ":" + auth.ActionVerify),
 	}
 }
 
