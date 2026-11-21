@@ -397,7 +397,7 @@ func extractAccountIDFromURI(uri string) (uint64, error) {
 // exists. Consolidating the registration call here means it is never
 // duplicated at, or omitted from, an individual call site.
 func (c *Client) authorizeOrder(ctx context.Context, ids []acme.AuthzID) (*acme.Order, error) {
-	if err := c.ensureAccountRegistered(); err != nil {
+	if err := c.ensureAccountRegistered(ctx); err != nil {
 		return nil, err
 	}
 	return c.client.AuthorizeOrder(ctx, ids)
@@ -410,8 +410,9 @@ func (c *Client) authorizeOrder(ctx context.Context, ids []acme.AuthzID) (*acme.
 // concurrent caller racing this check-then-act at most performs the
 // registration request twice, both of which succeed. A failure is not
 // cached, so the next order attempt retries it rather than failing forever
-// on a transient error.
-func (c *Client) ensureAccountRegistered() error {
+// on a transient error. Registration runs under ctx, so the deadline of the
+// order that needs it also bounds the newAccount request.
+func (c *Client) ensureAccountRegistered(ctx context.Context) error {
 	c.mutex.RLock()
 	registered := c.accountRegistered
 	c.mutex.RUnlock()
@@ -419,7 +420,7 @@ func (c *Client) ensureAccountRegistered() error {
 		return nil
 	}
 
-	if _, err := c.RegisterAccount(); err != nil {
+	if _, err := c.registerAccount(ctx); err != nil {
 		return err
 	}
 
@@ -431,6 +432,12 @@ func (c *Client) ensureAccountRegistered() error {
 
 // RegisterAccount registers a new account with the ACME server
 func (c *Client) RegisterAccount() (*acme.Account, error) {
+	return c.registerAccount(context.Background())
+}
+
+// registerAccount registers the account with every newAccount and account
+// request bound by ctx.
+func (c *Client) registerAccount(ctx context.Context) (*acme.Account, error) {
 	defer c.mutex.RUnlock()
 	c.mutex.RLock()
 
@@ -446,7 +453,7 @@ func (c *Client) RegisterAccount() (*acme.Account, error) {
 		account.Contact = []string{fmt.Sprintf("%s%s", mailTo, c.accountEmail)}
 	}
 
-	newAccount, err := c.client.Register(context.Background(), account, acme.AcceptTOS)
+	newAccount, err := c.client.Register(ctx, account, acme.AcceptTOS)
 	if err != nil {
 		// When the account key is already registered, x/crypto/acme
 		// returns ErrAccountAlreadyExists AFTER caching the account URL
@@ -457,7 +464,7 @@ func (c *Client) RegisterAccount() (*acme.Account, error) {
 		if errors.Is(err, acme.ErrAccountAlreadyExists) {
 			c.logger.Info("ACME account already registered; reusing cached KID",
 				slog.String("directory_url", c.config.DirectoryURL))
-			existing, regErr := c.client.GetReg(context.Background(), "")
+			existing, regErr := c.client.GetReg(ctx, "")
 			if regErr != nil {
 				c.logger.Warn("failed to fetch existing ACME account (continuing with cached KID)",
 					slog.String("error", regErr.Error()))

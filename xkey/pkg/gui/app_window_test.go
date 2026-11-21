@@ -250,6 +250,7 @@ func TestApp_Run_HandsLifecycleHooksToWails(t *testing.T) {
 	assert.NotNil(t, got.OnBeforeClose)
 	assert.Contains(t, got.Bind, any(app), "the App itself must be bound to the frontend")
 	assert.Contains(t, got.Bind, any(app.barrierService))
+	assert.Contains(t, got.Bind, any(app.acmeService))
 	require.NotNil(t, got.Linux)
 	assert.Equal(t, "xkey", got.Linux.ProgramName)
 }
