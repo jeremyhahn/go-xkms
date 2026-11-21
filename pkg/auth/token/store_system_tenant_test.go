@@ -92,17 +92,54 @@ func TestQRDBRefreshStore_RevokeBySubjectIsTenantScoped(t *testing.T) {
 	require.NoError(t, err, "system-tenant alice stays signed in")
 }
 
-// TestRecordOwnedBy_LegacyRecordIsSystemTenant: a record saved before Record
-// carried a tenant belongs to the system tenant only.
-func TestRecordOwnedBy_LegacyRecordIsSystemTenant(t *testing.T) {
+// TestRecordOwnedBy_TenantlessRecordFailsClosed: a record saved before Record
+// carried a tenant is owned by its subject in any tenant, so a revocation in
+// the subject's tenant never skips it. Records that carry a tenant stay
+// tenant-scoped.
+func TestRecordOwnedBy_TenantlessRecordFailsClosed(t *testing.T) {
 	legacy := &Record{Subject: "alice"}
 	require.True(t, legacy.ownedBy(qrdbsdk.SystemTenantID, "alice"))
 	require.True(t, legacy.ownedBy("", "alice"))
-	require.False(t, legacy.ownedBy("tenant-a", "alice"))
+	require.True(t, legacy.ownedBy("tenant-a", "alice"))
 	require.False(t, legacy.ownedBy(qrdbsdk.SystemTenantID, "bob"))
+	require.False(t, legacy.ownedBy("tenant-a", "bob"))
 
 	scoped := &Record{Subject: "alice", TenantID: "tenant-a"}
 	require.True(t, scoped.ownedBy("tenant-a", "alice"))
 	require.False(t, scoped.ownedBy("tenant-b", "alice"))
 	require.False(t, scoped.ownedBy("", "alice"))
+}
+
+// TestRefreshStore_PreUpgradeRecordRevokedInUserTenant is PR #2296's Codex
+// round-1 P1 at a8849cf02: a refresh record saved before Record carried a
+// tenant must be revoked when its non-system user is disabled or deleted, so
+// re-enabling the account cannot revive the old refresh token.
+func TestRefreshStore_PreUpgradeRecordRevokedInUserTenant(t *testing.T) {
+	stores := map[string]func(t *testing.T) RefreshStore{
+		"memory": func(*testing.T) RefreshStore { return NewMemoryRefreshStore() },
+		"qrdb": func(t *testing.T) RefreshStore {
+			store, err := NewQRDBRefreshStore(newGuardedMemoryKV(), WithCallContext(rbacServiceBind))
+			require.NoError(t, err)
+			return store
+		},
+	}
+	for name, newStore := range stores {
+		t.Run(name, func(t *testing.T) {
+			issuer := newIssuerWithStore(t, newStore(t))
+
+			// A pre-upgrade session: the record carries no tenant.
+			legacy := &auth.Identity{Subject: "alice", Metadata: map[string]string{"username": "alice"}}
+			pair, err := issuer.Mint(context.Background(), legacy)
+			require.NoError(t, err)
+
+			// alice is a tenant-a user; DisableUser runs on her tenant's request.
+			tenantCtx := qrdbtenant.WithTenantID(context.Background(), "tenant-a")
+			require.NoError(t, issuer.RevokeBySubject(tenantCtx, "tenant-a", "alice"))
+
+			// After re-enable, the old refresh token stays refused.
+			_, err = issuer.Refresh(context.Background(), pair.RefreshToken)
+			var revokedErr *RefreshRevokedError
+			require.ErrorAs(t, err, &revokedErr)
+		})
+	}
 }
