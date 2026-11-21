@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/internal/claimclock"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -40,21 +41,21 @@ import (
 func TestRotateKey_ExpiredClaimHolderNeverDeletesTheNewHoldersKey(t *testing.T) {
 	ctx := context.Background()
 	here, elsewhere, shared := twoProcesses(t)
-	// B's clock is past A's claim expiry: A stalled for longer than ClaimTTL.
-	bStore, err := elsewhere.requireVersionStore()
-	require.NoError(t, err)
-	bStore.SetClock(func() time.Time { return time.Now().Add(keyversion.ClaimTTL + time.Minute) })
-
 	genKey(t, here, "", "k", "ed25519", 0)
 	// An interrupted rotation left version 2's backend key unrecorded.
-	_, err = shared.GenerateEd25519(ctx, &types.KeyAttributes{CN: "k--v2", KeyType: types.KeyTypeSigning, StoreType: types.StoreSoftware})
+	_, err := shared.GenerateEd25519(ctx, &types.KeyAttributes{CN: "k--v2", KeyType: types.KeyTypeSigning, StoreType: types.StoreSoftware})
 	require.NoError(t, err)
 
 	var other *rotation
 	var otherErr error
 	b := &deleteHookBackend{Backend: shared, beforeDelete: func(ctx context.Context) {
+		// A stalls here for longer than ClaimTTL: B runs past A's claim
+		// expiry.
+		claimclock.Now = func() time.Time { return time.Now().Add(keyversion.ClaimTTL + time.Minute) }
+		defer func() { claimclock.Now = time.Now }()
 		other, otherErr = elsewhere.rotateKey(ctx, shared, "software", "k")
 	}}
+	t.Cleanup(func() { claimclock.Now = time.Now })
 	_, mineErr := here.rotateKey(ctx, b, "software", "k")
 	require.NoError(t, otherErr, "B takes the expired claim over and records its version")
 	require.ErrorIs(t, mineErr, keyversion.ErrVersionConflict, "A lost its claim")

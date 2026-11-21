@@ -23,6 +23,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/internal/claimclock"
 	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
@@ -50,25 +51,13 @@ type Store struct {
 
 	// locks holds one *sync.Mutex per record name.
 	locks sync.Map
-
-	// now is the store's clock (SetClock); nil means time.Now.
-	now func() time.Time
 }
 
-// SetClock sets the clock the store dates and expires rotation claims by
-// (ClaimTTL); nil restores time.Now. It is for tests that model a claim
-// expiring, or processes whose clocks differ, and must be set before the
-// store is used.
-func (s *Store) SetClock(now func() time.Time) {
-	s.now = now
-}
-
-// clock returns the store's current time.
+// clock returns the time rotation claims are dated and expired by
+// (ClaimTTL). It reads claimclock.Now, which only tests inside this module
+// replace.
 func (s *Store) clock() time.Time {
-	if s.now != nil {
-		return s.now()
-	}
-	return time.Now()
+	return claimclock.Now()
 }
 
 // NewStore returns a Store whose DAO daos builds over DatabaseName.
