@@ -66,7 +66,7 @@ func reproCA793Config(t *testing.T, dataDir string) *config.Config {
 			SocketPath: filepath.Join(dataDir, "xkms.sock"),
 		},
 		Logging:   config.LoggingConfig{Level: "info", Format: "json"},
-		TLS:       config.TLSConfig{Enabled: true},
+		TLS:       config.TLSConfig{Enabled: true, ServerCN: "localhost"},
 		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Path: filepath.Join(dataDir, "storage")},
 		Default:   config.DefaultConfig("software"),
