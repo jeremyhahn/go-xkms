@@ -8,17 +8,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The #2240 customizations of ci.yml: scheduled and dispatched main runs
-// share the bigdisk-docker pool with main's push runs, so the preflight
-// schedule guard must count main's active push runs on every server, and
-// the Devcontainer job's coverage step must not run after a failed build.
+// The #2240 customizations of ci.yml: scheduled and dispatched main runs and
+// main's push runs share their runners, so the preflight schedule guard must
+// count main's active push runs on every server, and the Devcontainer job's
+// coverage step must not run after a failed build. Where the Devcontainer
+// job runs is ci_runners_test.go's rule (rulings 833, 921).
 const (
-	devcontainerJob = "image"
-	preflightJob    = "preflight"
-	// devcontainerRunsOn sends push, schedule and workflow_dispatch on main
-	// and same-repository pull requests to bigdisk-docker, and fork pull
-	// requests to ubuntu-latest.
-	devcontainerRunsOn = `${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}`
+	devcontainerJob    = "image"
+	preflightJob       = "preflight"
 	buildStepID        = "build"
 	coverageAfterBuild = "steps.build.outcome != 'failure'"
 	// scheduleBranch opens the guard's chain of branches for a schedule run.
@@ -36,17 +33,6 @@ func readDigestWorkflow(t *testing.T) digestWorkflow {
 		t.Fatalf("parse %s: %v", ciWorkflow, err)
 	}
 	return wf
-}
-
-func TestCIDevcontainerRunsOnTheSharedPool(t *testing.T) {
-	wf := readDigestWorkflow(t)
-	j, ok := wf.Jobs[devcontainerJob]
-	if !ok {
-		t.Fatalf("ci.yml has no %s job", devcontainerJob)
-	}
-	if j.RunsOn != devcontainerRunsOn {
-		t.Errorf("%s runs-on = %q, want %q", devcontainerJob, j.RunsOn, devcontainerRunsOn)
-	}
 }
 
 func TestCIDevcontainerCoverageSkipsAfterFailedBuild(t *testing.T) {
