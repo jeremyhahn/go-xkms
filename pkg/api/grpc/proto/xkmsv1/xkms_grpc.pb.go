@@ -220,6 +220,7 @@ const (
 	KeystoreService_DisableUser_FullMethodName                  = "/xkms.v1.KeystoreService/DisableUser"
 	KeystoreService_BindUserCert_FullMethodName                 = "/xkms.v1.KeystoreService/BindUserCert"
 	KeystoreService_ListUserCredentials_FullMethodName          = "/xkms.v1.KeystoreService/ListUserCredentials"
+	KeystoreService_GetCredentialStrategy_FullMethodName        = "/xkms.v1.KeystoreService/GetCredentialStrategy"
 	KeystoreService_BeginRegistration_FullMethodName            = "/xkms.v1.KeystoreService/BeginRegistration"
 	KeystoreService_FinishRegistration_FullMethodName           = "/xkms.v1.KeystoreService/FinishRegistration"
 	KeystoreService_BeginAuthentication_FullMethodName          = "/xkms.v1.KeystoreService/BeginAuthentication"
@@ -708,6 +709,10 @@ type KeystoreServiceClient interface {
 	DisableUser(ctx context.Context, in *DisableUserRequest, opts ...grpc.CallOption) (*UserResponse, error)
 	BindUserCert(ctx context.Context, in *BindUserCertRequest, opts ...grpc.CallOption) (*UserResponse, error)
 	ListUserCredentials(ctx context.Context, in *ListUserCredentialsRequest, opts ...grpc.CallOption) (*ListUserCredentialsResponse, error)
+	// GetCredentialStrategy reports the server's credential strategy and the
+	// resolved PKCS#11 backend PIN strategy (#2262); REST GET
+	// /api/v1/credentials/strategy.
+	GetCredentialStrategy(ctx context.Context, in *GetCredentialStrategyRequest, opts ...grpc.CallOption) (*CredentialStrategyResponse, error)
 	// FIDO2/WebAuthn registration ceremony. BeginRegistration returns the
 	// JSON-marshaled WebAuthn options plus an opaque session ID; the client
 	// drives an authenticator and echoes the session ID back to
@@ -2737,6 +2742,16 @@ func (c *keystoreServiceClient) ListUserCredentials(ctx context.Context, in *Lis
 	return out, nil
 }
 
+func (c *keystoreServiceClient) GetCredentialStrategy(ctx context.Context, in *GetCredentialStrategyRequest, opts ...grpc.CallOption) (*CredentialStrategyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CredentialStrategyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GetCredentialStrategy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) BeginRegistration(ctx context.Context, in *BeginRegistrationRequest, opts ...grpc.CallOption) (*BeginRegistrationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BeginRegistrationResponse)
@@ -3412,6 +3427,10 @@ type KeystoreServiceServer interface {
 	DisableUser(context.Context, *DisableUserRequest) (*UserResponse, error)
 	BindUserCert(context.Context, *BindUserCertRequest) (*UserResponse, error)
 	ListUserCredentials(context.Context, *ListUserCredentialsRequest) (*ListUserCredentialsResponse, error)
+	// GetCredentialStrategy reports the server's credential strategy and the
+	// resolved PKCS#11 backend PIN strategy (#2262); REST GET
+	// /api/v1/credentials/strategy.
+	GetCredentialStrategy(context.Context, *GetCredentialStrategyRequest) (*CredentialStrategyResponse, error)
 	// FIDO2/WebAuthn registration ceremony. BeginRegistration returns the
 	// JSON-marshaled WebAuthn options plus an opaque session ID; the client
 	// drives an authenticator and echoes the session ID back to
@@ -4061,6 +4080,9 @@ func (UnimplementedKeystoreServiceServer) BindUserCert(context.Context, *BindUse
 }
 func (UnimplementedKeystoreServiceServer) ListUserCredentials(context.Context, *ListUserCredentialsRequest) (*ListUserCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListUserCredentials not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetCredentialStrategy(context.Context, *GetCredentialStrategyRequest) (*CredentialStrategyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCredentialStrategy not implemented")
 }
 func (UnimplementedKeystoreServiceServer) BeginRegistration(context.Context, *BeginRegistrationRequest) (*BeginRegistrationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BeginRegistration not implemented")
@@ -7692,6 +7714,24 @@ func _KeystoreService_ListUserCredentials_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_GetCredentialStrategy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCredentialStrategyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetCredentialStrategy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetCredentialStrategy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetCredentialStrategy(ctx, req.(*GetCredentialStrategyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_BeginRegistration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BeginRegistrationRequest)
 	if err := dec(in); err != nil {
@@ -8864,6 +8904,10 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListUserCredentials",
 			Handler:    _KeystoreService_ListUserCredentials_Handler,
+		},
+		{
+			MethodName: "GetCredentialStrategy",
+			Handler:    _KeystoreService_GetCredentialStrategy_Handler,
 		},
 		{
 			MethodName: "BeginRegistration",

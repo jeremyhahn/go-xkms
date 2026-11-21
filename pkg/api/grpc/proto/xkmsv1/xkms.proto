@@ -1107,6 +1107,12 @@ service KeystoreService {
   rpc ListUserCredentials(ListUserCredentialsRequest) returns (ListUserCredentialsResponse) {
     option (qrdb.v1.permission) = "users:read";
   }
+  // GetCredentialStrategy reports the server's credential strategy and the
+  // resolved PKCS#11 backend PIN strategy (#2262); REST GET
+  // /api/v1/credentials/strategy.
+  rpc GetCredentialStrategy(GetCredentialStrategyRequest) returns (CredentialStrategyResponse) {
+    option (qrdb.v1.permission) = "credentials:strategy";
+  }
 
   // FIDO2/WebAuthn registration ceremony. BeginRegistration returns the
   // JSON-marshaled WebAuthn options plus an opaque session ID; the client
@@ -4910,6 +4916,18 @@ message SSHAuthorizedKeyRef {
   string scope = 1;
   string owner = 2;
   string name = 3;
+}
+
+// GetCredentialStrategyRequest asks for the credential strategy status.
+message GetCredentialStrategyRequest {}
+
+// CredentialStrategyResponse mirrors REST GET /api/v1/credentials/strategy.
+message CredentialStrategyResponse {
+  string strategy = 1;
+  bool auto_unseal = 2;
+  // Resolved PKCS#11 backend PIN strategy (sealed or manual); empty when no
+  // PKCS#11 backend is enabled (#2262).
+  string backend_pin_strategy = 3;
 }
 
 

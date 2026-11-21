@@ -1951,13 +1951,21 @@ func (t *Transport) SubmitCredential(ctx context.Context, req *transport.Credent
 	return nil, ErrNotSupported
 }
 
-// GetCredentialStrategy returns the configured credential strategy.
-// Note: This endpoint is only available via REST API, not gRPC.
+// GetCredentialStrategy returns the configured credential strategy and the
+// resolved PKCS#11 backend PIN strategy (#2262).
 func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.CredentialStrategyResponse, error) {
-	if !t.connected {
+	if !t.connected || t.client == nil {
 		return nil, ErrNotConnected
 	}
-	return nil, ErrNotSupported
+	resp, err := t.client.GetCredentialStrategy(ctx, &pb.GetCredentialStrategyRequest{})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "get credential strategy failed", Err: err}
+	}
+	return &transport.CredentialStrategyResponse{
+		Strategy:           resp.Strategy,
+		AutoUnseal:         resp.AutoUnseal,
+		BackendPINStrategy: resp.BackendPinStrategy,
+	}, nil
 }
 
 // ==================== User Operations ====================
