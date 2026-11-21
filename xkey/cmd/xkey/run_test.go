@@ -16,12 +16,14 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui"
 )
 
@@ -79,6 +81,23 @@ func TestRun_DispatchesToCLIAndReportsSuccess(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
+// TestRun_PlatformSRKAuthRejectedExitCode is #2325 (4): a Platform SRK PIN
+// the TPM rejected exits with cmd.ExitCodePlatformSRKAuthRejected, the
+// code the xkey unit lists in RestartPreventExitStatus.
+func TestRun_PlatformSRKAuthRejectedExitCode(t *testing.T) {
+	isolateRun(t)
+	headless(t)
+
+	cliExecute = func() error {
+		return fmt.Errorf("fido2: %w", cmd.ErrFIDO2TPMPlatformSRKAuthRejected)
+	}
+
+	var stderr bytes.Buffer
+	if code := run([]string{"xkey", "fido2"}, &stderr); code != cmd.ExitCodePlatformSRKAuthRejected {
+		t.Fatalf("exit code = %d, want %d", code, cmd.ExitCodePlatformSRKAuthRejected)
 	}
 }
 

@@ -126,6 +126,10 @@ func (m *MockXKMSService) RotateOTAImageKey(ctx context.Context, req *xkms.OTAIm
 	return &xkms.RotateKeyResponse{Success: true, KeyID: "ota-image-" + req.BoardID, KeyVersion: 2}, nil
 }
 
+func (m *MockXKMSService) ExportOTAImagePublicKey(ctx context.Context, req *xkms.OTAImageKeyRequest) (*xkms.OTAImagePublicKeyResponse, error) {
+	return &xkms.OTAImagePublicKeyResponse{KeyID: "ota-image-" + req.BoardID, BoardID: req.BoardID, Version: 1}, nil
+}
+
 func (m *MockXKMSService) SignOTAImage(ctx context.Context, req *xkms.OTAImageSignRequest) (*xkms.SignResponse, error) {
 	return &xkms.SignResponse{Signature: []byte("mock-signature"), KeyVersion: 1}, nil
 }
