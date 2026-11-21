@@ -53,6 +53,11 @@ const (
 	// certificate tooling, or its own bootstrap channel), so it runs once, on
 	// the embedded cell.
 	ReasonNoSDKTransport = "no SDK transport (local or own bootstrap channel)"
+
+	// ReasonEmbeddedNoCA: the embedded service (sdk/go/embedded.go) sets up
+	// software key and certificate storage only and installs no CA, so the
+	// ca verbs reach servicer_ca.go's getCA guard there.
+	ReasonEmbeddedNoCA = "embedded service installs no CA (sdk/go/embedded.go)"
 )
 
 // SkipReason reports whether the standalone run (RunAllCommandsForProtocol)

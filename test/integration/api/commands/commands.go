@@ -1228,7 +1228,7 @@ func OIDCCommands() []CommandDefinition {
 // These commands interact with the XKMS Certificate Authority for certificate lifecycle management.
 // All CA commands require a server connection.
 func CACommands() []CommandDefinition {
-	return []CommandDefinition{
+	cmds := []CommandDefinition{
 		// Bundle - get CA certificate bundle
 		{
 			Name:                   "ca-bundle",
@@ -1326,6 +1326,13 @@ func CACommands() []CommandDefinition {
 			},
 		},
 	}
+	// The CA lives in the server: every server transport runs the verbs,
+	// the embedded cell names why it cannot.
+	for i := range cmds {
+		cmds[i].Transports = []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
+		cmds[i].TransportSkip = ReasonEmbeddedNoCA
+	}
+	return cmds
 }
 
 // CommandsByCategory returns commands filtered by category
