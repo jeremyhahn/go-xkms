@@ -27,8 +27,11 @@ import (
 // proxy set it sends that log to /dev/null, so no layer keeps the address; a
 // hosted build, with none, keeps its history log.
 const (
-	cachesRoot   = "../.."
-	aptProxyDef  = `p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}`
+	cachesRoot  = "../.."
+	aptProxyDef = `p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY ` + aptBound + ` -o Dir::Log::History=/dev/null}`
+	// aptBound makes a stalled LAN cache fail the fetch and retry instead
+	// of hanging the build until the CI job times out (DS-9514).
+	aptBound     = `-o Acquire::http::Timeout=30 -o Acquire::Retries=3`
 	apkHelper    = "scripts/apk-mirror.sh"
 	apkHelperDst = "target=/usr/local/bin/apk-mirror"
 	aptSecret    = "--mount=type=secret,id=apt_proxy,env=APT_PROXY"
@@ -73,6 +76,9 @@ func aptCacheProblems(name, df string) []string {
 			}
 			if aptBareCall.MatchString(run) {
 				problems = append(problems, name+" stage "+head+" runs apt-get without $p: it would not take the pool's apt cache")
+			}
+			if strings.Contains(run, "Acquire::http::Proxy=") && !strings.Contains(run, aptBound) {
+				problems = append(problems, name+" stage "+head+" sets the apt proxy without "+aptBound+": a stalled cache hangs the build (DS-9514)")
 			}
 			if !strings.Contains(run, aptProxyDef) {
 				problems = append(problems, name+" stage "+head+" has an apt RUN that does not define "+aptProxyDef)
@@ -355,6 +361,7 @@ func TestCacheChecksCatchARegression(t *testing.T) {
 		"no p definition":                      "FROM x\nRUN " + aptSecret + " apt-get $p update\n",
 		"a proxy def that keeps apt's history": "FROM x\nRUN " + aptSecret + " p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY}; apt-get $p update\n",
 		"no secret mount":                      "FROM x\nRUN " + aptProxyDef + "; apt-get $p update\n",
+		"a proxy def with no timeout":          "FROM x\nRUN " + aptSecret + " p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Dir::Log::History=/dev/null}; apt-get $p update\n",
 		"the proxy as a build arg":             "FROM x\nARG APT_PROXY=\nRUN " + aptSecret + " " + aptProxyDef + "; apt-get $p update\n",
 	} {
 		if len(aptCacheProblems("f", bad)) == 0 {

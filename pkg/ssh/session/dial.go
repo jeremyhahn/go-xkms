@@ -230,12 +230,18 @@ func DialClient(ctx context.Context, p ClientParams) (*ssh.Client, error) {
 	})
 
 	sshConn, chans, reqs, hsErr := ssh.NewClientConn(netConn, addr, cfg)
+	if afterHandshakeHook != nil {
+		afterHandshakeHook(hsErr)
+	}
 	if !stop() {
 		// ctx ended during the handshake: wait for the close to finish
 		// before reading its result.
 		<-cancelClosed
 		if hsErr == nil {
-			closeErr := closeAfterFailedHandshake(sshConn)
+			// Close a client, not the bare conn: its handlers drain chans
+			// and reqs, which the mux goroutine may be blocked sending
+			// queued peer traffic into.
+			closeErr := closeAfterFailedHandshake(ssh.NewClient(sshConn, chans, reqs))
 			return nil, errors.Join(&TimeoutError{Host: p.Host, Duration: timeout, Err: ctx.Err()}, cancelCloseErr, closeErr)
 		}
 	}
@@ -261,6 +267,11 @@ func DialClient(ctx context.Context, p ClientParams) (*ssh.Client, error) {
 // second Close returns is expected and dropped: it would only sit next to
 // the handshake error (under GODEBUG=fips140=only, the module's refusal) as
 // noise. Any other close error is returned.
+// afterHandshakeHook, when a test sets it, runs in DialClient after
+// ssh.NewClientConn returns and before the context watcher is stopped, so
+// a test can make cancellation win after a successful handshake.
+var afterHandshakeHook func(hsErr error)
+
 func closeAfterFailedHandshake(conn interface{ Close() error }) error {
 	if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		return err
