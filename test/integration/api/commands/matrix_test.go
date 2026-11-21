@@ -380,3 +380,29 @@ func TestRunCommandWithProtocol_EmbeddedArgs(t *testing.T) {
 		t.Errorf("protocolArgs(mcp) = %v, want %v", got, want)
 	}
 }
+
+// TestCACommands_EmbeddedCellNamesNoCA checks the CA family on the embedded
+// transport: the embedded service (sdk/go/embedded.go) installs no CA, so
+// every CA cell there is skipped with ReasonEmbeddedNoCA, while the server
+// transports still run the verbs that need no setup.
+func TestCACommands_EmbeddedCellNamesNoCA(t *testing.T) {
+	cmds := CACommands()
+	if len(cmds) == 0 {
+		t.Fatal("CACommands() is empty")
+	}
+	for _, def := range cmds {
+		r, skip := MatrixSkipReason(def, ProtocolEmbedded, nil)
+		if !skip || r != ReasonEmbeddedNoCA {
+			t.Errorf("(ca, embedded) %s: skip=%v reason=%q, want %q", def.Name, skip, r, ReasonEmbeddedNoCA)
+		}
+		for _, p := range []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP} {
+			r, skip := MatrixSkipReason(def, p, nil)
+			if !def.RequiresSetup && skip {
+				t.Errorf("(ca, %s) %s skipped: %s", p, def.Name, r)
+			}
+			if r == ReasonEmbeddedNoCA {
+				t.Errorf("(ca, %s) %s carries the embedded reason", p, def.Name)
+			}
+		}
+	}
+}
