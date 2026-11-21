@@ -13,6 +13,8 @@
 
 package keyversion
 
+import "time"
+
 // Entity is the DAO entity of one key's version record. Name, the record's
 // "{tenant}/{backend}/{keyID}" triple, is its natural key: the entity ID is
 // derived from it, so a record is read and written by name.
@@ -20,6 +22,25 @@ type Entity struct {
 	ID   uint64 `json:"id"`
 	Name string `json:"name"`
 	Record
+
+	// Claim is the rotation that owns the backend key name of the record's
+	// next version, if any (Store.Claim).
+	Claim *rotationClaim `json:"rotation_claim,omitempty"`
+}
+
+// rotationClaim marks a version record as claimed by one rotation: only its
+// holder creates or removes the backend key under the next version's name,
+// and records that version.
+type rotationClaim struct {
+	Token   string    `json:"token"`
+	Expires time.Time `json:"expires"`
+
+	// Version is the version number reserved for the claim: only its holder
+	// creates, removes or records the backend key under that version's
+	// name. Every later claim reserves a higher number, so a holder whose
+	// claim was taken over never touches its successor's key. A released
+	// claim keeps an empty Token and its Version as the floor for the next.
+	Version uint32 `json:"version,omitempty"`
 }
 
 // EntityID returns the entity's unique identifier.

@@ -16,6 +16,7 @@ package xkms
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -26,12 +27,16 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
@@ -908,4 +913,238 @@ func TestRotateKey_ConcurrentRotationsTakeDistinctVersions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(rotations+1), listed.CurrentVersion)
 	assert.Len(t, listed.Versions, rotations+1)
+}
+
+// generateHookBackend runs beforeGenerate when rotateKey creates the next
+// version's backend key: after rotateKey read the record, before it writes.
+type generateHookBackend struct {
+	Backend
+	beforeGenerate func(ctx context.Context)
+	// afterGenerate runs once the backend key exists, before rotateKey
+	// records it.
+	afterGenerate func(ctx context.Context)
+}
+
+func (b *generateHookBackend) GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	if b.beforeGenerate != nil {
+		b.beforeGenerate(ctx)
+	}
+	key, err := b.Backend.GenerateEd25519(ctx, attrs)
+	if err == nil && b.afterGenerate != nil {
+		b.afterGenerate(ctx)
+	}
+	return key, err
+}
+
+func TestRotateKey_StaleRecordFailsWithVersionConflict(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := context.Background()
+	genKey(t, svc, "", "k", "ed25519", 0)
+	store, err := svc.requireVersionStore()
+	require.NoError(t, err)
+	inner, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+
+	// A second writer, which does not hold this process's key lock, records
+	// versions 2 and 3 between rotateKey's read and its write.
+	b := &generateHookBackend{Backend: inner, beforeGenerate: func(ctx context.Context) {
+		rec, _, err := store.Load(ctx, "", "software", "k")
+		require.NoError(t, err)
+		rec.AddCurrent(2, time.Now().UTC(), "second-writer")
+		rec.AddCurrent(3, time.Now().UTC(), "second-writer")
+		require.NoError(t, store.Put(ctx, "", rec))
+	}}
+
+	_, err = svc.rotateKey(ctx, b, "software", "k")
+	require.ErrorIs(t, err, keyversion.ErrVersionConflict)
+	var conflict *keyversion.VersionConflictError
+	require.ErrorAs(t, err, &conflict)
+
+	stored, found, err := store.Load(ctx, "", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint32(3), stored.Current, "the second writer's record is kept")
+	require.Len(t, stored.Versions, 3)
+	for _, v := range stored.Versions[1:] {
+		assert.Equal(t, "second-writer", v.CreatedBy)
+	}
+}
+
+// writeAfterReadKV runs afterRead once, after the first Get that follows
+// arm: the read returns the value stored before afterRead writes.
+type writeAfterReadKV struct {
+	qrdbsdk.AtomicKVStore
+	mu        sync.Mutex
+	armed     bool
+	afterRead func()
+}
+
+func (s *writeAfterReadKV) arm() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.armed = true
+}
+
+func (s *writeAfterReadKV) Get(ctx context.Context, key string) ([]byte, error) {
+	v, err := s.AtomicKVStore.Get(ctx, key)
+	s.mu.Lock()
+	fire := s.armed
+	s.armed = false
+	s.mu.Unlock()
+	if fire {
+		s.afterRead()
+	}
+	return v, err
+}
+
+// listHookBackend runs onList after its n-th ListKeys.
+type listHookBackend struct {
+	Backend
+	n      int
+	onList func(n int)
+}
+
+func (b *listHookBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
+	keys, err := b.Backend.ListKeys(ctx)
+	b.n++
+	b.onList(b.n)
+	return keys, err
+}
+
+func TestRotateKey_OrphanCleanupKeepsAVersionNewerThanTheRecordRead(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := context.Background()
+	kv := &writeAfterReadKV{AtomicKVStore: qrdbsdk.NewMemoryKVStore()}
+	store, err := keyversion.NewStore(dao.NewStoreFactory(kv))
+	require.NoError(t, err)
+	svc.SetKeyVersionStore(store)
+
+	genKey(t, svc, "", "k", "ed25519", 0)
+	inner, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+	// Another rotator has created version 2's backend key and records it
+	// right after this rotation reads the record under its lock, so the key
+	// this rotation lists under the next version's name is no orphan.
+	v2, err := inner.GenerateEd25519(ctx, &types.KeyAttributes{CN: "k--v2", KeyType: types.KeyTypeSigning, StoreType: types.StoreSoftware})
+	require.NoError(t, err)
+	kv.afterRead = func() {
+		rec := keyversion.Implicit("k", "software")
+		rec.AddCurrent(2, time.Now().UTC(), "second-writer")
+		require.NoError(t, store.Put(ctx, "", rec))
+	}
+	b := &listHookBackend{Backend: inner, onList: func(n int) {
+		if n == 2 { // the listing under the key's lock, just before the read
+			kv.arm()
+		}
+	}}
+
+	_, err = svc.rotateKey(ctx, b, "software", "k")
+	require.ErrorIs(t, err, keyversion.ErrVersionConflict)
+
+	stored, found, err := store.Load(ctx, "", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint32(2), stored.Current)
+	got, err := svc.GetKey(ctx, "software", "k")
+	require.NoError(t, err)
+	v2PEM, err := pubKeyPEM(v2)
+	require.NoError(t, err)
+	assert.Equal(t, v2PEM, got.PublicKeyPEM, "version 2 is still the second writer's key")
+}
+
+// deleteHookBackend runs beforeDelete once, when rotateKey first removes a
+// backend key: after it checked the record, before the key is gone.
+type deleteHookBackend struct {
+	Backend
+	beforeDelete func(ctx context.Context)
+}
+
+func (b *deleteHookBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
+	if hook := b.beforeDelete; hook != nil {
+		b.beforeDelete = nil
+		hook(ctx)
+	}
+	return b.Backend.DeleteKey(ctx, attrs)
+}
+
+// twoProcesses returns two services standing for two processes: each has
+// its own keyversion.Store (so its own key locks) over one shared record
+// database, and both rotate keys in the first one's software backend.
+func twoProcesses(t *testing.T) (here, elsewhere *XKMSService, shared Backend) {
+	t.Helper()
+	kv := qrdbsdk.NewMemoryKVStore()
+	here = setupDeriveService(t)
+	shared, err := here.LookupBackend("software")
+	require.NoError(t, err)
+	elsewhere, err = NewService(&ServiceConfig{
+		Backends:       map[string]Backend{"software": shared},
+		DefaultBackend: "software",
+	})
+	require.NoError(t, err)
+	for _, svc := range []*XKMSService{here, elsewhere} {
+		store, err := keyversion.NewStore(dao.NewStoreFactory(kv))
+		require.NoError(t, err)
+		svc.SetKeyVersionStore(store)
+	}
+	return here, elsewhere, shared
+}
+
+// requireRecordedVersionKeepsItsKey asserts one of two racing rotations of
+// key "k" recorded version 2 and the other failed with a version conflict,
+// and that version 2's backend key is the one the recording rotation made.
+func requireRecordedVersionKeepsItsKey(t *testing.T, svc *XKMSService, a *rotation, aErr error, b *rotation, bErr error) {
+	t.Helper()
+	winner, loserErr := a, bErr
+	if aErr != nil {
+		winner, loserErr = b, aErr
+		require.NoError(t, bErr, "one of the two rotations records version 2")
+	}
+	require.ErrorIs(t, loserErr, keyversion.ErrVersionConflict)
+
+	store, err := svc.requireVersionStore()
+	require.NoError(t, err)
+	stored, found, err := store.Load(context.Background(), "", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint32(2), stored.Current)
+	got, err := svc.GetKey(context.Background(), "software", "k")
+	require.NoError(t, err, "the recorded version's backend key exists")
+	want, err := pubKeyPEM(winner.key)
+	require.NoError(t, err)
+	assert.Equal(t, want, got.PublicKeyPEM, "version 2's key material is the recording rotation's")
+}
+
+func TestRotateKey_OrphanRemovalNeverDeletesAVersionRecordedElsewhere(t *testing.T) {
+	ctx := context.Background()
+	here, elsewhere, shared := twoProcesses(t)
+	genKey(t, here, "", "k", "ed25519", 0)
+	// An interrupted rotation left version 2's backend key unrecorded.
+	_, err := shared.GenerateEd25519(ctx, &types.KeyAttributes{CN: "k--v2", KeyType: types.KeyTypeSigning, StoreType: types.StoreSoftware})
+	require.NoError(t, err)
+
+	// A rotator in another process rotates the key after this rotation
+	// checked the record and before it removes the orphan.
+	var other *rotation
+	var otherErr error
+	b := &deleteHookBackend{Backend: shared, beforeDelete: func(ctx context.Context) {
+		other, otherErr = elsewhere.rotateKey(ctx, shared, "software", "k")
+	}}
+	mine, err := here.rotateKey(ctx, b, "software", "k")
+	requireRecordedVersionKeepsItsKey(t, here, mine, err, other, otherErr)
+}
+
+func TestRotateKey_ConflictCleanupNeverDeletesAVersionRecordedElsewhere(t *testing.T) {
+	ctx := context.Background()
+	here, elsewhere, shared := twoProcesses(t)
+	genKey(t, here, "", "k", "ed25519", 0)
+
+	// A rotator in another process rotates the key after this rotation
+	// created version 2's backend key and before it records it.
+	var other *rotation
+	var otherErr error
+	b := &generateHookBackend{Backend: shared, afterGenerate: func(ctx context.Context) {
+		other, otherErr = elsewhere.rotateKey(ctx, shared, "software", "k")
+	}}
+	mine, err := here.rotateKey(ctx, b, "software", "k")
+	requireRecordedVersionKeepsItsKey(t, here, mine, err, other, otherErr)
 }
