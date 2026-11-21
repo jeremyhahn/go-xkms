@@ -101,8 +101,7 @@ func (s *DAOStore) Add(ctx context.Context, cert *x509.Certificate, opts *AddCer
 			// The config file lists a root the store already holds:
 			// record that, so removing it leaves a tombstone.
 			if source == SourceConfig && !existing.ConfigSeeded {
-				existing.ConfigSeeded = true
-				if err := s.dao.Save(ctx, existing); err != nil {
+				if err := s.markConfigSeeded(ctx, existing); err != nil {
 					return err
 				}
 			}
@@ -155,6 +154,34 @@ func (s *DAOStore) ImportPEM(ctx context.Context, pemData []byte, opts *AddCerti
 
 // daoImporter adapts DAOStore.Add to the context-free certificateImporter
 // importPEM drives, binding the import's context.
+// markConfigSeeded records that the config file lists a root the store
+// already holds. It swaps only the record it read: a quarantine or delete
+// another server made in between is never overwritten. On a conflict it
+// re-reads, keeps the newer purpose and PEM, and seeds nothing once the root
+// is deleted or tombstoned.
+func (s *DAOStore) markConfigSeeded(ctx context.Context, current *TrustCertEntity) error {
+	for {
+		next := *current
+		next.ConfigSeeded = true
+		swapped, err := s.dao.CompareAndSwap(ctx, current, &next)
+		if err != nil {
+			return err
+		}
+		if swapped {
+			return nil
+		}
+		current, err = s.dao.Get(ctx, current.EntityID())
+		switch {
+		case qrdbsdk.IsDAONotFound(err):
+			return nil
+		case err != nil:
+			return err
+		case isTombstone(current) || current.ConfigSeeded:
+			return nil
+		}
+	}
+}
+
 type daoImporter struct {
 	ctx   context.Context
 	store *DAOStore
