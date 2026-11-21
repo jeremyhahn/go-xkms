@@ -83,6 +83,19 @@ describe("PasswordAccessModeView", () => {
     expect(applyButton().disabled).toBe(true);
   });
 
+  it("write-only caller: a refused status read leaves Apply usable and the POST sets the mode", async () => {
+    status.mockRejectedValue(Object.assign(new Error("permission denied: passwords:read"), { status: 403 }));
+    setAccessMode.mockResolvedValue({ mode: "session_based", message: "access mode set to session_based" });
+    render(PasswordAccessModeView);
+    await waitFor(() => expect(applyButton()).toBeTruthy());
+    expect(screen.queryByText(/permission denied/i)).toBeNull();
+    expect(screen.getByText(/not known/i)).toBeTruthy();
+    await chooseAndApply(/session based/i);
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(setAccessMode).toHaveBeenCalledWith({ mode: "session_based" }));
+    await waitFor(() => expect(screen.getByTestId("current-mode").textContent).toContain("session_based"));
+  });
+
   it("validation: Apply stays disabled until a mode is chosen", async () => {
     await mountAvailable();
     expect(applyButton().disabled).toBe(true);
