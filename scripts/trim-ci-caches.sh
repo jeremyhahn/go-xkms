@@ -136,10 +136,46 @@ in_volume() {
     --user "$uid:$uid" -v "$vol:/c" "$@" 2>/dev/null
 }
 
+# Cache volumes are shared by every job of this repo and trust class on the
+# host, so an in-use volume can belong to another job that is compiling or
+# linking from it. scripts/in-toolchain-image.sh holds each mounted volume's
+# lock, CI_CACHE_LOCK_DIR/<volume>.lock, shared for its whole stage; this
+# takes it exclusively, without waiting, before it cleans or unlinks anything
+# in the volume, and holds it until the volume is remeasured. A held volume is
+# skipped and keeps its size in the total. Without a usable lock dir nothing
+# in use is trimmed inside. A dry run only reports and takes no lock.
+lockdir=${CI_CACHE_LOCK_DIR:-/var/lock/ci-caches}
+if ! command -v flock >/dev/null || ! mkdir -p "$lockdir" 2>/dev/null; then
+  lockdir=
+fi
+lockfd=
+unlock() {
+  if [ -n "$lockfd" ]; then
+    exec {lockfd}>&-
+    lockfd=
+  fi
+}
+
 trimmed=0
 while read -r kib vol; do
+  unlock
   [ "$total" -gt "$max_kib" ] || break
   need=$((total - max_kib))
+  case $dry:$vol in
+    1:* | *:*-gomod) ;;
+    *)
+      if [ -z "$lockdir" ] || ! { exec {lockfd}>>"$lockdir/$vol.lock"; } 2>/dev/null; then
+        lockfd=
+        echo "warn  $vol: no cache lock; not trimmed inside"
+        continue
+      fi
+      if ! flock -n -x "$lockfd"; then
+        unlock
+        echo "skip  $vol: a build holds it"
+        continue
+      fi
+      ;;
+  esac
   case $vol in
     *-gobuild)
       if [ "$kib" -gt "$max_kib" ]; then
@@ -196,6 +232,7 @@ while read -r kib vol; do
   fi
   trimmed=$((trimmed + 1))
 done < <(sort -rn "$inuse")
+unlock
 
 echo "trim: $removed volume(s) removed, $trimmed trimmed inside, $((total / 1024 / 1024)) GiB left for prefix '$prefix'"
 exit 0

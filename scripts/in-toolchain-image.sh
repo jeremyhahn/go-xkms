@@ -187,6 +187,23 @@ args=(
 modcache=/tmp/gomodcache
 if [ "$cache" = on ]; then
   vols="${prefix}cache-${class}"
+  # Each cache volume's lock, held shared until this script exits (the whole
+  # stage): scripts/trim-ci-caches.sh takes it exclusively before it cleans or
+  # unlinks anything in an in-use volume, so it never evicts an entry a running
+  # build has already resolved. A lock that cannot be taken never blocks the
+  # build: it warns and runs unlocked.
+  lockdir=${CI_CACHE_LOCK_DIR:-/var/lock/ci-caches}
+  if command -v flock >/dev/null && mkdir -p "$lockdir" 2>/dev/null; then
+    for v in gobuild golangci gomod; do
+      if { exec {lockfd}>>"$lockdir/$vols-$v.lock"; } 2>/dev/null && flock -s "$lockfd"; then
+        :
+      else
+        echo "in-toolchain-image: warn: cache lock $lockdir/$vols-$v.lock not taken; running unlocked" >&2
+      fi
+    done
+  else
+    echo "in-toolchain-image: warn: cache lock dir $lockdir not usable; running unlocked" >&2
+  fi
   docker run --rm --network none --cap-drop ALL --cap-add CHOWN \
     --security-opt no-new-privileges:true --user 0:0 \
     -v "$vols-gobuild:/c/gobuild" -v "$vols-golangci:/c/golangci" -v "$vols-gomod:/c/gomod" \
