@@ -6,9 +6,11 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -76,5 +78,103 @@ func TestImportParamsFile_RoundTripsWrappingPublicKey(t *testing.T) {
 	unwrapped, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, priv, wrapped, nil)
 	if err != nil || !bytes.Equal(unwrapped, material) {
 		t.Fatalf("unwrap: %v", err)
+	}
+}
+
+// TestImportChain_CarriesImportToken drives get-import-params -> wrap ->
+// unwrap and get-import-params -> wrap -> import through the CLI. A backend
+// that issues an import token (the software backend, AWS KMS) refuses an
+// unwrap or import without it, so the token the server returned must reach
+// the params file, the wrapped file and every later request.
+func TestImportChain_CarriesImportToken(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := []byte("server-import-token")
+	const expires = "2030-01-02T03:04:05Z"
+	mock := &mockKeyClient{
+		getImportParamsResp: &client.GetImportParametersResponse{
+			WrappingPublicKey: der,
+			ImportToken:       token,
+			Algorithm:         "RSAES_OAEP_SHA_256",
+			ExpiresAt:         expires,
+			KeySpec:           "AES_256",
+		},
+		wrapKeyResp:   &client.WrapKeyResponse{WrappedKeyMaterial: []byte("wrapped-bytes")},
+		unwrapKeyResp: &client.UnwrapKeyResponse{KeyMaterial: []byte("raw-key")},
+		importKeyResp: &client.ImportKeyResponse{},
+	}
+	withGlobalConfig(t, newKeyRunConfig("text", mock))
+	dir := t.TempDir()
+
+	paramsFile := filepath.Join(dir, "params.json")
+	getCmd := keyGetImportParamsCmd
+	_ = getCmd.Flags().Set("output", paramsFile)
+	t.Cleanup(func() { _ = getCmd.Flags().Set("output", "") })
+	captureStdout(t, func() { getCmd.Run(getCmd, []string{"k1"}) })
+
+	paramsData, err := os.ReadFile(paramsFile)
+	if err != nil {
+		t.Fatalf("params file: %v", err)
+	}
+	params, err := decodeImportParams(paramsData)
+	if err != nil {
+		t.Fatalf("decodeImportParams: %v", err)
+	}
+	if !bytes.Equal(params.ImportToken, token) {
+		t.Fatalf("params file ImportToken = %q, want %q", params.ImportToken, token)
+	}
+	if params.KeySpec != "AES_256" {
+		t.Errorf("params file KeySpec = %q, want AES_256", params.KeySpec)
+	}
+	if params.ExpiresAt == nil || params.ExpiresAt.UTC().Format(time.RFC3339) != expires {
+		t.Errorf("params file ExpiresAt = %v, want %s", params.ExpiresAt, expires)
+	}
+
+	keyMat := filepath.Join(dir, "keymat.bin")
+	if err := os.WriteFile(keyMat, bytes.Repeat([]byte{0x42}, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wrappedFile := filepath.Join(dir, "wrapped.json")
+	captureStdout(t, func() {
+		keyWrapCmd.Run(keyWrapCmd, []string{keyMat, paramsFile, wrappedFile})
+	})
+	if mock.wrapKeyReq == nil || !bytes.Equal(mock.wrapKeyReq.ImportToken, token) {
+		t.Fatalf("WrapKey request did not carry the import token: %+v", mock.wrapKeyReq)
+	}
+	if mock.wrapKeyReq.KeySpec != "AES_256" {
+		t.Errorf("WrapKey KeySpec = %q, want AES_256", mock.wrapKeyReq.KeySpec)
+	}
+	wrappedData, err := os.ReadFile(wrappedFile)
+	if err != nil {
+		t.Fatalf("wrapped file: %v", err)
+	}
+	var wrapped client.WrappedKeyMaterial
+	if err := json.Unmarshal(wrappedData, &wrapped); err != nil {
+		t.Fatalf("wrapped file: %v", err)
+	}
+	if !bytes.Equal(wrapped.ImportToken, token) {
+		t.Fatalf("wrapped file ImportToken = %q, want %q", wrapped.ImportToken, token)
+	}
+
+	captureStdout(t, func() {
+		keyUnwrapCmd.Run(keyUnwrapCmd, []string{wrappedFile, paramsFile, filepath.Join(dir, "unwrapped.bin")})
+	})
+	if mock.unwrapKeyReq == nil || !bytes.Equal(mock.unwrapKeyReq.ImportToken, token) {
+		t.Fatalf("UnwrapKey request did not carry the import token: %+v", mock.unwrapKeyReq)
+	}
+
+	if err := keyImportCmd.Flags().Set("key-type", "aes"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = keyImportCmd.Flags().Set("key-type", "") })
+	captureStdout(t, func() { keyImportCmd.Run(keyImportCmd, []string{"k1", wrappedFile}) })
+	if mock.importKeyReq == nil || !bytes.Equal(mock.importKeyReq.ImportToken, token) {
+		t.Fatalf("ImportKey request did not carry the import token: %+v", mock.importKeyReq)
 	}
 }
