@@ -82,14 +82,14 @@ func PlatformCommands() []CommandDefinition {
 	}
 	put := def("platform-put", "put", "Seal and store a platform secret", secret())
 	put.RequiredArgs = append(put.RequiredArgs, ArgDefinition{Flag: "value", Value: "it-platform-value", Description: "Secret value"})
-	return []CommandDefinition{
+	return serverOnly(ReasonEmbeddedNoPlatformStore, []CommandDefinition{
 		put,
 		def("platform-get", "get", "Unseal and return a platform secret", secret()),
 		def("platform-list", "list", "List platform secrets", nil),
 		def("platform-reseal", "reseal", "Reseal a platform secret", secret()),
 		def("platform-status", "status", "Show platform sealing status", nil),
 		def("platform-delete", "delete", "Delete a platform secret", secret()),
-	}
+	})
 }
 
 // ClusterCommands returns the qrdb cluster membership commands. add and

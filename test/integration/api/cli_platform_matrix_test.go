@@ -28,6 +28,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -107,7 +108,10 @@ func TestCLIPlatformMatrix(t *testing.T) {
 				out := res.Stdout + res.Stderr
 				switch res.Command.Name {
 				case "platform-get":
-					assertContains(t, out, "it-platform-value", "get returns the value put stored")
+					// platform get prints the secret base64-encoded (text and
+					// JSON alike), never as plaintext.
+					assertContains(t, out, base64.StdEncoding.EncodeToString([]byte("it-platform-value")),
+						"get returns the value put stored")
 				case "platform-list":
 					assertContains(t, out, secret, "list names the secret put stored")
 				}

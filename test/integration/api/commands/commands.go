@@ -421,9 +421,22 @@ func KeyCommands() []CommandDefinition {
 			fileArg(MatrixWorkDir+"/wrapped.json", "Wrapped input file"),
 			fileArg(MatrixWorkDir+"/import-params.json", "Params file"),
 			fileArg(MatrixWorkDir+"/unwrapped.bin", "Unwrapped output file")),
+		// The backend consumes an import token once: UnwrapKey above took the
+		// first ceremony's token, so the import runs its own ceremony with
+		// separate files.
+		keyServerCommand("key-get-import-params-for-import", "Fetch fresh import parameters for the import", []string{"key", "get-import-params"},
+			[]string{"key-unwrap"}, keyIDArg("test-import-key"),
+			ArgDefinition{Flag: "key-algorithm", Value: "aes", Description: "Key algorithm"},
+			ArgDefinition{Flag: "key-size", Value: "256", Description: "Key size"},
+			ArgDefinition{Flag: "output", Value: MatrixWorkDir + "/import-ceremony-params.json", Description: "Params output"}),
+		keyServerCommand("key-wrap-for-import", "Wrap key material under the import ceremony's parameters", []string{"key", "wrap"},
+			[]string{"key-get-import-params-for-import"},
+			fileArg(MatrixWorkDir+"/"+MatrixKeyMaterialFile, "Key material file"),
+			fileArg(MatrixWorkDir+"/import-ceremony-params.json", "Params file"),
+			fileArg(MatrixWorkDir+"/import-wrapped.json", "Wrapped output file")),
 		keyServerCommand("key-import", "Import the wrapped AES-256 key", []string{"key", "import"},
-			[]string{"key-wrap"}, keyIDArg("test-import-key"),
-			fileArg(MatrixWorkDir+"/wrapped.json", "Wrapped input file"),
+			[]string{"key-wrap-for-import"}, keyIDArg("test-import-key"),
+			fileArg(MatrixWorkDir+"/import-wrapped.json", "Wrapped input file"),
 			ArgDefinition{Flag: "key-type", Value: "aes", Description: "Key type"},
 			ArgDefinition{Flag: "aes-key-size", Value: "256", Description: "AES key size"}),
 		keyServerCommand("key-export", "Export an exportable key wrapped for transport", []string{"key", "export"},
@@ -788,7 +801,7 @@ func SealingCommands() []CommandDefinition {
 // unseal/can-seal above.
 func PolicyCommands() []CommandDefinition {
 	create := []string{"tpm-policy-create"}
-	return []CommandDefinition{
+	return withSkip(ReasonNoPolicyService, []CommandDefinition{
 		{
 			Name:           "tpm-policy-create",
 			Category:       CategoryPolicy,
@@ -847,7 +860,16 @@ func PolicyCommands() []CommandDefinition {
 			[]string{"tpm", "authority", "rotate"}, create, false),
 		// delete last: every verb above needs the policy.
 		policyCommand("tpm-policy-delete", "Delete a TPM policy", []string{"tpm", "policy", "delete"}, create, true),
+	})
+}
+
+// withSkip gives every command in cmds the capability skip reason, on every
+// transport: the matrix server lacks the service the family needs.
+func withSkip(reason string, cmds []CommandDefinition) []CommandDefinition {
+	for i := range cmds {
+		cmds[i].Skip = reason
 	}
+	return cmds
 }
 
 // policyCommand declares a TPM policy command that runs after its setup

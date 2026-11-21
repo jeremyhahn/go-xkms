@@ -63,6 +63,16 @@ const (
 	// installs no password-store or PIN manager, so the password and pin
 	// verbs return ErrNotConfigured there.
 	ReasonEmbeddedNoSecrets = "embedded service installs no password store or PIN manager (sdk/go/embedded.go)"
+
+	// ReasonEmbeddedNoPlatformStore: the embedded service (sdk/go/embedded.go)
+	// installs no platform seal store, so SealStorePut and the other platform
+	// verbs return ErrNotConfigured there.
+	ReasonEmbeddedNoPlatformStore = "embedded service installs no platform seal store (sdk/go/embedded.go)"
+
+	// ReasonNoPolicyService: the standalone matrix server configures no TPM
+	// policy service, so tpm policy create, and every verb that needs the
+	// policy it creates, cannot run there.
+	ReasonNoPolicyService = "standalone matrix server configures no TPM policy service"
 )
 
 // SkipReason reports whether the standalone run (RunAllCommandsForProtocol)
