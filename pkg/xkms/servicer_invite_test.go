@@ -24,6 +24,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,10 +84,24 @@ type inviteFixture struct {
 	rp        virtualwebauthn.RelyingParty
 	inviteTTL time.Duration
 	tenant    string
+	// certBindings returns the thumbprints AddCertBinding recorded for a user.
+	certBindings func(userID uint64) []string
+	// credentials is the webauthn credential store the fixture wires.
+	credentials webauthn.CredentialStore
+	// setGetUserGate installs a hook run at the start of every GetUser;
+	// call it before any concurrent use.
+	setGetUserGate func(func())
 }
 
 const inviteFixtureQRDBUserID = uint64(42)
 const inviteFixtureEmail = "invitee@example.com"
+
+// inviteFixtureQRDBUserIDB and inviteFixtureEmailB are the fixture's second
+// pending account.
+const (
+	inviteFixtureQRDBUserIDB = uint64(43)
+	inviteFixtureEmailB      = "invitee-b@example.com"
+)
 const inviteFixtureTenant = "system"
 
 // newInviteFixture builds the fixture with the account already pending in
@@ -105,41 +120,82 @@ func newInviteFixtureIn(t *testing.T, tenant string) *inviteFixture {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	// qrdb side: mockUserClient tracks the pending account by qrdb id.
-	qrdbUser := &qrdbtransport.User{
-		ID: inviteFixtureQRDBUserID, Username: inviteFixtureEmail, Email: inviteFixtureEmail,
-		Name: "Invitee", TenantID: tenant, Lifecycle: string(qrdbsdk.LifecyclePending),
+	// qrdb side: mockUserClient tracks the pending accounts by qrdb id. A
+	// second pending account (inviteFixtureQRDBUserIDB) lets a test hold
+	// two live invitations at once. mu guards the accounts and the cert
+	// bindings: the concurrent-activation test drives them from two
+	// goroutines.
+	var mu sync.Mutex
+	accounts := map[uint64]*qrdbtransport.User{
+		inviteFixtureQRDBUserID: {
+			ID: inviteFixtureQRDBUserID, Username: inviteFixtureEmail, Email: inviteFixtureEmail,
+			Name: "Invitee", TenantID: tenant, Lifecycle: string(qrdbsdk.LifecyclePending),
+		},
+		inviteFixtureQRDBUserIDB: {
+			ID: inviteFixtureQRDBUserIDB, Username: inviteFixtureEmailB, Email: inviteFixtureEmailB,
+			Name: "Invitee B", TenantID: tenant, Lifecycle: string(qrdbsdk.LifecyclePending),
+		},
+	}
+	bindings := map[uint64][]string{}
+	// getUserGate, when set (before any concurrent call), runs at the
+	// start of every GetUser: a test uses it as a barrier.
+	var getUserGate func()
+	snapshot := func(u *qrdbtransport.User) *qrdbtransport.User {
+		c := *u
+		return &c
 	}
 	users := &mockUserClient{
 		getUser: func(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
-			if id != qrdbUser.ID || inviteCallerTenant(ctx) != qrdbUser.TenantID {
+			if getUserGate != nil {
+				getUserGate()
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			u, ok := accounts[id]
+			if !ok || inviteCallerTenant(ctx) != u.TenantID {
 				return nil, &qrdbtransport.UserNotFoundError{ID: id}
 			}
-			return qrdbUser, nil
+			return snapshot(u), nil
 		},
 		getUserByEmail: func(_ context.Context, tenantID, email string) (*qrdbtransport.User, error) {
-			if tenantID != qrdbUser.TenantID || email != qrdbUser.Email {
-				return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, email)}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, u := range accounts {
+				if u.TenantID == tenantID && u.Email == email {
+					return snapshot(u), nil
+				}
 			}
-			return qrdbUser, nil
+			return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, email)}
 		},
 		updateUser: func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
-			if req.ID != qrdbUser.ID || inviteCallerTenant(ctx) != qrdbUser.TenantID {
+			mu.Lock()
+			defer mu.Unlock()
+			u, ok := accounts[req.ID]
+			if !ok || inviteCallerTenant(ctx) != u.TenantID {
 				return nil, &qrdbtransport.UserNotFoundError{ID: req.ID}
 			}
 			if req.Lifecycle != "" {
-				qrdbUser.Lifecycle = req.Lifecycle
+				u.Lifecycle = req.Lifecycle
 			}
-			return qrdbUser, nil
+			return snapshot(u), nil
 		},
 		addCertBinding: func(_ context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
-			if userID != qrdbUser.ID {
+			mu.Lock()
+			defer mu.Unlock()
+			u, ok := accounts[userID]
+			if !ok {
 				return nil, &qrdbtransport.UserNotFoundError{ID: userID}
 			}
-			return qrdbUser, nil
+			bindings[userID] = append(bindings[userID], thumbprint)
+			return snapshot(u), nil
 		},
 	}
 	svc.SetUserClients(users, &mockRoleClient{})
+	certBindings := func(userID uint64) []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), bindings[userID]...)
+	}
 
 	// webauthn side: the SAME qrdb account, by its qrdb-id-derived handle.
 	waStores := webauthntest.NewStoresFor(t, users)
@@ -164,9 +220,14 @@ func newInviteFixtureIn(t *testing.T, tenant string) *inviteFixture {
 
 	return &inviteFixture{
 		svc: svc, users: users,
-		rp:        virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
-		inviteTTL: time.Hour,
-		tenant:    tenant,
+		rp:           virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
+		inviteTTL:    time.Hour,
+		tenant:       tenant,
+		certBindings: certBindings,
+		credentials:  waStores.Credentials,
+		setGetUserGate: func(g func()) {
+			getUserGate = g
+		},
 	}
 }
 
@@ -368,6 +429,128 @@ func TestActivateInvitePIV_Success(t *testing.T) {
 
 	_, err = f.getInvite(inviteFixtureTenant, token)
 	require.ErrorIs(t, err, ErrInviteUnusable)
+}
+
+// mintInviteFor mints an invitation for the fixture account userID.
+func (f *inviteFixture) mintInviteFor(t *testing.T, userID uint64) string {
+	t.Helper()
+	info, err := f.svc.createInvite(context.Background(), f.tenant, userID, f.inviteTTL)
+	require.NoError(t, err)
+	require.NotEmpty(t, info.Token)
+	return info.Token
+}
+
+// A ceremony begun with user A's invitation cannot be finished with user
+// B's: the session belongs to A, the token to B, and the finish refuses
+// before any credential is persisted, activating neither account and
+// leaving B's invitation redeemable.
+func TestFinishInviteRegistration_RefusesSessionOfAnotherInvitation(t *testing.T) {
+	f := newInviteFixture(t)
+	tokenA := f.mintInviteFor(t, inviteFixtureQRDBUserID)
+	tokenB := f.mintInviteFor(t, inviteFixtureQRDBUserIDB)
+
+	begin, err := f.beginRegistration(inviteFixtureTenant, tokenA)
+	require.NoError(t, err)
+	attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+
+	_, err = f.finishRegistration(inviteFixtureTenant, tokenB, begin.SessionID, attestation)
+	require.ErrorIs(t, err, ErrInviteUnusable)
+
+	ctx := bindInviteTenant(context.Background(), inviteFixtureTenant)
+	for _, id := range []uint64{inviteFixtureQRDBUserID, inviteFixtureQRDBUserIDB} {
+		creds, cErr := f.credentials.GetByUserID(ctx, webauthn.HandleFromUserID(id))
+		require.NoError(t, cErr)
+		assert.Empty(t, creds, "no credential may be stored for user %d", id)
+
+		u, uErr := f.users.GetUser(ctx, id)
+		require.NoError(t, uErr)
+		assert.Equal(t, string(qrdbsdk.LifecyclePending), u.Lifecycle, "user %d must stay pending", id)
+	}
+
+	_, err = f.getInvite(inviteFixtureTenant, tokenB)
+	require.NoError(t, err, "B's invitation must stay redeemable")
+}
+
+// Two concurrent PIV activations of one invitation: exactly one wins, the
+// loser gets ErrInviteUnusable, and the account ends with one cert binding.
+func TestActivateInvitePIV_ConcurrentClaimsOneWinner(t *testing.T) {
+	f := newInviteFixture(t)
+	token := f.mintInvite(t)
+
+	ca1, leaf1, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	ca2, leaf2, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	bundle := append(pemEncodeCert(ca1), pemEncodeCert(ca2)...)
+	f.svc.SetCA(&mockCA{bundlePEM: bundle})
+
+	leaves := [][]byte{pemEncodeCert(leaf1), pemEncodeCert(leaf2)}
+	// Both requests read the account (the pending check) before either
+	// goes on: the interleaving that let both bind before the claim.
+	var arrived sync.WaitGroup
+	arrived.Add(len(leaves))
+	var gateMu sync.Mutex
+	calls := 0
+	f.setGetUserGate(func() {
+		gateMu.Lock()
+		calls++
+		first := calls <= len(leaves)
+		gateMu.Unlock()
+		if first {
+			arrived.Done()
+			arrived.Wait()
+		}
+	})
+	start := make(chan struct{})
+	errs := make([]error, len(leaves))
+	var wg sync.WaitGroup
+	for i := range leaves {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, errs[i] = f.activatePIV(inviteFixtureTenant, token, leaves[i])
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var wins int
+	for _, e := range errs {
+		if e == nil {
+			wins++
+			continue
+		}
+		assert.ErrorIs(t, e, ErrInviteUnusable)
+	}
+	assert.Equal(t, 1, wins, "exactly one activation must win")
+	assert.Len(t, f.certBindings(inviteFixtureQRDBUserID), 1, "exactly one certificate may be bound")
+}
+
+// A request whose chain fails verification does not claim the invitation:
+// a following valid request still activates.
+func TestActivateInvitePIV_RejectedChainLeavesInvitationRedeemable(t *testing.T) {
+	f := newInviteFixture(t)
+	token := f.mintInvite(t)
+
+	caCert, leafCert, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	_, strangerLeaf, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	f.svc.SetCA(&mockCA{bundlePEM: pemEncodeCert(caCert)})
+
+	_, err = f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(strangerLeaf))
+	var rejected *ErrPIVCertRejected
+	require.ErrorAs(t, err, &rejected)
+	assert.Empty(t, f.certBindings(inviteFixtureQRDBUserID))
+
+	_, err = f.getInvite(inviteFixtureTenant, token)
+	require.NoError(t, err, "a rejected chain must not spend the invitation")
+
+	result, err := f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+	require.NoError(t, err)
+	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+	assert.Len(t, f.certBindings(inviteFixtureQRDBUserID), 1)
 }
 
 func TestActivateInvitePIV_RejectsUntrustedCert(t *testing.T) {
