@@ -584,7 +584,20 @@ func TestBarrierService_Unseal_TransparentInitWhenNoRootKey(t *testing.T) {
 func TestBarrierService_ChangePassword_Success(t *testing.T) {
 	svc := newTestBarrierService(t)
 	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
-	require.NoError(t, svc.ChangePassword("newpass"))
+	require.NoError(t, svc.ChangePassword("oldpass", "newpass"))
+}
+
+func TestBarrierService_ChangePassword_WrongCurrentRefused(t *testing.T) {
+	// go-qrdb v0.58.5: ChangePassword proves the current credential before
+	// re-sealing, so a wrong current password leaves the old one in force.
+	svc := newTestBarrierService(t)
+	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
+	require.Error(t, svc.ChangePassword("wrongpass", "newpass"))
+	require.NoError(t, svc.Seal())
+
+	svc2 := NewBarrierService(svc.configDir, slog.Default())
+	require.NoError(t, svc2.Unseal("oldpass", "passphrase"))
+	assert.True(t, svc2.IsUnsealed())
 }
 
 func TestBarrierService_Unseal_EmptyPassword_RejectedNotWrongPassword(t *testing.T) {
@@ -608,7 +621,7 @@ func TestBarrierService_Unseal_EmptyPassword_RejectedNotWrongPassword(t *testing
 
 func TestBarrierService_ChangePassword_NotInitialized(t *testing.T) {
 	svc := newTestBarrierService(t)
-	err := svc.ChangePassword("newpass")
+	err := svc.ChangePassword("oldpass", "newpass")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBarrierNotInitialized)
 }
@@ -616,7 +629,7 @@ func TestBarrierService_ChangePassword_NotInitialized(t *testing.T) {
 func TestBarrierService_ChangePassword_RoundTrip(t *testing.T) {
 	svc := newTestBarrierService(t)
 	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
-	require.NoError(t, svc.ChangePassword("newpass"))
+	require.NoError(t, svc.ChangePassword("oldpass", "newpass"))
 	require.NoError(t, svc.Seal())
 
 	// Must unseal from scratch - new BarrierService uses same configDir
