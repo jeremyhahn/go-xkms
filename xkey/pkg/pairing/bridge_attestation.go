@@ -83,10 +83,10 @@ type TPMEnroller interface {
 	FixedProperties() (*xkms.PropertiesFixed, error)
 
 	// ProvisionIAKCert stores the CA-issued IAK certificate.
-	ProvisionIAKCert(cert *x509.Certificate) error
+	ProvisionIAKCert(_ []byte, cert *x509.Certificate) error
 
 	// ProvisionIDevIDCert stores the CA-issued IDevID certificate.
-	ProvisionIDevIDCert(cert *x509.Certificate) error
+	ProvisionIDevIDCert(_ []byte, cert *x509.Certificate) error
 }
 
 // Compile-time proof that the concrete TPM satisfies the narrow interface.
@@ -432,14 +432,14 @@ func (b *Bridge) handleStoreEnrollmentCerts(_ context.Context, params json.RawMe
 		}
 	}
 
-	if err := tpm.ProvisionIAKCert(iakCert); err != nil {
+	if err := tpm.ProvisionIAKCert(nil, iakCert); err != nil {
 		b.logger.Error("IAK certificate provisioning failed", "error", err)
 		if auditErr := b.logTPM(audit.OpTPMProvisioned, pairingproto.MethodRemoteStoreEnrollmentCerts, false, err); auditErr != nil {
 			return nil, auditErr
 		}
 		return nil, tpmError(err)
 	}
-	if err := tpm.ProvisionIDevIDCert(idevidCert); err != nil {
+	if err := tpm.ProvisionIDevIDCert(nil, idevidCert); err != nil {
 		b.logger.Error("IDevID certificate provisioning failed", "error", err)
 		if auditErr := b.logTPM(audit.OpTPMProvisioned, pairingproto.MethodRemoteStoreEnrollmentCerts, false, err); auditErr != nil {
 			return nil, auditErr
