@@ -111,6 +111,12 @@ const (
 	AndroidPurposeSign = android.PurposeSign
 	// AndroidPurposeVerify authorizes the key to verify signatures.
 	AndroidPurposeVerify = android.PurposeVerify
+	// AndroidUserAuthTypePassword is the device-credential (PIN, pattern,
+	// password) bit of the userAuthType HardwareAuthenticatorType mask.
+	AndroidUserAuthTypePassword = android.UserAuthTypePassword
+	// AndroidUserAuthTypeFingerprint is the biometric bit of the userAuthType
+	// HardwareAuthenticatorType mask.
+	AndroidUserAuthTypeFingerprint = android.UserAuthTypeFingerprint
 	// AndroidPurposeDeriveKey authorizes the key for key derivation.
 	AndroidPurposeDeriveKey = android.PurposeDeriveKey
 	// AndroidPurposeWrapKey authorizes the key to wrap other keys.
@@ -142,6 +148,12 @@ var RequireAndroidAttestedBootState = android.RequireAttestedBootState
 // claim the key was generated in secure hardware and may sign.
 var RequireAndroidAttestedKeyOrigin = android.RequireAttestedKeyOrigin
 
+// RequireAndroidAttestedPerUseUserVerification requires the hardware-enforced
+// list to bind every use of the key to a fresh user verification: auth
+// required, userAuthType the device credential, the biometric or both (1, 2
+// or 3), no authTimeout, not usable while on body.
+var RequireAndroidAttestedPerUseUserVerification = android.RequireAttestedPerUseUserVerification
+
 // RequireAndroidAttestedApplication requires the attesting application to
 // satisfy an AndroidApplicationMatcher.
 var RequireAndroidAttestedApplication = android.RequireAttestedApplication
@@ -166,6 +178,19 @@ var (
 	// ErrAndroidApplicationRefused means the attesting application was
 	// refused; the policy's own error is joined to it.
 	ErrAndroidApplicationRefused = android.ErrApplicationRefused
+	// ErrAndroidKeyNoAuthRequired means the key is usable without user
+	// authentication.
+	ErrAndroidKeyNoAuthRequired = android.ErrKeyNoAuthRequired
+	// ErrAndroidKeyUserAuthTypeNotUserVerification means the key's
+	// hardware-enforced authenticator type is neither the biometric nor the
+	// device credential.
+	ErrAndroidKeyUserAuthTypeNotUserVerification = android.ErrKeyUserAuthTypeNotUserVerification
+	// ErrAndroidKeyAuthTimeout means one authentication unlocks the key for a
+	// time window instead of a single use.
+	ErrAndroidKeyAuthTimeout = android.ErrKeyAuthTimeout
+	// ErrAndroidKeyAllowWhileOnBody means the key stays usable while the
+	// device is on the body.
+	ErrAndroidKeyAllowWhileOnBody = android.ErrKeyAllowWhileOnBody
 )
 
 // ParseAndroidKeyAttestation parses the Android key-attestation extension

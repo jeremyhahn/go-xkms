@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -222,13 +223,14 @@ func (a *Authenticator) getOptions() map[string]bool {
 	// uv - Built-in user verification (e.g. biometrics).
 	// CTAP 2.1 §6.4: uv=true alongside pinUvAuthToken=true promises
 	// getPinUvAuthTokenUsingUvWithPermissions, which this authenticator
-	// refuses (#1145) because no key backend can verify a user on demand. A
-	// backend that verifies inside its own key operation (the phone's biometric
-	// gating Sign) is the CTAP 2.0 form of built-in UV, so uv=true is
-	// advertised for it only when no pinUvAuthToken surface is advertised.
-	// Otherwise PIN-based verification reports uv=false (differs from the
-	// default of absent).
-	if a.backendHandlesUserVerification() && !a.supportsPinUvAuthToken() {
+	// serves only when the key backend can verify a user on demand
+	// (keybackend.UserVerifier, ruling 167). A backend that verifies only
+	// inside its own key operation (#1145) is the CTAP 2.0 form of built-in
+	// UV, so uv=true is advertised for it only when no pinUvAuthToken surface
+	// is advertised. Otherwise PIN-based verification reports uv=false
+	// (differs from the default of absent).
+	if a.userVerifier() != nil ||
+		(a.backendHandlesUserVerification() && !a.supportsPinUvAuthToken()) {
 		options["uv"] = true
 	} else if a.config.EnablePIN {
 		options["uv"] = false
@@ -314,13 +316,30 @@ func (a *Authenticator) getAlgorithms() []publicKeyCredentialParameters {
 
 // supportsPinUvAuthToken reports whether the authenticator advertises the
 // CTAP 2.1 pinUvAuthToken surface: FIDO_2_1, credMgmt and the pinUvAuthToken
-// option. Every token comes from getPinUvAuthTokenUsingPinWithPermissions, so
-// the surface needs the PIN. A key backend that handles user verification
-// does not count (#1145): it verifies the user inside its own key operation
-// and cannot perform the standalone verification that minting a token
-// requires.
+// option. authenticatorClientPIN carries every minting subcommand, so the
+// surface needs EnablePIN, which Config.SetDefaults forces whenever credential
+// management is enabled. A key backend that handles user verification only
+// inside its own key operations adds nothing (#1145); one that is a
+// keybackend.UserVerifier adds getPinUvAuthTokenUsingUvWithPermissions
+// (ruling 167).
 func (a *Authenticator) supportsPinUvAuthToken() bool {
 	return a.config.EnableCredentialManagement && a.config.EnablePIN
+}
+
+// userVerifier returns the key backend's on-demand user verification method,
+// or nil when the backend has none (ruling 167).
+func (a *Authenticator) userVerifier() keybackend.UserVerifier {
+	backend := a.keyBackend
+	// NewAuthenticator decorates a non-attesting backend with an
+	// AttestingBackend, whose method set hides the inner VerifyUser.
+	if attesting, ok := backend.(*keybackend.AttestingBackend); ok {
+		backend = attesting.FIDO2KeyBackend
+	}
+	verifier, ok := backend.(keybackend.UserVerifier)
+	if !ok {
+		return nil
+	}
+	return verifier
 }
 
 // backendHandlesUserVerification reports whether the key backend verifies the
