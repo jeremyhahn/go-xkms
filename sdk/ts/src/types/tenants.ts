@@ -77,6 +77,8 @@ export interface TenantEntitlements {
   allow_system_managed_barrier?: boolean;
   allowed_barrier_modes?: string[];
   allow_dedicated_wal?: boolean;
+  /** Named volume pools a volume/raft tenant may use; the first is its default. Empty entitles none. */
+  allowed_volume_pools?: string[];
 }
 
 /** Mirrors go-qrdb/sdk/go/transport tenant_types.go TenantInfo. */

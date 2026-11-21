@@ -725,18 +725,21 @@ build-desktop: build-web
 ## test-web: Type-check and unit-test the SDK, svelte-auth, and SPA
 ## Runs under coverage so the 90% thresholds in each vitest config gate the
 ## build — a plain `vitest run` reports no coverage and enforces nothing.
+## Node 25+ ships a built-in localStorage global that shadows jsdom's (it is
+## undefined without --localstorage-file), so the test runs turn it off.
+WEB_TEST_NODE_OPTIONS ?= --no-experimental-webstorage
 test-web:
 ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping test-web$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/sdk...$(RESET)"
-	@cd $(SDK_TS_DIR) && npm ci --silent && npm run test:coverage
+	@cd $(SDK_TS_DIR) && npm ci --silent && NODE_OPTIONS="$(WEB_TEST_NODE_OPTIONS)" npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/svelte-auth...$(RESET)"
-	@cd $(SVELTE_AUTH_DIR) && npm ci --silent && npm run test:coverage
+	@cd $(SVELTE_AUTH_DIR) && npm ci --silent && NODE_OPTIONS="$(WEB_TEST_NODE_OPTIONS)" npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing web/app...$(RESET)"
-	@cd $(WEB_APP_DIR) && npm ci --silent && npm run check && npm run test:coverage
+	@cd $(WEB_APP_DIR) && npm ci --silent && npm run check && NODE_OPTIONS="$(WEB_TEST_NODE_OPTIONS)" npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing the xKey GUI frontend...$(RESET)"
-	@cd $(XKEY_FRONTEND_DIR) && npm ci --silent && npm run check -- --fail-on-warnings && npm test
+	@cd $(XKEY_FRONTEND_DIR) && npm ci --silent && npm run check -- --fail-on-warnings && NODE_OPTIONS="$(WEB_TEST_NODE_OPTIONS)" npm test
 	@echo "$(GREEN)✓ web UI tests passed$(RESET)"
 endif
 

@@ -24,7 +24,7 @@
     ScrollText,
     LogIn,
   } from "lucide-svelte";
-  import { navSections, type NavItem } from "$lib/nav.ts";
+  import { navSections, itemVisible, type NavItem } from "$lib/nav.ts";
   import { routerStore, navigateTo } from "$stores/router.svelte.ts";
   import { can, hasCapability } from "$stores/session.svelte.ts";
 
@@ -40,13 +40,7 @@
   // any) both pass. Unmet items are hidden, not disabled; the route guard and
   // the server still reject direct access.
   function visible(item: NavItem): boolean {
-    if (item.requires && !can(item.requires.resource, item.requires.action)) {
-      return false;
-    }
-    if (item.capability && !hasCapability(item.capability)) {
-      return false;
-    }
-    return true;
+    return itemVisible(item, can, hasCapability);
   }
 
   function go(path: string): void {

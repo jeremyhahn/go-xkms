@@ -1,0 +1,1 @@
+Web console: a Signing Keys screen (`#/attestation/signing-keys`, Security nav, shown with `attestation_signing_keys:list`) lists, sets, deletes and resolves the per-repository release-signing-key bindings, so a tenant no longer needs xkmsctl or the raw API to name a repository's signing key (#1697).

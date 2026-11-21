@@ -1,0 +1,1 @@
+- **The web console imports certificates.** A new Import Certificate screen at `#/certs/import` (nav entry for identities with `certs:enroll`) stores a PEM certificate, and optionally its chain, for an existing key through `certs.save` and `certs.saveChain`. It checks the PEM before sending anything and asks before overwriting a certificate the key already has.

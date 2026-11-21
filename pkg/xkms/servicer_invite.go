@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -191,6 +192,21 @@ func (s *XKMSService) createInvite(ctx context.Context, tenantID string, userID 
 // absent, expired, redeemed, or a token naming a user record that is no
 // longer readable — answers with the one opaque ErrInviteUnusable.
 // Implements transport.InviteServicer.
+// inviteCallContext returns the context the invite routes use for their qrdb
+// user calls. Call it only after inviteStore.Lookup has validated the token:
+// the routes are public, so the request context carries no identity, and the
+// service identity must never be reachable without a live invite.
+func (s *XKMSService) inviteCallContext(ctx context.Context) (context.Context, error) {
+	if s.inviteCallCtx == nil {
+		return ctx, nil
+	}
+	bound, err := s.inviteCallCtx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("invite service context: %w", err)
+	}
+	return bound, nil
+}
+
 func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -206,7 +222,11 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
+	uctx, err := s.inviteCallContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.users.GetUser(uctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -239,12 +259,16 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
+	uctx, err := s.inviteCallContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.users.GetUser(uctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
 
-	options, sessionID, err := s.webauthnService.BeginInviteRegistration(ctx, u.Email)
+	options, sessionID, err := s.webauthnService.BeginInviteRegistration(uctx, u.Email)
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable
@@ -282,7 +306,11 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: err}
 	}
 
-	user, err := s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, parsed)
+	uctx, err := s.inviteCallContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	user, err := s.webauthnService.FinishInviteRegistration(uctx, req.SessionID, parsed)
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable
@@ -295,7 +323,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, &ErrUserOperation{Operation: "decode invite user handle", Err: err}
 	}
 
-	if err := s.activateInviteUser(ctx, userID); err != nil {
+	if err := s.activateInviteUser(uctx, userID); err != nil {
 		return nil, err
 	}
 	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
@@ -350,7 +378,11 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrPIVCertRejected{Err: err}
 	}
 
-	u, err := s.users.GetUser(ctx, userID)
+	uctx, err := s.inviteCallContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.users.GetUser(uctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -359,11 +391,11 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	}
 
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	if _, err := s.users.AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+	if _, err := s.users.AddCertBinding(uctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
 		return nil, &ErrUserOperation{Operation: "bind piv certificate", Err: err}
 	}
 
-	if err := s.activateInviteUser(ctx, userID); err != nil {
+	if err := s.activateInviteUser(uctx, userID); err != nil {
 		return nil, err
 	}
 	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {

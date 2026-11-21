@@ -465,6 +465,7 @@ func TestStatusHandler_ReportsCallersView(t *testing.T) {
 	assert.True(t, locked.Available)
 	assert.True(t, locked.IsLocked)
 	assert.Equal(t, 1, locked.PasswordCount, "shared entries are readable while locked")
+	assert.Equal(t, "session_based", locked.AccessMode, "the console needs the composed mode to offer only that one")
 
 	f.unlock(t, alice)
 	f.add(t, alice, "personal-one", false)

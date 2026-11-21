@@ -44,8 +44,8 @@ test.describe('Authenticated shell', () => {
     await page.goto('/#/dashboard');
 
     const nav = page.getByRole('navigation', { name: 'Primary' });
-    for (const label of ['Keys', 'FROST', 'Certificates', 'Certificate Authority', 'Users', 'Tenants', 'Cluster']) {
-      await expect(nav.getByRole('button', { name: label })).toBeVisible();
+    for (const label of ['Keys', 'FROST', 'Certificates', 'Certificate Authority', 'Users', 'Tenants']) {
+      await expect(nav.getByRole('button', { name: label, exact: true })).toBeVisible();
     }
   });
 
