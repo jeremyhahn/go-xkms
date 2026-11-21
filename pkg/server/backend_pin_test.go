@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,10 +33,12 @@ import (
 type fakePKCS11Provider struct {
 	types.KeyProvider
 	closed bool
+	closes int
 }
 
 func (f *fakePKCS11Provider) Close() error {
 	f.closed = true
+	f.closes++
 	return nil
 }
 
@@ -197,4 +200,36 @@ func TestSealBackendPIN_SealedKeepsBackendRunning(t *testing.T) {
 	require.False(t, (*providers)[0].closed)
 	_, pinErr := s.backendPIN.PIN()
 	require.Error(t, pinErr, "the released PIN copy is zeroized at seal")
+}
+
+// Shutdown zeroizes the held backend PIN and closes the PKCS#11 provider
+// exactly once, under both strategies that hold a PIN (#2262).
+func TestShutdown_ZeroizesBackendPINClosesProviderOnce(t *testing.T) {
+	for _, strategy := range []string{"sealed", "manual"} {
+		t.Run(strategy, func(t *testing.T) {
+			var pin []byte
+			if strategy == "sealed" {
+				pin = []byte("backend-pin-1")
+			}
+			s, _, providers := backendPINTestServer(t, strategy, pin, false, true)
+			ctx, cancel := context.WithCancel(context.Background())
+			s.ctx, s.cancel = ctx, cancel
+			s.logger = slog.New(slog.DiscardHandler)
+			s.shutdownCh = make(chan struct{})
+			require.NoError(t, s.resolveBackendPIN())
+			require.NoError(t, s.startPKCS11AfterUnseal())
+			if strategy == "manual" {
+				require.NoError(t, s.UnsealBackendPIN(context.Background(), []byte("operator-pin-1")))
+			}
+			_, pinErr := s.backendPIN.PIN()
+			require.NoError(t, pinErr, "PIN held before shutdown")
+			require.Len(t, *providers, 1)
+
+			_ = s.Shutdown()
+
+			_, pinErr = s.backendPIN.PIN()
+			require.Error(t, pinErr, "PIN zeroized at shutdown")
+			require.Equal(t, 1, (*providers)[0].closes, "PKCS#11 provider closed exactly once")
+		})
+	}
 }
