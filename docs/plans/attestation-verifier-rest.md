@@ -63,3 +63,7 @@ T="codec_cbor codec_json codec_msgpack", go test -count=1 -race -tags "$T":
 - The xkey clause (`device_attest.go:261`, `tpm_ek.go:402`) stays: those calls build trust pools and verify chains in-process; they are not appraisals.
 - Open question for the coordinator: must xkey appraise through the remote Client before the row ships?
 - `refs/fold/attestation-verifier/lane/test/1794-attestation` (3707b8bca41f) is not in the lane clone, so the fold is left to the coordinator.
+
+## Ruling 1073 (a) slice (lane rw2101b): blocked
+
+- Ruling 1073 (a) orders xkey to appraise through the sdk/go Client. `AppraiseAttestationQuote` is the only appraisal verb, and it takes TPM quote evidence. `device attest` holds an Android key-attestation chain and `tpm ek` an EK certificate, so neither can be appraised by it. No code change was made; the options are in docs/plans/1660.md.
