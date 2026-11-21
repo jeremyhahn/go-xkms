@@ -14,7 +14,6 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -2093,6 +2092,17 @@ var (
 	ErrFIDO2PlatformSRKPINBothStdin = errors.New("--pin-stdin and --set-pin-stdin cannot both read standard input; use --pin-file")
 )
 
+// promptFIDO2PlatformSRKPIN reads the Platform SRK user PIN at the
+// terminal. The caller owns and wipes the returned slice. A variable so
+// tests can stand in for the terminal.
+var promptFIDO2PlatformSRKPIN = func() ([]byte, error) {
+	prompted, err := readOptionalPIN(os.Stderr, "Platform SRK user PIN: ")
+	if err != nil {
+		return nil, err
+	}
+	return []byte(prompted), nil
+}
+
 // loadFIDO2PlatformSRKAuth verifies the user PIN against the Platform SRK
 // and loads it as the SRK auth credential keys are created under. With no
 // PIN supplied it prompts at a terminal (an empty answer keeps an
@@ -2102,13 +2112,16 @@ func loadFIDO2PlatformSRKAuth(cfg *FIDO2Config, attach func() (xkms.PlatformKeyS
 	if err != nil {
 		return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
 	}
-	defer secure.Wipe(pin)
+	// The closure wipes whichever slice pin holds at return, so a PIN read
+	// at the prompt below is wiped too.
+	defer func() { secure.Wipe(pin) }()
 	if len(pin) == 0 && pinInputIsTerminal() {
-		prompted, promptErr := readOptionalPIN(os.Stderr, "Platform SRK user PIN: ")
+		prompted, promptErr := promptFIDO2PlatformSRKPIN()
 		if promptErr != nil {
+			secure.Wipe(prompted)
 			return errors.Join(ErrFIDO2TPMPlatformSRKAuth, promptErr)
 		}
-		pin = []byte(prompted)
+		pin = prompted
 	}
 	if len(pin) == 0 {
 		return nil
@@ -2120,12 +2133,18 @@ func loadFIDO2PlatformSRKAuth(cfg *FIDO2Config, attach func() (xkms.PlatformKeyS
 	// VerifyAuth is a real TPM auth attempt, counted by the TPM's
 	// dictionary-attack protection. A rejected PIN is
 	// ErrFIDO2TPMPlatformSRKAuthRejected, which exits with
-	// ExitCodePlatformSRKAuthRejected so systemd does not retry it.
+	// ExitCodePlatformSRKAuthRejected so systemd does not retry it. Any
+	// other error (an SRK not enrolled, a transport or session failure)
+	// keeps exit 1, so systemd restarts the service once it clears.
 	if err := pks.VerifyAuth(string(pin)); err != nil {
-		return errors.Join(ErrFIDO2TPMPlatformSRKAuth, ErrFIDO2TPMPlatformSRKAuthRejected, err)
+		if errors.Is(err, xkms.ErrTPMAuthFailed) {
+			return errors.Join(ErrFIDO2TPMPlatformSRKAuth, ErrFIDO2TPMPlatformSRKAuthRejected, err)
+		}
+		return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
 	}
 	if attrs := pks.SRKAttributes(); attrs != nil {
-		password, err := xkms.NewPassword(bytes.Clone(pin))
+		// NewPassword copies pin; the deferred wipe clears this one.
+		password, err := xkms.NewPassword(pin)
 		if err != nil {
 			return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
 		}
