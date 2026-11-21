@@ -154,7 +154,7 @@ args=(
   --name "$name"
   --cpus "$cpus"
   --env GOMAXPROCS="$cpus"
-  --env GOFLAGS="-p=$cpus"
+  --env GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=$cpus"
   --init
   --cap-drop ALL
   --security-opt no-new-privileges:true
