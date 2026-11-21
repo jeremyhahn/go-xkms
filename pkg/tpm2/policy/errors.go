@@ -123,6 +123,11 @@ var (
 	// ErrNoPCRCondition is returned (in an InvalidBranchError) for a
 	// reference-value update of a branch without a pcr condition.
 	ErrNoPCRCondition = errors.New("tpmpolicy: the branch has no pcr condition to update")
+
+	// ErrPCRConditionNeedsReference is returned (in an InvalidBranchError)
+	// for a re-approval of a policy with a pcr condition: its PCR values
+	// change only through a signed reference-value update of that branch.
+	ErrPCRConditionNeedsReference = errors.New("tpmpolicy: the branch has a pcr condition, which only a signed reference-value update re-approves")
 )
 
 // InvalidTenantError reports a tenant ID that cannot name a scope.
