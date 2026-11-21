@@ -42,6 +42,7 @@ __export(index_exports, {
   PivClient: () => PivClient,
   PlatformClient: () => PlatformClient,
   SealClient: () => SealClient,
+  SigningKeyClient: () => SigningKeyClient,
   SshClient: () => SshClient,
   TenantsClient: () => TenantsClient,
   TpmPolicyClient: () => TpmPolicyClient,
@@ -928,8 +929,36 @@ var OidcCredentialClient = class {
   }
 };
 
+// src/clients/signingKey.ts
+var BASE8 = "/api/v1/attestation/signing-keys";
+var SigningKeyClient = class {
+  constructor(http) {
+    __publicField(this, "http", http);
+  }
+  /** PUT /api/v1/attestation/signing-keys — names the key that signs a repository. */
+  set(req) {
+    return this.http.request("PUT", BASE8, { body: req });
+  }
+  /** GET /api/v1/attestation/signing-keys/binding?repository= — a repository's binding. */
+  get(repository) {
+    return this.http.request("GET", `${BASE8}/binding`, { query: { repository } });
+  }
+  /** GET /api/v1/attestation/signing-keys — the tenant's bindings. */
+  list() {
+    return this.http.request("GET", BASE8);
+  }
+  /** DELETE /api/v1/attestation/signing-keys/binding?repository= (204). */
+  async delete(repository) {
+    await this.http.request("DELETE", `${BASE8}/binding`, { query: { repository } });
+  }
+  /** GET /api/v1/attestation/signing-keys/resolve?repository= — the key that signs a repository. */
+  resolve(repository) {
+    return this.http.request("GET", `${BASE8}/resolve`, { query: { repository } });
+  }
+};
+
 // src/clients/passwords.ts
-var BASE8 = "/api/v1/passwords";
+var BASE9 = "/api/v1/passwords";
 var VAULT = "/api/v1/password-vault";
 var PasswordsClient = class {
   constructor(http) {
@@ -937,23 +966,23 @@ var PasswordsClient = class {
   }
   /** POST /api/v1/passwords/ */
   add(req) {
-    return this.http.request("POST", `${BASE8}/`, { body: req });
+    return this.http.request("POST", `${BASE9}/`, { body: req });
   }
   /** GET /api/v1/passwords/?folder=&scope= */
   list(folder, scope) {
-    return this.http.request("GET", `${BASE8}/`, { query: { folder, scope } });
+    return this.http.request("GET", `${BASE9}/`, { query: { folder, scope } });
   }
   /** GET /api/v1/passwords/{id} */
   get(id) {
-    return this.http.request("GET", `${BASE8}/${encodeURIComponent(id)}`);
+    return this.http.request("GET", `${BASE9}/${encodeURIComponent(id)}`);
   }
   /** PUT /api/v1/passwords/{id} */
   update(id, req) {
-    return this.http.request("PUT", `${BASE8}/${encodeURIComponent(id)}`, { body: req });
+    return this.http.request("PUT", `${BASE9}/${encodeURIComponent(id)}`, { body: req });
   }
   /** DELETE /api/v1/passwords/{id} */
   delete(id) {
-    return this.http.request("DELETE", `${BASE8}/${encodeURIComponent(id)}`);
+    return this.http.request("DELETE", `${BASE9}/${encodeURIComponent(id)}`);
   }
   /** POST /api/v1/password-vault/unlock -- opens the caller's session with one of their vault factors. */
   unlock(req) {
@@ -992,58 +1021,58 @@ var PasswordsClient = class {
   }
   /** POST /api/v1/passwords/access-mode */
   setAccessMode(req) {
-    return this.http.request("POST", `${BASE8}/access-mode`, { body: req });
+    return this.http.request("POST", `${BASE9}/access-mode`, { body: req });
   }
   /** POST /api/v1/passwords/generate */
   generate(req) {
-    return this.http.request("POST", `${BASE8}/generate`, { body: req });
+    return this.http.request("POST", `${BASE9}/generate`, { body: req });
   }
 };
 
 // src/clients/pin.ts
-var BASE9 = "/api/v1/pin";
+var BASE10 = "/api/v1/pin";
 var PinClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** POST /api/v1/pin/so/set */
   setSO(req) {
-    return this.http.request("POST", `${BASE9}/so/set`, { body: req });
+    return this.http.request("POST", `${BASE10}/so/set`, { body: req });
   }
   /** POST /api/v1/pin/user/set */
   setUser(req) {
-    return this.http.request("POST", `${BASE9}/user/set`, { body: req });
+    return this.http.request("POST", `${BASE10}/user/set`, { body: req });
   }
   /** POST /api/v1/pin/so/change */
   changeSO(req) {
-    return this.http.request("POST", `${BASE9}/so/change`, { body: req });
+    return this.http.request("POST", `${BASE10}/so/change`, { body: req });
   }
   /** POST /api/v1/pin/user/change */
   changeUser(req) {
-    return this.http.request("POST", `${BASE9}/user/change`, { body: req });
+    return this.http.request("POST", `${BASE10}/user/change`, { body: req });
   }
   /** POST /api/v1/pin/so/verify */
   verifySO(req) {
-    return this.http.request("POST", `${BASE9}/so/verify`, { body: req });
+    return this.http.request("POST", `${BASE10}/so/verify`, { body: req });
   }
   /** POST /api/v1/pin/user/verify */
   verifyUser(req) {
-    return this.http.request("POST", `${BASE9}/user/verify`, { body: req });
+    return this.http.request("POST", `${BASE10}/user/verify`, { body: req });
   }
   /** GET /api/v1/pin/lockout */
   lockoutStatus() {
-    return this.http.request("GET", `${BASE9}/lockout`);
+    return this.http.request("GET", `${BASE10}/lockout`);
   }
   /** POST /api/v1/pin/lockout/reset */
   resetLockout(req) {
-    return this.http.request("POST", `${BASE9}/lockout/reset`, { body: req });
+    return this.http.request("POST", `${BASE10}/lockout/reset`, { body: req });
   }
 };
 
 // src/clients/piv.ts
-var BASE10 = "/api/v1/piv";
+var BASE11 = "/api/v1/piv";
 function slotPath(slot, suffix) {
-  return `${BASE10}/slots/${encodeURIComponent(slot)}${suffix}`;
+  return `${BASE11}/slots/${encodeURIComponent(slot)}${suffix}`;
 }
 var PivClient = class {
   constructor(http) {
@@ -1051,7 +1080,7 @@ var PivClient = class {
   }
   /** GET /api/v1/piv/slots?backend= */
   listSlots(backend) {
-    return this.http.request("GET", `${BASE10}/slots`, { query: { backend } });
+    return this.http.request("GET", `${BASE11}/slots`, { query: { backend } });
   }
   /** GET /api/v1/piv/slots/{slot}/certificate?backend=&format= */
   getCertificate(slot, backend, format) {
@@ -1090,36 +1119,36 @@ var PivClient = class {
 };
 
 // src/clients/platform.ts
-var BASE11 = "/api/v1/platform";
+var BASE12 = "/api/v1/platform";
 var PlatformClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** PUT /api/v1/platform/secrets/{key} */
   putSecret(key, req) {
-    return this.http.request("PUT", `${BASE11}/secrets/${encodeURIComponent(key)}`, {
+    return this.http.request("PUT", `${BASE12}/secrets/${encodeURIComponent(key)}`, {
       body: req
     });
   }
   /** GET /api/v1/platform/secrets/{key} */
   getSecret(key) {
-    return this.http.request("GET", `${BASE11}/secrets/${encodeURIComponent(key)}`);
+    return this.http.request("GET", `${BASE12}/secrets/${encodeURIComponent(key)}`);
   }
   /** DELETE /api/v1/platform/secrets/{key} */
   deleteSecret(key) {
-    return this.http.request("DELETE", `${BASE11}/secrets/${encodeURIComponent(key)}`);
+    return this.http.request("DELETE", `${BASE12}/secrets/${encodeURIComponent(key)}`);
   }
   /** GET /api/v1/platform/secrets */
   listSecrets() {
-    return this.http.request("GET", `${BASE11}/secrets`);
+    return this.http.request("GET", `${BASE12}/secrets`);
   }
   /** POST /api/v1/platform/secrets/{key}/reseal */
   resealSecret(key) {
-    return this.http.request("POST", `${BASE11}/secrets/${encodeURIComponent(key)}/reseal`);
+    return this.http.request("POST", `${BASE12}/secrets/${encodeURIComponent(key)}/reseal`);
   }
   /** GET /api/v1/platform/status */
   status() {
-    return this.http.request("GET", `${BASE11}/status`);
+    return this.http.request("GET", `${BASE12}/status`);
   }
 };
 
@@ -1143,12 +1172,12 @@ var SealClient = class {
 };
 
 // src/clients/ssh.ts
-var BASE12 = "/xkms/v1/ssh";
+var BASE13 = "/xkms/v1/ssh";
 function keyPath2(scope, owner, name, suffix = "") {
-  return `${BASE12}/keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}${suffix}`;
+  return `${BASE13}/keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}${suffix}`;
 }
 function authorizedPath(scope, owner, name) {
-  return `${BASE12}/authorized-keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}`;
+  return `${BASE13}/authorized-keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}`;
 }
 var SshClient = class {
   constructor(http) {
@@ -1159,15 +1188,15 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/keys */
   generateKey(req) {
-    return this.http.request("POST", `${BASE12}/keys`, { body: req });
+    return this.http.request("POST", `${BASE13}/keys`, { body: req });
   }
   /** POST /xkms/v1/ssh/keys/import */
   importKey(req) {
-    return this.http.request("POST", `${BASE12}/keys/import`, { body: req });
+    return this.http.request("POST", `${BASE13}/keys/import`, { body: req });
   }
   /** GET /xkms/v1/ssh/keys?scope=&owner= */
   listKeys(scope, owner) {
-    return this.http.request("GET", `${BASE12}/keys`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE13}/keys`, { query: { scope, owner } });
   }
   /** GET /xkms/v1/ssh/keys/{scope}/{owner}/{name} */
   getKey(scope, owner, name) {
@@ -1190,18 +1219,18 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/known-hosts (201). */
   async addKnownHost(req) {
-    await this.http.request("POST", `${BASE12}/known-hosts`, {
+    await this.http.request("POST", `${BASE13}/known-hosts`, {
       body: req,
       parse: "void"
     });
   }
   /** GET /xkms/v1/ssh/known-hosts?scope=&owner= */
   listKnownHosts(scope, owner) {
-    return this.http.request("GET", `${BASE12}/known-hosts`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE13}/known-hosts`, { query: { scope, owner } });
   }
   /** DELETE /xkms/v1/ssh/known-hosts/{host}?scope=&owner= (204). */
   async removeKnownHost(host, scope, owner) {
-    await this.http.request("DELETE", `${BASE12}/known-hosts/${encodePathSegment(host)}`, {
+    await this.http.request("DELETE", `${BASE13}/known-hosts/${encodePathSegment(host)}`, {
       query: { scope, owner },
       parse: "void"
     });
@@ -1214,7 +1243,7 @@ var SshClient = class {
   async verifyKnownHost(host, req) {
     await this.http.request(
       "POST",
-      `${BASE12}/known-hosts/${encodePathSegment(host)}/verify`,
+      `${BASE13}/known-hosts/${encodePathSegment(host)}/verify`,
       { body: req, parse: "void" }
     );
   }
@@ -1223,14 +1252,14 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/authorized-keys (201). */
   async addAuthorizedKey(req) {
-    await this.http.request("POST", `${BASE12}/authorized-keys`, {
+    await this.http.request("POST", `${BASE13}/authorized-keys`, {
       body: req,
       parse: "void"
     });
   }
   /** GET /xkms/v1/ssh/authorized-keys?scope=&owner= */
   listAuthorizedKeys(scope, owner) {
-    return this.http.request("GET", `${BASE12}/authorized-keys`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE13}/authorized-keys`, { query: { scope, owner } });
   }
   /** GET /xkms/v1/ssh/authorized-keys/{scope}/{owner}/{name} */
   getAuthorizedKey(scope, owner, name) {
@@ -1244,18 +1273,18 @@ var SshClient = class {
   }
   /** POST /xkms/v1/ssh/authorized-keys/emit */
   emitAuthorizedKey(req) {
-    return this.http.request("POST", `${BASE12}/authorized-keys/emit`, { body: req });
+    return this.http.request("POST", `${BASE13}/authorized-keys/emit`, { body: req });
   }
   /** POST /xkms/v1/ssh/authorized-keys/verify — returns the matching entry. */
   verifyAuthorizedKey(req) {
-    return this.http.request("POST", `${BASE12}/authorized-keys/verify`, { body: req });
+    return this.http.request("POST", `${BASE13}/authorized-keys/verify`, { body: req });
   }
 };
 
 // src/clients/tenants.ts
-var BASE13 = "/api/v1/tenants";
+var BASE14 = "/api/v1/tenants";
 function tenantPath(id, suffix = "") {
-  return `${BASE13}/${encodeURIComponent(id)}${suffix}`;
+  return `${BASE14}/${encodeURIComponent(id)}${suffix}`;
 }
 var TenantsClient = class {
   constructor(http) {
@@ -1263,11 +1292,11 @@ var TenantsClient = class {
   }
   /** POST /api/v1/tenants/ */
   create(req) {
-    return this.http.request("POST", `${BASE13}/`, { body: req });
+    return this.http.request("POST", `${BASE14}/`, { body: req });
   }
   /** GET /api/v1/tenants/ */
   list(page) {
-    return this.http.request("GET", `${BASE13}/`, { query: { ...page } });
+    return this.http.request("GET", `${BASE14}/`, { query: { ...page } });
   }
   /** GET /api/v1/tenants/{tenantID} */
   get(tenantId) {
@@ -1314,12 +1343,12 @@ var TenantsClient = class {
 };
 
 // src/clients/tpmPolicy.ts
-var BASE14 = "/api/v1/tpm/policies";
+var BASE15 = "/api/v1/tpm/policies";
 function pcrBranch(bank, pcrs) {
   return { conditions: [{ type: "pcr", bank, pcrs }] };
 }
 function policyPath(name, action) {
-  const path = `${BASE14}/${encodeURIComponent(name)}`;
+  const path = `${BASE15}/${encodeURIComponent(name)}`;
   return action ? `${path}/${action}` : path;
 }
 var TpmPolicyClient = class {
@@ -1328,11 +1357,11 @@ var TpmPolicyClient = class {
   }
   /** POST /api/v1/tpm/policies — captures the live values of its pcr conditions. */
   create(req) {
-    return this.http.request("POST", BASE14, { body: req });
+    return this.http.request("POST", BASE15, { body: req });
   }
   /** GET /api/v1/tpm/policies?tenant_id= */
   list(tenantId) {
-    return this.http.request("GET", BASE14, { query: { tenant_id: tenantId } });
+    return this.http.request("GET", BASE15, { query: { tenant_id: tenantId } });
   }
   /** GET /api/v1/tpm/policies/{name}?tenant_id= */
   get(name, tenantId) {
@@ -1402,9 +1431,9 @@ var TpmPolicyClient = class {
 };
 
 // src/clients/users.ts
-var BASE15 = "/api/v1/users";
+var BASE16 = "/api/v1/users";
 function userPath(username, suffix = "") {
-  return `${BASE15}/${encodeURIComponent(username)}${suffix}`;
+  return `${BASE16}/${encodeURIComponent(username)}${suffix}`;
 }
 var UsersClient = class {
   constructor(http) {
@@ -1412,11 +1441,11 @@ var UsersClient = class {
   }
   /** POST /api/v1/users/ */
   create(req) {
-    return this.http.request("POST", `${BASE15}/`, { body: req });
+    return this.http.request("POST", `${BASE16}/`, { body: req });
   }
   /** GET /api/v1/users/ */
   list() {
-    return this.http.request("GET", `${BASE15}/`);
+    return this.http.request("GET", `${BASE16}/`);
   }
   /** GET /api/v1/users/{username} */
   get(username) {
@@ -1463,6 +1492,7 @@ var XkmsClient = class {
     __publicField(this, "tenants");
     __publicField(this, "passwords");
     __publicField(this, "oidcCredentials");
+    __publicField(this, "signingKeys");
     __publicField(this, "platform");
     __publicField(this, "tpmPolicies");
     __publicField(this, "credentials");
@@ -1484,6 +1514,7 @@ var XkmsClient = class {
     this.tenants = new TenantsClient(this.http);
     this.passwords = new PasswordsClient(this.http);
     this.oidcCredentials = new OidcCredentialClient(this.http);
+    this.signingKeys = new SigningKeyClient(this.http);
     this.platform = new PlatformClient(this.http);
     this.tpmPolicies = new TpmPolicyClient(this.http);
     this.credentials = new CredentialsClient(this.http);
@@ -1835,6 +1866,7 @@ async function unlockWithXkey(fingerprints, win = window, timeoutMs = XKEY_UNLOC
   PivClient,
   PlatformClient,
   SealClient,
+  SigningKeyClient,
   SshClient,
   TenantsClient,
   TpmPolicyClient,

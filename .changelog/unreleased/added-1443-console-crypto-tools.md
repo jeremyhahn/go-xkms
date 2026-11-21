@@ -1,0 +1,1 @@
+- **Web console Random & Hash view.** A new view at `#/tools/crypto` (Keys & Crypto, needs `keys:verify`) draws 1-1024 random bytes from the server's backend through `POST /api/v1/random` and hashes text or base64 data on the server through `POST /api/v1/hash` (server default, SHA-256, SHA-384 or SHA-512). Both results show as hex and base64, with copy buttons.

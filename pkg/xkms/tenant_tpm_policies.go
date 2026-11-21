@@ -103,22 +103,18 @@ func (t *TenantTPMPolicies) TPMPolicyGet(ctx context.Context, req *transport.TPM
 	return t.policyOp(ctx, req, (*tpmpolicy.Service).Policy)
 }
 
-// TPMPolicyUpdate re-captures a policy's PCR values and re-approves it at the
-// scope's next epoch. No object is re-keyed.
+// TPMPolicyUpdate updates one named branch of a policy from signed reference
+// values (a CoRIM) and re-approves it at the scope's next epoch. A request
+// without both the branch and its reference values (an unsigned live
+// re-capture) is refused with ErrTPMPolicyBranchUpdate. No object is re-keyed.
 func (t *TenantTPMPolicies) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if (req.Branch == "") != (len(req.ReferenceValues) == 0) {
+	if req.Branch == "" || len(req.ReferenceValues) == 0 {
 		return nil, ErrTPMPolicyBranchUpdate
 	}
-	var p *tpmpolicy.Policy
-	var err error
-	if req.Branch == "" {
-		p, err = t.svc.UpdatePolicy(ctx, t.tenant, req.Name)
-	} else {
-		p, err = t.svc.UpdateBranch(ctx, t.tenant, req.Name, req.Branch, req.ReferenceValues)
-	}
+	p, err := t.svc.UpdateBranch(ctx, t.tenant, req.Name, req.Branch, req.ReferenceValues)
 	if err != nil {
 		return nil, err
 	}

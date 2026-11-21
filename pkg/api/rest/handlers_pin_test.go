@@ -412,6 +412,9 @@ func TestVerifySOPINHandler_InvalidPIN(t *testing.T) {
 	h.VerifySOPINHandler(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	// The web PIN Setup view tells a wrong PIN from a rejected session (also
+	// 401) by this message; keep it in the body.
+	assert.Contains(t, w.Body.String(), "pin: invalid PIN")
 }
 
 // --- VerifyUserPINHandler ---

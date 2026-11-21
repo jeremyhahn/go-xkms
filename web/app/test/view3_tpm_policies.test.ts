@@ -265,8 +265,8 @@ describe("TpmPoliciesView", () => {
       match: false,
       approved: true,
       branches: [
-        { match: false, mismatched: [7], approved: true },
-        { match: true, approved: true },
+        { name: "branch-1", match: false, mismatched: [7], approved: true },
+        { name: "branch-2", match: true, approved: true },
       ],
     });
 
@@ -282,17 +282,14 @@ describe("TpmPoliciesView", () => {
     expect(screen.getByText(/Branch 2:\s*PCRs match,\s*approved/)).toBeInTheDocument();
   });
 
-  it("re-captures and re-approves a policy via Update, then reloads the list", async () => {
+  it("offers no unsigned live re-capture Update (SPEC tpm-policies: a signed CoRIM updates one branch)", async () => {
     list.mockResolvedValue({ policies: [policy()] });
-    update.mockResolvedValue(policy());
 
     render(TpmPoliciesView);
     await screen.findByText("boot");
 
-    await fireEvent.click(screen.getByRole("button", { name: "Update" }));
-
-    await waitFor(() => expect(update).toHaveBeenCalledWith("boot"));
-    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("revokes a policy's approval and reloads the list", async () => {

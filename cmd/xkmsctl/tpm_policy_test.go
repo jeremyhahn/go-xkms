@@ -265,7 +265,6 @@ func TestTPMPolicyNameCmds(t *testing.T) {
 		want    string
 	}{
 		{tpmPolicyGetCmd, "get", &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, "TPM Policy:"},
-		{tpmPolicyUpdateCmd, "update", &client.TPMPolicyUpdateRequest{TenantID: "acme", Name: "boot"}, "TPM Policy Updated"},
 		{tpmPolicyRevokeCmd, "revoke", &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, "TPM Policy Revoked"},
 		{tpmPolicyObjectsCmd, "objects", &client.TPMPolicyRequest{TenantID: "acme", Name: "boot"}, "key/a"},
 	}
@@ -314,6 +313,26 @@ func TestTPMPolicyUpdateCmd_UnreadableReferenceValues(t *testing.T) {
 	assert.Empty(t, mock.requests)
 }
 
+// TestTPMPolicyUpdateCmd_NeedsSignedBranch proves an update without both
+// --branch and --reference-values (an unsigned live re-capture) is refused
+// before any request is sent: only a signed CoRIM updates a policy.
+func TestTPMPolicyUpdateCmd_NeedsSignedBranch(t *testing.T) {
+	corim := filepath.Join(t.TempDir(), "boot.corim")
+	require.NoError(t, os.WriteFile(corim, []byte{0xd2, 0x84}, 0o600))
+	for name, flags := range map[string]map[string]string{
+		"no flags":              {},
+		"branch only":           {"branch": "next"},
+		"reference values only": {"reference-values": corim},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "boot"}}
+			_, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"boot"}, flags)
+			assert.Equal(t, 1, code)
+			assert.Empty(t, mock.requests)
+		})
+	}
+}
+
 // TestTPMPolicyVerifyCmd reports each branch and succeeds only when every
 // branch's live PCRs match and it is approved.
 func TestTPMPolicyVerifyCmd(t *testing.T) {
@@ -329,6 +348,15 @@ func TestTPMPolicyVerifyCmd(t *testing.T) {
 	}}, tpmPolicyVerifyCmd, []string{"boot"}, nil)
 	assert.Equal(t, 1, code, "a PCR mismatch fails the command")
 	assert.Contains(t, out, "PCRs [7] differ")
+
+	out, code = runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{
+		Name: "boot", Approved: true, Branches: []client.TPMPolicyBranchVerification{{
+			Name: "next", Mismatched: []uint{7}, Approved: true,
+			Reference: &client.TPMPolicyReference{ID: "boot-image-v2", Signer: "Example Provider", Digest: []byte{0xab, 0xcd}},
+		}},
+	}}, tpmPolicyVerifyCmd, []string{"boot"}, nil)
+	assert.Equal(t, 1, code, "a PCR mismatch fails the command")
+	assert.Contains(t, out, "Reference: boot-image-v2 signed by Example Provider, sha256 abcd", "verify prints the branch reference")
 
 	_, code = runTPMCmd(t, &mockTPMClient{verification: &client.TPMPolicyVerifyResponse{Name: "boot", Match: true}},
 		tpmPolicyVerifyCmd, []string{"boot"}, nil)

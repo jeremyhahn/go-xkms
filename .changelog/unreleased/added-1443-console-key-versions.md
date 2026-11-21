@@ -1,0 +1,1 @@
+Web console: a Key Versions screen (`#/keys/versions`, Keys & Crypto, needs `keys:list`) lists a key's versions and enables, disables or retires one (retire asks for a confirm, as it deletes the version's key material), enables or disables all of them, and rotates all keys with a per-key failure list (#1443).

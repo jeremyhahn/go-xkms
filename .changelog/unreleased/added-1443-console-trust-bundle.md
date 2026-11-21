@@ -1,0 +1,1 @@
+- **The web console shows the CA bootstrap bundle.** A new Trust Bundle screen (`#/trust/bundle`, under Overview) loads `GET /v1/ca/bootstrap`, shows the PEM bundle a new client pins on first contact with its certificate count, and downloads it as `xkms-ca-bundle.pem` or copies it, so operators no longer fetch it with curl.

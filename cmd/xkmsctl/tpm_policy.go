@@ -233,19 +233,15 @@ var tpmPolicyUpdateCmd = &cobra.Command{
 	Long: `Re-approve a policy at its next epoch after an expected platform change,
 such as a firmware or kernel update. No key is re-keyed.
 
-Without --branch, every branch's PCR values are re-captured from the TPM,
-so the update runs after the change, on the changed platform.
-
-With --branch <name> and --reference-values, only the named branch is
-updated, to the PCR values the signed CoRIM predicts the platform will hold
+Both --branch <name> and --reference-values are required: only the named
+branch is updated, to the PCR values the signed CoRIM predicts the platform will hold
 once the images it describes are booted, so the update runs before the
 change and the platform unseals unattended after it. The CoRIM must verify
 under the server's configured reference signer. A policy with a "current"
 and a "next" branch approves the running image and the registered one at
 once: update "next" before the change, and both images unseal.
 
-Examples:
-  xkmsctl tpm policy update boot
+Example:
   xkmsctl tpm policy update boot --branch next --reference-values bootloader-v2.corim`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -257,15 +253,16 @@ Examples:
 			handleError(err)
 			return
 		}
-		req := &client.TPMPolicyUpdateRequest{TenantID: tenant, Name: args[0], Branch: branch}
-		if path != "" {
-			corim, err := os.ReadFile(filepath.Clean(path))
-			if err != nil {
-				handleError(&WrappedDetailError{Sentinel: ErrReadReferenceValuesFailed, Detail: path, Err: err})
-				return
-			}
-			req.ReferenceValues = corim
+		if branch == "" || path == "" {
+			handleError(ErrTPMPolicyUpdateNeedsSignedBranch)
+			return
 		}
+		corim, err := os.ReadFile(filepath.Clean(path))
+		if err != nil {
+			handleError(&WrappedDetailError{Sentinel: ErrReadReferenceValuesFailed, Detail: path, Err: err})
+			return
+		}
+		req := &client.TPMPolicyUpdateRequest{TenantID: tenant, Name: args[0], Branch: branch, ReferenceValues: corim}
 		runClientCall(getConfig(), "Updating TPM policy "+args[0], ErrUpdateTPMPolicyFailed, func(ctx context.Context, cl client.Client) (any, error) {
 			return cl.TPMPolicyUpdate(ctx, req)
 		}, printTPMPolicyResult("TPM Policy Updated"))
@@ -736,8 +733,8 @@ func init() {
 	tpmPolicyCreateCmd.Flags().Bool("auto-unseal", false, "mark the policy barrier auto-unseal uses")
 	tpmPolicyCreateCmd.Flags().String("owner-auth", "", ownerAuthUsage)
 	tpmPolicyDeleteCmd.Flags().String("owner-auth", "", ownerAuthUsage)
-	tpmPolicyUpdateCmd.Flags().String("branch", "", "update only the named branch, e.g. next (needs --reference-values)")
-	tpmPolicyUpdateCmd.Flags().String("reference-values", "", "signed CoRIM file the branch's PCR values are predicted from (needs --branch)")
+	tpmPolicyUpdateCmd.Flags().String("branch", "", "the branch to update, e.g. next (required, with --reference-values)")
+	tpmPolicyUpdateCmd.Flags().String("reference-values", "", "signed CoRIM file the branch's PCR values are predicted from (required, with --branch)")
 	tpmPolicyAutoUnsealCmd.Flags().Bool("disable", false, "clear the auto-unseal mark instead of setting it")
 	tenantTPMModeCmd.Flags().String("owner-auth", "", ownerAuthUsage)
 	keyPolicyCmd.Flags().Bool("sealed", false, "the ID names a sealed object, not a key")

@@ -369,6 +369,11 @@ func (f *Fake) TPMPolicyVerify(_ context.Context, req *transport.TPMPolicyReques
 	resp := &transport.TPMPolicyVerifyResponse{Name: p.Name, Match: true, Approved: approved}
 	for _, b := range p.Branches {
 		v := transport.TPMPolicyBranchVerification{Name: b.Name, Approved: approved}
+		if b.Reference != nil {
+			ref := *b.Reference
+			ref.Digest = append([]byte(nil), b.Reference.Digest...)
+			v.Reference = &ref
+		}
 		for _, c := range b.Conditions {
 			for _, pcr := range c.PCRs {
 				if c.PCRValues[pcr] != f.pcrs[pcr] {

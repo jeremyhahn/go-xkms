@@ -748,7 +748,7 @@ describe('SshClient (generate/import/delete keys, known-hosts, authorized-keys)'
       scope: 'user',
       owner: 'alice',
       host: 'db1',
-      fingerprint: 'SHA256:x',
+      public_key: 'ssh-ed25519 AAAA',
     });
     expect(fake.calls[0]?.method).toBe('POST');
     expect(fake.calls[0]?.url).toBe(`${BASE}/xkms/v1/ssh/known-hosts`);

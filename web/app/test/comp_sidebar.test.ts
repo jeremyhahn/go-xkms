@@ -128,3 +128,79 @@ describe("Sidebar RBAC and capability gating", () => {
     expect(screen.queryByText("Keys & Crypto")).not.toBeInTheDocument();
   });
 });
+
+// The server authorizes decrypt-batch with keys:decrypt and hmac/verify with
+// keys:verify (pkg/api/rest/routes.go), so a screen offering several
+// operations shows for a caller holding any of their permissions.
+describe("Sidebar gates multi-operation screens on any permission", () => {
+  beforeEach(() => {
+    clearSession();
+    meMock.mockReset();
+    window.location.hash = "";
+  });
+
+  async function session(permissions: Record<string, boolean>): Promise<void> {
+    meMock.mockResolvedValue({ subject: "u1", permissions, capabilities: {} });
+    await loadSession();
+    render(Sidebar);
+  }
+
+  it("shows Batch Crypto to a decrypt-only caller", async () => {
+    await session({ "keys:decrypt": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Batch Crypto/ })).toBeInTheDocument());
+  });
+
+  it("shows Seal to an unseal-only (decrypt) caller", async () => {
+    await session({ "keys:decrypt": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Seal$/ })).toBeInTheDocument());
+  });
+
+  it("shows Key Lifecycle to a revoke-only (delete) caller", async () => {
+    await session({ "keys:delete": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Key Lifecycle/ })).toBeInTheDocument());
+  });
+
+  it.each(["keys:rotate", "keys:sign"])("shows OTA Image Keys to a %s-only caller", async (perm) => {
+    await session({ [perm]: true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /OTA Image Keys/ })).toBeInTheDocument());
+  });
+
+  it("hides Seal, Key Lifecycle and OTA Image Keys from a caller with none of their operations", async () => {
+    await session({ "keys:get": true });
+    await waitFor(() => expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /^Seal$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Key Lifecycle/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /OTA Image Keys/ })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Key Access Policy", "keys:rotate"],
+    ["Key Access Policy", "keys:delete"],
+    ["Rotation Policy", "keys:rotate"],
+    ["Rotation Policy", "keys:delete"],
+    ["Key Safety", "keys:rotate"],
+  ])("shows %s to a %s-only caller", async (label, perm) => {
+    await session({ [perm]: true });
+    await waitFor(() => expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument());
+  });
+
+  it("hides Key Access Policy, Rotation Policy and Key Safety from a caller with none of their operations", async () => {
+    await session({ "keys:list": true });
+    await waitFor(() => expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Key Access Policy/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Rotation Policy/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Key Safety/ })).not.toBeInTheDocument();
+  });
+
+  it("shows HMAC to a verify-only caller", async () => {
+    await session({ "keys:verify": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /HMAC/ })).toBeInTheDocument());
+  });
+
+  it("hides Batch Crypto and HMAC from a caller holding none of their permissions", async () => {
+    await session({ "keys:list": true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Keys/ })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Batch Crypto/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /HMAC/ })).not.toBeInTheDocument();
+  });
+});
