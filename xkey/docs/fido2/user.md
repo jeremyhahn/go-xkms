@@ -103,6 +103,23 @@ is the one a browser actually uses.
 | `provision-attestation` says the daemon is running | the daemon owns the device state while it runs | stop it, run the command, start it again |
 | registrations still show `fmt: none` after provisioning | `fido2.attestation` was not set to `packed` | restart the daemon with `--attestation packed` |
 | the GUI and `xkey fido2` disagree about credentials | both are running against the same or different data directories | run only one against a given store at a time |
+| `xkey fido2 --backend tpm2` exits with status 78 | the TPM rejected the Platform SRK PIN from `--pin-file`, `--pin-stdin` or `XKEY_PIN` | fix the PIN source, then start the daemon again (see below) |
+| `--pin-file` is refused as accessible to group or other users | the PIN file's mode allows more than its owner | `chmod 600` the file |
+
+### Exit status 78: Platform SRK PIN rejected
+
+With `--backend tpm2`, the daemon checks the user PIN against the Platform
+SRK (enrolled by `xkey tpm srk enroll`) once at start. That check is a real
+TPM authorisation, counted by the TPM's dictionary-attack protection, so a
+daemon that kept restarting on a wrong PIN would lock the TPM out. When the
+TPM rejects the PIN the daemon stops with exit status **78** (`EX_CONFIG`)
+and does not try again.
+
+The shipped unit, `deploy/systemd/xkey.service`, lists that status in
+`RestartPreventExitStatus=78`, so `Restart=on-failure` leaves the unit
+stopped. Correct the PIN file (it must be mode `0600` or stricter), then
+`systemctl start xkey`. Any other start failure keeps exit status 1 and the
+usual restart policy.
 
 ## Where to go next
 
