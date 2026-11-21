@@ -14,6 +14,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -28,9 +29,13 @@ import (
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-const otaBadBoard = "Bad--Board"
+const (
+	otaBadBoard     = "Bad--Board"
+	otaMissingBoard = "no-key"
+)
 
 var (
+	errOTANoKey     = errors.New("keystore: key not found")
 	errOTABoard     = errors.New("keystore: invalid board id")
 	errOTAAlgorithm = errors.New("keystore: OTA image keys are ES256 only")
 )
@@ -70,6 +75,23 @@ func (m *mockOTAImageClient) RotateOTAImageKey(_ context.Context, req *client.OT
 		return nil, err
 	}
 	return &client.RotateKeyResponse{KeyID: "ota-image-" + req.BoardID, KeyVersion: 2, CertificateReissueRequired: m.reissue}, nil
+}
+
+func (m *mockOTAImageClient) ExportOTAImagePublicKey(_ context.Context, req *client.OTAImageKeyRequest) (*client.OTAImagePublicKeyResponse, error) {
+	m.keyReq = req
+	if err := m.validate(req.BoardID, req.Algorithm); err != nil {
+		return nil, err
+	}
+	if req.BoardID == otaMissingBoard {
+		return nil, errOTANoKey
+	}
+	return &client.OTAImagePublicKeyResponse{
+		KeyID:   "ota-image-" + req.BoardID,
+		BoardID: req.BoardID,
+		Version: 2,
+		Raw:     bytes.Repeat([]byte{0xab}, 64),
+		COSEKey: []byte("cose"),
+	}, nil
 }
 
 func (m *mockOTAImageClient) SignOTAImage(_ context.Context, req *client.OTAImageSignRequest) (*client.SignResponse, error) {
