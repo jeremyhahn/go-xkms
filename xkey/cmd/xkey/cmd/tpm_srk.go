@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/jeremyhahn/go-xkms/pkg/pintpm2"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -144,6 +145,12 @@ func lockSRKEnrollment() (func(), error) {
 // the lock, so an SRK a concurrent enrolment created is seen and checked
 // against userPIN, never re-created.
 func enrollPlatformSRKLocked(out io.Writer, userPIN, soPIN string) error {
+	// The PIN policy runs before the TPM is opened: an SRK bound to a PIN
+	// the policy refuses would answer to a PIN nothing else accepts.
+	if err := checkSRKUserPINPolicy(userPIN); err != nil {
+		return fmt.Errorf("%w: %w", ErrTPMSRKEnrollFailed, err)
+	}
+
 	tpm, err := openTPM()
 	if err != nil {
 		return fmt.Errorf("%w: open TPM: %w", ErrTPMSRKEnrollFailed, err)
@@ -193,6 +200,50 @@ func enrollPlatformSRKLocked(out io.Writer, userPIN, soPIN string) error {
 		return fmt.Errorf("%w: enrol Platform SRK: %w", ErrTPMSRKEnrollFailed, err)
 	}
 }
+
+// checkSRKUserPINPolicy applies the user PIN policy pintpm2's SetUserPIN
+// applies, through SetUserPIN itself over a probe store, so the rule lives
+// in one place. SetUserPIN reaches the store only once the policy passed;
+// the probe records that and refuses, so nothing is verified or cached.
+func checkSRKUserPINPolicy(userPIN string) error {
+	probe := &srkPINPolicyProbe{}
+	backend := pintpm2.NewTPM2Backend(probe)
+	err := backend.SetUserPIN("", userPIN)
+	if closeErr := backend.Close(); closeErr != nil {
+		return closeErr
+	}
+	if probe.reached {
+		return nil
+	}
+	return err
+}
+
+// errSRKPINPolicyProbe is the probe's refusal once the policy has passed.
+var errSRKPINPolicyProbe = errors.New("tpm srk enroll: PIN policy probe")
+
+// srkPINPolicyProbe is a pintpm2.PlatformAuthProvider that holds no SRK:
+// it only records that SetUserPIN reached the store.
+type srkPINPolicyProbe struct{ reached bool }
+
+func (p *srkPINPolicyProbe) VerifyAuth(string) error {
+	p.reached = true
+	return errSRKPINPolicyProbe
+}
+
+func (p *srkPINPolicyProbe) ChangeAuth(string, string) error {
+	p.reached = true
+	return errSRKPINPolicyProbe
+}
+
+func (*srkPINPolicyProbe) GetLockoutInfo() (int, int, int, int, error) {
+	return 0, 0, 0, 0, errSRKPINPolicyProbe
+}
+
+func (*srkPINPolicyProbe) DictionaryAttackLockoutReset([]byte) error { return errSRKPINPolicyProbe }
+
+func (*srkPINPolicyProbe) IsProvisioned() bool { return true }
+
+func (*srkPINPolicyProbe) IsAuthReady() bool { return false }
 
 // resolveSRKEnrollPINs returns the user PIN (required) and the SO PIN (may
 // be empty) from the non-interactive sources, or prompts at a terminal.
