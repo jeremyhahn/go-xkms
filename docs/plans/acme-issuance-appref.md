@@ -43,3 +43,4 @@ T="codec_cbor codec_json codec_msgpack"
   `ApplicationReference`; out of scope for this row.
 - Main is red on Devcontainer, Soak and Integration (ruling 648); not this
   row's to fix.
+- Codex round 2 docs slice: the grep for the removed DICE require switch over docs/acme-issuance and .changelog/unreleased printed hits at the merged head and prints nothing after; docs/plans/acme-issuance-appref-policy.md keeps the names as history under a removal note.
