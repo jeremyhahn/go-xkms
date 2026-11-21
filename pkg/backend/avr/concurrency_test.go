@@ -45,6 +45,10 @@ import (
 // Run under -race, which the suite is, this also reports the unsynchronised
 // reads and writes of the device's sequence counter, receive buffer and event
 // list directly.
+// raceSafeTimeout bounds one exchange in a test that checks routing, not
+// timing, so that -race and a loaded runner cannot turn it into a timing test.
+const raceSafeTimeout = 10 * time.Second
+
 func TestConcurrentCallsDoNotConsumeEachOthersReplies(t *testing.T) {
 	device := newAliasDevice(t)
 	nonce := bytes.Repeat([]byte{0x5A}, tfw.AliasNonceLen)
@@ -57,7 +61,19 @@ func TestConcurrentCallsDoNotConsumeEachOthersReplies(t *testing.T) {
 		answer(tfw.CmdProvPubKey, point).
 		answerAttestCertRepeating(certificate)
 
-	b := newTestBackend(t, link)
+	// This test is about routing, not timing: 48 callers under -race on a
+	// loaded runner can see one exchange (a multi-frame AttestCert among
+	// them) outlast linkTimeout of wall time, and the SDK then reports
+	// "context deadline exceeded" on a device that answered every request.
+	// TestLateReplyIsNotHandedToTheNextCaller covers what a timed-out call
+	// leaves on the wire; here each exchange gets a deadline no scheduler
+	// stall reaches. The fake link answers or reports EOF at once, so a
+	// longer deadline never slows a failure down.
+	config := testConfig()
+	config.RequestTimeout = raceSafeTimeout
+	b, err := NewBackend(context.Background(), config, tfw.New(link, tfw.WithTimeout(raceSafeTimeout)))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	attrs := &types.KeyAttributes{CN: DefaultKeyCN}
 
 	// Each call is a different command, so a crossed reply is not merely a
