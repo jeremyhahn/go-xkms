@@ -90,9 +90,10 @@ func (b *PKCS8Backend) Capabilities() types.Capabilities {
 
 // keyMetadataSchemaVersion is the schema version of keyMetadata: it carries
 // SchemaVersion, CN, KeyType, StoreType, KeyAlgorithm, TenantID, Partition,
-// Exportable, Hash and KeyOrigin. There is a single supported shape; every
-// field is read directly from whatever record exists, with no
-// version-gated inference.
+// Exportable, Hash, KeyOrigin and BlobSHA256. Every field is read directly
+// from whatever record exists, with no version-gated inference; the one
+// earlier shape still read, schema 2, is migrated to this one on its first
+// read (see migrateLegacyMetadata).
 const keyMetadataSchemaVersion = 3
 
 // keyMetadata is the record persisted alongside a key's PKCS#8 bytes to carry
@@ -201,9 +202,12 @@ func (b *PKCS8Backend) loadKeyMetadata(ctx context.Context, keyID string) *keyMe
 			"keyID", keyID, "metaKey", metadataPath(keyID), "error", err)
 		return nil
 	}
+	if metadata.SchemaVersion == legacyKeyMetadataSchemaVersion {
+		return b.migrateLegacyMetadata(ctx, keyID, data, &metadata)
+	}
 	if metadata.SchemaVersion != keyMetadataSchemaVersion {
-		// There is a single supported schema, so a record stamped with any
-		// other version -- including the pre-tenant shape that predates
+		// Apart from the schema-2 shape migrated above, a record stamped
+		// with any other version -- including the pre-tenant shape that predates
 		// SchemaVersion existing at all, which decodes as 0 -- is invalid
 		// data, not a shape to interpret. It is discarded exactly like a
 		// corrupt record: the identifier's own parse stands, and
@@ -223,6 +227,60 @@ func (b *PKCS8Backend) loadKeyMetadata(ctx context.Context, keyID string) *keyMe
 		return nil
 	}
 	return &metadata
+}
+
+// legacyKeyMetadataSchemaVersion is the record shape written before records
+// were bound to their blob: the current fields without BlobSHA256.
+const legacyKeyMetadataSchemaVersion = 2
+
+// migrateLegacyMetadata upgrades keyID's schema-2 record, read as data, to
+// the current schema bound to the blob stored under keyID now, and returns
+// it.
+//
+// A schema-2 record predates blob bindings, so it is trusted exactly as it
+// was before them: it keeps the key's tenant, export policy and origin. The
+// rewrite is conditioned on the record bytes read here wherever the storage
+// offers a guarded write, so a record another writer replaced in between is
+// never overwritten; that writer's record is read instead. A failed rewrite
+// still returns the legacy record and is retried on the next read. A record
+// without a blob is an orphan and applies to nothing.
+func (b *PKCS8Backend) migrateLegacyMetadata(ctx context.Context, keyID string, data []byte, legacy *keyMetadata) *keyMetadata {
+	metaKey := metadataPath(keyID)
+	blob, err := storage.GetKey(ctx, b.storage, keyID)
+	if err != nil {
+		slog.Debug("pkcs8: schema-2 key metadata record has no stored key",
+			"keyID", keyID, "metaKey", metaKey, "error", err)
+		return nil
+	}
+	upgraded := *legacy
+	upgraded.SchemaVersion = keyMetadataSchemaVersion
+	upgraded.BlobSHA256 = blobBinding(blob)
+	encoded, err := json.Marshal(upgraded)
+	if err != nil {
+		return legacy
+	}
+	if cas, ok := b.storage.(storage.CompareAndSwapper); ok && storage.GuardedWritesUsable(b.storage) {
+		swapped, current, err := cas.CompareAndSwap(ctx, metaKey, data, encoded)
+		if err != nil {
+			slog.Debug("pkcs8: schema-2 key metadata migration failed",
+				"keyID", keyID, "metaKey", metaKey, "error", err)
+			return legacy
+		}
+		if !swapped {
+			var replaced keyMetadata
+			if current == nil || json.Unmarshal(current, &replaced) != nil || !recordBindsBlob(current, blob) {
+				return nil
+			}
+			return &replaced
+		}
+		return &upgraded
+	}
+	if err := b.storage.Put(ctx, metaKey, encoded); err != nil {
+		slog.Debug("pkcs8: schema-2 key metadata migration failed",
+			"keyID", keyID, "metaKey", metaKey, "error", err)
+		return legacy
+	}
+	return &upgraded
 }
 
 // blobBindingPrefix domain-separates the digest that binds a metadata record
