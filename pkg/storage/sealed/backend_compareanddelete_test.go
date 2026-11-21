@@ -218,7 +218,7 @@ func TestCompareInEnclave_DetectsPlaintextEscapingToTheHeap(t *testing.T) {
 
 	// One byte short: go-enclave slices its region with cap == len, so the
 	// decryption cannot fit and must reallocate onto the heap.
-	enc, err := enclave.NewMemoryEnclaveSized(n - 1)
+	enc, err := enclave.NewMemorySized(n - 1)
 	require.NoError(t, err)
 	defer enc.Destroy()
 
@@ -251,7 +251,7 @@ func TestCompareInEnclave_CorrectlySizedEnclaveComparesBothWays(t *testing.T) {
 			n, err := sealer.PlaintextLen(sealed)
 			require.NoError(t, err)
 
-			enc, err := enclave.NewMemoryEnclaveSized(n)
+			enc, err := enclave.NewMemorySized(n)
 			require.NoError(t, err)
 			defer enc.Destroy()
 
@@ -268,7 +268,7 @@ func TestCompareInEnclave_CorrectlySizedEnclaveComparesBothWays(t *testing.T) {
 // -- and a caller acts on it by giving up its claim. A comparison that never ran
 // reporting false would make the caller abandon a claim it still holds.
 //
-// It is reachable rather than theoretical: NewMemoryEnclaveSized documents that
+// It is reachable rather than theoretical: NewMemorySized documents that
 // it can return a successful but ALREADY-DESTROYED enclave when WipeAll runs
 // between publication and return. Destroying explicitly reproduces that state
 // deterministically instead of trying to win a race in a test.
@@ -281,7 +281,7 @@ func TestCompareInEnclave_UnreadableEnclaveIsAnErrorNotARefusal(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("destroyed before the comparison", func(t *testing.T) {
-		enc, err := enclave.NewMemoryEnclaveSized(n)
+		enc, err := enclave.NewMemorySized(n)
 		require.NoError(t, err)
 		enc.Destroy()
 
@@ -293,9 +293,13 @@ func TestCompareInEnclave_UnreadableEnclaveIsAnErrorNotARefusal(t *testing.T) {
 	})
 
 	t.Run("nil enclave", func(t *testing.T) {
-		matched, err := compareInEnclave(ctx, nil, sealer, sealed, plaintext)
+		// go-enclave v0.11.1 hands out enclaves as the ByteAccess interface, so
+		// a missing enclave is a nil interface: it must be refused, not called.
+		var enc enclave.ByteAccess
+		matched, err := compareInEnclave(ctx, enc, sealer, sealed, plaintext)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, enclave.ErrEnclaveDestroyed)
+		assert.ErrorIs(t, err, ErrGuardEnclaveFailed)
 		assert.False(t, matched)
 	})
 }
@@ -399,7 +403,7 @@ func TestCompareInEnclave_CorruptEnvelopeIsAnUnsealFailureNotAnEnclaveFailure(t 
 	n, err := sealer.PlaintextLen(sealed)
 	require.NoError(t, err)
 
-	enc, err := enclave.NewMemoryEnclaveSized(n)
+	enc, err := enclave.NewMemorySized(n)
 	require.NoError(t, err)
 	defer enc.Destroy()
 
