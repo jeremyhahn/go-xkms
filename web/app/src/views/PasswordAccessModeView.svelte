@@ -32,14 +32,27 @@
   // The status carries no mode, so the view shows only the mode it set itself.
   let current = $state<string | null>(null);
 
-  const canApply = $derived(status?.available === true && selected !== "" && !busy);
+  // A passwords:write caller without passwords:read is refused the status
+  // read (403). The status is advisory: the form stays usable and the POST
+  // enforces its own permission.
+  let statusRefused = $state(false);
+
+  const canApply = $derived(
+    (status?.available === true || statusRefused) && selected !== "" && !busy,
+  );
 
   async function load(): Promise<void> {
     loading = true;
     loadError = null;
+    statusRefused = false;
     try {
       status = await getSDKClient().passwords.status();
     } catch (e) {
+      if ((e as { status?: unknown } | null)?.status === 403) {
+        status = null;
+        statusRefused = true;
+        return;
+      }
       loadError = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
