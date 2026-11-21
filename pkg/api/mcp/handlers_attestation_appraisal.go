@@ -94,3 +94,15 @@ func (s *Server) handleAttestationReferenceValuesDelete(ctx context.Context, req
 func (s *Server) handleAttestationAppraise(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	return attestationAppraisalCall(s, ctx, req, "attestation appraise", s.xkmsService.AppraiseAttestationQuote)
 }
+
+// handleAttestationAppraiseAndroidKey appraises an Android key attestation
+// chain and returns the attestation result.
+func (s *Server) handleAttestationAppraiseAndroidKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	return attestationAppraisalCall(s, ctx, req, "attestation appraise android key", s.xkmsService.AppraiseAndroidKeyAttestation)
+}
+
+// handleAttestationAppraiseEKCertificate appraises a TPM endorsement key
+// certificate and returns the attestation result.
+func (s *Server) handleAttestationAppraiseEKCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	return attestationAppraisalCall(s, ctx, req, "attestation appraise ek certificate", s.xkmsService.AppraiseEKCertificate)
+}

@@ -87,14 +87,12 @@ func (t *Transport) AppraiseAttestationQuote(ctx context.Context, req *transport
 	return appraisalCall[transport.AttestationResult](t, ctx, "attestation.appraise", req)
 }
 
-// AppraiseAndroidKeyAttestation is a placeholder the MCP commit of row
-// 1660 slice A replaces.
-func (t *Transport) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
-	return nil, ErrNotSupported
+// AppraiseAndroidKeyAttestation calls the attestation.appraise.android_key tool.
+func (t *Transport) AppraiseAndroidKeyAttestation(ctx context.Context, req *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return appraisalCall[transport.AttestationResult](t, ctx, "attestation.appraise.android_key", req)
 }
 
-// AppraiseEKCertificate is a placeholder the MCP commit of row 1660 slice
-// A replaces.
-func (t *Transport) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
-	return nil, ErrNotSupported
+// AppraiseEKCertificate calls the attestation.appraise.ek_certificate tool.
+func (t *Transport) AppraiseEKCertificate(ctx context.Context, req *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	return appraisalCall[transport.AttestationResult](t, ctx, "attestation.appraise.ek_certificate", req)
 }

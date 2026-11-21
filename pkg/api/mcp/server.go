@@ -548,6 +548,8 @@ var rpcMethods = map[string]rpcMethod{
 	"attestation.reference_values.list":   handle(auth.ResourceAttestationReferenceValues, auth.ActionList, (*Server).handleAttestationReferenceValuesList),
 	"attestation.reference_values.delete": handle(auth.ResourceAttestationReferenceValues, auth.ActionDelete, (*Server).handleAttestationReferenceValuesDelete),
 	"attestation.appraise":                handle(auth.ResourceAttestationVerifier, auth.ActionVerify, (*Server).handleAttestationAppraise),
+	"attestation.appraise.android_key":    handle(auth.ResourceAttestationVerifier, auth.ActionVerify, (*Server).handleAttestationAppraiseAndroidKey),
+	"attestation.appraise.ek_certificate": handle(auth.ResourceAttestationVerifier, auth.ActionVerify, (*Server).handleAttestationAppraiseEKCertificate),
 
 	// Attested-caller evidence (pkg/attestation/peergate) --
 	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped
