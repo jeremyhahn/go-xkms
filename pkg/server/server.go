@@ -936,6 +936,12 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		}
 		if s.passwordStore != nil && s.qrdbClient != nil {
 			svc.SetUserClients(s.qrdbClient.Users(), s.qrdbClient.Roles())
+			if s.qrdbNode != nil {
+				// The invite routes are anonymous; after the token is
+				// validated their user calls run as the node's service
+				// principal, which an auth-enabled node requires.
+				svc.SetInviteCallContext(s.qrdbNode.ServiceContext)
+			}
 		}
 		if s.pkcs11StateStore != nil {
 			svc.SetPKCS11StateStore(s.pkcs11StateStore)

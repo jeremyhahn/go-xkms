@@ -102,8 +102,12 @@ type XKMSService struct {
 	// users and roles are the embedded qrdb node's identity clients. xkms
 	// presents its own user-management API on top of them, so callers only
 	// ever see xkms users; qrdb is an internal implementation detail.
-	users           qrdbtransport.UserClient
-	roles           qrdbtransport.RoleClient
+	users qrdbtransport.UserClient
+	roles qrdbtransport.RoleClient
+	// inviteCallCtx binds the in-process service identity the public invite
+	// routes use for their qrdb user calls once the invite token has been
+	// validated; nil runs them on the request context.
+	inviteCallCtx   func(context.Context) (context.Context, error)
 	platformStore   subsystem[seal.PlatformStore]
 	tpmPolicies     subsystem[*tpmpolicy.Service]
 	keyVersions     subsystem[*keyversion.Store]
@@ -277,6 +281,15 @@ func (s *XKMSService) SetPasswordStore(p *staticpw.DAOStore) { s.passwordStore.s
 
 // SetPKCS11StateStore wires the remote-mode PKCS#11 state persistence store.
 func (s *XKMSService) SetPKCS11StateStore(p *pkcs11state.Store) { s.pkcs11StateStore = p }
+
+// SetInviteCallContext sets the binder the public invite routes run their qrdb
+// user lookups and activation under once inviteStore.Lookup has validated the
+// token: the request is anonymous, and an auth-enabled node refuses a user call
+// on a context with no identity. The server passes the embedded node's
+// Node.ServiceContext, the same binder the storage and OIDC lease calls use.
+func (s *XKMSService) SetInviteCallContext(bind func(context.Context) (context.Context, error)) {
+	s.inviteCallCtx = bind
+}
 
 // SetUserClients wires the embedded qrdb node's user and role clients into the
 // service so xkms can present its own user-management API backed by qrdb.
