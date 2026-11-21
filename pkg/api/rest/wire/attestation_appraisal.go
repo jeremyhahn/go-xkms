@@ -15,6 +15,7 @@ package wire
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -138,4 +139,16 @@ func (c AttestationAppraisalClient) AppraiseAttestationQuote(ctx context.Context
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// AppraiseAndroidKeyAttestation is a placeholder the REST commit of row
+// 1660 slice A replaces.
+func (c AttestationAppraisalClient) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, errors.ErrUnsupported
+}
+
+// AppraiseEKCertificate is a placeholder the REST commit of row 1660
+// slice A replaces.
+func (c AttestationAppraisalClient) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	return nil, errors.ErrUnsupported
 }

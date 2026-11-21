@@ -89,7 +89,31 @@ var (
 	// ErrInvalidAKIntermediate indicates evidence whose attestation key
 	// intermediates hold a nil certificate. See AKIntermediateError.
 	ErrInvalidAKIntermediate = errors.New("attestation: invalid attestation key intermediate certificate")
+
+	// ErrEvidenceRefused indicates device evidence (an Android key
+	// attestation chain or a TPM EK certificate) that did not verify under
+	// the tenant's endorsements. See EvidenceRefusedError.
+	ErrEvidenceRefused = errors.New("attestation: evidence refused")
 )
+
+// EvidenceRefusedError refuses device evidence: the chain is empty or does
+// not parse, no endorsement of the check's kind is stored, the chain does not
+// anchor in one, or a policy the evidence must satisfy fails.
+type EvidenceRefusedError struct {
+	// Check names the appraisal that refused, such as
+	// AppraisalCheckAndroidKey or AppraisalCheckEKCertificate.
+	Check string
+	// Cause is the verification failure.
+	Cause error
+}
+
+// Error returns a human-readable description.
+func (e *EvidenceRefusedError) Error() string {
+	return "attestation: " + e.Check + " refused: " + e.Cause.Error()
+}
+
+// Unwrap returns ErrEvidenceRefused and the verification failure.
+func (e *EvidenceRefusedError) Unwrap() []error { return []error{ErrEvidenceRefused, e.Cause} }
 
 // AKIntermediateError reports a nil entry in the attestation key
 // intermediates of host or container evidence.

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -1855,5 +1856,13 @@ func (*mockCAClient) DeleteAttestationReferenceValues(context.Context, *transpor
 	return nil
 }
 func (*mockCAClient) AppraiseAttestationQuote(context.Context, *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*mockCAClient) AppraiseAndroidKeyAttestation(context.Context, *pkgtransport.AppraiseAndroidKeyAttestationRequest) (*pkgtransport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*mockCAClient) AppraiseEKCertificate(context.Context, *pkgtransport.AppraiseEKCertificateRequest) (*pkgtransport.AttestationResult, error) {
 	return nil, nil
 }

@@ -114,3 +114,15 @@ func (t *Transport) AppraiseAttestationQuote(ctx context.Context, req *transport
 	}
 	return s.AppraiseAttestationQuote(ctx, req)
 }
+
+// AppraiseAndroidKeyAttestation is a placeholder the embedded commit of
+// row 1660 slice A replaces.
+func (t *Transport) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, errors.ErrUnsupported
+}
+
+// AppraiseEKCertificate is a placeholder the embedded commit of row 1660
+// slice A replaces.
+func (t *Transport) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	return nil, errors.ErrUnsupported
+}

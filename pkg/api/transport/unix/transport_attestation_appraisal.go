@@ -108,3 +108,15 @@ func (t *Transport) AppraiseAttestationQuote(ctx context.Context, req *transport
 	}
 	return c.AppraiseAttestationQuote(ctx, req)
 }
+
+// AppraiseAndroidKeyAttestation is not on the Unix socket API yet.
+// slice B: replaced by the gRPC verb of row 1660.
+func (t *Transport) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, ErrNotSupported
+}
+
+// AppraiseEKCertificate is not on the Unix socket API yet.
+// slice B: replaced by the gRPC verb of row 1660.
+func (t *Transport) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	return nil, ErrNotSupported
+}

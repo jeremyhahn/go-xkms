@@ -74,7 +74,7 @@ func TestXKMSService_AppraiseAndroidKeyAttestation(t *testing.T) {
 		chain, err := appraisaltest.AndroidKeyAttestation(foreign, appraisaltest.LockedVerifiedBoot())
 		require.NoError(t, err)
 		_, err = f.svc.AppraiseAndroidKeyAttestation(ctx, &appraisal.AppraiseAndroidKeyAttestationRequest{ChainDER: chain})
-		requireRefused(t, err, appraisal.AppraisalCheckAndroidKey, nil)
+		requireRefused(t, err, appraisal.AppraisalCheckAndroidKey, android.ErrChainVerificationFailed)
 	})
 
 	t.Run("unlocked bootloader", func(t *testing.T) {
@@ -83,7 +83,7 @@ func TestXKMSService_AppraiseAndroidKeyAttestation(t *testing.T) {
 		chain, err := appraisaltest.AndroidKeyAttestation(root, rot)
 		require.NoError(t, err)
 		_, err = f.svc.AppraiseAndroidKeyAttestation(ctx, &appraisal.AppraiseAndroidKeyAttestationRequest{ChainDER: chain})
-		requireRefused(t, err, appraisal.AppraisalCheckAndroidKey, nil)
+		requireRefused(t, err, appraisal.AppraisalCheckAndroidKey, android.ErrBootloaderUnlocked)
 	})
 
 	t.Run("empty chain", func(t *testing.T) {

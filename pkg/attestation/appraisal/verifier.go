@@ -53,12 +53,31 @@ const (
 	// EndorsementAKRoot anchors attestation-key certificates: a CA
 	// certificate the AK certificate must chain to.
 	EndorsementAKRoot EndorsementKind = "ak-root"
+
+	// EndorsementAndroidRoot anchors Android key attestation chains: a CA
+	// certificate, such as a Google hardware attestation root, the chain
+	// must end in.
+	EndorsementAndroidRoot EndorsementKind = "android-root"
+
+	// EndorsementEKRoot anchors TPM endorsement key certificates: a TPM
+	// manufacturer's CA certificate the EK certificate must chain to.
+	EndorsementEKRoot EndorsementKind = "ek-root"
 )
 
 // endorsementKinds is the closed set of kinds.
 var endorsementKinds = map[EndorsementKind]bool{
 	EndorsementReferenceSigner: true,
 	EndorsementAKRoot:          true,
+	EndorsementAndroidRoot:     true,
+	EndorsementEKRoot:          true,
+}
+
+// certificateOnlyKinds are the endorsement kinds that anchor a certificate
+// chain, so a pinned public key cannot stand in for them.
+var certificateOnlyKinds = map[EndorsementKind]bool{
+	EndorsementAKRoot:      true,
+	EndorsementAndroidRoot: true,
+	EndorsementEKRoot:      true,
 }
 
 // Appraisal check names.
@@ -67,6 +86,8 @@ const (
 	AppraisalCheckQuote         = "quote"
 	AppraisalCheckEventLog      = "event-log"
 	AppraisalCheckBaseline      = "baseline"
+	AppraisalCheckAndroidKey    = "android-key-attestation"
+	AppraisalCheckEKCertificate = "ek-certificate"
 )
 
 // AppraisalOutcome is one check's result.
@@ -227,6 +248,18 @@ type AttestationResult struct {
 	// evaluated.
 	BaselineSource string `json:"baseline_source,omitempty"`
 
+	// TrustAnchor names the stored endorsement a device chain anchored in
+	// (Android key attestation and EK certificate appraisals).
+	TrustAnchor string `json:"trust_anchor,omitempty"`
+
+	// BootState is the verified boot state an Android key attestation
+	// claims in its hardware-enforced root of trust.
+	BootState string `json:"boot_state,omitempty"`
+
+	// KeyOrigin is where an Android attested key was created; always
+	// KeyOriginGenerated for a key that affirms.
+	KeyOrigin string `json:"key_origin,omitempty"`
+
 	// AppraisedAt is when the appraisal ran.
 	AppraisedAt time.Time `json:"appraised_at"`
 }
@@ -297,14 +330,14 @@ func (a *Appraiser) PutEndorsement(ctx context.Context, tenant string, req *PutE
 // validateEndorsement checks the kind and that the anchor material parses.
 func validateEndorsement(req *PutEndorsementRequest) error {
 	if !endorsementKinds[req.Kind] {
-		return &EndorsementInvalidError{Reason: "kind must be reference-signer or ak-root"}
+		return &EndorsementInvalidError{Reason: "kind must be reference-signer, ak-root, android-root or ek-root"}
 	}
 	hasCert, hasKey := len(req.CertificatePEM) > 0, len(req.PublicKeyPEM) > 0
 	if hasCert == hasKey {
 		return &EndorsementInvalidError{Reason: "exactly one of certificate_pem and public_key_pem is required"}
 	}
-	if req.Kind == EndorsementAKRoot && !hasCert {
-		return &EndorsementInvalidError{Reason: "an ak-root endorsement is a CA certificate"}
+	if certificateOnlyKinds[req.Kind] && !hasCert {
+		return &EndorsementInvalidError{Reason: "an " + string(req.Kind) + " endorsement is a CA certificate"}
 	}
 	if hasCert {
 		cert, err := parseCertificatePEM(req.CertificatePEM)

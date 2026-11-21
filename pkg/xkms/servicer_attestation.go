@@ -140,3 +140,23 @@ func (s *XKMSService) AppraiseAttestationQuote(ctx context.Context, req *apprais
 	}
 	return appraiser.AppraiseQuote(ctx, tenant, req)
 }
+
+// AppraiseAndroidKeyAttestation appraises an Android key attestation chain
+// under the caller tenant's android-root endorsements.
+func (s *XKMSService) AppraiseAndroidKeyAttestation(ctx context.Context, req *appraisal.AppraiseAndroidKeyAttestationRequest) (*appraisal.AttestationResult, error) {
+	appraiser, tenant, err := s.attestationAppraiser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return appraiser.AppraiseAndroidKeyAttestation(ctx, tenant, req)
+}
+
+// AppraiseEKCertificate appraises a TPM endorsement key certificate under
+// the caller tenant's ek-root endorsements.
+func (s *XKMSService) AppraiseEKCertificate(ctx context.Context, req *appraisal.AppraiseEKCertificateRequest) (*appraisal.AttestationResult, error) {
+	appraiser, tenant, err := s.attestationAppraiser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return appraiser.AppraiseEKCertificate(ctx, tenant, req)
+}

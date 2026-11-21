@@ -39,6 +39,7 @@ func TestAttestationAppraisalClassOf(t *testing.T) {
 		{appraisal.ErrEndorsementInvalid, ClassInvalidArgument},
 		{appraisal.ErrReferenceValuesRejected, ClassInvalidArgument},
 		{appraisal.ErrInvalidAKIntermediate, ClassInvalidArgument},
+		{&appraisal.EvidenceRefusedError{Check: appraisal.AppraisalCheckEKCertificate, Cause: errors.New("no anchor")}, ClassInvalidArgument},
 		{fmt.Errorf("get: %w", appraisal.ErrRecordNotFound), ClassNotFound},
 		{appraisal.ErrStoreUnavailable, ClassUnavailable},
 	}

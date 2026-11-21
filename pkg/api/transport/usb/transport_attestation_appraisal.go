@@ -65,3 +65,15 @@ func (t *Transport) DeleteAttestationReferenceValues(_ context.Context, _ *trans
 func (t *Transport) AppraiseAttestationQuote(_ context.Context, _ *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
 	return nil, ErrNotSupported
 }
+
+// AppraiseAndroidKeyAttestation returns ErrNotSupported: the USB protocol
+// carries no attestation verifier verbs.
+func (t *Transport) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, ErrNotSupported
+}
+
+// AppraiseEKCertificate returns ErrNotSupported: the USB protocol carries
+// no attestation verifier verbs.
+func (t *Transport) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	return nil, ErrNotSupported
+}

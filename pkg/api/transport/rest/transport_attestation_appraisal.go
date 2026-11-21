@@ -103,3 +103,21 @@ func (t *Transport) AppraiseAttestationQuote(ctx context.Context, req *transport
 	}
 	return c.AppraiseAttestationQuote(ctx, req)
 }
+
+// AppraiseAndroidKeyAttestation appraises an Android key attestation chain.
+func (t *Transport) AppraiseAndroidKeyAttestation(ctx context.Context, req *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	c, err := t.appraisalClient()
+	if err != nil {
+		return nil, err
+	}
+	return c.AppraiseAndroidKeyAttestation(ctx, req)
+}
+
+// AppraiseEKCertificate appraises a TPM endorsement key certificate.
+func (t *Transport) AppraiseEKCertificate(ctx context.Context, req *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	c, err := t.appraisalClient()
+	if err != nil {
+		return nil, err
+	}
+	return c.AppraiseEKCertificate(ctx, req)
+}

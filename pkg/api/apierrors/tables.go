@@ -361,6 +361,7 @@ var AttestationAppraisalSentinelClasses = []SentinelClass{
 	{appraisal.ErrEndorsementInvalid, ClassInvalidArgument},
 	{appraisal.ErrReferenceValuesRejected, ClassInvalidArgument},
 	{appraisal.ErrInvalidAKIntermediate, ClassInvalidArgument},
+	{appraisal.ErrEvidenceRefused, ClassInvalidArgument},
 	{appraisal.ErrRecordNotFound, ClassNotFound},
 	{appraisal.ErrStoreUnavailable, ClassUnavailable},
 }

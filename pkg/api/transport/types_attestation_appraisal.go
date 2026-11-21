@@ -56,6 +56,17 @@ type AttestationAppraisalService interface {
 	// AppraiseAttestationQuote appraises a TPM quote and returns the
 	// attestation result. Permission: attestation_verifier:verify.
 	AppraiseAttestationQuote(ctx context.Context, req *AppraiseAttestationQuoteRequest) (*AttestationResult, error)
+
+	// AppraiseAndroidKeyAttestation appraises an Android key attestation
+	// chain under the tenant's android-root endorsements and returns the
+	// attestation result naming the trust anchor, boot state and key
+	// origin. Permission: attestation_verifier:verify.
+	AppraiseAndroidKeyAttestation(ctx context.Context, req *AppraiseAndroidKeyAttestationRequest) (*AttestationResult, error)
+
+	// AppraiseEKCertificate appraises a TPM endorsement key certificate
+	// under the tenant's ek-root endorsements and returns the attestation
+	// result naming the trust anchor. Permission: attestation_verifier:verify.
+	AppraiseEKCertificate(ctx context.Context, req *AppraiseEKCertificateRequest) (*AttestationResult, error)
 }
 
 // AttestationAppraisalServicer is the server side of
@@ -79,4 +90,6 @@ type (
 	DeleteAttestationReferenceValuesRequest = appraisal.DeleteReferenceValuesRequest
 	AppraiseAttestationQuoteRequest         = appraisal.AppraiseQuoteRequest
 	AttestationResult                       = appraisal.AttestationResult
+	AppraiseAndroidKeyAttestationRequest    = appraisal.AppraiseAndroidKeyAttestationRequest
+	AppraiseEKCertificateRequest            = appraisal.AppraiseEKCertificateRequest
 )

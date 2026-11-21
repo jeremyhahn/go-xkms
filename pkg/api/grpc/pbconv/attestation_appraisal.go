@@ -15,6 +15,7 @@ package pbconv
 
 import (
 	"context"
+	"errors"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -383,4 +384,16 @@ func (c AttestationAppraisalClient) AppraiseAttestationQuote(ctx context.Context
 		return nil, err
 	}
 	return AttestationResultFromProto(resp), nil
+}
+
+// AppraiseAndroidKeyAttestation is not on the gRPC API yet.
+// slice B: replaced by the gRPC verb of row 1660.
+func (c AttestationAppraisalClient) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, errors.ErrUnsupported
+}
+
+// AppraiseEKCertificate is not on the gRPC API yet.
+// slice B: replaced by the gRPC verb of row 1660.
+func (c AttestationAppraisalClient) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	return nil, errors.ErrUnsupported
 }

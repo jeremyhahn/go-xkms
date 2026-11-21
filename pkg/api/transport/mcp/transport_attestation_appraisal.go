@@ -86,3 +86,15 @@ func (t *Transport) DeleteAttestationReferenceValues(ctx context.Context, req *t
 func (t *Transport) AppraiseAttestationQuote(ctx context.Context, req *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
 	return appraisalCall[transport.AttestationResult](t, ctx, "attestation.appraise", req)
 }
+
+// AppraiseAndroidKeyAttestation is a placeholder the MCP commit of row
+// 1660 slice A replaces.
+func (t *Transport) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, ErrNotSupported
+}
+
+// AppraiseEKCertificate is a placeholder the MCP commit of row 1660 slice
+// A replaces.
+func (t *Transport) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	return nil, ErrNotSupported
+}
