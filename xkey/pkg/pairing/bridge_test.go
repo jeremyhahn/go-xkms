@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 
@@ -3167,5 +3168,13 @@ func (*mockTransportClient) DeleteAttestationReferenceValues(context.Context, *t
 	return nil
 }
 func (*mockTransportClient) AppraiseAttestationQuote(context.Context, *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*mockTransportClient) AppraiseAndroidKeyAttestation(context.Context, *pkgtransport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*mockTransportClient) AppraiseEKCertificate(context.Context, *pkgtransport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
 	return nil, nil
 }

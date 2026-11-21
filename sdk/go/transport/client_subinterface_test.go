@@ -16,6 +16,8 @@ package transport
 import (
 	"context"
 	"testing"
+
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
 // stubClient is a minimal implementation of Client used for compile-time
@@ -713,5 +715,13 @@ func (*stubClient) DeleteAttestationReferenceValues(context.Context, *DeleteAtte
 	return nil
 }
 func (*stubClient) AppraiseAttestationQuote(context.Context, *AppraiseAttestationQuoteRequest) (*AttestationResult, error) {
+	return nil, nil
+}
+
+func (*stubClient) AppraiseAndroidKeyAttestation(context.Context, *pkgtransport.AppraiseAndroidKeyAttestationRequest) (*AttestationResult, error) {
+	return nil, nil
+}
+
+func (*stubClient) AppraiseEKCertificate(context.Context, *pkgtransport.AppraiseEKCertificateRequest) (*AttestationResult, error) {
 	return nil, nil
 }

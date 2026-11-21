@@ -25,6 +25,7 @@ import (
 	"errors"
 	"testing"
 
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -1032,5 +1033,13 @@ func (*noopClient) DeleteAttestationReferenceValues(context.Context, *transport.
 	return nil
 }
 func (*noopClient) AppraiseAttestationQuote(context.Context, *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*noopClient) AppraiseAndroidKeyAttestation(context.Context, *pkgtransport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*noopClient) AppraiseEKCertificate(context.Context, *pkgtransport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
 	return nil, nil
 }

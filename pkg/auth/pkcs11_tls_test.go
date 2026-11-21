@@ -1978,3 +1978,11 @@ func (*authMockClient) DeleteAttestationReferenceValues(context.Context, *transp
 func (*authMockClient) AppraiseAttestationQuote(context.Context, *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
 	return nil, nil
 }
+
+func (*authMockClient) AppraiseAndroidKeyAttestation(context.Context, *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*authMockClient) AppraiseEKCertificate(context.Context, *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
