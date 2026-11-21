@@ -1785,7 +1785,7 @@ func TestProvisionEKCertNVRAM(t *testing.T) {
 		assert.Equal(t, tpm2.TPMNTOrdinary, pub.Attributes.NT,
 			"certificate storage requires TPM_NT_ORDINARY, not a counter")
 
-		require.NoError(t, tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048)))
+		require.NoError(t, tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048), nil))
 	})
 
 	t.Run("rejects a certificate larger than TPM_PT_NV_INDEX_MAX", func(t *testing.T) {

@@ -556,6 +556,10 @@ var (
 	ErrTPMEKCertExists                = tpm2.ErrEKCertExists
 	ErrTPMEKCertIndexInvalid          = tpm2.ErrEKCertIndexInvalid
 	ErrTPMEKCertPlatformIndex         = tpm2.ErrEKCertPlatformIndex
+	ErrTPMEKCertKeyType               = tpm2.ErrEKCertKeyType
+	ErrTPMNVCertTooLarge              = tpm2.ErrNVCertTooLarge
+	ErrTPMNVCertIndexMismatch         = tpm2.ErrNVCertIndexMismatch
+	ErrTPMNVCertHierarchyAuth         = tpm2.ErrNVCertHierarchyAuth
 
 	// Platform key store errors
 	ErrPlatformKeyStoreNilTPM             = tpm2.ErrPlatformKeyStoreNilTPM

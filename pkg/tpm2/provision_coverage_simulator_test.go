@@ -174,7 +174,7 @@ func TestBackupEKCertificates_NoCertStoreReturnsEarly(t *testing.T) {
 	tpmImpl.config.EK.CertHandle = ekCertIndexRSA2048
 	certDER := createTestCertDER(t)
 	require.NoError(t, tpmImpl.ProvisionEKCert(nil, certDER))
-	t.Cleanup(func() { _ = tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048)) })
+	t.Cleanup(func() { _ = tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048), nil) })
 
 	tpmImpl.certStore = nil
 	assert.NotPanics(t, func() { tpmImpl.BackupEKCertificates() })
@@ -190,7 +190,7 @@ func TestBackupEKCertificates_ImportSucceeds(t *testing.T) {
 	tpmImpl.config.EK.CertHandle = ekCertIndexRSA2048
 	certDER := createTestCertDER(t)
 	require.NoError(t, tpmImpl.ProvisionEKCert(nil, certDER))
-	t.Cleanup(func() { _ = tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048)) })
+	t.Cleanup(func() { _ = tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048), nil) })
 
 	memStore := store.NewMemoryCertStore(slog.Default())
 	tpmImpl.certStore = memStore
@@ -213,7 +213,7 @@ func TestBackupEKCertificates_ImportFailureIsLoggedNotPanicked(t *testing.T) {
 	tpmImpl.config.EK.CertHandle = ekCertIndexRSA2048
 	certDER := createTestCertDER(t)
 	require.NoError(t, tpmImpl.ProvisionEKCert(nil, certDER))
-	t.Cleanup(func() { _ = tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048)) })
+	t.Cleanup(func() { _ = tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048), nil) })
 
 	tpmImpl.certStore = &alwaysFailCertStore{err: errors.New("cert store: synthetic import failure")}
 
@@ -229,7 +229,7 @@ func newEKCertSim(t *testing.T) *TPM2 {
 	tpmImpl, ok := tpm.(*TPM2)
 	require.True(t, ok)
 	tpmImpl.config.EK.CertHandle = ekCertIndexRSA2048
-	t.Cleanup(func() { _ = tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048)) })
+	t.Cleanup(func() { _ = tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048), nil) })
 	return tpmImpl
 }
 
@@ -344,7 +344,7 @@ func TestReplaceEKCert_RefusesAnIndexThatIsNotACertificate(t *testing.T) {
 			}),
 		}.Execute(tpmImpl.transport)
 		require.NoError(t, err)
-		t.Cleanup(func() { assert.NoError(t, tpmImpl.deleteCertFromNVRAM(counterIndex)) })
+		t.Cleanup(func() { assert.NoError(t, tpmImpl.deleteCertFromNVRAM(counterIndex, nil)) })
 
 		tpmImpl.config.EK.CertHandle = uint32(counterIndex)
 		assert.ErrorIs(t, tpmImpl.ReplaceEKCert(nil, createTestCertDER(t)), ErrEKCertIndexInvalid)
@@ -360,7 +360,7 @@ func TestReplaceEKCert_WritesOnlyTheConfiguredIndex(t *testing.T) {
 	require.NoError(t, tpmImpl.ProvisionEKCert(nil, rsaCert))
 
 	tpmImpl.config.EK.CertHandle = ekCertIndexECCP256
-	t.Cleanup(func() { assert.NoError(t, tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexECCP256))) })
+	t.Cleanup(func() { assert.NoError(t, tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexECCP256), nil)) })
 
 	// The first run defines the EC index; the second replaces it.
 	for i := 0; i < 2; i++ {
