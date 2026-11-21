@@ -121,6 +121,75 @@ func TestEnrollPlatformSRK_SecondBoot_IsIdempotent(t *testing.T) {
 	assert.NoError(t, pks.VerifyAuth(userPIN))
 }
 
+// TestEnrollPlatformSRK_ConcurrentFirstEnrolment_SecondRefusedNoEvict covers
+// Codex review 6000753682 (P1): two key stores that both probed an absent SRK
+// race to enrol it. The second meets TPM_RC_NV_DEFINED with initialized=false
+// cached; it must refuse with ErrPlatformSRKEnrolledOtherPIN and must never
+// evict the SRK the first enrolment created (that would orphan its keys).
+func TestEnrollPlatformSRK_ConcurrentFirstEnrolment_SecondRefusedNoEvict(t *testing.T) {
+	h := newEnrollHarness(t)
+	first := newPlatformKeyStore(t, h)
+	second := newPlatformKeyStore(t, h)
+	require.False(t, first.IsInitialized(), "precondition: both stores saw an absent SRK")
+	require.False(t, second.IsInitialized(), "precondition: both stores saw an absent SRK")
+
+	const pinA = "operator-pin-aaaa"
+	const pinB = "operator-pin-bbbb"
+	require.NoError(t, first.EnrollPlatformSRK("", pinA))
+
+	srkHandle := tpm2.TPMHandle(h.TPM.config.PlatformSRK.SRKHandle)
+	nameBefore, _, err := h.TPM.ReadHandle(srkHandle)
+	require.NoError(t, err)
+
+	err = second.EnrollPlatformSRK("", pinB)
+	require.ErrorIs(t, err, ErrPlatformSRKEnrolledOtherPIN,
+		"an enrolment meeting an SRK enrolled under another PIN must refuse")
+	assert.False(t, second.IsAuthReady())
+
+	nameAfter, _, err := h.TPM.ReadHandle(srkHandle)
+	require.NoError(t, err)
+	assert.Equal(t, nameBefore.Buffer, nameAfter.Buffer,
+		"the refused enrolment must not have evicted and recreated the SRK")
+	assert.NoError(t, first.VerifyAuth(pinA), "PIN A must still authorize the SRK")
+	assert.ErrorIs(t, first.VerifyAuth(pinB), ErrAuthFailed)
+}
+
+// TestEnrollPlatformSRK_ConcurrentFirstEnrolment_SamePINIsAlreadyEnrolled: the
+// loser of the race with the same PIN adopts the SRK without replacing it.
+func TestEnrollPlatformSRK_ConcurrentFirstEnrolment_SamePINIsAlreadyEnrolled(t *testing.T) {
+	h := newEnrollHarness(t)
+	first := newPlatformKeyStore(t, h)
+	second := newPlatformKeyStore(t, h)
+
+	const pin = "operator-pin-aaaa"
+	require.NoError(t, first.EnrollPlatformSRK("", pin))
+	srkHandle := tpm2.TPMHandle(h.TPM.config.PlatformSRK.SRKHandle)
+	nameBefore, _, err := h.TPM.ReadHandle(srkHandle)
+	require.NoError(t, err)
+
+	assert.ErrorIs(t, second.EnrollPlatformSRK("", pin), ErrPlatformSRKAlreadyEnrolled)
+	assert.True(t, second.IsAuthReady())
+	nameAfter, _, err := h.TPM.ReadHandle(srkHandle)
+	require.NoError(t, err)
+	assert.Equal(t, nameBefore.Buffer, nameAfter.Buffer)
+}
+
+// TestPlatformKeyStore_Initialize_ExplicitReplaceStillReplaces proves the
+// explicit replace path (Initialize on an initialized store) keeps evicting
+// and recreating the SRK under the new PIN; only enrolment refuses.
+func TestPlatformKeyStore_Initialize_ExplicitReplaceStillReplaces(t *testing.T) {
+	h := newEnrollHarness(t)
+	pks := newPlatformKeyStore(t, h)
+
+	const pinA = "operator-pin-aaaa"
+	const pinB = "operator-pin-bbbb"
+	require.NoError(t, pks.EnrollPlatformSRK("", pinA))
+	require.NoError(t, pks.Initialize("", pinB))
+
+	assert.NoError(t, pks.VerifyAuth(pinB), "the replaced SRK must carry the new PIN")
+	assert.ErrorIs(t, pks.VerifyAuth(pinA), ErrAuthFailed)
+}
+
 // TestEnrollPlatformSRK_EmptyPIN_Rejected proves an empty PIN cannot be
 // enrolled. An SRK with an empty auth value would be usable by any process on
 // the machine, silently defeating the PIN.

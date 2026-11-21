@@ -311,13 +311,20 @@ type Params struct {
 	Logger     *slog.Logger
 	Tracker    types.AEADSafetyTracker // Optional: AEAD safety tracker for symmetric encryption
 	Transport  transport.TPM           // Optional: custom transport for testing
+	// StorageCloser, when set, is closed by Close after the TPM: the key
+	// store the caller opened Backend over (a file engine holds a lock-file
+	// descriptor until its factory closes). NewTPM2 owns it only when it
+	// returns a TPM; when it returns none, the caller closes it.
+	StorageCloser io.Closer
 }
 
 type TPM2 struct {
-	algID     tpm2.TPMAlgID
-	backend   store.KeyBackend
-	certStore store.CertificateStorer
-	config    *Config
+	algID tpm2.TPMAlgID
+	// storageCloser is Params.StorageCloser: Close closes it last.
+	storageCloser io.Closer
+	backend       store.KeyBackend
+	certStore     store.CertificateStorer
+	config        *Config
 	// deviceCaps caches the algorithm and curve sets this TPM reports. The
 	// answer cannot change while the device is open, and the pointer is
 	// published atomically so concurrent callers share one snapshot without a
@@ -511,15 +518,16 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	}
 
 	tpm := &TPM2{
-		algID:      algID,
-		logger:     params.Logger,
-		backend:    params.Backend,
-		certStore:  params.CertStore,
-		config:     params.Config,
-		device:     device,
-		conn:       conn,
-		fqdn:       params.FQDN,
-		httpClient: params.HTTPClient,
+		algID:         algID,
+		storageCloser: params.StorageCloser,
+		logger:        params.Logger,
+		backend:       params.Backend,
+		certStore:     params.CertStore,
+		config:        params.Config,
+		device:        device,
+		conn:          conn,
+		fqdn:          params.FQDN,
+		httpClient:    params.HTTPClient,
 		// hash:         hash,
 		simulator: sim,
 		tracker:   tracker,
@@ -1149,6 +1157,11 @@ func (tpm *TPM2) Close() error {
 			tpm.logger.Error("failed to close simulator", slog.String("error", err.Error()))
 		}
 		tpm.simulator = nil
+	}
+	if tpm.storageCloser != nil {
+		closer := tpm.storageCloser
+		tpm.storageCloser = nil
+		return closer.Close()
 	}
 	return nil
 }
