@@ -16,6 +16,7 @@ package rest
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -41,9 +42,35 @@ func deviceQuery(r *http.Request) *transport.AttestationVerdictRequest {
 	return &transport.AttestationVerdictRequest{DeviceID: r.URL.Query().Get("device")}
 }
 
-// ListHandler serves GET /attestation/verdicts?device=.
+// pageQuery reads the optional limit and offset query parameters of the
+// list route; an absent one is zero. A value that is not a 32-bit integer
+// is refused.
+func pageQuery(r *http.Request) (limit, offset int32, err error) {
+	parse := func(name string) (int32, error) {
+		raw := r.URL.Query().Get(name)
+		if raw == "" {
+			return 0, nil
+		}
+		n, err := strconv.ParseInt(raw, 10, 32)
+		return int32(n), err
+	}
+	if limit, err = parse("limit"); err != nil {
+		return 0, 0, err
+	}
+	offset, err = parse("offset")
+	return limit, offset, err
+}
+
+// ListHandler serves GET /attestation/verdicts?device=&limit=&offset=, one
+// page of the device's history.
 func (h *AttestationVerdictHandlers) ListHandler(w http.ResponseWriter, r *http.Request) {
-	resp, err := h.servicer.ListAttestationVerdicts(r.Context(), deviceQuery(r))
+	req := deviceQuery(r)
+	var err error
+	if req.Limit, req.Offset, err = pageQuery(r); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+	resp, err := h.servicer.ListAttestationVerdicts(r.Context(), req)
 	respondVerdict(w, resp, err, http.StatusOK)
 }
 

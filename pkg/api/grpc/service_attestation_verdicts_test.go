@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,8 +24,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -97,6 +101,61 @@ func TestVerdictRPCs_ReattestLatestList(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list.GetVerdicts(), 1)
 	assert.Equal(t, "dev-1", list.GetVerdicts()[0].GetDeviceId())
+}
+
+// grpcDefaultMaxRecv is the receive limit the gRPC and Unix clients keep
+// (grpc-go's default, 4 MiB).
+const grpcDefaultMaxRecv = 4 << 20
+
+// TestVerdictRPCs_ListPagesHistoryBeyondReceiveLimit stores a history whose
+// encoding exceeds the clients' 4 MiB receive limit and pages through it:
+// every page fits the limit, and the pages together return the whole
+// history in order, with its total.
+func TestVerdictRPCs_ListPagesHistoryBeyondReceiveLimit(t *testing.T) {
+	store, err := continuous.NewStore(continuous.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
+	require.NoError(t, err)
+	svc := &xkms.XKMSService{}
+	svc.SetContinuousAttestation(nil, store)
+	authorizer, _ := allowAuthorizer()
+	s := NewService(authorizer, nil, svc)
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "operator", TenantID: "acme"})
+
+	const n = 800
+	cause := strings.Repeat("c", 6<<10)
+	at := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	for i := range n {
+		require.NoError(t, store.SaveVerdict(ctx, continuous.Verdict{Tenant: "acme", DeviceID: "dev-1", At: at.Add(time.Duration(i) * time.Second), Cause: cause}))
+	}
+	all, err := store.ListVerdicts(ctx, "acme", "dev-1")
+	require.NoError(t, err)
+	whole := pbconv.ListAttestationVerdictsResponseToProto(&transport.ListAttestationVerdictsResponse{Verdicts: all})
+	require.Greater(t, proto.Size(whole), grpcDefaultMaxRecv, "the history must exceed the receive limit")
+
+	// A request asking for everything is capped to one bounded page.
+	big, err := s.ListAttestationVerdicts(ctx, &pb.AttestationVerdictRequest{DeviceId: "dev-1", Limit: n})
+	require.NoError(t, err)
+	assert.Len(t, big.GetVerdicts(), continuous.MaxVerdictPageSize)
+	assert.Less(t, proto.Size(big), grpcDefaultMaxRecv)
+
+	var got int
+	for offset := int32(0); ; {
+		page, err := s.ListAttestationVerdicts(ctx, &pb.AttestationVerdictRequest{DeviceId: "dev-1", Offset: offset})
+		require.NoError(t, err)
+		assert.Less(t, proto.Size(page), grpcDefaultMaxRecv)
+		assert.EqualValues(t, n, page.GetTotal())
+		if len(page.GetVerdicts()) == 0 {
+			break
+		}
+		for j, v := range page.GetVerdicts() {
+			require.True(t, v.GetAt().AsTime().Equal(at.Add(time.Duration(got+j)*time.Second)), "verdict %d out of order", got+j)
+		}
+		got += len(page.GetVerdicts())
+		offset += int32(len(page.GetVerdicts()))
+	}
+	assert.Equal(t, n, got)
+
+	_, err = s.ListAttestationVerdicts(ctx, &pb.AttestationVerdictRequest{DeviceId: "dev-1", Offset: -1})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 // TestVerdictRPCs_Errors proves the RPCs map the service's errors to their

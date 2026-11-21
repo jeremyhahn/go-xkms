@@ -109,6 +109,48 @@ func (s *Store) ListVerdicts(ctx context.Context, tenant, deviceID string) ([]Ve
 	return verdicts, nil
 }
 
+// DefaultVerdictPageSize is the page size of a history request that names
+// none; MaxVerdictPageSize caps the page a request may ask for, so one
+// response stays well inside a transport's default 4 MiB message limit
+// however long a device's history grows.
+const (
+	DefaultVerdictPageSize = 100
+	MaxVerdictPageSize     = 500
+)
+
+// VerdictPage is one page of a device's verdicts, oldest first, with the
+// number of verdicts in the whole history.
+type VerdictPage struct {
+	Verdicts []Verdict
+	Total    int
+}
+
+// ListVerdictsPage returns at most limit of the device's verdicts, oldest
+// first, starting at offset. A zero limit means DefaultVerdictPageSize and
+// a limit above MaxVerdictPageSize is capped to it; a negative offset or
+// limit is an *InputError. An offset past the end returns an empty page.
+func (s *Store) ListVerdictsPage(ctx context.Context, tenant, deviceID string, offset, limit int) (VerdictPage, error) {
+	if offset < 0 {
+		return VerdictPage{}, &InputError{Field: "offset", Cause: errors.New("is negative")}
+	}
+	if limit < 0 {
+		return VerdictPage{}, &InputError{Field: "limit", Cause: errors.New("is negative")}
+	}
+	if limit == 0 {
+		limit = DefaultVerdictPageSize
+	}
+	limit = min(limit, MaxVerdictPageSize)
+	all, err := s.ListVerdicts(ctx, tenant, deviceID)
+	if err != nil {
+		return VerdictPage{}, err
+	}
+	page := VerdictPage{Verdicts: []Verdict{}, Total: len(all)}
+	if offset < len(all) {
+		page.Verdicts = all[offset:min(offset+limit, len(all))]
+	}
+	return page, nil
+}
+
 // LatestVerdict returns the device's newest verdict, or a
 // *VerdictNotFoundError when it has none.
 func (s *Store) LatestVerdict(ctx context.Context, tenant, deviceID string) (*Verdict, error) {

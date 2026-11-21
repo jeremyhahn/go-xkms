@@ -122,6 +122,30 @@ func TestAttestationVerdictREST_ReattestLatestList(t *testing.T) {
 	assert.Len(t, list.Verdicts, 2)
 }
 
+// TestAttestationVerdictREST_ListPage pages the history through the limit
+// and offset query parameters and refuses a value that is not an integer.
+func TestAttestationVerdictREST_ListPage(t *testing.T) {
+	router := verdictRouter(verdictXKMS(t, true))
+	for range 3 {
+		w := serveVerdict(router, http.MethodPost, "/api/v1/attestation/verdicts", `{"device_id":"dev-1"}`)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	}
+
+	w := serveVerdict(router, http.MethodGet, "/api/v1/attestation/verdicts?device=dev-1&limit=2&offset=1", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var page transport.ListAttestationVerdictsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+	assert.Len(t, page.Verdicts, 2)
+	assert.EqualValues(t, 3, page.Total)
+
+	for _, q := range []string{"limit=x", "offset=1.5", "limit=99999999999"} {
+		w = serveVerdict(router, http.MethodGet, "/api/v1/attestation/verdicts?device=dev-1&"+q, "")
+		assert.Equal(t, http.StatusBadRequest, w.Code, q)
+	}
+	w = serveVerdict(router, http.MethodGet, "/api/v1/attestation/verdicts?device=dev-1&offset=-1", "")
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
 func TestAttestationVerdictREST_MapsErrors(t *testing.T) {
 	router := verdictRouter(verdictXKMS(t, true))
 	assert.Equal(t, http.StatusBadRequest, serveVerdict(router, http.MethodPost, "/api/v1/attestation/verdicts", "{").Code)

@@ -39,6 +39,17 @@ func TestAttestationVerdictClient_List(t *testing.T) {
 	assert.Nil(t, got.body)
 }
 
+// TestAttestationVerdictClient_ListPage sends the page's limit and offset
+// in the query and reads the history's total.
+func TestAttestationVerdictClient_ListPage(t *testing.T) {
+	rec := &recordingRequester{response: `{"verdicts":[{"device_id":"dev-1"}],"total":7}`}
+	c := AttestationVerdictClient{Do: rec.do}
+	resp, err := c.ListAttestationVerdicts(context.Background(), &transport.AttestationVerdictRequest{DeviceID: "dev-1", Limit: 2, Offset: 5})
+	require.NoError(t, err)
+	assert.EqualValues(t, 7, resp.Total)
+	assert.Equal(t, "/api/v1/attestation/verdicts?device=dev-1&limit=2&offset=5", rec.last().path)
+}
+
 // TestAttestationVerdictClient_Latest proves the latest verb's route.
 func TestAttestationVerdictClient_Latest(t *testing.T) {
 	rec := &recordingRequester{response: `{"device_id":"dev-1"}`}

@@ -16,6 +16,7 @@ package wire
 import (
 	"context"
 	"net/http"
+	"strconv"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
@@ -30,6 +31,10 @@ const (
 	AttestationVerdictLatestPath = AttestationVerdictsPath + "/latest"
 	// AttestationVerdictDeviceParam names the device on the GET routes.
 	AttestationVerdictDeviceParam = "device"
+	// AttestationVerdictLimitParam and AttestationVerdictOffsetParam page
+	// the list route.
+	AttestationVerdictLimitParam  = "limit"
+	AttestationVerdictOffsetParam = "offset"
 )
 
 // AttestationVerdictClient serves transport.AttestationVerdictService over
@@ -40,13 +45,22 @@ type AttestationVerdictClient struct {
 
 var _ transport.AttestationVerdictService = AttestationVerdictClient{}
 
-// ListAttestationVerdicts sends GET /api/v1/attestation/verdicts?device=.
+// ListAttestationVerdicts sends
+// GET /api/v1/attestation/verdicts?device=&limit=&offset=, naming limit and
+// offset only when they are set.
 func (c AttestationVerdictClient) ListAttestationVerdicts(ctx context.Context, req *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
 	var resp transport.ListAttestationVerdictsResponse
-	path := withQuery(AttestationVerdictsPath, map[string]string{AttestationVerdictDeviceParam: req.DeviceID})
+	query := map[string]string{AttestationVerdictDeviceParam: req.DeviceID}
+	if req.Limit != 0 {
+		query[AttestationVerdictLimitParam] = strconv.FormatInt(int64(req.Limit), 10)
+	}
+	if req.Offset != 0 {
+		query[AttestationVerdictOffsetParam] = strconv.FormatInt(int64(req.Offset), 10)
+	}
+	path := withQuery(AttestationVerdictsPath, query)
 	if err := callJSON(ctx, c.Do, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err
 	}

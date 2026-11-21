@@ -53,10 +53,10 @@ func TestVerdictConversions_RoundTrip(t *testing.T) {
 	bare := &transport.AttestationVerdict{Tenant: "acme", DeviceID: "dev-2", Verified: true}
 	assert.Equal(t, bare, AttestationVerdictFromProto(AttestationVerdictToProto(bare)))
 
-	list := &transport.ListAttestationVerdictsResponse{Verdicts: []transport.AttestationVerdict{*v, *bare}}
+	list := &transport.ListAttestationVerdictsResponse{Verdicts: []transport.AttestationVerdict{*v, *bare}, Total: 9}
 	assert.Equal(t, list, ListAttestationVerdictsResponseFromProto(ListAttestationVerdictsResponseToProto(list)))
 
-	req := &transport.AttestationVerdictRequest{DeviceID: "dev-1"}
+	req := &transport.AttestationVerdictRequest{DeviceID: "dev-1", Limit: 50, Offset: 100}
 	assert.Equal(t, req, AttestationVerdictRequestFromProto(AttestationVerdictRequestToProto(req)))
 }
 

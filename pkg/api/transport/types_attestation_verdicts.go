@@ -44,12 +44,19 @@ type AttestationVerdictServicer interface {
 // AttestationVerdict is one re-attestation verdict.
 type AttestationVerdict = continuous.Verdict
 
-// AttestationVerdictRequest names the device of a verdict verb.
+// AttestationVerdictRequest names the device of a verdict verb. Limit and
+// Offset page ListAttestationVerdicts: a zero Limit asks for the default
+// page (continuous.DefaultVerdictPageSize) and a Limit above
+// continuous.MaxVerdictPageSize is capped to it. The other verbs ignore them.
 type AttestationVerdictRequest struct {
 	DeviceID string `json:"device_id"`
+	Limit    int32  `json:"limit,omitempty"`
+	Offset   int32  `json:"offset,omitempty"`
 }
 
-// ListAttestationVerdictsResponse carries a device's verdicts, oldest first.
+// ListAttestationVerdictsResponse carries one page of a device's verdicts,
+// oldest first, and the number of verdicts in the whole history.
 type ListAttestationVerdictsResponse struct {
 	Verdicts []AttestationVerdict `json:"verdicts"`
+	Total    int32                `json:"total"`
 }

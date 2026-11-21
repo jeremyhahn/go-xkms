@@ -16,6 +16,7 @@ package xkms
 import (
 	"context"
 	"errors"
+	"math"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
@@ -97,17 +98,19 @@ func (e *VerdictPermissionError) Error() string {
 // Unwrap returns the authorizer's refusal.
 func (e *VerdictPermissionError) Unwrap() error { return e.Err }
 
-// ListAttestationVerdicts returns the device's verdicts, oldest first.
+// ListAttestationVerdicts returns one page of the device's verdicts, oldest
+// first, from req.Offset and at most req.Limit long (see
+// continuous.Store.ListVerdictsPage), with the history's total.
 func (s *XKMSService) ListAttestationVerdicts(ctx context.Context, req *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
 	ca, tenant, deviceID, err := s.verdictSubsystem(ctx, auth.ActionList, req)
 	if err != nil {
 		return nil, err
 	}
-	verdicts, err := ca.store.ListVerdicts(ctx, tenant, deviceID)
+	page, err := ca.store.ListVerdictsPage(ctx, tenant, deviceID, int(req.Offset), int(req.Limit))
 	if err != nil {
 		return nil, err
 	}
-	return &transport.ListAttestationVerdictsResponse{Verdicts: verdicts}, nil
+	return &transport.ListAttestationVerdictsResponse{Verdicts: page.Verdicts, Total: int32(min(page.Total, math.MaxInt32))}, nil
 }
 
 // GetLatestAttestationVerdict returns the device's newest verdict, or a

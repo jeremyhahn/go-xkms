@@ -24837,9 +24837,14 @@ func (x *SigningKeyResolution) GetDefault() bool {
 
 // AttestationVerdictRequest names the device of a verdict verb. The tenant
 // is always the caller's.
+// limit and offset page ListAttestationVerdicts: 0 asks for the default
+// page of 100 and a limit above 500 is capped to 500. The other verbs
+// ignore them.
 type AttestationVerdictRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DeviceId      string                 `protobuf:"bytes,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -24879,6 +24884,20 @@ func (x *AttestationVerdictRequest) GetDeviceId() string {
 		return x.DeviceId
 	}
 	return ""
+}
+
+func (x *AttestationVerdictRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *AttestationVerdictRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
 }
 
 // AppraisalCheck is one check of an appraisal.
@@ -25130,10 +25149,12 @@ func (x *AttestationVerdict) GetCause() string {
 	return ""
 }
 
-// ListAttestationVerdictsResponse carries a device's verdicts, oldest first.
+// ListAttestationVerdictsResponse carries one page of a device's verdicts,
+// oldest first; total counts the whole history.
 type ListAttestationVerdictsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Verdicts      []*AttestationVerdict  `protobuf:"bytes,1,rep,name=verdicts,proto3" json:"verdicts,omitempty"`
+	Total         int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -25173,6 +25194,13 @@ func (x *ListAttestationVerdictsResponse) GetVerdicts() []*AttestationVerdict {
 		return x.Verdicts
 	}
 	return nil
+}
+
+func (x *ListAttestationVerdictsResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
 }
 
 // BeginRegistrationRequest begins a WebAuthn registration ceremony.
@@ -29338,9 +29366,11 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"repository\x12\x15\n" +
 	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x03 \x01(\tR\abackend\x12\x18\n" +
-	"\adefault\x18\x04 \x01(\bR\adefault\"8\n" +
+	"\adefault\x18\x04 \x01(\bR\adefault\"f\n" +
 	"\x19AttestationVerdictRequest\x12\x1b\n" +
-	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\"V\n" +
+	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x03 \x01(\x05R\x06offset\"V\n" +
 	"\x0eAppraisalCheck\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aoutcome\x18\x02 \x01(\tR\aoutcome\x12\x16\n" +
@@ -29361,9 +29391,10 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x06result\x18\x03 \x01(\v2\x1a.xkms.v1.AttestationResultR\x06result\x12\x1a\n" +
 	"\bverified\x18\x04 \x01(\bR\bverified\x12*\n" +
 	"\x02at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x14\n" +
-	"\x05cause\x18\x06 \x01(\tR\x05cause\"Z\n" +
+	"\x05cause\x18\x06 \x01(\tR\x05cause\"p\n" +
 	"\x1fListAttestationVerdictsResponse\x127\n" +
-	"\bverdicts\x18\x01 \x03(\v2\x1b.xkms.v1.AttestationVerdictR\bverdicts\"S\n" +
+	"\bverdicts\x18\x01 \x03(\v2\x1b.xkms.v1.AttestationVerdictR\bverdicts\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\"S\n" +
 	"\x18BeginRegistrationRequest\x12\x14\n" +
 	"\x05email\x18\x01 \x01(\tR\x05email\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\"]\n" +

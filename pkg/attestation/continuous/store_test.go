@@ -115,6 +115,67 @@ func TestStore_LatestAndList(t *testing.T) {
 	}
 }
 
+// TestStore_ListVerdictsPage pages a device's history oldest first, caps the
+// page at MaxVerdictPageSize and refuses a negative offset or limit.
+func TestStore_ListVerdictsPage(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 12, 1, 0, 0, 0, time.UTC)
+	const n = MaxVerdictPageSize + 7
+	for i := range n {
+		v := Verdict{Tenant: "acme", DeviceID: "dev-1", Verified: true, At: at.Add(time.Duration(i) * time.Second)}
+		if err := store.SaveVerdict(ctx, v); err != nil {
+			t.Fatalf("SaveVerdict %d: %v", i, err)
+		}
+	}
+
+	def, err := store.ListVerdictsPage(ctx, "acme", "dev-1", 0, 0)
+	if err != nil {
+		t.Fatalf("default page: %v", err)
+	}
+	if len(def.Verdicts) != DefaultVerdictPageSize || def.Total != n || !def.Verdicts[0].At.Equal(at) {
+		t.Fatalf("default page: %d verdicts, total %d, first %v", len(def.Verdicts), def.Total, def.Verdicts[0].At)
+	}
+
+	capped, err := store.ListVerdictsPage(ctx, "acme", "dev-1", 0, n*2)
+	if err != nil {
+		t.Fatalf("capped page: %v", err)
+	}
+	if len(capped.Verdicts) != MaxVerdictPageSize {
+		t.Fatalf("capped page: %d verdicts, want %d", len(capped.Verdicts), MaxVerdictPageSize)
+	}
+
+	var seen int
+	for offset := 0; offset < n; offset += 200 {
+		page, err := store.ListVerdictsPage(ctx, "acme", "dev-1", offset, 200)
+		if err != nil {
+			t.Fatalf("page at %d: %v", offset, err)
+		}
+		for j, v := range page.Verdicts {
+			if want := at.Add(time.Duration(offset+j) * time.Second); !v.At.Equal(want) {
+				t.Fatalf("page at %d item %d at %v, want %v", offset, j, v.At, want)
+			}
+		}
+		seen += len(page.Verdicts)
+	}
+	if seen != n {
+		t.Fatalf("paged %d verdicts, want %d", seen, n)
+	}
+
+	past, err := store.ListVerdictsPage(ctx, "acme", "dev-1", n, 10)
+	if err != nil || len(past.Verdicts) != 0 || past.Total != n {
+		t.Fatalf("past the end: %+v, %v", past, err)
+	}
+
+	var inputErr *InputError
+	if _, err := store.ListVerdictsPage(ctx, "acme", "dev-1", -1, 10); !errors.As(err, &inputErr) || inputErr.Field != "offset" {
+		t.Fatalf("negative offset: %v, want InputError on offset", err)
+	}
+	if _, err := store.ListVerdictsPage(ctx, "acme", "dev-1", 0, -1); !errors.As(err, &inputErr) || inputErr.Field != "limit" {
+		t.Fatalf("negative limit: %v, want InputError on limit", err)
+	}
+}
+
 // scanGuardKV is the backing store of a test that must not walk a
 // collection: once armed, every Scan or List through it fails the test. It
 // embeds the memory store so the index, atomic and batch capabilities the

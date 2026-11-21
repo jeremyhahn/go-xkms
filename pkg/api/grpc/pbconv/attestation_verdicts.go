@@ -27,7 +27,7 @@ func AttestationVerdictRequestToProto(r *transport.AttestationVerdictRequest) *p
 	if r == nil {
 		return nil
 	}
-	return &pb.AttestationVerdictRequest{DeviceId: r.DeviceID}
+	return &pb.AttestationVerdictRequest{DeviceId: r.DeviceID, Limit: r.Limit, Offset: r.Offset}
 }
 
 // AttestationVerdictRequestFromProto converts a proto verdict request to its
@@ -36,7 +36,7 @@ func AttestationVerdictRequestFromProto(r *pb.AttestationVerdictRequest) *transp
 	if r == nil {
 		return nil
 	}
-	return &transport.AttestationVerdictRequest{DeviceID: r.GetDeviceId()}
+	return &transport.AttestationVerdictRequest{DeviceID: r.GetDeviceId(), Limit: r.GetLimit(), Offset: r.GetOffset()}
 }
 
 // attestationResultToProto converts an appraisal result to its proto form;
@@ -123,7 +123,7 @@ func ListAttestationVerdictsResponseToProto(r *transport.ListAttestationVerdicts
 	if r == nil {
 		return nil
 	}
-	out := &pb.ListAttestationVerdictsResponse{Verdicts: make([]*pb.AttestationVerdict, 0, len(r.Verdicts))}
+	out := &pb.ListAttestationVerdictsResponse{Verdicts: make([]*pb.AttestationVerdict, 0, len(r.Verdicts)), Total: r.Total}
 	for i := range r.Verdicts {
 		out.Verdicts = append(out.Verdicts, AttestationVerdictToProto(&r.Verdicts[i]))
 	}
@@ -137,7 +137,7 @@ func ListAttestationVerdictsResponseFromProto(r *pb.ListAttestationVerdictsRespo
 	if r == nil {
 		return nil
 	}
-	out := &transport.ListAttestationVerdictsResponse{Verdicts: make([]transport.AttestationVerdict, 0, len(r.GetVerdicts()))}
+	out := &transport.ListAttestationVerdictsResponse{Verdicts: make([]transport.AttestationVerdict, 0, len(r.GetVerdicts())), Total: r.GetTotal()}
 	for _, v := range r.GetVerdicts() {
 		out.Verdicts = append(out.Verdicts, *AttestationVerdictFromProto(v))
 	}

@@ -4634,8 +4634,13 @@ message SigningKeyResolution {
 
 // AttestationVerdictRequest names the device of a verdict verb. The tenant
 // is always the caller's.
+// limit and offset page ListAttestationVerdicts: 0 asks for the default
+// page of 100 and a limit above 500 is capped to 500. The other verbs
+// ignore them.
 message AttestationVerdictRequest {
   string device_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
 }
 
 // AppraisalCheck is one check of an appraisal.
@@ -4669,9 +4674,11 @@ message AttestationVerdict {
   string cause = 6;
 }
 
-// ListAttestationVerdictsResponse carries a device's verdicts, oldest first.
+// ListAttestationVerdictsResponse carries one page of a device's verdicts,
+// oldest first; total counts the whole history.
 message ListAttestationVerdictsResponse {
   repeated AttestationVerdict verdicts = 1;
+  int32 total = 2;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================

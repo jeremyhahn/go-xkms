@@ -92,7 +92,7 @@ the device. Without a verdict store wired, each returns `ErrNotConfigured`.
 
 | Capability | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
 |---|---|---|---|---|---|---|
-| List a device's verdicts | `GET /api/v1/attestation/verdicts?device=` | `ListAttestationVerdicts` | not yet | `attestation.verdict.list` | `ListAttestationVerdicts` | `attestation_verdicts:list` |
+| List a page of a device's verdicts (`limit` default 100, capped at 500; `offset`; response `total`) | `GET /api/v1/attestation/verdicts?device=&limit=&offset=` | `ListAttestationVerdicts` | not yet | `attestation.verdict.list` | `ListAttestationVerdicts` | `attestation_verdicts:list` |
 | Read the newest verdict | `GET /api/v1/attestation/verdicts/latest?device=` | `GetLatestAttestationVerdict` | not yet | `attestation.verdict.latest` | `GetLatestAttestationVerdict` | `attestation_verdicts:get` |
 | Re-attest now | `POST /api/v1/attestation/verdicts` with `{"device_id": ...}` | `ReattestDevice` | not yet | `attestation.verdict.reattest` | `ReattestDevice` | `attestation_verdicts:create` |
 
