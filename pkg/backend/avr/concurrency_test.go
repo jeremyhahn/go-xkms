@@ -214,6 +214,98 @@ func TestRequestTimeoutBoundsTheDeviceRead(t *testing.T) {
 		"the read ran to the SDK's own deadline: Config.RequestTimeout never reached the device")
 }
 
+// TestLateReplyIsNotHandedToTheNextCaller pins the reply routing a timed-out
+// call leaves behind. The device answers the first request only after the
+// caller's deadline has passed, so that reply is still on the wire when the
+// next caller, asking a different command, takes the link. The next caller
+// must get its own reply: never the stale one, and never an error because the
+// stale one was in the way.
+func TestLateReplyIsNotHandedToTheNextCaller(t *testing.T) {
+	inner := secureElementLink().
+		answer(tfw.CmdSysInfo, sysInfoPayload(90*time.Second, 512, tfw.ResetPowerOn)).
+		answer(tfw.CmdProvInfo, provInfoPayload(bytes.Repeat([]byte{0x11}, 9), true, true))
+	link := &lateReplyLink{inner: inner}
+
+	b, err := NewBackend(context.Background(), testConfig(), tfw.New(link, tfw.WithTimeout(linkTimeout)))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+
+	link.holdNextReply()
+	_, err = b.Health(context.Background())
+	require.Error(t, err, "a reply that arrived after the deadline was accepted")
+
+	for round := 0; round < 3; round++ {
+		identity, err := b.Identity(context.Background())
+		require.NoError(t, err, "the next caller was answered with the timed-out caller's reply")
+		require.True(t, identity.DataLocked)
+
+		health, err := b.Health(context.Background())
+		require.NoError(t, err, "a caller was answered with a stale reply")
+		require.EqualValues(t, 512, health.FreeRAM)
+	}
+}
+
+// lateReplyLink wraps fakeLink with a device that can answer one request late:
+// its reply reaches the wire only when the host writes its next request.
+type lateReplyLink struct {
+	mu       sync.Mutex
+	inner    *fakeLink
+	hold     bool
+	pending  []byte
+	deadline time.Time
+}
+
+func (l *lateReplyLink) holdNextReply() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.hold = true
+}
+
+func (l *lateReplyLink) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.pending != nil {
+		l.inner.rx.Write(l.pending)
+		l.pending = nil
+	}
+	if !l.hold {
+		return l.inner.Write(p)
+	}
+	l.hold = false
+	before := l.inner.rx.Len()
+	n, err := l.inner.Write(p)
+	if err != nil {
+		return n, err
+	}
+	l.pending = append([]byte(nil), l.inner.rx.Bytes()[before:]...)
+	l.inner.rx.Truncate(before)
+	return n, nil
+}
+
+func (l *lateReplyLink) SetReadDeadline(deadline time.Time) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.deadline = deadline
+	return nil
+}
+
+func (l *lateReplyLink) Read(p []byte) (int, error) {
+	l.mu.Lock()
+	if l.inner.rx.Len() > 0 {
+		defer l.mu.Unlock()
+		return l.inner.rx.Read(p)
+	}
+	deadline := l.deadline
+	l.mu.Unlock()
+	if deadline.IsZero() {
+		return 0, io.EOF
+	}
+	if wait := time.Until(deadline); wait > 0 {
+		time.Sleep(wait)
+	}
+	return 0, errReadDeadline
+}
+
 // stallingLink answers one command and then goes quiet, blocking each read
 // until the deadline the SDK sets on it -- which is what a serial port does,
 // and what makes the device's own timeout, rather than the caller's context,
