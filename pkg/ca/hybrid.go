@@ -90,8 +90,9 @@ func (e *HybridVerificationError) Error() string {
 //   - tenantID: The tenant a leaf certificate is issued to. A leaf template
 //     (IsCA false) is stamped with it as Subject-OU[0] through StampTenant,
 //     replacing any OU the template names; an empty tenant on a leaf is
-//     refused with ErrTenantRequired. A CA template keeps its subject (CA
-//     hierarchy certificates are exempt) and may pass an empty tenant.
+//     refused with ErrTenantRequired. A CA template for a tenant is stamped
+//     the same way (ruling 1073 (a)); a CA template with an empty tenant is
+//     the system root or an intermediate and keeps its subject.
 //   - template: The certificate template (never modified)
 //   - parent: The issuer certificate (for self-signed, pass template)
 //   - classicalKey: The classical signing key (ECDSA, RSA, or Ed25519)
@@ -143,8 +144,10 @@ func CreateHybridCertificate(
 	workingTemplate.ExtraExtensions = make([]pkix.Extension, len(template.ExtraExtensions), len(template.ExtraExtensions)+3)
 	copy(workingTemplate.ExtraExtensions, template.ExtraExtensions)
 
-	// A leaf names its tenant as Subject-OU[0]; CA certificates are exempt.
-	if !workingTemplate.IsCA {
+	// A leaf or tenant CA names its tenant as Subject-OU[0]; the system
+	// hierarchy (a CA template with no tenant) is exempt (ruling 1073 (a)).
+	kind := OwnerOUKindFor("", workingTemplate.IsCA, tenantID)
+	if !kind.Exempt() {
 		subject, raw, err := StampTenant(tenantID, workingTemplate.Subject, workingTemplate.RawSubject)
 		if err != nil {
 			return nil, &HybridCertError{Op: "create", Err: err}
@@ -156,6 +159,9 @@ func CreateHybridCertificate(
 			stampedParent := *template
 			stampedParent.Subject, stampedParent.RawSubject = subject, raw
 			parent = &stampedParent
+		}
+		if err := CheckOwnerOU(kind, tenantID, subject); err != nil {
+			return nil, &HybridCertError{Op: "create", Err: err}
 		}
 	}
 
