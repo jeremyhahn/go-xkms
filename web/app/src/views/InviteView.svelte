@@ -13,7 +13,7 @@
        svelte-auth CredentialProvider; there is no second WebAuthn path.
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
   import { isNetworkFailure, isUserDeclined, setAuthenticated } from "@go-xkms/svelte-auth";
   import type { InviteInfo } from "@go-xkms/sdk";
   import { getSDKClient } from "$stores/sdkClient.ts";
@@ -49,26 +49,47 @@
     return e instanceof Error && e.message ? e.message : fallback;
   }
 
-  onMount(() => {
-    void load();
+  interface Target {
+    readonly tenant: string;
+    readonly token: string;
+  }
+
+  // App.svelte reuses this view between invite hashes, so every tenant/token
+  // change reloads it. Each load takes a sequence number; a response for a
+  // superseded target is discarded.
+  let seq = 0;
+
+  $effect(() => {
+    const target: Target = Object.freeze({ tenant, token });
+    untrack(() => void load(target));
   });
 
-  async function load(): Promise<void> {
+  async function load(target: Target): Promise<void> {
+    const id = ++seq;
+    const current = (): boolean => id === seq;
+    stage = "loading";
+    invite = null;
+    errorMessage = "";
     try {
       const caps = await client.capabilities.get();
+      if (!current()) return;
       if (!caps.webauthn_enabled) {
         stage = "disabled";
         return;
       }
     } catch (e: unknown) {
+      if (!current()) return;
       errorMessage = describe(e, "Could not read the server capabilities.");
       stage = "error";
       return;
     }
     try {
-      invite = await client.invites.get(tenant, token);
+      const got = await client.invites.get(target.tenant, target.token);
+      if (!current()) return;
+      invite = got;
       stage = "ready";
     } catch (e: unknown) {
+      if (!current()) return;
       if (statusOf(e) === 404) {
         stage = "unusable";
         return;
@@ -80,13 +101,21 @@
 
   async function register(): Promise<void> {
     if (stage === "ceremony") return;
+    // One immutable target for the whole ceremony: begin, finish and the
+    // follow-up sign-in all use the invite this ceremony started on, even if
+    // the route moves to another invite meanwhile.
+    const target: Target = Object.freeze({ tenant, token });
+    const email = invite?.email;
+    const id = seq;
+    const current = (): boolean => id === seq;
     stage = "ceremony";
     errorMessage = "";
     try {
-      const begin = await client.invites.beginRegistration(tenant, token);
+      const begin = await client.invites.beginRegistration(target.tenant, target.token);
       const credential = await provider.createCredential(begin.options);
-      await client.invites.finishRegistration(tenant, token, begin.sessionId, credential);
+      await client.invites.finishRegistration(target.tenant, target.token, begin.sessionId, credential);
     } catch (e: unknown) {
+      if (!current()) return;
       if (statusOf(e) === 404) {
         stage = "unusable";
         return;
@@ -96,9 +125,7 @@
       return;
     }
     try {
-      const login = await client.auth.webAuthnBeginLogin(
-        invite?.email ? { email: invite.email } : undefined,
-      );
+      const login = await client.auth.webAuthnBeginLogin(email ? { email } : undefined);
       const assertion = await provider.getAssertion(login.options);
       const resp = await client.auth.webAuthnFinishLogin(login.sessionId, assertion);
       setAuthenticated({ access_token: resp.token, refresh_token: resp.refresh_token });
