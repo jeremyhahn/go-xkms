@@ -934,6 +934,10 @@ jobs:
           JOB_TOKEN: ${{ github.token }}
           LIMIT: ${{ env.HOSTED_JOBS_PER_REPO }}
           GRACE: ${{ env.HOSTED_QUEUE_GRACE_SECONDS }}
+          # true on a pull request from a fork: it never overflows to the
+          # self-hosted pools (Codex #2323 P1). Anything but "false" is read
+          # as a fork, so a missing value stays hosted.
+          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -uo pipefail
           HOSTED='"ubuntu-latest"'
@@ -950,6 +954,11 @@ jobs:
           }
           if [ "$SERVER" != https://github.com ]; then
             echo "not github.com: each job keeps its forge label (bigdisk, ci-gate); no selection"
+            emit "$HOSTED" "$HOSTED"
+            exit 0
+          fi
+          if [ "${FORK_PR:-}" != false ]; then
+            echo "pull request from a fork (FORK_PR='${FORK_PR:-}'): hosted only, no overflow to the self-hosted pools"
             emit "$HOSTED" "$HOSTED"
             exit 0
           fi
@@ -1243,7 +1252,7 @@ jobs:
     # requests share the self-hosted bigdisk-docker pool (the devcontainer
     # image build and its cached layers need the bigdisk volume); fork pull
     # requests run on ubuntu-latest.
-    runs-on: ${{ (((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     # v1.30: only on the guard's `run` (not `refused`, not `proven`). It keeps
