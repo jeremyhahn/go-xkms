@@ -81,10 +81,19 @@ type VerifierOption func(*Verifier)
 // roots as fallback trust anchors; pass nil if no embedded roots are needed.
 // A Verifier without a trust store refuses every purpose-pooled check with
 // ErrNilTrustStore.
-func WithTrustStore(store truststore.TrustStore, embeddedLoader EmbeddedRootsLoader) VerifierOption {
+func WithTrustStore(store truststore.PurposeLister, embeddedLoader EmbeddedRootsLoader) VerifierOption {
 	return func(v *Verifier) {
 		v.store = store
 		v.embeddedLoader = embeddedLoader
+	}
+}
+
+// WithChainPurpose makes VerifyChain and VerifyChainAnchored also anchor at
+// the trust store's roots of purpose, read on each verification. It needs
+// WithTrustStore; without a store it adds nothing.
+func WithChainPurpose(purpose truststore.CertPurpose) VerifierOption {
+	return func(v *Verifier) {
+		v.chainPurpose = purpose
 	}
 }
 

@@ -91,6 +91,36 @@ func TestTrustRoot_RoundTripsThroughTheDAO(t *testing.T) {
 	assert.ErrorIs(t, err, truststore.ErrCertificateNotFound)
 }
 
+// TestTrustRoot_ImportSourceCannotForgeATombstone proves a caller-supplied
+// source equal to the old tombstone marker leaves the root manageable: it is
+// read, quarantined and removed through the normal verbs, and once removed it
+// no longer anchors anything.
+func TestTrustRoot_ImportSourceCannotForgeATombstone(t *testing.T) {
+	svc := newTrustRootService(t)
+	ctx := systemCtx()
+	resp, err := svc.TrustRootImport(ctx, &transport.TrustRootImportRequest{
+		PEM: trustRootPEM(t), Purpose: string(truststore.PurposeUserCA), Source: "config-removed",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, resp.Added)
+	list, err := svc.TrustRootList(ctx, &transport.TrustRootListRequest{})
+	require.NoError(t, err)
+	require.Len(t, list.Roots, 1, "the imported root is listed")
+	fp := list.Roots[0].Fingerprint
+
+	root, err := svc.TrustRootGet(ctx, &transport.TrustRootRequest{Fingerprint: fp})
+	require.NoError(t, err, "get must find the imported root")
+	assert.Equal(t, "config-removed", root.Source)
+	_, err = svc.TrustRootQuarantine(ctx, &transport.TrustRootRequest{Fingerprint: fp})
+	require.NoError(t, err, "quarantine must reach the imported root")
+	require.NoError(t, svc.TrustRootRemove(ctx, &transport.TrustRootRequest{Fingerprint: fp}))
+	_, err = svc.TrustRootGet(ctx, &transport.TrustRootRequest{Fingerprint: fp})
+	assert.ErrorIs(t, err, truststore.ErrCertificateNotFound)
+	list, err = svc.TrustRootList(ctx, &transport.TrustRootListRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, list.Roots, "a removed root is not listed")
+}
+
 // TestTrustRoot_DuplicateImportKeepsItsPurpose proves re-importing a held
 // certificate is skipped rather than reclassified.
 func TestTrustRoot_DuplicateImportKeepsItsPurpose(t *testing.T) {

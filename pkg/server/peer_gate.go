@@ -14,12 +14,15 @@
 package server
 
 import (
+	"context"
+	"crypto/x509"
 	"slices"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -56,7 +59,11 @@ func (s *Server) attestedCallerNodeOptions() ([]qrdbnode.NodeOption, error) {
 	}
 	policy := *s.attestedCallerPolicy
 	policy.Mode = mode
-	gate, err := peergate.NewGate(peergate.GateConfig{Policy: policy, DAOs: s.peerEvidenceStorage})
+	cfg := peergate.GateConfig{Policy: policy, DAOs: s.peerEvidenceStorage}
+	if policy.Quote.Anchors == nil || (policy.DeviceIdentity != nil && policy.DeviceIdentity.Anchors == nil) {
+		cfg.Anchors = s.attestedCallerAnchorSource()
+	}
+	gate, err := peergate.NewGate(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +71,30 @@ func (s *Server) attestedCallerNodeOptions() ([]qrdbnode.NodeOption, error) {
 	s.logger.Info("attested-caller gate installed",
 		"mode", mode, "gated_permissions", len(policy.Permissions), "max_evidence_age", policy.MaxEvidenceAge)
 	return []qrdbnode.NodeOption{qrdbnode.WithPeerAttestationGate(gate.PeerAttestationGate())}, nil
+}
+
+// attestedCallerAnchorSource is the gate's anchor source for the pools its
+// policy leaves nil: the PurposeIDevIDIssuer roots of the persisted
+// trust-root store (docs/SPEC.md trust-roots), read on every verification,
+// so a root imported, quarantined or removed takes effect on the next peer.
+// The gate is built with the node, before the store opens; until then it
+// answers ErrNoDatastore, which leaves the gate undecided.
+func (s *Server) attestedCallerAnchorSource() peergate.AnchorSource {
+	return func(context.Context) (*x509.CertPool, error) {
+		store := s.peerTrustRoots.Load()
+		if store == nil {
+			return nil, ErrNoDatastore
+		}
+		certs, err := store.CertificatesByPurpose(truststore.PurposeIDevIDIssuer)
+		if err != nil {
+			return nil, err
+		}
+		pool := x509.NewCertPool()
+		for _, cert := range certs {
+			pool.AddCert(cert)
+		}
+		return pool, nil
+	}
 }
 
 // peerEvidenceStorage is the gate's DAO resolver: ErrNoDatastore until

@@ -56,7 +56,17 @@ type VerifierConfig struct {
 	// checked. Only absence is admitted: stored evidence is verified as
 	// always and a peer whose quote fails is refused.
 	AdmitUnattested bool
+
+	// Anchors, when set, supplies the roots for every anchor pool the
+	// policy leaves nil (Policy.Anchors, DeviceIdentity.Anchors). It is
+	// consulted on each verification, so a root withdrawn from it refuses
+	// the next peer; an error from it leaves the verifier undecided.
+	Anchors AnchorSource
 }
+
+// AnchorSource returns the current trust anchors, e.g. a persisted
+// trust-root store's roots of one purpose.
+type AnchorSource func(ctx context.Context) (*x509.CertPool, error)
 
 // Verifier is go-xkms's go-qrdb PeerAttestationVerifier: it judges the
 // evidence the Collector stored for the peer on a gated connection.
@@ -67,6 +77,11 @@ type Verifier struct {
 	engine          peer.Verifier
 	admitUnattested bool
 	now             func() time.Time
+
+	// anchors fills the pools the configuration left nil, per verification.
+	anchors      AnchorSource
+	quoteAnchors bool
+	deviceAnchor bool
 }
 
 // Compile-time check that Verifier satisfies go-qrdb's attested-caller seam.
@@ -79,6 +94,17 @@ var _ qrdbsdk.PeerAttestationVerifier = (*Verifier)(nil)
 func NewVerifier(cfg VerifierConfig, opts ...Option) (*Verifier, error) {
 	if cfg.Store == nil {
 		return nil, &ConfigError{Field: "Store", Reason: "an evidence store is required"}
+	}
+	quoteFromSource := cfg.Policy.Anchors == nil && cfg.Anchors != nil
+	deviceFromSource := cfg.DeviceIdentity != nil && cfg.DeviceIdentity.Anchors == nil && cfg.Anchors != nil
+	if quoteFromSource {
+		// The policy probe below needs a pool; the source fills it per call.
+		cfg.Policy.Anchors = x509.NewCertPool()
+	}
+	if deviceFromSource {
+		device := *cfg.DeviceIdentity
+		device.Anchors = x509.NewCertPool()
+		cfg.DeviceIdentity = &device
 	}
 	if cfg.Policy.Anchors == nil {
 		return nil, &ConfigError{Field: "Policy.Anchors", Reason: "no attestation key anchors; no quote could ever verify"}
@@ -108,6 +134,9 @@ func NewVerifier(cfg VerifierConfig, opts ...Option) (*Verifier, error) {
 		engine:          engine,
 		admitUnattested: cfg.AdmitUnattested,
 		now:             settings.now,
+		anchors:         cfg.Anchors,
+		quoteAnchors:    quoteFromSource,
+		deviceAnchor:    deviceFromSource,
 	}
 	if cfg.DeviceIdentity != nil {
 		device := *cfg.DeviceIdentity
@@ -201,6 +230,24 @@ func (v *Verifier) VerifyPeer(ctx context.Context, attested qrdbsdk.AttestedPeer
 	}
 
 	policy := v.policy
+	device := v.device
+	if v.quoteAnchors || v.deviceAnchor {
+		pool, err := v.anchors(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if v.quoteAnchors {
+			policy.Anchors = pool
+		}
+		if v.deviceAnchor {
+			current := *v.device
+			current.Anchors = pool
+			device = &current
+		}
+	}
 	policy.ChannelBinding = record.ChannelBinding
 	verdict, err := v.engine.Verify(ctx, record.Evidence, policy)
 	if err != nil {
@@ -210,8 +257,8 @@ func (v *Verifier) VerifyPeer(ctx context.Context, attested qrdbsdk.AttestedPeer
 	if !verdict.Passed {
 		j.fail(verdict.Failure, verdict.Reason)
 	}
-	if v.device != nil {
-		if err := v.checkDevice(ctx, attested.Certificate, record.Evidence.AKCertificatePEM, j); err != nil {
+	if device != nil {
+		if err := checkDevice(ctx, *device, attested.Certificate, record.Evidence.AKCertificatePEM, j); err != nil {
 			return nil, err
 		}
 	}
@@ -233,8 +280,8 @@ func (v *Verifier) VerifyPeer(ctx context.Context, attested qrdbsdk.AttestedPeer
 // an absence; two well-formed credentials naming different TPMs is the relay
 // this check exists for, and is cryptographic. It returns an error only when
 // the device policy cannot be evaluated or the context is done.
-func (v *Verifier) checkDevice(ctx context.Context, connection *x509.Certificate, akPEM []byte, j *judgment) error {
-	if err := peer.VerifyIDevID(ctx, connection, *v.device); err != nil {
+func checkDevice(ctx context.Context, device peer.DevIDPolicy, connection *x509.Certificate, akPEM []byte, j *judgment) error {
+	if err := peer.VerifyIDevID(ctx, connection, device); err != nil {
 		var credential *peer.DevIDError
 		if !errors.As(err, &credential) {
 			return err

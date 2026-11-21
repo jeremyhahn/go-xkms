@@ -1,0 +1,2 @@
+- **Trust-root removal holds for every config root.** An imported root whose source reads like a removal marker stays readable, quarantinable and removable. A root an operator imported before the attestation config listed it stays removed across a restart.
+- **A quarantine or removal made on another server while the config adopts a root is no longer undone.**

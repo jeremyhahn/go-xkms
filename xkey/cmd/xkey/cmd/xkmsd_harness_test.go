@@ -152,7 +152,7 @@ func startTestXKMSd(t *testing.T) (address string, cleanup func()) {
 
 // startTestXKMSdService is startTestXKMSd over a caller-built service, for a
 // test that wires a subsystem into it first.
-func startTestXKMSdService(t *testing.T, svc *pkgxkms.XKMSService) (address string, cleanup func()) {
+func startTestXKMSdService(t *testing.T, svc *pkgxkms.XKMSService, extra ...grpc.UnaryServerInterceptor) (address string, cleanup func()) {
 	t.Helper()
 
 	serverTLS := newTestXKMSdTLS(t)
@@ -160,8 +160,10 @@ func startTestXKMSdService(t *testing.T, svc *pkgxkms.XKMSService) (address stri
 	srv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(serverTLS)),
 		grpc.ChainUnaryInterceptor(
-			testOperatorUnaryInterceptor,
-			grpcapi.TenantUnaryInterceptor(nil, logger),
+			append([]grpc.UnaryServerInterceptor{
+				testOperatorUnaryInterceptor,
+				grpcapi.TenantUnaryInterceptor(nil, logger),
+			}, extra...)...,
 		),
 		grpc.ChainStreamInterceptor(
 			testOperatorStreamInterceptor,

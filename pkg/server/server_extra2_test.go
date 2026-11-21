@@ -221,7 +221,7 @@ func TestServer_CloseBackends_EmptyKeyProviders(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -285,7 +285,7 @@ func TestStartNoiseBootstrap_NoBundler(t *testing.T) {
 	cfg.Protocols.Noise = false // we'll call startNoiseBootstrap manually
 	cfg.Server.NoisePort = 0    // unused
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -329,7 +329,7 @@ func TestServer_Start_TLSCABundlerFromFile(t *testing.T) {
 	cfg.TLS.CertFile = certFile
 	cfg.TLS.KeyFile = keyFile
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -357,7 +357,7 @@ func TestServer_Start_TLSCABundlerFromInstance(t *testing.T) {
 	cfg.TLS.CertFile = certFile
 	cfg.TLS.KeyFile = keyFile
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -383,7 +383,7 @@ func TestServer_Shutdown_WithMetricsCollector(t *testing.T) {
 	cfg.Metrics.Enabled = true
 	cfg.Metrics.Path = "/metrics"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	server.SetMetricsListener(newTestMetricsListener(t))
 
@@ -417,7 +417,7 @@ func TestInitializeWebAuthnService_FileBacked(t *testing.T) {
 		RPOrigins:     []string{"https://localhost"},
 	}
 	// qrdbClient is nil (no embedded qrdb) → datastore-backed stores are chosen.
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -466,7 +466,7 @@ func TestInitializeAuthentication_CompositeWebAuthnNoJWT_NoFile(t *testing.T) {
 		// PublicKeyFile deliberately empty
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -520,7 +520,7 @@ func TestServer_Reload_SameLogging_NoOp(t *testing.T) {
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "json"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -722,7 +722,7 @@ func TestInitializeHealth_RegistersChecks(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -908,7 +908,7 @@ func TestInitializeCA_ValidateFails(t *testing.T) {
 	// ca.MultiIdentityCAConfig with empty Identity slice → Validate() returns error.
 	cfg.CA = buildEmptyCAConfig()
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	// Error wraps ErrCAInit (from initializeCA's validate path).
 }
@@ -1563,7 +1563,7 @@ func TestServer_Reload_ChangedLogging(t *testing.T) {
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "json"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -1598,7 +1598,7 @@ func TestInitializeFactorRegistry_AlreadySet(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -1707,7 +1707,7 @@ func TestNew_JWTMissingPublicKeyFails(t *testing.T) {
 		// PublicKeyFile is empty — must fail
 	}
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 }
 
@@ -1722,7 +1722,7 @@ func TestNew_MTLSAuthWithoutTLSFails(t *testing.T) {
 	cfg.Auth.Type = "mtls"
 	cfg.TLS.Enabled = false
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 }
 
@@ -1739,7 +1739,7 @@ func TestServer_Shutdown_WithQRDBNode(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NoError(t, server.Start())
 
@@ -1757,7 +1757,7 @@ func TestServer_WaitForShutdown_UnblocksAfterShutdown(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NoError(t, server.Start())
 
@@ -1905,7 +1905,7 @@ func TestNew_WithCAConfig_Succeeds(t *testing.T) {
 			},
 		},
 	}
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	if err != nil {
 		// Some CA implementations require specific storage; accept failure if it's
 		// not a validate error (we already test validate separately).
@@ -1957,7 +1957,7 @@ func TestNew_WithCAConfig_LiteralKeyPasswordFailsClosed(t *testing.T) {
 		},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err, "a literal CA key password must fail closed, not boot")
 	if server != nil {
 		defer func() { _ = server.Shutdown() }()
@@ -2000,7 +2000,7 @@ func TestNew_InjectsTheNodeTenantService(t *testing.T) {
 	cfg := qrdbBarrierConfig(t)
 	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -2063,7 +2063,7 @@ func TestInitializeBackends_PKCS8Enabled(t *testing.T) {
 		Path:    pkcs8Dir,
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -2127,7 +2127,7 @@ func TestServer_StartMetrics_BindError(t *testing.T) {
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -2318,7 +2318,7 @@ func TestNew_WithBarrierAndPIN(t *testing.T) {
 	cfg.PIN.Enabled = true
 	cfg.PIN.Strategy = "software"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -2336,7 +2336,7 @@ func TestNew_WithCredentialsDefaultStrategy(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	// Credentials.SealStrategy is empty → defaults to "manual"
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 	assert.NotNil(t, server.credentialService)
@@ -2428,7 +2428,7 @@ func TestNew_CompositeAuthNoMethodsDerives(t *testing.T) {
 		Methods: []string{},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 	require.NotNil(t, server.authenticator)
@@ -2448,7 +2448,7 @@ func TestNew_UnknownPINStrategyFails(t *testing.T) {
 	cfg.PIN.Enabled = true
 	cfg.PIN.Strategy = "quantum-resistant" // unknown
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 }
 
@@ -2669,7 +2669,7 @@ func TestStartNoiseBootstrap_WithBundler(t *testing.T) {
 	cfg.Server.NoisePort = 0    // bind on any available port
 	cfg.Server.Host = "127.0.0.1"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 
 	// Set a mock CA bundler so the nil-guard is passed.
@@ -2711,7 +2711,7 @@ func TestStartNoiseBootstrap_TimingsOK(t *testing.T) {
 	cfg.Bootstrap.Noise.WriteTimeout = "5s"
 	cfg.Bootstrap.Noise.MaxConnections = 10
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 
 	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
@@ -2762,7 +2762,7 @@ func TestServer_Shutdown_WithNoiseServer(t *testing.T) {
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 
 	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
@@ -2866,7 +2866,7 @@ func TestNew_BarrierStorageCreateFails(t *testing.T) {
 	cfg.Barrier.PreferenceOrder = []string{"software"}
 	cfg.Datastore.Engine = "badbackend"
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "datastore.engine")
 }
@@ -2913,7 +2913,7 @@ func TestServer_Shutdown_BackendCloseError(t *testing.T) {
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 
 	require.NoError(t, server.Start())
@@ -2947,7 +2947,7 @@ func TestServer_StartREST_NoBackends(t *testing.T) {
 	// A loadable certificate so startREST reaches the NewServer call.
 	cfg.TLS.CertFile, cfg.TLS.KeyFile, _ = createTestTLSFiles(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -3261,7 +3261,7 @@ func TestStart_TLSBundlerFileNotFound(t *testing.T) {
 	cfg.TLS.Enabled = true
 	cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CAFile = createTestTLSFiles(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 
 	// TLS.CAFile disappears after New, so newTLSCABundler fails with a
@@ -3329,7 +3329,7 @@ func TestShutdown_AuditLoggerCloseError(t *testing.T) {
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 
 	// Inject an audit logger whose Close() returns an error.
@@ -3648,7 +3648,7 @@ func TestServer_Reload_ChangedFormat(t *testing.T) {
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "json"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -3683,7 +3683,7 @@ func TestNew_WebAuthnServiceInitFails(t *testing.T) {
 		RPDisplayName: "", // also empty — ensures SetDefaults leaves RPID empty
 	}
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	var svcErr *ErrServiceInit
 	assert.True(t, errors.As(err, &svcErr), "expected ErrServiceInit, got: %v", err)
@@ -3704,7 +3704,7 @@ func TestNew_CredentialServiceInitFails(t *testing.T) {
 	// An invalid SealStrategy makes credentialspkg.New return ErrInvalidStrategy.
 	cfg.Credentials.SealStrategy = "totally-invalid-strategy"
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	var svcErr *ErrServiceInit
 	assert.True(t, errors.As(err, &svcErr), "expected ErrServiceInit, got: %v", err)
@@ -3730,7 +3730,7 @@ func TestBuildTLSConfig_CertFileFallback(t *testing.T) {
 	cfg.TLS.KeyFile = keyFile
 	cfg.TLS.CAFile = caFile
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -3773,7 +3773,7 @@ func TestBuildTLSConfig_ClientAuthVariants(t *testing.T) {
 			cfg.TLS.CAFile = caFile
 			cfg.TLS.ClientAuth = tc.authStr
 
-			server, err := New(cfg)
+			server, err := newServerWithCleanup(t, cfg)
 			require.NoError(t, err)
 			defer func() { _ = server.Shutdown() }()
 
@@ -3804,7 +3804,7 @@ func TestBuildTLSConfig_TLSVersions(t *testing.T) {
 	cfg.TLS.MinVersion = "TLS1.2"
 	cfg.TLS.MaxVersion = "TLS1.3"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -3833,7 +3833,7 @@ func TestBuildTLSConfig_CipherSuites(t *testing.T) {
 	cfg.TLS.CAFile = caFile
 	cfg.TLS.CipherSuites = []string{"TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -4313,7 +4313,7 @@ func TestStartREST_WithCA(t *testing.T) {
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	// The node's Unix socket needs TLS at New; the REST listener started
 	// below does not, and the injected mock CA cannot issue its certificate.
@@ -4529,7 +4529,7 @@ func TestStart_CABundlerInstanceError(t *testing.T) {
 	cfg.TLS.CertFile = certFile
 	cfg.TLS.KeyFile = keyFile
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 

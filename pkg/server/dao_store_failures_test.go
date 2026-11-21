@@ -37,6 +37,15 @@ func TestInitializeKeyVersionStore_DatabaseUnavailable(t *testing.T) {
 	assert.Nil(t, s.keyVersions)
 }
 
+func TestInitializeTrustRootStore_DatabaseUnavailable(t *testing.T) {
+	s := newNoDatabaseServer(t)
+
+	err := s.initializeTrustRootStore()
+	var scopeErr *datastore.ErrDatabaseScope
+	require.ErrorAs(t, err, &scopeErr)
+	assert.Nil(t, s.trustRoots)
+}
+
 func TestInitializePasswordStore_DatabaseUnavailable(t *testing.T) {
 	s := newNoDatabaseServer(t)
 

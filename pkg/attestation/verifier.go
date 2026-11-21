@@ -52,10 +52,14 @@ type Verifier struct {
 
 	// store supplies purpose-scoped trust anchors; nil refuses the
 	// purpose-pooled checks.
-	store truststore.TrustStore
+	store truststore.PurposeLister
 
 	// embeddedLoader supplies compiled-in manufacturer roots per purpose.
 	embeddedLoader EmbeddedRootsLoader
+
+	// chainPurpose, when set with a store, adds the store's roots of that
+	// purpose to the chain anchors, read on every verification.
+	chainPurpose truststore.CertPurpose
 }
 
 // NewVerifier creates a new attestation verifier.
@@ -159,21 +163,51 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) (*Res
 
 // TrustAnchorCount returns the number of trust anchors configured on the
 // verifier. A verifier with zero anchors cannot establish hardware provenance
-// and is rejected by VerifyChainAnchored.
+// and is rejected by VerifyChainAnchored. A store-backed verifier counts the
+// store's roots of its chain purpose as read now (quarantined roots excluded);
+// a store read error counts as zero, so registration fails closed.
 func (v *Verifier) TrustAnchorCount() int {
-	return len(v.trustedRoots)
+	stored, err := v.storeChainRoots()
+	if err != nil {
+		return 0
+	}
+	return len(v.trustedRoots) + len(stored)
 }
 
 // anchors returns the effective trust anchor set: the anchors the verifier was
 // constructed with, plus any supplied per-call through the options.
-func (v *Verifier) anchors(opts *VerifyOptions) []*x509.Certificate {
-	if opts == nil || len(opts.TrustedRoots) == 0 {
-		return v.trustedRoots
+func (v *Verifier) anchors(opts *VerifyOptions) ([]*x509.Certificate, error) {
+	stored, err := v.storeChainRoots()
+	if err != nil {
+		return nil, err
 	}
-	combined := make([]*x509.Certificate, 0, len(v.trustedRoots)+len(opts.TrustedRoots))
+	combined := make([]*x509.Certificate, 0, len(v.trustedRoots)+len(stored))
 	combined = append(combined, v.trustedRoots...)
-	combined = append(combined, opts.TrustedRoots...)
-	return combined
+	combined = append(combined, stored...)
+	if opts != nil {
+		combined = append(combined, opts.TrustedRoots...)
+	}
+	return combined, nil
+}
+
+// storeChainRoots reads the store's roots of the chain purpose. It runs once
+// per verification, so a root quarantined, removed or imported takes effect
+// at the next one. A store that cannot answer refuses the verification with
+// its error (fails closed).
+func (v *Verifier) storeChainRoots() ([]*x509.Certificate, error) {
+	if v.store == nil || v.chainPurpose == "" {
+		return nil, nil
+	}
+	// CertificatesByPurpose only classifies; the quarantine is enforced here,
+	// as BuildTrustPool and DAOStore.Anchors do (docs/SPEC.md trust-roots).
+	if !truststore.IsAnchorPurpose(v.chainPurpose) {
+		return nil, &errs.Wrapped{Msg: "attestation: chain purpose " + string(v.chainPurpose), Err: truststore.ErrNotAnchorPurpose}
+	}
+	roots, err := v.store.CertificatesByPurpose(v.chainPurpose)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "attestation: trust store anchors", Err: err}
+	}
+	return roots, nil
 }
 
 // VerifyChain validates the certificate chain in the attestation statement.
@@ -217,10 +251,26 @@ func (v *Verifier) verifyChain(stmt *AttestationStatement, opts *VerifyOptions) 
 		return nil, err
 	}
 
-	if anchors := v.anchors(opts); len(anchors) > 0 {
+	anchors, err := v.anchors(opts)
+	if err != nil {
+		return nil, err
+	}
+	// A store-backed chain purpose whose last root was quarantined or
+	// removed must not fall back to the structural-only check: that would
+	// let a withdrawn or caller-minted chain verify. Only a verifier built
+	// without any anchor source stays structural-only.
+	if len(anchors) == 0 && v.store != nil && v.chainPurpose != "" {
+		return nil, ErrNoTrustAnchors
+	}
+	return verifyChainOver(stmt, anchors, now)
+}
+
+// verifyChainOver anchors the structurally valid chain at the one anchor
+// snapshot given; with no anchors it is structural-only.
+func verifyChainOver(stmt *AttestationStatement, anchors []*x509.Certificate, now time.Time) ([][]*x509.Certificate, error) {
+	if len(anchors) > 0 {
 		return verifyChainAnchoring(stmt.CertificateChain, anchors, stmt.Format, now)
 	}
-
 	return nil, nil
 }
 
@@ -235,10 +285,28 @@ func (v *Verifier) VerifyChainAnchored(stmt *AttestationStatement, opts *VerifyO
 	if stmt == nil {
 		return ErrNilStatement
 	}
-	if len(v.anchors(opts)) == 0 {
+	// One anchor snapshot serves both the emptiness check and the chain
+	// check: a store that changes between two reads must not turn an
+	// anchored verification into a structural-only one.
+	anchors, err := v.anchors(opts)
+	if err != nil {
+		return err
+	}
+	if len(anchors) == 0 {
 		return ErrNoTrustAnchors
 	}
-	return v.VerifyChain(stmt, opts)
+	if len(stmt.CertificateChain) == 0 {
+		return ErrEmptyCertificateChain
+	}
+	now := time.Now()
+	if opts != nil && opts.CurrentTime != nil {
+		now = time.Unix(*opts.CurrentTime, 0)
+	}
+	if err := verifyChainStructure(stmt.CertificateChain, now); err != nil {
+		return err
+	}
+	_, err = verifyChainOver(stmt, anchors, now)
+	return err
 }
 
 // verifyChainStructure checks that the leaf-first chain is internally
