@@ -1,4 +1,4 @@
-# ci-template: v1.51 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# ci-template: v1.53 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
 # v1.48 (Tenant Agent ruling 1024 item 1; ruling 999: hosted by default): the
 # preflight step `Hosted or overflow runner (ruling 1024)` and its `runner` and
 # `runner_docker` outputs, the top-level HOSTED_JOBS_PER_REPO (12) and
@@ -26,6 +26,8 @@
 #   the template's runner-labels lint step (ruling 633) is NOT taken (above).
 # v1.50 (handbook 52e70fd5, #84; rulings 999/1024): pages() keeps a short list in SHORT as a lower bound, no return 1; elif [ -n "$SHORT" ] stays hosted when no trigger is reached; an overflow notes "(a lower bound: $SHORT)".
 # v1.51 (handbook c4de1f7d, #86): the Runner labels (ruling 633) pull_request_target cases are in a step this file does not take; no job change.
+# v1.52 (handbook 2635447, #91): a fork's pull request runs every job hosted: preflight's runs-on takes the template's fork clause before the variable (go-xkms keeps its ubuntu-latest default when CI_PREFLIGHT_RUNS_ON is unset), and the runner selection step reads EVENT, HEAD_REPO and REPO and outputs the hosted default for a fork's head with a ::notice and no API call; the Runner labels (ruling 633) fork handling is in the step this file does not take.
+# v1.53 (handbook 88c10e76): main's concurrency group is main-{event} (no github.sha), schedule and every other ref unchanged, cancel-in-progress a literal true (ruling 1087); CI Gate runs on !cancelled() off pull_request (a pull request keeps always()); main-green for a tag is a green ci.yml run on the tagged commit (a push run, or a workflow_dispatch on main when later pushes cancelled it); the preflight comment names the Infra Department's CI_PREFLIGHT_RUNS_ON SOP; scripts/ci-mask-lan.sh masks internal host names too; no comment names an internal repository. Item (0), Runner labels accepting code-review.yml's guard jobs on bigdisk, is in the step this file does not take.
 # v1.42 hermetic gate only (owner ruling 742 (1), Tenant Agent ruling 754): the
 # CI Gate's outcome depends only on the tree under test. `make deps-check`,
 # `make security` (gosec, govulncheck, go mod verify, trivy fs) and the trivy
@@ -143,7 +145,7 @@
 # go. Every job, gate, tier and in-toolchain-image.sh v4 is v1.29.4's. A
 # repository adopts v1.29.5 in the one CI-file PR that adopts v1.29.4, with
 # its Makefile's quoting line.
-# v1.29.4 (Company Agent ruling 261(c), 2026-10-30; claude-agents #379
+# v1.29.4 (Company Agent ruling 261(c), 2026-10-30; the factory tooling's issue 379,
 # comment 157032): three changes, and no job, gate or tier change.
 #   - the module fetches of the image build go through Athens first, with the
 #     proxy.golang.org fallback. The toolchain image build and the Lint Gates
@@ -643,8 +645,14 @@ on:
 # `schedule-{repository}`, with no sha, so a repository has one schedule run
 # at a time. It is tested first, so a schedule run never takes a main group.
 # The push, pull_request and workflow_dispatch groups do not change.
+# v1.53 (ruling 1087, supersedes v1.26.2's main group): on main the group is
+# the workflow and the event, `main-{event}`, so a newer main run cancels the
+# older one still queued or in progress, and the newest run validates every
+# merge under it. A schedule run keeps `schedule-{repository}` and a
+# workflow_dispatch run keeps `main-workflow_dispatch`, so neither shares a
+# group with a push run; every other ref keeps github.ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || github.ref == 'refs/heads/main' && format('main-{0}-{1}', github.event_name, github.sha) || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || github.ref == 'refs/heads/main' && format('main-{0}', github.event_name) || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -773,8 +781,15 @@ jobs:
     # this job chooses every later job's runner, so it cannot read the choice.
     # Ruling 999 (Codex #2323 P1): preflight runs hosted by default; a set
     # CI_PREFLIGHT_RUNS_ON moves it for same-repository runs only, so a fork
-    # pull request never reaches a self-hosted pool.
-    runs-on: ${{ github.server_url == 'https://github.com' && vars.CI_PREFLIGHT_RUNS_ON != '' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}
+    # pull request never reaches a self-hosted pool. v1.52: the template's
+    # fork clause comes before the variable, so a fork's head under
+    # pull_request or pull_request_target (a deleted fork included) takes
+    # ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds. v1.53: the Infra
+    # Department sets CI_PREFLIGHT_RUNS_ON to "ubuntu-latest" on every
+    # repository while the bigdisk pool has no online runner for 10 minutes,
+    # and unsets it when the pool is back; go-xkms keeps ubuntu-latest as the
+    # default when it is unset (ruling 999).
+    runs-on: ${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}   # v1.52
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 10       # v1.34: the three jobs had 5 each
@@ -940,15 +955,14 @@ jobs:
         id: runner
         env:
           SERVER: ${{ github.server_url }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
           API: ${{ github.api_url }}/repos/${{ github.repository }}/actions
           RUN_ID: ${{ github.run_id }}
           JOB_TOKEN: ${{ github.token }}
           LIMIT: ${{ env.HOSTED_JOBS_PER_REPO }}
           GRACE: ${{ env.HOSTED_QUEUE_GRACE_SECONDS }}
-          # true on a pull request from a fork: it never overflows to the
-          # self-hosted pools (Codex #2323 P1). Anything but "false" is read
-          # as a fork, so a missing value stays hosted.
-          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -uo pipefail
           HOSTED='"ubuntu-latest"'
@@ -968,11 +982,15 @@ jobs:
             emit "$HOSTED" "$HOSTED"
             exit 0
           fi
-          if [ "${FORK_PR:-}" != false ]; then
-            echo "pull request from a fork (FORK_PR='${FORK_PR:-}'): hosted only, no overflow to the self-hosted pools"
-            emit "$HOSTED" "$HOSTED"
-            exit 0
-          fi
+          # v1.52: a fork's pull request runs every job on GitHub-hosted runners.
+          case "$EVENT" in
+            pull_request|pull_request_target)
+              if [ "$HEAD_REPO" != "$REPO" ]; then
+                echo "::notice::runner selection: this pull request's head repository is not this repository (a fork); every job of this run takes the GitHub-hosted default, ubuntu-latest, and none reaches a self-hosted runner (ci-template v1.52)"
+                emit "$HOSTED" "$HOSTED"
+                exit 0
+              fi ;;
+          esac
           case "$LIMIT:$GRACE" in
             *[!0-9:]*|:*|*:) hosted "HOSTED_JOBS_PER_REPO='$LIMIT' or HOSTED_QUEUE_GRACE_SECONDS='$GRACE' is not a whole number" ;;
           esac
@@ -2856,7 +2874,16 @@ jobs:
     # gate, so `CI / CI Gate (schedule)` posts `skipped` (Gitea 1.27.1 posts a
     # skipped job as `skipped`, not `success`), never a green nightly. Every
     # other verdict, an empty one included, runs it.
-    if: ${{ always() && (github.event_name != 'schedule' || needs.preflight.outputs.verdict != 'busy') }}
+    # v1.53 (Tenant Agent on trusted-firmware #821): with main-{event} a newer
+    # push cancels the older main run, and an always() gate then read the
+    # cancelled needs and failed, so every superseded main commit showed a red
+    # gate. Off pull_request the gate runs on !cancelled(): a cancelled run
+    # posts no gate result (skipped), and a run that is not cancelled still
+    # fails closed on any need that failed. A pull request keeps always(): a
+    # skipped required check counts as passed, so a cancelled PR run must post
+    # a failing gate, never a skip; only an older head of the PR is cancelled
+    # by its group, and the head that merges has its own run.
+    if: ${{ (startsWith(github.event_name, 'pull_request') && always() || !cancelled()) && (github.event_name != 'schedule' || needs.preflight.outputs.verdict != 'busy') }}
     timeout-minutes: 5        # v1.30
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
