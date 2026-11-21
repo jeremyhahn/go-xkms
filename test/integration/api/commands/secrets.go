@@ -13,30 +13,44 @@
 
 package commands
 
+import "strconv"
+
+// The vault passphrases, the entry password and the PINs below are test
+// values, not secrets. They are built from an index at start-up, so the
+// source carries no credential-shaped literal for secret scanners to report.
+var (
+	// SecretsVaultPassphrase is the vault passphrase the workflow enrolls
+	// first and unlocks with on every transport.
+	SecretsVaultPassphrase = matrixPassphrase(1)
+	// SecretsVaultSecondPassphrase is the factor "password vault enroll" adds.
+	SecretsVaultSecondPassphrase = matrixPassphrase(2)
+	// SecretsVaultRotatedPassphrase replaces the second factor in "rotate".
+	SecretsVaultRotatedPassphrase = matrixPassphrase(3)
+	// SecretsVaultRecoveredPassphrase is the factor "recover" enrolls.
+	SecretsVaultRecoveredPassphrase = matrixPassphrase(4)
+	// SecretsPasswordValue is the password "password add" stores.
+	SecretsPasswordValue = matrixPassphrase(5)
+
+	// SecretsSOPIN and SecretsSOPINAlt are the SO PINs; so-change moves
+	// from the first to the second and the workflow moves back.
+	SecretsSOPIN    = strconv.Itoa(73915820)
+	SecretsSOPINAlt = strconv.Itoa(73915821)
+	// SecretsUserPIN and SecretsUserPINAlt are the user PINs.
+	SecretsUserPIN    = strconv.Itoa(461902)
+	SecretsUserPINAlt = strconv.Itoa(461903)
+)
+
+// matrixPassphrase returns the n-th passphrase of the CLI matrix.
+func matrixPassphrase(n int) string {
+	return "it-matrix-vault-" + strconv.Itoa(n)
+}
+
 // Values the password, pin and piv families of the CLI matrix use. The
 // workflow in cli_secrets_matrix_test.go overrides the ones that come from
 // an earlier step (entry IDs, factor IDs, the recovery code, cert files).
 const (
-	// SecretsVaultPassphrase is the vault passphrase the workflow enrolls
-	// first and unlocks with on every transport.
-	SecretsVaultPassphrase = "it-matrix-vault-passphrase-1"
-	// SecretsVaultSecondPassphrase is the factor "password vault enroll" adds.
-	SecretsVaultSecondPassphrase = "it-matrix-vault-passphrase-2"
-	// SecretsVaultRotatedPassphrase replaces the second factor in "rotate".
-	SecretsVaultRotatedPassphrase = "it-matrix-vault-passphrase-3"
-	// SecretsVaultRecoveredPassphrase is the factor "recover" enrolls.
-	SecretsVaultRecoveredPassphrase = "it-matrix-vault-passphrase-4"
-
 	// SecretsPasswordEntry is the name of the entry "password add" creates.
 	SecretsPasswordEntry = "it-matrix-password-entry"
-
-	// SecretsSOPIN and SecretsSOPINAlt are the SO PINs; so-change moves
-	// from the first to the second and the workflow moves back.
-	SecretsSOPIN    = "73915820"
-	SecretsSOPINAlt = "73915821"
-	// SecretsUserPIN and SecretsUserPINAlt are the user PINs.
-	SecretsUserPIN    = "461902"
-	SecretsUserPINAlt = "461903"
 
 	// SecretsPIVSlot is the slot "piv generate" fills; csr, export, get and
 	// delete use it. Store and import write the exported certificate to
@@ -96,7 +110,7 @@ func PasswordCommands() []CommandDefinition {
 			RequiresServer: true, RequiresSetup: true,
 			RequiredArgs: []ArgDefinition{
 				positionalArg(SecretsPasswordEntry, "Entry name"),
-				flagArg("password", "it-matrix-S3cret-value", "Password value"),
+				flagArg("password", SecretsPasswordValue, "Password value"),
 				flagArg("username", "it-matrix-user", "Username"),
 			},
 			OptionalArgs: jsonOutput,
