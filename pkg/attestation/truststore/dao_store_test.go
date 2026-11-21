@@ -188,6 +188,86 @@ func TestDAOStore_SetPurpose_Quarantine(t *testing.T) {
 	assert.Equal(t, PurposeSynced, meta.Purpose)
 }
 
+// withdrawAfterGetDAO runs withdraw once, right after the first Get
+// returns, so another server's withdrawal lands deterministically between
+// the seeding Get and its write.
+type withdrawAfterGetDAO struct {
+	qrdbsdk.GenericDAO[*TrustCertEntity]
+	withdraw func()
+	done     bool
+}
+
+func (w *withdrawAfterGetDAO) Get(ctx context.Context, id uint64) (*TrustCertEntity, error) {
+	e, err := w.GenericDAO.Get(ctx, id)
+	if !w.done {
+		w.done = true
+		w.withdraw()
+	}
+	return e, err
+}
+
+// TestDAOStore_ConfigSeed_ConcurrentWithdrawalSurvives: two servers share
+// one store; while one adopts an operator-installed root as a config root,
+// the other quarantines or deletes it. The withdrawal must survive.
+func TestDAOStore_ConfigSeed_ConcurrentWithdrawalSurvives(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		withdraw func(t *testing.T, other *DAOStore, fp string)
+		check    func(t *testing.T, store *DAOStore, fp string)
+	}{
+		{
+			name: "quarantine",
+			withdraw: func(t *testing.T, other *DAOStore, fp string) {
+				_, err := other.SetPurpose(context.Background(), fp, PurposeSynced)
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, store *DAOStore, fp string) {
+				_, meta, err := store.Get(context.Background(), fp)
+				require.NoError(t, err)
+				assert.Equal(t, PurposeSynced, meta.Purpose)
+			},
+		},
+		{
+			name: "delete",
+			withdraw: func(t *testing.T, other *DAOStore, fp string) {
+				require.NoError(t, other.Delete(context.Background(), fp))
+			},
+			check: func(t *testing.T, store *DAOStore, fp string) {
+				_, _, err := store.Get(context.Background(), fp)
+				require.ErrorIs(t, err, ErrCertificateNotFound)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := storage.NewMemory()
+			t.Cleanup(func() { backend.Close() })
+			kvStore, err := kvadapter.New(backend)
+			require.NoError(t, err)
+			seeder, err := NewDAOStore(dao.NewStoreFactory(kvStore))
+			require.NoError(t, err)
+			other, err := NewDAOStore(dao.NewStoreFactory(kvStore))
+			require.NoError(t, err)
+			ctx := context.Background()
+
+			cert := generateTestCert(t, "Operator CA")
+			fp := Fingerprint(cert)
+			require.NoError(t, other.Add(ctx, cert, purposeOpts(PurposeIDevIDIssuer)))
+
+			seeder.dao = &withdrawAfterGetDAO{
+				GenericDAO: seeder.dao,
+				withdraw:   func() { tc.withdraw(t, other, fp) },
+			}
+			err = seeder.Add(ctx, cert, &AddCertificateOptions{Purpose: PurposeIDevIDIssuer, Source: SourceConfig})
+			require.ErrorIs(t, err, ErrCertificateExists)
+
+			tc.check(t, other, fp)
+			anchors, err := other.Anchors(ctx, PurposeIDevIDIssuer)
+			require.NoError(t, err)
+			assert.Empty(t, anchors)
+		})
+	}
+}
+
 func TestDAOStore_SetPurpose_Errors(t *testing.T) {
 	store := newTestDAOTrustStore(t)
 	ctx := context.Background()
