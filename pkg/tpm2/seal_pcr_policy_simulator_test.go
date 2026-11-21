@@ -217,6 +217,297 @@ func TestSealUnseal_PlatformPolicySRK_PCRBranchesStillFailAfterExtend(t *testing
 	assert.Equal(t, ErrPolicyCheckFailed, err)
 }
 
+// A seal through Seal with the platform policy and a caller PCR selection
+// is bound to the selected PCRs too: extending a selected PCR outside the
+// platform set must close the object (#2226).
+func TestSeal_PlatformPolicy_BindsRequestedPCRSelection(t *testing.T) {
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+
+	// The harness's platform set is {7, 11}; 15 lies outside it.
+	const extraPCR = 15
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, 7, extraPCR)
+	attrsFor := func() *types.KeyAttributes {
+		attrs := sealedKeyAttrsUnder(
+			platformPolicySRKAttrs(t, h, nil), "platform-policy-pcr-selection", nil)
+		attrs.TPMAttributes.PCRSelection = selection
+		return attrs
+	}
+
+	secret := []byte("bound-to-pcr-7-and-15")
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+	require.NoError(t, err)
+
+	// Baseline: the unchanged state opens the object.
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+	require.NoError(t, err, "the sealed state must open the object")
+	require.Equal(t, secret, got)
+
+	h.extendPCR(t, extraPCR, []byte("post-seal-measurement"))
+
+	out, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+	require.Error(t, err, "extending a selected PCR must close the object")
+	assert.Nil(t, out)
+}
+
+// A seal with a recovery PIN over a selection holding a PCR outside the
+// platform set must still open through the PCR branch without the PIN while
+// every selected PCR is unchanged, and refuse once that PCR is extended.
+func TestSealUnseal_PlatformPolicyWithPIN_ExtraPCRBranchOpensWithoutPIN(t *testing.T) {
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+
+	const extraPCR = 15
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, 7, extraPCR)
+	attrsFor := func(password types.Password) *types.KeyAttributes {
+		attrs := sealedKeyAttrsUnder(
+			platformPolicySRKAttrs(t, h, nil), "platform-policy-pin-extra-pcr", password)
+		attrs.TPMAttributes.PCRSelection = selection
+		return attrs
+	}
+
+	secret := []byte("pin-sealed-bound-to-pcr-7-and-15")
+	pin := mustPassword(t, []byte("object-recovery-pin"))
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: attrsFor(pin), Backend: h.Backend})
+	require.NoError(t, err)
+
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: attrsFor(nil), Backend: h.Backend})
+	require.NoError(t, err, "the PCR branch must open the object without the PIN")
+	require.Equal(t, secret, got)
+
+	h.extendPCR(t, extraPCR, []byte("post-seal-measurement"))
+
+	out, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: attrsFor(nil), Backend: h.Backend})
+	require.Error(t, err, "extending a selected PCR must close the PCR branch")
+	assert.Nil(t, out)
+}
+
+// An Unseal whose attributes are reconstructed from the key ID (no
+// PCRSelection, as defaultUnsealKeyAttributes builds them) must recover the
+// selection the object was sealed over: from the pin recorded in the key
+// store, or, for portable inline blobs read against a store holding no
+// record, from the sealed data's metadata. Extending the extra PCR must
+// still close the object (Codex review 5959969020 P1).
+func TestUnseal_PlatformPolicy_ExtraPCR_RecoversSealedSelection(t *testing.T) {
+	const extraPCR = 15
+	selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, 7, extraPCR)
+
+	for _, tc := range []struct {
+		name   string
+		inline bool
+	}{
+		{name: "key store pin", inline: false},
+		{name: "inline blobs, empty store", inline: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSimHarness(t, platformPolicySRKConfig())
+			createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+			require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+				"the test needs a selected PCR outside the platform set")
+
+			cn := "platform-policy-default-unseal-extra-pcr"
+			sealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+			sealAttrs.TPMAttributes.PCRSelection = selection
+
+			secret := []byte("default-unseal-bound-to-pcr-7-and-15")
+			sealed, err := h.TPM.Seal(context.Background(), secret,
+				&types.SealOptions{KeyAttributes: sealAttrs, Backend: h.Backend})
+			require.NoError(t, err)
+
+			backend := h.Backend
+			if tc.inline {
+				factory, ferr := store.NewStorageFactory(h.Logger, t.TempDir())
+				require.NoError(t, ferr)
+				t.Cleanup(func() { _ = factory.Close() })
+				backend = factory.KeyBackend()
+			} else {
+				sealed.TPMPublic, sealed.TPMPrivate = nil, nil
+			}
+
+			// Reconstructed attributes: the selection is not repeated.
+			reconstructed := func() *types.KeyAttributes {
+				return sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+			}
+
+			got, err := h.TPM.Unseal(context.Background(), sealed,
+				&types.UnsealOptions{KeyAttributes: reconstructed(), Backend: backend})
+			require.NoError(t, err, "reconstructed attributes must open the unchanged object")
+			require.Equal(t, secret, got)
+
+			h.extendPCR(t, extraPCR, []byte("post-seal-measurement"))
+
+			out, err := h.TPM.Unseal(context.Background(), sealed,
+				&types.UnsealOptions{KeyAttributes: reconstructed(), Backend: backend})
+			require.Error(t, err, "extending the extra PCR must close the object")
+			assert.Nil(t, out)
+		})
+	}
+}
+
+// An object sealed with the platform policy, a password and an extra PCR
+// carries PolicyOR(PolicyPCR({7,11,15}), PolicyAuthValue). Its inline blobs,
+// unsealed against an empty key backend with the same password and
+// unchanged PCRs, must open: the password session's PolicyOR is built over
+// the selection recovered from the blob, not the platform set alone.
+func TestUnseal_PlatformPolicy_InlinePasswordExpandedSelection(t *testing.T) {
+	const extraPCR = 15
+	const testPIN = "expanded-sel-test-pin"
+
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, append(
+		append([]uint(nil), h.TPM.config.PlatformPCRs...), extraPCR)...)
+
+	cn := "platform-policy-inline-password-expanded-pcr"
+	sealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+	sealAttrs.TPMAttributes.PCRSelection = selection
+
+	secret := []byte("password-unseal-bound-to-expanded-selection")
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: sealAttrs, Backend: h.Backend})
+	require.NoError(t, err)
+
+	factory, err := store.NewStorageFactory(h.Logger, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = factory.Close() })
+
+	unsealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: unsealAttrs, Backend: factory.KeyBackend()})
+	require.NoError(t, err, "the correct password must open the inline blobs")
+	require.Equal(t, secret, got)
+}
+
+// An inline blob's own PCR selection wins over the pin a later seal stored
+// under the same CN: overwriting the store must not lock out a retained blob.
+// Before the expanded selection, a seal with the platform policy and a
+// password ignored the caller's extra PCRs: the object carries
+// PolicyOR(PolicyPCR(platform set), PolicyAuthValue) and its stored pin
+// covers the platform set alone. Sealing without the extra selection
+// reproduces that object exactly. Unsealing it with the attributes it was
+// sealed with (extra PCR included) must still open with the correct
+// password: the recorded pin matches the object's authPolicy and wins over
+// the expanded selection.
+func TestUnseal_PlatformPolicy_PasswordLegacyPinKeepsRecordedPolicy(t *testing.T) {
+	const extraPCR = 15
+	const testPIN = "legacy-pin-test-password"
+
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	cn := "platform-policy-password-legacy-pin"
+	// The previous policy calculation: no extra selection reaches the seal.
+	legacyAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+
+	secret := []byte("password-unseal-bound-to-recorded-pin")
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: legacyAttrs, Backend: h.Backend})
+	require.NoError(t, err)
+
+	unsealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+	unsealAttrs.TPMAttributes.PCRSelection = PolicyPCRSelection(tpm2.TPMAlgSHA256, append(
+		append([]uint(nil), h.TPM.config.PlatformPCRs...), extraPCR)...)
+
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: unsealAttrs, Backend: h.Backend})
+	require.NoError(t, err, "the correct password must open an object sealed under the recorded pin")
+	require.Equal(t, secret, got)
+}
+
+// The same pre-expansion object, unsealed from its inline blobs against an
+// empty key backend (no recorded pin) with the extra PCR in the attributes,
+// must open too: its authPolicy is the platform set's PolicyOR.
+func TestUnseal_PlatformPolicy_PasswordLegacyInlineNoPin(t *testing.T) {
+	const extraPCR = 15
+	const testPIN = "legacy-inline-test-password"
+
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(extraPCR),
+		"the test needs a selected PCR outside the platform set")
+
+	cn := "platform-policy-password-legacy-inline"
+	legacyAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+
+	secret := []byte("password-unseal-legacy-inline-no-pin")
+	sealed, err := h.TPM.Seal(context.Background(), secret,
+		&types.SealOptions{KeyAttributes: legacyAttrs, Backend: h.Backend})
+	require.NoError(t, err)
+
+	factory, err := store.NewStorageFactory(h.Logger, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = factory.Close() })
+
+	unsealAttrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn,
+		mustPassword(t, []byte(testPIN)))
+	unsealAttrs.TPMAttributes.PCRSelection = PolicyPCRSelection(tpm2.TPMAlgSHA256, append(
+		append([]uint(nil), h.TPM.config.PlatformPCRs...), extraPCR)...)
+
+	got, err := h.TPM.Unseal(context.Background(), sealed,
+		&types.UnsealOptions{KeyAttributes: unsealAttrs, Backend: factory.KeyBackend()})
+	require.NoError(t, err, "the correct password must open a pre-expansion inline blob")
+	require.Equal(t, secret, got)
+}
+
+func TestUnseal_PlatformPolicy_InlineBlobKeepsSelectionAfterCNOverwrite(t *testing.T) {
+	h := newSimHarness(t, platformPolicySRKConfig())
+	createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-overwrite-pin")))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(15))
+	require.NotContains(t, h.TPM.config.PlatformPCRs, uint(14))
+
+	cn := "platform-policy-inline-overwrite"
+	seal := func(secret []byte, pcrs ...uint) *types.SealedData {
+		attrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+		attrs.TPMAttributes.PCRSelection = PolicyPCRSelection(tpm2.TPMAlgSHA256, pcrs...)
+		sealed, err := h.TPM.Seal(context.Background(), secret,
+			&types.SealOptions{KeyAttributes: attrs, Backend: h.Backend})
+		require.NoError(t, err)
+		return sealed
+	}
+	secretA := []byte("inline-blob-a-bound-to-pcr-7-and-15")
+	sealedA := seal(secretA, 7, 15)
+	sealedB := seal([]byte("blob-b-bound-to-pcr-7-and-14"), 7, 14)
+	require.NotNil(t, sealedB)
+
+	t.Run("recovered selection", func(t *testing.T) {
+		attrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+		got, err := h.TPM.Unseal(context.Background(), sealedA,
+			&types.UnsealOptions{KeyAttributes: attrs, Backend: h.Backend})
+		require.NoError(t, err, "blob A's metadata selection must open blob A")
+		require.Equal(t, secretA, got)
+	})
+	t.Run("explicit selection", func(t *testing.T) {
+		attrs := sealedKeyAttrsUnder(platformPolicySRKAttrs(t, h, nil), cn, nil)
+		attrs.TPMAttributes.PCRSelection = PolicyPCRSelection(tpm2.TPMAlgSHA256, 7, 15)
+		got, err := h.TPM.Unseal(context.Background(), sealedA,
+			&types.UnsealOptions{KeyAttributes: attrs, Backend: h.Backend})
+		require.NoError(t, err, "blob A's explicit selection must open blob A")
+		require.Equal(t, secretA, got)
+	})
+}
+
 // TestSealUnseal_WrongSRKPINAfterExtend_Rejected proves the SRK's recovery path
 // still demands the SRK's auth value. The pin record removes the PCR coupling
 // of the OR digest; it does not remove the PIN requirement, which the TPM

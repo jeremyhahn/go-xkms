@@ -1,0 +1,1 @@
+xkey: `xkey fido2 --backend tpm2` opens the TPM with the same SSRK, EK, IAK, IDevID and LAK configuration as every `xkey tpm` command, so it no longer fails with "SSRK config is nil" on a TPM that `xkey tpm install` provisioned (ruling 988).
