@@ -27,8 +27,9 @@
   const versionOk = $derived(version === null || (Number.isInteger(version) && version >= 1));
   const keyReady = $derived(keyId.trim() !== "" && backend.trim() !== "");
   // Enable/Disable need keys:rotate and Revoke keys:delete; the page serves either.
-  const noRotate = lacks("keys", "rotate");
-  const noDelete = lacks("keys", "delete");
+  // Derived, not snapshots: the view can mount before /auth/me resolves.
+  const noRotate = $derived(lacks("keys", "rotate"));
+  const noDelete = $derived(lacks("keys", "delete"));
   const canSetStatus = $derived(!noRotate && keyReady && versionOk && !busy);
   const canRevoke = $derived(!noDelete && keyReady && confirmId === keyId && !busy);
 

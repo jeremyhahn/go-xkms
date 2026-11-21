@@ -24,8 +24,9 @@
   let verifying = $state(false);
 
   // Compute needs keys:sign and Verify keys:verify; the page serves either.
-  const noSign = lacks("keys", "sign");
-  const noVerify = lacks("keys", "verify");
+  // Derived, not snapshots: the view can mount before /auth/me resolves.
+  const noSign = $derived(lacks("keys", "sign"));
+  const noVerify = $derived(lacks("keys", "verify"));
   const ready = $derived(keyId.trim() !== "" && backend.trim() !== "" && data !== "");
   const macHex = $derived(computed ? b64ToHex(computed.mac) : "");
   const verifyInputs = $derived(JSON.stringify([keyId, backend, data, dataIsB64, hash, macIn]));

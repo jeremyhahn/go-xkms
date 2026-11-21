@@ -37,9 +37,15 @@
   let backend = $state("");
   // Encrypt needs keys:encrypt and Decrypt keys:decrypt; a decrypt-only role
   // starts in decrypt mode.
-  const noEncrypt = lacks("keys", "encrypt");
-  const noDecrypt = lacks("keys", "decrypt");
-  let mode = $state<Mode>(noEncrypt && !noDecrypt ? "decrypt" : "encrypt");
+  // Derived, not snapshots: the view can mount before /auth/me resolves.
+  const noEncrypt = $derived(lacks("keys", "encrypt"));
+  const noDecrypt = $derived(lacks("keys", "decrypt"));
+  let mode = $state<Mode>("encrypt");
+  // Move to the permitted mode once the session says the current one is not.
+  $effect(() => {
+    if (mode === "encrypt" && noEncrypt && !noDecrypt) mode = "decrypt";
+    else if (mode === "decrypt" && noDecrypt && !noEncrypt) mode = "encrypt";
+  });
   let rows = $state<Row[]>([emptyRow()]);
   let busy = $state(false);
   let error = $state<string | null>(null);
