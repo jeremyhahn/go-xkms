@@ -59,8 +59,16 @@ func TestAttestationAppraisal_NotSupported(t *testing.T) {
 			_, err := svc.AppraiseAttestationQuote(ctx, &transport.AppraiseAttestationQuoteRequest{})
 			return err
 		},
+		"AppraiseAndroidKeyAttestation": func() error {
+			_, err := svc.AppraiseAndroidKeyAttestation(ctx, &transport.AppraiseAndroidKeyAttestationRequest{})
+			return err
+		},
+		"AppraiseEKCertificate": func() error {
+			_, err := svc.AppraiseEKCertificate(ctx, &transport.AppraiseEKCertificateRequest{})
+			return err
+		},
 	}
-	assert.Len(t, calls, 8, "every method of transport.AttestationAppraisalService")
+	assert.Len(t, calls, 10, "every method of transport.AttestationAppraisalService")
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
 			err := call()
