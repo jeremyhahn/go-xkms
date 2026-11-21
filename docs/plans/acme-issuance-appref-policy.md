@@ -2,6 +2,8 @@
 
 Row: acme-issuance (docs/SPEC.md:41), epic #1667, slice 2 (lane sacmeib), stacked on 5d3244280.
 
+Removed since: the require switch below no longer exists; a device registered without a reference is always refused (`TrustAnchorVerifier.RegisteredApplicationReference`, docs/SPEC.md:41). The rest is history.
+
 ## Gaps slice 1 left
 
 1. No handler-level finalize test proves that `bindDeviceAttestationKey`

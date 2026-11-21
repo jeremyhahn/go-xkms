@@ -851,13 +851,11 @@ The reference is the provisioning record's `ApplicationReference`
 `ErrProvisioningRecordInvalid` (`registry.go:178`). The handler re-reads it from
 the registry before the checks (`VerifiedAttestation.ApplicationReference`,
 `registry.go:353`, through `TrustAnchorVerifier.RegisteredApplicationReference`,
-`registry.go:188`; called at `handlers/device_attest.go:229`). A device
-registered without a reference is refused with
-`ErrPossessionApplicationEvidenceMismatch` under
-`DICEPolicy.RequireApplicationReference` (`anchors.go:145`) and admitted without
-the comparison when the option is off, the default, because the end-to-end
-enrollment of the real firmware registers none
-(`pkg/acme/client/device_attest_dice_e2e_test.go:85`). Tests:
+`registry.go:205`; called at `handlers/device_attest.go:229`). The reference
+is mandatory: a device registered without one is refused at finalize as badCSR
+with `ErrPossessionApplicationEvidenceMismatch`, returned by
+`TrustAnchorVerifier.RegisteredApplicationReference` when the record carries no
+reference. There is no option to admit such a device. Tests:
 `TestVerifyPossessionCSRApplicationEvidence` (`possession_test.go:675`) and
 `TestApplicationReference` (`registry_test.go:73`).
 
@@ -1858,7 +1856,7 @@ enrollment challenge's (`enroll-01`/`endorse-01`)
 permanent-identifier is the literal `127.0.0.1`, the handler can validate
 against the request's client IP (or the first `X-Forwarded-For` entry)
 instead of the identifier, so a device that registered with a loopback
-identifier is still reachable at its real address. Off by default
+identifier is still reachable at its real address. Disabled by default
 (`XKMS_ACME_ENROLLMENT_ALLOW_LOOPBACK_IDENTIFIER`): with the key false, a
 loopback identifier is refused with `ErrLoopbackIdentifierNotAllowed` before
 the challenge verifier runs, rather than being silently substituted (#140).
@@ -1866,7 +1864,7 @@ the challenge verifier runs, rather than being silently substituted (#140).
 `acme.challenges.allow_private_targets` (`ACMEChallengesConfig`,
 `pkg/config/acme.go:756`; `XKMS_ACME_CHALLENGES_ALLOW_PRIVATE_TARGETS`)
 lets the challenge validation client connect to reserved addresses --
-loopback, private, link-local, metadata. Off by default, which is the
+loopback, private, link-local, metadata. Disabled by default, which is the
 production setting. It exists for the test lanes, whose challenge targets
 are loopback or container-network addresses, and for lab deployments whose
 devices sit on a private network. With `allow_loopback_identifier` on, the
@@ -1887,20 +1885,18 @@ acme:
       dice_require_device_signed_leaf: true   # secure-element profiles
       dice_require_measurement: true          # DiceTcbInfo must carry an FWID
       dice_require_tcb_info: true             # DiceTcbInfo must be present
-      dice_require_application_reference: true  # finalize needs a registered 32-byte reference
 ```
 
 `tpm_roots` are the CAs that vouch for AIK certificates (a manufacturer
 attestation CA, a privacy CA, or this deployment's own CA); `dice_roots` are the
 anchors of DICE alias chains. A certificate listed in `tpm_roots` anchors a
 chain whether or not it is self-signed, so when an AIK is issued by an
-intermediate, list that intermediate. A DICE device whose provisioning record
-registers no application reference is admitted by default; with
-`dice_require_application_reference` (`DICERequireApplicationReference`,
-pkg/config/acme.go:856) finalize refuses it as badCSR, and a registered
-reference is always compared against the possession request's 32-byte
-application evidence (`RegisteredApplicationReference`,
-pkg/acme/challenges/device-attest-01/registry.go:189).
+intermediate, list that intermediate. Every DICE device's provisioning record
+must register a 32-byte application reference: finalize refuses a device
+without one as badCSR, and compares a registered reference against the
+possession request's 32-byte application evidence
+(`TrustAnchorVerifier.RegisteredApplicationReference`,
+pkg/acme/challenges/device-attest-01/registry.go). No config key relaxes this.
 
 The xkmsd ACME listener (`acme.tls`, `ACMEConfig` / `ACMETLSConfig`,
 `pkg/config/acme.go`) always uses its own dedicated TLS certificate/key pair;
