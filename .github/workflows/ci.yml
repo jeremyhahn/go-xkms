@@ -1101,7 +1101,7 @@ jobs:
     # v1.30: only on the guard's `run` (not `refused`, not `proven`). It keeps
     # Lint, so unlike the template's it runs on a docs-only PR (header).
     if: ${{ needs.preflight.outputs.verdict == 'run' }}
-    timeout-minutes: 240      # CUSTOMIZE (go-xkms): the Lint (90) and image (150) jobs' bounds, now one job
+    timeout-minutes: 120
     permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
       contents: read
       packages: read
@@ -2452,7 +2452,7 @@ jobs:
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
       contents: read
       packages: read
-    timeout-minutes: 145  # #1587: ~2x 71m, slowest green (forge API, last 60 CI runs, 2026-10-17)
+    timeout-minutes: 145  # #1587: slowest green 71m; stays 145, a lower bound must hold 1.5x 71m (ruling 580)
     env:
       GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-

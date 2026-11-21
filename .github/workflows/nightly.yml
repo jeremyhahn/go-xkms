@@ -47,6 +47,7 @@ env:
 
 jobs:
   trivy:
+    timeout-minutes: 60
     name: Trivy
     runs-on: ubuntu-latest
     permissions:
@@ -158,6 +159,7 @@ jobs:
   # `advisory`) once it has passed there.
   # Job 2: Integration Tests
   integration-test:
+    timeout-minutes: 120
     name: Integration Tests
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
 
@@ -316,6 +318,7 @@ jobs:
   # DAO-backed tests fail on "codec json is not supported in this build"
   # without it, which is a failure of the invocation and not of the code.
   xkey-pkcs11-unit:
+    timeout-minutes: 60
     name: xkey pkcs11 unit tests
     runs-on: ubuntu-latest
 
