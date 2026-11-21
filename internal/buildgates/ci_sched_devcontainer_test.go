@@ -87,9 +87,27 @@ func TestCIDevcontainerCoverageSkipsAfterFailedBuild(t *testing.T) {
 // default or the overflow pools (ci-template v1.48, ruling 1024).
 const runnerSelectStep = "runner"
 
-// forkPRExpr is the step's FORK_PR env: true on a pull request whose head
-// repository is not this repository (Codex #2323 P1).
-const forkPRExpr = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}"
+// forkEnv is the step's v1.52 fork env (template verbatim): a pull request
+// whose head repository is not this repository, a deleted fork's empty one
+// included, takes the hosted default with a ::notice and no API call.
+var forkEnv = map[string]string{
+	"EVENT":     "${{ github.event_name }}",
+	"HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
+	"REPO":      "${{ github.repository }}",
+}
+
+// headRepo maps the helpers' fork argument to the HEAD_REPO a pull request
+// in repository o/r carries: "false" is the same repository, "true" a fork,
+// "" a deleted fork.
+func headRepo(fork string) string {
+	switch fork {
+	case "false":
+		return "o/r"
+	case "true":
+		return "fork/r"
+	}
+	return ""
+}
 
 // stubCurl answers the selector's Actions API calls: one run, and a job
 // list whose first page is $STUB_DIR/jobs.json; a later page is
@@ -120,9 +138,12 @@ printf 200
 // preflightRunsOn is the preflight runs-on (Codex #2323 P1, ruling 999):
 // hosted unless CI_PREFLIGHT_RUNS_ON is set, and never the variable on a
 // pull request from a fork, so a fork never reaches a self-hosted pool.
-const preflightRunsOn = "${{ github.server_url == 'https://github.com' && vars.CI_PREFLIGHT_RUNS_ON != '' && !(" +
-	"github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository" +
-	") && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"
+// v1.52: the template's fork clause comes before the variable, so a fork's
+// pull request (under pull_request or pull_request_target, a deleted fork
+// included) takes ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds.
+const preflightRunsOn = "${{ github.server_url == 'https://github.com' && " +
+	"(!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository)" +
+	" && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"
 
 func TestCIPreflightRunsHostedByDefault(t *testing.T) {
 	wf := readDigestWorkflow(t)
@@ -198,7 +219,9 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 		"JOB_TOKEN=x",
 		"LIMIT=12",
 		"GRACE=60",
-		"FORK_PR="+fork,
+		"EVENT=pull_request",
+		"REPO=o/r",
+		"HEAD_REPO="+headRepo(fork),
 		"GITHUB_OUTPUT="+out,
 		"RUNNER_TEMP="+dir,
 		"STUB_DIR="+dir,
@@ -206,7 +229,7 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 	)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("selector (FORK_PR=%s): %v\n%s", fork, err, b)
+		t.Fatalf("selector (fork=%s): %v\n%s", fork, err, b)
 	}
 	o, err := os.ReadFile(out)
 	if err != nil {
@@ -230,8 +253,13 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 	if step == nil {
 		t.Fatalf("%s has no step with id: %s", preflightJob, runnerSelectStep)
 	}
-	if got := step.Env["FORK_PR"]; got != forkPRExpr {
-		t.Fatalf("%s step %s env FORK_PR = %q, want %q", preflightJob, runnerSelectStep, got, forkPRExpr)
+	for k, want := range forkEnv {
+		if got := step.Env[k]; got != want {
+			t.Fatalf("%s step %s env %s = %q, want %q", preflightJob, runnerSelectStep, k, got, want)
+		}
+	}
+	if _, ok := step.Env["FORK_PR"]; ok {
+		t.Errorf("%s step %s still sets FORK_PR: v1.52 reads EVENT, HEAD_REPO and REPO", preflightJob, runnerSelectStep)
 	}
 	for _, tool := range []string{"bash", "jq"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -249,10 +277,10 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 	for _, fork := range []string{"true", ""} {
 		out, calls := runRunnerSelect(t, step.Run, fork)
 		if out != hosted {
-			t.Errorf("FORK_PR=%q on a full pool: output %q, want %q", fork, out, hosted)
+			t.Errorf("fork=%q on a full pool: output %q, want %q", fork, out, hosted)
 		}
 		if calls != "" {
-			t.Errorf("FORK_PR=%q: the selector called the Actions API:\n%s", fork, calls)
+			t.Errorf("fork=%q: the selector called the Actions API:\n%s", fork, calls)
 		}
 	}
 }
