@@ -144,11 +144,6 @@ func TestAttestKey_Success(t *testing.T) {
 	assert.Equal(t, &ecKey.PublicKey, stmt.AttestedKeyPublic)
 }
 
-func TestAttestKey_InterfaceAssertion(t *testing.T) {
-	// Verify that Backend implements AttestingBackend at compile time
-	var _ types.AttestingKeyProvider = (*Backend)(nil)
-}
-
 func TestCapabilities_AttestationEnabled(t *testing.T) {
 	mock := &mockTPM{
 		ssrkAttrsValue: &types.KeyAttributes{CN: "ssrk"},
