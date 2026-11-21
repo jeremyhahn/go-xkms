@@ -50,8 +50,9 @@
     try {
       const resp = await getSDKClient().seal.capability(id);
       if (backend === id) canSeal = resp.can_seal;
-    } catch (e) {
-      showToast("error", message(e));
+    } catch {
+      // The probe is advisory: GET /seal/capability needs keys:get, POST /seal
+      // does not, so a refused probe leaves Seal enabled (canSeal stays null).
     }
   }
 
@@ -162,7 +163,7 @@
         <input class="input input-bordered w-full" aria-label="AAD" placeholder="AAD (optional)" bind:value={aad} />
         <input class="input input-bordered w-full" type="password" aria-label="Password" placeholder="Password (optional)" bind:value={password} />
         <input class="input input-bordered w-full" aria-label="TPM policy" placeholder="TPM policy (optional)" bind:value={tpmPolicy} />
-        <button class="btn btn-primary" onclick={doSeal} disabled={busy || backend === "" || text === "" || canSeal !== true}>Seal</button>
+        <button class="btn btn-primary" onclick={doSeal} disabled={busy || backend === "" || text === "" || canSeal === false}>Seal</button>
         {#if result}
           <pre class="bg-base-200 rounded p-3 text-xs overflow-x-auto" aria-label="Seal result">{JSON.stringify(result, null, 2)}</pre>
           <button class="btn btn-ghost btn-sm" onclick={copyResult}>Copy</button>
