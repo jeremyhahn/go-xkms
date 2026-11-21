@@ -383,7 +383,9 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 			return nil, types.SealedDataAuthenticationError("", err)
 		}
 		tpm.logger.Debug("unseal: using provided TPMPublic/TPMPrivate blobs directly")
+		tpm.sealMu.Lock()
 		secret, err := tpm.unsealFromBlobs(keyAttrs, backend, sealed.TPMPublic, sealed.TPMPrivate)
+		tpm.sealMu.Unlock()
 		if err != nil {
 			return nil, err
 		}
@@ -416,6 +418,8 @@ func (tpm *TPM2) SealKey(
 	if err := requireSealProtection(keyAttrs); err != nil {
 		return nil, err
 	}
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
 	return tpm.sealKeyInternal(keyAttrs, backend, overwrite)
 }
 
@@ -426,6 +430,7 @@ func (tpm *TPM2) UnsealKey(
 	keyAttrs *types.KeyAttributes,
 	backend KeyBackend) ([]byte, error) {
 
-	// Delegate to the existing implementation in seal.go
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
 	return tpm.unsealKeyInternal(keyAttrs, backend)
 }
