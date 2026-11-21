@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -218,8 +219,20 @@ type FIDO2Config struct {
 	UserPresenceTimeout time.Duration
 
 	// Key backend configuration
-	Backend           string
-	TPMDevice         string
+	Backend   string
+	TPMDevice string
+	// PlatformSRKPIN is the user PIN, the Platform SRK auth the tpm2
+	// backend creates credential keys under (`xkey tpm srk enroll`). It
+	// comes from --pin-stdin, --pin-file or XKEY_PIN, or a terminal prompt.
+	// It is sealed in protected memory, as PIN is, nil when no source
+	// carried one, and destroyed (set to nil) once loadFIDO2PlatformSRKAuth
+	// has used it.
+	PlatformSRKPIN *secure.Secret
+	// PlatformSRKPINErr is set when a PIN source was named but failed
+	// (unreadable or empty --pin-file, --pin-stdin with --set-pin-stdin).
+	// The tpm2 backend refuses to start on it rather than fall back to an
+	// empty auth.
+	PlatformSRKPINErr error
 	AttestationFormat string
 
 	// Phone backend configuration
@@ -394,6 +407,9 @@ func init() {
 	fido2Cmd.Flags().Bool("pin", true,
 		"Enable PIN support (required for FIDO 2.1 credential management)")
 	fido2SetPINSource.addFlags(fido2Cmd)
+	// --pin-stdin / --pin-file: the user PIN as the Platform SRK auth for
+	// --backend tpm2 (rulings 993, 994).
+	srkUserPINSource.addFlags(fido2Cmd)
 
 	// User presence configuration flags
 	fido2Cmd.Flags().Bool("interactive", false,
@@ -446,6 +462,8 @@ func init() {
 	_ = viper.BindPFlag("fido2.serial", fido2Cmd.Flags().Lookup("serial"))
 	_ = viper.BindPFlag("fido2.pin", fido2Cmd.Flags().Lookup("pin"))
 	_ = viper.BindPFlag("fido2.set_pin_stdin", fido2Cmd.Flags().Lookup("set-pin-stdin"))
+	_ = viper.BindPFlag("fido2.pin_stdin", fido2Cmd.Flags().Lookup(pinFlagStdin))
+	_ = viper.BindPFlag("fido2.pin_file", fido2Cmd.Flags().Lookup(pinFlagFile))
 	_ = viper.BindPFlag("fido2.interactive", fido2Cmd.Flags().Lookup("interactive"))
 	_ = viper.BindPFlag("fido2.require_touch", fido2Cmd.Flags().Lookup("require-touch"))
 	_ = viper.BindPFlag("fido2.timeout", fido2Cmd.Flags().Lookup("timeout"))
@@ -605,6 +623,7 @@ func buildFIDO2Config() *FIDO2Config {
 		CDPHost:         viper.GetString("fido2.cdp_host"),
 		CDPPort:         viper.GetInt("fido2.cdp_port"),
 	}
+	cfg.PlatformSRKPIN, cfg.PlatformSRKPINErr = resolveFIDO2PlatformSRKPIN()
 
 	return cfg
 }
@@ -656,6 +675,42 @@ func resolveFIDO2SetPINSecret() *secure.Secret {
 	}
 	defer enclave.Wipe(secret)
 	return fido2PINSecret(string(secret))
+}
+
+// resolveFIDO2PlatformSRKPIN resolves the user PIN used as the Platform SRK
+// auth for --backend tpm2: --pin-stdin, then --pin-file, then XKEY_PIN.
+// Errors name the source, never the value. A named source that fails is an
+// error (ErrFIDO2PlatformSRKPIN); with no source named the PIN is empty.
+func resolveFIDO2PlatformSRKPIN() (*secure.Secret, error) {
+	fromStdin := viper.GetBool("fido2.pin_stdin")
+	if fromStdin && viper.GetBool("fido2.set_pin_stdin") {
+		return nil, fmt.Errorf("%w: %w", ErrFIDO2PlatformSRKPIN, ErrFIDO2PlatformSRKPINBothStdin)
+	}
+	var (
+		secret []byte
+		err    error
+		source = "--pin-stdin or XKEY_PIN"
+	)
+	if path := viper.GetString("fido2.pin_file"); !fromStdin && path != "" {
+		source = "--pin-file"
+		secret, err = srkUserPINSource.secretFromFile(path)
+	} else {
+		secret, err = srkUserPINSource.resolveBytesFrom(fromStdin)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrFIDO2PlatformSRKPIN, source, err)
+	}
+	if len(secret) == 0 {
+		return nil, nil
+	}
+	defer enclave.Wipe(secret)
+	// A named source whose PIN cannot be sealed is an error, not "no PIN":
+	// the backend must not start on an empty auth (ruling 998).
+	sealed, err := secure.NewSecret(context.Background(), secret)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrFIDO2PlatformSRKPIN, source, err)
+	}
+	return sealed, nil
 }
 
 // fido2PINSecret seals s into a *secure.Secret for FIDO2Config.PIN. An
@@ -1945,6 +2000,13 @@ func createFIDO2XKMSSoftwareKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (k
 // createFIDO2TPM2KeyBackend creates a TPM2-backed FIDO2 key backend by wrapping
 // the go-xkms TPM2 backend with BackendAdapter.
 func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybackend.FIDO2KeyBackend, error) {
+	// A named PIN source that failed stops here, before any TPM open or
+	// auth: falling back to an empty auth would fail later as an unrelated
+	// TPM auth error.
+	if cfg.PlatformSRKPINErr != nil {
+		return nil, cfg.PlatformSRKPINErr
+	}
+
 	logger.Info("opening TPM device", slog.String("device", cfg.TPMDevice))
 
 	// The TPM `tpm install` provisioned, opened with the same SSRK, EK, IAK,
@@ -1961,6 +2023,13 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 	keyBackend, err := xkms.NewTPMBackendBlobStore(logger, memStorage)
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err, tpm.Close())
+	}
+
+	attach := func() (xkms.PlatformKeyStorer, error) {
+		return xkms.AttachPlatformKeyStore(logger, tpm, keyBackend)
+	}
+	if err := loadFIDO2PlatformSRKAuth(cfg, attach); err != nil {
+		return nil, errors.Join(err, tpm.Close())
 	}
 
 	backend, err := xkms.NewTPM2BackendWithTPM(&xkms.TPM2BackendExternalConfig{
@@ -1981,7 +2050,149 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 	// there, is what lets NewAuthenticator tell the two apart (see
 	// FIDO2AttestingKeyBackend's doc comment).
 	adapter := keybackend.NewBackendAdapter(backend, xkms.BackendTypeTPM2)
-	return keybackend.NewTPM2AttestingBackend(adapter, tpm, keyBackend), nil
+	return &ownedTPM2KeyBackend{
+		TPM2AttestingBackend: keybackend.NewTPM2AttestingBackend(adapter, tpm, keyBackend),
+		tpm:                  tpm,
+	}, nil
+}
+
+// ownedTPM2KeyBackend is the fido2 tpm2 key backend that owns the TPM
+// createFIDO2TPM2KeyBackend opened: the backend over an external TPM leaves
+// it open, so Close closes the backend and then the TPM (which closes the
+// key store it was opened over). Close runs once; later calls return nil.
+type ownedTPM2KeyBackend struct {
+	// The SDK re-exports the constructor but not the type it returns.
+	*keybackend.TPM2AttestingBackend
+	tpm       xkms.TrustedPlatformModule
+	closeOnce sync.Once
+}
+
+// Close closes the backend and the TPM it owns, joining their errors.
+func (b *ownedTPM2KeyBackend) Close() error {
+	var err error
+	b.closeOnce.Do(func() {
+		err = errors.Join(b.TPM2AttestingBackend.Close(), b.tpm.Close())
+	})
+	return err
+}
+
+// ErrFIDO2TPMPlatformSRKAuth indicates the user PIN did not unlock the
+// Platform SRK enrolled by `xkey tpm srk enroll`.
+var ErrFIDO2TPMPlatformSRKAuth = errors.New("fido2: Platform SRK auth failed: check the user PIN given to `xkey tpm srk enroll`")
+
+// ErrFIDO2TPMPlatformSRKAuthRejected indicates the TPM itself rejected the
+// Platform SRK PIN: a counted failure under the TPM's dictionary-attack
+// protection. It maps to ExitCodePlatformSRKAuthRejected.
+var ErrFIDO2TPMPlatformSRKAuthRejected = errors.New("fido2: the TPM rejected the Platform SRK PIN; not retrying, so a wrong --pin-file cannot lock the TPM out")
+
+// ExitCodePlatformSRKAuthRejected is the process exit status when the TPM
+// rejected the Platform SRK PIN (78, EX_CONFIG in sysexits.h: the PIN
+// source is misconfigured). deploy/systemd/xkey.service lists it in
+// RestartPreventExitStatus: every restart would be another counted auth
+// failure, and enough of them put the TPM into dictionary-attack lockout.
+const ExitCodePlatformSRKAuthRejected = 78
+
+// ExitCode is the process exit status for err, the result of executing the
+// root command: 0 for nil, ExitCodePlatformSRKAuthRejected for a rejected
+// Platform SRK PIN, and 1 for any other error.
+func ExitCode(err error) int {
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, ErrFIDO2TPMPlatformSRKAuthRejected):
+		return ExitCodePlatformSRKAuthRejected
+	default:
+		return 1
+	}
+}
+
+var (
+	// ErrFIDO2PlatformSRKPIN indicates a named Platform SRK PIN source
+	// (--pin-file, --pin-stdin, XKEY_PIN) could not be read.
+	ErrFIDO2PlatformSRKPIN = errors.New("fido2: read the Platform SRK PIN")
+
+	// ErrFIDO2PlatformSRKPINBothStdin indicates --pin-stdin and
+	// --set-pin-stdin were both given; only one can read standard input.
+	ErrFIDO2PlatformSRKPINBothStdin = errors.New("--pin-stdin and --set-pin-stdin cannot both read standard input; use --pin-file")
+)
+
+// promptFIDO2PlatformSRKPIN reads the Platform SRK user PIN at the
+// terminal. The caller owns and wipes the returned slice. A variable so
+// tests can stand in for the terminal.
+var promptFIDO2PlatformSRKPIN = func() ([]byte, error) {
+	prompted, err := readOptionalPIN(os.Stderr, "Platform SRK user PIN: ")
+	if err != nil {
+		return nil, err
+	}
+	return []byte(prompted), nil
+}
+
+// loadFIDO2PlatformSRKAuth verifies the user PIN against the Platform SRK
+// and loads it as the SRK auth credential keys are created under. With no
+// PIN supplied it prompts at a terminal (an empty answer keeps an
+// empty-auth SRK working) and otherwise leaves the SRK auth unset.
+func loadFIDO2PlatformSRKAuth(cfg *FIDO2Config, attach func() (xkms.PlatformKeyStorer, error)) error {
+	pin, err := takeFIDO2PlatformSRKPIN(cfg)
+	if err != nil {
+		return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
+	}
+	// The closure wipes whichever slice pin holds at return, so a PIN read
+	// at the prompt below is wiped too.
+	defer func() { secure.Wipe(pin) }()
+	if len(pin) == 0 && pinInputIsTerminal() {
+		prompted, promptErr := promptFIDO2PlatformSRKPIN()
+		if promptErr != nil {
+			secure.Wipe(prompted)
+			return errors.Join(ErrFIDO2TPMPlatformSRKAuth, promptErr)
+		}
+		pin = prompted
+	}
+	if len(pin) == 0 {
+		return nil
+	}
+	pks, err := attach()
+	if err != nil {
+		return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
+	}
+	// VerifyAuth is a real TPM auth attempt, counted by the TPM's
+	// dictionary-attack protection. A rejected PIN is
+	// ErrFIDO2TPMPlatformSRKAuthRejected, which exits with
+	// ExitCodePlatformSRKAuthRejected so systemd does not retry it. Any
+	// other error (an SRK not enrolled, a transport or session failure)
+	// keeps exit 1, so systemd restarts the service once it clears.
+	if err := pks.VerifyAuth(string(pin)); err != nil {
+		if errors.Is(err, xkms.ErrTPMAuthFailed) {
+			return errors.Join(ErrFIDO2TPMPlatformSRKAuth, ErrFIDO2TPMPlatformSRKAuthRejected, err)
+		}
+		return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
+	}
+	if attrs := pks.SRKAttributes(); attrs != nil {
+		// NewPassword copies pin; the deferred wipe clears this one.
+		password, err := xkms.NewPassword(pin)
+		if err != nil {
+			return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
+		}
+		attrs.Password = password
+	}
+	return nil
+}
+
+// takeFIDO2PlatformSRKPIN copies the sealed Platform SRK PIN out of cfg into
+// a slice the caller wipes, and destroys the sealed copy, so the PIN lives
+// in plain memory only for the auth that uses it. No PIN is a nil slice.
+func takeFIDO2PlatformSRKPIN(cfg *FIDO2Config) ([]byte, error) {
+	sealed := cfg.PlatformSRKPIN
+	if sealed == nil {
+		return nil, nil
+	}
+	cfg.PlatformSRKPIN = nil
+	defer sealed.Destroy()
+	buf, err := sealed.Open(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer buf.Destroy()
+	return secure.CopyOut(buf)
 }
 
 // formatCID formats a channel ID from a HID packet for logging.
