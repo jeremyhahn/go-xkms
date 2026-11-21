@@ -397,7 +397,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		if cfg.WebAuthnService == nil {
 			return nil, ErrWebAuthnServiceRequired
 		}
-		server.webauthnHandler = webauthnhttp.NewHandler(cfg.WebAuthnService)
+		server.webauthnHandler = webauthnhttp.NewHandler(cfg.WebAuthnService).WithLogger(log)
 
 		log.Info("WebAuthn enabled",
 			slog.String("rpid", cfg.WebAuthnConfig.RPID))

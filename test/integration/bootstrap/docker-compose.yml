@@ -30,12 +30,13 @@ services:
     environment:
       # This suite exercises the bootstrap trust protocol (Noise handshake, SPKI
       # pin, admin mTLS) using generated test certs at the transport layer.
-      # scripts/generate-test-certs.sh still writes a config with auth.enabled
-      # false and no ca section: config.ComplianceGaps reports both, and
-      # cmd/xkmsd refuses to start on any gap with no override flag or
-      # environment variable, so that config has to gain an authenticator and a
-      # CA before the suite can bring the daemon up. The XKMS_INSECURE opt-in
-      # this comment used to name was removed in v0.3.0-alpha.
+      # cmd/xkmsd refuses to start on any config.ComplianceGaps entry, with no
+      # override flag or environment variable (the XKMS_INSECURE opt-in was
+      # removed in v0.3.0-alpha), so scripts/generate-test-certs.sh writes a
+      # config that config.Load accepts and that reports no gap: a datastore
+      # path on the data volume, mTLS authentication against the test CA, and
+      # a ca section. TestGeneratedConfigLoadsWithoutComplianceGaps checks it
+      # without Docker.
       # KNOWN GAP (go-xkms#653): the generated config enables a barrier
       # (passphrase strategy). go-xkms#653 removed the config-sourced
       # boot-time barrier secret entirely (matching go-qrdb's own SealConfig,

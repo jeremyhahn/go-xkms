@@ -20,6 +20,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -85,6 +86,24 @@ func (m *Module) restServer() (*rest.Server, error) {
 		return nil, nil
 	}
 
+	hc, err := m.hostConfig(x)
+	if err != nil {
+		return nil, err
+	}
+
+	srv, err := rest.NewHostServer(context.Background(), hc)
+	if err != nil {
+		return nil, &HostBuildError{Err: err}
+	}
+	if !m.selfREST.CompareAndSwap(nil, srv) {
+		srv = m.selfREST.Load()
+	}
+	return srv, nil
+}
+
+// hostConfig assembles the HostConfig restServer builds the module's own
+// REST host from.
+func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 	stores := m.hostStores(x)
 	hc := &rest.HostConfig{
 		XKMSService:   x,
@@ -92,6 +111,13 @@ func (m *Module) restServer() (*rest.Server, error) {
 		PIVLogin:      m.pivLogin,
 		PasswordStore: stores.PasswordStore,
 		SSHClient:     stores.SSH,
+		NodeUsers:     m.nodeUsers,
+	}
+	if m.serviceContext != nil {
+		// The refresh store binds its KV calls through the node's
+		// service context; without it minting a token on an
+		// auth-enforcing node fails saving the refresh record.
+		hc.ServiceContext = token.CallContext(m.serviceContext)
 	}
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()
@@ -109,15 +135,7 @@ func (m *Module) restServer() (*rest.Server, error) {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
 	}
-
-	srv, err := rest.NewHostServer(context.Background(), hc)
-	if err != nil {
-		return nil, &HostBuildError{Err: err}
-	}
-	if !m.selfREST.CompareAndSwap(nil, srv) {
-		srv = m.selfREST.Load()
-	}
-	return srv, nil
+	return hc, nil
 }
 
 // selfBuilds reports whether the module composes its own surfaces from host

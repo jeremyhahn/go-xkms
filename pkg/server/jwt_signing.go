@@ -52,17 +52,27 @@ func (s *Server) initializeTokenIssuer() error {
 
 	accessTTL, refreshTTL := s.sessionTTLs()
 
+	// The refresh store writes as the embedded node's service principal:
+	// login routes are public, so the request context has no identity
+	// (go-xkms#2287).
+	var serviceContext token.CallContext
+	if s.qrdbNode != nil {
+		serviceContext = s.qrdbNode.ServiceContext
+	}
+
 	issuer, err := rest.BuildTokenIssuer(s.ctx, rest.TokenIssuerParams{
-		Backend:      backend,
-		BackendName:  s.defaultBackendName,
-		SigningKeyCN: cn,
-		IssuerName:   issuerName,
-		Audience:     audience,
-		AccessTTL:    accessTTL,
-		RefreshTTL:   refreshTTL,
-		QRDBClient:   s.qrdbClient,
-		Logger:       s.logger,
-		Retry:        retryNotLeader,
+		Backend:        backend,
+		BackendName:    s.defaultBackendName,
+		SigningKeyCN:   cn,
+		IssuerName:     issuerName,
+		Audience:       audience,
+		AccessTTL:      accessTTL,
+		RefreshTTL:     refreshTTL,
+		QRDBClient:     s.qrdbClient,
+		NodeUsers:      s.nodeUserSource(),
+		ServiceContext: serviceContext,
+		Logger:         s.logger,
+		Retry:          retryNotLeader,
 	})
 	if err != nil {
 		// A signing-key backend failure (provisioning or signer

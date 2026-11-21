@@ -20,7 +20,7 @@
 set -eu
 
 CERT_DIR="${CERT_DIR:-/etc/xkms/certs}"
-CONFIG_FILE="/etc/xkms/xkmsd.yaml"
+CONFIG_FILE="${CONFIG_FILE:-/etc/xkms/xkmsd.yaml}"
 DATA_DIR="${TEST_DATA_DIR:-/data}"
 DAYS_VALID=365
 HOSTNAME_SAN="bootstrap.test"
@@ -191,9 +191,41 @@ tls:
   cert_file: ${CERT_DIR}/fullchain.crt
   key_file: ${CERT_DIR}/server.key
   ca_file: ${CERT_DIR}/ca.crt
+  # Ask for (but do not demand) a client certificate: the admin mTLS
+  # identity authenticates with one chained to ca.crt, while the Noise/SPKI/
+  # DANE bootstrap probes and the health check connect without one.
+  client_auth: request
 
+# xkmsd refuses to start on any config.ComplianceGaps entry, so the suite
+# runs with an authenticator: mTLS against the test CA above.
 auth:
-  enabled: false
+  enabled: true
+  type: mtls
+  mtls: true
+
+# Standalone datastore rooted on the data volume (config.Load requires
+# datastore.path for every standalone engine).
+datastore:
+  path: ${DATA_DIR}/datastore
+
+# The daemon's issuing CA (required by config.ComplianceGaps). Its root is
+# generated on first boot under the data volume; ca.crt above stays the TLS
+# and mTLS trust anchor.
+ca:
+  identity:
+    - subject:
+        cn: "go-xkms Bootstrap Test Issuing CA"
+        organization: "go-xkms Test CA"
+      valid: 1
+      keys:
+        - algorithm: "ECDSA"
+          ecc-curve: "P-256"
+          key_type: "CA"
+      keystore-type: "software"
+      is-root: true
+  selected-ca: 0
+  default-validity-days: ${DAYS_VALID}
+  home-dir: ${DATA_DIR}/ca
 
 ratelimit:
   enabled: false

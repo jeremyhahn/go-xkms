@@ -40,6 +40,12 @@ type UserStore interface {
 	// Delete removes a user by their WebAuthn ID.
 	// Returns ErrUserNotFound if the user does not exist.
 	Delete(ctx context.Context, userID []byte) error
+
+	// TenantID is the tenant the store resolves accounts in: the relying
+	// party's served tenant. It must never be empty; an empty tenant is
+	// refused (UserStoreTenantUnsetError), never read as the system tenant
+	// (ruling 1041 (1)).
+	TenantID() string
 }
 
 // SessionCleaner is implemented by session stores that keep expired

@@ -233,6 +233,32 @@ func (s *Service) BeginInviteRegistration(ctx context.Context, email string) (*p
 		}
 		return nil, "", WrapError("get user by email", err)
 	}
+	return s.beginInviteRegistrationFor(ctx, user)
+}
+
+// BeginInviteRegistrationForUser starts the invite enrolment ceremony for
+// the account whose WebAuthn handle is userHandle, resolved by id in the
+// tenant the caller bound on ctx (a validated invite's). Unlike
+// BeginInviteRegistration it never re-resolves an email in the store's
+// configured scope, which would miss a non-system invite's account or find
+// another tenant's account with the same email.
+func (s *Service) BeginInviteRegistrationForUser(ctx context.Context, userHandle []byte) (*protocol.CredentialCreation, string, error) {
+	if !s.configured {
+		return nil, "", ErrNotConfigured
+	}
+	user, err := s.users.GetByID(ctx, userHandle)
+	if err != nil {
+		if IsUserNotFound(err) {
+			return nil, "", ErrRegistrationRefused
+		}
+		return nil, "", WrapError("get user by id", err)
+	}
+	return s.beginInviteRegistrationFor(ctx, user)
+}
+
+// beginInviteRegistrationFor starts the ceremony for a pending account
+// that holds no credential yet.
+func (s *Service) beginInviteRegistrationFor(ctx context.Context, user User) (*protocol.CredentialCreation, string, error) {
 	if user.Lifecycle() != qrdbsdk.LifecyclePending {
 		return nil, "", ErrRegistrationRefused
 	}
@@ -816,6 +842,35 @@ func (s *Service) DeleteUser(ctx context.Context, userID []byte) error {
 
 	// Delete user
 	return s.users.Delete(ctx, userID)
+}
+
+// UserStoreTenant is the tenant the relying party resolves accounts in: the
+// configured tenant of its user store. A store that names none is a
+// *UserStoreTenantUnsetError, never the system tenant (ruling 1041 (1)).
+func (s *Service) UserStoreTenant() (string, error) {
+	return userStoreTenant(s.users)
+}
+
+// UserStoreTenantUnsetError reports a user store that names no tenant. Such
+// a store is refused, never read as the system tenant: the fallback reopened
+// the cross-tenant invite hole (ruling 1041 (1)).
+type UserStoreTenantUnsetError struct{}
+
+func (*UserStoreTenantUnsetError) Error() string {
+	return "webauthn: user store names no tenant"
+}
+
+// userStoreTenant returns the tenant users resolves accounts in, or a
+// *UserStoreTenantUnsetError when users is nil or names none.
+func userStoreTenant(users UserStore) (string, error) {
+	if users == nil {
+		return "", &UserStoreTenantUnsetError{}
+	}
+	tenant := users.TenantID()
+	if tenant == "" {
+		return "", &UserStoreTenantUnsetError{}
+	}
+	return tenant, nil
 }
 
 // Config returns the service configuration.

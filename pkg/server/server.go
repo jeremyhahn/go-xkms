@@ -936,6 +936,9 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		}
 		if s.passwordStore != nil && s.qrdbClient != nil {
 			svc.SetUserClients(s.qrdbClient.Users(), s.qrdbClient.Roles())
+			if src := s.nodeUserSource(); src != nil {
+				svc.SetInviteUserClient(auth.NewNodeUserClient(src))
+			}
 		}
 		if s.pkcs11StateStore != nil {
 			svc.SetPKCS11StateStore(s.pkcs11StateStore)
@@ -1526,6 +1529,7 @@ func (s *Server) initializeWebAuthnService() error {
 	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
 		Config:      s.webauthnConfig,
 		QRDBClient:  ds.Client(),
+		NodeUsers:   s.nodeUserSource(),
 		DAOFactory:  ds.DAOFactory(),
 		TenantID:    webAuthnSystemTenant,
 		TokenIssuer: s.tokenIssuer,
@@ -1658,6 +1662,19 @@ func (n nodeCertUsers) UserByCertThumbprint(ctx context.Context, thumbprint stri
 		return nil, ErrQRDBNodeNotServing
 	}
 	return users.UserByCertThumbprint(ctx, thumbprint)
+}
+
+// nodeUserSource returns the embedded node as the user source the public
+// routes (WebAuthn ceremonies, invite redemption, the refresh re-check) look
+// users up through, the way nodeCertUsers resolves certificates: those
+// routes' request context carries no qrdb credentials, so the datastore
+// client's user calls are refused on a node that enforces authentication
+// (ruling 973). Nil when xkmsd hosts no embedded node.
+func (s *Server) nodeUserSource() auth.NodeUserSource {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	return s.qrdbNode
 }
 
 // initializeKeyVersionStore builds the key-version record store through
@@ -2647,6 +2664,7 @@ func (s *Server) ModuleRESTServer() *rest.Server {
 // (pkg/apimodule), so both surfaces are built from identical wiring.
 func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	restConfig := &rest.Config{
+		Logger:          s.logger,
 		Host:            s.config.Server.Host,
 		Port:            s.config.Server.RESTPort,
 		Backends:        s.backends,
@@ -2683,13 +2701,7 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	// Cross-origin access is opt-in: without an explicit allowlist the REST
 	// router emits no CORS headers and browsers enforce same-origin (the
 	// embedded web UI is served same-origin and needs none).
-	if s.config.CORS.Enabled {
-		restConfig.CORS = &rest.CORSOptions{
-			AllowedOrigins:   s.config.CORS.AllowedOrigins,
-			AllowCredentials: s.config.CORS.AllowCredentials,
-			MaxAgeSeconds:    s.config.CORS.MaxAgeSeconds,
-		}
-	}
+	restConfig.CORS = s.corsOptions()
 
 	// Rate-limit identity: forwarding headers are believed only from the
 	// configured reverse proxies (server.trusted_proxies; none by default).

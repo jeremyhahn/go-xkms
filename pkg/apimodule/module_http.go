@@ -95,10 +95,37 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 		variants[key] = append(variants[key], spec)
 	}
 
+	// Cross-origin policy (WithCORS): each handler carries the CORS headers,
+	// and each pattern gets a public OPTIONS route so the browser's preflight
+	// is answered before the auth chain (#2329).
+	// The middleware passes every request through untouched when no policy
+	// is set, so only the OPTIONS routes need the policy's own check.
+	cors := rest.NewCORSMiddleware(m.cors)
+	if m.cors.Enabled() {
+		preflight := cors(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			// Reached only for an origin outside the allowlist: no CORS
+			// headers, and the method stays unserved.
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		})).ServeHTTP
+		patterns := map[string]bool{}
+		for _, key := range order {
+			if key.method == http.MethodOptions {
+				patterns[key.pattern] = true
+			}
+		}
+		for _, key := range order {
+			if patterns[key.pattern] {
+				continue
+			}
+			patterns[key.pattern] = true
+			r.HandlePublic(http.MethodOptions, key.pattern, preflight)
+		}
+	}
+
 	for _, key := range order {
 		specs := variants[key]
 		lead := specs[0]
-		h := m.lazyHTTPHandler(specs)
+		h := cors(m.lazyHTTPHandler(specs)).ServeHTTP
 		switch lead.Auth {
 		case rest.RouteAuthPublic:
 			r.HandlePublic(lead.Method, lead.Pattern, h)

@@ -219,6 +219,10 @@ type XKMSService struct {
 	// pkg/compose/invite.go).
 	inviteStore InviteStore
 
+	// inviteUsers, when set, is the user client the public invite routes
+	// read and activate the invited user through (SetInviteUserClient).
+	inviteUsers InviteUserClient
+
 	// inviteConfig holds the operator-configured invitation link base URL
 	// and TTL bounds. The zero value is usable: an empty PublicBaseURL
 	// yields a link with no origin, and empty TTL bounds fall back to

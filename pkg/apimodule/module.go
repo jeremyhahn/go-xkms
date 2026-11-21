@@ -52,6 +52,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -144,6 +145,19 @@ func WithServiceContext(bind qrdbstorage.CallContext) Option {
 	}
 }
 
+// WithNodeUsers wires the host's embedded go-qrdb node as the user source
+// the module's public routes (WebAuthn ceremonies, invite redemption, the
+// refresh re-check) look users up through. Those routes' request context
+// carries no qrdb credentials, so on a node that enforces authentication the
+// qrdb client's user calls are refused there (ruling 973). A host that
+// embeds a node passes it (*node.Node satisfies auth.NodeUserSource); a
+// host that dials a remote qrdb leaves it unset.
+func WithNodeUsers(node auth.NodeUserSource) Option {
+	return func(m *Module) {
+		m.nodeUsers = node
+	}
+}
+
 // openDatastore opens a datastore on the host's qrdb client, bound to the
 // host's service context (WithServiceContext).
 func (m *Module) openDatastore(client *qrdbsdk.Client) (*datastore.Datastore, error) {
@@ -222,6 +236,20 @@ func WithSessionOptions(opts *rest.SessionOptions) Option {
 func WithPIVLogin(opts *rest.PIVLoginOptions) Option {
 	return func(m *Module) {
 		m.pivLogin = opts
+	}
+}
+
+// WithCORS applies the host's cross-origin policy (xkmsd's cors config
+// section) to the module's REST routes on the unified server. The go-qrdb
+// registrar mounts each route by itself, so the REST router's own CORS
+// middleware never runs there. RegisterHTTP wraps every route handler in the
+// policy and registers a public OPTIONS route for each pattern, so that a
+// preflight from an allowed origin is answered before the auth chain. Nil, or
+// an empty AllowedOrigins list, emits no CORS headers and registers no
+// OPTIONS routes.
+func WithCORS(opts *rest.CORSOptions) Option {
+	return func(m *Module) {
+		m.cors = opts
 	}
 }
 
@@ -336,6 +364,9 @@ type Module struct {
 	resolveMCP        MCPResolver
 	resolveQRDBClient QRDBClientResolver
 
+	// nodeUsers is WithNodeUsers' embedded node; nil without one.
+	nodeUsers auth.NodeUserSource
+
 	// serviceContext is WithServiceContext's binder, applied to every
 	// datastore the module opens (openDatastore).
 	serviceContext qrdbstorage.CallContext
@@ -364,6 +395,10 @@ type Module struct {
 	// vaultRelyingParty is WithPasswordVaultRelyingParty's relying party.
 	vaultRelyingParty string
 	pivLogin          *rest.PIVLoginOptions
+
+	// cors is WithCORS's cross-origin policy for the module's REST routes
+	// (module_http.go). Nil emits no CORS headers.
+	cors *rest.CORSOptions
 
 	// webauthnCredentialStoreDecorator wraps the credential store the
 	// self-built WebAuthn relying party persists through

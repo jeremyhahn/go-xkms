@@ -59,11 +59,20 @@ const (
 // import would cycle, and the interface is implemented here rather than
 // declared.
 type QRDBUserResolver struct {
-	users qrdbtransport.UserClient
+	users RefreshUserLookup
 }
 
 // NewQRDBUserResolver wires the qrdb user client into a QRDBUserResolver.
-func NewQRDBUserResolver(users qrdbtransport.UserClient) *QRDBUserResolver {
+// RefreshUserLookup is the part of qrdbtransport.UserClient the refresh
+// re-check reads. qrdbtransport.UserClient and NodeUserClient satisfy it;
+// on an embedded node the public refresh route uses NodeUserClient, since
+// its request context carries no qrdb credentials (ruling 973).
+type RefreshUserLookup interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error)
+	GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error)
+}
+
+func NewQRDBUserResolver(users RefreshUserLookup) *QRDBUserResolver {
 	return &QRDBUserResolver{users: users}
 }
 
@@ -137,7 +146,10 @@ func (r *QRDBUserResolver) lookup(ctx context.Context, id *Identity) (*qrdbtrans
 		if !ok {
 			return nil, ErrRefreshSubjectNotFound
 		}
-		u, err := r.users.GetUser(ctx, uid)
+		// The by-id lookup carries no tenant of its own: bind the validated
+		// refresh token's tenant, or a routing user service resolves the
+		// anonymous refresh route in the system tenant.
+		u, err := r.users.GetUser(bindTenant(ctx, id.TenantID), uid)
 		if err != nil {
 			if errors.As(err, &notFound) {
 				return nil, ErrRefreshSubjectNotFound

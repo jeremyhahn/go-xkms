@@ -70,6 +70,7 @@ func newCredentialStore(factory *qrdbsdk.DAOFactory) (*daoCredentialStore, error
 // — to this account or any other — is refused with
 // ErrCredentialAlreadyExists and the stored record is left untouched.
 func (s *daoCredentialStore) Save(ctx context.Context, cred *Credential) error {
+	ctx = credentialScope(ctx)
 	if cred == nil || len(cred.ID) == 0 {
 		return ErrInvalidCredential
 	}
@@ -86,6 +87,7 @@ func (s *daoCredentialStore) Save(ctx context.Context, cred *Credential) error {
 // GetByUserID returns all credentials for a user, or an empty slice when the
 // user has none.
 func (s *daoCredentialStore) GetByUserID(ctx context.Context, userID []byte) ([]*Credential, error) {
+	ctx = credentialScope(ctx)
 	entities, err := s.creds.Find(ctx).Where("UserID = ?", encodeID(userID)).Execute()
 	if err != nil {
 		return nil, WrapError("list user credentials", err)
@@ -99,6 +101,7 @@ func (s *daoCredentialStore) GetByUserID(ctx context.Context, userID []byte) ([]
 
 // GetByCredentialID retrieves a credential by its ID.
 func (s *daoCredentialStore) GetByCredentialID(ctx context.Context, credID []byte) (*Credential, error) {
+	ctx = credentialScope(ctx)
 	e, err := s.get(ctx, credID)
 	if err != nil {
 		return nil, err
@@ -114,6 +117,7 @@ func (s *daoCredentialStore) GetByCredentialID(ctx context.Context, credID []byt
 // is never resurrected or reassigned by a stale update
 // (ErrCredentialUpdateConflict).
 func (s *daoCredentialStore) Update(ctx context.Context, cred *Credential) error {
+	ctx = credentialScope(ctx)
 	if cred == nil || len(cred.ID) == 0 {
 		return ErrInvalidCredential
 	}
@@ -138,6 +142,7 @@ func (s *daoCredentialStore) Update(ctx context.Context, cred *Credential) error
 
 // Delete removes a credential by its ID.
 func (s *daoCredentialStore) Delete(ctx context.Context, credID []byte) error {
+	ctx = credentialScope(ctx)
 	e, err := s.get(ctx, credID)
 	if err != nil {
 		return err
@@ -150,6 +155,7 @@ func (s *daoCredentialStore) Delete(ctx context.Context, credID []byte) error {
 
 // DeleteByUserID removes all credentials for a user.
 func (s *daoCredentialStore) DeleteByUserID(ctx context.Context, userID []byte) error {
+	ctx = credentialScope(ctx)
 	entities, err := s.creds.Find(ctx).Where("UserID = ?", encodeID(userID)).Execute()
 	if err != nil {
 		return WrapError("list user credentials", err)

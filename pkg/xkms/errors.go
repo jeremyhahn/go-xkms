@@ -758,6 +758,13 @@ func (e *ErrUnknownRole) Error() string {
 // classifyInviteError.
 var ErrInviteUnusable = errors.New("invite: link is not valid")
 
+// ErrInviteTenantNotServed refuses passkey enrolment through an invitation
+// whose account is outside the tenant the WebAuthn relying party serves
+// (ruling 1029 B): the login ceremony resolves accounts in that tenant only,
+// so the passkey could never sign in. Tenant-aware passkey login is a
+// separate SPEC row. Transports map it to 403 Forbidden.
+var ErrInviteTenantNotServed = errors.New("invite: passkey enrolment is not available for this tenant")
+
 // ErrPIVCertDecode is returned when an invite's PIV activation certificate
 // cannot be decoded from PEM or parsed as an X.509 certificate.
 type ErrPIVCertDecode struct {
