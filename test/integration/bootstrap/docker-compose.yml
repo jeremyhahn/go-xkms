@@ -63,11 +63,15 @@ services:
     healthcheck:
       # Healthy only once the admin client credential is bound
       # (scripts/enrol-admin-client.sh writes the marker), so no test runs
-      # before key discovery can authenticate.
-      test: ["CMD-SHELL", "test -f /etc/xkms/certs/admin-client.bound && wget --quiet --tries=1 --spider --ca-certificate=/etc/xkms/certs/ca.crt https://localhost:8443/health"]
+      # before key discovery can authenticate. The probe is a GET: /health
+      # answers HEAD (wget --spider) with 405, which kept the container
+      # unhealthy (CI at 2964e51e4). The window (start_period + retries x
+      # interval) exceeds enrol-admin-client.sh's ENROL_WAIT_SECONDS
+      # (healthcheck_test.go).
+      test: ["CMD-SHELL", "test -f /etc/xkms/certs/admin-client.bound && curl -sf -o /dev/null --max-time 3 --cacert /etc/xkms/certs/ca.crt https://localhost:8443/health"]
       interval: 5s
-      timeout: 3s
-      retries: 15
+      timeout: 4s
+      retries: 30
       start_period: 15s
     networks:
       - bootstrap-net

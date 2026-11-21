@@ -37,16 +37,30 @@ while [ "${i}" -lt "${WAIT_SECONDS}" ]; do
             first_boot_dir="${d}"
         fi
     done
+    healthy=""
     if [ -n "${first_boot_dir}" ] &&
-        curl -sf -o /dev/null --cacert "${CERT_DIR}/ca.crt" "${SERVER_URL}/health"; then
+        curl -sf -o /dev/null --max-time 3 --cacert "${CERT_DIR}/ca.crt" "${SERVER_URL}/health"; then
+        healthy=1
         break
     fi
     i=$((i + 1))
+    if [ $((i % 10)) -eq 0 ]; then
+        if [ -z "${first_boot_dir}" ]; then
+            echo "enrol-admin-client: ${i}s: still waiting for admin-cert.pem/admin-key.pem under ${DATA_DIR}" >&2
+        else
+            echo "enrol-admin-client: ${i}s: still waiting for ${SERVER_URL}/health" >&2
+        fi
+    fi
     sleep 1
 done
 if [ -z "${first_boot_dir}" ]; then
     echo "enrol-admin-client: no first-boot admin credential under ${DATA_DIR} after ${WAIT_SECONDS}s" >&2
     exit 1
+fi
+if [ -z "${healthy}" ]; then
+    echo "enrol-admin-client: ${SERVER_URL}/health not OK after ${WAIT_SECONDS}s:" >&2
+    curl -sS --max-time 5 --cacert "${CERT_DIR}/ca.crt" "${SERVER_URL}/health" >&2 || true
+    echo >&2
 fi
 
 # The binding identifier is qrdb's SPKI SHA-256 thumbprint, base64url
@@ -59,7 +73,9 @@ thumbprint=$(openssl x509 -in "${CERT_DIR}/admin-client.crt" -pubkey -noout \
     | tr -d '=')
 not_after=$(date -d "$(openssl x509 -in "${CERT_DIR}/admin-client.crt" -noout -enddate | cut -d= -f2)" +%s)
 
-status=$(curl -s -o /dev/null -w '%{http_code}' \
+body_file=$(mktemp)
+trap 'rm -f "${body_file}"' EXIT
+status=$(curl -s -o "${body_file}" -w '%{http_code}' --max-time 30 \
     --cacert "${CERT_DIR}/ca.crt" \
     --cert "${first_boot_dir}/admin-cert.pem" \
     --key "${first_boot_dir}/admin-key.pem" \
@@ -67,7 +83,10 @@ status=$(curl -s -o /dev/null -w '%{http_code}' \
     -d "{\"thumbprint\":\"${thumbprint}\",\"not_after_unix\":${not_after}}" \
     "${SERVER_URL}/api/v1/users/${ADMIN_USER}/cert-bindings")
 if [ "${status}" != "200" ]; then
-    echo "enrol-admin-client: binding admin-client.crt to ${ADMIN_USER} answered HTTP ${status}" >&2
+    echo "enrol-admin-client: binding admin-client.crt to ${ADMIN_USER} answered HTTP ${status}:" >&2
+    # The binding response carries no key material.
+    cat "${body_file}" >&2
+    echo >&2
     exit 1
 fi
 

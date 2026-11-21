@@ -5031,7 +5031,12 @@ integration-test-bootstrap: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
 	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,bootstrap) run --build --rm test
+		$(call compose,bootstrap) run --build --rm test || { rc=$$?; \
+		echo "$(RED)✗ bootstrap stack failed (rc=$$rc): ps, xkms-server logs and health follow$(RESET)"; \
+		$(call compose,bootstrap) ps -a; \
+		$(call compose,bootstrap) logs --no-color --tail=400 xkms-server 2>&1 | grep -v 'PRIVATE KEY'; \
+		docker inspect --format '{{json .State.Health}}' $$($(call compose,bootstrap) ps -aq xkms-server); \
+		exit $$rc; }
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
 .PHONY: integration-test-acmeadmin
