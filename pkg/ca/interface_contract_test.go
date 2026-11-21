@@ -65,6 +65,7 @@ var trustedCAMethods = map[string]struct{}{
 	"ImportCertificatePEM":                   {},
 	"ImportDistributionCRLs":                 {},
 	"ImportIssuingCAs":                       {},
+	"ImportIssuingCAsInto":                   {},
 	"ImportLocalAttestation":                 {},
 	"ImportXSignedCertificate":               {},
 	"Init":                                   {},
