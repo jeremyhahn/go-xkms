@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -407,5 +408,68 @@ fi`
 	good := strings.Replace(bad, `echo "no check"`, `runs "$JOB_TOKEN" || verdict=unreadable`, 1)
 	if p := scheduleGuardProblems(good); len(p) != 0 {
 		t.Fatalf("want no problem, got %q", p)
+	}
+}
+
+// varsRegistry matches a repository variable whose name ends in _REGISTRY
+// (template v1.53, handbook 17803e85): a registry host a later step takes
+// from vars, which the mask step must see as VARS_<NAME>. A name such as
+// CI_REGISTRY_OWNER is not a host and does not match.
+var varsRegistry = regexp.MustCompile(`vars\.([A-Z0-9_]*_REGISTRY)\b`)
+
+// maskRegistryCase is the v1.53 case arm of ci-mask-lan.sh: every variable
+// whose name ends in _REGISTRY is scanned.
+const maskRegistryCase = "| *_REGISTRY |"
+
+// TestCIMaskStepsSetVarsRegistries pins template v1.53 at handbook
+// 17803e85: every Mask the LAN addresses step sets VARS_CI_IMAGE_REGISTRY
+// and one VARS_<NAME> per vars.<NAME> ending in _REGISTRY its job reads, and
+// ci-mask-lan.sh scans every *_REGISTRY variable.
+func TestCIMaskStepsSetVarsRegistries(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	var raw struct {
+		Jobs map[string]yaml.Node `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parse %s: %v", ciWorkflow, err)
+	}
+	masks := 0
+	for name, node := range raw.Jobs {
+		var job digestJob
+		if err := node.Decode(&job); err != nil {
+			t.Fatalf("decode job %s: %v", name, err)
+		}
+		text, err := yaml.Marshal(&node)
+		if err != nil {
+			t.Fatalf("marshal job %s: %v", name, err)
+		}
+		want := map[string]string{"VARS_CI_IMAGE_REGISTRY": "${{ vars.CI_IMAGE_REGISTRY }}"}
+		for _, m := range varsRegistry.FindAllStringSubmatch(string(text), -1) {
+			want["VARS_"+m[1]] = "${{ vars." + m[1] + " }}"
+		}
+		for _, s := range job.Steps {
+			if strings.TrimSpace(s.Run) != maskLANScript {
+				continue
+			}
+			masks++
+			for k, v := range want {
+				if got := s.Env[k]; got != v {
+					t.Errorf("%s mask step env %s = %q, want %q", name, k, got, v)
+				}
+			}
+		}
+	}
+	if masks == 0 {
+		t.Fatalf("%s has no step running %s", ciWorkflow, maskLANScript)
+	}
+	script, err := os.ReadFile(filepath.Join(maskLANRoot, maskLANScript))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), maskRegistryCase) {
+		t.Errorf("%s case pattern lacks %q: v1.53 scans every *_REGISTRY variable", maskLANScript, maskRegistryCase)
 	}
 }
