@@ -77,7 +77,18 @@ most 3 redirects, a 30-second timeout, and a body cap of 64 KiB for a
 certificate or 32 MiB for a CRL (`pki_fetch.go:31-49`). `ImportIssuingCAs`
 also requires each fetched issuer to verify the child's signature and stops
 a walk that repeats a certificate or climbs more than 5 issuers
-(`trust_chain_extensions.go:278-328`). None of the limits is configurable.
+(`trust_chain_extensions.go:314-353`). None of the limits is configurable.
+
+`ImportIssuingCAsInto(ctx, cert, store)` runs the same walk, under the same
+limits and refusals, but looks for and stores each issuer only in `store`, a
+`certstore.CertStore` the caller owns (`trust_chain_extensions.go:298`). It
+never reads or writes the CA's shared certificate or key stores, which every
+tenant shares and which are keyed by common name: importing a tenant's
+issuers there would let one tenant claim a common name and block another
+tenant's issuer of that name (go-quicbaas#1993). A nil `store` returns
+`ErrTargetCertStoreRequired`; there is no fallback to the shared stores.
+`ImportIssuingCAs` stays for system-scope callers. Both share one walk,
+`importIssuingCAs`, parameterised by an `issuerSink` (lookup and store).
 
 **`CACrossSigner`** — `ImportXSignedCertificate(issuerCN, cert)`,
 `XSignedCertificate(issuerCN, attrs)`, `XSignedRootCertificate(issuerCN, cert)`,
@@ -521,11 +532,15 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
   tenant's certificates — a system-tenant caller only the system/platform
   scope's own (`""`), never a tenant's (go-xkms#1406). `IssueCertificate` binds `req.TenantID`
   the same way before forwarding it, so a tenant-scoped caller cannot mint
-  a certificate attributed to a different tenant either. A certificate
-  issued through a path that never calls `signCSR` — the TCG device-identity
-  family (EK/AK/IDevID) and the CA's own root/intermediate certificates —
-  carries no record and so resolves to the system/platform scope, reachable
-  only by a system-tenant caller. `certs:revoke` (and `certs:generate`) is
+  a certificate attributed to a different tenant either. A TCG
+  device-identity certificate (EK/AK/IDevID) the CA signs records the
+  request's tenant the same way (`issueTCGCertificate`, `pkg/ca/tcg.go`;
+  empty for the system scope), so it is revocable only by that tenant, and a
+  system-tenant caller is refused for a tenant's EK/AK/IDevID certificate. A
+  certificate with no record — a TCG certificate signed by a caller-supplied
+  Signer, the CA's own root/intermediate certificates, and a certificate
+  issued before the record existed — resolves to the system/platform scope,
+  reachable only by a system-tenant caller. `certs:revoke` (and `certs:generate`) is
   the same permission on every transport (REST, gRPC, MCP); go-qrdb's
   built-in Admin role grants it by default in every tenant it is seeded
   into, including the system tenant, so both a system admin and a tenant
