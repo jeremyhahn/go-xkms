@@ -223,37 +223,46 @@ xkmsctl key attest node-idevid --backend tpm2 --output attestation.json
 xkmsctl key derive-ecdh session-ec --peer-key peer.der --kdf HKDF --length 32
 ```
 
-### `key ota-image create | rotate | sign`
+### `key ota-image create | rotate | export | sign`
 
 These verbs manage the ES256 key that signs a trusted-firmware board's OTA
 images. Each board has one key, `ota-image-<board-id>`. A board id is 1-63
 characters of `a-z`, `0-9` and single inner hyphens
-(`cmd/xkmsctl/key_ota_image.go:29-37`). The rules are in
+(`cmd/xkmsctl/key_ota_image.go:30-38`). The rules are in
 [engineering.md](engineering.md#per-board-ota-image-keys).
 
 | Verb | Arguments | Flag | Type | Default |
 |---|---|---|---|---|
 | `key ota-image create <board-id>` | board id | `--algorithm` | string | `ES256` (the only value accepted) |
 | `key ota-image rotate <board-id>` | board id | `--algorithm` | string | `ES256` |
+| `key ota-image export <board-id>` | board id | none | | |
 | `key ota-image sign <board-id> <image-file>` | board id, image file | `--digest` | bool | `false` |
 
-The flags are defined at `key_ota_image.go:153-156`.
+The flags are defined at `key_ota_image.go:184-188`.
 
 - `create` prints the new key ID.
 - `rotate` creates the next version and makes it current. Images signed
   with the previous version still verify. It prints the key ID and the
   current version. When the key has a certificate, it warns that the
   certificate still certifies the previous version and must be re-issued
-  (`key_ota_image.go:126-137`).
+  (`key_ota_image.go:147-158`).
+- `export` prints the public half of the current version: the key ID, the
+  board ID, the version, the raw 64-byte X||Y point in hex (what a board
+  flashes to verify its images) and the COSE_Key in base64; `-o json`
+  prints the `key_id`, `board_id`, `version`, `raw` and `cose_key` fields
+  (`key_ota_image.go:73-91`, `:160-169`). A board without a key exits 1
+  with `failed to export the OTA image public key` and the server's
+  not-found reason (`errors.go:846`).
 - `sign` signs the file with the current version and prints the base64
   ES256 signature and the version. The signature is the RFC 9053 §2.1
   fixed-width `r || s`, 64 bytes (ruling 136); `key sign` and every other
   verb still print ASN.1 DER. With `--digest`, the file holds the
-  image's SHA-256 digest, not the image (`key_ota_image.go:72-99`).
+  image's SHA-256 digest, not the image (`key_ota_image.go:92-119`).
 
 ```
 xkmsctl key ota-image create cm4 --backend software
 xkmsctl key ota-image rotate cm4 --backend software
+xkmsctl key ota-image export cm4 --backend software
 xkmsctl key ota-image sign cm4 firmware.bin --backend software
 ```
 
@@ -261,9 +270,9 @@ xkmsd validates the board id and the algorithm. When it refuses a request,
 the verb exits 1 and prints the typed error: `failed to create the OTA
 image key`, `failed to rotate the OTA image key` or `failed to sign the OTA
 image`, followed by the server's reason (`cmd/xkmsctl/errors.go:838`,
-`:842`, `:846`). When `sign` cannot read the image file, it exits 1 with
+`:842`, `:850`). When `sign` cannot read the image file, it exits 1 with
 `failed to read data file` and sends nothing (`errors.go:759`,
-`key_ota_image.go:89-93`).
+`key_ota_image.go:110-114`).
 
 ## Exit codes
 
@@ -284,6 +293,6 @@ Definitions exist today in `test/integration/api/commands/commands.go` for
 `key export-material`, `key copy`, `key get-import-params`, `key wrap`,
 `key unwrap`, `key wrap-by-id`, `key unwrap-by-id`, `key attest`,
 `key derive-ecdh`, `key ota-image create`, `key ota-image rotate`,
-`key ota-image sign`, `backends get` and `algorithms` have no
+`key ota-image export`, `key ota-image sign`, `backends get` and `algorithms` have no
 `CommandDefinition`. Adding them is mechanical — extend the table and the
 runner picks them up on all protocols.
