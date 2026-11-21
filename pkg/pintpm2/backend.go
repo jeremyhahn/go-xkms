@@ -53,13 +53,20 @@ const minPINLength = 6
 // qrdbsdk.ErrPINNotSet.
 //
 // FIDO2 PIN hash verification is supported by caching SHA-256(PIN)[:16]
-// in a go-enclave MemoryEnclave (mlock'd, guard-paged memory), admitted
+// in a go-enclave ByteAccess enclave (mlock'd, guard-paged memory), admitted
 // through enclave.ProcessAllocator, when the user PIN is set, verified, or
 // changed.
 type TPM2Backend struct {
 	platformStore PlatformAuthProvider
 	userPINSet    atomic.Bool
-	fido2Enclave  atomic.Pointer[enclave.MemoryEnclave]
+	fido2Enclave  atomic.Pointer[fido2Hash]
+}
+
+// fido2Hash holds the cached FIDO2 PIN hash enclave so it can sit behind an
+// atomic.Pointer; go-enclave v0.11.1 hands out an enclave.ByteAccess
+// interface rather than a concrete type.
+type fido2Hash struct {
+	enclave.ByteAccess
 }
 
 // NewTPM2Backend creates a new TPM2Backend that delegates PIN verification
@@ -221,7 +228,11 @@ func (b *TPM2Backend) VerifyFIDO2Hash(hash []byte) bool {
 	if len(hash) != qrdbsdk.FIDO2PINHashSize {
 		return false
 	}
-	match, err := b.fido2Enclave.Load().EqualTo(hash)
+	cached := b.fido2Enclave.Load()
+	if cached == nil {
+		return false
+	}
+	match, err := cached.EqualTo(hash)
 	if err != nil {
 		return false
 	}
@@ -240,7 +251,7 @@ func (b *TPM2Backend) Close() error {
 
 // destroyFIDO2Enclave wipes enc, reporting a failure as
 // ErrFIDO2HashDestroyFailed.
-func destroyFIDO2Enclave(enc *enclave.MemoryEnclave) error {
+func destroyFIDO2Enclave(enc enclave.ByteAccess) error {
 	if err := enc.Destroy(); err != nil {
 		return &errs.Joined{Lead: ErrFIDO2HashDestroyFailed, Cause: err}
 	}
@@ -291,7 +302,7 @@ func (b *TPM2Backend) cacheFIDO2Hash(pinBytes []byte) error {
 	if err != nil {
 		return b.failFIDO2HashCache(err)
 	}
-	if old := b.fido2Enclave.Swap(enc); old != nil {
+	if old := b.fido2Enclave.Swap(&fido2Hash{ByteAccess: enc}); old != nil {
 		return destroyFIDO2Enclave(old)
 	}
 	return nil
