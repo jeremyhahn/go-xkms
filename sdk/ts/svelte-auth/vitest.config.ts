@@ -7,6 +7,12 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // Node 26 enables Web Storage by default; its global localStorage
+    // shadows jsdom's (#2167). Workers run without it.
+    poolOptions: {
+      forks: { execArgv: ['--no-experimental-webstorage'] },
+      threads: { execArgv: ['--no-experimental-webstorage'] },
+    },
     include: ['test/**/*.test.ts'],
     coverage: {
       provider: 'v8',
