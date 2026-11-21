@@ -58,12 +58,33 @@ type Record struct {
 	// Subject is the identity the token refreshes.
 	Subject string `json:"subject"`
 
+	// TenantID is the tenant of the account the token refreshes. Usernames
+	// are tenant-scoped and every tenant's records share one store, so a
+	// revocation matches tenant and subject together. A record saved before
+	// this field existed carries none and belongs to the system tenant.
+	TenantID string `json:"tenant_id,omitempty"`
+
 	// ExpiresAt is the refresh token's absolute expiry (Unix seconds).
 	ExpiresAt int64 `json:"expires_at"`
 
 	// Rotated marks a token that was already exchanged for a successor.
 	// Presenting a rotated token again is reuse — the family is revoked.
 	Rotated bool `json:"rotated"`
+}
+
+// ownedBy reports whether r refreshes subject in tenantID. An empty tenant
+// on either side is the system tenant, so a record saved before Record
+// carried a tenant matches only a system-tenant revocation.
+func (r *Record) ownedBy(tenantID, subject string) bool {
+	return r.Subject == subject && canonicalTenant(r.TenantID) == canonicalTenant(tenantID)
+}
+
+// canonicalTenant maps the empty tenant to the system tenant.
+func canonicalTenant(tenantID string) string {
+	if tenantID == "" {
+		return qrdbsdk.SystemTenantID
+	}
+	return tenantID
 }
 
 // revocation is the tombstone written when a family is revoked.
@@ -105,13 +126,13 @@ type RefreshStore interface {
 	// slip a successor past the sweep.
 	RevokeFamily(ctx context.Context, family string) error
 
-	// RevokeBySubject revokes every family whose Record.Subject equals
-	// subject, exactly as RevokeFamily revokes one -- so a user-lifecycle
+	// RevokeBySubject revokes every family whose Record carries subject in
+	// tenantID (an empty tenant, on either side, is the system tenant), exactly as RevokeFamily revokes one -- so a user-lifecycle
 	// change (disable, delete) ends every session the account holds, no
 	// matter which login flow minted it. It is idempotent: a subject with no
 	// live family is a no-op success, matching RevokeFamily's own logout
 	// semantics.
-	RevokeBySubject(ctx context.Context, subject string) error
+	RevokeBySubject(ctx context.Context, tenantID, subject string) error
 }
 
 // refreshKey builds the KV key for a record.
@@ -208,13 +229,13 @@ func (s *MemoryRefreshStore) RevokeFamily(_ context.Context, family string) erro
 }
 
 // RevokeBySubject implements RefreshStore.
-func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, tenantID, subject string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	families := make(map[string]struct{})
 	for _, rec := range s.records {
-		if rec.Subject == subject {
+		if rec.ownedBy(tenantID, subject) {
 			families[rec.Family] = struct{}{}
 		}
 	}
@@ -498,7 +519,7 @@ func (s *QRDBRefreshStore) revokeFamily(ctx context.Context, family string) erro
 // have to stay consistent with RevokeFamily's own delete-by-prefix sweep,
 // and a lifecycle change is rare enough next to a refresh that the scan's
 // cost is the right place to pay it.
-func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, tenantID, subject string) error {
 	ctx, err := s.callContext(ctx)
 	if err != nil {
 		return err
@@ -514,7 +535,7 @@ func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) 
 		if err := json.Unmarshal(data, &rec); err != nil {
 			return &StoreError{Op: "decode", Err: err}
 		}
-		if rec.Subject == subject {
+		if rec.ownedBy(tenantID, subject) {
 			families[rec.Family] = struct{}{}
 		}
 	}

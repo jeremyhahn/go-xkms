@@ -75,7 +75,7 @@ func TestQRDBRefreshStore_ServiceContext_AnonymousCaller(t *testing.T) {
 	assert.Nil(t, rec)
 
 	require.NoError(t, store.Save(ctx, &token.Record{JTI: "j2", Family: "f2", Subject: "bob", ExpiresAt: exp}))
-	require.NoError(t, store.RevokeBySubject(ctx, "bob"))
+	require.NoError(t, store.RevokeBySubject(ctx, "", "bob"))
 	rec, err = store.Get(ctx, "f2", "j2")
 	require.NoError(t, err)
 	assert.Nil(t, rec)

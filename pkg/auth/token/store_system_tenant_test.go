@@ -91,3 +91,18 @@ func TestQRDBRefreshStore_RevokeBySubjectIsTenantScoped(t *testing.T) {
 	_, err = issuer.Refresh(context.Background(), pairSys.RefreshToken)
 	require.NoError(t, err, "system-tenant alice stays signed in")
 }
+
+// TestRecordOwnedBy_LegacyRecordIsSystemTenant: a record saved before Record
+// carried a tenant belongs to the system tenant only.
+func TestRecordOwnedBy_LegacyRecordIsSystemTenant(t *testing.T) {
+	legacy := &Record{Subject: "alice"}
+	require.True(t, legacy.ownedBy(qrdbsdk.SystemTenantID, "alice"))
+	require.True(t, legacy.ownedBy("", "alice"))
+	require.False(t, legacy.ownedBy("tenant-a", "alice"))
+	require.False(t, legacy.ownedBy(qrdbsdk.SystemTenantID, "bob"))
+
+	scoped := &Record{Subject: "alice", TenantID: "tenant-a"}
+	require.True(t, scoped.ownedBy("tenant-a", "alice"))
+	require.False(t, scoped.ownedBy("tenant-b", "alice"))
+	require.False(t, scoped.ownedBy("", "alice"))
+}
