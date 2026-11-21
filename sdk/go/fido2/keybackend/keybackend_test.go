@@ -10,8 +10,9 @@ import (
 // TestTPM2AttestingBackendIsTheAuthenticatorType proves the sdk alias is the
 // authenticator type itself, so xkey can hold the backend without pkg/.
 func TestTPM2AttestingBackendIsTheAuthenticatorType(t *testing.T) {
-	var b *keybackend.TPM2AttestingBackend = (*pkgkeybackend.TPM2AttestingBackend)(nil)
-	if b != nil {
-		t.Fatal("nil conversion must stay nil")
+	if holds((*pkgkeybackend.TPM2AttestingBackend)(nil)) {
+		t.Fatal("nil backend must stay nil through the alias")
 	}
 }
+
+func holds(b *keybackend.TPM2AttestingBackend) bool { return b != nil }
