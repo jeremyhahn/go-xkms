@@ -28,6 +28,9 @@ logging:
 tls:
   enabled: true
   server_cn: "localhost"
+  # The init mTLS administrator needs its certificate requested; "verify"
+  # still lets clients without one connect (issue #2254).
+  client_auth: verify
 
 # Adaptive: anonymous while zero users exist (so the SPA's own /register
 # ceremony can create the first operator), required auth afterwards.

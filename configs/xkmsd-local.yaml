@@ -27,6 +27,9 @@ logging:
 tls:
   enabled: true
   server_cn: "localhost"
+  # The init mTLS administrator needs its certificate requested; "verify"
+  # still lets clients without one connect (issue #2254).
+  client_auth: verify
 
 # Adaptive authentication: anonymous while zero users exist (so a fresh local
 # instance is reachable for bootstrap), then every request is required to

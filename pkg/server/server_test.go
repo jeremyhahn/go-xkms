@@ -81,9 +81,12 @@ func createMinimalConfig(t *testing.T) *config.Config {
 		// serves the persisted bootstrap certificate. The defaults layer
 		// turns include_localhost_sans on, so it names localhost: the
 		// authority gRPC uses for a unix target.
+		// client_auth "verify": tests that switch Auth to an mTLS chain
+		// need the certificate requested (issue #2254).
 		TLS: config.TLSConfig{
 			Enabled:              true,
 			IncludeLocalhostSANs: true,
+			ClientAuth:           "verify",
 		},
 		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
@@ -1693,9 +1696,12 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 		// serves the persisted bootstrap certificate. The defaults layer
 		// turns include_localhost_sans on, so it names localhost: the
 		// authority gRPC uses for a unix target.
+		// client_auth "verify": tests that switch Auth to an mTLS chain
+		// need the certificate requested (issue #2254).
 		TLS: config.TLSConfig{
 			Enabled:              true,
 			IncludeLocalhostSANs: true,
+			ClientAuth:           "verify",
 		},
 		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
@@ -2711,9 +2717,12 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 		// serves the persisted bootstrap certificate. The defaults layer
 		// turns include_localhost_sans on, so it names localhost: the
 		// authority gRPC uses for a unix target.
+		// client_auth "verify": tests that switch Auth to an mTLS chain
+		// need the certificate requested (issue #2254).
 		TLS: config.TLSConfig{
 			Enabled:              true,
 			IncludeLocalhostSANs: true,
+			ClientAuth:           "verify",
 		},
 		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
