@@ -52,6 +52,11 @@ func newOTAImageMCPServer(t *testing.T) *Transport {
 			result = map[string]string{"key_id": "ota-image-" + params.BoardID}
 		case "xkms.rotateOTAImageKey":
 			result = map[string]interface{}{"key_id": "ota-image-" + params.BoardID, "key_version": 2}
+		case "xkms.exportOTAImagePublicKey":
+			result = map[string]interface{}{
+				"key_id": "ota-image-" + params.BoardID, "board_id": params.BoardID, "version": 2,
+				"raw": make([]byte, 64), "cose_key": []byte{0xa5},
+			}
 		case "xkms.signOTAImage":
 			result = map[string]interface{}{"signature": []byte("sig"), "key_version": 2}
 		default:
@@ -83,6 +88,21 @@ func TestOTAImageKey_MCP(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("sig"), signed.Signature)
 	assert.Equal(t, uint32(2), signed.KeyVersion)
+}
+
+func TestOTAImageKey_MCP_ExportPublicKey(t *testing.T) {
+	tr := newOTAImageMCPServer(t)
+
+	got, err := tr.ExportOTAImagePublicKey(context.Background(), &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
+	require.NoError(t, err)
+	assert.Equal(t, "ota-image-cm4", got.KeyID)
+	assert.Equal(t, "cm4", got.BoardID)
+	assert.Equal(t, uint32(2), got.Version)
+	assert.Len(t, got.Raw, 64)
+	assert.Equal(t, []byte{0xa5}, got.COSEKey)
+
+	_, err = tr.ExportOTAImagePublicKey(context.Background(), &transport.OTAImageKeyRequest{Backend: "software", BoardID: otaBadBoard})
+	assert.Error(t, err)
 }
 
 func TestOTAImageKey_MCP_InvalidBoard(t *testing.T) {

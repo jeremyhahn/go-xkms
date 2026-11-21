@@ -30,6 +30,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 const otaTestBoard = "stm32-h7"
@@ -155,6 +156,50 @@ func TestOTAImageKeyRPCs_UnknownBoardKey(t *testing.T) {
 		BoardId: otaTestBoard, Backend: crossTenantSource,
 	})
 	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestService_ExportOTAImagePublicKey(t *testing.T) {
+	s, _ := crossTenantService(t)
+	ctx := tenantCtx(crossTenantA)
+
+	created, err := s.CreateOTAImageKey(ctx, &pb.OTAImageKeyRequest{
+		BoardId: otaTestBoard, Backend: crossTenantSource, Algorithm: "ES256",
+	})
+	require.NoError(t, err)
+
+	got, err := s.ExportOTAImagePublicKey(ctx, &pb.OTAImageKeyRequest{
+		BoardId: otaTestBoard, Backend: crossTenantSource,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, created.KeyId, got.KeyId)
+	assert.Equal(t, otaTestBoard, got.BoardId)
+	assert.Equal(t, uint32(1), got.Version)
+	require.Len(t, got.Raw, 64)
+	assert.NotEmpty(t, got.CoseKey)
+
+	uncompressed, err := otaPublicKey(t, created.PublicKeyPem).Bytes()
+	require.NoError(t, err)
+	assert.Equal(t, uncompressed[1:], got.Raw, "raw is the uncompressed point without its 0x04 prefix")
+}
+
+func TestService_ExportOTAImagePublicKey_NotFound(t *testing.T) {
+	s, _ := crossTenantService(t)
+
+	_, err := s.ExportOTAImagePublicKey(tenantCtx(crossTenantA), &pb.OTAImageKeyRequest{
+		BoardId: otaTestBoard, Backend: crossTenantSource,
+	})
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestService_ExportOTAImagePublicKey_PermissionDenied(t *testing.T) {
+	xkms.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
+
+	_, err := newDeniedService().ExportOTAImagePublicKey(deniedCtx(), &pb.OTAImageKeyRequest{
+		BoardId: otaTestBoard, Backend: "test",
+	})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestOTAImageKeyRPCs_NotInitialized(t *testing.T) {
