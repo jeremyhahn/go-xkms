@@ -3,6 +3,7 @@ package tpm2
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -67,6 +68,40 @@ func (tpm *TPM2) defaultUnsealKeyAttributes(keyID string) (*types.KeyAttributes,
 		CN:     keyID,
 		Parent: srkAttrs,
 	}, nil
+}
+
+// sealedPCRSelectMetadata is the SealedData metadata key holding the PCR
+// bitmap (platform bank) a platform-policy object was sealed over, when it
+// is wider than the platform set.
+const sealedPCRSelectMetadata = "tpm:pcr_select"
+
+// applySealedPCRSelection gives keyAttrs the PCR selection recorded in the
+// sealed data's metadata when the caller named none, so inline blobs sealed
+// over an extra PCR open by their PCR branch with reconstructed attributes.
+// A selection the caller gave is kept: the TPM checks it either way.
+func (tpm *TPM2) applySealedPCRSelection(keyAttrs *types.KeyAttributes, sealed *types.SealedData) error {
+	raw, ok := sealed.Metadata[sealedPCRSelectMetadata]
+	if !ok {
+		return nil
+	}
+	if keyAttrs.TPMAttributes != nil &&
+		len(keyAttrs.TPMAttributes.PCRSelection.PCRSelections) > 0 {
+		return nil
+	}
+	mask, err := strconv.ParseUint(string(raw), 0, 32)
+	if err != nil || mask == 0 {
+		return &errs.Detail{Err: ErrSealedObjectIncomplete,
+			Detail: fmt.Sprintf("bad %s metadata", sealedPCRSelectMetadata)}
+	}
+	bank, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+	}
+	if keyAttrs.TPMAttributes == nil {
+		keyAttrs.TPMAttributes = &types.TPMAttributes{}
+	}
+	keyAttrs.TPMAttributes.PCRSelection = PolicyPCRSelection(bank, PCRSetFromMask(uint32(mask))...)
+	return nil
 }
 
 // Seal encrypts/protects data using the TPM's sealing mechanism.
@@ -195,6 +230,18 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 	// Store additional metadata
 	if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.Handle != 0 {
 		sealed.Metadata["tpm:handle"] = []byte(fmt.Sprintf("0x%x", keyAttrs.TPMAttributes.Handle))
+	}
+	// A platform-policy object sealed over PCRs beyond the platform set
+	// records that selection, so its portable inline blobs open by their PCR
+	// branch without the key store's pin or a repeated selection.
+	if keyAttrs.TPMPolicy == types.TPMPolicyPlatform {
+		pcrs, err := tpm.sealPCRSet(keyAttrs)
+		if err != nil {
+			return nil, err
+		}
+		if pcrs.Mask() != tpm.config.PlatformPCRs.Mask() {
+			sealed.Metadata[sealedPCRSelectMetadata] = []byte(fmt.Sprintf("0x%08x", pcrs.Mask()))
+		}
 	}
 
 	return sealed, nil
@@ -332,6 +379,9 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	// still read from the caller's key store. Both are present or neither is,
 	// checked above.
 	if len(sealed.TPMPublic) > 0 {
+		if err := tpm.applySealedPCRSelection(keyAttrs, sealed); err != nil {
+			return nil, types.SealedDataAuthenticationError("", err)
+		}
 		tpm.logger.Debug("unseal: using provided TPMPublic/TPMPrivate blobs directly")
 		secret, err := tpm.unsealFromBlobs(keyAttrs, backend, sealed.TPMPublic, sealed.TPMPrivate)
 		if err != nil {
