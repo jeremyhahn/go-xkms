@@ -61,7 +61,8 @@ type Record struct {
 	// TenantID is the tenant of the account the token refreshes. Usernames
 	// are tenant-scoped and every tenant's records share one store, so a
 	// revocation matches tenant and subject together. A record saved before
-	// this field existed carries none and belongs to the system tenant.
+	// this field existed carries none; its tenant is unknown, so it fails
+	// closed and is revoked by its subject's revocation in any tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 
 	// ExpiresAt is the refresh token's absolute expiry (Unix seconds).
@@ -72,11 +73,16 @@ type Record struct {
 	Rotated bool `json:"rotated"`
 }
 
-// ownedBy reports whether r refreshes subject in tenantID. An empty tenant
-// on either side is the system tenant, so a record saved before Record
-// carried a tenant matches only a system-tenant revocation.
+// ownedBy reports whether r refreshes subject in tenantID. A record that
+// carries a tenant matches tenant and subject together (an empty tenantID is
+// the system tenant). A record saved before Record carried a tenant fails
+// closed: its tenant is unknown, so it matches a revocation of its subject in
+// any tenant and is never assumed to belong to the system tenant.
 func (r *Record) ownedBy(tenantID, subject string) bool {
-	return r.Subject == subject && canonicalTenant(r.TenantID) == canonicalTenant(tenantID)
+	if r.Subject != subject {
+		return false
+	}
+	return r.TenantID == "" || canonicalTenant(r.TenantID) == canonicalTenant(tenantID)
 }
 
 // canonicalTenant maps the empty tenant to the system tenant.
