@@ -456,8 +456,12 @@ XKMS_GRPC_TLS_INSECURE ?= true
 GOFIPS140 ?= off
 GOFIPS140_FIPS ?= latest
 
-# Test timeout
-PKCS11_TEST_TIMEOUT ?= 10m
+# Test timeout for the pkcs11 integration targets. The pkcs11/module package
+# took 485s at normal load (run 72047 attempt 1) and more than 600s at
+# loadavg 498 on 80 CPUs (attempt 2, fsync-bound in ModuleStorage.SaveObject).
+# 20m is about 2.5x the normal-load time, which covers the loaded-runner
+# slowdown (go-xkms#1763).
+PKCS11_TEST_TIMEOUT ?= 20m
 # Backends the OpenSSL matrix exercises. Naming a backend asserts it is
 # compiled in; the matrix fails rather than skips if it is not.
 XKMS_PKCS11_BACKENDS ?= software
