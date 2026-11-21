@@ -126,6 +126,8 @@ type XKMSService struct {
 	tokenIssuer *token.Issuer
 
 	credentialService subsystem[*credentialspkg.Service]
+	// backendPINStrategy reports the resolved backend PIN strategy (#2262).
+	backendPINStrategy subsystem[func() string]
 
 	// authorizer is the process's single qrdb-backed Authorizer, the same one
 	// every transport gates on. The service consults it only where a decision

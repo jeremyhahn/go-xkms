@@ -16,9 +16,11 @@
 package server
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,6 +106,9 @@ func TestServer_InitPKCS11Backend_Stub(t *testing.T) {
 		// must reference a secret held elsewhere (go-xkms#654) --
 		// unconfigured is the correct shape for this test's purpose.
 	}
+	// Seal is off here, so no barrier exists and the default (auto ->
+	// sealed without a TPM) fails closed (#2262). Manual needs no barrier.
+	cfg.BackendPIN.Strategy = "manual"
 
 	server, err := New(cfg)
 	require.NoError(t, err)
@@ -112,6 +117,30 @@ func TestServer_InitPKCS11Backend_Stub(t *testing.T) {
 
 	// PKCS11 stub should be called but not add a backend (since it's a stub)
 	assert.NotNil(t, server.backends)
+}
+
+// An explicitly configured sealed backend PIN strategy with no barrier
+// (seal off) refuses to start: it never falls back (#2262).
+func TestServer_New_SealedBackendPINWithoutBarrierFailsClosed(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	cfg.Backends.PKCS11 = &config.PKCS11Config{
+		Enabled: true,
+		Library: "/usr/lib/softhsm/libsofthsm2.so",
+		Token:   "test",
+	}
+	cfg.BackendPIN.Strategy = "sealed"
+
+	server, err := New(cfg)
+	if server != nil {
+		_ = server.Shutdown()
+	}
+	require.Error(t, err)
+	var unavailable *pinselect.BackendPINUnavailableError
+	require.True(t, errors.As(err, &unavailable), "typed refusal is reachable: %v", err)
+	assert.Equal(t, "no barrier", unavailable.Reason)
 }
 
 func TestServer_InitVaultBackend_Stub(t *testing.T) {

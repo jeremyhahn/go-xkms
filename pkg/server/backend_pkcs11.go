@@ -51,6 +51,16 @@ func (s *Server) initPKCS11Backend() error {
 	return nil
 }
 
+// defaultPKCS11PINOpener opens the PKCS#11 backend with a PIN released by
+// the backend PIN holder (#2262), sealed in a SecretValue for the open.
+func (s *Server) defaultPKCS11PINOpener(pin []byte) (types.KeyProvider, error) {
+	pv, err := types.NewLiteralSecretValue(s.ctx, pin)
+	if err != nil {
+		return nil, err
+	}
+	return s.openPKCS11Backend(pv)
+}
+
 // openPKCS11Backend is the one construction of the configured PKCS#11
 // backend, from backends.pkcs11 and the given token PIN. Its key and
 // certificate metadata live in the shared datastore through

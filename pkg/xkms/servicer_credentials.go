@@ -67,7 +67,19 @@ func (s *XKMSService) GetCredentialStrategy(ctx context.Context) (*transport.Cre
 	return &transport.CredentialStrategyResponse{
 		Strategy:   credentialService.Strategy(),
 		AutoUnseal: credentialService.AutoUnsealAvailable(),
+		BackendPINStrategy: func() string {
+			if source := s.backendPINStrategy.load(); source != nil {
+				return source()
+			}
+			return ""
+		}(),
 	}, nil
+}
+
+// SetBackendPINStrategy sets the source of the resolved PKCS#11 backend PIN
+// strategy reported by GetCredentialStrategy (#2262).
+func (s *XKMSService) SetBackendPINStrategy(source func() string) {
+	s.backendPINStrategy.store(source)
 }
 
 // ListCredentials returns the names of the platform's stored backend
