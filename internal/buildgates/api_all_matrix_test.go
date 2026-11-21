@@ -73,6 +73,8 @@ func TestAPIAllRunsProtocolMatrix(t *testing.T) {
 		"TestAllCommandsAllProtocols",
 		"TestCLIPlatformMatrix",
 		"TestCLISecretsMatrix",
+		"TestCLIClusterMatrix",
+		"TestCLIBootstrapMatrix",
 		"TestCLIEmbeddedProtocol",
 	} {
 		var hits []string
