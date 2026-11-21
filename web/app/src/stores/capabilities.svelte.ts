@@ -24,7 +24,7 @@
 
 import { sessionStore } from "./session.svelte.ts";
 
-export type CapabilityFlag = "ca" | "ssh" | "tenants" | "passwords" | "webauthn";
+export type CapabilityFlag = "ca" | "ssh" | "tenants" | "passwords" | "webauthn" | "frost";
 
 /** Disabled state of each gated subsystem: what is off and how to turn it on. */
 export const SUBSYSTEM_OFF: Readonly<Record<CapabilityFlag, { title: string; setting: string }>> = {
@@ -48,6 +48,10 @@ export const SUBSYSTEM_OFF: Readonly<Record<CapabilityFlag, { title: string; set
     title: "Passkeys are off on this server.",
     setting: "Set webauthn.enabled: true in xkmsd.yaml.",
   },
+  frost: {
+    title: "FROST threshold signing is not in this xkmsd build.",
+    setting: "Rebuild xkmsd with -tags frost (the default build serves no FROST routes).",
+  },
 };
 
 /** Router name -> the capability flag its view's routes need. */
@@ -68,6 +72,9 @@ export const ROUTE_CAPABILITY: Readonly<Record<string, CapabilityFlag>> = {
   passwordAccessMode: "passwords",
   // POST /api/v1/webauthn/credentials/begin.
   addPasskey: "webauthn",
+  // The !frost build answers the FROST routes with 501 (handlers_frost_stub.go).
+  frost: "frost",
+  frostKeyImport: "frost",
 };
 
 /** The flag that gates a route, when the session reports it explicitly false. */
