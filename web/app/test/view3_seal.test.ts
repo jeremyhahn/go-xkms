@@ -108,6 +108,22 @@ describe("SealView", () => {
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
   });
 
+  it("keeps Seal enabled when the capability probe is forbidden", async () => {
+    capability.mockRejectedValue(Object.assign(new Error("forbidden"), { status: 403 }));
+    seal.mockResolvedValue(sealed);
+    render(SealView);
+
+    await chooseBackend("tpm2");
+    await waitFor(() => expect(capability).toHaveBeenCalledWith("tpm2"));
+    await fireEvent.input(screen.getByLabelText("Text to seal"), { target: { value: "hello" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Seal" })).toBeEnabled());
+    expect(screen.queryByText("Backend tpm2 cannot seal.")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Seal" }));
+
+    await waitFor(() => expect(seal).toHaveBeenCalledOnce());
+    expect(seal.mock.calls[0]![0]).toEqual({ backend: "tpm2", data: textToB64("hello") });
+  });
+
   it("unseals from the seal result JSON and shows the plaintext", async () => {
     unseal.mockResolvedValue({ plaintext: textToB64("hello") });
     render(SealView);
