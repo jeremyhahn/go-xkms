@@ -669,6 +669,10 @@ build-web: build-sdk-ts
 ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping build-web$(RESET)"
 else
+	@# svelte-auth resolves its @go-xkms/sdk devDependency (file:..) only through
+	@# its own node_modules, so install it before the web/app build (#2286).
+	@echo "$(CYAN)$(BOLD)→ Installing @go-xkms/svelte-auth dependencies...$(RESET)"
+	@cd $(SVELTE_AUTH_DIR) && npm ci --silent
 	@echo "$(CYAN)$(BOLD)→ Installing web/app dependencies...$(RESET)"
 	@cd $(WEB_APP_DIR) && npm ci --silent
 	@# npm rewrites file: deps to relative symlinks; force absolute symlinks so
@@ -1093,6 +1097,7 @@ test-scripts:
 	@bash test/scripts/retry.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@bash test/scripts/softhsm-pin.test.sh
+	@bash test/scripts/softhsm-lib.test.sh
 	@bash test/scripts/open-server-barrier.test.sh
 	@bash test/scripts/ensure-server-ca.test.sh
 	@bash test/scripts/socket-probe.test.sh
@@ -1104,10 +1109,12 @@ test-scripts:
 	@bash test/scripts/xkey-build-tags.test.sh
 	@bash test/scripts/go-build-tags.test.sh
 	@bash test/scripts/gomodauth.test.sh
+	@bash test/scripts/go-caches-env.test.sh
 	@bash test/scripts/credential-ignores.test.sh
 	@bash test/scripts/no-credential-echo.test.sh
 	@bash test/scripts/ci-registry.test.sh
 	@bash test/scripts/trim-ci-caches.test.sh
+	@bash test/scripts/build-web-deps.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
@@ -1693,7 +1700,12 @@ test-pkcs11-tagged:
 coverage-pkcs11-tagged:
 	@echo "$(CYAN)→ Generating pkcs11-tagged coverage report...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@CGO_ENABLED=1 $(GO) test -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(PKCS11_TAGGED_TAGS))" \
+	@# SoftHSM 2.7.0+ reports PKCS#11 tamper (#1418); on an older host SoftHSM
+	@# (the lane-verify image's distro 2.6.1) softhsm-lib.sh builds the pinned
+	@# release once into a user cache and points the suites at it (#1420).
+	@lib=$$(scripts/softhsm-lib.sh) || exit 1; \
+	echo "  SoftHSM module: $${lib:-internal/softhsmtest default}"; \
+	SOFTHSM2_LIB=$$lib CGO_ENABLED=1 $(GO) test -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(PKCS11_TAGGED_TAGS))" \
 		-coverprofile=$(COVERAGE_DIR)/pkcs11-tagged.raw -covermode=atomic $(PKCS11_TAGGED_PKGS)
 	@grep -v -E "/mocks/|_test\.go" $(COVERAGE_DIR)/pkcs11-tagged.raw > $(COVERAGE_DIR)/pkcs11-tagged.out
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/pkcs11-tagged.out -o $(COVERAGE_DIR)/pkcs11-tagged.html
@@ -1852,7 +1864,11 @@ coverage-xkmsctl:
 # integration-test-cluster stays out of the default run: its three Raft nodes
 # cannot initialize their barriers until each node can be initialized without
 # running its own first boot, against a shared bootstrap CA. Run it on its own.
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
+#
+# integration-test-bootstrap runs first (ruling 981): Make runs prerequisites
+# in order, and a bootstrap image build failure at the end of the list used to
+# cost the whole two-hour suite; first, it costs minutes.
+integration-test: clean-test-containers integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 # run-image-refs sets the shell variable refs to this run's images: each
@@ -5012,7 +5028,7 @@ AWSKMS_COMPOSE := $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/do
 
 .PHONY: integration-test-bootstrap
 ## integration-test-bootstrap: Run bootstrap integration tests (DANE/TLSA, Noise, SPKI, Direct, Auto)
-integration-test-bootstrap:
+integration-test-bootstrap: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
 	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
@@ -5374,7 +5390,8 @@ bench-cert-compare:
 # ==============================================================================
 
 # Get all packages dynamically (excluding cmd and test dirs)
-PKG_DIRS := $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
+# Deferred (=): a parse must not run go list, which fills the module cache (#2295).
+PKG_DIRS = $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
 
 # Explicit xkey E2E targets that would otherwise be caught by test-% pattern.
 .PHONY: test-fido2-pkcs11

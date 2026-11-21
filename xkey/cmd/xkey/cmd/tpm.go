@@ -129,6 +129,7 @@ var (
 	openTPMForEKCert                       = openConfiguredTPMForEKCert
 	openTPMForEKRestore                    = openConfiguredTPMForEKRestore
 	openTPMForProvisioningWithPCROverrides = openConfiguredTPMForProvisioningWithPCROverrides
+	openTPMForDevice                       = openProvisionedTPMForDevice
 )
 
 // EK certificate NV indices from the TCG EK Credential Profile: the RSA 2048
@@ -170,6 +171,28 @@ func openConfiguredTPMForEKRestore(ekCertHandle uint32) (xkms.TrustedPlatformMod
 	if err != nil {
 		if errors.Is(err, xkms.ErrTPMNotInitialized) {
 			return tpm, ErrTPMNotInitialized
+		}
+		return nil, discardTPM(tpm, err)
+	}
+
+	return tpm, nil
+}
+
+// openProvisionedTPMForDevice opens the provisioned TPM at device with the
+// configuration every `tpm` command uses (newTPMConfig, RSA EK certificate
+// index), for callers outside the `tpm` command group -- the fido2 tpm2 key
+// backend -- that have their own device flag. A TPM `tpm install` has not
+// provisioned is closed and reported as ErrTPMNotInitialized.
+func openProvisionedTPMForDevice(device string) (xkms.TrustedPlatformModule, error) {
+	config, err := newTPMConfig(device, false, ekCertHandleRSA)
+	if err != nil {
+		return nil, err
+	}
+
+	tpm, err := xkms.NewTPM2(newTPMParams(config))
+	if err != nil {
+		if errors.Is(err, xkms.ErrTPMNotInitialized) {
+			err = ErrTPMNotInitialized
 		}
 		return nil, discardTPM(tpm, err)
 	}
