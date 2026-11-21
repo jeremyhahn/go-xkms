@@ -64,6 +64,53 @@ func registryVerifier(t *testing.T, anchors TrustAnchors) *TrustAnchorVerifier {
 	return verifier
 }
 
+// TestApplicationReference covers how finalize obtains the reference the
+// possession request's application evidence must match: the provisioning
+// record's ApplicationReference, re-read from the registry, refused when
+// it is not 32 bytes, and refused when absent (docs/SPEC.md:41).
+func TestApplicationReference(t *testing.T) {
+	leafDER, key := newDICEAlias(t, DICENonce(diceKeyAuth))
+	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(t, err)
+	reference := mustHex(t, vectorApplicationEvidence)
+	verified := &VerifiedAttestation{Format: FormatDICE, KeyAuthorization: diceKeyAuth, LeafDER: leafDER, AttestedSPKI: spki}
+	verifierFor := func(policy DICEPolicy, ref []byte) *TrustAnchorVerifier {
+		return registryVerifier(t, TrustAnchors{DICE: policy, Devices: resolverFunc(func(context.Context, string) (*ProvisionedDevice, error) {
+			return &ProvisionedDevice{DeviceIDKey: spki, ApplicationReference: ref}, nil
+		})})
+	}
+	t.Run("the registered reference is returned", func(t *testing.T) {
+		got, err := verified.ApplicationReference(context.Background(), verifierFor(DICEPolicy{}, reference))
+		require.NoError(t, err)
+		assert.Equal(t, reference, got)
+	})
+	t.Run("a missing reference is refused with the default policy", func(t *testing.T) {
+		got, err := verified.ApplicationReference(context.Background(), verifierFor(DICEPolicy{}, nil))
+		assert.ErrorIs(t, err, ErrPossessionApplicationEvidenceMismatch)
+		assert.Nil(t, got)
+	})
+	for name, ref := range map[string][]byte{
+		"a 31-byte reference": reference[:31],
+		"a 33-byte reference": append(bytes.Clone(reference), 0x00),
+	} {
+		t.Run(name+" makes the record invalid", func(t *testing.T) {
+			_, err := verified.ApplicationReference(context.Background(), verifierFor(DICEPolicy{}, ref))
+			assert.ErrorIs(t, err, ErrProvisioningRecordInvalid)
+			assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
+			assert.ErrorIs(t, verifierFor(DICEPolicy{}, ref).ConfirmRegisteredDevice(context.Background(), "00", spki, nil), ErrProvisioningRecordInvalid)
+		})
+	}
+	t.Run("a non-DICE attestation has no reference", func(t *testing.T) {
+		got, err := (&VerifiedAttestation{Format: FormatTPM}).ApplicationReference(context.Background(), nil)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+	t.Run("a verifier without a registry is refused", func(t *testing.T) {
+		_, err := verified.ApplicationReference(context.Background(), nil)
+		assert.ErrorIs(t, err, ErrNoDeviceResolver)
+	})
+}
+
 // provisionedFor is a verifier whose registry provisions key as the DeviceID
 // key of the device named diceUeid: the raw-key path.
 func provisionedFor(t *testing.T, key *ecdsa.PrivateKey) *TrustAnchorVerifier {

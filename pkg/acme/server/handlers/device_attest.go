@@ -16,6 +16,7 @@ package handlers
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -226,7 +227,16 @@ func (s *RestService) bindDeviceAttestationKey(ctx context.Context, rec *entitie
 	// request itself must be that template: it is what proves the attested
 	// key answered this challenge (go-xkms#1441).
 	if verified.Format == deviceattest01.FormatDICE {
-		if err := verified.VerifyPossessionCSR(csr, order.Identifiers); err != nil {
+		reference, err := verified.ApplicationReference(ctx, s.deviceAttestationVerifier())
+		if err != nil {
+			if errors.Is(err, deviceattest01.ErrPossessionApplicationEvidenceMismatch) {
+				return common.BadCSR("device-attest-01: certificate request is not the attested device's possession request: " + err.Error())
+			}
+			s.logger.Warn("Refusing finalization: the device registry gave no application reference",
+				"error", err, "orderID", order.ID)
+			return common.Unauthorized("device-attest-01: the device's provisioning record no longer authorizes the attested key")
+		}
+		if err := verified.VerifyPossessionCSR(csr, order.Identifiers, reference); err != nil {
 			return common.BadCSR("device-attest-01: certificate request is not the attested device's possession request: " + err.Error())
 		}
 	}

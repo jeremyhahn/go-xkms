@@ -80,11 +80,15 @@ func simulatorUeid() string {
 }
 
 // diceRegistry is the device registry a provisioning step fills: the DeviceID
-// key each UEID was provisioned with. Only the public key crosses over.
-type diceRegistry map[string]*ecdsa.PublicKey
+// key each UEID was provisioned with, and the application reference the
+// firmware's possession request must carry. Only public values cross over.
+type diceRegistry struct {
+	keys      map[string]*ecdsa.PublicKey
+	reference []byte
+}
 
 func (r diceRegistry) ResolveDevice(_ context.Context, ueid string) (*deviceattest01.ProvisionedDevice, error) {
-	key, ok := r[ueid]
+	key, ok := r.keys[ueid]
 	if !ok {
 		return nil, deviceattest01.ErrDeviceNotProvisioned
 	}
@@ -92,7 +96,7 @@ func (r diceRegistry) ResolveDevice(_ context.Context, ueid string) (*deviceatte
 	if err != nil {
 		return nil, err
 	}
-	return &deviceattest01.ProvisionedDevice{DeviceIDKey: spki}, nil
+	return &deviceattest01.ProvisionedDevice{DeviceIDKey: spki, ApplicationReference: r.reference}, nil
 }
 
 // diceElement is the ACME client's view of the simulated device. It implements
@@ -110,6 +114,10 @@ type diceElement struct {
 	device   *tfw.Device
 	identity string
 	signer   crypto.Signer
+
+	// reference is the firmware's application evidence, the value its
+	// provisioning record registers.
+	reference []byte
 
 	// nonceFor derives the nonce the device attests over from the key
 	// authorization. The draft's is deviceattest01.DICENonce.
@@ -131,6 +139,24 @@ func newDiceElement(t *testing.T) *diceElement {
 	require.NoError(t, err)
 	element.identity, err = deviceattest01.DeviceIdentityFromCertificate(deviceattest01.FormatDICE, leaf)
 	require.NoError(t, err)
+
+	// The application reference a provisioning step registers is the
+	// firmware's own application evidence, read through the possession
+	// request the client assembles from the probe.
+	statement, err := deviceattest01.EncodeAttestationRequest(&deviceattest01.AttestationObject{
+		Format:       deviceattest01.FormatDICE.String(),
+		AttStatement: deviceattest01.AttestationStatement{X5c: []interface{}{probe}},
+	})
+	require.NoError(t, err)
+	claims, err := aliasClaims(statement)
+	require.NoError(t, err)
+	csrDER, err := deviceattest01.SignPossessionCSR(element.signer, claims, deviceattest01.DICENonce("identity-probe"))
+	require.NoError(t, err)
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+	request, err := deviceattest01.ParsePossessionCSR(csr)
+	require.NoError(t, err)
+	element.reference = request.ApplicationEvidence
 	return element
 }
 
@@ -212,10 +238,10 @@ type diceEnrollment struct {
 // provisioned with deviceID as its DeviceID key. RequireDeviceSignedLeaf is the
 // device-resident-issuer profile: the alias certificate's issuer is the
 // element's own DeviceID key.
-func newDiceEnrollment(t *testing.T, deviceID *ecdsa.PublicKey) *diceEnrollment {
+func newDiceEnrollment(t *testing.T, deviceID *ecdsa.PublicKey, reference []byte) *diceEnrollment {
 	t.Helper()
 	verifier, err := deviceattest01.NewTrustAnchorVerifier(deviceattest01.TrustAnchors{
-		Devices: diceRegistry{simulatorUeid(): deviceID},
+		Devices: diceRegistry{keys: map[string]*ecdsa.PublicKey{simulatorUeid(): deviceID}, reference: reference},
 		DICE:    deviceattest01.DICEPolicy{RequireDeviceSignedLeaf: true},
 	})
 	require.NoError(t, err)
@@ -272,7 +298,7 @@ func permanentIdentifier(t *testing.T, cert *x509.Certificate) string {
 // is for the DeviceID key it attested and bound to the ueid.
 func TestDeviceAttestDICEEnrollsTheRealFirmware(t *testing.T) {
 	element := newDiceElement(t)
-	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey())
+	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey(), element.reference)
 
 	assert.Equal(t, simulatorUeid(), element.identity,
 		"the identity is the hex of the ueid, type byte included")
@@ -297,7 +323,7 @@ func TestDeviceAttestDICEEnrollsTheRealFirmware(t *testing.T) {
 // evidence is genuine, but it is not that device's.
 func TestDeviceAttestDICERefusesAnotherUeid(t *testing.T) {
 	element := newDiceElement(t)
-	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey())
+	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey(), element.reference)
 	element.identity = hex.EncodeToString(append([]byte{0x01}, []byte("another-device-1")...))
 
 	cert, err := enrollment.enroll(element)
@@ -311,7 +337,7 @@ func TestDeviceAttestDICERefusesAnotherUeid(t *testing.T) {
 // refused, whatever else about it is genuine.
 func TestDeviceAttestDICERefusesTheWrongNonce(t *testing.T) {
 	element := newDiceElement(t)
-	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey())
+	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey(), element.reference)
 	element.nonceFor = func(string) []byte { return deviceattest01.DICENonce("another-token.another-thumbprint") }
 
 	cert, err := enrollment.enroll(element)
@@ -327,7 +353,7 @@ func TestDeviceAttestDICERefusesTheWrongNonce(t *testing.T) {
 // though the device's evidence verified.
 func TestDeviceAttestDICERefusesACSRForAnotherKey(t *testing.T) {
 	element := newDiceElement(t)
-	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey())
+	enrollment := newDiceEnrollment(t, tfwsim.TestDeviceIDPublicKey(), element.reference)
 	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	element.signer = other
@@ -346,7 +372,7 @@ func TestDeviceAttestDICERefusesAnUnprovisionedKey(t *testing.T) {
 	element := newDiceElement(t)
 	stranger, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	enrollment := newDiceEnrollment(t, &stranger.PublicKey)
+	enrollment := newDiceEnrollment(t, &stranger.PublicKey, element.reference)
 
 	cert, err := enrollment.enroll(element)
 
