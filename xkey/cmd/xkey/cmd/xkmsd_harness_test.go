@@ -40,16 +40,12 @@ import (
 	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	pkgca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // testOperatorAuthenticator is a minimal, real implementation of
@@ -64,12 +60,12 @@ import (
 // production authenticator that does this without a real credential.
 type testOperatorAuthenticator struct{}
 
-func (testOperatorAuthenticator) AuthenticateHTTP(*http.Request) (*auth.Identity, error) {
-	return &auth.Identity{Subject: "xkey-harness-operator", TenantID: "system", Roles: []string{"operator"}}, nil
+func (testOperatorAuthenticator) AuthenticateHTTP(*http.Request) (*xkms.QRDBIdentity, error) {
+	return &xkms.QRDBIdentity{Subject: "xkey-harness-operator", TenantID: "system", Roles: []string{"operator"}}, nil
 }
 
-func (testOperatorAuthenticator) AuthenticateGRPC(context.Context, metadata.MD) (*auth.Identity, error) {
-	return &auth.Identity{Subject: "xkey-harness-operator", TenantID: "system", Roles: []string{"operator"}}, nil
+func (testOperatorAuthenticator) AuthenticateGRPC(context.Context, metadata.MD) (*xkms.QRDBIdentity, error) {
+	return &xkms.QRDBIdentity{Subject: "xkey-harness-operator", TenantID: "system", Roles: []string{"operator"}}, nil
 }
 
 func (testOperatorAuthenticator) Name() string { return "xkey-test-operator" }
@@ -90,20 +86,20 @@ func testXKMSdQuietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// newTestXKMSService builds a real *pkgxkms.XKMSService backed by a real,
+// newTestXKMSService builds a real *xkms.XKMSService backed by a real,
 // initialized TrustedCA (software key backend, in-memory storage) — the same
 // construction pkg/ca/service_adapter_test.go:setupTestCA uses internally,
 // reassembled here from the same exported production constructors because
 // setupTestCA itself lives in a _test.go file pkg/ca does not export.
-func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
+func newTestXKMSService(t *testing.T) *xkms.XKMSService {
 	t.Helper()
 
-	swBackend, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
+	swBackend, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
 
-	backend, err := pkgxkms.New(&pkgxkms.BackendConfig{
+	backend, err := xkms.NewServiceBackend(&xkms.ServiceBackendConfig{
 		Backend:     swBackend,
-		CertStorage: storage.NewMemory(),
+		CertStorage: xkms.NewStorageMemory(),
 	})
 	require.NoError(t, err)
 
@@ -118,10 +114,10 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 	caIface, err := pkgca.NewFromMultiIdentityConfig(&pkgca.MultiIdentityParams{
 		Config:   config,
 		KeyStore: backend,
-		BackendForStore: func(string, types.StoreType) (pkgxkms.Backend, error) {
+		BackendForStore: func(string, xkms.StoreType) (xkms.ServiceBackend, error) {
 			return backend, nil
 		},
-		RevocationStore: storage.NewMemory(),
+		RevocationStore: xkms.NewStorageMemory(),
 		CertStore:       certStore,
 	})
 	require.NoError(t, err)
@@ -130,7 +126,7 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 	caProvider, ok := caIface.(provider.CA)
 	require.True(t, ok, "test CA must implement provider.CA, same as pkg/server's production wiring")
 
-	svc := &pkgxkms.XKMSService{}
+	svc := &xkms.XKMSService{}
 	svc.SetCA(caProvider)
 	return svc
 }
@@ -152,7 +148,7 @@ func startTestXKMSd(t *testing.T) (address string, cleanup func()) {
 
 // startTestXKMSdService is startTestXKMSd over a caller-built service, for a
 // test that wires a subsystem into it first.
-func startTestXKMSdService(t *testing.T, svc *pkgxkms.XKMSService) (address string, cleanup func()) {
+func startTestXKMSdService(t *testing.T, svc *xkms.XKMSService) (address string, cleanup func()) {
 	t.Helper()
 
 	serverTLS := newTestXKMSdTLS(t)
@@ -239,7 +235,7 @@ func testOperatorUnaryInterceptor(ctx context.Context, req any, _ *grpc.UnarySer
 	if err != nil {
 		return nil, err
 	}
-	return handler(auth.WithIdentity(ctx, identity), req)
+	return handler(xkms.QRDBWithIdentity(ctx, identity), req)
 }
 
 // testOperatorStreamInterceptor is testOperatorUnaryInterceptor for streams.
@@ -248,7 +244,7 @@ func testOperatorStreamInterceptor(srv any, ss grpc.ServerStream, _ *grpc.Stream
 	if err != nil {
 		return err
 	}
-	return handler(srv, &identityServerStream{ServerStream: ss, ctx: auth.WithIdentity(ss.Context(), identity)})
+	return handler(srv, &identityServerStream{ServerStream: ss, ctx: xkms.QRDBWithIdentity(ss.Context(), identity)})
 }
 
 // identityServerStream carries the authenticated identity in its context.
@@ -294,11 +290,11 @@ func startTestXKMSdREST(t *testing.T) (baseURL, spkiPin string) {
 	pin, err := spki.ComputePin(leaf)
 	require.NoError(t, err)
 
-	swBackend, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
+	swBackend, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
-	backend, err := pkgxkms.New(&pkgxkms.BackendConfig{
+	backend, err := xkms.NewServiceBackend(&xkms.ServiceBackendConfig{
 		Backend:     swBackend,
-		CertStorage: storage.NewMemory(),
+		CertStorage: xkms.NewStorageMemory(),
 	})
 	require.NoError(t, err)
 
@@ -307,7 +303,7 @@ func startTestXKMSdREST(t *testing.T) (baseURL, spkiPin string) {
 
 	srv, err := restapi.NewServer(&restapi.Config{
 		Authenticator: testOperatorAuthenticator{},
-		Backends:      map[string]pkgxkms.Backend{"software": backend},
+		Backends:      map[string]xkms.ServiceBackend{"software": backend},
 		XKMSService:   svc,
 		CA:            svc,
 		Listener:      listener,

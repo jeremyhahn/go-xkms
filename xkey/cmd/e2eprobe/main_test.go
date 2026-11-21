@@ -35,9 +35,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 )
 
@@ -109,7 +109,7 @@ func TestTOTP_MatchesRFC6238Vectors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// RFC 6238 section 1.2 and Appendix B pin HMAC-SHA-1, which the
 			// FIPS 140-3 module refuses, so that vector runs outside it.
-			if tc.name == "SHA1" && !fipstest.OutsideFIPS(t) {
+			if tc.name == "SHA1" && !xkmstest.OutsideFIPS(t) {
 				return
 			}
 			if got := totp(b32(tc.seed), 1, tc.digest); got != tc.want {

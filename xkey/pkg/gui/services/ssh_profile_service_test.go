@@ -17,7 +17,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -26,7 +26,7 @@ type ctxKeyTest struct{}
 
 func newProfileService(t *testing.T) *SSHProfileService {
 	t.Helper()
-	store, err := sshclient.NewProfileStore(sshDAOs(t, storage.New()))
+	store, err := sshclient.NewProfileStore(sshDAOs(t, xkms.NewStorageMemory()))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestSSHProfileService_SetStoreAndStore(t *testing.T) {
 		t.Fatal("expected nil store by default")
 	}
 
-	store, err := sshclient.NewProfileStore(sshDAOs(t, storage.New()))
+	store, err := sshclient.NewProfileStore(sshDAOs(t, xkms.NewStorageMemory()))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}

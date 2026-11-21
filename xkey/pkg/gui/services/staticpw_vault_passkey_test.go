@@ -18,25 +18,22 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest/vaultservice"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport/embedded"
 	"github.com/jeremyhahn/go-xkms/sdk/go/vaultpasskey"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
-// vaultSimKey is the shared simulated security key (vaulttest.SimulatedKey).
-type vaultSimKey = vaulttest.SimulatedKey
+// vaultSimKey is the shared simulated security key (xkmstest.VaultSimulatedKey).
+type vaultSimKey = xkmstest.VaultSimulatedKey
 
-func newVaultSimKey(pin string) *vaultSimKey { return vaulttest.NewSimulatedKey(pin) }
+func newVaultSimKey(pin string) *vaultSimKey { return xkmstest.NewVaultSimulatedKey(pin) }
 
 // passkeyVault is a StaticPasswordService connected, as user alice, to a
 // real XKMSService's vault through the SDK's embedded transport, with its
@@ -50,9 +47,9 @@ type passkeyVault struct {
 
 func newPasskeyVault(t *testing.T, key *vaultSimKey) *passkeyVault {
 	t.Helper()
-	tr, err := embedded.New(vaultservice.New(t).Service)
+	tr, err := embedded.New(xkmstest.NewVaultService(t).Service)
 	require.NoError(t, err)
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "alice", TenantID: vaultservice.Tenant})
+	ctx := xkms.QRDBWithIdentity(context.Background(), &xkms.QRDBIdentity{Subject: "alice", TenantID: xkmstest.VaultTenant})
 
 	svc := NewStaticPasswordService(newTestPasswordStore(t, xkms.NewStorageMemory()))
 	svc.SetContext(ctx)

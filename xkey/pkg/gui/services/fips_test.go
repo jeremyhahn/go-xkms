@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nssdb"
 	"github.com/stretchr/testify/assert"
@@ -24,7 +24,7 @@ import (
 func noiseOutsideFIPS(t *testing.T) bool {
 	t.Helper()
 	key, err := bootstrap.GenerateNoiseStaticKey()
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
 		return false
 	}
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func noiseOutsideFIPS(t *testing.T) bool {
 func nssdbOutsideFIPS(t *testing.T) bool {
 	t.Helper()
 	err := nssdb.InitDir(filepath.Join(t.TempDir(), "nssdb"))
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, nssdb.ErrFIPSUnsupported) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, nssdb.ErrFIPSUnsupported) {
 		return false
 	}
 	require.NoError(t, err)
@@ -54,7 +54,7 @@ func nssdbOutsideFIPS(t *testing.T) bool {
 func nativeMessagingOutsideFIPS(t *testing.T) bool {
 	t.Helper()
 	_, _, err := nativemsg.NewSessionCrypto()
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, nativemsg.ErrHandshakeFailed) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, nativemsg.ErrHandshakeFailed) {
 		return false
 	}
 	require.NoError(t, err)
@@ -80,5 +80,5 @@ func assertLegacyFingerprints(t *testing.T, sha1Fingerprint, md5Fingerprint stri
 // GODEBUG=fips140=only that error must carry the typed X25519 refusal.
 func serviceNoiseOutsideFIPS(t *testing.T, err error) bool {
 	t.Helper()
-	return fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported)
+	return xkmstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported)
 }

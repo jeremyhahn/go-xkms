@@ -21,7 +21,8 @@ import (
 )
 
 const (
-	AttestationFormatPacked = keybackend.AttestationFormatPacked
+	AttestationCertificateOU = keybackend.AttestationCertificateOU
+	AttestationFormatPacked  = keybackend.AttestationFormatPacked
 
 	COSEAlgES256 = keybackend.COSEAlgES256
 	COSEAlgES384 = keybackend.COSEAlgES384
@@ -38,8 +39,12 @@ type (
 
 var (
 	EncodeCOSEPublicKey            = keybackend.EncodeCOSEPublicKey
+	ErrAttestationAAGUIDMismatch   = keybackend.ErrAttestationAAGUIDMismatch
+	ErrAttestationCertInvalid      = keybackend.ErrAttestationCertInvalid
+	MarshalAAGUIDExtensionValue    = keybackend.MarshalAAGUIDExtensionValue
 	NewBackendAdapter              = keybackend.NewBackendAdapter
 	NewCompositeBackend            = keybackend.NewCompositeBackend
 	NewTPM2AttestingBackend        = keybackend.NewTPM2AttestingBackend
+	OIDFIDOGenCEAAGUID             = keybackend.OIDFIDOGenCEAAGUID
 	ValidateAttestationCertificate = keybackend.ValidateAttestationCertificate
 )

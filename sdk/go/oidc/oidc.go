@@ -72,6 +72,12 @@ type (
 // application/x-www-form-urlencoded.
 const TokenEncodingForm = pkg.TokenEncodingForm
 
+// TokenEncodingJSON encodes a token request as application/json.
+const TokenEncodingJSON = pkg.TokenEncodingJSON
+
+// CodexAuthModeChatGPT is codex's own ChatGPT login mode in auth.json.
+const CodexAuthModeChatGPT = pkg.CodexAuthModeChatGPT
+
 var (
 	// NewProvider discovers and builds a Provider from config.
 	NewProvider = pkg.NewProvider
@@ -113,6 +119,10 @@ type (
 	Callback = pkg.Callback
 	// CallbackPage is the page shown to the browser after a redirect.
 	CallbackPage = pkg.CallbackPage
+	// RedirectURLError reports a redirect URL the callback listener cannot serve.
+	RedirectURLError = pkg.RedirectURLError
+	// CallbackHostError reports a callback host that cannot serve the redirect host.
+	CallbackHostError = pkg.CallbackHostError
 )
 
 // AWSRedirectPath is the redirect path the AWS sign-in flow uses.
@@ -153,4 +163,10 @@ var (
 	ErrMissingRefreshToken = pkg.ErrMissingRefreshToken
 	// ErrTokenNotFound reports a token store miss.
 	ErrTokenNotFound = pkg.ErrTokenNotFound
+	// ErrInvalidTokenEncoding reports an unknown token request encoding.
+	ErrInvalidTokenEncoding = pkg.ErrInvalidTokenEncoding
+	// ErrCodexAuthInvalid reports a malformed codex auth.json.
+	ErrCodexAuthInvalid = pkg.ErrCodexAuthInvalid
+	// ErrCodexAuthMode reports a codex auth.json that is not a ChatGPT login.
+	ErrCodexAuthMode = pkg.ErrCodexAuthMode
 )

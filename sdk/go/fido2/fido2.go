@@ -100,6 +100,9 @@ var (
 	ValidateRPID                     = pkgfido2.ValidateRPID
 )
 
+// ErrNoDeviceFound reports that enumeration found no FIDO2 device.
+var ErrNoDeviceFound = pkgfido2.ErrNoDeviceFound
+
 // Re-exported relying party ID / origin binding error sentinels.
 var (
 	ErrOriginRequired     = pkgfido2.ErrOriginRequired

@@ -1,0 +1,1 @@
+- **sdk/go re-exports `ErrCAProfileNotFound`.** The sentinel a CA profile registry returns for an unknown profile name is now `xkms.ErrCAProfileNotFound` (an alias of `pkg/ca.ErrProfileNotFound`), so callers such as the xkey CA profile tests match it with `errors.Is` through sdk/go without importing `pkg/ca`.

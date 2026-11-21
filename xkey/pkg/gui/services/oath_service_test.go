@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -401,7 +401,7 @@ func TestOATHService_AddAccountManual_Success(t *testing.T) {
 	acct, err := svc.AddAccountManual("user@okta.com", "Okta", "AENQRKXVV3NCGL73")
 	// Manual entry takes the RFC 6238 default, HMAC-SHA-1, which
 	// fips140=only refuses.
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, oath.ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, oath.ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	require.NoError(t, err)
@@ -481,7 +481,7 @@ func TestOATHService_AddAccountManual_Errors(t *testing.T) {
 			}
 
 			_, err := svc.AddAccountManual(tc.accountName, tc.issuer, tc.secret)
-			if tc.sha1Refused && !fipstest.OutsideFIPSAfterRefusal(t, err, oath.ErrAlgorithmNotFIPSApproved) {
+			if tc.sha1Refused && !xkmstest.OutsideFIPSAfterRefusal(t, err, oath.ErrAlgorithmNotFIPSApproved) {
 				return
 			}
 			require.Error(t, err)

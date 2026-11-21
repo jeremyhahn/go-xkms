@@ -38,6 +38,8 @@ const (
 	FillModeAutoFill = autofill.FillModeAutoFill
 	// FillModeClickToFill requires a user click before filling.
 	FillModeClickToFill = autofill.FillModeClickToFill
+	// TOTPPolicyAuto fills the TOTP code without prompting.
+	TOTPPolicyAuto = autofill.TOTPPolicyAuto
 	// TOTPPolicyPrompt prompts the user before revealing a TOTP code.
 	TOTPPolicyPrompt = autofill.TOTPPolicyPrompt
 )

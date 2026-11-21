@@ -31,9 +31,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // This file is the end-to-end proof that BridgeConfig.TPM is wired to
@@ -49,12 +48,12 @@ import (
 // enrollmentTPM is a provisioned simulator-backed TPM that owns a complete
 // device identity: an EK with a certificate the CA can see, the IAK that
 // Provision creates, and an IDevID minted on top of both.
-func enrollmentTPM(t *testing.T) tpm2.TrustedPlatformModule {
+func enrollmentTPM(t *testing.T) xkms.TrustedPlatformModule {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	sim, err := tpm2.OpenSimulator()
+	sim, err := xkms.OpenSimulator()
 	require.NoError(t, err, "TPM simulator must be available; build with -tags tpm_simulator")
 	// Release the process-global simulator on every exit path. A cleanup
 	// registered only after the fixture finished would be skipped when an
@@ -62,7 +61,7 @@ func enrollmentTPM(t *testing.T) tpm2.TrustedPlatformModule {
 	// simulator lock until the test binary times out.
 	t.Cleanup(func() { assert.NoError(t, sim.Close(), "closing the TPM simulator") })
 
-	storageFactory, err := store.NewStorageFactory(logger, t.TempDir())
+	storageFactory, err := xkms.NewTPMStorageFactory(logger, t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, storageFactory.Close(), "closing the storage factory") })
 
@@ -70,16 +69,16 @@ func enrollmentTPM(t *testing.T) tpm2.TrustedPlatformModule {
 	// certificate store stands in for the manufacturer. A CSR without an EK
 	// certificate is not a CSR a CA can act on, so this is required, not
 	// convenience.
-	certStore := store.NewMemoryCertStore(logger)
+	certStore := xkms.NewTPMMemoryCertStore(logger)
 
-	config := tpm2.DefaultConfig
+	config := xkms.DefaultTPMConfig
 	config.UseSimulator = false // the transport is supplied explicitly
 	config.Device = ""
 	config.IDevID.CN = "enrollment-device-001"
 	config.IDevID.Model = "xkey-test-laptop"
 	config.IDevID.Serial = "SN-ENROLL-0001"
 
-	tpm, err := tpm2.NewTPM2(&tpm2.Params{
+	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
 		Config:    &config,
 		Logger:    logger,
 		Backend:   storageFactory.KeyBackend(),
@@ -90,7 +89,7 @@ func enrollmentTPM(t *testing.T) tpm2.TrustedPlatformModule {
 	if tpm != nil {
 		t.Cleanup(func() { assert.NoError(t, tpm.Close(), "closing the TPM") })
 	}
-	if err == tpm2.ErrNotInitialized {
+	if err == xkms.ErrTPMNotInitialized {
 		require.NotNil(t, tpm)
 		require.NoError(t, tpm.Provision(nil), "provisioning the simulator must succeed")
 	} else {
@@ -163,9 +162,9 @@ func TestBridge_GetTCGCSRIDevID_AgainstARealTPM(t *testing.T) {
 	// The CSR must be the real TCG structure, not an opaque blob: parsing the
 	// wire bytes back and unpacking them is exactly what the phone acting as
 	// the CA does next.
-	parsed, err := tpm2.UnmarshalIDevIDCSR(result.CSR)
+	parsed, err := xkms.UnmarshalIDevIDCSR(result.CSR)
 	require.NoError(t, err, "the packed CSR must parse as a TCG-CSR-IDEVID")
-	csr, err := tpm2.UnpackIDevIDCSR(parsed)
+	csr, err := xkms.UnpackIDevIDCSR(parsed)
 	require.NoError(t, err, "the parsed CSR must unpack into its TCG fields")
 	assert.Equal(t, "xkey-test-laptop", string(csr.CsrContents.ProdModel))
 	assert.Equal(t, "SN-ENROLL-0001", string(csr.CsrContents.ProdSerial))

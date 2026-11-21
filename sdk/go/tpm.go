@@ -328,6 +328,16 @@ var ErrTPMStoreCertNotFound = store.ErrCertNotFound
 // DebugKeyAttributes logs key attributes at debug level for diagnostics.
 var DebugKeyAttributes = store.DebugKeyAttributes
 
+// NewTPMMemoryCertStore creates an in-memory TPM certificate store.
+var NewTPMMemoryCertStore = store.NewMemoryCertStore
+
+// Owner-range NV indices (TCG "Registry of Reserved TPM 2.0 Handles and
+// Localities", section 2.2): the range an owner allocates its own indices in.
+const (
+	TPMNVOwnerIndexFirst = tpm2.NVOwnerIndexFirst
+	TPMNVOwnerIndexLast  = tpm2.NVOwnerIndexLast
+)
+
 // ---------------------------------------------------------------------------
 // Enrollment strategy constants
 // ---------------------------------------------------------------------------
@@ -581,6 +591,11 @@ var (
 
 // NewTPM2 creates a new TPM2 instance.
 var NewTPM2 = tpm2.NewTPM2
+
+// ProvisionTPMFresh provisions a freshly-manufactured TPM xkms itself created
+// (the development simulator or a tenant's vTPM): EK, Shared SRK and Platform
+// SRK. A physical TPM is never provisioned this way.
+var ProvisionTPMFresh = tpm2.ProvisionFresh
 
 // OpenUnixSocketTransport opens a connection to a TPM via Unix domain socket.
 var OpenUnixSocketTransport = tpm2.OpenUnixSocketTransport

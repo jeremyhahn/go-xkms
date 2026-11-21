@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 var errListenerClosed = errors.New("listener closed")
@@ -149,7 +149,7 @@ func sshClient(t *testing.T, ln *memListener) (*ssh.Client, bool) {
 		},
 	}
 	conn, chans, reqs, err := ssh.NewClientConn(newQueuedConn(ln.dial(t)), "127.0.0.9:2222", cfg)
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, nil) {
 		return nil, false
 	}
 	if err != nil {
