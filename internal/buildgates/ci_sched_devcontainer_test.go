@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -93,8 +92,9 @@ const runnerSelectStep = "runner"
 const forkPRExpr = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}"
 
 // stubCurl answers the selector's Actions API calls: one run, and a job
-// list of HOSTED_JOBS_PER_REPO hosted jobs in progress (a full pool). Each
-// URL it is asked for is appended to $STUB_LOG.
+// list whose first page is $STUB_DIR/jobs.json; a later page is
+// $STUB_DIR/jobs-more.json when it exists (an incomplete listing), else the
+// first page again. Each URL it is asked for is appended to $STUB_LOG.
 const stubCurl = `#!/bin/sh
 out=; url=
 while [ $# -gt 0 ]; do
@@ -107,7 +107,8 @@ while [ $# -gt 0 ]; do
 done
 echo "$url" >> "$STUB_LOG"
 case "$url" in
-  */jobs*) cat "$STUB_DIR/jobs.json" > "$out" ;;
+  */jobs*\&page=1) cat "$STUB_DIR/jobs.json" > "$out" ;;
+  */jobs*) if [ -f "$STUB_DIR/jobs-more.json" ]; then cat "$STUB_DIR/jobs-more.json"; else cat "$STUB_DIR/jobs.json"; fi > "$out" ;;
   *) cat "$STUB_DIR/runs.json" > "$out" ;;
 esac
 printf 200
@@ -146,6 +147,16 @@ func TestCIPreflightRunsHostedByDefault(t *testing.T) {
 
 func runRunnerSelect(t *testing.T, script, fork string) (output, calls string) {
 	t.Helper()
+	output, calls, _ = runRunnerSelectListing(t, script, fork, 12, 12)
+	return output, calls
+}
+
+// runRunnerSelectListing runs the selector as runRunnerSelect does, with a
+// first job page of listed hosted jobs in progress under a total_count of
+// total. When total exceeds listed, every later page is empty: the listing
+// is incomplete. It also returns the selector's own log.
+func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int) (output, calls, log string) {
+	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	if err := os.Mkdir(bin, 0o755); err != nil {
@@ -157,17 +168,23 @@ func runRunnerSelect(t *testing.T, script, fork string) (output, calls string) {
 	if err := os.WriteFile(filepath.Join(dir, "runs.json"), []byte(`{"total_count":1,"workflow_runs":[{"id":7}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	jobs := make([]string, 12)
+	jobs := make([]string, listed)
 	for i := range jobs {
 		jobs[i] = `{"status":"in_progress","labels":["ubuntu-latest"],"run_id":7}`
 	}
-	jobsJSON := fmt.Sprintf(`{"total_count":%d,"jobs":[%s]}`, len(jobs), strings.Join(jobs, ","))
+	jobsJSON := fmt.Sprintf(`{"total_count":%d,"jobs":[%s]}`, total, strings.Join(jobs, ","))
 	if err := os.WriteFile(filepath.Join(dir, "jobs.json"), []byte(jobsJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if total > listed {
+		more := fmt.Sprintf(`{"total_count":%d,"jobs":[]}`, total)
+		if err := os.WriteFile(filepath.Join(dir, "jobs-more.json"), []byte(more), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	out := filepath.Join(dir, "output")
-	log := filepath.Join(dir, "calls")
-	for _, f := range []string{out, log} {
+	callLog := filepath.Join(dir, "calls")
+	for _, f := range []string{out, callLog} {
 		if err := os.WriteFile(f, nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -185,20 +202,21 @@ func runRunnerSelect(t *testing.T, script, fork string) (output, calls string) {
 		"GITHUB_OUTPUT="+out,
 		"RUNNER_TEMP="+dir,
 		"STUB_DIR="+dir,
-		"STUB_LOG="+log,
+		"STUB_LOG="+callLog,
 	)
-	if b, err := cmd.CombinedOutput(); err != nil {
+	b, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("selector (FORK_PR=%s): %v\n%s", fork, err, b)
 	}
 	o, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := os.ReadFile(log)
+	c, err := os.ReadFile(callLog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(o), string(c)
+	return string(o), string(c), string(b)
 }
 
 func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
@@ -243,23 +261,50 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 // 52e70fd5, #84): a listing short of its total_count is a lower bound kept in
 // SHORT, not a reason to stay hosted, so overflow still fires under load.
 func TestCIRunnerSelectionShortListIsLowerBound(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "ci.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(b)
-	for _, re := range []string{
-		`(?m)^\s*SHORT=""\s*$`,
-		`(?m)^\s*\[ "\$got" -ge "\$total" \] \|\| SHORT="\$\{SHORT:\+\$SHORT; \}\$1: \$got of \$total entries"\s*$`,
-		`(?m)^\s*elif \[ -n "\$SHORT" \]; then\s*$`,
-		`(?m)^\s*\[ -z "\$SHORT" \] \|\| why="\$why \(a lower bound: \$SHORT\)"\s*$`,
-	} {
-		if !regexp.MustCompile(re).MatchString(text) {
-			t.Errorf("ci.yml: no line matches %s (v1.50 short-list lower bound)", re)
+	wf := readDigestWorkflow(t)
+	var script string
+	for _, s := range wf.Jobs[preflightJob].Steps {
+		if s.ID == runnerSelectStep {
+			script = s.Run
 		}
 	}
-	if strings.Contains(text, `WHY="$1: $got of $total entries"; return 1;`) {
-		t.Error("ci.yml: a short listing still returns 1 (pre-v1.50)")
+	if script == "" {
+		t.Fatalf("%s has no step with id: %s", preflightJob, runnerSelectStep)
+	}
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not installed: the selector script needs it", tool)
+		}
+	}
+	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
+	for _, tc := range []struct {
+		name   string
+		listed int
+		want   string
+		note   string
+	}{
+		// 12 of 20 listed: the lower bound already reaches
+		// HOSTED_JOBS_PER_REPO=12, so the run overflows and says so.
+		{"lower bound reaches the limit", 12, overflow, "(a lower bound:"},
+		// 5 of 20 listed: the lower bound reaches no trigger, so it stays hosted.
+		{"lower bound short of the limit", 5, hosted, "fewer entries than its total"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, calls, log := runRunnerSelectListing(t, script, "false", tc.listed, 20)
+			if out != tc.want {
+				t.Errorf("%d of 20 jobs listed: output %q, want %q\n%s", tc.listed, out, tc.want, log)
+			}
+			if !strings.Contains(calls, "&page=2") {
+				t.Errorf("%d of 20 jobs listed: the selector did not ask for the next page:\n%s", tc.listed, calls)
+			}
+			if strings.Contains(calls, "&page=3") {
+				t.Errorf("%d of 20 jobs listed: the selector read past the empty page:\n%s", tc.listed, calls)
+			}
+			if !strings.Contains(log, tc.note) {
+				t.Errorf("%d of 20 jobs listed: log lacks %q:\n%s", tc.listed, tc.note, log)
+			}
+		})
 	}
 }
 
