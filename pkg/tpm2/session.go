@@ -553,10 +553,21 @@ func (tpm *TPM2) platformPolicyPCR(
 	hashAlgID tpm2.TPMAlgID,
 	pcrDigest []byte) error {
 
+	return tpm.platformPolicyPCROver(session, hashAlgID, tpm.config.PlatformPCRs, pcrDigest)
+}
+
+// platformPolicyPCROver is platformPolicyPCR over pcrs instead of the
+// configured platform set.
+func (tpm *TPM2) platformPolicyPCROver(
+	session tpm2.Session,
+	hashAlgID tpm2.TPMAlgID,
+	pcrs PCRSet,
+	pcrDigest []byte) error {
+
 	_, err := tpm2.PolicyPCR{
 		PolicySession: session.Handle(),
 		PcrDigest:     tpm2.TPM2BDigest{Buffer: pcrDigest},
-		Pcrs:          platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCRs),
+		Pcrs:          platformPolicyPCRSelection(hashAlgID, pcrs),
 	}.Execute(tpm.transport)
 	if err != nil {
 		return &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyPCR execute: %v", err)}
@@ -571,11 +582,17 @@ func (tpm *TPM2) platformPolicyPCR(
 // session proves no secret, so it is unsalted. It fails with
 // TPM_RC_POLICY_FAIL at use once the platform state has moved.
 func (tpm *TPM2) platformPCRSession() (tpm2.Session, func() error, error) {
+	return tpm.platformPCRSessionOver(tpm.config.PlatformPCRs)
+}
+
+// platformPCRSessionOver is platformPCRSession over pcrs, in the platform
+// bank, instead of the configured platform set.
+func (tpm *TPM2) platformPCRSessionOver(pcrs PCRSet) (tpm2.Session, func() error, error) {
 	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
 		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
-	pcrDigest, err := tpm.PlatformPolicyDigestHash()
+	pcrDigest, err := tpm.platformPCRDigestOver(hashAlgID, pcrs)
 	if err != nil {
 		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -583,9 +600,51 @@ func (tpm *TPM2) platformPCRSession() (tpm2.Session, func() error, error) {
 	if err != nil {
 		return nil, noopCloser, &errs.Joined{Lead: ErrPlatformPolicySession, Cause: err}
 	}
-	if err := tpm.platformPolicyPCR(session, hashAlgID, pcrDigest); err != nil {
+	if err := tpm.platformPolicyPCROver(session, hashAlgID, pcrs, pcrDigest); err != nil {
 		tpm.closeSession(closer, "platform PCR policy")
 		return nil, noopCloser, err
+	}
+	return session, closer, nil
+}
+
+// platformORPCRSessionOver opens the PCR branch of a PolicyOR(PolicyPCR,
+// PolicyAuthValue) policy whose PCR branch is bound to pcrs: it runs
+// PolicyPCR over pcrs and then PolicyOR over both branch digests, so an
+// object sealed with a recovery PIN over a selection wider than the platform
+// set opens without the PIN while every selected PCR is unchanged.
+func (tpm *TPM2) platformORPCRSessionOver(pcrs PCRSet) (tpm2.Session, func() error, error) {
+	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+	}
+	pcrDigest, err := tpm.platformPCRDigestOver(hashAlgID, pcrs)
+	if err != nil {
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+	}
+	branch1Digest, branch2Digest, err := platformPolicyBranchDigests(hashAlgID, pcrs, pcrDigest)
+	if err != nil {
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+	}
+	session, closer, err := tpm.startPolicySession(hashAlgID, nil)
+	if err != nil {
+		return nil, noopCloser, &errs.Joined{Lead: ErrPlatformPolicySession, Cause: err}
+	}
+	if err := tpm.platformPolicyPCROver(session, hashAlgID, pcrs, pcrDigest); err != nil {
+		tpm.closeSession(closer, "platform PCR branch policy")
+		return nil, noopCloser, err
+	}
+	_, err = tpm2.PolicyOr{
+		PolicySession: session.Handle(),
+		PHashList: tpm2.TPMLDigest{
+			Digests: []tpm2.TPM2BDigest{
+				{Buffer: branch1Digest},
+				{Buffer: branch2Digest},
+			},
+		},
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.closeSession(closer, "platform PCR branch policy")
+		return nil, noopCloser, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyOR execute: %v", err)}
 	}
 	return session, closer, nil
 }
