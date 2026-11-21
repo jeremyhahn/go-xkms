@@ -120,7 +120,6 @@ func TestTPMPolicyTools_CarryBranchAndReferenceValues(t *testing.T) {
 		name, params, cause string
 		code                int
 	}{
-		{"no branch refused", `{"name":"boot"}`, "needs both the branch and its signed reference values", ErrCodeInvalidParams},
 		{"branch without reference values", `{"name":"boot","branch":"next"}`, "", ErrCodeInvalidParams},
 		{"reference values without a branch", `{"name":"boot","reference_values":"0oRDoQEm"}`, "", ErrCodeInvalidParams},
 		{"branch and reference values without a signer", `{"name":"boot","branch":"next","reference_values":"0oRDoQEm"}`, "no reference-value signer", ErrCodeInternalError},

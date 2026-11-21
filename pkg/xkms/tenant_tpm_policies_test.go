@@ -101,14 +101,9 @@ func TestTenantTPMPolicies_BranchUpdate(t *testing.T) {
 // UpdatePolicy updates one named branch from a signed CoRIM, so a request
 // with neither a branch nor reference values (the old live re-capture) is
 // refused before the policy service runs, and nothing is re-approved.
-func TestTPMPolicyUpdateRefusesUnsignedLiveCapture(t *testing.T) {
-	policies, _ := tpmpolicytest.NewOffline(t)
-	p, err := NewTenantTPMPolicies(policies, "")
-	require.NoError(t, err)
-
-	_, err = p.TPMPolicyUpdate(context.Background(), &transport.TPMPolicyUpdateRequest{Name: "boot"})
-	require.ErrorIs(t, err, ErrTPMPolicyBranchUpdate, "an unsigned live re-capture is refused")
-}
+// An update without a branch is a re-approval, refused for a policy with a
+// pcr condition: TestTenantTPMPolicies_ReapprovesAPolicyWithoutAPCRCondition
+// (tpm_simulator) covers it, as creating a policy needs a TPM.
 
 // TestParseTPMObjectKind proves the API's object kinds map to the policy
 // service's, "" meaning a key, and any other kind is a typed error.

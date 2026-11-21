@@ -16,6 +16,7 @@ package xkms
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -111,10 +112,23 @@ func (t *TenantTPMPolicies) TPMPolicyUpdate(ctx context.Context, req *transport.
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if req.Branch == "" || len(req.ReferenceValues) == 0 {
+	var (
+		p   *tpmpolicy.Policy
+		err error
+	)
+	switch {
+	case req.Branch == "" && len(req.ReferenceValues) == 0:
+		// No reference values: only a policy without a pcr condition is
+		// re-approved; one with a pcr condition needs a signed named branch.
+		p, err = t.svc.ReapprovePolicy(ctx, t.tenant, req.Name)
+		if errors.Is(err, tpmpolicy.ErrPCRConditionNeedsReference) {
+			return nil, ErrTPMPolicyBranchUpdate
+		}
+	case req.Branch == "" || len(req.ReferenceValues) == 0:
 		return nil, ErrTPMPolicyBranchUpdate
+	default:
+		p, err = t.svc.UpdateBranch(ctx, t.tenant, req.Name, req.Branch, req.ReferenceValues)
 	}
-	p, err := t.svc.UpdateBranch(ctx, t.tenant, req.Name, req.Branch, req.ReferenceValues)
 	if err != nil {
 		return nil, err
 	}

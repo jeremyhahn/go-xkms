@@ -76,6 +76,31 @@ func (s *Service) UpdateBranch(ctx context.Context, tenant, name, branch string,
 	return s.resignAll(ctx, st, scope, epoch, p)
 }
 
+// ReapprovePolicy re-approves a policy none of whose branches holds a pcr
+// condition (only auth_value or locality conditions), for instance after a
+// revoke: the scope's counter moves to its next epoch and every policy of
+// the scope is re-signed at it, as UpdateBranch does after its CoRIM step.
+// A policy with a pcr condition is refused with ErrPCRConditionNeedsReference
+// in an InvalidBranchError: its values change only through UpdateBranch, so
+// live PCR capture stays unreachable.
+func (s *Service) ReapprovePolicy(ctx context.Context, tenant, name string) (*Policy, error) {
+	st, scope, p, unlock, err := s.lockPolicy(ctx, tenant, name)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	for i := range p.Branches {
+		if branchPCRCondition(&p.Branches[i]) != nil {
+			return nil, &InvalidBranchError{Branch: p.Branches[i].Name, Err: ErrPCRConditionNeedsReference}
+		}
+	}
+	epoch, err := s.incrementCounter(st, scope)
+	if err != nil {
+		return nil, err
+	}
+	return s.resignAll(ctx, st, scope, epoch, p)
+}
+
 // branchPCRCondition returns b's pcr condition, or nil when it has none.
 func branchPCRCondition(b *Branch) *Condition {
 	for i := range b.Conditions {

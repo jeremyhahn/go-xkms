@@ -136,7 +136,6 @@ func TestTPMPolicyREST_MapsErrors(t *testing.T) {
 		{"another tenant", "acme", http.MethodGet, "/api/v1/tpm/policies?tenant_id=globex", "", http.StatusNotFound},
 		{"mode none refuses delete", "initech", http.MethodDelete, "/api/v1/tpm/policies/boot", "", http.StatusConflict},
 		{"mode none refuses update", "initech", http.MethodPost, "/api/v1/tpm/policies/boot/update", `{"branch":"next","reference_values":"0oQ="}`, http.StatusConflict},
-		{"unsigned live re-capture", "acme", http.MethodPost, "/api/v1/tpm/policies/boot/update", "", http.StatusBadRequest},
 		{"branch without reference values", "acme", http.MethodPost, "/api/v1/tpm/policies/boot/update", `{"branch":"next"}`, http.StatusBadRequest},
 		{"integer branch index", "acme", http.MethodPost, "/api/v1/tpm/policies/boot/update", `{"branch":0,"reference_values":"0oQ="}`, http.StatusBadRequest},
 		{"reference values without a signer", "acme", http.MethodPost, "/api/v1/tpm/policies/boot/update", `{"branch":"next","reference_values":"0oQ="}`, http.StatusConflict},

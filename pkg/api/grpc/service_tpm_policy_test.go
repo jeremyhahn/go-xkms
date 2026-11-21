@@ -141,7 +141,6 @@ func TestTPMPolicyRPCs_CarryBranchAndReferenceValues(t *testing.T) {
 		req  *pb.TPMPolicyUpdateRequest
 		code codes.Code
 	}{
-		{"no branch refused", &pb.TPMPolicyUpdateRequest{Name: "boot"}, codes.InvalidArgument},
 		{"branch without reference values", &pb.TPMPolicyUpdateRequest{Name: "boot", Branch: "next"}, codes.InvalidArgument},
 		{"reference values without a branch", &pb.TPMPolicyUpdateRequest{Name: "boot", ReferenceValues: corim}, codes.InvalidArgument},
 		{"branch and reference values without a signer", &pb.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: corim}, codes.FailedPrecondition},
