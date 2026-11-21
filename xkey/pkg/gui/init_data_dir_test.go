@@ -34,6 +34,7 @@ package gui
 // an already-initialized sentinel.
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -67,8 +68,8 @@ func newMinimalApp(t *testing.T) *App {
 	// configDirPath: use a subdir inside xkeyHome so nothing escapes.
 	cfgDir := filepath.Join(xkeyHome, "config")
 
-	auditStore, err := audit.NewBackendStore(xkmssdk.NewStorageMemory(), 100, log)
-	require.NoError(t, err, "audit.NewBackendStore")
+	auditStore, err := audit.NewQRDBStore(xkmssdk.NewQRDBAuditRingBuffer(100))
+	require.NoError(t, err, "audit.NewQRDBStore")
 
 	barrierSvc := services.NewBarrierService(cfgDir, log)
 	pinSvc := services.NewPINService()
@@ -195,6 +196,53 @@ func TestInitializeDataDir_PreSetDataDirSucceeds(t *testing.T) {
 		"initializeDataDir must succeed when dataDir is pre-set but dataDirInit=false")
 	assert.True(t, app.dataDirInit,
 		"dataDirInit must be true after successful initialization")
+}
+
+// TestInitializeDataDir_AuditMovesBehindTheBarrier proves the desktop's audit
+// events are persisted through the barrier once the data directory opens
+// with it unsealed, including the events written before, and that a sink
+// reopened over the same barrier backend reads them back.
+func TestInitializeDataDir_AuditMovesBehindTheBarrier(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+
+	require.NoError(t, app.auditStore.LogServiceEvent(audit.OpServiceStarted, nil))
+	require.NoError(t, app.initializeDataDir())
+	require.True(t, app.auditStore.SealedAtRest())
+	require.NoError(t, app.auditStore.LogKeyOperation(audit.OpKeyCreated, "software", "k1", true, nil, 1))
+	require.NoError(t, app.auditStore.Close())
+
+	be, err := xkmssdk.NewStoragePrefixBackend(app.barrierService.GetBackend(), auditBarrierPrefix)
+	require.NoError(t, err)
+	sink, err := audit.OpenBarrierSink(context.Background(), be, auditRingCapacity)
+	require.NoError(t, err, "reopen the barrier audit sink")
+	defer func() { _ = sink.Close() }()
+	require.NoError(t, sink.VerifyChain(context.Background()))
+	page, err := sink.Query(context.Background(), xkmssdk.QRDBNodeAuditFilter{})
+	require.NoError(t, err)
+	var actions []string
+	for _, ev := range page.Events {
+		actions = append(actions, ev.Action)
+	}
+	assert.Contains(t, actions, string(audit.OpServiceStarted), "pre-init event replayed")
+	assert.Contains(t, actions, string(audit.OpKeyCreated), "post-init event persisted")
+}
+
+// TestInitializeDataDir_NoBarrierPersistsNoAudit proves that without a
+// barrier the audit events stay in memory and no audit file is written.
+func TestInitializeDataDir_NoBarrierPersistsNoAudit(t *testing.T) {
+	app := newMinimalApp(t)
+	xkeyHome := t.TempDir()
+	t.Setenv("XKEY_HOME", xkeyHome)
+	app.dataDir = filepath.Join(xkeyHome, "data")
+
+	require.NoError(t, app.initializeDataDir())
+	require.False(t, app.auditStore.SealedAtRest())
+	require.NoError(t, app.auditStore.LogKeyOperation(audit.OpKeyCreated, "software", "k1", true, nil, 1))
+	assert.Equal(t, 1, app.auditStore.Count(), "the event is held in memory")
+	assert.ErrorIs(t, app.auditStore.VerifyChain(context.Background()), audit.ErrChainUnsupported)
+	_, statErr := os.Stat(filepath.Join(app.dataDir, "audit.log"))
+	assert.True(t, os.IsNotExist(statErr), "no plaintext audit file without a barrier")
 }
 
 // TestInitializeDataDir_UnopenableStoresDegrade verifies that, with no

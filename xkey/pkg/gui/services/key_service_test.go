@@ -476,7 +476,7 @@ func newTestKeyService(mc *mockClient) *KeyService {
 	svc := NewKeyService()
 	svc.SetContext(context.Background())
 	svc.SetClientFunc(func() xkms.Client { return mc })
-	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	auditStore, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	if err != nil {
 		panic("failed to create audit store: " + err.Error())
 	}

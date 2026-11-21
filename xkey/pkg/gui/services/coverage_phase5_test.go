@@ -1100,7 +1100,7 @@ func TestP5B_SetupWizard_EmitProgress_NilEmitter(t *testing.T) {
 // TestP5B_AdminService_GetAuditLogs_WithStore verifies that GetAuditLogs
 // delegates to the audit service with a real store.
 func TestP5B_AdminService_GetAuditLogs_WithStore(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation("generate", "software", "key-1", true, nil, 10)
 
@@ -1127,7 +1127,7 @@ func TestP5B_AdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
 // ExportAuditLogs returns ErrAuditNoEntries when there are no entries.
 func TestP5B_AdminService_ExportAuditLogs_EmptyEntries(t *testing.T) {
 	svc := NewAdminService()
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	svc.SetAuditStore(store)
 	svc.SetContext(context.Background())

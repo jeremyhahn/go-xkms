@@ -93,6 +93,13 @@ func ParseFirmwareVersion(version string) uint32 {
 
 // App is the central Wails v2 application. It wires the config, services,
 // tray manager, and Wails lifecycle hooks together.
+// auditBarrierPrefix is where the audit records live in the barrier backend.
+const auditBarrierPrefix = "audit/"
+
+// auditRingCapacity is the number of audit events held in process for
+// queries, both before the barrier opens and after.
+const auditRingCapacity = 10000
+
 type App struct {
 	ctx    context.Context
 	config *GUIConfig
@@ -108,7 +115,7 @@ type App struct {
 	pivService               *services.PIVService
 	tpmService               *services.TPMService
 	auditService             *services.AuditService
-	auditStore               *audit.BackendStore
+	auditStore               *audit.QRDBStore
 	adminService             *services.AdminService
 	connectionService        *services.ConnectionService
 	keyService               *services.KeyService
@@ -1039,14 +1046,12 @@ func (a *App) initializeDataDir() error {
 		a.log.Info("sealed blob store using barrier backend")
 	}
 
-	// Audit store — migrate to barrier-encrypted persistence.
-	if barrierBackend != nil {
-		if migrateErr := a.auditStore.MigrateBackend(barrierBackend); migrateErr != nil {
-			a.log.Warn("failed to migrate audit store to barrier", "error", migrateErr)
-		} else {
-			a.log.Info("audit store migrated to barrier backend")
-		}
-	}
+	// Audit store: with the barrier unsealed, move from the start-up ring to
+	// a sink that persists each hash-chained record through the barrier, so
+	// the audit trail is encrypted at rest; what was logged so far is
+	// replayed into it. With no barrier nothing is persisted: the events stay
+	// in the in-process ring, never in a plaintext file.
+	a.moveAuditStoreBehindBarrier(barrierBackend)
 
 	// Wire the SSH services: build an embedded SSH client whose key
 	// generation and signing are delegated to the user-selected crypto
@@ -1118,6 +1123,36 @@ func (a *App) initializeDataDir() error {
 // (the only production App constructor), so they are never nil here.
 // Test harnesses that build an App composite literal directly must
 // populate them (see init_data_dir_test.go).
+// moveAuditStoreBehindBarrier moves the audit store to a BarrierSink over
+// the barrier backend's audit prefix. It does nothing without a barrier, or
+// when the store already writes through one (a second data-dir open must
+// not replay the stored records into themselves).
+func (a *App) moveAuditStoreBehindBarrier(barrierBackend xkmssdk.StorageBackend) {
+	if barrierBackend == nil {
+		a.log.Info("audit events kept in memory only: no barrier to encrypt them at rest")
+		return
+	}
+	if a.auditStore.SealedAtRest() {
+		return
+	}
+	auditBE, err := xkmssdk.NewStoragePrefixBackend(barrierBackend, auditBarrierPrefix)
+	if err != nil {
+		a.log.Warn("failed to scope the barrier backend for audit", "error", err)
+		return
+	}
+	sink, err := audit.OpenBarrierSink(context.Background(), auditBE, auditRingCapacity)
+	if err != nil {
+		a.log.Warn("failed to open the barrier audit sink", "error", err)
+		return
+	}
+	if err := a.auditStore.MoveTo(sink); err != nil {
+		_ = sink.Close()
+		a.log.Warn("failed to move the audit store behind the barrier", "error", err)
+		return
+	}
+	a.log.Info("audit store persisted through the barrier")
+}
+
 func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBackend) {
 	a.sshLocalService.SetLogger(a.log)
 
@@ -1411,6 +1446,12 @@ func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 	if err != nil {
 		a.log.Warn("failed to get xkms service for local key store", "error", err)
 		return
+	}
+
+	// Audit reads go through the embedded service's go-qrdb authorizer. The
+	// accessor is nil without RBAC, and then AdminService keeps refusing.
+	if authorizer := svc.Authorizer(); authorizer != nil && a.adminService != nil {
+		a.adminService.SetAuthorizer(authorizer)
 	}
 
 	localClient, err := xkmssdk.NewEmbedded(svc)
@@ -1831,9 +1872,9 @@ func NewApp(cfg *GUIConfig) *App {
 	}
 
 	// Create shared audit store for queryable logging across all services.
-	// Initially backed by in-memory storage; migrated to barrier-encrypted
-	// persistence in initializeDataDir() after barrier unseal.
-	auditStore, auditStoreErr := audit.NewBackendStore(xkmssdk.NewStorageMemory(), 10000, slog.Default())
+	// go-qrdb's audit store: a go-qrdb ring buffer until initializeDataDir()
+	// moves it to go-qrdb's audit file in the data directory.
+	auditStore, auditStoreErr := audit.NewQRDBStore(xkmssdk.NewQRDBAuditRingBuffer(auditRingCapacity))
 	if auditStoreErr != nil {
 		log.Error("failed to create audit store", "error", auditStoreErr)
 		panic("audit store initialization failed: " + auditStoreErr.Error())

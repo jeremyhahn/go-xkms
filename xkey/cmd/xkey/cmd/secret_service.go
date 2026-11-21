@@ -148,10 +148,10 @@ func runSecretService(cmd *cobra.Command, args []string) (err error) {
 
 	// Same chicken-and-egg the GUI's audit store solves the same way (see
 	// pkg/gui/app.go): the barrier-backed store is not necessarily unsealed
-	// yet, so the audit trail starts in-memory rather than blocking startup
+	// yet, so the audit trail starts in go-qrdb's in-memory ring rather than blocking startup
 	// on a password. It is process-lifetime only; xkmsd-backed persistent
 	// audit is a separate, larger wiring this command does not attempt.
-	auditStore, auditErr := audit.NewBackendStore(xkms.NewStorageMemory(), 10000, logger)
+	auditStore, auditErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(10000))
 	if auditErr != nil {
 		return &SentinelCauseError{Sentinel: ErrSecretServiceStartFailed, Cause: auditErr}
 	}
