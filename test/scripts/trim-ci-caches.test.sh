@@ -304,6 +304,31 @@ else
 fi
 
 # --------------------------------------------------------------------------
+start_case "a failed remeasure keeps the volume's previous size; trimming goes on"
+# go clean -cache succeeds but the gobuild volume cannot be measured again: its
+# previous 2000000 KiB still count, so golangci is cleaned as well and the
+# report reads 2100000 KiB (2 GiB), not the 100000 KiB of a subtracted clean.
+setup "p-ci-cache-t-gobuild 2000000" "p-ci-cache-t-golangci 100000"
+entry p-ci-cache-t-golangci ab "2026-05-01"
+echo "p-ci-cache-t-gobuild unreadable" > "$WORK_DIR/after"
+run_script 0 "p-ci-cache-t-gobuild p-ci-cache-t-golangci" FAKE_AFTER="$WORK_DIR/after"
+if rw_mounted p-ci-cache-t-golangci; then
+    pass "trimming goes on when a remeasure fails"
+else
+    fail "stopped as if the unmeasured volume had been emptied"
+fi
+if grep -q "warn  p-ci-cache-t-gobuild: remeasure failed" "$WORK_DIR/stdout"; then
+    pass "the failed remeasure is reported"
+else
+    fail "no warning for the failed remeasure"
+fi
+if grep -q "2 GiB left" "$WORK_DIR/stdout"; then
+    pass "the unmeasured volume keeps its previous size in the total"
+else
+    fail "the reported total subtracts a clean it could not measure"
+fi
+
+# --------------------------------------------------------------------------
 start_case "REAP_DRY_RUN=1 removes and trims nothing"
 setup "p-ci-cache-t-gobuild 1000000" "p-ci-cache-u-gomod 48588" "p-ci-cache-t-golangci 600000"
 entry p-ci-cache-t-gobuild aa "2026-01-01"
