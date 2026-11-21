@@ -84,11 +84,11 @@ func (m *mockTPMEnroller) Quote([]uint, []byte) (xkms.Quote, error) {
 func (m *mockTPMEnroller) FixedProperties() (*xkms.PropertiesFixed, error) {
 	return m.fixedProps, m.fixedPropsErr
 }
-func (m *mockTPMEnroller) ProvisionIAKCert(cert *x509.Certificate) error {
+func (m *mockTPMEnroller) ProvisionIAKCert(_ []byte, cert *x509.Certificate) error {
 	m.provisionedIAK = cert
 	return m.provisionIAKErr
 }
-func (m *mockTPMEnroller) ProvisionIDevIDCert(cert *x509.Certificate) error {
+func (m *mockTPMEnroller) ProvisionIDevIDCert(_ []byte, cert *x509.Certificate) error {
 	m.provisionedIDevID = cert
 	return m.provisionIDevIDErr
 }

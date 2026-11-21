@@ -80,9 +80,9 @@ func (f *fakeEnroller) Quote(_ []uint, _ []byte) (xkms.Quote, error) { return f.
 
 func (f *fakeEnroller) FixedProperties() (*xkms.PropertiesFixed, error) { return f.props, nil }
 
-func (f *fakeEnroller) ProvisionIAKCert(_ *x509.Certificate) error { return nil }
+func (f *fakeEnroller) ProvisionIAKCert(_ []byte, _ *x509.Certificate) error { return nil }
 
-func (f *fakeEnroller) ProvisionIDevIDCert(_ *x509.Certificate) error { return nil }
+func (f *fakeEnroller) ProvisionIDevIDCert(_ []byte, _ *x509.Certificate) error { return nil }
 
 var _ TPMEnroller = (*fakeEnroller)(nil)
 

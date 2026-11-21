@@ -79,7 +79,8 @@ type Target struct {
 //
 // The rule:
 //   - an unauthenticated principal reaches nothing;
-//   - every caller, the system tenant's included, reaches only its own tenant;
+//   - every caller, the system tenant's included, reaches only its own tenant
+//     (go-qrdb's qrdbsdk.OwnTenant rule);
 //   - Tenant scope: every user of the tenant;
 //   - User scope: only the owner;
 //   - Service scope: only a caller holding the service-scope permission.
@@ -91,8 +92,8 @@ func (p Principal) Authorize(t Target) error {
 	if !p.Authenticated {
 		return &UnauthenticatedError{TargetTenantID: target}
 	}
-	if target != TenantName(p.TenantID) {
-		return &CrossTenantError{CallerTenantID: p.TenantID, TargetTenantID: target}
+	if err := ownTenant(p.TenantID, target); err != nil {
+		return &CrossTenantError{CallerTenantID: p.TenantID, TargetTenantID: target, err: err}
 	}
 	switch t.Scope {
 	case User:
@@ -105,4 +106,20 @@ func (p Principal) Authorize(t Target) error {
 		}
 	}
 	return nil
+}
+
+// ownTenant applies go-qrdb's OwnTenant rule (no caller, the system tenant's
+// included, acts on another tenant) to a caller and a target tenant, both
+// normalized to go-qrdb tenant IDs first: OwnTenant reads an empty target as
+// the caller's own tenant, so the system tenant's "" must be spelled out.
+func ownTenant(callerTenantID, targetTenantID string) error {
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), qrdbTenantID(callerTenantID))
+	_, err := qrdbsdk.OwnTenant(ctx, qrdbTenantID(targetTenantID), "scope.authorize")
+	return err
+}
+
+// qrdbTenantID returns go-qrdb's tenant ID for a scope tenant: "" and every
+// spelling of the system tenant are qrdbsdk.SystemTenantID.
+func qrdbTenantID(tenantID string) string {
+	return qrdbsdk.NormalizeTenantID(TenantName(tenantID))
 }
