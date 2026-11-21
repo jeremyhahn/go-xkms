@@ -44,3 +44,4 @@ T="codec_cbor codec_json codec_msgpack"
 - Main is red on Devcontainer, Soak and Integration (ruling 648); not this
   row's to fix.
 - Codex round 2 docs slice: the grep for the removed DICE require switch over docs/acme-issuance and .changelog/unreleased printed hits at the merged head and prints nothing after; docs/plans/acme-issuance-appref-policy.md keeps the names as history under a removal note.
+- Slice 3 (SPEC row open item closed): the row's "Open: nothing matches the 32 bytes" sentence is replaced by the shipped match with cites; every claim (match, one-byte mismatch naming the sentinel, missing reference, reference of another length) was already pinned by `TestBindDeviceAttestationKey_ApplicationReference`, `TestVerifyPossessionCSRApplicationEvidence` and `TestApplicationReference`, so no test was added. The dice-device-identity row's matching "Open:" sentence is that row's to update.
