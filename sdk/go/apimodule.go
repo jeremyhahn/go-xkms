@@ -54,6 +54,17 @@ var NewServiceModule = apimodule.NewModule
 // module's SSH RPC handlers.
 var WithServiceModuleSSHClient = apimodule.WithSSHClient
 
+// ServiceModuleCORSOptions is the module's cross-origin policy: the allowed
+// origins, whether credentials are allowed, and the preflight max age.
+type ServiceModuleCORSOptions = rest.CORSOptions
+
+// WithServiceModuleCORS sets the module's cross-origin policy: every route
+// carries the CORS headers for an allowed origin, and each pattern gets a
+// public OPTIONS route that answers the browser's preflight before the auth
+// chain. Nil or an empty AllowedOrigins list emits no CORS headers and
+// registers no OPTIONS routes.
+var WithServiceModuleCORS = apimodule.WithCORS
+
 // ---------------------------------------------------------------------------
 // Host self-build surface
 //
