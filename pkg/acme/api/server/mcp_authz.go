@@ -18,13 +18,14 @@ import (
 	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 )
 
 // The ACME admin MCP surface reports its tool permissions in go-qrdb's
 // module contract.
-var _ qrdbsdk.ModuleMCPToolPermissioner = (*MultiProtocolServer)(nil)
+var _ qrdbserver.ModuleMCPToolPermissioner = (*MultiProtocolServer)(nil)
 
 // MCPToolPermissions returns the permission every dispatchable ACME admin MCP
 // method requires: the qrdb.v1.permission option of the AdminService RPC the

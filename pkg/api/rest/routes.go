@@ -17,6 +17,7 @@ import (
 	"net/http"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -130,7 +131,7 @@ type RouteSpec struct {
 // hostRoutePatterns are the routes a qrdb host's REST server serves itself,
 // so a module never registers them: /health, its node health, and
 // /v1/ca/bootstrap, first-contact trust, which it serves from the bundle the
-// host supplies (qrdbsdk.WithBootstrapCABundle -- xkmsd passes its CA
+// host supplies (qrdbserver.WithBootstrapCABundle -- xkmsd passes its CA
 // bundle).
 var hostRoutePatterns = map[string]bool{
 	"/health":          true,
