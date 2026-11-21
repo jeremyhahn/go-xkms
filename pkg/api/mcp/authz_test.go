@@ -763,6 +763,8 @@ var goldenMethodPermissions = map[string]string{
 	"attestation.reference_values.list":   "attestation_reference_values:list",
 	"attestation.reference_values.delete": "attestation_reference_values:delete",
 	"attestation.appraise":                "attestation_verifier:verify",
+	"attestation.appraise.android_key":    "attestation_verifier:verify",
+	"attestation.appraise.ek_certificate": "attestation_verifier:verify",
 
 	// Attested-caller evidence.
 	"peer.attestation.challenge": "peer_attestation:challenge",

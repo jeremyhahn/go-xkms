@@ -450,6 +450,8 @@ var mockToolMethods = []string{
 	"attestation.reference_values.list",
 	"attestation.reference_values.delete",
 	"attestation.appraise",
+	"attestation.appraise.android_key",
+	"attestation.appraise.ek_certificate",
 	"xkms.resetLockout",
 	"xkms.rotateKey",
 	"xkms.createOTAImageKey",

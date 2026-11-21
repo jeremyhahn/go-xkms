@@ -58,6 +58,14 @@ func appraisalCalls(ctx context.Context, svc transport.AttestationAppraisalServi
 			_, err := svc.AppraiseAttestationQuote(ctx, &transport.AppraiseAttestationQuoteRequest{ReferenceValues: "golden"})
 			return err
 		},
+		"attestation.appraise.android_key": func() error {
+			_, err := svc.AppraiseAndroidKeyAttestation(ctx, &transport.AppraiseAndroidKeyAttestationRequest{ChainDER: [][]byte{{0x30}}})
+			return err
+		},
+		"attestation.appraise.ek_certificate": func() error {
+			_, err := svc.AppraiseEKCertificate(ctx, &transport.AppraiseEKCertificateRequest{CertificateDER: []byte{0x30}})
+			return err
+		},
 	}
 }
 
