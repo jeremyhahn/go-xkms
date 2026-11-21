@@ -2959,8 +2959,13 @@ devcontainer-server-wait:
 # only that build compiles in the //go:build integration && fido2 virtual-device
 # seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
 # binary (make build / make release-*) never carries those tags. See #807.
+# The UHID round trip (#2052) needs /dev/uhid. A container's /dev is copied
+# when it starts, and the host has no uhid node until the module is loaded,
+# so the step makes the misc node (10:239) when it is missing: opening it
+# loads uhid on the host kernel (misc_open requests char-major-10-239), where
+# post-start.sh's in-container modprobe cannot (no /lib/modules).
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -timeout 10m && $(GO) test -c -tags='$(call go_tags,linux)' -o build/bin/fido2-uhid.test ./pkg/fido2/ && sudo XKMS_REQUIRE_UHID=1 build/bin/fido2-uhid.test -test.v -test.count=1 -test.run TestLinuxHIDDevice_UHIDRoundTrip,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -timeout 10m && $(GO) test -c -tags='$(call go_tags,linux)' -o build/bin/fido2-uhid.test ./pkg/fido2/ && { [ -c /dev/uhid ] || sudo mknod -m 600 /dev/uhid c 10 239; } && sudo XKMS_REQUIRE_UHID=1 build/bin/fido2-uhid.test -test.v -test.count=1 -test.run TestLinuxHIDDevice_UHIDRoundTrip,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
