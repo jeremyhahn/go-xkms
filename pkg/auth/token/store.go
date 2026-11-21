@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -52,6 +53,12 @@ type Record struct {
 
 	// Family groups all refresh tokens descended from a single login.
 	Family string `json:"family"`
+
+	// Tenant is the tenant of the identity the token refreshes. Usernames are
+	// unique only within a tenant, so a subject revoke matches Tenant and
+	// Subject together. A record without a tenant cannot be attributed: the
+	// stores refuse to save it, and refuse and delete one found in storage.
+	Tenant string `json:"tenant"`
 
 	// Subject is the identity the token refreshes.
 	Subject string `json:"subject"`
@@ -103,13 +110,15 @@ type RefreshStore interface {
 	// slip a successor past the sweep.
 	RevokeFamily(ctx context.Context, family string) error
 
-	// RevokeBySubject revokes every family whose Record.Subject equals
-	// subject, exactly as RevokeFamily revokes one -- so a user-lifecycle
-	// change (disable, delete) ends every session the account holds, no
-	// matter which login flow minted it. It is idempotent: a subject with no
-	// live family is a no-op success, matching RevokeFamily's own logout
-	// semantics.
-	RevokeBySubject(ctx context.Context, subject string) error
+	// RevokeBySubject revokes every family whose Record.Tenant equals tenant
+	// and whose Record.Subject equals subject, exactly as RevokeFamily
+	// revokes one -- so a user-lifecycle change (disable, delete) ends every
+	// session the account holds, no matter which login flow minted it, and
+	// never a session of the same username in another tenant. An empty
+	// tenant or subject is an error and revokes nothing. It is idempotent: an
+	// account with no live family is a no-op success, matching
+	// RevokeFamily's own logout semantics.
+	RevokeBySubject(ctx context.Context, tenant, subject string) error
 }
 
 // refreshKey builds the KV key for a record.
@@ -157,6 +166,9 @@ func NewMemoryRefreshStore() *MemoryRefreshStore {
 func (s *MemoryRefreshStore) Save(_ context.Context, rec *Record) error {
 	if rec == nil {
 		return &NilInputError{Field: "record"}
+	}
+	if rec.Tenant == "" {
+		return &NilInputError{Field: "record tenant"}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,13 +218,16 @@ func (s *MemoryRefreshStore) RevokeFamily(_ context.Context, family string) erro
 }
 
 // RevokeBySubject implements RefreshStore.
-func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, tenant, subject string) error {
+	if err := checkRevokeAccount(tenant, subject); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	families := make(map[string]struct{})
 	for _, rec := range s.records {
-		if rec.Subject == subject {
+		if rec.Tenant == tenant && rec.Subject == subject {
 			families[rec.Family] = struct{}{}
 		}
 	}
@@ -256,6 +271,19 @@ func expired(rec *Record) bool {
 	return time.Now().Unix() >= rec.ExpiresAt
 }
 
+// checkRevokeAccount refuses a subject revoke that does not name both the
+// tenant and the subject: an unscoped revoke could end another tenant's
+// sessions.
+func checkRevokeAccount(tenant, subject string) error {
+	if tenant == "" {
+		return &NilInputError{Field: "tenant"}
+	}
+	if subject == "" {
+		return &NilInputError{Field: "subject"}
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // qrdb-KV store (the production identity plane).
 // ---------------------------------------------------------------------------
@@ -269,7 +297,49 @@ func expired(rec *Record) bool {
 // CompareAndSwap and revocation with PutIfAbsent, both evaluated inside the
 // Raft state machine, so two nodes cannot both win.
 type QRDBRefreshStore struct {
-	kv qrdbtransport.GuardedKVClient
+	kv   qrdbtransport.GuardedKVClient
+	bind CallContext
+}
+
+// CallContext derives the context the store's own KV calls run under from
+// the caller's context. pkg/server and apimodule pass the embedded node's
+// ServiceContext, so the bookkeeping runs as the node's service principal
+// even on public routes whose request context carries no identity
+// (go-xkms#2287). It has the shape of qrdbstorage.CallContext.
+type CallContext func(context.Context) (context.Context, error)
+
+// QRDBRefreshStoreOption configures a QRDBRefreshStore.
+type QRDBRefreshStoreOption func(*QRDBRefreshStore)
+
+// WithCallContext sets the binder applied to every KV call the store makes.
+// A nil binder keeps the caller's context.
+func WithCallContext(bind CallContext) QRDBRefreshStoreOption {
+	return func(s *QRDBRefreshStore) { s.bind = bind }
+}
+
+// callContext applies the binder, if any, to ctx, and binds the result to
+// the system tenant, the scope the store's records and service identity
+// live in.
+func (s *QRDBRefreshStore) callContext(ctx context.Context) (context.Context, error) {
+	if s.bind == nil {
+		return ctx, nil
+	}
+	// The embedded KV client does not check ctx itself, so a cancelled
+	// caller is refused here rather than running the call detached.
+	if err := ctx.Err(); err != nil {
+		return nil, &StoreError{Op: "bind call context", Err: err}
+	}
+	bound, err := s.bind(ctx)
+	if err != nil {
+		return nil, &StoreError{Op: "bind call context", Err: err}
+	}
+	// The service identity lives in the system tenant, and the binder keeps
+	// the caller's tenant: a request from a non-system tenant would reach
+	// the self-scoped KV permissions with a mismatched scope. The store's
+	// records are system-tenant bookkeeping, so the call is bound to that
+	// scope, never to the request's tenant. Deriving from ctx keeps the
+	// caller's cancellation and deadline (go-xkms#2287, ruling 971).
+	return qrdbsdk.ContextWithTenant(bound, qrdbsdk.SystemTenantID), nil
 }
 
 // NewQRDBRefreshStore constructs a store over the given KV client.
@@ -281,7 +351,7 @@ type QRDBRefreshStore struct {
 // second refresh can slip between — so construction fails instead. There is
 // deliberately no degraded non-atomic path: a refresh store that cannot
 // arbitrate a race is a refresh store that mints two live successors.
-func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
+func NewQRDBRefreshStore(kv qrdbtransport.KVClient, opts ...QRDBRefreshStoreOption) (*QRDBRefreshStore, error) {
 	if kv == nil {
 		return nil, &NilInputError{Field: "kv"}
 	}
@@ -289,7 +359,11 @@ func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
 	if !ok {
 		return nil, &GuardedKVUnsupportedError{ClientType: fmt.Sprintf("%T", kv)}
 	}
-	return &QRDBRefreshStore{kv: guarded}, nil
+	s := &QRDBRefreshStore{kv: guarded}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // Save implements RefreshStore.
@@ -302,6 +376,13 @@ func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
 func (s *QRDBRefreshStore) Save(ctx context.Context, rec *Record) error {
 	if rec == nil {
 		return &NilInputError{Field: "record"}
+	}
+	if rec.Tenant == "" {
+		return &NilInputError{Field: "record tenant"}
+	}
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -330,6 +411,10 @@ func (s *QRDBRefreshStore) Save(ctx context.Context, rec *Record) error {
 
 // Get implements RefreshStore.
 func (s *QRDBRefreshStore) Get(ctx context.Context, family, jti string) (*Record, error) {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rec, _, err := s.load(ctx, family, jti)
 	if err != nil {
 		return nil, err
@@ -362,11 +447,23 @@ func (s *QRDBRefreshStore) load(ctx context.Context, family, jti string) (*Recor
 		_ = s.kv.Delete(ctx, refreshKey(family, jti)) // best-effort cleanup of an already-expired record; the explicit `_ =` already satisfies errcheck
 		return nil, nil, nil
 	}
+	if rec.Tenant == "" {
+		// A record without a tenant cannot be attributed to an account, so no
+		// tenant-scoped revoke could ever end it: refuse it and do not keep it.
+		if err := s.kv.Delete(ctx, refreshKey(family, jti)); err != nil && !isNotFound(err) {
+			return nil, nil, &StoreError{Op: "delete", Err: err}
+		}
+		return nil, nil, nil
+	}
 	return &rec, data, nil
 }
 
 // MarkRotated implements RefreshStore.
 func (s *QRDBRefreshStore) MarkRotated(ctx context.Context, family, jti string) error {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
 	rec, current, err := s.load(ctx, family, jti)
 	if err != nil {
 		return err
@@ -398,6 +495,15 @@ func (s *QRDBRefreshStore) MarkRotated(ctx context.Context, family, jti string) 
 
 // RevokeFamily implements RefreshStore.
 func (s *QRDBRefreshStore) RevokeFamily(ctx context.Context, family string) error {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
+	return s.revokeFamily(ctx, family)
+}
+
+// revokeFamily is RevokeFamily under an already bound context.
+func (s *QRDBRefreshStore) revokeFamily(ctx context.Context, family string) error {
 	tombstone, err := json.Marshal(&revocation{
 		Family:    family,
 		ExpiresAt: time.Now().Add(RevocationTombstoneTTL).Unix(),
@@ -436,7 +542,14 @@ func (s *QRDBRefreshStore) RevokeFamily(ctx context.Context, family string) erro
 // have to stay consistent with RevokeFamily's own delete-by-prefix sweep,
 // and a lifecycle change is rare enough next to a refresh that the scan's
 // cost is the right place to pay it.
-func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, tenant, subject string) error {
+	if err := checkRevokeAccount(tenant, subject); err != nil {
+		return err
+	}
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
 	entries, err := s.kv.Scan(ctx, refreshPrefix)
 	if err != nil {
 		return &StoreError{Op: "scan", Err: err}
@@ -448,12 +561,14 @@ func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) 
 		if err := json.Unmarshal(data, &rec); err != nil {
 			return &StoreError{Op: "decode", Err: err}
 		}
-		if rec.Subject == subject {
+		// A record without a tenant never matches: it is refused and deleted
+		// when it is next read, and never revoked across tenants.
+		if rec.Tenant == tenant && rec.Subject == subject {
 			families[rec.Family] = struct{}{}
 		}
 	}
 	for family := range families {
-		if err := s.RevokeFamily(ctx, family); err != nil {
+		if err := s.revokeFamily(ctx, family); err != nil {
 			return err
 		}
 	}

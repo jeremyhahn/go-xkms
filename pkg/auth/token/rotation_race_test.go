@@ -287,6 +287,7 @@ func TestMarkRotated_AlreadyRotated(t *testing.T) {
 			rec := &Record{
 				JTI:       "jti-1",
 				Family:    "fam-1",
+				Tenant:    "t1",
 				Subject:   "user-1",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			}
@@ -311,6 +312,7 @@ func TestMarkRotated_ConcurrentCallersElectOneWinner(t *testing.T) {
 			require.NoError(t, store.Save(ctx, &Record{
 				JTI:       "jti-1",
 				Family:    "fam-1",
+				Tenant:    "t1",
 				Subject:   "user-1",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			}))
@@ -519,6 +521,7 @@ func TestSave_IntoRevokedFamily(t *testing.T) {
 			err := store.Save(ctx, &Record{
 				JTI:       "jti-successor",
 				Family:    "fam-1",
+				Tenant:    "t1",
 				Subject:   "user-1",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			})
@@ -572,19 +575,19 @@ func TestRevokeBySubject_RevokesEveryFamilyForSubjectAndNoOther(t *testing.T) {
 			// alice holds two families (e.g. two browser sessions); bob holds
 			// one. Revoking alice must not touch bob's.
 			require.NoError(t, store.Save(ctx, &Record{
-				JTI: "jti-1", Family: "fam-alice-1", Subject: "alice",
+				JTI: "jti-1", Family: "fam-alice-1", Tenant: "t1", Subject: "alice",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			}))
 			require.NoError(t, store.Save(ctx, &Record{
-				JTI: "jti-2", Family: "fam-alice-2", Subject: "alice",
+				JTI: "jti-2", Family: "fam-alice-2", Tenant: "t1", Subject: "alice",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			}))
 			require.NoError(t, store.Save(ctx, &Record{
-				JTI: "jti-3", Family: "fam-bob-1", Subject: "bob",
+				JTI: "jti-3", Family: "fam-bob-1", Tenant: "t1", Subject: "bob",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			}))
 
-			require.NoError(t, store.RevokeBySubject(ctx, "alice"))
+			require.NoError(t, store.RevokeBySubject(ctx, "t1", "alice"))
 
 			got1, err := store.Get(ctx, "fam-alice-1", "jti-1")
 			require.NoError(t, err)
@@ -602,7 +605,7 @@ func TestRevokeBySubject_RevokesEveryFamilyForSubjectAndNoOther(t *testing.T) {
 			// A successor can no longer be minted into either of alice's
 			// families -- exactly RevokeFamily's own tombstone guarantee.
 			err = store.Save(ctx, &Record{
-				JTI: "jti-successor", Family: "fam-alice-1", Subject: "alice",
+				JTI: "jti-successor", Family: "fam-alice-1", Tenant: "t1", Subject: "alice",
 				ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			})
 			var revoked *FamilyRevokedError
@@ -615,7 +618,7 @@ func TestRevokeBySubject_NoFamiliesIsANoop(t *testing.T) {
 	for _, tc := range refreshStoreCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			store := tc.newStore(t)
-			require.NoError(t, store.RevokeBySubject(context.Background(), "nobody"))
+			require.NoError(t, store.RevokeBySubject(context.Background(), "t1", "nobody"))
 		})
 	}
 }
@@ -632,7 +635,7 @@ func TestRevokeBySubject_IssuerIntegration(t *testing.T) {
 			pair, err := issuer.Mint(ctx, testIdentity())
 			require.NoError(t, err)
 
-			require.NoError(t, issuer.RevokeBySubject(ctx, testIdentity().Subject))
+			require.NoError(t, issuer.RevokeBySubject(ctx, testIdentity().TenantID, testIdentity().Subject))
 
 			_, err = issuer.Refresh(ctx, pair.RefreshToken)
 			var revokedErr *RefreshRevokedError

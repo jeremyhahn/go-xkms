@@ -33,6 +33,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -1080,7 +1081,10 @@ func (s *spyRefreshStore) MarkRotated(context.Context, string, string) error { r
 
 func (s *spyRefreshStore) RevokeFamily(context.Context, string) error { return nil }
 
-func (s *spyRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *spyRefreshStore) RevokeBySubject(_ context.Context, tenant, subject string) error {
+	if tenant != "t1" {
+		return errors.New("revoke outside the user's tenant")
+	}
 	s.revoked = append(s.revoked, subject)
 	if s.failOn != "" && subject == s.failOn {
 		return errors.New("revoke store unavailable")
@@ -1111,7 +1115,7 @@ func newTestTokenIssuerWithStore(t *testing.T, store token.RefreshStore) *token.
 func TestDisableUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
 	svc, users, _ := setupServiceWithUserClients(t)
 	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
-		return &qrdbtransport.User{ID: 42, Username: "alice"}, nil
+		return &qrdbtransport.User{ID: 42, Username: "alice", TenantID: "t1"}, nil
 	}
 	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
 
@@ -1128,7 +1132,7 @@ func TestDisableUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
 func TestDeleteUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
 	svc, users, _ := setupServiceWithUserClients(t)
 	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
-		return &qrdbtransport.User{ID: 7, Username: "bob"}, nil
+		return &qrdbtransport.User{ID: 7, Username: "bob", TenantID: "t1"}, nil
 	}
 	users.deleteUser = func(_ context.Context, _ uint64) error { return nil }
 
@@ -1139,6 +1143,60 @@ func TestDeleteUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
 
 	wantHandle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(7))
 	assert.ElementsMatch(t, []string{"bob", wantHandle}, store.revoked)
+}
+
+// TestDisableUser_RevokesOnlyTheUsersTenant gives "alice" a refresh session
+// in tenants t1 and t2 and disables t1's "alice": t1's session ends and
+// t2's "alice" keeps hers (Tenant Agent ruling 962).
+func TestDisableUser_RevokesOnlyTheUsersTenant(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 42, Username: "alice", TenantID: "t1"}, nil
+	}
+	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
+
+	ctx := context.Background()
+	store := token.NewMemoryRefreshStore()
+	exp := time.Now().Add(time.Hour).Unix()
+	require.NoError(t, store.Save(ctx, &token.Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: exp}))
+	require.NoError(t, store.Save(ctx, &token.Record{JTI: "j2", Family: "f2", Tenant: "t2", Subject: "alice", ExpiresAt: exp}))
+	svc.SetTokenIssuer(newTestTokenIssuerWithStore(t, store))
+
+	require.NoError(t, svc.DisableUser(ctx, "alice"))
+
+	rec, err := store.Get(ctx, "f1", "j1")
+	require.NoError(t, err)
+	assert.Nil(t, rec, "t1's alice session must be revoked")
+	rec, err = store.Get(ctx, "f2", "j2")
+	require.NoError(t, err)
+	require.NotNil(t, rec, "t2's alice session must survive")
+	require.NoError(t, store.MarkRotated(ctx, "f2", "j2"))
+}
+
+// An admin of a non-system tenant disables a user: the request context
+// carries that tenant. On the embedded node that enforces authentication,
+// the refresh store's revoke must still run in its system-tenant scope and
+// revoke the user's records (go-xkms#2287, Tenant Agent ruling 971).
+func TestDisableUser_FromNonSystemTenant_RevokesOnTheEmbeddedNode(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 42, Username: "alice", TenantID: "t1"}, nil
+	}
+	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
+
+	node := barriertest.NewPrincipalNode(t)
+	store, err := token.NewQRDBRefreshStore(node.Client().KV(), token.WithCallContext(node.ServiceContext))
+	require.NoError(t, err)
+	anon := context.Background()
+	exp := time.Now().Add(time.Hour).Unix()
+	require.NoError(t, store.Save(anon, &token.Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: exp}))
+	svc.SetTokenIssuer(newTestTokenIssuerWithStore(t, store))
+
+	require.NoError(t, svc.DisableUser(qrdbsdk.ContextWithTenant(anon, "t1"), "alice"))
+
+	rec, err := store.Get(anon, "f1", "j1")
+	require.NoError(t, err)
+	assert.Nil(t, rec, "the disabled user's refresh record must be revoked")
 }
 
 // TestDisableUser_NoTokenIssuerConfiguredStillSucceeds proves a deployment
@@ -1162,7 +1220,7 @@ func TestDisableUser_NoTokenIssuerConfiguredStillSucceeds(t *testing.T) {
 func TestDisableUser_RevokeFailureDoesNotFailTheOperation(t *testing.T) {
 	svc, users, _ := setupServiceWithUserClients(t)
 	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
-		return &qrdbtransport.User{ID: 1, Username: "mallory"}, nil
+		return &qrdbtransport.User{ID: 1, Username: "mallory", TenantID: "t1"}, nil
 	}
 	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
 

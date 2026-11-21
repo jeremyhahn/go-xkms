@@ -95,6 +95,11 @@ type TokenIssuerParams struct {
 	// restart).
 	QRDBClient *qrdbsdk.Client
 
+	// ServiceContext binds the refresh store's own KV calls to the node's
+	// service principal (go-xkms#2287): login routes are public, so their
+	// request context carries no identity. Nil keeps the caller's context.
+	ServiceContext token.CallContext
+
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
 
@@ -208,7 +213,7 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		userResolver token.UserResolver
 	)
 	if p.QRDBClient != nil {
-		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV())
+		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV(), token.WithCallContext(p.ServiceContext))
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
@@ -263,15 +268,21 @@ var _ token.UserResolver = (*auth.QRDBUserResolver)(nil)
 type WebAuthnTokenAdapter struct {
 	issuer   *token.Issuer
 	tenantID string
+	logger   *slog.Logger
 }
 
 // NewWebAuthnTokenAdapter builds the adapter around issuer, scoping minted
-// identities to tenantID (DefaultWebAuthnTenant when empty).
-func NewWebAuthnTokenAdapter(issuer *token.Issuer, tenantID string) *WebAuthnTokenAdapter {
+// identities to tenantID (DefaultWebAuthnTenant when empty). Mint failures
+// are logged through logger, the host's configured logger; nil selects
+// slog.Default().
+func NewWebAuthnTokenAdapter(issuer *token.Issuer, tenantID string, logger *slog.Logger) *WebAuthnTokenAdapter {
 	if tenantID == "" {
 		tenantID = DefaultWebAuthnTenant
 	}
-	return &WebAuthnTokenAdapter{issuer: issuer, tenantID: tenantID}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &WebAuthnTokenAdapter{issuer: issuer, tenantID: tenantID, logger: logger}
 }
 
 // identityFor maps a WebAuthn user onto the auth identity carried in tokens.
@@ -312,8 +323,11 @@ func (a *WebAuthnTokenAdapter) GenerateToken(ctx context.Context, user webauthn.
 
 // GenerateTokenPair implements webauthn.TokenPairGenerator.
 func (a *WebAuthnTokenAdapter) GenerateTokenPair(ctx context.Context, user webauthn.User) (string, string, error) {
-	pair, err := a.issuer.Mint(ctx, a.identityFor(user))
+	identity := a.identityFor(user)
+	pair, err := a.issuer.Mint(ctx, identity)
 	if err != nil {
+		a.logger.DebugContext(ctx, "webauthn login: token mint failed",
+			"user", identity.Subject, "tenant", identity.TenantID, "error", err.Error())
 		return "", "", err
 	}
 	return pair.AccessToken, pair.RefreshToken, nil
@@ -443,7 +457,7 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		AuditLogger:     p.AuditLogger,
 	}
 	if p.TokenIssuer != nil {
-		params.JWTGenerator = NewWebAuthnTokenAdapter(p.TokenIssuer, tenantID)
+		params.JWTGenerator = NewWebAuthnTokenAdapter(p.TokenIssuer, tenantID, logger)
 	} else {
 		logger.Warn("WebAuthn service has no token issuer: ceremony tokens will not authenticate API requests")
 	}
@@ -635,6 +649,11 @@ type HostConfig struct {
 	// datastore; nil leaves the WebAuthn routes unmounted.
 	DAOFactory *qrdbsdk.DAOFactory
 
+	// ServiceContext binds the refresh store to the host node's service
+	// principal (TokenIssuerParams.ServiceContext). Nil keeps the caller's
+	// context.
+	ServiceContext token.CallContext
+
 	// WebAuthn enables the WebAuthn ceremony routes when non-nil. Requires
 	// QRDBClient and DAOFactory; without them the routes stay unmounted.
 	WebAuthn *webauthn.Config
@@ -745,15 +764,16 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 	// own lenient "issuer stays nil" behavior.
 	if backend, err := hc.XKMSService.LookupDefaultBackend(); err == nil {
 		issuer, tiErr := BuildTokenIssuer(ctx, TokenIssuerParams{
-			Backend:      backend,
-			BackendName:  hc.XKMSService.DefaultBackendName(),
-			SigningKeyCN: session.SigningKeyCN,
-			IssuerName:   session.Issuer,
-			Audience:     session.Audience,
-			AccessTTL:    session.AccessTTL,
-			RefreshTTL:   session.RefreshTTL,
-			QRDBClient:   hc.QRDBClient,
-			Logger:       logger,
+			Backend:        backend,
+			BackendName:    hc.XKMSService.DefaultBackendName(),
+			SigningKeyCN:   session.SigningKeyCN,
+			IssuerName:     session.Issuer,
+			Audience:       session.Audience,
+			AccessTTL:      session.AccessTTL,
+			RefreshTTL:     session.RefreshTTL,
+			QRDBClient:     hc.QRDBClient,
+			ServiceContext: hc.ServiceContext,
+			Logger:         logger,
 		})
 		if tiErr != nil {
 			logger.Error("host REST surface: token issuer construction failed; "+
