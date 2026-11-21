@@ -103,6 +103,9 @@ func (c *Controller) Seal() error {
 // the change does not leave key material exposed. If the barrier was never
 // initialized — the user changed the PIN before ever logging in and creating a
 // key — there is nothing to rekey and the next login keys it to the new PIN.
+// The old PIN is checked on every path: qrdb's ChangePassword takes it as the
+// current credential and refuses a wrong one even on an unsealed barrier, so
+// a logged-in session alone cannot replace the PIN.
 // CredentialsFor, never NewCredentials, at both sites: NewCredentials wipes
 // the caller's slice, and Module.SetPIN reads newPin AFTER this returns —
 // it sets the token PIN and hashes its verifier (pkg/pkcs11/module:1580,
@@ -124,12 +127,12 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 	ctx := context.Background()
 
 	wasSealed := c.barrier.IsSealed()
+	oldCreds, credErr := seal.CredentialsFor(ctx, oldPassphrase)
+	if credErr != nil {
+		return credErr
+	}
+	defer func() { err = errors.Join(err, destroyCredentials(oldCreds)) }()
 	if wasSealed {
-		oldCreds, credErr := seal.CredentialsFor(ctx, oldPassphrase)
-		if credErr != nil {
-			return credErr
-		}
-		defer func() { err = errors.Join(err, oldCreds.Secret.Destroy()) }()
 		unsealErr := c.barrier.Unseal(ctx, oldCreds)
 		if isUninitialized(unsealErr) {
 			return nil // no barrier yet; first login will key it to the new PIN
@@ -148,8 +151,8 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		}
 		return credErr
 	}
-	defer func() { err = errors.Join(err, newCreds.Secret.Destroy()) }()
-	if changeErr := c.barrier.ChangePassword(ctx, newCreds); changeErr != nil {
+	defer func() { err = errors.Join(err, destroyCredentials(newCreds)) }()
+	if changeErr := c.barrier.ChangePassword(ctx, oldCreds, newCreds); changeErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {
 				return errors.Join(changeErr, sealErr)
@@ -162,6 +165,16 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		return c.barrier.Seal()
 	}
 	return nil
+}
+
+// destroyCredentials releases creds' secret. An empty passphrase yields the
+// zero Credentials, whose Secret is a nil go-enclave ByteAccess with nothing
+// to release.
+func destroyCredentials(creds seal.Credentials) error {
+	if creds.Secret == nil {
+		return nil
+	}
+	return creds.Secret.Destroy()
 }
 
 func isAlreadyInitialized(err error) bool {
