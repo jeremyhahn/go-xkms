@@ -337,6 +337,12 @@ func (s *DAOStore) List(ctx context.Context) ([]*x509.Certificate, []*CertMetada
 }
 
 // Delete removes a trusted certificate by its SHA-256 fingerprint.
+//
+// The record is replaced by a tombstone, never physically removed: a
+// config import racing the removal (or the next Verifiers rebuild) then
+// finds the tombstone and does not bring the withdrawn root back
+// (docs/SPEC.md trust-roots: the store is authoritative). Every reader
+// skips tombstones; an operator Add over one re-imports the root.
 func (s *DAOStore) Delete(ctx context.Context, fingerprint string) error {
 	if s.closed.Load() {
 		return ErrStoreClosed
@@ -358,18 +364,9 @@ func (s *DAOStore) Delete(ctx context.Context, fingerprint string) error {
 	if isTombstone(entity) {
 		return ErrCertificateNotFound
 	}
-	if entity.ConfigSeeded {
-		// Keep a tombstone so the next config import does not bring the
-		// removed root back (docs/SPEC.md trust-roots: the store is
-		// authoritative).
-		tomb := &TrustCertEntity{Fingerprint: entity.Fingerprint, ConfigSeeded: true, Removed: true, AddedAt: time.Now().UTC()}
-		tomb.SetEntityID(entityID)
-		return s.dao.Save(ctx, tomb)
-	}
-
-	stub := &TrustCertEntity{}
-	stub.SetEntityID(entityID)
-	return s.dao.Delete(ctx, stub)
+	tomb := &TrustCertEntity{Fingerprint: entity.Fingerprint, ConfigSeeded: entity.ConfigSeeded, Removed: true, AddedAt: time.Now().UTC()}
+	tomb.SetEntityID(entityID)
+	return s.dao.Save(ctx, tomb)
 }
 
 // Page retrieves a paginated set of trust certificate entities.
