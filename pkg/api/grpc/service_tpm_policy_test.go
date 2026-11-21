@@ -141,7 +141,7 @@ func TestTPMPolicyRPCs_CarryBranchAndReferenceValues(t *testing.T) {
 		req  *pb.TPMPolicyUpdateRequest
 		code codes.Code
 	}{
-		{"no branch re-captures", &pb.TPMPolicyUpdateRequest{Name: "boot"}, codes.Internal},
+		{"no branch refused", &pb.TPMPolicyUpdateRequest{Name: "boot"}, codes.InvalidArgument},
 		{"branch without reference values", &pb.TPMPolicyUpdateRequest{Name: "boot", Branch: "next"}, codes.InvalidArgument},
 		{"reference values without a branch", &pb.TPMPolicyUpdateRequest{Name: "boot", ReferenceValues: corim}, codes.InvalidArgument},
 		{"branch and reference values without a signer", &pb.TPMPolicyUpdateRequest{Name: "boot", Branch: "next", ReferenceValues: corim}, codes.FailedPrecondition},
@@ -210,7 +210,10 @@ func tpmPolicyRPCs(s *Service, tenant string) map[string]func(context.Context) e
 			return err
 		},
 		"TPMPolicyUpdate": func(ctx context.Context) error {
-			_, err := s.TPMPolicyUpdate(ctx, &pb.TPMPolicyUpdateRequest{TenantId: tenant, Name: "boot"})
+			_, err := s.TPMPolicyUpdate(ctx, &pb.TPMPolicyUpdateRequest{
+				TenantId: tenant, Name: "boot", Branch: "next",
+				ReferenceValues: []byte{0xd2, 0x84, 0x43, 0xa1, 0x01, 0x26},
+			})
 			return err
 		},
 		"TPMPolicyRevoke": func(ctx context.Context) error {
@@ -253,6 +256,13 @@ func TestTPMPolicyRPCs_ReachTheCallersScope(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			err := call(platformScopeCtx("acme"))
 			assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+			if name == "TPMPolicyUpdate" {
+				// A signed named-branch Update reaches the service, which
+				// refuses it on the missing reference signer before the
+				// tenant scope: the offline service configures no signer.
+				assert.Contains(t, err.Error(), tpmpolicy.ErrNoReferenceSigner.Error())
+				return
+			}
 			assert.Contains(t, err.Error(), tpmpolicy.ErrTPMModeNone.Error())
 		})
 	}
