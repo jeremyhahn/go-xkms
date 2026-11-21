@@ -30,6 +30,10 @@ type UserStore interface {
 	// Returns ErrUserNotFound if the user does not exist.
 	GetByEmail(ctx context.Context, email string) (User, error)
 
+	// GetByUsername retrieves a user by their username.
+	// Returns ErrUserNotFound if the user does not exist.
+	GetByUsername(ctx context.Context, username string) (User, error)
+
 	// Create creates a new user with the given email and display name.
 	// Returns the created user with its assigned ID.
 	Create(ctx context.Context, email, displayName string) (User, error)

@@ -207,3 +207,88 @@ func TestParseWebAuthnRegistrationOptions_NoUserID(t *testing.T) {
 		t.Errorf("UserID: got %x, want nil", opts.UserID)
 	}
 }
+
+// buildSelectionOptionsJSON returns creation options whose
+// authenticatorSelection member is the supplied raw JSON object.
+func buildSelectionOptionsJSON(selection string) []byte {
+	return []byte(`{"publicKey":{` +
+		`"challenge":"` + base64.RawURLEncoding.EncodeToString([]byte("registration-challenge")) + `",` +
+		`"rp":{"id":"xkms.example.com","name":"xKMS"},` +
+		`"user":{"id":"` + base64.RawURLEncoding.EncodeToString([]byte("user-handle")) + `","name":"alice","displayName":"Alice"},` +
+		`"authenticatorSelection":` + selection +
+		`}}`)
+}
+
+// TestParseWebAuthnRegistrationOptions_ResidentKey maps the Relying Party's
+// resident-key requirement (WebAuthn Level 2 §5.4.4, §5.4.6) onto
+// RequireResidentKey.
+func TestParseWebAuthnRegistrationOptions_ResidentKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		selection string
+		want      bool
+	}{
+		{name: "required", selection: `{"residentKey":"required"}`, want: true},
+		{name: "preferred", selection: `{"residentKey":"preferred"}`, want: true},
+		{name: "discouraged", selection: `{"residentKey":"discouraged"}`, want: false},
+		{name: "absent", selection: `{}`, want: false},
+		{name: "legacy requireResidentKey true", selection: `{"requireResidentKey":true}`, want: true},
+		{name: "legacy requireResidentKey false", selection: `{"requireResidentKey":false}`, want: false},
+		{name: "residentKey overrides legacy member", selection: `{"residentKey":"discouraged","requireResidentKey":true}`, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts, err := ParseWebAuthnRegistrationOptions(buildSelectionOptionsJSON(tt.selection), "https://xkms.example.com")
+			if err != nil {
+				t.Fatalf("ParseWebAuthnRegistrationOptions: %v", err)
+			}
+			if opts.RequireResidentKey != tt.want {
+				t.Errorf("RequireResidentKey: got %v want %v", opts.RequireResidentKey, tt.want)
+			}
+		})
+	}
+}
+
+// TestRegisterWebAuthn_ResidentKeyReachesAuthenticator registers from
+// options that require a resident key and checks the MakeCredential request
+// asks the authenticator for a discoverable credential ("rk" true), and that
+// options without the requirement do not.
+func TestRegisterWebAuthn_ResidentKeyReachesAuthenticator(t *testing.T) {
+	tests := []struct {
+		name      string
+		selection string
+		wantRK    bool
+	}{
+		{name: "required", selection: `{"residentKey":"required","userVerification":"discouraged"}`, wantRK: true},
+		{name: "discouraged", selection: `{"residentKey":"discouraged","userVerification":"discouraged"}`, wantRK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockDev := NewMockHIDDevice("/dev/hidraw0")
+			enum := NewMockHIDDeviceEnumerator()
+			enum.AddDevice(mockDev)
+
+			config := DefaultConfig
+			handler, err := NewHandler(&config, enum)
+			if err != nil {
+				t.Fatalf("NewHandler: %v", err)
+			}
+
+			opts, err := ParseWebAuthnRegistrationOptions(buildSelectionOptionsJSON(tt.selection), "https://xkms.example.com")
+			if err != nil {
+				t.Fatalf("ParseWebAuthnRegistrationOptions: %v", err)
+			}
+			if _, err := handler.RegisterWebAuthn(opts); err != nil {
+				t.Fatalf("RegisterWebAuthn: %v", err)
+			}
+
+			rk, ok := mockDev.sim.makeCredentialOptions["rk"].(bool)
+			if tt.wantRK && (!ok || !rk) {
+				t.Fatalf("MakeCredential options %v: want rk=true", mockDev.sim.makeCredentialOptions)
+			}
+			if !tt.wantRK && ok && rk {
+				t.Fatalf("MakeCredential options %v: want no rk", mockDev.sim.makeCredentialOptions)
+			}
+		})
+	}
+}

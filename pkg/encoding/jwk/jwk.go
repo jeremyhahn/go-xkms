@@ -356,11 +356,22 @@ func fromECDSAPublicKey(key *ecdsa.PublicKey) (*JWK, error) {
 		return nil, err
 	}
 
+	// RFC 7518 Sections 6.2.1.2 and 6.2.1.3 require x and y to be the full
+	// coordinate size, leading zero octets included. The SEC 1 uncompressed
+	// point 0x04 || X || Y carries each coordinate at that size; encoding the
+	// big-integer coordinates instead drops a zero high byte from about one
+	// key in 128. Bytes also rejects a point that is not on the curve.
+	point, err := key.Bytes()
+	if err != nil {
+		return nil, &errs.Detail{Err: ecpoint.ErrInvalidPoint, Detail: err.Error()}
+	}
+	size := ecpoint.CoordinateSize(key.Curve)
+
 	return &JWK{
 		Kty: string(KeyTypeEC),
 		Crv: string(crv),
-		X:   base64.RawURLEncoding.EncodeToString(key.X.Bytes()), //nolint:staticcheck // JWK RFC 7518 requires raw EC coordinates
-		Y:   base64.RawURLEncoding.EncodeToString(key.Y.Bytes()), //nolint:staticcheck // JWK RFC 7518 requires raw EC coordinates
+		X:   base64.RawURLEncoding.EncodeToString(point[1 : 1+size]),
+		Y:   base64.RawURLEncoding.EncodeToString(point[1+size:]),
 	}, nil
 }
 
@@ -370,7 +381,14 @@ func fromECDSAPrivateKey(key *ecdsa.PrivateKey) (*JWK, error) {
 		return nil, err
 	}
 
-	jwk.D = base64.RawURLEncoding.EncodeToString(key.D.Bytes()) //nolint:staticcheck // JWK RFC 7518 requires raw private scalar
+	// RFC 7518 Section 6.2.2.1 requires d to be the full
+	// ceiling(log-base-2(n)/8) octets. Bytes returns the scalar at that
+	// fixed length (SEC 1 Section 2.3.6) and rejects an invalid scalar.
+	d, err := key.Bytes()
+	if err != nil {
+		return nil, &errs.Detail{Err: ecpoint.ErrInvalidScalar, Detail: err.Error()}
+	}
+	jwk.D = base64.RawURLEncoding.EncodeToString(d)
 	return jwk, nil
 }
 

@@ -595,3 +595,76 @@ func TestMintedRefreshTokenIsNotABearerCredential(t *testing.T) {
 	assert.Equal(t, "user-123", got.Subject)
 	assert.Equal(t, "hardware", got.Metadata["attest_level"])
 }
+
+// unverifiedHeader returns the JOSE header of tokenString.
+func unverifiedHeader(t *testing.T, tokenString string) map[string]interface{} {
+	t.Helper()
+	parsed, _, err := jwt.NewParser().ParseUnverified(tokenString, jwt.MapClaims{})
+	require.NoError(t, err)
+	return parsed.Header
+}
+
+// TestMint_AccessTokenTypeHeader pins the RFC 9068 §2.1 typ option: it
+// changes the access token's header only, the issuer still accepts what it
+// issues, and the two token kinds stay unexchangeable either way.
+func TestMint_AccessTokenTypeHeader(t *testing.T) {
+	tests := []struct {
+		name          string
+		keyID         string
+		accessType    string
+		wantAccessTyp string
+		wantKID       interface{}
+	}{
+		{"default typ", "kid-1", "", "JWT", "kid-1"},
+		{"RFC 9068 at+jwt", "kid-1", ATJWTType, "at+jwt", "kid-1"},
+		{"at+jwt without kid", "", ATJWTType, "at+jwt", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer := newTestIssuer(t, func(c *Config) {
+				c.KeyID = tc.keyID
+				c.AccessTokenType = tc.accessType
+			})
+			ctx := context.Background()
+			pair, err := issuer.Mint(ctx, testIdentity())
+			require.NoError(t, err)
+
+			access := unverifiedHeader(t, pair.AccessToken)
+			assert.Equal(t, tc.wantAccessTyp, access["typ"])
+			assert.Equal(t, tc.wantKID, access["kid"])
+
+			// Refresh tokens keep the default header and their typ claim.
+			refresh := unverifiedHeader(t, pair.RefreshToken)
+			assert.Equal(t, "JWT", refresh["typ"])
+			assert.Equal(t, tc.wantKID, refresh["kid"])
+			assert.Equal(t, refreshTokenType, unverifiedClaims(t, pair.RefreshToken)["typ"])
+			_, hasTypClaim := unverifiedClaims(t, pair.AccessToken)["typ"]
+			assert.False(t, hasTypClaim, "the access token carries no typ claim")
+
+			authn, err := auth.NewJWTAuthenticator(&auth.JWTConfig{
+				PublicKey: issuer.PublicKey(),
+				Issuer:    issuer.IssuerName(),
+				Audience:  issuer.Audience(),
+			})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+			id, err := authn.AuthenticateHTTP(req)
+			require.NoError(t, err)
+			assert.Equal(t, "user-123", id.Subject)
+
+			req = httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
+			req.Header.Set("Authorization", "Bearer "+pair.RefreshToken)
+			_, err = authn.AuthenticateHTTP(req)
+			require.Error(t, err, "a refresh token must not authenticate as an access token")
+
+			_, err = issuer.Refresh(ctx, pair.AccessToken)
+			var invalid *InvalidTokenError
+			require.ErrorAs(t, err, &invalid, "an access token must not refresh")
+
+			rotated, err := issuer.Refresh(ctx, pair.RefreshToken)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantAccessTyp, unverifiedHeader(t, rotated.AccessToken)["typ"])
+		})
+	}
+}

@@ -172,12 +172,11 @@ func TestToECDSAPrivateKeyAcceptsShortScalarMember(t *testing.T) {
 			if err != nil {
 				t.Fatalf("FromPrivateKey: %v", err)
 			}
-			// FromPrivateKey encodes D via big.Int.Bytes(), which for these
-			// small deterministic scalars is a single byte.
-			d, err := base64.RawURLEncoding.DecodeString(jwk.D)
-			if err != nil {
-				t.Fatalf("decode d: %v", err)
-			}
+			// FromPrivateKey writes d at full width, so rewrite it the way a
+			// big-integer encoder would: these small deterministic scalars
+			// become a single byte.
+			d := key.D.Bytes() //nolint:staticcheck // builds the short member a big-integer encoder emits
+			jwk.D = base64.RawURLEncoding.EncodeToString(d)
 			if len(d) == tc.size {
 				t.Fatalf("fixture scalar is full width (%d bytes); it no longer proves the trap", len(d))
 			}
@@ -235,5 +234,66 @@ func TestToECDSAPrivateKeyRejectsInvalidScalar(t *testing.T) {
 
 	if _, err := jwk.ToPrivateKey(); !errors.Is(err, ecpoint.ErrInvalidScalar) {
 		t.Fatalf("zero scalar: got %v, want ecpoint.ErrInvalidScalar", err)
+	}
+}
+
+// TestFromECDSAKeyEncodesFullWidthMembers checks the encoder side of the
+// left-padding trap: RFC 7518 Sections 6.2.1.2, 6.2.1.3 and 6.2.2.1 require
+// x, y and d at the full field size even when the high byte is zero.
+func TestFromECDSAKeyEncodesFullWidthMembers(t *testing.T) {
+	for _, tc := range ecJWKCurves {
+		t.Run(tc.name, func(t *testing.T) {
+			key := shortCoordinateECKey(t, tc.curve, tc.size)
+
+			jwk, err := FromPrivateKey(key)
+			if err != nil {
+				t.Fatalf("FromPrivateKey: %v", err)
+			}
+			pubJWK, err := FromPublicKey(&key.PublicKey)
+			if err != nil {
+				t.Fatalf("FromPublicKey: %v", err)
+			}
+			if pubJWK.X != jwk.X || pubJWK.Y != jwk.Y {
+				t.Fatal("public and private encodings disagree on x or y")
+			}
+
+			want := map[string]*big.Int{"x": key.X, "y": key.Y, "d": key.D} //nolint:staticcheck // compares against the raw values
+			got := map[string]string{"x": jwk.X, "y": jwk.Y, "d": jwk.D}
+			for member, value := range want {
+				raw, err := base64.RawURLEncoding.DecodeString(got[member])
+				if err != nil {
+					t.Fatalf("decode %s: %v", member, err)
+				}
+				if len(raw) != tc.size {
+					t.Errorf("%s is %d octets, want %d", member, len(raw), tc.size)
+				}
+				if new(big.Int).SetBytes(raw).Cmp(value) != 0 {
+					t.Errorf("%s does not encode the key's value", member)
+				}
+			}
+		})
+	}
+}
+
+func TestFromECDSAPublicKeyRejectsOffCurvePoint(t *testing.T) {
+	pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: big.NewInt(1), Y: big.NewInt(1)} //nolint:staticcheck // an off-curve point needs the raw coordinates
+
+	_, err := FromPublicKey(pub)
+	if !errors.Is(err, ecpoint.ErrInvalidPoint) {
+		t.Fatalf("FromPublicKey(off-curve point) error = %v, want ecpoint.ErrInvalidPoint", err)
+	}
+}
+
+func TestFromECDSAPrivateKeyRejectsInvalidScalar(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	// A scalar equal to the curve order is not reduced (SEC 1 Section 3.2.1).
+	invalid := &ecdsa.PrivateKey{PublicKey: key.PublicKey, D: elliptic.P256().Params().N} //nolint:staticcheck // an unreduced scalar needs the raw field
+
+	_, err = FromPrivateKey(invalid)
+	if !errors.Is(err, ecpoint.ErrInvalidScalar) {
+		t.Fatalf("FromPrivateKey(unreduced scalar) error = %v, want ecpoint.ErrInvalidScalar", err)
 	}
 }

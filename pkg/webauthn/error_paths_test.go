@@ -55,6 +55,10 @@ func (s *faultyUserStore) GetByEmail(ctx context.Context, email string) (User, e
 	return s.inner.GetByEmail(ctx, email)
 }
 
+func (s *faultyUserStore) GetByUsername(ctx context.Context, username string) (User, error) {
+	return s.inner.GetByUsername(ctx, username)
+}
+
 func (s *faultyUserStore) Create(ctx context.Context, email, displayName string) (User, error) {
 	if s.createErr != nil {
 		return nil, s.createErr

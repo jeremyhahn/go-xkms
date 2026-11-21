@@ -262,11 +262,25 @@ func (s *Signer) SignWithSigner(signer crypto.Signer, claims jwt.Claims, keyAttr
 
 // SignWithSignerAndKID creates and signs a JWT with a Key ID using a crypto.Signer.
 func (s *Signer) SignWithSignerAndKID(signer crypto.Signer, claims jwt.Claims, keyAttrs *types.KeyAttributes, kid string) (string, error) {
+	return s.SignWithSignerKIDAndType(signer, claims, keyAttrs, kid, "")
+}
+
+// SignWithSignerKIDAndType creates and signs a JWT using a crypto.Signer,
+// setting the JOSE header's kid (RFC 7515 §4.1.4) and typ (RFC 7515 §4.1.9)
+// parameters. An empty kid omits the kid header; an empty typ keeps the
+// default "JWT" (RFC 7519 §5.1). RFC 9068 §2.1 access tokens pass
+// "at+jwt".
+func (s *Signer) SignWithSignerKIDAndType(signer crypto.Signer, claims jwt.Claims, keyAttrs *types.KeyAttributes, kid, typ string) (string, error) {
 	method, err := NewSigningMethodSigner(keyAttrs)
 	if err != nil {
 		return "", err
 	}
 	token := jwt.NewWithClaims(method, claims)
-	token.Header["kid"] = kid
+	if kid != "" {
+		token.Header["kid"] = kid
+	}
+	if typ != "" {
+		token.Header["typ"] = typ
+	}
 	return token.SignedString(signer)
 }
