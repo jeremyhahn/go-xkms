@@ -533,6 +533,34 @@ func TestTrustBootstrapXKMSd_ImportsToServer(t *testing.T) {
 	requireLocalTrustStoreUntouched(t)
 }
 
+// TestTrustFetchXKMSd_ImportsToServer: with an xkmsd endpoint configured,
+// trust fetch imports the pinned bundle into the server's trust-root store
+// (docs/SPEC.md trust-roots) and never writes the local FileStore.
+func TestTrustFetchXKMSd_ImportsToServer(t *testing.T) {
+	startTrustXKMSd(t)
+	_, bundlePEM := makeFetchCA(t)
+	srv := startFetchServer(t, bundlePEM)
+	pin := tlsServerPin(t, srv)
+
+	fcmd := newFetchTestCmd()
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	fcmd.SetOut(out)
+	fcmd.SetErr(errOut)
+	require.NoError(t, setFlagForTest(t, fcmd.Flags(), "spki-pin", pin))
+	require.NoError(t, runTrustFetch(fcmd, []string{srv.URL + sdkxkms.TrustFetcherDefaultBundlePath}), "stderr=%s", errOut.String())
+	require.Contains(t, out.String(), "added: 1")
+
+	root, err := getServerTrustRoot(t, trustPEMFingerprint(t, bundlePEM))
+	require.NoError(t, err)
+	require.Equal(t, "bootstrap-ca", string(root.Purpose))
+
+	var buf bytes.Buffer
+	require.NoError(t, runTrustList(newTrustListTestCommand(t, &buf, ""), nil))
+	require.Contains(t, buf.String(), "Trust Fetch CA")
+
+	requireLocalTrustStoreUntouched(t)
+}
+
 // TestTrustBootstrapXKMSd_ImportHonoursTimeout: the server import runs under
 // the bootstrap --timeout context, so an expired deadline stops it and files
 // nothing on the server.
