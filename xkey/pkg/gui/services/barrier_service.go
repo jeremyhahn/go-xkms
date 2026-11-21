@@ -365,7 +365,7 @@ func (s *BarrierService) Initialize(password, strategyID string) (err error) {
 		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
 		return errors.Join(credErr, closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
 
 	if initErr := barrier.Initialize(ctx, creds); initErr != nil {
 		closeErr := base.Close()
@@ -436,7 +436,7 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 			s.mu.Unlock()
 			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
 		}
-		defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+		defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
 
 		if err := s.barrier.Unseal(ctx, creds); err != nil {
 			s.mu.Unlock()
@@ -507,7 +507,7 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 		s.mu.Unlock()
 		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID}), closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		closeErr := base.Close()
@@ -559,11 +559,21 @@ func (s *BarrierService) Seal() error {
 	return auditErr
 }
 
-// ChangePassword re-seals the barrier root key with new credentials.
-// The barrier must be initialized and unsealed. For hardware-backed
-// strategies this is a no-op because those strategies do not use
-// password-derived wrapping keys.
-func (s *BarrierService) ChangePassword(newPassword string) (err error) {
+// destroyCredentials releases the secret of c. The zero Credentials an empty
+// password yields has a nil Secret; under go-enclave v0.11.1 Secret is an
+// enclave.ByteAccess interface, so a nil one is skipped, never called.
+func destroyCredentials(c xkms.SealCredentials) error {
+	if c.Secret == nil {
+		return nil
+	}
+	return c.Secret.Destroy()
+}
+
+// ChangePassword re-seals the barrier root key with new credentials after
+// proving the current ones. The barrier must be initialized and unsealed.
+// For hardware-backed strategies this is a no-op because those strategies
+// do not use password-derived wrapping keys.
+func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -573,15 +583,22 @@ func (s *BarrierService) ChangePassword(newPassword string) (err error) {
 
 	ctx := s.context()
 	// CredentialsFor: ChangePassword is a no-op for hardware-backed
-	// strategies, which are called with an empty newPassword by design (see
+	// strategies, which are called with empty passwords by design (see
 	// the doc comment above); NewCredentials would reject that empty input.
-	creds, credErr := xkms.CredentialsFor(ctx, []byte(newPassword))
+	// An empty password yields the zero Credentials, whose Secret is nil.
+	current, credErr := xkms.CredentialsFor(ctx, []byte(currentPassword))
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCredentials(current)) }()
+	next, credErr := xkms.CredentialsFor(ctx, []byte(newPassword))
+	if credErr != nil {
+		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
+	}
+	defer func() { err = errors.Join(err, destroyCredentials(next)) }()
 
-	if err := s.barrier.ChangePassword(ctx, creds); err != nil {
+	// go-qrdb v0.58.5: the barrier proves current before re-sealing.
+	if err := s.barrier.ChangePassword(ctx, current, next); err != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)
 	}
 
