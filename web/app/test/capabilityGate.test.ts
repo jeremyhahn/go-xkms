@@ -99,6 +99,21 @@ describe("console capability gate (ruling 972 (1))", () => {
     expect(screen.queryByTestId("gated-child")).toBeNull();
   });
 
+  it("a direct FROST route on a build without frost shows the gate naming the build tag", async () => {
+    // The !frost build serves the FROST routes from handlers_frost_stub.go,
+    // which answers 501; /auth/me reports frost:false there.
+    expect(ROUTE_CAPABILITY).toMatchObject({ frost: "frost", frostKeyImport: "frost" });
+    me.mockResolvedValue(session({ frost: false }));
+    await loadSession();
+    for (const route of ["frostKeyImport", "frost"]) {
+      cleanup();
+      render(RouteGate, { props: { route, children: child } });
+      const off = await screen.findByTestId("subsystem-off");
+      expect(off.textContent).toContain("-tags frost");
+      expect(screen.queryByTestId("gated-child")).toBeNull();
+    }
+  });
+
   it("does not mount a gated view before the session is known", () => {
     me.mockReturnValue(new Promise(() => {}));
     void loadSession();
