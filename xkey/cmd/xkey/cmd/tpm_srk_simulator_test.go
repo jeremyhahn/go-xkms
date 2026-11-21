@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -264,6 +265,21 @@ func TestTPMSRKEnrollIdempotent(t *testing.T) {
 	out, err := runSRKEnroll(t, "", "--pin-file", pinFile)
 	require.NoError(t, err)
 	assert.Contains(t, out, "already enrolled")
+}
+
+// TestTPMSRKEnrollShortPINLeavesNoSRK: a PIN the shared PIN policy refuses
+// is refused before any persistent SRK exists, so a later enrolment with a
+// valid PIN creates the SRK rather than meeting one bound to the short PIN.
+func TestTPMSRKEnrollShortPINLeavesNoSRK(t *testing.T) {
+	installTPMForSRK(t)
+
+	_, err := runSRKEnroll(t, "", "--pin-file", writeSRKPINFile(t, "12345"))
+	require.ErrorIs(t, err, qrdbsdk.ErrPINTooShort)
+
+	out, err := runSRKEnroll(t, "", "--pin-file", writeSRKPINFile(t, testSRKUserPIN))
+	require.NoError(t, err)
+	assert.Contains(t, out, "Platform SRK enrolled")
+	assert.NotContains(t, out, "already enrolled")
 }
 
 // TestTPMSRKEnrollFreshOpenIdempotent: enrolling again from a fresh open of
