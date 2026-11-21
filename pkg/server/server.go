@@ -3706,6 +3706,12 @@ func (s *Server) shutdown() error {
 func (s *Server) closeBackends() {
 	s.closeOIDCCredentials()
 	s.closeTPMPolicies()
+	// Zeroize the held backend PIN first (#2262). Under manual this also
+	// closes the PKCS#11 provider and removes it from keyProviders, so the
+	// loop below never closes it a second time.
+	if err := s.SealBackendPIN(); err != nil {
+		s.logger.Error("Error sealing the backend PIN", slog.Any("error", err))
+	}
 	for name, backend := range s.keyProviders {
 		s.logger.Info("Closing key provider...", "key_provider", name)
 		if err := backend.Close(); err != nil {
