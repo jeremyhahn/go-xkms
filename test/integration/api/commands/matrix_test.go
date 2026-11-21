@@ -370,9 +370,12 @@ func TestRunCommandWithProtocol_EmbeddedArgs(t *testing.T) {
 		t.Errorf("protocolArgs(embedded) = %v, want %v", got, want)
 	}
 
+	// The integration server serves MCP over TLS: the runner must use
+	// mcps:// and pass the test CA, or the SDK speaks plaintext HTTP.
 	r.MCPAddr = "localhost:9444"
+	r.TLSCACert = "/etc/xkms/certs/ca.crt"
 	got = r.protocolArgs(ProtocolMCP, []string{"version"})
-	want = []string{"--server", "mcp://localhost:9444", "version"}
+	want = []string{"--server", "mcps://localhost:9444", "--tls-ca", "/etc/xkms/certs/ca.crt", "version"}
 	if !slices.Equal(got, want) {
 		t.Errorf("protocolArgs(mcp) = %v, want %v", got, want)
 	}
