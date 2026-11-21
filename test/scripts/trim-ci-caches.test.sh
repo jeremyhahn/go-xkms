@@ -93,6 +93,14 @@ entry() {
     touch -d "$3" "$VOLROOT/$1/$2/$2$2-a" "$VOLROOT/$1/$2"
 }
 
+# file_at <volume> <bucket> <name> <touch-date>: one 8 KiB cache file
+# <volume>/<bucket>/<name> with its own mtime; the bucket's mtime is untouched.
+file_at() {
+    mkdir -p "$VOLROOT/$1/$2"
+    head -c 8192 /dev/zero > "$VOLROOT/$1/$2/$3"
+    touch -d "$4" "$VOLROOT/$1/$2/$3"
+}
+
 # run_script <expected-exit> <in-use volumes> [VAR=VALUE ...]; max-gib is 1.
 run_script() {
     local expected_exit="$1" inuse="$2"; shift 2
@@ -165,10 +173,42 @@ if [ -f "$VOLROOT/p-ci-cache-t-gobuild/README" ]; then
 else
     fail "removed a file that is not a cache entry"
 fi
-if grep -Eq -- "-(m|a)time|-mmin|-amin" "$CALL_LOG"; then
-    fail "the trim ages single files instead of whole entries"
+
+# --------------------------------------------------------------------------
+start_case "entries go by their own mtime across buckets, not by bucket mtime"
+# A bucket holds unrelated entries and reading one does not touch the bucket's
+# mtime, so bucket mtimes deliberately disagree with their files: aa is the
+# newest bucket but holds the oldest file; bb is the oldest bucket but holds
+# only a middle-aged file. 12 KiB over, 8 KiB a file: the two oldest files go.
+setup "p-ci-cache-t-gobuild 1000000" "p-ci-cache-t-gomod 48588"
+file_at p-ci-cache-t-gobuild aa aa01-a "2026-01-01"
+file_at p-ci-cache-t-gobuild aa aa02-a "2026-06-01"
+file_at p-ci-cache-t-gobuild bb bb01-a "2026-03-01"
+file_at p-ci-cache-t-gobuild cc cc01-a "2026-05-01"
+touch -d "2026-07-01" "$VOLROOT/p-ci-cache-t-gobuild/aa"
+touch -d "2025-01-01" "$VOLROOT/p-ci-cache-t-gobuild/bb"
+touch -d "2025-02-01" "$VOLROOT/p-ci-cache-t-gobuild/cc"
+run_script 0 "p-ci-cache-t-gobuild p-ci-cache-t-gomod"
+g="$VOLROOT/p-ci-cache-t-gobuild"
+if [ ! -e "$g/aa/aa01-a" ] && [ ! -e "$g/bb/bb01-a" ]; then
+    pass "the two oldest files, in different buckets, are gone"
 else
-    pass "no per-file age trim"
+    fail "the oldest files by their own mtime were not removed"
+fi
+if [ -f "$g/aa/aa02-a" ]; then
+    pass "a newer file in the same bucket as an evicted one stays"
+else
+    fail "evicted a recently used file with its bucket"
+fi
+if [ -f "$g/cc/cc01-a" ]; then
+    pass "a newer file in an old bucket stays"
+else
+    fail "evicted by bucket mtime, not file mtime"
+fi
+if [ -d "$g/aa" ] && [ -d "$g/bb" ] && [ -d "$g/cc" ]; then
+    pass "bucket directories stay"
+else
+    fail "removed a bucket directory"
 fi
 
 # --------------------------------------------------------------------------
