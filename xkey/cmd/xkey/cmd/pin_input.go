@@ -16,6 +16,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -56,6 +57,27 @@ var (
 	// no PIN would look to the operator exactly like an authenticator that
 	// needs none.
 	ErrPINInputFlagsMissing = errors.New("pin: the command does not declare the PIN input flags")
+
+	// ErrPINInputFileRead indicates the PIN file could not be read.
+	ErrPINInputFileRead = errors.New("pin: failed to read the PIN file")
+
+	// ErrPINInputFileEmpty indicates the PIN file's first line was empty.
+	ErrPINInputFileEmpty = errors.New("pin: the PIN file carried no PIN on its first line")
+
+	// ErrPINInputFilePermissions indicates the PIN file's mode lets its
+	// group or other users access it; it must be 0600 or stricter.
+	ErrPINInputFilePermissions = errors.New("pin: the PIN file is accessible to group or other users; it must be 0600 or stricter")
+)
+
+// pinFileForbiddenPerm is the mode bits a PIN file must not carry: any
+// group or other access.
+const pinFileForbiddenPerm os.FileMode = 0o077
+
+// pinFlagFile and soPINFlagFile name the PIN file flags. The flag value is
+// a path, never the PIN, so it is safe on the command line.
+const (
+	pinFlagFile   = "pin-file"
+	soPINFlagFile = "so-pin-file"
 )
 
 // pinFlagStdin and pinEnvVar name the two PIN sources. They are constants so
@@ -90,6 +112,9 @@ type pinSource struct {
 	// then environment.
 	stdinFlag string
 	envVar    string
+	// fileFlag, when set, names a flag whose value is a file holding the
+	// PIN on its first line; it sits between stdin and environment.
+	fileFlag string
 	// stdinEmpty is returned when stdinFlag was given but stdin was empty.
 	stdinEmpty error
 	// stdinRead is returned when stdinFlag was given but stdin could not be
@@ -113,6 +138,22 @@ var (
 		stdinRead:  ErrPINInputStdinRead,
 	}
 )
+
+// srkUserPINSource and srkSOPINSource add the --pin-file / --so-pin-file
+// inputs to the user and SO PIN, for the commands a systemd unit runs with
+// no person at a prompt: `tpm srk enroll` and `fido2 --backend tpm2`
+// (ruling 994).
+var (
+	srkUserPINSource = userPINSource.withFile(pinFlagFile)
+	srkSOPINSource   = soPINSource.withFile(soPINFlagFile)
+)
+
+// withFile returns a copy of p that also reads the PIN from the file named
+// by flag.
+func (p pinSource) withFile(flag string) pinSource {
+	p.fileFlag = flag
+	return p
+}
 
 // pinUsage is the operator-facing description of the two PIN sources,
 // embedded verbatim in the long help of every command that accepts one.
@@ -202,6 +243,9 @@ func resolveSOPINFromEnv() (string, error) {
 // need no flag of their own: os.Getenv reads them directly.
 func (p pinSource) addFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool(p.stdinFlag, false, "Read the "+p.label+" from standard input")
+	if p.fileFlag != "" {
+		cmd.Flags().String(p.fileFlag, "", "Read the "+p.label+" from the first line of this file")
+	}
 }
 
 // addPersistentFlags declares the source's one flag on cmd's persistent flag
@@ -210,6 +254,9 @@ func (p pinSource) addFlags(cmd *cobra.Command) {
 // than redeclaring it).
 func (p pinSource) addPersistentFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().Bool(p.stdinFlag, false, "Read the "+p.label+" from standard input")
+	if p.fileFlag != "" {
+		cmd.PersistentFlags().String(p.fileFlag, "", "Read the "+p.label+" from the first line of this file")
+	}
 }
 
 // resolve returns the PIN from the highest-precedence source that carries
@@ -235,7 +282,81 @@ func (p pinSource) resolveBytes(cmd *cobra.Command) ([]byte, error) {
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
 	}
-	return p.resolveBytesFrom(fromStdin)
+	if fromStdin {
+		if in := cmd.InOrStdin(); in != os.Stdin {
+			return p.secretFromStdin(func() ([]byte, error) { return io.ReadAll(in) })
+		}
+		return p.resolveBytesFrom(true)
+	}
+	if p.fileFlag != "" {
+		if flag := cmd.Flags().Lookup(p.fileFlag); flag != nil && flag.Value.String() != "" {
+			return p.secretFromFile(flag.Value.String())
+		}
+	}
+	return p.resolveBytesFrom(false)
+}
+
+// secretFromStdin reads the PIN with read and trims the trailing newline.
+func (p pinSource) secretFromStdin(read func() ([]byte, error)) ([]byte, error) {
+	data, readErr := read()
+	if readErr != nil {
+		enclave.Wipe(data)
+		return nil, &SentinelCauseError{Sentinel: p.stdinRead, Cause: readErr}
+	}
+	secret := bytes.TrimRight(data, "\r\n")
+	if len(secret) == 0 {
+		enclave.Wipe(data)
+		return nil, p.stdinEmpty
+	}
+	return secret, nil
+}
+
+// secretFromFile reads the first line of the file at path, without its
+// trailing newline, as the PIN. Errors name the file flag, never the value.
+//
+// The file must be 0600 or stricter, as the pkcs11 config check requires
+// of a file that names a PIN: a PIN file another user or group can read is
+// refused with ErrPINInputFilePermissions, never read. The mode is checked
+// on the open descriptor, so a swap between check and read cannot pass.
+func (p pinSource) secretFromFile(path string) ([]byte, error) {
+	f, openErr := os.Open(path) // #nosec G304 -- operator-named PIN file
+	if openErr != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPINInputFileRead, Cause: openErr}
+	}
+	defer func() { _ = f.Close() }()
+	info, statErr := f.Stat()
+	if statErr != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPINInputFileRead, Cause: statErr}
+	}
+	if perm := info.Mode().Perm(); perm&pinFileForbiddenPerm != 0 {
+		return nil, &SentinelCauseError{
+			Sentinel: ErrPINInputFilePermissions,
+			Cause:    fmt.Errorf("--%s has mode %04o; chmod 600 it", p.fileFlag, perm),
+		}
+	}
+	data, readErr := io.ReadAll(f)
+	if readErr != nil {
+		enclave.Wipe(data)
+		return nil, &SentinelCauseError{Sentinel: ErrPINInputFileRead, Cause: readErr}
+	}
+	return p.pinFromFileData(data)
+}
+
+// pinFromFileData returns the first line of data, without its trailing
+// "\r\n" or "\n", as a new slice the caller owns, and wipes all of data:
+// the lines after the PIN are as secret as the PIN, so no part of the read
+// buffer outlives the call, on success or error.
+func (p pinSource) pinFromFileData(data []byte) ([]byte, error) {
+	defer enclave.Wipe(data)
+	line := data
+	if i := bytes.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	line = bytes.TrimRight(line, "\r")
+	if len(line) == 0 {
+		return nil, &SentinelCauseError{Sentinel: ErrPINInputFileEmpty, Cause: errors.New("--" + p.fileFlag)}
+	}
+	return bytes.Clone(line), nil
 }
 
 // resolveBytesFrom is resolveBytes for a caller that has already determined
@@ -247,17 +368,7 @@ func (p pinSource) resolveBytes(cmd *cobra.Command) ([]byte, error) {
 // environment variable, then nil when neither carries a value.
 func (p pinSource) resolveBytesFrom(fromStdin bool) ([]byte, error) {
 	if fromStdin {
-		data, readErr := stdinReader()
-		if readErr != nil {
-			enclave.Wipe(data)
-			return nil, &SentinelCauseError{Sentinel: p.stdinRead, Cause: readErr}
-		}
-		secret := bytes.TrimRight(data, "\r\n")
-		if len(secret) == 0 {
-			enclave.Wipe(data)
-			return nil, p.stdinEmpty
-		}
-		return secret, nil
+		return p.secretFromStdin(stdinReader)
 	}
 
 	if p.envVar != "" {
