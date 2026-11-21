@@ -1,4 +1,4 @@
-# ci-template: v1.50 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# ci-template: v1.51 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
 # v1.48 (Tenant Agent ruling 1024 item 1; ruling 999: hosted by default): the
 # preflight step `Hosted or overflow runner (ruling 1024)` and its `runner` and
 # `runner_docker` outputs, the top-level HOSTED_JOBS_PER_REPO (12) and
@@ -24,6 +24,7 @@
 #   github.com only, and the hosted in-progress count note names preflight;
 #   the template's runner-labels lint step (ruling 633) is NOT taken (above).
 # v1.50 (handbook 52e70fd5, #84; rulings 999/1024): pages() keeps a short list in SHORT as a lower bound, no return 1; elif [ -n "$SHORT" ] stays hosted when no trigger is reached; an overflow notes "(a lower bound: $SHORT)".
+# v1.51 (handbook c4de1f7d, #86): the Runner labels (ruling 633) pull_request_target cases are in a step this file does not take; no job change.
 # v1.42 hermetic gate only (owner ruling 742 (1), Tenant Agent ruling 754): the
 # CI Gate's outcome depends only on the tree under test. `make deps-check`,
 # `make security` (gosec, govulncheck, go mod verify, trivy fs) and the trivy
