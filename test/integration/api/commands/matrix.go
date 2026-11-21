@@ -58,6 +58,11 @@ const (
 	// software key and certificate storage only and installs no CA, so the
 	// ca verbs reach servicer_ca.go's getCA guard there.
 	ReasonEmbeddedNoCA = "embedded service installs no CA (sdk/go/embedded.go)"
+
+	// ReasonEmbeddedNoSecrets: the embedded service (sdk/go/embedded.go)
+	// installs no password-store or PIN manager, so the password and pin
+	// verbs return ErrNotConfigured there.
+	ReasonEmbeddedNoSecrets = "embedded service installs no password store or PIN manager (sdk/go/embedded.go)"
 )
 
 // SkipReason reports whether the standalone run (RunAllCommandsForProtocol)

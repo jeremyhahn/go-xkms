@@ -13,7 +13,10 @@
 
 package commands
 
-import "strconv"
+import (
+	"slices"
+	"strconv"
+)
 
 // The vault passphrases, the entry password and the PINs below are test
 // values, not secrets. They are built from an index at start-up, so the
@@ -76,7 +79,7 @@ var jsonOutput = []ArgDefinition{flagArg("output", "json", "Output format")}
 
 // PasswordCommands returns the password and password vault commands.
 func PasswordCommands() []CommandDefinition {
-	return []CommandDefinition{
+	return serverOnly(ReasonEmbeddedNoSecrets, []CommandDefinition{
 		{
 			Name: "password-vault-status", Category: CategoryPassword,
 			Command:        []string{"password", "vault", "status"},
@@ -201,12 +204,12 @@ func PasswordCommands() []CommandDefinition {
 			Description:    "Close the vault session",
 			RequiresServer: true, RequiresSetup: true,
 		},
-	}
+	})
 }
 
 // PINCommands returns the SO and user PIN commands.
 func PINCommands() []CommandDefinition {
-	return []CommandDefinition{
+	return serverOnly(ReasonEmbeddedNoSecrets, []CommandDefinition{
 		{
 			Name: "pin-so-set", Category: CategoryPIN,
 			Command:        []string{"pin", "so-set"},
@@ -273,7 +276,7 @@ func PINCommands() []CommandDefinition {
 			RequiresServer: true, RequiresSetup: true,
 			RequiredArgs: []ArgDefinition{flagArg("so-pin", SecretsSOPIN, "SO PIN")},
 		},
-	}
+	})
 }
 
 // PIVCommands returns the PIV slot commands. They run on the server's
@@ -372,6 +375,30 @@ func SecretsSetupOrder() []string {
 }
 
 // SecretsCommand returns the password, pin or piv command named name.
+// serverOnly restricts cmds to the server transports; the embedded cell
+// names reason.
+func serverOnly(reason string, cmds []CommandDefinition) []CommandDefinition {
+	for i := range cmds {
+		cmds[i].Transports = []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
+		cmds[i].TransportSkip = reason
+	}
+	return cmds
+}
+
+// SecretsWorkflowSkip reports whether the secrets matrix workflow of
+// category skips protocol before any cell runs, and why: a family whose
+// commands exclude the transport carries their TransportSkip.
+func SecretsWorkflowSkip(category CommandCategory, protocol ProtocolType) (string, bool) {
+	for _, family := range [][]CommandDefinition{PasswordCommands(), PINCommands(), PIVCommands()} {
+		for _, cmd := range family {
+			if cmd.Category == category && len(cmd.Transports) > 0 && !slices.Contains(cmd.Transports, protocol) {
+				return cmd.TransportSkip, true
+			}
+		}
+	}
+	return "", false
+}
+
 func SecretsCommand(name string) (CommandDefinition, bool) {
 	for _, family := range [][]CommandDefinition{PasswordCommands(), PINCommands(), PIVCommands()} {
 		for _, cmd := range family {

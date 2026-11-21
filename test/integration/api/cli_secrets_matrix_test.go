@@ -71,10 +71,22 @@ func TestCLISecretsMatrix(t *testing.T) {
 				t.Fatalf("Protocol %s not available - server must be running", protocol)
 			}
 			w := &secretsWorkflow{runner: runner, protocol: protocol, state: state}
-			t.Run("password", w.password)
-			t.Run("pin", w.pin)
-			t.Run("piv", w.piv)
+			t.Run("password", w.family(commands.CategoryPassword, w.password))
+			t.Run("pin", w.family(commands.CategoryPIN, w.pin))
+			t.Run("piv", w.family(commands.CategoryPIV, w.piv))
 		})
+	}
+}
+
+// family wraps a workflow so a transport that lacks the family's services
+// (commands.SecretsWorkflowSkip) is skipped with its reason before any cell
+// runs.
+func (w *secretsWorkflow) family(category commands.CommandCategory, run func(*testing.T)) func(*testing.T) {
+	return func(t *testing.T) {
+		if reason, skip := commands.SecretsWorkflowSkip(category, w.protocol); skip {
+			t.Skip(reason)
+		}
+		run(t)
 	}
 }
 
