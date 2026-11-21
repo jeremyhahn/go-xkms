@@ -350,8 +350,9 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 		svc.SetTrustRootStore(st.TrustRoots)
 	}
 	if st.Verdicts != nil {
-		// No engine is composed yet, so ReattestDevice stays not configured.
-		svc.SetContinuousAttestation(nil, st.Verdicts)
+		// No engine is composed, so the store-only default goes in only
+		// when the host has not wired its own engine/store pair.
+		svc.SetDefaultContinuousAttestation(st.Verdicts)
 	}
 	if st.OIDCCredentials != nil {
 		svc.SetOIDCCredentialService(st.OIDCCredentials)

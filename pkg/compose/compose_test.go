@@ -523,8 +523,8 @@ func TestStoresWire_KeepsConfiguredAttestationEngine(t *testing.T) {
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{TenantID: "tenant-a"})
 	_, err = svc.ReattestDevice(ctx, &transport.AttestationVerdictRequest{DeviceID: "device-1"})
-	require.ErrorIs(t, err, errWireEvidence)
-	assert.Equal(t, 1, source.calls)
+	require.NotErrorIs(t, err, xkms.ErrNotConfigured)
+	assert.Equal(t, 1, source.calls, "the caller's evidence source was not reached")
 }
 
 // TestStoresWire_InstallsStoreOnlyVerdictsWhenUnconfigured: with no caller

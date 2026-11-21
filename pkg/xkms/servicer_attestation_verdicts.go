@@ -40,6 +40,27 @@ func (s *XKMSService) SetContinuousAttestation(engine *continuous.Engine, store 
 	s.verdicts.store(&continuousAttestation{engine: engine, store: store})
 }
 
+// SetDefaultContinuousAttestation serves the verdicts of store, without an
+// engine, only when no subsystem is wired yet; it reports whether it did. A
+// pair a host configured with SetContinuousAttestation is never replaced, so
+// its engine keeps answering ReattestDevice. The check and the store are one
+// atomic step.
+func (s *XKMSService) SetDefaultContinuousAttestation(store *continuous.Store) bool {
+	if store == nil {
+		return false
+	}
+	next := &continuousAttestation{store: store}
+	for {
+		cur := s.verdicts.ref.Load()
+		if cur != nil && *cur != nil {
+			return false
+		}
+		if s.verdicts.ref.CompareAndSwap(cur, &next) {
+			return true
+		}
+	}
+}
+
 // verdictSubsystem returns the wired subsystem, the caller's tenant and the
 // requested device, or ErrNotConfigured.
 func (s *XKMSService) verdictSubsystem(ctx context.Context, action string, req *transport.AttestationVerdictRequest) (*continuousAttestation, string, string, error) {
