@@ -614,6 +614,10 @@ func eccAttributesFromConfig(config *store.ECCConfig) (*types.ECCAttributes, err
 	return &types.ECCAttributes{Curve: curve}, nil
 }
 
+// EKAttributesFromConfig builds the EK's key attributes from its config. The
+// CertHandle is the index the EK's key type resolves to (configuredEKCertIndex),
+// so an ECC P-256 EK that keeps the RSA default 0x01C00002 reads its
+// certificate at 0x01C0000A (TCG EK Credential Profile v2.1 §2.2.1.4).
 func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, idevidConfig *IDevIDConfig) (*types.KeyAttributes, error) {
 
 	if config.CN == "" {
@@ -628,27 +632,15 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 		}
 	}
 
-	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
-	if err != nil {
-		switch {
-		case config.RSAConfig != nil:
-			algorithm = x509.RSA
-		case config.ECCConfig != nil:
-			algorithm = x509.ECDSA
-		default:
-			return nil, err
-		}
-	}
-
-	// The curve is checked before any password is allocated, so a bad
-	// curve never strands a locked password enclave.
-	eccAttrs, err := eccAttributesFromConfig(config.ECCConfig)
+	// The key type, curve included, is checked before any password is
+	// allocated, so a bad curve never strands a locked password enclave.
+	keyType, err := ekKeyType(config)
 	if err != nil {
 		return nil, err
 	}
 
 	var ekTemplate tpm2.TPMTPublic
-	if algorithm == x509.RSA {
+	if keyType.KeyAlgorithm == x509.RSA {
 		ekTemplate = tpm2.RSAEKTemplate
 	} else {
 		ekTemplate = tpm2.ECCEKTemplate
@@ -675,33 +667,54 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 	attrs := &types.KeyAttributes{
 		CN:           config.CN,
 		Debug:        config.Debug,
-		KeyAlgorithm: algorithm,
+		KeyAlgorithm: keyType.KeyAlgorithm,
 		KeyType:      types.KeyTypeEndorsement,
 		Password:     ekPassword,
 		TPMPolicy:    platformPolicyName(config.PlatformPolicy),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
-			CertHandle:    tpm2.TPMHandle(config.CertHandle),
+			CertHandle:    configuredEKCertIndex(config),
 			Handle:        tpm2.TPMHandle(config.Handle),
 			HandleType:    tpm2.TPMHTPersistent,
 			Hierarchy:     tpm2.TPMHandle(tpm2.TPMRHEndorsement),
 			HierarchyAuth: ekHierarchyAuth,
 			Template:      ekTemplate,
 		},
+		RSAAttributes: keyType.RSAAttributes,
+		ECCAttributes: keyType.ECCAttributes,
 	}
-
-	if config.RSAConfig != nil {
-		if config.KeyAlgorithm == "" {
-			config.KeyAlgorithm = x509.RSA.String()
-		}
-		attrs.RSAAttributes = &types.RSAAttributes{
-			KeySize: config.RSAConfig.KeySize,
-		}
-	}
-
-	attrs.ECCAttributes = eccAttrs
 
 	return attrs, nil
+}
+
+// ekKeyType returns the key algorithm and RSA or ECC parameters the EK
+// config names. The algorithm falls back to the RSA or ECC config present
+// when KeyAlgorithm is empty or unknown. It allocates no secret, so it also
+// serves where only the EK's key type is wanted (configuredEKCertIndex).
+func ekKeyType(config EKConfig) (*types.KeyAttributes, error) {
+	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
+	if err != nil {
+		switch {
+		case config.RSAConfig != nil:
+			algorithm = x509.RSA
+		case config.ECCConfig != nil:
+			algorithm = x509.ECDSA
+		default:
+			return nil, err
+		}
+	}
+	eccAttrs, err := eccAttributesFromConfig(config.ECCConfig)
+	if err != nil {
+		return nil, err
+	}
+	keyType := &types.KeyAttributes{
+		KeyAlgorithm:  algorithm,
+		ECCAttributes: eccAttrs,
+	}
+	if config.RSAConfig != nil {
+		keyType.RSAAttributes = &types.RSAAttributes{KeySize: config.RSAConfig.KeySize}
+	}
+	return keyType, nil
 }
 
 // SRKAttributesFromConfig builds storage-root-key attributes from an SRKConfig.
