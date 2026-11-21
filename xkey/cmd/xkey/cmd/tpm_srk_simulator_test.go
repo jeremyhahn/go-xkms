@@ -51,6 +51,12 @@ func writeSRKPINFile(t *testing.T, pin string) string {
 // its output and error.
 func runSRKEnroll(t *testing.T, stdin string, args ...string) (string, error) {
 	t.Helper()
+	return executeSRKEnroll(stdin, args...)
+}
+
+// executeSRKEnroll runs `tpm srk enroll` on a fresh command without a
+// *testing.T, so a goroutine can call it and report over a channel.
+func executeSRKEnroll(stdin string, args ...string) (string, error) {
 	c := newTPMSRKCmd()
 	var out bytes.Buffer
 	c.SetOut(&out)
@@ -302,7 +308,8 @@ func TestTPMSRKEnrollConcurrentSerializesOnLock(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, runErr := runSRKEnroll(t, "", "--pin-file", otherPINFile)
+		// No t methods here: the result goes over done.
+		_, runErr := executeSRKEnroll("", "--pin-file", otherPINFile)
 		done <- runErr
 	}()
 
