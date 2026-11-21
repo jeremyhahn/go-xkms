@@ -1857,6 +1857,76 @@ func TestParseAuthorizationList_WithOriginAndPurpose(t *testing.T) {
 	}
 }
 
+// marshalExplicitNull encodes [tag] EXPLICIT NULL, the KeyMint form of the
+// boolean-presence tags (noAuthRequired, allowWhileOnBody).
+func marshalExplicitNull(t *testing.T, tag int) []byte {
+	t.Helper()
+	out, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tag,
+		IsCompound: true,
+		Bytes:      asn1.NullBytes,
+	})
+	if err != nil {
+		t.Fatalf("marshal tagged NULL %d: %v", tag, err)
+	}
+	return out
+}
+
+func TestParseAuthorizationList_UserAuthTags(t *testing.T) {
+	userAuthType, err := marshalExplicitInt(tagUserAuthType, UserAuthBiometric)
+	if err != nil {
+		t.Fatalf("marshal tagged userAuthType: %v", err)
+	}
+	authTimeout, err := marshalExplicitInt(tagAuthTimeout, 0)
+	if err != nil {
+		t.Fatalf("marshal tagged authTimeout: %v", err)
+	}
+
+	var elements bytes.Buffer
+	elements.Write(marshalExplicitNull(t, tagNoAuthRequired))
+	elements.Write(userAuthType)
+	elements.Write(authTimeout)
+	elements.Write(marshalExplicitNull(t, tagAllowWhileOnBody))
+	rawVal := asn1.RawValue{FullBytes: wrapAuthorizationListElements(t, elements.Bytes())}
+
+	result := parseAuthorizationList(rawVal)
+	if !result.NoAuthRequired {
+		t.Error("NoAuthRequired = false, want true")
+	}
+	if !result.HasUserAuthType || result.UserAuthType != UserAuthBiometric {
+		t.Errorf("UserAuthType = %d (present %v), want %d (present)", result.UserAuthType, result.HasUserAuthType, UserAuthBiometric)
+	}
+	if !result.HasAuthTimeout || result.AuthTimeout != 0 {
+		t.Errorf("AuthTimeout = %d (present %v), want 0 (present)", result.AuthTimeout, result.HasAuthTimeout)
+	}
+	if !result.AllowWhileOnBody {
+		t.Error("AllowWhileOnBody = false, want true")
+	}
+}
+
+func TestParseAuthorizationList_UserAuthTagsAbsent(t *testing.T) {
+	originTagged, err := marshalExplicitInt(tagOrigin, OriginGenerated)
+	if err != nil {
+		t.Fatalf("marshal tagged origin: %v", err)
+	}
+	rawVal := asn1.RawValue{FullBytes: wrapAuthorizationListElements(t, originTagged)}
+
+	result := parseAuthorizationList(rawVal)
+	if result.NoAuthRequired {
+		t.Error("NoAuthRequired = true on a list without tag 503")
+	}
+	if result.HasUserAuthType {
+		t.Errorf("HasUserAuthType = true (UserAuthType %d) on a list without tag 504", result.UserAuthType)
+	}
+	if result.HasAuthTimeout {
+		t.Errorf("HasAuthTimeout = true (AuthTimeout %d) on a list without tag 505", result.AuthTimeout)
+	}
+	if result.AllowWhileOnBody {
+		t.Error("AllowWhileOnBody = true on a list without tag 506")
+	}
+}
+
 // TestBuildAttestationExtensionWithOptions_RoundTrip verifies that Origin,
 // Purpose and RootOfTrust all survive a build-then-parse round trip inside
 // teeEnforced, and that softwareEnforced stays empty (go-xkms#132).

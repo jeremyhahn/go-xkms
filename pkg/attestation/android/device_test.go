@@ -145,6 +145,74 @@ func TestRequireAttestedKeyOrigin_Refuses(t *testing.T) {
 	}
 }
 
+func TestRequirePerUseUserAuth(t *testing.T) {
+	perUse := func() AuthorizationList {
+		return AuthorizationList{Origin: OriginGenerated, UserAuthType: UserAuthBiometric, HasUserAuthType: true}
+	}
+	for _, tc := range []struct {
+		name string
+		desc *KeyDescription
+		want error
+	}{
+		{name: "biometric per use", desc: &KeyDescription{TeeEnforced: perUse()}, want: nil},
+		{
+			name: "userAuthType absent",
+			desc: &KeyDescription{TeeEnforced: AuthorizationList{Origin: OriginGenerated}},
+			want: ErrUserAuthNotPerUse,
+		},
+		{
+			name: "userAuthType password only",
+			desc: &KeyDescription{TeeEnforced: AuthorizationList{UserAuthType: 1, HasUserAuthType: true}},
+			want: ErrUserAuthNotPerUse,
+		},
+		{
+			name: "authTimeout in teeEnforced",
+			desc: &KeyDescription{TeeEnforced: func() AuthorizationList {
+				l := perUse()
+				l.HasAuthTimeout = true
+				return l
+			}()},
+			want: ErrUserAuthNotPerUse,
+		},
+		{
+			name: "allowWhileOnBody in teeEnforced",
+			desc: &KeyDescription{TeeEnforced: func() AuthorizationList {
+				l := perUse()
+				l.AllowWhileOnBody = true
+				return l
+			}()},
+			want: ErrUserAuthNotPerUse,
+		},
+		{
+			name: "noAuthRequired in teeEnforced",
+			desc: &KeyDescription{TeeEnforced: func() AuthorizationList {
+				l := perUse()
+				l.NoAuthRequired = true
+				return l
+			}()},
+			want: ErrUserAuthNotPerUse,
+		},
+		{
+			name: "noAuthRequired in softwareEnforced",
+			desc: &KeyDescription{
+				TeeEnforced:      perUse(),
+				SoftwareEnforced: AuthorizationList{NoAuthRequired: true},
+			},
+			want: ErrUserAuthNotPerUse,
+		},
+		{name: "nil description", desc: nil, want: ErrNilKeyDescription},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := RequirePerUseUserAuth(tc.desc)
+			if tc.want == nil {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
 func TestRequireAttestedApplication_Succeeds(t *testing.T) {
 	desc := &KeyDescription{}
 	desc.SoftwareEnforced.AttestationApplicationID = &AttestationApplicationID{
