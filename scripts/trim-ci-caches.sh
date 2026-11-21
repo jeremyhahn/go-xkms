@@ -24,9 +24,9 @@
 # Agent ruling 966 (4): one host's gobuild volume reached 57G), they are
 # trimmed inside, largest first, by a one-shot <image> container with the same
 # limits mounting the volume read-write, by whole cache entries:
-#   gobuild   the files of whole xx/ entry directories, oldest directory mtime
-#             first, until under the bound; `go clean -cache` when the volume
-#             alone is over the bound;
+#   gobuild   the entry files inside the xx/ hash buckets, oldest file mtime
+#             first across all buckets, until under the bound (buckets stay);
+#             `go clean -cache` when the volume alone is over the bound;
 #   golangci  emptied whole, as `golangci-lint cache clean` does;
 #   gomod     never trimmed inside (no per-file age trims of the module cache):
 #             reported, and removed whole only once no container uses it.
@@ -103,21 +103,27 @@ done < <(sort -rn "$list")
 # removed, so while the total is still over the bound trim inside it, through a
 # one-shot container of <image> mounting it read-write, by whole cache entries.
 
-# Empty the files of whole build-cache entry directories (xx/, two hex digits),
-# oldest directory mtime first, until <need> KiB are freed; the directories
-# stay, so a concurrent build can still write into them. Prints the KiB freed.
+# Delete build-cache entries, the files inside the xx/ hash buckets (two hex
+# digits), oldest file mtime first across all buckets, until <need> KiB are
+# freed. A bucket holds many unrelated entries and reading an entry does not
+# touch the bucket's mtime, so a bucket's own mtime never decides; the bucket
+# directories stay, so a concurrent build can still write into them. Prints
+# the KiB freed.
 # shellcheck disable=SC2016 # expanded by the in-volume shell, not here
-gobuild_trim='dir=$1 need=$2 freed=0
+gobuild_trim='dir=$1 need=$2
 cd "$dir" || exit 1
-for e in $(ls -1dtr -- [0-9a-f][0-9a-f] 2>/dev/null); do
-  [ "$freed" -lt "$need" ] || break
-  [ -d "$e" ] || continue
-  before=$(du -sk -- "$e" | cut -f1)
-  find "$e" -type f -exec rm -f {} + || continue
-  after=$(du -sk -- "$e" | cut -f1)
-  freed=$((freed + ${before:-0} - ${after:-0}))
-done
-echo "$freed"'
+buckets=
+for d in [0-9a-f][0-9a-f]; do [ -d "$d" ] && buckets="$buckets $d"; done
+[ -n "$buckets" ] || { echo 0; exit 0; }
+find $buckets -type f -exec stat -c "%Y %s %n" {} + | sort -n | {
+  freed=0
+  while read -r _ bytes f; do
+    [ "$freed" -lt "$need" ] || break
+    rm -f "$f" || continue
+    freed=$((freed + (bytes + 1023) / 1024))
+  done
+  echo "$freed"
+}'
 # golangci-lint cache clean: the whole cache directory's content goes.
 # shellcheck disable=SC2016
 golangci_clean='find "$1" -mindepth 1 -maxdepth 1 -exec rm -rf {} + && echo cleaned'
