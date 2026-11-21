@@ -264,6 +264,15 @@ func TestDAOStore_ConfigSeed_ConcurrentWithdrawalSurvives(t *testing.T) {
 			anchors, err := other.Anchors(ctx, PurposeIDevIDIssuer)
 			require.NoError(t, err)
 			assert.Empty(t, anchors)
+
+			// A later rebuild runs the config import again (the DAO
+			// wrapper is spent): the withdrawal still holds.
+			err = seeder.Add(ctx, cert, &AddCertificateOptions{Purpose: PurposeIDevIDIssuer, Source: SourceConfig})
+			require.ErrorIs(t, err, ErrCertificateExists)
+			tc.check(t, other, fp)
+			anchors, err = other.Anchors(ctx, PurposeIDevIDIssuer)
+			require.NoError(t, err)
+			assert.Empty(t, anchors)
 		})
 	}
 }
