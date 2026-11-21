@@ -61,7 +61,10 @@ services:
       - XKMS_STORAGE_BACKEND=qrdb
       - XKMS_STORAGE_PATH=/data/storage
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
+      # Healthy only once the admin client credential is bound
+      # (scripts/enrol-admin-client.sh writes the marker), so no test runs
+      # before key discovery can authenticate.
+      test: ["CMD-SHELL", "test -f /etc/xkms/certs/admin-client.bound && wget --quiet --tries=1 --spider --ca-certificate=/etc/xkms/certs/ca.crt https://localhost:8443/health"]
       interval: 5s
       timeout: 3s
       retries: 15
@@ -77,7 +80,11 @@ services:
         echo "Generating TLS certificates..."
         /workspace/test/integration/bootstrap/scripts/generate-test-certs.sh
         echo "Starting xkms server..."
-        exec /app/xkmsd
+        /app/xkmsd &
+        pid=$$!
+        trap 'kill -TERM $$pid' TERM INT
+        /workspace/test/integration/bootstrap/scripts/enrol-admin-client.sh || { kill -TERM $$pid; exit 1; }
+        wait $$pid
 
   # One-shot zone generator: reads server cert, computes TLSA, writes zone file,
   # and stages the Corefile beside it for CoreDNS, whose image has no shell.
@@ -146,6 +153,8 @@ services:
       - BOOTSTRAP_DNS_SERVER=coredns:1053
       - BOOTSTRAP_HOSTNAME=bootstrap.test
       - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
+      - BOOTSTRAP_ADMIN_CERT=/etc/xkms/certs/admin-client.crt
+      - BOOTSTRAP_ADMIN_KEY=/etc/xkms/certs/admin-client.key
     working_dir: /workspace
     networks:
       - bootstrap-net
@@ -192,6 +201,8 @@ services:
       - BOOTSTRAP_DNS_SERVER=coredns:1053
       - BOOTSTRAP_HOSTNAME=bootstrap.test
       - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
+      - BOOTSTRAP_ADMIN_CERT=/etc/xkms/certs/admin-client.crt
+      - BOOTSTRAP_ADMIN_KEY=/etc/xkms/certs/admin-client.key
     working_dir: /workspace/xkey
     networks:
       - bootstrap-net

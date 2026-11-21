@@ -20,10 +20,14 @@ sleep 5
 # The Noise listener generates or unseals its own key (go-xkms#35); there is
 # no file to read it from. Discover the running server's actual key over its
 # admin API (go-xkms#632) instead of a pre-shared value generate-test-certs.sh
-# can no longer produce.
+# can no longer produce. The route is admin-only (mTLS), so present the
+# administrator client credential generate-test-certs.sh wrote and
+# enrol-admin-client.sh bound to the first-boot administrator.
 echo 'Discovering the running server bootstrap keys...'
 BOOTSTRAP_KEYS_JSON="$(cd /workspace && go run ./cmd/xkmsctl bootstrap show-keys --output json \
-    --transport rest --server https://xkms-server:8443 --tls-ca /etc/xkms/certs/ca.crt)"
+    --transport rest --server https://xkms-server:8443 --tls-ca /etc/xkms/certs/ca.crt \
+    --tls-cert "${BOOTSTRAP_ADMIN_CERT:-/etc/xkms/certs/admin-client.crt}" \
+    --tls-key "${BOOTSTRAP_ADMIN_KEY:-/etc/xkms/certs/admin-client.key}")"
 BOOTSTRAP_NOISE_STATIC_KEY="$(printf '%s' "${BOOTSTRAP_KEYS_JSON}" | sed -n 's/.*"noise_public_key":"\([^"]*\)".*/\1/p')"
 BOOTSTRAP_SPKI_PIN="$(cat /etc/xkms/certs/spki.pin)"
 export BOOTSTRAP_NOISE_STATIC_KEY BOOTSTRAP_SPKI_PIN

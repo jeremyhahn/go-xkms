@@ -138,6 +138,48 @@ chmod 644 "${CERT_DIR}/ca.crt" "${CERT_DIR}/server.crt" "${CERT_DIR}/fullchain.c
 chmod 600 "${CERT_DIR}/ca.key" "${CERT_DIR}/server.key"
 
 # ---------------------------------------------------------------------------
+# Step 4b: Administrator client credential
+#
+# The generated config authenticates the admin API with mTLS against ca.crt
+# (auth.type mtls, tls.client_auth request), and the suite's key discovery
+# (GET /api/v1/bootstrap/keys, xkmsctl bootstrap show-keys) is an admin
+# call. This is the identity both present: an EC P-256 key with a clientAuth
+# certificate signed by the test CA.
+# ---------------------------------------------------------------------------
+
+echo "Generating administrator client credential..."
+openssl ecparam -genkey -name prime256v1 -noout -out "${CERT_DIR}/admin-client.key" 2>/dev/null
+
+openssl req -new \
+    -key "${CERT_DIR}/admin-client.key" \
+    -out "${CERT_DIR}/admin-client.csr" \
+    -subj "/C=US/O=go-xkms Test/OU=system/CN=bootstrap-admin" \
+    2>/dev/null
+
+cat > "${CERT_DIR}/admin_client_ext.cnf" << CLIENTEXT
+authorityKeyIdentifier = keyid,issuer
+basicConstraints       = CA:FALSE
+keyUsage               = digitalSignature
+extendedKeyUsage       = clientAuth
+CLIENTEXT
+
+openssl x509 -req \
+    -in "${CERT_DIR}/admin-client.csr" \
+    -CA "${CERT_DIR}/ca.crt" \
+    -CAkey "${CERT_DIR}/ca.key" \
+    -CAcreateserial \
+    -out "${CERT_DIR}/admin-client.crt" \
+    -days ${DAYS_VALID} \
+    -sha256 \
+    -extfile "${CERT_DIR}/admin_client_ext.cnf" \
+    2>/dev/null
+
+rm -f "${CERT_DIR}/admin-client.csr" "${CERT_DIR}/admin_client_ext.cnf" "${CERT_DIR}/ca.srl"
+# The test container reads this credential from the shared certs volume.
+chmod 644 "${CERT_DIR}/admin-client.crt" "${CERT_DIR}/admin-client.key"
+echo "Administrator client certificate generated: ${CERT_DIR}/admin-client.crt"
+
+# ---------------------------------------------------------------------------
 # Step 5: Compute SPKI SHA-256 pin for the server certificate
 # ---------------------------------------------------------------------------
 
@@ -253,8 +295,13 @@ backends:
     enabled: true
     path: ${DATA_DIR}/software
 
+# strategy "none": the default (passphrase) boots sealed and serves the
+# unauthenticated sealed window, which xkmsd refuses to bind on 0.0.0.0, and
+# this suite has no unseal ceremony. Same choice as
+# test/integration/acmeadmin/xkmsd.yaml.
 barrier:
   enabled: true
+  strategy: "none"
   root_key_path: ${DATA_DIR}/barrier
 
 bootstrap:

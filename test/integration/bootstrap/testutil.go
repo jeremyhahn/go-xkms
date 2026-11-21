@@ -37,6 +37,8 @@ const (
 	EnvHostname  = "BOOTSTRAP_HOSTNAME"
 	EnvSPKIPin   = "BOOTSTRAP_SPKI_PIN"
 	EnvTLSCA     = "BOOTSTRAP_TLS_CA"
+	EnvAdminCert = "BOOTSTRAP_ADMIN_CERT"
+	EnvAdminKey  = "BOOTSTRAP_ADMIN_KEY"
 
 	// xkmsBundlePath is the REST API path for the CA bootstrap bundle endpoint.
 	// This matches the path hardcoded in go-truststrap for DANE/SPKI bootstrapping.
@@ -105,10 +107,15 @@ func newSDKTransport(t *testing.T) *rest.Transport {
 
 	serverURL := requiredEnv(t, EnvServerURL)
 	caFile := requiredEnv(t, EnvTLSCA)
+	// The admin routes (bootstrap key discovery among them) authenticate
+	// with mTLS: present the administrator client credential the harness
+	// generated and bound (scripts/enrol-admin-client.sh).
+	certFile := requiredEnv(t, EnvAdminCert)
+	keyFile := requiredEnv(t, EnvAdminKey)
 
 	tr, err := rest.New(
 		transport.WithAddress(serverURL),
-		transport.WithTLS(caFile),
+		transport.WithMTLS(certFile, keyFile, caFile),
 	)
 	if err != nil {
 		t.Fatalf("create REST transport: %v", err)
