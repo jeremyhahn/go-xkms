@@ -54,8 +54,15 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
+# A read-write run (trim or clean) marks the volume; FAKE_AFTER: lines
+# "<volume> <KiB>", the size du reports once the volume was cleaned (a
+# concurrent build refilled it). Without a line du keeps the canned size.
+case $ep in sh | go) : > "$FAKE_ROOT/.cleaned-$vol" ;; esac
 case $ep in
   du)
+    if [ -e "$FAKE_ROOT/.cleaned-$vol" ] && [ -f "${FAKE_AFTER:-}" ]; then
+      while read -r v k; do [ "$v" = "$vol" ] && { printf '%s\t/c\n' "$k"; exit 0; }; done < "$FAKE_AFTER"
+    fi
     while read -r v k; do [ "$v" = "$vol" ] && printf '%s\t/c\n' "$k"; done < "$FAKE_SIZES"
     exit 0 ;;
   sh)
@@ -243,6 +250,57 @@ if grep -q "keep  p-ci-cache-t-gomod" "$WORK_DIR/stdout"; then
     pass "the in-use gomod volume is reported"
 else
     fail "the in-use gomod volume over the bound is not reported"
+fi
+
+# --------------------------------------------------------------------------
+start_case "a cleaned golangci volume is remeasured; trimming goes on while over"
+# The clean succeeds, but a concurrent build refills golangci to 800000 KiB:
+# the total stays over the bound, so the gobuild volume is trimmed too and the
+# report counts the data left behind (1100000 KiB, 1 GiB), not an empty volume.
+setup "p-ci-cache-t-golangci 900000" "p-ci-cache-t-gobuild 300000"
+entry p-ci-cache-t-golangci ab "2026-05-01"
+entry p-ci-cache-t-gobuild aa "2026-01-01"
+echo "p-ci-cache-t-golangci 800000" > "$WORK_DIR/after"
+run_script 0 "p-ci-cache-t-golangci p-ci-cache-t-gobuild" FAKE_AFTER="$WORK_DIR/after"
+if grep -q -- "-v p-ci-cache-t-golangci:/c:ro" "$CALL_LOG" &&
+   [ "$(grep -c -- "-v p-ci-cache-t-golangci:/c:ro" "$CALL_LOG")" -ge 2 ]; then
+    pass "the golangci volume is measured again after its clean"
+else
+    fail "the cleaned golangci volume was not remeasured"
+fi
+if rw_mounted p-ci-cache-t-gobuild; then
+    pass "trimming goes on while the remeasured total is over the bound"
+else
+    fail "stopped as if the cleaned volume were empty"
+fi
+if grep -q "1 GiB left" "$WORK_DIR/stdout"; then
+    pass "the reported total is the remeasured one"
+else
+    fail "the reported total ignores the data left after the clean"
+fi
+
+# --------------------------------------------------------------------------
+start_case "a gobuild volume after go clean -cache is remeasured; trimming goes on"
+# go clean -cache succeeds, a concurrent build leaves 1500000 KiB: golangci is
+# cleaned as well and the report reads 1600000 KiB (1 GiB), not 100000 KiB.
+setup "p-ci-cache-t-gobuild 2000000" "p-ci-cache-t-golangci 100000"
+entry p-ci-cache-t-golangci ab "2026-05-01"
+echo "p-ci-cache-t-gobuild 1500000" > "$WORK_DIR/after"
+run_script 0 "p-ci-cache-t-gobuild p-ci-cache-t-golangci" FAKE_AFTER="$WORK_DIR/after"
+if [ "$(grep -c -- "-v p-ci-cache-t-gobuild:/c:ro" "$CALL_LOG")" -ge 2 ]; then
+    pass "the gobuild volume is measured again after go clean -cache"
+else
+    fail "the cleaned gobuild volume was not remeasured"
+fi
+if rw_mounted p-ci-cache-t-golangci; then
+    pass "trimming goes on while the remeasured total is over the bound"
+else
+    fail "stopped as if go clean -cache had emptied the volume"
+fi
+if grep -q "1 GiB left" "$WORK_DIR/stdout"; then
+    pass "the reported total is the remeasured one"
+else
+    fail "the reported total ignores the data left after go clean -cache"
 fi
 
 # --------------------------------------------------------------------------
