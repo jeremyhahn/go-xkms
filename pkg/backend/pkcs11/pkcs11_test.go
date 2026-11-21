@@ -25,10 +25,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/internal/keyslot"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -213,6 +215,70 @@ func TestCreateKeyID(t *testing.T) {
 				t.Errorf("createKeyID() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// One CN under two tenants must name two token objects, and ListKeys must
+// report each object's tenant, so a tenant-scoped view finds its own key.
+// A YubiKey PIV backend configured with a slot puts every key it generates
+// in that slot (resolveKeyID returns it before any name-based ID), so it
+// must say so to callers that create keys per tenant.
+func TestBackend_FixedKeySlot(t *testing.T) {
+	slot := 0x9c
+	cases := []struct {
+		name string
+		cfg  *Config
+		want bool
+	}{
+		{"yubikey PIV with a slot", &Config{Library: "/usr/lib/libykcs11.so", Slot: &slot}, true},
+		{"yubikey PIV without a slot", &Config{Library: "/usr/lib/libykcs11.so"}, false},
+		{"softhsm with a slot", &Config{Library: "/usr/lib/softhsm/libsofthsm2.so", Slot: &slot}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := keyslot.Fixed(&Backend{config: tc.cfg}); got != tc.want {
+				t.Fatalf("keyslot.Fixed() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// The answer is internal: the backend adds no exported method for it.
+	if _, ok := reflect.TypeOf(&Backend{}).MethodByName("FixedKeySlot"); ok {
+		t.Fatal("pkcs11.Backend exports FixedKeySlot")
+	}
+}
+
+func TestCreateKeyID_TenantScoped(t *testing.T) {
+	attrs := func(tenant string) *types.KeyAttributes {
+		return &types.KeyAttributes{CN: "qrdb-login-ca", KeyAlgorithm: x509.ECDSA, TenantID: tenant}
+	}
+	a, b := createKeyID(attrs("tenant-a")), createKeyID(attrs("tenant-b"))
+	if a == b {
+		t.Fatalf("createKeyID gives tenants one token ID %q", a)
+	}
+	for _, sys := range []string{"", "system"} {
+		if got := createKeyID(attrs(sys)); got != "qrdb-login-ca.ecdsa" {
+			t.Errorf("createKeyID(system %q) = %q, want the unscoped ID", sys, got)
+		}
+	}
+	for _, tenant := range []string{"tenant-a", "tenant-b", ""} {
+		ka := &types.KeyAttributes{}
+		decodeListedLabel(ka, pkcs11.CKK_EC, createKeyID(attrs(tenant)))
+		if ka.TenantID != tenant || ka.CN != "qrdb-login-ca" || ka.KeyAlgorithm != x509.ECDSA {
+			t.Errorf("listed %q: TenantID=%q CN=%q alg=%v", tenant, ka.TenantID, ka.CN, ka.KeyAlgorithm)
+		}
+	}
+}
+
+// Only the tenant login CA key, which this release provisions fresh, takes
+// the tenant-scoped token ID. Every other tenant key keeps the ID its token
+// object was created under, so an upgraded node still signs, decrypts and
+// deletes it with the same tenant and attributes.
+func TestCreateKeyID_ExistingTenantKeysKeepTheirID(t *testing.T) {
+	for _, tenant := range []string{"tenant-a", "tenant-b"} {
+		attrs := &types.KeyAttributes{CN: "app-signing", KeyAlgorithm: x509.ECDSA, TenantID: tenant}
+		if got := createKeyID(attrs); got != "app-signing.ecdsa" {
+			t.Errorf("createKeyID(tenant %q, CN app-signing) = %q, want the ID existing token objects carry", tenant, got)
+		}
 	}
 }
 

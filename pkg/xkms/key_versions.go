@@ -224,6 +224,11 @@ func (s *XKMSService) resolveKey(ctx context.Context, b Backend, backendName, ke
 // convention rather than by name -- its default sealing key -- is resolved
 // this way, so an unscoped view never answers with another tenant's.
 func (s *XKMSService) resolveKeyOf(ctx context.Context, b Backend, backendName, keyID string, only *string) (*versionedKey, error) {
+	// Every key operation a caller addresses by name resolves here, so a
+	// reserved key is refused for all of them at once.
+	if err := refuseReservedKey(keyID); err != nil {
+		return nil, err
+	}
 	if _, _, ok := keyversion.Parse(keyID); ok {
 		return nil, &keyversion.ReservedKeyIDError{KeyID: keyID}
 	}
@@ -423,7 +428,12 @@ func (s *XKMSService) requireVersionStore() (*keyversion.Store, error) {
 // and a new key would take over the rotated key's name -- its version 1 may
 // have been retired, leaving the name free in the backend. A key that was
 // never rotated needs no check here; the backend refuses a name it holds.
+// A reserved name is refused too, so no caller can create it ahead of the
+// node and have the node adopt that key.
 func (s *XKMSService) refuseRotatedKeyID(ctx context.Context, tenant, backendName, keyID string) error {
+	if err := refuseReservedKey(keyID); err != nil {
+		return err
+	}
 	store := s.keyVersions.load()
 	if store == nil {
 		return nil

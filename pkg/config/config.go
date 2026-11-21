@@ -717,6 +717,17 @@ type DatastoreConfig struct {
 	// lets a database choose independently of the datastore's default
 	// engine. See docs/datastore/architecture.md.
 	Databases []qrdbsdk.DaemonDatabaseConfig `yaml:"databases"`
+
+	// TenantLoginCAKeys opts the embedded qrdb node into signing each
+	// tenant's login CA with a tenant-scoped xkms key (SPEC row
+	// qrdb-crypto-provider-seam). Default false: go-qrdb keeps the tenant
+	// login CAs it already persisted. Turning it on replaces those CAs with
+	// fresh xkms-held keys and certificates, so login certificates issued
+	// under the old CAs (system tenant included) stop chaining to a trusted
+	// issuer; enable it on a fresh deployment, or only after re-issuing
+	// every tenant's login credentials. Only meaningful when the TrustedCA
+	// is the cluster CA.
+	TenantLoginCAKeys bool `yaml:"tenant-login-ca-keys"`
 }
 
 // DatastoreRemoteConfig configures a connection to an already-running,

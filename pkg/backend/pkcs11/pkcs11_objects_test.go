@@ -990,6 +990,62 @@ func TestBackend_DeleteKey_RemovesBothObjects(t *testing.T) {
 	assert.Nil(t, signer)
 }
 
+// TestBackend_TenantKeys_ResolveUnderTheirExistingTokenID: a tenant key that
+// is not the login CA key keeps the token ID every earlier release created it
+// under, <CN>.<algorithm>, so an upgraded node still finds, signs with and
+// deletes it with the same attributes. Only a tenant login CA key takes the
+// tenant-scoped ID, and it never falls back to an unscoped object.
+func TestBackend_TenantKeys_ResolveUnderTheirExistingTokenID(t *testing.T) {
+	ctx := context.Background()
+	b := newProvisionedBackend(t, "tenant-key-ids")
+	session := openIntrospectionSession(t, b)
+
+	attrs := ecdsaKeyAttrs("app-signing", elliptic.P256())
+	attrs.TenantID = "tenant-a"
+	_, err := b.GenerateKey(ctx, attrs)
+	require.NoError(t, err)
+	oldID := []byte("app-signing.ecdsa")
+	require.Equal(t, 1, countObjects(t, b, session, pkcs11.CKO_PRIVATE_KEY, oldID),
+		"a tenant key must be created under the ID existing token objects carry")
+	signer, err := b.Signer(ctx, attrs)
+	require.NoError(t, err)
+	key, err := b.GetKey(ctx, attrs)
+	require.NoError(t, err)
+	assert.Equal(t, signer.Public(), key.(interface{ Public() crypto.PublicKey }).Public())
+	require.NoError(t, b.DeleteKey(ctx, attrs))
+	assert.Equal(t, 0, countObjects(t, b, session, pkcs11.CKO_PRIVATE_KEY, oldID))
+
+	secret := &types.KeyAttributes{CN: "app-aes", KeyType: backend.KEY_TYPE_ENCRYPTION, StoreType: types.StorePKCS11, TenantID: "tenant-a"}
+	handle, err := b.GenerateSecretKey(secret, 256)
+	require.NoError(t, err)
+	unscoped := *secret
+	unscoped.TenantID = ""
+	read, err := b.p11ctx.GetAttributeValue(session, handle, []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_LABEL, nil)})
+	require.NoError(t, err)
+	assert.Equal(t, createKeyID(&unscoped), string(read[0].Value), "a tenant secret key keeps its existing label")
+	found, err := b.FindSecretKey(secret)
+	require.NoError(t, err)
+	assert.Equal(t, handle, found)
+
+	// A system login CA key exists under the unscoped ID; a tenant's login
+	// CA key must not resolve to it.
+	system := ecdsaKeyAttrs("qrdb-login-ca", elliptic.P256())
+	_, err = b.GenerateKey(ctx, system)
+	require.NoError(t, err)
+	tenantCA := ecdsaKeyAttrs("qrdb-login-ca", elliptic.P256())
+	tenantCA.TenantID = "tenant-a"
+	_, err = b.Signer(ctx, tenantCA)
+	require.ErrorIs(t, err, backend.ErrKeyNotFound, "a tenant login CA key must never fall back to the unscoped object")
+	_, err = b.GenerateKey(ctx, tenantCA)
+	require.NoError(t, err)
+	assert.Equal(t, 1, countObjects(t, b, session, pkcs11.CKO_PRIVATE_KEY, []byte("tenant=tenant-a/qrdb-login-ca.ecdsa")))
+	tenantSigner, err := b.Signer(ctx, tenantCA)
+	require.NoError(t, err)
+	systemSigner, err := b.Signer(ctx, system)
+	require.NoError(t, err)
+	assert.NotEqual(t, systemSigner.Public(), tenantSigner.Public())
+}
+
 // TestBackend_Delete_AliasMatchesDeleteKey proves the storage-interface alias
 // performs the same destruction as DeleteKey.
 func TestBackend_Delete_AliasMatchesDeleteKey(t *testing.T) {

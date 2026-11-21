@@ -29,11 +29,14 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/internal/keyslot"
+	"github.com/jeremyhahn/go-xkms/internal/loginca"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	pivpkcs11 "github.com/jeremyhahn/go-xkms/pkg/pivcert/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
@@ -150,6 +153,24 @@ func (b *Backend) Type() types.BackendType {
 // Config returns the PKCS#11 configuration.
 func (b *Backend) Config() *Config {
 	return b.config
+}
+
+// fixedKeySlot reports whether every key this backend generates lands in one
+// slot: a YubiKey PIV token configured with Config.Slot, which resolveKeyID
+// returns before any name-based ID. Such a backend holds one key, not one
+// key per name. Callers ask internal/keyslot.Fixed.
+func (b *Backend) fixedKeySlot() bool {
+	return b.config != nil && b.config.IsYubiKeyPIV() && b.config.Slot != nil
+}
+
+func init() {
+	keyslot.Register(func(provider any) (bool, bool) {
+		b, ok := provider.(*Backend)
+		if !ok {
+			return false, false
+		}
+		return b.fixedKeySlot(), true
+	})
 }
 
 // userPIN borrows the configured user PIN as a plain string, the shape
@@ -519,7 +540,7 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 				}
 			}
 
-			decodeKeyType(ka, ckULong(readAttrs[2].Value), string(readAttrs[1].Value))
+			decodeListedLabel(ka, ckULong(readAttrs[2].Value), string(readAttrs[1].Value))
 
 			// CKA_EXTRACTABLE and CKA_SENSITIVE are the token's own record of
 			// whether this key may ever be wrapped out and whether its value
@@ -1990,10 +2011,43 @@ func (b *Backend) resolveKeyID(attrs *types.KeyAttributes) ([]byte, error) {
 // createKeyID generates a PKCS#11 object identifier for a key.
 // Format: {CN}.{algorithm}
 func createKeyID(attrs *types.KeyAttributes) string {
+	var id string
 	if attrs.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm {
-		return fmt.Sprintf("%s.", attrs.CN)
+		id = fmt.Sprintf("%s.", attrs.CN)
+	} else {
+		id = fmt.Sprintf("%s.%s", attrs.CN, strings.ToLower(attrs.KeyAlgorithm.String()))
 	}
-	return fmt.Sprintf("%s.%s", attrs.CN, strings.ToLower(attrs.KeyAlgorithm.String()))
+	// Every tenant's login CA key has one CN, so its token ID carries its
+	// tenant: two tenants' login CA keys are two objects. Only that key,
+	// which no earlier release made, takes the scoped ID; every other key
+	// keeps the unscoped ID its existing token object was created under, so
+	// an upgrade still resolves it. System keys are never scoped.
+	if isLoginCAKeyCN(attrs.CN) && !scope.IsSystem(attrs.TenantID) {
+		id = tenantKeyIDPrefix + attrs.TenantID + "/" + id
+	}
+	return id
+}
+
+// tenantKeyIDPrefix opens the token ID (CKA_ID and CKA_LABEL) of a tenant's
+// login CA key: "tenant=<tenant>/<CN>.<algorithm>".
+const tenantKeyIDPrefix = "tenant="
+
+// isLoginCAKeyCN reports whether cn names a tenant login CA key: the shared
+// name, alone or followed by "-" and the tenant.
+func isLoginCAKeyCN(cn string) bool {
+	return cn == loginca.KeyCN || strings.HasPrefix(cn, loginca.KeyCN+"-")
+}
+
+// decodeListedLabel fills ka from a listed key's CKA_KEY_TYPE and CKA_LABEL,
+// the tenant included.
+func decodeListedLabel(ka *types.KeyAttributes, keyType uint, label string) {
+	if rest, ok := strings.CutPrefix(label, tenantKeyIDPrefix); ok {
+		if tenant, name, found := strings.Cut(rest, "/"); found && tenant != "" {
+			ka.TenantID = tenant
+			label = name
+		}
+	}
+	decodeKeyType(ka, keyType, label)
 }
 
 // keyIDToCN recovers the common name from a PKCS#11 object label that
