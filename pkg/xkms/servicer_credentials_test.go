@@ -90,6 +90,21 @@ func TestGetCredentialStrategy_Success(t *testing.T) {
 	assert.False(t, resp.AutoUnseal)
 }
 
+// The credential strategy status carries the backend PIN strategy from the
+// source set on the service, and leaves it empty when none is set (#2262).
+func TestGetCredentialStrategy_BackendPINStrategy(t *testing.T) {
+	svc := setupServiceWithCredentials(t)
+
+	resp, err := svc.GetCredentialStrategy(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, resp.BackendPINStrategy)
+
+	svc.SetBackendPINStrategy(func() string { return "sealed" })
+	resp, err = svc.GetCredentialStrategy(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "sealed", resp.BackendPINStrategy)
+}
+
 func TestSubmitCredential_Success(t *testing.T) {
 	svc := setupServiceWithCredentials(t)
 
