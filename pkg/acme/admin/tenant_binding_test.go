@@ -53,7 +53,9 @@ func callerCtx(tenantID string) context.Context {
 		UserID:   "admin@" + tenantID,
 		Username: "admin@" + tenantID,
 		TenantID: tenantID,
-		Roles:    []string{qrdbsdk.RoleNameAdmin},
+		// identity.Roles holds role identifiers; go-qrdb v0.58.5 never
+		// matches a role NAME ("role: not found: admin").
+		Roles: []string{qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameAdmin)},
 	})
 }
 
@@ -95,11 +97,30 @@ func newBindingFixture(t *testing.T) *bindingFixture {
 		_, err := svc.CreateTenant(ctx, CreateTenantRequest{ID: id, Name: id})
 		require.NoError(t, err)
 	}
+	// go-qrdb v0.58.5 resolves a caller's roles by ID, so the built-in
+	// roles callerCtx names must exist; the fake tenant servicer seeds none.
+	for _, id := range []string{qrdbsdk.SystemTenantID, boundTenantA, boundTenantB} {
+		own := qrdbsdk.ContextWithTenant(context.Background(), id)
+		_, err := svc.qrdbService.Roles().ReconcileBuiltInRoles(own, &db.ReconcileRolesRequest{})
+		require.NoError(t, err)
+	}
 
+	// A grantor may grant only permissions it holds in the target tenant
+	// (go-qrdb v0.58.5), so each kv:get role is seeded by a caller of that
+	// tenant holding kv:get.
+	seed := func(tenantID string) context.Context {
+		return withUser(context.Background(), &AuthenticatedUser{
+			UserID: "seeder@" + tenantID, Username: "seeder@" + tenantID, TenantID: tenantID,
+			Roles: []string{
+				qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameAdmin),
+				qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameOperator),
+			},
+		})
+	}
 	var err error
-	f.roleA, err = svc.CreateTenantRole(ctx, boundTenantA, &db.CreateRoleRequest{Name: "role-a", Permissions: []string{"kv:get"}})
+	f.roleA, err = svc.CreateTenantRole(seed(boundTenantA), boundTenantA, &db.CreateRoleRequest{Name: "role-a", Permissions: []string{"kv:get"}})
 	require.NoError(t, err)
-	f.roleB, err = svc.CreateTenantRole(ctx, boundTenantB, &db.CreateRoleRequest{Name: "role-b", Permissions: []string{"kv:get"}})
+	f.roleB, err = svc.CreateTenantRole(seed(boundTenantB), boundTenantB, &db.CreateRoleRequest{Name: "role-b", Permissions: []string{"kv:get"}})
 	require.NoError(t, err)
 	f.userA, err = svc.CreateTenantUser(ctx, boundTenantA, &db.CreateUserRequest{Username: "user-a", Name: "User A", Email: "user-a@example.com"})
 	require.NoError(t, err)
