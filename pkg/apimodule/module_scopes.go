@@ -153,6 +153,17 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// is ScopeSelf; xkms owns these names too.
 		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionGet),
 		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionList),
+
+		// attestation_verdicts:list, :get and :create read a device's
+		// continuous attestation verdicts and re-attest it now (pkg/xkms
+		// ListAttestationVerdicts, GetLatestAttestationVerdict,
+		// ReattestDevice, go-xkms#2088). The service binds every call to the
+		// caller's own tenant, so a tenant identity reaches only its own
+		// devices and a system-tenant identity any tenant's, which is
+		// ScopeSelf. qrdb does not declare these names; xkms owns them.
+		qrdbsdk.Permission(auth.ResourceAttestationVerdicts + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceAttestationVerdicts + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceAttestationVerdicts + ":" + auth.ActionCreate),
 	}
 }
 

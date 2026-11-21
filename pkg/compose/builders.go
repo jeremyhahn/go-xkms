@@ -20,6 +20,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
@@ -126,6 +127,19 @@ func BuildTrustRootStore(daos *qrdbsdk.DAOFactory) (*truststore.DAOStore, error)
 	store, err := truststore.NewDAOStore(daos)
 	if err != nil {
 		return nil, &FeatureBuildError{Feature: FeatureTrustRoots, Err: err}
+	}
+	return store, nil
+}
+
+// BuildVerdictStore builds the continuous-attestation verdict store on the
+// DAO factory's attestation database.
+func BuildVerdictStore(daos *qrdbsdk.DAOFactory) (*continuous.Store, error) {
+	if daos == nil {
+		return nil, &NilDependencyError{Feature: FeatureVerdicts, Dependency: "DAO factory"}
+	}
+	store, err := continuous.NewStore(continuous.StoreConfig{DAOs: daos})
+	if err != nil {
+		return nil, &FeatureBuildError{Feature: FeatureVerdicts, Err: err}
 	}
 	return store, nil
 }

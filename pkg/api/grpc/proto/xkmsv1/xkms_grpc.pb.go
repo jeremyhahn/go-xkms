@@ -198,6 +198,9 @@ const (
 	KeystoreService_ListSigningKeyBindings_FullMethodName       = "/xkms.v1.KeystoreService/ListSigningKeyBindings"
 	KeystoreService_DeleteSigningKeyBinding_FullMethodName      = "/xkms.v1.KeystoreService/DeleteSigningKeyBinding"
 	KeystoreService_ResolveSigningKey_FullMethodName            = "/xkms.v1.KeystoreService/ResolveSigningKey"
+	KeystoreService_ListAttestationVerdicts_FullMethodName      = "/xkms.v1.KeystoreService/ListAttestationVerdicts"
+	KeystoreService_GetLatestAttestationVerdict_FullMethodName  = "/xkms.v1.KeystoreService/GetLatestAttestationVerdict"
+	KeystoreService_ReattestDevice_FullMethodName               = "/xkms.v1.KeystoreService/ReattestDevice"
 	KeystoreService_PKCS11StatePut_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StatePut"
 	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName       = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
 	KeystoreService_PKCS11StateCAS_FullMethodName               = "/xkms.v1.KeystoreService/PKCS11StateCAS"
@@ -681,6 +684,12 @@ type KeystoreServiceClient interface {
 	DeleteSigningKeyBinding(ctx context.Context, in *DeleteSigningKeyBindingRequest, opts ...grpc.CallOption) (*DeleteSigningKeyBindingResponse, error)
 	// ResolveSigningKey returns the key that signs a repository.
 	ResolveSigningKey(ctx context.Context, in *ResolveSigningKeyRequest, opts ...grpc.CallOption) (*SigningKeyResolution, error)
+	// ListAttestationVerdicts returns a device's verdicts, oldest first.
+	ListAttestationVerdicts(ctx context.Context, in *AttestationVerdictRequest, opts ...grpc.CallOption) (*ListAttestationVerdictsResponse, error)
+	// GetLatestAttestationVerdict returns a device's newest verdict.
+	GetLatestAttestationVerdict(ctx context.Context, in *AttestationVerdictRequest, opts ...grpc.CallOption) (*AttestationVerdict, error)
+	// ReattestDevice re-attests a device now and returns the verdict.
+	ReattestDevice(ctx context.Context, in *AttestationVerdictRequest, opts ...grpc.CallOption) (*AttestationVerdict, error)
 	PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error)
@@ -2513,6 +2522,36 @@ func (c *keystoreServiceClient) ResolveSigningKey(ctx context.Context, in *Resol
 	return out, nil
 }
 
+func (c *keystoreServiceClient) ListAttestationVerdicts(ctx context.Context, in *AttestationVerdictRequest, opts ...grpc.CallOption) (*ListAttestationVerdictsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAttestationVerdictsResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_ListAttestationVerdicts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GetLatestAttestationVerdict(ctx context.Context, in *AttestationVerdictRequest, opts ...grpc.CallOption) (*AttestationVerdict, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttestationVerdict)
+	err := c.cc.Invoke(ctx, KeystoreService_GetLatestAttestationVerdict_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) ReattestDevice(ctx context.Context, in *AttestationVerdictRequest, opts ...grpc.CallOption) (*AttestationVerdict, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttestationVerdict)
+	err := c.cc.Invoke(ctx, KeystoreService_ReattestDevice_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PKCS11StatePutResponse)
@@ -3372,6 +3411,12 @@ type KeystoreServiceServer interface {
 	DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBindingRequest) (*DeleteSigningKeyBindingResponse, error)
 	// ResolveSigningKey returns the key that signs a repository.
 	ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error)
+	// ListAttestationVerdicts returns a device's verdicts, oldest first.
+	ListAttestationVerdicts(context.Context, *AttestationVerdictRequest) (*ListAttestationVerdictsResponse, error)
+	// GetLatestAttestationVerdict returns a device's newest verdict.
+	GetLatestAttestationVerdict(context.Context, *AttestationVerdictRequest) (*AttestationVerdict, error)
+	// ReattestDevice re-attests a device now and returns the verdict.
+	ReattestDevice(context.Context, *AttestationVerdictRequest) (*AttestationVerdict, error)
 	PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error)
@@ -3978,6 +4023,15 @@ func (UnimplementedKeystoreServiceServer) DeleteSigningKeyBinding(context.Contex
 }
 func (UnimplementedKeystoreServiceServer) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResolveSigningKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) ListAttestationVerdicts(context.Context, *AttestationVerdictRequest) (*ListAttestationVerdictsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAttestationVerdicts not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetLatestAttestationVerdict(context.Context, *AttestationVerdictRequest) (*AttestationVerdict, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetLatestAttestationVerdict not implemented")
+}
+func (UnimplementedKeystoreServiceServer) ReattestDevice(context.Context, *AttestationVerdictRequest) (*AttestationVerdict, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReattestDevice not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PKCS11StatePut not implemented")
@@ -7276,6 +7330,60 @@ func _KeystoreService_ResolveSigningKey_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_ListAttestationVerdicts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttestationVerdictRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).ListAttestationVerdicts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_ListAttestationVerdicts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).ListAttestationVerdicts(ctx, req.(*AttestationVerdictRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GetLatestAttestationVerdict_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttestationVerdictRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetLatestAttestationVerdict(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetLatestAttestationVerdict_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetLatestAttestationVerdict(ctx, req.(*AttestationVerdictRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_ReattestDevice_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttestationVerdictRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).ReattestDevice(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_ReattestDevice_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).ReattestDevice(ctx, req.(*AttestationVerdictRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PKCS11StatePut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PKCS11StatePutRequest)
 	if err := dec(in); err != nil {
@@ -8738,6 +8846,18 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResolveSigningKey",
 			Handler:    _KeystoreService_ResolveSigningKey_Handler,
+		},
+		{
+			MethodName: "ListAttestationVerdicts",
+			Handler:    _KeystoreService_ListAttestationVerdicts_Handler,
+		},
+		{
+			MethodName: "GetLatestAttestationVerdict",
+			Handler:    _KeystoreService_GetLatestAttestationVerdict_Handler,
+		},
+		{
+			MethodName: "ReattestDevice",
+			Handler:    _KeystoreService_ReattestDevice_Handler,
 		},
 		{
 			MethodName: "PKCS11StatePut",

@@ -265,6 +265,9 @@ var goldenRESTPermissions = map[string]string{
 	"GET /api/v1/attestation/signing-keys/binding":    "attestation_signing_keys:get",
 	"DELETE /api/v1/attestation/signing-keys/binding": "attestation_signing_keys:bind",
 	"GET /api/v1/attestation/signing-keys/resolve":    "attestation_signing_keys:get",
+	"GET /api/v1/attestation/verdicts":                "attestation_verdicts:list",
+	"GET /api/v1/attestation/verdicts/latest":         "attestation_verdicts:get",
+	"POST /api/v1/attestation/verdicts":               "attestation_verdicts:create",
 	"POST /api/v1/peer-attestation/challenge":         "peer_attestation:challenge",
 	"POST /api/v1/peer-attestation/evidence":          "peer_attestation:submit",
 }

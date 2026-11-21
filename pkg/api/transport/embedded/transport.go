@@ -482,6 +482,30 @@ func (t *Transport) GetInvite(ctx context.Context, req *transport.GetInviteReque
 	return t.service.GetInvite(ctx, req)
 }
 
+// ListAttestationVerdicts forwards to the service.
+func (t *Transport) ListAttestationVerdicts(ctx context.Context, req *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ListAttestationVerdicts(ctx, req)
+}
+
+// GetLatestAttestationVerdict forwards to the service.
+func (t *Transport) GetLatestAttestationVerdict(ctx context.Context, req *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.GetLatestAttestationVerdict(ctx, req)
+}
+
+// ReattestDevice forwards to the service.
+func (t *Transport) ReattestDevice(ctx context.Context, req *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ReattestDevice(ctx, req)
+}
+
 // BeginInviteRegistration opens the invite-authorized WebAuthn registration ceremony.
 func (t *Transport) BeginInviteRegistration(ctx context.Context, req *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
 	if !t.connected {

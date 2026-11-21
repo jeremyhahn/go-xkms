@@ -59,6 +59,7 @@ type XKMSServicer interface {
 	CredentialManagementServicer
 	BootstrapServicer
 	InviteServicer
+	AttestationVerdictServicer
 }
 
 // InviteServicer redeems administrator-issued account-activation

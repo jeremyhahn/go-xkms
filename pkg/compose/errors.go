@@ -76,6 +76,10 @@ const (
 	// FeatureTrustRoots is the platform trust-root store
 	// (pkg/attestation/truststore).
 	FeatureTrustRoots Feature = "trust-roots"
+
+	// FeatureVerdicts is the continuous-attestation verdict store
+	// (pkg/attestation/continuous).
+	FeatureVerdicts Feature = "attestation-verdicts"
 )
 
 // FeatureDisabledError reports a feature left off because a dependency it

@@ -537,6 +537,13 @@ var rpcMethods = map[string]rpcMethod{
 	"attestation.signing_key.list":    handle(auth.ResourceAttestationSigningKeys, auth.ActionList, (*Server).handleSigningKeyList),
 	"attestation.signing_key.delete":  handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
 	"attestation.signing_key.resolve": handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
+	// pkg/auth.ResourceAttestationVerdicts, the continuous attestation
+	// verdicts (go-xkms#2088). Mirrors the gRPC verdict RPCs'
+	// (qrdb.v1.permission) options one-for-one: re-attesting records a new
+	// verdict, so it is create.
+	"attestation.verdict.list":     handle(auth.ResourceAttestationVerdicts, auth.ActionList, (*Server).handleVerdictList),
+	"attestation.verdict.latest":   handle(auth.ResourceAttestationVerdicts, auth.ActionGet, (*Server).handleVerdictLatest),
+	"attestation.verdict.reattest": handle(auth.ResourceAttestationVerdicts, auth.ActionCreate, (*Server).handleVerdictReattest),
 
 	// Attested-caller evidence (pkg/attestation/peergate) --
 	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped

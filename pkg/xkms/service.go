@@ -112,6 +112,7 @@ type XKMSService struct {
 	trustRoots      subsystem[*truststore.DAOStore]
 	peerEvidence    subsystem[*peergate.Collector]
 	appraiser       subsystem[*appraisal.Appraiser]
+	verdicts        subsystem[*continuousAttestation]
 	webauthnService *webauthn.Service
 
 	// tokenIssuer mints and revokes the browser/desktop session token
