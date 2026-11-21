@@ -32,6 +32,21 @@ import (
 // role grants for the identity carried on the request context.
 type Authorizer struct {
 	rbac qrdbtransport.RBACClient
+
+	// node, when set, makes every Authorize decision on the caller's
+	// original identity (NewNodeAuthorizer); rbac then only lists.
+	node qrdbsdk.Authorizer
+}
+
+// NewNodeAuthorizer returns an Authorizer whose decisions are made by the
+// host node's own authorizer (go-qrdb node.Node.Authorizer) on the caller's
+// full identity, so a delegated caller's ScopePermissions (a token's scp
+// claim, a service principal) count; the SDK RBAC client sees only Subject,
+// TenantID, Roles and Metadata. rbac lists permissions and sets the
+// posture: a nil rbac disables authorization, as NewAuthorizer(nil) does,
+// and a nil node leaves rbac deciding, as NewAuthorizer(rbac) does.
+func NewNodeAuthorizer(rbac qrdbtransport.RBACClient, node qrdbsdk.Authorizer) *Authorizer {
+	return &Authorizer{rbac: rbac, node: node}
 }
 
 // Authorizer satisfies go-qrdb's authorization contract, qrdbsdk.Authorizer.
@@ -71,6 +86,17 @@ func (a *Authorizer) Authorize(ctx context.Context, identity *Identity, resource
 	}
 
 	authzCtx, qid := bindIdentity(ctx, identity)
+	if a.node != nil {
+		// Decide on the original identity; only an unset tenant is filled
+		// in, on a copy, as bindIdentity does for the projection.
+		original := identity
+		if original.TenantID == "" {
+			cp := *identity
+			cp.TenantID = qid.TenantID
+			original = &cp
+		}
+		return a.node.Authorize(authzCtx, original, resource, action)
+	}
 	return a.rbac.Authorize(authzCtx, qid, resource, action)
 }
 

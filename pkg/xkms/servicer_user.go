@@ -139,6 +139,20 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	if !req.WithoutEmailLoginKey && s.inviteStore == nil {
 		return nil, ErrNotConfigured
 	}
+	// Minting the invitation is inviting a user into the caller's tenant,
+	// which go-qrdb decides under users:invite, not users:create (the
+	// transports' gate). Asked before the account exists, so a refusal
+	// leaves nothing to roll back; returned unchanged so the transports map
+	// go-qrdb's denial as they do their own. The decision is audited (the
+	// transport audits only its own users:create gate), and an audit write
+	// that fails refuses the call.
+	if !req.WithoutEmailLoginKey {
+		if err := s.authorizeAudited(ctx,
+			qrdbsdk.PermissionResource(qrdbsdk.PermissionUsersInvite),
+			qrdbsdk.PermissionAction(qrdbsdk.PermissionUsersInvite)); err != nil {
+			return nil, err
+		}
+	}
 	roleID, err := s.roleNameToID(ctx, req.TenantID, req.Role)
 	if err != nil {
 		return nil, err
