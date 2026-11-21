@@ -974,6 +974,9 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.tenantService != nil {
 			svc.SetTenantService(s.tenantService)
 		}
+		// The credential strategy status reports the backend PIN strategy
+		// (#2262).
+		svc.SetBackendPINStrategy(s.BackendPINStrategy)
 		// The enrollment-invitation store (go-xkms#1294 part B) is built and
 		// wired through composedStores()/compose.Stores.Wire above, the same
 		// one construction path (pkg/compose.BuildInviteStore) an embedding
