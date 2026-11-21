@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -294,7 +296,13 @@ func (s *QRDBRefreshStore) callContext(ctx context.Context) (context.Context, er
 	if s.bind == nil {
 		return ctx, nil
 	}
-	bound, err := s.bind(ctx)
+	// Refresh bookkeeping lives in system storage whatever tenant the
+	// request serves: the public login paths save it there, and the
+	// service identity the binder applies is not in any other tenant, so a
+	// request's tenant binding must not reach it (an RBAC-enforcing node
+	// refuses "identity not in target tenant", and a disable on a
+	// non-system request would leave the user's sessions live).
+	bound, err := s.bind(qrdbtenant.WithTenantID(ctx, qrdbsdk.SystemTenantID))
 	if err != nil {
 		return nil, &StoreError{Op: "bind call context", Err: err}
 	}
