@@ -138,6 +138,8 @@ func TestAttestationAppraisalREST_RouteTable(t *testing.T) {
 		"GET " + wire.AttestationReferenceValuesEntryPath:    {auth.ResourceAttestationReferenceValues, auth.ActionGet},
 		"DELETE " + wire.AttestationReferenceValuesEntryPath: {auth.ResourceAttestationReferenceValues, auth.ActionDelete},
 		"POST " + wire.AttestationAppraisePath:               {auth.ResourceAttestationVerifier, auth.ActionVerify},
+		"POST " + wire.AttestationAppraiseAndroidKeyPath:     {auth.ResourceAttestationVerifier, auth.ActionVerify},
+		"POST " + wire.AttestationAppraiseEKCertificatePath:  {auth.ResourceAttestationVerifier, auth.ActionVerify},
 	}
 	got := map[string][2]string{}
 	for _, spec := range Routes() {
