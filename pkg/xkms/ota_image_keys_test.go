@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/veraison/go-cose"
 )
 
 func otaKey(backend, boardID string) *transport.OTAImageKeyRequest {
@@ -539,4 +540,26 @@ func TestOTAImageKeys_ExportPublicKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.Version, "the export follows the rotation")
 	assertOTAPublicExport(t, resp, otaPublicKeyFromPEM(t, rotated.PublicKeyPEM), keyID)
+
+	// #1778: a go-cose consumer decodes the exported COSE_Key and verifies
+	// a SignOTAImage signature (r || s) made after the rotation.
+	var key cose.Key
+	require.NoError(t, key.UnmarshalCBOR(resp.COSEKey))
+	assert.Equal(t, cose.KeyTypeEC2, key.Type)
+	assert.Equal(t, cose.AlgorithmES256, key.Algorithm)
+	assert.Equal(t, []byte(keyID), key.ID)
+	crv, x, y, d := key.EC2()
+	assert.Equal(t, cose.CurveP256, crv)
+	assert.Equal(t, resp.Raw, append(append([]byte{}, x...), y...), "Raw is X || Y of the COSE_Key")
+	assert.Empty(t, d, "the COSE_Key carries no d")
+
+	image := []byte("firmware image after rotation")
+	sig, err := svc.SignOTAImage(ctx, &transport.OTAImageSignRequest{Backend: "software", BoardID: "cm4", Data: image})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), sig.KeyVersion)
+	pub, err := key.PublicKey()
+	require.NoError(t, err)
+	verifier, err := cose.NewVerifier(cose.AlgorithmES256, pub)
+	require.NoError(t, err)
+	assert.NoError(t, verifier.Verify(image, sig.Signature), "the exported key verifies the new version's signature")
 }
