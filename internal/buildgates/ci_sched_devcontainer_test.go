@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -207,6 +208,30 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 		if calls != "" {
 			t.Errorf("FORK_PR=%q: the selector called the Actions API:\n%s", fork, calls)
 		}
+	}
+}
+
+// TestCIRunnerSelectionShortListIsLowerBound pins template v1.50 (handbook
+// 52e70fd5, #84): a listing short of its total_count is a lower bound kept in
+// SHORT, not a reason to stay hosted, so overflow still fires under load.
+func TestCIRunnerSelectionShortListIsLowerBound(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	for _, re := range []string{
+		`(?m)^\s*SHORT=""\s*$`,
+		`(?m)^\s*\[ "\$got" -ge "\$total" \] \|\| SHORT="\$\{SHORT:\+\$SHORT; \}\$1: \$got of \$total entries"\s*$`,
+		`(?m)^\s*elif \[ -n "\$SHORT" \]; then\s*$`,
+		`(?m)^\s*\[ -z "\$SHORT" \] \|\| why="\$why \(a lower bound: \$SHORT\)"\s*$`,
+	} {
+		if !regexp.MustCompile(re).MatchString(text) {
+			t.Errorf("ci.yml: no line matches %s (v1.50 short-list lower bound)", re)
+		}
+	}
+	if strings.Contains(text, `WHY="$1: $got of $total entries"; return 1;`) {
+		t.Error("ci.yml: a short listing still returns 1 (pre-v1.50)")
 	}
 }
 
