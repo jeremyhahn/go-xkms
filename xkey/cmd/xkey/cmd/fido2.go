@@ -33,7 +33,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-enclave"
-	pkgkeybackend "github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
@@ -2063,7 +2062,7 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 // key store it was opened over). Close runs once; later calls return nil.
 type ownedTPM2KeyBackend struct {
 	// The SDK re-exports the constructor but not the type it returns.
-	*pkgkeybackend.TPM2AttestingBackend
+	*keybackend.TPM2AttestingBackend
 	tpm       xkms.TrustedPlatformModule
 	closeOnce sync.Once
 }

@@ -24,7 +24,6 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pintpm2"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -207,7 +206,7 @@ func enrollPlatformSRKLocked(out io.Writer, userPIN, soPIN string) error {
 // the probe records that and refuses, so nothing is verified or cached.
 func checkSRKUserPINPolicy(userPIN string) error {
 	probe := &srkPINPolicyProbe{}
-	backend := pintpm2.NewTPM2Backend(probe)
+	backend := xkms.NewPINTPMBackend(probe)
 	err := backend.SetUserPIN("", userPIN)
 	if closeErr := backend.Close(); closeErr != nil {
 		return closeErr
@@ -221,7 +220,7 @@ func checkSRKUserPINPolicy(userPIN string) error {
 // errSRKPINPolicyProbe is the probe's refusal once the policy has passed.
 var errSRKPINPolicyProbe = errors.New("tpm srk enroll: PIN policy probe")
 
-// srkPINPolicyProbe is a pintpm2.PlatformAuthProvider that holds no SRK:
+// srkPINPolicyProbe is an xkms.TPMPlatformAuthProvider that holds no SRK:
 // it only records that SetUserPIN reached the store.
 type srkPINPolicyProbe struct{ reached bool }
 
