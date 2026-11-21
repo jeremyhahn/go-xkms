@@ -145,3 +145,47 @@ ca:
       is-root: true
   selected-ca: 0
   default-validity-days: 365
+
+# ACME (RFC 8555) server. It runs on its own TLS listener (https_addr), apart
+# from the REST API, and issues from the CA above; the directory is served at
+# <external_url>/acme/directory.
+# When neither tls.cert_file nor tls.key_file exists, xkmsd issues the
+# listener certificate from the CA above on first start (SANs: the hosts of
+# external_url and https_addr) and reuses it afterwards; place your own pair
+# there to use it instead (only one of the two stops the daemon). Before the
+# first start set external_url and caa_identities to the name clients use to
+# reach this host (RFC 8659 CAA issuer domain).
+# Set enabled: false to run without ACME.
+acme:
+  enabled: true
+  https_addr: "127.0.0.1:8446"
+  external_url: "https://localhost:8446"
+  caa_identities:
+    - "localhost"
+  keystore_backend: "software"
+  data_dir: "xkms-data/acme"
+  tls:
+    cert_file: "xkms-data/acme/tls.crt"
+    key_file: "xkms-data/acme/tls.key"
+  challenges:
+    http01: true
+    dns01: false
+    enroll01: false
+    endorse01: false
+    device_attest01: false
+  # Audit trail of every ACME state change; log_path empty means
+  # <data_dir>/audit.log. JSON is the only format the audit query API reads.
+  audit:
+    enabled: true
+    max_size_mb: 100
+    max_age_days: 90
+    max_backups: 10
+    compress: true
+    format: "json"
+  # Per-client sliding-window limit (HTTP 429 when exceeded); the per-category
+  # limits (new_account, new_order, certificate, failed_validation) keep
+  # their built-in defaults.
+  rate_limit:
+    enabled: true
+    max_requests: 300
+    interval: "1m"

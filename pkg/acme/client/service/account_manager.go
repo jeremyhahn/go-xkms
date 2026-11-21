@@ -147,6 +147,12 @@ func (am *accountManager) Client(ctx context.Context, name string) (*client.Clie
 	if cached, ok := am.clients.Load(name); ok {
 		return cached.(*client.Client), nil
 	}
+	// An account loaded from a configuration file never passed Add, so the
+	// key store is checked here too, before any key exists or any request
+	// is sent (the first order builds its client through this method).
+	if err := checkAccountKeyStore(name, cfg.Key); err != nil {
+		return nil, err
+	}
 	signer, err := generateSigner(cfg.Key)
 	if err != nil {
 		return nil, err
@@ -344,6 +350,24 @@ func validateAccountConfig(name string, cfg *AccountConfig) error {
 	}
 	if cfg.Key.Store == "" {
 		return ErrInvalidAccountConfig{Name: name, Reason: "key store is required"}
+	}
+	return checkAccountKeyStore(name, cfg.Key)
+}
+
+// softwareAccountKeyStores are the key stores whose account key the client
+// generates in process memory. It keeps no account key on disk.
+var softwareAccountKeyStores = map[string]bool{"software": true, "file": true}
+
+// checkAccountKeyStore refuses an account key store the client cannot sign
+// through. There is no TPM or PKCS#11 backend for account keys here, and a
+// software key must never stand in for a hardware one: the account key is a
+// certificate-issuing capability (docs/acme-issuance/cli.md).
+func checkAccountKeyStore(name string, keyCfg *KeyConfig) error {
+	if keyCfg == nil {
+		return ErrMissingKeyConfig{Context: "account " + name}
+	}
+	if !softwareAccountKeyStores[strings.ToLower(keyCfg.Store)] {
+		return ErrUnsupportedAccountKeyStore{Account: name, Store: keyCfg.Store}
 	}
 	return nil
 }

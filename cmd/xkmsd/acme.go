@@ -416,7 +416,11 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		}
 	}
 
-	// Build the TLS configuration for the dedicated ACME listener.
+	// Issue the listener certificate from the xkmsd CA when the operator has
+	// placed neither file, then build the TLS configuration from the files.
+	if err := ensureACMEListenerCert(context.Background(), primaryCA, acmeCfg, logger); err != nil {
+		return nil, &acmeInitError{Stage: "provision listener certificate", Sentinel: ErrACMETLSConfig, Err: err}
+	}
 	tlsCfg, err := buildACMETLSConfig(acmeCfg)
 	if err != nil {
 		return nil, &acmeInitError{Stage: "build TLS config", Sentinel: ErrACMETLSConfig, Err: err}
