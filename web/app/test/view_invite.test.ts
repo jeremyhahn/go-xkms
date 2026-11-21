@@ -126,4 +126,79 @@ describe("InviteView", () => {
     expect(await screen.findByText(/this invite link is not valid/i)).toBeInTheDocument();
     expect(createCredential).not.toHaveBeenCalled();
   });
+
+  // App.svelte reuses one InviteView between invite hashes: the view must
+  // reload per route and pin each ceremony to the target it started on.
+  describe("route changes", () => {
+    function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+      let resolve!: (v: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    }
+    const inviteFor = (email: string) => ({
+      email,
+      display_name: email,
+      expires_at: "2026-12-01T00:00:00Z",
+      methods: ["webauthn"],
+    });
+
+    it("reloads when the tenant/token change and shows the new invite", async () => {
+      invitesGet.mockImplementation(async (t: string) =>
+        inviteFor(t === "tA" ? "a@example.com" : "b@example.com"),
+      );
+      const view = render(InviteView, { props: { tenant: "tA", token: "tokA" } });
+      expect(await screen.findByText("a@example.com")).toBeInTheDocument();
+
+      await view.rerender({ tenant: "tB", token: "tokB" });
+      expect(await screen.findByText("b@example.com")).toBeInTheDocument();
+      expect(screen.queryByText("a@example.com")).toBeNull();
+      expect(invitesGet).toHaveBeenLastCalledWith("tB", "tokB");
+    });
+
+    it("ignores a slow response for a superseded invite", async () => {
+      const slowA = deferred<ReturnType<typeof inviteFor>>();
+      invitesGet.mockImplementation((t: string) =>
+        t === "tA" ? slowA.promise : Promise.resolve(inviteFor("b@example.com")),
+      );
+      const view = render(InviteView, { props: { tenant: "tA", token: "tokA" } });
+      await waitFor(() => expect(invitesGet).toHaveBeenCalledWith("tA", "tokA"));
+
+      await view.rerender({ tenant: "tB", token: "tokB" });
+      expect(await screen.findByText("b@example.com")).toBeInTheDocument();
+
+      slowA.resolve(inviteFor("a@example.com"));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(screen.queryByText("a@example.com")).toBeNull();
+      expect(screen.getByText("b@example.com")).toBeInTheDocument();
+    });
+
+    it("finishes a ceremony on the target it began on", async () => {
+      invitesGet.mockImplementation(async (t: string) =>
+        inviteFor(t === "tA" ? "a@example.com" : "b@example.com"),
+      );
+      invitesBegin.mockResolvedValue({ sessionId: "sA", options: { publicKey: {} } });
+      const cred = deferred<{ id: string }>();
+      createCredential.mockReturnValue(cred.promise);
+      invitesFinish.mockResolvedValue({ user_id: "42" });
+      loginBegin.mockResolvedValue({ sessionId: "s2", options: { publicKey: {} } });
+      getAssertion.mockResolvedValue({ id: "cred" });
+      loginFinish.mockResolvedValue({ token: "at", refresh_token: "rt" });
+      loadSession.mockResolvedValue(undefined);
+
+      const view = render(InviteView, { props: { tenant: "tA", token: "tokA" } });
+      await fireEvent.click(await screen.findByRole("button", { name: /register passkey/i }));
+      await waitFor(() => expect(createCredential).toHaveBeenCalled());
+
+      await view.rerender({ tenant: "tB", token: "tokB" });
+      cred.resolve({ id: "cred" });
+
+      await waitFor(() => expect(invitesFinish).toHaveBeenCalled());
+      expect(invitesBegin).toHaveBeenCalledWith("tA", "tokA");
+      expect(invitesFinish).toHaveBeenCalledWith("tA", "tokA", "sA", { id: "cred" });
+      expect(invitesFinish).not.toHaveBeenCalledWith("tB", expect.anything(), expect.anything(), expect.anything());
+      await waitFor(() => expect(loginBegin).toHaveBeenCalledWith({ email: "a@example.com" }));
+    });
+  });
 });
