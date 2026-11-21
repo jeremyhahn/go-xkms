@@ -16,6 +16,7 @@ package piv
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -54,7 +55,7 @@ var (
 // holder gets a key of their own.
 func enrollHolder(t *testing.T, user string, params map[string]any) *qrdbsdk.AuthFactorEnrollment {
 	t.Helper()
-	e, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: user, MethodParams: params})
+	e, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: user, TenantID: "tenant-t", MethodParams: params})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
@@ -68,6 +69,183 @@ func decoyFor(t *testing.T, f *Factor, seed []byte, user string, like []*qrdbsdk
 		t.Fatalf("DecoyEnrollment: %v", err)
 	}
 	return e
+}
+
+// A roster that mixes a legacy OU-less holder certificate with a stamped
+// one yields decoys in the same mix: OU-less decoys in proportion to the
+// OU-less holders, so the legacy holder does not stand out as the only
+// certificate without a tenant OU.
+func TestDecoyEnrollment_MirrorsMixedLegacyRoster(t *testing.T) {
+	stamped := enrollHolder(t, "holder-stamped", nil)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	legacyPEM, err := issueSelfSignedCert(key, pkix.Name{CommonName: stamped.Metadata["cn"]}, big.NewInt(7), time.Now().UTC().Add(-30*24*time.Hour), defaultValidityDays)
+	if err != nil {
+		t.Fatalf("legacy certificate: %v", err)
+	}
+	roster := []*qrdbsdk.AuthFactorEnrollment{
+		{UserID: "holder-legacy", FactorName: FactorName, PublicKey: legacyPEM, Metadata: stamped.Metadata},
+		{UserID: stamped.UserID, FactorName: FactorName, PublicKey: stamped.PublicKey, Metadata: stamped.Metadata},
+	}
+	if ou := parseCert(t, legacyPEM).Subject.OrganizationalUnit; len(ou) != 0 {
+		t.Fatalf("legacy holder OU = %v, want none", ou)
+	}
+
+	// The OU and the validity come from one roster cohort: an OU-bearing
+	// decoy is never older than the oldest OU-bearing holder, and an
+	// OU-less decoy is never newer than the newest OU-less (legacy) holder.
+	stampedCert := parseCert(t, stamped.PublicKey)
+	legacyCert := parseCert(t, legacyPEM)
+	if !legacyCert.NotBefore.Before(stampedCert.NotBefore) {
+		t.Fatalf("legacy NotBefore %v not before stamped %v", legacyCert.NotBefore, stampedCert.NotBefore)
+	}
+
+	f := New(Config{})
+	const n = 200
+	ouLess := 0
+	for i := 0; i < n; i++ {
+		d := decoyFor(t, f, decoySeed, "stranger-"+strconv.Itoa(i), roster)
+		cert := parseCert(t, d.PublicKey)
+		switch ou := cert.Subject.OrganizationalUnit; {
+		case len(ou) == 0:
+			ouLess++
+			if cert.NotBefore.After(legacyCert.NotBefore) {
+				t.Fatalf("OU-less decoy NotBefore %v after the newest OU-less holder %v", cert.NotBefore, legacyCert.NotBefore)
+			}
+		case !reflect.DeepEqual(ou, []string{"tenant-t"}):
+			t.Fatalf("decoy OU = %v, want [tenant-t] or none", ou)
+		default:
+			if cert.NotBefore.Before(stampedCert.NotBefore) {
+				t.Fatalf("OU decoy NotBefore %v before the oldest OU holder %v", cert.NotBefore, stampedCert.NotBefore)
+			}
+		}
+		if got, want := cert.NotAfter.Sub(cert.NotBefore), legacyCert.NotAfter.Sub(legacyCert.NotBefore); got != want {
+			t.Fatalf("decoy validity %v, want the roster's %v", got, want)
+		}
+	}
+	// Half the roster is OU-less; the decoy share must match it, not be 0.
+	if ouLess < n*3/10 || ouLess > n*7/10 {
+		t.Fatalf("OU-less decoys = %d of %d, want about half (the roster's OU-less share)", ouLess, n)
+	}
+}
+
+// TestDecoyEnrollment_ShapeFollowsOneExemplar pins that a decoy's OU, key
+// algorithm and slot come from one roster holder together: with two legacy
+// OU-less P-256/9a holders and one stamped Ed25519/9c holder, no decoy is a
+// stamped P-256/9a or an OU-less Ed25519/9c, which no holder is.
+func TestDecoyEnrollment_ShapeFollowsOneExemplar(t *testing.T) {
+	stamped := enrollHolder(t, "holder-stamped", map[string]any{"algorithm": "ed25519", "slot": "9c"})
+	if stamped.Metadata["algorithm"] != "ed25519" || stamped.Metadata["slot"] != "9c" {
+		t.Fatalf("stamped holder metadata = %v, want ed25519 in 9c", stamped.Metadata)
+	}
+	legacy := func(user string, serial int64) *qrdbsdk.AuthFactorEnrollment {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("GenerateKey: %v", err)
+		}
+		certPEM, err := issueSelfSignedCert(key, pkix.Name{CommonName: "PIV 9a"}, big.NewInt(serial), time.Now().UTC().Add(-30*24*time.Hour), defaultValidityDays)
+		if err != nil {
+			t.Fatalf("legacy certificate: %v", err)
+		}
+		return &qrdbsdk.AuthFactorEnrollment{UserID: user, FactorName: FactorName, PublicKey: certPEM, Metadata: map[string]string{
+			"slot": "9a", "algorithm": "ecdsap256", "cn": "PIV 9a", "ttl": stamped.Metadata["ttl"],
+		}}
+	}
+	roster := []*qrdbsdk.AuthFactorEnrollment{legacy("holder-legacy-1", 7), legacy("holder-legacy-2", 8), stamped}
+
+	f := New(Config{})
+	seen := map[string]int{}
+	for i := 0; i < 200; i++ {
+		d := decoyFor(t, f, decoySeed, "stranger-"+strconv.Itoa(i), roster)
+		cert := parseCert(t, d.PublicKey)
+		alg, slot := d.Metadata["algorithm"], d.Metadata["slot"]
+		if shape, ok := decoy.ShapeOfKey(cert.PublicKey); !ok || shape != decoyShapes[alg] {
+			t.Fatalf("decoy key shape %v does not match its algorithm %q", shape, alg)
+		}
+		var combo string
+		switch ou := cert.Subject.OrganizationalUnit; {
+		case len(ou) == 0 && alg == "ecdsap256" && slot == "9a":
+			combo = "legacy"
+		case reflect.DeepEqual(ou, []string{"tenant-t"}) && alg == "ed25519" && slot == "9c":
+			combo = "stamped"
+		default:
+			t.Fatalf("decoy OU %v, algorithm %q, slot %q: no holder has this combination", ou, alg, slot)
+		}
+		if d.Metadata["cn"] != "PIV "+slot || cert.Subject.CommonName != "PIV "+slot {
+			t.Fatalf("decoy cn %q / %q, want PIV %s", d.Metadata["cn"], cert.Subject.CommonName, slot)
+		}
+		seen[combo]++
+	}
+	if seen["legacy"] == 0 || seen["stamped"] == 0 {
+		t.Fatalf("decoy shapes = %v, want both holder shapes", seen)
+	}
+}
+
+// TestDecoyEnrollment_DerivationWorkIndependentOfExemplar: go-qrdb derives
+// the decoy before it looks the holder up, so the key derivation work of a
+// decoy must not follow the exemplar it picks. In a mixed RSA/ECDSA roster
+// every username's decoy derives the same set of key shapes, in the same
+// order, whichever holder it mirrors.
+func TestDecoyEnrollment_DerivationWorkIndependentOfExemplar(t *testing.T) {
+	holder := func(user string, serial int64, alg string, key crypto.Signer) *qrdbsdk.AuthFactorEnrollment {
+		certPEM, err := issueSelfSignedCert(key, pkix.Name{CommonName: "PIV 9a"}, big.NewInt(serial), time.Now().UTC().Add(-30*24*time.Hour), defaultValidityDays)
+		if err != nil {
+			t.Fatalf("holder certificate: %v", err)
+		}
+		return &qrdbsdk.AuthFactorEnrollment{UserID: user, FactorName: FactorName, PublicKey: certPEM, Metadata: map[string]string{
+			"slot": "9a", "algorithm": alg, "cn": "PIV 9a", "ttl": "60",
+		}}
+	}
+	var roster []*qrdbsdk.AuthFactorEnrollment
+	for i := 0; i < 3; i++ {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("GenerateKey: %v", err)
+		}
+		roster = append(roster, holder("holder-ec-"+strconv.Itoa(i), int64(10+i), "ecdsap256", key))
+	}
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey: %v", err)
+	}
+	roster = append(roster, holder("holder-rsa", 20, "rsa2048", rsaKey))
+
+	var derived []decoy.KeyShape
+	orig := deriveDecoyKey
+	deriveDecoyKey = func(d *decoy.Deriver, purpose string, s decoy.KeyShape) (crypto.Signer, error) {
+		derived = append(derived, s)
+		return orig(d, purpose, s)
+	}
+	t.Cleanup(func() { deriveDecoyKey = orig })
+
+	f := New(Config{})
+	var want []decoy.KeyShape
+	picked := map[string]int{}
+	for i := 0; i < 24; i++ {
+		derived = nil
+		d := decoyFor(t, f, decoySeed, "stranger-"+strconv.Itoa(i), roster)
+		alg := d.Metadata["algorithm"]
+		picked[alg]++
+		if shape, ok := decoy.ShapeOfKey(parseCert(t, d.PublicKey).PublicKey); !ok || shape != decoyShapes[alg] {
+			t.Fatalf("decoy key shape %v does not match its algorithm %q", shape, alg)
+		}
+		if want == nil {
+			want = append([]decoy.KeyShape(nil), derived...)
+			continue
+		}
+		if !reflect.DeepEqual(derived, want) {
+			t.Fatalf("decoy for stranger-%d (%s) derived %v, the first derived %v: the work follows the exemplar", i, alg, derived, want)
+		}
+	}
+	if len(want) != 2 || !reflect.DeepEqual(map[decoy.KeyShape]bool{want[0]: true, want[1]: true},
+		map[decoy.KeyShape]bool{decoyShapes["ecdsap256"]: true, decoyShapes["rsa2048"]: true}) {
+		t.Fatalf("derived shapes %v, want one ecdsap256 and one rsa2048 per decoy", want)
+	}
+	if picked["ecdsap256"] == 0 || picked["rsa2048"] == 0 {
+		t.Fatalf("decoy algorithms = %v, want both roster algorithms", picked)
+	}
 }
 
 func parseCert(t *testing.T, pemBytes []byte) *x509.Certificate {
@@ -252,12 +430,20 @@ func TestDecoyEnrollmentEmptyLikeYieldsDefaultForm(t *testing.T) {
 			if !reflect.DeepEqual(fake.Metadata, want) {
 				t.Errorf("want metadata %v, got %v", want, fake.Metadata)
 			}
-			real, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "holder"})
+			real, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "holder", TenantID: "tenant-t"})
 			if err != nil {
 				t.Fatalf("Enroll: %v", err)
 			}
-			if got, want := shapeOfCert(t, fake.PublicKey), shapeOfCert(t, real.PublicKey); !reflect.DeepEqual(got, want) {
-				t.Errorf("certificate shapes differ:\nreal  %+v\ndecoy %+v", want, got)
+			// With no enrollment to copy, the decoy record names no tenant
+			// (decoy.Deriver.Enrollment), so its certificate carries no
+			// tenant OU; every other field of the shape must match.
+			got, realShape := shapeOfCert(t, fake.PublicKey), shapeOfCert(t, real.PublicKey)
+			if fake.TenantID != "" || got.subject != "CN=PIV 9a" || got.issuer != "CN=PIV 9a" {
+				t.Errorf("tenantless decoy: tenant %q subject %q issuer %q, want no tenant and CN=PIV 9a", fake.TenantID, got.subject, got.issuer)
+			}
+			got.subject, got.issuer = realShape.subject, realShape.issuer
+			if !reflect.DeepEqual(got, realShape) {
+				t.Errorf("certificate shapes differ:\nreal  %+v\ndecoy %+v", realShape, got)
 			}
 			cert := parseCert(t, fake.PublicKey)
 			if from, to := decoy.NotBeforeSpan(nil); cert.NotBefore.Before(from) || cert.NotBefore.After(to) {
@@ -270,7 +456,7 @@ func TestDecoyEnrollmentEmptyLikeYieldsDefaultForm(t *testing.T) {
 func TestDecoyEnrollmentFailsVerify(t *testing.T) {
 	ctx := context.Background()
 	holder := New(Config{})
-	if _, err := holder.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "holder"}); err != nil {
+	if _, err := holder.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "holder", TenantID: "tenant-t"}); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
 	fake := decoyFor(t, holder, decoySeed, "stranger", nil)

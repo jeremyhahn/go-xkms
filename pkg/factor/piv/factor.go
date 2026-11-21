@@ -161,12 +161,21 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 	}
 
 	cn := "PIV " + string(slot)
+	// The enrollment certificate names its tenant as Subject-OU[0], through
+	// the one stamping path every issued certificate takes. The tenant is
+	// checked before the slot key is replaced, so a refused enrollment
+	// leaves an existing enrollment able to answer its challenges.
+	subject, _, err := ca.StampTenant(params.TenantID, pkix.Name{CommonName: cn}, nil)
+	if err != nil {
+		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "piv: " + err.Error()}
+	}
+
 	signer, err := f.cfg.Generator.GeneratePIVKey(slot, algorithm, cn)
 	if err != nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "piv: generate key: " + err.Error()}
 	}
 
-	certPEM, err := buildSelfSignedCert(signer, pkix.Name{CommonName: cn}, defaultValidityDays)
+	certPEM, err := buildSelfSignedCert(signer, subject, defaultValidityDays)
 	if err != nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "piv: build certificate: " + err.Error()}
 	}

@@ -44,6 +44,7 @@ func TestPIVFactor_Verify_MultiAlgorithm(t *testing.T) {
 			f := New(Config{})
 			enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
 				UserID:       "custodian-" + algorithm,
+				TenantID:     "tenant-t",
 				MethodParams: map[string]any{"algorithm": algorithm},
 			})
 			if err != nil {
@@ -106,6 +107,7 @@ func TestPIVFactor_Verify_MultiAlgorithm(t *testing.T) {
 				other := New(Config{})
 				otherEnrollment, err := other.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
 					UserID:       "other-custodian-" + algorithm,
+					TenantID:     "tenant-t",
 					MethodParams: map[string]any{"algorithm": algorithm},
 				})
 				if err != nil {
@@ -148,7 +150,7 @@ func TestPIVFactor_Verify_RejectsUndersizedRSAKey(t *testing.T) {
 	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 
 	f := New(Config{})
-	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{UserID: "u1", TenantID: "tenant-t"})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}

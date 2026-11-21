@@ -27,9 +27,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/certsubject"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 )
 
@@ -279,7 +283,9 @@ func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
 	if cert, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
 		if leaf, perr := x509.ParseCertificate(cert.Certificate[0]); perr == nil &&
 			time.Now().Before(leaf.NotAfter.Add(-24*time.Hour)) {
-			if certSANsMatch(leaf, dnsNames, ips) {
+			// It must also name the system tenant as OU[0], as every node
+			// certificate does; one persisted before that rule is replaced.
+			if certSANsMatch(leaf, dnsNames, ips) && slices.Equal(leaf.Subject.OrganizationalUnit, []string{qrdbsdk.SystemTenantID}) {
 				s.logger.Info("unified API server: serving persisted bootstrap TLS certificate until the CA composes")
 				return &cert, nil
 			}
@@ -297,9 +303,13 @@ func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
 		return nil, &ErrTLSCertOp{Operation: "generate bootstrap TLS serial", Err: err}
 	}
 
+	subject, _, err := certsubject.StampTenant(qrdbsdk.SystemTenantID, pkix.Name{CommonName: cn}, nil)
+	if err != nil {
+		return nil, &ErrTLSCertOp{Operation: "stamp bootstrap TLS certificate tenant", Err: err}
+	}
 	template := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: cn},
+		Subject:      subject,
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

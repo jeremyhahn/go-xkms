@@ -58,7 +58,7 @@ func TestCreateHybridCertificate(t *testing.T) {
 	template := makeHybridCACertTemplate()
 
 	// Create self-signed hybrid certificate
-	certDER, err := CreateHybridCertificate(template, template, classicalKey, quantumKey)
+	certDER, err := CreateHybridCertificate("", template, template, classicalKey, quantumKey)
 	if err != nil {
 		t.Fatalf("CreateHybridCertificate failed: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestCreateHybridCertificate_ECDSA_MLDSA44(t *testing.T) {
 	quantumKey := generateTestMLDSAKey(t, types.QuantumAlgorithmMLDSA44)
 	template := makeHybridCACertTemplate()
 
-	certDER, err := CreateHybridCertificate(template, template, classicalKey, quantumKey)
+	certDER, err := CreateHybridCertificate("", template, template, classicalKey, quantumKey)
 	if err != nil {
 		t.Fatalf("CreateHybridCertificate failed: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestCreateHybridCertificate_ECDSA_MLDSA87(t *testing.T) {
 	quantumKey := generateTestMLDSAKey(t, types.QuantumAlgorithmMLDSA87)
 	template := makeHybridCACertTemplate()
 
-	certDER, err := CreateHybridCertificate(template, template, classicalKey, quantumKey)
+	certDER, err := CreateHybridCertificate("", template, template, classicalKey, quantumKey)
 	if err != nil {
 		t.Fatalf("CreateHybridCertificate failed: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestCreateHybridCertificate_InvalidQuantumKey(t *testing.T) {
 	template := makeHybridCACertTemplate()
 
 	t.Run("nil_quantum_key", func(t *testing.T) {
-		_, err := CreateHybridCertificate(template, template, classicalKey, nil)
+		_, err := CreateHybridCertificate("", template, template, classicalKey, nil)
 		if err == nil {
 			t.Fatal("Expected error for nil quantum key")
 		}
@@ -159,7 +159,7 @@ func TestCreateHybridCertificate_InvalidQuantumKey(t *testing.T) {
 
 	t.Run("nil_classical_key", func(t *testing.T) {
 		quantumKey := generateTestMLDSAKey(t, types.QuantumAlgorithmMLDSA65)
-		_, err := CreateHybridCertificate(template, template, nil, quantumKey)
+		_, err := CreateHybridCertificate("", template, template, nil, quantumKey)
 		if err == nil {
 			t.Fatal("Expected error for nil classical key")
 		}
@@ -167,7 +167,7 @@ func TestCreateHybridCertificate_InvalidQuantumKey(t *testing.T) {
 
 	t.Run("nil_template", func(t *testing.T) {
 		quantumKey := generateTestMLDSAKey(t, types.QuantumAlgorithmMLDSA65)
-		_, err := CreateHybridCertificate(nil, template, classicalKey, quantumKey)
+		_, err := CreateHybridCertificate("", nil, template, classicalKey, quantumKey)
 		if err == nil {
 			t.Fatal("Expected error for nil template")
 		}
@@ -175,7 +175,7 @@ func TestCreateHybridCertificate_InvalidQuantumKey(t *testing.T) {
 
 	t.Run("nil_parent", func(t *testing.T) {
 		quantumKey := generateTestMLDSAKey(t, types.QuantumAlgorithmMLDSA65)
-		_, err := CreateHybridCertificate(template, nil, classicalKey, quantumKey)
+		_, err := CreateHybridCertificate("", template, nil, classicalKey, quantumKey)
 		if err == nil {
 			t.Fatal("Expected error for nil parent")
 		}
@@ -193,7 +193,7 @@ func TestVerifyHybridCertificate(t *testing.T) {
 	// Create self-signed hybrid CA certificate
 	template := makeHybridCACertTemplate()
 
-	certDER, err := CreateHybridCertificate(template, template, classicalKey, quantumKey)
+	certDER, err := CreateHybridCertificate("", template, template, classicalKey, quantumKey)
 	if err != nil {
 		t.Fatalf("CreateHybridCertificate failed: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestVerifyHybridCertificate_TamperedClassical(t *testing.T) {
 
 	template := makeHybridCACertTemplate()
 
-	certDER, err := CreateHybridCertificate(template, template, classicalKey, quantumKey)
+	certDER, err := CreateHybridCertificate("", template, template, classicalKey, quantumKey)
 	if err != nil {
 		t.Fatalf("CreateHybridCertificate failed: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestVerifyHybridCertificate_TamperedQuantum(t *testing.T) {
 
 	template := makeHybridCACertTemplate()
 
-	certDER, err := CreateHybridCertificate(template, template, classicalKey, quantumKey)
+	certDER, err := CreateHybridCertificate("", template, template, classicalKey, quantumKey)
 	if err != nil {
 		t.Fatalf("CreateHybridCertificate failed: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestCreateHybridCertificate_DoesNotMutateTemplate(t *testing.T) {
 	template := makeHybridCACertTemplate()
 	originalExtCount := len(template.ExtraExtensions)
 
-	_, err = CreateHybridCertificate(template, template, classicalKey, quantumKey)
+	_, err = CreateHybridCertificate("", template, template, classicalKey, quantumKey)
 	if err != nil {
 		t.Fatalf("CreateHybridCertificate failed: %v", err)
 	}

@@ -476,7 +476,8 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
 
 - **Every issued certificate carries its tenant as `Subject.OrganizationalUnit[0]`**
   (go-xkms#1557, SPEC `tenant-subject-ou`). `StampTenant`
-  (`pkg/ca/tenant_subject.go:42`) is the one place a certificate gets its
+  (`pkg/certsubject/subject.go:64`, aliased as `ca.StampTenant` in
+  `pkg/ca/tenant_subject.go`, a leaf package so pkg/xkms can call it) is the one place a certificate gets its
   tenant: a `pkix.Name` subject has every OU replaced by `[tenant]` (OUs in
   `ExtraNames` are dropped), never appended to; a caller-chosen `RawSubject`
   (go-qrdb's `CN, OU=<tenant>, OU=<profile>` ceremony) has its first OU set to
@@ -499,12 +500,25 @@ e-mail addresses are valid tenant names and are not SPIFFE path segments.
     (`pkg/init/firstboot_adapter.go:96`), and the node's own transport and
     server certificates the system tenant (`pkg/server/server.go:2251`,
     `pkg/trust/clusterca/acme.go:250`);
+  - the PIV slot self-signed certificate (`GeneratePIVKey` and
+    `SelfSignExistingPIVKey`) the caller's tenant, or the system tenant without
+    an identity (`buildAndStoreSelfSigned`, `pkg/xkms/piv_manager.go:901`);
+  - the xkmsd bootstrap listener certificate the system tenant, and a persisted
+    one without it is regenerated (`ensureBootstrapCert`,
+    `pkg/server/unified_tls.go:267`);
+  - a hybrid (classical + ML-DSA) leaf certificate the caller's `tenantID`,
+    stamped on the working copy before the first signature, and an empty
+    tenant is refused with `ErrTenantRequired` (`CreateHybridCertificate`,
+    `pkg/ca/hybrid.go:146-153`); a hybrid CA template keeps its subject;
   - ACME issuance is in [acme-issuance](../acme-issuance/engineering.md#invariants).
 
   Not stamped: CA hierarchy certificates (roots, intermediates, subordinate
   CAs, per-tenant ACME roots), whose subject names the CA; the TCG LAK, whose
   subject must be empty; and the FIDO2 attestation profile, which rewrites the
-  subject to WebAuthn §8.2.1's fixed OU after the tenant is required.
+  subject to WebAuthn §8.2.1's fixed OU after the tenant is required; and the
+  virtual-authenticator attestation CSR
+  (`pkg/fido2/authenticator/attestation.go:183-186`), whose Subject-OU WebAuthn
+  Level 2 §8.2.1 fixes to `AttestationCertificateOU`, as for the FIDO2 profile.
 - **Certificate storage is confined to the caller's tenant** (go-xkms#1228).
   The `XKMSService` certificate methods resolve the backend with
   `resolveTenantBackend` (`pkg/xkms/servicer_cert.go:29-284`), so a tenant's
