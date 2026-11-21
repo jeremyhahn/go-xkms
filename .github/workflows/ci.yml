@@ -1,10 +1,10 @@
-# ci-template: v1.48 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# ci-template: v1.49 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
 # v1.48 (Tenant Agent ruling 1024 item 1; ruling 999: hosted by default): the
 # preflight step `Hosted or overflow runner (ruling 1024)` and its `runner` and
 # `runner_docker` outputs, the top-level HOSTED_JOBS_PER_REPO (12) and
 # HOSTED_QUEUE_GRACE_SECONDS (60), and the template's runs-on, verbatim: image,
 # lint-gates, integration and soak read runner_docker, CI Gate reads runner
-# with the `|| '"ubuntu-latest"'` guard, and preflight runs on ubuntu-latest.
+# with the `|| '"ubuntu-latest"'` guard (preflight's runs-on: v1.49 below).
 # go-xkms's own routing (m2475, #2240, ruling 740), which sent main pushes and
 # same-repository PRs to the bigdisk pools, is gone: every job is hosted unless
 # the hosted pool is full. go-xkms deviations for v1.48, one per line:
@@ -19,6 +19,10 @@
 #     qwen-review.yml names `qwen` outside code-review.yml (v1.47 finding (f)),
 #     so the step would fail CI on files this one-file bump leaves alone; it
 #     comes with those files, in the full catch-up below.
+# v1.49 (handbook 83), one deviation line: preflight runs-on reads
+#   vars.CI_PREFLIGHT_RUNS_ON (default the bigdisk pool), BOT is set off
+#   github.com only, and the hosted in-progress count note names preflight;
+#   the template's runner-labels lint step (ruling 633) is NOT taken (above).
 # v1.42 hermetic gate only (owner ruling 742 (1), Tenant Agent ruling 754): the
 # CI Gate's outcome depends only on the tree under test. `make deps-check`,
 # `make security` (gosec, govulncheck, go mod verify, trivy fs) and the trivy
@@ -764,7 +768,8 @@ jobs:
     name: Preflight [changed files, schedule guard, architecture gates]
     # v1.48 (ruling 1024): a standard GitHub-hosted image, as in the template;
     # this job chooses every later job's runner, so it cannot read the choice.
-    runs-on: ubuntu-latest
+    # v1.49 (handbook 83): preflight runs on the bigdisk pool by default, CI_PREFLIGHT_RUNS_ON moves it to a hosted runner.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON || '["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}   # v1.49
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 10       # v1.34: the three jobs had 5 each
@@ -800,7 +805,8 @@ jobs:
           GH_RUNS_API: ${{ github.api_url }}/repos/${{ github.repository }}/actions/workflows/ci.yml/runs
           JOB_TOKEN: ${{ github.token }}
           # v1.30: a push to main reads the tree proof with it as well.
-          BOT: ${{ (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.AGENT_TOKEN || '' }}
+          # v1.49: off github.com only.
+          BOT: ${{ github.server_url != 'https://github.com' && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.AGENT_TOKEN || '' }}
         run: |
           set -uo pipefail
           # runs <token>: sets N to the number of this workflow's push runs
@@ -1001,7 +1007,8 @@ jobs:
             pages "$API/runs/$id/jobs?filter=latest" jobs "$RUNNER_TEMP/sel-j.jsonl" || hosted "the Actions API gave no complete job list ($WHY)"
             cat "$RUNNER_TEMP/sel-j.jsonl" >> "$RUNNER_TEMP/sel-jobs.jsonl"
           done
-          # In progress: every hosted job, this one included. Queued: a hosted
+          # In progress: every hosted job (this one too, when CI_PREFLIGHT_RUNS_ON
+          # puts it on a hosted runner; v1.49). Queued: a hosted
           # job of another run (this run's jobs wait on this one) queued for
           # GRACE seconds or more, so a runner did not take it at once.
           read -r running queued < <(jq -rs --argjson run "$RUN_ID" --argjson grace "$GRACE" '
@@ -1246,12 +1253,10 @@ jobs:
 
   image:
     name: Devcontainer image [lint, gosec, build, test]
-    # CUSTOMIZE (go-xkms, #2240/#2241; kept over the v1.48 Docker-job routing,
-    # pinned by internal/buildgates/ci_sched_devcontainer_test.go): push,
-    # schedule and workflow_dispatch runs on main and same-repository pull
-    # requests share the self-hosted bigdisk-docker pool (the devcontainer
-    # image build and its cached layers need the bigdisk volume); fork pull
-    # requests run on ubuntu-latest.
+    # v1.48 (ruling 1024; replaces the #2240/#2241 routing, Codex #2323 P1):
+    # ubuntu-latest, or the bigdisk-docker pool when the preflight's
+    # `runner_docker` reports the hosted pool full; a fork pull request
+    # never overflows. Pinned by internal/buildgates/ci_sched_devcontainer_test.go.
     runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
