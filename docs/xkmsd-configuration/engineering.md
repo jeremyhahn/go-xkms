@@ -297,7 +297,17 @@ The client-CA pool is the union of `tls.ca_file`, `tls.client_cas` and the
 parse fails start-up). After the embedded CA composes, the unified listener
 adds the CA's own bundle to that union, not in place of it
 (`unifiedClientCAPool`, `unified_tls.go:198`, called at `:174`). `auth.piv_login.enabled` refuses an
-empty or `none` `tls.client_auth` (`pkg/config/config.go:1634-1638`).
+empty or `none` `tls.client_auth` (`pkg/config/config.go:1671-1675`).
+`Config.Validate` also refuses `tls.enabled` with `tls.client_auth` none or
+unset when the auth chain accepts mTLS (`config.go:1659-1664`;
+`AuthConfig.usesMTLS`, `config.go:445`: type `mtls`, the `mtls` flag, or a
+composite with `mtls` or the default methods), so the administrator `xkmsd
+init` provisions is asked for its certificate; the shipped
+`configs/xkmsd.yaml` sets `client_auth: verify`. Pinned by
+`TestShippedConfigRequestsAdminClientCert`,
+`TestValidateRejectsMTLSAdminWithoutClientAuth` and
+`TestValidateAllowsNoClientAuthWithoutMTLSAdmin`
+(`pkg/config/client_auth_mtls_admin_test.go`).
 `tls.prefer_server_ciphers` and `tls.watch_cert_files` are parsed
 (`config.go:413`, `:416`) but read by nothing: certificates are not reloaded
 when the files change.
