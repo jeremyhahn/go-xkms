@@ -26307,9 +26307,13 @@ func (x *SSHPublicKeyResponse) GetFingerprint() string {
 }
 
 type SSHSignRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           *SSHKeyRef             `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	Digest        []byte                 `protobuf:"bytes,2,opt,name=digest,proto3" json:"digest,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Key    *SSHKeyRef             `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Digest []byte                 `protobuf:"bytes,2,opt,name=digest,proto3" json:"digest,omitempty"`
+	// algorithm is the SSH signature algorithm to sign with (RFC 8332 §3:
+	// ssh-rsa, rsa-sha2-256 or rsa-sha2-512 for an RSA key; the key's own
+	// type otherwise). Empty keeps the key's default.
+	Algorithm     string `protobuf:"bytes,3,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -26356,6 +26360,13 @@ func (x *SSHSignRequest) GetDigest() []byte {
 		return x.Digest
 	}
 	return nil
+}
+
+func (x *SSHSignRequest) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
 }
 
 type SSHSignResponse struct {
@@ -29104,10 +29115,11 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x14SSHPublicKeyResponse\x12\x1c\n" +
 	"\talgorithm\x18\x01 \x01(\tR\talgorithm\x12\x12\n" +
 	"\x04line\x18\x02 \x01(\tR\x04line\x12 \n" +
-	"\vfingerprint\x18\x03 \x01(\tR\vfingerprint\"N\n" +
+	"\vfingerprint\x18\x03 \x01(\tR\vfingerprint\"l\n" +
 	"\x0eSSHSignRequest\x12$\n" +
 	"\x03key\x18\x01 \x01(\v2\x12.xkms.v1.SSHKeyRefR\x03key\x12\x16\n" +
-	"\x06digest\x18\x02 \x01(\fR\x06digest\"=\n" +
+	"\x06digest\x18\x02 \x01(\fR\x06digest\x12\x1c\n" +
+	"\talgorithm\x18\x03 \x01(\tR\talgorithm\"=\n" +
 	"\x0fSSHSignResponse\x12\x16\n" +
 	"\x06format\x18\x01 \x01(\tR\x06format\x12\x12\n" +
 	"\x04blob\x18\x02 \x01(\fR\x04blob\"\xf6\x01\n" +
