@@ -116,6 +116,34 @@ printf 200
 // runRunnerSelect runs the selector script with the stub curl, as a pull
 // request with FORK_PR=fork, and returns its GITHUB_OUTPUT and the API
 // URLs it asked for.
+// preflightRunsOn is the preflight runs-on (Codex #2323 P1, ruling 999):
+// hosted unless CI_PREFLIGHT_RUNS_ON is set, and never the variable on a
+// pull request from a fork, so a fork never reaches a self-hosted pool.
+const preflightRunsOn = "${{ github.server_url == 'https://github.com' && vars.CI_PREFLIGHT_RUNS_ON != '' && !(" +
+	"github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository" +
+	") && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"
+
+func TestCIPreflightRunsHostedByDefault(t *testing.T) {
+	wf := readDigestWorkflow(t)
+	j, ok := wf.Jobs[preflightJob]
+	if !ok {
+		t.Fatalf("ci.yml has no %s job", preflightJob)
+	}
+	if j.RunsOn != preflightRunsOn {
+		t.Errorf("%s runs-on = %q, want %q", preflightJob, j.RunsOn, preflightRunsOn)
+	}
+	// No self-hosted label is written into the job: with the variable
+	// unset, or on a fork, the only value it can resolve to is ubuntu-latest.
+	for _, label := range []string{"self-hosted", "bigdisk"} {
+		if strings.Contains(j.RunsOn, label) {
+			t.Errorf("%s runs-on names %q: unset or on a fork it must stay hosted", preflightJob, label)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSuffix(j.RunsOn, " }}"), "|| 'ubuntu-latest'") {
+		t.Errorf("%s runs-on does not fall back to ubuntu-latest: %q", preflightJob, j.RunsOn)
+	}
+}
+
 func runRunnerSelect(t *testing.T, script, fork string) (output, calls string) {
 	t.Helper()
 	dir := t.TempDir()
