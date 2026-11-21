@@ -383,7 +383,8 @@ descriptions (draft-aaron-acme-profiles; `directory.go:50`, from
   route permission in `admin.Routes()` (`pkg/acme/admin/routes.go:97-174`) is
   a qrdb-registered permission that qrdb
   places on its built-in roles — Owner holds all of them; Admin holds all but
-  `roles:create`/`roles:update`/`roles:delete`; Operator and Auditor each hold
+  `roles:delete` (go-qrdb v0.58.5 places `roles:create`/`roles:update` on
+  Admin, capped by its rule that a grantor grants only what it holds); Operator and Auditor each hold
   a subset of the read/list permissions (qrdb's placement, not restated by
   xkms). `cmd/xkmsd/admin_authz_test.go` walks the published router
   and pins all three properties against a first-boot-seeded node.

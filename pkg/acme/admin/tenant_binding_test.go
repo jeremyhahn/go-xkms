@@ -229,7 +229,11 @@ func TestTenantBinding_ForeignTenantRefusedAsNotFound(t *testing.T) {
 	require.NoError(t, err)
 	roles, err := svc.ListTenantRoles(pctx, boundTenantB, &db.ListRolesRequest{})
 	require.NoError(t, err)
-	assert.Len(t, roles.Roles, 1, "no role may be planted in tenant-b")
+	// Tenant-b holds its seeded built-in roles and role-b, nothing planted.
+	assert.Len(t, roles.Roles, len(qrdbsdk.BuiltInRoles(boundTenantB))+1, "no role may be planted in tenant-b")
+	for _, r := range roles.Roles {
+		assert.NotEqual(t, "planted", r.Name, "no role may be planted in tenant-b")
+	}
 	users, err := svc.ListTenantUsers(pctx, boundTenantB, &db.ListUsersRequest{})
 	require.NoError(t, err)
 	assert.Len(t, users.Users, 1, "no user may be planted in tenant-b")
@@ -314,9 +318,11 @@ func TestTenantBinding_TenantCallerManagesOwnTenant(t *testing.T) {
 	require.NoError(t, err)
 	assertTenantStatusUnsupported(t, svc.UpdateTenantStatus(ctx, boundTenantA, entities.TenantStatusActive))
 
-	role, err := svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleA.ID, Permissions: []string{"kv:put"}})
+	// A grantor may grant only permissions it holds (go-qrdb v0.58.5): the
+	// tenant Admin rewrites role-a with one it holds in its own tenant.
+	role, err := svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleA.ID, Permissions: []string{"roles:read"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"kv:put"}, role.Permissions)
+	assert.Equal(t, []string{"roles:read"}, role.Permissions)
 	user, err := svc.UpdateTenantUser(ctx, boundTenantA, &db.UpdateUserRequest{ID: f.userA.ID, Name: "Renamed A"})
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed A", user.Name)
