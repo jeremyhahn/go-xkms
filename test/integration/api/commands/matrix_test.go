@@ -34,6 +34,54 @@ func TestCLIProtocols_CoversEverySDKTransport(t *testing.T) {
 	}
 }
 
+// TestCompiledTags checks that the matrix tag set names every optional
+// family the CLI binary was built with, fido2 included (#2321 gap 5), and
+// leaves out the ones it lacks.
+func TestCompiledTags(t *testing.T) {
+	all := CompiledTags(func(string) bool { return true })
+	for _, tag := range []string{"integration", "frost", "fido2"} {
+		if !slices.Contains(all, tag) {
+			t.Errorf("CompiledTags(all) = %v, missing %s", all, tag)
+		}
+	}
+
+	none := CompiledTags(func(string) bool { return false })
+	if !slices.Equal(none, []string{"integration"}) {
+		t.Errorf("CompiledTags(none) = %v, want [integration]", none)
+	}
+
+	onlyFIDO2 := CompiledTags(func(command string) bool { return command == "fido2" })
+	if !slices.Contains(onlyFIDO2, "fido2") || slices.Contains(onlyFIDO2, "frost") {
+		t.Errorf("CompiledTags(fido2 only) = %v", onlyFIDO2)
+	}
+
+	// With fido2 compiled in, every FIDO2 verb that needs an authenticator
+	// names that gap; list-devices runs (it lists none).
+	for _, cmd := range FIDO2Commands() {
+		r, skip := MatrixSkipReason(cmd, ProtocolUnix, all)
+		if cmd.Name == "fido2-list-devices" {
+			if skip {
+				t.Errorf("fido2-list-devices skipped with fido2 compiled: %s", r)
+			}
+			continue
+		}
+		if !skip || r != skipFIDO2 {
+			t.Errorf("%s: skip=%v reason=%q, want %q", cmd.Name, skip, r, skipFIDO2)
+		}
+	}
+
+	// Every tag a command definition requires is either probed or always on,
+	// so no cell is skipped only because the tag set forgot it.
+	known := CompiledTags(func(string) bool { return true })
+	for _, cmd := range AllCommands() {
+		for _, tag := range cmd.BuildTags {
+			if !slices.Contains(known, tag) && tag != "gui" {
+				t.Errorf("%s requires tag %q, which CompiledTags never reports", cmd.Name, tag)
+			}
+		}
+	}
+}
+
 // TestMatrix_EverySkippedCellHasReason walks every (family, transport) cell
 // of the matrix: a cell either runs at least one command or names why it
 // is skipped.

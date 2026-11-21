@@ -70,6 +70,27 @@ func SkipReason(cmd CommandDefinition, protocol ProtocolType, enabledTags []stri
 
 // MatrixSkipReason reports whether cmd's (family, protocol) cell runs it at
 // all, in the standalone run or in its Workflow test, and why not.
+// optionalFamilyTags maps each optional build tag a command definition can
+// require to the xkmsctl subcommand that exists only when the binary was
+// built with it.
+var optionalFamilyTags = []struct{ tag, command string }{
+	{tag: "frost", command: "frost"},
+	{tag: "fido2", command: "fido2"},
+}
+
+// CompiledTags returns the matrix tag set: "integration" plus every optional
+// tag whose subcommand probe reports compiled into the CLI binary. probe
+// receives the subcommand name (e.g. "fido2").
+func CompiledTags(probe func(command string) bool) []string {
+	tags := []string{"integration"}
+	for _, opt := range optionalFamilyTags {
+		if probe(opt.command) {
+			tags = append(tags, opt.tag)
+		}
+	}
+	return tags
+}
+
 func MatrixSkipReason(cmd CommandDefinition, protocol ProtocolType, enabledTags []string) (string, bool) {
 	for _, tag := range cmd.BuildTags {
 		if !slices.Contains(enabledTags, tag) {

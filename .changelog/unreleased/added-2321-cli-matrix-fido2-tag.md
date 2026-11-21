@@ -1,0 +1,1 @@
+- **The CLI protocol matrix detects the fido2 build.** `TestAllCommandsAllProtocols` probes the CLI binary for every optional family (frost and now fido2) instead of frost only, so a fido2 build runs its FIDO2 cells; verbs that need a security key touch name that reason, and `fido2 list-devices` runs (row cli-protocol-matrix).

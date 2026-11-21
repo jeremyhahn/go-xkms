@@ -33,35 +33,21 @@ import (
 	"github.com/jeremyhahn/go-xkms/test/integration/api/commands"
 )
 
-// enabledBuildTags returns the build tags enabled for the current test run
+// enabledBuildTags returns the matrix tag set: the optional families (frost,
+// fido2) the CLI binary under test was built with.
 func enabledBuildTags() []string {
-	// These are set at compile time based on build tags
-	tags := []string{"integration"}
-
-	// Check for frost support
-	if isFrostEnabled() {
-		tags = append(tags, "frost")
-	}
-
-	// Add other tags as needed
-	return tags
+	return commands.CompiledTags(subcommandCompiled)
 }
 
-// isFrostEnabled checks if FROST support is compiled in
-func isFrostEnabled() bool {
-	// This will be true when built with -tags frost
-	// We detect by checking if the frost command exists
+// subcommandCompiled reports whether the CLI binary was built with the
+// optional subcommand (frost, fido2): its --help succeeds and does not say
+// "not compiled".
+func subcommandCompiled(subcommand string) bool {
 	runner := commands.NewTestRunner()
-
-	// Check if CLI binary exists without using testing.T
 	if _, err := os.Stat(runner.CLIBinPath); os.IsNotExist(err) {
 		return false
 	}
-
-	// Check if frost command is available
-	cmd := exec.Command(runner.CLIBinPath, "frost", "--help")
-	output, err := cmd.CombinedOutput()
-	// If frost command works, it's enabled
+	output, err := exec.Command(runner.CLIBinPath, subcommand, "--help").CombinedOutput()
 	return err == nil && !strings.Contains(string(output), "not compiled")
 }
 

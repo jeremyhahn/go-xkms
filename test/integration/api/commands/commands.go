@@ -662,6 +662,7 @@ func FIDO2Commands() []CommandDefinition {
 			RequiresServer: false,
 			RequiresLocal:  true,
 			BuildTags:      []string{"fido2"},
+			Skip:           skipFIDO2,
 			OptionalArgs: []ArgDefinition{
 				{Flag: "timeout", Value: "30s", Description: "Timeout for device wait"},
 			},
@@ -675,6 +676,7 @@ func FIDO2Commands() []CommandDefinition {
 			RequiresServer: false,
 			RequiresLocal:  true,
 			BuildTags:      []string{"fido2"},
+			Skip:           skipFIDO2,
 			RequiredArgs: []ArgDefinition{
 				{Flag: "", Value: "testuser", Description: "Username", IsPositional: true},
 			},
@@ -696,6 +698,7 @@ func FIDO2Commands() []CommandDefinition {
 			RequiresServer: false,
 			RequiresLocal:  true,
 			BuildTags:      []string{"fido2"},
+			Skip:           skipFIDO2,
 			RequiresSetup:  true, // Requires credential to be registered first
 			RequiredArgs: []ArgDefinition{
 				{Flag: "credential-id", Value: "", Description: "Credential ID from registration"},
@@ -718,6 +721,7 @@ func FIDO2Commands() []CommandDefinition {
 			RequiresServer: false,
 			RequiresLocal:  true,
 			BuildTags:      []string{"fido2"},
+			Skip:           skipFIDO2,
 			OptionalArgs: []ArgDefinition{
 				{Flag: "device", Value: "", Description: "Specific device path"},
 			},
