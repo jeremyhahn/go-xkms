@@ -245,11 +245,6 @@ auth:
   type: mtls
   mtls: true
 
-# Standalone datastore rooted on the data volume (config.Load requires
-# datastore.path for every standalone engine).
-datastore:
-  path: ${DATA_DIR}/datastore
-
 # The daemon's issuing CA (required by config.ComplianceGaps). Its root is
 # generated on first boot under the data volume; ca.crt above stays the TLS
 # and mTLS trust anchor.
