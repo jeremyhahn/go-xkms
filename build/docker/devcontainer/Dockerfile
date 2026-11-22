@@ -43,7 +43,7 @@ ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=${GO_BUILD_PROXY} GOBIN=/out
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
     p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
-    apt-get $p update && apt-get $p install -y --no-install-recommends xz-utils && \
+    timeout 300 apt-get $p update && timeout 300 apt-get $p install -y --no-install-recommends xz-utils && \
     rm -rf /var/lib/apt/lists/*
 COPY scripts/tool-pins.sh /tmp/tool-pins.sh
 RUN . /tmp/tool-pins.sh && \
@@ -114,7 +114,7 @@ ENV GOTOOLCHAIN=local DEBIAN_FRONTEND=noninteractive
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
     p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
-    apt-get $p update && apt-get $p install -y --no-install-recommends \
+    timeout 300 apt-get $p update && timeout 300 apt-get $p install -y --no-install-recommends \
     # Core build tools
     build-essential \
     gcc \
@@ -355,7 +355,7 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/ap
 # gated by `trivy image --ignore-unfixed` (ci.yml).
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
     p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
-    apt-get $p update && apt-get $p upgrade -y && apt-get $p install -y --no-install-recommends \
+    timeout 300 apt-get $p update && timeout 300 apt-get $p upgrade -y && timeout 300 apt-get $p install -y --no-install-recommends \
     # Core build tools (needed for CGO)
     build-essential \
     gcc \
@@ -520,7 +520,7 @@ FROM base AS toolchain
 ENV HOME=/tmp XKMS_NATIVE_BUILD=1
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
     p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
-    apt-get $p update && apt-get $p install -y --no-install-recommends \
+    timeout 300 apt-get $p update && timeout 300 apt-get $p install -y --no-install-recommends \
         bash \
         coreutils \
         diffutils \
@@ -557,7 +557,7 @@ LABEL description="Development environment for go-xkms with ALL build and test d
 USER root
 RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
     p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
-    apt-get $p update && apt-get $p install -y --no-install-recommends \
+    timeout 300 apt-get $p update && timeout 300 apt-get $p install -y --no-install-recommends \
     git-lfs \
     # Networking and testing tools
     wget \
