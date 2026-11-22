@@ -23,11 +23,19 @@
 # Host-name case and a terminal dot (Codex on #2340): DNS names are
 # case-insensitive and may be written fully qualified, so cache.INTERNAL and
 # registry.lan. are internal. The host is classified from a copy, lowercased
-# with one terminal dot removed; the masks keep the entry's own spelling,
-# which is what a log line repeats.
+# with one terminal dot removed. Each mask is printed in the entry's own
+# spelling and, when that differs, lowercased too, because a helper may log
+# the normalized form: scripts/ci-registry.sh push_host lowercases
+# RELEASE_REGISTRY and logs it after the login (Codex round 2 on #2346).
 #
 #   usage: scripts/ci-mask-lan.sh
 set -euo pipefail
+
+# mask <value>: the value as written and, when it differs, lowercased.
+mask() {
+	echo "::add-mask::$1"
+	[ "${1,,}" = "$1" ] || echo "::add-mask::${1,,}"
+}
 
 private() {
 	local h=${1,,}
@@ -52,8 +60,8 @@ for v in $(compgen -e); do
 		hostport=${hostport%%/*}
 		host=${hostport%%:*}
 		private "$host" || continue
-		echo "::add-mask::$entry"
-		[ "$hostport" = "$entry" ] || echo "::add-mask::$hostport"
-		[ "$host" = "$hostport" ] || echo "::add-mask::$host"
+		mask "$entry"
+		[ "$hostport" = "$entry" ] || mask "$hostport"
+		[ "$host" = "$hostport" ] || mask "$host"
 	done
 done

@@ -155,17 +155,24 @@ func TestCIMaskLANScript(t *testing.T) {
 		}
 	}
 	// Codex P1 on #2340: a host name is classified in any letter case and
-	// with its terminal dot removed; the masks keep the entry's spelling.
+	// with its terminal dot removed. Codex round 2 on #2346: each mask is
+	// printed as written and, when that differs, lowercased, because
+	// scripts/ci-registry.sh push_host lowercases RELEASE_REGISTRY and logs it.
 	for _, tc := range []struct {
 		name, env string
 		want      []string
 	}{
 		{"an upper-case LAN suffix", "DEVCACHE_GO=http://cache.INTERNAL:3300/go",
-			[]string{"http://cache.INTERNAL:3300/go", "cache.INTERNAL:3300", "cache.INTERNAL"}},
+			[]string{"http://cache.INTERNAL:3300/go", "cache.INTERNAL:3300", "cache.INTERNAL",
+				"http://cache.internal:3300/go", "cache.internal:3300", "cache.internal"}},
 		{"a fully qualified LAN name", "CI_IMAGE_REGISTRY=registry.lan.:5000",
 			[]string{"registry.lan.:5000", "registry.lan."}},
 		{"a fully qualified mixed-case name with no port", "RELEASE_REGISTRY=Pkgs.Home.Arpa.",
-			[]string{"Pkgs.Home.Arpa."}},
+			[]string{"Pkgs.Home.Arpa.", "pkgs.home.arpa."}},
+		// The registry helper's form: push_host prints ${RELEASE_REGISTRY,,},
+		// and the login line logs it.
+		{"a mixed-case release registry as the registry helper logs it", "RELEASE_REGISTRY=Pkgs.Home.Arpa:5000",
+			[]string{"Pkgs.Home.Arpa:5000", "Pkgs.Home.Arpa", "pkgs.home.arpa:5000", "pkgs.home.arpa"}},
 		{"a fully qualified single label", "GOPROXY=http://buildcache.:3000",
 			[]string{"http://buildcache.:3000", "buildcache.:3000", "buildcache."}},
 		{"a fully qualified public host and an upper-case keyword", "GOPROXY=https://Proxy.Golang.Org.,DIRECT",
