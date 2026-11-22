@@ -14,7 +14,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -132,16 +131,6 @@ func (s *Server) newQRDBAuditSink() (qrdbsdk.NodeAuditLogger, error) {
 // via WithFactorRegistry so the node's unified AuthFactorService can verify
 // hardware factor challenges during custodian enrollment and Shamir unseal
 // ceremonies.
-// nodeBuildContext is the context the embedded qrdb node is built with: the
-// server's own context, or context.Background() when the server was
-// composed without one (the node build reads the context, a nil one panics).
-func (s *Server) nodeBuildContext() context.Context {
-	if s.ctx != nil {
-		return s.ctx
-	}
-	return context.Background()
-}
-
 func (s *Server) initEmbeddedQRDBNode() error {
 	qcfg := s.buildXKMSQRDBConfig()
 
