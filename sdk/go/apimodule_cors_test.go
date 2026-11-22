@@ -21,6 +21,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -46,7 +47,7 @@ func TestServiceModule_CORSThroughSDK(t *testing.T) {
 	gate := func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}
-	module.RegisterHTTP(qrdbsdk.NewModuleHTTPRegistrar(mux,
+	module.RegisterHTTP(qrdbserver.NewModuleHTTPRegistrar(mux,
 		func(method, pattern string, _ qrdbsdk.Permission, _ http.HandlerFunc) {
 			mux.MethodFunc(method, pattern, gate)
 		},
