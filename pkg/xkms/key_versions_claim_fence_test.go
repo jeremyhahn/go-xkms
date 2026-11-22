@@ -112,3 +112,47 @@ func TestRotateKey_CancelledRequestReleasesItsClaim(t *testing.T) {
 	require.NoError(t, err, "the cancelled rotation released its claim")
 	assert.NotZero(t, next.version)
 }
+
+// TestRotateKey_TakeoverReclaimsTheCrashedRotatorsVersion: a rotator
+// reserves version 2, creates K--v2 and crashes before recording it. Once
+// its claim expires, the next rotation reserves version 3 and removes K--v2,
+// which no record holds and RetireKeyVersion could never reach.
+func TestRotateKey_TakeoverReclaimsTheCrashedRotatorsVersion(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := context.Background()
+	genKey(t, svc, "", "k", "ed25519", 0)
+	b, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+	store, err := svc.requireVersionStore()
+	require.NoError(t, err)
+
+	// The crashed rotator: claim, generate, never record or release.
+	_, reserved, err := store.Claim(ctx, "", "software", "k", nil)
+	require.NoError(t, err)
+	require.Equal(t, uint32(2), reserved)
+	_, err = b.GenerateEd25519(ctx, &types.KeyAttributes{CN: "k--v2", KeyType: types.KeyTypeSigning, StoreType: types.StoreSoftware})
+	require.NoError(t, err)
+
+	claimclock.Now = func() time.Time { return time.Now().Add(keyversion.ClaimTTL + time.Minute) }
+	t.Cleanup(func() { claimclock.Now = time.Now })
+	assert.Equal(t, uint32(3), rotate(t, svc, "", "k"), "the takeover keeps distinct reservations")
+
+	keys, err := b.ListKeys(ctx)
+	require.NoError(t, err)
+	var names []string
+	for _, attrs := range keys {
+		names = append(names, attrs.CN)
+	}
+	assert.NotContains(t, names, "k--v2", "the abandoned version is reclaimed")
+	assert.Contains(t, names, "k", "the recorded version 1 is never deleted")
+	assert.Contains(t, names, "k--v3")
+
+	stored, found, err := store.Load(ctx, "", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint32(3), stored.Current)
+	_, err = stored.Version(2)
+	assert.Error(t, err, "the record lists no version 2")
+	_, err = stored.Version(1)
+	assert.NoError(t, err)
+}

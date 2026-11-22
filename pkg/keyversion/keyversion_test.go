@@ -215,3 +215,19 @@ func TestErrorMessages(t *testing.T) {
 	}
 	assert.ErrorIs(t, &StoreError{Op: "put", Key: "x", Err: cause}, cause)
 }
+
+// A rotator that created K--v2 and crashed before recording it leaves v2 in
+// the backend; the rotation that takes its expired claim over reserves v3
+// and must reclaim v2, never a version the record holds.
+func TestRecordAbandoned(t *testing.T) {
+	r := Implicit("k", "software")
+	assert.Equal(t, []uint32{2}, r.Abandoned([]uint32{1, 2}, 3), "the crashed rotator's v2 is reclaimed")
+	assert.Empty(t, r.Abandoned([]uint32{1}, 3), "nothing to reclaim when the crash left no key")
+	assert.Empty(t, r.Abandoned([]uint32{1, 3}, 3), "the reserved version itself is not abandoned")
+	assert.Empty(t, r.Abandoned([]uint32{1, 4}, 3), "a version above the reservation is never touched")
+
+	r.AddCurrent(2, time.Now(), "")
+	require.NoError(t, r.Retire(1))
+	assert.Equal(t, []uint32{3, 4}, r.Abandoned([]uint32{1, 2, 4, 3}, 5), "only unrecorded versions, ascending")
+	assert.Empty(t, r.Abandoned([]uint32{1, 2}, 5), "a recorded version, retired or current, is never reclaimed")
+}
