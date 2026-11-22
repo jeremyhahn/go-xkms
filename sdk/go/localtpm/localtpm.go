@@ -43,7 +43,14 @@ var (
 	OpenDevice = pkg.OpenDevice
 	// OpenHost opens the host's TPM, its key store and the service.
 	OpenHost = pkg.OpenHost
+	// LoadReferenceSigner reads the trusted reference-value signer from
+	// ReferenceSignerFile in a data directory (nil when the file is absent).
+	LoadReferenceSigner = pkg.LoadReferenceSigner
 )
+
+// ReferenceSignerFile is the data-directory file naming the trusted
+// reference-value signer (PEM PUBLIC KEY or CERTIFICATE blocks).
+const ReferenceSignerFile = pkg.ReferenceSignerFile
 
 var (
 	ErrNoTPM              = pkg.ErrNoTPM
@@ -51,4 +58,7 @@ var (
 	ErrNoDataDir          = pkg.ErrNoDataDir
 	ErrNoStoreOpener      = pkg.ErrNoStoreOpener
 	ErrObjectNameRequired = pkg.ErrObjectNameRequired
+	// ErrReferenceSignerInvalid refuses a reference signer file with no
+	// usable key or certificate.
+	ErrReferenceSignerInvalid = pkg.ErrReferenceSignerInvalid
 )
