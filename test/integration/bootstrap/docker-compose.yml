@@ -16,7 +16,7 @@ services:
       secrets:
         - gomodauth
         - apt_proxy
-    image: go-xkms-bootstrap:${XKMS_IMAGE_TAG:-latest}
+    image: go-xkms-bootstrap-xkms-server:${XKMS_IMAGE_TAG:-latest}
     ports:
       - "${XKMS_HOST_REST_PORT:-0}:8443"
       - "${XKMS_HOST_NOISE_PORT:-0}:8445"
@@ -87,7 +87,7 @@ services:
       secrets:
         - gomodauth
         - apt_proxy
-    image: go-xkms-bootstrap:${XKMS_IMAGE_TAG:-latest}
+    image: go-xkms-bootstrap-zone-generator:${XKMS_IMAGE_TAG:-latest}
     user: root
     volumes:
       - xkms-certs:/etc/xkms/certs:ro

@@ -105,7 +105,7 @@ func run(argv []string, stderr io.Writer) int {
 	os.Args = stripFlags(os.Args, "--no-gui", "--gui")
 	if err := cliExecute(); err != nil {
 		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
-		return 1
+		return cmd.ExitCode(err)
 	}
 	return 0
 }
