@@ -40,6 +40,23 @@ rule falls through to a pattern rule that runs `test/integration/<dir>`
   run on its own, outside the `integration-test` aggregate, pending
   go-xkms#737: `make integration-test-acme-tpm` (`Makefile:2365`)
 
+### Per-Feature Tests
+A local verify runs the fast gates plus the tests of the features a change
+touches (Tenant ruling 1170).
+- `scripts/features.tsv`: one row per `docs/SPEC.md` feature that links a docs
+  folder, with its path prefixes, unit package patterns and integration
+  targets (`-` for none). `internal/buildgates/features_tsv_test.go` fails
+  when the table and the SPEC, the tree or the Makefile drift apart.
+- `make test-feature FEATURE=<name>` (`Makefile:1192`): the row's unit tests,
+  run as `test-go` runs them (same tags, `-race`, timeout and exclusions).
+- `make integration-test-feature FEATURE=<name>` (`Makefile:1203`): the row's
+  integration targets, in order. An unknown or empty `FEATURE` exits 2 on
+  both targets and lists the names.
+- `scripts/touched-features.sh <base> <tip>`: the features whose prefixes match
+  a file of `git diff --name-only <base> <tip>`, sorted; only `ALL` when a
+  changed file belongs to no feature (Makefile, `.github/`, `go.mod`, a shared
+  package); nothing for an empty diff; exit 2 on a bad revision.
+
 ## Testing Guides
 
 - [Docker Testing](docker-testing.md) - Using Docker for isolated integration tests
