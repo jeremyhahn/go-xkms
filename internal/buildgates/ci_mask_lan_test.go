@@ -177,6 +177,16 @@ func TestCIMaskLANScript(t *testing.T) {
 			[]string{"http://buildcache.:3000", "buildcache.:3000", "buildcache."}},
 		{"a fully qualified public host and an upper-case keyword", "GOPROXY=https://Proxy.Golang.Org.,DIRECT",
 			nil},
+		// Local Codex review on #2346: the authority is split at its last "@"
+		// before the host is classified, so the user name is never taken for
+		// the host, and the userinfo and its password are masked.
+		{"userinfo before an internal host", "GOPROXY=http://build.user:pw@cache.internal:3300",
+			[]string{"http://build.user:pw@cache.internal:3300", "build.user:pw@cache.internal:3300",
+				"cache.internal:3300", "cache.internal", "build.user:pw", "pw"}},
+		// A mask is workflow command data: a "%" is escaped as %25, so the
+		// runner decodes the mask back to the literal password.
+		{"a percent in a password on a public host", "GOPROXY=https://u:pa%25ss@proxy.golang.org",
+			[]string{"u:pa%2525ss", "pa%2525ss"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command("bash", script) // #nosec G204 -- the repository's own script
