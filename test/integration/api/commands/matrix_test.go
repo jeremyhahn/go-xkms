@@ -14,9 +14,13 @@
 package commands
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestCLIProtocols_CoversEverySDKTransport pins the SDK transport list of
@@ -409,6 +413,146 @@ func TestCACommands_EmbeddedCellNamesNoCA(t *testing.T) {
 			}
 			if r == ReasonEmbeddedNoCA {
 				t.Errorf("(ca, %s) %s carries the embedded reason", p, def.Name)
+			}
+		}
+	}
+}
+
+// serverCellTransports are the five transports that reach a running xkmsd.
+var serverCellTransports = []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
+
+// matrixCommand returns the matrix definition of name.
+func matrixCommand(t *testing.T, name string) CommandDefinition {
+	t.Helper()
+	for _, def := range AllCommands() {
+		if def.Name == name {
+			return def
+		}
+	}
+	t.Fatalf("no matrix command %q", name)
+	return CommandDefinition{}
+}
+
+// fixtureValue walks a dotted key through the parsed fixture config.
+func fixtureValue(cfg map[string]any, key string) any {
+	var cur any = cfg
+	for _, part := range strings.Split(key, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = m[part]
+	}
+	return cur
+}
+
+// TestMatrix_FixtureServicesDeclared checks that every command family the
+// integration-test-api-parity target runs on server transports (Platform,
+// Secrets, Bootstrap) either finds its service enabled in config.test.yaml or
+// skips with a reason that names the missing config key. A family that hits a
+// service the fixture never starts fails instead of reporting why.
+func TestMatrix_FixtureServicesDeclared(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "config.test.yaml"))
+	if err != nil {
+		t.Fatalf("read fixture config: %v", err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("parse fixture config: %v", err)
+	}
+	type need struct {
+		key     string
+		enabled bool
+		cmds    []CommandDefinition
+		secrets CommandCategory
+	}
+	seal, _ := fixtureValue(cfg, "credentials.seal_strategy").(string)
+	pinOn, _ := fixtureValue(cfg, "pin.enabled").(bool)
+	noiseOn, _ := fixtureValue(cfg, "bootstrap.noise.enabled").(bool)
+	needs := []need{
+		{key: "pin.enabled", enabled: pinOn, cmds: PINCommands(), secrets: CategoryPIN},
+		// manual and barrier both leave the platform store uninstalled
+		// (pkg/server/platform_store.go).
+		{key: "credentials.seal_strategy", enabled: seal != "" && seal != "manual" && seal != "barrier", cmds: PlatformCommands()},
+		{key: "bootstrap.noise.enabled", enabled: noiseOn, cmds: []CommandDefinition{matrixCommand(t, "bootstrap-show-keys")}},
+	}
+	for _, n := range needs {
+		if len(n.cmds) == 0 {
+			t.Fatalf("%s: no commands", n.key)
+		}
+		for _, p := range serverCellTransports {
+			if n.secrets != "" {
+				r, skip := SecretsWorkflowSkip(n.secrets, p)
+				if !n.enabled && (!skip || !strings.Contains(r, n.key)) {
+					t.Errorf("(%s, %s) secrets workflow: skip=%v reason=%q, want a reason naming %s", n.secrets, p, skip, r, n.key)
+				}
+				if n.enabled && skip && strings.Contains(r, n.key) {
+					t.Errorf("(%s, %s) skips for %s although the fixture enables it", n.secrets, p, n.key)
+				}
+			}
+			for _, def := range n.cmds {
+				r, skip := MatrixSkipReason(def, p, nil)
+				if !n.enabled && (!skip || !strings.Contains(r, n.key)) {
+					t.Errorf("(%s, %s) %s: skip=%v reason=%q, want a reason naming %s", def.Category, p, def.Name, skip, r, n.key)
+				}
+				if n.enabled && skip && strings.Contains(r, n.key) {
+					t.Errorf("(%s, %s) %s skips for %s although the fixture enables it", def.Category, p, def.Name, n.key)
+				}
+			}
+		}
+	}
+}
+
+// TestMatrix_EmbeddedCellsNameMissingSubsystem checks the commands whose
+// service sdk/go/embedded.go does not wire (it installs key and certificate
+// storage only) skip on embedded with a reason naming that subsystem, and
+// still run on the server transports.
+func TestMatrix_EmbeddedCellsNameMissingSubsystem(t *testing.T) {
+	cases := map[string]string{
+		"key-rotate":              "key version",
+		"key-rotate-all":          "key version",
+		"key-versions":            "key version",
+		"key-version-disable":     "key version",
+		"key-version-enable":      "key version",
+		"key-version-disable-all": "key version",
+		"key-version-enable-all":  "key version",
+		"key-version-retire":      "key version",
+		"admin-list":              "admin",
+		"tenant-list":             "tenant",
+		"user-list":               "user",
+		"credential-list":         "credential",
+		"credential-strategy":     "credential",
+	}
+	for name, subsystem := range cases {
+		def := matrixCommand(t, name)
+		r, skip := MatrixSkipReason(def, ProtocolEmbedded, nil)
+		if !skip || !strings.Contains(r, subsystem) || !strings.Contains(r, "sdk/go/embedded.go") {
+			t.Errorf("(%s, embedded) %s: skip=%v reason=%q, want a reason naming the %s subsystem", def.Category, name, skip, r, subsystem)
+		}
+		for _, p := range serverCellTransports {
+			r, skip := MatrixSkipReason(def, p, nil)
+			if skip && strings.Contains(r, "sdk/go/embedded.go") {
+				t.Errorf("(%s, %s) %s carries the embedded reason %q", def.Category, p, name, r)
+			}
+			if skip && !def.RequiresSetup {
+				t.Errorf("(%s, %s) %s skipped: %s", def.Category, p, name, r)
+			}
+		}
+	}
+}
+
+// TestMatrix_EmbeddedImportCeremonySkipped checks the import ceremony runs on
+// the server transports only: each embedded CLI call starts a fresh
+// SoftwareBackend, so the import token one step mints is gone by the next.
+func TestMatrix_EmbeddedImportCeremonySkipped(t *testing.T) {
+	for _, name := range []string{"key-unwrap", "key-get-import-params-for-import", "key-wrap-for-import", "key-import"} {
+		def := matrixCommand(t, name)
+		if r, skip := MatrixSkipReason(def, ProtocolEmbedded, nil); !skip || r != ReasonEmbeddedImportCeremony {
+			t.Errorf("(key, embedded) %s: skip=%v reason=%q, want %q", name, skip, r, ReasonEmbeddedImportCeremony)
+		}
+		for _, p := range serverCellTransports {
+			if r, _ := MatrixSkipReason(def, p, nil); r == ReasonEmbeddedImportCeremony {
+				t.Errorf("(key, %s) %s carries the embedded import reason", p, name)
 			}
 		}
 	}
