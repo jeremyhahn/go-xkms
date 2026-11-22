@@ -406,7 +406,10 @@ endif
 # declare no USER. The integration image runs `make test` as testuser
 # (Dockerfile), which cannot traverse /root, so docker-run and docker-test take
 # GITEA_MODULE_ENV alone and resolve modules inside the image as before.
+# `-e GOFLAGS` (no value) forwards the recipe's exported GOFLAGS, so the
+# global -trimpath and any target-specific GOFLAGS reach the builder (#2309).
 BUILDER_MODULE_ENV := $(GITEA_MODULE_ENV) \
+                    -e GOFLAGS \
                     -e GOMODCACHE=/root/go/pkg/mod \
                     -v $(GOMODCACHE_HOST):/root/go/pkg/mod:cached
 
