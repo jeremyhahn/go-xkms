@@ -24,6 +24,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -375,6 +376,15 @@ func TestGetInvite_NotConfigured(t *testing.T) {
 // bundle, so the two must be different certificates linked by signature.
 func generateInvitePIVChain(t *testing.T) (caCert *x509.Certificate, leafCert *x509.Certificate, leafErr error) {
 	t.Helper()
+	return generateInvitePIVChainFor(t, inviteFixtureTenant)
+}
+
+// generateInvitePIVChainFor is generateInvitePIVChain with a leaf that names
+// tenant the way qrdb's TenantFromClientCert reads it: tenant as the first
+// OU and a spiffe://<tenant>/user/<name> SAN, the form PIV login derives the
+// account's tenant from.
+func generateInvitePIVChainFor(t *testing.T, tenant string) (caCert *x509.Certificate, leafCert *x509.Certificate, leafErr error) {
+	t.Helper()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	caTemplate := &x509.Certificate{
@@ -395,7 +405,8 @@ func generateInvitePIVChain(t *testing.T) (caCert *x509.Certificate, leafCert *x
 	require.NoError(t, err)
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "invitee PIV cert"},
+		Subject:      pkix.Name{CommonName: "invitee", OrganizationalUnit: []string{tenant}},
+		URIs:         []*url.URL{{Scheme: "spiffe", Host: tenant, Path: "/user/invitee"}},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -548,6 +559,45 @@ func TestActivateInvitePIV_RejectedChainLeavesInvitationRedeemable(t *testing.T)
 	require.NoError(t, err, "a rejected chain must not spend the invitation")
 
 	result, err := f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+	require.NoError(t, err)
+	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+	assert.Len(t, f.certBindings(inviteFixtureQRDBUserID), 1)
+}
+
+// A certificate the CA trusts but that names another tenant (here a
+// system-tenant certificate presented with an acme-tenant invitation) is
+// refused before anything is claimed or bound: PIV login derives the tenant
+// from the certificate under the pinned trust domain, so such a binding
+// could never be found. The invitation stays redeemable and the account
+// pending; the acme certificate then activates the same invitation.
+func TestActivateInvitePIV_RefusesCertificateOfAnotherTenant(t *testing.T) {
+	const tenant = "acme"
+	f := newInviteFixtureIn(t, tenant)
+	f.svc.SetSPIFFETrustDomain("xkms.test")
+	token := f.mintInvite(t)
+
+	// Both issuing CAs are in the trusted bundle: chain trust alone admits
+	// either certificate.
+	systemCA, systemLeaf, err := generateInvitePIVChainFor(t, qrdbsdk.SystemTenantID)
+	require.NoError(t, err)
+	acmeCA, acmeLeaf, err := generateInvitePIVChainFor(t, tenant)
+	require.NoError(t, err)
+	bundle := append(pemEncodeCert(systemCA), pemEncodeCert(acmeCA)...)
+	f.svc.SetCA(&mockCA{bundlePEM: bundle})
+
+	_, err = f.activatePIV(tenant, token, pemEncodeCert(systemLeaf))
+	var rejected *ErrPIVCertRejected
+	require.ErrorAs(t, err, &rejected, "a certificate of another tenant must be refused")
+	assert.Empty(t, f.certBindings(inviteFixtureQRDBUserID), "no binding for a refused certificate")
+
+	_, err = f.getInvite(tenant, token)
+	require.NoError(t, err, "a refused certificate must not spend the invitation")
+	u, err := f.svc.inviteUserClient().GetUser(bindInviteTenant(context.Background(), tenant), inviteFixtureQRDBUserID)
+	require.NoError(t, err)
+	assert.Equal(t, string(qrdbsdk.LifecyclePending), u.Lifecycle, "the account must stay pending")
+
+	// The invited tenant's certificate activates the same invitation.
+	result, err := f.activatePIV(tenant, token, pemEncodeCert(acmeLeaf))
 	require.NoError(t, err)
 	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
 	assert.Len(t, f.certBindings(inviteFixtureQRDBUserID), 1)
