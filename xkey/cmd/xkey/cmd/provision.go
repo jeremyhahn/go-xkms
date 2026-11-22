@@ -491,7 +491,11 @@ func provisionBarrier(ctx context.Context, dataDir, barrierPassword string) (str
 	if credErr != nil {
 		return "", credErr
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() {
+		if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+			err = errors.Join(err, creds.Secret.Destroy())
+		}
+	}()
 
 	if err := barrier.Initialize(ctx, creds); err != nil {
 		return "", err

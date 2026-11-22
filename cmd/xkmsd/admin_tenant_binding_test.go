@@ -34,6 +34,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -139,7 +140,10 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 		WithoutEmailLoginKey: true,
 	})
 	require.NoError(t, err)
-	f.roleB, err = client.Roles().CreateRole(ctxB, &qrdbtransport.CreateRoleRequest{
+	// go-qrdb lets a grantor grant only permissions it holds, and kv:get is
+	// not among Admin's or SO's, so the victim role is created by a tenant-b
+	// principal that also holds the built-in Operator and User roles.
+	f.roleB, err = client.Roles().CreateRole(granterContext(bindingTenantB), &qrdbtransport.CreateRoleRequest{
 		Name:        "victim-role-1225",
 		TenantID:    bindingTenantB,
 		Permissions: []string{"kv:get"},
@@ -155,6 +159,24 @@ func tenantRole(t *testing.T, client *qrdbsdk.Client, tenantID, name string) *qr
 		&qrdbtransport.GetRoleByNameRequest{TenantID: tenantID, Name: name})
 	require.NoError(t, err, "tenant %s must be seeded with the %q role", tenantID, name)
 	return r
+}
+
+// granterContext is oracleContext for a principal that holds every built-in
+// role of the tenant (Admin, SO, Operator, User), so it may grant the data
+// permissions (kv:get and the like) go-qrdb's grant rule refuses a grantor
+// that does not hold them.
+func granterContext(tenantID string) context.Context {
+	granter := &qrdbsdk.Identity{
+		Subject:  "admin-plane-granter",
+		TenantID: tenantID,
+		Roles: []string{
+			qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameAdmin),
+			qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameSO),
+			qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameOperator),
+			qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameUser),
+		},
+	}
+	return qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(context.Background(), granter), tenantID)
 }
 
 // do dispatches one admin request presenting the caller's certificate as the
