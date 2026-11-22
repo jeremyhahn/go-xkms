@@ -33,8 +33,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
-	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
+	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // startOIDCXKMSd starts the harness xkmsd with an OIDC credential service
@@ -43,7 +43,7 @@ func startOIDCXKMSd(t *testing.T) {
 	t.Helper()
 	isolateXKMSdEndpoint(t)
 	svc := newTestXKMSService(t)
-	creds, err := credential.New(credential.RegistryBarriers(barriertest.NewRegistry(t)))
+	creds, err := oidc.NewCredentialService(oidc.CredentialRegistryBarriers(xkmstest.NewBarrierRegistry(t)))
 	require.NoError(t, err)
 	svc.SetOIDCCredentialService(creds)
 	address, _ := startTestXKMSdService(t, svc)
