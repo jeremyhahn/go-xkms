@@ -382,6 +382,72 @@ func TestSelection_GrantSatisfiesNextMakeCredential(t *testing.T) {
 
 }
 
+// TestSelection_GrantDoesNotSurvivePINMakeCredential covers the Codex P1 on
+// #2271: a PIN-authenticated MakeCredential with RequireUserPresence off asks
+// for no presence, so it never consumed the Selection grant. A later
+// GetAssertion without a PIN on the same channel must not inherit it: the
+// grant is one-shot for the next credential operation (docs/plans/2052.md).
+func TestSelection_GrantDoesNotSurvivePINMakeCredential(t *testing.T) {
+	t.Parallel()
+	const ch1 = uint32(0x01000001)
+	h := newSelUPHandler()
+	h.auto.Store(true)
+	auth := newSelectionTestAuthenticator(t, h, func(c *Config) {
+		c.EnablePIN = true
+		c.RequireUserPresence = false
+	})
+	ctx := WithCTAPHIDChannel(context.Background(), ch1)
+
+	resp, err := auth.ProcessCBORWithContext(ctx, CmdSelection, nil)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	require.Equal(t, int32(1), h.calls.Load())
+
+	token := authzTestToken()
+	clientDataHash := sha256.Sum256([]byte("selection"))
+	auth.pinState.protocol = livePinTokenGrant(token, PINPermissionMakeCredential)
+	mc, err := cbor.Marshal(map[int]interface{}{
+		0x01: clientDataHash[:],
+		0x02: map[string]interface{}{"id": "test.example.com", "name": "Test RP"},
+		0x03: map[string]interface{}{"id": []byte{0x01, 0x02, 0x03}, "name": "testuser"},
+		0x04: []map[string]interface{}{{"type": "public-key", "alg": -7}},
+		0x08: pinUvAuthParamFor(token, clientDataHash[:]),
+		0x09: 1,
+	})
+	require.NoError(t, err)
+	resp, err = auth.ProcessCBORWithContext(ctx, CmdMakeCredential, mc)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	require.Equal(t, int32(1), h.calls.Load(),
+		"precondition: PIN-authenticated MakeCredential without RequireUserPresence asks for no presence")
+
+	var att map[int]cbor.RawMessage
+	require.NoError(t, cbor.Unmarshal(resp[1:], &att))
+	var rawAuthData []byte
+	require.NoError(t, cbor.Unmarshal(att[0x02], &rawAuthData))
+	mcAuthData, err := ParseAuthData(rawAuthData)
+	require.NoError(t, err)
+
+	ga, err := cbor.Marshal(map[int]interface{}{
+		0x01: "test.example.com",
+		0x02: clientDataHash[:],
+		0x03: []map[string]interface{}{{"type": "public-key", "id": mcAuthData.CredentialID}},
+	})
+	require.NoError(t, err)
+	resp, err = auth.ProcessCBORWithContext(ctx, CmdGetAssertion, ga)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	require.Equal(t, int32(2), h.calls.Load(),
+		"GetAssertion must ask for fresh presence: the Selection grant ended with the MakeCredential")
+
+	var asr map[int]cbor.RawMessage
+	require.NoError(t, cbor.Unmarshal(resp[1:], &asr))
+	require.NoError(t, cbor.Unmarshal(asr[0x02], &rawAuthData))
+	gaAuthData, err := ParseAuthData(rawAuthData)
+	require.NoError(t, err)
+	require.True(t, gaAuthData.Flags.Has(FlagUP), "UP comes from the fresh gesture")
+}
+
 // --- CTAPHID transport helpers -------------------------------------------
 
 // selProbe collects the HID packets an authenticator sends.
