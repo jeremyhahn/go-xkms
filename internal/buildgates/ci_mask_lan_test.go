@@ -180,8 +180,8 @@ func TestCIMaskLANScript(t *testing.T) {
 		// Local Codex review on #2346: the authority is split at its last "@"
 		// before the host is classified, so the user name is never taken for
 		// the host, and the userinfo and its password are masked.
-		{"userinfo before an internal host", "GOPROXY=http://build.user:pw@cache.internal:3300",
-			[]string{"http://build.user:pw@cache.internal:3300", "build.user:pw@cache.internal:3300",
+		{"userinfo before an internal host", "GOPROXY=http://build.user:pw@cache.internal:3300", // lab-string-ok: made-up user and LAN-suffix host; the test proves the userinfo split
+			[]string{"http://build.user:pw@cache.internal:3300", "build.user:pw@cache.internal:3300", // lab-string-ok: the same made-up fixture
 				"cache.internal:3300", "cache.internal", "build.user:pw", "pw"}},
 		// A mask is workflow command data: a "%" is escaped as %25, so the
 		// runner decodes the mask back to the literal password.
