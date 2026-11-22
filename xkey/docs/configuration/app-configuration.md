@@ -175,7 +175,20 @@ phone:
   server_tls_enabled: false
   device_filter: ""
   attestation_policy: ""
+  attestation_status_url: ""   # Android attestation revocation status list; empty = https://android.googleapis.com/attestation/status
+  attestation_status_file: ""  # Local copy of the status list; when set it is used instead of the URL
 ```
+
+Every Android attestation chain xkey verifies (pairing, reconnect,
+`device verify-user`, `device attest`, phone enrollment) is checked against the
+attestation certificate revocation status list (ruling 180,
+`docs/references/android-key-attestation.md` §Certificate revocation status
+list). `attestation_status_file` names a local copy, for a host that cannot
+reach the published list; otherwise the list is fetched from
+`attestation_status_url` and cached for the freshness the response allows
+(RFC 9111 §4.2). Revocation fails closed: an unreadable file, an unreachable
+URL or a stale list refuses the chain, and there is no setting that skips the
+check. `attestation_status_url` must be an absolute `http` or `https` URL.
 
 ### xkmsd
 

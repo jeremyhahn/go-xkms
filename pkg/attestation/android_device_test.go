@@ -19,6 +19,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -93,7 +94,7 @@ func (ca *testCA) pool() *x509.CertPool {
 }
 
 func TestVerifyAndroidDeviceKey_RealHandsetSatisfiesTheHardwarePolicy(t *testing.T) {
-	trust := &AndroidDeviceTrust{Roots: googleRoots(t), Applications: packageMatcher(captureApplication)}
+	trust := &AndroidDeviceTrust{Roots: googleRoots(t), Applications: packageMatcher(captureApplication), Revocation: noRevocations(t)}
 
 	key, err := VerifyAndroidDeviceKey(loadDERChain(t, galaxyS23UltraChain), trust)
 	require.NoError(t, err)
@@ -115,7 +116,7 @@ func TestVerifyAndroidDeviceKey_Refuses(t *testing.T) {
 	chainDER := loadDERChain(t, galaxyS23UltraChain)
 
 	t.Run("another application", func(t *testing.T) {
-		trust := &AndroidDeviceTrust{Roots: googleRoots(t), Applications: packageMatcher("com.automatethethings.xkey")}
+		trust := &AndroidDeviceTrust{Roots: googleRoots(t), Applications: packageMatcher("com.automatethethings.xkey"), Revocation: noRevocations(t)}
 
 		key, err := VerifyAndroidDeviceKey(chainDER, trust)
 
@@ -125,12 +126,17 @@ func TestVerifyAndroidDeviceKey_Refuses(t *testing.T) {
 	})
 
 	t.Run("no application policy", func(t *testing.T) {
-		_, err := VerifyAndroidDeviceKey(chainDER, &AndroidDeviceTrust{Roots: googleRoots(t)})
+		_, err := VerifyAndroidDeviceKey(chainDER, &AndroidDeviceTrust{Roots: googleRoots(t), Revocation: noRevocations(t)})
 		require.ErrorIs(t, err, android.ErrNilApplicationMatcher)
 	})
 
+	t.Run("no revocation status list", func(t *testing.T) {
+		_, err := VerifyAndroidDeviceKey(chainDER, &AndroidDeviceTrust{Roots: googleRoots(t), Applications: packageMatcher(captureApplication)})
+		require.ErrorIs(t, err, ErrNoRevocationSource, "the revocation check is required, not optional")
+	})
+
 	t.Run("roots it does not anchor in", func(t *testing.T) {
-		trust := &AndroidDeviceTrust{Roots: generateTestCA(t, "Foreign Root").pool(), Applications: packageMatcher(captureApplication)}
+		trust := &AndroidDeviceTrust{Roots: generateTestCA(t, "Foreign Root").pool(), Applications: packageMatcher(captureApplication), Revocation: noRevocations(t)}
 
 		_, err := VerifyAndroidDeviceKey(chainDER, trust)
 
@@ -148,8 +154,82 @@ func TestVerifyAndroidDeviceKey_Refuses(t *testing.T) {
 	})
 
 	t.Run("empty chain", func(t *testing.T) {
-		_, err := VerifyAndroidDeviceKey(nil, &AndroidDeviceTrust{Roots: googleRoots(t), Applications: packageMatcher(captureApplication)})
+		_, err := VerifyAndroidDeviceKey(nil, &AndroidDeviceTrust{Roots: googleRoots(t), Applications: packageMatcher(captureApplication), Revocation: noRevocations(t)})
 		require.ErrorIs(t, err, ErrEmptyCertificateChain)
+	})
+}
+
+// noRevocations is a status list that lists no certificate.
+func noRevocations(t *testing.T) *android.StatusList {
+	t.Helper()
+	list, err := android.ParseStatusList([]byte(`{"entries":{}}`))
+	require.NoError(t, err)
+	return list
+}
+
+// listing returns a status list naming one certificate with a status.
+func listing(t *testing.T, cert *x509.Certificate, status android.CertificateStatus) *android.StatusList {
+	t.Helper()
+	doc := fmt.Sprintf(`{"entries":{%q:{"status":%q,"reason":"KEY_COMPROMISE"}}}`,
+		android.StatusListSerial(cert.SerialNumber), status)
+	list, err := android.ParseStatusList([]byte(doc))
+	require.NoError(t, err)
+	return list
+}
+
+// unavailableStatusList is a source that cannot supply a list.
+type unavailableStatusList struct{}
+
+func (unavailableStatusList) Current() (*android.StatusList, error) {
+	return nil, &android.StatusListUnavailableError{Source: "test", Cause: errUnreachable}
+}
+
+var errUnreachable = errors.New("test: status list endpoint unreachable")
+
+func TestVerifyAndroidDeviceKey_RevocationStatusList(t *testing.T) {
+	chainDER := loadDERChain(t, galaxyS23UltraChain)
+	chain, err := ParseDERChain(chainDER)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(chain), 3, "the fixture must carry a leaf, an intermediate and a root")
+
+	verify := func(revocation android.StatusListSource) error {
+		_, err := VerifyAndroidDeviceKey(chainDER, &AndroidDeviceTrust{
+			Roots: googleRoots(t), Applications: packageMatcher(captureApplication), Revocation: revocation,
+		})
+		return err
+	}
+
+	cases := []struct {
+		name   string
+		cert   *x509.Certificate
+		status android.CertificateStatus
+	}{
+		{"revoked leaf", chain[0], android.CertificateStatusRevoked},
+		{"revoked intermediate", chain[1], android.CertificateStatusRevoked},
+		{"revoked root", chain[len(chain)-1], android.CertificateStatusRevoked},
+		{"suspended intermediate", chain[1], android.CertificateStatusSuspended},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verify(listing(t, tc.cert, tc.status))
+
+			require.ErrorIs(t, err, android.ErrCertificateRevoked)
+			var revoked *android.RevokedCertificateError
+			require.ErrorAs(t, err, &revoked)
+			assert.Equal(t, android.StatusListSerial(tc.cert.SerialNumber), revoked.Serial)
+			assert.Equal(t, tc.status, revoked.Status)
+			assert.Contains(t, err.Error(), revoked.Serial, "the error names the serial")
+		})
+	}
+
+	t.Run("unlisted chain passes", func(t *testing.T) {
+		require.NoError(t, verify(noRevocations(t)))
+	})
+
+	t.Run("list unavailable fails closed", func(t *testing.T) {
+		err := verify(unavailableStatusList{})
+		require.ErrorIs(t, err, android.ErrStatusListUnavailable)
+		require.ErrorIs(t, err, errUnreachable)
 	})
 }
 

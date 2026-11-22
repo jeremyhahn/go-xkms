@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func TestEnrollPhone_NoConfig(t *testing.T) {
@@ -54,6 +56,20 @@ func TestEnrollPhone_SessionOpenFailure(t *testing.T) {
 	opts := &enrollPhoneOptions{CASource: "local"}
 	err := enrollPhone(context.Background(), opts, discardLogger())
 	require.ErrorIs(t, err, ErrSessionKeyDecode)
+}
+
+// TestEnrollPhone_UnreadableStatusListRefusesBeforeTheSession pins ruling
+// 180: a configured status list that cannot be read refuses enrollment before
+// a session to the phone is opened.
+func TestEnrollPhone_UnreadableStatusListRefusesBeforeTheSession(t *testing.T) {
+	deviceInfoTestHome(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{Devices: []PairedDevice{brokenNoiseKeyDevice("A")}}))
+	useAbsentStatusList(t)
+
+	err := enrollPhone(context.Background(), &enrollPhoneOptions{CASource: "local"}, discardLogger())
+
+	require.ErrorIs(t, err, xkms.ErrAndroidStatusListUnavailable)
+	assert.NotErrorIs(t, err, ErrSessionKeyDecode)
 }
 
 func TestRunDeviceEnrollPhone_NoConfig(t *testing.T) {

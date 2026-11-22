@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 )
 
@@ -195,7 +196,7 @@ func newAndroidVerifier(t *testing.T, root *x509.Certificate) *Verifier {
 	store := newMockTrustStore()
 	store.addCertForPurpose(root, truststore.PurposeAndroidHardware)
 
-	v := NewVerifier(nil, WithTrustStore(store, nil))
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(&android.StatusList{}))
 
 	return v
 }
@@ -380,5 +381,46 @@ func TestVerifyAndroidAttestation_ChallengeCheckedAfterChainFails(t *testing.T) 
 	}
 	if result.Verified {
 		t.Error("Verified = true for an untrusted chain, want false")
+	}
+}
+
+func TestVerifyAndroidAttestation_RevokedTrustAnchorRejected(t *testing.T) {
+	challenge := []byte("challenge-generated-by-this-host")
+	rootCA := generateTestCA(t, "Android Root CA")
+	leaf := generateAttestedLeaf(t, rootCA, "Android Key", challenge, androidSecurityLevelTrustedEnv)
+	list, err := android.ParseStatusList([]byte(`{"entries":{"` + android.StatusListSerial(rootCA.cert.SerialNumber) + `":{"status":"REVOKED","reason":"KEY_COMPROMISE"}}}`))
+	if err != nil {
+		t.Fatalf("ParseStatusList() error: %v", err)
+	}
+	store := newMockTrustStore()
+	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
+	v := NewVerifier(nil, WithTrustStore(store, nil), WithRevocation(list))
+
+	// The root is not presented: it is found in the pool and checked there.
+	result, err := v.VerifyAndroidAttestation([]*x509.Certificate{leaf}, challenge)
+
+	if !errors.Is(err, android.ErrCertificateRevoked) || !errors.Is(err, ErrChainVerificationFailed) {
+		t.Fatalf("error = %v, want ErrCertificateRevoked and ErrChainVerificationFailed", err)
+	}
+	if result == nil || result.Verified {
+		t.Fatalf("result = %+v, want an unverified result", result)
+	}
+}
+
+func TestVerifyAndroidAttestation_NoRevocationSourceRefused(t *testing.T) {
+	challenge := []byte("challenge-generated-by-this-host")
+	rootCA := generateTestCA(t, "Android Root CA")
+	leaf := generateAttestedLeaf(t, rootCA, "Android Key", challenge, androidSecurityLevelTrustedEnv)
+	store := newMockTrustStore()
+	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
+	v := NewVerifier(nil, WithTrustStore(store, nil))
+
+	result, err := v.VerifyAndroidAttestation([]*x509.Certificate{leaf, rootCA.cert}, challenge)
+
+	if !errors.Is(err, ErrNoRevocationSource) {
+		t.Fatalf("error = %v, want ErrNoRevocationSource", err)
+	}
+	if result != nil {
+		t.Fatalf("result = %+v, want nil", result)
 	}
 }

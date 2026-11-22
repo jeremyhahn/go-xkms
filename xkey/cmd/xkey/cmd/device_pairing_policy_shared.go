@@ -131,6 +131,11 @@ func loadPairingAttestationTrust() (_ *xkms.AndroidDeviceTrust, err error) {
 	}
 	apps := attestation.ResolveApplicationPolicy(devices.applicationPolicy(), enterprise)
 
+	revocation, err := attestation.RevocationSource(unifiedConfigOrDefault().Phone)
+	if err != nil {
+		return nil, err
+	}
+
 	store, err := openTrustStore()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
@@ -141,7 +146,7 @@ func loadPairingAttestationTrust() (_ *xkms.AndroidDeviceTrust, err error) {
 		}
 	}()
 
-	return attestation.LoadTrust(store, apps)
+	return attestation.LoadTrust(store, apps, revocation)
 }
 
 // ErrPairingPolicyRefused indicates the config directory is sealed, an SO

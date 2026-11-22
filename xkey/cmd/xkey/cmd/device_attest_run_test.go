@@ -19,12 +19,15 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // runAttestWithPhone pairs a device, answers local.attestKey through the
@@ -147,4 +150,24 @@ func TestRunDeviceAttest_UntrustedChainFailsVerification(t *testing.T) {
 	require.ErrorIs(t, err, ErrDeviceAttestVerifyFailed)
 	assert.Contains(t, out, "Chain Status:        FAILED")
 	assert.NotContains(t, out, "VERIFIED")
+}
+
+// TestRunDeviceAttest_UnreadableStatusListFailsClosed pins ruling 180: a
+// configured status list that cannot be read refuses verification before any
+// chain verdict is printed.
+func TestRunDeviceAttest_UnreadableStatusListFailsClosed(t *testing.T) {
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.Phone.AttestationStatusFile = filepath.Join(t.TempDir(), "absent.json")
+	previous := loadedConfig
+	loadedConfig = cfg
+	t.Cleanup(func() { loadedConfig = previous })
+	transport := attestResultTransport(&pairingproto.LocalAttestKeyResult{
+		CertificateChain: [][]byte{generateTestCertDER(t, x509.ECDSA)},
+	})
+
+	out, err := runAttestWithPhone(t, transport, false)
+
+	require.ErrorIs(t, err, ErrDeviceAttestVerifyFailed)
+	require.ErrorIs(t, err, xkms.ErrAndroidStatusListUnavailable)
+	assert.NotContains(t, out, "Chain Status:")
 }

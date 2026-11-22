@@ -53,25 +53,57 @@ type AndroidVerifier struct {
 	trustPool       *x509.CertPool
 	minSecLevel     attestandroid.SecurityLevel
 	verifyBootState bool
+	revocation      attestandroid.StatusListSource
 }
 
 // NewAndroidVerifier creates a new AndroidVerifier from the phone backend's
 // attestation configuration. This function satisfies the phone.PlatformVerifierFactory
 // signature.
+//
+// Every chain certificate is checked against the attestation revocation
+// status list (ruling 180): the copy at cfg.StatusListFile when it is set,
+// else the list fetched from cfg.StatusListURL, Google's when that is empty.
+// No request is made here; the list is fetched when a chain is first
+// verified, and a list that cannot be fetched fails the verification.
 func NewAndroidVerifier(trustPool *x509.CertPool, cfg *phone.AttestationConfig) (phone.PlatformVerifier, error) {
 	minSecLevel := attestandroid.SecurityLevelSoftware
 	verifyBootState := false
+	var statusListURL, statusListFile string
 
 	if cfg != nil {
 		minSecLevel = mapMinSecurityLevel(cfg.MinSecurityLevel)
 		verifyBootState = cfg.VerifyBootState
+		statusListURL, statusListFile = cfg.StatusListURL, cfg.StatusListFile
+	}
+
+	revocation, err := statusListSource(statusListURL, statusListFile)
+	if err != nil {
+		return nil, err
 	}
 
 	return &AndroidVerifier{
 		trustPool:       trustPool,
 		minSecLevel:     minSecLevel,
 		verifyBootState: verifyBootState,
+		revocation:      revocation,
 	}, nil
+}
+
+// statusListSource returns the status list loaded from file when it is set,
+// else an HTTP source for url.
+func statusListSource(url, file string) (attestandroid.StatusListSource, error) {
+	if file != "" {
+		list, err := attestandroid.LoadStatusListFile(file)
+		if err != nil {
+			return nil, err
+		}
+		return list, nil
+	}
+	source, err := attestandroid.NewHTTPStatusList(attestandroid.HTTPStatusListOptions{URL: url})
+	if err != nil {
+		return nil, err
+	}
+	return source, nil
 }
 
 // Platform returns the platform identifier for Android.
@@ -95,17 +127,21 @@ func (v *AndroidVerifier) VerifyAttestation(derChain [][]byte, nonce []byte) (*p
 		}
 		chain = append(chain, cert)
 	}
+	if v.revocation == nil {
+		return nil, &errs.Joined{Lead: phone.ErrChainVerificationFailed, Cause: attestandroid.ErrNilStatusListSource}
+	}
 
 	verifyOpts := &attestandroid.VerifyOptions{
 		TrustedRoots:     v.trustPool,
 		ExpectedNonce:    nonce,
 		MinSecurityLevel: v.minSecLevel,
 		VerifyBootState:  v.verifyBootState,
+		Revocation:       v.revocation,
 	}
 
 	desc, err := attestandroid.VerifyKeyAttestation(chain, verifyOpts)
 	if err != nil {
-		return nil, &errs.Detail{Err: phone.ErrChainVerificationFailed, Detail: fmt.Sprintf("%v", err)}
+		return nil, &errs.Joined{Lead: phone.ErrChainVerificationFailed, Cause: err}
 	}
 
 	return &phone.VerifiedAttestation{
