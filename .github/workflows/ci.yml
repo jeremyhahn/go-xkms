@@ -1565,7 +1565,6 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && steps.probe.outputs.has_target == 'true' }}
         with:
-          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: Install the gate tools at the toolchain image's pins
@@ -2054,7 +2053,6 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' && needs.preflight.outputs.docs_only != 'true' }}
         with:
-          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: Static analysis (native)
@@ -2201,7 +2199,6 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
-          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: Backend-tagged binaries and the acme-client GUI (native)
@@ -2320,7 +2317,6 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
-          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: Build sdk/go, web/desktop and xkey (native)
@@ -2455,7 +2451,6 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
-          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: sdk/go and web/desktop tests (native)
@@ -2589,7 +2584,6 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
-          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: Build, vet and test (native)
@@ -2715,7 +2709,6 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
-          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: Race detector, all backends including FROST (native)
@@ -2814,7 +2807,6 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: ${{ runner.environment == 'self-hosted' }}
         with:
-          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: pkg/tpm2 on the simulator (native)

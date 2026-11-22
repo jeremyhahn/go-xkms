@@ -40,7 +40,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: ${{ runner.environment != 'self-hosted' }}
+          cache: true
 
       - name: Install dependencies
         run: go mod download
@@ -125,7 +125,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: ${{ runner.environment != 'self-hosted' }}
+          cache: true
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
@@ -145,7 +145,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: ${{ runner.environment != 'self-hosted' }}
+          cache: true
 
       - name: Run tests with race detector
         run: make test
@@ -163,7 +163,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: ${{ runner.environment != 'self-hosted' }}
+          cache: true
 
       - name: Run integration tests
         run: make compose-integration
