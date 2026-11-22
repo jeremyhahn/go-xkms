@@ -213,9 +213,6 @@ func (m *mockPIVClient) ExportOTAImagePublicKey(_ context.Context, _ *transport.
 func (m *mockPIVClient) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }
-func (m *mockPIVClient) ExportOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
-	return nil, nil
-}
 func (m *mockPIVClient) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, errMockNotImplemented
 }
