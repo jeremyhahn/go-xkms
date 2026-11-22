@@ -463,6 +463,32 @@ func TestCredentialStore_ExpiredClaimWithCredentialIsNotRecovered(t *testing.T) 
 	assert.Equal(t, saved.ID, owned[0].ID)
 }
 
+// TestCredentialStore_CommitAfterRollForwardKeepsCredential: a ceremony that
+// saved its credential and stalled past its lease, whose claim another
+// ClaimFirstCredential rolled forward to committed, keeps its passkey when
+// its own Commit resumes.
+func TestCredentialStore_CommitAfterRollForwardKeepsCredential(t *testing.T) {
+	ctx := context.Background()
+	factory := newTestDAOFactory()
+	stalled := newTestCredentialStore(t, factory)
+	claim, err := stalled.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.NoError(t, err)
+	saved := &Credential{ID: []byte("stalled-id"), UserID: uniquenessOwner}
+	require.NoError(t, claim.Save(ctx, saved))
+
+	recoverer := newTestCredentialStore(t, factory)
+	recoverer.now = pastClaimLease()
+	_, err = recoverer.ClaimFirstCredential(ctx, uniquenessOwner)
+	require.ErrorIs(t, err, ErrFirstCredentialClaimed)
+
+	require.NoError(t, claim.Commit(ctx, saved))
+
+	owned, err := stalled.GetByUserID(ctx, uniquenessOwner)
+	require.NoError(t, err)
+	require.Len(t, owned, 1)
+	assert.Equal(t, saved.ID, owned[0].ID)
+}
+
 // TestCredentialStore_ReleaseLeavesARecoveredClaim proves a slow claimer's
 // release cannot delete the claim another ceremony recovered from it.
 func TestCredentialStore_ReleaseLeavesARecoveredClaim(t *testing.T) {
