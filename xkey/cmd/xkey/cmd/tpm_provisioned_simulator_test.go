@@ -47,11 +47,32 @@ import (
 // re-manufactures it, which would discard every provisioned key.
 type sharedTPM struct {
 	xkms.TrustedPlatformModule
+	// fatalf fails the test (t.Fatalf) when the wrapped TPM cannot take
+	// a Platform key store, so a lost setter is a failure, not a skip.
+	fatalf func(format string, args ...any)
+}
+
+// newSharedTPM wraps tpm for the open hooks; t fails the test if the
+// wrapped TPM lacks SetPlatformKeyStore.
+func newSharedTPM(t *testing.T, tpm xkms.TrustedPlatformModule) sharedTPM {
+	return sharedTPM{TrustedPlatformModule: tpm, fatalf: t.Fatalf}
 }
 
 // Close leaves the shared simulator open; withProvisionedSimulatorTPM
 // closes it when the test ends.
 func (sharedTPM) Close() error { return nil }
+
+// SetPlatformKeyStore forwards to the simulator so `tpm srk enroll` and the
+// fido2 tpm2 backend can attach the Platform key store through the wrapper.
+func (s sharedTPM) SetPlatformKeyStore(pks xkms.PlatformKeyStorer) {
+	if setter, ok := s.TrustedPlatformModule.(interface {
+		SetPlatformKeyStore(xkms.PlatformKeyStorer)
+	}); ok {
+		setter.SetPlatformKeyStore(pks)
+		return
+	}
+	s.fatalf("sharedTPM: the wrapped %T has no SetPlatformKeyStore; the Platform key store would be dropped", s.TrustedPlatformModule)
+}
 
 // provisionedSimulator is an open, provisioned simulator plus the CA that
 // issued its EK certificate, so tests can issue further certificates for
@@ -102,13 +123,18 @@ func withProvisionedSimulatorTPMForECCert(t *testing.T) *provisionedSimulator {
 
 	config, err := newTPMConfig("", true, ekCertHandleEC)
 	require.NoError(t, err)
-	tpm, err := xkms.NewTPM2(newTPMParams(config))
+	tpm, err := newConfiguredTPM2(config)
 	require.ErrorIs(t, err, xkms.ErrTPMNotInitialized)
 	return shareProvisionedSimulatorTPM(t, tpm, ekCertHandleEC)
 }
 
 func withSimulatorTPMCfg(t *testing.T) {
 	t.Helper()
+	// newTPMParams opens the persistent key store under the data dir; keep
+	// it per test so no blob outlives the run in the home data dir.
+	if os.Getenv("XKEY_DATA_DIR") == "" {
+		t.Setenv("XKEY_DATA_DIR", t.TempDir())
+	}
 	withTPMCfg(t, func(c *tpmConfig) {
 		c.device = ""
 		c.useSimulator = true
@@ -137,7 +163,7 @@ func shareProvisionedSimulatorTPM(t *testing.T, tpm xkms.TrustedPlatformModule, 
 		openTPM, openTPMForEKCert, openTPMForEKRestore, openTPMForProvisioningWithPCROverrides = savedOpen, savedOpenForEKCert, savedOpenForEKRestore, savedOpenWithPCROverrides
 		openTPMForDevice = savedOpenForDevice
 	})
-	shared := sharedTPM{tpm}
+	shared := newSharedTPM(t, tpm)
 	openTPM = func() (xkms.TrustedPlatformModule, error) {
 		require.Equal(t, ekCertHandle, ekCertHandleRSA, "openTPM opens the TPM for the RSA EK certificate index")
 		return shared, nil
@@ -616,7 +642,7 @@ func withUnprovisionedSimulatorTPMForECCert(t *testing.T) (xkms.TrustedPlatformM
 	t.Cleanup(func() { openTPMForEKRestore = saved })
 	openTPMForEKRestore = func(handle uint32) (xkms.TrustedPlatformModule, error) {
 		require.Equal(t, uint32(ekCertHandleEC), handle, "EK certificate index the TPM is opened for")
-		return sharedTPM{tpm}, ErrTPMNotInitialized
+		return newSharedTPM(t, tpm), ErrTPMNotInitialized
 	}
 	return tpm, rsaCert
 }
@@ -852,7 +878,7 @@ func TestRunIDevIDCreate_ForceReplacesExisting(t *testing.T) {
 	sim := withProvisionedSimulatorTPM(t)
 	idevidPub := sim.withIDevID(t)
 	cert := issueTestCert(t, sim.caCert, sim.caKey, "xkey-001", idevidPub)
-	require.NoError(t, sim.tpm.ProvisionIDevIDCert(cert))
+	require.NoError(t, sim.tpm.ProvisionIDevIDCert(nil, cert))
 	_, err := sim.tpm.IDevIDCertificate()
 	require.NoError(t, err)
 
@@ -1119,7 +1145,7 @@ func TestRunLAKCreate_WithoutPlatformSRK(t *testing.T) {
 	setVar(t, &lakCreateForce, false)
 	stdout, _, err := runTPMSubcommand(runLAKCreate)
 	require.ErrorIs(t, err, ErrLAKPlatformSRKNotEnrolled)
-	assert.ErrorContains(t, err, "xkey setup wizard")
+	assert.ErrorContains(t, err, "xkey tpm srk enroll")
 	assert.NotContains(t, stdout, "Creating Local Attestation Key")
 }
 
@@ -1494,7 +1520,7 @@ func TestRunTPMProvision_TakesOwnershipWithTheSuppliedHierarchyAuth(t *testing.T
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, tpm.Close()) })
 			setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, []uint) (xkms.TrustedPlatformModule, error) {
-				return sharedTPM{tpm}, nil
+				return newSharedTPM(t, tpm), nil
 			})
 			setVar(t, &provisionConfirm, true)
 			setVar(t, &provisionHierarchyAuth, tt.flagAuth)
