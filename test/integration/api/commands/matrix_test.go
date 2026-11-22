@@ -157,13 +157,21 @@ func TestMatrix_ACMEAndAdminFamilies(t *testing.T) {
 		}
 	}
 
-	// Read-only admin cells run on every transport.
+	// Read-only admin cells run on every transport; admin-list skips only
+	// embedded, which installs no admin store.
 	for _, cmd := range AdminCommands() {
 		if cmd.Name != "admin-list" && cmd.Name != "admin-status" {
 			continue
 		}
 		for _, p := range CLIProtocols() {
-			if r, skip := SkipReason(cmd, p, nil); skip {
+			r, skip := SkipReason(cmd, p, nil)
+			if cmd.Name == "admin-list" && p == ProtocolEmbedded {
+				if !skip || r != ReasonEmbeddedNoAdmin {
+					t.Errorf("admin-list on embedded: skip=%v reason=%q, want %q", skip, r, ReasonEmbeddedNoAdmin)
+				}
+				continue
+			}
+			if skip {
 				t.Errorf("%s skipped on %s: %s", cmd.Name, p, r)
 			}
 		}

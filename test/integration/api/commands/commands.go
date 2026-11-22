@@ -229,7 +229,7 @@ func BackendCommands() []CommandDefinition {
 
 // KeyCommands returns key management commands
 func KeyCommands() []CommandDefinition {
-	return []CommandDefinition{
+	cmds := []CommandDefinition{
 		{
 			Name:            "key-generate-rsa",
 			Category:        CategoryKey,
@@ -377,32 +377,10 @@ func KeyCommands() []CommandDefinition {
 				{Flag: "hash", Value: "SHA-256", Description: "Hash algorithm"},
 			},
 		},
-		// Lifecycle verbs (#2321 slice f) run between key-verify and
-		// key-delete, so test-key still exists and the version verbs see the
-		// versions key-rotate made.
-		keyServerCommand("key-rotate", "Rotate a key to a new version", []string{"key", "rotate"},
-			[]string{"key-generate-rsa"}, keyIDArg("test-key")),
-		keyServerCommand("key-versions", "List the versions of a key", []string{"key", "versions"},
-			[]string{"key-rotate"}, keyIDArg("test-key")),
-		keyServerCommand("key-version-disable", "Disable key version 1", []string{"key", "version", "disable"},
-			[]string{"key-rotate"}, keyIDArg("test-key"), versionArg("1")),
-		keyServerCommand("key-version-enable", "Re-enable key version 1", []string{"key", "version", "enable"},
-			[]string{"key-version-disable"}, keyIDArg("test-key"), versionArg("1")),
-		keyServerCommand("key-version-disable-all", "Disable every version of a key", []string{"key", "version", "disable-all"},
-			[]string{"key-rotate"}, keyIDArg("test-key")),
-		keyServerCommand("key-version-enable-all", "Re-enable every version of a key", []string{"key", "version", "enable-all"},
-			[]string{"key-version-disable-all"}, keyIDArg("test-key")),
-		keyServerCommand("key-version-retire", "Retire key version 1", []string{"key", "version", "retire"},
-			[]string{"key-version-enable-all"}, keyIDArg("test-key"), versionArg("1")),
-		{
-			Name:           "key-rotate-all",
-			Category:       CategoryKey,
-			Command:        []string{"key", "rotate-all"},
-			Description:    "Rotate every key of the caller's tenant",
-			RequiresServer: true,
-			RequiresSetup:  true,
-			SetupSteps:     []string{"key-generate-rsa"},
-		},
+	}
+	// The lifecycle verbs run between key-verify and key-delete.
+	cmds = append(cmds, keyVersionCommands()...)
+	cmds = append(cmds, []CommandDefinition{
 		// Import path: the runner writes raw AES-256 material into the work
 		// dir; get-import-params fetches the wrapping key, wrap seals the
 		// material under it, unwrap opens it again and import stores it.
@@ -461,7 +439,54 @@ func KeyCommands() []CommandDefinition {
 				{Flag: "", Value: "test-key", Description: "Key ID", IsPositional: true},
 			},
 		},
+	}...)
+	for i := range cmds {
+		if slices.Contains(importCeremonySteps, cmds[i].Name) {
+			cmds[i] = limitToServer(cmds[i], ReasonEmbeddedImportCeremony)
+		}
 	}
+	return cmds
+}
+
+// importCeremonySteps need the import token an earlier step minted in the
+// same backend, which an embedded CLI call (a fresh SoftwareBackend each
+// time) never has.
+var importCeremonySteps = []string{"key-unwrap", "key-get-import-params-for-import", "key-wrap-for-import", "key-import"}
+
+// keyVersionCommands are the lifecycle verbs (#2321 slice f). They run
+// between key-verify and key-delete, so test-key still exists and the
+// version verbs see the versions key-rotate made. sdk/go/embedded.go wires
+// no key version service, so they run on the server transports only.
+func keyVersionCommands() []CommandDefinition {
+	cmds := []CommandDefinition{
+		keyServerCommand("key-rotate", "Rotate a key to a new version", []string{"key", "rotate"},
+			[]string{"key-generate-rsa"}, keyIDArg("test-key")),
+		keyServerCommand("key-versions", "List the versions of a key", []string{"key", "versions"},
+			[]string{"key-rotate"}, keyIDArg("test-key")),
+		keyServerCommand("key-version-disable", "Disable key version 1", []string{"key", "version", "disable"},
+			[]string{"key-rotate"}, keyIDArg("test-key"), versionArg("1")),
+		keyServerCommand("key-version-enable", "Re-enable key version 1", []string{"key", "version", "enable"},
+			[]string{"key-version-disable"}, keyIDArg("test-key"), versionArg("1")),
+		keyServerCommand("key-version-disable-all", "Disable every version of a key", []string{"key", "version", "disable-all"},
+			[]string{"key-rotate"}, keyIDArg("test-key")),
+		keyServerCommand("key-version-enable-all", "Re-enable every version of a key", []string{"key", "version", "enable-all"},
+			[]string{"key-version-disable-all"}, keyIDArg("test-key")),
+		keyServerCommand("key-version-retire", "Retire key version 1", []string{"key", "version", "retire"},
+			[]string{"key-version-enable-all"}, keyIDArg("test-key"), versionArg("1")),
+		{
+			Name:           "key-rotate-all",
+			Category:       CategoryKey,
+			Command:        []string{"key", "rotate-all"},
+			Description:    "Rotate every key of the caller's tenant",
+			RequiresServer: true,
+			RequiresSetup:  true,
+			SetupSteps:     []string{"key-generate-rsa"},
+		},
+	}
+	for i := range cmds {
+		cmds[i] = limitToServer(cmds[i], ReasonEmbeddedNoKeyVersions)
+	}
+	return cmds
 }
 
 // keyServerCommand declares a key command that runs against the server's
@@ -989,13 +1014,13 @@ func AdminCommands() []CommandDefinition {
 		chained("admin-disable", "disable", "Disable an administrator"),
 		chained("admin-enable", "enable", "Enable an administrator"),
 		chained("admin-delete", "delete", "Delete an administrator"),
-		{
+		limitToServer(CommandDefinition{
 			Name:           "admin-list",
 			Category:       CategoryAdmin,
 			Command:        []string{"admin", "list"},
 			Description:    "List administrator accounts",
 			RequiresServer: true,
-		},
+		}, ReasonEmbeddedNoAdmin),
 		{
 			Name:           "admin-status",
 			Category:       CategoryAdmin,
@@ -1027,12 +1052,12 @@ func TenantCommands() []CommandDefinition {
 				{Flag: "name", Value: "IT tenant", Description: "Tenant display name"}},
 			OptionalArgs: []ArgDefinition{{Flag: "isolation", Value: "prefix", Description: "Isolation mode"}},
 		},
-		{
+		limitToServer(CommandDefinition{
 			Name: "tenant-list", Category: CategoryTenant,
 			Command:        []string{"tenant", "list"},
 			Description:    "List tenants",
 			RequiresServer: true,
-		},
+		}, ReasonEmbeddedNoTenant),
 		{
 			Name: "tenant-show", Category: CategoryTenant,
 			Command:        []string{"tenant", "show"},
@@ -1090,12 +1115,12 @@ func UserCommands() []CommandDefinition {
 			RequiresServer: true, Skip: skipFIDO2,
 			RequiredArgs: []ArgDefinition{pos("it-user@example.com", "Login email")},
 		},
-		{
+		limitToServer(CommandDefinition{
 			Name: "user-list", Category: CategoryUser,
 			Command:        []string{"user", "list"},
 			Description:    "List users",
 			RequiresServer: true,
-		},
+		}, ReasonEmbeddedNoUser),
 		chain("user-get", []string{"user", "get"}, "Show a user"),
 		chain("user-update", []string{"user", "update"}, "Update a user",
 			ArgDefinition{Flag: "enable", Description: "Enable the account", IsBoolean: true}),
@@ -1168,18 +1193,18 @@ func CredentialCommands() []CommandDefinition {
 				{Flag: "value", Value: "it-secret", Description: "Credential value"},
 			},
 		},
-		{
+		limitToServer(CommandDefinition{
 			Name: "credential-list", Category: CategoryCredential,
 			Command:        []string{"credential", "list"},
 			Description:    "List the credentials the server holds",
 			RequiresServer: true,
-		},
-		{
+		}, ReasonEmbeddedNoCredential),
+		limitToServer(CommandDefinition{
 			Name: "credential-strategy", Category: CategoryCredential,
 			Command:        []string{"credential", "strategy"},
 			Description:    "Show the configured credential strategy",
 			RequiresServer: true,
-		},
+		}, ReasonEmbeddedNoCredential),
 		{
 			Name: "credential-rotate", Category: CategoryCredential,
 			Command:        []string{"credential", "rotate"},

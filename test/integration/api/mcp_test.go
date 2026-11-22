@@ -381,8 +381,8 @@ func TestMCPBatchRequests(t *testing.T) {
 func TestMCPStreamingNotifications(t *testing.T) {
 	// MCP streaming notifications are inherently racy in integration tests because
 	// notifications are sent asynchronously in goroutines and may arrive before,
-	// during, or after the synchronous response. This test verifies the subscribe
-	// API works but skips notification verification due to timing constraints.
+	// during, or after the synchronous response. This test verifies the
+	// triggering calls work but skips notification verification due to timing constraints.
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
@@ -393,11 +393,9 @@ func TestMCPStreamingNotifications(t *testing.T) {
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
-	// Subscribe to key events - verify subscribe API works
-	_, err = client.Call("xkms.subscribe", map[string]interface{}{
-		"events": []string{"key.created", "key.deleted"},
-	})
-	assertNoError(t, err, "Failed to subscribe to events")
+	// The server leaves xkms.subscribe out of its tools
+	// (pkg/api/mcp/module_support.go): the session's event stream carries
+	// the notifications without a subscribe call.
 
 	// Create a key (should trigger notification)
 	keyID := generateUniqueID("mcp-notify-key")
@@ -416,8 +414,8 @@ func TestMCPStreamingNotifications(t *testing.T) {
 	}()
 
 	// Notifications arrive asynchronously on the session's event stream;
-	// the subscribe and the triggering call succeeding is what is verified.
-	t.Log("Subscribe API verified successfully; notification delivery is asynchronous")
+	// the triggering call succeeding is what is verified.
+	t.Log("Key event call verified; notification delivery is asynchronous")
 }
 
 // TestMCPErrorHandling tests error handling in MCP (placeholder)

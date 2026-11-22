@@ -123,3 +123,20 @@ backends:
 barrier:
   enabled: true
   strategy: "passphrase"
+
+# Services the integration-test-api-parity target drives on every server
+# transport (TestCLISecretsMatrix pin family, TestCLIPlatformMatrix,
+# TestCLIBootstrapMatrix bootstrap-show-keys). matrix_test.go
+# TestMatrix_FixtureServicesDeclared requires each one enabled here.
+pin:
+  enabled: true
+  strategy: "software"
+
+# manual and barrier install no platform store (pkg/server/platform_store.go);
+# passphrase seals with the same passphrase source as the barrier.
+credentials:
+  seal_strategy: "passphrase"
+
+bootstrap:
+  noise:
+    enabled: true

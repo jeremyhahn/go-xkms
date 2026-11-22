@@ -73,7 +73,35 @@ const (
 	// policy service, so tpm policy create, and every verb that needs the
 	// policy it creates, cannot run there.
 	ReasonNoPolicyService = "standalone matrix server configures no TPM policy service"
+
+	// ReasonEmbeddedNoKeyVersions: sdk/go/embedded.go wires key and
+	// certificate storage only, with no key version (rotation) service.
+	ReasonEmbeddedNoKeyVersions = "embedded service installs no key version (rotation) service (sdk/go/embedded.go)"
+
+	// ReasonEmbeddedNoAdmin, ReasonEmbeddedNoTenant, ReasonEmbeddedNoUser and
+	// ReasonEmbeddedNoCredential name the account and credential services
+	// sdk/go/embedded.go does not install.
+	ReasonEmbeddedNoAdmin      = "embedded service installs no admin store (sdk/go/embedded.go)"
+	ReasonEmbeddedNoTenant     = "embedded service installs no tenant store (sdk/go/embedded.go)"
+	ReasonEmbeddedNoUser       = "embedded service installs no user store (sdk/go/embedded.go)"
+	ReasonEmbeddedNoCredential = "embedded service installs no credential service (sdk/go/embedded.go)"
+
+	// ReasonEmbeddedImportCeremony: each embedded CLI call starts a fresh
+	// SoftwareBackend, so the import token one step mints is gone by the
+	// next and the unwrap/import ceremony cannot complete.
+	ReasonEmbeddedImportCeremony = "embedded CLI calls each start a fresh SoftwareBackend: the import token does not survive between steps"
 )
+
+// serverTransports are the transports that reach a running xkmsd.
+var serverTransports = []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
+
+// limitToServer restricts def to the server transports; embedded cells skip
+// with reason.
+func limitToServer(def CommandDefinition, reason string) CommandDefinition {
+	def.Transports = slices.Clone(serverTransports)
+	def.TransportSkip = reason
+	return def
+}
 
 // SkipReason reports whether the standalone run (RunAllCommandsForProtocol)
 // skips cmd on protocol, and why. enabledTags are the build tags the test
