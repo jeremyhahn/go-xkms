@@ -740,11 +740,6 @@ lan_config() {
 lan_pull() {
   local family=$1 hold=$2 ref=${3:-} lanref tag digest id want=""
   [[ $ref != *@sha256:* ]] || want=${ref##*@}
-  # #2243 Codex: the LAN registry is unauthenticated HTTP, so the digest it
-  # serves proves nothing; a hit is taken only when it matches main's digest
-  # read from the forge. Without that digest the job pulls from the forge or
-  # builds on this runner.
-  [ -n "$want" ] || { echo "==> no digest of main's for $family; $CI_IMAGE_REGISTRY not used" >&2; return 1; }
   if [[ ${CI_IMAGE_REGISTRY} =~ ^[A-Za-z0-9-]+$ && ${CI_IMAGE_REGISTRY} != localhost ]]; then
     echo "::warning::ci-registry: CI_IMAGE_REGISTRY is a single-label name, which Docker reads as a Docker Hub namespace; not used" >&2
     return 1
@@ -753,6 +748,11 @@ lan_pull() {
     echo "==> CI_IMAGE_REGISTRY is not a host[:port]; not used" >&2
     return 1
   fi
+  # #2243 Codex: the LAN registry is unauthenticated HTTP, so the digest it
+  # serves proves nothing; a hit is taken only when it matches main's digest
+  # read from the forge. Without that digest the job pulls from the forge or
+  # builds on this runner.
+  [ -n "$want" ] || { echo "==> no digest of main's for $family; $CI_IMAGE_REGISTRY not used" >&2; return 1; }
   if ! curl -fsS --max-time 5 -o /dev/null "http://${CI_IMAGE_REGISTRY}/v2/" 2>/dev/null; then
     echo "==> CI_IMAGE_REGISTRY does not answer; not used" >&2
     return 1

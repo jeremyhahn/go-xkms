@@ -858,9 +858,11 @@ called "docker-build-toolchain"
 stderr_has "building it on this runner"
 not_called "docker push"
 
-start_case "use (f): CI_PUBLISH=true, empty ref, CI_IMAGE_REGISTRY misses: builds on this runner"
-run_script 0 use toolchain "" -- CI_PUBLISH=true CI_IMAGE_REGISTRY="$FB_LAN" FAKE_LAN="$FB_LAN" FAKE_LAN_PULL_RC=1
-called "docker pull --quiet $FB_LAN/go-xkms-toolchain:"
+start_case "use (f): CI_PUBLISH=true, empty ref, CI_IMAGE_REGISTRY set: not used, builds on this runner"
+run_script 0 use toolchain "" -- CI_PUBLISH=true CI_IMAGE_REGISTRY="$FB_LAN" FAKE_LAN="$FB_LAN"
+stderr_has "no digest of main's for toolchain; $FB_LAN not used"
+not_called "docker pull --quiet $FB_LAN/"
+not_called "docker push"
 called "docker-build-toolchain"
 
 start_case "use (g): the forge pull fails every attempt: builds on this runner"
@@ -965,9 +967,12 @@ stderr_has "unknown command 'push'"
 # pushed, and neither a failed pull nor a failed push turns the job red.
 LAN=lan.invalid:5000
 LAN_TC="$LAN/$TOOLCHAIN_TAG"
+LAN_REF="$TOOLCHAIN_REPO@$DIGEST"
+# A forge pull that fails every attempt, so a LAN miss builds on this runner.
+NO_FORGE=(FAKE_PULL_RC=1 CI_REGISTRY_BACKOFF=0)
 
 start_case "use: CI_IMAGE_REGISTRY hit pulls the content tag, tags it locally, builds nothing"
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
 stderr_has "pulled $LAN_TC $DIGEST"
 called "docker pull --quiet $LAN_TC"
 called "docker tag $IMAGE_ID $TOOLCHAIN_TAG"
@@ -980,11 +985,15 @@ else
   fail "printed '$(cat "$WORK_DIR/stdout")'"
 fi
 
-start_case "use: with no ref, a CI_IMAGE_REGISTRY hit needs no GITHUB_SERVER_URL and skips the forge pull"
+# #2243 Codex: the LAN registry is unauthenticated HTTP; with no digest of
+# main's from the forge nothing vouches for its image, so it is not used.
+start_case "use: with no ref, CI_IMAGE_REGISTRY is not used: no LAN pull or push, builds on this runner"
 run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" GITHUB_SERVER_URL=
-stderr_has "pulled $LAN_TC $DIGEST"
-not_called "docker pull --quiet $FORGE"
-not_called "docker-build-toolchain"
+stderr_has "no digest of main's for toolchain; $LAN not used"
+not_called "docker pull"
+not_called "docker push"
+not_called "$LAN/"
+called "docker-build-toolchain"
 # Codex round 2 P1-1: a ref is checked against GITHUB_SERVER_URL's registry
 # before the CI_IMAGE_REGISTRY path, so with no GITHUB_SERVER_URL it is refused.
 start_case "use: a ref with no GITHUB_SERVER_URL is refused before any CI_IMAGE_REGISTRY pull"
@@ -993,7 +1002,7 @@ stderr_has "GITHUB_SERVER_URL is empty"
 not_called "docker pull"
 
 start_case "use: CI_IMAGE_REGISTRY miss builds, tags and pushes the content tag"
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1
 called "docker pull --quiet $LAN_TC"
 called "docker-build-toolchain"
 called "docker tag $TOOLCHAIN_TAG $LAN_TC"
@@ -1002,7 +1011,7 @@ stderr_has "miss, built and pushed $LAN_TC"
 not_called "docker login"
 
 start_case "use: CI_IMAGE_REGISTRY push failure is one line and the job stays green"
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 FAKE_PUSH_RC=1
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 FAKE_PUSH_RC=1
 called "docker-build-toolchain"
 called "docker push $LAN_TC"
 stderr_has "miss, built, push failed"
@@ -1021,7 +1030,7 @@ ended_within() {
 
 start_case "use: a stalled CI_IMAGE_REGISTRY pull ends at CI_IMAGE_TIMEOUT and builds on this runner"
 SECONDS=0
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" CI_IMAGE_TIMEOUT=1 FAKE_LAN_PULL_SLEEP=30
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" CI_IMAGE_TIMEOUT=1 FAKE_LAN_PULL_SLEEP=30
 ended_within "$SECONDS"
 called "docker pull --quiet $LAN_TC"
 called "docker-build-toolchain"
@@ -1033,7 +1042,7 @@ fi
 
 start_case "use: a stalled CI_IMAGE_REGISTRY push ends at CI_IMAGE_TIMEOUT and the job stays green"
 SECONDS=0
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 CI_IMAGE_TIMEOUT=1 FAKE_PUSH_SLEEP=30
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 CI_IMAGE_TIMEOUT=1 FAKE_PUSH_SLEEP=30
 ended_within "$SECONDS"
 called "docker push $LAN_TC"
 stderr_has "miss, built, push failed"
@@ -1116,11 +1125,11 @@ lan_cfg_private() {
   fi
 }
 start_case "use: a CI_IMAGE_REGISTRY pull never sees the runner's Docker config"
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" DOCKER_CONFIG="$RUNNER_CFG"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" DOCKER_CONFIG="$RUNNER_CFG"
 lan_cfg_private pull
 not_called "docker login"
 start_case "use: a CI_IMAGE_REGISTRY miss's pull and push never see the runner's Docker config"
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 DOCKER_CONFIG="$RUNNER_CFG"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 DOCKER_CONFIG="$RUNNER_CFG"
 lan_cfg_private pull
 lan_cfg_private push
 start_case "use: after a forge pull, the CI_IMAGE_REGISTRY push never sees the run's login config"
@@ -1164,7 +1173,7 @@ not_called "docker tag $LAN_TC"
 
 # P1-2: with no private config dir (mktemp fails), no LAN docker call runs.
 start_case "use: no private Docker config for CI_IMAGE_REGISTRY: no LAN pull or push, builds on this runner"
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" DOCKER_CONFIG="$RUNNER_CFG" TMPDIR="$WORK_DIR/no-such-tmp"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" DOCKER_CONFIG="$RUNNER_CFG" TMPDIR="$WORK_DIR/no-such-tmp"
 not_called "docker pull --quiet $LAN/"
 not_called "docker push"
 called "docker-build-toolchain"
@@ -1184,7 +1193,7 @@ not_called "docker pull"
 not_called "docker push"
 called "docker-build-toolchain"
 start_case "use: CI_IMAGE_REGISTRY=localhost is a registry host"
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY=localhost FAKE_LAN=localhost
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY=localhost FAKE_LAN=localhost
 called "docker pull --quiet localhost/$TOOLCHAIN_TAG"
 not_called "docker-build-toolchain"
 
