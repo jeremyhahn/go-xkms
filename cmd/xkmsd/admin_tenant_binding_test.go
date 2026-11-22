@@ -346,6 +346,25 @@ func TestAdminPlane_OwnTenantAdminCreatesAndUpdatesRole(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
+// TestAdminPlane_AdminCannotGrantPermissionItLacks pins go-qrdb's role-grant
+// rule: a grantor may grant only permissions it holds. Role deletion is the
+// SO's alone, so the built-in Admin cannot put roles:delete in a new role.
+func TestAdminPlane_AdminCannotGrantPermissionItLacks(t *testing.T) {
+	f := newTenantBindingFixture(t)
+	admin := f.builtInAdminCaller(t, "builtin-admin-grant-2339")
+
+	rec := f.do(t, admin, http.MethodPost, "/api/v1/tenants/"+bindingTenantA+"/roles",
+		map[string]any{"name": "escalated-role-2339", "permissions": []string{"roles:delete"}})
+	// qrdb refuses with a GrantExceedsHolderError. The handler maps only
+	// PermissionDeniedError to 403, so the status is not pinned here; the
+	// refusal and the absence of the role are.
+	require.GreaterOrEqual(t, rec.Code, http.StatusBadRequest, rec.Body.String())
+
+	_, err := f.client.Roles().GetRoleByName(oracleContext(bindingTenantA),
+		&qrdbtransport.GetRoleByNameRequest{TenantID: bindingTenantA, Name: "escalated-role-2339"})
+	require.Error(t, err, "qrdb must not create a role whose grant exceeds the Admin's permissions")
+}
+
 // TestAdminPlane_PlatformAdminReachesEveryTenant proves the system identity
 // keeps its cross-tenant reach over the tenant records the tenant caller is
 // refused.
