@@ -185,6 +185,30 @@ describe("CertImportView", () => {
 
     expect(await screen.findByText(/certificate was stored but the chain was not: chain rejected/)).toBeInTheDocument();
   });
+
+  // A caller with certs:enroll and certs:read but not backends:list types
+  // the backend, as SealView does, and can still import.
+  it("takes a typed backend and imports when backends.list() is refused", async () => {
+    list.mockReset();
+    list.mockRejectedValue(new Error("403 Forbidden: backends:list"));
+    exists.mockResolvedValue(false);
+    save.mockResolvedValue({ success: true });
+    render(CertImportView);
+    expect(await screen.findByText(/backends:list/)).toBeInTheDocument();
+
+    const field = screen.getByLabelText("Backend");
+    expect(field.tagName).toBe("INPUT");
+    await fireEvent.input(screen.getByLabelText("Key ID"), { target: { value: "k1" } });
+    await fireEvent.input(field, { target: { value: " tpm2 " } });
+    await fireEvent.input(screen.getByLabelText("Certificate PEM"), { target: { value: LEAF } });
+    expect(importButton().disabled).toBe(false);
+
+    await fireEvent.click(importButton());
+
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(exists).toHaveBeenCalledWith("k1", "tpm2");
+    expect(save).toHaveBeenCalledWith("k1", "tpm2", { backend: "tpm2", certificate_pem: LEAF });
+  });
 });
 
 describe("CertImportView frozen target", () => {
