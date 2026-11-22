@@ -19,13 +19,24 @@ package gui
 // by the tpm_simulator build tag.
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
@@ -71,6 +82,66 @@ func TestApp_EnsureLocalTPMPolicies_OpensServiceAndShutdownDetachesIt(t *testing
 	status, err = app.barrierAutoUnsealService.GetAutoUnsealStatus()
 	require.NoError(t, err)
 	assert.False(t, status.Available, "auto-unseal must not keep a closed policy service")
+}
+
+// TestApp_EnsureLocalTPMPolicies_TrustsTheReferenceSignerInTheDataDir proves
+// the GUI's local policy service approves an expected platform change: a
+// CoRIM signed by the trusted reference signer in the data directory
+// updates a pcr branch, and one signed by another key is refused.
+func TestApp_EnsureLocalTPMPolicies_TrustsTheReferenceSignerInTheDataDir(t *testing.T) {
+	app := fakeTPMApp(t, nil)
+	app.newTPM = provisionedSimulatorTPM
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(app.dataDir, localtpm.ReferenceSignerFile),
+		pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0o600))
+	t.Cleanup(func() { app.shutdown(app.ctx) })
+
+	app.ensureLocalTPMPolicies()
+	local := app.tpmPolicyService.Local()
+	require.NotNil(t, local)
+	ctx := t.Context()
+	_, err = local.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{
+		Name:     "boot",
+		Branches: []transport.TPMPolicyBranch{transport.TPMPolicyPCRBranch("sha256", []uint{23})},
+	})
+	require.NoError(t, err)
+
+	next := sha256.Sum256([]byte("bootloader-v2"))
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	untrusted, err := appraisaltest.SignCoRIM(map[uint32][]byte{23: next[:]}, other, nil)
+	require.NoError(t, err)
+	_, err = local.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{
+		Name: "boot", Branch: "branch-1", ReferenceValues: untrusted,
+	})
+	require.Error(t, err, "a CoRIM from an untrusted signer must be refused")
+
+	signed, err := appraisaltest.SignCoRIM(map[uint32][]byte{23: next[:]}, key, nil)
+	require.NoError(t, err)
+	updated, err := local.TPMPolicyUpdate(ctx, &transport.TPMPolicyUpdateRequest{
+		Name: "boot", Branch: "branch-1", ReferenceValues: signed,
+	})
+	require.NoError(t, err)
+	assert.True(t, updated.Approved)
+}
+
+// TestApp_EnsureLocalTPMPolicies_InvalidReferenceSignerStillOpens proves an
+// unusable signer file is logged and leaves signed updates refused, without
+// closing the local policy service.
+func TestApp_EnsureLocalTPMPolicies_InvalidReferenceSignerStillOpens(t *testing.T) {
+	app := fakeTPMApp(t, nil)
+	app.newTPM = provisionedSimulatorTPM
+	logs := captureLog(app)
+	require.NoError(t, os.WriteFile(filepath.Join(app.dataDir, localtpm.ReferenceSignerFile), []byte("not a key"), 0o600))
+	t.Cleanup(func() { app.shutdown(app.ctx) })
+
+	app.ensureLocalTPMPolicies()
+
+	require.NotNil(t, app.tpmPolicyService.Local())
+	assert.True(t, logs.Contains("TPM policies: reference signer unavailable"))
 }
 
 // A returning user's tpm2 barrier with auto-unseal enabled opens at startup
