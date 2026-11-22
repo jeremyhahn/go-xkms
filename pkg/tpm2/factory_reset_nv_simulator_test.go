@@ -19,7 +19,7 @@ var platformCertIndices = []tpm2.TPMHandle{iakCert, idevIDCert}
 func TestFactoryReset_UndefinesPlatformCertIndices(t *testing.T) {
 	h := newSimHarness(t, nil)
 	for _, index := range platformCertIndices {
-		require.NoError(t, h.TPM.writeCertToNVRAM(index, []byte("platform-certificate-der")))
+		require.NoError(t, h.TPM.writeCertToNVRAM(index, nil, []byte("platform-certificate-der")))
 	}
 
 	require.NoError(t, h.TPM.FactoryReset(nil))
@@ -35,7 +35,7 @@ func TestFactoryReset_UndefinesPlatformCertIndices(t *testing.T) {
 // certificate in place.
 func TestFactoryReset_RefusedUndefineKeepsCertIndices(t *testing.T) {
 	h := newSimHarness(t, nil)
-	require.NoError(t, h.TPM.writeCertToNVRAM(iakCert, []byte("platform-certificate-der")))
+	require.NoError(t, h.TPM.writeCertToNVRAM(iakCert, nil, []byte("platform-certificate-der")))
 
 	err := h.TPM.FactoryReset([]byte("not-the-owner-auth"))
 	assert.ErrorIs(t, err, ErrFactoryReset)
