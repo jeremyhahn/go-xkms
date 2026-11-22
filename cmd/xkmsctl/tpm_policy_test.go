@@ -313,14 +313,30 @@ func TestTPMPolicyUpdateCmd_UnreadableReferenceValues(t *testing.T) {
 	assert.Empty(t, mock.requests)
 }
 
-// TestTPMPolicyUpdateCmd_NeedsSignedBranch proves an update without both
-// --branch and --reference-values (an unsigned live re-capture) is refused
-// before any request is sent: only a signed CoRIM updates a policy.
+// TestTPMPolicyUpdateCmd_ReapprovesWithoutBranch proves an update with
+// neither --branch nor --reference-values sends the branchless request, so a
+// revoked policy without a pcr condition (auth_value or locality only) is
+// re-approved at its next epoch; the server refuses it for a pcr policy.
+func TestTPMPolicyUpdateCmd_ReapprovesWithoutBranch(t *testing.T) {
+	mock := &mockTPMClient{policy: &client.TPMPolicy{Name: "pin", Approved: true, Branches: []client.TPMPolicyBranch{{
+		Conditions: []client.TPMPolicyCondition{{Type: "auth_value"}}, Approved: true,
+	}}}}
+	out, code := runTPMCmd(t, mock, tpmPolicyUpdateCmd, []string{"pin"}, map[string]string{"tenant": "acme"})
+	assert.Equal(t, -1, code)
+	assert.Equal(t, &client.TPMPolicyUpdateRequest{TenantID: "acme", Name: "pin"}, mock.requests["update"])
+	assert.Contains(t, out, "TPM Policy Updated")
+
+	_, code = runTPMCmd(t, &mockTPMClient{err: errTPMRunBoom}, tpmPolicyUpdateCmd, []string{"boot"}, nil)
+	assert.Equal(t, 1, code, "the server's refusal (a pcr policy needs a signed branch) fails the command")
+}
+
+// TestTPMPolicyUpdateCmd_NeedsSignedBranch proves --branch without
+// --reference-values, or the reverse, is refused before any request is
+// sent: a branch is updated only from a signed CoRIM.
 func TestTPMPolicyUpdateCmd_NeedsSignedBranch(t *testing.T) {
 	corim := filepath.Join(t.TempDir(), "boot.corim")
 	require.NoError(t, os.WriteFile(corim, []byte{0xd2, 0x84}, 0o600))
 	for name, flags := range map[string]map[string]string{
-		"no flags":              {},
 		"branch only":           {"branch": "next"},
 		"reference values only": {"reference-values": corim},
 	} {
