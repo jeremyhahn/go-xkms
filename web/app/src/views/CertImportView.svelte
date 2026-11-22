@@ -11,6 +11,8 @@
 
   let backends = $state<BackendInfo[]>([]);
   let loadError = $state<string | null>(null);
+  // Set when backends:list is refused: the backend is typed, not picked.
+  let listRefused = $state(false);
 
   let keyId = $state("");
   let backend = $state("");
@@ -37,7 +39,7 @@
     chainPem.trim() !== "" && pemBlocks(chainPem).length === 0 ? `Chain PEM must contain ${BEGIN}.` : null,
   );
   const ready = $derived(
-    keyId.trim() !== "" && backend !== "" && certPem.includes(BEGIN) && certError === null && chainError === null,
+    keyId.trim() !== "" && backend.trim() !== "" && certPem.includes(BEGIN) && certError === null && chainError === null,
   );
 
   function message(e: unknown): string {
@@ -49,6 +51,7 @@
       backends = (await getSDKClient().backends.list()).backends;
     } catch (e) {
       loadError = message(e);
+      listRefused = true;
     }
   }
 
@@ -61,7 +64,7 @@
 
   async function startImport(): Promise<void> {
     if (!ready) return;
-    const p: Pending = { id: keyId.trim(), backend, certPem, chainPem };
+    const p: Pending = { id: keyId.trim(), backend: backend.trim(), certPem, chainPem };
     pending = p;
     busy = true;
     error = null;
@@ -125,12 +128,24 @@
 
 <div class="space-y-3 max-w-2xl">
   <input class="input input-bordered w-full" aria-label="Key ID" placeholder="Key ID" bind:value={keyId} disabled={frozen} />
-  <select class="select select-bordered w-full" aria-label="Backend" bind:value={backend} disabled={frozen}>
-    <option value="">Select a backend</option>
-    {#each backends as b (b.id)}
-      <option value={b.id}>{b.id}</option>
-    {/each}
-  </select>
+  <!-- A refused backend list (certs:enroll without backends:list) turns the
+       picker into a typed field, as SealView does. -->
+  {#if listRefused}
+    <input
+      class="input input-bordered w-full"
+      aria-label="Backend"
+      placeholder="Backend (e.g. tpm2)"
+      bind:value={backend}
+      disabled={frozen}
+    />
+  {:else}
+    <select class="select select-bordered w-full" aria-label="Backend" bind:value={backend} disabled={frozen}>
+      <option value="">Select a backend</option>
+      {#each backends as b (b.id)}
+        <option value={b.id}>{b.id}</option>
+      {/each}
+    </select>
+  {/if}
   <textarea
     class="textarea textarea-bordered w-full font-mono"
     aria-label="Certificate PEM"
