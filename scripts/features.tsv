@@ -1,0 +1,59 @@
+feature	paths	unit	integration
+acme-issuance	docs/acme-issuance/ pkg/acme/ cmd/acme-client/	./pkg/acme/... ./cmd/acme-client/...	integration-test-challenges integration-test-acmeadmin
+attestation-evidence	docs/attestation-evidence/ pkg/attestation/evidence/ pkg/attestation/refvalue/ pkg/attestation/securityevent/ sdk/go/evidence/	./pkg/attestation/evidence/... ./pkg/attestation/refvalue/... ./pkg/attestation/securityevent/...	-
+attestation-verifier	docs/attestation-verifier/ pkg/attestation/appraisal/ pkg/attestation/android/	./pkg/attestation/appraisal/... ./pkg/attestation/android/...	-
+attested-peer	docs/attested-peer/ pkg/attestation/peer/ pkg/attestation/peergate/	./pkg/attestation/peer/... ./pkg/attestation/peergate/...	integration-test-peergate
+audit-log	docs/audit-log/ pkg/audit/ pkg/acme/audit/	./pkg/audit/... ./pkg/acme/audit/...	-
+auth-factors	docs/auth-factors/ pkg/factor/ pkg/auth_factors/	./pkg/factor/... ./pkg/auth_factors/...	integration-test-logins
+authz-cert-ou-roles	docs/acme-issuance/ pkg/acme/admin/	./pkg/acme/admin/...	integration-test-acmeadmin
+backend-credentials	docs/backend-credentials/	./pkg/xkms	-
+certificate-authority	docs/certificate-authority/ pkg/ca/ pkg/certstore/ pkg/trust/dane/	./pkg/ca/... ./pkg/certstore/... ./pkg/trust/dane/...	-
+clustering	docs/clustering/ pkg/embeddednode/ pkg/trust/clusterca/	./pkg/embeddednode/... ./pkg/trust/clusterca/...	integration-test-cluster integration-test-clusterca
+continuous-attestation	docs/attestation-verifier/ pkg/attestation/appraisal/	./pkg/attestation/appraisal/...	-
+crypto-backends	docs/crypto-backends/ pkg/backend/ pkg/keyprovider/	./pkg/backend/... ./pkg/keyprovider/...	integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault
+datastore	docs/datastore/ pkg/datastore/ pkg/dao/ pkg/storage/	./pkg/datastore/... ./pkg/dao/... ./pkg/storage/...	integration-test-storage
+device-configuration	docs/acme-issuance/ pkg/acme/	./pkg/acme/...	-
+device-endorsement	docs/acme-issuance/ pkg/acme/	./pkg/acme/...	-
+dice-device-identity	docs/dice-device-identity/ pkg/attestation/dice/ pkg/acme/challenges/device-attest-01/ pkg/backend/avr/	./pkg/attestation/dice/... ./pkg/acme/challenges/device-attest-01/... ./pkg/backend/avr/...	-
+dice-tcbinfo-seam	docs/dice-device-identity/ pkg/attestation/dice/	./pkg/attestation/dice/...	-
+enrollment-ek-required	docs/acme-issuance/ pkg/acme/	./pkg/acme/...	-
+escrow	docs/escrow/ pkg/escrow/	./pkg/escrow/...	-
+fido2-ctap2	docs/fido2-ctap2/ pkg/fido2/	./pkg/fido2/...	integration-test-fido2
+frost-threshold-signing	docs/frost-threshold-signing/ pkg/keyprovider/frost/	./pkg/keyprovider/frost/...	integration-test-frost integration-test-api-frost
+host-embedding	docs/host-embedding/ pkg/apimodule/ pkg/compose/	./pkg/apimodule/... ./pkg/compose/...	-
+init-ceremony	docs/init-ceremony/ pkg/init/	./pkg/init/...	integration-test-initceremony
+key-management	docs/key-management/ pkg/keyprovider/ pkg/keyversion/ pkg/crypto/ecdh/ pkg/crypto/x25519/	./pkg/keyprovider/... ./pkg/keyversion/... ./pkg/crypto/ecdh/... ./pkg/crypto/x25519/...	integration-test-cli integration-test-api-all
+key-policy-and-crypto	docs/key-policy-and-crypto/ pkg/keypolicy/	./pkg/keypolicy/...	integration-test-crypto-wrapping
+luks	docs/luks/ pkg/luks/ sdk/go/luks/	./pkg/luks/...	integration-test-xkey-luks
+multi-tenancy	docs/multi-tenancy/ pkg/scope/ pkg/ssh/tenancy/	./pkg/scope/... ./pkg/ssh/tenancy/...	-
+observability	docs/observability/ pkg/metrics/	./pkg/metrics/...	integration-test-metrics integration-test-health
+oidc-credentials	docs/oidc-credentials/ pkg/oidc/	./pkg/oidc/...	integration-test-oidc-credentials
+optee-sealed-blob	docs/optee-sealed-blob/ pkg/enclaveprovider/opteeblob/	./pkg/enclaveprovider/opteeblob/...	-
+password-vault	docs/password-vault/ pkg/staticpw/ pkg/vaultkey/ pkg/vaultpasskey/ pkg/vaulttoken/	./pkg/staticpw/... ./pkg/vaultkey/... ./pkg/vaultpasskey/... ./pkg/vaulttoken/...	integration-test-password-vault
+pin-management	docs/pin-management/ pkg/pinselect/ pkg/pintpm2/	./pkg/pinselect/... ./pkg/pintpm2/...	-
+piv-smartcard	docs/piv-smartcard/ pkg/pivcert/ pkg/factor/piv/	./pkg/pivcert/... ./pkg/factor/piv/...	-
+pkcs11-backend	docs/pkcs11-backend/ pkg/backend/pkcs11/ pkg/pkcs11/manager/ sdk/go/pkcs11/manager/	./pkg/backend/pkcs11/... ./pkg/pkcs11/manager/...	integration-test-pkcs11 integration-test-pkcs11-barrier
+pkcs11-provider-module	docs/pkcs11-provider-module/ cmd/pkcs11-module/ pkg/pkcs11/ pkg/pkcs11state/	./cmd/pkcs11-module/... ./pkg/pkcs11/... ./pkg/pkcs11state/...	integration-test-pkcs11-module-all
+platform-pcr-selection	docs/tpm2/ pkg/tpm2/	./pkg/tpm2/...	integration-test-tpm2
+platform-secrets	docs/platform-secrets/ pkg/seal/ pkg/preseal/ pkg/pkcs11strategy/	./pkg/seal/... ./pkg/preseal/... ./pkg/pkcs11strategy/...	-
+post-quantum	docs/post-quantum/ pkg/quantum/ pkg/keyprovider/quantum/	./pkg/quantum/... ./pkg/keyprovider/quantum/...	integration-test-quantum
+rbac	docs/rbac/ pkg/auth/ internal/authzscan/	./pkg/auth/... ./internal/authzscan/...	-
+release-engineering	docs/release-engineering/ scripts/release-alpha.sh scripts/release-tag.sh scripts/release-assets.sh scripts/changelog-assemble.sh scripts/exportsurface/	-	test-scripts
+sealing-and-barrier	docs/sealing-and-barrier/ pkg/seal/ pkg/preseal/ pkg/sealblobstore/ pkg/storage/sealed/ pkg/enclaveprovider/	./pkg/seal/... ./pkg/preseal/... ./pkg/sealblobstore/... ./pkg/storage/sealed/... ./pkg/enclaveprovider/...	integration-test-pkcs11-barrier
+sign-server	docs/sign-server/ pkg/signserver/ sdk/go/signserver/	./pkg/signserver/...	-
+signing	docs/signing/ pkg/signing/	./pkg/signing/...	integration-test-signing
+ssh-agent-sessions	docs/ssh-agent-sessions/ pkg/ssh/agent/ pkg/ssh/connect/ sdk/go/client/ssh/	./pkg/ssh/agent/... ./pkg/ssh/connect/...	integration-test-sshagent
+ssh-keys	docs/ssh-keys/ pkg/ssh/	./pkg/ssh/...	integration-test-ssh-backends integration-test-api-ssh
+ssh-sessions	docs/ssh-sessions/ pkg/ssh/ sdk/go/client/ssh/	./pkg/ssh/...	-
+symmetric-aead	docs/symmetric-aead/ pkg/crypto/aead/ pkg/keyprovider/symmetric/	./pkg/crypto/aead/... ./pkg/keyprovider/symmetric/...	integration-test-symmetric
+tenant-subject-ou	docs/certificate-authority/ docs/acme-issuance/ pkg/ca/	./pkg/ca/...	-
+tpm-policies	docs/tpm-policies/ pkg/tpm2/policy/ pkg/localtpm/ pkg/keyversion/	./pkg/tpm2/policy/... ./pkg/localtpm/... ./pkg/keyversion/...	integration-test-tpm2
+tpm2	docs/tpm2/ pkg/tpm2/ pkg/backend/tpm2/	./pkg/tpm2/... ./pkg/backend/tpm2/...	integration-test-tpm2
+transparency-log	docs/transparency-log/ pkg/ca/checkpoint/ sdk/go/checkpoint/	./pkg/ca/checkpoint/...	-
+trust-bootstrap	docs/trust-bootstrap/ pkg/trust/bootstrap/ pkg/trust/resolver/	./pkg/trust/bootstrap/... ./pkg/trust/resolver/...	integration-test-bootstrap
+trust-roots	docs/trust-roots/ pkg/attestation/truststore/	./pkg/attestation/truststore/...	-
+user-onboarding	docs/user-onboarding/ pkg/webauthn/	./pkg/webauthn/...	-
+web-console	docs/web-console/ pkg/webui/ pkg/acme/gui/ web/ sdk/ts/	./pkg/webui/... ./pkg/acme/gui/...	integration-test-web
+webauthn	docs/webauthn/ pkg/webauthn/ pkg/factor/fido2/	./pkg/webauthn/... ./pkg/factor/fido2/...	integration-test-webauthn
+workload-identity	docs/workload-identity/ pkg/spiffe/ pkg/acme/linter/	./pkg/spiffe/... ./pkg/acme/linter/...	-
+xkmsd-configuration	docs/xkmsd-configuration/ pkg/config/ cmd/xkmsd/	./pkg/config/... ./cmd/xkmsd/...	-

@@ -1164,6 +1164,51 @@ test-go: check-insecure-tls agsim
 		exit $$EXIT_CODE; \
 	fi'
 
+# Per-feature test targets (Tenant ruling 1170). A local verify runs the fast
+# gates plus the unit and integration tests of the features a lane touched:
+# scripts/touched-features.sh <base> <tip> names them (FEATURES_CMD), and
+# these two targets run one feature's tests (FEATURE_TEST_CMD). The map is
+# scripts/features.tsv, one row per docs/SPEC.md feature that links a docs
+# folder; internal/buildgates/features_tsv_test.go keeps it in step.
+FEATURES_TSV := scripts/features.tsv
+
+# feature_lookup sets $$val to column $(1) (u = unit, i = integration) of
+# FEATURE's row, or prints the feature names and exits 2 when FEATURE is
+# empty or names no row.
+define feature_lookup
+tab=$$(printf '\t'); val=""; found=0; \
+while IFS="$$tab" read -r f p u i; do \
+	if [ -n "$(FEATURE)" ] && [ "$$f" = "$(FEATURE)" ]; then found=1; val="$$$(1)"; break; fi; \
+done < $(FEATURES_TSV); \
+if [ "$$found" -ne 1 ]; then \
+	echo "unknown FEATURE '$(FEATURE)'; usage: make $@ FEATURE=<name>, one of:" >&2; \
+	while IFS="$$tab" read -r f rest; do [ "$$f" = feature ] || echo "  $$f" >&2; done < $(FEATURES_TSV); \
+	exit 2; \
+fi
+endef
+
+.PHONY: test-feature integration-test-feature
+## test-feature: Run one feature's unit tests as test-go runs them (FEATURE=<name>, scripts/features.tsv)
+test-feature:
+	@$(call feature_lookup,u); \
+	if [ "$$val" = "-" ]; then echo "no unit tests for $(FEATURE)"; exit 0; fi; \
+	pkgs=$$(go list -e $$val 2>/dev/null | grep -v -E "$(UNIT_TEST_EXCLUDE)" || true); \
+	if [ -z "$$pkgs" ]; then echo "$(FEATURES_TSV): unit patterns of $(FEATURE) match no package: $$val" >&2; exit 1; fi; \
+	$(MAKE) --no-print-directory agsim || exit $$?; \
+	echo "$(CYAN)$(BOLD)→ Running unit tests for $(FEATURE)...$(RESET)"; \
+	$(GO) test -race -timeout $(UNIT_TEST_TIMEOUT) -tags="$(call go_tags,$(TEST_TAGS))" $$pkgs || exit $$?; \
+	echo "$(GREEN)✓ Unit tests passed for $(FEATURE)$(RESET)"
+
+## integration-test-feature: Run one feature's integration targets in order (FEATURE=<name>, scripts/features.tsv)
+integration-test-feature:
+	@$(call feature_lookup,i); \
+	if [ "$$val" = "-" ]; then echo "no integration tests for $(FEATURE)"; exit 0; fi; \
+	for target in $$val; do \
+		echo "$(CYAN)$(BOLD)→ $(FEATURE): make $$target$(RESET)"; \
+		$(MAKE) --no-print-directory $$target || exit $$?; \
+	done; \
+	echo "$(GREEN)✓ Integration tests passed for $(FEATURE)$(RESET)"
+
 .PHONY: test-pkcs11
 ## test-pkcs11: Run the pkcs11-tagged password-vault key-factor tests (pkg/vaulttoken)
 ## on SoftHSM, whose token lives in a temp directory. test-go builds without
