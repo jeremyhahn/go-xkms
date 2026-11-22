@@ -39,12 +39,14 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/veraison/corim/comid"
 	"github.com/veraison/corim/corim"
+	"github.com/veraison/corim/cots"
 	cose "github.com/veraison/go-cose"
 	"github.com/veraison/swid"
 
@@ -471,10 +473,23 @@ func checkTags(tags []corim.Tag) error {
 		if err := wellformedMode.Wellformed(tag); err != nil {
 			return &errs.Joined{Lead: ErrMalformed, Cause: err}
 		}
-		body, ok := bytes.CutPrefix(tag, corim.ComidTag)
-		if !ok {
-			continue
+		if err := checkTag(tag); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// checkTag decodes and validates one embedded tag by its CBOR tag number:
+// a CoMID (506), CoSWID (505) or CoTS (507). Any other item, tagged or
+// not, is not a CoRIM tag and is refused with ErrMalformed.
+func checkTag(tag corim.Tag) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = &errs.Joined{Lead: ErrMalformed, Cause: fmt.Errorf("tag decoder: %v", r)}
+		}
+	}()
+	if body, ok := bytes.CutPrefix(tag, corim.ComidTag); ok {
 		c, err := decodeCoMID(body)
 		if err != nil {
 			return err
@@ -482,8 +497,29 @@ func checkTags(tags []corim.Tag) error {
 		if err := c.Valid(); err != nil {
 			return &errs.Joined{Lead: ErrMalformed, Cause: err}
 		}
+		return nil
 	}
-	return nil
+	if body, ok := bytes.CutPrefix(tag, corim.CoswidTag); ok {
+		var s swid.SoftwareIdentity
+		if err := s.FromCBOR(body); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		if s.TagID.String() == "" || s.SoftwareName == "" || len(s.Entities) == 0 {
+			return &errs.Joined{Lead: ErrMalformed, Cause: errors.New("coswid: tag-id, software-name and entity are required")}
+		}
+		return nil
+	}
+	if body, ok := bytes.CutPrefix(tag, cots.CotsTag); ok {
+		var c cots.ConciseTaStore
+		if err := c.FromCBOR(body); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		if err := c.Valid(); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		return nil
+	}
+	return &errs.Joined{Lead: ErrMalformed, Cause: errors.New("tag is not a CoMID, CoSWID or CoTS")}
 }
 
 // convertReferenceValue maps one Veraison reference-value triple.
