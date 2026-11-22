@@ -426,13 +426,44 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	// account, and only while it is pending with no binding: of concurrent
 	// redemptions exactly one binds its certificate (Codex round-4 P1,
 	// ruling 952); every other one is the opaque unusable answer.
+	//
+	// Before anything is bound, the PIV activation takes the account's
+	// first-credential claim, the one a WebAuthn invite finish stores its
+	// passkey under: while a finish holds it (its passkey saved, the
+	// account not yet active) or after it committed (its activation then
+	// failed and only the WebAuthn resume, with its possession proof, may
+	// finish), PIV is refused and binds nothing (Codex round-1 P1).
+	var claim xkmswebauthn.FirstCredentialClaim
+	if s.webauthnService != nil {
+		claim, err = s.webauthnService.ClaimInviteFirstCredential(ctx, xkmswebauthn.HandleFromUserID(userID))
+		switch {
+		case errors.Is(err, xkmswebauthn.ErrRegistrationRefused):
+			return nil, ErrInviteUnusable
+		case errors.Is(err, xkmswebauthn.ErrNotConfigured):
+			// No WebAuthn ceremony can enrol this account: nothing to claim.
+			claim = nil
+		case err != nil:
+			return nil, &ErrUserOperation{Operation: "claim invited user's first credential", Err: err}
+		}
+	}
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
 	if _, err := s.inviteUsers.ActivateWithCertBinding(qrdbsdk.ContextWithTenant(ctx, req.TenantID), userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+		if claim != nil {
+			// Nothing was bound: a later activation, by either method, may
+			// claim afresh.
+			_ = claim.Release(context.WithoutCancel(ctx))
+		}
 		var notPending *qrdbuser.AccountNotPendingError
 		if errors.As(err, &notPending) {
 			return nil, ErrInviteUnusable
 		}
 		return nil, &ErrUserOperation{Operation: "activate invited user with piv certificate", Err: err}
+	}
+	if claim != nil {
+		// The activation is the commit point: the account is active, so no
+		// WebAuthn invite finish can enrol it whatever becomes of the claim.
+		// Committing it with no credential keeps it held for good.
+		_ = claim.Commit(context.WithoutCancel(ctx), nil)
 	}
 	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
 		return nil, &ErrUserOperation{Operation: "redeem invite", Err: err}

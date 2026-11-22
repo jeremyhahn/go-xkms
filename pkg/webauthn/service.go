@@ -607,6 +607,27 @@ func (s *Service) FinishInviteResume(ctx context.Context, sessionID string, invi
 	return user, nil
 }
 
+// ClaimInviteFirstCredential takes the invited account's first-credential
+// claim for an activation method that stores no passkey (PIV): the same
+// claim an invite registration finish stores its passkey under, so of the
+// two anonymous activation methods only one ever enrols the account. A claim
+// already held, pending or committed, is refused with ErrRegistrationRefused.
+// The caller commits the claim (with a nil credential) once its activation
+// commits, or releases it if the activation fails.
+func (s *Service) ClaimInviteFirstCredential(ctx context.Context, invitedHandle []byte) (FirstCredentialClaim, error) {
+	if !s.configured {
+		return nil, ErrNotConfigured
+	}
+	claim, err := s.creds.ClaimFirstCredential(ctx, invitedHandle)
+	if errors.Is(err, ErrFirstCredentialClaimed) {
+		return nil, ErrRegistrationRefused
+	}
+	if err != nil {
+		return nil, WrapError("claim first credential", err)
+	}
+	return claim, nil
+}
+
 // runFinishRegistration claims the ceremony session, resolves the account it
 // names, and — only once accept approves that account — validates the
 // authenticator response and persists the resulting credential. accept
