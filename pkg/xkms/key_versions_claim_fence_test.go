@@ -21,13 +21,18 @@ import (
 	"context"
 	"crypto"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/internal/claimclock"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -155,4 +160,93 @@ func TestRotateKey_TakeoverReclaimsTheCrashedRotatorsVersion(t *testing.T) {
 	assert.Error(t, err, "the record lists no version 2")
 	_, err = stored.Version(1)
 	assert.NoError(t, err)
+}
+
+// A version-state write in another process lands while a rotation holds
+// its claim, between the rotation's orphan check and its removal of the
+// orphan (Codex round 4, #2225). Recording the orphan's version as current
+// must fail, or the orphan's key material must survive the rotation.
+func TestRotateKey_PutDuringClaimNeverLosesRecordedMaterial(t *testing.T) {
+	ctx := context.Background()
+	here, elsewhere, shared := twoProcesses(t)
+	genKey(t, here, "", "k", "ed25519", 0)
+	orphan, err := shared.GenerateEd25519(ctx, &types.KeyAttributes{CN: "k--v2", KeyType: types.KeyTypeSigning, StoreType: types.StoreSoftware})
+	require.NoError(t, err)
+	orphanPEM, err := pubKeyPEM(orphan)
+	require.NoError(t, err)
+
+	var writeErr error
+	b := &deleteHookBackend{Backend: shared, beforeDelete: func(ctx context.Context) {
+		_, writeErr = elsewhere.updateVersions(ctx, "software", "", "k", func(k *versionedKey) (bool, error) {
+			k.record.AddCurrent(2, time.Now().UTC(), "state-writer")
+			return true, nil
+		})
+	}}
+	_, _ = here.rotateKey(ctx, b, "software", "k")
+
+	if writeErr != nil {
+		require.ErrorIs(t, writeErr, keyversion.ErrVersionConflict)
+		return
+	}
+	store, err := here.requireVersionStore()
+	require.NoError(t, err)
+	stored, found, err := store.Load(ctx, "", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, uint32(2), stored.Current, "the state writer recorded version 2")
+	got, err := here.GetKey(ctx, "software", "k")
+	require.NoError(t, err, "the recorded version's backend key exists")
+	assert.Equal(t, orphanPEM, got.PublicKeyPEM, "version 2's recorded key material survives the rotation")
+}
+
+// A version-state change that read the record before another process
+// rotated the key must not write the stale record back over the newer
+// version (Codex round 4, #2225).
+func TestUpdateVersions_StaleReadDoesNotDropANewerVersion(t *testing.T) {
+	ctx := context.Background()
+	kv := &writeAfterReadKV{AtomicKVStore: qrdbsdk.NewMemoryKVStore()}
+	inner, err := setupDeriveService(t).LookupBackend("software")
+	require.NoError(t, err)
+	armAt := 0
+	lb := &listHookBackend{Backend: inner, onList: func(n int) {
+		if n == armAt { // the listing under the key's lock, just before the read
+			kv.arm()
+		}
+	}}
+	svc, err := NewService(&ServiceConfig{
+		Backends:       map[string]Backend{"software": lb},
+		DefaultBackend: "software",
+	})
+	require.NoError(t, err)
+	store, err := keyversion.NewStore(dao.NewStoreFactory(kv))
+	require.NoError(t, err)
+	svc.SetKeyVersionStore(store)
+	other, err := keyversion.NewStore(dao.NewStoreFactory(kv))
+	require.NoError(t, err)
+
+	genKey(t, svc, "", "k", "ed25519", 0)
+	require.Equal(t, uint32(2), rotate(t, svc, "", "k"))
+
+	// Another process rotates the key to version 3 right after the state
+	// change reads the record under its lock.
+	kv.afterRead = func() {
+		rec, found, err := other.Load(ctx, "", "software", "k")
+		require.NoError(t, err)
+		require.True(t, found)
+		read := *rec
+		read.Versions = slices.Clone(rec.Versions)
+		rec.AddCurrent(3, time.Now().UTC(), "other-rotator")
+		require.NoError(t, other.CompareAndPut(ctx, "", "", &read, rec))
+	}
+	armAt = lb.n + 2
+
+	_, err = svc.DisableKeyVersion(ctx, &transport.KeyVersionRequest{Backend: "software", KeyID: "k", Version: 1})
+	require.ErrorIs(t, err, keyversion.ErrVersionConflict)
+
+	stored, found, err := store.Load(ctx, "", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint32(3), stored.Current, "the newer version stays current")
+	_, err = stored.Version(3)
+	assert.NoError(t, err, "the newer version stays recorded")
 }
