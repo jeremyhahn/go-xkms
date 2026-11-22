@@ -388,12 +388,25 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrPIVCertRejected{Err: err}
 	}
 
+	// The certificate must name the invited account's tenant under the
+	// rule and trust-domain pin PIV login applies (handlePIVLogin reads
+	// qrdbsdk.TenantFromClientCert under the same pin): a certificate the
+	// CA trusts but that names another tenant would be bound where login
+	// never looks it up. Checked before anything is claimed or bound.
+	certTenant, err := qrdbsdk.TenantFromClientCert(cert, s.SPIFFETrustDomain())
+	if err != nil {
+		return nil, &ErrPIVCertRejected{Err: err}
+	}
+
 	u, err := s.inviteUserClient().GetUser(ctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
 	if u.Lifecycle != string(qrdbsdk.LifecyclePending) {
 		return nil, ErrInviteUnusable
+	}
+	if certTenant != req.TenantID || (u.TenantID != "" && u.TenantID != req.TenantID) {
+		return nil, &ErrPIVCertRejected{Err: errPIVCertTenantMismatch}
 	}
 
 	// Claim the invitation BEFORE anything is bound. Concurrent requests can
@@ -534,3 +547,7 @@ func (s *XKMSService) caRootPool() (*x509.CertPool, error) {
 
 // errCABundleEmpty reports a CA bundle that parsed no certificates.
 var errCABundleEmpty = errors.New("ca bundle contains no parsable certificates")
+
+// errPIVCertTenantMismatch refuses a PIV invitation activation whose
+// certificate names a tenant other than the invited account's.
+var errPIVCertTenantMismatch = errors.New("certificate tenant is not the invited account's tenant")
