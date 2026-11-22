@@ -600,6 +600,9 @@ func (a *Authenticator) ProcessCBORWithContext(ctx context.Context, cmd byte, da
 	// A Selection grant is bound to one CTAPHID channel: any command from
 	// another channel ends it.
 	a.dropForeignPresenceGrant(ctx)
+	if credentialOperation(cmd) {
+		defer a.endPresenceGrantAfter()()
+	}
 
 	response, err := a.dispatchCommand(cmd, data)
 	if err != nil {

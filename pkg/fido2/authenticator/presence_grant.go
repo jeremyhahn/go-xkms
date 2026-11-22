@@ -103,6 +103,31 @@ func (a *Authenticator) dropForeignPresenceGrant(ctx context.Context) {
 	}
 }
 
+// credentialOperation reports whether cmd is a credential operation that a
+// Selection grant is offered to: the grant ends when one completes.
+func credentialOperation(cmd byte) bool {
+	return cmd == CmdMakeCredential || cmd == CmdGetAssertion
+}
+
+// endPresenceGrantAfter snapshots the grant a credential operation starts
+// with and returns the func that ends it once the operation completes, on
+// success or error, whether or not the operation's own presence check ran
+// (a PIN-authenticated MakeCredential with RequireUserPresence off asks for
+// none). A grant the operation itself issued (the zero-length
+// pinUvAuthParam selection idiom) is left for the next operation.
+func (a *Authenticator) endPresenceGrantAfter() func() {
+	a.grantMu.Lock()
+	start := a.presenceGrant
+	a.grantMu.Unlock()
+	return func() {
+		a.grantMu.Lock()
+		defer a.grantMu.Unlock()
+		if start != nil && a.presenceGrant == start {
+			a.presenceGrant = nil
+		}
+	}
+}
+
 // presenceEndsGrant reports whether a command error ended a presence wait
 // (host cancel or timeout), which clears any grant.
 func presenceEndsGrant(err error) bool {
