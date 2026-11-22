@@ -51,6 +51,11 @@ func (e *HostBuildError) Error() string {
 // Unwrap exposes the underlying construction error for errors.As/errors.Is.
 func (e *HostBuildError) Unwrap() error { return e.Err }
 
+// newHostServer builds the module's self-built REST surface. It is
+// rest.NewHostServer; a test replaces it (before any concurrent call) to
+// count the builds restServer runs.
+var newHostServer = rest.NewHostServer
+
 // restServer resolves the REST surface backing the module's HTTP routes and
 // its AuthenticateHTTP fallback.
 //
@@ -91,7 +96,7 @@ func (m *Module) restServer() (*rest.Server, error) {
 		return nil, err
 	}
 
-	srv, err := rest.NewHostServer(context.Background(), hc)
+	srv, err := newHostServer(context.Background(), hc)
 	if err != nil {
 		return nil, &HostBuildError{Err: err}
 	}
