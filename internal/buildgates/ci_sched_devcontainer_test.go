@@ -85,7 +85,8 @@ func TestCIDevcontainerCoverageSkipsAfterFailedBuild(t *testing.T) {
 }
 
 // runnerSelectStep is the id of the preflight step that picks the hosted
-// default or the overflow pools (ci-template v1.48, ruling 1024).
+// or the self-hosted pools (ci-template v1.48, ruling 1024; since v1.54 the
+// step `Balanced runner pool (ruling 1137)`).
 const runnerSelectStep = "runner"
 
 // forkEnv is the step's v1.52 fork env (template verbatim): a pull request
@@ -176,7 +177,9 @@ func runRunnerSelect(t *testing.T, script, fork string) (output, calls string) {
 // runRunnerSelectListing runs the selector as runRunnerSelect does, with a
 // first job page of listed hosted jobs in progress under a total_count of
 // total. When total exceeds listed, every later page is empty: the listing
-// is incomplete. It also returns the selector's own log.
+// is incomplete. It also returns the selector's own log. The limits are
+// v1.54's repository variables: CI_HOSTED_SHARE 12, so 12 hosted jobs fill
+// the hosted pool, and 10 units of each self-hosted label, none in use.
 func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int) (output, calls, log string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -218,8 +221,9 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 		"API=https://api.example/repos/o/r/actions",
 		"RUN_ID=1",
 		"JOB_TOKEN=x",
-		"LIMIT=12",
-		"GRACE=60",
+		"HS=12",
+		"C1=10",
+		"C2=10",
 		"EVENT=pull_request",
 		"REPO=o/r",
 		"HEAD_REPO="+headRepo(fork),
@@ -270,8 +274,9 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
 	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 
-	// A same-repository run on a full pool overflows: the stub reaches the
-	// overflow branch, so the fork case below tests the fork check.
+	// A same-repository run on a full hosted pool goes self-hosted: the stub
+	// reaches the self-hosted branch, so the fork case below tests the fork
+	// check.
 	if out, _ := runRunnerSelect(t, step.Run, "false"); out != overflow {
 		t.Errorf("same-repository run on a full pool: output %q, want %q", out, overflow)
 	}
@@ -286,10 +291,11 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 	}
 }
 
-// TestCIRunnerSelectionShortListIsLowerBound pins template v1.50 (handbook
-// 52e70fd5, #84): a listing short of its total_count is a lower bound kept in
-// SHORT, not a reason to stay hosted, so overflow still fires under load.
-func TestCIRunnerSelectionShortListIsLowerBound(t *testing.T) {
+// TestCIRunnerSelectionShortListGoesHosted pins template v1.54 (handbook
+// 1ad68ab8, #104, ruling 1137), which drops v1.50's lower bound: a listing
+// short of its total_count is a count it cannot read, so the run takes the
+// hosted default with a ::warning, whatever the jobs it did list would pick.
+func TestCIRunnerSelectionShortListGoesHosted(t *testing.T) {
 	wf := readDigestWorkflow(t)
 	var script string
 	for _, s := range wf.Jobs[preflightJob].Steps {
@@ -306,18 +312,18 @@ func TestCIRunnerSelectionShortListIsLowerBound(t *testing.T) {
 		}
 	}
 	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
-	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 	for _, tc := range []struct {
 		name   string
 		listed int
 		want   string
 		note   string
 	}{
-		// 12 of 20 listed: the lower bound already reaches
-		// HOSTED_JOBS_PER_REPO=12, so the run overflows and says so.
-		{"lower bound reaches the limit", 12, overflow, "(a lower bound:"},
-		// 5 of 20 listed: the lower bound reaches no trigger, so it stays hosted.
-		{"lower bound short of the limit", 5, hosted, "fewer entries than its total"},
+		// 12 of 20 listed: the listed jobs alone fill the hosted pool
+		// (CI_HOSTED_SHARE 12), which would pick self-hosted, yet the short
+		// listing sends the run hosted.
+		{"short list that would pick self-hosted", 12, hosted, "::warning::runner selection: the Actions API gave no complete job list"},
+		// 5 of 20 listed: hosted, with the same warning.
+		{"short list that would pick hosted", 5, hosted, "::warning::runner selection: the Actions API gave no complete job list"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, calls, log := runRunnerSelectListing(t, script, "false", tc.listed, 20)

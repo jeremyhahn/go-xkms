@@ -154,6 +154,44 @@ func TestCIMaskLANScript(t *testing.T) {
 			t.Errorf("masked %q: a public host, a keyword or a variable outside the list", l)
 		}
 	}
+	// Codex P1 on #2340: a host name is classified in any letter case and
+	// with its terminal dot removed; the masks keep the entry's spelling.
+	for _, tc := range []struct {
+		name, env string
+		want      []string
+	}{
+		{"an upper-case LAN suffix", "DEVCACHE_GO=http://cache.INTERNAL:3300/go",
+			[]string{"http://cache.INTERNAL:3300/go", "cache.INTERNAL:3300", "cache.INTERNAL"}},
+		{"a fully qualified LAN name", "CI_IMAGE_REGISTRY=registry.lan.:5000",
+			[]string{"registry.lan.:5000", "registry.lan."}},
+		{"a fully qualified mixed-case name with no port", "RELEASE_REGISTRY=Pkgs.Home.Arpa.",
+			[]string{"Pkgs.Home.Arpa."}},
+		{"a fully qualified single label", "GOPROXY=http://buildcache.:3000",
+			[]string{"http://buildcache.:3000", "buildcache.:3000", "buildcache."}},
+		{"a fully qualified public host and an upper-case keyword", "GOPROXY=https://Proxy.Golang.Org.,DIRECT",
+			nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("bash", script) // #nosec G204 -- the repository's own script
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), tc.env}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s: %v\n%s", maskLANScript, err, out)
+			}
+			var got []string
+			for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if l != "" {
+					got = append(got, strings.TrimPrefix(l, "::add-mask::"))
+				}
+			}
+			slices.Sort(got)
+			want := slices.Clone(tc.want)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s: masks %q, want %q", tc.env, got, want)
+			}
+		})
+	}
 	public := exec.Command("bash", script) // #nosec G204 -- the repository's own script
 	public.Env = []string{"PATH=" + os.Getenv("PATH"), "GITHUB_SERVER_URL=https://github.com"}
 	if out, err := public.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "" {

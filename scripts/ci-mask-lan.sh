@@ -20,12 +20,19 @@
 # VARS_CI_IMAGE_REGISTRY from the repository variable, because a registry a
 # later step takes from `vars` is not in this step's environment otherwise. A
 # _REGISTRY_OWNER or other non-host name is not scanned.
+# Host-name case and a terminal dot (Codex on #2340): DNS names are
+# case-insensitive and may be written fully qualified, so cache.INTERNAL and
+# registry.lan. are internal. The host is classified from a copy, lowercased
+# with one terminal dot removed; the masks keep the entry's own spelling,
+# which is what a log line repeats.
 #
 #   usage: scripts/ci-mask-lan.sh
 set -euo pipefail
 
 private() {
-	case $1 in
+	local h=${1,,}
+	h=${h%.}
+	case $h in
 	10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].*) return 0 ;;
 	'' | direct | off) return 1 ;;
 	*.internal | *.lan | *.local | *.localdomain | *.home.arpa | *.corp) return 0 ;;
