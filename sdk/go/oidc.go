@@ -66,6 +66,17 @@ var (
 // starts its refresh scheduler.
 var BuildOIDCCredentialService = compose.BuildOIDCCredentialService
 
+// OIDCCredentialBarriers seals and opens OIDC credentials per tenant.
+type OIDCCredentialBarriers = credential.Barriers
+
+// OIDCCredentialRegistryBarriers adapts a tenant barrier registry to
+// OIDCCredentialBarriers.
+var OIDCCredentialRegistryBarriers = credential.RegistryBarriers
+
+// NewOIDCCredentialService builds an OIDC credential service over the given
+// barriers without starting a refresh scheduler.
+var NewOIDCCredentialService = credential.New
+
 // The codex CLI's auth.json (pkg/oidc).
 
 // CodexAuth is a ChatGPT login read from a codex auth.json.
