@@ -102,6 +102,9 @@ type tenantCAKeyFactory struct {
 	// before generation keeps concurrent passes from each making a key.
 	claims  storage.Backend
 	tenants tenantLookup
+	// fenced holds the claim owners whose hosts the operator fenced (see
+	// FenceHolders).
+	fenced map[string]struct{}
 }
 
 // tenantLookup is the part of go-qrdb's tenant service the factory uses to
@@ -274,10 +277,47 @@ func (f *tenantCAKeyFactory) TenantIDs(ctx context.Context) ([]string, error) {
 // tenant's scope and a self-signed CA certificate over it, saved under the same
 // name. An existing key is kept and its certificate validated, or issued if
 // missing.
+//
+// A tenant RemoveTenant tore down is never provisioned again: teardown
+// tombstones the tenant's claim before it deletes anything, and every pass
+// checks the tombstone after its last write. A pass that sees it undoes what
+// it wrote, so a pass that raced teardown leaves no CA material behind: either
+// the pass wrote before the tombstone, and teardown's deletes come after, or
+// its check comes after the tombstone, and it deletes its own writes.
 func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) error {
 	if tenantID == "" {
 		return errors.New("tenant login CA key factory: empty tenant ID")
 	}
+	if removed, err := f.tenantLoginCARemoved(ctx, tenantID); err != nil || removed {
+		return errors.Join(fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved), err)
+	}
+	ensureErr := f.ensureTenant(ctx, tenantID)
+	removed, err := f.tenantLoginCARemoved(ctx, tenantID)
+	if err != nil {
+		// Teardown may have run: whether this pass's writes outlive it is
+		// unknown, so the pass fails.
+		return errors.Join(ensureErr, err)
+	}
+	if removed {
+		base, baseErr := f.backend()
+		if baseErr != nil {
+			return errors.Join(fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved), baseErr)
+		}
+		errs := deleteTenantLoginCAMaterial(ctx, base, tenantID)
+		return errors.Join(append([]error{fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved)}, errs...)...)
+	}
+	if errors.Is(ensureErr, errTenantLoginCAClaimHeld) {
+		// Name the holder: a holder on a lost host is released only when the
+		// operator fences it (config.DatastoreConfig.TenantLoginCAFencedHolders).
+		if holder := f.tenantLoginCAClaimHolder(ctx, tenantID); holder != "" {
+			ensureErr = fmt.Errorf("%w (claim holder %s)", ensureErr, holder)
+		}
+	}
+	return ensureErr
+}
+
+// ensureTenant is one provisioning pass of EnsureTenant.
+func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) error {
 	base, err := f.backend()
 	if err != nil {
 		return err
@@ -326,12 +366,13 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 	// waits on the token's mutex without a deadline), so no lease bounds
 	// when this pass can still make its key.
 	_, err = scoped.GenerateECDSA(ctx, attrs)
+	// The generate returned, so it makes no key any more: put back a plain
+	// claim, which teardown may replace and a later pass may take over once
+	// its lease runs out and no key is behind it. Writes this pass still
+	// makes are fenced by EnsureTenant's tombstone check.
+	f.releaseTenantLoginCAGenerating(ctx, tenantID, owner, generating)
 	if err != nil {
 		if !errors.Is(err, backend.ErrKeyAlreadyExists) {
-			// The generate returned, so it makes no key any more: put back
-			// a plain claim, which a later pass may take over once its
-			// lease runs out and no key is behind it.
-			f.releaseTenantLoginCAGenerating(ctx, tenantID, owner, generating)
 			return fmt.Errorf("tenant login CA key factory: generate key for tenant %q: %w", tenantID, err)
 		}
 		// Another node provisioned the key between the lookup and the
@@ -397,6 +438,9 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 	if err != nil {
 		return "", fmt.Errorf("tenant login CA key factory: read claim of tenant %q: %w", tenantID, err)
 	}
+	if tenantLoginCAClaimIsRemoved(held) {
+		return "", fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved)
+	}
 	if at, _, parseErr := parseTenantLoginCAClaim(held); parseErr == nil && time.Since(at) < tenantLoginCAClaimLease {
 		return "", nil
 	}
@@ -404,8 +448,9 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 		// Its owner may still be inside a generate that no lease bounds,
 		// and an unchanged claim does not prove it stopped: taking over
 		// could make a second key beside the one it makes. Take it over
-		// only on proof that its owner's process ended.
-		if _, heldOwner, _ := parseTenantLoginCAClaim(held); !tenantLoginCAHolderStopped(heldOwner) {
+		// only on proof that its owner's process ended, or once the
+		// operator fenced its host and named it a fenced holder.
+		if _, heldOwner, _ := parseTenantLoginCAClaim(held); !tenantLoginCAHolderStopped(heldOwner) && !f.fencedHolder(heldOwner) {
 			return "", nil
 		}
 	}
@@ -721,6 +766,172 @@ func (f *tenantCAKeyFactory) RemoveTenant(ctx context.Context, tenantID string) 
 	if err != nil {
 		return err
 	}
+	claims, err := f.claimStorage()
+	if err != nil {
+		return err
+	}
+	// The tombstone goes first, through the same claim every pass takes: no
+	// pass claims or generates after it, and a pass already running sees it
+	// after its last write and undoes that write (see EnsureTenant).
+	if err := f.tombstoneTenantLoginCAClaim(ctx, claims, tenantID); err != nil {
+		return fmt.Errorf("tenant login CA key factory: remove tenant %q: tombstone claim: %w", tenantID, err)
+	}
+	if errs := deleteTenantLoginCAMaterial(ctx, base, tenantID); len(errs) > 0 {
+		return fmt.Errorf("tenant login CA key factory: remove tenant %q: %w", tenantID, errors.Join(errs...))
+	}
+	return nil
+}
+
+// ReviveTenant clears the teardown tombstone of a tenant created again under
+// the ID RemoveTenant tore down (a create retried after its undo), so
+// EnsureTenant provisions it anew. Nothing but RemoveTenant writes over a
+// tombstone, and it leaves one in place, so reading it and then deleting it
+// races no other writer. A tenant without a tombstone is left as it is.
+func (f *tenantCAKeyFactory) ReviveTenant(ctx context.Context, tenantID string) error {
+	if tenantID == "" {
+		return errors.New("tenant login CA key factory: empty tenant ID")
+	}
+	removed, err := f.tenantLoginCARemoved(ctx, tenantID)
+	if err != nil || !removed {
+		return err
+	}
+	claims, err := f.claimStorage()
+	if err != nil {
+		return err
+	}
+	if err := claims.Delete(ctx, tenantLoginCAClaimKey(tenantID)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return fmt.Errorf("tenant login CA key factory: revive tenant %q: %w", tenantID, err)
+	}
+	return nil
+}
+
+// errTenantLoginCARemoved reports a tenant whose login CA RemoveTenant tore
+// down: its claim is a tombstone, and no pass provisions it again.
+var errTenantLoginCARemoved = errors.New("tenant login CA key factory: the tenant's login CA was removed")
+
+// tenantLoginCAClaimRemovedValue is the claim value of a torn-down tenant.
+// It holds no time, so no pass parses it as a claim it may take over.
+const tenantLoginCAClaimRemovedValue = "removed"
+
+// tenantLoginCAClaimIsRemoved reports whether claim is a teardown tombstone.
+func tenantLoginCAClaimIsRemoved(claim []byte) bool {
+	return string(claim) == tenantLoginCAClaimRemovedValue
+}
+
+// tombstoneTenantLoginCAClaim replaces the tenant's claim with the teardown
+// tombstone: written with PutIfAbsent or compare-and-swap, so a claim or
+// takeover racing it either lands first and is replaced, or finds the
+// tombstone. A claim marked generating by a holder that may still run is not
+// replaced: errTenantLoginCAClaimHeld, and teardown retries.
+func (f *tenantCAKeyFactory) tombstoneTenantLoginCAClaim(ctx context.Context, claims storage.Backend, tenantID string) error {
+	key := tenantLoginCAClaimKey(tenantID)
+	removed := []byte(tenantLoginCAClaimRemovedValue)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		stored, err := claims.PutIfAbsent(ctx, key, removed)
+		if err != nil {
+			return err
+		}
+		if stored {
+			return nil
+		}
+		held, err := claims.Get(ctx, key)
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if tenantLoginCAClaimIsRemoved(held) {
+			return nil
+		}
+		if tenantLoginCAClaimGenerating(held) {
+			// A generate may be in flight, and a key it makes after the
+			// deletes would outlive teardown: wait for it to return, or for
+			// proof (or the operator's fence) that its holder stopped.
+			if _, heldOwner, _ := parseTenantLoginCAClaim(held); !tenantLoginCAHolderStopped(heldOwner) && !f.fencedHolder(heldOwner) {
+				return fmt.Errorf("%w (claim holder %s)", errTenantLoginCAClaimHeld, heldOwner)
+			}
+		}
+		swapper, ok := claims.(storage.CompareAndSwapper)
+		if !ok {
+			return claims.Put(ctx, key, removed)
+		}
+		swapped, _, err := swapper.CompareAndSwap(ctx, key, held, removed)
+		if err != nil {
+			return err
+		}
+		if swapped {
+			return nil
+		}
+	}
+}
+
+// tenantLoginCARemoved reports whether the tenant's claim is a teardown
+// tombstone. A storage error leaves it unknown and is returned.
+func (f *tenantCAKeyFactory) tenantLoginCARemoved(ctx context.Context, tenantID string) (bool, error) {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return false, err
+	}
+	held, err := claims.Get(ctx, tenantLoginCAClaimKey(tenantID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("tenant login CA key factory: read claim of tenant %q: %w", tenantID, err)
+	}
+	return tenantLoginCAClaimIsRemoved(held), nil
+}
+
+// tenantLoginCAClaimHolder is the owner named by the tenant's claim, or "".
+func (f *tenantCAKeyFactory) tenantLoginCAClaimHolder(ctx context.Context, tenantID string) string {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return ""
+	}
+	held, err := claims.Get(ctx, tenantLoginCAClaimKey(tenantID))
+	if err != nil {
+		return ""
+	}
+	_, owner, parseErr := parseTenantLoginCAClaim(held)
+	if parseErr != nil {
+		return ""
+	}
+	return owner
+}
+
+// FenceHolders names the claim holders whose hosts the operator fenced: each
+// is a claim owner a lost host left marked generating (EnsureTenant's
+// "claim holder" error names it). A pass takes such a claim over as if its
+// holder had provably stopped. Naming a holder whose host may still run is
+// unsafe: its generate could make a second key.
+func (f *tenantCAKeyFactory) FenceHolders(owners []string) {
+	fenced := make(map[string]struct{}, len(owners))
+	for _, owner := range owners {
+		if owner = strings.TrimSpace(owner); owner != "" {
+			fenced[owner] = struct{}{}
+		}
+	}
+	f.mu.Lock()
+	f.fenced = fenced
+	f.mu.Unlock()
+}
+
+// fencedHolder reports whether the operator fenced owner's host.
+func (f *tenantCAKeyFactory) fencedHolder(owner string) bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	_, ok := f.fenced[owner]
+	return ok
+}
+
+// deleteTenantLoginCAMaterial deletes the tenant's login CA certificate,
+// provenance and intent records and its key, and returns what failed. A
+// lookup error other than absence leaves the key in place and is returned.
+func deleteTenantLoginCAMaterial(ctx context.Context, base xkms.Backend, tenantID string) []error {
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	var errs []error
 	for _, certID := range []string{tenantLoginCAKeyCN, tenantLoginCAProvenanceID, tenantLoginCAIntentID} {
@@ -739,21 +950,9 @@ func (f *tenantCAKeyFactory) RemoveTenant(ctx context.Context, tenantID string) 
 			errs = append(errs, delErr)
 		}
 	} else if !errors.Is(lookupErr, errTenantLoginCAKeyNotFound) {
-		// The key may remain: keep the claim.
 		errs = append(errs, lookupErr)
 	}
-	if len(errs) > 0 {
-		return fmt.Errorf("tenant login CA key factory: remove tenant %q: %w", tenantID, errors.Join(errs...))
-	}
-	// The claim goes last: while any key or certificate remains, a new
-	// pass must not claim and generate beside it.
-	f.mu.RLock()
-	claims := f.claims
-	f.mu.RUnlock()
-	if err := claims.Delete(ctx, tenantLoginCAClaimKey(tenantID)); err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return fmt.Errorf("tenant login CA key factory: remove tenant %q: delete claim: %w", tenantID, err)
-	}
-	return nil
+	return errs
 }
 
 // ensureTenantLoginCACert makes sure the tenant's saved login CA certificate is

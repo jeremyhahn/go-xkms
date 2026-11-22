@@ -728,6 +728,17 @@ type DatastoreConfig struct {
 	// every tenant's login credentials. Only meaningful when the TrustedCA
 	// is the cluster CA.
 	TenantLoginCAKeys bool `yaml:"tenant-login-ca-keys"`
+
+	// TenantLoginCAFencedHolders is the recovery for a tenant login CA
+	// provisioning claim a lost host left marked generating: no other host
+	// can prove that host's generate stopped, so the claim is held, and the
+	// boot pass fails with an error naming the "claim holder". After fencing
+	// that host (powered off, or its HSM session revoked), the operator lists
+	// the named holder here and restarts; the boot pass then takes the claim
+	// over and provisions the tenant. Remove the entry once the boot pass
+	// succeeds. Listing a holder whose host may still run is unsafe: its
+	// generate could leave a second key.
+	TenantLoginCAFencedHolders []string `yaml:"tenant-login-ca-fenced-holders"`
 }
 
 // DatastoreRemoteConfig configures a connection to an already-running,

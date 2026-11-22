@@ -90,6 +90,8 @@ func (k *fakeTenantCAKeys) EnsureTenant(_ context.Context, id string) error {
 	return nil
 }
 
+func (k *fakeTenantCAKeys) ReviveTenant(context.Context, string) error { return nil }
+
 func (k *fakeTenantCAKeys) RemoveTenant(_ context.Context, id string) error {
 	delete(k.provisioned, id)
 	return nil

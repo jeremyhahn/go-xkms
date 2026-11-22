@@ -31,6 +31,7 @@ func (e *TenantProvisionError) Unwrap() error { return e.Err }
 type tenantCAKeyProvisioner interface {
 	EnsureTenant(ctx context.Context, tenantID string) error
 	RemoveTenant(ctx context.Context, tenantID string) error
+	ReviveTenant(ctx context.Context, tenantID string) error
 }
 
 // provisioningTenantService is the node's tenant service with one change:
@@ -53,7 +54,13 @@ func (p *provisioningTenantService) CreateTenant(ctx context.Context, id, name s
 	if err != nil {
 		return nil, err
 	}
-	if ensureErr := p.keys.EnsureTenant(ctx, info.ID); ensureErr != nil {
+	// The tenant is new: a login CA an earlier tenant under this ID tore
+	// down does not keep it from being provisioned.
+	ensureErr := p.keys.ReviveTenant(ctx, info.ID)
+	if ensureErr == nil {
+		ensureErr = p.keys.EnsureTenant(ctx, info.ID)
+	}
+	if ensureErr != nil {
 		return nil, &TenantProvisionError{
 			TenantID: info.ID,
 			Err:      errors.Join(ensureErr, p.undoCreate(ctx, info.ID)),
@@ -113,6 +120,7 @@ func (s *Server) provisionTenantCAKeys(ctx context.Context) error {
 	if err := s.tenantCAKeys.Bind(base, s.sharedStorage()); err != nil {
 		return &TenantProvisionError{Err: err}
 	}
+	s.tenantCAKeys.FenceHolders(s.config.Datastore.TenantLoginCAFencedHolders)
 	s.tenantCAKeys.TrackTenants(s.tenantService)
 	return provisionTenantCAKeysWith(ctx, s.tenantService, s.tenantCAKeys)
 }

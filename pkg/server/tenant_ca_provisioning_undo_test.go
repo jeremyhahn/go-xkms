@@ -32,6 +32,8 @@ func (k *cancellingTenantCAKeys) EnsureTenant(ctx context.Context, _ string) err
 
 func (k *cancellingTenantCAKeys) RemoveTenant(context.Context, string) error { return nil }
 
+func (k *cancellingTenantCAKeys) ReviveTenant(context.Context, string) error { return nil }
+
 // newRealTenantService builds go-qrdb's own tenant service over an
 // initialized in-memory system barrier.
 func newRealTenantService(t *testing.T) seal.TenantService {

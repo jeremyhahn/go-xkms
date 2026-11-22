@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/internal/keyslot"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -923,19 +924,130 @@ func TestTenantCAKeyFactory_NoTakeoverOfRenewingGeneratingClaim(t *testing.T) {
 
 // Removing a tenant releases its claim, so the tenant can be provisioned
 // again.
-func TestTenantCAKeyFactory_RemoveTenantReleasesClaim(t *testing.T) {
+func TestTenantCAKeyFactory_RemoveTenantTombstonesClaim(t *testing.T) {
 	ctx := context.Background()
-	f, _ := newTenantCAKeyTestFactory(t, "tenant-a")
+	f, base := newTenantCAKeyTestFactory(t, "tenant-a")
 	before, _ := tenantLoginCA(t, f, "tenant-a")
 
 	require.NoError(t, f.RemoveTenant(ctx, "tenant-a"))
-	_, err := f.claims.Get(ctx, tenantLoginCAClaimKey("tenant-a"))
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	held, err := f.claims.Get(ctx, tenantLoginCAClaimKey("tenant-a"))
+	require.NoError(t, err)
+	assert.True(t, tenantLoginCAClaimIsRemoved(held), "teardown leaves a tombstone, not an empty claim")
+	require.NoError(t, f.RemoveTenant(ctx, "tenant-a"), "a second teardown is not an error")
 
+	require.ErrorIs(t, f.EnsureTenant(ctx, "tenant-a"), errTenantLoginCARemoved, "a late pass must not provision a removed tenant")
+	assertNoTenantLoginCA(t, base, "tenant-a")
+
+	// A tenant created again under the ID is revived and provisioned anew.
+	require.NoError(t, f.ReviveTenant(ctx, "tenant-a"))
 	require.NoError(t, f.EnsureTenant(ctx, "tenant-a"))
 	after, _ := tenantLoginCA(t, f, "tenant-a")
 	assert.False(t, before.(*ecdsa.PublicKey).Equal(after), "a removed tenant gets a new login CA key")
 }
+
+// assertNoTenantLoginCA fails unless the tenant has no login CA key and none
+// of its certificate, provenance or intent records.
+func assertNoTenantLoginCA(t *testing.T, base xkms.Backend, tenantID string) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+	require.ErrorIs(t, err, errTenantLoginCAKeyNotFound, "a login CA key outlived teardown")
+	scoped := xkms.NewTenantScopedBackend(base, tenantID)
+	for _, certID := range []string{tenantLoginCAKeyCN, tenantLoginCAProvenanceID, tenantLoginCAIntentID} {
+		exists, err := scoped.CertExists(ctx, certID)
+		require.NoError(t, err)
+		assert.False(t, exists, "%s outlived teardown", certID)
+	}
+}
+
+// pausingProvenanceBackend runs pause once, right before the provenance
+// record of a provisioning pass is saved: after the key exists, before the
+// pass's last writes.
+type pausingProvenanceBackend struct {
+	xkms.Backend
+	pause func()
+	once  sync.Once
+}
+
+func (b *pausingProvenanceBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
+	if strings.HasSuffix(keyID, tenantLoginCAProvenanceID) {
+		b.once.Do(b.pause)
+	}
+	return b.Backend.SaveCert(ctx, keyID, cert)
+}
+
+func TestTenantCAKeyFactory_TeardownFencesLateProvisioningWrites(t *testing.T) {
+	ctx := context.Background()
+	baseA, baseB := sharedTenantCABackends(t)
+	claims := storage.New() // shared by the nodes, as the server's shared storage is
+	b := newTenantCAKeyFactory()
+	require.NoError(t, b.Bind(baseB, claims))
+	var removeErr error
+	nodeA := &pausingProvenanceBackend{Backend: baseA}
+	// Node B tears the tenant down while node A's pass has made the key and
+	// is about to save its provenance and certificate.
+	nodeA.pause = func() { removeErr = b.RemoveTenant(ctx, "tenant-a") }
+	a := newTenantCAKeyFactory()
+	require.NoError(t, a.Bind(nodeA, claims))
+
+	require.ErrorIs(t, a.EnsureTenant(ctx, "tenant-a"), errTenantLoginCARemoved, "a pass that raced teardown must report the removal")
+	require.NoError(t, removeErr)
+	assertNoTenantLoginCA(t, baseB, "tenant-a")
+
+	require.ErrorIs(t, b.EnsureTenant(ctx, "tenant-a"), errTenantLoginCARemoved, "no pass provisions a torn-down tenant")
+	assertNoTenantLoginCA(t, baseB, "tenant-a")
+}
+
+func TestTenantCAKeyFactory_TeardownWaitsForGenerateInFlight(t *testing.T) {
+	ctx := context.Background()
+	baseA, baseB := sharedTenantCABackends(t)
+	claims := storage.New()
+	b := newTenantCAKeyFactory()
+	require.NoError(t, b.Bind(baseB, claims))
+	var removeErr error
+	nodeA := &stalledGenerateBackend{Backend: baseA}
+	nodeA.pause = func() { removeErr = b.RemoveTenant(ctx, "tenant-a") }
+	a := newTenantCAKeyFactory()
+	require.NoError(t, a.Bind(nodeA, claims))
+
+	require.NoError(t, a.EnsureTenant(ctx, "tenant-a"))
+	require.ErrorIs(t, removeErr, errTenantLoginCAClaimHeld, "teardown must not delete under a generate in flight")
+
+	require.NoError(t, b.RemoveTenant(ctx, "tenant-a"), "teardown proceeds once the generate returned")
+	assertNoTenantLoginCA(t, baseB, "tenant-a")
+}
+
+func TestTenantCAKeyFactory_FencedHolderReleasesLostHostClaim(t *testing.T) {
+	ctx := context.Background()
+	base, _ := sharedTenantCABackends(t)
+	claims := storage.New()
+	key := tenantLoginCAClaimKey(tenantLoginCASystemTestID)
+	// A node on another host died after marking the claim generating.
+	lostHolder := tenantLoginCAClaimOwner("lost-holder", "lost-process", 4242, "lost-host")
+	stored, err := claims.PutIfAbsent(ctx, key, tenantLoginCAGeneratingClaim(lostHolder, time.Now().Add(-2*tenantLoginCAClaimLease)))
+	require.NoError(t, err)
+	require.True(t, stored)
+	node := &stalledGenerateBackend{Backend: base}
+	f := newTenantCAKeyFactory()
+	require.NoError(t, f.Bind(node, claims))
+
+	err = f.EnsureTenant(ctx, tenantLoginCASystemTestID)
+	require.ErrorIs(t, err, errTenantLoginCAClaimHeld, "no host proves a lost host's generate stopped")
+	assert.Contains(t, err.Error(), lostHolder, "the error names the holder the operator fences")
+	require.ErrorIs(t, f.RemoveTenant(ctx, tenantLoginCASystemTestID), errTenantLoginCAClaimHeld)
+	assert.Zero(t, node.generated.Load())
+
+	// The operator fenced the lost host and names its holder.
+	f.FenceHolders([]string{" " + lostHolder + " "})
+	require.NoError(t, f.EnsureTenant(ctx, tenantLoginCASystemTestID))
+	assert.EqualValues(t, 1, node.generated.Load(), "the fenced holder's claim is taken over and one key made")
+	pub, cert := tenantLoginCA(t, f, tenantLoginCASystemTestID)
+	assert.True(t, pub.(*ecdsa.PublicKey).Equal(cert.PublicKey))
+}
+
+// tenantLoginCASystemTestID is the system tenant, whose claim no tenant
+// deletion clears.
+const tenantLoginCASystemTestID = qrdbsdk.SystemTenantID
 
 func TestTenantCAKeyFactory_BindRequiresClaimStorage(t *testing.T) {
 	_, base := newTenantCAKeyTestFactory(t)
