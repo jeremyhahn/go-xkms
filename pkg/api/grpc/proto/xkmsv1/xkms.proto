@@ -73,6 +73,12 @@ service KeystoreService {
     option (qrdb.v1.permission) = "keys:rotate";
   }
 
+  // ExportOTAImagePublicKey returns the public half of a board's current OTA
+  // image-signing key as raw X||Y and as a COSE_Key.
+  rpc ExportOTAImagePublicKey(OTAImageKeyRequest) returns (OTAImagePublicKeyResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
+
   // SignOTAImage signs an OTA image with the current version of its board's
   // key.
   rpc SignOTAImage(SignOTAImageRequest) returns (SignResponse) {
@@ -1525,6 +1531,18 @@ message OTAImageKeyRequest {
   string backend = 2;
   // algorithm must be "ES256"; empty selects it.
   string algorithm = 3;
+}
+
+// OTAImagePublicKeyResponse is the public half of a board's current OTA
+// image-signing key.
+message OTAImagePublicKeyResponse {
+  string key_id = 1;
+  string board_id = 2;
+  uint32 version = 3;
+  // raw is the uncompressed P-256 point without its 0x04 prefix: X||Y, 64 bytes.
+  bytes raw = 4;
+  // cose_key is the key as a CBOR-encoded COSE_Key (RFC 9052).
+  bytes cose_key = 5;
 }
 
 // SignOTAImageRequest signs an OTA image, or its SHA-256 digest.

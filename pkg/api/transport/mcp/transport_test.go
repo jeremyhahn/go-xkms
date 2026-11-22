@@ -447,6 +447,7 @@ var mockToolMethods = []string{
 	"xkms.rotateKey",
 	"xkms.createOTAImageKey",
 	"xkms.rotateOTAImageKey",
+	"xkms.exportOTAImagePublicKey",
 	"xkms.signOTAImage",
 	"xkms.listKeyVersions",
 	"xkms.enableKeyVersion",

@@ -862,6 +862,10 @@ func (m *mockXKMSService) RotateOTAImageKey(ctx context.Context, req *transport.
 	return nil, nil
 }
 
+func (m *mockXKMSService) ExportOTAImagePublicKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.OTAImagePublicKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockXKMSService) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }
