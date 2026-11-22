@@ -2376,7 +2376,7 @@ func endorse01CSRKey(t *testing.T) *ecdsa.PrivateKey {
 // manufacturer code the device asserts must reach the EK certificate request.
 func TestOrderFinalizeHandler_Endorse01RecordsAssertedManufacturer(t *testing.T) {
 	f := newEndorse01Fixture(t)
-	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "lab-node-5-ek"}}
+	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "node-01-ek"}}
 
 	resp := f.finalize(t, createEndorse01CSR(t, template, endorse01CSRKey(t)))
 
@@ -2390,7 +2390,7 @@ func TestOrderFinalizeHandler_Endorse01RecordsAssertedManufacturer(t *testing.T)
 // name no TPM, so finalize is refused with badCSR, nothing is issued, and the
 // order stays ready for a corrected request.
 func TestOrderFinalizeHandler_Endorse01RefusesMissingOrMalformedManufacturer(t *testing.T) {
-	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "lab-node-5-ek"}}
+	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "node-01-ek"}}
 
 	t.Run("missing", func(t *testing.T) {
 		f := newEndorse01Fixture(t)
@@ -2420,7 +2420,7 @@ func TestOrderFinalizeHandler_Endorse01RefusesMissingOrMalformedManufacturer(t *
 // an operator who registered the device with a manufacturer code limits what
 // the device may assert.
 func TestOrderFinalizeHandler_Endorse01ManufacturerBoundByEAB(t *testing.T) {
-	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "lab-node-5-ek"}}
+	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "node-01-ek"}}
 
 	t.Run("matching", func(t *testing.T) {
 		f := newEndorse01Fixture(t)
