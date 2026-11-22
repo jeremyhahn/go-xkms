@@ -90,7 +90,18 @@ func (f *enrollFixture) attestInvite(t *testing.T, options *protocol.CredentialC
 	attestation := virtualwebauthn.CreateAttestationResponse(f.rp, virtualwebauthn.NewAuthenticator(), credential, *parsedOptions)
 	parsed, err := parseAttestationResponse(attestation)
 	require.NoError(t, err)
-	return f.svc.FinishInviteRegistration(context.Background(), sessionID, parsed)
+	// The ceremony's own user handle: these tests finish the invitation the
+	// ceremony was begun for.
+	var handle []byte
+	switch id := options.Response.User.ID.(type) {
+	case []byte:
+		handle = id
+	case protocol.URLEncodedBase64:
+		handle = id
+	default:
+		t.Fatalf("unexpected user handle type %T", id)
+	}
+	return f.svc.FinishInviteRegistration(context.Background(), sessionID, handle, parsed)
 }
 
 // enroll registers a first passkey for email through the public ceremony.

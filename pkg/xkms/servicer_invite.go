@@ -43,15 +43,23 @@ import (
 // creates it LifecyclePending and mints a single-use invitation through
 // s.inviteStore. The invitee redeems the token through exactly one of the
 // two entry points below — FIDO2 (BeginInviteRegistration /
-// FinishInviteRegistration) or PIV (ActivateInvitePIV) — which binds their
-// first credential, activates the account, and redeems the invitation, in
-// that order: the credential is bound to a still-PENDING account, so a
-// failure before activation leaves the invitation intact and the token
-// retryable, and activation is confirmed (by re-reading the account on an
-// ambiguous write) before the single-use token is spent — a redeemed
-// invitation never outlives an unbound credential, and an active account is
-// never left with a still-live token (mirrors go-quicbaas's
-// PIVActivator.Activate / ActivateFIDO2Finish ordering).
+// FinishInviteRegistration) or PIV (ActivateInvitePIV).
+//
+// FIDO2 binds the first credential, activates the account, and redeems the
+// invitation, in that order. The ceremony session must belong to the user
+// the invitation names: the webauthn finish refuses any other account's
+// session before it persists a credential. The single-use session (taken
+// atomically) serialises concurrent finishes of one ceremony, and a failure
+// before activation leaves the invitation intact and the token retryable;
+// activation is confirmed (by re-reading the account on an ambiguous
+// write) before the token is spent.
+//
+// PIV runs validate, claim, bind, activate: the certificate chain and the
+// pending account are checked first (a failure leaves the invitation
+// retryable), then the invitation is claimed with the store's single-winner
+// Redeem, so of concurrent requests only one binds a certificate. A bind or
+// activation failure after the claim fails closed: the account stays
+// pending and needs a new invitation.
 //
 // Every unauthenticated lookup collapses "not found", "expired" and
 // "already redeemed" into ErrInviteUnusable (classifyInviteError): telling a
@@ -283,8 +291,17 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	// expensive, failure-prone work must not burn a single-use token when it
 	// fails, and a caller whose attestation is rejected can retry with a
 	// working authenticator instead of needing to be re-invited.
-	if _, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
+	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
+	if err != nil {
 		return nil, classifyInviteError(err)
+	}
+	// The ceremony must be the one begun for THIS invitation's user: the
+	// webauthn finish refuses a session of any other account before it
+	// persists a credential, so one live token cannot complete (and
+	// activate) a ceremony begun with another.
+	inviteeID, err := inviteUserID(entity)
+	if err != nil {
+		return nil, err
 	}
 	// After the lookup, as in BeginInviteRegistration (ruling 1041 (2)).
 	if err := s.ensureInviteTenantServed(req.TenantID); err != nil {
@@ -297,7 +314,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: err}
 	}
 
-	user, err := s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, parsed)
+	user, err := s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, xkmswebauthn.HandleFromUserID(inviteeID), parsed)
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable
@@ -319,11 +336,16 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	return &transport.FinishInviteRegistrationResponse{UserID: userID}, nil
 }
 
-// ActivateInvitePIV completes PIV invite activation: it verifies the
-// presented certificate's chain against the CA's trust roots, binds its SPKI
-// thumbprint to the still-pending account, activates the account, and
-// redeems the invitation — the same safe order FinishInviteRegistration
-// uses, and for the same reason. Implements transport.InviteServicer.
+// ActivateInvitePIV completes PIV invite activation in the safe order
+// validate, claim, bind, activate: it verifies the presented certificate's
+// chain against the CA's trust roots and checks the account is still
+// pending, then claims the invitation (the store's single-winner Redeem),
+// then binds the certificate's SPKI thumbprint to the account and
+// activates it. A request that fails validation never claims, so the
+// invitation stays retryable; of concurrent requests only the one that
+// wins the claim binds. If the bind or the activation fails after the
+// claim, the request fails closed: the account stays pending and needs a
+// new invitation. Implements transport.InviteServicer.
 func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -374,6 +396,14 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, ErrInviteUnusable
 	}
 
+	// Claim the invitation BEFORE anything is bound. Concurrent requests can
+	// all pass the lookup and the pending check above; the store's Redeem
+	// resolves them to exactly one winner (ErrAlreadyRedeemed for the
+	// rest), so only the winner binds its certificate.
+	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
+		return nil, ErrInviteUnusable
+	}
+
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
 	if _, err := s.inviteUserClient().AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
 		return nil, &ErrUserOperation{Operation: "bind piv certificate", Err: err}
@@ -381,9 +411,6 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 
 	if err := s.activateInviteUser(ctx, userID); err != nil {
 		return nil, err
-	}
-	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
-		return nil, &ErrUserOperation{Operation: "redeem invite", Err: err}
 	}
 	return &transport.ActivateInvitePIVResponse{UserID: userID}, nil
 }
