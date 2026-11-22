@@ -33,7 +33,8 @@ import (
 // TouchRequest contains information about a pending touch request that
 // triggered the notification.
 type TouchRequest struct {
-	// Operation is the WebAuthn ceremony type ("register" or "authenticate").
+	// Operation is the ceremony type ("register", "authenticate", or
+	// "select" for CTAP 2.1 authenticatorSelection).
 	Operation string
 
 	// RPID is the relying party identifier (e.g. "example.com").
@@ -44,6 +45,10 @@ type TouchRequest struct {
 
 	// UserName is the display name of the user being prompted.
 	UserName string
+
+	// AuthenticatorName names the authenticator asking for the touch, so a
+	// user with several authenticators can tell which one it is.
+	AuthenticatorName string
 }
 
 // Notifier defines the interface for sending touch-required notifications

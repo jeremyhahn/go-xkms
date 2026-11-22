@@ -116,6 +116,8 @@ func (h *SocketHandler) RequestUserPresence(ctx context.Context, req *authentica
 			RPID:      req.RPID,
 			RPName:    req.RPName,
 			UserName:  req.UserName,
+
+			AuthenticatorName: req.AuthenticatorName,
 		}
 		if err := h.notifier.NotifyTouchRequired(touchReq); err != nil {
 			h.logger.Warn("failed to send touch notification",
