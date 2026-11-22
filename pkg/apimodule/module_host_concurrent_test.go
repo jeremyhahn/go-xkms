@@ -66,3 +66,17 @@ func TestModuleHost_RestServer_ConcurrentFirstCallsBuildOnce(t *testing.T) {
 	}
 	assert.Equal(t, int32(1), builds.Load(), "exactly one REST host must be built")
 }
+
+// PIV invitation activation derives the certificate's tenant under the
+// service's SPIFFE trust domain; PIV login derives it under WithPIVLogin's
+// pin. A self-building module composes the service with the login pin when
+// the host set none, so both read a certificate's tenant the same way.
+func TestModuleHost_PIVLoginTrustDomainReachesService(t *testing.T) {
+	m, svc, _ := nodeHostedModule(t, WithPIVLogin(&rest.PIVLoginOptions{TrustDomain: "xkms.test"}))
+	require.Empty(t, svc.SPIFFETrustDomain())
+
+	srv, err := m.restServer()
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+	assert.Equal(t, "xkms.test", svc.SPIFFETrustDomain())
+}
