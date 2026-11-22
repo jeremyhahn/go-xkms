@@ -214,6 +214,16 @@ func (c *daoFirstCredentialClaim) Commit(ctx context.Context, cred *Credential) 
 	if swapped {
 		return nil
 	}
+	// A lost swap may mean a recoverer rolled this very claim forward after
+	// its lease ran out: the committed claim carries this token, so the
+	// credential saved under it is already the account's first. Keep it.
+	held, err := c.store.claims.GetByNaturalKey(ctx, c.claim.UserID)
+	if err != nil && !qrdbsdk.IsDAONotFound(err) {
+		return WrapError("read first-credential claim", err)
+	}
+	if err == nil && !held.Pending && held.Token == c.claim.Token {
+		return nil
+	}
 	if err := c.store.removeFencedCredential(ctx, cred, c.claim.Token); err != nil {
 		return err
 	}
