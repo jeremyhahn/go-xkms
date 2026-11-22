@@ -66,10 +66,14 @@ func (e *UnauthenticatedError) Error() string {
 // Is matches ErrRefused.
 func (e *UnauthenticatedError) Is(target error) bool { return target == ErrRefused }
 
-// CrossTenantError refuses a caller addressing another tenant.
+// CrossTenantError refuses a caller addressing another tenant. Authorize
+// returns it wrapping go-qrdb's *qrdbsdk.CrossTenantDeniedError, which
+// errors.As reaches through Unwrap.
 type CrossTenantError struct {
 	CallerTenantID string
 	TargetTenantID string
+
+	err error
 }
 
 // Error implements the error interface.
@@ -79,6 +83,10 @@ func (e *CrossTenantError) Error() string {
 
 // Is matches ErrRefused.
 func (e *CrossTenantError) Is(target error) bool { return target == ErrRefused }
+
+// Unwrap returns go-qrdb's *CrossTenantDeniedError the refusal came from
+// (qrdbsdk.OwnTenant), or nil for an error built by hand.
+func (e *CrossTenantError) Unwrap() error { return e.err }
 
 // CrossUserError refuses a caller addressing a personal object it does not
 // own.

@@ -137,6 +137,10 @@ var (
 	// or set RequireKeyPassword to false to permit plaintext key storage.
 	ErrKeyPasswordRequired = errors.New("ca: key password required (RequireKeyPassword=true)")
 
+	// ErrCAKeyChanged indicates a password-scoped CA signer's per-Sign key
+	// lookup resolved a key other than the one the signer was created for.
+	ErrCAKeyChanged = errors.New("ca: CA key changed since the signer was created")
+
 	// ErrKeyRetrievalFailed indicates the configured backend returned an
 	// error other than "key not found" (errors.Is(err, backend.ErrKeyNotFound))
 	// while getOrGenerateCAKey checked whether a CA key already exists.
@@ -210,6 +214,11 @@ var (
 	// AIA URL did not sign the certificate that named it, so it is not that
 	// certificate's issuer and is never imported.
 	ErrAIAIssuerSignatureInvalid = errors.New("ca: aia certificate did not sign the child certificate")
+
+	// ErrTargetCertStoreRequired indicates ImportIssuingCAsInto was given no
+	// certificate store. A tenant-scoped import never falls back to the CA's
+	// shared stores.
+	ErrTargetCertStoreRequired = errors.New("ca: aia import requires a target certificate store")
 )
 
 // Serial number errors indicate issues with certificate serial generation.
