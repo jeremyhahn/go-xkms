@@ -233,7 +233,11 @@ var tpmPolicyUpdateCmd = &cobra.Command{
 	Long: `Re-approve a policy at its next epoch after an expected platform change,
 such as a firmware or kernel update. No key is re-keyed.
 
-Both --branch <name> and --reference-values are required: only the named
+With neither --branch nor --reference-values, a policy without a pcr
+condition (auth_value or locality only) is re-approved as it is, such as
+after a revoke; the server refuses this for a policy with a pcr condition.
+
+A pcr policy needs both --branch <name> and --reference-values: only the named
 branch is updated, to the PCR values the signed CoRIM predicts the platform will hold
 once the images it describes are booted, so the update runs before the
 change and the platform unseals unattended after it. The CoRIM must verify
@@ -253,14 +257,18 @@ Example:
 			handleError(err)
 			return
 		}
-		if branch == "" || path == "" {
+		if (branch == "") != (path == "") {
 			handleError(ErrTPMPolicyUpdateNeedsSignedBranch)
 			return
 		}
-		corim, err := os.ReadFile(filepath.Clean(path))
-		if err != nil {
-			handleError(&WrappedDetailError{Sentinel: ErrReadReferenceValuesFailed, Detail: path, Err: err})
-			return
+		var corim []byte
+		if path != "" {
+			var err error
+			corim, err = os.ReadFile(filepath.Clean(path))
+			if err != nil {
+				handleError(&WrappedDetailError{Sentinel: ErrReadReferenceValuesFailed, Detail: path, Err: err})
+				return
+			}
 		}
 		req := &client.TPMPolicyUpdateRequest{TenantID: tenant, Name: args[0], Branch: branch, ReferenceValues: corim}
 		runClientCall(getConfig(), "Updating TPM policy "+args[0], ErrUpdateTPMPolicyFailed, func(ctx context.Context, cl client.Client) (any, error) {
@@ -733,8 +741,8 @@ func init() {
 	tpmPolicyCreateCmd.Flags().Bool("auto-unseal", false, "mark the policy barrier auto-unseal uses")
 	tpmPolicyCreateCmd.Flags().String("owner-auth", "", ownerAuthUsage)
 	tpmPolicyDeleteCmd.Flags().String("owner-auth", "", ownerAuthUsage)
-	tpmPolicyUpdateCmd.Flags().String("branch", "", "the branch to update, e.g. next (required, with --reference-values)")
-	tpmPolicyUpdateCmd.Flags().String("reference-values", "", "signed CoRIM file the branch's PCR values are predicted from (required, with --branch)")
+	tpmPolicyUpdateCmd.Flags().String("branch", "", "the branch to update, e.g. next (with --reference-values; omit both to re-approve a policy without a pcr condition)")
+	tpmPolicyUpdateCmd.Flags().String("reference-values", "", "signed CoRIM file the branch's PCR values are predicted from (with --branch)")
 	tpmPolicyAutoUnsealCmd.Flags().Bool("disable", false, "clear the auto-unseal mark instead of setting it")
 	tenantTPMModeCmd.Flags().String("owner-auth", "", ownerAuthUsage)
 	keyPolicyCmd.Flags().Bool("sealed", false, "the ID names a sealed object, not a key")
