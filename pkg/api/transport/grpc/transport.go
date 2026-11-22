@@ -2809,7 +2809,7 @@ func (t *Transport) BeginInviteRegistration(ctx context.Context, req *transport.
 	if err != nil {
 		return nil, err
 	}
-	return &transport.BeginInviteRegistrationResponse{SessionID: resp.SessionId, OptionsJSON: resp.OptionsJson}, nil
+	return &transport.BeginInviteRegistrationResponse{SessionID: resp.SessionId, OptionsJSON: resp.OptionsJson, Ceremony: resp.Ceremony}, nil
 }
 
 // FinishInviteRegistration completes the invite-authorized WebAuthn registration ceremony.

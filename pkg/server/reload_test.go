@@ -69,7 +69,7 @@ func TestServer_Reload_RefusesDisabledAuthentication(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -100,7 +100,7 @@ func TestServer_Reload_InvalidAuthKeepsPreviousAuthenticator(t *testing.T) {
 		Audience:      []string{"test-audience"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -145,7 +145,7 @@ func TestServer_Reload_UnknownAuthTypeKeepsPreviousAuthenticator(t *testing.T) {
 		Audience:      []string{"test-audience"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -178,7 +178,7 @@ func TestServer_Reload_BrokenJWTKeyKeepsPreviousAuthenticator(t *testing.T) {
 		Audience:      []string{"test-audience"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 

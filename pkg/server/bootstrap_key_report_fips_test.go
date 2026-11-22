@@ -45,7 +45,7 @@ func TestStartNoiseBootstrap_FIPSPublishesP256KeyOnly(t *testing.T) {
 	cfg.Server.NoisePort = 0    // bind on any available port
 	cfg.Server.Host = "127.0.0.1"
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, srv.xkmsService, "server construction must wire the XKMSService singleton")
 

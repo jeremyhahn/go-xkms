@@ -182,6 +182,10 @@ func (m *mockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtra
 	return nil, errors.New("not used")
 }
 
+func (m *mockRoleClient) ReconcileBuiltInRolesAllTenants(context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
+	return nil, errors.New("not used")
+}
+
 // singleStoreResolver resolves every tenant to the same backing KVStore —
 // enough for a unit test's invite store, which does not exercise the
 // per-tenant routing or barrier isolation qrdb's own tests already cover.
@@ -529,6 +533,73 @@ func TestCreateUser_InviteStoreNotConfigured(t *testing.T) {
 		Username: "x", Email: "x@example.com",
 	})
 	require.ErrorIs(t, err, ErrNotConfigured)
+}
+
+// TestCreateUser_SystemTenantInviteStillMinted is the other side of the
+// narrowing: an invited account of the system tenant, named explicitly, is
+// still created pending with an invitation.
+func TestCreateUser_SystemTenantInviteStillMinted(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		assert.True(t, req.Pending)
+		return &qrdbtransport.User{
+			ID: 9, Username: "sys", Email: req.Email, TenantID: req.TenantID,
+			Lifecycle: string(qrdbsdk.LifecyclePending),
+		}, nil
+	}
+
+	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "sys", Email: "sys@example.com", TenantID: qrdbsdk.SystemTenantID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Invite)
+	assert.NotEmpty(t, resp.Invite.Token)
+}
+
+// A system-tenant caller (bound explicitly or by the unbound default) that
+// omits tenant_id still creates the pending account and gets its invitation.
+func TestCreateUser_SystemContextEmptyRequestTenantStillInvites(t *testing.T) {
+	for name, ctx := range map[string]context.Context{
+		"bound":   qrdbsdk.ContextWithTenant(context.Background(), qrdbsdk.SystemTenantID),
+		"unbound": context.Background(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, users, _ := setupServiceWithUserClients(t)
+			created := false
+			users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+				created = true
+				assert.True(t, req.Pending)
+				return &qrdbtransport.User{
+					ID: 9, Username: "sys", Email: req.Email, TenantID: qrdbsdk.SystemTenantID,
+					Lifecycle: string(qrdbsdk.LifecyclePending),
+				}, nil
+			}
+
+			resp, err := svc.CreateUser(ctx, &transport.CreateUserRequest{
+				Username: "sys", Email: "sys@example.com",
+			})
+			require.NoError(t, err)
+			assert.True(t, created)
+			require.NotNil(t, resp.Invite)
+			assert.NotEmpty(t, resp.Invite.Token)
+		})
+	}
+}
+
+// TestCreateUser_NonSystemTenantWithoutEmailLoginKey shows a
+// certificate-only identity mints no invitation and is created in any
+// tenant.
+func TestCreateUser_NonSystemTenantWithoutEmailLoginKey(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 10, Username: "svc", TenantID: req.TenantID, Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
+	}
+
+	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "svc", WithoutEmailLoginKey: true, TenantID: "acme",
+	})
+	require.NoError(t, err)
+	assert.Nil(t, resp.Invite)
 }
 
 // TestCreateUser_RollsBackOnInviteMintFailure proves the create is atomic: a

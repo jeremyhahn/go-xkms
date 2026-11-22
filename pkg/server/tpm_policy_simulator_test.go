@@ -48,7 +48,7 @@ func newTPMPolicyServer(t *testing.T) *xkms.XKMSService {
 	cfg := createMinimalConfig(t)
 	cfg.Backends.TPM2 = &config.TPM2Config{Enabled: true, UseSimulator: true}
 	cfg.CA = testFirstBootCAConfig()
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, server.Shutdown()) })
 

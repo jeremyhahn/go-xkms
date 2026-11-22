@@ -61,18 +61,19 @@ func TestCIDevcontainerCoverageSkipsAfterFailedBuild(t *testing.T) {
 	if build < 0 {
 		t.Fatalf("%s has no step with id: %s", devcontainerJob, buildStepID)
 	}
-	found := false
-	for _, s := range j.Steps[build+1:] {
+	// The unit suite runs in the coverage shard jobs (DS-8139), so the
+	// Devcontainer job carries no make coverage step; one that comes back
+	// must follow make build and skip after a failed build (#2240).
+	for i, s := range j.Steps {
 		if !strings.Contains(s.Run, "make coverage") {
 			continue
 		}
-		found = true
+		if i < build {
+			t.Errorf("%s runs make coverage (step %d) before step %s", devcontainerJob, i, buildStepID)
+		}
 		if !strings.Contains(s.If, coverageAfterBuild) {
 			t.Errorf("%s coverage step if: %q lacks %q", devcontainerJob, s.If, coverageAfterBuild)
 		}
-	}
-	if !found {
-		t.Fatalf("%s has no make coverage step after step %s", devcontainerJob, buildStepID)
 	}
 }
 

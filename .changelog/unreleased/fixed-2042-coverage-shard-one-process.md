@@ -1,0 +1,1 @@
+- **CI's coverage shards run one test binary at a time.** `make coverage-shard` now sets `-p=1`, like `make coverage`, so two test binaries no longer share the 8 GiB swap-off container; at `-p=2` the `pkg/fido2/authenticator` binary was OOM-killed. A buildgates test pins `GOMEMLIMIT := 5GiB` and `-p=1` on both targets.

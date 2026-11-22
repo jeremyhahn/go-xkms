@@ -28,6 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
@@ -51,6 +53,9 @@ type mockPINBackend struct {
 	// verifyUserCalls counts VerifyUserPIN calls so a test can assert that
 	// an unlock never reached the PIN verification path.
 	verifyUserCalls atomic.Int32
+	// changeUserCalls counts ChangeUserPIN calls so a test can assert that
+	// a refused change never reached the PIN backend commit.
+	changeUserCalls atomic.Int32
 }
 
 func (m *mockPINBackend) Strategy() qrdbsdk.PINStrategyID             { return m.strategy }
@@ -59,11 +64,14 @@ func (m *mockPINBackend) UserPINSet() bool                            { return m
 func (m *mockPINBackend) IsInitialized() bool                         { return m.initialized }
 func (m *mockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
 
-func (m *mockPINBackend) SetSOPIN(_, _ string) error      { return m.setSOPINErr }
-func (m *mockPINBackend) SetUserPIN(_, _ string) error    { return m.setUserPINErr }
-func (m *mockPINBackend) ChangeSOPIN(_, _ string) error   { return m.changeSOPINErr }
-func (m *mockPINBackend) ChangeUserPIN(_, _ string) error { return m.changeUserErr }
-func (m *mockPINBackend) VerifySOPIN(_ string) error      { return m.verifySOErr }
+func (m *mockPINBackend) SetSOPIN(_, _ string) error    { return m.setSOPINErr }
+func (m *mockPINBackend) SetUserPIN(_, _ string) error  { return m.setUserPINErr }
+func (m *mockPINBackend) ChangeSOPIN(_, _ string) error { return m.changeSOPINErr }
+func (m *mockPINBackend) ChangeUserPIN(_, _ string) error {
+	m.changeUserCalls.Add(1)
+	return m.changeUserErr
+}
+func (m *mockPINBackend) VerifySOPIN(_ string) error { return m.verifySOErr }
 func (m *mockPINBackend) VerifyUserPIN(_ string) error {
 	m.verifyUserCalls.Add(1)
 	return m.verifyUserErr
@@ -668,13 +676,374 @@ func TestPINService_ChangeUserPIN_BarrierResealFails(t *testing.T) {
 	}
 	svc := newTestPINService(backend)
 
-	// Create barrier service WITHOUT initializing it
+	// Create barrier service WITHOUT initializing it: the pre-commit
+	// credential check cannot confirm the PIN seals it, so the change is
+	// refused before the PIN backend commits and no reseal is attempted.
 	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
 	svc.SetBarrierService(barrierSvc)
 
 	err := svc.ChangeUserPIN("old-pin", "new-pin")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrBarrierResealFailed)
+	assert.ErrorIs(t, err, ErrBarrierNotPINSealed)
+	assert.NotErrorIs(t, err, ErrBarrierResealFailed)
+	assert.Equal(t, int32(0), backend.changeUserCalls.Load())
+}
+
+// A barrier sealed with its own passphrase (UseUserPinAsMaster=false) reads
+// as a credential mismatch for the user PIN. go-qrdb v0.58.4 reports every
+// unseal failure as a mismatch, so a mismatch cannot prove the barrier is
+// independent: the change is refused before the PIN backend commits, and the
+// barrier keeps unsealing with its passphrase.
+func TestPINService_ChangeUserPIN_CredentialMismatchRefusesBeforeCommit(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("barrier-pass", "passphrase"))
+	svc.SetBarrierService(barrierSvc)
+
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, ErrBarrierNotPINSealed)
+	require.Contains(t, err.Error(), "not sealed by the user PIN")
+	require.Equal(t, int32(0), backend.changeUserCalls.Load())
+
+	require.NoError(t, barrierSvc.Seal())
+	withPassphrase := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.NoError(t, withPassphrase.Unseal("barrier-pass", "passphrase"))
+	require.True(t, withPassphrase.IsUnsealed())
+}
+
+// armableUnsealSealer unseals normally until armed, then fails every
+// unseal, standing in for a TPM or enclave failure on a PIN-bound barrier.
+// countingSealer records every Seal and Unseal the barrier makes once armed,
+// so a test can prove a hardware barrier is never probed or rewrapped.
+type countingSealer struct {
+	mockSealer
+	armed   atomic.Bool
+	seals   atomic.Int32
+	unseals atomic.Int32
+}
+
+func (s *countingSealer) Seal(ctx context.Context, data []byte, opts *xkms.SealOptions) (*xkms.SealedData, error) {
+	if s.armed.Load() {
+		s.seals.Add(1)
+	}
+	return s.mockSealer.Seal(ctx, data, opts)
+}
+
+func (s *countingSealer) Unseal(ctx context.Context, sealed *xkms.SealedData, opts *xkms.UnsealOptions) ([]byte, error) {
+	if s.armed.Load() {
+		s.unseals.Add(1)
+		return nil, errors.New("hardware barrier must not be unsealed by a PIN change")
+	}
+	return s.mockSealer.Unseal(ctx, sealed, opts)
+}
+
+// A hardware-strategy barrier (TPM2 here; PKCS#11 and cloud KMS alike) is
+// not sealed by the user PIN, so a PIN change neither probes it with
+// VerifyCredentials nor rewraps it with ChangePassword: the PIN change goes
+// through the backend's retry-enforced verify alone and succeeds.
+func TestPINService_ChangeUserPIN_HardwareBarrierSkipsBarrierCheck(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+
+	sealer := &countingSealer{mockSealer: mockSealer{canSeal: true}}
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return sealer })
+	require.NoError(t, barrierSvc.Initialize("", string(xkms.StrategyTPM2)))
+	svc.SetBarrierService(barrierSvc)
+
+	sealer.armed.Store(true)
+	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
+	require.Equal(t, int32(1), backend.changeUserCalls.Load())
+	require.Equal(t, int32(0), sealer.unseals.Load(), "VerifyCredentials must not run on a hardware barrier")
+	require.Equal(t, int32(0), sealer.seals.Load(), "ChangePassword must not rewrap a hardware barrier")
+	require.True(t, barrierSvc.IsUnsealed())
+}
+
+// The strategy is also known while the barrier is sealed between sessions
+// (from the persisted config): a sealed hardware barrier is skipped too,
+// rather than refused as uninitialized.
+func TestPINService_ChangeUserPIN_SealedHardwareBarrierSkipsBarrierCheck(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	barrierSvc.SetLastStrategy(string(xkms.StrategyPKCS11))
+	svc.SetBarrierService(barrierSvc)
+
+	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
+	require.Equal(t, int32(1), backend.changeUserCalls.Load())
+}
+
+// A PIN-sealed barrier is checked before the commit and rewrapped after it:
+// the old PIN no longer unseals, the new PIN does.
+func TestPINService_ChangeUserPIN_PINBoundBarrierRewrapped(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("old-pin", "passphrase"))
+	svc.SetBarrierService(barrierSvc)
+
+	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
+	require.Equal(t, int32(1), backend.changeUserCalls.Load())
+
+	require.NoError(t, barrierSvc.Seal())
+	withOldPIN := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.Error(t, withOldPIN.Unseal("old-pin", "passphrase"))
+	withNewPIN := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.NoError(t, withNewPIN.Unseal("new-pin", "passphrase"))
+}
+
+var (
+	errTestUserPINWrong  = errors.New("test backend: user PIN incorrect")
+	errTestUserPINLocked = errors.New("test backend: user PIN locked")
+)
+
+// retryLimitedPINBackend models a hardware PIN backend (TPM2 dictionary
+// attack protection, PKCS#11 token lockout): every wrong user PIN consumes
+// one retry, and at zero retries every verification is refused, even with
+// the right PIN. ChangeUserPIN authenticates the current PIN the same way.
+type retryLimitedPINBackend struct {
+	*mockPINBackend
+	userPIN string
+	retries int
+	failed  int
+}
+
+func (b *retryLimitedPINBackend) VerifyUserPIN(pin string) error {
+	b.verifyUserCalls.Add(1)
+	if b.retries == 0 {
+		return errTestUserPINLocked
+	}
+	if pin != b.userPIN {
+		b.retries--
+		b.failed++
+		return errTestUserPINWrong
+	}
+	return nil
+}
+
+// GetLockoutStatus reports the hardware lockout state: locked once the
+// retries are spent.
+func (b *retryLimitedPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus {
+	return &qrdbsdk.PINLockoutStatus{IsLocked: b.retries == 0, FailedAttempts: b.failed}
+}
+
+func (b *retryLimitedPINBackend) ChangeUserPIN(current, next string) error {
+	if err := b.VerifyUserPIN(current); err != nil {
+		return err
+	}
+	b.changeUserCalls.Add(1)
+	b.userPIN = next
+	return nil
+}
+
+// A current-PIN guess must reach the backend's retry-enforced verification
+// before the barrier is consulted: a wrong guess consumes a hardware retry
+// and returns the backend's error, never ErrBarrierNotPINSealed, so the
+// barrier cannot be used as a free PIN oracle (Codex P1 pin_service.go:393).
+func TestPINService_ChangeUserPIN_WrongGuessesConsumeBackendRetries(t *testing.T) {
+	backend := &retryLimitedPINBackend{
+		mockPINBackend: &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true},
+		userPIN:        "old-pin",
+		retries:        3,
+	}
+	svc := newTestPINService(backend)
+
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("old-pin", "passphrase"))
+	svc.SetBarrierService(barrierSvc)
+
+	for i, guess := range []string{"guess-1", "guess-2", "guess-3"} {
+		err := svc.ChangeUserPIN(guess, "new-pin")
+		require.ErrorIs(t, err, errTestUserPINWrong)
+		require.NotErrorIs(t, err, ErrBarrierNotPINSealed)
+		require.Equal(t, 2-i, backend.retries)
+	}
+
+	for _, guess := range []string{"guess-4", "old-pin"} {
+		err := svc.ChangeUserPIN(guess, "new-pin")
+		require.ErrorIs(t, err, errTestUserPINLocked)
+		require.NotErrorIs(t, err, ErrBarrierNotPINSealed)
+	}
+	require.Equal(t, int32(0), backend.changeUserCalls.Load())
+
+	require.NoError(t, barrierSvc.Seal())
+	withOldPIN := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.NoError(t, withOldPIN.Unseal("old-pin", "passphrase"))
+}
+
+// A locked backend refuses before the barrier is consulted: the barrier
+// here is uninitialized, so consulting it would refuse with
+// ErrBarrierNotPINSealed instead of the backend's lockout error.
+func TestPINService_ChangeUserPIN_LockedBackendRefusesBeforeBarrier(t *testing.T) {
+	backend := &retryLimitedPINBackend{
+		mockPINBackend: &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true},
+		userPIN:        "old-pin",
+		retries:        0,
+	}
+	svc := newTestPINService(backend)
+	svc.SetBarrierService(NewBarrierService(t.TempDir(), slog.Default()))
+
+	for _, guess := range []string{"wrong-pin", "old-pin"} {
+		err := svc.ChangeUserPIN(guess, "new-pin")
+		require.ErrorIs(t, err, errTestUserPINLocked)
+		require.NotErrorIs(t, err, ErrBarrierNotPINSealed)
+	}
+	require.Equal(t, int32(0), backend.changeUserCalls.Load())
+}
+
+func auditEntriesWithOp(l *recordingAuditLogger, op audit.OperationType) []audit.Entry {
+	var out []audit.Entry
+	for _, e := range l.entries {
+		if e.Operation == op {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// A locked backend reached through ChangeUserPIN is audited exactly as the
+// login path (VerifyUserPIN) audits it: one OpPINLocked event with the same
+// fields, which security monitoring keys on, and no failed-attempt event.
+func TestPINService_ChangeUserPIN_LockoutAuditedAsLoginPath(t *testing.T) {
+	lockedBackend := func() *retryLimitedPINBackend {
+		return &retryLimitedPINBackend{
+			mockPINBackend: &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true},
+			userPIN:        "old-pin",
+			retries:        0,
+			failed:         3,
+		}
+	}
+
+	login := newTestPINService(lockedBackend())
+	loginLog := &recordingAuditLogger{}
+	login.SetAuditLogger(loginLog)
+	require.ErrorIs(t, login.VerifyUserPIN("old-pin"), errTestUserPINLocked)
+	want := auditEntriesWithOp(loginLog, audit.OpPINLocked)
+	require.Len(t, want, 1, "the login path records the lockout event")
+
+	svc := newTestPINService(lockedBackend())
+	log := &recordingAuditLogger{}
+	svc.SetAuditLogger(log)
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, errTestUserPINLocked)
+	assert.Equal(t, want, log.entries, "only the login path's lockout event is recorded")
+	assert.Empty(t, auditEntriesWithOp(log, audit.OpPINFailed), "a lockout is not a failed attempt")
+}
+
+// A plain wrong current PIN keeps the failed-attempt audit and records no
+// lockout.
+func TestPINService_ChangeUserPIN_WrongPINAuditedAsFailedAttempt(t *testing.T) {
+	backend := &retryLimitedPINBackend{
+		mockPINBackend: &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true},
+		userPIN:        "old-pin",
+		retries:        3,
+	}
+	svc := newTestPINService(backend)
+	log := &recordingAuditLogger{}
+	svc.SetAuditLogger(log)
+
+	err := svc.ChangeUserPIN("wrong-pin", "new-pin")
+	require.ErrorIs(t, err, errTestUserPINWrong)
+	failed := auditEntriesWithOp(log, audit.OpPINFailed)
+	require.Len(t, failed, 1)
+	assert.Equal(t, "current_pin_rejected", failed[0].Details["reason"])
+	assert.Empty(t, auditEntriesWithOp(log, audit.OpPINLocked))
+}
+
+// An invalid replacement PIN is refused with go-qrdb's own validation error
+// before either the backend or the barrier sees the current PIN, so the
+// refusal is the same whether the current PIN guess is right or wrong.
+func TestPINService_ChangeUserPIN_InvalidReplacementRefusedBeforeChecks(t *testing.T) {
+	for _, replacement := range []string{"", "1"} {
+		want := qrdbsdk.NewPINService(&mockPINBackend{}, slog.Default()).ChangeUserPIN("x", replacement)
+		require.Error(t, want, "go-qrdb must reject replacement %q", replacement)
+
+		for _, current := range []string{"old-pin", "wrong-pin"} {
+			backend := &retryLimitedPINBackend{
+				mockPINBackend: &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true},
+				userPIN:        "old-pin",
+				retries:        3,
+			}
+			svc := newTestPINService(backend)
+			svc.SetBarrierService(NewBarrierService(t.TempDir(), slog.Default()))
+
+			err := svc.ChangeUserPIN(current, replacement)
+			require.EqualError(t, err, want.Error())
+			require.NotErrorIs(t, err, ErrBarrierNotPINSealed)
+			require.Equal(t, int32(0), backend.verifyUserCalls.Load())
+			require.Equal(t, int32(0), backend.changeUserCalls.Load())
+			require.Equal(t, 3, backend.retries)
+		}
+	}
+}
+
+// failingGetBackend fails every Get once armed, standing in for an
+// unreadable sealed root-key blob.
+type failingGetBackend struct {
+	xkms.StorageBackend
+	armed atomic.Bool
+	err   error
+}
+
+func (b *failingGetBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	if b.armed.Load() {
+		return nil, b.err
+	}
+	return b.StorageBackend.Get(ctx, key)
+}
+
+// A storage error while checking the barrier credential is neither a match
+// nor a mismatch: the change is refused before the PIN backend commits.
+func TestPINService_ChangeUserPIN_BarrierStorageErrorRefusesBeforeCommit(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+
+	storageErr := errors.New("sealed root key unreadable")
+	base := &failingGetBackend{StorageBackend: xkms.NewStorageMemory(), err: storageErr}
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	barrierSvc.SetBaseBackendFactory(func(string) (xkms.StorageBackend, error) { return base, nil })
+	require.NoError(t, barrierSvc.Initialize("barrier-pass", "passphrase"))
+	svc.SetBarrierService(barrierSvc)
+
+	base.armed.Store(true)
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, ErrBarrierNotPINSealed)
+	require.ErrorIs(t, err, storageErr)
+	require.Equal(t, int32(0), backend.changeUserCalls.Load())
+}
+
+// An uninitialized barrier is no answer either: nothing commits.
+func TestPINService_ChangeUserPIN_UninitializedBarrierRefusesBeforeCommit(t *testing.T) {
+	backend := &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}
+	svc := newTestPINService(backend)
+	svc.SetBarrierService(NewBarrierService(t.TempDir(), slog.Default()))
+
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, ErrBarrierNotPINSealed)
+	require.ErrorIs(t, err, ErrBarrierNotInitialized)
+	require.Equal(t, int32(0), backend.changeUserCalls.Load())
 }
 
 func TestPINService_ChangeUserPIN_NoBarrierService(t *testing.T) {

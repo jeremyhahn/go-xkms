@@ -54,6 +54,23 @@ func (s *XKMSService) userToTransport(ctx context.Context, u *qrdbtransport.User
 	}, nil
 }
 
+// effectiveRequestTenant resolves the tenant an IAM request acts on exactly
+// as go-qrdb's tenant.EffectiveTenant will: the request tenant when given,
+// else the tenant bound to the caller context (qrdbsdk.TenantFromContext
+// reads the same binding). An unbound context yields "", which
+// qrdbsdk.NormalizeTenantID reads as the system tenant. A request tenant
+// that differs from the context is left as given: go-qrdb refuses that
+// cross-tenant request itself.
+func effectiveRequestTenant(ctx context.Context, requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if fromCtx, ok := qrdbsdk.TenantFromContext(ctx); ok {
+		return fromCtx
+	}
+	return ""
+}
+
 // roleNameToID resolves a role name to its qrdb role id in tenantID (the
 // context tenant when empty). A built-in role's id is deterministic
 // (qrdbsdk.SystemRoleID); a custom role is looked up by name. An empty name
@@ -62,11 +79,7 @@ func (s *XKMSService) roleNameToID(ctx context.Context, tenantID, name string) (
 	if name == "" {
 		return "", nil
 	}
-	if tenantID == "" {
-		if fromCtx, ok := qrdbsdk.TenantFromContext(ctx); ok {
-			tenantID = fromCtx
-		}
-	}
+	tenantID = effectiveRequestTenant(ctx, tenantID)
 	if qrdbsdk.IsSystemRoleName(name) {
 		return qrdbsdk.SystemRoleID(tenantID, name), nil
 	}

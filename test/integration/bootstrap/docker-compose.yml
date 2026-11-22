@@ -149,6 +149,7 @@ services:
         condition: service_started
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
+      - xkms-data:/data:ro
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
@@ -197,6 +198,7 @@ services:
         condition: service_started
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
+      - xkms-data:/data:ro
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1

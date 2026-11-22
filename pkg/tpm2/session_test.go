@@ -6,10 +6,13 @@ package tpm2
 import (
 	"crypto"
 	"errors"
+	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -103,6 +106,84 @@ func TestSaveKeyPairSuccess(t *testing.T) {
 	}
 
 	logger.Debug("SaveKeyPair test passed")
+}
+
+// hookedKeyBackend runs afterPrivate once its first private-blob save
+// returns, standing in for a writer that is paused (or slow) right there.
+type hookedKeyBackend struct {
+	store.KeyBackend
+	once         sync.Once
+	afterPrivate func()
+}
+
+func (b *hookedKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	err := b.KeyBackend.Save(attrs, data, ext, overwrite)
+	if err == nil && ext == store.FSEXT_PRIVATE_BLOB && b.afterPrivate != nil {
+		b.once.Do(b.afterPrivate)
+	}
+	return err
+}
+
+// TestSaveKeyPair_ConcurrentCreatorsNeverMismatch: two create-only writers
+// of one key on one shared BlobStore, the second finding the first's
+// private blob before its public blob exists, never leave the public blob of
+// one beside the private blob of the other.
+func TestSaveKeyPair_ConcurrentCreatorsNeverMismatch(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+
+	attrs := &types.KeyAttributes{CN: "contended-key", KeyType: types.KeyTypeTPM}
+	privA := tpm2.TPM2BPrivate{Buffer: []byte("private-A")}
+	pubA := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-A"))
+	privB := tpm2.TPM2BPrivate{Buffer: []byte("private-B")}
+	pubB := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B"))
+
+	resumeA := make(chan struct{})
+	aDone := make(chan error, 1)
+	aPaused := make(chan struct{})
+	writerA := &hookedKeyBackend{KeyBackend: shared, afterPrivate: func() {
+		close(aPaused)
+		<-resumeA
+	}}
+	go func() { aDone <- tpmImpl.SaveKeyPair(attrs, privA, pubA, writerA, false) }()
+	<-aPaused
+
+	// B finds A's private blob without a public blob. Once B's private save
+	// returns, A finishes its pair before B goes on.
+	var aErr error
+	writerB := &hookedKeyBackend{KeyBackend: shared, afterPrivate: func() {
+		close(resumeA)
+		aErr = <-aDone
+	}}
+	bErr := tpmImpl.SaveKeyPair(attrs, privB, pubB, writerB, false)
+	select {
+	case <-resumeA:
+	default:
+		close(resumeA)
+		aErr = <-aDone
+	}
+
+	gotPriv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	pair := string(gotPub) + "/" + string(gotPriv)
+	require.Contains(t, []string{"public-A/private-A", "public-B/private-B"}, pair,
+		"mismatched key pair (A err=%v, B err=%v)", aErr, bErr)
+	// Exactly one writer succeeds, and its pair is the stored one.
+	if aErr == nil {
+		require.Error(t, bErr)
+		require.Equal(t, "public-A/private-A", pair)
+	} else {
+		require.NoError(t, bErr)
+		require.Equal(t, "public-B/private-B", pair)
+	}
 }
 
 func TestSaveKeyPairWithNilBackend(t *testing.T) {

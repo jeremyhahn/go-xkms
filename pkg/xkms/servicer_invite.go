@@ -262,18 +262,35 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	// The invite's own account, by id, in the invite's validated tenant
 	// (bound on ctx): never re-resolve its email in the WebAuthn store's
 	// configured scope.
-	options, sessionID, err := s.webAuthn().BeginInviteRegistrationForUser(ctx, xkmswebauthn.HandleFromUserID(userID))
-	if err != nil {
-		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
-			return nil, ErrInviteUnusable
+	invitedHandle := xkmswebauthn.HandleFromUserID(userID)
+
+	// An account whose credential was stored under this invitation but
+	// whose activation then failed resumes with a possession proof: the
+	// options are a WebAuthn get for exactly that credential, answered
+	// through FinishInviteRegistration.
+	var options any
+	ceremony := transport.InviteCeremonyGet
+	assertion, sessionID, err := s.webAuthn().BeginInviteResume(ctx, invitedHandle, entity.CreatedAt)
+	switch {
+	case err == nil:
+		options = assertion
+	case errors.Is(err, xkmswebauthn.ErrInviteNotResumable):
+		creation, regSessionID, regErr := s.webAuthn().BeginInviteRegistrationForUser(ctx, invitedHandle)
+		if regErr != nil {
+			if errors.Is(regErr, xkmswebauthn.ErrRegistrationRefused) {
+				return nil, ErrInviteUnusable
+			}
+			return nil, &ErrWebAuthnCeremony{Operation: "begin invite registration", Err: regErr}
 		}
-		return nil, &ErrWebAuthnCeremony{Operation: "begin invite registration", Err: err}
+		options, sessionID, ceremony = creation, regSessionID, transport.InviteCeremonyCreate
+	default:
+		return nil, &ErrWebAuthnCeremony{Operation: "begin invite resume", Err: err}
 	}
 	optsJSON, err := json.Marshal(options)
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "marshal options", Err: err}
 	}
-	return &transport.BeginInviteRegistrationResponse{SessionID: sessionID, OptionsJSON: string(optsJSON)}, nil
+	return &transport.BeginInviteRegistrationResponse{SessionID: sessionID, OptionsJSON: string(optsJSON), Ceremony: ceremony}, nil
 }
 
 // FinishInviteRegistration completes the invite-authorized WebAuthn
@@ -309,14 +326,27 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	}
 	ctx = bindInviteTenant(ctx, req.TenantID)
 
-	parsed, err := protocol.ParseCredentialCreationResponseBody(strings.NewReader(req.AttestationJSON))
-	if err != nil {
-		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: err}
+	// The answer is either the attestation of a new enrolment or, after a
+	// finish whose credential was stored but whose activation then failed,
+	// the assertion answering BeginInviteResume's get ceremony. Re-sending
+	// the attestation proves nothing (its credential ID and public key are
+	// public), so only a valid assertion by the enrolled credential over
+	// the resume session's challenge resumes. Both are bound to this
+	// invitation's account; neither touches another invitation.
+	invitedHandle := xkmswebauthn.HandleFromUserID(inviteeID)
+	var user xkmswebauthn.User
+	if parsed, perr := protocol.ParseCredentialCreationResponseBody(strings.NewReader(req.AttestationJSON)); perr == nil {
+		user, err = s.webAuthn().FinishInviteRegistration(ctx, req.SessionID, invitedHandle, parsed)
+	} else if asserted, aerr := protocol.ParseCredentialRequestResponseBody(strings.NewReader(req.AttestationJSON)); aerr == nil {
+		user, err = s.webAuthn().FinishInviteResume(ctx, req.SessionID, invitedHandle, entity.CreatedAt, asserted)
+	} else {
+		// No assertion: the session is still claimed, so a refused
+		// answer leaves no challenge to sign later.
+		_, _ = s.webAuthn().FinishInviteResume(ctx, req.SessionID, invitedHandle, entity.CreatedAt, nil)
+		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: perr}
 	}
-
-	user, err := s.webAuthn().FinishInviteRegistration(ctx, req.SessionID, xkmswebauthn.HandleFromUserID(inviteeID), parsed)
 	if err != nil {
-		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
+		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) || errors.Is(err, xkmswebauthn.ErrInviteNotResumable) {
 			return nil, ErrInviteUnusable
 		}
 		return nil, &ErrWebAuthnCeremony{Operation: "finish invite registration", Err: err}
@@ -325,6 +355,10 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	userID, err := xkmswebauthn.UserIDFromHandle(user.WebAuthnID())
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "decode invite user handle", Err: err}
+	}
+	// Defence in depth: the enrolled account is the invited one.
+	if userID != inviteeID {
+		return nil, ErrInviteUnusable
 	}
 
 	if err := s.activateInviteUser(ctx, userID); err != nil {
@@ -409,21 +443,57 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrPIVCertRejected{Err: errPIVCertTenantMismatch}
 	}
 
+	// Before anything is claimed or bound, the PIV activation takes the
+	// account's first-credential claim, the one a WebAuthn invite finish
+	// stores its passkey under: while a finish holds it (its passkey saved,
+	// the account not yet active) or after it committed (its activation
+	// then failed and only the WebAuthn resume, with its possession proof,
+	// may finish), PIV is refused, binds nothing and leaves the invitation
+	// to the WebAuthn finish (Codex round-1 P1).
+	var claim xkmswebauthn.FirstCredentialClaim
+	if wa := s.webAuthn(); wa != nil {
+		claim, err = wa.ClaimInviteFirstCredential(ctx, xkmswebauthn.HandleFromUserID(userID))
+		switch {
+		case errors.Is(err, xkmswebauthn.ErrRegistrationRefused):
+			return nil, ErrInviteUnusable
+		case errors.Is(err, xkmswebauthn.ErrNotConfigured):
+			// No WebAuthn ceremony can enrol this account: nothing to claim.
+			claim = nil
+		case err != nil:
+			return nil, &ErrUserOperation{Operation: "claim invited user's first credential", Err: err}
+		}
+	}
+	// releaseClaim frees the claim when nothing was bound: a later
+	// activation, by either method, may claim afresh.
+	releaseClaim := func() {
+		if claim != nil {
+			_ = claim.Release(context.WithoutCancel(ctx))
+		}
+	}
+
 	// Claim the invitation BEFORE anything is bound. Concurrent requests can
 	// all pass the lookup and the pending check above; the store's Redeem
 	// resolves them to exactly one winner (ErrAlreadyRedeemed for the
 	// rest), so only the winner binds its certificate.
 	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
+		releaseClaim()
 		return nil, ErrInviteUnusable
 	}
 
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
 	if _, err := s.inviteUserClient().AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+		releaseClaim()
 		return nil, &ErrUserOperation{Operation: "bind piv certificate", Err: err}
 	}
 
 	if err := s.activateInviteUser(ctx, userID); err != nil {
 		return nil, err
+	}
+	if claim != nil {
+		// The activation is the commit point: the account is active, so no
+		// WebAuthn invite finish can enrol it whatever becomes of the claim.
+		// Committing it with no credential keeps it held for good.
+		_ = claim.Commit(context.WithoutCancel(ctx), nil)
 	}
 	return &transport.ActivateInvitePIVResponse{UserID: userID}, nil
 }
@@ -444,6 +514,9 @@ func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) err
 	if _, err := s.inviteUserClient().UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: active}); err != nil {
 		if u, gErr := s.inviteUserClient().GetUser(ctx, userID); gErr == nil && u != nil && u.Lifecycle == active {
 			return nil
+		}
+		if errors.Is(err, ErrInviteUnusable) {
+			return ErrInviteUnusable
 		}
 		return &ErrUserOperation{Operation: "activate invited user", Err: err}
 	}

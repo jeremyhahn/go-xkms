@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 // waitUntil polls cond until it reports true, failing the test if timeout
@@ -186,7 +188,7 @@ func TestSSHProxy_HandleConnection_WithMasterSocket(t *testing.T) {
 	waitUntil(t, 5*time.Second, client.IsConnected, "client never reached the connected state")
 
 	// Create SSH proxy.
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	proxy, _ := NewSSHProxy(socketPath, client, testLogger())
 	if err := proxy.Start(); err != nil {
 		t.Fatalf("start failed: %v", err)
@@ -221,7 +223,7 @@ func TestSSHProxy_HandleConnection_WithMasterSocket(t *testing.T) {
 // TestSSHProxy_MultipleConnections tests that the SSH proxy handles
 // multiple concurrent connections.
 func TestSSHProxy_MultipleConnections(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
 	proxy, _ := NewSSHProxy(socketPath, client, testLogger())

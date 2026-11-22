@@ -97,7 +97,7 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 	credential := newEC2Credential(t)
 
 	// === REGISTRATION (invite activation) ===
-	regOptions, regSessionID, err := svc.BeginInviteRegistration(ctx, email)
+	regOptions, regSessionID, err := svc.BeginInviteRegistration(ctx, HandleFromUserID(created.ID))
 	if err != nil {
 		t.Fatalf("BeginInviteRegistration: %v", err)
 	}

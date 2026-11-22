@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
@@ -62,7 +63,7 @@ func liveListener(t *testing.T, sockPath string) {
 }
 
 func TestStartIPCServer_TakesOverOwnLiveSocket(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(dir, 0o700))
 	sockPath := filepath.Join(dir, "xkey.sock")
 	t.Setenv(ipc.EnvSocketPath, sockPath)
@@ -81,7 +82,7 @@ func TestStartIPCServer_TakesOverOwnLiveSocket(t *testing.T) {
 }
 
 func TestStartIPCServer_RefusesInsecureDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	sockPath := filepath.Join(dir, "xkey.sock")
 	t.Setenv(ipc.EnvSocketPath, sockPath)
@@ -229,7 +230,7 @@ func (h *blockingStatusHandler) HandleStatus() (*ipc.Response, error) {
 // cleared ipcServer) while a handler is still running, and closeIPCServer must
 // still wait for that handler before shutdown closes what it uses.
 func TestCloseIPCServer_WaitsForHandlerOfStoppedServer(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(dir, 0o700))
 	sockPath := filepath.Join(dir, "xkey.sock")
 

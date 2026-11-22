@@ -18,10 +18,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -33,9 +37,11 @@ import (
 // fakeAuthenticator answers MakeCredential with attestation or err and
 // records the options it was asked to sign.
 type fakeAuthenticator struct {
-	attestation []byte
-	err         error
-	got         *webauthnclient.CeremonyOptions
+	attestation  []byte
+	assertion    []byte
+	err          error
+	got          *webauthnclient.CeremonyOptions
+	gotAssertion *webauthnclient.CeremonyOptions
 }
 
 func (f *fakeAuthenticator) MakeCredential(_ context.Context, opts *webauthnclient.CeremonyOptions) ([]byte, error) {
@@ -43,8 +49,12 @@ func (f *fakeAuthenticator) MakeCredential(_ context.Context, opts *webauthnclie
 	return f.attestation, f.err
 }
 
-func (f *fakeAuthenticator) GetAssertion(context.Context, *webauthnclient.CeremonyOptions) ([]byte, error) {
-	return nil, client.ErrNotSupported
+func (f *fakeAuthenticator) GetAssertion(_ context.Context, opts *webauthnclient.CeremonyOptions) ([]byte, error) {
+	f.gotAssertion = opts
+	if f.assertion == nil {
+		return nil, client.ErrNotSupported
+	}
+	return f.assertion, f.err
 }
 
 func (f *fakeAuthenticator) Available() bool { return true }
@@ -74,7 +84,7 @@ func (m *mockInviteCeremonyClient) FinishInviteRegistration(_ context.Context, r
 }
 
 func TestRedeemInviteFIDO2_CompletesCeremony(t *testing.T) {
-	mock := &mockInviteCeremonyClient{beginResp: &client.BeginInviteRegistrationResponse{SessionID: "session-1", OptionsJSON: `{"publicKey":{}}`}}
+	mock := &mockInviteCeremonyClient{beginResp: &client.BeginInviteRegistrationResponse{SessionID: "session-1", OptionsJSON: `{"publicKey":{}}`, Ceremony: client.InviteCeremonyCreate}}
 	auth := &fakeAuthenticator{attestation: []byte(`{"id":"cred-1"}`)}
 	var prompt bytes.Buffer
 
@@ -82,6 +92,7 @@ func TestRedeemInviteFIDO2_CompletesCeremony(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(7), resp.UserID)
 	assert.Contains(t, prompt.String(), "touch your security key")
+	assert.Nil(t, auth.gotAssertion, "a create ceremony never asks for an assertion")
 	assert.Equal(t, `{"publicKey":{}}`, string(auth.got.OptionsJSON))
 	assert.Equal(t, "https://kms.example.com", auth.got.Origin)
 	assert.Equal(t, &client.FinishInviteRegistrationRequest{
@@ -90,7 +101,9 @@ func TestRedeemInviteFIDO2_CompletesCeremony(t *testing.T) {
 }
 
 func TestRedeemInviteFIDO2_Failures(t *testing.T) {
-	begun := &client.BeginInviteRegistrationResponse{SessionID: "session-1", OptionsJSON: "{}"}
+	begun := &client.BeginInviteRegistrationResponse{SessionID: "session-1", OptionsJSON: "{}", Ceremony: client.InviteCeremonyCreate}
+	resume := &client.BeginInviteRegistrationResponse{SessionID: "session-2", OptionsJSON: "{}", Ceremony: client.InviteCeremonyGet}
+	unknown := &client.BeginInviteRegistrationResponse{SessionID: "session-3", OptionsJSON: "{}", Ceremony: "enrol"}
 	cases := []struct {
 		name     string
 		mock     *mockInviteCeremonyClient
@@ -101,6 +114,11 @@ func TestRedeemInviteFIDO2_Failures(t *testing.T) {
 		{"authenticator wants a PIN", &mockInviteCeremonyClient{beginResp: begun}, &fakeAuthenticator{err: fido2.ErrPINRequired}, ErrWebAuthnPINRequired},
 		{"authenticator fails", &mockInviteCeremonyClient{beginResp: begun}, &fakeAuthenticator{err: errUserInviteBoom}, ErrFinishInviteRegistrationFailed},
 		{"finish refused", &mockInviteCeremonyClient{beginResp: begun, finishErr: errUserInviteBoom}, &fakeAuthenticator{attestation: []byte("{}")}, ErrFinishInviteRegistrationFailed},
+		{"no ceremony type", &mockInviteCeremonyClient{beginResp: &client.BeginInviteRegistrationResponse{SessionID: "session-4", OptionsJSON: "{}"}}, &fakeAuthenticator{attestation: []byte("{}")}, ErrUnknownInviteCeremony},
+		{"unknown ceremony type", &mockInviteCeremonyClient{beginResp: unknown}, &fakeAuthenticator{attestation: []byte("{}")}, ErrUnknownInviteCeremony},
+		{"resume assertion fails", &mockInviteCeremonyClient{beginResp: resume}, &fakeAuthenticator{assertion: []byte("{}"), err: errUserInviteBoom}, ErrFinishInviteRegistrationFailed},
+		{"resume wants a PIN", &mockInviteCeremonyClient{beginResp: resume}, &fakeAuthenticator{assertion: []byte("{}"), err: fido2.ErrPINRequired}, ErrWebAuthnPINRequired},
+		{"resume finish refused", &mockInviteCeremonyClient{beginResp: resume, finishErr: errUserInviteBoom}, &fakeAuthenticator{assertion: []byte("{}")}, ErrFinishInviteRegistrationFailed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,6 +128,53 @@ func TestRedeemInviteFIDO2_Failures(t *testing.T) {
 			assert.Nil(t, resp)
 		})
 	}
+}
+
+// TestRedeemInviteFIDO2_ResumeAssertsWithSoftwareAuthenticator drives the
+// resume path with the software authenticator: the first redeem enrols a
+// credential (create) whose activation then fails; the retried begin answers
+// with a get for exactly that credential, and redeemInviteFIDO2 answers it
+// with an assertion by that credential, never a second credential.
+func TestRedeemInviteFIDO2_ResumeAssertsWithSoftwareAuthenticator(t *testing.T) {
+	const origin = "https://kms.example.com"
+	b64 := base64.RawURLEncoding.EncodeToString
+	soft := webauthnclient.NewSoftwareAdapter()
+	var prompt bytes.Buffer
+	printer := NewPrinter("text", &prompt)
+
+	creation := fmt.Sprintf(`{"publicKey":{"challenge":%q,"rp":{"id":"kms.example.com","name":"xkms"},`+
+		`"user":{"id":%q,"name":"alice","displayName":"Alice"},"pubKeyCredParams":[{"type":"public-key","alg":-7}]}}`,
+		b64([]byte("create-challenge-0123456789abcdef")), b64([]byte("user-handle-7")))
+	failing := &mockInviteCeremonyClient{
+		beginResp: &client.BeginInviteRegistrationResponse{SessionID: "session-1", OptionsJSON: creation, Ceremony: client.InviteCeremonyCreate},
+		finishErr: errUserInviteBoom,
+	}
+	_, err := redeemInviteFIDO2(context.Background(), failing, printer, "acme", "token-1", soft, origin, nil)
+	require.ErrorIs(t, err, ErrFinishInviteRegistrationFailed)
+	require.NotNil(t, failing.gotFinish)
+	created, err := protocol.ParseCredentialCreationResponseBody(strings.NewReader(failing.gotFinish.AttestationJSON))
+	require.NoError(t, err, "the create ceremony sends an attestation")
+	require.Equal(t, 1, soft.CredentialCount())
+
+	assertionOpts := fmt.Sprintf(`{"publicKey":{"challenge":%q,"rpId":"kms.example.com",`+
+		`"allowCredentials":[{"type":"public-key","id":%q}]}}`,
+		b64([]byte("resume-challenge-0123456789abcdef")), b64(created.RawID))
+	resuming := &mockInviteCeremonyClient{
+		beginResp: &client.BeginInviteRegistrationResponse{SessionID: "session-2", OptionsJSON: assertionOpts, Ceremony: client.InviteCeremonyGet},
+	}
+	resp, err := redeemInviteFIDO2(context.Background(), resuming, printer, "acme", "token-1", soft, origin, nil)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(7), resp.UserID)
+	require.NotNil(t, resuming.gotFinish)
+	assert.Equal(t, "session-2", resuming.gotFinish.SessionID)
+
+	_, err = protocol.ParseCredentialCreationResponseBody(strings.NewReader(resuming.gotFinish.AttestationJSON))
+	require.Error(t, err, "a resume never sends an attestation")
+	asserted, err := protocol.ParseCredentialRequestResponseBody(strings.NewReader(resuming.gotFinish.AttestationJSON))
+	require.NoError(t, err, "a resume sends an assertion")
+	assert.Equal(t, created.RawID, asserted.RawID, "the assertion is by the enrolled credential")
+	assert.Equal(t, b64([]byte("resume-challenge-0123456789abcdef")), asserted.Response.CollectedClientData.Challenge, "the assertion signs the resume session's challenge")
+	assert.Equal(t, 1, soft.CredentialCount(), "a resume enrols no second credential")
 }
 
 // runRedeem runs invite redeem for tenant acme with the given client

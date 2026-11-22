@@ -21,14 +21,15 @@
 
 import { test, expect } from '@playwright/test';
 import { installVirtualAuthenticator } from './support/virtualAuthenticator.ts';
-import { loginOperator, registerOperator, uniqueOperator } from './support/operator.ts';
+import { loginOperator, uniqueOperator } from './support/operator.ts';
+import { provisionOperator } from './support/passkeyAccount.ts';
 
 test.describe('Passkey registration and login', () => {
   test('registers a passkey, then signs out and back in via the same credential', async ({ page }) => {
     await installVirtualAuthenticator(page);
     const op = uniqueOperator('auth');
 
-    await registerOperator(page, op);
+    await provisionOperator(page, op);
 
     // Sign out — back to the login chooser, shell gone.
     await page.getByRole('button', { name: 'Sign out' }).click();

@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -67,7 +68,7 @@ func startTenantTestGRPCServer(t *testing.T, registry *seal.BarrierRegistry) (pb
 	tmpDir, err := os.MkdirTemp("", "xkms-grpc-tenant-test-*")
 	require.NoError(t, err)
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	cfg := &GRPCConfig{
 		SocketPath:      socketPath,
