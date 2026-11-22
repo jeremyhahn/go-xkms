@@ -67,6 +67,28 @@ func TestShortTMPDIR_DeepTMPDIRAndGOTMPDIR(t *testing.T) {
 	}
 }
 
+// TestShortTMPDIR_UnsetsVariablesThatWereUnset checks that a variable unset
+// before the run is set during it and unset again after it.
+func TestShortTMPDIR_UnsetsVariablesThatWereUnset(t *testing.T) {
+	t.Setenv("GOTMPDIR", "")
+	if err := os.Unsetenv("GOTMPDIR"); err != nil {
+		t.Fatalf("unsetting GOTMPDIR: %v", err)
+	}
+
+	var during string
+	shortTMPDIR(func() int {
+		during = os.Getenv("GOTMPDIR")
+		return 0
+	})
+
+	if during == "" {
+		t.Fatal("GOTMPDIR was not set during the run")
+	}
+	if _, had := os.LookupEnv("GOTMPDIR"); had {
+		t.Fatal("GOTMPDIR is set after shortTMPDIR, want it unset again")
+	}
+}
+
 // TestTempDir_FitsAgentSocket shows the package's t.TempDir() leaves room for
 // the agent socket under a deep TMPDIR or GOTMPDIR, which needs the TestMain.
 func TestTempDir_FitsAgentSocket(t *testing.T) {
