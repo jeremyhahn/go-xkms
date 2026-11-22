@@ -154,6 +154,61 @@ func TestCIMaskLANScript(t *testing.T) {
 			t.Errorf("masked %q: a public host, a keyword or a variable outside the list", l)
 		}
 	}
+	// Codex P1 on #2340: a host name is classified in any letter case and
+	// with its terminal dot removed. Codex round 2 on #2346: each mask is
+	// printed as written and, when that differs, lowercased, because
+	// scripts/ci-registry.sh push_host lowercases RELEASE_REGISTRY and logs it.
+	for _, tc := range []struct {
+		name, env string
+		want      []string
+	}{
+		{"an upper-case LAN suffix", "DEVCACHE_GO=http://cache.INTERNAL:3300/go",
+			[]string{"http://cache.INTERNAL:3300/go", "cache.INTERNAL:3300", "cache.INTERNAL",
+				"http://cache.internal:3300/go", "cache.internal:3300", "cache.internal"}},
+		{"a fully qualified LAN name", "CI_IMAGE_REGISTRY=registry.lan.:5000",
+			[]string{"registry.lan.:5000", "registry.lan."}},
+		{"a fully qualified mixed-case name with no port", "RELEASE_REGISTRY=Pkgs.Home.Arpa.",
+			[]string{"Pkgs.Home.Arpa.", "pkgs.home.arpa."}},
+		// The registry helper's form: push_host prints ${RELEASE_REGISTRY,,},
+		// and the login line logs it.
+		{"a mixed-case release registry as the registry helper logs it", "RELEASE_REGISTRY=Pkgs.Home.Arpa:5000",
+			[]string{"Pkgs.Home.Arpa:5000", "Pkgs.Home.Arpa", "pkgs.home.arpa:5000", "pkgs.home.arpa"}},
+		{"a fully qualified single label", "GOPROXY=http://buildcache.:3000",
+			[]string{"http://buildcache.:3000", "buildcache.:3000", "buildcache."}},
+		{"a fully qualified public host and an upper-case keyword", "GOPROXY=https://Proxy.Golang.Org.,DIRECT",
+			nil},
+		// Local Codex review on #2346: the authority is split at its last "@"
+		// before the host is classified, so the user name is never taken for
+		// the host, and the userinfo and its password are masked.
+		{"userinfo before an internal host", "GOPROXY=http://build.user:pw@cache.internal:3300", // lab-string-ok: made-up user and LAN-suffix host; the test proves the userinfo split
+			[]string{"http://build.user:pw@cache.internal:3300", "build.user:pw@cache.internal:3300", // lab-string-ok: the same made-up fixture
+				"cache.internal:3300", "cache.internal", "build.user:pw", "pw"}},
+		// A mask is workflow command data: a "%" is escaped as %25, so the
+		// runner decodes the mask back to the literal password.
+		{"a percent in a password on a public host", "GOPROXY=https://u:pa%25ss@proxy.golang.org",
+			[]string{"u:pa%2525ss", "pa%2525ss"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("bash", script) // #nosec G204 -- the repository's own script
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), tc.env}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s: %v\n%s", maskLANScript, err, out)
+			}
+			var got []string
+			for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if l != "" {
+					got = append(got, strings.TrimPrefix(l, "::add-mask::"))
+				}
+			}
+			slices.Sort(got)
+			want := slices.Clone(tc.want)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s: masks %q, want %q", tc.env, got, want)
+			}
+		})
+	}
 	public := exec.Command("bash", script) // #nosec G204 -- the repository's own script
 	public.Env = []string{"PATH=" + os.Getenv("PATH"), "GITHUB_SERVER_URL=https://github.com"}
 	if out, err := public.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "" {
