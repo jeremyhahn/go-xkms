@@ -294,6 +294,9 @@ eq "a GitHub response yields its /pull/<n> URL" \
 	"https://github.com/jeremyhahn/go-xkms/pull/9" "$(pr_html_url "$PRRESP")"
 printf '{"user":{"html_url":"https://github.com/example-bot"}}' >"$PRRESP"
 eq "a response with no pull request URL yields nothing" "" "$(pr_html_url "$PRRESP")"
+printf '{\n  "number": 9,\n  "user": {\n    "html_url": "https://github.com/example-bot"\n  },\n  "html_url": "https://github.com/owner/repo/pull/9"\n}\n' >"$PRRESP"
+eq "a whitespace-formatted response yields its /pull/<n> URL" \
+	"https://github.com/owner/repo/pull/9" "$(pr_html_url "$PRRESP")"
 rm -f "$PRRESP"
 
 section "json_string"
