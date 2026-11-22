@@ -369,14 +369,12 @@ forge_api_url() {
 }
 
 # pr_html_url prints the pull request's web URL from the forge's JSON response
-# in file $1: Gitea links it under /pulls/<n>, GitHub under /pull/<n>. The
-# user and repository objects the response embeds carry html_urls of their
-# own, none of which ends in /pull(s)/<n>. Empty when there is none.
+# in file $1: the top-level html_url (Gitea links it under /pulls/<n>, GitHub
+# under /pull/<n>). jq parses the response, so its formatting does not matter,
+# and the html_urls of the embedded user and repository objects are never
+# read. Empty when there is none or the response is not JSON.
 pr_html_url() {
-	local url
-	url=$(grep -oE '"html_url":"[^"]*/pulls?/[0-9]+"' "$1" | head -n 1) || return 0
-	url=${url#*:\"}
-	printf '%s' "${url%\"}"
+	jq -r '.html_url // empty | strings' "$1" 2>/dev/null || true
 }
 
 # json_string prints $1 as a JSON string literal, escaping the backslash and
