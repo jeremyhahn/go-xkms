@@ -3354,11 +3354,11 @@ func TestSetWebAuthn_NilSet(t *testing.T) {
 	require.NoError(t, err)
 
 	// Initially nil
-	assert.Nil(t, svc.webauthnService)
+	assert.Nil(t, svc.webAuthn())
 
 	// Set nil and verify
 	svc.SetWebAuthn(nil)
-	assert.Nil(t, svc.webauthnService)
+	assert.Nil(t, svc.webAuthn())
 }
 
 func TestCeremonyService_NilByDefault(t *testing.T) {

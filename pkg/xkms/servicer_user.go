@@ -298,15 +298,15 @@ func (s *XKMSService) DisableUser(ctx context.Context, username string) error {
 // re-check (pkg/auth.QRDBUserResolver) still refuses u's sessions on their
 // next refresh attempt even when this sweep could not reach the store.
 func (s *XKMSService) revokeUserSessions(ctx context.Context, u *qrdbtransport.User) {
-	if s.tokenIssuer == nil {
+	if s.issuer() == nil {
 		return
 	}
 	// Usernames are tenant-scoped: only u's tenant's sessions end (#2296).
-	if err := s.tokenIssuer.RevokeBySubject(ctx, u.TenantID, u.Username); err != nil {
+	if err := s.issuer().RevokeBySubject(ctx, u.TenantID, u.Username); err != nil {
 		log.Printf("xkms: revoke refresh sessions for user %q failed: %v", u.Username, err)
 	}
 	handle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(u.ID))
-	if err := s.tokenIssuer.RevokeBySubject(ctx, u.TenantID, handle); err != nil {
+	if err := s.issuer().RevokeBySubject(ctx, u.TenantID, handle); err != nil {
 		log.Printf("xkms: revoke webauthn refresh sessions for user %q failed: %v", u.Username, err)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -86,6 +87,15 @@ func (m *Module) restServer() (*rest.Server, error) {
 		return srv, nil
 	}
 
+	// Build and publish under one lock: a second first caller waits and
+	// then finds the winner's server. A failed or not-yet-composed build
+	// publishes nothing, so the next call retries.
+	m.selfRESTMu.Lock()
+	defer m.selfRESTMu.Unlock()
+	if srv := m.selfREST.Load(); srv != nil {
+		return srv, nil
+	}
+
 	x := m.resolve()
 	if x == nil {
 		return nil, nil
@@ -100,9 +110,7 @@ func (m *Module) restServer() (*rest.Server, error) {
 	if err != nil {
 		return nil, &HostBuildError{Err: err}
 	}
-	if !m.selfREST.CompareAndSwap(nil, srv) {
-		srv = m.selfREST.Load()
-	}
+	m.selfREST.Store(srv)
 	return srv, nil
 }
 
@@ -210,6 +218,13 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 		st = &compose.Stores{Disabled: []error{err}}
 	}
 	st.Wire(x)
+	// The invite routes read and activate the invited account through the
+	// embedded node's user source (WithNodeUsers). Wired here, once under
+	// composeMu where the module composes the service, not by each REST
+	// host build (pkg/server does the same where xkmsd builds its service).
+	if m.nodeUsers != nil {
+		x.SetInviteUserClient(auth.NewNodeUserClient(m.nodeUsers))
+	}
 	m.stores.Store(st)
 	return st
 }

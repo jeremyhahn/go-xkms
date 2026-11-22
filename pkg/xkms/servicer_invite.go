@@ -238,7 +238,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.webauthnService == nil || s.inviteUserClient() == nil {
+	if s.inviteStore == nil || s.webAuthn() == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
 	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
@@ -262,7 +262,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	// The invite's own account, by id, in the invite's validated tenant
 	// (bound on ctx): never re-resolve its email in the WebAuthn store's
 	// configured scope.
-	options, sessionID, err := s.webauthnService.BeginInviteRegistrationForUser(ctx, xkmswebauthn.HandleFromUserID(userID))
+	options, sessionID, err := s.webAuthn().BeginInviteRegistrationForUser(ctx, xkmswebauthn.HandleFromUserID(userID))
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable
@@ -284,7 +284,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.webauthnService == nil || s.inviteUserClient() == nil {
+	if s.inviteStore == nil || s.webAuthn() == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
 	// Looked up (not redeemed) BEFORE the ceremony is validated: the
@@ -314,7 +314,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: err}
 	}
 
-	user, err := s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, xkmswebauthn.HandleFromUserID(inviteeID), parsed)
+	user, err := s.webAuthn().FinishInviteRegistration(ctx, req.SessionID, xkmswebauthn.HandleFromUserID(inviteeID), parsed)
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable
@@ -467,13 +467,24 @@ type InviteUserClient interface {
 // link (ruling 973 (2)). xkmsd and a host with an embedded node pass the
 // node's user service (auth.NodeUserClient). The user an invite call acts
 // on is the one the invite record names, never one the caller chooses.
-func (s *XKMSService) SetInviteUserClient(users InviteUserClient) { s.inviteUsers = users }
+func (s *XKMSService) SetInviteUserClient(users InviteUserClient) {
+	if users == nil {
+		s.inviteUsers.Store(nil)
+		return
+	}
+	s.inviteUsers.Store(&inviteUserClientRef{client: users})
+}
+
+// inviteUserClientRef boxes an InviteUserClient so the interface value can
+// be stored in an atomic.Pointer: the client is set once at composition
+// while the invite routes may already be serving.
+type inviteUserClientRef struct{ client InviteUserClient }
 
 // inviteUserClient is SetInviteUserClient's client, or SetUserClients'
 // when none is set; nil when neither is.
 func (s *XKMSService) inviteUserClient() InviteUserClient {
-	if s.inviteUsers != nil {
-		return s.inviteUsers
+	if ref := s.inviteUsers.Load(); ref != nil {
+		return ref.client
 	}
 	if s.users == nil {
 		return nil
@@ -511,7 +522,7 @@ func inviteStoreContext(ctx context.Context) context.Context {
 func (s *XKMSService) ensureInviteTenantServed(inviteTenant string) error {
 	// A user store that names no tenant fails closed: it is never read as
 	// the system tenant (ruling 1041 (1)).
-	served, err := s.webauthnService.UserStoreTenant()
+	served, err := s.webAuthn().UserStoreTenant()
 	if err != nil {
 		return errors.Join(ErrInviteTenantNotServed, err)
 	}

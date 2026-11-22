@@ -413,9 +413,12 @@ type Module struct {
 
 	// selfREST memoizes the module's self-built REST surface
 	// (rest.NewHostServer), built the first time restServer() is called
-	// with no WithRESTServer resolver configured. Lock-free: concurrent
-	// first calls may both construct, and CompareAndSwap keeps exactly one.
-	selfREST atomic.Pointer[rest.Server]
+	// with no WithRESTServer resolver configured. Loads are lock-free;
+	// selfRESTMu is held across the empty check, the build and the publish,
+	// so concurrent first calls build exactly one server and the build's
+	// writes to the shared XKMSService never run twice at once.
+	selfREST   atomic.Pointer[rest.Server]
+	selfRESTMu sync.Mutex
 
 	// stores memoizes the host composition (hostStores). Unlike the
 	// service and REST memos it must be built exactly once -- building the
