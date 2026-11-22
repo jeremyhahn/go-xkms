@@ -417,21 +417,21 @@ fi`
 	}
 }
 
-// varsRegistry matches a repository variable whose name ends in _REGISTRY
-// (template v1.53, handbook 17803e85): a registry host a later step takes
-// from vars, which the mask step must see as VARS_<NAME>. A name such as
-// CI_REGISTRY_OWNER is not a host and does not match.
-var varsRegistry = regexp.MustCompile(`vars\.([A-Z0-9_]*_REGISTRY)\b`)
+// varsRef matches a repository variable reference, ${{ vars.NAME }}.
+var varsRef = regexp.MustCompile(`\bvars\.[A-Za-z0-9_]+`)
 
 // maskRegistryCase is the v1.53 case arm of ci-mask-lan.sh: every variable
 // whose name ends in _REGISTRY is scanned.
 const maskRegistryCase = "| *_REGISTRY |"
 
-// TestCIMaskStepsSetVarsRegistries pins template v1.53 at handbook
-// 17803e85: every Mask the LAN addresses step sets VARS_CI_IMAGE_REGISTRY
-// and one VARS_<NAME> per vars.<NAME> ending in _REGISTRY its job reads, and
-// ci-mask-lan.sh scans every *_REGISTRY variable.
-func TestCIMaskStepsSetVarsRegistries(t *testing.T) {
+// TestCIMaskStepsReadNoRepositoryVariable: go-xkms deviates from template
+// v1.53 (handbook 17803e85) on purpose. No Mask the LAN addresses step
+// puts a repository variable in its env block, because Actions prints a
+// step's env unredacted before the step runs, so an internal registry in a
+// variable would be logged before any mask. An internal registry is a
+// secret, never a variable (the template fix is with the Software
+// Department). ci-mask-lan.sh still scans every *_REGISTRY variable.
+func TestCIMaskStepsReadNoRepositoryVariable(t *testing.T) {
 	data, err := os.ReadFile(ciWorkflow)
 	if err != nil {
 		t.Fatalf("read %s: %v", ciWorkflow, err)
@@ -448,28 +448,23 @@ func TestCIMaskStepsSetVarsRegistries(t *testing.T) {
 		if err := node.Decode(&job); err != nil {
 			t.Fatalf("decode job %s: %v", name, err)
 		}
-		text, err := yaml.Marshal(&node)
-		if err != nil {
-			t.Fatalf("marshal job %s: %v", name, err)
-		}
-		want := map[string]string{"VARS_CI_IMAGE_REGISTRY": "${{ vars.CI_IMAGE_REGISTRY }}"}
-		for _, m := range varsRegistry.FindAllStringSubmatch(string(text), -1) {
-			want["VARS_"+m[1]] = "${{ vars." + m[1] + " }}"
-		}
 		for _, s := range job.Steps {
 			if strings.TrimSpace(s.Run) != maskLANScript {
 				continue
 			}
 			masks++
-			for k, v := range want {
-				if got := s.Env[k]; got != v {
-					t.Errorf("%s mask step env %s = %q, want %q", name, k, got, v)
+			for k, v := range s.Env {
+				if varsRef.MatchString(v) {
+					t.Errorf("%s mask step env %s = %q: a repository variable is printed unredacted before the mask runs", name, k, v)
 				}
 			}
 		}
 	}
 	if masks == 0 {
 		t.Fatalf("%s has no step running %s", ciWorkflow, maskLANScript)
+	}
+	if !varsRef.MatchString("${{ vars.CI_IMAGE_REGISTRY }}") {
+		t.Fatal("varsRef does not match a repository variable reference")
 	}
 	script, err := os.ReadFile(filepath.Join(maskLANRoot, maskLANScript))
 	if err != nil {

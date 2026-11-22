@@ -38,7 +38,7 @@
 # v1.50 (handbook 52e70fd5, #84; rulings 999/1024): pages() keeps a short list in SHORT as a lower bound, no return 1; elif [ -n "$SHORT" ] stays hosted when no trigger is reached; an overflow notes "(a lower bound: $SHORT)".
 # v1.51 (handbook c4de1f7d, #86): the Runner labels (ruling 633) pull_request_target cases are in a step this file does not take; no job change.
 # v1.52 (handbook 2635447, #91): a fork's pull request runs every job hosted: preflight's runs-on takes the template's fork clause before the variable (go-xkms keeps its ubuntu-latest default when CI_PREFLIGHT_RUNS_ON is unset), and the runner selection step reads EVENT, HEAD_REPO and REPO and outputs the hosted default for a fork's head with a ::notice and no API call; the Runner labels (ruling 633) fork handling is in the step this file does not take.
-# v1.53 (handbook 17803e85): every Mask the LAN addresses step sets VARS_CI_IMAGE_REGISTRY from vars and scripts/ci-mask-lan.sh scans every variable ending in _REGISTRY (a registry a later step takes from vars is masked); main's concurrency group is main-{event} (no github.sha), schedule and every other ref unchanged, cancel-in-progress a literal true (ruling 1087); CI Gate runs on !cancelled() off pull_request (a pull request keeps always()); main-green for a tag is a green ci.yml run on the tagged commit (a push run, or a workflow_dispatch on main when later pushes cancelled it); the preflight comment names the Infra Department's CI_PREFLIGHT_RUNS_ON SOP; scripts/ci-mask-lan.sh masks internal host names too; no comment names an internal repository. Item (0), Runner labels accepting code-review.yml's guard jobs on bigdisk, is in the step this file does not take.
+# v1.53 (handbook 17803e85): the template's Mask the LAN addresses step sets VARS_CI_IMAGE_REGISTRY from vars; go-xkms deliberately does not (a repository variable in a step's env is printed unredacted before the mask runs; the template fix, an internal registry is a secret, is with the Software Department); scripts/ci-mask-lan.sh scans every variable ending in _REGISTRY in its environment; main's concurrency group is main-{event} (no github.sha), schedule and every other ref unchanged, cancel-in-progress a literal true (ruling 1087); CI Gate runs on !cancelled() off pull_request (a pull request keeps always()); main-green for a tag is a green ci.yml run on the tagged commit (a push run, or a workflow_dispatch on main when later pushes cancelled it); the preflight comment names the Infra Department's CI_PREFLIGHT_RUNS_ON SOP; scripts/ci-mask-lan.sh masks internal host names too; no comment names an internal repository. Item (0), Runner labels accepting code-review.yml's guard jobs on bigdisk, is in the step this file does not take.
 # v1.42 hermetic gate only (owner ruling 742 (1), Tenant Agent ruling 754): the
 # CI Gate's outcome depends only on the tree under test. `make deps-check`,
 # `make security` (gosec, govulncheck, go mod verify, trivy fs) and the trivy
@@ -1267,12 +1267,10 @@ jobs:
       # Debian, has no apk and reads `none`.
       # Ruling 887: on a forge release or bigdisk runner, the LAN addresses are
       # masked before ci-registry.sh publish builds and prints.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Read the Alpine package index
@@ -1382,12 +1380,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -1586,12 +1582,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       # A source check on the runner's shell: no make recipe runs here.
@@ -1813,12 +1807,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -1930,12 +1922,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -2107,12 +2097,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -2226,12 +2214,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -2383,12 +2369,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -2500,12 +2484,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -2660,12 +2642,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -2773,12 +2753,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
@@ -2903,12 +2881,10 @@ jobs:
 
       # Ruling 887: the LAN addresses this runner's environment names, masked
       # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
-        env:
-          # v1.53: a registry a later step takes from `vars` is masked here.
-          # CUSTOMIZE: one VARS_<NAME> line per vars.<NAME> ending in _REGISTRY
-          # that this job reads (testdata/ci-mask-lan-tests.py M1 to M3).
-          VARS_CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
