@@ -1214,9 +1214,16 @@ func (tpm *TPM2) SaveKeyPair(
 	}
 	// The private blob is written first and the public blob last, so a key is
 	// complete only once its public blob exists. A create-only save that
-	// finds a private blob without a public blob meets an incomplete earlier
-	// save (a storage fault or crash between the two writes): that pair
-	// cannot load, so the retry replaces it. A complete pair still refuses.
+	// finds a private blob without a public blob meets either an incomplete
+	// earlier save (a storage fault or crash between the two writes) or a
+	// live writer between its two writes, possibly on another backend
+	// instance or node: the two cannot be told apart. So the public blob is
+	// the per-key fence: the recovering save creates it, create-only, before
+	// it touches the private blob. If the live writer's public blob is
+	// already there, the recovery refuses and leaves the pair alone; if the
+	// recovery's is, the live writer's own public save refuses and only the
+	// recovering writer then writes the private blob. A complete pair still
+	// refuses.
 	err := backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, overwrite)
 	if err != nil && !overwrite && errors.Is(err, store.ErrBlobExists) {
 		if _, perr := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB); !errors.Is(perr, store.ErrBlobNotFound) {
@@ -1224,7 +1231,19 @@ func (tpm *TPM2) SaveKeyPair(
 		}
 		tpm.logger.Warn("tpm: replacing an incomplete key pair (private blob without public blob)",
 			slog.String("cn", keyAttrs.CN))
-		err = backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, true)
+		if err := backend.Save(keyAttrs, outPublic.Bytes(), store.FSEXT_PUBLIC_BLOB, false); err != nil {
+			return err
+		}
+		if err := backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, true); err != nil {
+			// This save owns the key now: drop the pair so a retry starts
+			// clean rather than meeting this public blob beside another
+			// writer's private blob.
+			if derr := backend.Delete(keyAttrs); derr != nil {
+				return errors.Join(err, derr)
+			}
+			return err
+		}
+		return nil
 	}
 	if err != nil {
 		return err
