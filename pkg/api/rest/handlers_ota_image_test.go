@@ -42,6 +42,7 @@ func otaImageRouter(h *HandlerContext) http.Handler {
 	r.Post("/api/v1/ota-image-keys/{board}", h.CreateOTAImageKeyHandler)
 	r.Post("/api/v1/ota-image-keys/{board}/rotate", h.RotateOTAImageKeyHandler)
 	r.Post("/api/v1/ota-image-keys/{board}/sign", h.SignOTAImageHandler)
+	r.Get("/api/v1/ota-image-keys/{board}/public-key", h.ExportOTAImagePublicKeyHandler)
 	return r
 }
 
@@ -166,4 +167,57 @@ func TestOTAImageKeyHandlers_UnknownBoardKey(t *testing.T) {
 	w := serveOTA(t, router, "/api/v1/ota-image-keys/"+otaTestBoard+"/rotate",
 		OTAImageKeyRequest{Backend: crossTenantSource})
 	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+}
+
+func TestOTAImageKeyHandlers_ExportPublicKey(t *testing.T) {
+	h, _ := crossTenantHandlerContext(t)
+	router := otaImageRouter(h)
+
+	w := serveOTA(t, router, "/api/v1/ota-image-keys/"+otaTestBoard,
+		OTAImageKeyRequest{Backend: crossTenantSource, Algorithm: "ES256"})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created GenerateKeyResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	get := func(board string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, tenantIdentityRequest(t, http.MethodGet,
+			"/api/v1/ota-image-keys/"+board+"/public-key?backend="+crossTenantSource, nil, crossTenantA))
+		return rec
+	}
+
+	w = get(otaTestBoard)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		KeyID   string `json:"key_id"`
+		BoardID string `json:"board_id"`
+		Version uint32 `json:"version"`
+		Raw     []byte `json:"raw"`
+		COSEKey []byte `json:"cose_key"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, created.KeyID, resp.KeyID)
+	assert.Equal(t, otaTestBoard, resp.BoardID)
+	assert.Equal(t, uint32(1), resp.Version)
+	pub := otaPublicKey(t, created.PublicKeyPEM)
+	uncompressed, err := pub.Bytes()
+	require.NoError(t, err)
+	assert.Equal(t, uncompressed[1:], resp.Raw,
+		"raw is the 64-byte X||Y of the board key")
+	assert.NotEmpty(t, resp.COSEKey)
+
+	w = get("pi5")
+	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+}
+
+func TestOTAImageKeyRoutes_ExportPublicKeyNeedsKeysGet(t *testing.T) {
+	for _, spec := range Routes() {
+		if spec.Method == http.MethodGet && spec.Pattern == "/api/v1/ota-image-keys/{board}/public-key" {
+			assert.Equal(t, RouteAuthPermission, spec.Auth)
+			assert.Equal(t, "keys:get", spec.Resource+":"+spec.Action,
+				"a caller without keys:get is refused with 403")
+			return
+		}
+	}
+	t.Fatal("GET /api/v1/ota-image-keys/{board}/public-key is not routed")
 }
