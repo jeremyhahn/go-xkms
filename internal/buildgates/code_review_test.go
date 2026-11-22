@@ -3,11 +3,53 @@ package buildgates
 import (
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 )
 
 // codeReviewWorkflow is the handbook's code-review template, copied verbatim.
 const codeReviewWorkflow = "../../.github/workflows/code-review.yml"
+
+// extractCodeReviewStep returns the run: script of the code-review
+// template's step called name, its 10-space step indent removed, so a test
+// runs the template's own script rather than a copy of it.
+func extractCodeReviewStep(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(codeReviewWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", codeReviewWorkflow, err)
+	}
+	lines := strings.Split(string(data), "\n")
+	start := -1
+	for i, l := range lines {
+		if l == "      - name: "+name {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("%s has no step %q", codeReviewWorkflow, name)
+	}
+	i := start + 1
+	for ; i < len(lines) && lines[i] != "        run: |"; i++ {
+		if strings.HasPrefix(lines[i], "      - ") {
+			t.Fatalf("%s: step %q has no run: | block", codeReviewWorkflow, name)
+		}
+	}
+	const indent = "          "
+	var script []string
+	for i++; i < len(lines); i++ {
+		l := lines[i]
+		if strings.TrimSpace(l) != "" && !strings.HasPrefix(l, indent) {
+			break
+		}
+		script = append(script, strings.TrimPrefix(l, indent))
+	}
+	if len(script) == 0 {
+		t.Fatalf("%s: step %q has an empty script", codeReviewWorkflow, name)
+	}
+	return strings.Join(script, "\n") + "\n"
+}
 
 // TestCodeReviewGateRerunsNewerTwin pins code-review template v5.12.7
 // (Codex's P1 on #2327): GitHub reads the required context from the newest
