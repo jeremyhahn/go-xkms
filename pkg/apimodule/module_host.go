@@ -225,6 +225,13 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 	if m.nodeUsers != nil {
 		x.SetInviteUserClient(auth.NewNodeUserClient(m.nodeUsers))
 	}
+	// PIV invitation activation reads the certificate's tenant under the
+	// service's trust domain and PIV login under WithPIVLogin's pin; a host
+	// that set no service trust domain gets the login pin, so an activation
+	// binds only certificates the login will find (go-xkms#2296).
+	if m.pivLogin != nil && m.pivLogin.TrustDomain != "" && x.SPIFFETrustDomain() == "" {
+		x.SetSPIFFETrustDomain(m.pivLogin.TrustDomain)
+	}
 	m.stores.Store(st)
 	return st
 }
