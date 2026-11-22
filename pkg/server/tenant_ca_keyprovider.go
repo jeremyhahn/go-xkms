@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -291,7 +292,17 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 	if removed, err := f.tenantLoginCARemoved(ctx, tenantID); err != nil || removed {
 		return errors.Join(fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved), err)
 	}
-	ensureErr := f.ensureTenant(ctx, tenantID)
+	// The generation this pass provisions under: a remove and revive of the
+	// tenant ID bumps it, and every certificate write this pass makes checks
+	// it first (see tenantLoginCAFenceWrite).
+	generation, err := f.tenantLoginCAGeneration(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	fence := &tenantLoginCAFence{check: func(ctx context.Context) error {
+		return f.checkTenantLoginCAGeneration(ctx, tenantID, generation)
+	}}
+	ensureErr := f.ensureTenant(context.WithValue(ctx, tenantLoginCAFenceKey{}, fence), tenantID)
 	removed, err := f.tenantLoginCARemoved(ctx, tenantID)
 	if err != nil {
 		// Teardown may have run: whether this pass's writes outlive it is
@@ -306,6 +317,21 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		errs := deleteTenantLoginCAMaterial(ctx, base, tenantID)
 		return errors.Join(append([]error{fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved)}, errs...)...)
 	}
+	current, err := f.tenantLoginCAGeneration(ctx, tenantID)
+	if err != nil {
+		return errors.Join(ensureErr, err)
+	}
+	if current != generation {
+		// The tenant was removed and created again while this pass ran: its
+		// work belongs to the removed tenant. A write it made after its last
+		// fence check may have replaced the new tenant's provenance or
+		// certificate, so put those back over the key that is there now.
+		errs := []error{fmt.Errorf("tenant %q (removed and created again during this pass): %w", tenantID, errTenantLoginCARemoved)}
+		if fence.wrote.Load() {
+			errs = append(errs, f.repairRevivedTenantLoginCA(ctx, tenantID)...)
+		}
+		return errors.Join(errs...)
+	}
 	if errors.Is(ensureErr, errTenantLoginCAClaimHeld) {
 		// Name the holder: a holder on a lost host is released only when the
 		// operator fences it (WithTenantLoginCAFencedHolders).
@@ -314,6 +340,165 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		}
 	}
 	return ensureErr
+}
+
+// tenantLoginCAFenceKey carries a provisioning pass's *tenantLoginCAFence in
+// its context.
+type tenantLoginCAFenceKey struct{}
+
+// tenantLoginCAFence is the generation fence of one provisioning pass: check
+// refuses once the tenant was removed or revived, and wrote records that the
+// pass wrote a certificate.
+type tenantLoginCAFence struct {
+	check func(context.Context) error
+	wrote atomic.Bool
+}
+
+// tenantLoginCAFenceWrite runs before every certificate write of a
+// provisioning pass: it refuses the write once the pass's generation is gone.
+func tenantLoginCAFenceWrite(ctx context.Context) error {
+	fence, _ := ctx.Value(tenantLoginCAFenceKey{}).(*tenantLoginCAFence)
+	if fence == nil {
+		return nil
+	}
+	if err := fence.check(ctx); err != nil {
+		return err
+	}
+	fence.wrote.Store(true)
+	return nil
+}
+
+// tenantLoginCAGenerationKey is the claims-storage key of a tenant ID's
+// provisioning generation.
+func tenantLoginCAGenerationKey(tenantID string) string {
+	return "tenant-login-ca/generations/" + tenantLoginCAKeyName(tenantID)
+}
+
+// tenantLoginCAGeneration reads a tenant ID's provisioning generation (0
+// until its first revive).
+func (f *tenantCAKeyFactory) tenantLoginCAGeneration(ctx context.Context, tenantID string) (uint64, error) {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return 0, err
+	}
+	raw, err := claims.Get(ctx, tenantLoginCAGenerationKey(tenantID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("tenant login CA key factory: read generation of tenant %q: %w", tenantID, err)
+	}
+	n, err := strconv.ParseUint(string(raw), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("tenant login CA key factory: generation of tenant %q: %w", tenantID, err)
+	}
+	return n, nil
+}
+
+// checkTenantLoginCAGeneration refuses once the tenant was removed, or
+// revived past generation.
+func (f *tenantCAKeyFactory) checkTenantLoginCAGeneration(ctx context.Context, tenantID string, generation uint64) error {
+	removed, err := f.tenantLoginCARemoved(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	current, err := f.tenantLoginCAGeneration(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if removed || current != generation {
+		return fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved)
+	}
+	return nil
+}
+
+// bumpTenantLoginCAGeneration advances a tenant ID's provisioning generation.
+func bumpTenantLoginCAGeneration(ctx context.Context, claims storage.Backend, tenantID string) error {
+	key := tenantLoginCAGenerationKey(tenantID)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		cur, err := claims.Get(ctx, key)
+		if errors.Is(err, storage.ErrNotFound) {
+			stored, putErr := claims.PutIfAbsent(ctx, key, []byte("1"))
+			if putErr != nil || stored {
+				return putErr
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		n, err := strconv.ParseUint(string(cur), 10, 64)
+		if err != nil {
+			return fmt.Errorf("generation %q: %w", cur, err)
+		}
+		next := []byte(strconv.FormatUint(n+1, 10))
+		swapper, ok := claims.(storage.CompareAndSwapper)
+		if !ok {
+			return claims.Put(ctx, key, next)
+		}
+		swapped, _, err := swapper.CompareAndSwap(ctx, key, cur, next)
+		if err != nil || swapped {
+			return err
+		}
+	}
+}
+
+// repairRevivedTenantLoginCA puts back the provenance and certificate of a
+// revived tenant that a pass of its removed generation overwrote: a stored
+// one whose public key is not the stored key's is signed again over the key
+// there now, or deleted when there is no key yet (its pass writes them).
+func (f *tenantCAKeyFactory) repairRevivedTenantLoginCA(ctx context.Context, tenantID string) []error {
+	base, err := f.backend()
+	if err != nil {
+		return []error{err}
+	}
+	scoped := xkms.NewTenantScopedBackend(base, tenantID)
+	var signer crypto.Signer
+	attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+	switch {
+	case err == nil:
+		if signer, err = scoped.Signer(ctx, attrs); err != nil {
+			return []error{fmt.Errorf("tenant login CA key factory: signer for tenant %q: %w", tenantID, err)}
+		}
+	case !errors.Is(err, errTenantLoginCAKeyNotFound):
+		return []error{err}
+	}
+	var errs []error
+	for _, certID := range []string{tenantLoginCAProvenanceID, tenantLoginCAKeyCN} {
+		exists, err := scoped.CertExists(ctx, certID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if !exists {
+			continue
+		}
+		cert, err := scoped.GetCert(ctx, certID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if signer != nil {
+			if pub, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool }); ok && pub.Equal(signer.Public()) {
+				continue
+			}
+			fixed, err := selfSignTenantLoginCA(tenantID, signer)
+			if err == nil {
+				err = scoped.SaveCert(ctx, certID, fixed)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("tenant login CA key factory: repair %s of tenant %q: %w", certID, tenantID, err))
+			}
+			continue
+		}
+		if err := scoped.DeleteCert(ctx, certID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 // ensureTenant is one provisioning pass of EnsureTenant.
@@ -667,6 +852,9 @@ func finishTenantLoginCAKey(ctx context.Context, scoped *xkms.TenantScopedBacken
 	if err != nil {
 		return err
 	}
+	if err := tenantLoginCAFenceWrite(ctx); err != nil {
+		return err
+	}
 	if err := scoped.SaveCert(ctx, tenantLoginCAProvenanceID, provenance); err != nil {
 		return fmt.Errorf("tenant login CA key factory: record key provenance for tenant %q: %w", tenantID, err)
 	}
@@ -798,6 +986,11 @@ func (f *tenantCAKeyFactory) ReviveTenant(ctx context.Context, tenantID string) 
 	claims, err := f.claimStorage()
 	if err != nil {
 		return err
+	}
+	// The generation moves before the tombstone goes: a pass of the removed
+	// tenant that resumes now finds its generation gone and writes nothing.
+	if err := bumpTenantLoginCAGeneration(ctx, claims, tenantID); err != nil {
+		return fmt.Errorf("tenant login CA key factory: revive tenant %q: bump generation: %w", tenantID, err)
 	}
 	if err := claims.Delete(ctx, tenantLoginCAClaimKey(tenantID)); err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return fmt.Errorf("tenant login CA key factory: revive tenant %q: %w", tenantID, err)
@@ -964,6 +1157,9 @@ func ensureTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBacke
 	}
 	cert, err := selfSignTenantLoginCA(tenantID, signer)
 	if err != nil {
+		return err
+	}
+	if err := tenantLoginCAFenceWrite(ctx); err != nil {
 		return err
 	}
 	if err := scoped.SaveCert(ctx, tenantLoginCAKeyCN, cert); err != nil {

@@ -996,6 +996,59 @@ func TestTenantCAKeyFactory_TeardownFencesLateProvisioningWrites(t *testing.T) {
 	assertNoTenantLoginCA(t, baseB, "tenant-a")
 }
 
+// A pass paused before its provenance write resumes after the tenant was
+// removed, revived and provisioned again: it reports the removal, and the
+// revived tenant keeps a provenance and certificate over its own key.
+func TestTenantCAKeyFactory_TeardownFencesLateWritesAcrossRevive(t *testing.T) {
+	ctx := context.Background()
+	baseA, baseB := sharedTenantCABackends(t)
+	claims := storage.New()
+	b := newTenantCAKeyFactory()
+	require.NoError(t, b.Bind(baseB, claims))
+	var removeErr, reviveErr, reprovisionErr error
+	nodeA := &pausingProvenanceBackend{Backend: baseA}
+	nodeA.pause = func() {
+		removeErr = b.RemoveTenant(ctx, "tenant-a")
+		reviveErr = b.ReviveTenant(ctx, "tenant-a")
+		reprovisionErr = b.EnsureTenant(ctx, "tenant-a")
+	}
+	a := newTenantCAKeyFactory()
+	require.NoError(t, a.Bind(nodeA, claims))
+
+	require.ErrorIs(t, a.EnsureTenant(ctx, "tenant-a"), errTenantLoginCARemoved, "a pass of the removed tenant must not report success")
+	require.NoError(t, removeErr)
+	require.NoError(t, reviveErr)
+	require.NoError(t, reprovisionErr)
+
+	attrs, err := tenantLoginCAKeyAttrs(ctx, baseB, "tenant-a")
+	require.NoError(t, err)
+	scoped := xkms.NewTenantScopedBackend(baseB, "tenant-a")
+	signer, err := scoped.Signer(ctx, attrs)
+	require.NoError(t, err)
+	require.True(t, tenantLoginCAKeyProvisioned(ctx, scoped, signer.Public()), "the revived tenant's provenance must be over its own key")
+	require.True(t, tenantLoginCACertValid(ctx, scoped, signer.Public()), "the revived tenant's certificate must be over its own key")
+	require.NoError(t, b.EnsureTenant(ctx, "tenant-a"), "the revived tenant stays provisioned")
+}
+
+// A pass whose generation moved before a write refuses the write.
+func TestTenantLoginCAFenceWrite_RefusesAfterRevive(t *testing.T) {
+	ctx := context.Background()
+	f := newTenantCAKeyFactory()
+	_, base := sharedTenantCABackends(t)
+	claims := storage.New()
+	require.NoError(t, f.Bind(base, claims))
+	gen, err := f.tenantLoginCAGeneration(ctx, "tenant-a")
+	require.NoError(t, err)
+	fence := &tenantLoginCAFence{check: func(ctx context.Context) error {
+		return f.checkTenantLoginCAGeneration(ctx, "tenant-a", gen)
+	}}
+	fenced := context.WithValue(ctx, tenantLoginCAFenceKey{}, fence)
+	require.NoError(t, tenantLoginCAFenceWrite(fenced))
+	require.NoError(t, f.RemoveTenant(ctx, "tenant-a"))
+	require.NoError(t, f.ReviveTenant(ctx, "tenant-a"))
+	require.ErrorIs(t, tenantLoginCAFenceWrite(fenced), errTenantLoginCARemoved)
+}
+
 func TestTenantCAKeyFactory_TeardownWaitsForGenerateInFlight(t *testing.T) {
 	ctx := context.Background()
 	baseA, baseB := sharedTenantCABackends(t)
