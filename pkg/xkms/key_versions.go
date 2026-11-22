@@ -518,9 +518,25 @@ func (s *XKMSService) rotateKey(ctx context.Context, b Backend, backendName, key
 	// recording it. It was never current, so nothing was ever signed or
 	// encrypted with it; it is removed so the name can be created again. No
 	// other rotation can record that version while this one holds the claim.
-	if orphan, ok := k.present[next]; ok {
-		if err := b.DeleteKey(ctx, orphan); err != nil {
-			return nil, release(&ErrKeyOperation{Operation: "remove interrupted rotation", KeyID: name, Err: err})
+	//
+	// When this claim took over an expired or released one, the numbers
+	// that claim (and any it took over) reserved lie below next; a rotator
+	// that crashed after creating its key left it there, in no record, so
+	// RetireKeyVersion never reaches it. Those versions are reclaimed too
+	// (Codex round 3, #2225). The record cannot change while the claim is
+	// held, so a recorded version is never removed. A key already gone -- a
+	// stalled rotator removing its own orphan -- is not an error.
+	numbers := make([]uint32, 0, len(k.present))
+	for n := range k.present {
+		numbers = append(numbers, n)
+	}
+	reclaim := k.record.Abandoned(numbers, next)
+	if _, ok := k.present[next]; ok {
+		reclaim = append(reclaim, next)
+	}
+	for _, n := range reclaim {
+		if err := b.DeleteKey(ctx, k.present[n]); err != nil && !errors.Is(err, backend.ErrKeyNotFound) {
+			return nil, release(&ErrKeyOperation{Operation: "remove interrupted rotation", KeyID: keyversion.Name(keyID, n), Err: err})
 		}
 	}
 

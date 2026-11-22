@@ -217,6 +217,26 @@ func (r *Record) Next() uint32 {
 	return highest + 1
 }
 
+// Abandoned returns, ascending, the versions in present (the version numbers
+// found in the backend) that a rotation holding the claim for version next
+// reclaims: those below next that r does not hold. Such a version was
+// reserved by a claim that expired or was released before it was recorded --
+// its rotator crashed or stalled after creating the backend key -- so no
+// record names it and nothing was signed or encrypted with it. While the
+// claim for next is held no other claim is live and r cannot change, so the
+// set never includes a recorded version or one a live claim holds.
+func (r *Record) Abandoned(present []uint32, next uint32) []uint32 {
+	var abandoned []uint32
+	for _, n := range present {
+		if n >= next || slices.ContainsFunc(r.Versions, func(v Version) bool { return v.Number == n }) {
+			continue
+		}
+		abandoned = append(abandoned, n)
+	}
+	slices.Sort(abandoned)
+	return abandoned
+}
+
 // AddCurrent records version n, enabled, created at by createdBy, and makes
 // it current.
 func (r *Record) AddCurrent(n uint32, at time.Time, createdBy string) {
