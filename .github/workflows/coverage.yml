@@ -28,6 +28,7 @@ env:
 
 jobs:
   coverage:
+    timeout-minutes: 60
     name: Test Coverage
     runs-on: ubuntu-latest
 
@@ -112,6 +113,7 @@ jobs:
             });
 
   lint:
+    timeout-minutes: 60
     name: Lint
     runs-on: ubuntu-latest
 
@@ -131,6 +133,7 @@ jobs:
           version: v2.14.0
 
   race:
+    timeout-minutes: 60
     name: Race Detector
     runs-on: ubuntu-latest
 
@@ -148,6 +151,7 @@ jobs:
         run: make test
 
   integration:
+    timeout-minutes: 120
     name: Integration Tests
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
 
