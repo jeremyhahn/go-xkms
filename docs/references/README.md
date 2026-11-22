@@ -55,12 +55,12 @@ path in the private `jeremyhahn/vendor-tcg` repository.
   encoding `I2OSP(R, n) | I2OSP(S, n)` that `XKMSService.SignOTAImage` returns
   for the OTA_AUTH image signature (ruling 136); every other signature stays
   ASN.1 DER. §7.1.1 defines the EC2 COSE_Key parameters (crv, x, y) that
-  `XKMSService.ExportOTAImageKey` sets.
+  `XKMSService.ExportOTAImagePublicKey` sets.
 - `rfc-9052.txt` — IETF RFC 9052, "CBOR Object Signing and Encryption (COSE):
   Structures and Process", copied verbatim from
   https://www.rfc-editor.org/rfc/rfc9052.txt. §7 is the COSE_Key structure
   (kty, kid, alg) of the per-board OTA verification key
-  `XKMSService.ExportOTAImageKey` returns.
+  `XKMSService.ExportOTAImagePublicKey` returns.
 - `rfc-8949.txt` — IETF RFC 8949, "Concise Binary Object Representation
   (CBOR)", copied verbatim from https://www.rfc-editor.org/rfc/rfc8949.txt.
   §4.2.1 is the core deterministic encoding of that COSE_Key.

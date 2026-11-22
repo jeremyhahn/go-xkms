@@ -145,6 +145,10 @@ func (m *mockCAClient) RotateOTAImageKey(_ context.Context, req *client.OTAImage
 	return nil, nil
 }
 
+func (m *mockCAClient) ExportOTAImagePublicKey(_ context.Context, req *client.OTAImageKeyRequest) (*client.OTAImagePublicKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockCAClient) SignOTAImage(_ context.Context, req *client.OTAImageSignRequest) (*client.SignResponse, error) {
 	return nil, nil
 }

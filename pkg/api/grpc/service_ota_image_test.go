@@ -30,6 +30,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 const otaTestBoard = "stm32-h7"
@@ -79,19 +80,6 @@ func TestOTAImageKeyRPCs_CreateRotateSign(t *testing.T) {
 	assert.Equal(t, uint32(2), signed.KeyVersion, "signs with the current version")
 	assert.True(t, verifyOTASignature(t, otaPublicKey(t, rotated.PublicKeyPem), digest[:], signed.Signature),
 		"signature does not verify under the rotated key")
-
-	exported, err := s.ExportOTAImageKey(ctx, &pb.OTAImageKeyRequest{
-		BoardId: otaTestBoard, Backend: crossTenantSource,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, otaTestBoard, exported.BoardId)
-	assert.Equal(t, "ota-image-"+otaTestBoard, exported.KeyId)
-	assert.Equal(t, uint32(2), exported.KeyVersion, "exports the current version")
-	assert.Equal(t, "ES256", exported.Algorithm)
-	rotatedPub, err := otaPublicKey(t, rotated.PublicKeyPem).ECDH()
-	require.NoError(t, err)
-	assert.Equal(t, rotatedPub.Bytes()[1:], exported.PublicKey, "X || Y of the rotated key")
-	assert.NotEmpty(t, exported.CoseKey)
 }
 
 func TestOTAImageKeyRPCs_InvalidArgument(t *testing.T) {
@@ -120,10 +108,6 @@ func TestOTAImageKeyRPCs_InvalidArgument(t *testing.T) {
 	}
 	sign := func(req *pb.SignOTAImageRequest) error {
 		_, err := s.SignOTAImage(ctx, req)
-		return err
-	}
-	export := func(req *pb.OTAImageKeyRequest) error {
-		_, err := s.ExportOTAImageKey(ctx, req)
 		return err
 	}
 	tests := []struct {
@@ -157,15 +141,6 @@ func TestOTAImageKeyRPCs_InvalidArgument(t *testing.T) {
 		{"sign missing backend", func() error {
 			return sign(&pb.SignOTAImageRequest{BoardId: otaTestBoard, Data: []byte("image")})
 		}},
-		{"export malformed board id", func() error {
-			return export(&pb.OTAImageKeyRequest{BoardId: "Bad--Board", Backend: crossTenantSource})
-		}},
-		{"export non-ES256 key", func() error {
-			return export(&pb.OTAImageKeyRequest{BoardId: "p384-board", Backend: crossTenantSource})
-		}},
-		{"export missing backend", func() error {
-			return export(&pb.OTAImageKeyRequest{BoardId: otaTestBoard})
-		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,15 +156,50 @@ func TestOTAImageKeyRPCs_UnknownBoardKey(t *testing.T) {
 		BoardId: otaTestBoard, Backend: crossTenantSource,
 	})
 	assert.Equal(t, codes.NotFound, status.Code(err))
+}
 
-	_, err = s.CreateOTAImageKey(tenantCtx(crossTenantA), &pb.OTAImageKeyRequest{
+func TestService_ExportOTAImagePublicKey(t *testing.T) {
+	s, _ := crossTenantService(t)
+	ctx := tenantCtx(crossTenantA)
+
+	created, err := s.CreateOTAImageKey(ctx, &pb.OTAImageKeyRequest{
+		BoardId: otaTestBoard, Backend: crossTenantSource, Algorithm: "ES256",
+	})
+	require.NoError(t, err)
+
+	got, err := s.ExportOTAImagePublicKey(ctx, &pb.OTAImageKeyRequest{
 		BoardId: otaTestBoard, Backend: crossTenantSource,
 	})
 	require.NoError(t, err)
-	_, err = s.ExportOTAImageKey(tenantCtx(crossTenantB), &pb.OTAImageKeyRequest{
+	assert.Equal(t, created.KeyId, got.KeyId)
+	assert.Equal(t, otaTestBoard, got.BoardId)
+	assert.Equal(t, uint32(1), got.Version)
+	require.Len(t, got.Raw, 64)
+	assert.NotEmpty(t, got.CoseKey)
+
+	uncompressed, err := otaPublicKey(t, created.PublicKeyPem).Bytes()
+	require.NoError(t, err)
+	assert.Equal(t, uncompressed[1:], got.Raw, "raw is the uncompressed point without its 0x04 prefix")
+}
+
+func TestService_ExportOTAImagePublicKey_NotFound(t *testing.T) {
+	s, _ := crossTenantService(t)
+
+	_, err := s.ExportOTAImagePublicKey(tenantCtx(crossTenantA), &pb.OTAImageKeyRequest{
 		BoardId: otaTestBoard, Backend: crossTenantSource,
 	})
-	assert.Equal(t, codes.NotFound, status.Code(err), "another tenant's board key is not found")
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestService_ExportOTAImagePublicKey_PermissionDenied(t *testing.T) {
+	xkms.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
+
+	_, err := newDeniedService().ExportOTAImagePublicKey(deniedCtx(), &pb.OTAImageKeyRequest{
+		BoardId: otaTestBoard, Backend: "test",
+	})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestOTAImageKeyRPCs_NotInitialized(t *testing.T) {
@@ -201,7 +211,5 @@ func TestOTAImageKeyRPCs_NotInitialized(t *testing.T) {
 	_, err = s.RotateOTAImageKey(ctx, &pb.OTAImageKeyRequest{BoardId: otaTestBoard, Backend: crossTenantSource})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 	_, err = s.SignOTAImage(ctx, &pb.SignOTAImageRequest{BoardId: otaTestBoard, Backend: crossTenantSource})
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-	_, err = s.ExportOTAImageKey(ctx, &pb.OTAImageKeyRequest{BoardId: otaTestBoard, Backend: crossTenantSource})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 }

@@ -115,6 +115,39 @@ func (s *Service) RotateOTAImageKey(ctx context.Context, req *pb.OTAImageKeyRequ
 	}, nil
 }
 
+// ExportOTAImagePublicKey returns the public half of a board's current OTA
+// image-signing key as raw X||Y and as a COSE_Key.
+func (s *Service) ExportOTAImagePublicKey(ctx context.Context, req *pb.OTAImageKeyRequest) (*pb.OTAImagePublicKeyResponse, error) {
+	keyID, err := s.otaImageKeyID(ctx, req.BoardId, req.Backend)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionGet, keyID); err != nil {
+		return nil, err
+	}
+	if err := s.requireXKMSService(); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.xkmsService.ExportOTAImagePublicKey(ctx, &transport.OTAImageKeyRequest{
+		Backend:   req.Backend,
+		BoardID:   req.BoardId,
+		Algorithm: req.Algorithm,
+		TenantID:  callerTenantID(ctx),
+	})
+	if err != nil {
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
+	}
+
+	return &pb.OTAImagePublicKeyResponse{
+		KeyId:   resp.KeyID,
+		BoardId: resp.BoardID,
+		Version: resp.Version,
+		Raw:     resp.Raw,
+		CoseKey: resp.COSEKey,
+	}, nil
+}
+
 // SignOTAImage signs an OTA image with the current version of its board's
 // key, which the response's key_version names.
 func (s *Service) SignOTAImage(ctx context.Context, req *pb.SignOTAImageRequest) (*pb.SignResponse, error) {
@@ -141,38 +174,4 @@ func (s *Service) SignOTAImage(ctx context.Context, req *pb.SignOTAImageRequest)
 	}
 
 	return &pb.SignResponse{Signature: resp.Signature, KeyVersion: resp.KeyVersion}, nil
-}
-
-// ExportOTAImageKey returns the public half of the current version of a
-// board's key. It reads a public key, so the get permission applies.
-func (s *Service) ExportOTAImageKey(ctx context.Context, req *pb.OTAImageKeyRequest) (*pb.ExportOTAImageKeyResponse, error) {
-	keyID, err := s.otaImageKeyID(ctx, req.BoardId, req.Backend)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionGet, keyID); err != nil {
-		return nil, err
-	}
-	if err := s.requireXKMSService(); err != nil {
-		return nil, err
-	}
-
-	resp, err := s.xkmsService.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{
-		Backend:   req.Backend,
-		BoardID:   req.BoardId,
-		Algorithm: req.Algorithm,
-		TenantID:  callerTenantID(ctx),
-	})
-	if err != nil {
-		return nil, mapKeyOpError(ctx, s.xkmsService, err)
-	}
-
-	return &pb.ExportOTAImageKeyResponse{
-		BoardId:    resp.BoardID,
-		KeyId:      resp.KeyID,
-		KeyVersion: resp.KeyVersion,
-		Algorithm:  resp.Algorithm,
-		PublicKey:  resp.PublicKey,
-		CoseKey:    resp.COSEKey,
-	}, nil
 }

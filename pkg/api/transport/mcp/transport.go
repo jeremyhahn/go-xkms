@@ -692,21 +692,21 @@ func (t *Transport) RotateOTAImageKey(ctx context.Context, req *transport.OTAIma
 	return &result, nil
 }
 
-// SignOTAImage signs an OTA image with the current version of its board's
-// key.
-func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
-	var result transport.SignResponse
-	if err := t.rpcCall(ctx, "xkms.signOTAImage", req, &result); err != nil {
+// ExportOTAImagePublicKey returns the public half of a board's current OTA
+// image-signing key through xkms.exportOTAImagePublicKey.
+func (t *Transport) ExportOTAImagePublicKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.OTAImagePublicKeyResponse, error) {
+	var result transport.OTAImagePublicKeyResponse
+	if err := t.rpcCall(ctx, "xkms.exportOTAImagePublicKey", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// ExportOTAImageKey returns the public half of the current version of a
-// board's OTA image-signing key.
-func (t *Transport) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
-	var result transport.ExportOTAImageKeyResponse
-	if err := t.rpcCall(ctx, "xkms.exportOTAImageKey", req, &result); err != nil {
+// SignOTAImage signs an OTA image with the current version of its board's
+// key.
+func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
+	var result transport.SignResponse
+	if err := t.rpcCall(ctx, "xkms.signOTAImage", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

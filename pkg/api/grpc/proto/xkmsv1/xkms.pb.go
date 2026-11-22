@@ -2786,6 +2786,86 @@ func (x *OTAImageKeyRequest) GetAlgorithm() string {
 	return ""
 }
 
+// OTAImagePublicKeyResponse is the public half of a board's current OTA
+// image-signing key.
+type OTAImagePublicKeyResponse struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	KeyId   string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	BoardId string                 `protobuf:"bytes,2,opt,name=board_id,json=boardId,proto3" json:"board_id,omitempty"`
+	Version uint32                 `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
+	// raw is the uncompressed P-256 point without its 0x04 prefix: X||Y, 64 bytes.
+	Raw []byte `protobuf:"bytes,4,opt,name=raw,proto3" json:"raw,omitempty"`
+	// cose_key is the key as a CBOR-encoded COSE_Key (RFC 9052).
+	CoseKey       []byte `protobuf:"bytes,5,opt,name=cose_key,json=coseKey,proto3" json:"cose_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OTAImagePublicKeyResponse) Reset() {
+	*x = OTAImagePublicKeyResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OTAImagePublicKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OTAImagePublicKeyResponse) ProtoMessage() {}
+
+func (x *OTAImagePublicKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OTAImagePublicKeyResponse.ProtoReflect.Descriptor instead.
+func (*OTAImagePublicKeyResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *OTAImagePublicKeyResponse) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *OTAImagePublicKeyResponse) GetBoardId() string {
+	if x != nil {
+		return x.BoardId
+	}
+	return ""
+}
+
+func (x *OTAImagePublicKeyResponse) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *OTAImagePublicKeyResponse) GetRaw() []byte {
+	if x != nil {
+		return x.Raw
+	}
+	return nil
+}
+
+func (x *OTAImagePublicKeyResponse) GetCoseKey() []byte {
+	if x != nil {
+		return x.CoseKey
+	}
+	return nil
+}
+
 // SignOTAImageRequest signs an OTA image, or its SHA-256 digest.
 type SignOTAImageRequest struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
@@ -2800,7 +2880,7 @@ type SignOTAImageRequest struct {
 
 func (x *SignOTAImageRequest) Reset() {
 	*x = SignOTAImageRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[38]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2812,7 +2892,7 @@ func (x *SignOTAImageRequest) String() string {
 func (*SignOTAImageRequest) ProtoMessage() {}
 
 func (x *SignOTAImageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[38]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2825,7 +2905,7 @@ func (x *SignOTAImageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignOTAImageRequest.ProtoReflect.Descriptor instead.
 func (*SignOTAImageRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{38}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *SignOTAImageRequest) GetBoardId() string {
@@ -2854,98 +2934,6 @@ func (x *SignOTAImageRequest) GetDataIsDigest() bool {
 		return x.DataIsDigest
 	}
 	return false
-}
-
-// ExportOTAImageKeyResponse is the public half of a board's OTA image-signing
-// key and the record of which board id its key ID belongs to.
-type ExportOTAImageKeyResponse struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	BoardId string                 `protobuf:"bytes,1,opt,name=board_id,json=boardId,proto3" json:"board_id,omitempty"`
-	KeyId   string                 `protobuf:"bytes,2,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
-	// key_version is the exported version, always the current one.
-	KeyVersion uint32 `protobuf:"varint,3,opt,name=key_version,json=keyVersion,proto3" json:"key_version,omitempty"`
-	// algorithm is always ES256.
-	Algorithm string `protobuf:"bytes,4,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
-	// public_key is the raw 64-byte X || Y, each coordinate 32 bytes
-	// big-endian, left-padded.
-	PublicKey []byte `protobuf:"bytes,5,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
-	// cose_key is the RFC 9052 §7 COSE_Key (RFC 9053 §7.1.1 EC2) in RFC 8949
-	// §4.2.1 deterministic CBOR.
-	CoseKey       []byte `protobuf:"bytes,6,opt,name=cose_key,json=coseKey,proto3" json:"cose_key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ExportOTAImageKeyResponse) Reset() {
-	*x = ExportOTAImageKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[39]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ExportOTAImageKeyResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ExportOTAImageKeyResponse) ProtoMessage() {}
-
-func (x *ExportOTAImageKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[39]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ExportOTAImageKeyResponse.ProtoReflect.Descriptor instead.
-func (*ExportOTAImageKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{39}
-}
-
-func (x *ExportOTAImageKeyResponse) GetBoardId() string {
-	if x != nil {
-		return x.BoardId
-	}
-	return ""
-}
-
-func (x *ExportOTAImageKeyResponse) GetKeyId() string {
-	if x != nil {
-		return x.KeyId
-	}
-	return ""
-}
-
-func (x *ExportOTAImageKeyResponse) GetKeyVersion() uint32 {
-	if x != nil {
-		return x.KeyVersion
-	}
-	return 0
-}
-
-func (x *ExportOTAImageKeyResponse) GetAlgorithm() string {
-	if x != nil {
-		return x.Algorithm
-	}
-	return ""
-}
-
-func (x *ExportOTAImageKeyResponse) GetPublicKey() []byte {
-	if x != nil {
-		return x.PublicKey
-	}
-	return nil
-}
-
-func (x *ExportOTAImageKeyResponse) GetCoseKey() []byte {
-	if x != nil {
-		return x.CoseKey
-	}
-	return nil
 }
 
 // KeyVersionInfo contains information about a key version
@@ -29221,21 +29209,18 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x12OTAImageKeyRequest\x12\x19\n" +
 	"\bboard_id\x18\x01 \x01(\tR\aboardId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x1c\n" +
-	"\talgorithm\x18\x03 \x01(\tR\talgorithm\"\x84\x01\n" +
+	"\talgorithm\x18\x03 \x01(\tR\talgorithm\"\x94\x01\n" +
+	"\x19OTAImagePublicKeyResponse\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x19\n" +
+	"\bboard_id\x18\x02 \x01(\tR\aboardId\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\rR\aversion\x12\x10\n" +
+	"\x03raw\x18\x04 \x01(\fR\x03raw\x12\x19\n" +
+	"\bcose_key\x18\x05 \x01(\fR\acoseKey\"\x84\x01\n" +
 	"\x13SignOTAImageRequest\x12\x19\n" +
 	"\bboard_id\x18\x01 \x01(\tR\aboardId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12$\n" +
-	"\x0edata_is_digest\x18\x04 \x01(\bR\fdataIsDigest\"\xc6\x01\n" +
-	"\x19ExportOTAImageKeyResponse\x12\x19\n" +
-	"\bboard_id\x18\x01 \x01(\tR\aboardId\x12\x15\n" +
-	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12\x1f\n" +
-	"\vkey_version\x18\x03 \x01(\rR\n" +
-	"keyVersion\x12\x1c\n" +
-	"\talgorithm\x18\x04 \x01(\tR\talgorithm\x12\x1d\n" +
-	"\n" +
-	"public_key\x18\x05 \x01(\fR\tpublicKey\x12\x19\n" +
-	"\bcose_key\x18\x06 \x01(\fR\acoseKey\"\xc0\x01\n" +
+	"\x0edata_is_digest\x18\x04 \x01(\bR\fdataIsDigest\"\xc0\x01\n" +
 	"\x0eKeyVersionInfo\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x05R\aversion\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1d\n" +
@@ -31316,7 +31301,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x13RESIDENT_KEY_OP_MAC\x10\x02\x12\x1e\n" +
 	"\x1aRESIDENT_KEY_OP_VERIFY_MAC\x10\x03\x12\x18\n" +
 	"\x14RESIDENT_KEY_OP_WRAP\x10\x04\x12\x1a\n" +
-	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\x8e\xb9\x01\n" +
+	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\x94\xb9\x01\n" +
 	"\x0fKeystoreService\x129\n" +
 	"\x06Health\x12\x16.xkms.v1.HealthRequest\x1a\x17.xkms.v1.HealthResponse\x12^\n" +
 	"\fListBackends\x12\x1c.xkms.v1.ListBackendsRequest\x1a\x1d.xkms.v1.ListBackendsResponse\"\x11\xc2\xf3\x18\rbackends:list\x12d\n" +
@@ -31329,9 +31314,9 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\tDeleteKey\x12\x19.xkms.v1.DeleteKeyRequest\x1a\x1a.xkms.v1.DeleteKeyResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12S\n" +
 	"\tRotateKey\x12\x19.xkms.v1.RotateKeyRequest\x1a\x1a.xkms.v1.RotateKeyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12_\n" +
 	"\x11CreateOTAImageKey\x12\x1b.xkms.v1.OTAImageKeyRequest\x1a\x1c.xkms.v1.GenerateKeyResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12]\n" +
-	"\x11RotateOTAImageKey\x12\x1b.xkms.v1.OTAImageKeyRequest\x1a\x1a.xkms.v1.RotateKeyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12R\n" +
-	"\fSignOTAImage\x12\x1c.xkms.v1.SignOTAImageRequest\x1a\x15.xkms.v1.SignResponse\"\r\xc2\xf3\x18\tkeys:sign\x12b\n" +
-	"\x11ExportOTAImageKey\x12\x1b.xkms.v1.OTAImageKeyRequest\x1a\".xkms.v1.ExportOTAImageKeyResponse\"\f\xc2\xf3\x18\bkeys:get\x12c\n" +
+	"\x11RotateOTAImageKey\x12\x1b.xkms.v1.OTAImageKeyRequest\x1a\x1a.xkms.v1.RotateKeyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12h\n" +
+	"\x17ExportOTAImagePublicKey\x12\x1b.xkms.v1.OTAImageKeyRequest\x1a\".xkms.v1.OTAImagePublicKeyResponse\"\f\xc2\xf3\x18\bkeys:get\x12R\n" +
+	"\fSignOTAImage\x12\x1c.xkms.v1.SignOTAImageRequest\x1a\x15.xkms.v1.SignResponse\"\r\xc2\xf3\x18\tkeys:sign\x12c\n" +
 	"\x0fListKeyVersions\x12\x1f.xkms.v1.ListKeyVersionsRequest\x1a .xkms.v1.ListKeyVersionsResponse\"\r\xc2\xf3\x18\tkeys:list\x12h\n" +
 	"\x10EnableKeyVersion\x12 .xkms.v1.EnableKeyVersionRequest\x1a!.xkms.v1.EnableKeyVersionResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12k\n" +
 	"\x11DisableKeyVersion\x12!.xkms.v1.DisableKeyVersionRequest\x1a\".xkms.v1.DisableKeyVersionResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12t\n" +
@@ -31637,8 +31622,8 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_goTypes = []any{
 	(*RotateKeyRequest)(nil),                           // 40: xkms.v1.RotateKeyRequest
 	(*RotateKeyResponse)(nil),                          // 41: xkms.v1.RotateKeyResponse
 	(*OTAImageKeyRequest)(nil),                         // 42: xkms.v1.OTAImageKeyRequest
-	(*SignOTAImageRequest)(nil),                        // 43: xkms.v1.SignOTAImageRequest
-	(*ExportOTAImageKeyResponse)(nil),                  // 44: xkms.v1.ExportOTAImageKeyResponse
+	(*OTAImagePublicKeyResponse)(nil),                  // 43: xkms.v1.OTAImagePublicKeyResponse
+	(*SignOTAImageRequest)(nil),                        // 44: xkms.v1.SignOTAImageRequest
 	(*KeyVersionInfo)(nil),                             // 45: xkms.v1.KeyVersionInfo
 	(*ListKeyVersionsRequest)(nil),                     // 46: xkms.v1.ListKeyVersionsRequest
 	(*ListKeyVersionsResponse)(nil),                    // 47: xkms.v1.ListKeyVersionsResponse
@@ -32220,8 +32205,8 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	40,  // 158: xkms.v1.KeystoreService.RotateKey:input_type -> xkms.v1.RotateKeyRequest
 	42,  // 159: xkms.v1.KeystoreService.CreateOTAImageKey:input_type -> xkms.v1.OTAImageKeyRequest
 	42,  // 160: xkms.v1.KeystoreService.RotateOTAImageKey:input_type -> xkms.v1.OTAImageKeyRequest
-	43,  // 161: xkms.v1.KeystoreService.SignOTAImage:input_type -> xkms.v1.SignOTAImageRequest
-	42,  // 162: xkms.v1.KeystoreService.ExportOTAImageKey:input_type -> xkms.v1.OTAImageKeyRequest
+	42,  // 161: xkms.v1.KeystoreService.ExportOTAImagePublicKey:input_type -> xkms.v1.OTAImageKeyRequest
+	44,  // 162: xkms.v1.KeystoreService.SignOTAImage:input_type -> xkms.v1.SignOTAImageRequest
 	46,  // 163: xkms.v1.KeystoreService.ListKeyVersions:input_type -> xkms.v1.ListKeyVersionsRequest
 	48,  // 164: xkms.v1.KeystoreService.EnableKeyVersion:input_type -> xkms.v1.EnableKeyVersionRequest
 	50,  // 165: xkms.v1.KeystoreService.DisableKeyVersion:input_type -> xkms.v1.DisableKeyVersionRequest
@@ -32453,8 +32438,8 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	41,  // 391: xkms.v1.KeystoreService.RotateKey:output_type -> xkms.v1.RotateKeyResponse
 	28,  // 392: xkms.v1.KeystoreService.CreateOTAImageKey:output_type -> xkms.v1.GenerateKeyResponse
 	41,  // 393: xkms.v1.KeystoreService.RotateOTAImageKey:output_type -> xkms.v1.RotateKeyResponse
-	35,  // 394: xkms.v1.KeystoreService.SignOTAImage:output_type -> xkms.v1.SignResponse
-	44,  // 395: xkms.v1.KeystoreService.ExportOTAImageKey:output_type -> xkms.v1.ExportOTAImageKeyResponse
+	43,  // 394: xkms.v1.KeystoreService.ExportOTAImagePublicKey:output_type -> xkms.v1.OTAImagePublicKeyResponse
+	35,  // 395: xkms.v1.KeystoreService.SignOTAImage:output_type -> xkms.v1.SignResponse
 	47,  // 396: xkms.v1.KeystoreService.ListKeyVersions:output_type -> xkms.v1.ListKeyVersionsResponse
 	49,  // 397: xkms.v1.KeystoreService.EnableKeyVersion:output_type -> xkms.v1.EnableKeyVersionResponse
 	51,  // 398: xkms.v1.KeystoreService.DisableKeyVersion:output_type -> xkms.v1.DisableKeyVersionResponse

@@ -331,6 +331,15 @@ func (t *Transport) RotateOTAImageKey(ctx context.Context, req *transport.OTAIma
 	return t.service.RotateOTAImageKey(ctx, req)
 }
 
+// ExportOTAImagePublicKey returns the public half of a board's current OTA
+// image-signing key.
+func (t *Transport) ExportOTAImagePublicKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.OTAImagePublicKeyResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ExportOTAImagePublicKey(ctx, req)
+}
+
 // SignOTAImage signs an OTA image with the current version of its board's
 // key, which the response's KeyVersion names.
 func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
@@ -338,15 +347,6 @@ func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSig
 		return nil, ErrNotConnected
 	}
 	return t.service.SignOTAImage(ctx, req)
-}
-
-// ExportOTAImageKey returns the public half of the current version of a
-// board's OTA image-signing key.
-func (t *Transport) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ExportOTAImageKey(ctx, req)
 }
 
 // GetImportParameters gets the parameters needed to import a key.

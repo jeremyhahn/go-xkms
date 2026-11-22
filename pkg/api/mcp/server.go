@@ -270,11 +270,10 @@ var rpcMethods = map[string]rpcMethod{
 
 	// OTA image keys: one ES256 signing key per trusted-firmware board id,
 	// under the same permissions as any other key.
-	"xkms.createOTAImageKey": handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleCreateOTAImageKey),
-	"xkms.rotateOTAImageKey": handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateOTAImageKey),
-	"xkms.signOTAImage":      handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleSignOTAImage),
-	// Exporting a board key reads its public half, so the get permission applies.
-	"xkms.exportOTAImageKey": handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleExportOTAImageKey),
+	"xkms.createOTAImageKey":       handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleCreateOTAImageKey),
+	"xkms.rotateOTAImageKey":       handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateOTAImageKey),
+	"xkms.signOTAImage":            handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleSignOTAImage),
+	"xkms.exportOTAImagePublicKey": handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleExportOTAImagePublicKey),
 
 	// Key versions: listing reads like listing keys; enabling and disabling
 	// versions is rotation lifecycle management; retiring destroys a

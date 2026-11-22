@@ -226,6 +226,20 @@ func WithPIVLogin(opts *rest.PIVLoginOptions) Option {
 	}
 }
 
+// WithCORS applies the host's cross-origin policy (xkmsd's cors config
+// section) to the module's REST routes on the unified server. The go-qrdb
+// registrar mounts each route by itself, so the REST router's own CORS
+// middleware never runs there. RegisterHTTP wraps every route handler in the
+// policy and registers a public OPTIONS route for each pattern, so that a
+// preflight from an allowed origin is answered before the auth chain. Nil, or
+// an empty AllowedOrigins list, emits no CORS headers and registers no
+// OPTIONS routes.
+func WithCORS(opts *rest.CORSOptions) Option {
+	return func(m *Module) {
+		m.cors = opts
+	}
+}
+
 // BarrierRegistryResolver returns the host's tenant barrier registry (an
 // embedded qrdb node's BarrierRegistry), or nil when the host has none.
 type BarrierRegistryResolver func() *qrdbsdk.BarrierRegistry
@@ -365,6 +379,10 @@ type Module struct {
 	// vaultRelyingParty is WithPasswordVaultRelyingParty's relying party.
 	vaultRelyingParty string
 	pivLogin          *rest.PIVLoginOptions
+
+	// cors is WithCORS's cross-origin policy for the module's REST routes
+	// (module_http.go). Nil emits no CORS headers.
+	cors *rest.CORSOptions
 
 	// webauthnCredentialStoreDecorator wraps the credential store the
 	// self-built WebAuthn relying party persists through

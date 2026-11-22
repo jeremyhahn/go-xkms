@@ -14,6 +14,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -28,9 +29,13 @@ import (
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-const otaBadBoard = "Bad--Board"
+const (
+	otaBadBoard     = "Bad--Board"
+	otaMissingBoard = "no-key"
+)
 
 var (
+	errOTANoKey     = errors.New("keystore: key not found")
 	errOTABoard     = errors.New("keystore: invalid board id")
 	errOTAAlgorithm = errors.New("keystore: OTA image keys are ES256 only")
 )
@@ -72,23 +77,29 @@ func (m *mockOTAImageClient) RotateOTAImageKey(_ context.Context, req *client.OT
 	return &client.RotateKeyResponse{KeyID: "ota-image-" + req.BoardID, KeyVersion: 2, CertificateReissueRequired: m.reissue}, nil
 }
 
+func (m *mockOTAImageClient) ExportOTAImagePublicKey(_ context.Context, req *client.OTAImageKeyRequest) (*client.OTAImagePublicKeyResponse, error) {
+	m.keyReq = req
+	if err := m.validate(req.BoardID, req.Algorithm); err != nil {
+		return nil, err
+	}
+	if req.BoardID == otaMissingBoard {
+		return nil, errOTANoKey
+	}
+	return &client.OTAImagePublicKeyResponse{
+		KeyID:   "ota-image-" + req.BoardID,
+		BoardID: req.BoardID,
+		Version: 2,
+		Raw:     bytes.Repeat([]byte{0xab}, 64),
+		COSEKey: []byte("cose"),
+	}, nil
+}
+
 func (m *mockOTAImageClient) SignOTAImage(_ context.Context, req *client.OTAImageSignRequest) (*client.SignResponse, error) {
 	m.signReq = req
 	if err := m.validate(req.BoardID, ""); err != nil {
 		return nil, err
 	}
 	return &client.SignResponse{Signature: []byte("sig"), KeyVersion: 2}, nil
-}
-
-func (m *mockOTAImageClient) ExportOTAImageKey(_ context.Context, req *client.OTAImageKeyRequest) (*client.ExportOTAImageKeyResponse, error) {
-	m.keyReq = req
-	if err := m.validate(req.BoardID, req.Algorithm); err != nil {
-		return nil, err
-	}
-	return &client.ExportOTAImageKeyResponse{
-		BoardID: req.BoardID, KeyID: "ota-image-" + req.BoardID, KeyVersion: 2, Algorithm: "ES256",
-		PublicKey: []byte{0x00, 0xab}, COSEKey: []byte("cose"),
-	}, nil
 }
 
 // runOTAImageCmd runs cmd against mock and returns its stdout, stderr and
@@ -126,7 +137,7 @@ func TestKeyOTAImageCmds_RegisteredUnderKey(t *testing.T) {
 	found, _, err := keyCmd.Find([]string{"ota-image"})
 	require.NoError(t, err)
 	assert.Same(t, keyOTAImageCmd, found)
-	for _, name := range []string{"create", "rotate", "sign", "export"} {
+	for _, name := range []string{"create", "rotate", "sign"} {
 		sub, _, err := keyOTAImageCmd.Find([]string{name})
 		require.NoError(t, err, name)
 		assert.Equal(t, name, sub.Name())
@@ -178,16 +189,6 @@ func TestKeyOTAImageSignCmd_MissingImageFile(t *testing.T) {
 	assert.Nil(t, mock.signReq, "nothing is sent when the image cannot be read")
 }
 
-func TestKeyOTAImageExportCmd(t *testing.T) {
-	mock := &mockOTAImageClient{}
-	out, _, code := runOTAImageCmd(t, mock, keyOTAImageExportCmd, []string{"cm4"}, nil)
-	assert.Equal(t, -1, code)
-	assert.Contains(t, out, "ota-image-cm4 (version 2, ES256)")
-	assert.Contains(t, out, "Public key (X || Y, hex): 00ab", "the leading zero octet is kept")
-	assert.Contains(t, out, "COSE_Key (base64): "+base64.StdEncoding.EncodeToString([]byte("cose")))
-	assert.Equal(t, &client.OTAImageKeyRequest{Backend: "software", BoardID: "cm4", Algorithm: "ES256"}, mock.keyReq)
-}
-
 func TestKeyOTAImageCmds_InvalidBoard(t *testing.T) {
 	image := writeOTAImage(t, "image")
 	cases := map[string]struct {
@@ -198,7 +199,6 @@ func TestKeyOTAImageCmds_InvalidBoard(t *testing.T) {
 		"create": {keyOTAImageCreateCmd, []string{otaBadBoard}, ErrCreateOTAImageKeyFailed},
 		"rotate": {keyOTAImageRotateCmd, []string{otaBadBoard}, ErrRotateOTAImageKeyFailed},
 		"sign":   {keyOTAImageSignCmd, []string{otaBadBoard, image}, ErrSignOTAImageFailed},
-		"export": {keyOTAImageExportCmd, []string{otaBadBoard}, ErrExportOTAImageKeyFailed},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -218,7 +218,6 @@ func TestKeyOTAImageCmds_NonES256Algorithm(t *testing.T) {
 	}{
 		"create": {keyOTAImageCreateCmd, ErrCreateOTAImageKeyFailed},
 		"rotate": {keyOTAImageRotateCmd, ErrRotateOTAImageKeyFailed},
-		"export": {keyOTAImageExportCmd, ErrExportOTAImageKeyFailed},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

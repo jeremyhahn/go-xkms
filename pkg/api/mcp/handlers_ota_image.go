@@ -85,6 +85,40 @@ func (s *Server) handleRotateOTAImageKey(ctx context.Context, req *JSONRPCReques
 	}, nil
 }
 
+// OTAImagePublicKeyResult is the result of xkms.exportOTAImagePublicKey: the
+// board's OTA image public key as the raw 64-byte X||Y and as a COSE_Key.
+type OTAImagePublicKeyResult struct {
+	KeyID   string `json:"key_id"`
+	BoardID string `json:"board_id"`
+	Version uint32 `json:"version"`
+	Raw     []byte `json:"raw"`
+	COSEKey []byte `json:"cose_key"`
+}
+
+func (s *Server) handleExportOTAImagePublicKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	var params OTAImageKeyParams
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.xkmsService.ExportOTAImagePublicKey(ctx, &transport.OTAImageKeyRequest{
+		Backend:  params.Backend,
+		BoardID:  params.BoardID,
+		TenantID: callerTenantID(ctx),
+	})
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	return OTAImagePublicKeyResult{
+		KeyID:   resp.KeyID,
+		BoardID: resp.BoardID,
+		Version: resp.Version,
+		Raw:     resp.Raw,
+		COSEKey: resp.COSEKey,
+	}, nil
+}
+
 // handleSignOTAImage signs an OTA image with the current version of its
 // board's key, which the result's key_version names.
 func (s *Server) handleSignOTAImage(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
@@ -105,25 +139,4 @@ func (s *Server) handleSignOTAImage(ctx context.Context, req *JSONRPCRequest) (i
 	}
 
 	return SignResult{Signature: resp.Signature, Algorithm: resp.Algorithm, KeyVersion: resp.KeyVersion}, nil
-}
-
-// handleExportOTAImageKey returns the public half of the current version of
-// the board's key.
-func (s *Server) handleExportOTAImageKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	var params OTAImageKeyParams
-	if err := decodeParams(req, &params); err != nil {
-		return nil, err
-	}
-
-	resp, err := s.xkmsService.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{
-		Backend:   params.Backend,
-		BoardID:   params.BoardID,
-		Algorithm: params.Algorithm,
-		TenantID:  callerTenantID(ctx),
-	})
-	if err != nil {
-		return nil, mapKeyOpError(err)
-	}
-
-	return resp, nil
 }

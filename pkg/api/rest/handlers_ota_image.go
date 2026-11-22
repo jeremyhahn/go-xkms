@@ -129,6 +129,33 @@ func (h *HandlerContext) RotateOTAImageKeyHandler(w http.ResponseWriter, r *http
 	}, http.StatusOK)
 }
 
+// ExportOTAImagePublicKeyHandler handles
+// GET /api/v1/ota-image-keys/{board}/public-key: the board's OTA image
+// public key as the raw 64-byte X||Y and as a COSE_Key.
+func (h *HandlerContext) ExportOTAImagePublicKeyHandler(w http.ResponseWriter, r *http.Request) {
+	if h.xkmsService == nil {
+		mapKeyOpError(w, xkms.ErrNotInitialized)
+		return
+	}
+	backendID := backendFromRequest(r, r.URL.Query().Get("backend"))
+	if backendID == "" {
+		writeError(w, ErrMissingBackend, http.StatusBadRequest)
+		return
+	}
+
+	resp, err := h.xkmsService.ExportOTAImagePublicKey(r.Context(), &transport.OTAImageKeyRequest{
+		Backend:  backendID,
+		BoardID:  chi.URLParam(r, "board"),
+		TenantID: callerTenantID(r.Context()),
+	})
+	if err != nil {
+		mapKeyOpError(w, err)
+		return
+	}
+
+	writeJSON(w, resp, http.StatusOK)
+}
+
 // SignOTAImageHandler handles POST /api/v1/ota-image-keys/{board}/sign. The
 // response's key_version names the board key version that signed.
 func (h *HandlerContext) SignOTAImageHandler(w http.ResponseWriter, r *http.Request) {
@@ -155,27 +182,4 @@ func (h *HandlerContext) SignOTAImageHandler(w http.ResponseWriter, r *http.Requ
 		Algorithm:  resp.Algorithm,
 		KeyVersion: resp.KeyVersion,
 	}, http.StatusOK)
-}
-
-// ExportOTAImageKeyHandler handles POST /api/v1/ota-image-keys/{board}/export:
-// the public half of the current version of the board's key.
-func (h *HandlerContext) ExportOTAImageKeyHandler(w http.ResponseWriter, r *http.Request) {
-	var req OTAImageKeyRequest
-	backendID, ok := h.decodeOTARequest(w, r, &req)
-	if !ok {
-		return
-	}
-
-	resp, err := h.xkmsService.ExportOTAImageKey(r.Context(), &transport.OTAImageKeyRequest{
-		Backend:   backendID,
-		BoardID:   chi.URLParam(r, "board"),
-		Algorithm: req.Algorithm,
-		TenantID:  callerTenantID(r.Context()),
-	})
-	if err != nil {
-		mapKeyOpError(w, err)
-		return
-	}
-
-	writeJSON(w, resp, http.StatusOK)
 }

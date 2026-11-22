@@ -205,6 +205,10 @@ func (b *baseSDKClient) RotateOTAImageKey(ctx context.Context, req *transport.OT
 	return nil, nil
 }
 
+func (b *baseSDKClient) ExportOTAImagePublicKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.OTAImagePublicKeyResponse, error) {
+	return nil, nil
+}
+
 func (b *baseSDKClient) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }

@@ -609,160 +609,133 @@ A runnable X25519 example — generation, agreement, HKDF derivation — is in
 
 go-xkms holds one ES256 key per trusted-firmware board, which signs that
 board's OTA images. The service is `pkg/xkms/ota_image_keys.go`. Every
-transport reaches it through the four `transport.Client` methods
-`CreateOTAImageKey`, `RotateOTAImageKey`, `SignOTAImage` and
-`ExportOTAImageKey` (`pkg/api/transport/client.go:71`, `:75`, `:79`, `:84`).
-The calls on each transport are in [api.md](api.md#per-board-ota-image-keys),
-and the xkmsctl verbs are in
-[cli.md](cli.md#key-ota-image-create--rotate--sign--export).
+transport reaches it through the three `transport.Client` methods
+`CreateOTAImageKey`, `RotateOTAImageKey` and `SignOTAImage`
+(`pkg/api/transport/client.go:71`, `:75`, `:79`). The calls on each
+transport are in [api.md](api.md#per-board-ota-image-keys), and the xkmsctl
+verbs are in [cli.md](cli.md#key-ota-image-create--rotate--sign).
 
 **Board id and key ID.** `OTAImageKeyID(boardID)` returns the board's key
-ID, `ota-image-<board-id>` (`ota_image_keys.go:36`, `:48-54`). A board id
-is 1-63 characters (`:39`) matching `^[a-z0-9]+(-[a-z0-9]+)*$` (`:44`):
+ID, `ota-image-<board-id>` (`ota_image_keys.go:32`, `:44-49`). A board id
+is 1-63 characters (`:35`) matching `^[a-z0-9]+(-[a-z0-9]+)*$` (`:40`):
 lowercase alphanumeric words joined by single hyphens. A doubled hyphen is
 refused, so a board key ID can never take the shape of a key version's
-backend name, `K--v2` (`:40-43`). Any other id returns `ErrInvalidBoardID`
-(`:50`).
+backend name, `K--v2` (`:37-39`). Any other id returns `ErrInvalidBoardID`
+(`:46`).
 
 **ES256 only.** `OTAImageAlgorithmES256` is `"ES256"`: ECDSA on P-256 with
-SHA-256, per RFC 7518 §3.4 (`ota_image_keys.go:33`). The request's
+SHA-256, per RFC 7518 §3.4 (`ota_image_keys.go:26-29`). The request's
 `Algorithm` may be empty, which selects ES256, or `"ES256"`. Anything else
-returns `ErrOTAImageAlgorithm` (`:56-61`).
+returns `ErrOTAImageAlgorithm` (`:56-57`).
 
 - `CreateOTAImageKey` generates a `signing` key, `ecdsa` on `P-256`, under
-  the board's key ID (`:68-81`).
-- Before a rotate, a sign or an export, `requireES256Key` checks that the
-  current version is an ECDSA P-256 key (`:195-214`). A key created under
-  the board's key ID by another path is therefore never rotated, used or
-  exported as an OTA image key (`:213`, `ota_image_keys_test.go:174`,
-  `ota_image_keys_export_test.go:130`).
+  the board's key ID (`:64-77`).
+- Before a rotate or a sign, `requireES256Key` checks that the current
+  version is an ECDSA P-256 key (`:122-141`). A key created under the
+  board's key ID by another path is therefore never rotated or used as an
+  OTA image key (`:119-121`, `ota_image_keys_test.go:166`).
+
+**Public key export.** `ExportOTAImagePublicKey` returns the public half
+of the current version of a board's key (`ota_image_keys.go:183-210`), the
+form trusted-firmware #104 (requirement 10) embeds in a board image. The
+board's record is its key ID, `OTAImageKeyID(boardID)`; the response,
+`OTAImagePublicKeyResponse` (`pkg/api/transport/types.go:657-663`), carries
+`KeyID`, `BoardID` and the current `Version` with two encodings:
+
+- `Raw`: the 64-byte X || Y of the P-256 point, each coordinate left-padded
+  to 32 bytes, without the SEC 1 `0x04` prefix.
+- `COSEKey`: a COSE_Key (RFC 9052 §7, RFC 9053 §7.1.1) in core
+  deterministic CBOR (`encodeES256COSEKey`, `:214-225`, with
+  `github.com/fxamacker/cbor/v2`): kty 2 (EC2), kid the key ID's bytes,
+  alg -7 (ES256), crv 1 (P-256), x and y. It never carries d (-4).
+
+The check is `requireES256KeyVersion` (`:145-166`), which also returns the
+version number; a board with no key returns `ErrKeyNotFound`, and after a
+rotate the export follows the new version (`ota_image_keys_test.go:514`).
+Every transport carries the export: REST
+(`GET /api/v1/ota-image-keys/{board}/public-key`), MCP
+(`xkms.exportOTAImagePublicKey`), the gRPC and Unix RPC
+`ExportOTAImagePublicKey`, QUIC, the embedded SDK and `xkmsctl key ota-image
+export`, all under `keys:get` ([api.md](api.md#per-board-ota-image-keys)).
 
 **One key per board.** A second create for the same board returns
 `ErrKeyAlreadyExists`. That holds after a rotate too
-(`ota_image_keys.go:73`, `ota_image_keys_test.go:86`).
+(`ota_image_keys.go:63`, `ota_image_keys_test.go:79-92`).
 
 **Rotate.** `RotateOTAImageKey` creates the key's next version through
-`RotateKey` and makes it current (`ota_image_keys.go:85-98`). The response
+`RotateKey` and makes it current (`ota_image_keys.go:79-94`). The response
 carries the new `KeyVersion` and `CertificateReissueRequired`
-(`pkg/api/transport/types.go:685`, `:698`). Earlier versions stay, and an
-image signed with one still verifies:
+(`pkg/api/transport/types.go:674-679`). Earlier versions stay, and an image
+signed with one still verifies:
 `TestRotateOTAImageKey_OldVersionStillVerifies`
-(`ota_image_keys_test.go:123`) signs under version 1, rotates, signs under
-version 2, and both signatures verify against their own version.
+(`ota_image_keys_test.go:116-147`) signs under version 1, rotates, signs
+under version 2, and both signatures verify against their own version.
 
 **Sign.** `SignOTAImage` signs with the current version. The hash is
 SHA-256, and with `DataIsDigest` the data is already the image's SHA-256
-digest (`ota_image_keys.go:116-123`). The response's `KeyVersion` names the
-version that signed. The signature is the OTA_AUTH encoding of ruling 136:
-RFC 9053 §2.1 fixed-width `r || s`
+digest (`ota_image_keys.go:114-121`). The response's `KeyVersion` names the
+version that signed (`:98-99`). The signature is the OTA_AUTH encoding of
+ruling 136: RFC 9053 §2.1 fixed-width `r || s`
 ([rfc-9053.txt](../references/rfc-9053.txt)), each integer big-endian and
 left-padded with zeros to the curve's byte width, so 64 bytes for ES256. The
 trusted-firmware 328P and 32U4 boards carry no DER parser. `SignOTAImage`
-converts the backend's ASN.1 DER signature (`:127`,
-`fixedWidthECDSASignature` at `:221`). Every other signature the service
+converts the backend's ASN.1 DER signature (`:125-128`,
+`fixedWidthECDSASignature` at `:162`). Every other signature the service
 returns, the generic `Sign` on the same key included, stays DER.
 
-**Export.** `ExportOTAImageKey` returns the public half of the current
-version of the board's key, never its private key (`ota_image_keys.go:139-160`).
-It reads the public key from the backend's signer, so it works on a
-non-extractable key too (`:204-206`). It is a read of a public key, so every
-transport checks `keys:get`, not `keys:export`, which stays reserved for
-private material. The response is `ExportOTAImageKeyResponse`
-(`pkg/api/transport/types.go:668-682`):
-
-| Field | JSON | Value |
-|---|---|---|
-| `BoardID` | `board_id` | the request's board id |
-| `KeyID` | `key_id` | `ota-image-<board-id>`, the record that binds the key ID to the board |
-| `KeyVersion` | `key_version` | the exported version, always the current one |
-| `Algorithm` | `algorithm` | `ES256` |
-| `PublicKey` | `public_key` | raw `X \|\| Y`, 64 bytes |
-| `COSEKey` | `cose_key` | the COSE_Key, deterministic CBOR |
-
-`otaImagePublicKeyEncodings` produces the two encodings
-(`ota_image_keys.go:162-189`):
-
-- `PublicKey` is the uncompressed P-256 point without its `0x04` prefix:
-  `X` then `Y`, each 32 bytes big-endian with its leading zero octets kept
-  (RFC 9053 §7.1.1). `TestOTAImagePublicKeyEncodings_LeftPadsCoordinates`
-  (`ota_image_keys_export_test.go:155`) pins a key whose coordinate starts
-  with a zero octet.
-- `COSEKey` is a COSE_Key, RFC 9052 §7 ([rfc-9052.txt](../references/rfc-9052.txt)),
-  with the EC2 parameters of RFC 9053 §7.1.1. go-cose builds it
-  (`cose.NewKeyEC2`, `:179`) and encodes it in RFC 8949 §4.2.1 core
-  deterministic CBOR ([rfc-8949.txt](../references/rfc-8949.txt)): definite
-  lengths and the map keys in bytewise order. The map is:
-
-| Label | Parameter | Value |
-|---|---|---|
-| 1 | `kty` | 2 (EC2) |
-| 2 | `kid` | the key ID as a byte string, `ota-image-<board-id>` (`:183`) |
-| 3 | `alg` | -7 (ES256) |
-| -1 | `crv` | 1 (P-256) |
-| -2 | `x` | `X`, 32 bytes |
-| -3 | `y` | `Y`, 32 bytes |
-
-`TestExportOTAImageKey_PublicKeyAndCOSEKey` (`ota_image_keys_export_test.go:51`)
-checks that the map holds those six labels and no other, that the bytes
-are core deterministic CBOR, that `X || Y` is the created key's point, and
-that the decoded COSE_Key verifies the board's `SignOTAImage` signature.
-
-**Naming a version after a rotation.** The `kid` is the key ID, and it does
-not change when the key rotates; the version is `KeyVersion`. A caller
-names a version by the pair (`key_id`, `key_version`). `SignOTAImage`
-reports the same `KeyVersion` for the version that signed
-(`pkg/api/transport/types.go:671-672`), so a verifier picks the exported key
-whose version matches. An export always returns the current version: after
-a rotation it moves to the new version, with the new point
-(`TestExportOTAImageKey_FollowsRotation`, `ota_image_keys_export_test.go:95`).
-There is no request for an earlier version's public key, so a verifier that
-must still accept images signed by an earlier version keeps that version's
-export.
-
 **Tenancy.** Each request's `TenantID` scopes the key
-(`pkg/api/transport/types.go:650`, `:662`). Each transport fills it from the
-caller (REST `pkg/api/rest/handlers_ota_image.go:114`, `:146`, `:173`; the
-export over gRPC `pkg/api/grpc/service_ota_image.go:164` and over MCP
-`pkg/api/mcp/handlers_ota_image.go:122`). Another tenant's board key is not
-found (`TestExportOTAImageKey_TenantScoped`,
-`ota_image_keys_export_test.go:116`).
+(`pkg/api/transport/types.go:649-650`, `:661-662`). REST fills it from the
+caller (`pkg/api/rest/handlers_ota_image.go:114`, `:146`).
 
-**Errors.** The sentinels are in `pkg/xkms/errors.go`. `ErrInvalidBoardID`
-and `ErrOTAImageAlgorithm` are wrapped in `ErrValidation`, so `errors.Is`
-reaches the sentinel:
+**Errors.** Both sentinels are in `pkg/xkms/errors.go`, and both are
+wrapped in `ErrValidation`, so `errors.Is` reaches the sentinel:
 
 | Error | Returned when | REST | gRPC / Unix | MCP |
 |---|---|---|---|---|
-| `ErrInvalidBoardID` (`errors.go:201`) | malformed board id (`ota_image_keys.go:50`) | 400 | `InvalidArgument` | `-32602` |
-| `ErrOTAImageAlgorithm` (`errors.go:205`) | algorithm other than ES256 (`:61`), or the board key is not P-256 (`:213`) | 400 | `InvalidArgument` | `-32602` |
-| `ErrOTASignatureEncoding` (`errors.go:948`), matches `ErrInvalidSignature` | sign only: the backend's signature is not DER, or `r` or `s` is outside `[1, n-1]` (`ota_image_keys.go:221-233`) | 500 | `Internal` | error object |
-| unknown board key | rotate, sign or export for a board with no key | 404 (`pkg/api/rest/handlers_ota_image_test.go:179`) | `NotFound` (`pkg/api/grpc/service_ota_image_test.go:177`) | not `-32602` (`pkg/api/mcp/handlers_ota_image_test.go:190`) |
+| `ErrInvalidBoardID` (`errors.go:185`) | malformed board id (`ota_image_keys.go:46`) | 400 | `InvalidArgument` | `-32602` |
+| `ErrOTAImageAlgorithm` (`errors.go:189`) | algorithm other than ES256 (`:57`), or the board key is not P-256 (`:154`) | 400 | `InvalidArgument` | `-32602` |
+| `ErrOTASignatureEncoding` (`errors.go:948`), matches `ErrInvalidSignature` | the backend's signature is not DER, or `r` or `s` is outside `[1, n-1]` (`ota_image_keys.go:162-182`) | 500 | `Internal` (`pkg/api/grpc/errors_keyops.go:185`) | error object |
+| unknown board key | rotate or sign for a board with no key | 404 (`pkg/api/rest/handlers_ota_image_test.go:153-159`) | `NotFound` (`pkg/api/grpc/service_ota_image_test.go:142-148`) | not `-32602` (`pkg/api/mcp/handlers_ota_image_test.go:166-173`) |
 | `ErrKeyAlreadyExists` | create for a board that has a key | 409 | `AlreadyExists` | error object |
 
 - The `ErrValidation` rows map in each transport's `mapKeyOpError`
-  (`pkg/api/rest/errors_keyops.go:142`,
-  `pkg/api/grpc/errors_keyops.go:150`,
-  `pkg/api/mcp/errors_keyops.go:190`).
+  (`pkg/api/rest/errors_keyops.go:137-140`,
+  `pkg/api/grpc/errors_keyops.go:147-149`,
+  `pkg/api/mcp/errors_keyops.go:187-197`).
 - The `ErrKeyAlreadyExists` row follows the
   [status and error mapping](api.md#status-and-error-mapping).
 - Over gRPC, a missing backend is `InvalidArgument`
-  (`pkg/api/grpc/service_ota_image.go:37`). A key service that is not
-  initialized is `Unavailable` (`:45`).
+  (`pkg/api/grpc/service_ota_image.go:36-37`). A key service that is not
+  initialized is `Unavailable` (`:44-45`).
 - xkmsctl does not repeat the validation. It wraps the server's error in
-  `ErrCreateOTAImageKeyFailed`, `ErrRotateOTAImageKeyFailed`,
-  `ErrSignOTAImageFailed` or `ErrExportOTAImageKeyFailed`
-  (`cmd/xkmsctl/errors.go:838`, `:842`, `:846`, `:850`) and exits 1.
+  `ErrCreateOTAImageKeyFailed`, `ErrRotateOTAImageKeyFailed` or
+  `ErrSignOTAImageFailed` (`cmd/xkmsctl/errors.go:838`, `:842`, `:846`)
+  and exits 1.
 
-**Tests.** Each row names the first test of the file's OTA set.
+**Permissions.** OTA activate and confirm are go-qrdb's permissions
+`ota:activate` and `ota:confirm`, not go-xkms's. The pinned
+`github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha` registers both and
+grants them to the built-in Admin role only, in go-qrdb's
+`pkg/permission/builtin_role_grants.go` (`registerAdminGrants`). Neither is
+a role of its own, and `pkg/auth/permissions.go` declares no OTA resource,
+action or role. `TestOTAImageKeys_QrdbGrantsOTAPermissionsToAdmin`
+(`pkg/xkms/ota_image_keys_qrdb_grant_test.go`) parses both through
+`qrdbsdk.ParsePermission`, asserts `HasPermissionRoleGrant` for
+`PermissionRoleAdmin`, and asserts that Operator, User and Auditor do not
+hold them. A qrdb bump that drops a grant fails there.
+`TestOTAImageKeys_AuthDeclaresNoOTAVocabulary` fails if `pkg/auth` starts
+declaring an OTA name.
+
+**Tests.**
 
 | Layer | Tests |
 |---|---|
-| Service | `pkg/xkms/ota_image_keys_test.go:42` onwards; the export in `pkg/xkms/ota_image_keys_export_test.go:51` onwards |
-| REST | `pkg/api/rest/handlers_ota_image_test.go:78` onwards: 200/201/400/404 |
-| gRPC | `pkg/api/grpc/service_ota_image_test.go:57` onwards: `InvalidArgument`, `NotFound`, `Unavailable` |
-| MCP | `pkg/api/mcp/handlers_ota_image_test.go:81` onwards |
-| Client transports | `pkg/api/transport/{rest,quic,mcp,grpc,unix,embedded}/transport_ota_image_test.go`: each transport carries all four calls, and refuses an invalid board; grpc, unix and embedded also return `ErrNotConnected` before connecting |
-| xkmsctl | `cmd/xkmsctl/key_ota_image_test.go:125` onwards: a refused board id or algorithm exits 1 with the typed sentinel |
+| Service | `pkg/xkms/ota_image_keys_test.go:35-200` |
+| go-qrdb grants | `pkg/xkms/ota_image_keys_qrdb_grant_test.go`: Admin holds `ota:activate` and `ota:confirm`, Operator, User and Auditor do not; `pkg/auth` has no OTA name |
+| REST | `pkg/api/rest/handlers_ota_image_test.go:67-159`: 201/400/404 |
+| gRPC | `pkg/api/grpc/service_ota_image_test.go:48-160`: `InvalidArgument`, `NotFound`, `Unavailable` |
+| MCP | `pkg/api/mcp/handlers_ota_image_test.go:71-173` |
+| xkmsctl | `cmd/xkmsctl/key_ota_image_test.go:114-211`: a refused board id or algorithm exits 1 with the typed sentinel |
 
 ## Error semantics
 

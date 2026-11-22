@@ -41,6 +41,19 @@ func newOTAImageQUICServer(t *testing.T) *Transport {
 		writeOTAJSON(t, w, http.StatusOK, transport.HealthResponse{Status: "ok"})
 	})
 	mux.HandleFunc("/api/v1/ota-image-keys/", func(w http.ResponseWriter, r *http.Request) {
+		if board, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/ota-image-keys/"), "/public-key"); ok {
+			require.Equal(t, http.MethodGet, r.Method)
+			require.Equal(t, "software", r.URL.Query().Get("backend"))
+			if board == otaBadBoard {
+				writeOTAJSON(t, w, http.StatusBadRequest, map[string]string{"error": "invalid board id"})
+				return
+			}
+			writeOTAJSON(t, w, http.StatusOK, transport.OTAImagePublicKeyResponse{
+				KeyID: "ota-image-" + board, BoardID: board, Version: 2,
+				Raw: make([]byte, 64), COSEKey: []byte{0xa5},
+			})
+			return
+		}
 		require.Equal(t, http.MethodPost, r.Method)
 		var body struct {
 			Backend string `json:"backend"`
@@ -63,11 +76,6 @@ func newOTAImageQUICServer(t *testing.T) *Transport {
 		case "sign":
 			require.Equal(t, []byte("image"), body.Data)
 			writeOTAJSON(t, w, http.StatusOK, transport.SignResponse{Signature: []byte("sig"), KeyVersion: 2})
-		case "export":
-			writeOTAJSON(t, w, http.StatusOK, transport.ExportOTAImageKeyResponse{
-				BoardID: board, KeyID: "ota-image-" + board, KeyVersion: 2, Algorithm: "ES256",
-				PublicKey: []byte("x||y"), COSEKey: []byte("cose"),
-			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -105,17 +113,21 @@ func TestOTAImageKey_QUIC(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("sig"), signed.Signature)
 	assert.Equal(t, uint32(2), signed.KeyVersion)
+}
 
-	exported, err := tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
+func TestOTAImageKey_QUIC_ExportPublicKey(t *testing.T) {
+	tr := newOTAImageQUICServer(t)
+
+	got, err := tr.ExportOTAImagePublicKey(context.Background(), &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
 	require.NoError(t, err)
-	assert.Equal(t, &transport.ExportOTAImageKeyResponse{
-		BoardID:    "cm4",
-		KeyID:      "ota-image-cm4",
-		KeyVersion: 2,
-		Algorithm:  "ES256",
-		PublicKey:  []byte("x||y"),
-		COSEKey:    []byte("cose"),
-	}, exported, "every field crosses the wire")
+	assert.Equal(t, "ota-image-cm4", got.KeyID)
+	assert.Equal(t, "cm4", got.BoardID)
+	assert.Equal(t, uint32(2), got.Version)
+	assert.Len(t, got.Raw, 64)
+	assert.Equal(t, []byte{0xa5}, got.COSEKey)
+
+	_, err = tr.ExportOTAImagePublicKey(context.Background(), &transport.OTAImageKeyRequest{Backend: "software", BoardID: otaBadBoard})
+	assert.Error(t, err)
 }
 
 func TestOTAImageKey_QUIC_InvalidBoard(t *testing.T) {
@@ -133,10 +145,6 @@ func TestOTAImageKey_QUIC_InvalidBoard(t *testing.T) {
 		},
 		"sign": func() error {
 			_, err := tr.SignOTAImage(ctx, &transport.OTAImageSignRequest{Backend: "software", BoardID: otaBadBoard, Data: []byte("image")})
-			return err
-		},
-		"export": func() error {
-			_, err := tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: otaBadBoard})
 			return err
 		},
 	}

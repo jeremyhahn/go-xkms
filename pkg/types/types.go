@@ -1953,39 +1953,34 @@ type AttestingKeyProvider interface {
 	AttestKey(ctx context.Context, attrs *KeyAttributes, nonce []byte) (interface{}, error)
 }
 
-// SecurityEventEvidence is a device's security-event record and the
-// device-signed evidence that binds it, as an AttestSecurityEvents call
-// returns them. The securityevent package appraises it.
+// SecurityEventEvidence is a device security-event record with the signed
+// evidence that authenticates it (owner ruling 7dbbb72 item 181 (b)).
 type SecurityEventEvidence struct {
-	// Evidence is the device-signed EAT: a COSE_Sign1 (RFC 9052 §4.2) whose
-	// payload is a CBOR Claims-Set carrying the Verifier's eat_nonce
-	// (RFC 9711 §4.1) and a submods entry (RFC 9711 §4.2.18) holding the
-	// Detached-Submodule-Digest of Record (RFC 9711 §4.2.18.2).
+	// ClaimsSet is the record's encoded Claims-Set, in the format of
+	// pkg/attestation/securityevent. On its own it is unauthenticated.
+	ClaimsSet []byte
+
+	// Evidence is the device-signed EAT evidence, produced after the
+	// record's last entry, that carries the Verifier's eat_nonce and the
+	// Detached Submodule Digest of ClaimsSet (RFC 9711 §4.2.18.2,
+	// securityevent.DetachedDigest).
 	Evidence []byte
-
-	// Chain is the DICE certificate chain of the key that signed Evidence,
-	// leaf first, each certificate DER-encoded.
-	Chain [][]byte
-
-	// Record is the security-event record: the CBOR-encoded Claims-Set the
-	// detached digest was computed over, conveyed beside Evidence.
-	Record []byte
 }
 
-// SecurityEventAttester is implemented by backends whose device keeps a
-// security-event (tamper-response) record and can sign evidence over it.
-// It follows the AttestingKeyProvider pattern: an optional capability that
-// callers detect with a type assertion.
-type SecurityEventAttester interface {
+// SecurityEventProvider is an optional capability for backends that keep a
+// device security-event (tamper-response) record (SPEC row
+// device-security-event-evidence, docs/attestation-evidence/architecture.md).
+// Check for it with a type assertion, as for AttestingKeyProvider.
+type SecurityEventProvider interface {
 	KeyProvider
 
-	// AttestSecurityEvents returns the device's security-event record and the
-	// evidence the device signed after the record's last entry, carrying the
-	// record's detached digest and nonce as its eat_nonce.
+	// AttestSecurityEvents returns the device's security-event record and
+	// the signed evidence that binds it to nonce, the Verifier's challenge
+	// (its eat_nonce, RFC 9711 §4.1). A Verifier accepts the record only
+	// through securityevent.Verify, which checks the evidence's signature,
+	// its eat_nonce against nonce, and its digest over ClaimsSet together.
 	//
-	// The nonce is the Verifier's challenge (RFC 9334 §10); the evidence is
-	// fresh only if it echoes this nonce. Returns ErrNotSupported when the
-	// backend keeps no record.
+	// Returns ErrNotSupported when the backend keeps no record.
 	AttestSecurityEvents(ctx context.Context, nonce []byte) (*SecurityEventEvidence, error)
 }
 

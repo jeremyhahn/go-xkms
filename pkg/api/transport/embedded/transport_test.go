@@ -114,6 +114,13 @@ func (m *mockService) RotateOTAImageKey(_ context.Context, req *transport.OTAIma
 	return &transport.RotateKeyResponse{Success: true, KeyID: "ota-image-" + req.BoardID, KeyVersion: 2}, nil
 }
 
+func (m *mockService) ExportOTAImagePublicKey(_ context.Context, req *transport.OTAImageKeyRequest) (*transport.OTAImagePublicKeyResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.OTAImagePublicKeyResponse{KeyID: "ota-image-" + req.BoardID, BoardID: req.BoardID, Version: 1}, nil
+}
+
 func (m *mockService) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

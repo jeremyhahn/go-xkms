@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -80,10 +79,10 @@ func verifyOTASignature(t *testing.T, pub *ecdsa.PublicKey, digest, sig []byte) 
 
 func TestOTAImageKeyMethods_Registered(t *testing.T) {
 	for method, action := range map[string]string{
-		"xkms.createOTAImageKey": auth.ActionCreate,
-		"xkms.rotateOTAImageKey": auth.ActionRotate,
-		"xkms.signOTAImage":      auth.ActionSign,
-		"xkms.exportOTAImageKey": auth.ActionGet,
+		"xkms.createOTAImageKey":       auth.ActionCreate,
+		"xkms.rotateOTAImageKey":       auth.ActionRotate,
+		"xkms.signOTAImage":            auth.ActionSign,
+		"xkms.exportOTAImagePublicKey": auth.ActionGet,
 	} {
 		entry, ok := rpcMethods[method]
 		require.True(t, ok, "%s must be registered", method)
@@ -120,17 +119,6 @@ func TestOTAImageKeyMethods_CreateRotateSign(t *testing.T) {
 	require.True(t, ok, "signature is %T", signed.Signature)
 	assert.True(t, verifyOTASignature(t, otaPublicKey(t, rotated.PublicKeyPEM), digest[:], signature),
 		"signature does not verify under the rotated key")
-
-	result, err = callOTA(t, server, "xkms.exportOTAImageKey",
-		OTAImageKeyParams{BoardID: otaTestBoard, Backend: otaTestBackend})
-	require.NoError(t, err)
-	exported, ok := result.(*transport.ExportOTAImageKeyResponse)
-	require.True(t, ok, "result is %T", result)
-	assert.Equal(t, uint32(2), exported.KeyVersion, "exports the current version")
-	rotatedPoint, err := otaPublicKey(t, rotated.PublicKeyPEM).ECDH()
-	require.NoError(t, err)
-	assert.Equal(t, rotatedPoint.Bytes()[1:], exported.PublicKey, "X || Y of the rotated key")
-	assert.NotEmpty(t, exported.COSEKey)
 }
 
 func TestOTAImageKeyMethods_InvalidParams(t *testing.T) {
@@ -160,8 +148,6 @@ func TestOTAImageKeyMethods_InvalidParams(t *testing.T) {
 		{"rotate non-ES256 key", "xkms.rotateOTAImageKey", OTAImageKeyParams{BoardID: "p384-board", Backend: otaTestBackend}},
 		{"sign malformed board id", "xkms.signOTAImage", OTAImageSignParams{BoardID: "-board", Backend: otaTestBackend, Data: []byte("image")}},
 		{"sign non-ES256 key", "xkms.signOTAImage", OTAImageSignParams{BoardID: "p384-board", Backend: otaTestBackend, Data: []byte("image")}},
-		{"export malformed board id", "xkms.exportOTAImageKey", OTAImageKeyParams{BoardID: "Board", Backend: otaTestBackend}},
-		{"export non-ES256 key", "xkms.exportOTAImageKey", OTAImageKeyParams{BoardID: "p384-board", Backend: otaTestBackend}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,7 +162,7 @@ func TestOTAImageKeyMethods_InvalidParams(t *testing.T) {
 func TestOTAImageKeyMethods_MalformedParams(t *testing.T) {
 	server, _ := newOTAImageServer(t)
 
-	for _, method := range []string{"xkms.createOTAImageKey", "xkms.rotateOTAImageKey", "xkms.signOTAImage", "xkms.exportOTAImageKey"} {
+	for _, method := range []string{"xkms.createOTAImageKey", "xkms.rotateOTAImageKey", "xkms.signOTAImage"} {
 		t.Run(method, func(t *testing.T) {
 			_, err := rpcMethods[method].handler(server, tenantContext(otaTestTenant),
 				&JSONRPCRequest{JSONRPC: "2.0", Method: method, Params: []byte("{not json"), ID: 1})
@@ -195,9 +181,35 @@ func TestOTAImageKeyMethods_UnknownBoardKey(t *testing.T) {
 	var opErr *KeyOpError
 	require.True(t, errors.As(err, &opErr), "error %v is not a KeyOpError", err)
 	assert.NotEqual(t, ErrCodeInvalidParams, opErr.Code, "a missing board key is not malformed input")
+}
 
-	_, err = callOTA(t, server, "xkms.exportOTAImageKey",
+func TestOTAImageKeyMethods_ExportPublicKey(t *testing.T) {
+	server, _ := newOTAImageServer(t)
+
+	result, err := callOTA(t, server, "xkms.createOTAImageKey",
+		OTAImageKeyParams{BoardID: otaTestBoard, Backend: otaTestBackend, Algorithm: "ES256"})
+	require.NoError(t, err)
+	created, ok := result.(GenerateKeyResult)
+	require.True(t, ok, "result is %T", result)
+
+	result, err = callOTA(t, server, "xkms.exportOTAImagePublicKey",
 		OTAImageKeyParams{BoardID: otaTestBoard, Backend: otaTestBackend})
+	require.NoError(t, err)
+	exported, ok := result.(OTAImagePublicKeyResult)
+	require.True(t, ok, "result is %T", result)
+	assert.Equal(t, created.KeyID, exported.KeyID)
+	assert.Equal(t, otaTestBoard, exported.BoardID)
+	assert.Equal(t, uint32(1), exported.Version)
+	pub := otaPublicKey(t, created.PublicKeyPEM)
+	uncompressed, err := pub.Bytes()
+	require.NoError(t, err)
+	assert.Equal(t, uncompressed[1:], exported.Raw,
+		"raw is the 64-byte X||Y of the board key")
+	assert.NotEmpty(t, exported.COSEKey)
+
+	_, err = callOTA(t, server, "xkms.exportOTAImagePublicKey",
+		OTAImageKeyParams{BoardID: "pi5", Backend: otaTestBackend})
+	var opErr *KeyOpError
 	require.True(t, errors.As(err, &opErr), "error %v is not a KeyOpError", err)
 	assert.NotEqual(t, ErrCodeInvalidParams, opErr.Code, "a missing board key is not malformed input")
 }

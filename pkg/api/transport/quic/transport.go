@@ -980,6 +980,27 @@ func (t *Transport) RotateOTAImageKey(ctx context.Context, req *transport.OTAIma
 	return &resp, nil
 }
 
+// ExportOTAImagePublicKey returns the public half of a board's current OTA
+// image-signing key: GET /api/v1/ota-image-keys/{board}/public-key.
+func (t *Transport) ExportOTAImagePublicKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.OTAImagePublicKeyResponse, error) {
+	path := fmt.Sprintf("/api/v1/ota-image-keys/%s/public-key", url.PathEscape(req.BoardID))
+	if req.Backend != "" {
+		path += "?backend=" + url.QueryEscape(req.Backend)
+	}
+
+	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.OTAImagePublicKeyResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
 // SignOTAImage signs an OTA image with the current version of its board's
 // key, which the response's KeyVersion names.
 func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
@@ -996,28 +1017,6 @@ func (t *Transport) SignOTAImage(ctx context.Context, req *transport.OTAImageSig
 	}
 
 	var resp transport.SignResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-
-	return &resp, nil
-}
-
-// ExportOTAImageKey returns the public half of the current version of a
-// board's OTA image-signing key.
-func (t *Transport) ExportOTAImageKey(ctx context.Context, req *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
-	path := fmt.Sprintf("/api/v1/ota-image-keys/%s/export", url.PathEscape(req.BoardID))
-	body := map[string]interface{}{
-		"backend":   req.Backend,
-		"algorithm": req.Algorithm,
-	}
-
-	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp transport.ExportOTAImageKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
