@@ -18,6 +18,9 @@ import (
 	"io"
 	"sync/atomic"
 
+	qrdbbackend "github.com/jeremyhahn/go-qrdb/sdk/go/backend"
+	qrdbsm "github.com/jeremyhahn/go-qrdb/sdk/go/statemachine"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
@@ -75,7 +78,7 @@ import (
 // Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the note
 // above these constructors.
 func NewMemory() (*Backend, error) {
-	store := qrdbsdk.NewMemoryStorage()
+	store := qrdbstorage.NewMemoryStorage()
 	return newEmbedded(store, "memory")
 }
 
@@ -88,7 +91,7 @@ func NewMemory() (*Backend, error) {
 // Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the note
 // above these constructors.
 func NewFile(path string) (*Backend, error) {
-	store, err := qrdbsdk.NewFileStorage(path)
+	store, err := qrdbstorage.NewFileStorage(path)
 	if err != nil {
 		return nil, &FactoryError{Engine: "file", Err: err}
 	}
@@ -103,8 +106,8 @@ func NewFile(path string) (*Backend, error) {
 // Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the note
 // above these constructors.
 func NewPebble(path string) (*Backend, error) {
-	cfg := qrdbsdk.TestPebbleConfig(path)
-	store, err := qrdbsdk.NewPebbleStorage(cfg)
+	cfg := qrdbstorage.TestPebbleConfig(path)
+	store, err := qrdbstorage.NewPebbleStorage(cfg)
 	if err != nil {
 		return nil, &FactoryError{Engine: "pebble", Err: err}
 	}
@@ -130,9 +133,9 @@ func NewPebble(path string) (*Backend, error) {
 // shutdown lands after Close returns, or not at all, and the only trace is an
 // error logged from a goroutine nobody is waiting on. For a key store that is
 // silent data loss.
-func newEmbedded(store qrdbsdk.Storage, engine string) (*Backend, error) {
-	fsm := qrdbsdk.NewFastStateMachine(1, 1, store)
-	host := qrdbsdk.NewLocalBackend(fsm)
+func newEmbedded(store qrdbstorage.Storage, engine string) (*Backend, error) {
+	fsm := qrdbsm.NewFastStateMachine(1, 1, store)
+	host := qrdbbackend.NewLocalBackend(fsm)
 	kvSvc := qrdbsdk.NewKVService(host, 1)
 	adminSvc := qrdbsdk.NewAdminService(host)
 

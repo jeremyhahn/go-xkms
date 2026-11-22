@@ -34,6 +34,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -139,7 +140,19 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 		WithoutEmailLoginKey: true,
 	})
 	require.NoError(t, err)
-	f.roleB, err = client.Roles().CreateRole(ctxB, &qrdbtransport.CreateRoleRequest{
+	// go-qrdb's grant rule: a grantor may grant only permissions it holds,
+	// and the oracle's Admin and SO roles hold no kv permission. The seeder
+	// also holds the tenant's Operator and User roles, which carry them.
+	seedB := qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{
+		Subject:  "admin-plane-seeder",
+		TenantID: bindingTenantB,
+		Roles: []string{
+			qrdbsdk.SystemRoleID(bindingTenantB, qrdbsdk.RoleNameSO),
+			qrdbsdk.SystemRoleID(bindingTenantB, qrdbsdk.RoleNameOperator),
+			qrdbsdk.SystemRoleID(bindingTenantB, qrdbsdk.RoleNameUser),
+		},
+	}), bindingTenantB)
+	f.roleB, err = client.Roles().CreateRole(seedB, &qrdbtransport.CreateRoleRequest{
 		Name:        "victim-role-1225",
 		TenantID:    bindingTenantB,
 		Permissions: []string{"kv:get"},
@@ -296,6 +309,60 @@ func TestAdminPlane_TenantCallerManagesItsOwnTenant(t *testing.T) {
 
 	rec = f.do(t, f.callerA, http.MethodDelete, "/api/v1/tenants/"+bindingTenantA+"/users/"+id, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// builtInAdminCaller returns a tenant-a caller holding only the tenant's
+// built-in Admin role, with no custom role beside it.
+func (f *tenantBindingFixture) builtInAdminCaller(t *testing.T, username string) adminCaller {
+	t.Helper()
+	adminA := tenantRole(t, f.client, bindingTenantA, qrdbsdk.RoleNameAdmin)
+	user, err := f.client.Users().CreateUser(oracleContext(bindingTenantA), &qrdbtransport.CreateUserRequest{
+		Username:             username,
+		TenantID:             bindingTenantA,
+		RoleIDs:              []string{adminA.ID},
+		WithoutEmailLoginKey: true,
+	})
+	require.NoError(t, err)
+	return adminCaller{cert: bindClientCert(t, f.client, user), tenantID: bindingTenantA}
+}
+
+// TestAdminPlane_OwnTenantAdminCreatesAndUpdatesRole pins the Tenant Agent's
+// #2339 ruling: go-qrdb (since v0.52) lets a tenant's built-in Admin create
+// and update roles in its own tenant, within the permissions it holds.
+func TestAdminPlane_OwnTenantAdminCreatesAndUpdatesRole(t *testing.T) {
+	f := newTenantBindingFixture(t)
+	admin := f.builtInAdminCaller(t, "builtin-admin-2339")
+
+	rec := f.do(t, admin, http.MethodPost, "/api/v1/tenants/"+bindingTenantA+"/roles",
+		map[string]any{"name": "own-role-2339", "permissions": []string{"acme:read"}})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var created qrdbtransport.Role
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	require.NotEmpty(t, created.ID)
+	assert.Equal(t, bindingTenantA, created.TenantID)
+
+	rec = f.do(t, admin, http.MethodPut, "/api/v1/tenants/"+bindingTenantA+"/roles/"+created.ID,
+		map[string]any{"permissions": []string{"acme:read", "acme:write"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// TestAdminPlane_AdminCannotGrantPermissionItLacks pins go-qrdb's role-grant
+// rule: a grantor may grant only permissions it holds. Role deletion is the
+// SO's alone, so the built-in Admin cannot put roles:delete in a new role.
+func TestAdminPlane_AdminCannotGrantPermissionItLacks(t *testing.T) {
+	f := newTenantBindingFixture(t)
+	admin := f.builtInAdminCaller(t, "builtin-admin-grant-2339")
+
+	rec := f.do(t, admin, http.MethodPost, "/api/v1/tenants/"+bindingTenantA+"/roles",
+		map[string]any{"name": "escalated-role-2339", "permissions": []string{"roles:delete"}})
+	// qrdb refuses with a GrantExceedsHolderError. The handler maps only
+	// PermissionDeniedError to 403, so the status is not pinned here; the
+	// refusal and the absence of the role are.
+	require.GreaterOrEqual(t, rec.Code, http.StatusBadRequest, rec.Body.String())
+
+	_, err := f.client.Roles().GetRoleByName(oracleContext(bindingTenantA),
+		&qrdbtransport.GetRoleByNameRequest{TenantID: bindingTenantA, Name: "escalated-role-2339"})
+	require.Error(t, err, "qrdb must not create a role whose grant exceeds the Admin's permissions")
 }
 
 // TestAdminPlane_PlatformAdminReachesEveryTenant proves the system identity
