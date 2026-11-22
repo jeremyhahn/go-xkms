@@ -144,3 +144,99 @@ func TestBarrierSink_UndecodableLegacyRecordFailsOpen(t *testing.T) {
 	_, err := OpenBarrierSink(ctx, be, 100)
 	require.Error(t, err, "a legacy record is never dropped silently")
 }
+
+func TestBarrierSink_SecondWriterOnTheChainIsRefused(t *testing.T) {
+	ctx := context.Background()
+	be := newSinkBackend(t)
+	lock := filepath.Join(t.TempDir(), "audit.lock")
+
+	first, err := OpenBarrierSink(ctx, be, 100, WithWriterLock(lock))
+	require.NoError(t, err)
+	_, err = OpenBarrierSink(ctx, be, 100, WithWriterLock(lock))
+	require.ErrorIs(t, err, ErrAuditWriterLocked, "two sinks must never append to one chain")
+
+	emitN(t, first, 2)
+	require.NoError(t, first.Close())
+
+	second, err := OpenBarrierSink(ctx, be, 100, WithWriterLock(lock))
+	require.NoError(t, err, "the lock is free once the first writer closes")
+	defer func() { _ = second.Close() }()
+	emitN(t, second, 1)
+	require.NoError(t, second.VerifyChain(ctx))
+	page, err := second.Query(ctx, xkms.QRDBNodeAuditFilter{})
+	require.NoError(t, err)
+	assert.Len(t, page.Events, 3, "no record was overwritten")
+}
+
+// faultBackend fails the Put or Delete numbered failPut / failDelete
+// (1-based, 0 never).
+type faultBackend struct {
+	xkms.StorageBackend
+	puts, deletes       int
+	failPut, failDelete int
+}
+
+var errInjected = errors.New("injected I/O failure")
+
+func (f *faultBackend) Put(ctx context.Context, key string, value []byte) error {
+	f.puts++
+	if f.puts == f.failPut {
+		return errInjected
+	}
+	return f.StorageBackend.Put(ctx, key, value)
+}
+
+func (f *faultBackend) Delete(ctx context.Context, key string) error {
+	f.deletes++
+	if f.deletes == f.failDelete {
+		return errInjected
+	}
+	return f.StorageBackend.Delete(ctx, key)
+}
+
+func TestBarrierSink_InterruptedLegacyMigrationResumesWithoutDuplicates(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		failPut, failDelete int
+	}{
+		{name: "second append fails", failPut: 2},
+		{name: "first delete fails", failDelete: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			be := newSinkBackend(t)
+			dir := filepath.Join("testdata", "legacy-backendstore")
+			files, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			for _, f := range files {
+				raw, err := os.ReadFile(filepath.Join(dir, f.Name()))
+				require.NoError(t, err)
+				require.NoError(t, be.Put(ctx, f.Name(), raw))
+			}
+
+			fb := &faultBackend{StorageBackend: be, failPut: tc.failPut, failDelete: tc.failDelete}
+			_, err = OpenBarrierSink(ctx, fb, 100)
+			require.ErrorIs(t, err, errInjected, "the interrupted migration fails the open")
+
+			s, err := OpenBarrierSink(ctx, be, 100)
+			require.NoError(t, err, "the retry opens")
+			defer func() { _ = s.Close() }()
+			require.NoError(t, s.VerifyChain(ctx))
+			page, err := s.Query(ctx, xkms.QRDBNodeAuditFilter{})
+			require.NoError(t, err)
+			require.Len(t, page.Events, len(files), "each legacy record is in the chain exactly once")
+			sources := map[string]bool{}
+			for _, ev := range page.Events {
+				src, _ := ev.Attributes[legacySourceAttr].(string)
+				assert.False(t, sources[src], "legacy record %s migrated twice", src)
+				sources[src] = true
+			}
+			keys, err := be.List(ctx, "")
+			require.NoError(t, err)
+			for _, k := range keys {
+				_, _, legacy := parseLegacyKey(k)
+				assert.False(t, legacy, "legacy key %s left behind", k)
+			}
+		})
+	}
+}

@@ -48,26 +48,70 @@ type BarrierSink struct {
 	ring    xkms.QRDBNodeAuditLogger
 	seq     uint64
 	head    string
+	lock    *writerLock
+}
+
+// ErrAuditWriterLocked is returned by OpenBarrierSink when another sink,
+// in this process or another one, holds the audit writer lock: two writers
+// on one chain would both append at the same sequence number.
+var ErrAuditWriterLocked = errors.New("audit: another audit writer holds the barrier audit chain")
+
+// legacySourceAttr names the attribute a migrated legacy record carries:
+// its BackendStore key, so an interrupted migration resumes without
+// appending a record twice.
+const legacySourceAttr = "legacy_source"
+
+// BarrierSinkOption configures OpenBarrierSink.
+type BarrierSinkOption func(*barrierSinkOptions)
+
+type barrierSinkOptions struct {
+	lockPath string
+}
+
+// WithWriterLock makes the sink hold an exclusive lock on path for its
+// lifetime, so a second sink over the same chain (a second xkey process on
+// the same data dir) fails to open with ErrAuditWriterLocked instead of
+// overwriting records.
+func WithWriterLock(path string) BarrierSinkOption {
+	return func(o *barrierSinkOptions) { o.lockPath = path }
 }
 
 // OpenBarrierSink opens the sink over backend (a prefix of the barrier
-// backend), verifies the records already stored there and loads them into
-// a ring buffer of ringCapacity events.
-func OpenBarrierSink(ctx context.Context, backend xkms.StorageBackend, ringCapacity int) (*BarrierSink, error) {
+// backend), verifies the records already stored there, loads them into a
+// ring buffer of ringCapacity events and migrates any legacy BackendStore
+// records. With WithWriterLock the sink is the chain's only writer until
+// Close.
+func OpenBarrierSink(ctx context.Context, backend xkms.StorageBackend, ringCapacity int, opts ...BarrierSinkOption) (*BarrierSink, error) {
 	if backend == nil {
 		return nil, ErrNilBarrierBackend
 	}
-	s := &BarrierSink{backend: backend, ring: xkms.NewQRDBAuditRingBuffer(ringCapacity)}
+	var o barrierSinkOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	s := &BarrierSink{backend: backend}
+	if o.lockPath != "" {
+		l, err := acquireWriterLock(o.lockPath)
+		if err != nil {
+			return nil, err
+		}
+		s.lock = l
+	}
+	s.ring = xkms.NewQRDBAuditRingBuffer(ringCapacity)
+	migrated := map[string]bool{}
 	seq, head, err := s.walk(ctx, func(ev xkms.QRDBNodeAuditEvent) error {
+		if src, ok := ev.Attributes[legacySourceAttr].(string); ok {
+			migrated[src] = true
+		}
 		return s.ring.Emit(ctx, ev)
 	})
 	if err != nil {
-		_ = s.ring.Close()
+		_ = s.Close()
 		return nil, err
 	}
 	s.seq, s.head = seq, head
-	if err := s.migrateLegacy(ctx); err != nil {
-		_ = s.ring.Close()
+	if err := s.migrateLegacy(ctx, migrated); err != nil {
+		_ = s.Close()
 		return nil, err
 	}
 	return s, nil
@@ -104,9 +148,13 @@ func parseLegacyKey(key string) (nano, seq uint64, ok bool) {
 
 // migrateLegacy appends every record the removed BackendStore left in the
 // backend to the hash chain, oldest first, then deletes the legacy keys, so
-// an upgraded installation keeps its audit trail. A legacy record that does
-// not decode fails the open: it is never dropped silently.
-func (s *BarrierSink) migrateLegacy(ctx context.Context) error {
+// an upgraded installation keeps its audit trail. Each migrated record
+// carries its legacy key (legacySourceAttr); a key already in the chain
+// (migrated, the set walk collected) is not appended again, so a migration
+// interrupted by a write or delete failure resumes on the next open without
+// duplicating events. A legacy record that does not decode fails the open:
+// it is never dropped silently.
+func (s *BarrierSink) migrateLegacy(ctx context.Context, migrated map[string]bool) error {
 	keys, err := s.backend.List(ctx, "")
 	if err != nil {
 		return fmt.Errorf("audit: list legacy records: %w", err)
@@ -134,7 +182,17 @@ func (s *BarrierSink) migrateLegacy(ctx context.Context) error {
 		return legacy[i].seq < legacy[j].seq
 	})
 	for _, rec := range legacy {
-		if err := s.Emit(ctx, entryToQRDBEvent(rec.entry)); err != nil {
+		if migrated[rec.key] {
+			continue
+		}
+		ev := entryToQRDBEvent(rec.entry)
+		attrs := make(map[string]any, len(ev.Attributes)+1)
+		for k, v := range ev.Attributes {
+			attrs[k] = v
+		}
+		attrs[legacySourceAttr] = rec.key
+		ev.Attributes = attrs
+		if err := s.Emit(ctx, ev); err != nil {
 			return fmt.Errorf("audit: migrate legacy record %s: %w", rec.key, err)
 		}
 	}
@@ -172,9 +230,18 @@ func (s *BarrierSink) Query(ctx context.Context, f xkms.QRDBNodeAuditFilter) (*x
 	return s.ring.Query(ctx, f)
 }
 
-// Close releases the ring buffer; the barrier backend stays open.
+// Close releases the ring buffer and the writer lock; the barrier backend
+// stays open.
 func (s *BarrierSink) Close() error {
-	return s.ring.Close()
+	var err error
+	if s.ring != nil {
+		err = s.ring.Close()
+	}
+	if s.lock != nil {
+		err = errors.Join(err, s.lock.release())
+		s.lock = nil
+	}
+	return err
 }
 
 // VerifyChain re-reads every persisted record and checks that each one

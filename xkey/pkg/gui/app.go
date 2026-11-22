@@ -96,6 +96,10 @@ func ParseFirmwareVersion(version string) uint32 {
 // auditBarrierPrefix is where the audit records live in the barrier backend.
 const auditBarrierPrefix = "audit/"
 
+// auditWriterLockFile, in the data dir, is the barrier audit sink's
+// exclusive writer lock.
+const auditWriterLockFile = "audit.lock"
+
 // auditRingCapacity is the number of audit events held in process for
 // queries, both before the barrier opens and after.
 const auditRingCapacity = 10000
@@ -804,6 +808,19 @@ func (a *App) initializeDataDir() error {
 	// Get barrier backend (nil if barrier not active).
 	barrierBackend := a.barrierService.GetBackend()
 
+	// Audit store, before any store or service is wired: with the barrier
+	// unsealed, move from the start-up ring to a sink that persists each
+	// hash-chained record through the barrier, so the audit trail is
+	// encrypted at rest; what was logged so far is replayed into it. With no
+	// barrier nothing is persisted: the events stay in the in-process ring,
+	// never in a plaintext file. A barrier whose audit sink cannot open fails
+	// initialisation with ErrAuditSinkUnavailable before any store opens:
+	// security operations must not run with their audit records silently
+	// downgraded to memory.
+	if err := a.moveAuditStoreBehindBarrier(dir, barrierBackend); err != nil {
+		return &SentinelCauseError{Sentinel: ErrAuditSinkUnavailable, Cause: err}
+	}
+
 	// The phone service seals the Noise static private key on Pair and
 	// unseals it on Connect (#42); it re-fetches the barrier on every use
 	// rather than being handed a snapshot, so wiring the service, not a
@@ -1046,17 +1063,6 @@ func (a *App) initializeDataDir() error {
 		a.log.Info("sealed blob store using barrier backend")
 	}
 
-	// Audit store: with the barrier unsealed, move from the start-up ring to
-	// a sink that persists each hash-chained record through the barrier, so
-	// the audit trail is encrypted at rest; what was logged so far is
-	// replayed into it. With no barrier nothing is persisted: the events stay
-	// in the in-process ring, never in a plaintext file. A barrier whose
-	// audit sink cannot open fails initialisation: security operations must
-	// not run with their audit records silently downgraded to memory.
-	if err := a.moveAuditStoreBehindBarrier(barrierBackend); err != nil {
-		return fmt.Errorf("audit store: %w", err)
-	}
-
 	// Wire the SSH services: build an embedded SSH client whose key
 	// generation and signing are delegated to the user-selected crypto
 	// backend (software / tpm2 / pkcs11 / cloud). For hardware backends the
@@ -1130,8 +1136,10 @@ func (a *App) initializeDataDir() error {
 // moveAuditStoreBehindBarrier moves the audit store to a BarrierSink over
 // the barrier backend's audit prefix. It does nothing without a barrier, or
 // when the store already writes through one (a second data-dir open must
-// not replay the stored records into themselves).
-func (a *App) moveAuditStoreBehindBarrier(barrierBackend xkmssdk.StorageBackend) error {
+// not replay the stored records into themselves). The sink holds the
+// writer lock dir/audit.lock for its lifetime, so a second xkey process on
+// the same data dir cannot append to the same chain.
+func (a *App) moveAuditStoreBehindBarrier(dir string, barrierBackend xkmssdk.StorageBackend) error {
 	if barrierBackend == nil {
 		a.log.Info("audit events kept in memory only: no barrier to encrypt them at rest")
 		return nil
@@ -1143,7 +1151,8 @@ func (a *App) moveAuditStoreBehindBarrier(barrierBackend xkmssdk.StorageBackend)
 	if err != nil {
 		return fmt.Errorf("scope the barrier backend for audit: %w", err)
 	}
-	sink, err := audit.OpenBarrierSink(context.Background(), auditBE, auditRingCapacity)
+	sink, err := audit.OpenBarrierSink(context.Background(), auditBE, auditRingCapacity,
+		audit.WithWriterLock(filepath.Join(dir, auditWriterLockFile)))
 	if err != nil {
 		return fmt.Errorf("open the barrier audit sink: %w", err)
 	}
@@ -3229,13 +3238,28 @@ func (a *App) startupReturningUser(ctx context.Context) {
 		return
 	}
 
-	// Initialize data directory (creates ~/.xkey/data/ structure).
+	a.startDataDirServices()
+}
+
+// startDataDirServices is the returning user's data-dir start: it
+// initialises the data directory (creates ~/.xkey/data/) and runs the
+// post-data-dir startup tasks. It fails closed on the audit sink: when the
+// barrier is unsealed but the durable audit sink cannot open, no
+// post-data-dir startup runs (no FIDO2 device, dataReady stays false) and
+// it reports false.
+func (a *App) startDataDirServices() bool {
 	if err := a.initializeDataDir(); err != nil {
+		if errors.Is(err, ErrAuditSinkUnavailable) {
+			a.log.Error("audit store unavailable: startup stopped", "error", err)
+			a.EmitEvent(events.NewEvent(events.EventError, map[string]string{
+				"error": "audit store unavailable: " + err.Error(),
+			}))
+			return false
+		}
 		a.log.Warn("failed to initialize data directory", "error", err)
 	}
-
-	// Run post-data-dir startup tasks.
 	a.postDataDirStartup()
+	return true
 }
 
 // postDataDirStartup runs startup tasks that require the data directory

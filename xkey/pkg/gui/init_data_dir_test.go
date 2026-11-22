@@ -255,8 +255,45 @@ func TestInitializeDataDir_AuditSinkFailureFailsInit(t *testing.T) {
 	require.NoError(t, app.barrierService.GetBackend().Put(context.Background(), auditBarrierPrefix+"not-a-record", []byte("x")))
 
 	err := app.initializeDataDir()
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrAuditSinkUnavailable)
 	assert.False(t, app.auditStore.SealedAtRest())
+	assert.Nil(t, app.staticpwStore, "no store is wired before the audit sink opens")
+	assert.Nil(t, app.oathStore, "no store is wired before the audit sink opens")
+}
+
+// The returning user's start (startupReturningUser's data-dir tail) stops
+// when the durable audit sink cannot open: no post-data-dir startup, so
+// dataReady stays false and no store serves operations without auditing.
+func TestStartDataDirServices_AuditSinkFailureStopsStartup(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	require.NoError(t, app.barrierService.GetBackend().Put(context.Background(), auditBarrierPrefix+"not-a-record", []byte("x")))
+
+	assert.False(t, app.startDataDirServices(), "startup must stop on the audit sink failure")
+	assert.False(t, app.dataReady.Load(), "post-data-dir startup must not run")
+	assert.False(t, app.dataDirInit)
+	assert.Nil(t, app.staticpwStore)
+}
+
+// A second xkey on the same data dir cannot open the same audit chain: the
+// first holds the writer lock, so the second fails initialisation closed.
+func TestInitializeDataDir_SecondAuditWriterOnTheDataDirFailsInit(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	dir := t.TempDir()
+	app.dataDir = dir
+
+	mem, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	defer func() { _ = mem.Close() }()
+	holder, err := audit.OpenBarrierSink(context.Background(), mem, auditRingCapacity,
+		audit.WithWriterLock(filepath.Join(dir, auditWriterLockFile)))
+	require.NoError(t, err)
+	defer func() { _ = holder.Close() }()
+
+	err = app.initializeDataDir()
+	require.ErrorIs(t, err, ErrAuditSinkUnavailable)
+	require.ErrorIs(t, err, audit.ErrAuditWriterLocked)
 }
 
 // TestInitializeDataDir_NoBarrierPersistsNoAudit proves that without a
