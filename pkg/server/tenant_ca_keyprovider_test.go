@@ -667,6 +667,64 @@ func TestTenantCAKeyFactory_LookupFailureIsNotAbsence(t *testing.T) {
 	assert.ErrorIs(t, err, storage.ErrNotFound, "a pass that could not look the key up took the claim")
 }
 
+// omittingListBackend lists no keys without failing, the way a PKCS#11
+// listing skips an object whose attributes it could not read; signerErr, when
+// set, fails every signer lookup.
+type omittingListBackend struct {
+	xkms.Backend
+	signerErr error
+	generated atomic.Int32
+}
+
+func (b *omittingListBackend) ListKeys(context.Context) ([]*types.KeyAttributes, error) {
+	return nil, nil
+}
+
+func (b *omittingListBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	if b.signerErr != nil {
+		return nil, b.signerErr
+	}
+	return b.Backend.Signer(ctx, attrs)
+}
+
+func (b *omittingListBackend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	b.generated.Add(1)
+	return b.Backend.GenerateECDSA(ctx, attrs)
+}
+
+// A listing that omits the existing CA key is not proof of absence: the
+// pass finds the key by an exact lookup and generates no second one.
+func TestTenantCAKeyFactory_PartialListingIsNotAbsence(t *testing.T) {
+	ctx := context.Background()
+	f, base := newTenantCAKeyTestFactory(t)
+	require.NoError(t, f.EnsureTenant(ctx, "tenant-a"))
+	want, err := tenantLoginCAKeyAttrs(ctx, base, "tenant-a")
+	require.NoError(t, err)
+
+	partial := &omittingListBackend{Backend: base}
+	g := newTenantCAKeyFactory()
+	require.NoError(t, g.Bind(partial, f.claims))
+	got, err := tenantLoginCAKeyAttrs(ctx, partial, "tenant-a")
+	require.NoError(t, err, "an omitted key must be found by the exact lookup")
+	assert.Equal(t, want.CN, got.CN)
+	require.NoError(t, g.EnsureTenant(ctx, "tenant-a"))
+	assert.Zero(t, partial.generated.Load(), "a pass over a partial listing generated a second CA key")
+}
+
+// When the listing omits the key and the exact lookup fails for another
+// reason than absence, the pass fails and generates nothing.
+func TestTenantCAKeyFactory_ExactLookupFailureIsNotAbsence(t *testing.T) {
+	ctx := context.Background()
+	_, base := newTenantCAKeyTestFactory(t)
+	outage := errors.New("token attribute read failed")
+	partial := &omittingListBackend{Backend: base, signerErr: outage}
+	g := newTenantCAKeyFactory()
+	require.NoError(t, g.Bind(partial, storage.New()))
+
+	require.ErrorIs(t, g.EnsureTenant(ctx, "tenant-a"), outage)
+	assert.Zero(t, partial.generated.Load(), "a pass that could not prove absence generated a key")
+}
+
 // delayedProvisionerBackend stalls its provisioner after the claim: on the
 // first intent record it runs pause, the way a process that is descheduled
 // past the claim lease does, and it counts the keys generated through it.

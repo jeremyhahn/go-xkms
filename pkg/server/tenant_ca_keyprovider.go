@@ -527,13 +527,7 @@ func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) 
 		return adoptOtherTenantLoginCAKey(ctx, base, scoped, tenantID)
 	}
 	defer tenantLoginCALiveOwners.Delete(owner)
-	attrs := &types.KeyAttributes{
-		CN:            tenantLoginCAKeyName(tenantID),
-		KeyType:       types.KeyTypeSigning,
-		StoreType:     types.StoreSoftware,
-		KeyAlgorithm:  x509.ECDSA,
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
-	}
+	attrs := tenantLoginCAKeyGenAttrs(tenantID)
 	if err := recordTenantLoginCAIntent(ctx, scoped, tenantID); err != nil {
 		return err
 	}
@@ -1202,7 +1196,32 @@ func tenantLoginCAKeyAttrs(ctx context.Context, base xkms.Backend, tenantID stri
 			return &found, nil
 		}
 	}
-	return nil, errTenantLoginCAKeyNotFound
+	// A listing that succeeds is not a complete one: PKCS#11 skips an
+	// object whose attributes it could not read, and Azure a key whose
+	// metadata read failed. Absence is only what an exact lookup of the key
+	// this path makes reports as not found; any other lookup failure is
+	// not absence.
+	exact := tenantLoginCAKeyGenAttrs(tenantID)
+	exact.TenantID = tenantID
+	if _, err := xkms.NewTenantScopedBackend(base, tenantID).Signer(ctx, exact); err != nil {
+		if errors.Is(err, backend.ErrKeyNotFound) || errors.Is(err, xkms.ErrKeyNotFound) {
+			return nil, errTenantLoginCAKeyNotFound
+		}
+		return nil, fmt.Errorf("tenant login CA key factory: look up key of tenant %q: %w", tenantID, err)
+	}
+	return exact, nil
+}
+
+// tenantLoginCAKeyGenAttrs are the attributes of the login CA key this path
+// generates for a tenant.
+func tenantLoginCAKeyGenAttrs(tenantID string) *types.KeyAttributes {
+	return &types.KeyAttributes{
+		CN:            tenantLoginCAKeyName(tenantID),
+		KeyType:       types.KeyTypeSigning,
+		StoreType:     types.StoreSoftware,
+		KeyAlgorithm:  x509.ECDSA,
+		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+	}
 }
 
 // errTenantLoginCAKeyNotFound is the only lookup result that proves the
