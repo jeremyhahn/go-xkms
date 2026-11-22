@@ -366,6 +366,13 @@ compose_trap_cmd = trap 'rc=$$?; trap - EXIT INT TERM; \
 	exit $$rc' EXIT INT TERM
 compose_trap = $(call compose_trap_cmd,$(call compose,$(1)) $(2))
 
+# Appended to an integration recipe's `$(call compose,<stack>) run ...` line:
+# when the run fails, print the stack's container logs (the server's start
+# error among them) before the EXIT trap tears the stack down, then keep the
+# run's non-zero exit status. Without it a server that exits at start shows
+# only "dependency failed to start" (issue #2232).
+compose_logs_on_fail = || { rc=$$?; echo "$(RED)✗ $(1) stack failed (exit $$rc); container logs:$(RESET)"; $(call compose,$(1)) logs --no-color --tail=400 || true; exit $$rc; }
+
 # An image TAG is daemon-global -- the project namespace does not reach it.
 # `docker build -t go-xkms-integration:latest` on one job retags that name for
 # every job on the host, so two runs building different commits race between
@@ -2090,7 +2097,7 @@ integration-test-storage-file:
 	@echo "$(CYAN)$(BOLD)→ Running file storage integration tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
 	@cd test/integration/storage && $(call compose_trap,storage) && \
-		$(call compose,storage) run --rm test-file
+		$(call compose,storage) run --rm test-file $(call compose_logs_on_fail,storage)
 	@echo "$(GREEN)✓ File storage integration tests complete$(RESET)"
 
 .PHONY: integration-test-storage-memory
@@ -2099,7 +2106,7 @@ integration-test-storage-memory:
 	@echo "$(CYAN)$(BOLD)→ Running memory storage integration tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
 	@cd test/integration/storage && $(call compose_trap,storage) && \
-		$(call compose,storage) run --rm test-memory
+		$(call compose,storage) run --rm test-memory $(call compose_logs_on_fail,storage)
 	@echo "$(GREEN)✓ Memory storage integration tests complete$(RESET)"
 
 .PHONY: integration-test-storage-hardware
@@ -2119,7 +2126,7 @@ integration-test-storage-hardware-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 hardware storage tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
 	@cd test/integration/storage && $(call compose_trap,storage) && \
-		$(call compose,storage) run --rm test-hardware-pkcs11
+		$(call compose,storage) run --rm test-hardware-pkcs11 $(call compose_logs_on_fail,storage)
 	@echo "$(GREEN)✓ PKCS#11 hardware storage tests complete$(RESET)"
 
 .PHONY: integration-test-storage-hardware-tpm2
@@ -2130,7 +2137,7 @@ integration-test-storage-hardware-tpm2:
 	@cd test/integration/storage && $(call compose,storage) up -d tpm-simulator
 	@sleep 3
 	@cd test/integration/storage && $(call compose_trap,storage) && \
-		$(call compose,storage) run --rm test-hardware-tpm2
+		$(call compose,storage) run --rm test-hardware-tpm2 $(call compose_logs_on_fail,storage)
 	@echo "$(GREEN)✓ TPM2 hardware storage tests complete$(RESET)"
 
 # ==============================================================================
@@ -2261,7 +2268,7 @@ integration-test-pkcs8:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS8 integration tests...$(RESET)"
 	@cd test/integration/pkcs8 && $(call compose,pkcs8) down -v >/dev/null 2>&1 || true
 	@cd test/integration/pkcs8 && $(call compose_trap,pkcs8) && \
-		$(call compose,pkcs8) run --build --rm test
+		$(call compose,pkcs8) run --build --rm test $(call compose_logs_on_fail,pkcs8)
 	@echo "$(GREEN)✓ PKCS8 integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs11-backend integration-test-pkcs11
@@ -2276,7 +2283,7 @@ integration-test-pkcs11-backend:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS11/SoftHSM integration tests...$(RESET)"
 	@cd test/integration/pkcs11 && $(call compose,pkcs11) down -v >/dev/null 2>&1 || true
 	@cd test/integration/pkcs11 && $(call compose_trap,pkcs11) && \
-		$(call compose,pkcs11) run --build --rm test
+		$(call compose,pkcs11) run --build --rm test $(call compose_logs_on_fail,pkcs11)
 	@echo "$(GREEN)✓ PKCS11 integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs11-barrier
@@ -2606,7 +2613,7 @@ integration-test-tpm2:
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
 	@cd test/integration/tpm2 && $(call compose_trap,tpm2) && \
-		$(call compose,tpm2) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test
+		$(call compose,tpm2) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test $(call compose_logs_on_fail,tpm2)
 	@echo "$(GREEN)✓ TPM2 integration tests complete$(RESET)"
 
 .PHONY: integration-test-peergate
@@ -2642,7 +2649,7 @@ integration-test-acme-tpm:
 	@cd test/integration/acme-tpm && $(call compose,acme-tpm) up -d --build tpm-simulator acme-server
 	@echo "$(CYAN)  Waiting for swtpm and the ACME server to be ready...$(RESET)"
 	@cd test/integration/acme-tpm && $(call compose_trap,acme-tpm) && \
-		$(call compose,acme-tpm) run --build --rm test
+		$(call compose,acme-tpm) run --build --rm test $(call compose_logs_on_fail,acme-tpm)
 	@echo "$(GREEN)✓ ACME+TPM integration tests complete$(RESET)"
 
 .PHONY: integration-test-challenges
@@ -2657,7 +2664,7 @@ integration-test-challenges:
 	@cd test/integration/challenges && $(call compose,challenges) up -d --build acme-server
 	@echo "$(CYAN)  Waiting for the ACME server to be ready...$(RESET)"
 	@cd test/integration/challenges && $(call compose_trap,challenges) && \
-		$(call compose,challenges) run --build --rm test
+		$(call compose,challenges) run --build --rm test $(call compose_logs_on_fail,challenges)
 	@echo "$(GREEN)✓ ACME challenge-framework integration tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption
@@ -2669,7 +2676,7 @@ test-tpm2-encryption:
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
 	@cd test/integration/tpm2 && $(call compose_trap,tpm2) && \
-		$(call compose,tpm2) run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test sh /app/test/integration/tpm2/run_capture_tests.sh
+		$(call compose,tpm2) run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test sh /app/test/integration/tpm2/run_capture_tests.sh $(call compose_logs_on_fail,tpm2)
 	@echo "$(GREEN)✓ TPM2 encryption verification tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption-local
@@ -2693,7 +2700,7 @@ integration-test-awskms:
 	@cd test/integration/awskms && $(call compose,awskms) down -v >/dev/null 2>&1 || true
 	@cd test/integration/awskms && $(call compose,awskms) up -d floci
 	@cd test/integration/awskms && $(call compose_trap,awskms) && \
-		$(call compose,awskms) run --build --rm test
+		$(call compose,awskms) run --build --rm test $(call compose_logs_on_fail,awskms)
 	@echo "$(GREEN)✓ AWS KMS integration tests complete$(RESET)"
 
 .PHONY: integration-test-gcpkms
@@ -2702,7 +2709,7 @@ integration-test-gcpkms:
 	@echo "$(CYAN)$(BOLD)→ Running GCP KMS integration tests (Floci emulator + mock client)...$(RESET)"
 	@cd test/integration/gcpkms && $(call compose,gcpkms) down -v >/dev/null 2>&1 || true
 	@cd test/integration/gcpkms && $(call compose_trap,gcpkms) && \
-		$(call compose,gcpkms) run --build --rm test
+		$(call compose,gcpkms) run --build --rm test $(call compose_logs_on_fail,gcpkms)
 	@echo "$(GREEN)✓ GCP KMS integration tests complete$(RESET)"
 
 .PHONY: integration-test-azurekv
@@ -2711,7 +2718,7 @@ integration-test-azurekv:
 	@echo "$(CYAN)$(BOLD)→ Running Azure Key Vault integration tests...$(RESET)"
 	@cd test/integration/azurekv && $(call compose,azurekv) down -v >/dev/null 2>&1 || true
 	@cd test/integration/azurekv && $(call compose_trap,azurekv) && \
-		$(call compose,azurekv) run --build --rm test
+		$(call compose,azurekv) run --build --rm test $(call compose_logs_on_fail,azurekv)
 	@echo "$(GREEN)✓ Azure Key Vault integration tests complete$(RESET)"
 
 .PHONY: integration-test-vault
@@ -2722,7 +2729,7 @@ integration-test-vault:
 	@cd test/integration/vault && $(call compose,vault) up -d vault
 	@cd test/integration/vault && $(call compose,vault) build test
 	@cd test/integration/vault && $(call compose_trap,vault) && \
-		$(call compose,vault) run --build --rm test
+		$(call compose,vault) run --build --rm test $(call compose_logs_on_fail,vault)
 	@echo "$(GREEN)✓ Vault integration tests complete$(RESET)"
 
 .PHONY: integration-test-quantum
@@ -2733,7 +2740,7 @@ integration-test-quantum:
 	@cd test/integration/quantum && $(call compose,quantum) down -v >/dev/null 2>&1 || true
 	@cd test/integration/quantum && $(call compose,quantum) build --no-cache quantum-test
 	@cd test/integration/quantum && $(call compose_trap,quantum) && \
-		$(call compose,quantum) run --rm quantum-test
+		$(call compose,quantum) run --rm quantum-test $(call compose_logs_on_fail,quantum)
 	@echo "$(GREEN)✓ Quantum-safe integration tests complete$(RESET)"
 
 .PHONY: test-frost
@@ -2752,7 +2759,7 @@ ifeq ($(WITH_FROST),1)
 	@cd test/integration/frost && $(call compose,frost) down -v >/dev/null 2>&1 || true
 	@cd test/integration/frost && $(call compose,frost) build frost-test
 	@cd test/integration/frost && $(call compose_trap,frost) && \
-		$(call compose,frost) run --rm frost-test
+		$(call compose,frost) run --rm frost-test $(call compose_logs_on_fail,frost)
 	@echo "$(GREEN)✓ FROST integration tests complete$(RESET)"
 else
 	@echo "$(YELLOW)⚠ Skipping FROST integration tests (WITH_FROST=0)$(RESET)"
@@ -3140,7 +3147,7 @@ integration-test-xkey-webauthn:
 	@echo "$(CYAN)$(BOLD)→ Running xkey Playwright WebAuthn integration tests...$(RESET)"
 	@cd xkey/test/integration/webauthn && $(call compose,xkey-webauthn) down -v >/dev/null 2>&1 || true
 	@cd xkey/test/integration/webauthn && $(call compose_trap,xkey-webauthn) && \
-		$(call compose,xkey-webauthn) run --rm webauthn-test
+		$(call compose,xkey-webauthn) run --rm webauthn-test $(call compose_logs_on_fail,xkey-webauthn)
 	@echo "$(GREEN)✓ xkey Playwright WebAuthn integration tests complete$(RESET)"
 
 .PHONY: integration-test-xkey-backends
@@ -3155,7 +3162,7 @@ integration-test-xkey-oidc:
 	@echo "$(CYAN)$(BOLD)→ Running xkey OIDC integration tests...$(RESET)"
 	@cd xkey/test/integration/oidc && $(call compose,xkey-oidc) down -v >/dev/null 2>&1 || true
 	@cd xkey/test/integration/oidc && $(call compose_trap,xkey-oidc) && \
-		$(call compose,xkey-oidc) run --rm test-runner
+		$(call compose,xkey-oidc) run --rm test-runner $(call compose_logs_on_fail,xkey-oidc)
 	@echo "$(GREEN)✓ xkey OIDC integration tests complete$(RESET)"
 
 .PHONY: integration-test-xkey-piv
@@ -3290,7 +3297,7 @@ integration-test-cli:
 	@cd $(API_TEST_DIR) && $(call compose,api) down -v >/dev/null 2>&1 || true
 	@cd $(API_TEST_DIR) && $(call compose,api) build
 	@cd $(API_TEST_DIR) && $(call compose_trap,api) && \
-		$(call compose,api) run --rm integration-tests
+		$(call compose,api) run --rm integration-tests $(call compose_logs_on_fail,api)
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
 .PHONY: integration-test-cli-local
@@ -5160,7 +5167,7 @@ integration-test-bootstrap: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
 	@cd test/integration/bootstrap && $(call compose_trap,bootstrap) && \
-		$(call compose,bootstrap) run --build --rm test
+		$(call compose,bootstrap) run --build --rm test $(call compose_logs_on_fail,bootstrap)
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
 .PHONY: integration-test-acmeadmin
@@ -5169,7 +5176,7 @@ integration-test-acmeadmin: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running ACME admin plane integration tests...$(RESET)"
 	@cd test/integration/acmeadmin && $(call compose,acmeadmin) down -v >/dev/null 2>&1 || true
 	@cd test/integration/acmeadmin && $(call compose_trap,acmeadmin) && \
-		$(call compose,acmeadmin) run --build --rm test
+		$(call compose,acmeadmin) run --build --rm test $(call compose_logs_on_fail,acmeadmin)
 	@echo "$(GREEN)✓ ACME admin plane integration tests complete$(RESET)"
 
 .PHONY: integration-test-cluster
@@ -5179,7 +5186,7 @@ integration-test-cluster: stage-gomodauth
 	@cd test/integration/cluster && bash gen-certs.sh
 	@cd test/integration/cluster && $(call compose,cluster) down -v >/dev/null 2>&1 || true
 	@cd test/integration/cluster && $(call compose_trap,cluster) && \
-		$(call compose,cluster) run --build --rm test
+		$(call compose,cluster) run --build --rm test $(call compose_logs_on_fail,cluster)
 	@echo "$(GREEN)✓ Cluster integration tests complete$(RESET)"
 
 .PHONY: integration-test-truststrap
