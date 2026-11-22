@@ -734,11 +734,17 @@ lan_config() {
 }
 
 # lan_pull <family> <hold> [ref]: 0 on a hit held, 1 when the registry is not
-# used, 2 on a miss. With a digest ref, the hit must be that digest (#2243
-# Codex P1-1); any other image is a miss, and its pulled name is dropped.
+# used, 2 on a miss. The hit must be the digest of the ref (#2243 Codex
+# P1-1); any other image is a miss, and its pulled name is dropped. With no
+# digest ref the registry is not used: nothing vouches for what it serves.
 lan_pull() {
   local family=$1 hold=$2 ref=${3:-} lanref tag digest id want=""
   [[ $ref != *@sha256:* ]] || want=${ref##*@}
+  # #2243 Codex: the LAN registry is unauthenticated HTTP, so the digest it
+  # serves proves nothing; a hit is taken only when it matches main's digest
+  # read from the forge. Without that digest the job pulls from the forge or
+  # builds on this runner.
+  [ -n "$want" ] || { echo "==> no digest of main's for $family; $CI_IMAGE_REGISTRY not used" >&2; return 1; }
   if [[ ${CI_IMAGE_REGISTRY} =~ ^[A-Za-z0-9-]+$ && ${CI_IMAGE_REGISTRY} != localhost ]]; then
     echo "::warning::ci-registry: CI_IMAGE_REGISTRY is a single-label name, which Docker reads as a Docker Hub namespace; not used" >&2
     return 1
@@ -757,7 +763,7 @@ lan_pull() {
   timeout "$(lan_timeout)" env DOCKER_CONFIG="$lan_cfg" docker pull --quiet "$lanref" >/dev/null 2>&1 || return 2
   digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$lanref" 2>/dev/null |
     while IFS= read -r d; do [[ $d != "${lanref%:*}@"* ]] || { echo "${d##*@}"; break; }; done)
-  if [ -n "$want" ] && [ "$digest" != "$want" ]; then
+  if [ "$digest" != "$want" ]; then
     echo "==> $lanref is ${digest:-of no digest}, not the digest of $ref; not used" >&2
     docker image rm "$lanref" >/dev/null 2>&1 || true
     return 2
