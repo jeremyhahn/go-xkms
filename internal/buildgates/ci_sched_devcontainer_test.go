@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -84,12 +85,31 @@ func TestCIDevcontainerCoverageSkipsAfterFailedBuild(t *testing.T) {
 }
 
 // runnerSelectStep is the id of the preflight step that picks the hosted
-// default or the overflow pools (ci-template v1.48, ruling 1024).
+// or the self-hosted pools (ci-template v1.48, ruling 1024; since v1.54 the
+// step `Balanced runner pool (ruling 1137)`).
 const runnerSelectStep = "runner"
 
-// forkPRExpr is the step's FORK_PR env: true on a pull request whose head
-// repository is not this repository (Codex #2323 P1).
-const forkPRExpr = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}"
+// forkEnv is the step's v1.52 fork env (template verbatim): a pull request
+// whose head repository is not this repository, a deleted fork's empty one
+// included, takes the hosted default with a ::notice and no API call.
+var forkEnv = map[string]string{
+	"EVENT":     "${{ github.event_name }}",
+	"HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
+	"REPO":      "${{ github.repository }}",
+}
+
+// headRepo maps the helpers' fork argument to the HEAD_REPO a pull request
+// in repository o/r carries: "false" is the same repository, "true" a fork,
+// "" a deleted fork.
+func headRepo(fork string) string {
+	switch fork {
+	case "false":
+		return "o/r"
+	case "true":
+		return "fork/r"
+	}
+	return ""
+}
 
 // stubCurl answers the selector's Actions API calls: one run, and a job
 // list whose first page is $STUB_DIR/jobs.json; a later page is
@@ -120,9 +140,12 @@ printf 200
 // preflightRunsOn is the preflight runs-on (Codex #2323 P1, ruling 999):
 // hosted unless CI_PREFLIGHT_RUNS_ON is set, and never the variable on a
 // pull request from a fork, so a fork never reaches a self-hosted pool.
-const preflightRunsOn = "${{ github.server_url == 'https://github.com' && vars.CI_PREFLIGHT_RUNS_ON != '' && !(" +
-	"github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository" +
-	") && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"
+// v1.52: the template's fork clause comes before the variable, so a fork's
+// pull request (under pull_request or pull_request_target, a deleted fork
+// included) takes ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds.
+const preflightRunsOn = "${{ github.server_url == 'https://github.com' && " +
+	"(!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository)" +
+	" && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"
 
 func TestCIPreflightRunsHostedByDefault(t *testing.T) {
 	wf := readDigestWorkflow(t)
@@ -154,7 +177,9 @@ func runRunnerSelect(t *testing.T, script, fork string) (output, calls string) {
 // runRunnerSelectListing runs the selector as runRunnerSelect does, with a
 // first job page of listed hosted jobs in progress under a total_count of
 // total. When total exceeds listed, every later page is empty: the listing
-// is incomplete. It also returns the selector's own log.
+// is incomplete. It also returns the selector's own log. The limits are
+// v1.54's repository variables: CI_HOSTED_SHARE 12, so 12 hosted jobs fill
+// the hosted pool, and 10 units of each self-hosted label, none in use.
 func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int) (output, calls, log string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -196,9 +221,12 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 		"API=https://api.example/repos/o/r/actions",
 		"RUN_ID=1",
 		"JOB_TOKEN=x",
-		"LIMIT=12",
-		"GRACE=60",
-		"FORK_PR="+fork,
+		"HS=12",
+		"C1=10",
+		"C2=10",
+		"EVENT=pull_request",
+		"REPO=o/r",
+		"HEAD_REPO="+headRepo(fork),
 		"GITHUB_OUTPUT="+out,
 		"RUNNER_TEMP="+dir,
 		"STUB_DIR="+dir,
@@ -206,7 +234,7 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 	)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("selector (FORK_PR=%s): %v\n%s", fork, err, b)
+		t.Fatalf("selector (fork=%s): %v\n%s", fork, err, b)
 	}
 	o, err := os.ReadFile(out)
 	if err != nil {
@@ -230,8 +258,13 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 	if step == nil {
 		t.Fatalf("%s has no step with id: %s", preflightJob, runnerSelectStep)
 	}
-	if got := step.Env["FORK_PR"]; got != forkPRExpr {
-		t.Fatalf("%s step %s env FORK_PR = %q, want %q", preflightJob, runnerSelectStep, got, forkPRExpr)
+	for k, want := range forkEnv {
+		if got := step.Env[k]; got != want {
+			t.Fatalf("%s step %s env %s = %q, want %q", preflightJob, runnerSelectStep, k, got, want)
+		}
+	}
+	if _, ok := step.Env["FORK_PR"]; ok {
+		t.Errorf("%s step %s still sets FORK_PR: v1.52 reads EVENT, HEAD_REPO and REPO", preflightJob, runnerSelectStep)
 	}
 	for _, tool := range []string{"bash", "jq"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -241,26 +274,28 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
 	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 
-	// A same-repository run on a full pool overflows: the stub reaches the
-	// overflow branch, so the fork case below tests the fork check.
+	// A same-repository run on a full hosted pool goes self-hosted: the stub
+	// reaches the self-hosted branch, so the fork case below tests the fork
+	// check.
 	if out, _ := runRunnerSelect(t, step.Run, "false"); out != overflow {
 		t.Errorf("same-repository run on a full pool: output %q, want %q", out, overflow)
 	}
 	for _, fork := range []string{"true", ""} {
 		out, calls := runRunnerSelect(t, step.Run, fork)
 		if out != hosted {
-			t.Errorf("FORK_PR=%q on a full pool: output %q, want %q", fork, out, hosted)
+			t.Errorf("fork=%q on a full pool: output %q, want %q", fork, out, hosted)
 		}
 		if calls != "" {
-			t.Errorf("FORK_PR=%q: the selector called the Actions API:\n%s", fork, calls)
+			t.Errorf("fork=%q: the selector called the Actions API:\n%s", fork, calls)
 		}
 	}
 }
 
-// TestCIRunnerSelectionShortListIsLowerBound pins template v1.50 (handbook
-// 52e70fd5, #84): a listing short of its total_count is a lower bound kept in
-// SHORT, not a reason to stay hosted, so overflow still fires under load.
-func TestCIRunnerSelectionShortListIsLowerBound(t *testing.T) {
+// TestCIRunnerSelectionShortListGoesHosted pins template v1.54 (handbook
+// 1ad68ab8, #104, ruling 1137), which drops v1.50's lower bound: a listing
+// short of its total_count is a count it cannot read, so the run takes the
+// hosted default with a ::warning, whatever the jobs it did list would pick.
+func TestCIRunnerSelectionShortListGoesHosted(t *testing.T) {
 	wf := readDigestWorkflow(t)
 	var script string
 	for _, s := range wf.Jobs[preflightJob].Steps {
@@ -277,18 +312,18 @@ func TestCIRunnerSelectionShortListIsLowerBound(t *testing.T) {
 		}
 	}
 	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
-	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 	for _, tc := range []struct {
 		name   string
 		listed int
 		want   string
 		note   string
 	}{
-		// 12 of 20 listed: the lower bound already reaches
-		// HOSTED_JOBS_PER_REPO=12, so the run overflows and says so.
-		{"lower bound reaches the limit", 12, overflow, "(a lower bound:"},
-		// 5 of 20 listed: the lower bound reaches no trigger, so it stays hosted.
-		{"lower bound short of the limit", 5, hosted, "fewer entries than its total"},
+		// 12 of 20 listed: the listed jobs alone fill the hosted pool
+		// (CI_HOSTED_SHARE 12), which would pick self-hosted, yet the short
+		// listing sends the run hosted.
+		{"short list that would pick self-hosted", 12, hosted, "::warning::runner selection: the Actions API gave no complete job list"},
+		// 5 of 20 listed: hosted, with the same warning.
+		{"short list that would pick hosted", 5, hosted, "::warning::runner selection: the Actions API gave no complete job list"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, calls, log := runRunnerSelectListing(t, script, "false", tc.listed, 20)
@@ -379,5 +414,63 @@ fi`
 	good := strings.Replace(bad, `echo "no check"`, `runs "$JOB_TOKEN" || verdict=unreadable`, 1)
 	if p := scheduleGuardProblems(good); len(p) != 0 {
 		t.Fatalf("want no problem, got %q", p)
+	}
+}
+
+// varsRef matches a repository variable reference, ${{ vars.NAME }}.
+var varsRef = regexp.MustCompile(`\bvars\.[A-Za-z0-9_]+`)
+
+// maskRegistryCase is the v1.53 case arm of ci-mask-lan.sh: every variable
+// whose name ends in _REGISTRY is scanned.
+const maskRegistryCase = "| *_REGISTRY |"
+
+// TestCIMaskStepsReadNoRepositoryVariable: go-xkms deviates from template
+// v1.53 (handbook 17803e85) on purpose. No Mask the LAN addresses step
+// puts a repository variable in its env block, because Actions prints a
+// step's env unredacted before the step runs, so an internal registry in a
+// variable would be logged before any mask. An internal registry is a
+// secret, never a variable (the template fix is with the Software
+// Department). ci-mask-lan.sh still scans every *_REGISTRY variable.
+func TestCIMaskStepsReadNoRepositoryVariable(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	var raw struct {
+		Jobs map[string]yaml.Node `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parse %s: %v", ciWorkflow, err)
+	}
+	masks := 0
+	for name, node := range raw.Jobs {
+		var job digestJob
+		if err := node.Decode(&job); err != nil {
+			t.Fatalf("decode job %s: %v", name, err)
+		}
+		for _, s := range job.Steps {
+			if strings.TrimSpace(s.Run) != maskLANScript {
+				continue
+			}
+			masks++
+			for k, v := range s.Env {
+				if varsRef.MatchString(v) {
+					t.Errorf("%s mask step env %s = %q: a repository variable is printed unredacted before the mask runs", name, k, v)
+				}
+			}
+		}
+	}
+	if masks == 0 {
+		t.Fatalf("%s has no step running %s", ciWorkflow, maskLANScript)
+	}
+	if !varsRef.MatchString("${{ vars.CI_IMAGE_REGISTRY }}") {
+		t.Fatal("varsRef does not match a repository variable reference")
+	}
+	script, err := os.ReadFile(filepath.Join(maskLANRoot, maskLANScript))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), maskRegistryCase) {
+		t.Errorf("%s case pattern lacks %q: v1.53 scans every *_REGISTRY variable", maskLANScript, maskRegistryCase)
 	}
 }
