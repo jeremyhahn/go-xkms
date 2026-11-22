@@ -15,6 +15,7 @@ package xkms
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 
@@ -176,13 +177,25 @@ func (s *XKMSService) updateVersions(ctx context.Context, backendName, tenantID,
 	if k, err = s.resolveKey(ctx, b, resolvedName, keyID); err != nil {
 		return nil, err
 	}
+	// read is the record as read above (nil when none is stored), a copy,
+	// as change edits k.record. The write goes through only while the
+	// stored record is still the one read and no rotation holds a live
+	// claim on it; otherwise it fails with a *keyversion.VersionConflictError,
+	// so a stale read never drops a version recorded elsewhere and a
+	// rotation's claim is never written past (Codex round 4, #2225).
+	var read *keyversion.Record
+	if k.stored {
+		snapshot := *k.record
+		snapshot.Versions = slices.Clone(k.record.Versions)
+		read = &snapshot
+	}
 
 	changed, err := change(k)
 	if err != nil {
 		return nil, err
 	}
 	if changed {
-		if err := store.Put(ctx, k.tenant, k.record); err != nil {
+		if err := store.CompareAndPut(ctx, k.tenant, "", read, k.record); err != nil {
 			return nil, err
 		}
 	}

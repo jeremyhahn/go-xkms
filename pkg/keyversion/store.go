@@ -125,7 +125,14 @@ func (s *Store) Load(ctx context.Context, tenant, backend, keyID string) (rec *R
 	return &stored.Record, true, nil
 }
 
-// Put stores rec as the record of its key for tenant.
+// Put stores rec as the record of its key for tenant, whatever record is
+// stored. It refuses with a *VersionConflictError (matching
+// ErrVersionConflict) while a rotation holds a live claim on the record:
+// the claim's holder may be removing an unrecorded backend key under its
+// reserved name, and a record written past it could name that key (Codex
+// round 4, #2225). An expired claim is dropped as a released one, keeping
+// its reserved version as the next claim's floor. Callers that read the
+// record before changing it use CompareAndPut.
 func (s *Store) Put(ctx context.Context, tenant string, rec *Record) error {
 	if rec == nil {
 		return ErrNilRecord
@@ -134,8 +141,6 @@ func (s *Store) Put(ctx context.Context, tenant string, rec *Record) error {
 	if err != nil {
 		return err
 	}
-	// The record is swapped in, not saved over, so a rotation's claim on the
-	// stored record survives the write.
 	for {
 		current, err := s.records.GetByNaturalKey(ctx, name)
 		if qrdbsdk.IsDAONotFound(err) {
@@ -151,8 +156,12 @@ func (s *Store) Put(ctx context.Context, tenant string, rec *Record) error {
 		if err != nil {
 			return &StoreError{Op: "put", Key: name, Err: err}
 		}
+		keep, live := s.unheldClaim(current.Claim)
+		if live {
+			return &VersionConflictError{KeyID: rec.KeyID, Backend: rec.Backend}
+		}
 		swapped, err := s.records.CompareAndSwap(ctx, current,
-			&Entity{ID: current.ID, Name: name, Record: *rec, Claim: current.Claim})
+			&Entity{ID: current.ID, Name: name, Record: *rec, Claim: keep})
 		if err != nil {
 			return &StoreError{Op: "put", Key: name, Err: err}
 		}
@@ -162,6 +171,23 @@ func (s *Store) Put(ctx context.Context, tenant string, rec *Record) error {
 		if err := ctx.Err(); err != nil {
 			return &StoreError{Op: "put", Key: name, Err: err}
 		}
+	}
+}
+
+// unheldClaim reports whether claim is live (held, with a token, and not
+// expired) and, when it is not, the claim a token-less write keeps: nil for
+// no claim, a released claim as stored, and an expired one as a released
+// claim reserving the same version. The expired holder may still run and
+// create its key under that version's name, so the number is never reused;
+// its own write then fails, as its token no longer matches.
+func (s *Store) unheldClaim(claim *rotationClaim) (keep *rotationClaim, live bool) {
+	switch {
+	case claim == nil || claim.Token == "":
+		return claim, false
+	case s.clock().Before(claim.Expires):
+		return nil, true
+	default:
+		return &rotationClaim{Version: claim.Version}, false
 	}
 }
 
@@ -280,18 +306,23 @@ func (s *Store) CompareAndPut(ctx context.Context, tenant, token string, expecte
 		return &StoreError{Op: "get", Key: name, Err: err}
 	}
 	// A held claim records only the version reserved for it. Without a
-	// token the write goes through only while no claim is held, and it
-	// keeps a released claim's floor, as the claim's reservation still
-	// excludes a holder that may be running from its successor's name.
+	// token the write goes through only while no live claim is held, and it
+	// keeps a released or expired claim's floor, as the claim's reservation
+	// still excludes a holder that may be running from its successor's name.
+	// An expired claim does not block a token-less write until a rotation
+	// takes it over: it is dropped as a released one (see unheldClaim).
 	var claim, keep *rotationClaim
-	switch {
-	case token != "":
+	if token != "" {
 		if current.Claim == nil || current.Claim.Token != token || next.Current != current.Claim.Version {
 			return conflict
 		}
 		claim = current.Claim
-	case current.Claim != nil && current.Claim.Token == "":
-		claim, keep = current.Claim, current.Claim
+	} else {
+		var live bool
+		if keep, live = s.unheldClaim(current.Claim); live {
+			return conflict
+		}
+		claim = current.Claim
 	}
 	swapped, err := s.records.CompareAndSwap(ctx,
 		&Entity{ID: current.ID, Name: name, Record: *expected, Claim: claim},

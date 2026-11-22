@@ -163,16 +163,18 @@ func TestStoreClaim(t *testing.T) {
 	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", "", read, next), ErrVersionConflict, "an unclaimed write of a claimed record")
 	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", "other", nil, next), ErrVersionConflict, "another token")
 
-	// Put keeps the claim; the holder's write then fails, as the record moved.
+	// Put never writes past a live claim: the record stays as stored.
 	moved := cloneRecord(read)
 	moved.Versions[0].CreatedBy = "edited"
-	require.NoError(t, s.Put(ctx, "acme", moved))
-	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", tok, nil, next), ErrVersionConflict, "the record moved on")
-	_, _, err = s.Claim(ctx, "acme", "software", "k", moved)
-	require.ErrorIs(t, err, ErrVersionConflict, "Put kept the claim")
+	require.ErrorIs(t, s.Put(ctx, "acme", moved), ErrVersionConflict, "Put refuses a live claim")
+	kept, _, err := s.Load(ctx, "acme", "software", "k")
+	require.NoError(t, err)
+	assert.Equal(t, read, kept, "the refused Put changed nothing")
 
 	require.NoError(t, s.Release(ctx, "acme", "software", "k", tok))
 	require.NoError(t, s.Release(ctx, "acme", "software", "k", tok), "a released claim")
+	require.NoError(t, s.Put(ctx, "acme", moved), "Put goes through once the claim is released")
+	require.ErrorIs(t, s.CompareAndPut(ctx, "acme", tok, nil, next), ErrVersionConflict, "the released holder is fenced")
 	tok, _, err = s.Claim(ctx, "acme", "software", "k", moved)
 	require.NoError(t, err)
 	next = cloneRecord(moved)
@@ -220,6 +222,56 @@ func TestStoreClaimTakeover(t *testing.T) {
 	got, _, err := s.Load(ctx, "acme", "software", "k")
 	require.NoError(t, err)
 	assert.Equal(t, "new-holder", got.Versions[1].CreatedBy)
+}
+
+// TestStoreTokenlessWriteDropsAnExpiredClaim proves an expired claim blocks
+// neither CompareAndPut without a token nor Put: the write drops it as a
+// released claim and keeps its reserved version as the next claim's floor,
+// and the old holder can no longer record its version.
+func TestStoreTokenlessWriteDropsAnExpiredClaim(t *testing.T) {
+	for _, write := range []struct {
+		name string
+		put  func(s *Store, ctx context.Context, read, next *Record) error
+	}{
+		{"CompareAndPut", func(s *Store, ctx context.Context, read, next *Record) error {
+			return s.CompareAndPut(ctx, "acme", "", read, next)
+		}},
+		{"Put", func(s *Store, ctx context.Context, _, next *Record) error {
+			return s.Put(ctx, "acme", next)
+		}},
+	} {
+		t.Run(write.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, _ := newTestStore(t)
+			at := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+
+			old, reserved, err := s.Claim(ctx, "acme", "software", "k", nil)
+			require.NoError(t, err)
+			name, err := recordName("acme", "software", "k")
+			require.NoError(t, err)
+			stored, err := s.records.GetByNaturalKey(ctx, name)
+			require.NoError(t, err)
+			expired := *stored
+			expired.Claim = &rotationClaim{Token: old, Version: reserved, Expires: time.Now().UTC().Add(-time.Second)}
+			swapped, err := s.records.CompareAndSwap(ctx, stored, &expired)
+			require.NoError(t, err)
+			require.True(t, swapped)
+
+			read, _, err := s.Load(ctx, "acme", "software", "k")
+			require.NoError(t, err)
+			next := cloneRecord(read)
+			next.Versions[0].CreatedBy = "state-writer"
+			require.NoError(t, write.put(s, ctx, read, next), "an expired claim does not block the write")
+
+			late := cloneRecord(read)
+			late.AddCurrent(reserved, at, "old-holder")
+			require.ErrorIs(t, s.CompareAndPut(ctx, "acme", old, nil, late), ErrVersionConflict, "the old holder is fenced")
+
+			_, version, err := s.Claim(ctx, "acme", "software", "k", next)
+			require.NoError(t, err)
+			assert.Equal(t, reserved+1, version, "the expired claim's version is never reused")
+		})
+	}
 }
 
 func cloneRecord(r *Record) *Record {

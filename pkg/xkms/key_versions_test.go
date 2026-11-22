@@ -25,6 +25,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -939,20 +940,35 @@ func (b *generateHookBackend) GenerateEd25519(ctx context.Context, attrs *types.
 func TestRotateKey_StaleRecordFailsWithVersionConflict(t *testing.T) {
 	svc := setupDeriveService(t)
 	ctx := context.Background()
-	genKey(t, svc, "", "k", "ed25519", 0)
-	store, err := svc.requireVersionStore()
+	kv := &writeAfterReadKV{AtomicKVStore: qrdbsdk.NewMemoryKVStore()}
+	store, err := keyversion.NewStore(dao.NewStoreFactory(kv))
 	require.NoError(t, err)
+	svc.SetKeyVersionStore(store)
+	other, err := keyversion.NewStore(dao.NewStoreFactory(kv))
+	require.NoError(t, err)
+	genKey(t, svc, "", "k", "ed25519", 0)
 	inner, err := svc.LookupBackend("software")
 	require.NoError(t, err)
 
 	// A second writer, which does not hold this process's key lock, records
-	// versions 2 and 3 between rotateKey's read and its write.
-	b := &generateHookBackend{Backend: inner, beforeGenerate: func(ctx context.Context) {
-		rec, _, err := store.Load(ctx, "", "software", "k")
+	// versions 2 and 3 between rotateKey's read and its claim.
+	kv.afterRead = func() {
+		rec, found, err := other.Load(ctx, "", "software", "k")
 		require.NoError(t, err)
+		var read *keyversion.Record
+		if found {
+			snapshot := *rec
+			snapshot.Versions = slices.Clone(rec.Versions)
+			read = &snapshot
+		}
 		rec.AddCurrent(2, time.Now().UTC(), "second-writer")
 		rec.AddCurrent(3, time.Now().UTC(), "second-writer")
-		require.NoError(t, store.Put(ctx, "", rec))
+		require.NoError(t, other.CompareAndPut(ctx, "", "", read, rec))
+	}
+	b := &listHookBackend{Backend: inner, onList: func(n int) {
+		if n == 2 { // the listing under the key's lock, just before the read
+			kv.arm()
+		}
 	}}
 
 	_, err = svc.rotateKey(ctx, b, "software", "k")
