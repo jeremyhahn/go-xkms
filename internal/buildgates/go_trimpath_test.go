@@ -74,6 +74,71 @@ func TestLintRecipeStripsTrimpath(t *testing.T) {
 	}
 }
 
+// makeLogical returns the Makefile's logical lines: each backslash-continued
+// line joined to the next.
+func makeLogical(mk string) []string {
+	var out []string
+	cur := ""
+	for _, line := range strings.Split(mk, "\n") {
+		if strings.HasSuffix(line, "\\") {
+			cur += strings.TrimSuffix(line, "\\") + " "
+			continue
+		}
+		out = append(out, cur+line)
+		cur = ""
+	}
+	return out
+}
+
+// TestDockerBuildsForwardGOFLAGS pins Codex round 2 on #2322 (Makefile:21):
+// outside XKMS_NATIVE_BUILD=1, build-server and lib run through CGO_RUN and
+// build-xkey through its own docker run; the exported GOFLAGS (-trimpath)
+// reaches those containers only through BUILDER_MODULE_ENV.
+func TestDockerBuildsForwardGOFLAGS(t *testing.T) {
+	lines := makeLogical(readMakefile(t))
+	var env, cgoRun string
+	for _, l := range lines {
+		switch {
+		case regexp.MustCompile(`^BUILDER_MODULE_ENV\s*:?=`).MatchString(l):
+			env = l
+		case regexp.MustCompile(`^CGO_RUN\s*:?=\s*docker run`).MatchString(l):
+			cgoRun = l
+		}
+	}
+	if env == "" {
+		t.Fatal("Makefile has no BUILDER_MODULE_ENV definition")
+	}
+	if !regexp.MustCompile(`-e GOFLAGS(\s|=|$)`).MatchString(env) {
+		t.Errorf("BUILDER_MODULE_ENV does not forward GOFLAGS into the builder containers: %q", env)
+	}
+	if cgoRun == "" || !strings.Contains(cgoRun, "$(BUILDER_MODULE_ENV)") {
+		t.Errorf("Docker-backed CGO_RUN does not pass $(BUILDER_MODULE_ENV): %q", cgoRun)
+	}
+
+	in, goBuilds := false, 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, "build-xkey:") {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if !strings.HasPrefix(l, "\t") {
+			break
+		}
+		if strings.Contains(l, "docker run") && strings.Contains(l, "go build") {
+			goBuilds++
+			if !strings.Contains(l, "$(BUILDER_MODULE_ENV)") {
+				t.Errorf("build-xkey docker run of go build does not pass $(BUILDER_MODULE_ENV): %q", l)
+			}
+		}
+	}
+	if goBuilds == 0 {
+		t.Error("build-xkey recipe has no docker run of go build")
+	}
+}
+
 func TestCIWorkflowGOFLAGSTrimpath(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "ci.yml"))
 	if err != nil {
