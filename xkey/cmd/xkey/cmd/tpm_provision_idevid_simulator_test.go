@@ -45,7 +45,7 @@ func withUnprovisionedSimulatorTPM(t *testing.T) xkms.TrustedPlatformModule {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, tpm.Close()) })
 
-	shared := sharedTPM{tpm}
+	shared := newSharedTPM(t, tpm)
 	setVar(t, &openTPM, func() (xkms.TrustedPlatformModule, error) { return shared, nil })
 	setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, []uint) (xkms.TrustedPlatformModule, error) {
 		return shared, nil
@@ -173,7 +173,7 @@ func TestRunIDevIDShow_BeforeIDevIDExists(t *testing.T) {
 func TestRunIDevIDExport_WritesCertificateFile(t *testing.T) {
 	sim := withProvisionedSimulatorTPM(t)
 	cert := issueTestCert(t, sim.caCert, sim.caKey, "xkey-001", sim.withIDevID(t))
-	require.NoError(t, sim.tpm.ProvisionIDevIDCert(cert))
+	require.NoError(t, sim.tpm.ProvisionIDevIDCert(nil, cert))
 
 	t.Run("file", func(t *testing.T) {
 		output := filepath.Join(t.TempDir(), "idevid.pem")
