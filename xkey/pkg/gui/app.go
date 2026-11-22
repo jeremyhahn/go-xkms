@@ -1050,8 +1050,12 @@ func (a *App) initializeDataDir() error {
 	// a sink that persists each hash-chained record through the barrier, so
 	// the audit trail is encrypted at rest; what was logged so far is
 	// replayed into it. With no barrier nothing is persisted: the events stay
-	// in the in-process ring, never in a plaintext file.
-	a.moveAuditStoreBehindBarrier(barrierBackend)
+	// in the in-process ring, never in a plaintext file. A barrier whose
+	// audit sink cannot open fails initialisation: security operations must
+	// not run with their audit records silently downgraded to memory.
+	if err := a.moveAuditStoreBehindBarrier(barrierBackend); err != nil {
+		return fmt.Errorf("audit store: %w", err)
+	}
 
 	// Wire the SSH services: build an embedded SSH client whose key
 	// generation and signing are delegated to the user-selected crypto
@@ -1127,30 +1131,28 @@ func (a *App) initializeDataDir() error {
 // the barrier backend's audit prefix. It does nothing without a barrier, or
 // when the store already writes through one (a second data-dir open must
 // not replay the stored records into themselves).
-func (a *App) moveAuditStoreBehindBarrier(barrierBackend xkmssdk.StorageBackend) {
+func (a *App) moveAuditStoreBehindBarrier(barrierBackend xkmssdk.StorageBackend) error {
 	if barrierBackend == nil {
 		a.log.Info("audit events kept in memory only: no barrier to encrypt them at rest")
-		return
+		return nil
 	}
 	if a.auditStore.SealedAtRest() {
-		return
+		return nil
 	}
 	auditBE, err := xkmssdk.NewStoragePrefixBackend(barrierBackend, auditBarrierPrefix)
 	if err != nil {
-		a.log.Warn("failed to scope the barrier backend for audit", "error", err)
-		return
+		return fmt.Errorf("scope the barrier backend for audit: %w", err)
 	}
 	sink, err := audit.OpenBarrierSink(context.Background(), auditBE, auditRingCapacity)
 	if err != nil {
-		a.log.Warn("failed to open the barrier audit sink", "error", err)
-		return
+		return fmt.Errorf("open the barrier audit sink: %w", err)
 	}
 	if err := a.auditStore.MoveTo(sink); err != nil {
 		_ = sink.Close()
-		a.log.Warn("failed to move the audit store behind the barrier", "error", err)
-		return
+		return fmt.Errorf("move the audit store behind the barrier: %w", err)
 	}
 	a.log.Info("audit store persisted through the barrier")
+	return nil
 }
 
 func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBackend) {

@@ -228,6 +228,37 @@ func TestInitializeDataDir_AuditMovesBehindTheBarrier(t *testing.T) {
 	assert.Contains(t, actions, string(audit.OpKeyCreated), "post-init event persisted")
 }
 
+// An installation upgraded from the removed BackendStore (Entry JSON at
+// audit/<unix_nano>-<seq>.json in the barrier) opens its durable audit sink
+// and keeps those records.
+func TestInitializeDataDir_AuditMigratesLegacyBackendStoreRecords(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	legacy := []byte(`{"Timestamp":"2024-11-07T17:20:00Z","Operation":"key_created","Backend":"software","KeyID":"legacy-key","Success":true}`)
+	require.NoError(t, app.barrierService.GetBackend().Put(context.Background(), auditBarrierPrefix+"1731000000000000000-1.json", legacy))
+
+	require.NoError(t, app.initializeDataDir())
+	require.True(t, app.auditStore.SealedAtRest(), "the durable sink opened over the legacy records")
+	entries := app.auditStore.Query(audit.QueryFilter{})
+	var keyIDs []string
+	for _, e := range entries {
+		keyIDs = append(keyIDs, e.KeyID)
+	}
+	assert.Contains(t, keyIDs, "legacy-key", "the legacy record is kept")
+}
+
+// A barrier whose audit records cannot be opened fails initialisation
+// rather than leaving security operations auditing to memory only.
+func TestInitializeDataDir_AuditSinkFailureFailsInit(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	require.NoError(t, app.barrierService.GetBackend().Put(context.Background(), auditBarrierPrefix+"not-a-record", []byte("x")))
+
+	err := app.initializeDataDir()
+	require.Error(t, err)
+	assert.False(t, app.auditStore.SealedAtRest())
+}
+
 // TestInitializeDataDir_NoBarrierPersistsNoAudit proves that without a
 // barrier the audit events stay in memory and no audit file is written.
 func TestInitializeDataDir_NoBarrierPersistsNoAudit(t *testing.T) {

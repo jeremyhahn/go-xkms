@@ -3,6 +3,8 @@ package audit
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,4 +86,61 @@ func TestBarrierSink_DeletedRecordBreaksTheChain(t *testing.T) {
 func TestBarrierSink_NilBackend(t *testing.T) {
 	_, err := OpenBarrierSink(context.Background(), nil, 1)
 	assert.ErrorIs(t, err, ErrNilBarrierBackend)
+}
+
+// TestBarrierSink_MigratesLegacyBackendStoreRecords: an installation the
+// removed BackendStore wrote to (Entry JSON at <unix_nano>-<seq>.json under
+// the audit prefix) opens, keeps those records in the chain oldest first,
+// and holds no legacy key afterwards.
+func TestBarrierSink_MigratesLegacyBackendStoreRecords(t *testing.T) {
+	ctx := context.Background()
+	be := newSinkBackend(t)
+	dir := filepath.Join("testdata", "legacy-backendstore")
+	files, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+	// Written in reverse so the migration's ordering is what is tested.
+	for i := len(files) - 1; i >= 0; i-- {
+		raw, err := os.ReadFile(filepath.Join(dir, files[i].Name()))
+		require.NoError(t, err)
+		require.NoError(t, be.Put(ctx, files[i].Name(), raw))
+	}
+
+	s, err := OpenBarrierSink(ctx, be, 100)
+	require.NoError(t, err, "an upgraded installation opens")
+	emitN(t, s, 1)
+	require.NoError(t, s.VerifyChain(ctx))
+	page, err := s.Query(ctx, xkms.QRDBNodeAuditFilter{})
+	require.NoError(t, err)
+	require.Len(t, page.Events, 3)
+	actions := map[string]bool{}
+	for _, ev := range page.Events {
+		actions[ev.Action] = true
+	}
+	assert.True(t, actions[string(OpKeyCreated)])
+	assert.True(t, actions[string(OpKeyDeleted)])
+	require.NoError(t, s.Close())
+
+	keys, err := be.List(ctx, "")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{recordKey(1), recordKey(2), recordKey(3)}, keys, "legacy keys are gone")
+
+	first, err := be.Get(ctx, recordKey(1))
+	require.NoError(t, err)
+	assert.Contains(t, string(first), string(OpKeyCreated), "the oldest legacy record is first")
+
+	s2, err := OpenBarrierSink(ctx, be, 100)
+	require.NoError(t, err, "reopening after migration")
+	defer func() { _ = s2.Close() }()
+	page, err = s2.Query(ctx, xkms.QRDBNodeAuditFilter{})
+	require.NoError(t, err)
+	assert.Len(t, page.Events, 3, "migration runs once")
+}
+
+func TestBarrierSink_UndecodableLegacyRecordFailsOpen(t *testing.T) {
+	ctx := context.Background()
+	be := newSinkBackend(t)
+	require.NoError(t, be.Put(ctx, "1731000000000000000-1.json", []byte("{not json")))
+	_, err := OpenBarrierSink(ctx, be, 100)
+	require.Error(t, err, "a legacy record is never dropped silently")
 }

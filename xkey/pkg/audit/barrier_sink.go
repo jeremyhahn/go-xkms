@@ -66,7 +66,84 @@ func OpenBarrierSink(ctx context.Context, backend xkms.StorageBackend, ringCapac
 		return nil, err
 	}
 	s.seq, s.head = seq, head
+	if err := s.migrateLegacy(ctx); err != nil {
+		_ = s.ring.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// legacyRecord is one Entry the removed BackendStore persisted at
+// audit/<unix_nano>-<seq>.json in the same barrier backend.
+type legacyRecord struct {
+	key   string
+	nano  uint64
+	seq   uint64
+	entry Entry
+}
+
+// parseLegacyKey reports whether key (prefix stripped) is a BackendStore
+// record key, <unix_nano>-<seq>.json, and returns its two numbers.
+func parseLegacyKey(key string) (nano, seq uint64, ok bool) {
+	name := key[strings.LastIndex(key, "/")+1:]
+	base, found := strings.CutSuffix(name, ".json")
+	if !found {
+		return 0, 0, false
+	}
+	left, right, found := strings.Cut(base, "-")
+	if !found {
+		return 0, 0, false
+	}
+	nano, errN := strconv.ParseUint(left, 10, 64)
+	seq, errS := strconv.ParseUint(right, 10, 64)
+	if errN != nil || errS != nil {
+		return 0, 0, false
+	}
+	return nano, seq, true
+}
+
+// migrateLegacy appends every record the removed BackendStore left in the
+// backend to the hash chain, oldest first, then deletes the legacy keys, so
+// an upgraded installation keeps its audit trail. A legacy record that does
+// not decode fails the open: it is never dropped silently.
+func (s *BarrierSink) migrateLegacy(ctx context.Context) error {
+	keys, err := s.backend.List(ctx, "")
+	if err != nil {
+		return fmt.Errorf("audit: list legacy records: %w", err)
+	}
+	var legacy []legacyRecord
+	for _, key := range keys {
+		nano, seq, ok := parseLegacyKey(key)
+		if !ok {
+			continue
+		}
+		raw, err := s.backend.Get(ctx, key)
+		if err != nil {
+			return fmt.Errorf("audit: read legacy record %s: %w", key, err)
+		}
+		var e Entry
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return fmt.Errorf("audit: decode legacy record %s: %w", key, err)
+		}
+		legacy = append(legacy, legacyRecord{key: key, nano: nano, seq: seq, entry: e})
+	}
+	sort.Slice(legacy, func(i, j int) bool {
+		if legacy[i].nano != legacy[j].nano {
+			return legacy[i].nano < legacy[j].nano
+		}
+		return legacy[i].seq < legacy[j].seq
+	})
+	for _, rec := range legacy {
+		if err := s.Emit(ctx, entryToQRDBEvent(rec.entry)); err != nil {
+			return fmt.Errorf("audit: migrate legacy record %s: %w", rec.key, err)
+		}
+	}
+	for _, rec := range legacy {
+		if err := s.backend.Delete(ctx, rec.key); err != nil {
+			return fmt.Errorf("audit: delete migrated legacy record %s: %w", rec.key, err)
+		}
+	}
+	return nil
 }
 
 // Emit links ev to the chain, persists it through the barrier and holds it
@@ -130,6 +207,9 @@ func (s *BarrierSink) walk(ctx context.Context, fn func(xkms.QRDBNodeAuditEvent)
 		head string
 	)
 	for _, key := range keys {
+		if _, _, legacy := parseLegacyKey(key); legacy {
+			continue // migrated by migrateLegacy on open
+		}
 		n, err := strconv.ParseUint(key[strings.LastIndex(key, "/")+1:], 10, 64)
 		if err != nil {
 			return 0, "", &ChainBrokenError{Key: key, Reason: "not a record key"}
