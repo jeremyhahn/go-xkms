@@ -52,7 +52,7 @@ func TestDialXKMSd_NoClientCertificateRefused(t *testing.T) {
 func TestDialXKMSd_UnreadableClientCertificate(t *testing.T) {
 	cfg := &XKMSdBridgeConfig{
 		Protocol:    "unix",
-		Address:     t.TempDir() + "/xkmsd.sock",
+		Address:     privateTempDir(t) + "/xkmsd.sock",
 		TLSCertFile: t.TempDir() + "/absent-cert.pem",
 		TLSKeyFile:  t.TempDir() + "/absent-key.pem",
 	}
@@ -83,7 +83,7 @@ func TestDialXKMSd_NoServer(t *testing.T) {
 
 	cfg := &XKMSdBridgeConfig{
 		Protocol:       "unix",
-		Address:        t.TempDir() + "/no-such.sock",
+		Address:        privateTempDir(t) + "/no-such.sock",
 		ConnectTimeout: 2 * time.Second,
 	}
 
