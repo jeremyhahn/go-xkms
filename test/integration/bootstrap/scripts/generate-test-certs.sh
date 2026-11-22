@@ -20,7 +20,7 @@
 set -eu
 
 CERT_DIR="${CERT_DIR:-/etc/xkms/certs}"
-CONFIG_FILE="/etc/xkms/xkmsd.yaml"
+CONFIG_FILE="${CONFIG_FILE:-/etc/xkms/xkmsd.yaml}"
 DATA_DIR="${TEST_DATA_DIR:-/data}"
 DAYS_VALID=365
 HOSTNAME_SAN="bootstrap.test"
@@ -190,10 +190,16 @@ tls:
   # in the presented chain (RFC 7671 Section 5.2.2).
   cert_file: ${CERT_DIR}/fullchain.crt
   key_file: ${CERT_DIR}/server.key
-  ca_file: ${CERT_DIR}/ca.crt
+  # "verify" (VerifyClientCertIfGiven): the TLS layer requests a client
+  # certificate, so the suite's admin calls (bootstrap show-keys, tenants)
+  # authenticate with the first-boot administrator certificate xkmsd writes
+  # beside its datastore; a request without one still reaches the handler
+  # (the trust-bootstrap fetches) and is authorised there.
+  client_auth: verify
 
 auth:
-  enabled: false
+  enabled: true
+  type: composite
 
 ratelimit:
   enabled: false
@@ -207,9 +213,10 @@ health:
   enabled: true
   path: /health
 
-storage:
-  backend: file
-  path: ${DATA_DIR}
+datastore:
+  engine: pebble
+  mode: standalone
+  path: ${DATA_DIR}/storage
 
 rng:
   mode: software
@@ -223,7 +230,34 @@ backends:
 
 barrier:
   enabled: true
-  root_key_path: ${DATA_DIR}/barrier
+  # "none": the qrdb node's own barrier auto-unseals unattended at startup.
+  # "passphrase"/"shamir" defer to an operator-driven unseal behind a
+  # sealed-window listener, and this suite has no unseal-ceremony step
+  # (same choice as test/integration/acmeadmin/xkmsd.yaml).
+  strategy: none
+
+ca:
+  identity:
+    - subject:
+        cn: "Bootstrap Integration Test Root CA"
+        organization: "go-xkms Integration Tests"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: ${DATA_DIR}/ca
 
 bootstrap:
   noise:
