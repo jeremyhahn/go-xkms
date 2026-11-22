@@ -38,35 +38,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestNew_EmptyFields(t *testing.T) {
-	err := New(CodeUnknown, "", "")
-
-	if err.Code != CodeUnknown {
-		t.Errorf("expected code %v, got %v", CodeUnknown, err.Code)
-	}
-	if err.Op != "" {
-		t.Errorf("expected empty op, got %q", err.Op)
-	}
-	if err.Message != "" {
-		t.Errorf("expected empty message, got %q", err.Message)
-	}
-}
-
-func TestWrap(t *testing.T) {
-	underlying := errors.New("underlying error")
-	err := Wrap(underlying, CodeInternal, "WrapOp", "wrapped message")
-
-	if err.Code != CodeInternal {
-		t.Errorf("expected code %v, got %v", CodeInternal, err.Code)
-	}
-	if err.Err != underlying {
-		t.Error("expected wrapped error to be preserved")
-	}
-	if !errors.Is(err, underlying) {
-		t.Error("expected errors.Is to find underlying error")
-	}
-}
-
 func TestWrap_NilError(t *testing.T) {
 	err := Wrap(nil, CodeInternal, "WrapOp", "wrapped message")
 
@@ -107,15 +78,6 @@ func TestCAError_Error(t *testing.T) {
 	}
 }
 
-func TestCAError_Unwrap(t *testing.T) {
-	underlying := errors.New("underlying")
-	err := Wrap(underlying, CodeInternal, "Op", "message")
-
-	if unwrapped := err.Unwrap(); unwrapped != underlying {
-		t.Error("expected Unwrap to return underlying error")
-	}
-}
-
 func TestCAError_Unwrap_Nil(t *testing.T) {
 	err := New(CodeInternal, "Op", "message")
 
@@ -146,33 +108,6 @@ func TestCAError_Is_NonCAError(t *testing.T) {
 	}
 }
 
-func TestCAError_IsRetryable(t *testing.T) {
-	tests := []struct {
-		code      ErrorCode
-		retryable bool
-	}{
-		{CodeNotFound, false},
-		{CodeInvalidInput, false},
-		{CodeUnavailable, true},
-		{CodeTimeout, true},
-		{CodeResourceExhausted, true},
-		{CodeInternal, false},
-		{CodeACMEBadNonce, true},
-		{CodeACMERateLimited, true},
-		{CodeACMEServerInternal, true},
-		{CodeACMEMalformed, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.code.String(), func(t *testing.T) {
-			err := New(tt.code, "Op", "message")
-			if got := err.IsRetryable(); got != tt.retryable {
-				t.Errorf("expected IsRetryable=%v for %v, got %v", tt.retryable, tt.code, got)
-			}
-		})
-	}
-}
-
 func TestCAError_WithContext(t *testing.T) {
 	err := New(CodeNotFound, "Op", "message")
 	err.WithContext("key", "value")
@@ -186,17 +121,6 @@ func TestCAError_WithContext(t *testing.T) {
 	}
 }
 
-func TestCAError_WithContext_Chaining(t *testing.T) {
-	err := New(CodeNotFound, "Op", "message").
-		WithContext("a", 1).
-		WithContext("b", 2).
-		WithContext("c", 3)
-
-	if len(err.Context) != 3 {
-		t.Errorf("expected 3 context entries, got %d", len(err.Context))
-	}
-}
-
 func TestCAError_WithCause(t *testing.T) {
 	underlying := errors.New("underlying")
 	err := New(CodeInternal, "Op", "message").WithCause(underlying)
@@ -206,20 +130,6 @@ func TestCAError_WithCause(t *testing.T) {
 	}
 	if !errors.Is(err, underlying) {
 		t.Error("expected errors.Is to find underlying error")
-	}
-}
-
-func TestCAError_WithCause_Chaining(t *testing.T) {
-	underlying := errors.New("underlying")
-	err := New(CodeInternal, "Op", "message").
-		WithCause(underlying).
-		WithContext("key", "value")
-
-	if err.Err != underlying {
-		t.Error("expected underlying error to be preserved")
-	}
-	if err.Context["key"] != "value" {
-		t.Error("expected context to be preserved")
 	}
 }
 
@@ -418,18 +328,5 @@ func TestErrorsAs(t *testing.T) {
 	}
 	if caErr.Context["key"] != "value" {
 		t.Error("expected context to be preserved")
-	}
-}
-
-func TestWrappedErrorChain(t *testing.T) {
-	base := errors.New("base")
-	wrapped := Wrap(base, CodeInternal, "wrap", "wrapped")
-
-	var caErr *CAError
-	if !errors.As(wrapped, &caErr) {
-		t.Fatal("expected errors.As to find CAError")
-	}
-	if !errors.Is(wrapped, base) {
-		t.Error("expected errors.Is to find base error")
 	}
 }

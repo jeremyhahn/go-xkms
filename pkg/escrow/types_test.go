@@ -65,15 +65,6 @@ func TestEscrowRequest_Validate_EmptyWrappedKey(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrNilWrappedKey))
 }
 
-func TestEscrowRequest_Validate_MinimalValid(t *testing.T) {
-	req := &EscrowRequest{
-		KeyID:      "k",
-		WrappedKey: []byte{0x01},
-	}
-	err := req.Validate()
-	require.NoError(t, err)
-}
-
 func TestRecoverRequest_Validate_WithEscrowID(t *testing.T) {
 	req := &RecoverRequest{
 		EscrowID: "escrow-001",
@@ -85,15 +76,6 @@ func TestRecoverRequest_Validate_WithEscrowID(t *testing.T) {
 func TestRecoverRequest_Validate_WithKeyID(t *testing.T) {
 	req := &RecoverRequest{
 		KeyID: "key-001",
-	}
-	err := req.Validate()
-	require.NoError(t, err)
-}
-
-func TestRecoverRequest_Validate_WithBothIDs(t *testing.T) {
-	req := &RecoverRequest{
-		EscrowID: "escrow-001",
-		KeyID:    "key-001",
 	}
 	err := req.Validate()
 	require.NoError(t, err)
@@ -134,18 +116,4 @@ func TestAgentConfig_Validate_EmptyEndpoint(t *testing.T) {
 	err := cfg.Validate()
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrEmptyEndpoint))
-}
-
-func TestAgentConfig_Validate_KMIPType(t *testing.T) {
-	cfg := &AgentConfig{
-		Type:     AgentTypeKMIP,
-		Endpoint: "kmip://escrow.company.com:5696",
-	}
-	err := cfg.Validate()
-	require.NoError(t, err)
-}
-
-func TestAgentTypeConstants(t *testing.T) {
-	assert.Equal(t, "kmip", AgentTypeKMIP)
-	assert.Equal(t, "xkms", AgentTypeXKMS)
 }

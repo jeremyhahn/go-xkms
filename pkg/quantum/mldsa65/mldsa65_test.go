@@ -20,16 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew(t *testing.T) {
-	m, err := New()
-	require.NoError(t, err)
-	defer m.Clean()
-
-	assert.Nil(t, m.privateKey)
-	assert.Nil(t, m.publicKey)
-	assert.False(t, m.hasSeed)
-}
-
 func TestGenerateKeyPair(t *testing.T) {
 	m, err := New()
 	require.NoError(t, err)
@@ -204,6 +194,7 @@ func TestClean(t *testing.T) {
 	assert.NotNil(t, m.privateKey)
 
 	m.Clean()
+	m.Clean() // a second Clean must be a no-op
 
 	assert.False(t, m.hasSeed)
 	assert.Nil(t, m.privateKey)
@@ -213,21 +204,6 @@ func TestClean(t *testing.T) {
 	for _, b := range m.seed {
 		assert.Equal(t, byte(0), b)
 	}
-}
-
-func TestCleanIdempotent(t *testing.T) {
-	m, err := New()
-	require.NoError(t, err)
-
-	_, err = m.GenerateKeyPair()
-	require.NoError(t, err)
-
-	// Clean should be safe to call multiple times
-	m.Clean()
-	m.Clean()
-
-	assert.False(t, m.hasSeed)
-	assert.Nil(t, m.privateKey)
 }
 
 func TestDetails(t *testing.T) {
@@ -240,23 +216,9 @@ func TestDetails(t *testing.T) {
 	assert.Equal(t, PublicKeySize, details.LengthPublicKey)
 	assert.Equal(t, SeedSize, details.LengthSecretKey)
 	assert.Equal(t, SignatureSize, details.MaxLengthSignature)
-}
 
-func TestPublicKeyLength(t *testing.T) {
-	m, err := New()
-	require.NoError(t, err)
 	assert.Equal(t, PublicKeySize, m.PublicKeyLength())
-}
-
-func TestSecretKeyLength(t *testing.T) {
-	m, err := New()
-	require.NoError(t, err)
 	assert.Equal(t, SeedSize, m.SecretKeyLength())
-}
-
-func TestSignatureLength(t *testing.T) {
-	m, err := New()
-	require.NoError(t, err)
 	assert.Equal(t, SignatureSize, m.SignatureLength())
 }
 
@@ -266,31 +228,6 @@ func TestTypeStrings(t *testing.T) {
 
 	var sigAlgo MLDSA65SignatureAlgorithm
 	assert.Equal(t, "ML-DSA-65", sigAlgo.String())
-}
-
-func TestDeterministicKeyReconstruction(t *testing.T) {
-	// Generate a key pair and capture the seed
-	m1, err := New()
-	require.NoError(t, err)
-
-	pubKey1, err := m1.GenerateKeyPair()
-	require.NoError(t, err)
-	seed := m1.ExportSecretKey()
-	m1.Clean()
-
-	// Reconstruct twice from the same seed and verify determinism
-	m2, err := Create(seed)
-	require.NoError(t, err)
-	pubKey2 := m2.publicKey.Bytes()
-	m2.Clean()
-
-	m3, err := Create(seed)
-	require.NoError(t, err)
-	pubKey3 := m3.publicKey.Bytes()
-	m3.Clean()
-
-	assert.Equal(t, pubKey1, pubKey2, "First reconstruction should match original")
-	assert.Equal(t, pubKey2, pubKey3, "Second reconstruction should match first")
 }
 
 func TestCrossInstanceVerification(t *testing.T) {

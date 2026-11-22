@@ -54,14 +54,6 @@ func atomicStore(t *testing.T, backend storage.Backend) qrdbsdk.AtomicKVStore {
 	return atomic
 }
 
-func TestNew_BackendWithGuardedWritesSatisfiesAtomicKVStore(t *testing.T) {
-	store, err := New(storage.NewMemory())
-	require.NoError(t, err)
-
-	_, ok := store.(qrdbsdk.AtomicKVStore)
-	assert.True(t, ok, "the memory backend implements PutIfAbsent, CompareAndSwap and CompareAndDelete")
-}
-
 func TestNew_BackendWithoutCompareAndSwapDoesNotClaimAtomicKVStore(t *testing.T) {
 	// errorBackend carries PutIfAbsent and CompareAndDelete but no
 	// CompareAndSwap, so it can serve two of the three. Claiming the

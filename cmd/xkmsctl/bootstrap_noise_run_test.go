@@ -21,7 +21,6 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
@@ -169,27 +168,6 @@ func allZeroBytes(b []byte) bool {
 		}
 	}
 	return true
-}
-
-// TestNoiseGenerateKeyCmd_RunNoOutput checks the flag plumbing for the ruling
-// that the key only ever lands in a file: an empty --output has to reach the
-// error path, not fall back to printing.
-func TestNoiseGenerateKeyCmd_RunNoOutput(t *testing.T) {
-	cmd := noiseGenerateKeyCmd
-	_ = cmd.Flags().Set("output", "")
-
-	var stderr string
-	code := captureExit(t, func() {
-		stderr = captureStderr(t, func() { cmd.Run(cmd, nil) })
-	})
-	if code != 1 {
-		t.Errorf("expected exit code 1 for missing --output, got %d", code)
-	}
-	// Which error, not just that one occurred — see the note in
-	// TestNoiseGenerateKey_RequiresOutputFile.
-	if !strings.Contains(stderr, "--output is required") {
-		t.Errorf("expected the missing-output error specifically, got: %s", stderr)
-	}
 }
 
 func TestNoiseShowKeyCmd_Run(t *testing.T) {

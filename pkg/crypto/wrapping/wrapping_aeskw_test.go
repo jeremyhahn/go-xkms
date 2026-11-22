@@ -14,7 +14,6 @@
 package wrapping
 
 import (
-	"crypto/rand"
 	"encoding/hex"
 	"testing"
 
@@ -107,27 +106,6 @@ func TestWrapAESKW_RFC3394_256BitKeyData(t *testing.T) {
 	got, err := WrapAESKW(keyData, kek)
 	require.NoError(t, err)
 	assert.Equal(t, wantCiphertext, got)
-}
-
-// TestWrapUnwrapAESKW_RoundTrip_MultiBlock proves round-trip correctness for
-// key material that is not one of the fixed RFC vectors -- a randomly
-// generated 5-block (40-byte) plaintext. The oracle here is the random
-// plaintext itself: the unwrapped output must equal the exact bytes that
-// were wrapped, not merely "no error".
-func TestWrapUnwrapAESKW_RoundTrip_MultiBlock(t *testing.T) {
-	kek := mustHex(t, "000102030405060708090A0B0C0D0E0F")
-	plaintext := make([]byte, 40)
-	_, err := rand.Read(plaintext)
-	require.NoError(t, err)
-
-	wrapped, err := WrapAESKW(plaintext, kek)
-	require.NoError(t, err)
-	// RFC 3394: ciphertext is (n+1) 8-byte blocks for n plaintext blocks.
-	assert.Len(t, wrapped, len(plaintext)+8)
-
-	recovered, err := UnwrapAESKW(wrapped, kek)
-	require.NoError(t, err)
-	assert.Equal(t, plaintext, recovered)
 }
 
 // TestUnwrapAESKW_TamperedCiphertextRejected proves the integrity check (the

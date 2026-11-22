@@ -19,29 +19,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ssrkChildAttrs builds a plain signing key beneath the shared SRK: no platform
-// policy anywhere, which is what every child of the SSRK now looks like.
-func ssrkChildAttrs(t *testing.T, h *simHarness, cn string) *types.KeyAttributes {
-	t.Helper()
-
-	srkAttrs, err := h.TPM.SSRKAttributes()
-	require.NoError(t, err)
-
-	return &types.KeyAttributes{
-		CN:                 cn,
-		Hash:               crypto.SHA256,
-		KeyAlgorithm:       x509.RSA,
-		KeyType:            types.KeyTypeSigning,
-		Parent:             srkAttrs,
-		RSAAttributes:      &types.RSAAttributes{KeySize: 2048},
-		SignatureAlgorithm: x509.SHA256WithRSA,
-		StoreType:          types.StoreTPM2,
-		TPMAttributes: &types.TPMAttributes{
-			Hierarchy: tpm2.TPMRHOwner,
-		},
-	}
-}
-
 // TestProvisionSSRKHasNoAuthPolicy is the invariant itself, read back from the
 // TPM: after provisioning, the object persisted at the shared SRK handle has an
 // empty AuthPolicy.
@@ -63,55 +40,6 @@ func TestProvisionSSRKHasNoAuthPolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
 		"the shared SRK's attributes must not claim a platform policy")
-}
-
-// TestProvisionSSRKRecordsNoPolicyPin proves the policy-pin machinery is not
-// engaged for the shared SRK. A pin record exists to rebuild a PolicyPCR
-// operand for a key that has one; a key with no policy must write none, or the
-// record would be an orphan claiming a binding that does not exist.
-func TestProvisionSSRKRecordsNoPolicyPin(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	ssrk, err := SRKAttributesFromConfig(*h.TPM.config.SSRK)
-	require.NoError(t, err)
-
-	pinAttrs := primaryPolicyPinAttrs(ssrk)
-	require.NotNil(t, pinAttrs)
-
-	_, err = h.Backend.Get(pinAttrs, store.FSEXT_PLATFORM_POLICY)
-	require.Error(t, err, "the shared SRK must record no platform policy pin")
-	assert.ErrorIs(t, err, store.ErrBlobNotFound)
-}
-
-// TestProvisionSSRKUsableAsParent proves the SSRK still does its job: it is the
-// TCG-standard storage parent, and children load and sign beneath it with plain
-// password authorization.
-func TestProvisionSSRKUsableAsParent(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	attrs := ssrkChildAttrs(t, h, "ssrk-child")
-	pub, err := h.TPM.CreateRSA(attrs, h.Backend, true)
-	require.NoError(t, err, "the shared SRK must work as a parent with no policy")
-	require.NotNil(t, pub)
-
-	digest := sha256.Sum256([]byte("signed beneath a policy-free shared SRK"))
-	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
-		KeyAttributes: attrs,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err)
-	require.NoError(t, rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], signature))
-
-	// The SSRK carries no PCR binding, so a measurement change must not touch
-	// it. Anything else would mean a policy crept back in.
-	h.extendPlatformPCR(t, []byte("post-update-measurement"))
-
-	signature, err = h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
-		KeyAttributes: attrs,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err, "a policy-free shared SRK must be unaffected by a PCR change")
-	require.NoError(t, rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], signature))
 }
 
 // TestSSRKPlatformPolicyConfigRejectedBeforeAnySRKIsCreated closes the loop
@@ -149,6 +77,29 @@ ssrk:
 	}.Execute(sim.Transport())
 	require.Error(t, err, "no SRK may be created from a rejected configuration")
 	assert.Equal(t, tpm2.TPMRC(0x18b), err, "expected TPM_RC_HANDLE")
+}
+
+// ssrkChildAttrs builds a plain signing key beneath the shared SRK: no platform
+// policy anywhere, which is what every child of the SSRK now looks like.
+func ssrkChildAttrs(t *testing.T, h *simHarness, cn string) *types.KeyAttributes {
+	t.Helper()
+
+	srkAttrs, err := h.TPM.SSRKAttributes()
+	require.NoError(t, err)
+
+	return &types.KeyAttributes{
+		CN:                 cn,
+		Hash:               crypto.SHA256,
+		KeyAlgorithm:       x509.RSA,
+		KeyType:            types.KeyTypeSigning,
+		Parent:             srkAttrs,
+		RSAAttributes:      &types.RSAAttributes{KeySize: 2048},
+		SignatureAlgorithm: x509.SHA256WithRSA,
+		StoreType:          types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			Hierarchy: tpm2.TPMRHOwner,
+		},
+	}
 }
 
 // TestLegacySSRKWithPlatformPolicyStillLoadable is the upgrade case. A

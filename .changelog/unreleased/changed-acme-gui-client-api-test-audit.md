@@ -1,0 +1,1 @@
+- `pkg/acme/gui/client/api`: the test audit (#1794) removes tests that repeat a path another kept test covers: the unguarded-router origin tests (the network-router security tests assert them), the list-accounts and empty list-certificates status checks, and a second deploy refusal on the same handler path.

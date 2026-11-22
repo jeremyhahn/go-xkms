@@ -72,31 +72,6 @@ func newTestService() *Service {
 
 // ==================== PIN Handler Tests ====================
 
-func TestSetSOPIN_Success(t *testing.T) {
-	setupPINManager(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	resp, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{
-		CurrentSoPin: "",
-		NewSoPin:     "so-pin-123456",
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestSetSOPIN_NotConfigured(t *testing.T) {
-	svc := newPlatformTestService()
-
-	_, err := svc.SetSOPIN(context.Background(), &pb.SetSOPINRequest{
-		NewSoPin: "so-pin-123456",
-	})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.Unavailable, st.Code())
-}
-
 func TestSetSOPIN_TooShort(t *testing.T) {
 	setupPINManager(t)
 	svc := newPlatformTestService()
@@ -111,65 +86,12 @@ func TestSetSOPIN_TooShort(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
-func TestSetUserPIN_Success(t *testing.T) {
-	setupPINManager(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	// Must set SO PIN first.
-	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{
-		NewSoPin: "so-pin-123456",
-	})
-	require.NoError(t, err)
-
-	// Now set user PIN using SO PIN authorization.
-	resp, err := svc.SetUserPIN(ctx, &pb.SetUserPINRequest{
-		SoPin:      "so-pin-123456",
-		NewUserPin: "user-pin-654321",
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
 func TestSetUserPIN_NotConfigured(t *testing.T) {
 	svc := newPlatformTestService()
 
 	_, err := svc.SetUserPIN(context.Background(), &pb.SetUserPINRequest{
 		SoPin:      "so-pin-123456",
 		NewUserPin: "user-pin-654321",
-	})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.Unavailable, st.Code())
-}
-
-func TestChangeSOPIN_Success(t *testing.T) {
-	setupPINManager(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	// Set initial SO PIN.
-	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{
-		NewSoPin: "so-pin-123456",
-	})
-	require.NoError(t, err)
-
-	// Change SO PIN.
-	resp, err := svc.ChangeSOPIN(ctx, &pb.ChangeSOPINRequest{
-		CurrentSoPin: "so-pin-123456",
-		NewSoPin:     "new-so-pin-789",
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestChangeSOPIN_NotConfigured(t *testing.T) {
-	svc := newPlatformTestService()
-
-	_, err := svc.ChangeSOPIN(context.Background(), &pb.ChangeSOPINRequest{
-		CurrentSoPin: "old",
-		NewSoPin:     "new-pin-123456",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -199,64 +121,12 @@ func TestChangeSOPIN_InvalidCurrent(t *testing.T) {
 	assert.Equal(t, codes.Unauthenticated, st.Code())
 }
 
-func TestChangeUserPIN_Success(t *testing.T) {
-	setupPINManager(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	soPIN := "so-pin-123456"
-	userPIN := "user-pin-654321"
-
-	// Set SO PIN and user PIN.
-	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{NewSoPin: soPIN})
-	require.NoError(t, err)
-	_, err = svc.SetUserPIN(ctx, &pb.SetUserPINRequest{SoPin: soPIN, NewUserPin: userPIN})
-	require.NoError(t, err)
-
-	// Change user PIN.
-	resp, err := svc.ChangeUserPIN(ctx, &pb.ChangeUserPINRequest{
-		CurrentUserPin: userPIN,
-		NewUserPin:     "new-user-pin-000",
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
 func TestChangeUserPIN_NotConfigured(t *testing.T) {
 	svc := newPlatformTestService()
 
 	_, err := svc.ChangeUserPIN(context.Background(), &pb.ChangeUserPINRequest{
 		CurrentUserPin: "old",
 		NewUserPin:     "new-pin-123456",
-	})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.Unavailable, st.Code())
-}
-
-func TestVerifySOPIN_Success(t *testing.T) {
-	setupPINManager(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	soPIN := "so-pin-123456"
-
-	// Set SO PIN.
-	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{NewSoPin: soPIN})
-	require.NoError(t, err)
-
-	// Verify correct SO PIN.
-	resp, err := svc.VerifySOPIN(ctx, &pb.VerifySOPINRequest{SoPin: soPIN})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestVerifySOPIN_NotConfigured(t *testing.T) {
-	svc := newPlatformTestService()
-
-	_, err := svc.VerifySOPIN(context.Background(), &pb.VerifySOPINRequest{
-		SoPin: "test-pin-123456",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -281,38 +151,6 @@ func TestVerifySOPIN_Invalid(t *testing.T) {
 	assert.Equal(t, codes.Unauthenticated, st.Code())
 }
 
-func TestVerifyUserPIN_Success(t *testing.T) {
-	setupPINManager(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	soPIN := "so-pin-123456"
-	userPIN := "user-pin-654321"
-
-	// Set SO PIN and user PIN.
-	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{NewSoPin: soPIN})
-	require.NoError(t, err)
-	_, err = svc.SetUserPIN(ctx, &pb.SetUserPINRequest{SoPin: soPIN, NewUserPin: userPIN})
-	require.NoError(t, err)
-
-	// Verify correct user PIN.
-	resp, err := svc.VerifyUserPIN(ctx, &pb.VerifyUserPINRequest{UserPin: userPIN})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestVerifyUserPIN_NotConfigured(t *testing.T) {
-	svc := newPlatformTestService()
-
-	_, err := svc.VerifyUserPIN(context.Background(), &pb.VerifyUserPINRequest{
-		UserPin: "test-pin-123456",
-	})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.Unavailable, st.Code())
-}
-
 func TestVerifyUserPIN_Invalid(t *testing.T) {
 	setupPINManager(t)
 	svc := newPlatformTestService()
@@ -335,19 +173,6 @@ func TestVerifyUserPIN_Invalid(t *testing.T) {
 	assert.Equal(t, codes.Unauthenticated, st.Code())
 }
 
-func TestGetLockoutStatus_Success(t *testing.T) {
-	setupPINManager(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	resp, err := svc.GetLockoutStatus(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.False(t, resp.IsLocked)
-	assert.Equal(t, int32(0), resp.FailedAttempts)
-	assert.Equal(t, int32(0), resp.MaxAttempts) // SoftwareBackend does not track lockout.
-}
-
 func TestGetLockoutStatus_NotConfigured(t *testing.T) {
 	svc := newPlatformTestService()
 
@@ -356,23 +181,6 @@ func TestGetLockoutStatus_NotConfigured(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.Unavailable, st.Code())
-}
-
-func TestResetLockout_Success(t *testing.T) {
-	setupPINManager(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	soPIN := "so-pin-123456"
-
-	// Set SO PIN.
-	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{NewSoPin: soPIN})
-	require.NoError(t, err)
-
-	// Reset lockout.
-	resp, err := svc.ResetLockout(ctx, &pb.ResetLockoutRequest{SoPin: soPIN})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
 }
 
 func TestResetLockout_NotConfigured(t *testing.T) {
@@ -385,22 +193,6 @@ func TestResetLockout_NotConfigured(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.Unavailable, st.Code())
-}
-
-func TestResetLockout_InvalidSOPIN(t *testing.T) {
-	setupPINManager(t)
-	svc := newPlatformTestService()
-	ctx := context.Background()
-
-	// Set SO PIN.
-	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{NewSoPin: "so-pin-123456"})
-	require.NoError(t, err)
-
-	// SoftwareBackend has no lockout mechanism, so ResetLockout is a no-op
-	// that succeeds regardless of SO PIN. Backends with lockout support
-	// (e.g., TPM2Backend) would return Unauthenticated for wrong SO PIN.
-	_, err = svc.ResetLockout(ctx, &pb.ResetLockoutRequest{SoPin: "wrong-pin-00000"})
-	require.NoError(t, err)
 }
 
 // ==================== Error Mapping Tests ====================

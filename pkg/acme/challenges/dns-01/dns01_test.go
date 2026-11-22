@@ -109,18 +109,6 @@ func (m *mockProvider) CleanUp(ctx context.Context, domain, fqdn, value string) 
 	return m.cleanupErr
 }
 
-func TestSetDNSService(t *testing.T) {
-	service := &mockDNSService{
-		zones: make(map[string]*mockZone),
-	}
-
-	SetDNSService(service)
-
-	if DNSService != service {
-		t.Error("SetDNSService() did not set the DNS service correctly")
-	}
-}
-
 func TestVerify_Success(t *testing.T) {
 	keyAuth := "test-token.test-thumbprint"
 	sha := sha256.Sum256([]byte(keyAuth))
@@ -293,6 +281,14 @@ func TestSetup_Success(t *testing.T) {
 	if record.ttl != 300 {
 		t.Errorf("Expected TTL 300, got %d", record.ttl)
 	}
+
+	// A subdomain's record goes into its registered domain's zone.
+	if err := Setup(challengeToken, "test.example.com"); err != nil {
+		t.Fatalf("Setup() failed for a subdomain: %v", err)
+	}
+	if _, ok := zone.records["_acme-challenge.test.example.com."]; !ok {
+		t.Error("Setup() should have added the subdomain's TXT record to the example.com zone")
+	}
 }
 
 func TestSetup_WithTrailingDot(t *testing.T) {
@@ -447,59 +443,6 @@ func TestNewTXTRecord(t *testing.T) {
 
 	if record.TTL() != ttl {
 		t.Errorf("Expected TTL %d, got %d", ttl, record.TTL())
-	}
-}
-
-func TestVerify_Integration(t *testing.T) {
-	// This test simulates a full dns-01 challenge flow
-	keyAuth := "integration-token.integration-thumbprint"
-	sha := sha256.Sum256([]byte(keyAuth))
-	expected := base64.RawURLEncoding.EncodeToString(sha[:])
-
-	// Setup DNS service
-	dnsService := &mockDNSService{
-		zones: make(map[string]*mockZone),
-	}
-	SetDNSService(dnsService)
-
-	// Setup the challenge
-	err := Setup(expected, "test.example.com")
-	if err != nil {
-		t.Fatalf("Setup() failed: %v", err)
-	}
-
-	// Verify the record was created
-	zone, ok := dnsService.zones["example.com"]
-	if !ok {
-		t.Fatal("Zone was not created")
-	}
-
-	recordName := "_acme-challenge.test.example.com."
-	if _, ok := zone.records[recordName]; !ok {
-		t.Fatal("TXT record was not created")
-	}
-
-	// Simulate DNS resolver returning the record
-	resolver := &mockResolver{
-		records: map[string][]string{
-			"_acme-challenge.test.example.com": {expected},
-		},
-	}
-
-	// Verify the challenge
-	err = Verify(resolver, "test.example.com", "", "", keyAuth)
-	if err != nil {
-		t.Errorf("Verify() failed: %v", err)
-	}
-
-	// Verify the record was removed - the RemoveTXTRecord is called with domain name only
-	// Note: The actual removal depends on the zone implementation
-	// In this test, the removal happens but we check by looking for the exact name used
-	_ = recordName // Silence unused variable warning
-	// The mock might still have the dotted version
-	if _, exists := zone.records["_acme-challenge.test.example.com"]; exists {
-		// Check if it was actually removed by the zone implementation
-		t.Log("Note: TXT record removal depends on zone RemoveTXTRecord implementation")
 	}
 }
 
@@ -696,17 +639,6 @@ func TestListProviders(t *testing.T) {
 	}
 }
 
-func TestListProviders_ContainsKnownProviders(t *testing.T) {
-	// The providers are registered via init() functions, so they should be available
-	// This test verifies the function returns a slice even if providers vary
-	list := ListProviders()
-
-	// Just verify it returns a valid slice (may be empty in isolated test runs)
-	if list == nil {
-		t.Error("ListProviders() should not return nil")
-	}
-}
-
 // Tests for ComputeChallengeValue
 
 func TestComputeChallengeValue(t *testing.T) {
@@ -740,35 +672,6 @@ func TestComputeChallengeValue(t *testing.T) {
 				t.Errorf("ComputeChallengeValue() = %q, want %q", result, expected)
 			}
 		})
-	}
-}
-
-func TestComputeChallengeValue_Consistency(t *testing.T) {
-	keyAuth := "consistent-token.consistent-thumbprint"
-
-	// Call multiple times and verify same result
-	result1 := ComputeChallengeValue(keyAuth)
-	result2 := ComputeChallengeValue(keyAuth)
-	result3 := ComputeChallengeValue(keyAuth)
-
-	if result1 != result2 || result2 != result3 {
-		t.Error("ComputeChallengeValue() should return consistent results for same input")
-	}
-}
-
-func TestComputeChallengeValue_RFC8555Compliance(t *testing.T) {
-	// Test that output is base64url encoded without padding
-	keyAuth := "token.thumbprint"
-	result := ComputeChallengeValue(keyAuth)
-
-	// Base64url encoding should not contain + or / or =
-	if strings.Contains(result, "+") || strings.Contains(result, "/") || strings.Contains(result, "=") {
-		t.Error("ComputeChallengeValue() should use base64url encoding without padding")
-	}
-
-	// Result should be 43 characters (256 bits / 6 bits per char = 42.67, rounded up to 43)
-	if len(result) != 43 {
-		t.Errorf("ComputeChallengeValue() result length should be 43, got %d", len(result))
 	}
 }
 

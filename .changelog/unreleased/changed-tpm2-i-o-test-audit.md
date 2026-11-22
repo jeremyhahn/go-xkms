@@ -1,0 +1,1 @@
+Tests: the `pkg/tpm2` test files `i*` to `o*` lose 187 tests that repeated another test's path, covered no statement the rest miss, or ran no package code (#1794 slice 9). `left_alone_fixes_test.go` is deleted. Coverage is unchanged, and every policy, PCR, attestation, EK/IDevID, leak and secret-logging assertion stays.

@@ -1,0 +1,1 @@
+Tests: `pkg/acme/challenges/dns-01/providers` keeps one test per behaviour (#1794): repeated WaitForCtx, zone-cache, factory, registry, error and propagation paths, tautologies on constants and mocks, standard-library parse cases, and the assertion-free subtests that queried the public default nameservers are removed.

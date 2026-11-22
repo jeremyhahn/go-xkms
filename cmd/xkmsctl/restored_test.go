@@ -149,23 +149,6 @@ func TestCreateServerHTTPClient_SPKISuccess(t *testing.T) {
 		t.Fatal("expected non-nil client")
 	}
 }
-func TestCreateServerHTTPClient_TestFactory(t *testing.T) {
-	oldFactory := serverHTTPClientFactory
-	defer func() { serverHTTPClientFactory = oldFactory }()
-
-	expectedClient := &http.Client{}
-	serverHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
-		return expectedClient, nil
-	}
-
-	client, err := createServerHTTPClient(&Config{}, false)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-	if client != expectedClient {
-		t.Fatal("expected factory-injected client")
-	}
-}
 func TestDoServerRequest_InvalidURL(t *testing.T) {
 	_, err := doServerRequest(http.DefaultClient, http.MethodGet, "://invalid-url", nil)
 	if err == nil {
@@ -201,26 +184,6 @@ func TestDoServerRequest_MarshalAndSend(t *testing.T) {
 		map[string]string{"username": "test@example.com"})
 	if err != nil {
 		t.Fatalf("doServerRequest failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-}
-func TestDoServerRequest_NilBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET, got %s", r.Method)
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"state":"enrolling"}`))
-	}))
-	defer server.Close()
-
-	resp, err := doServerRequest(server.Client(), http.MethodGet, server.URL, nil)
-	if err != nil {
-		t.Fatalf("doServerRequest with nil body failed: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

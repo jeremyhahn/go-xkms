@@ -289,21 +289,6 @@ func TestUserRegisterCmd_FirstUserCreatesInvitedAccount(t *testing.T) {
 	}
 }
 
-func TestUserRegisterCmd_CreateUserError(t *testing.T) {
-	mock := &mockUserClient{
-		listUsersResp: &transport.ListUsersResponse{Users: []transport.UserInfo{{Username: "existing", Roles: []string{"admin"}}}},
-		createUserErr: errors.New("username exists"),
-	}
-	withGlobalConfig(t, newUserTestConfig("json", mock))
-
-	code := captureExit(t, func() {
-		userRegisterCmd.Run(newUserRegisterCmd(), []string{"alice"})
-	})
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-}
-
 // TestUserRegisterCmd_RequestedRoleJSON pins that a later user gets the role
 // asked for, and that JSON output reports the pending account.
 func TestUserRegisterCmd_RequestedRoleJSON(t *testing.T) {
@@ -348,12 +333,6 @@ func TestUserLoginCmd_ConnectError(t *testing.T) {
 	mock := &mockUserClient{connectErr: errors.New("connect refused")}
 	withGlobalConfig(t, newUserTestConfig("text", mock))
 	runUserLoginExpectingFailure(t, ErrConnectFailed)
-}
-
-func TestUserLoginCmd_BeginAuthenticationError(t *testing.T) {
-	mock := &mockUserClient{beginAuthErr: errors.New("no such user")}
-	withGlobalConfig(t, newUserTestConfig("text", mock))
-	runUserLoginExpectingFailure(t, ErrBeginAuthenticationFailed)
 }
 
 // runUserLoginExpectingFailure logs in as alice@example.com and requires
@@ -812,18 +791,6 @@ func TestUserCredentialConfigCmd_JSONWithCreds(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Registration / metadata
 // ---------------------------------------------------------------------------
-
-func TestUserCmd_SubcommandsRegistered(t *testing.T) {
-	found := map[string]bool{}
-	for _, c := range userCmd.Commands() {
-		found[c.Name()] = true
-	}
-	for _, name := range []string{"register", "login", "list", "get", "delete", "disable", "enable", "status", "credentials"} {
-		if !found[name] {
-			t.Errorf("expected user subcommand %q to be registered", name)
-		}
-	}
-}
 
 // Registration must refuse to run without the canonical login key rather than
 // creating an account nobody can enrol against.

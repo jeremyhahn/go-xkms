@@ -32,22 +32,6 @@ func (f *erroringWriter) Write(p []byte) (int, error) {
 	return 0, f.err
 }
 
-func TestOutputWriter_Success(t *testing.T) {
-	var buf bytes.Buffer
-	w := newOutputWriter(&buf)
-
-	w.print("a")
-	w.printf("%d", 1)
-	w.println("b")
-
-	if err := w.Err(); err != nil {
-		t.Fatalf("Err: got %v, want nil", err)
-	}
-	if got, want := buf.String(), "a1b\n"; got != want {
-		t.Errorf("buf: got %q, want %q", got, want)
-	}
-}
-
 func TestOutputWriter_RecordsFirstErrorAndStopsWriting(t *testing.T) {
 	fw := &erroringWriter{err: errors.New("disk full")}
 	w := newOutputWriter(fw)

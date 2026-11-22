@@ -110,21 +110,6 @@ func TestHandler_WaitForDevice(t *testing.T) {
 	assert.Equal(t, "/dev/hidraw0", device.Path)
 }
 
-func TestHandler_WaitForDevice_Timeout(t *testing.T) {
-	config := DefaultConfig
-	enum := NewMockHIDDeviceEnumerator()
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	device, err := handler.WaitForDevice(ctx)
-	assert.Error(t, err)
-	assert.Nil(t, device)
-}
-
 func TestHandler_EnrollKey(t *testing.T) {
 	config := DefaultConfig
 	enum := NewMockHIDDeviceEnumerator()
@@ -523,24 +508,6 @@ func (m *MockLogger) Printf(format string, v ...interface{}) {
 	m.messages = append(m.messages, fmt.Sprintf(format, v...))
 }
 
-func TestHandler_EnrollKey_WithTimeout(t *testing.T) {
-	config := DefaultConfig
-	enum := NewMockHIDDeviceEnumerator()
-
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	enum.AddDevice(mockDev)
-
-	handler, err := NewHandler(&config, enum)
-	require.NoError(t, err)
-
-	enrollConfig := DefaultEnrollmentConfig("testuser")
-	enrollConfig.Timeout = 100 * time.Millisecond
-
-	result, err := handler.EnrollKey(enrollConfig)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
 func TestHandler_UnlockWithKey_WithTimeout(t *testing.T) {
 	config := DefaultConfig
 	enum := NewMockHIDDeviceEnumerator()
@@ -570,12 +537,6 @@ func TestHandler_SelectDevice_InvalidPath(t *testing.T) {
 	_, err = handler.selectDevice()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to open")
-}
-
-func TestDiscardLogger(t *testing.T) {
-	logger := &discardLogger{}
-	// Should not panic
-	logger.Printf("test %s", "message")
 }
 
 func TestHandler_WaitForDevice_CancelledContext(t *testing.T) {
@@ -650,12 +611,6 @@ func TestHandler_SelectDevice_AllFilteredOut(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, device)
 	assert.ErrorIs(t, err, ErrNoDeviceFound)
-}
-
-func TestDiscardLogger_Printf(t *testing.T) {
-	logger := &discardLogger{}
-	// Should not panic and do nothing
-	logger.Printf("test message %s %d", "hello", 42)
 }
 
 func TestHandler_EnrollKey_LoggerOutput(t *testing.T) {

@@ -27,11 +27,15 @@ func init() {
 // FederationAgent without importing this package directly (which would
 // cycle, since this package already imports pkg/escrow).
 func newFederationAgentFromConfig(cfg *escrow.AgentConfig) (escrow.EscrowAgent, error) {
-	return NewFederationAgent(&FederationConfig{
+	agent, err := NewFederationAgent(&FederationConfig{
 		Endpoint:   cfg.Endpoint,
 		ClientCert: cfg.ClientCert,
 		ClientKey:  cfg.ClientKey,
 		CACert:     cfg.CACert,
 		Timeout:    cfg.Timeout,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return agent, nil
 }

@@ -112,5 +112,5 @@ func newPKCS11KeyProvider(config map[string]interface{}) (types.KeyProvider, err
 		p11Config.Slot = &slot
 	}
 
-	return pkcs11.NewBackend(p11Config)
+	return keyProvider(pkcs11.NewBackend(p11Config))
 }

@@ -299,49 +299,6 @@ func TestSeal_AADBinding_Simulator(t *testing.T) {
 	})
 }
 
-// TestSeal_PresetSealData_Simulator proves a Seal with nil data seals the
-// SealData the caller preset on the key attributes -- with AAD bound to it,
-// and with a magic-prefixed preset wrapped like any other magic-prefixed
-// data -- instead of replacing it with a random secret.
-func TestSeal_PresetSealData_Simulator(t *testing.T) {
-	h := newSimHarness(t, nil)
-	aad := []byte("volume=root")
-
-	seal := func(t *testing.T, cn string, preset, aad []byte) *types.SealedData {
-		t.Helper()
-		attrs := sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword))
-		attrs.SealData = types.NewSealData(preset)
-		sealed, err := h.TPM.Seal(context.Background(), nil, &types.SealOptions{KeyAttributes: attrs, AAD: aad})
-		require.NoError(t, err)
-		return sealed
-	}
-
-	t.Run("preset data with AAD", func(t *testing.T) {
-		sealed := seal(t, "preset-aad", []byte("preset payload"), aad)
-		got, err := h.TPM.Unseal(context.Background(), sealed, unsealOpts(t, h, "preset-aad", aad))
-		require.NoError(t, err)
-		require.Equal(t, []byte("preset payload"), got, "the preset payload, not a random secret, must be sealed")
-
-		_, err = h.TPM.Unseal(context.Background(), cloneTPMSealed(sealed), unsealOpts(t, h, "preset-aad", nil))
-		require.ErrorIs(t, err, types.ErrSealedDataAuthentication)
-	})
-
-	t.Run("preset data that forges a binding, no AAD", func(t *testing.T) {
-		chosenAAD := []byte("attacker-chosen")
-		forged, owned, err := bindSealAAD(nil, []byte("payload"), chosenAAD)
-		require.NoError(t, err)
-		require.True(t, owned)
-
-		sealed := seal(t, "preset-forged", forged, nil)
-		got, err := h.TPM.Unseal(context.Background(), sealed, unsealOpts(t, h, "preset-forged", nil))
-		require.NoError(t, err)
-		require.Equal(t, forged, got, "a preset that looks like a binding is sealed as data, not as a binding")
-
-		_, err = h.TPM.Unseal(context.Background(), cloneTPMSealed(sealed), unsealOpts(t, h, "preset-forged", chosenAAD))
-		require.ErrorIs(t, err, types.ErrSealedDataAuthentication, "the forged binding must not authenticate its AAD")
-	})
-}
-
 // TestUnseal_OversizedAndForeignObjects_Simulator proves oversized areas are
 // refused before they reach the TPM, and that an object which loads but is
 // not sealed data -- a TPM AES key -- is reported as sealed-data

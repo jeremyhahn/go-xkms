@@ -151,47 +151,6 @@ func nvHandlesInRange(t *testing.T, tpm transport.TPM) []uint32 {
 	return indices
 }
 
-// TestStoreRetrieve_RoundTrip verifies certificates come back byte-identical
-// from every kind of PIV slot.
-func TestStoreRetrieve_RoundTrip(t *testing.T) {
-	tpm := newSimulator(t)
-	store := newStore(t, tpm)
-
-	slots := []pivcert.PIVSlot{
-		pivcert.PIVSlotAuthentication,
-		pivcert.PIVSlotDigitalSignature,
-		pivcert.PIVSlotKeyManagement,
-		pivcert.PIVSlotCardAuthentication,
-		pivcert.PIVSlotAttestation,
-		pivcert.PIVSlotRetired1,
-		pivcert.PIVSlotRetired20,
-	}
-
-	stored := make(map[pivcert.PIVSlot]*x509.Certificate, len(slots))
-	for i, slot := range slots {
-		cert := generateCert(t, "Slot "+string(slot), int64(i+1))
-		if err := store.Store(slot, cert); err != nil {
-			t.Fatalf("Store(%q) error = %v", slot, err)
-		}
-		stored[slot] = cert
-	}
-
-	// Every slot must return its own certificate, not a neighbour's.
-	for _, slot := range slots {
-		got, err := store.Retrieve(slot)
-		if err != nil {
-			t.Fatalf("Retrieve(%q) error = %v", slot, err)
-		}
-		if !bytes.Equal(got.Raw, stored[slot].Raw) {
-			t.Errorf("Retrieve(%q) returned different DER bytes", slot)
-		}
-		if got.Subject.CommonName != stored[slot].Subject.CommonName {
-			t.Errorf("Retrieve(%q).CommonName = %q, want %q",
-				slot, got.Subject.CommonName, stored[slot].Subject.CommonName)
-		}
-	}
-}
-
 // TestStoreRetrieve_PersistsAcrossReopen is the test that proves the slot to NV
 // index mapping is stable: a brand new storage instance, holding no state from
 // the first, recomputes the same NV index and reads back the same bytes.
@@ -276,6 +235,15 @@ func TestPIVSlotCertIDs_MapToDistinctNVIndices(t *testing.T) {
 			t.Errorf("slots %q and %q collide on NV index %#x", previous, slot, index)
 		}
 		indices[index] = slot
+
+		// The certificate ID maps back to the slot it was stored under.
+		listed, err := store.List()
+		if err != nil {
+			t.Fatalf("List() after Store(%q) error = %v", slot, err)
+		}
+		if len(listed) != 1 || listed[0].Slot != slot {
+			t.Errorf("List() after Store(%q) = %+v, want only that slot", slot, listed)
+		}
 
 		if err := store.Delete(slot); err != nil {
 			t.Fatalf("Delete(%q) error = %v", slot, err)

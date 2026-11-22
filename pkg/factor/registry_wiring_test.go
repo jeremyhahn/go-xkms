@@ -233,25 +233,6 @@ func TestDefaultFactors_ProducesIndependentInstances(t *testing.T) {
 	}
 }
 
-// TestNewDefaultRegistry_NamesAreUnique documents why NewDefaultRegistry's
-// error branch is unreachable through the public API: registration fails only
-// on a duplicate name, and the canonical set has four distinct ones. If a new
-// factor is ever added with a colliding name this test catches it before the
-// silently-dropped registration reaches production.
-func TestNewDefaultRegistry_NamesAreUnique(t *testing.T) {
-	seen := map[string]int{}
-	for i, f := range DefaultFactors(Config{}) {
-		name := f.Name()
-		if name == "" {
-			t.Fatalf("DefaultFactors[%d] has an empty name", i)
-		}
-		if prev, dup := seen[name]; dup {
-			t.Fatalf("DefaultFactors[%d] and [%d] both use the name %q; registration would fail", prev, i, name)
-		}
-		seen[name] = i
-	}
-}
-
 // assertTTLNear checks a challenge expires roughly wantSeconds from now,
 // allowing a few seconds of slack for test scheduling.
 func assertTTLNear(t *testing.T, challenge *qrdbsdk.AuthFactorChallenge, wantSeconds int) {

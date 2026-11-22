@@ -247,16 +247,22 @@ func TestConsole_ConcurrentWriteReadAndClose(t *testing.T) {
 		}
 	}()
 
+	resizing := make(chan struct{})
 	go func() { // window-size pump
 		defer wg.Done()
 		for i := 0; i < 500; i++ {
-			if err := c.Resize(20+i%10, 80+i%10); err != nil {
+			err := c.Resize(20+i%10, 80+i%10)
+			if i == 0 {
+				close(resizing)
+			}
+			if err != nil {
 				return
 			}
 		}
 	}()
 
-	time.Sleep(5 * time.Millisecond)
+	// Close once the pumps are live.
+	<-resizing
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close during concurrent I/O: %v", err)
 	}
@@ -341,6 +347,11 @@ func TestConsole_CloseIsIdempotentAndTearsDownSession(t *testing.T) {
 		}
 	}
 
+	// Writes after close must fail rather than silently succeed.
+	if _, err := c.Write([]byte("x")); err == nil {
+		t.Error("Write after Close must fail")
+	}
+
 	select {
 	case <-srv.channelClosed:
 	case <-time.After(5 * time.Second):
@@ -411,74 +422,4 @@ func TestConsole_CloseWriteSignalsEOFAndSessionSurvives(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close after CloseWrite did not tear the session down")
 	}
-}
-
-// TestConsole_CloseWriteOnClosedConsole verifies the half-close path reports
-// the typed closed error rather than touching a torn-down channel.
-func TestConsole_CloseWriteOnClosedConsole(t *testing.T) {
-	srv := startLifecycleServer(t, modeEcho)
-	c, ok := dialLifecycleServer(t, srv)
-	if !ok {
-		return
-	}
-
-	if err := c.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-
-	var closedErr *ClosedError
-	if err := c.CloseWrite(); !errors.As(err, &closedErr) {
-		t.Fatalf("CloseWrite after Close = %T (%v), want *ClosedError", err, err)
-	}
-}
-
-// TestConsole_OpenDoesNotCloseCallerClient verifies Console.Close on a console
-// created by Open tears down only the session, leaving the caller's client
-// usable for a second console. Close now closes the session rather than the
-// stdin pipe, so this ownership boundary is worth pinning.
-func TestConsole_OpenLeavesClientUsable(t *testing.T) {
-	srv := startLifecycleServer(t, modeEcho)
-
-	client, err := ssh.Dial("tcp", net.JoinHostPort(srv.host, itoa(srv.port)), &ssh.ClientConfig{
-		User:            "tester",
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(clientSigner(t))},
-		HostKeyCallback: ssh.FixedHostKey(srv.hostPub),
-		Timeout:         10 * time.Second,
-	})
-	if !requireSSHHandshake(t, err) {
-		return
-	}
-	defer func() { _ = client.Close() }()
-
-	first, err := Open(client, Config{})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if err := first.Close(); err != nil {
-		t.Fatalf("Close first console: %v", err)
-	}
-
-	second, err := Open(client, Config{})
-	if err != nil {
-		t.Fatalf("Open after closing the first console: %v (Close must not close the caller's client)", err)
-	}
-	if err := second.Close(); err != nil {
-		t.Fatalf("Close second console: %v", err)
-	}
-}
-
-// itoa renders a port without pulling strconv into this file's import set for
-// a single call site.
-func itoa(v int) string {
-	if v == 0 {
-		return "0"
-	}
-	var buf [8]byte
-	i := len(buf)
-	for v > 0 {
-		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return string(buf[i:])
 }

@@ -16,13 +16,11 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -33,7 +31,6 @@ import (
 	"testing"
 
 	"github.com/go-jose/go-jose/v4"
-	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
@@ -42,7 +39,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -303,111 +299,8 @@ func setupServiceWithTenantFactory(t *testing.T, tenantDAO *mockTenantDAOSimple)
 }
 
 // =============================================================================
-// findPCRValue Tests
-// =============================================================================
-
-func TestFindPCRValue_EmptyDataSimple(t *testing.T) {
-	value, found := findPCRValue(nil, 0)
-	assert.False(t, found)
-	assert.Nil(t, value)
-}
-
-func TestFindPCRValue_InvalidGobSimple(t *testing.T) {
-	value, found := findPCRValue([]byte("invalid"), 0)
-	assert.False(t, found)
-	assert.Nil(t, value)
-}
-
-func TestFindPCRValue_ValidBanksSimple(t *testing.T) {
-	banks := []xkmssdk.PCRBank{
-		{Algorithm: "sha256", PCRs: []xkmssdk.PCR{{ID: 0, Value: []byte("pcr0")}, {ID: 7, Value: []byte("pcr7")}}},
-	}
-	var buf bytes.Buffer
-	err := gob.NewEncoder(&buf).Encode(banks)
-	require.NoError(t, err)
-
-	value, found := findPCRValue(buf.Bytes(), 0)
-	assert.True(t, found)
-	assert.Equal(t, []byte("pcr0"), value)
-
-	value, found = findPCRValue(buf.Bytes(), 7)
-	assert.True(t, found)
-	assert.Equal(t, []byte("pcr7"), value)
-
-	value, found = findPCRValue(buf.Bytes(), 23)
-	assert.False(t, found)
-	assert.Nil(t, value)
-}
-
-func TestFindPCRValue_SHA256PreferredSimple(t *testing.T) {
-	banks := []xkmssdk.PCRBank{
-		{Algorithm: "SHA256", PCRs: []xkmssdk.PCR{{ID: 0, Value: []byte("sha256")}}},
-		{Algorithm: "sha1", PCRs: []xkmssdk.PCR{{ID: 0, Value: []byte("sha1")}}},
-	}
-	var buf bytes.Buffer
-	err := gob.NewEncoder(&buf).Encode(banks)
-	require.NoError(t, err)
-
-	value, found := findPCRValue(buf.Bytes(), 0)
-	assert.True(t, found)
-	assert.Equal(t, []byte("sha256"), value)
-}
-
-// =============================================================================
-// NewPCRValidationHook Tests
-// =============================================================================
-
-func TestNewPCRValidationHook_SkipsNonTCGSimple(t *testing.T) {
-	hook := NewPCRValidationHook(&PCRPolicy{ExpectedPCRs: map[int][]byte{0: {0x01}}, StrictMode: true})
-
-	err := hook(&PreIssuanceHookContext{IsTCGCSR: false})
-	assert.NoError(t, err)
-
-	err = hook(&PreIssuanceHookContext{IsTCGCSR: true, TCGData: nil})
-	assert.NoError(t, err)
-}
-
-func TestNewPCRValidationHook_StrictMissingDataSimple(t *testing.T) {
-	hook := NewPCRValidationHook(&PCRPolicy{ExpectedPCRs: map[int][]byte{0: {0x01}}, StrictMode: true})
-
-	err := hook(&PreIssuanceHookContext{
-		IsTCGCSR: true,
-		TCGData:  &TCGEnrollmentData{ProdCaData: nil},
-	})
-	assert.ErrorIs(t, err, ErrAttestationDataMissing)
-}
-
-// =============================================================================
-// validateDeviceAgainstProfile Tests
-// =============================================================================
-
-func TestValidateDeviceAgainstProfile_EmptyPCRsSimple(t *testing.T) {
-	profile := &DeviceProfile{ExpectedPCRs: nil}
-	tcgData := &TCGEnrollmentData{}
-	err := validateDeviceAgainstProfile(tcgData, profile)
-	assert.NoError(t, err)
-}
-
-func TestValidateDeviceAgainstProfile_InvalidDataSimple(t *testing.T) {
-	profile := &DeviceProfile{ExpectedPCRs: map[int][]byte{0: {0x01}}}
-	tcgData := &TCGEnrollmentData{ProdCaData: []byte("invalid")}
-	err := validateDeviceAgainstProfile(tcgData, profile)
-	assert.Error(t, err)
-}
-
-// =============================================================================
 // resolveTenantSigningCA Tests
 // =============================================================================
-
-func TestResolveTenantSigningCA_DAOErrorSimple(t *testing.T) {
-	dao := &mockTenantDAOSimple{tenants: make(map[string]*entities.Tenant), getErr: errors.New("db error")}
-	service, cleanup := setupServiceWithTenantFactory(t, dao)
-	defer cleanup()
-
-	result, err := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
-	assert.ErrorIs(t, err, ErrTenantNotFound)
-	assert.Nil(t, result)
-}
 
 func TestResolveTenantSigningCA_TenantInactiveSimple(t *testing.T) {
 	dao := &mockTenantDAOSimple{tenants: map[string]*entities.Tenant{"t1": {ID: "t1", Status: entities.TenantStatusSuspended}}}
@@ -419,76 +312,9 @@ func TestResolveTenantSigningCA_TenantInactiveSimple(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestResolveTenantSigningCA_WithIntermediateSimple(t *testing.T) {
-	dao := &mockTenantDAOSimple{tenants: map[string]*entities.Tenant{
-		"t1": {ID: "t1", Status: entities.TenantStatusActive, IntermediateCAs: []*entities.TenantIntermediateCA{{ID: "ca1", Status: entities.CAStatusActive}}},
-	}}
-	service, cleanup := setupServiceWithTenantFactory(t, dao)
-	defer cleanup()
-
-	result, err := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, entities.SigningCATypeIntermediate, result.Type)
-}
-
-func TestResolveTenantSigningCA_FallbackGlobalSimple(t *testing.T) {
-	dao := &mockTenantDAOSimple{tenants: map[string]*entities.Tenant{"t1": {ID: "t1", Status: entities.TenantStatusActive}}}
-	service, cleanup := setupServiceWithTenantFactory(t, dao)
-	defer cleanup()
-
-	result, err := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.True(t, result.UseGlobalDefault)
-}
-
 // =============================================================================
 // getTenantCASigner Tests
 // =============================================================================
-
-func TestGetTenantCASigner_NilKMSSimple(t *testing.T) {
-	service, _, cleanup := setupTestServiceWithMockCA(t)
-	defer cleanup()
-
-	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
-	assert.ErrorIs(t, err, ErrTenantSignerUnavailable)
-	assert.Nil(t, result)
-}
-
-func TestGetTenantCASigner_UnknownTypeSimple(t *testing.T) {
-	service, _, cleanup := setupTestServiceWithMockCA(t)
-	defer cleanup()
-	service.kmsService = &mockKMSServiceSimple{signers: make(map[string]crypto.Signer)}
-
-	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: "unknown", TenantID: "t1"})
-	assert.ErrorIs(t, err, ErrTenantCATypeUnsupported)
-	assert.Nil(t, result)
-}
-
-func TestGetTenantCASigner_KMSErrorSimple(t *testing.T) {
-	service, _, cleanup := setupTestServiceWithMockCA(t)
-	defer cleanup()
-	service.kmsService = &mockKMSServiceSimple{signers: make(map[string]crypto.Signer), getSignerErr: errors.New("kms fail")}
-
-	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
-	assert.ErrorIs(t, err, ErrTenantSignerUnavailable)
-	assert.Nil(t, result)
-}
-
-func TestGetTenantCASigner_IntermediateSuccessSimple(t *testing.T) {
-	service, _, cleanup := setupTestServiceWithMockCA(t)
-	defer cleanup()
-
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	service.kmsService = &mockKMSServiceSimple{signers: map[string]crypto.Signer{
-		"t1-" + string(kms.KeyPurposeTenantIntermediateCA): key,
-	}}
-
-	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-}
 
 func TestGetTenantCASigner_RootSuccessSimple(t *testing.T) {
 	service, _, cleanup := setupTestServiceWithMockCA(t)
@@ -533,90 +359,6 @@ func TestResolveTenantComplianceConfig_TenantConfigSimple(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.True(t, result.Enabled)
 	assert.True(t, result.RequireSignedReport)
-}
-
-func TestResolveTenantComplianceConfig_EnforcedGlobalSimple(t *testing.T) {
-	dao := &mockTenantDAOSimple{tenants: map[string]*entities.Tenant{
-		"t1": {ID: "t1", Status: entities.TenantStatusActive, Settings: &entities.TenantSettings{
-			ComplianceConfig: &entities.ComplianceConfig{Enabled: false},
-		}},
-	}}
-	service, cleanup := setupServiceWithTenantFactory(t, dao)
-	defer cleanup()
-	service.globalComplianceConfig = &GlobalComplianceConfig{ComplianceConfig: ComplianceConfig{Enabled: true}, Enforce: true}
-
-	result := service.resolveTenantComplianceConfig(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"})
-	assert.NotNil(t, result)
-	assert.True(t, result.Enabled)
-}
-
-// =============================================================================
-// validateEventLogAgainstPCRs Tests
-// =============================================================================
-
-func TestValidateEventLogAgainstPCRs_EmptySimple(t *testing.T) {
-	assert.NoError(t, validateEventLogAgainstPCRs(nil, []byte("data")))
-	assert.NoError(t, validateEventLogAgainstPCRs([]byte("data"), nil))
-	assert.NoError(t, validateEventLogAgainstPCRs(nil, nil))
-}
-
-// =============================================================================
-// KeyChangeHandler Tests
-// =============================================================================
-
-func TestKeyChangeHandler_SameKeySimple(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	payload := createKeyChangePayloadSimple(t, service, account, key, key)
-
-	url := service.baseRESTURI + "/acme/key-change"
-	req := createJWSRequest(t, service, key, url, json.RawMessage(payload), true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.KeyChangeHandler(resp, req)
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
-}
-
-func TestKeyChangeHandler_ConflictSimple(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key1 := generateTestKey(t)
-	account1 := createTestAccount(t, service, key1)
-
-	key2 := generateTestKey(t)
-	_ = createTestAccount(t, service, key2)
-
-	payload := createKeyChangePayloadSimple(t, service, account1, key1, key2)
-
-	url := service.baseRESTURI + "/acme/key-change"
-	req := createJWSRequest(t, service, key1, url, json.RawMessage(payload), true, account1.ID)
-
-	resp := httptest.NewRecorder()
-	service.KeyChangeHandler(resp, req)
-	assert.Equal(t, http.StatusConflict, resp.Code)
-}
-
-func createKeyChangePayloadSimple(t *testing.T, service *RestService, account *entities.ACMEAccount, oldKey, newKey *TestKey) []byte {
-	oldKeyJWK := &jose.JSONWebKey{Key: oldKey.PublicKey}
-	oldKeyJSON, _ := oldKeyJWK.MarshalJSON()
-	var oldKeyMap map[string]interface{}
-	json.Unmarshal(oldKeyJSON, &oldKeyMap)
-
-	innerPayload := map[string]interface{}{"account": account.URL, "oldKey": oldKeyMap}
-	innerPayloadBytes, _ := json.Marshal(innerPayload)
-
-	innerSignerOpts := &jose.SignerOptions{ExtraHeaders: map[jose.HeaderKey]interface{}{"url": service.baseRESTURI + "/acme/key-change"}}
-	innerSignerOpts.EmbedJWK = true
-
-	innerSigner, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: newKey.PrivateKey}, innerSignerOpts)
-	innerJWS, _ := innerSigner.Sign(innerPayloadBytes)
-
-	return []byte(innerJWS.FullSerialize())
 }
 
 // =============================================================================
@@ -677,30 +419,3 @@ func (f *failingAccountDAOFactorySimple) AccountDAO() (qrdbsdk.GenericDAO[*entit
 // =============================================================================
 // OrderFinalizeHandler Tests
 // =============================================================================
-
-func TestOrderFinalizeHandler_UnauthorizedSimple(t *testing.T) {
-	service, _, cleanup := setupTestServiceWithMockCA(t)
-	defer cleanup()
-
-	key1 := generateTestKey(t)
-	account1 := createTestAccount(t, service, key1)
-
-	key2 := generateTestKey(t)
-	account2 := createTestAccount(t, service, key2)
-
-	ctx := context.Background()
-	orderDAO, _ := service.storageFactory.OrderDAO(account1.ID)
-	order := &entities.ACMEOrder{ID: 99999, AccountID: account1.ID, Status: common.StatusReady, Identifiers: []entities.ACMEIdentifier{{Type: "dns", Value: "example.com"}}}
-	orderDAO.Save(ctx, order)
-
-	payload := OrderFinalizeRequest{CSR: "test-csr"}
-	url := service.baseRESTURI + "/acme/order/99999/finalize"
-	req := createJWSRequest(t, service, key2, url, payload, true, account2.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": "99999"})
-
-	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
-	// Order lookup uses the authenticated account's ID, so order won't be found (400)
-	// rather than being found and access denied (401)
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
-}

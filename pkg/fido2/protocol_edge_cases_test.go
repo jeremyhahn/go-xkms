@@ -736,48 +736,6 @@ func (d *DeriveSecretShortAuthDataMockDevice) Read(data []byte) (int, error) {
 	return 0, &errs.Message{Msg: "no data"}
 }
 
-// TestGenerateDerivedKey_InvalidLength tests key derivation with invalid secret length
-func TestGenerateDerivedKey_InvalidLength(t *testing.T) {
-	// Too short
-	_, err := GenerateDerivedKey(make([]byte, 16))
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid HMAC secret length")
-
-	// Too long
-	_, err = GenerateDerivedKey(make([]byte, 64))
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid HMAC secret length")
-}
-
-// TestParseAuthDataExtensions_WithAttestedCredData tests extension parsing with attested cred data
-func TestParseAuthDataExtensions_WithAttestedCredData(t *testing.T) {
-	// Create auth data with AT flag and ED flag
-	authData := make([]byte, 100)
-	authData[32] = 0xC0 // AT + ED flags
-
-	// AAGUID (16 bytes at offset 37)
-	// Credential ID length (2 bytes at offset 53)
-	authData[53] = 0x00
-	authData[54] = 0x10 // 16 bytes credential ID
-
-	// The COSE public key position holds CBOR unsigned zero, which is
-	// well-formed but is not a COSE_Key map.
-	extensions, err := ParseAuthDataExtensions(authData)
-	assert.ErrorIs(t, err, ErrInvalidCOSEKey)
-	assert.Nil(t, extensions)
-}
-
-// TestParseAuthDataExtensions_InvalidAttestedCredData tests with invalid attested cred data
-func TestParseAuthDataExtensions_InvalidAttestedCredData(t *testing.T) {
-	// Create auth data with AT flag but too short for attested cred data
-	authData := make([]byte, 40)
-	authData[32] = 0xC0 // AT + ED flags
-
-	extensions, err := ParseAuthDataExtensions(authData)
-	assert.Error(t, err)
-	assert.Nil(t, extensions)
-}
-
 // TestHandleCTAPError_AllStatusCodes tests all CTAP status code handling
 func TestHandleCTAPError_AllStatusCodes(t *testing.T) {
 	mockDev := NewMockHIDDevice("/dev/hidraw0")

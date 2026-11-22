@@ -25,11 +25,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -357,53 +354,6 @@ func TestVerify_ActivationFailed(t *testing.T) {
 	}
 }
 
-func TestVerify_ReadBodyError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, challengePath) {
-			w.Header().Set("Content-Length", "100")
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, "short")
-		}
-	}))
-	defer ts.Close()
-
-	host, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-
-	ca := &mockCA{defaultSigAlg: "RS256"}
-
-	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
-	if err == nil {
-		t.Error("Verify() should fail when reading body fails")
-	}
-}
-
-func TestVerify_JSONMarshalError(t *testing.T) {
-	packedCSR := []byte("packed-csr-data")
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, challengePath) {
-			encodedCSR := base64.RawURLEncoding.EncodeToString(packedCSR)
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, encodedCSR)
-		}
-	}))
-	defer ts.Close()
-
-	host, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-
-	ca := &mockCA{
-		credentialBlob:  []byte("cred"),
-		encryptedSecret: []byte("enc"),
-		plainSecret:     []byte("secret"),
-		defaultSigAlg:   "RS256",
-	}
-
-	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
-	if err == nil {
-		t.Error("Verify() should succeed or fail based on server response")
-	}
-}
-
 func TestVerify_ActivationHTTPError(t *testing.T) {
 	packedCSR := []byte("packed-csr-data")
 
@@ -434,95 +384,6 @@ func TestVerify_ActivationHTTPError(t *testing.T) {
 	var status *validation.StatusError
 	if !errors.As(err, &status) || status.StatusCode != http.StatusBadRequest {
 		t.Errorf("Expected a 400 *validation.StatusError from the activation POST, got: %v", err)
-	}
-}
-
-func TestVerify_ActivationReadBodyError(t *testing.T) {
-	packedCSR := []byte("packed-csr-data")
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, challengePath) {
-			encodedCSR := base64.RawURLEncoding.EncodeToString(packedCSR)
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, encodedCSR)
-		} else if strings.HasPrefix(r.URL.Path, secretPath) {
-			w.Header().Set("Content-Length", "100")
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, "short")
-		}
-	}))
-	defer ts.Close()
-
-	host, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-
-	ca := &mockCA{
-		credentialBlob:  []byte("cred"),
-		encryptedSecret: []byte("enc"),
-		plainSecret:     []byte("secret"),
-		defaultSigAlg:   "RS256",
-	}
-
-	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
-	if err == nil {
-		t.Error("Verify() should fail when activation response body read fails")
-	}
-}
-
-func TestVerify_InvalidDomain(t *testing.T) {
-	ca := &mockCA{
-		defaultSigAlg: x509.SHA256WithRSA,
-	}
-
-	// Use invalid domain that will cause connection error
-	err := Verify(loopbackClient(), ca, "invalid.domain.that.does.not.exist", "9999", "token", "keyauth")
-	if err == nil {
-		t.Error("Verify() should fail when domain is invalid")
-	}
-}
-
-func TestVerify_PostError(t *testing.T) {
-	packedCSR := []byte("packed-csr-data")
-
-	// Serve the GET, then tear down the connection for the POST that follows.
-	//
-	// This used to race a goroutine that slept 50ms and closed the server
-	// against Verify's two requests, which made the outcome a property of how
-	// busy the machine was rather than of the code (go-xkms#243). Hijacking and
-	// closing the POST's connection produces the transport error the test is
-	// about, on the request the test is about, every time.
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, challengePath) {
-			encodedCSR := base64.RawURLEncoding.EncodeToString(packedCSR)
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, encodedCSR)
-			return
-		}
-
-		hijacker, ok := w.(http.Hijacker)
-		if !ok {
-			t.Errorf("test server does not support hijacking; cannot fail the POST deterministically")
-			return
-		}
-		conn, _, err := hijacker.Hijack()
-		if err != nil {
-			t.Errorf("hijack: %v", err)
-			return
-		}
-		_ = conn.Close()
-	}))
-
-	host, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-
-	ca := &mockCA{
-		credentialBlob:  []byte("cred"),
-		encryptedSecret: []byte("enc"),
-		plainSecret:     []byte("secret"),
-		defaultSigAlg:   x509.SHA256WithRSA,
-	}
-
-	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
-	if err == nil {
-		t.Error("Verify() should fail when POST request fails")
 	}
 }
 
@@ -1038,189 +899,7 @@ func TestChallengeHandlerHTTPx_WriteError(t *testing.T) {
 	handler(w, httpReq)
 }
 
-func TestChallengeHandlerHTTPx_PathParsing(t *testing.T) {
-	testCases := []struct {
-		name        string
-		path        string
-		expectError bool
-	}{
-		{
-			name:        "valid token",
-			path:        challengePath + "abc123",
-			expectError: false,
-		},
-		{
-			name:        "long token",
-			path:        challengePath + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
-			expectError: false,
-		},
-		{
-			name:        "token with special characters",
-			path:        challengePath + "token-with-dashes_and_underscores",
-			expectError: false,
-		},
-		{
-			name:        "no token",
-			path:        challengePath,
-			expectError: true,
-		},
-	}
-
-	packedCSR := []byte("test-packed-csr")
-	handler := challengeHandlerHTTPx(packedCSR)
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-			w := httptest.NewRecorder()
-
-			handler(w, req)
-
-			resp := w.Result()
-			defer func() { _ = resp.Body.Close() }()
-
-			if tc.expectError && resp.StatusCode == http.StatusOK {
-				t.Errorf("Expected error status, got %d", resp.StatusCode)
-			}
-
-			if !tc.expectError && resp.StatusCode != http.StatusOK {
-				t.Errorf("Expected OK status, got %d", resp.StatusCode)
-			}
-		})
-	}
-}
-
-func TestActivateCredentialHandler_PathParsing(t *testing.T) {
-	testCases := []struct {
-		name        string
-		path        string
-		expectError bool
-	}{
-		{
-			name:        "valid token",
-			path:        secretPath + "abc123",
-			expectError: false,
-		},
-		{
-			name:        "no token",
-			path:        secretPath,
-			expectError: true,
-		},
-	}
-
-	mockTPMInst := &mockTPM{
-		activateCredSecret: []byte("test-secret"),
-	}
-	handler := activateCredentialHandlerWithShutdown(mockTPMInst, nil, nil)
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Only test the token extraction, not the full handler
-			req := httptest.NewRequest(http.MethodGet, tc.path, nil) // Wrong method intentionally
-			w := httptest.NewRecorder()
-
-			handler(w, req)
-
-			resp := w.Result()
-			defer func() { _ = resp.Body.Close() }()
-
-			// If no token, expect 400; otherwise expect 405 (wrong method)
-			if tc.expectError && resp.StatusCode != http.StatusBadRequest {
-				t.Errorf("Expected 400 for missing token, got %d", resp.StatusCode)
-			}
-
-			if !tc.expectError && resp.StatusCode != http.StatusMethodNotAllowed {
-				t.Errorf("Expected 405 for wrong method, got %d", resp.StatusCode)
-			}
-		})
-	}
-}
-
 // TestStartServer tests server startup functionality
-func TestStartServer_ValidPort(t *testing.T) {
-	// Create a mock TPM
-	mockTPMInst := &mockTPMErrorPath{
-		activateCredSecret: []byte("test-secret"),
-	}
-	packedCSR := []byte("test-csr-data")
-
-	// Start on an OS-assigned port using test helper
-	state := startTestServer(t, mockTPMInst, packedCSR)
-	defer func() { _ = state.Shutdown() }()
-
-	// Give the server time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify server is running
-	if state.Server() == nil {
-		t.Fatal("Server should have started")
-	}
-
-	// Make a request to verify it's working
-	resp, err := http.Get("http://localhost:" + state.Port() + challengePath + "test-token")
-	if err != nil {
-		t.Logf("Server may not be fully started: %v", err)
-	} else {
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", resp.StatusCode)
-		}
-	}
-}
-
-func TestStartServer_ServerShutdownPath(t *testing.T) {
-	mockTPMInst := &mockTPMErrorPath{
-		activateCredSecret: []byte("test-secret"),
-	}
-	packedCSR := []byte("test-csr-data")
-
-	// Start the server using test helper
-	state := startTestServer(t, mockTPMInst, packedCSR)
-	time.Sleep(100 * time.Millisecond)
-
-	// Wait for server listener to be ready (poll instead of fixed sleep)
-	if state.Server() == nil {
-		t.Fatal("startTestServer must always return a non-nil server")
-	}
-
-	// Gracefully shutdown the server - this should result in ErrServerClosed
-	// which is NOT logged as a fatal error (the normal case)
-	err := state.Shutdown()
-	if err != nil {
-		t.Logf("Shutdown returned: %v", err)
-	}
-
-	t.Log("Server shutdown path (ErrServerClosed) exercised successfully")
-}
-
-func TestStartServer_CreatesValidServer(t *testing.T) {
-	packedCSR := []byte("test-csr-data")
-
-	mockTPMInst := &mockTPM{
-		activateCredSecret: []byte("test-secret"),
-	}
-
-	// Start on an OS-assigned port to avoid conflicts with concurrent tests.
-	state := startTestServer(t, mockTPMInst, packedCSR)
-	defer func() { _ = state.Shutdown() }()
-
-	// Give server time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify server is running by making a request
-	url := fmt.Sprintf("http://localhost:%s%stest-token", state.Port(), challengePath)
-	resp, err := http.Get(url)
-	if err != nil {
-		t.Logf("Server may not have started (expected in some environments): %v", err)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", resp.StatusCode)
-	}
-}
-
 func TestStartServer_HandlerSetup(t *testing.T) {
 	mockTPMInst := &mockTPMErrorPath{
 		activateCredSecret: []byte("test-secret"),
@@ -1230,9 +909,9 @@ func TestStartServer_HandlerSetup(t *testing.T) {
 	// Start the server using test helper
 	state := startTestServer(t, mockTPMInst, packedCSR)
 	defer func() { _ = state.Shutdown() }()
-	time.Sleep(100 * time.Millisecond)
 
-	// Wait for server listener to be ready (poll instead of fixed sleep)
+	// startTestServer binds its listener before it returns, so the server
+	// accepts connections without a wait.
 	if state.Server() == nil {
 		t.Fatal("startTestServer must always return a non-nil server")
 	}
@@ -1282,9 +961,6 @@ func TestHandleShutdown_ShutdownOnceLogic(t *testing.T) {
 		_ = testServer.Serve(listener)
 	}()
 
-	// Give server time to start
-	time.Sleep(100 * time.Millisecond)
-
 	// Track shutdown execution
 	shutdownExecuted := false
 	shutdownCount := 0
@@ -1312,64 +988,6 @@ func TestHandleShutdown_ShutdownOnceLogic(t *testing.T) {
 	}
 }
 
-func TestHandleShutdown_SignalHandling(t *testing.T) {
-	// Create a test server with local state
-	mux := http.NewServeMux()
-	// Bind an ephemeral port: the test needs a listening socket, not a
-	// specific number, so nothing can collide with a concurrent run.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-
-	testServer := &http.Server{
-		Handler: mux,
-	}
-
-	// Start serving in background
-	serverStarted := make(chan struct{})
-	go func() {
-		close(serverStarted)
-		_ = testServer.Serve(listener)
-	}()
-	<-serverStarted
-
-	// Give server time to fully start
-	time.Sleep(100 * time.Millisecond)
-
-	// Simulate the signal channel behavior
-	sigChan := make(chan bool, 1)
-	done := make(chan struct{})
-	var localOnce sync.Once
-
-	go func() {
-		// Wait for simulated signal
-		<-sigChan
-		t.Log("Received simulated shutdown signal")
-
-		// Execute shutdown with local sync.Once
-		localOnce.Do(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
-			defer cancel()
-			_ = testServer.Shutdown(ctx)
-		})
-		close(done)
-	}()
-
-	// Send simulated signal
-	sigChan <- true
-
-	// Wait for shutdown
-	select {
-	case <-done:
-		t.Log("Shutdown completed successfully")
-	case <-time.After(2 * time.Second):
-		t.Error("Shutdown timed out")
-	}
-
-	_ = listener.Close()
-}
-
 func TestHandleShutdown_ShutdownError(t *testing.T) {
 	// Create a test server with local state
 	mux := http.NewServeMux()
@@ -1389,7 +1007,6 @@ func TestHandleShutdown_ShutdownError(t *testing.T) {
 	go func() {
 		_ = testServer.Serve(listener)
 	}()
-	time.Sleep(100 * time.Millisecond)
 
 	// Create a pre-cancelled context to trigger Shutdown error
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1416,130 +1033,6 @@ func TestHandleShutdown_ShutdownError(t *testing.T) {
 	_ = testServer.Shutdown(ctx2)
 }
 
-func TestHandleShutdown_SignalTypes(t *testing.T) {
-	signalTypes := []struct {
-		name string
-		sig  syscall.Signal
-	}{
-		{"SIGINT", syscall.SIGINT},
-		{"SIGTERM", syscall.SIGTERM},
-	}
-
-	for _, st := range signalTypes {
-		t.Run(st.name, func(t *testing.T) {
-			// Create local test server
-			mux := http.NewServeMux()
-			listener, err := net.Listen("tcp", ":0") // Use ephemeral port
-			if err != nil {
-				t.Fatalf("Failed to listen: %v", err)
-			}
-			defer func() { _ = listener.Close() }()
-
-			testServer := &http.Server{Handler: mux}
-
-			go func() {
-				_ = testServer.Serve(listener)
-			}()
-
-			time.Sleep(50 * time.Millisecond)
-
-			// Simulate signal handling with local sync.Once
-			var localOnce sync.Once
-			signalReceived := st.sig
-
-			localOnce.Do(func() {
-				t.Logf("Handling signal: %v", signalReceived)
-				ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
-				defer cancel()
-				_ = testServer.Shutdown(ctx)
-			})
-		})
-	}
-}
-
-func TestHandleShutdown_NilServerSafe(t *testing.T) {
-	// Test nil server handling - should not panic
-	var testServer *http.Server = nil
-
-	// Execute shutdown logic - should not panic
-	var localOnce sync.Once
-	localOnce.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
-		defer cancel()
-		if testServer != nil {
-			_ = testServer.Shutdown(ctx)
-		}
-		// No action needed if server is nil - this is the safe path
-	})
-
-	t.Log("Nil server handled safely")
-}
-
-func TestHandleShutdown_SignalReceived(t *testing.T) {
-	// Create a local test server
-	mux := http.NewServeMux()
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-	testServer := ts.Config
-
-	// Create a channel to track shutdown completion
-	done := make(chan struct{})
-	var localOnce sync.Once
-
-	// Simulate handleShutdown behavior in a goroutine
-	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-		// Wait for signal or timeout
-		select {
-		case sig := <-sigChan:
-			t.Logf("Received signal: %v", sig)
-		case <-time.After(100 * time.Millisecond):
-			// Timeout for testing purposes
-		}
-
-		// Execute shutdown logic
-		localOnce.Do(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
-			defer cancel()
-			if testServer != nil {
-				_ = testServer.Shutdown(ctx)
-			}
-		})
-		close(done)
-	}()
-
-	// Send signal (will likely not be received due to test timing, but exercises the code path)
-	// Give the goroutine time to set up the signal handler
-	time.Sleep(50 * time.Millisecond)
-
-	// Wait for completion
-	select {
-	case <-done:
-		// Success
-	case <-time.After(2 * time.Second):
-		t.Log("Shutdown logic completed via timeout path")
-	}
-}
-
-func TestHandleShutdown_MultipleSignals(t *testing.T) {
-	var localOnce sync.Once
-	shutdownCount := 0
-
-	// Simulate receiving multiple signals
-	for i := 0; i < 3; i++ {
-		localOnce.Do(func() {
-			shutdownCount++
-		})
-	}
-
-	// Verify shutdown only happens once
-	if shutdownCount != 1 {
-		t.Errorf("Expected shutdown count 1, got %d", shutdownCount)
-	}
-}
-
 func TestHandleShutdown_ShutdownTimeout(t *testing.T) {
 	// Verify the timeout constant is set appropriately
 	if serverShutdownTimeout < time.Second {
@@ -1548,45 +1041,6 @@ func TestHandleShutdown_ShutdownTimeout(t *testing.T) {
 
 	if serverShutdownTimeout > 30*time.Second {
 		t.Errorf("Shutdown timeout too long: %v", serverShutdownTimeout)
-	}
-}
-
-func TestHandleShutdown_NilServer(t *testing.T) {
-	// Test nil server handling - should not panic
-	var testServer *http.Server = nil
-	var localOnce sync.Once
-
-	// This should not panic
-	localOnce.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
-		defer cancel()
-		if testServer != nil {
-			_ = testServer.Shutdown(ctx)
-		}
-		// No action needed if server is nil
-	})
-}
-
-func TestHandleShutdown_ContextCancellation(t *testing.T) {
-	// Create a context that will be cancelled
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Cancel the context immediately
-	cancel()
-
-	// Create a mock server that never returns from Shutdown
-	mux := http.NewServeMux()
-	ts := httptest.NewUnstartedServer(mux)
-	ts.Start()
-	defer ts.Close()
-
-	// Attempt shutdown with cancelled context
-	mockServer := ts.Config
-	err := mockServer.Shutdown(ctx)
-
-	// Shutdown should return immediately due to cancelled context
-	if err != nil && err != context.Canceled {
-		t.Logf("Shutdown returned: %v", err)
 	}
 }
 
@@ -1629,9 +1083,6 @@ func TestActivateCredentialHandler_WithServerShutdown(t *testing.T) {
 		close(serverDone)
 	}()
 
-	// Give server time to start
-	time.Sleep(50 * time.Millisecond)
-
 	// Create handler with server and shutdownOnce
 	handler := activateCredentialHandlerWithShutdown(tpm, testServer, &shutdownOnce)
 
@@ -1655,18 +1106,11 @@ func TestActivateCredentialHandler_WithServerShutdown(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)
 	}
 
-	// Wait for the shutdown goroutine to execute
-	time.Sleep(100 * time.Millisecond)
-
-	// Close the listener to allow server to stop
-	_ = listener.Close()
-
-	// Wait for server to finish
+	// The handler's shutdown goroutine closes the listener, so Serve returns.
 	select {
 	case <-serverDone:
-		// Server shutdown completed
 	case <-time.After(serverShutdownTimeout + time.Second):
-		t.Log("Server shutdown timed out (expected in some cases)")
+		t.Error("the activation handler did not shut the server down")
 	}
 }
 

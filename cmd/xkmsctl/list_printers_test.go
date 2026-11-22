@@ -193,11 +193,3 @@ func TestPasswordList_Empty(t *testing.T) {
 		})
 	}
 }
-
-func TestPasswordList_ConnectFailure(t *testing.T) {
-	mock := &mockPasswordClient{mockBackendsClient: mockBackendsClient{connectErr: errListBoom}}
-	out, code, stderr := runPasswordList(t, mock, "text")
-	assert.Equal(t, 1, code)
-	assert.Contains(t, stderr, ErrConnectFailed.Error())
-	assert.Empty(t, out)
-}

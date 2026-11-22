@@ -1,0 +1,1 @@
+- **The embedded transport's key-management and crypto-utility methods are tested.** Their 27 methods join the `forwardingCalls` table. Each must return `ErrNotConnected` before connect and after close, and must pass through the service's error unchanged. The key-management fakes now honour `shouldFail`. Package coverage rises from 81.9% to 100% (#1794).

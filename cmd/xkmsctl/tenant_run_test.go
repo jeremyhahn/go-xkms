@@ -94,17 +94,6 @@ func TestTenantCreateCmd_Success(t *testing.T) {
 	}
 }
 
-func TestTenantListCmd_Run(t *testing.T) {
-	mock := &mockTenantClient{listTenantsResp: &transport.ListTenantsResponse{
-		Tenants: []transport.TenantInfo{{ID: "acme", Name: "Acme"}},
-	}}
-	withGlobalConfig(t, newTenantRunConfig(mock))
-
-	captureStdout(t, func() {
-		tenantListCmd.Run(tenantListCmd, nil)
-	})
-}
-
 func TestTenantListCmd_Error(t *testing.T) {
 	mock := &mockTenantClient{listTenantsErr: errTenantRunBoom}
 	withGlobalConfig(t, newTenantRunConfig(mock))

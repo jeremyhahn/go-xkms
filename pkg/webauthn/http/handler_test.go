@@ -206,53 +206,6 @@ func TestHandler_FinishRegistration(t *testing.T) {
 	}
 }
 
-func TestHandler_FinishRegistration_ServiceErrors(t *testing.T) {
-	h := newTestHandler(t)
-
-	// Create a valid session first
-	beginReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
-		strings.NewReader(`{"email":"test@example.com"}`))
-	beginReq.Header.Set("Content-Type", "application/json")
-	beginRec := httptest.NewRecorder()
-	h.BeginRegistration(beginRec, beginReq)
-	require.Equal(t, http.StatusOK, beginRec.Code)
-	_ = beginRec.Header().Get(HeaderSessionID) // Use the session if needed later
-
-	tests := []struct {
-		name       string
-		sessionID  string
-		body       string
-		wantStatus int
-		wantCode   string
-	}{
-		{
-			name:       "session not found",
-			sessionID:  "nonexistent-session-id",
-			body:       `{"id":"test","rawId":"dGVzdA","type":"public-key","response":{"clientDataJSON":"eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIn0","attestationObject":"o2NmbXRkbm9uZQ"}}`,
-			wantStatus: http.StatusBadRequest,
-			wantCode:   ErrorCodeInvalidRequest,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/registration/finish", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set(HeaderSessionID, tt.sessionID)
-			rec := httptest.NewRecorder()
-
-			h.FinishRegistration(rec, req)
-
-			assert.Equal(t, tt.wantStatus, rec.Code)
-
-			var errResp ErrorResponse
-			err := json.NewDecoder(rec.Body).Decode(&errResp)
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantCode, errResp.Error)
-		})
-	}
-}
-
 func TestHandler_BeginLogin(t *testing.T) {
 	h := newTestHandler(t)
 
@@ -436,44 +389,6 @@ func TestHandler_FinishLogin(t *testing.T) {
 	}
 }
 
-func TestHandler_FinishLogin_ServiceErrors(t *testing.T) {
-	h := newTestHandler(t)
-
-	tests := []struct {
-		name       string
-		sessionID  string
-		body       string
-		wantStatus int
-		wantCode   string
-	}{
-		{
-			name:       "session not found",
-			sessionID:  "nonexistent-session-id",
-			body:       `{"id":"test","rawId":"dGVzdA","type":"public-key","response":{"clientDataJSON":"eyJ0eXBlIjoid2ViYXV0aG4uZ2V0In0","authenticatorData":"SZYN5YgOjGh0NBcPZHZgW4","signature":"MEQCID"}}`,
-			wantStatus: http.StatusBadRequest,
-			wantCode:   ErrorCodeInvalidRequest,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/login/finish", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set(HeaderSessionID, tt.sessionID)
-			rec := httptest.NewRecorder()
-
-			h.FinishLogin(rec, req)
-
-			assert.Equal(t, tt.wantStatus, rec.Code)
-
-			var errResp ErrorResponse
-			err := json.NewDecoder(rec.Body).Decode(&errResp)
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantCode, errResp.Error)
-		})
-	}
-}
-
 func TestHandler_HandleServiceError(t *testing.T) {
 	h := newTestHandler(t)
 
@@ -615,164 +530,6 @@ func TestHandler_WriteJSON_EncodeError(t *testing.T) {
 	assert.Equal(t, http.StatusOK, bw.code)
 }
 
-func TestHandler_WriteError(t *testing.T) {
-	h := newTestHandler(t)
-
-	rec := httptest.NewRecorder()
-	h.writeError(rec, http.StatusForbidden, "test_error", "test message")
-
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-
-	var errResp ErrorResponse
-	err := json.NewDecoder(rec.Body).Decode(&errResp)
-	require.NoError(t, err)
-	assert.Equal(t, "test_error", errResp.Error)
-	assert.Equal(t, "test message", errResp.Message)
-}
-
-func TestHandler_BeginLogin_WithValidUserID(t *testing.T) {
-	h := newTestHandler(t)
-
-	// Register a user to get a valid user ID
-	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
-		strings.NewReader(`{"email":"validuser@example.com"}`))
-	regReq.Header.Set("Content-Type", "application/json")
-	regRec := httptest.NewRecorder()
-	h.BeginRegistration(regRec, regReq)
-	require.Equal(t, http.StatusOK, regRec.Code)
-
-	// Extract user ID from the service
-	user, err := h.service.GetUserByEmail(regReq.Context(), "validuser@example.com")
-	require.NoError(t, err)
-	userID := base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
-
-	// Test BeginLogin with valid user ID
-	loginReq := BeginLoginRequest{
-		UserID: userID,
-	}
-	b, _ := json.Marshal(loginReq)
-	req := httptest.NewRequest(http.MethodPost, "/login/begin", bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	h.BeginLogin(rec, req)
-
-	// The user has no credentials: answered with decoy options rather than
-	// an error that would reveal the account (go-xkms#1296).
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.NotEmpty(t, rec.Header().Get(HeaderSessionID))
-}
-
-func TestHandler_FinishLogin_UnknownSession(t *testing.T) {
-	h := newTestHandler(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/login/finish",
-		strings.NewReader(`{"id":"test","rawId":"dGVzdA","type":"public-key","response":{"clientDataJSON":"eyJ0eXBlIjoid2ViYXV0aG4uZ2V0In0","authenticatorData":"SZYN5YgOjGh0NBcPZHZgW4","signature":"MEQCID"}}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderSessionID, "test-session")
-	rec := httptest.NewRecorder()
-
-	h.FinishLogin(rec, req)
-
-	// Should fail due to invalid session
-	assert.True(t, rec.Code >= 400)
-}
-
-func TestHandler_WithLogger(t *testing.T) {
-	h := newTestHandler(t)
-
-	// Test that WithLogger returns the handler
-	result := h.WithLogger(nil)
-	assert.Same(t, h, result)
-}
-
-func TestHandler_FinishRegistration_InvalidSession(t *testing.T) {
-	h := newTestHandler(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/registration/finish",
-		strings.NewReader(`{"id":"test","rawId":"dGVzdA","type":"public-key","response":{"clientDataJSON":"eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIn0","attestationObject":"o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVikSZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2NFAAAAAAoY_1Y1HAABAQIDBAEXIQA"}}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderSessionID, "invalid-session-id")
-	rec := httptest.NewRecorder()
-
-	h.FinishRegistration(rec, req)
-
-	// Should fail with session not found
-	assert.True(t, rec.Code >= 400)
-}
-
-func TestHandler_FinishLogin_InvalidResponse(t *testing.T) {
-	h := newTestHandler(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/login/finish",
-		strings.NewReader(`not valid json`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderSessionID, "test-session")
-	rec := httptest.NewRecorder()
-
-	h.FinishLogin(rec, req)
-
-	// Should fail due to invalid response body
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandler_BeginLogin_EmailWithoutCredentials(t *testing.T) {
-	h := newTestHandler(t)
-
-	// Register a user first
-	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
-		strings.NewReader(`{"email":"login-with-creds@example.com"}`))
-	regReq.Header.Set("Content-Type", "application/json")
-	regRec := httptest.NewRecorder()
-	h.BeginRegistration(regRec, regReq)
-	require.Equal(t, http.StatusOK, regRec.Code)
-
-	// Get the user to retrieve the user ID
-	user, err := h.service.GetUserByEmail(regReq.Context(), "login-with-creds@example.com")
-	require.NoError(t, err)
-
-	// Test BeginLogin by email
-	loginReq := httptest.NewRequest(http.MethodPost, "/login/begin",
-		strings.NewReader(`{"email":"login-with-creds@example.com"}`))
-	loginReq.Header.Set("Content-Type", "application/json")
-	loginRec := httptest.NewRecorder()
-
-	h.BeginLogin(loginRec, loginReq)
-
-	// No credentials yet: decoy options, indistinguishable from an unknown
-	// email (go-xkms#1296).
-	assert.Equal(t, http.StatusOK, loginRec.Code)
-	assert.NotNil(t, user)
-}
-
-func TestHandler_FinishRegistration_ParseError(t *testing.T) {
-	h := newTestHandler(t)
-
-	// Begin registration to get a valid session
-	beginReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
-		strings.NewReader(`{"email":"parse-error@example.com"}`))
-	beginReq.Header.Set("Content-Type", "application/json")
-	beginRec := httptest.NewRecorder()
-	h.BeginRegistration(beginRec, beginReq)
-	require.Equal(t, http.StatusOK, beginRec.Code)
-	sessionID := beginRec.Header().Get(HeaderSessionID)
-
-	// Send malformed credential creation response
-	req := httptest.NewRequest(http.MethodPost, "/registration/finish",
-		strings.NewReader(`{"id":"test","type":"public-key"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderSessionID, sessionID)
-	rec := httptest.NewRecorder()
-
-	h.FinishRegistration(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	var errResp ErrorResponse
-	err := json.NewDecoder(rec.Body).Decode(&errResp)
-	require.NoError(t, err)
-	assert.Equal(t, ErrorCodeInvalidRequest, errResp.Error)
-}
-
 func TestHandler_FinishLogin_ParseError(t *testing.T) {
 	h := newTestHandler(t)
 
@@ -830,7 +587,6 @@ func TestHandler_BeginLogin_UserIDNotNil(t *testing.T) {
 type errorUserStore struct {
 	pkgwebauthn.UserStore
 	getByEmailErr error
-	createErr     error
 }
 
 func (e *errorUserStore) GetByEmail(ctx context.Context, email string) (pkgwebauthn.User, error) {
@@ -840,65 +596,8 @@ func (e *errorUserStore) GetByEmail(ctx context.Context, email string) (pkgwebau
 	return e.UserStore.GetByEmail(ctx, email)
 }
 
-func (e *errorUserStore) Create(ctx context.Context, email, displayName string) (pkgwebauthn.User, error) {
-	if e.createErr != nil {
-		return nil, e.createErr
-	}
-	return e.UserStore.Create(ctx, email, displayName)
-}
-
-// errorCredentialStore is a mock credential store that returns errors.
-type errorCredentialStore struct {
-	pkgwebauthn.CredentialStore
-	getByUserIDErr error
-}
-
-func (e *errorCredentialStore) GetByUserID(ctx context.Context, userID []byte) ([]*pkgwebauthn.Credential, error) {
-	if e.getByUserIDErr != nil {
-		return nil, e.getByUserIDErr
-	}
-	return e.CredentialStore.GetByUserID(ctx, userID)
-}
-
-// TestHandler_BeginRegistration_ServiceError tests BeginRegistration when the service returns an error.
-func TestHandler_BeginRegistration_ServiceError(t *testing.T) {
-	// Create a handler with an error-returning user store
-	stores := webauthntest.NewStores(t)
-	errStore := &errorUserStore{
-		UserStore:     stores.Users,
-		getByEmailErr: errors.New("database connection failed"),
-	}
-
-	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
-		Config: &pkgwebauthn.Config{
-			RPID:          "example.com",
-			RPDisplayName: "Example",
-			RPOrigins:     []string{"https://example.com"},
-		},
-		UserStore:       errStore,
-		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
-		CredentialStore: stores.Credentials,
-	})
-	require.NoError(t, err)
-	h := NewHandler(svc)
-
-	req := httptest.NewRequest(http.MethodPost, "/registration/begin",
-		strings.NewReader(`{"email":"error@example.com"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	h.BeginRegistration(rec, req)
-
-	// Should return internal server error
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	var errResp ErrorResponse
-	decErr := json.NewDecoder(rec.Body).Decode(&errResp)
-	require.NoError(t, decErr)
-	assert.Equal(t, ErrorCodeInternalError, errResp.Error)
-}
-
-// TestHandler_FinishRegistration_SessionNotFoundError tests FinishRegistration
-// when the session is not found and returns session not found error.
+// TestHandler_FinishRegistration_InvalidCredentialBody tests FinishRegistration
+// with an attestation object that does not parse.
 func TestHandler_FinishRegistration_InvalidCredentialBody(t *testing.T) {
 	h := newTestHandler(t)
 
@@ -1005,55 +704,6 @@ func TestHandler_BeginLogin_GetUserByEmailServiceError(t *testing.T) {
 	assert.Equal(t, ErrorCodeInternalError, errResp.Error)
 }
 
-// TestHandler_BeginLogin_ServiceErrorOnBeginLogin tests BeginLogin when
-// the service BeginLogin call itself fails.
-func TestHandler_BeginLogin_BeginLoginServiceError(t *testing.T) {
-	// Create a credential store that returns errors
-	stores := webauthntest.NewStores(t)
-	errStore := &errorCredentialStore{
-		CredentialStore: stores.Credentials,
-		getByUserIDErr:  errors.New("database connection failed"),
-	}
-
-	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
-		Config: &pkgwebauthn.Config{
-			RPID:          "example.com",
-			RPDisplayName: "Example",
-			RPOrigins:     []string{"https://example.com"},
-		},
-		UserStore:       stores.Users,
-		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
-		CredentialStore: errStore,
-	})
-	require.NoError(t, err)
-	h := NewHandler(svc)
-
-	// Register a user first (this will work because the error is on GetByUserID)
-	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
-		strings.NewReader(`{"email":"test@example.com"}`))
-	regReq.Header.Set("Content-Type", "application/json")
-	regRec := httptest.NewRecorder()
-	h.BeginRegistration(regRec, regReq)
-	// Note: this fails at getting credentials, but user is still created
-
-	// Get the user ID from a successful fetch
-	user, userErr := h.service.GetUserByEmail(regReq.Context(), "test@example.com")
-	if userErr == nil && user != nil {
-		userID := base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
-
-		// Try to login with user ID
-		req := httptest.NewRequest(http.MethodPost, "/login/begin",
-			strings.NewReader(`{"user_id":"`+userID+`"}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-
-		h.BeginLogin(rec, req)
-
-		// Should fail with internal server error due to credential store error
-		assert.True(t, rec.Code >= 400)
-	}
-}
-
 // TestHandler_WithLogger_CustomLogger tests that WithLogger properly sets a custom logger.
 func TestHandler_WithLogger_CustomLogger(t *testing.T) {
 	h := newTestHandler(t)
@@ -1066,10 +716,6 @@ func TestHandler_WithLogger_CustomLogger(t *testing.T) {
 
 	// Verify it returns the same handler for chaining
 	assert.Same(t, h, result)
-
-	// Verify the logger was set (indirectly through an operation that would use logging)
-	// The logger is private so we can only verify the handler works correctly
-	assert.NotNil(t, h)
 }
 
 // TestHandler_BeginLogin_HeaderSetOnSuccess tests that BeginLogin returns the

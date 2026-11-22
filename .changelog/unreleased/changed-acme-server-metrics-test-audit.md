@@ -1,0 +1,1 @@
+acme/server/metrics: the package's tests test each behaviour once (#1794). The extractEndpoint tables fold into `TestExtractEndpoint`, and tests that repeat a kept test's path, test the Prometheus client or the embedded `http.ResponseWriter`, or assert only non-nil getters already compared by `TestGetters` are removed. Coverage stays at 100%.

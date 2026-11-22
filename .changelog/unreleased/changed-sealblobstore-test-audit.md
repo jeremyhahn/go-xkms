@@ -1,0 +1,1 @@
+sealblobstore: the package's tests test each behaviour by one path (#1794): the entity accessor tests that repeated `TestEntity_EntityID_RoundTrip` or only exercised struct fields are gone, and `TestStore_SaveLoad` now asserts that a caller-set `CreatedAt` survives serialization in place of `TestStore_TimestampPreservation`.

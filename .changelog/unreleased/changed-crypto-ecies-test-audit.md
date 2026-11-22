@@ -1,0 +1,1 @@
+- **Tests: `pkg/crypto/ecies` audited (#1794)** — 35 duplicate round-trip, plaintext-size, AAD-size, curve-mismatch, corruption and P-224 tests removed; each behaviour keeps one test, the known-answer, refusal, AAD-binding, reader, concurrency and injected-failure tests stay, and coverage holds at 96.1%.

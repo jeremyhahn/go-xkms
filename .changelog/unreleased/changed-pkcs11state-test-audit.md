@@ -1,0 +1,1 @@
+Tests: the `pkg/pkcs11state` suite tests each behaviour by one path (#1794). The absent-key Get assertion moves into the empty-value Get test, and the sequential PutIfAbsent test folds into the concurrent one, which now also asserts that the winner's value is kept.

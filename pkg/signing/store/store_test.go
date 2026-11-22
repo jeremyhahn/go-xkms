@@ -301,6 +301,7 @@ func TestSignerStore_Save_ErrorCases(t *testing.T) {
 		err := store.Save(attrs, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "signer is nil")
+		assert.Contains(t, err.Error(), attrs.CN)
 	})
 
 	t.Run("save unsupported signer type returns error", func(t *testing.T) {
@@ -313,6 +314,7 @@ func TestSignerStore_Save_ErrorCases(t *testing.T) {
 		err := store.Save(attrs, "not a signer")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported signer type")
+		assert.Contains(t, err.Error(), attrs.CN)
 	})
 }
 
@@ -329,7 +331,10 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
 		assert.Nil(t, signer)
-		assert.Contains(t, err.Error(), "not found")
+		var notFound *ErrSignerNotFound
+		assert.ErrorAs(t, err, &notFound)
+		assert.Contains(t, err.Error(), "signer not found")
+		assert.Contains(t, err.Error(), attrs.CN)
 	})
 
 	t.Run("get with invalid PEM returns error", func(t *testing.T) {
@@ -344,7 +349,11 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
 		assert.Nil(t, signer)
+		var pemErr *ErrSignerPEMDecode
+		require.ErrorAs(t, err, &pemErr)
 		assert.Contains(t, err.Error(), "decode PEM")
+		assert.Contains(t, err.Error(), attrs.CN)
+		assert.NotNil(t, errors.Unwrap(pemErr), "the cause must stay reachable")
 	})
 
 	t.Run("get RSA with invalid key data returns error", func(t *testing.T) {
@@ -364,7 +373,12 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
 		assert.Nil(t, signer)
+		var parseErr *ErrSignerKeyParse
+		require.ErrorAs(t, err, &parseErr)
 		assert.Contains(t, err.Error(), "parse RSA")
+		assert.Contains(t, err.Error(), attrs.CN)
+		assert.Contains(t, err.Error(), "pkcs8:", "both parse failures are reported")
+		assert.NotNil(t, errors.Unwrap(parseErr), "the cause must stay reachable")
 	})
 
 	t.Run("get ECDSA with invalid key data returns error", func(t *testing.T) {
@@ -405,6 +419,7 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, signer)
 		assert.Contains(t, err.Error(), "parse Ed25519")
+		assert.NotContains(t, err.Error(), "pkcs8:", "Ed25519 has no fallback parse")
 	})
 
 	t.Run("get with unsupported algorithm returns error", func(t *testing.T) {
@@ -429,6 +444,7 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, signer)
 		assert.Contains(t, err.Error(), "unsupported key algorithm")
+		assert.Contains(t, err.Error(), attrs.CN)
 	})
 
 	t.Run("get RSA key marked as ECDSA returns error", func(t *testing.T) {
@@ -449,6 +465,10 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
 		assert.Nil(t, signer)
+		var mismatch *ErrSignerKeyTypeMismatch
+		assert.ErrorAs(t, err, &mismatch)
+		assert.Contains(t, err.Error(), "not an ECDSA private key")
+		assert.Contains(t, err.Error(), attrs.CN)
 	})
 
 	t.Run("get ECDSA key marked as RSA returns error", func(t *testing.T) {
@@ -469,6 +489,10 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
 		assert.Nil(t, signer)
+		var mismatch *ErrSignerKeyTypeMismatch
+		assert.ErrorAs(t, err, &mismatch)
+		assert.Contains(t, err.Error(), "not an RSA private key")
+		assert.Contains(t, err.Error(), attrs.CN)
 	})
 
 	t.Run("get ECDSA key marked as Ed25519 returns error", func(t *testing.T) {
@@ -489,6 +513,10 @@ func TestSignerStore_Get_ErrorCases(t *testing.T) {
 		signer, err := store.Get(attrs)
 		assert.Error(t, err)
 		assert.Nil(t, signer)
+		var mismatch *ErrSignerKeyTypeMismatch
+		assert.ErrorAs(t, err, &mismatch)
+		assert.Contains(t, err.Error(), "not an Ed25519 private key")
+		assert.Contains(t, err.Error(), attrs.CN)
 	})
 }
 
@@ -570,26 +598,6 @@ func TestSignerStore_SaveSignature(t *testing.T) {
 		data := getSignatureData(t, store, sigKey)
 		assert.Contains(t, data, "digest=")
 		assert.Contains(t, data, "signature=")
-	})
-
-	t.Run("save signature with empty blob CN", func(t *testing.T) {
-		opts := &SignerOpts{
-			KeyAttributes: &types.KeyAttributes{
-				CN: "sig-key-empty-blob",
-			},
-			BlobCN: "",
-		}
-
-		signature := []byte("test signature 3")
-		digest := []byte("test digest 3")
-
-		err := store.SaveSignature(opts, signature, digest)
-		assert.NoError(t, err)
-
-		// Verify stored (should use key without blob CN).
-		sigKey := "sig-key-empty-blob.sig"
-		data := getSignatureData(t, store, sigKey)
-		assert.Contains(t, data, "digest=")
 	})
 
 	t.Run("save signature with nil opts returns error", func(t *testing.T) {
@@ -891,6 +899,7 @@ func TestSignerStore_Save_CryptoSignerErrorPaths(t *testing.T) {
 		err = store.Save(attrs, mockSigner)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unable to extract RSA private key")
+		assert.Contains(t, err.Error(), attrs.CN)
 	})
 
 	t.Run("unable to extract ECDSA private key from crypto.Signer", func(t *testing.T) {
@@ -936,6 +945,7 @@ func TestSignerStore_Save_CryptoSignerErrorPaths(t *testing.T) {
 		err := store.Save(attrs, mockSigner)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported public key type")
+		assert.Contains(t, err.Error(), attrs.CN)
 	})
 }
 
@@ -953,6 +963,8 @@ func TestSignerStore_SavePutError(t *testing.T) {
 	err = store.Save(attrs, rsaKey)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to save signer")
+	assert.Contains(t, err.Error(), attrs.CN)
+	assert.NotNil(t, errors.Unwrap(err), "the cause must stay reachable")
 }
 
 func TestSignerStore_SaveSignaturePutError(t *testing.T) {
@@ -967,6 +979,8 @@ func TestSignerStore_SaveSignaturePutError(t *testing.T) {
 	err := store.SaveSignature(opts, []byte("sig"), []byte("digest"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to save signature")
+	assert.Contains(t, err.Error(), "sig-error-key.sig")
+	assert.NotNil(t, errors.Unwrap(err), "the cause must stay reachable")
 }
 
 func TestSignerStore_DeleteError(t *testing.T) {
@@ -982,16 +996,20 @@ func TestSignerStore_DeleteError(t *testing.T) {
 	require.NoError(t, err)
 	putSignerEntry(t, seed, attrs.CN, []byte("pem"), "RSA")
 
-	store := newFailingStore(t, failingKV{KVStore: mem, deleteErr: errors.New("delete failed")})
+	cause := errors.New("delete failed")
+	store := newFailingStore(t, failingKV{KVStore: mem, deleteErr: cause})
 
 	err = store.Delete(attrs)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to delete signer")
+	assert.Contains(t, err.Error(), attrs.CN)
+	assert.ErrorIs(t, err, cause)
 }
 
 func TestSignerStore_GetError(t *testing.T) {
 	// Return a non-ErrNotFound error
-	store := newFailingStore(t, failingKV{getErr: errors.New("get failed")})
+	cause := errors.New("get failed")
+	store := newFailingStore(t, failingKV{getErr: cause})
 
 	attrs := &types.KeyAttributes{
 		CN:           "get-error-signer",
@@ -1002,6 +1020,8 @@ func TestSignerStore_GetError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, signer)
 	assert.Contains(t, err.Error(), "failed to get signer")
+	assert.Contains(t, err.Error(), attrs.CN)
+	assert.ErrorIs(t, err, cause)
 }
 
 // =============================================================================
@@ -1030,17 +1050,8 @@ func TestSignerStore_NilLogger(t *testing.T) {
 	// Delete should work with nil logger
 	err = store.Delete(attrs)
 	assert.NoError(t, err)
-}
 
-func TestSignerStore_DeleteWithNilLoggerNotFound(t *testing.T) {
-	store := newTestStore(t, nil)
-
-	attrs := &types.KeyAttributes{
-		CN:           "nil-logger-not-found",
-		KeyAlgorithm: x509.RSA,
-	}
-
-	// Delete non-existent with nil logger - tests the logger nil check path
-	err := store.Delete(attrs)
+	// Deleting it again takes the not-found branch, also with nil logger
+	err = store.Delete(attrs)
 	assert.NoError(t, err)
 }

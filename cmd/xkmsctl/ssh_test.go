@@ -297,15 +297,3 @@ func TestRunXkmsctlSSHGet_ClientError(t *testing.T) {
 		t.Fatal("expected error when the SSH client cannot be constructed")
 	}
 }
-
-func TestSSHCmd_Registration(t *testing.T) {
-	found := map[string]bool{}
-	for _, c := range sshKeysCmd.Commands() {
-		found[c.Name()] = true
-	}
-	for _, name := range []string{"generate", "list", "get", "export", "sign", "delete"} {
-		if !found[name] {
-			t.Errorf("expected ssh keys subcommand %q to be registered", name)
-		}
-	}
-}

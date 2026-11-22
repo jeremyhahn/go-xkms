@@ -22,8 +22,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/preseal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 func simulatorVaultNodeSealConfig(t *testing.T) *config.Config {
@@ -52,4 +54,22 @@ func TestPresealedVaultToken_WithoutASealedTokenFailsClosed(t *testing.T) {
 	var notFound *preseal.NotFoundError
 	require.ErrorAs(t, err, &notFound)
 	require.Nil(t, token)
+}
+
+// TestBuildVaultNodeSealBackend_RefusesAnInvalidBackendsVault proves a
+// backends.vault section the Vault backend cannot be built from refuses the
+// node seal even once the token is released, with no provider.
+func TestBuildVaultNodeSealBackend_RefusesAnInvalidBackendsVault(t *testing.T) {
+	cfg := simulatorVaultNodeSealConfig(t)
+	store, closeStore, err := OpenPreseal(cfg, testLogger())
+	require.NoError(t, err)
+	require.NoError(t, store.Put(context.Background(), preseal.VaultToken, []byte("hvs.node-seal")))
+	require.NoError(t, closeStore())
+	cfg.Backends.Vault.Address = ""
+
+	provider, err := buildVaultNodeSealBackend(context.Background(), cfg, storage.NewMemory(), testLogger())
+	var msgErr *errs.Message
+	require.ErrorAs(t, err, &msgErr)
+	require.Equal(t, "vault address is required", msgErr.Msg)
+	require.Nil(t, provider)
 }

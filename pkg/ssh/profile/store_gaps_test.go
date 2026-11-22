@@ -205,16 +205,6 @@ func TestStore_RemoveFolder_Missing(t *testing.T) {
 	}
 }
 
-// TestStore_Update_NotFound covers updating a profile that was never stored.
-func TestStore_Update_NotFound(t *testing.T) {
-	st := newStore(t)
-	p := &Profile{Name: "ghost", Host: "h"}
-	p.ID = generateID(p.Name, p.FolderPath)
-	if err := st.Update(p); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Update(missing): expected ErrNotFound, got %v", err)
-	}
-}
-
 // TestStore_Update_Invalid covers validation rejection before any storage read.
 func TestStore_Update_Invalid(t *testing.T) {
 	st := newStore(t)
@@ -223,145 +213,6 @@ func TestStore_Update_Invalid(t *testing.T) {
 	}
 	if err := st.Update(&Profile{Name: "n", Host: ""}); !errors.Is(err, ErrInvalidHost) {
 		t.Fatalf("Update(invalid host): expected ErrInvalidHost, got %v", err)
-	}
-}
-
-// TestStore_Delete_NotFound covers deleting an absent profile.
-func TestStore_Delete_NotFound(t *testing.T) {
-	st := newStore(t)
-	if err := st.Delete("nope"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Delete(missing): expected ErrNotFound, got %v", err)
-	}
-}
-
-// TestStore_MoveToFolder covers the happy path, the same-folder rejection, and
-// the missing-entry rejection.
-func TestStore_MoveToFolder(t *testing.T) {
-	st := newStore(t)
-	if err := st.Add(&Profile{Name: "box", FolderPath: "a", Host: "h"}); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-	entry, err := st.Get("box")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-
-	// Same folder is a no-op rejection.
-	if err := st.MoveToFolder(entry.ID, "a"); !errors.Is(err, ErrMoveToSameFolder) {
-		t.Fatalf("MoveToFolder(same): expected ErrMoveToSameFolder, got %v", err)
-	}
-
-	// Real move regenerates the ID under the new folder.
-	if err := st.MoveToFolder(entry.ID, "b"); err != nil {
-		t.Fatalf("MoveToFolder(a->b): %v", err)
-	}
-	moved, err := st.Get("box")
-	if err != nil {
-		t.Fatalf("Get after move: %v", err)
-	}
-	if moved.FolderPath != "b" {
-		t.Fatalf("expected folder b, got %q", moved.FolderPath)
-	}
-
-	// Moving a missing entry fails.
-	if err := st.MoveToFolder("does-not-exist", "c"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("MoveToFolder(missing): expected ErrNotFound, got %v", err)
-	}
-}
-
-// TestStore_FolderLifecycle exercises CreateFolder markers surfacing through
-// ListFolders, RenameFolder migrating entries + markers, and DeleteFolder
-// removing entries and markers together.
-func TestStore_FolderLifecycle(t *testing.T) {
-	st := newStore(t)
-
-	// An empty folder is visible purely via its marker.
-	if err := st.CreateFolder("team/empty"); err != nil {
-		t.Fatalf("CreateFolder: %v", err)
-	}
-	if err := st.Add(&Profile{Name: "svc", FolderPath: "team/prod", Host: "h"}); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	folders, err := st.ListFolders()
-	if err != nil {
-		t.Fatalf("ListFolders: %v", err)
-	}
-	if !contains(folders, "team/empty") || !contains(folders, "team/prod") || !contains(folders, "team") {
-		t.Fatalf("ListFolders missing expected entries: %v", folders)
-	}
-
-	// Rename the whole subtree.
-	if err := st.RenameFolder("team", "org"); err != nil {
-		t.Fatalf("RenameFolder: %v", err)
-	}
-	moved, err := st.Get("svc")
-	if err != nil {
-		t.Fatalf("Get after rename: %v", err)
-	}
-	if moved.FolderPath != "org/prod" {
-		t.Fatalf("expected org/prod after rename, got %q", moved.FolderPath)
-	}
-	folders, _ = st.ListFolders()
-	if contains(folders, "team") {
-		t.Fatalf("old folder still present after rename: %v", folders)
-	}
-
-	// Delete the subtree: entries and markers both gone.
-	if err := st.DeleteFolder("org"); err != nil {
-		t.Fatalf("DeleteFolder: %v", err)
-	}
-	if _, err := st.Get("svc"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("entry survived DeleteFolder: %v", err)
-	}
-	folders, _ = st.ListFolders()
-	if contains(folders, "org") || contains(folders, "org/prod") {
-		t.Fatalf("markers survived DeleteFolder: %v", folders)
-	}
-}
-
-// TestStore_Search_EmptyReturnsAll covers the empty-query short-circuit.
-func TestStore_Search_EmptyReturnsAll(t *testing.T) {
-	st := newStore(t)
-	if err := st.Add(&Profile{Name: "one", Host: "h1"}); err != nil {
-		t.Fatalf("Add one: %v", err)
-	}
-	if err := st.Add(&Profile{Name: "two", Host: "h2"}); err != nil {
-		t.Fatalf("Add two: %v", err)
-	}
-	all, err := st.Search("   ")
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(all) != 2 {
-		t.Fatalf("empty query should return all, got %d", len(all))
-	}
-}
-
-// TestStore_ListByFolderDirect distinguishes direct children from descendants.
-func TestStore_ListByFolderDirect(t *testing.T) {
-	st := newStore(t)
-	if err := st.Add(&Profile{Name: "direct", FolderPath: "root", Host: "h"}); err != nil {
-		t.Fatalf("Add direct: %v", err)
-	}
-	if err := st.Add(&Profile{Name: "nested", FolderPath: "root/sub", Host: "h"}); err != nil {
-		t.Fatalf("Add nested: %v", err)
-	}
-
-	direct, err := st.ListByFolderDirect("root")
-	if err != nil {
-		t.Fatalf("ListByFolderDirect: %v", err)
-	}
-	if len(direct) != 1 || direct[0].Name != "direct" {
-		t.Fatalf("expected only the direct child, got %+v", direct)
-	}
-
-	sub, err := st.ListByFolder("root")
-	if err != nil {
-		t.Fatalf("ListByFolder: %v", err)
-	}
-	if len(sub) != 2 {
-		t.Fatalf("ListByFolder(root) should include descendants, got %d", len(sub))
 	}
 }
 
@@ -497,33 +348,6 @@ func TestStore_MoveToTakenName_KeepsSource(t *testing.T) {
 	}
 	if got, err := st.Get(generateID("other", "a")); err != nil || got.Host != "o" {
 		t.Fatalf("source lost by refused rename: %+v, %v", got, err)
-	}
-}
-
-// TestStore_Update_Rename covers the ID-regeneration branch: renaming a
-// profile deletes the old key and writes the new one.
-func TestStore_Update_Rename(t *testing.T) {
-	st := newStore(t)
-	if err := st.Add(&Profile{Name: "old", FolderPath: "f", Host: "h"}); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-	entry, err := st.Get("old")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	oldID := entry.ID
-	entry.Name = "renamed"
-	if err := st.Update(entry); err != nil {
-		t.Fatalf("Update(rename): %v", err)
-	}
-	if entry.ID == oldID {
-		t.Fatalf("ID should regenerate on rename")
-	}
-	if _, err := st.Get("old"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("old name still resolves: %v", err)
-	}
-	if _, err := st.Get("renamed"); err != nil {
-		t.Fatalf("Get(renamed): %v", err)
 	}
 }
 

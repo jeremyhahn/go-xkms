@@ -1,0 +1,1 @@
+ssh/console: the package's tests are audited (#1794): six tests that repeated a path another kept test covers are removed, their unique assertions (write after Close fails, the missing-Signer `*InputError`) folded into the tests that stay, and the two concurrent-teardown tests wait on the first resize instead of sleeping. Coverage is unchanged at 90.2%.

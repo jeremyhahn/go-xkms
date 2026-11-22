@@ -192,44 +192,6 @@ func TestDevIDTemplate_ECDSANullDetailsIsRefusedByTheTPM(t *testing.T) {
 	}
 }
 
-// TestDevIDTemplate_SM2IsNotImplemented records why Template H-5 is absent.
-//
-// H-5 requires nameAlg = TPM_ALG_SM3_256 and curveID = TPM_ECC_SM2_P256. The
-// reference simulator this package tests against implements neither, and
-// crypto/elliptic cannot represent the SM2 curve, so a key created on it could
-// not be returned as the *ecdsa.PublicKey this package's API produces. The
-// template is therefore not shipped, and this is the measurement behind that.
-func TestDevIDTemplate_SM2IsNotImplemented(t *testing.T) {
-	sim, err := OpenSimulator()
-	require.NoError(t, err)
-	defer sim.Close()
-
-	// Whatever else is true, the toolchain has no SM2 curve to ask for.
-	_, ok := eccCurveIDs["SM2-P256"]
-	assert.False(t, ok, "crypto/elliptic gained an SM2 curve; H-5 can be revisited")
-
-	// And the device has no SM3_256 to name as nameAlg.
-	template := tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgECC,
-		NameAlg: tpm2.TPMAlgSM3256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM: true, FixedParent: true, SensitiveDataOrigin: true,
-			UserWithAuth: true, AdminWithPolicy: true, SignEncrypt: true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgECC, &tpm2.TPMSECCParms{
-			Symmetric: tpm2.TPMTSymDefObject{Algorithm: tpm2.TPMAlgNull},
-			Scheme:    tpm2.TPMTECCScheme{Scheme: tpm2.TPMAlgNull},
-			CurveID:   tpm2.TPMECCSM2P256,
-			KDF:       tpm2.TPMTKDFScheme{Scheme: tpm2.TPMAlgNull},
-		}),
-	}
-	_, err = tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.AuthHandle{Handle: tpm2.TPMRHEndorsement, Auth: tpm2.PasswordAuth(nil)},
-		InPublic:      tpm2.New2B(template),
-	}.Execute(sim.Transport())
-	assert.Error(t, err, "if this passes, the device implements SM3_256 and H-5 can be revisited")
-}
-
 // TestDevIDTemplate_EveryShippedSuiteCreates proves each exported template is
 // a template a TPM will actually derive a key from -- including the P-384 and
 // P-521 suites this change adds, which no other test would otherwise reach.

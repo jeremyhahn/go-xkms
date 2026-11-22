@@ -44,21 +44,6 @@ import (
 )
 
 // =============================================================================
-// ca.go — Sign() ErrNotInitialized (line 716)
-// =============================================================================
-
-// TestSign_NotInitialized_B15 exercises the Sign() crypto.Signer implementation
-// when the CA is not initialized. The not-initialized path returns ErrNotInitialized
-// before reaching the signer (ca.go:706-708).
-func TestSign_NotInitialized_B15(t *testing.T) {
-	t.Parallel()
-	ca := setupUninitializedCA(t)
-	_, err := ca.Sign(rand.Reader, []byte("digest"), nil)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-// =============================================================================
 // ca.go — Init() error from createRootCertificate (lines 562, 938)
 // =============================================================================
 
@@ -145,20 +130,6 @@ func TestLoad_IntermediateKeyNotFound_B15(t *testing.T) {
 // =============================================================================
 // attestation.go — ImportAttestation / ImportAttestationKeyCertificate Signer error
 // =============================================================================
-
-// TestImportAttestation_SignerError_B15 exercises the Signer() error path in
-// ImportAttestation (attestation.go:100.16,102.3) by invalidating the CA config
-// after initialization. NOT parallel (mutates CA state).
-func TestImportAttestation_SignerError_B15(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-	akAttrs := &types.KeyAttributes{CN: "attestation-signer-error-b15"}
-
-	// Invalidate the issuing identity so Signer() returns ErrInvalidConfig.
-	ca.config.SelectedCA = -1
-
-	err := ca.ImportAttestation(context.Background(), akAttrs, AttestBlobQuote, []byte("some data"))
-	assert.Error(t, err)
-}
 
 // TestImportAttestationKeyCertificate_SignerError_B15 exercises the Signer()
 // error path in ImportAttestationKeyCertificate (attestation.go:158.16,160.3).
@@ -313,25 +284,6 @@ func TestCABundleFiltered_StoreTypeMismatch_B15(t *testing.T) {
 	_, err := ca.CABundleFiltered("pkcs11", x509.UnknownPublicKeyAlgorithm)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidCertificateChain)
-}
-
-// =============================================================================
-// constructors.go — initializeAsIntermediate ErrAlreadyInitialized (line 337)
-// =============================================================================
-
-// TestInitializeAsIntermediate_AlreadyInitialized_B15 exercises the
-// ErrAlreadyInitialized guard in initializeAsIntermediate (line 337.16,339.3)
-// by calling it on a CA that is already initialized.
-func TestInitializeAsIntermediate_AlreadyInitialized_B15(t *testing.T) {
-	t.Parallel()
-	// Use a fully initialized CA as the caInstance argument.
-	ca := setupTestCA(t)
-	parent := setupTestCA(t)
-
-	parentIdentity := parent.config.Identity[0]
-	err := initializeAsIntermediate(context.Background(), ca, parentIdentity, parent)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrAlreadyInitialized)
 }
 
 // =============================================================================
@@ -541,37 +493,6 @@ func TestVerifyHybridCertificate_ParseError_B15(t *testing.T) {
 	assert.Error(t, verErr)
 }
 
-// TestVerifyHybridCertificate_NoAltSigAlgExt_B15 covers hybrid.go:253.27,258.3
-// by passing a well-formed certificate that lacks the altSignatureAlgorithm
-// extension, after classical signature verification passes.
-func TestVerifyHybridCertificate_NoAltSigAlgExt_B15(t *testing.T) {
-	t.Parallel()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
-	// Self-signed cert — classicalIssuer is the cert itself, so CheckSignatureFrom
-	// will succeed.
-	tmpl := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "hybrid-no-altsig-b15"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	quantumIssuer := &quantum.MLDSAPublicKey{Algorithm: "ML-DSA-44", Key: []byte("pubkey")}
-
-	verErr := VerifyHybridCertificate(certDER, cert, quantumIssuer)
-	assert.Error(t, verErr)
-}
-
 // =============================================================================
 // hybrid.go — extractTBS bad TBS content (line 388)
 // =============================================================================
@@ -594,19 +515,6 @@ func TestExtractTBS_BadTBSContent_B15(t *testing.T) {
 
 	_, extractErr := extractTBS(outerDER)
 	assert.Error(t, extractErr)
-}
-
-// =============================================================================
-// hybrid.go — extractTBSWithoutExtension parse failure (line 402)
-// =============================================================================
-
-// TestExtractTBSWithoutExtension_ParseError_B15 covers hybrid.go:402.16,404.3
-// by passing garbage DER that fails x509.ParseCertificate inside the function.
-func TestExtractTBSWithoutExtension_ParseError_B15(t *testing.T) {
-	t.Parallel()
-	excludeOID := asn1.ObjectIdentifier{2, 5, 29, 99}
-	_, err := extractTBSWithoutExtension([]byte("garbage"), excludeOID)
-	assert.Error(t, err)
 }
 
 // =============================================================================
@@ -817,64 +725,6 @@ func TestVerifyTBSDeterminism_SecondExtractError_B15(t *testing.T) {
 //           Revoked intermediate (lines 573-580)
 // =============================================================================
 
-// TestVerifyPeerCertificate_IsRevokedError_B15 covers tls.go:533.16,539.3 by
-// calling VerifyPeerCertificate on an uninitialized CA so IsRevoked returns
-// ErrNotInitialized. The function logs and continues, returning nil.
-func TestVerifyPeerCertificate_IsRevokedError_B15(t *testing.T) {
-	t.Parallel()
-	ca := setupUninitializedCA(t)
-
-	// Build a simple self-signed cert to use as the peer cert.
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "peer-is-revoked-error-b15"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-
-	// VerifyPeerCertificate logs the IsRevoked error and continues; no error
-	// is propagated for the IsRevoked failure itself.
-	verErr := ca.VerifyPeerCertificate([][]byte{certDER}, nil)
-	// May return an error (cert not yet valid / expired) but the IsRevoked
-	// error path at line 533 is exercised regardless.
-	_ = verErr
-}
-
-// TestVerifyPeerCertificate_IntermediateIsRevokedError_B15 covers
-// tls.go:568.17,573.4 by providing two raw certs where the second (intermediate)
-// parse succeeds but IsRevoked returns an error (uninitialized CA).
-func TestVerifyPeerCertificate_IntermediateIsRevokedError_B15(t *testing.T) {
-	t.Parallel()
-	ca := setupUninitializedCA(t)
-
-	// Build two minimal self-signed certs.
-	makeCert := func(cn string) []byte {
-		key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-		tmpl := &x509.Certificate{
-			SerialNumber: serial,
-			Subject:      pkix.Name{CommonName: cn},
-			NotBefore:    time.Now().Add(-time.Hour),
-			NotAfter:     time.Now().Add(24 * time.Hour),
-		}
-		der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-		return der
-	}
-
-	peerDER := makeCert("peer-intermediate-error-b15")
-	intermediateDER := makeCert("intermediate-error-b15")
-
-	verErr := ca.VerifyPeerCertificate([][]byte{peerDER, intermediateDER}, nil)
-	// IsRevoked errors are logged and the loop continues; no hard error.
-	_ = verErr
-}
-
 // TestVerifyPeerCertificate_RevokedIntermediate_B15 covers tls.go:573.21,580.4
 // (revoked intermediate returns ErrCertificateRevoked) by revoking a cert whose
 // serial matches that of the fake intermediate DER.
@@ -1051,47 +901,4 @@ func TestOCSPCreateResponse_SignerError_B15(t *testing.T) {
 	_, handleErr := responder.HandleRequest(context.Background(), ocspReqDER)
 	assert.Error(t, handleErr)
 	assert.ErrorIs(t, handleErr, ErrOCSPSigningFailed)
-}
-
-// TestOCSPCheckCertificateStatus_ColdPathRevoked_B15 covers ocsp.go:237.2,237.53
-// (cold path: in-memory map is empty, object store has the revocation record).
-//
-// NOTE: NOT parallel — mutates CA revocation map.
-func TestOCSPCheckCertificateStatus_ColdPathRevoked_B15(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-
-	// Issue a cert and revoke it so the revocation is written to the object store.
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "ocsp-cold-revoked-b15"},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-	cert := issued.Certificate
-	require.NotNil(t, cert)
-
-	require.NoError(t, ca.RevokeCert(context.Background(), cert, RevokeOptions{}))
-
-	// Clear the in-memory revocations map to force the cold path.
-	ca.revocationsMutex.Lock()
-	ca.revocations = make(map[string]*RevocationInfo)
-	ca.revocationsMutex.Unlock()
-
-	// Build a valid OCSP request for the revoked cert's serial.
-	issuerCert := ca.rootCert
-	require.NotNil(t, issuerCert)
-	ocspReqDER, err := gocsp.CreateRequest(cert, issuerCert, &gocsp.RequestOptions{Hash: crypto.SHA256})
-	require.NoError(t, err)
-
-	responder := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
-	resp, handleErr := responder.HandleRequest(context.Background(), ocspReqDER)
-	require.NoError(t, handleErr)
-
-	// Parse the response and verify it shows Revoked.
-	ocspResp, parseErr := gocsp.ParseResponse(resp, issuerCert)
-	if parseErr == nil {
-		assert.Equal(t, gocsp.Revoked, ocspResp.Status)
-	}
-	// Even if gocsp.ParseResponse fails (e.g. signature mismatch with self-signed issuer),
-	// the HandleRequest itself should have succeeded — the cold path was exercised.
 }

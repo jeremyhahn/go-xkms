@@ -14,7 +14,6 @@
 package unix
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,35 +75,4 @@ func TestGRPCServer_Start_RemoveExistingSocketError(t *testing.T) {
 	err = server.Start()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to remove existing socket")
-}
-
-// TestGRPCServer_Stop_ContextAlreadyCancelled tests the Stop timeout path
-// where the context is already cancelled before GracefulStop completes.
-func TestGRPCServer_Stop_ContextAlreadyCancelled(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
-	require.NoError(t, err)
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
-
-	cfg := &GRPCConfig{
-		SocketPath: socketPath,
-	}
-
-	server, err := NewGRPCServer(cfg)
-	require.NoError(t, err)
-
-	// Start the server
-	go func() {
-		_ = server.Start()
-	}()
-
-	waitForGRPCServerReady(t, server, socketPath)
-
-	// Use an already-cancelled context to force the timeout path
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	err = server.Stop(ctx)
-	assert.NoError(t, err) // Stop should still succeed
 }

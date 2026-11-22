@@ -1,0 +1,1 @@
+- **`pkg/api/grpc/pbconv` test audit (#1794)** — removed `TestSigningKeyRequests_FromProto`, whose request converters `pkg/api/grpc`'s `TestSigningKeyRPCs_BindResolveRemove` drives through the service, and `TestSealKeyVersion_RoundTrip`, whose key-version assertion now sits in `TestSealConversions_CarryTheTPMFields`. No production change.

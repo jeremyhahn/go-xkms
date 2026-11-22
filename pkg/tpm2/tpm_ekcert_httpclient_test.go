@@ -28,12 +28,3 @@ func TestEkCertHTTPClient_NoInjectedClient_ReturnsHTTPDefaultClient(t *testing.T
 	tpm := &TPM2{}
 	assert.Same(t, http.DefaultClient, tpm.ekCertHTTPClient())
 }
-
-// TestEkCertHTTPClient_InjectedClient_ReturnsIt proves the injected client
-// (used by tests to point the EK certificate download at an httptest server)
-// takes priority over http.DefaultClient.
-func TestEkCertHTTPClient_InjectedClient_ReturnsIt(t *testing.T) {
-	custom := &http.Client{}
-	tpm := &TPM2{httpClient: custom}
-	assert.Same(t, custom, tpm.ekCertHTTPClient())
-}

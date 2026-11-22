@@ -141,19 +141,6 @@ func pinRequest(t *testing.T, method string, params interface{}) *JSONRPCRequest
 	return &JSONRPCRequest{JSONRPC: "2.0", Method: method, Params: raw, ID: 1}
 }
 
-// TestPINMethods_Dispatchable proves every PIN method is reachable through
-// the dispatch table, and via authz's public/mapped gate.
-func TestPINMethods_Dispatchable(t *testing.T) {
-	for _, method := range []string{
-		"xkms.setSOPIN", "xkms.setUserPIN", "xkms.changeSOPIN", "xkms.changeUserPIN",
-		"xkms.verifySOPIN", "xkms.verifyUserPIN", "xkms.getLockoutStatus", "xkms.resetLockout",
-	} {
-		entry, ok := rpcMethods[method]
-		assert.True(t, ok, "method %q must be dispatchable", method)
-		assert.False(t, entry.public(), "method %q must carry a permission mapping", method)
-	}
-}
-
 func TestHandleSetSOPIN_NotConfigured(t *testing.T) {
 	server := newPINServer(t, nil)
 
@@ -173,18 +160,6 @@ func TestHandleSetSOPIN_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, pinSuccess, result)
 	assert.Equal(t, "123456", pin.soPin)
-}
-
-func TestHandleSetSOPIN_InvalidParams(t *testing.T) {
-	server := newPINServer(t, &fakePINBackend{})
-
-	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.setSOPIN", Params: json.RawMessage(`{`), ID: 1}
-	_, err := server.handleSetSOPIN(context.Background(), req)
-
-	require.Error(t, err)
-	var keyOpErr *KeyOpError
-	require.True(t, errors.As(err, &keyOpErr), "decode failure must be a *KeyOpError")
-	assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
 }
 
 func TestHandleSetUserPIN_Success(t *testing.T) {

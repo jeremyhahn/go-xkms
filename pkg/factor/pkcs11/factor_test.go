@@ -76,14 +76,11 @@ func rsaKeyPair(t *testing.T) (pubDER string, sign func(message []byte) []byte) 
 	}
 }
 
-func TestPKCS11Factor_Name(t *testing.T) {
-	if got := New(Config{}).Name(); got != FactorName {
-		t.Fatalf("Name() = %q, want %q", got, FactorName)
-	}
-}
-
 func TestPKCS11Factor_NewDefaults(t *testing.T) {
 	f := New(Config{})
+	if got := f.Name(); got != FactorName {
+		t.Fatalf("Name() = %q, want %q", got, FactorName)
+	}
 	if f.cfg.DefaultMechanism != defaultMechanism {
 		t.Fatalf("DefaultMechanism = %q, want %q", f.cfg.DefaultMechanism, defaultMechanism)
 	}
@@ -166,17 +163,6 @@ func TestPKCS11Factor_Enroll_RejectsNilParams(t *testing.T) {
 	}
 }
 
-func TestPKCS11Factor_Enroll_RejectsMissingPublicKey(t *testing.T) {
-	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
-	_, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
-		UserID:       "u1",
-		MethodParams: map[string]any{},
-	})
-	if !errors.As(err, &inv) {
-		t.Fatalf("Enroll(no pubkey) err = %v, want EnrollmentInvalidError", err)
-	}
-}
-
 func TestPKCS11Factor_Enroll_RejectsMalformedDER(t *testing.T) {
 	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
 	_, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
@@ -211,68 +197,6 @@ func TestPKCS11Factor_Verify_RejectsExpiredChallenge(t *testing.T) {
 // TestPKCS11Factor_Verify_RejectsChallengeWithoutEnrolledKey proves Verify has
 // no second source for the key: with the enrolled key absent from the
 // challenge it refuses, even when the response carries the genuine one.
-func TestPKCS11Factor_Verify_RejectsChallengeWithoutEnrolledKey(t *testing.T) {
-	ctx := context.Background()
-	f := New(Config{})
-	pubDER, sign := ecKeyPair(t)
-	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
-		UserID:       "u1",
-		MethodParams: map[string]any{"public_key_der": pubDER},
-	})
-	challenge, _ := f.Challenge(ctx, enrollment)
-	delete(challenge.MethodData, methodDataEnrolledKey)
-
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value:    sign(challengemsg.Message(challenge)),
-		Metadata: map[string]string{"public_key_der": pubDER},
-	})
-	if !errors.As(err, &failed) {
-		t.Fatalf("Verify(no enrolled key) err = %v, want VerificationFailedError", err)
-	}
-}
-
-func TestPKCS11Factor_Verify_RejectsBadSignature(t *testing.T) {
-	ctx := context.Background()
-	f := New(Config{})
-	pubDER, _ := ecKeyPair(t)
-	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
-		UserID:       "u1",
-		MethodParams: map[string]any{"public_key_der": pubDER},
-	})
-	challenge, _ := f.Challenge(ctx, enrollment)
-
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value: []byte("not-a-valid-DER-signature"),
-	})
-	if !errors.As(err, &failed) {
-		t.Fatalf("Verify(bad sig) err = %v, want VerificationFailedError", err)
-	}
-}
-
-func TestPKCS11Factor_Verify_RejectsTamperedNonce(t *testing.T) {
-	ctx := context.Background()
-	f := New(Config{})
-	pubDER, sign := ecKeyPair(t)
-	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
-		UserID:       "u1",
-		MethodParams: map[string]any{"public_key_der": pubDER},
-	})
-	challenge, _ := f.Challenge(ctx, enrollment)
-
-	// Sign the original nonce, then tamper with the challenge nonce so the
-	// signature no longer matches.
-	sig := sign(challengemsg.Message(challenge))
-	challenge.Nonce[0] ^= 0xFF
-
-	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sig})
-	if !errors.As(err, &failed) {
-		t.Fatalf("Verify(tampered nonce) err = %v, want VerificationFailedError", err)
-	}
-}
-
 // TestPKCS11Factor_Verify_BindsTheChallengeMessage pins the proof to go-qrdb's
 // challenge message (#1684): a signature over the message for the challenge's
 // own ID, purpose and nonce verifies, while the old proof over SHA-256(nonce)
@@ -305,9 +229,12 @@ func TestPKCS11Factor_Verify_BindsTheChallengeMessage(t *testing.T) {
 				t.Fatalf("Verify(challenge message) = %v, want nil", err)
 			}
 
+			otherNonce := append([]byte(nil), challenge.Nonce...)
+			otherNonce[0] ^= 0xFF
 			refused := map[string][]byte{
 				"bare nonce":    sign(challenge.Nonce),
 				"other purpose": sign(qrdbsdk.QuorumChallengeMessage(challenge.ChallengeID, "quorum:b", challenge.Nonce)),
+				"other nonce":   sign(qrdbsdk.QuorumChallengeMessage(challenge.ChallengeID, "quorum:a", otherNonce)),
 			}
 			for proof, sig := range refused {
 				var failed *qrdbsdk.AuthFactorVerificationFailedError

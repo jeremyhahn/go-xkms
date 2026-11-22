@@ -13,12 +13,7 @@
 
 package common
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-)
+import "testing"
 
 // =============================================================================
 // ParseDynamicChallenge Tests
@@ -150,6 +145,13 @@ func TestParseDynamicChallenge(t *testing.T) {
 			wantErr:       ErrInvalidChallengeFormat,
 		},
 		{
+			name:          "port 99999 too large",
+			challengeType: "http-99999",
+			wantName:      "",
+			wantPort:      "",
+			wantErr:       ErrInvalidChallengeFormat,
+		},
+		{
 			name:          "negative port",
 			challengeType: "http--80",
 			wantName:      "",
@@ -222,166 +224,6 @@ func TestParseDynamicChallenge(t *testing.T) {
 
 			if gotPort != tt.wantPort {
 				t.Errorf("ParseDynamicChallenge() gotPort = %v, want %v", gotPort, tt.wantPort)
-			}
-		})
-	}
-}
-
-func TestParseDynamicChallenge_PortValidation_OutOfRange(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		wantErr       error
-	}{
-		{
-			name:          "port_zero_invalid",
-			challengeType: "http-0",
-			wantErr:       ErrInvalidChallengeFormat,
-		},
-		{
-			name:          "port_65536_invalid",
-			challengeType: "http-65536",
-			wantErr:       ErrInvalidChallengeFormat,
-		},
-		{
-			name:          "port_99999_invalid",
-			challengeType: "http-99999",
-			wantErr:       ErrInvalidChallengeFormat,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := ParseDynamicChallenge(tt.challengeType)
-			require.ErrorIs(t, err, tt.wantErr)
-		})
-	}
-}
-
-func TestParseDynamicChallenge_UnknownBaseTypeDynamic(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		wantErr       error
-	}{
-		{
-			name:          "unknown_base_type_dynamic",
-			challengeType: "unknown-8080",
-			wantErr:       ErrUnsupportedChallenge,
-		},
-		{
-			name:          "invalid_base_type_dynamic",
-			challengeType: "foobar-9000",
-			wantErr:       ErrUnsupportedChallenge,
-		},
-		{
-			name:          "typo_in_http_dynamic",
-			challengeType: "htp-8080",
-			wantErr:       ErrUnsupportedChallenge,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := ParseDynamicChallenge(tt.challengeType)
-			require.ErrorIs(t, err, tt.wantErr)
-		})
-	}
-}
-
-func TestParseDynamicChallenge_AllKnownTypes(t *testing.T) {
-	for baseType, standard := range DynamicChallengePatterns {
-		t.Run("dynamic_"+baseType, func(t *testing.T) {
-			// Test dynamic format
-			name, port, err := ParseDynamicChallenge(baseType + "-8080")
-			require.NoError(t, err)
-			assert.Equal(t, baseType, name)
-			assert.Equal(t, "8080", port)
-
-			// Verify normalization
-			normalized := NormalizeChallengeType(baseType + "-8080")
-			assert.Equal(t, standard, normalized)
-		})
-	}
-}
-
-func TestParseDynamicChallenge_BoundaryPorts(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		wantName      string
-		wantPort      string
-		wantErr       error
-	}{
-		{
-			name:          "port exactly 65535",
-			challengeType: "http-65535",
-			wantName:      "http",
-			wantPort:      "65535",
-			wantErr:       nil,
-		},
-		{
-			name:          "port exactly 1",
-			challengeType: "http-1",
-			wantName:      "http",
-			wantPort:      "1",
-			wantErr:       nil,
-		},
-		{
-			name:          "port exactly 0 invalid",
-			challengeType: "http-0",
-			wantName:      "",
-			wantPort:      "",
-			wantErr:       ErrInvalidChallengeFormat,
-		},
-		{
-			name:          "port 65536 invalid",
-			challengeType: "http-65536",
-			wantName:      "",
-			wantPort:      "",
-			wantErr:       ErrInvalidChallengeFormat,
-		},
-		{
-			name:          "port 99999 too large",
-			challengeType: "http-99999",
-			wantName:      "",
-			wantPort:      "",
-			wantErr:       ErrInvalidChallengeFormat,
-		},
-		{
-			name:          "port with max 5 digits valid",
-			challengeType: "http-12345",
-			wantName:      "http",
-			wantPort:      "12345",
-			wantErr:       nil,
-		},
-		{
-			name:          "port 10000 valid",
-			challengeType: "enroll-10000",
-			wantName:      "enroll",
-			wantPort:      "10000",
-			wantErr:       nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotName, gotPort, err := ParseDynamicChallenge(tt.challengeType)
-
-			if err != tt.wantErr {
-				t.Errorf("ParseDynamicChallenge(%q) error = %v, wantErr %v",
-					tt.challengeType, err, tt.wantErr)
-				return
-			}
-
-			if gotName != tt.wantName {
-				t.Errorf("ParseDynamicChallenge(%q) gotName = %q, want %q",
-					tt.challengeType, gotName, tt.wantName)
-			}
-
-			if gotPort != tt.wantPort {
-				t.Errorf("ParseDynamicChallenge(%q) gotPort = %q, want %q",
-					tt.challengeType, gotPort, tt.wantPort)
 			}
 		})
 	}
@@ -484,73 +326,6 @@ func TestIsDynamicChallenge(t *testing.T) {
 	}
 }
 
-func TestIsDynamicChallenge_AllKnownTypes(t *testing.T) {
-	// Test all base types from DynamicChallengePatterns with various ports
-	for baseType := range DynamicChallengePatterns {
-		t.Run(baseType+" with port 8080", func(t *testing.T) {
-			challenge := FormatDynamicChallenge(baseType, "8080")
-			if !IsDynamicChallenge(challenge) {
-				t.Errorf("IsDynamicChallenge(%q) = false, want true", challenge)
-			}
-		})
-
-		t.Run(baseType+" with port 443", func(t *testing.T) {
-			challenge := FormatDynamicChallenge(baseType, "443")
-			if !IsDynamicChallenge(challenge) {
-				t.Errorf("IsDynamicChallenge(%q) = false, want true", challenge)
-			}
-		})
-
-		t.Run(baseType+" with port 1", func(t *testing.T) {
-			challenge := FormatDynamicChallenge(baseType, "1")
-			if !IsDynamicChallenge(challenge) {
-				t.Errorf("IsDynamicChallenge(%q) = false, want true", challenge)
-			}
-		})
-	}
-}
-
-func TestIsDynamicChallenge_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		want          bool
-	}{
-		{
-			name:          "standard_two_digit_suffix",
-			challengeType: "http-01",
-			want:          false,
-		},
-		{
-			name:          "dynamic_three_digit_port",
-			challengeType: "http-100",
-			want:          true,
-		},
-		{
-			name:          "dynamic_five_digit_port",
-			challengeType: "http-65535",
-			want:          true,
-		},
-		{
-			name:          "invalid_no_digits",
-			challengeType: "http-",
-			want:          false,
-		},
-		{
-			name:          "invalid_no_hyphen",
-			challengeType: "http01",
-			want:          false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsDynamicChallenge(tt.challengeType)
-			require.Equal(t, tt.want, result)
-		})
-	}
-}
-
 // =============================================================================
 // GetChallengePort Tests
 // =============================================================================
@@ -587,26 +362,31 @@ func TestGetChallengePort(t *testing.T) {
 		{
 			name:          "standard http-01",
 			challengeType: "http-01",
-			want:          DefaultHTTPPort,
+			want:          "80",
 		},
 		{
 			name:          "standard https-01",
 			challengeType: "https-01",
-			want:          DefaultHTTPSPort,
+			want:          "443",
 		},
 		{
 			name:          "standard enroll-01",
 			challengeType: "enroll-01",
-			want:          DefaultEnrollPort,
+			want:          "8443",
 		},
 		{
 			name:          "standard endorse-01",
 			challengeType: "endorse-01",
-			want:          DefaultEnrollPort,
+			want:          "8443",
 		},
 		{
 			name:          "standard dns-01",
 			challengeType: "dns-01",
+			want:          "",
+		},
+		{
+			name:          "standard unknown-01",
+			challengeType: "unknown-01",
 			want:          "",
 		},
 
@@ -639,101 +419,6 @@ func TestGetChallengePort(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("GetChallengePort() = %v, want %v", got, tt.want)
 			}
-		})
-	}
-}
-
-func TestGetChallengePort_UnknownStandardTypes(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		want          string
-	}{
-		{
-			name:          "unknown standard type returns empty",
-			challengeType: "unknown-01",
-			want:          "", // Falls through to default case
-		},
-		{
-			name:          "custom standard type returns empty",
-			challengeType: "custom-01",
-			want:          "", // Falls through to default case
-		},
-		{
-			name:          "test standard type returns empty",
-			challengeType: "test-99",
-			want:          "", // Falls through to default case
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := GetChallengePort(tt.challengeType)
-			if got != tt.want {
-				t.Errorf("GetChallengePort(%q) = %q, want %q", tt.challengeType, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGetChallengePort_FallThroughCases(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		want          string
-	}{
-		{
-			name:          "unknown_standard_type",
-			challengeType: "unknown-01",
-			want:          "",
-		},
-		{
-			name:          "alpn_standard",
-			challengeType: "alpn-01",
-			want:          "",
-		},
-		{
-			name:          "custom_standard",
-			challengeType: "custom-99",
-			want:          "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetChallengePort(tt.challengeType)
-			require.Equal(t, tt.want, result)
-		})
-	}
-}
-
-func TestGetChallengePort_ErrorPathFromParseDynamic(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		want          string
-	}{
-		{
-			name:          "invalid_challenge_returns_empty",
-			challengeType: "invalid-challenge",
-			want:          "",
-		},
-		{
-			name:          "empty_challenge_returns_empty",
-			challengeType: "",
-			want:          "",
-		},
-		{
-			name:          "unknown_dynamic_returns_empty",
-			challengeType: "unknown-8080",
-			want:          "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetChallengePort(tt.challengeType)
-			require.Equal(t, tt.want, result)
 		})
 	}
 }
@@ -823,6 +508,11 @@ func TestNormalizeChallengeType(t *testing.T) {
 			challengeType: "http-65536",
 			want:          "",
 		},
+		{
+			name:          "port zero",
+			challengeType: "dns-0",
+			want:          "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -909,140 +599,6 @@ func TestNormalizeChallengeType_EdgeCases(t *testing.T) {
 	}
 }
 
-func TestNormalizeChallengeType_ReturnsEmptyForInvalid(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		want          string
-	}{
-		{
-			name:          "unsupported_dynamic_base",
-			challengeType: "unknown-8080",
-			want:          "",
-		},
-		{
-			name:          "invalid_format_no_hyphen",
-			challengeType: "invalid",
-			want:          "",
-		},
-		{
-			name:          "empty_string",
-			challengeType: "",
-			want:          "",
-		},
-		{
-			name:          "port_out_of_range",
-			challengeType: "http-65536",
-			want:          "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := NormalizeChallengeType(tt.challengeType)
-			require.Equal(t, tt.want, result)
-		})
-	}
-}
-
-func TestNormalizeChallengeType_DynamicToStandard(t *testing.T) {
-	tests := []struct {
-		challengeType string
-		want          string
-	}{
-		{"http-8080", "http-01"},
-		{"http-443", "http-01"},
-		{"http-1", "http-01"},
-		{"http-65535", "http-01"},
-		{"dns-5353", "dns-01"},
-		{"enroll-8443", "enroll-01"},
-		{"endorse-9000", "endorse-01"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.challengeType, func(t *testing.T) {
-			result := NormalizeChallengeType(tt.challengeType)
-			require.Equal(t, tt.want, result)
-		})
-	}
-}
-
-func TestNormalizeChallengeType_StandardPassthrough(t *testing.T) {
-	tests := []struct {
-		challengeType string
-		want          string
-	}{
-		{"http-01", "http-01"},
-		{"dns-01", "dns-01"},
-		{"enroll-01", "enroll-01"},
-		{"endorse-01", "endorse-01"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.challengeType, func(t *testing.T) {
-			result := NormalizeChallengeType(tt.challengeType)
-			require.Equal(t, tt.want, result)
-		})
-	}
-}
-
-func TestNormalizeChallengeType_OutOfRangePortErrorPath(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		want          string
-	}{
-		{
-			name:          "out_of_range_port_65536",
-			challengeType: "http-65536",
-			want:          "",
-		},
-		{
-			name:          "zero_port",
-			challengeType: "dns-0",
-			want:          "",
-		},
-		{
-			name:          "very_large_port",
-			challengeType: "enroll-99999",
-			want:          "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := NormalizeChallengeType(tt.challengeType)
-			require.Equal(t, tt.want, result)
-		})
-	}
-}
-
-func TestNormalizeChallengeType_UnsupportedBaseDynamic(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		want          string
-	}{
-		{
-			name:          "unsupported_dynamic_base_type",
-			challengeType: "custom-8080",
-			want:          "",
-		},
-		{
-			name:          "unsupported_another_type",
-			challengeType: "acme-9000",
-			want:          "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := NormalizeChallengeType(tt.challengeType)
-			require.Equal(t, tt.want, result)
-		})
-	}
-}
-
 // =============================================================================
 // FormatDynamicChallenge Tests
 // =============================================================================
@@ -1102,75 +658,6 @@ func TestFormatDynamicChallenge(t *testing.T) {
 	}
 }
 
-func TestFormatDynamicChallenge_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name     string
-		baseType string
-		port     string
-		want     string
-	}{
-		{
-			name:     "whitespace base type",
-			baseType: " ",
-			port:     "8080",
-			want:     " -8080",
-		},
-		{
-			name:     "whitespace port",
-			baseType: "http",
-			port:     " ",
-			want:     "http- ",
-		},
-		{
-			name:     "both whitespace",
-			baseType: " ",
-			port:     " ",
-			want:     " - ",
-		},
-		{
-			name:     "very long base type",
-			baseType: "verylongchallengetypename",
-			port:     "8080",
-			want:     "verylongchallengetypename-8080",
-		},
-		{
-			name:     "very long port string",
-			baseType: "http",
-			port:     "123456789",
-			want:     "http-123456789",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := FormatDynamicChallenge(tt.baseType, tt.port)
-			if got != tt.want {
-				t.Errorf("FormatDynamicChallenge(%q, %q) = %q, want %q",
-					tt.baseType, tt.port, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestFormatDynamicChallenge_ValidCombinations(t *testing.T) {
-	for baseType, standard := range DynamicChallengePatterns {
-		t.Run(baseType, func(t *testing.T) {
-			// Format it
-			formatted := FormatDynamicChallenge(baseType, "8080")
-			require.Equal(t, baseType+"-8080", formatted)
-
-			// Verify it parses correctly
-			parsed, _, err := ParseDynamicChallenge(formatted)
-			require.NoError(t, err)
-			require.Equal(t, baseType, parsed)
-
-			// Verify it normalizes correctly
-			normalized := NormalizeChallengeType(formatted)
-			require.Equal(t, standard, normalized)
-		})
-	}
-}
-
 // =============================================================================
 // Round Trip Tests
 // =============================================================================
@@ -1207,71 +694,9 @@ func TestDynamicChallengeRoundTrip(t *testing.T) {
 	}
 }
 
-func TestNormalizeAndParse(t *testing.T) {
-	tests := []struct {
-		name           string
-		challengeType  string
-		wantNormalized string
-		wantIsDynamic  bool
-	}{
-		{
-			name:           "dynamic http",
-			challengeType:  "http-8080",
-			wantNormalized: "http-01",
-			wantIsDynamic:  true,
-		},
-		{
-			name:           "standard http",
-			challengeType:  "http-01",
-			wantNormalized: "http-01",
-			wantIsDynamic:  false,
-		},
-		{
-			name:           "dynamic enroll",
-			challengeType:  "enroll-8443",
-			wantNormalized: "enroll-01",
-			wantIsDynamic:  true,
-		},
-		{
-			name:           "standard enroll",
-			challengeType:  "enroll-01",
-			wantNormalized: "enroll-01",
-			wantIsDynamic:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Check if it's dynamic
-			isDynamic := IsDynamicChallenge(tt.challengeType)
-			if isDynamic != tt.wantIsDynamic {
-				t.Errorf("IsDynamicChallenge() = %v, want %v", isDynamic, tt.wantIsDynamic)
-			}
-
-			// Normalize it
-			normalized := NormalizeChallengeType(tt.challengeType)
-			if normalized != tt.wantNormalized {
-				t.Errorf("NormalizeChallengeType() = %v, want %v", normalized, tt.wantNormalized)
-			}
-		})
-	}
-}
-
 // =============================================================================
-// Constants Tests
+// DynamicChallengePatterns Tests
 // =============================================================================
-
-func TestConstants(t *testing.T) {
-	if DefaultHTTPPort != "80" {
-		t.Errorf("DefaultHTTPPort = %v, want 80", DefaultHTTPPort)
-	}
-	if DefaultHTTPSPort != "443" {
-		t.Errorf("DefaultHTTPSPort = %v, want 443", DefaultHTTPSPort)
-	}
-	if DefaultEnrollPort != "8443" {
-		t.Errorf("DefaultEnrollPort = %v, want 8443", DefaultEnrollPort)
-	}
-}
 
 func TestDynamicChallengePatterns(t *testing.T) {
 	expectedPatterns := map[string]string{
