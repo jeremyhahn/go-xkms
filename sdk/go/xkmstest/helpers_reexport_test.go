@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/testing/enclavetest"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest/vaultservice"
@@ -36,6 +37,7 @@ func TestReexport_TestHelpers(t *testing.T) {
 		{"RunWithEnclaveBudget", RunWithEnclaveBudget, enclavetest.RunWithBudget},
 		{"NewVaultSimulatedKey", NewVaultSimulatedKey, vaulttest.NewSimulatedKey},
 		{"NewVaultService", NewVaultService, vaultservice.New},
+		{"NewBarrierRegistry", NewBarrierRegistry, barriertest.NewRegistry},
 	}
 	for _, tc := range funcs {
 		t.Run(tc.name, func(t *testing.T) {
