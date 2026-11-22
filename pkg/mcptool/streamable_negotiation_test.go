@@ -140,28 +140,36 @@ func connectTo(t *testing.T, server *httptest.Server) *Client {
 // retries at the mutually supported modern version, and every later request
 // carries that version in Mcp-Protocol-Version and _meta.
 func TestConnect_RetriesDiscoverAtVersionTheServerNames(t *testing.T) {
-	var mu sync.Mutex
-	discovers := 0
+	// The server supports only a modern version newer than the one Connect
+	// sends first, so the retry must switch versions. The SDK knows a single
+	// modern version, so the test registers a second one for its duration
+	// (no test in this package runs in parallel).
+	const serverVersion = "2026-12-01"
+	require.NotEqual(t, serverVersion, mcp.LATEST_PROTOCOL_VERSION)
+	require.True(t, mcp.IsModernProtocol(serverVersion))
+	saved := mcp.ValidProtocolVersions
+	mcp.ValidProtocolVersions = append([]string{serverVersion}, saved...)
+	t.Cleanup(func() { mcp.ValidProtocolVersions = saved })
+
+	reject := func(rec negotiationRecord, w http.ResponseWriter) {
+		writeRPCError(t, w, http.StatusBadRequest, rec.id, map[string]any{
+			"code":    mcp.UNSUPPORTED_PROTOCOL_VERSION,
+			"message": "unsupported protocol version",
+			"data": mcp.UnsupportedProtocolVersionData{
+				Supported: []string{serverVersion},
+				Requested: rec.metaVersion,
+			},
+		})
+	}
 	server, records := negotiationServer(t, func(rec negotiationRecord, w http.ResponseWriter) {
+		if rec.metaVersion != serverVersion || rec.headerVersion != serverVersion {
+			reject(rec, w)
+			return
+		}
 		switch rec.method {
 		case string(mcp.MethodServerDiscover):
-			mu.Lock()
-			discovers++
-			first := discovers == 1
-			mu.Unlock()
-			if first {
-				writeRPCError(t, w, http.StatusBadRequest, rec.id, map[string]any{
-					"code":    mcp.UNSUPPORTED_PROTOCOL_VERSION,
-					"message": "unsupported protocol version",
-					"data": mcp.UnsupportedProtocolVersionData{
-						Supported: []string{"2099-01-01", mcp.LATEST_PROTOCOL_VERSION},
-						Requested: rec.metaVersion,
-					},
-				})
-				return
-			}
 			writeRPCResult(t, w, rec.id, map[string]any{
-				"supportedVersions": []string{"2099-01-01", mcp.LATEST_PROTOCOL_VERSION},
+				"supportedVersions": []string{serverVersion},
 				"capabilities":      map[string]any{},
 			})
 		case string(mcp.MethodToolsCall):
@@ -184,11 +192,11 @@ func TestConnect_RetriesDiscoverAtVersionTheServerNames(t *testing.T) {
 	methods := []string{got[0].method, got[1].method, got[2].method}
 	assert.Equal(t, []string{string(mcp.MethodServerDiscover), string(mcp.MethodServerDiscover), string(mcp.MethodToolsCall)}, methods)
 	assert.NotContains(t, methods, string(mcp.MethodInitialize), "a modern retry must not fall back to the legacy handshake")
-	for i, r := range got {
-		assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, r.metaVersion, "request %d (%s) _meta protocol version", i, r.method)
+	assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, got[0].metaVersion, "the first discover carries the client's preferred version")
+	for i, r := range got[1:] {
+		assert.Equal(t, serverVersion, r.metaVersion, "request %d (%s) _meta protocol version", i+1, r.method)
+		assert.Equal(t, serverVersion, r.headerVersion, "request %d (%s) Mcp-Protocol-Version header", i+1, r.method)
 	}
-	assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, got[1].headerVersion, "the retried discover carries the negotiated version header")
-	assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, got[2].headerVersion, "tools/call carries the negotiated version header")
 }
 
 // legacyReply answers server/discover with METHOD_NOT_FOUND (a legacy
