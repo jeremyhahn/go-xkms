@@ -243,6 +243,12 @@ func (tc *TestConfig) RequireDevice(t *testing.T) {
 		t.Setenv("FIDO2_USE_VIRTUAL", "true")
 		tc.PIN = "" // Virtual devices don't support client-side PIN protocol
 	}
+	if tc.useVirtual {
+		// The CLI-exec tests run xkmsctl as a child process: it inherits
+		// this switch and serves the same virtual authenticator through
+		// cmd/xkmsctl/fido2_virtual.go instead of enumerating hidraw.
+		t.Setenv("FIDO2_USE_VIRTUAL", "true")
+	}
 }
 
 // WaitForDeviceWithTimeout waits for a FIDO2 device with custom timeout

@@ -1863,7 +1863,11 @@ coverage-xkmsctl:
 # integration-test-cluster stays out of the default run: its three Raft nodes
 # cannot initialize their barriers until each node can be initialized without
 # running its own first boot, against a shared bootstrap CA. Run it on its own.
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
+#
+# integration-test-bootstrap runs first (ruling 981): Make runs prerequisites
+# in order, and a bootstrap image build failure at the end of the list used to
+# cost the whole two-hour suite; first, it costs minutes.
+integration-test: clean-test-containers integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 # run-image-refs sets the shell variable refs to this run's images: each
@@ -2955,13 +2959,18 @@ devcontainer-server-wait:
 # only that build compiles in the //go:build integration && fido2 virtual-device
 # seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
 # binary (make build / make release-*) never carries those tags. See #807.
+# The UHID round trip (#2052) needs /dev/uhid. A container's /dev is copied
+# when it starts, and the host has no uhid node until the module is loaded,
+# so the step makes the misc node (10:239) when it is missing: opening it
+# loads uhid on the host kernel (misc_open requests char-major-10-239), where
+# post-start.sh's in-container modprobe cannot (no /lib/modules).
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -timeout 10m && $(GO) test -c -tags='$(call go_tags,linux)' -o build/bin/fido2-uhid.test ./pkg/fido2/ && { [ -c /dev/uhid ] || sudo mknod -m 600 /dev/uhid c 10 239; } && sudo XKMS_REQUIRE_UHID=1 build/bin/fido2-uhid.test -test.v -test.count=1 -test.run TestLinuxHIDDevice_UHIDRoundTrip,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
 
 .PHONY: integration-test-fido2-hardware
 ## integration-test-fido2-hardware: Run FIDO2 ceremonies against a REAL attached authenticator (requires a physical YubiKey/CTAP2 key and a human to touch it)
@@ -2973,12 +2982,12 @@ integration-test-fido2-hardware:
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
 integration-test-fido2-webauthn:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)webauthn)' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)webauthn$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
 integration-test-fido2-multiprotocol:
-	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration$(comma)fido2)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
+	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration$(comma)fido2)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
 
 .PHONY: integration-test-uhid
 ## integration-test-uhid: Run UHID package integration tests (runs in devcontainer with /dev/uhid access)
@@ -5023,7 +5032,7 @@ AWSKMS_COMPOSE := $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/do
 
 .PHONY: integration-test-bootstrap
 ## integration-test-bootstrap: Run bootstrap integration tests (DANE/TLSA, Noise, SPKI, Direct, Auto)
-integration-test-bootstrap:
+integration-test-bootstrap: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
 	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \

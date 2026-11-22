@@ -1,0 +1,1 @@
+Tests: `pkg/fido2/uhid` drops 34 of its 95 unit tests, each repeating a path and an assertion another kept test makes, or asserting only a struct literal or the standard library; coverage stays at 95.9%, and every wire-format golden, event-type and struct-size pin, refusal and error-message test stays (#1794).
