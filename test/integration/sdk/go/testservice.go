@@ -429,6 +429,34 @@ func (s *TestXKMSService) RotateOTAImageKey(ctx context.Context, req *xkms.OTAIm
 	return s.RotateKey(ctx, &xkms.RotateKeyRequest{KeyID: keyID, Backend: req.Backend})
 }
 
+func (s *TestXKMSService) ExportOTAImagePublicKey(ctx context.Context, req *xkms.OTAImageKeyRequest) (*xkms.OTAImagePublicKeyResponse, error) {
+	keyID, err := otaImageKeyID(req.BoardID, req.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	key, ok := s.keys[keyID]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, errors.New("key not found")
+	}
+	var pub *ecdsa.PublicKey
+	switch k := key.privateKey.(type) {
+	case *ecdsa.PrivateKey:
+		pub = &k.PublicKey
+	default:
+		pub, _ = key.publicKey.(*ecdsa.PublicKey)
+	}
+	if pub == nil {
+		return nil, errors.New("OTA image key is not an ECDSA key")
+	}
+	point, err := pub.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	return &xkms.OTAImagePublicKeyResponse{KeyID: keyID, BoardID: req.BoardID, Version: 1, Raw: point[1:]}, nil
+}
+
 func (s *TestXKMSService) SignOTAImage(ctx context.Context, req *xkms.OTAImageSignRequest) (*xkms.SignResponse, error) {
 	keyID, err := otaImageKeyID(req.BoardID, "")
 	if err != nil {
