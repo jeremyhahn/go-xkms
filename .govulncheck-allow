@@ -1,0 +1,9 @@
+# govulncheck allowlist, read by scripts/govulncheck-allow.sh (make vuln).
+# One entry per line: <OSV id> <expiry YYYY-MM-DD, UTC, inclusive> <tracking issue URL>
+# Every entry needs a tracking issue and an expiry; the gate fails once an
+# entry expires or is no longer reached.
+#
+# GO-2026-6911: ruling 1047 (1). The only trace left runs inside go-qrdb
+# (pkg/acme/api/swagger AssetHandler -> go-qrdb replica_forward.go ->
+# mcp-go transport.StreamableHTTP).
+GO-2026-6911 2026-12-04 https://github.com/jeremyhahn/go-xkms/issues/2326
