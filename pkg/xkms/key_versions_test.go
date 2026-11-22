@@ -909,3 +909,26 @@ func TestRotateKey_ConcurrentRotationsTakeDistinctVersions(t *testing.T) {
 	assert.Equal(t, uint32(rotations+1), listed.CurrentVersion)
 	assert.Len(t, listed.Versions, rotations+1)
 }
+
+func TestResolveKey_CurrentVersionWithoutItsBackendKey(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := ctxFor("")
+	genKey(t, svc, "", "k", "ed25519", 0)
+	rotate(t, svc, "", "k")
+	b, err := svc.LookupBackend("software")
+	require.NoError(t, err)
+	keys, err := b.ListKeys(ctx)
+	require.NoError(t, err)
+	for _, attrs := range keys {
+		if attrs.CN == "k--v2" {
+			require.NoError(t, b.DeleteKey(ctx, attrs))
+		}
+	}
+
+	k, err := svc.resolveKey(ctx, b, "software", "k")
+	require.NoError(t, err)
+	_, err = k.current()
+	var missing *KeyVersionMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, uint32(2), missing.Version)
+}
