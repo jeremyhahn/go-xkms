@@ -311,6 +311,41 @@ func TestAdminPlane_TenantCallerManagesItsOwnTenant(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
+// builtInAdminCaller returns a tenant-a caller holding only the tenant's
+// built-in Admin role, with no custom role beside it.
+func (f *tenantBindingFixture) builtInAdminCaller(t *testing.T, username string) adminCaller {
+	t.Helper()
+	adminA := tenantRole(t, f.client, bindingTenantA, qrdbsdk.RoleNameAdmin)
+	user, err := f.client.Users().CreateUser(oracleContext(bindingTenantA), &qrdbtransport.CreateUserRequest{
+		Username:             username,
+		TenantID:             bindingTenantA,
+		RoleIDs:              []string{adminA.ID},
+		WithoutEmailLoginKey: true,
+	})
+	require.NoError(t, err)
+	return adminCaller{cert: bindClientCert(t, f.client, user), tenantID: bindingTenantA}
+}
+
+// TestAdminPlane_OwnTenantAdminCreatesAndUpdatesRole pins the Tenant Agent's
+// #2339 ruling: go-qrdb (since v0.52) lets a tenant's built-in Admin create
+// and update roles in its own tenant, within the permissions it holds.
+func TestAdminPlane_OwnTenantAdminCreatesAndUpdatesRole(t *testing.T) {
+	f := newTenantBindingFixture(t)
+	admin := f.builtInAdminCaller(t, "builtin-admin-2339")
+
+	rec := f.do(t, admin, http.MethodPost, "/api/v1/tenants/"+bindingTenantA+"/roles",
+		map[string]any{"name": "own-role-2339", "permissions": []string{"acme:read"}})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var created qrdbtransport.Role
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	require.NotEmpty(t, created.ID)
+	assert.Equal(t, bindingTenantA, created.TenantID)
+
+	rec = f.do(t, admin, http.MethodPut, "/api/v1/tenants/"+bindingTenantA+"/roles/"+created.ID,
+		map[string]any{"permissions": []string{"acme:read", "acme:write"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
 // TestAdminPlane_PlatformAdminReachesEveryTenant proves the system identity
 // keeps its cross-tenant reach over the tenant records the tenant caller is
 // refused.
