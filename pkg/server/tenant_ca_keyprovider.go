@@ -308,7 +308,7 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 	}
 	if errors.Is(ensureErr, errTenantLoginCAClaimHeld) {
 		// Name the holder: a holder on a lost host is released only when the
-		// operator fences it (config.DatastoreConfig.TenantLoginCAFencedHolders).
+		// operator fences it (WithTenantLoginCAFencedHolders).
 		if holder := f.tenantLoginCAClaimHolder(ctx, tenantID); holder != "" {
 			ensureErr = fmt.Errorf("%w (claim holder %s)", ensureErr, holder)
 		}
@@ -1077,8 +1077,8 @@ func selfSignTenantLoginCA(tenantID string, signer crypto.Signer) (*x509.Certifi
 func (s *Server) tenantCAKeyProviderOptions() []qrdbnode.NodeOption {
 	// An explicit opt-in: wiring the factory replaces the tenant login CAs
 	// go-qrdb already persisted, which would strand the login certificates
-	// they issued on an upgrade (see config.DatastoreConfig.TenantLoginCAKeys).
-	if !s.config.Datastore.TenantLoginCAKeys || !s.trustedCAIsClusterCA() {
+	// they issued on an upgrade (see WithTenantLoginCAKeys).
+	if !s.tenantLoginCAKeys || !s.trustedCAIsClusterCA() {
 		return nil
 	}
 	f := newTenantCAKeyFactory()
@@ -1087,6 +1087,31 @@ func (s *Server) tenantCAKeyProviderOptions() []qrdbnode.NodeOption {
 	// it. provisionTenantCAKeys binds the factory once they are ready.
 	s.tenantCAKeys = f
 	return []qrdbnode.NodeOption{qrdbnode.WithCertKeyProviderFactory(f)}
+}
+
+// WithTenantLoginCAKeys is the node construction option (SPEC row
+// qrdb-crypto-provider-seam) that has the embedded qrdb node sign each
+// tenant's login CA with a tenant-scoped xkms key, passed to the node as its
+// cert key provider factory. Off by default: go-qrdb keeps the tenant login
+// CAs it already persisted. Turning it on replaces those CAs with fresh
+// xkms-held keys and certificates, so login certificates issued under the old
+// CAs stop chaining to a trusted issuer. Only meaningful when the TrustedCA is
+// the cluster CA.
+func WithTenantLoginCAKeys() Option {
+	return func(s *Server) { s.tenantLoginCAKeys = true }
+}
+
+// WithTenantLoginCAFencedHolders is the recovery for a tenant login CA
+// provisioning claim a lost host left marked generating: no other host can
+// prove that host's generate stopped, so the claim is held and the boot pass
+// fails with an error naming the "claim holder". After fencing that host
+// (powered off, or its HSM session revoked) the embedder passes the named
+// holder here; the boot pass then takes the claim over. Passing a holder
+// whose host may still run is unsafe: its generate could leave a second key.
+func WithTenantLoginCAFencedHolders(holders ...string) Option {
+	return func(s *Server) {
+		s.tenantLoginCAFencedHolders = append(s.tenantLoginCAFencedHolders, holders...)
+	}
 }
 
 // tenantCAKeyBackend is the server's default backend, the one that holds the

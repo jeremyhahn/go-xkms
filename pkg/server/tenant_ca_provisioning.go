@@ -125,7 +125,7 @@ func (s *Server) provisionTenantCAKeys(ctx context.Context) error {
 	if err := s.tenantCAKeys.Bind(base, s.sharedStorage()); err != nil {
 		return &TenantProvisionError{Err: err}
 	}
-	s.tenantCAKeys.FenceHolders(s.config.Datastore.TenantLoginCAFencedHolders)
+	s.tenantCAKeys.FenceHolders(s.tenantLoginCAFencedHolders)
 	s.tenantCAKeys.TrackTenants(s.tenantService)
 	return provisionTenantCAKeysWith(ctx, s.tenantService, s.tenantCAKeys)
 }

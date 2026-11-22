@@ -300,5 +300,8 @@ approval and the exported APIs) were not started.
   or is this process's own). A holder on another host stays held until
   `RemoveTenant`. Tests `TestTenantCAKeyFactory_NoTakeoverWhileRenewalsFailDuringGenerate`,
   `TestTenantLoginCAHolderStopped`, `TestTenantCAKeyFactory_ReconcilesGeneratingClaimOfGoneHolder`.
-- Codex review 5990957839, `datastore.tenant-login-ca-keys` scope (P1): not
-  acted on; needs owner approval of the setting or a SPEC row change.
+- Codex review 5990957839, `datastore.tenant-login-ca-keys` scope (P1): the
+  setting (and `datastore.tenant-login-ca-fenced-holders`) is removed; the
+  opt-in is the server construction option `WithTenantLoginCAKeys` (and
+  `WithTenantLoginCAFencedHolders`), so no unapproved config surface
+  remains. Read the opt-in mentions above as that option.

@@ -267,7 +267,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	nodeOpts = append(nodeOpts, s.clusterCAKeyProviderOptions()...)
 	// Each tenant's login CA (Key B) from its tenant-scoped xkms key, under
 	// the same condition as the cluster CA, and only when the operator opted
-	// in (datastore tenant-login-ca-keys).
+	// in (the WithTenantLoginCAKeys construction option).
 	nodeOpts = append(nodeOpts, s.tenantCAKeyProviderOptions()...)
 
 	// newQRDBNode is build-tag specific: the default (!raft) build hosts a

@@ -570,10 +570,8 @@ func TestTenantCAKeyProviderOptions_NotOptedIn(t *testing.T) {
 }
 
 func TestTenantCAKeyProviderOptions(t *testing.T) {
-	s := &Server{config: &config.Config{
-		CA:        ca.DefaultMultiIdentityCAConfigWithIntermediate(),
-		Datastore: config.DatastoreConfig{TenantLoginCAKeys: true},
-	}}
+	s := &Server{config: &config.Config{CA: ca.DefaultMultiIdentityCAConfigWithIntermediate()}}
+	WithTenantLoginCAKeys()(s)
 	if opts := s.tenantCAKeyProviderOptions(); len(opts) != 1 {
 		t.Fatalf("tenantCAKeyProviderOptions() returned %d options, want 1", len(opts))
 	}

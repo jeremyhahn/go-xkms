@@ -473,6 +473,13 @@ type Server struct {
 	// xkms hosting a second embedded node.
 	extraModules []qrdbsdk.ServiceModule
 
+	// tenantLoginCAKeys and tenantLoginCAFencedHolders are set only by the
+	// construction options WithTenantLoginCAKeys and
+	// WithTenantLoginCAFencedHolders (tenant_ca_keyprovider.go); there is
+	// no config setting for either.
+	tenantLoginCAKeys          bool
+	tenantLoginCAFencedHolders []string
+
 	// attestedCallerPolicy is the embedder's attested-caller gate policy, set
 	// via WithAttestedCallerPolicy. attestation.peer_gate decides whether a
 	// gate is built from it; its Mode is overridden by that key.

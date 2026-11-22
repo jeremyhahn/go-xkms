@@ -717,28 +717,6 @@ type DatastoreConfig struct {
 	// lets a database choose independently of the datastore's default
 	// engine. See docs/datastore/architecture.md.
 	Databases []qrdbsdk.DaemonDatabaseConfig `yaml:"databases"`
-
-	// TenantLoginCAKeys opts the embedded qrdb node into signing each
-	// tenant's login CA with a tenant-scoped xkms key (SPEC row
-	// qrdb-crypto-provider-seam). Default false: go-qrdb keeps the tenant
-	// login CAs it already persisted. Turning it on replaces those CAs with
-	// fresh xkms-held keys and certificates, so login certificates issued
-	// under the old CAs (system tenant included) stop chaining to a trusted
-	// issuer; enable it on a fresh deployment, or only after re-issuing
-	// every tenant's login credentials. Only meaningful when the TrustedCA
-	// is the cluster CA.
-	TenantLoginCAKeys bool `yaml:"tenant-login-ca-keys"`
-
-	// TenantLoginCAFencedHolders is the recovery for a tenant login CA
-	// provisioning claim a lost host left marked generating: no other host
-	// can prove that host's generate stopped, so the claim is held, and the
-	// boot pass fails with an error naming the "claim holder". After fencing
-	// that host (powered off, or its HSM session revoked), the operator lists
-	// the named holder here and restarts; the boot pass then takes the claim
-	// over and provisions the tenant. Remove the entry once the boot pass
-	// succeeds. Listing a holder whose host may still run is unsafe: its
-	// generate could leave a second key.
-	TenantLoginCAFencedHolders []string `yaml:"tenant-login-ca-fenced-holders"`
 }
 
 // DatastoreRemoteConfig configures a connection to an already-running,
