@@ -9,7 +9,7 @@ services:
       secrets:
         - gomodauth
         - apt_proxy
-    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    image: go-xkms-integration-xkms-server:${XKMS_IMAGE_TAG:-latest}
     # Ports are exposed but NOT published to the host. A published host port
     # is host-global, so publishing would make this stack collide with the
     # devcontainer's and with any other CI job running this same suite. Test
@@ -164,7 +164,7 @@ services:
       secrets:
         - gomodauth
         - apt_proxy
-    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    image: go-xkms-integration-integration-tests:${XKMS_IMAGE_TAG:-latest}
     # Required for QUIC UDP buffer settings
     privileged: true
     user: root

@@ -18,6 +18,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -178,6 +180,56 @@ func TestEmbeddedNodeStorageConfig_CarriesTheCORSPolicy(t *testing.T) {
 
 	cfg.CORS.AllowCredentials = false
 	require.False(t, EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{}).CORS.AllowCredentials)
+}
+
+// A relative datastore path (the webauthn-browser harness uses
+// "./.runtime/storage") must reach qrdb as an absolute path: qrdb refuses a
+// relative volume pool path, and without the default pool registration has
+// nowhere to write (ruling 1009).
+func TestEmbeddedNodeStorageConfig_ResolvesRelativeDatastorePath(t *testing.T) {
+	const rel = "./.runtime/storage"
+	abs, err := filepath.Abs(rel)
+	require.NoError(t, err)
+
+	cfg := &config.Config{}
+	cfg.Datastore.Path = rel
+	qcfg := EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{Enabled: true})
+
+	require.Len(t, qcfg.Storage.VolumePools, 1)
+	pool := qcfg.Storage.VolumePools[0].Path
+	assert.True(t, filepath.IsAbs(pool), "volume pool path %q is not absolute", pool)
+	assert.Equal(t, filepath.Join(abs, "tenant-volumes"), pool)
+	assert.True(t, filepath.IsAbs(qcfg.Raft.DataDir), "raft data dir %q is not absolute", qcfg.Raft.DataDir)
+	assert.Equal(t, abs, qcfg.Raft.DataDir)
+}
+
+// On a clean start (the webauthn-browser harness deletes .runtime/storage
+// before init) nothing has created the default volume pool directory, and
+// qrdb's volume Open stats the pool path and refuses a missing one, leaving
+// the pool unserved. Opening the node must provision it, owner-only
+// (ruling 1009, Codex P1 on #2308).
+func TestOpenEmbeddedNode_CreatesDefaultVolumePoolDir(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const rel = "./.runtime/storage"
+	abs, err := filepath.Abs(rel)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Path: rel},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "none"},
+	}
+	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
+		Config: cfg,
+		Logger: testLogger(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	defer func() { _ = node.Close() }()
+
+	info, err := os.Stat(filepath.Join(abs, "tenant-volumes"))
+	require.NoError(t, err, "default volume pool directory was not created")
+	assert.True(t, info.IsDir())
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 }
 
 // TestOpenEmbeddedNode_OverridesFactorRegistryAndAuditSink proves that a

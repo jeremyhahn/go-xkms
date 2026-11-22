@@ -212,6 +212,9 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		apimodule.WithSSHClient(func() sdkssh.Client { return s.ensureSSHClient() }),
 		apimodule.WithRESTServer(func() *rest.Server { return s.ModuleRESTServer() }),
 		apimodule.WithMCPServer(func() *mcp.Server { return s.ModuleMCPServer() }),
+		// The unified surface applies the same cors policy as the REST
+		// router (#2329).
+		apimodule.WithCORS(s.corsOptions()),
 	}
 	// Embedded web UI: registration is config-driven (assets are installed
 	// after construction via SetUIAssets and late-bind through the REST

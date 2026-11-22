@@ -939,6 +939,8 @@ Aliases: fido
 | `--password-store` | string |  | Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses) |
 | `--phone-device` | string |  | Specific phone name or address to use (default: use default paired phone) |
 | `--pin` | bool | true | Enable PIN support (required for FIDO 2.1 credential management) |
+| `--pin-file` | string |  | Read the PIN from the first line of this file |
+| `--pin-stdin` | bool | false | Read the PIN from standard input |
 | `--require-touch` | bool | true | Require touch even after PIN verification (like hardware YubiKey) |
 | `--serial` | string |  | Device serial number (auto-generated if empty) |
 | `--set-pin-stdin` | bool | false | Read the PIN to establish from standard input |
@@ -1068,6 +1070,8 @@ Usage: `xkey fido2 start [flags]`
 | `--password-store` | string |  | Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses) |
 | `--phone-device` | string |  | Specific phone name or address to use (default: use default paired phone) |
 | `--pin` | bool | true | Enable PIN support (required for FIDO 2.1 credential management) |
+| `--pin-file` | string |  | Read the PIN from the first line of this file |
+| `--pin-stdin` | bool | false | Read the PIN from standard input |
 | `--require-touch` | bool | true | Require touch even after PIN verification (like hardware YubiKey) |
 | `--serial` | string |  | Device serial number (auto-generated if empty) |
 | `--set-pin-stdin` | bool | false | Read the PIN to establish from standard input |
@@ -2866,6 +2870,25 @@ Usage: `xkey tpm quote [flags]`
 | `--nonce` | string |  | Nonce value (hex-encoded, will be generated if not provided) |
 | `--output` | string |  | Output file path for quote data |
 | `--pcrs` | string | 0,1,7 | Comma-separated list of PCR indices to include |
+
+## xkey tpm srk
+
+Manage the Platform Storage Root Key
+
+Usage: `xkey tpm srk`
+
+## xkey tpm srk enroll
+
+Enrol the Platform SRK under the user PIN
+
+Usage: `xkey tpm srk enroll [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--pin-file` | string |  | Read the PIN from the first line of this file |
+| `--pin-stdin` | bool | false | Read the PIN from standard input |
+| `--so-pin-file` | string |  | Read the SO PIN from the first line of this file |
+| `--so-pin-stdin` | bool | false | Read the SO PIN from standard input |
 
 ## xkey tpm status
 

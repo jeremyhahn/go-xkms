@@ -19,8 +19,8 @@ PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
 no() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n    want: %s\n    got:  %s\n' "$1" "$2" "$3" >&2; }
-eq() { [ "$2" = "$3" ] && ok "$1" || no "$1" "$2" "$3"; }
-has() { grep -qxF -- "$3" "$2" && ok "$1" || no "$1" "line '$3' in $2" "$(tr '\n' ' ' <"$2")"; }
+eq() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1" "$2" "$3"; fi; }
+has() { if grep -qxF -- "$3" "$2"; then ok "$1"; else no "$1" "line '$3' in $2" "$(tr '\n' ' ' <"$2")"; fi; }
 section() { printf '\n%s\n' "$1"; }
 
 WORK=$(mktemp -d)
@@ -57,7 +57,13 @@ case $1 in
     exit 0 ;;
   start)
     mapfile -t envs <"$FAKE_STATE/env"
-    exec env -i PATH="$PATH" FAKE_STATE="$FAKE_STATE" "${envs[@]}" sh -c "$(cat "$FAKE_STATE/cmd")" ;;
+    # The caller's Go caches, each only when set, before the container's -e
+    # values (#2295).
+    go_env=()
+    for v in GOMODCACHE GOPATH GOFLAGS GOPROXY GOSUMDB GOCACHE; do
+      if [ -n "${!v+x}" ]; then go_env+=("$v=${!v}"); fi
+    done
+    exec env -i PATH="$PATH" FAKE_STATE="$FAKE_STATE" "${go_env[@]}" "${envs[@]}" sh -c "$(cat "$FAKE_STATE/cmd")" ;;
 esac
 echo "fake docker: unexpected $*" >&2
 exit 99
