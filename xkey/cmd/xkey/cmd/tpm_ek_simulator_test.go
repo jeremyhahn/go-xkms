@@ -41,7 +41,7 @@ func withECEKCertSimulator(t *testing.T) *x509.Certificate {
 	cert := issueTestCert(t, sim.caCert, sim.caKey, "Test EC EK Certificate", foreignECKey(t))
 	require.NoError(t, sim.tpm.ProvisionEKCert(nil, cert.Raw))
 	setVar(t, &openTPM, func() (xkms.TrustedPlatformModule, error) {
-		return sharedTPM{sim.tpm}, nil
+		return newSharedTPM(t, sim.tpm), nil
 	})
 	return cert
 }
@@ -107,7 +107,7 @@ func TestRunEKCommands_WithoutEKCertificate(t *testing.T) {
 		true: func(t *testing.T) {
 			sim := withProvisionedSimulatorTPMForECCert(t)
 			setVar(t, &openTPM, func() (xkms.TrustedPlatformModule, error) {
-				return sharedTPM{sim.tpm}, nil
+				return newSharedTPM(t, sim.tpm), nil
 			})
 		},
 	}
