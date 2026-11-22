@@ -80,10 +80,15 @@ const tenantCreateUndoTimeout = 30 * time.Second
 func (p *provisioningTenantService) undoCreate(ctx context.Context, id string) error {
 	undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tenantCreateUndoTimeout)
 	defer cancel()
-	if err := p.UndoCreateTenant(undoCtx, id); err != nil {
+	// The tenant record fences the ID until its login CA material is gone:
+	// undoing it first would let a concurrent create reuse the ID, adopt
+	// the saved key, and then have this rollback tombstone its CA. When the
+	// CA cleanup fails the tenant stays, still fencing the ID, for
+	// DeleteTenant to finish.
+	if err := p.keys.RemoveTenant(undoCtx, id); err != nil {
 		return err
 	}
-	return p.keys.RemoveTenant(undoCtx, id)
+	return p.UndoCreateTenant(undoCtx, id)
 }
 
 // DeleteTenant deletes the tenant, then its login CA key and certificate, so

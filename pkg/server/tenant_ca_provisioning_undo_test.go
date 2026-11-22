@@ -87,3 +87,64 @@ func TestProvisioningTenantService_CancelledCreateRollsBackForRetry(t *testing.T
 	require.ErrorAs(t, err, &pending, "a retry with the same tenant ID must stay possible, got: %v", err)
 	require.Equal(t, "tenant-a", pending.TenantID)
 }
+
+// pausingTenantCAKeys fails every EnsureTenant and runs onRemove inside
+// RemoveTenant, where a rollback is paused in its CA cleanup.
+type pausingTenantCAKeys struct {
+	onRemove  func(id string)
+	removeErr error
+	removed   []string
+}
+
+func (k *pausingTenantCAKeys) EnsureTenant(context.Context, string) error {
+	return errors.New("login CA certificate save failed")
+}
+
+func (k *pausingTenantCAKeys) RemoveTenant(_ context.Context, id string) error {
+	if k.onRemove != nil {
+		k.onRemove(id)
+	}
+	k.removed = append(k.removed, id)
+	return k.removeErr
+}
+
+func (k *pausingTenantCAKeys) ReviveTenant(context.Context, string) error { return nil }
+
+// A rollback keeps the tenant ID fenced until its CA cleanup has finished:
+// a create retrying the same ID while the old rollback is still removing the
+// CA key is refused, so it cannot adopt the key the rollback then tombstones.
+func TestProvisioningTenantService_UndoFencesIDUntilCACleanup(t *testing.T) {
+	svc := newRealTenantService(t)
+	keys := &pausingTenantCAKeys{}
+	var retryErr error
+	keys.onRemove = func(id string) {
+		_, retryErr = svc.CreateTenant(context.Background(), id, "Tenant A retry", "")
+	}
+	p := newProvisioningTenantService(svc, keys)
+
+	_, err := p.CreateTenant(context.Background(), "tenant-a", "Tenant A", "")
+	var provErr *TenantProvisionError
+	require.ErrorAs(t, err, &provErr)
+	require.Equal(t, []string{"tenant-a"}, keys.removed)
+	require.Error(t, retryErr, "a create retrying the ID during the CA cleanup must be refused")
+	var pending *qrdbsdk.TenantUndoPendingError
+	require.False(t, errors.As(retryErr, &pending), "the ID must still be held by the tenant, not undone: %v", retryErr)
+
+	_, err = p.GetTenant(context.Background(), "tenant-a")
+	require.Error(t, err, "the rollback must undo the tenant once its CA is gone")
+}
+
+// A rollback whose CA cleanup fails leaves the tenant in place, still
+// fencing the ID, rather than releasing it over leftover CA material.
+func TestProvisioningTenantService_UndoKeepsTenantWhenCACleanupFails(t *testing.T) {
+	keys := &pausingTenantCAKeys{removeErr: errors.New("login CA key delete failed")}
+	p := newProvisioningTenantService(newRealTenantService(t), keys)
+
+	_, err := p.CreateTenant(context.Background(), "tenant-a", "Tenant A", "")
+	var provErr *TenantProvisionError
+	require.ErrorAs(t, err, &provErr)
+	require.ErrorIs(t, err, keys.removeErr)
+
+	_, err = p.GetTenant(context.Background(), "tenant-a")
+	require.NoError(t, err, "the tenant must keep fencing the ID until DeleteTenant finishes the cleanup")
+}
