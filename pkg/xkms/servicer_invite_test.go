@@ -712,6 +712,63 @@ func TestActivateInvitePIV_Success(t *testing.T) {
 	require.ErrorIs(t, err, ErrInviteUnusable)
 }
 
+// TestActivateInvitePIV_RefusedWhileWebAuthnFinishActivates: a WebAuthn
+// finish that saved its passkey but has not yet activated the account holds
+// the account's first-credential claim, so a PIV activation of the same
+// invitation in that window is refused and binds nothing.
+func TestActivateInvitePIV_RefusedWhileWebAuthnFinishActivates(t *testing.T) {
+	f := newInviteFixture(t)
+	token := f.mintInvite(t)
+	caCert, leafCert, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	f.svc.SetCA(&mockCA{bundlePEM: pemEncodeCert(caCert)})
+
+	bindings := 0
+	bind := f.users.addCertBinding
+	f.users.addCertBinding = func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+		bindings++
+		return bind(ctx, userID, thumbprint, notAfterUnix)
+	}
+	var pivErr error
+	pivRan := false
+	update := f.users.updateUser
+	f.users.updateUser = func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+		if !pivRan {
+			pivRan = true
+			_, pivErr = f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+		}
+		return update(ctx, req)
+	}
+
+	begin, err := f.beginRegistration(inviteFixtureTenant, token)
+	require.NoError(t, err)
+	attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+	result, err := f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+	require.NoError(t, err)
+	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+
+	require.True(t, pivRan, "the PIV activation ran inside the WebAuthn activation")
+	require.ErrorIs(t, pivErr, ErrInviteUnusable)
+	assert.Zero(t, bindings, "the refused PIV activation bound no certificate")
+}
+
+// TestActivateInvitePIV_RefusedAfterFailedWebAuthnActivation: once a
+// WebAuthn finish stored the account's passkey, a PIV activation cannot
+// sidestep the WebAuthn resume's possession proof.
+func TestActivateInvitePIV_RefusedAfterFailedWebAuthnActivation(t *testing.T) {
+	f := newInviteFixture(t)
+	token := f.mintInvite(t)
+	f.enrolThenFailActivation(t, token)
+
+	caCert, leafCert, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	f.svc.SetCA(&mockCA{bundlePEM: pemEncodeCert(caCert)})
+
+	_, err = f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+	require.ErrorIs(t, err, ErrInviteUnusable)
+	f.requirePendingUnredeemed(t, token, inviteFixtureQRDBUserID)
+}
+
 func TestActivateInvitePIV_RejectsUntrustedCert(t *testing.T) {
 	f := newInviteFixture(t)
 	token := f.mintInvite(t)
