@@ -54,6 +54,16 @@ func (otaImageServer) RotateOTAImageKey(_ context.Context, req *pb.OTAImageKeyRe
 	return &pb.RotateKeyResponse{KeyId: "ota-image-" + req.BoardId, KeyVersion: 2}, nil
 }
 
+func (otaImageServer) ExportOTAImagePublicKey(_ context.Context, req *pb.OTAImageKeyRequest) (*pb.OTAImagePublicKeyResponse, error) {
+	if req.BoardId == otaBadBoard {
+		return nil, status.Error(codes.InvalidArgument, "invalid board id")
+	}
+	return &pb.OTAImagePublicKeyResponse{
+		KeyId: "ota-image-" + req.BoardId, BoardId: req.BoardId, Version: 2,
+		Raw: make([]byte, 64), CoseKey: []byte{0xa5},
+	}, nil
+}
+
 func (otaImageServer) SignOTAImage(_ context.Context, req *pb.SignOTAImageRequest) (*pb.SignResponse, error) {
 	if req.BoardId == otaBadBoard {
 		return nil, status.Error(codes.InvalidArgument, "invalid board id")
@@ -110,6 +120,21 @@ func TestOTAImageKey_Unix(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("sig"), signed.Signature)
 	assert.Equal(t, uint32(2), signed.KeyVersion)
+}
+
+func TestOTAImageKey_Unix_ExportPublicKey(t *testing.T) {
+	tr := newOTAImageTransport(t)
+
+	got, err := tr.ExportOTAImagePublicKey(context.Background(), &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
+	require.NoError(t, err)
+	assert.Equal(t, "ota-image-cm4", got.KeyID)
+	assert.Equal(t, "cm4", got.BoardID)
+	assert.Equal(t, uint32(2), got.Version)
+	assert.Len(t, got.Raw, 64)
+	assert.Equal(t, []byte{0xa5}, got.COSEKey)
+
+	_, err = tr.ExportOTAImagePublicKey(context.Background(), &transport.OTAImageKeyRequest{Backend: "software", BoardID: otaBadBoard})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestOTAImageKey_Unix_InvalidBoard(t *testing.T) {
