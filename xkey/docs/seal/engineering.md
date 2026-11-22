@@ -208,8 +208,13 @@ The local TPM policy service it runs on is
 `localtpm.Policies` (go-xkms `pkg/localtpm`, re-exported as
 `sdk/go/localtpm`, shared with xkmsctl), opened with
 `localtpm.Open(localtpm.Params{TPM, Keys, DataDir, OpenStore, Lock,
-Logger})` -- the GUI passes its `TPMAccessor.Lock` -- or, by the CLI,
-`localtpm.OpenHost`, over `BuildTPMPolicyService`; see
+Logger, ReferenceSigner})` -- the GUI passes its `TPMAccessor.Lock` -- or, by the CLI,
+`localtpm.OpenHost`, over `BuildTPMPolicyService`. Both load
+`ReferenceSigner` with `localtpm.LoadReferenceSigner(dataDir)` from
+`tpm-reference-signer.pem` in the data directory (PEM `PUBLIC KEY` pins the
+signer, `CERTIFICATE` blocks are roots); without that file a signed branch
+update is refused (`ErrNoReferenceSigner`), an invalid file fails the CLI
+open and is logged by the GUI; see
 [docs/tpm-policies/](../../../docs/tpm-policies/) for the policy model and
 the GUI's `TPMPolicyService`.
 
