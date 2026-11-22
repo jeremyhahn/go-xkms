@@ -21,7 +21,10 @@
 // freely between the two and errors.Is/errors.As see the same sentinels.
 package oidc
 
-import pkg "github.com/jeremyhahn/go-xkms/pkg/oidc"
+import (
+	pkg "github.com/jeremyhahn/go-xkms/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
+)
 
 // Provider templates.
 type (
@@ -152,6 +155,20 @@ const DatabaseName = pkg.DatabaseName
 
 // NewDAOStore returns a DAOStore on a DAO factory that serves DatabaseName.
 var NewDAOStore = pkg.NewDAOStore
+
+// CredentialService is the server's tenant OIDC credential service.
+type CredentialService = credential.Service
+
+// CredentialBarriers resolves the seal barrier that guards a tenant's
+// credential secrets.
+type CredentialBarriers = credential.Barriers
+
+// NewCredentialService returns a credential service on barriers.
+var NewCredentialService = credential.New
+
+// CredentialRegistryBarriers returns CredentialBarriers backed by a seal
+// barrier registry.
+var CredentialRegistryBarriers = credential.RegistryBarriers
 
 // Sentinel errors.
 var (

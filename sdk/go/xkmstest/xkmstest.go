@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/testing/enclavetest"
 	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/pkg/testing/pkcs11test"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/secrettest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/vaulttest/vaultservice"
@@ -49,6 +50,10 @@ const VaultTenant = vaultservice.Tenant
 
 // NewVaultService builds an in-process vault service fixture.
 var NewVaultService = vaultservice.New
+
+// NewBarrierRegistry returns a seal barrier registry on an initialized
+// in-memory software barrier, failing the test on error.
+var NewBarrierRegistry = barriertest.NewRegistry
 
 // NewPKCS11ModuleFactory creates a mock PKCS#11 module and its teardown func.
 var NewPKCS11ModuleFactory = pkcs11test.NewModuleFactory
