@@ -2299,7 +2299,7 @@ integration-test-pkcs11-barrier:
 	@cd test/integration/pkcs11/barrier && $(call compose_trap,pkcs11-barrier) && \
 		$(call compose,pkcs11-barrier) run --build --rm test \
 		go test -v -count=1 -tags='$(call go_tags,integration pkcs11 pkcs11_barrier codec_cbor codec_json codec_msgpack)' -timeout 15m \
-		./test/integration/pkcs11/barrier/...
+		./test/integration/pkcs11/barrier/... $(call compose_logs_on_fail,pkcs11-barrier)
 	@echo "$(GREEN)✓ TPM-sealed PKCS#11 barrier PIN integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs11-module
@@ -2628,7 +2628,7 @@ integration-test-peergate:
 	@cd test/integration/tpm2 && $(call compose_trap,peergate) && \
 		$(call compose,peergate) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test \
 		go test -v -count=1 -tags='$(call go_tags,integration tpm2 codec_cbor codec_json codec_msgpack gms_pure_go)' -timeout 15m \
-		-run 'TestIntegration_PeerGate' ./test/integration/tpm2/...
+		-run 'TestIntegration_PeerGate' ./test/integration/tpm2/... $(call compose_logs_on_fail,peergate)
 	@echo "$(GREEN)✓ Attested-caller gate integration tests complete$(RESET)"
 
 .PHONY: integration-test-acme-tpm
