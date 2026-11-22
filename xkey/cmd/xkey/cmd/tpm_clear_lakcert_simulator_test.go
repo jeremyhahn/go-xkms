@@ -99,7 +99,7 @@ func withLAKSimulatorTPM(t *testing.T) *lakSimulator {
 	_, err = tpm.CreateLAK(nil, nil, false)
 	require.NoError(t, err)
 
-	shared := sharedTPM{tpm}
+	shared := newSharedTPM(t, tpm)
 	setVar(t, &openTPM, func() (xkms.TrustedPlatformModule, error) { return shared, nil })
 
 	caCert, caKey := generateEKTestCA(t)
