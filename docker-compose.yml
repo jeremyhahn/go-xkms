@@ -4,6 +4,11 @@ services:
     build:
       context: test/docker/swtpm
       dockerfile: Dockerfile
+      # Ruling 886: scripts/apk-mirror.sh, bind-mounted by the Dockerfile.
+      additional_contexts:
+        scripts: ./scripts
+      secrets:
+        - apk_mirror
     image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-latest}
     ports:
       - "0:2321"  # TPM command port
@@ -26,6 +31,8 @@ services:
       # The SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418).
       additional_contexts:
         softhsm-pin: ./scripts
+      secrets:
+        - apk_mirror
     image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - softhsm-tokens:/tokens
@@ -47,6 +54,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      secrets:
+        - apt_proxy
     image: go-xkms-test:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       swtpm:
@@ -81,6 +90,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      secrets:
+        - apt_proxy
     image: go-xkms-test:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - .:/workspace:cached
@@ -95,6 +106,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      secrets:
+        - apt_proxy
     image: go-xkms-test:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       swtpm:
@@ -134,3 +147,11 @@ volumes:
 networks:
   xkms-test:
     driver: bridge
+
+secrets:
+  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
+  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  apk_mirror:
+    environment: DEVCACHE_APK_MIRROR
+  apt_proxy:
+    environment: DEVCACHE_APT_PROXY
