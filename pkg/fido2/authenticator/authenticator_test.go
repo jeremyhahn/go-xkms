@@ -802,75 +802,9 @@ func TestHasMatchingCredentials_WithPINAuth(t *testing.T) {
 // ---------------------------------------------------------------------------
 // handleSelection tests
 //
-// handleSelection always auto-approves. A virtual authenticator is "selected"
-// by having it running; requiring touch at the Selection stage would create a
-// redundant interaction before the PIN dialog (touch -> PIN -> touch instead of
-// just PIN -> touch). The user intent check feature (EnableUserIntentCheck) is
-// implemented in MakeCredential/GetAssertion, not Selection.
+// handleSelection waits for user presence (CTAP 2.1 §6.9); the blocking,
+// status and transport tests are in selection_presence_test.go.
 // ---------------------------------------------------------------------------
-
-// TestHandleSelection_AlwaysAutoApproves verifies that authenticatorSelection
-// returns CTAP2 success (StatusOK) without invoking the user presence handler,
-// regardless of the EnableUserIntentCheck configuration.
-func TestHandleSelection_AlwaysAutoApproves(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name                  string
-		enableUserIntentCheck bool
-	}{
-		{"IntentCheckDisabled", false},
-		{"IntentCheckEnabled", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			storage := NewMemoryStorage()
-			config := DefaultConfig()
-			config.UserPresenceHandler = NewAutoGrantHandler()
-			config.Storage = storage
-			config.EnableUserIntentCheck = tt.enableUserIntentCheck
-			handler := &trackingUPHandler{approve: true}
-			config.UserPresenceHandler = handler
-
-			auth, err := NewAuthenticator(config)
-			require.NoError(t, err)
-			defer func() { _ = auth.Close() }()
-
-			resp, err := auth.ProcessCBOR(CmdSelection, nil)
-			require.NoError(t, err)
-			require.NotEmpty(t, resp)
-			require.Equal(t, byte(StatusOK), resp[0],
-				"Selection must return StatusOK regardless of intent check setting")
-			require.False(t, handler.called.Load(),
-				"user presence handler must NOT be called during Selection")
-		})
-	}
-}
-
-// TestHandleSelection_NeverBlocks verifies that Selection returns immediately
-// even when the user presence handler would block. Since handleSelection no
-// longer calls the UP handler, a blocking handler must not prevent success.
-func TestHandleSelection_NeverBlocks(t *testing.T) {
-	t.Parallel()
-	storage := NewMemoryStorage()
-	config := DefaultConfig()
-	config.UserPresenceHandler = NewAutoGrantHandler()
-	config.Storage = storage
-	config.EnableUserIntentCheck = true
-	config.UserPresenceHandler = &blockingUPHandler{}
-
-	auth, err := NewAuthenticator(config)
-	require.NoError(t, err)
-	defer func() { _ = auth.Close() }()
-
-	resp, err := auth.ProcessCBOR(CmdSelection, nil)
-	require.NoError(t, err)
-	require.NotEmpty(t, resp)
-	require.Equal(t, byte(StatusOK), resp[0],
-		"Selection must succeed even when the UP handler would block")
-}
 
 // TestHandleSelection_SuccessResponseFormat verifies the exact response byte
 // format: a single StatusOK (0x00) byte with no trailing CBOR payload. This
