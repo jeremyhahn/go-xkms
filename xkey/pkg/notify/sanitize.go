@@ -38,6 +38,8 @@ func SanitizeTouchRequest(req *TouchRequest) *TouchRequest {
 		RPID:      sanitizeDisplayField(req.RPID),
 		RPName:    sanitizeDisplayField(req.RPName),
 		UserName:  sanitizeDisplayField(req.UserName),
+
+		AuthenticatorName: sanitizeDisplayField(req.AuthenticatorName),
 	}
 }
 
