@@ -143,10 +143,12 @@ func (m *Module) RegisterHTTP(r *qrdbserver.ModuleHTTPRegistrar) {
 	// CORS preflights: a browser sends OPTIONS with no credentials before a
 	// cross-origin request, so each pattern gets one public OPTIONS route
 	// that only the REST server's CORS policy answers. A pattern the route
-	// table already serves for OPTIONS keeps its own handler.
+	// table already serves for OPTIONS keeps its own handler. With the
+	// module's own policy (WithCORS) those routes are registered above and
+	// answer the preflight themselves.
 	preflight := map[string]bool{}
 	for _, key := range order {
-		if key.method == http.MethodOptions {
+		if corsEnabled || key.method == http.MethodOptions {
 			preflight[key.pattern] = true
 		}
 	}
