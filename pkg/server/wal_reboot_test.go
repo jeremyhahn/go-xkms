@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -158,10 +160,65 @@ func walRebootCrashCopy(t *testing.T, src string) string {
 	return dst
 }
 
+// walRebootStoreBytes is the size on disk of the main store's WAL and
+// sstables: what a crash copy of dataDir would carry.
+func walRebootStoreBytes(t *testing.T, dataDir string) int64 {
+	t.Helper()
+	var total int64
+	for _, pattern := range []string{"*.log", "*.sst"} {
+		files, err := filepath.Glob(filepath.Join(dataDir, "pebble", pattern))
+		require.NoError(t, err)
+		for _, f := range files {
+			fi, err := os.Stat(f)
+			require.NoError(t, err)
+			total += fi.Size()
+		}
+	}
+	return total
+}
+
+// walRebootSyncedPut writes n records of run and makes them durable before
+// any crash copy is taken. qrdb v0.51.0-alpha exposes no WAL sync on the
+// embedded node (its standalone pebble opens with SyncWrites=false and no
+// write mode syncs the WAL), so the durability boundary is a clean Close,
+// which syncs the WAL. The boundary is verified on disk: the store's bytes
+// grew past what they were before the writes. The node is then rebooted
+// sealed and unsealed (rotating the epoch) and returned running, so a crash
+// copy taken from it stops a process whose records are all synced.
+func walRebootSyncedPut(t *testing.T, node *qrdbnode.Node, dataDir string, run, n int) *qrdbnode.Node {
+	t.Helper()
+	before := walRebootStoreBytes(t, dataDir)
+	walRebootPut(t, node, run, n)
+	require.NoError(t, node.Close())
+	require.Greater(t, walRebootStoreBytes(t, dataDir), before,
+		"run %d: the records must be on disk before the crash copy", run)
+	node, err := walRebootUnsealBoot(t, dataDir)
+	require.NoError(t, err, "run %d: boot completion after the synced close", run)
+	return node
+}
+
 const walRebootRecords = 64
 
 // (1) Unclean stop after synced writes, then a sealed reboot and unseal.
 func TestWALReboot_UncleanStopReopensIntact(t *testing.T) {
+	dir := t.TempDir()
+	node := walRebootFirstBoot(t, dir)
+	node = walRebootSyncedPut(t, node, dir, 0, walRebootRecords)
+	crashed := walRebootCrashCopy(t, dir)
+	require.NoError(t, node.Close())
+
+	node, err := walRebootUnsealBoot(t, crashed)
+	t.Cleanup(func() { _ = node.Close() })
+	require.NoError(t, err, "boot completion after unseal")
+	walRebootCheck(t, node, 1, walRebootRecords)
+}
+
+// (1b) Acknowledged but unsynced writes: every Put returned nil, then the
+// process stops uncleanly with no sync. The node's KV Put returns before
+// pebble syncs the WAL (encfs holds the tail in memory), so these records
+// are lost today; this is a separate reproduction from (1), which covers
+// records past a durability boundary.
+func TestWALReboot_UnsyncedAcknowledgedWritesSurviveUncleanStop(t *testing.T) {
 	dir := t.TempDir()
 	node := walRebootFirstBoot(t, dir)
 	walRebootPut(t, node, 0, walRebootRecords)
@@ -179,7 +236,7 @@ func TestWALReboot_UncleanStopReopensIntact(t *testing.T) {
 func TestWALReboot_EpochRotationAcrossUncleanRestarts(t *testing.T) {
 	dir := t.TempDir()
 	node := walRebootFirstBoot(t, dir)
-	walRebootPut(t, node, 0, walRebootRecords)
+	node = walRebootSyncedPut(t, node, dir, 0, walRebootRecords)
 	dir = walRebootCrashCopy(t, dir)
 	require.NoError(t, node.Close())
 
@@ -189,7 +246,7 @@ func TestWALReboot_EpochRotationAcrossUncleanRestarts(t *testing.T) {
 		node, err = walRebootUnsealBoot(t, dir)
 		require.NoError(t, err, "boot completion after unseal, restart %d", run)
 		walRebootCheck(t, node, run, walRebootRecords)
-		walRebootPut(t, node, run, walRebootRecords)
+		node = walRebootSyncedPut(t, node, dir, run, walRebootRecords)
 		dir = walRebootCrashCopy(t, dir)
 		require.NoError(t, node.Close())
 	}
@@ -277,7 +334,7 @@ func TestWALReboot_BootCompletionFailureIsPrecise(t *testing.T) {
 	node := walRebootFirstBoot(t, dir)
 	walRebootPut(t, node, 0, walRebootRecords)
 	require.NoError(t, node.Close())
-	walRebootDamageWAL(t, dir, -1)
+	walRebootCorruptInteriorWALBlock(t, dir)
 
 	node, err := qrdbnode.NewStandaloneNode(context.Background(), walRebootConfig(dir), nil,
 		qrdbnode.WithLogger(slog.Default()), serviceprincipal.Option())
@@ -285,9 +342,26 @@ func TestWALReboot_BootCompletionFailureIsPrecise(t *testing.T) {
 	t.Cleanup(func() { _ = node.Close() })
 	require.True(t, node.IsSealed())
 
+	// Unseal only once serveSealedWindow has passed its IsSealed check and
+	// is opening the window: unsealing earlier makes it return nil at once
+	// without ever completing the boot.
 	s := testSealedWindowServer(t, createMinimalConfig(t))
+	entered := make(chan struct{})
+	s.logger = slog.New(&walRebootSignalHandler{
+		Handler: slog.Default().Handler(),
+		match:   "opening the sealed-window listener",
+		signal:  func() { close(entered) },
+		once:    &sync.Once{},
+	})
 	done := make(chan error, 1)
 	go func() { done <- s.serveSealedWindow(node) }()
+	select {
+	case <-entered:
+	case err = <-done:
+		t.Fatalf("serveSealedWindow returned %v before opening the sealed window", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("serveSealedWindow did not open the sealed window")
+	}
 	require.NoError(t, node.Services().Barrier.BarrierUnseal(context.Background(), []byte(walRebootPassphrase)))
 
 	select {
@@ -295,11 +369,64 @@ func TestWALReboot_BootCompletionFailureIsPrecise(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("serveSealedWindow did not return after the barrier was unsealed")
 	}
-	if err == nil {
-		return // the damaged tail replayed: nothing to report
-	}
+	require.Error(t, err, "a corrupt interior WAL block must fail boot completion")
 	var nodeErr *QRDBNodeError
 	require.ErrorAs(t, err, &nodeErr)
 	require.Equal(t, "complete boot after sealed window", nodeErr.Stage)
 	require.ErrorIs(t, err, encfs.ErrAuthFailed)
+}
+
+// walRebootCorruptInteriorWALBlock flips one byte in the middle of the main
+// store's newest WAL, inside a full encfs block that is not the trailing
+// one. Unlike a torn tail, this is corruption no WAL replay may tolerate, so
+// boot completion fails the same way before and after the encfs tail fix.
+func walRebootCorruptInteriorWALBlock(t *testing.T, dataDir string) {
+	t.Helper()
+	logs, err := filepath.Glob(filepath.Join(dataDir, "pebble", "*.log"))
+	require.NoError(t, err)
+	require.NotEmpty(t, logs)
+	w := logs[len(logs)-1]
+	f, err := os.OpenFile(w, os.O_RDWR, 0)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, f.Close()) }()
+	fi, err := f.Stat()
+	require.NoError(t, err)
+	// 133-byte header plus at least two 4124-byte blocks: the middle byte
+	// then sits in a full block ahead of the trailing one.
+	require.Greater(t, fi.Size(), int64(133+2*4124), "the WAL must hold full blocks")
+	off := fi.Size() / 2
+	b := make([]byte, 1)
+	_, err = f.ReadAt(b, off)
+	require.NoError(t, err)
+	b[0] ^= 0xff
+	_, err = f.WriteAt(b, off)
+	require.NoError(t, err)
+}
+
+// walRebootSignalHandler calls signal once, on the first record whose
+// message contains match, then passes every record on.
+type walRebootSignalHandler struct {
+	slog.Handler
+	match  string
+	signal func()
+	once   *sync.Once
+}
+
+func (h *walRebootSignalHandler) Handle(ctx context.Context, r slog.Record) error {
+	if strings.Contains(r.Message, h.match) {
+		h.once.Do(h.signal)
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h *walRebootSignalHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	c := *h
+	c.Handler = h.Handler.WithAttrs(attrs)
+	return &c
+}
+
+func (h *walRebootSignalHandler) WithGroup(name string) slog.Handler {
+	c := *h
+	c.Handler = h.Handler.WithGroup(name)
+	return &c
 }
