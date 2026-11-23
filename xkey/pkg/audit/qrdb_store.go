@@ -48,12 +48,21 @@ const qrdbQueryPageSize = 1000
 // ErrNilQRDBSink is returned by NewQRDBStore without a go-qrdb sink.
 var ErrNilQRDBSink = errors.New("audit: go-qrdb audit sink is nil")
 
+// ErrAuditTimestampOverflow is returned when more audit events share one
+// timestamp than one go-qrdb page holds, so they cannot all be read.
+var ErrAuditTimestampOverflow = errors.New("audit: more events share one timestamp than a go-qrdb page holds")
+
 // QRDBStore is the xkey audit Store over go-qrdb's audit store: every entry
 // is written to a go-qrdb node audit sink through go-xkms sdk/go, and Query
 // reads it back from that sink. xkey keeps no audit storage of its own.
 type QRDBStore struct {
 	mu   sync.RWMutex
 	sink xkms.QRDBNodeAuditLogger
+
+	// clockMu orders clock-stamped writes; lastClock is the last timestamp
+	// Log assigned from the clock.
+	clockMu   sync.Mutex
+	lastClock time.Time
 }
 
 var _ Store = (*QRDBStore)(nil)
@@ -78,28 +87,78 @@ func (s *QRDBStore) MoveTo(next xkms.QRDBNodeAuditLogger) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ctx := context.Background()
-	qf := xkms.QRDBNodeAuditFilter{Limit: qrdbQueryPageSize}
-	for {
-		page, err := s.sink.Query(ctx, qf)
-		if err != nil {
-			return fmt.Errorf("audit: read go-qrdb sink: %w", err)
+	err := walkSink(ctx, s.sink, xkms.QRDBNodeAuditFilter{}, func(ev xkms.QRDBNodeAuditEvent) (bool, error) {
+		if err := next.Emit(ctx, ev); err != nil {
+			return false, fmt.Errorf("audit: replay into go-qrdb sink: %w", err)
 		}
-		if page == nil {
-			break
-		}
-		for i := range page.Events {
-			if err := next.Emit(ctx, page.Events[i]); err != nil {
-				return fmt.Errorf("audit: replay into go-qrdb sink: %w", err)
-			}
-		}
-		if page.Next == "" {
-			break
-		}
-		qf.Cursor = page.Next
+		return true, nil
+	})
+	if err != nil {
+		return err
 	}
 	old := s.sink
 	s.sink = next
 	return old.Close()
+}
+
+// walkSink visits every event of sink that matches base, in timestamp
+// order, until fn returns false or an error. It pages by timestamp window,
+// never by go-qrdb's cursor: in go-qrdb v0.51.0-alpha the cursor is the last
+// event's timestamp and resumes after the first event carrying it, so a run of
+// equal timestamps across a page boundary repeats forever. Each round takes
+// the events before the page's last timestamp, then every event at exactly
+// that timestamp in one bounded query, and moves From past it, so From
+// strictly advances and the walk ends. More events at one timestamp than a
+// page holds cannot be read in full and fail with ErrAuditTimestampOverflow.
+func walkSink(ctx context.Context, sink xkms.QRDBNodeAuditLogger, base xkms.QRDBNodeAuditFilter, fn func(xkms.QRDBNodeAuditEvent) (bool, error)) error {
+	qf := base
+	qf.Cursor = ""
+	qf.Limit = qrdbQueryPageSize
+	visit := func(events []xkms.QRDBNodeAuditEvent) (bool, error) {
+		for i := range events {
+			if cont, err := fn(events[i]); err != nil || !cont {
+				return false, err
+			}
+		}
+		return true, nil
+	}
+	for {
+		page, err := sink.Query(ctx, qf)
+		if err != nil {
+			return fmt.Errorf("audit: read go-qrdb sink: %w", err)
+		}
+		if page == nil || len(page.Events) == 0 {
+			return nil
+		}
+		if page.Next == "" {
+			_, err := visit(page.Events)
+			return err
+		}
+		last := page.Events[len(page.Events)-1].Timestamp
+		before := 0
+		for before < len(page.Events) && page.Events[before].Timestamp.Before(last) {
+			before++
+		}
+		if cont, err := visit(page.Events[:before]); err != nil || !cont {
+			return err
+		}
+		tie := qf
+		tie.From = last
+		tie.To = last.Add(time.Nanosecond)
+		tp, err := sink.Query(ctx, tie)
+		if err != nil {
+			return fmt.Errorf("audit: read go-qrdb sink: %w", err)
+		}
+		if tp != nil {
+			if tp.Next != "" {
+				return fmt.Errorf("%w: %s", ErrAuditTimestampOverflow, last.UTC().Format(time.RFC3339Nano))
+			}
+			if cont, err := visit(tp.Events); err != nil || !cont {
+				return err
+			}
+		}
+		qf.From = last.Add(time.Nanosecond)
+	}
 }
 
 // SealedAtRest reports whether the store writes to a BarrierSink, so its
@@ -135,12 +194,25 @@ func (s *QRDBStore) Close() error {
 // *ErrAuditWriteFailed so the caller fails the operation it audits; an
 // informational one is logged and dropped.
 func (s *QRDBStore) Log(entry Entry) error {
-	if entry.Timestamp.IsZero() {
-		entry.Timestamp = time.Now()
-	}
 	s.mu.RLock()
+	defer s.mu.RUnlock()
+	stamped := entry.Timestamp.IsZero()
+	if stamped {
+		// Clock-assigned timestamps are made unique: the go-qrdb sink pages
+		// by timestamp (walkSink), and a coarse clock would otherwise stamp a
+		// burst of events with one value.
+		s.clockMu.Lock()
+		now := time.Now().UTC()
+		if !now.After(s.lastClock) {
+			now = s.lastClock.Add(time.Nanosecond)
+		}
+		s.lastClock = now
+		entry.Timestamp = now
+		writeErr := s.sink.Emit(context.Background(), entryToQRDBEvent(entry))
+		s.clockMu.Unlock()
+		return handleWriteFailure(slog.Default(), entry.Operation, writeErr)
+	}
 	writeErr := s.sink.Emit(context.Background(), entryToQRDBEvent(entry))
-	s.mu.RUnlock()
 	return handleWriteFailure(slog.Default(), entry.Operation, writeErr)
 }
 
@@ -190,7 +262,6 @@ func (s *QRDBStore) Query(filter QueryFilter) []Entry {
 	qf := xkms.QRDBNodeAuditFilter{
 		From:   filter.Since,
 		Action: string(filter.Operation),
-		Limit:  qrdbQueryPageSize,
 	}
 	if !filter.Until.IsZero() {
 		// QueryFilter.Until is inclusive; the go-qrdb To bound is exclusive.
@@ -200,30 +271,21 @@ func (s *QRDBStore) Query(filter QueryFilter) []Entry {
 	skipped := 0
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for {
-		page, err := s.sink.Query(context.Background(), qf)
-		if err != nil || page == nil {
-			return matched
+	// A read error ends the walk with what matched so far: Query has no
+	// error return, and a partial page is what the old store returned too.
+	_ = walkSink(context.Background(), s.sink, qf, func(ev xkms.QRDBNodeAuditEvent) (bool, error) {
+		e := qrdbEventToEntry(ev)
+		if !filter.matches(e) {
+			return true, nil
 		}
-		for i := range page.Events {
-			e := qrdbEventToEntry(page.Events[i])
-			if !filter.matches(e) {
-				continue
-			}
-			if skipped < filter.Offset {
-				skipped++
-				continue
-			}
-			matched = append(matched, e)
-			if filter.Limit > 0 && len(matched) >= filter.Limit {
-				return matched
-			}
+		if skipped < filter.Offset {
+			skipped++
+			return true, nil
 		}
-		if page.Next == "" {
-			return matched
-		}
-		qf.Cursor = page.Next
-	}
+		matched = append(matched, e)
+		return filter.Limit <= 0 || len(matched) < filter.Limit, nil
+	})
+	return matched
 }
 
 // Count returns the number of entries in the go-qrdb sink.

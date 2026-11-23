@@ -16,6 +16,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -121,6 +122,118 @@ func TestQRDBStore_MoveToReplaysIntoNewSink(t *testing.T) {
 	}
 	if page.Events[0].Action != string(OpServiceStarted) || page.Events[1].Resource != "key:k2" {
 		t.Fatalf("file sink events = %+v", page.Events)
+	}
+}
+
+// tiedStore holds distinct events at t0..t(distinct-1) seconds and then tied
+// events all at one later timestamp, emitted straight into the sink.
+func tiedStore(t *testing.T, distinct, tied int) (*QRDBStore, xkms.QRDBNodeAuditLogger) {
+	t.Helper()
+	sink := xkms.NewQRDBAuditRingBuffer(distinct + tied)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	for i := 0; i < distinct; i++ {
+		ev := xkms.QRDBNodeAuditEvent{Timestamp: base.Add(time.Duration(i) * time.Second), Actor: qrdbActor, Action: string(OpKeyCreated), Resource: fmt.Sprintf("key:d%d", i), Outcome: "success", Attributes: map[string]any{attrKeyID: fmt.Sprintf("d%d", i)}}
+		if err := sink.Emit(ctx, ev); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+	}
+	tie := base.Add(time.Hour)
+	for i := 0; i < tied; i++ {
+		ev := xkms.QRDBNodeAuditEvent{Timestamp: tie, Actor: qrdbActor, Action: string(OpKeyCreated), Resource: fmt.Sprintf("key:t%d", i), Outcome: "success", Attributes: map[string]any{attrKeyID: fmt.Sprintf("t%d", i)}}
+		if err := sink.Emit(ctx, ev); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+	}
+	store, err := NewQRDBStore(sink)
+	if err != nil {
+		t.Fatalf("NewQRDBStore: %v", err)
+	}
+	return store, sink
+}
+
+func uniqueKeys(t *testing.T, entries []Entry) map[string]bool {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if seen[e.KeyID] {
+			t.Fatalf("duplicate entry %q", e.KeyID)
+		}
+		seen[e.KeyID] = true
+	}
+	return seen
+}
+
+// Equal timestamps across a go-qrdb page boundary: go-qrdb v0.51.0-alpha's
+// timestamp cursor resumes after the first tied event, so a cursor walk
+// repeats; the timestamp-window walk returns each event once and ends.
+func TestQRDBStore_QueryPagesAcrossEqualTimestamps(t *testing.T) {
+	store, _ := tiedStore(t, qrdbQueryPageSize-2, 4)
+	got := store.Query(QueryFilter{})
+	if len(got) != qrdbQueryPageSize+2 {
+		t.Fatalf("Query returned %d entries, want %d", len(got), qrdbQueryPageSize+2)
+	}
+	if seen := uniqueKeys(t, got); !seen["t0"] || !seen["t3"] || !seen["d0"] {
+		t.Fatalf("Query missed entries")
+	}
+	if n := store.Count(); n != qrdbQueryPageSize+2 {
+		t.Fatalf("Count = %d, want %d", n, qrdbQueryPageSize+2)
+	}
+	if got := store.Query(QueryFilter{Offset: qrdbQueryPageSize - 1, Limit: 2}); len(got) != 2 {
+		t.Fatalf("Query offset/limit returned %d entries, want 2", len(got))
+	}
+}
+
+func TestQRDBStore_MoveToPagesAcrossEqualTimestamps(t *testing.T) {
+	store, _ := tiedStore(t, qrdbQueryPageSize-2, 4)
+	next := xkms.NewQRDBAuditRingBuffer(2 * qrdbQueryPageSize)
+	if err := store.MoveTo(next); err != nil {
+		t.Fatalf("MoveTo: %v", err)
+	}
+	got := store.Query(QueryFilter{})
+	if len(got) != qrdbQueryPageSize+2 {
+		t.Fatalf("after MoveTo %d entries, want %d", len(got), qrdbQueryPageSize+2)
+	}
+	uniqueKeys(t, got)
+}
+
+// More tied events than one page holds cannot be read in full: the walk ends
+// with ErrAuditTimestampOverflow instead of looping, and MoveTo keeps the old
+// sink.
+func TestQRDBStore_TimestampOverflowEndsTheWalk(t *testing.T) {
+	store, sink := tiedStore(t, 0, qrdbQueryPageSize+2)
+	next := xkms.NewQRDBAuditRingBuffer(4 * qrdbQueryPageSize)
+	if err := store.MoveTo(next); !errors.Is(err, ErrAuditTimestampOverflow) {
+		t.Fatalf("MoveTo error = %v, want ErrAuditTimestampOverflow", err)
+	}
+	if store.sink != sink {
+		t.Fatalf("MoveTo swapped the sink after a failed replay")
+	}
+	if n := store.Count(); n > qrdbQueryPageSize+2 {
+		t.Fatalf("Count = %d: the walk repeated events", n)
+	}
+}
+
+// Clock-stamped writes get unique timestamps, so a burst never forms a tie.
+func TestQRDBStore_ClockStampedWritesAreUnique(t *testing.T) {
+	store, err := NewQRDBStore(xkms.NewQRDBAuditRingBuffer(3 * qrdbQueryPageSize))
+	if err != nil {
+		t.Fatalf("NewQRDBStore: %v", err)
+	}
+	n := qrdbQueryPageSize + 5
+	for i := 0; i < n; i++ {
+		if err := store.LogKeyOperation(OpKeyCreated, "software", fmt.Sprintf("k%d", i), true, nil, 0); err != nil {
+			t.Fatalf("LogKeyOperation: %v", err)
+		}
+	}
+	got := store.Query(QueryFilter{})
+	if len(got) != n {
+		t.Fatalf("Query returned %d entries, want %d", len(got), n)
+	}
+	for i := 1; i < len(got); i++ {
+		if !got[i].Timestamp.After(got[i-1].Timestamp) {
+			t.Fatalf("timestamps %d and %d not strictly increasing", i-1, i)
+		}
 	}
 }
 
