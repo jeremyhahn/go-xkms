@@ -983,7 +983,7 @@ Keystore as:
 | Property | Value |
 |---|---|
 | Algorithm | EC P-256, `PURPOSE_SIGN`, digest SHA-256 |
-| User authentication | `setUserAuthenticationRequired(true)` with `setUserAuthenticationParameters(0, AUTH_BIOMETRIC_STRONG \| AUTH_DEVICE_CREDENTIAL)`: a timeout of 0, so every signature needs a fresh strong biometric or the device credential (PIN, pattern or password) (ruling 180) |
+| User authentication | `setUserAuthenticationRequired(true)` with `setUserAuthenticationParameters(0, AUTH_BIOMETRIC_STRONG)`: a timeout of 0, so every signature needs a fresh strong biometric; a key the device credential (PIN, pattern or password) unlocks is refused (`RequireAttestedPerUseUserVerification`) |
 | Attestation challenge | begins with `xkey-user-verification-v1`; trailing bytes are reserved for the prover |
 | Hardware | TEE or StrongBox (StrongBox when available) |
 
@@ -1032,7 +1032,7 @@ The vector for the RP name `example.com` is in `attest_vectors_test.go`
 
 `channelBinding` is `pairingproto.ComputeAttestChannelBinding` over this
 session. The phone shows the user-authentication prompt naming `rpName` (a
-`BiometricPrompt` allowing `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`, with a
+`BiometricPrompt` allowing `BIOMETRIC_STRONG`, with a
 `CryptoObject` wrapping the UVK `Signature`) and signs the transcript as
 `SHA256withECDSA`, ASN.1 DER.
 
@@ -1086,10 +1086,13 @@ in this order. Steps 2 to 7 are the library decision `userverify.Verify`
    (`VerifyUserVerificationGenesisChallenge`), so a DAK chain cannot stand in
    for a UVK.
 5. The leaf's `teeEnforced` list requires a fresh user authentication on every
-   use: `userAuthType` (tag 504) is `1` (device credential), `2` (biometric)
-   or `3` (either), and `0` or any other bit is
-   `ErrAndroidKeyUserAuthTypeNotUserVerification`
-   (`pkg/attestation/android/device.go:165`, ruling 180); `authTimeout`
+   use: `userAuthType` (tag 504) is `2` (the biometric) alone, since
+   phone-verify-user requires a fresh biometric signature; `1` (the device
+   PIN, pattern or password), `3` (the credential beside the biometric), `0`
+   or any other bit is `android.ErrKeyUserAuthTypeNotUserVerification`
+   ("android: key user authentication is not the biometric alone") from
+   `RequireAttestedPerUseUserVerification`
+   (`pkg/attestation/android/device.go`); `authTimeout`
    (tag 505) and `allowWhileOnBody` (tag 506) are absent, and `noAuthRequired`
    (tag 503) is absent from both lists.
 6. The transcript is rebuilt (`BuildVerifyUserTranscript`) from the nonce and
@@ -1133,7 +1136,8 @@ the verifier (`pkg/attestation/userverify/userverify.go:120`, through
 to end against the `attesttest` phone (`device_session_verify_user_test.go`);
 the authenticator no longer refuses UV tokens when its key backend is a
 `UserVerifier` (#1145). Ruling 180 settled two of ruling 167's open choices:
-the UVK accepts biometric or device credential (`userAuthType` 1, 2 or 3), and
+the UVK accepts the biometric alone (`userAuthType` 2; 1 and 3 are refused by
+`RequireAttestedPerUseUserVerification`), and
 the request names the RP, bound into the transcript. The desktop still
 persists nothing about the UVK. The phone side is xkey-android #13.
 
