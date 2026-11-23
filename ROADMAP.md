@@ -103,6 +103,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 ## Now
 
+- **confidential-vm-provider** — go-enclave's confidential-VM Attester (SEV-SNP and TDX over configfs-tsm) and SEV-SNP derived-key KeyProtector as `pkg/enclaveprovider/confidentialvm`, moved with history; open: the hardware round trip on an SNP guest and the move to `enclave.Evidence` when the go-enclave hold lifts — [#2380](../../issues/2380), ruling 1234 — open
 - **tpm-policies** — unattended unlock across updates, steps 1 and 2 — [#1443](../../issues/1443) — open
 - **attestation-verifier** — event-log replay against signed CoRIM reference values — [#1443](../../issues/1443) — open
 - **acme-issuance** — `sdk/go` `AssemblePossessionCSR` for device-attest-01 finalize — [trusted-firmware #28](../../../trusted-firmware/issues/28), [SPEC](docs/SPEC.md#features) — open; the server refusing any measurements (273) shape but the ruled one is done, matching its 32 bytes against the registered reference is open
