@@ -783,7 +783,9 @@ type CopyKeyRequest struct {
 	SourceKeyID   string `json:"source_key_id"`
 	DestBackend   string `json:"dest_backend"`
 	DestKeyID     string `json:"dest_key_id"`
-	Algorithm     string `json:"algorithm"`
+	// Algorithm is the wrapping algorithm; empty lets the server pick the
+	// destination backend's default (TPM2_DUPLICATE for tpm2).
+	Algorithm string `json:"algorithm,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
