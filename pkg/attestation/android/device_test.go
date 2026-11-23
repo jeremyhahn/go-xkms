@@ -214,14 +214,21 @@ func TestRequirePerUseUserAuth(t *testing.T) {
 }
 
 func TestRequireAttestedPerUseUserVerification_Succeeds(t *testing.T) {
+	desc := &KeyDescription{TeeEnforced: AuthorizationList{UserAuthType: UserAuthTypeFingerprint}}
+	require.NoError(t, RequireAttestedPerUseUserVerification(desc))
+}
+
+// phone-verify-user (docs/SPEC.md) promises a fresh biometric signature, so a
+// key the device PIN, pattern or password can unlock is refused, alone or
+// beside the biometric.
+func TestRequireAttestedPerUseUserVerification_RefusesDeviceCredential(t *testing.T) {
 	for name, authType := range map[string]int{
 		"device credential (1)":           UserAuthTypePassword,
-		"biometric (2)":                   UserAuthTypeFingerprint,
 		"biometric or the credential (3)": UserAuthTypePassword | UserAuthTypeFingerprint,
 	} {
 		t.Run(name, func(t *testing.T) {
 			desc := &KeyDescription{TeeEnforced: AuthorizationList{UserAuthType: authType}}
-			require.NoError(t, RequireAttestedPerUseUserVerification(desc))
+			require.ErrorIs(t, RequireAttestedPerUseUserVerification(desc), ErrKeyUserAuthTypeNotUserVerification)
 		})
 	}
 }
