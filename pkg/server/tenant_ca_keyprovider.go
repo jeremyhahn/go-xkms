@@ -406,6 +406,7 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 	fence := &tenantLoginCAFence{check: func(ctx context.Context) error {
 		return f.checkTenantLoginCAGeneration(ctx, tenantID, generation)
 	}}
+	fence.claims, _ = f.claimStorage()
 	ensureErr := f.ensureTenant(context.WithValue(ctx, tenantLoginCAFenceKey{}, fence), tenantID)
 	removed, err := f.tenantLoginCARemoved(ctx, tenantID)
 	if err != nil {
@@ -472,6 +473,9 @@ type tenantLoginCAFenceKey struct{}
 type tenantLoginCAFence struct {
 	check func(context.Context) error
 	wrote atomic.Bool
+	// claims is the cluster claims store certificate publishes go through
+	// (see publishTenantLoginCACert); nil publishes unguarded.
+	claims storage.Backend
 }
 
 // tenantLoginCAFenceWrite runs before every certificate write of a
@@ -1387,7 +1391,7 @@ func ensureTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBacke
 		return nil
 	}
 	tenantLoginCACertPublishHook(tenantID)
-	cert, err := selfSignTenantLoginCA(tenantID, signer)
+	cert, err := publishTenantLoginCACert(ctx, scoped, tenantID, signer)
 	if err != nil {
 		return err
 	}
@@ -1401,6 +1405,78 @@ func ensureTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBacke
 		return fmt.Errorf("tenant login CA key factory: save certificate for tenant %q: %w", tenantID, err)
 	}
 	return nil
+}
+
+// tenantLoginCACertPublishKey is the claims-storage key of the tenant's
+// published login CA certificate (its DER).
+func tenantLoginCACertPublishKey(tenantID string) string {
+	return "tenant-login-ca/certs/" + tenantLoginCAKeyName(tenantID)
+}
+
+// publishTenantLoginCACert returns the certificate the pass must store: the
+// one already published in the claims store when it is a valid CA
+// certificate over signer's key, else a fresh one published there with a
+// create-if-absent (or compare-and-swap over a stale record) write. Two passes
+// that both found the certificate missing thus store the same DER, the first
+// published, which a listener may already trust. Without a claims store in
+// the pass's fence it signs a fresh certificate unguarded.
+func publishTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string, signer crypto.Signer) (*x509.Certificate, error) {
+	fence, _ := ctx.Value(tenantLoginCAFenceKey{}).(*tenantLoginCAFence)
+	if fence == nil || fence.claims == nil {
+		return selfSignTenantLoginCA(tenantID, signer)
+	}
+	claims := fence.claims
+	key := tenantLoginCACertPublishKey(tenantID)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		held, err := claims.Get(ctx, key)
+		switch {
+		case err == nil:
+			if winner, parseErr := x509.ParseCertificate(held); parseErr == nil && tenantLoginCACertFor(winner, signer.Public()) {
+				return winner, nil
+			}
+		case !errors.Is(err, storage.ErrNotFound):
+			return nil, fmt.Errorf("tenant login CA key factory: read published certificate for tenant %q: %w", tenantID, err)
+		}
+		cert, err := selfSignTenantLoginCA(tenantID, signer)
+		if err != nil {
+			return nil, err
+		}
+		if err := tenantLoginCAFenceWrite(ctx); err != nil {
+			return nil, err
+		}
+		var won bool
+		if held == nil {
+			won, err = claims.PutIfAbsent(ctx, key, cert.Raw)
+		} else if swapper, ok := claims.(storage.CompareAndSwapper); ok {
+			won, _, err = swapper.CompareAndSwap(ctx, key, held, cert.Raw)
+		} else {
+			won, err = true, claims.Put(ctx, key, cert.Raw)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("tenant login CA key factory: publish certificate for tenant %q: %w", tenantID, err)
+		}
+		if won {
+			return cert, nil
+		}
+		// Another pass published first: adopt its certificate.
+	}
+}
+
+// tenantLoginCACertFor reports whether cert is a currently valid CA
+// certificate over pub.
+func tenantLoginCACertFor(cert *x509.Certificate, pub crypto.PublicKey) bool {
+	if cert == nil || !cert.IsCA {
+		return false
+	}
+	now := time.Now()
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return false
+	}
+	certPub, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	return ok && certPub.Equal(pub)
 }
 
 // tenantLoginCACertValid reports whether the tenant's saved login CA
