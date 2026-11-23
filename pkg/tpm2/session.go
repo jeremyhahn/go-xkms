@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
+	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -1222,6 +1224,11 @@ func (tpm *TPM2) SaveKeyPair(
 	if backend == nil {
 		backend = tpm.backend
 	}
+	// Every write of one key's pair runs under its lock, so a recovery never
+	// interleaves with another save of the same key: a pair is changed by
+	// one writer at a time, and a fence found under the lock was left by a
+	// writer that no longer runs (a crash or a failed write).
+	defer lockKeyPair(keyAttrs)()
 	// The private blob is written first and the public blob last, so a key is
 	// complete only once its real public blob exists. A create-only save that
 	// finds a private blob without a public blob meets either an incomplete
@@ -1249,6 +1256,25 @@ var keyPairRecoveryFence = []byte("xkms-tpm2-key-pair-recovery\x00")
 
 // isKeyPairRecoveryFence reports whether a public-blob record is a recovery
 // fence rather than a public area.
+// keyPairLocks serializes the writes of one key's pair (SaveKeyPair,
+// including its recovery, and DeleteKeyPair) across every TPM2 in the
+// process. The key backend has no compare-and-swap over the two blobs, so a
+// recovery that overwrites the private blob must not run beside another
+// writer of the same key: a stale recovery would otherwise overwrite the
+// private blob of a pair another save had already completed. The locks are
+// striped by key name, so the set is bounded; two names on one stripe only
+// wait for each other.
+var keyPairLocks [64]sync.Mutex
+
+// lockKeyPair takes the lock of keyAttrs' pair and returns its unlock.
+func lockKeyPair(keyAttrs *types.KeyAttributes) func() {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(keyAttrs.CN))
+	mu := &keyPairLocks[h.Sum32()%uint32(len(keyPairLocks))]
+	mu.Lock()
+	return mu.Unlock
+}
+
 func isKeyPairRecoveryFence(pub []byte) bool {
 	return bytes.HasPrefix(pub, keyPairRecoveryFence)
 }
@@ -1321,6 +1347,7 @@ func (tpm *TPM2) DeleteKeyPair(
 	if backend == nil {
 		backend = tpm.backend
 	}
+	defer lockKeyPair(keyAttrs)()
 	err := backend.Delete(keyAttrs)
 	if err != nil {
 		return err
