@@ -23,7 +23,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
-	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -149,15 +148,6 @@ func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
 		hc.WebAuthnCallContext = m.serviceContext
-		// The user store runs as the node's service principal here, as it
-		// does in xkmsd (Server.initializeWebAuthnService); the principal's
-		// base grant holds no user permission, so it gains the user store's
-		// users:read/update/delete on this construction path too. It holds
-		// no users:create: anonymous public registration is refused with 403
-		// pending go-xkms #2202 (CA ruling 602).
-		if m.serviceContext != nil {
-			serviceprincipal.RegisterWebAuthnGrant()
-		}
 	}
 	return hc, nil
 }
