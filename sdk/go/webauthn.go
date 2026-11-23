@@ -172,13 +172,7 @@ const (
 // WebAuthnMountChi mounts the ceremony routes on a chi router.
 var WebAuthnMountChi = webauthnhttp.MountChi
 
-// WebAuthnMuxRouter is the gorilla/mux-shaped router WebAuthnMountMux mounts on.
-type WebAuthnMuxRouter = webauthnhttp.MuxRouter
-
-// WebAuthnMuxRoute is the route a WebAuthnMuxRouter returns.
-type WebAuthnMuxRoute = webauthnhttp.MuxRoute
-
-// WebAuthnMountMux mounts the ceremony routes on a WebAuthnMuxRouter.
+// WebAuthnMountMux mounts the ceremony routes on a gorilla/mux *mux.Router.
 var WebAuthnMountMux = webauthnhttp.MountMux
 
 // WebAuthnMountStdlib mounts the ceremony routes on a net/http ServeMux

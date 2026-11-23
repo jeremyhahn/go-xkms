@@ -17,6 +17,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/mux"
 )
 
 // MountChi mounts WebAuthn routes on a chi router.
@@ -34,24 +35,13 @@ func MountChi(r chi.Router, h *Handler) {
 	r.Post("/login/finish", h.FinishLogin)
 }
 
-// MuxRouter is an interface that matches *mux.Router from gorilla/mux.
-// This avoids importing gorilla/mux as a direct dependency.
-type MuxRouter interface {
-	HandleFunc(path string, f func(http.ResponseWriter, *http.Request)) MuxRoute
-}
-
-// MuxRoute is an interface that matches *mux.Route from gorilla/mux.
-type MuxRoute interface {
-	Methods(methods ...string) MuxRoute
-}
-
 // MountMux mounts WebAuthn routes on a gorilla/mux router.
 //
 // Example:
 //
-//	handler := webauthnhttp.NewHandler(svc)
+//	r := mux.NewRouter()
 //	webauthnhttp.MountMux(r.PathPrefix("/api/v1/webauthn").Subrouter(), handler)
-func MountMux(r MuxRouter, h *Handler) {
+func MountMux(r *mux.Router, h *Handler) {
 	r.HandleFunc("/registration/begin", h.BeginRegistration).Methods("POST")
 	r.HandleFunc("/registration/finish", h.FinishRegistration).Methods("POST")
 	r.HandleFunc("/login/begin", h.BeginLogin).Methods("POST")

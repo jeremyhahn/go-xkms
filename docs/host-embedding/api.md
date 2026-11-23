@@ -62,8 +62,8 @@ used from internal packages are aliases there (SPEC row
   `IsWebAuthnCredentialNotFound`; webauthn/http: `WebAuthnAuthResponse`,
   `WebAuthnBeginLoginRequest`, `WebAuthnErrorResponse`,
   `WebAuthnHeaderSessionID`, `WebAuthnErrorCode*`, `WebAuthnMountChi`,
-  `WebAuthnMountMux`, `WebAuthnMountStdlib`, `WebAuthnMuxRouter`,
-  `WebAuthnMuxRoute`, `WebAuthnRouteEntry` (`sdk/go/webauthn.go`).
+  `WebAuthnMountMux` (takes a gorilla/mux `*mux.Router`),
+  `WebAuthnMountStdlib`, `WebAuthnRouteEntry` (`sdk/go/webauthn.go`).
 - ssh/scope: `SSHKind`, `SSHKindKeys`, `SSHKindKnownHosts`,
   `SSHKindAuthorizedKeys`, `SSHBuildKeyID`, `SSHValidateFilter`,
   `SSHScopeInvalidError`, `SSHKindInvalidError`, `SSHKeyIDMalformedError`
