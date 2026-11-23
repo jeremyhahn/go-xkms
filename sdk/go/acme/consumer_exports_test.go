@@ -20,18 +20,26 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
 
+// sameType fails t unless A and B are the same type.
+func sameType[A, B any](t *testing.T) {
+	t.Helper()
+	if reflect.TypeFor[A]() != reflect.TypeFor[B]() {
+		t.Errorf("%v is not %v", reflect.TypeFor[A](), reflect.TypeFor[B]())
+	}
+}
+
 // TestConsumerExports_Entities asserts the acme entity symbols go-quicbaas
 // consumes are aliases of pkg/acme/entities.
 func TestConsumerExports_Entities(t *testing.T) {
-	var _ EABDeviceInfo = entities.EABDeviceInfo{}
-	var _ ExternalAccountBindingJWS = entities.ExternalAccountBindingJWS{}
-	var _ ExternalAccountBindingProtectedHeader = entities.ExternalAccountBindingProtectedHeader{}
-	var _ *InvalidSerialError = (*entities.InvalidSerialError)(nil)
-	var _ SigningCAInfo = entities.SigningCAInfo{}
-	var _ SubProblem = entities.SubProblem{}
-	var _ TenantIntermediateCA = entities.TenantIntermediateCA{}
-	var _ TenantRootCA = entities.TenantRootCA{}
-	var _ TenantSettings = entities.TenantSettings{}
+	sameType[EABDeviceInfo, entities.EABDeviceInfo](t)
+	sameType[ExternalAccountBindingJWS, entities.ExternalAccountBindingJWS](t)
+	sameType[ExternalAccountBindingProtectedHeader, entities.ExternalAccountBindingProtectedHeader](t)
+	sameType[InvalidSerialError, entities.InvalidSerialError](t)
+	sameType[SigningCAInfo, entities.SigningCAInfo](t)
+	sameType[SubProblem, entities.SubProblem](t)
+	sameType[TenantIntermediateCA, entities.TenantIntermediateCA](t)
+	sameType[TenantRootCA, entities.TenantRootCA](t)
+	sameType[TenantSettings, entities.TenantSettings](t)
 
 	for name, pair := range map[string][2]any{
 		"NormalizeSerial":  {NormalizeSerial, entities.NormalizeSerial},

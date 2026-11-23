@@ -24,6 +24,14 @@ import (
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
+// sameType fails t unless A and B are the same type.
+func sameType[A, B any](t *testing.T) {
+	t.Helper()
+	if reflect.TypeFor[A]() != reflect.TypeFor[B]() {
+		t.Errorf("%v is not %v", reflect.TypeFor[A](), reflect.TypeFor[B]())
+	}
+}
+
 // sameFunc reports whether two function values are the same function.
 func sameFunc(t *testing.T, name string, got, want any) {
 	t.Helper()
@@ -35,14 +43,13 @@ func sameFunc(t *testing.T, name string, got, want any) {
 // TestConsumerExports_WebAuthn asserts the webauthn and webauthn/http
 // symbols go-quicbaas consumes are aliases of the internal ones.
 func TestConsumerExports_WebAuthn(t *testing.T) {
-	var _ WebAuthnUserStore = webauthn.UserStore(nil)
-	var _ webauthn.UserStore = WebAuthnUserStore(nil)
-	var _ WebAuthnAuthResponse = webauthnhttp.AuthResponse{}
-	var _ WebAuthnBeginLoginRequest = webauthnhttp.BeginLoginRequest{}
-	var _ WebAuthnErrorResponse = webauthnhttp.ErrorResponse{}
-	var _ WebAuthnMuxRouter = webauthnhttp.MuxRouter(nil)
-	var _ WebAuthnMuxRoute = webauthnhttp.MuxRoute(nil)
-	var _ WebAuthnRouteEntry = webauthnhttp.RouteEntry{}
+	sameType[WebAuthnUserStore, webauthn.UserStore](t)
+	sameType[WebAuthnAuthResponse, webauthnhttp.AuthResponse](t)
+	sameType[WebAuthnBeginLoginRequest, webauthnhttp.BeginLoginRequest](t)
+	sameType[WebAuthnErrorResponse, webauthnhttp.ErrorResponse](t)
+	sameType[WebAuthnMuxRouter, webauthnhttp.MuxRouter](t)
+	sameType[WebAuthnMuxRoute, webauthnhttp.MuxRoute](t)
+	sameType[WebAuthnRouteEntry, webauthnhttp.RouteEntry](t)
 
 	if ErrWebAuthnCredentialNotFound != webauthn.ErrCredentialNotFound {
 		t.Error("ErrWebAuthnCredentialNotFound is not webauthn.ErrCredentialNotFound")
@@ -79,8 +86,8 @@ func TestConsumerExports_WebAuthn(t *testing.T) {
 // TestConsumerExports_KeyVersion asserts the keyversion symbols
 // go-quicbaas consumes are aliases of the internal ones.
 func TestConsumerExports_KeyVersion(t *testing.T) {
-	var _ *KeyVersionInvalidRecordKeyError = (*keyversion.InvalidRecordKeyError)(nil)
-	var _ *KeyVersionInvalidVersionError = (*keyversion.InvalidVersionError)(nil)
+	sameType[KeyVersionInvalidRecordKeyError, keyversion.InvalidRecordKeyError](t)
+	sameType[KeyVersionInvalidVersionError, keyversion.InvalidVersionError](t)
 
 	if ErrKeyVersionNilRecord != keyversion.ErrNilRecord {
 		t.Error("ErrKeyVersionNilRecord is not keyversion.ErrNilRecord")
@@ -95,11 +102,10 @@ func TestConsumerExports_KeyVersion(t *testing.T) {
 // TestConsumerExports_SSHScope asserts the ssh/scope symbols go-quicbaas
 // consumes are aliases of the internal ones.
 func TestConsumerExports_SSHScope(t *testing.T) {
-	var _ *SSHKeyIDMalformedError = (*sshscope.KeyIDMalformedError)(nil)
-	var _ *SSHKindInvalidError = (*sshscope.KindInvalidError)(nil)
-	var _ *SSHScopeInvalidError = (*sshscope.ScopeInvalidError)(nil)
-	var kind SSHKind = sshscope.KindKeys
-	_ = kind
+	sameType[SSHKeyIDMalformedError, sshscope.KeyIDMalformedError](t)
+	sameType[SSHKindInvalidError, sshscope.KindInvalidError](t)
+	sameType[SSHScopeInvalidError, sshscope.ScopeInvalidError](t)
+	sameType[SSHKind, sshscope.Kind](t)
 
 	if SSHKindKeys != sshscope.KindKeys ||
 		SSHKindKnownHosts != sshscope.KindKnownHosts ||
@@ -113,8 +119,8 @@ func TestConsumerExports_SSHScope(t *testing.T) {
 // TestConsumerExports_TPM2 asserts the tpm2 PCR and quote symbols
 // go-quicbaas consumes stay aliases of the internal ones.
 func TestConsumerExports_TPM2(t *testing.T) {
-	var _ PCRBank = tpm2.PCRBank{}
-	var _ Quote = tpm2.Quote{}
+	sameType[PCRBank, tpm2.PCRBank](t)
+	sameType[Quote, tpm2.Quote](t)
 	sameFunc(t, "ParsePCRBankAlgID", ParsePCRBankAlgID, tpm2.ParsePCRBankAlgID)
 	sameFunc(t, "ParsePCRBankCryptoHash", ParsePCRBankCryptoHash, tpm2.ParsePCRBankCryptoHash)
 	sameFunc(t, "PCRDigestSize", PCRDigestSize, tpm2.PCRDigestSize)
