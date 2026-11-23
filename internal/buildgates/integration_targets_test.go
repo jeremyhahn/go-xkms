@@ -341,7 +341,8 @@ func goTestCovers(recipe, dir string) bool {
 	recipe = strings.ReplaceAll(recipe, "\\\n", " ")
 	for _, line := range strings.Split(recipe, "\n") {
 		// Each recipe line is its own shell, starting at the repo root; a
-		// cd moves later commands (cd xkey: into another module).
+		// cd moves later commands (cd xkey: into another module). A cd
+		// alone runs nothing: only a go test after it counts.
 		cwd := "."
 		for _, seg := range shellCmdSep.Split(line, -1) {
 			if m := shellCd.FindStringSubmatch(seg); m != nil {
@@ -362,25 +363,41 @@ func goTestCovers(recipe, dir string) bool {
 				if !strings.HasPrefix(lead, "/") && !strings.HasPrefix(lead, "$") {
 					rel = path.Join(cwd, lead, rel)
 				}
-				p, ok := strings.CutPrefix(rel, "test/integration/")
-				if !ok {
-					continue
-				}
-				p = strings.TrimSuffix(p, "/")
-				if p == "..." {
+				if suiteCovered(rel, dir) {
 					return true
 				}
-				if q, rec := strings.CutSuffix(p, "/..."); rec {
-					if dir == q || strings.HasPrefix(dir, q+"/") {
+			}
+			// A relative package (./..., .) runs from the directory a cd
+			// moved into: cd test/integration/<dir> && go test ./...
+			for _, f := range strings.Fields(seg) {
+				f = strings.Trim(f, `"'()`)
+				if f == "." || strings.HasPrefix(f, "./") || strings.HasPrefix(f, "../") {
+					if suiteCovered(path.Join(cwd, f), dir) {
 						return true
 					}
-				} else if p == dir {
-					return true
 				}
 			}
 		}
 	}
 	return false
+}
+
+// suiteCovered reports whether go test on the repo-relative package pattern
+// rel runs the suite dir (relative to test/integration): rel is dir itself,
+// or dir or a parent of it with /..., compared as whole path elements.
+func suiteCovered(rel, dir string) bool {
+	p, ok := strings.CutPrefix(rel, "test/integration/")
+	if !ok {
+		return false
+	}
+	p = strings.TrimSuffix(p, "/")
+	if p == "..." {
+		return true
+	}
+	if q, rec := strings.CutSuffix(p, "/..."); rec {
+		return dir == q || strings.HasPrefix(dir, q+"/")
+	}
+	return p == dir
 }
 
 // TestEveryNestedIntegrationSuiteIsRun: a nested suite
