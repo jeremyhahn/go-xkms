@@ -152,8 +152,10 @@ func (r *OrderFinalizeHookRegistry) Count() int {
 
 // OrderFinalizeCommitHook is a function that gets called once per finalized
 // order after the certificate save and the order save were attempted, with
-// the same context the OrderFinalizeHooks saw. persistErr is nil when both
-// saves succeeded, and the save error when either failed, so the consumer
+// the same context the OrderFinalizeHooks saw. It is also called when a
+// finalize hook vetoes issuance (or issuance aborts after the finalize hooks
+// ran), with that error, so state an earlier hook staged is undone.
+// persistErr is nil when both saves succeeded, and the error otherwise, so the consumer
 // commits the state its finalize hook staged or undoes it. The hook cannot
 // change the response: a persisted certificate cannot be withdrawn.
 type OrderFinalizeCommitHook func(ctx *OrderFinalizeHookContext, persistErr error)

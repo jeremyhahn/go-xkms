@@ -1037,6 +1037,9 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			"client_ip", r.RemoteAddr)
 
 		if err := s.params.OrderFinalizeHooks.Execute(hookCtx); err != nil {
+			// A hook vetoed issuance: an earlier hook may have staged
+			// state, so the commit hooks undo it with the veto error.
+			s.runOrderFinalizeCommitHooks(hookCtx, err)
 			s.failOrder(ctx, orderDAO, order, account, start, w,
 				common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err)))
 			return
@@ -1787,6 +1790,9 @@ func (s *RestService) finalizeTCGCSR(
 			"eventlog_size", len(tcgCSR.CsrContents.BootEvntLog))
 
 		if err := s.params.OrderFinalizeHooks.Execute(hookCtx); err != nil {
+			// A hook vetoed issuance: an earlier hook may have staged
+			// state, so the commit hooks undo it with the veto error.
+			s.runOrderFinalizeCommitHooks(hookCtx, err)
 			return "", nil, nil, common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err))
 		}
 	} else {
@@ -1806,6 +1812,7 @@ func (s *RestService) finalizeTCGCSR(
 	// The IDevID certificate's full serial number, never truncated - see the
 	// identical treatment in OrderFinalizeHandler above.
 	if idevidCert.SerialNumber == nil {
+		s.runOrderFinalizeCommitHooks(hookCtx, errors.New("certificate serial number is nil"))
 		return "", nil, nil, common.ServerInternal("Certificate serial number is nil")
 	}
 	serialNumber := idevidCert.SerialNumber.Text(16)
