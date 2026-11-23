@@ -125,12 +125,14 @@ func TestRefreshStore_PreUpgradeRecordRevokedInUserTenant(t *testing.T) {
 	}
 	for name, newStore := range stores {
 		t.Run(name, func(t *testing.T) {
-			issuer := newIssuerWithStore(t, newStore(t))
+			store := newStore(t)
+			issuer := newIssuerWithStore(t, store)
 
 			// A pre-upgrade session: the record carries no tenant.
 			legacy := &auth.Identity{Subject: "alice", Metadata: map[string]string{"username": "alice"}}
 			pair, err := issuer.Mint(context.Background(), legacy)
 			require.NoError(t, err)
+			rewriteRefreshRecord(t, issuer, store, pair.RefreshToken, func(r *Record) { r.TenantID = "" })
 
 			// alice is a tenant-a user; DisableUser runs on her tenant's request.
 			tenantCtx := qrdbtenant.WithTenantID(context.Background(), "tenant-a")
