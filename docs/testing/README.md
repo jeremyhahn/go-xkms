@@ -48,22 +48,33 @@ feature list.
   `make integration-test-<feature>` must run. A feature is a
   `test/integration/<feature>/` directory holding `_test.go` files. A changed
   file under it, or a package its tests import (directly or transitively,
-  `go list -deps -test` under that suite's own tags), selects it. A suite's
-  tags are the `-tags` of the recipe lines that `go test` its directory
+  `go list -deps -test` under that suite's own tags), selects it. A non-test
+  Go file under it is also a package: other suites that import it (as
+  several import `test/integration/xkmsdtest`) are selected too. A suite's
+  tags are the `-tags` of the lines that `go test` its directory in the
+  recipe of `integration-test-<feature>` or its prerequisites
   (`integration-test-clusterca` adds `tpm_simulator`), expanded by make, else
   those of `integration-test-%` (from `make -n`, so conditional
-  `BUILD_TAGS +=` tags count). If none of a suite's tests builds under its
-  tags, any package change prints `ALL`. So does a
-  change to a binary the suite builds and runs, or to one of its deps: a
-  quoted `.../cmd/<name>` path in the suite's Go files, or a recipe line that
-  builds `./cmd/<name>` (after any `cd`, so `xkey/cmd/xkey` counts) and tests
-  `./test/integration/<feature>`. A change to the
+  `BUILD_TAGS +=` tags count). A suite is also selected by a change to a
+  binary it builds and runs, or to one of the binary's deps: a quoted
+  `.../cmd/<name>` path in the suite's Go files, or a recipe line that builds
+  `./cmd/<name>` (after any `cd`, so `xkey/cmd/xkey` counts) and tests
+  `./test/integration/<feature>`. A suite whose explicit recipe runs no
+  `go test` of it the script can read (it hands the suite to Compose, whose
+  Dockerfile builds what it runs) is selected by every change that selects
+  any feature.
+  When the script cannot prove a suite unaffected it prints `ALL`: if none of
+  a suite's tests builds under its tags, or a package or binary in the graphs
+  does not load (`Error` or `DepsErrors` from `go list -e`), any package
+  change prints `ALL`. A change to the
   Makefile, `.github/`, `go.mod`/`go.sum`, `test/integration/common/` or a
   file no feature reaches prints only `ALL`; a docs-only change prints nothing.
 - `scripts/touched-packages.sh <base> <tip>`: the repo-relative package
   directories for `make test-pkg PKG=<dir>`, which runs `go test $(TEST_FLAGS)`
   (the unit-test tags of `TEST_TAGS`) on `./<dir>`: each changed package plus
-  its direct importers in the root module, read under the same tags.
+  its direct importers in the root module, read under the same tags. If a
+  package of `./...` does not load, its importers are unknown and the script
+  prints only `ALL` (run `make test`).
 - Both count both sides of a rename and exit 2 on a bad revision.
   `internal/buildgates/integration_targets_test.go` fails when a
   `test/integration/` directory with tests has no `integration-test-<name>`

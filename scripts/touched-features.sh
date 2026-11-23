@@ -8,20 +8,29 @@
 # integration-test-% pattern runs it, and internal/buildgates checks that
 # every such directory resolves. There is no second feature list.
 #
-#   - a changed file under test/integration/<feature>/ names that feature;
+#   - a changed file under test/integration/<feature>/ names that feature; a
+#     non-test Go file there is also a package other features may import, so
+#     it goes through the rules below as well;
 #   - a changed Go package (or a file inside one, such as testdata) names
 #     every feature whose integration tests import it, directly or
-#     transitively, under that suite's own tags: the -tags of the recipe lines
-#     that go test ./test/integration/<feature> (an explicit rule such as
-#     integration-test-clusterca adding tpm_simulator), expanded by make,
+#     transitively, under that suite's own tags: the -tags of the go test
+#     lines for ./test/integration/<feature> in the recipe of
+#     integration-test-<feature> or its prerequisites (an explicit rule such
+#     as integration-test-clusterca adding tpm_simulator), expanded by make,
 #     else the tags of the integration-test-% recipe (from `make -n`, so +=
-#     tags count). A suite none of whose tests builds under its tags prints
+#     tags count). A suite none of whose tests builds under its tags, or any
+#     package of the graphs that does not load (Error or DepsErrors), prints
 #     ALL for any such change;
 #   - it also names every feature whose suite builds and runs a binary that
 #     is, or depends on, that package: a quoted .../cmd/<name> path in the
 #     suite's own Go files, or a Makefile recipe line that builds
 #     ./cmd/<name> (after any cd, so a nested module's binary counts) and
-#     tests ./test/integration/<feature>;
+#     tests ./test/integration/<feature>. A binary that does not load prints
+#     ALL;
+#   - a feature whose explicit integration-test-<feature> recipe runs no go
+#     test of it the script can read (it hands the suite to Compose, whose
+#     Dockerfile builds what it runs) is named by every change that names
+#     any feature;
 #   - a change outside every feature prints only ALL: the Makefile,
 #     .github/, go.mod/go.sum, test/integration/common/ or another shared
 #     helper no feature imports, or any non-docs file no feature reaches;
@@ -81,7 +90,13 @@ while IFS= read -r f; do
 		name=${name%%/*}
 		if is_feature "$name"; then
 			features+=("$name")
-			continue
+			# A helper Go file may be imported by other features' suites:
+			# its package also goes through the dependency analysis.
+			case "$f" in
+			*_test.go) continue ;;
+			*.go) ;;
+			*) continue ;;
+			esac
 		fi
 		;;
 	esac
@@ -143,9 +158,12 @@ module_root() {
 # <binary dir> TAB <tags>" for each Makefile recipe line that builds
 # ./.../cmd/<name> and tests ./test/integration/<feature>; the tags add the
 # build's literal ones. Each go test line that runs ./test/integration/<feature>
-# also appends "<feature> TAB <its -tags as written>" to <suites file>.
+# also appends "<target> TAB <feature> TAB <its -tags as written, or empty>" to
+# <suites file>, for each target of the rule it belongs to; <rules file> gets
+# "H TAB <target> TAB <prerequisites>" per rule header and "R TAB <target>"
+# per recipe line.
 recipe_binaries() {
-	awk -v tags="$1" -v suites="$2" '
+	awk -v tags="$1" -v suites="$2" -v rules="$3" '
 	function resolve(cwd, p,   n, parts, out, i, k, r) {
 		sub(/\/\.\.\.$/, "", p)
 		if (p ~ /^\//) return ""
@@ -166,10 +184,21 @@ recipe_binaries() {
 	}
 	# raw_tags <segment>: the -tags value as written, unexpanded; "" when it
 	# has no -tags or its parentheses do not balance.
-	function raw_tags(s,   v, o, c) {
-		if (!match(s, /-tags[= ]*["'\''][^"'\'']*["'\'']/) && !match(s, /-tags[= ]*[^[:space:]]+/)) return ""
-		v = substr(s, RSTART, RLENGTH)
-		sub(/^-tags[= ]*/, "", v)
+	function raw_tags(s,   v, o, c, i, ch, d) {
+		if (match(s, /-tags[= ]*["'\''][^"'\'']*["'\'']/)) {
+			v = substr(s, RSTART, RLENGTH)
+			sub(/^-tags[= ]*/, "", v)
+		} else if (match(s, /-tags[= ]*[^[:space:]"'\'']/)) {
+			# A bare value runs to the first blank outside $( ).
+			s = substr(s, RSTART + RLENGTH - 1); v = ""; d = 0
+			for (i = 1; i <= length(s); i++) {
+				ch = substr(s, i, 1)
+				if (d == 0 && ch ~ /[[:space:]]/) break
+				if (ch == "(") d++
+				else if (ch == ")") { if (d == 0) break; d-- }
+				v = v ch
+			}
+		} else return ""
 		gsub(/["'\'']/, "", v)
 		o = gsub(/\(/, "(", v); c = gsub(/\)/, ")", v)
 		if (o != c || v ~ /\$[*@<]/) return ""
@@ -193,7 +222,23 @@ recipe_binaries() {
 		line = cont $0
 		if (line ~ /\\$/) { sub(/\\$/, "", line); cont = line " "; next }
 		cont = ""
-		if (line !~ /^\t/) next
+		if (line !~ /^\t/) {
+			# A rule header (not a variable or target-specific variable)
+			# starts the recipe of its targets; a define body has none.
+			if (line ~ /^define[[:space:]]/) { curt = ""; next }
+			if (line !~ /^[[:space:]]*(#|$)/ && match(line, /^[^:=#\t]+::?/)) {
+				head = substr(line, 1, RLENGTH); rest = substr(line, RLENGTH + 1)
+				if (rest !~ /=/) {
+					sub(/::?$/, "", head); sub(/;.*/, "", rest)
+					curt = head
+					nh = split(head, tg, /[[:space:]]+/)
+					for (i = 1; i <= nh; i++) if (tg[i] != "") print "H\t" tg[i] "\t" rest > rules
+				}
+			}
+			next
+		}
+		nct = split(curt, ct, /[[:space:]]+/)
+		for (i = 1; i <= nct; i++) if (ct[i] != "") print "R\t" ct[i] > rules
 		nseg = split(line, seg, /&&|;/)
 		cwd = ""; saved = ""; insub = 0; nb = 0; nf = 0
 		for (s = 1; s <= nseg; s++) {
@@ -220,7 +265,7 @@ recipe_binaries() {
 					r = resolve(cwd, t)
 					if (r ~ /^test\/integration\/[^\/]+/) {
 						split(r, rp, "/"); feats[++nf] = rp[3]
-						if (texpr != "") print rp[3] "\t" texpr > suites
+						for (k = 1; k <= nct; k++) if (ct[k] != "") print ct[k] "\t" rp[3] "\t" texpr > suites
 					}
 				}
 			}
@@ -253,24 +298,65 @@ if [ "${#pending[@]}" -gt 0 ]; then
 	deps=$(mktemp)
 	bins=$(mktemp)
 	suites=$(mktemp)
+	rules=$(mktemp)
 	evalmk=$(mktemp)
-	trap 'rm -f "$deps" "$bins" "$suites" "$evalmk"' EXIT
-	# The binaries each suite builds, and the -tags of every go test line
-	# that runs a suite, as written in the recipes.
+	binreach=$(mktemp)
+	trap 'rm -f "$deps" "$bins" "$suites" "$rules" "$evalmk" "$binreach"' EXIT
+	# The binaries each suite builds, the -tags of every go test line that
+	# runs a suite (with its rule's targets), and the rules' prerequisites.
 	if [ -f Makefile ]; then
-		recipe_binaries "$tags" "$suites" >"$bins"
+		recipe_binaries "$tags" "$suites" "$rules" >"$bins"
 	fi
-	# suite_tags: "<feature> TAB <tags>", each suite's recipe tags expanded by
-	# make itself (union over its go test lines). A suite without one runs
-	# under the integration-test-% tags.
+	featlist=$(for fd in test/integration/*/; do
+		feat=$(basename "$fd")
+		if is_feature "$feat"; then printf '%s ' "$feat"; fi
+	done)
+	# plan: per feature "<feature> TAB P" (no explicit rule with a recipe:
+	# the integration-test-% tags), "<feature> TAB E TAB <tags as written>"
+	# for each go test line of it in integration-test-<feature> or its
+	# prerequisites, or "<feature> TAB U" when that recipe runs none (it
+	# delegates, to Compose say) or one whose tags cannot be read: such a
+	# suite's tests and binaries are unknown, so it is selected by any
+	# change that selects a feature.
+	plan=$(awk -F'\t' -v feats="$featlist" '
+		FILENAME == ARGV[1] {
+			if ($1 == "H") { has[$2] = 1; pre[$2] = pre[$2] " " $3 }
+			else if ($1 == "R") rec[$2] = 1
+			next
+		}
+		{ n++; lt[n] = $1; lf[n] = $2; le[n] = $3 }
+		END {
+			m = split(feats, fs, " ")
+			for (i = 1; i <= m; i++) {
+				f = fs[i]; root = "integration-test-" f
+				split("", in_); in_[root] = 1; q[1] = root; h = 1; tl = 1
+				while (h <= tl) {
+					t = q[h++]; k = split(pre[t], ps, /[[:space:]]+/)
+					for (j = 1; j <= k; j++) if (ps[j] != "" && ps[j] != "|" && !(ps[j] in in_)) { in_[ps[j]] = 1; q[++tl] = ps[j] }
+				}
+				found = 0; bad = 0
+				for (j = 1; j <= n; j++) if (lf[j] == f && (lt[j] in in_)) {
+					found = 1
+					if (le[j] == "") bad = 1; else print f "\tE\t" le[j]
+				}
+				if (found && !bad) continue
+				if (!found && !((root in has) && (root in rec))) print f "\tP"
+				else print f "\tU"
+			}
+		}' "$rules" "$suites")
+	unresolved=$(printf '%s\n' "$plan" | awk -F'\t' '$2 == "U" { print $1 }')
+	# suite_tags: "<feature> TAB <tags>", each E suite's tags expanded by make
+	# itself (union over its go test lines); P and U suites run under the
+	# integration-test-% tags.
 	suite_tags=
-	if [ -s "$suites" ]; then
+	if printf '%s\n' "$plan" | grep -q $'\tE\t'; then
 		{
 			printf '__touched_suite_tags:\n\t@:\n'
-			while IFS=$'\t' read -r feat expr; do
+			while IFS=$'\t' read -r feat kind expr; do
+				[ "$kind" = E ] || continue
 				# shellcheck disable=SC2016 # a make $(info), written literally
 				printf '$(info __TS__ %s %s)\n' "$feat" "$expr"
-			done <"$suites"
+			done <<<"$plan"
 		} >"$evalmk"
 		if ! out=$(env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -s --no-print-directory \
 			-f Makefile -f "$evalmk" __touched_suite_tags 2>/dev/null); then
@@ -308,13 +394,20 @@ if [ "${#pending[@]}" -gt 0 ]; then
 			pats+=("./test/integration/$feat/...")
 		done
 		if ! go list -e -deps -test -tags "$t" \
-			-f '{{if not .Standard}}{{.Dir}}{{"\t"}}{{.ImportPath}}{{"\t"}}{{join .Deps " "}}{{"\t"}}{{if or .TestGoFiles .XTestGoFiles}}T{{end}}{{end}}' \
+			-f '{{if not .Standard}}{{.Dir}}{{"\t"}}{{.ImportPath}}{{"\t"}}{{join .Deps " "}}{{"\t"}}{{if or .TestGoFiles .XTestGoFiles}}T{{end}}{{"\t"}}{{if or .Error .DepsErrors}}E{{end}}{{end}}' \
 			"${pats[@]}" >>"$deps" 2>/dev/null; then
 			echo "$0: go list -tags $t failed; every feature runs" >&2
 			echo ALL
 			exit 0
 		fi
 	done <<<"$groups"
+	# A package that does not load (a missing import, a parse error) hides
+	# its imports: the graph is incomplete, so every feature runs.
+	if bad=$(awk -F'\t' '$5 == "E" { print $2; found = 1; exit } END { exit !found }' "$deps"); then
+		echo "$0: $bad does not load completely; every feature runs" >&2
+		echo ALL
+		exit 0
+	fi
 	# A suite none of whose tests builds under its tags has unknown imports:
 	# every feature runs rather than that suite being dropped.
 	tested=$(awk -F'\t' -v top="$top/" '
@@ -367,20 +460,32 @@ if [ "${#pending[@]}" -gt 0 ]; then
 			fi
 		done < <(grep -rhoE --include='*.go' '"[^"[:space:]]*cmd/[A-Za-z0-9_.-]+(/\.\.\.)?"' "$fd" 2>/dev/null | tr -d '"' | LC_ALL=C sort -u)
 	done >>"$bins"
-	# Each binary reaches its own directory and its deps' directories.
-	bin_reach=$(while IFS=$'\t' read -r bin btags; do
+	# Each binary reaches its own directory and its deps' directories; a
+	# binary whose graph does not load completely makes every feature run.
+	while IFS=$'\t' read -r bin btags; do
+		[ -n "$bin" ] || continue
 		mod=$(module_root "$bin")
 		rel=./${bin#"$mod"/}
 		[ "$mod" != . ] || rel=./$bin
-		while IFS= read -r d; do
+		if ! bl=$(cd "$mod" && go list -e -deps -tags "$btags" \
+			-f '{{if not .Standard}}{{.Dir}}{{"\t"}}{{if or .Error .DepsErrors}}E{{end}}{{end}}' "$rel" 2>/dev/null); then
+			echo "$0: go list $bin failed; every feature runs" >&2
+			echo ALL
+			exit 0
+		fi
+		if printf '%s\n' "$bl" | grep -q $'\tE$'; then
+			echo "$0: $bin does not load completely under -tags $btags; every feature runs" >&2
+			echo ALL
+			exit 0
+		fi
+		while IFS=$'\t' read -r d _; do
 			case "$d" in
 			"$top"/*) awk -F'\t' -v b="$bin" -v t="$btags" -v d="${d#"$top"/}" \
 				'$2 == b && $3 == t { print d "\t" $1 }' "$bins" ;;
 			esac
-		done < <(cd "$mod" && go list -e -deps -tags "$btags" \
-			-f '{{if not .Standard}}{{.Dir}}{{end}}' "$rel" 2>/dev/null || true)
-	done < <(cut -f2,3 "$bins" | LC_ALL=C sort -u))
-	reach=$(printf '%s\n' "$reach" "$bin_reach" | LC_ALL=C sort -u)
+		done <<<"$bl" >>"$binreach"
+	done < <(cut -f2,3 "$bins" | LC_ALL=C sort -u)
+	reach=$(printf '%s\n' "$reach" | cat - "$binreach" | LC_ALL=C sort -u)
 
 	for f in "${pending[@]}"; do
 		dir=$(dirname "$f")
@@ -403,6 +508,10 @@ if [ "${#pending[@]}" -gt 0 ]; then
 			exit 0
 		fi
 		features+=("${hits[@]}")
+		# A suite whose recipe the script cannot follow may reach it too.
+		while IFS= read -r u; do
+			[ -n "$u" ] && features+=("$u")
+		done <<<"$unresolved"
 	done
 fi
 

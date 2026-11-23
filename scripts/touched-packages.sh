@@ -12,8 +12,10 @@
 # root-module importers are; test/integration/ is touched-features.sh's.
 #
 # Renames count on both sides. Imports come from the working tree, under the
-# tags `make test-pkg` passes (read from `make -n`). A docs-only change (*.md, docs/, .changelog/) or an
-# empty diff prints nothing. Exit 2 on a bad argument or revision.
+# tags `make test-pkg` passes (read from `make -n`). A package of ./... that
+# does not load (Error or DepsErrors) hides its imports, so the script prints
+# only ALL: run every package. A docs-only change (*.md, docs/, .changelog/)
+# or an empty diff prints nothing. Exit 2 on a bad argument or revision.
 set -euo pipefail
 
 usage() {
@@ -82,12 +84,20 @@ fi
 
 pkgs=$(mktemp)
 trap 'rm -f "$pkgs"' EXIT
-# <dir> TAB <import path> TAB <imports, test imports, xtest imports>
+# <dir> TAB <import path> TAB <imports, test imports, xtest imports> TAB E
+# when the package or a dependency does not load
 if ! go list -e -tags "$tags" \
-	-f '{{.Dir}}{{"\t"}}{{.ImportPath}}{{"\t"}}{{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}' \
+	-f '{{.Dir}}{{"\t"}}{{.ImportPath}}{{"\t"}}{{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}{{"\t"}}{{if or .Error .DepsErrors}}E{{end}}' \
 	./... >"$pkgs" 2>/dev/null; then
 	echo "$0: go list ./... failed" >&2
 	exit 2
+fi
+# A package that does not load hides its imports, so its importers are
+# unknown: every package runs.
+if bad=$(awk -F'\t' '$4 == "E" { print $2; found = 1; exit } END { exit !found }' "$pkgs"); then
+	echo "$0: $bad does not load completely; every package runs" >&2
+	echo ALL
+	exit 0
 fi
 rel_pkgs=$(awk -F'\t' -v top="$top/" 'substr($1, 1, length(top)) == top { print substr($1, length(top) + 1) "\t" $2 }' "$pkgs")
 
