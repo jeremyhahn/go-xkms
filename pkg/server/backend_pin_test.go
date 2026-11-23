@@ -159,6 +159,61 @@ func TestResolveBackendPIN_SealedUnderPKCS11BarrierIsSelfStore(t *testing.T) {
 	}
 }
 
+// rngPKCS11PINServer is a backend PIN test server whose only PKCS#11 PIN is
+// an active rng.pkcs11.pin: the PKCS#11 key backend is absent.
+func rngPKCS11PINServer(t *testing.T, strategy string, pin []byte) (*Server, *[][]byte) {
+	t.Helper()
+	s, opened, _ := backendPINTestServer(t, strategy, nil, false, true)
+	s.config.Backends.PKCS11 = nil
+	pv, err := types.NewLiteralSecretValue(context.Background(), pin)
+	require.NoError(t, err)
+	s.config.RNG.Mode = "pkcs11"
+	s.config.RNG.PKCS11 = &config.RNGPKCS11Config{PINRequired: true, PIN: pv}
+	return s, opened
+}
+
+// The policy covers rng.pkcs11.pin on its own (docs/SPEC.md:78): with the
+// key backend absent, an active RNG PIN is still resolved, persisted and
+// held to the minimum.
+func TestResolveBackendPIN_RNGPINWithoutKeyBackendEnforcesMinimum(t *testing.T) {
+	s, _ := rngPKCS11PINServer(t, "sealed", []byte("rng-pin-1"))
+	s.config.BackendPIN.Minimum = "tpm2"
+	var below *pinselect.BackendPINBelowMinimumError
+	require.True(t, errors.As(s.resolveBackendPIN(), &below), "minimum tpm2 enforced for the RNG PIN")
+	require.Nil(t, s.backendPIN)
+}
+
+// An active RNG PIN gets the release/seal lifecycle: released after
+// unseal, zeroized at seal; no PKCS#11 key backend is opened for it.
+func TestResolveBackendPIN_RNGPINWithoutKeyBackendReleasedAndZeroized(t *testing.T) {
+	pin := []byte("rng-pin-1")
+	s, opened := rngPKCS11PINServer(t, "sealed", pin)
+	require.NoError(t, s.resolveBackendPIN())
+	require.Equal(t, "sealed", s.BackendPINStrategy())
+	_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s.backendPINDir()))
+	require.NoError(t, statErr, "strategy persisted")
+
+	require.NoError(t, s.startPKCS11AfterUnseal())
+	held, err := s.backendPIN.PIN()
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(pin, held), "RNG PIN released after unseal")
+	clear(held)
+	require.Empty(t, *opened, "no PKCS#11 key backend opened for the RNG PIN")
+
+	require.NoError(t, s.SealBackendPIN())
+	_, err = s.backendPIN.PIN()
+	require.Error(t, err, "RNG PIN zeroized at seal")
+}
+
+// An RNG PIN that is not active (another RNG mode, or no PIN) resolves
+// nothing.
+func TestResolveBackendPIN_InactiveRNGPINIsNoOp(t *testing.T) {
+	s, _ := rngPKCS11PINServer(t, "sealed", []byte("rng-pin-1"))
+	s.config.RNG.Mode = "software"
+	require.NoError(t, s.resolveBackendPIN())
+	require.Equal(t, "", s.BackendPINStrategy())
+}
+
 func TestResolveBackendPIN_BelowMinimumFailsClosed(t *testing.T) {
 	s, _, _ := backendPINTestServer(t, "sealed", []byte("backend-pin-1"), false, true)
 	// No TPM: sealed sits below a tpm2 minimum (manual is refused outright).
