@@ -41,7 +41,9 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/veraison/corim/comid"
@@ -504,8 +506,8 @@ func checkTag(tag corim.Tag) (err error) {
 		if err := s.FromCBOR(body); err != nil {
 			return &errs.Joined{Lead: ErrMalformed, Cause: err}
 		}
-		if s.TagID.String() == "" || s.SoftwareName == "" || len(s.Entities) == 0 {
-			return &errs.Joined{Lead: ErrMalformed, Cause: errors.New("coswid: tag-id, software-name and entity are required")}
+		if err := checkCoSWID(&s); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
 		}
 		return nil
 	}
@@ -520,6 +522,44 @@ func checkTag(tag corim.Tag) (err error) {
 		return nil
 	}
 	return &errs.Joined{Lead: ErrMalformed, Cause: errors.New("tag is not a CoMID, CoSWID or CoTS")}
+}
+
+// checkCoSWID enforces the fields RFC 9393 requires of a concise-swid-tag
+// that the decoder fills with zero values when they are absent: a tag-id
+// (a decoded zero TagID marshals as CBOR null), a software-name, and at
+// least one entity, each named with a valid role, one of them the
+// tag-creator.
+func checkCoSWID(s *swid.SoftwareIdentity) error {
+	id, err := s.TagID.MarshalCBOR()
+	if err != nil || bytes.Equal(id, []byte{0xf6}) || s.TagID.String() == "" {
+		return errors.New("coswid: tag-id is required")
+	}
+	if s.SoftwareName == "" {
+		return errors.New("coswid: software-name is required")
+	}
+	if len(s.Entities) == 0 {
+		return errors.New("coswid: entity is required")
+	}
+	tagCreator := false
+	for i, e := range s.Entities {
+		if e.EntityName == "" {
+			return fmt.Errorf("coswid: entity %d: entity-name is required", i)
+		}
+		if err := e.Roles.Check(); err != nil {
+			return fmt.Errorf("coswid: entity %d: %w", i, err)
+		}
+		roles := strings.Fields(e.Roles.String())
+		if len(roles) == 0 {
+			return fmt.Errorf("coswid: entity %d: role is required", i)
+		}
+		if slices.Contains(roles, "tagCreator") {
+			tagCreator = true
+		}
+	}
+	if !tagCreator {
+		return errors.New("coswid: an entity with the tag-creator role is required")
+	}
+	return nil
 }
 
 // convertReferenceValue maps one Veraison reference-value triple.
