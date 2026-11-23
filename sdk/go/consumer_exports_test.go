@@ -88,7 +88,9 @@ func TestConsumerExports_WebAuthn(t *testing.T) {
 // way a consumer does: on a real gorilla/mux subrouter. The mount helper must
 // accept *mux.Router itself and register each ceremony path for POST.
 func TestConsumerExports_WebAuthnMountMuxGorilla(t *testing.T) {
-	var mount func(*mux.Router, *webauthnhttp.Handler) = WebAuthnMountMux
+	// Calling it with a gorilla/mux subrouter is the compile-time check
+	// that the exported helper takes *mux.Router.
+	mount := WebAuthnMountMux
 
 	r := mux.NewRouter()
 	mount(r.PathPrefix("/api/v1/webauthn").Subrouter(), nil)
