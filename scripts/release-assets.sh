@@ -10,16 +10,16 @@
 #	scripts/release-assets.sh download        DIR [GLOB]
 #	scripts/release-assets.sh upload          FILE...
 #
-# Environment (all required except DRY_RUN, RELEASE_FORGE, RELEASE_UPLOAD_API):
+# Environment (all required except DRY_RUN; nothing else is read):
 #	RELEASE_API   API root (github.api_url): https://api.github.com on GitHub,
 #	              e.g. http://forge.example.invalid/api/v1 on Gitea
 #	RELEASE_REPO  owner/repo (github.repository)
 #	RELEASE_TAG   the tag whose release is addressed, e.g. v0.11.0-alpha
 #	RELEASE_TOKEN a token allowed to read and write that release's assets
 #	DRY_RUN       when 1, upload prints its decisions and changes nothing
-#	RELEASE_FORGE github|gitea; default github when RELEASE_API's host is
-#	              api.github.com, else gitea
-#	RELEASE_UPLOAD_API GitHub uploads root, default https://uploads.github.com
+# The forge and the upload root are derived from RELEASE_API: the root
+# https://api.github.com is GitHub (uploads to https://uploads.github.com),
+# every other root is a Gitea (uploads under RELEASE_API).
 #
 # Why this exists (#447). The generic release action deletes an existing asset
 # and re-uploads it, and Gitea answers the re-upload with 404, so a workflow
@@ -49,27 +49,26 @@ need_env() {
 	release_forge
 }
 
-# release_forge sets FORGE to github or gitea. RELEASE_FORGE wins when set;
-# otherwise the API root's host decides by the rule release-alpha.sh's
+# release_forge sets FORGE to github or gitea, and upload_root to where
+# GitHub takes uploads, from RELEASE_API alone, by the rule release-alpha.sh's
 # forge_repo_url / forge_api_url apply: GitHub is github.com (whose API host
-# is api.github.com), every other host is a Gitea.
+# is api.github.com), every other host is a Gitea. No environment variable
+# overrides either.
 FORGE=
+upload_root=
 release_forge() {
 	local host
-	case "${RELEASE_FORGE:-}" in
-	github | gitea) FORGE=$RELEASE_FORGE ;;
-	"")
-		host=${RELEASE_API#*://}
-		host=${host%%/*}
-		host=${host##*@}
-		host=${host%%:*}
-		if [[ $host == api.github.com ]]; then FORGE=github; else FORGE=gitea; fi
-		;;
-	*)
-		echo "release-assets: RELEASE_FORGE must be github or gitea, not ${RELEASE_FORGE}" >&2
-		exit 2
-		;;
-	esac
+	host=${RELEASE_API#*://}
+	host=${host%%/*}
+	host=${host##*@}
+	host=${host%%:*}
+	if [[ $host == api.github.com ]]; then
+		FORGE=github
+		upload_root=https://uploads.github.com
+	else
+		FORGE=gitea
+		upload_root=$RELEASE_API
+	fi
 }
 
 api() {
@@ -219,7 +218,7 @@ upload_asset() {
 			-H "Authorization: token ${RELEASE_TOKEN}" \
 			-H "Content-Type: application/octet-stream" \
 			--data-binary "@${file}" \
-			"${RELEASE_UPLOAD_API:-https://uploads.github.com}/repos/${RELEASE_REPO}/releases/${rid}/assets?name=${name}" >/dev/null
+			"${upload_root}/repos/${RELEASE_REPO}/releases/${rid}/assets?name=${name}" >/dev/null
 		return
 	fi
 	api POST "/repos/${RELEASE_REPO}/releases/${rid}/assets?name=${name}" -F "attachment=@${file}" >/dev/null

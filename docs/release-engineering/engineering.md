@@ -29,7 +29,10 @@ and `upload FILE...`, which is idempotent: an asset present with the same
 SHA-256 is left alone, one with a different digest is replaced, one that is
 absent is added. It reads `RELEASE_API`, `RELEASE_REPO`, `RELEASE_TAG` and
 `RELEASE_TOKEN` from the environment, and `DRY_RUN=1` makes `upload` print its
-decisions without changing anything.
+decisions without changing anything. No other setting exists: the forge and
+the upload root are derived from `RELEASE_API` (the root
+`https://api.github.com` is GitHub, uploading to `https://uploads.github.com`;
+any other root is a Gitea, uploading under `RELEASE_API`).
 
 `scripts/check-public-literals.sh` (go-xkms#1030) is the public-release
 readiness gate: it fails with `file:line` output if any file in the tree

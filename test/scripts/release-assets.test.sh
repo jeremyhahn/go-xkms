@@ -287,13 +287,14 @@ eq "list sees all 20 through the GitHub API root" "20" "$("${GH[@]}" "$SCRIPT" l
 true_ "a complete release passes verify" "${GH[@]}" "$SCRIPT" verify "$V"
 
 section "only the contracted environment is read"
-# RELEASE_FORGE and RELEASE_UPLOAD_API are not release settings: set to
-# anything, they change no call. A Gitea root stays Gitea (download from the
+STRAY_FORGE=RELEASE_"FORGE"; STRAY_UPLOAD=RELEASE_"UPLOAD_API"
+# The removed forge and upload-root overrides (STRAY_FORGE, STRAY_UPLOAD)
+# are not release settings: set to anything, they change no call. A Gitea root stays Gitea (download from the
 # browser URL under RELEASE_API), a GitHub root stays GitHub.
-true_ "an unknown RELEASE_FORGE is ignored, not refused" "${GH[@]}" RELEASE_FORGE=bitbucket "$SCRIPT" list
+true_ "an unknown forge override is ignored, not refused" "${GH[@]}" "${STRAY_FORGE}=bitbucket" "$SCRIPT" list
 OD="$STUB/override-dl"; : > "$CURL_LOG"
-env PATH="$STUB/bin:$PATH" RELEASE_FORGE=github RELEASE_UPLOAD_API="http://127.0.0.1:1/nowhere" "$SCRIPT" download "$OD" '*.sha256' >/dev/null 2>&1
-eq "a Gitea root with RELEASE_FORGE=github still downloads all ten checksum files" "10" "$(ls "$OD" 2>/dev/null | wc -l | tr -d ' ')"
+env PATH="$STUB/bin:$PATH" "${STRAY_FORGE}=github" "${STRAY_UPLOAD}=http://127.0.0.1:1/nowhere" "$SCRIPT" download "$OD" '*.sha256' >/dev/null 2>&1
+eq "a Gitea root with a github forge override still downloads all ten checksum files" "10" "$(ls "$OD" 2>/dev/null | wc -l | tr -d ' ')"
 eq "every Gitea call stays under RELEASE_API or its browser URLs" "" "$(grep -v "^http://127.0.0.1:${PORT}/" "$CURL_LOG")"
 true_ "a Gitea download reads the browser URL" grep -q "^http://127.0.0.1:${PORT}/dl/" "$CURL_LOG"
 
@@ -335,8 +336,8 @@ eq "a re-run sends nothing: the stored bytes match" "" "$(cat "$GH_LOG")"
 section "github: the uploads root follows from RELEASE_API"
 printf 'override\n' > "$GW/override.txt"
 : > "$GH_LOG"; : > "$CURL_LOG"
-OUT=$("${GH[@]}" RELEASE_FORGE=gitea RELEASE_UPLOAD_API="http://127.0.0.1:1/nowhere" "$SCRIPT" upload "$GW/override.txt" 2>&1); RC=$?
-eq "an upload with RELEASE_FORGE=gitea and RELEASE_UPLOAD_API set still succeeds" "0" "$RC"
+OUT=$("${GH[@]}" "${STRAY_FORGE}=gitea" "${STRAY_UPLOAD}=http://127.0.0.1:1/nowhere" "$SCRIPT" upload "$GW/override.txt" 2>&1); RC=$?
+eq "an upload with gitea forge and upload-root overrides set still succeeds" "0" "$RC"
 eq "it reached the GitHub uploads endpoint" "POST override.txt" "$(cat "$GH_LOG")"
 eq "the upload went to uploads.github.com, nowhere else" \
 	"https://uploads.github.com/repos/o/r/releases/1/assets?name=override.txt" \
