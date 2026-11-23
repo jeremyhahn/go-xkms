@@ -61,6 +61,49 @@ func TestAttestationAppraisal_ReachesTheServer(t *testing.T) {
 	assert.Equal(t, []uint32{0, 7}, list.ReferenceValues[0].PCRIndices)
 }
 
+// AppraiseAndroidKeyAttestation answers with a verified result whose check
+// names the chain length, so a client test can see the chain arrive.
+func (s *mockKeystoreServer) AppraiseAndroidKeyAttestation(_ context.Context, req *pb.AppraiseAndroidKeyAttestationRequest) (*pb.AttestationResult, error) {
+	return &pb.AttestationResult{
+		Verified: len(req.GetChainDer()) == 2,
+		Checks:   []*pb.AttestationAppraisalCheck{{Name: "android-key-chain", Outcome: "pass"}},
+	}, nil
+}
+
+// AppraiseEKCertificate answers with a verified result when the certificate
+// and its intermediate arrive.
+func (s *mockKeystoreServer) AppraiseEKCertificate(_ context.Context, req *pb.AppraiseEKCertificateRequest) (*pb.AttestationResult, error) {
+	return &pb.AttestationResult{
+		Verified: string(req.GetCertificateDer()) == "ek" && len(req.GetIntermediatesDer()) == 1,
+		Checks:   []*pb.AttestationAppraisalCheck{{Name: "ek-certificate", Outcome: "pass"}},
+	}, nil
+}
+
+// TestAttestationAppraisal_DeviceCallsReachTheServer proves a connected
+// transport serves both device appraisal calls over its connection.
+func TestAttestationAppraisal_DeviceCallsReachTheServer(t *testing.T) {
+	tr, cleanup := newBufconnTransport(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	android, err := tr.AppraiseAndroidKeyAttestation(ctx, &transport.AppraiseAndroidKeyAttestationRequest{ChainDER: [][]byte{[]byte("leaf"), []byte("root")}})
+	require.NoError(t, err)
+	assert.True(t, android.Verified)
+	require.Len(t, android.Checks, 1)
+	assert.Equal(t, "android-key-chain", android.Checks[0].Name)
+
+	ek, err := tr.AppraiseEKCertificate(ctx, &transport.AppraiseEKCertificateRequest{CertificateDER: []byte("ek"), IntermediatesDER: [][]byte{[]byte("ca")}})
+	require.NoError(t, err)
+	assert.True(t, ek.Verified)
+	require.Len(t, ek.Checks, 1)
+	assert.Equal(t, "ek-certificate", ek.Checks[0].Name)
+
+	_, err = tr.AppraiseAndroidKeyAttestation(ctx, nil)
+	assert.ErrorIs(t, err, pbconv.ErrNilRequest)
+	_, err = tr.AppraiseEKCertificate(ctx, nil)
+	assert.ErrorIs(t, err, pbconv.ErrNilRequest)
+}
+
 // TestAttestationAppraisal_NilRequests proves a connected transport refuses
 // a nil request before it reaches the wire.
 func TestAttestationAppraisal_NilRequests(t *testing.T) {
@@ -116,6 +159,14 @@ func TestAttestationAppraisal_NotConnected(t *testing.T) {
 		},
 		"AppraiseAttestationQuote": func() error {
 			_, err := tr.AppraiseAttestationQuote(ctx, &transport.AppraiseAttestationQuoteRequest{})
+			return err
+		},
+		"AppraiseAndroidKeyAttestation": func() error {
+			_, err := tr.AppraiseAndroidKeyAttestation(ctx, &transport.AppraiseAndroidKeyAttestationRequest{})
+			return err
+		},
+		"AppraiseEKCertificate": func() error {
+			_, err := tr.AppraiseEKCertificate(ctx, &transport.AppraiseEKCertificateRequest{})
 			return err
 		},
 	}
