@@ -1805,7 +1805,7 @@ func (s *TPMService) ImportIAKCert(certPEM string) (retErr error) {
 	}
 	defer s.tpmAccessor.Release()
 
-	return tpm.ProvisionIAKCert(cert)
+	return tpm.ProvisionIAKCert(nil, cert)
 }
 
 // ExportIDevIDCert returns the IDevID certificate in PEM format.
@@ -1856,7 +1856,7 @@ func (s *TPMService) ImportIDevIDCert(certPEM string) (retErr error) {
 	}
 	defer s.tpmAccessor.Release()
 
-	return tpm.ProvisionIDevIDCert(cert)
+	return tpm.ProvisionIDevIDCert(nil, cert)
 }
 
 // --- Phase 2A: Handle Enumeration ---

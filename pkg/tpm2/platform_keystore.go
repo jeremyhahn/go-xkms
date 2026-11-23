@@ -15,6 +15,7 @@ package tpm2
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 
@@ -97,6 +98,13 @@ var (
 	// ErrPlatformSRKEnrollEmptyPIN is returned by EnrollPlatformSRK when the
 	// supplied user PIN is empty. First-boot enrollment must bind a real PIN.
 	ErrPlatformSRKEnrollEmptyPIN = errors.New("tpm2: platform SRK enrollment requires a non-empty user PIN")
+
+	// ErrPlatformSRKEnrolledOtherPIN is returned by EnrollPlatformSRK when the
+	// Platform SRK handle is already occupied by an SRK the supplied user PIN
+	// does not authorize, for example one a concurrent enrolment created after
+	// this store probed the handle. Enrolment never evicts an existing SRK;
+	// replacing it is the explicit Initialize path. It wraps ErrAuthFailed.
+	ErrPlatformSRKEnrolledOtherPIN = fmt.Errorf("tpm2: platform SRK already enrolled under another PIN: %w", ErrAuthFailed)
 )
 
 // tpmRCNVDefined is TPM_RC_NV_DEFINED (0x14c), indicating the persistent
@@ -244,7 +252,20 @@ func AttachPlatformKeyStore(logger *slog.Logger, tpm TrustedPlatformModule, back
 // where the setup wizard is re-run after a partial setup left the SRK with
 // empty auth.
 func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
+	return pks.initialize(soPIN, userPIN, true)
+}
+
+// initialize creates the Platform SRK under userPIN. When the handle is
+// already occupied, replace selects what happens to an SRK userPIN does not
+// authorize: Initialize (replace=true) evicts and recreates it through
+// ensureSRKAuth; enrolment (replace=false) adopts it only when userPIN
+// authorizes it and otherwise refuses with ErrPlatformSRKEnrolledOtherPIN,
+// never evicting it (Codex review 6000753682).
+func (pks *PlatformKeyStore) initialize(soPIN, userPIN string, replace bool) error {
 	if pks.initialized.Load() {
+		if !replace {
+			return pks.adoptEnrolledSRK(soPIN, userPIN)
+		}
 		return pks.ensureSRKAuth(soPIN, userPIN)
 	}
 
@@ -274,6 +295,9 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 		if errors.Is(err, tpmRCNVDefined) {
 			pks.logger.Info("platform SRK already exists at persistent handle")
 			pks.initialized.Store(true)
+			if !replace {
+				return pks.adoptEnrolledSRK(soPIN, userPIN)
+			}
 			return pks.ensureSRKAuth(soPIN, userPIN)
 		}
 		if isTPMAuthError(err) {
@@ -323,8 +347,12 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 // enrollment on every boot after the first without treating it as a failure.
 // An empty userPIN is rejected with ErrPlatformSRKEnrollEmptyPIN.
 //
-// Enrollment reuses the existing Initialize/ensureSRKAuth machinery; it adds no
-// new TPM primitives.
+// Enrollment never evicts an existing SRK. When the handle is occupied --
+// probed at construction, or met as TPM_RC_NV_DEFINED because a concurrent
+// enrolment created it after that probe -- an SRK userPIN authorizes is
+// adopted and reported as ErrPlatformSRKAlreadyEnrolled, and any other is
+// refused with ErrPlatformSRKEnrolledOtherPIN. Replacing an enrolled SRK is
+// the explicit Initialize path only.
 func (pks *PlatformKeyStore) EnrollPlatformSRK(soPIN, userPIN string) error {
 	if userPIN == "" {
 		return ErrPlatformSRKEnrollEmptyPIN
@@ -332,11 +360,38 @@ func (pks *PlatformKeyStore) EnrollPlatformSRK(soPIN, userPIN string) error {
 	if pks.IsAuthReady() {
 		return ErrPlatformSRKAlreadyEnrolled
 	}
-	if err := pks.Initialize(soPIN, userPIN); err != nil {
+	if err := pks.initialize(soPIN, userPIN, false); err != nil {
 		return err
 	}
 	pks.logger.Info("platform SRK enrolled at first boot")
 	return nil
+}
+
+// adoptEnrolledSRK is the enrolment path for an occupied Platform SRK handle:
+// it re-reads the SRK's Name, then adopts the SRK when userPIN authorizes it
+// (ErrPlatformSRKAlreadyEnrolled) and refuses with
+// ErrPlatformSRKEnrolledOtherPIN when it does not. It never evicts.
+func (pks *PlatformKeyStore) adoptEnrolledSRK(soPIN, userPIN string) error {
+	name, _, err := pks.tpm.ReadHandle(pks.srkAttrs.TPMAttributes.Handle)
+	if err != nil {
+		return errors.Join(ErrPlatformKeyStoreCreateSRK, err)
+	}
+	pks.srkAttrs.TPMAttributes.Name = name
+
+	if err := pks.VerifyAuth(userPIN); err != nil {
+		pks.authReady.Store(false)
+		if errors.Is(err, ErrAuthFailed) {
+			pks.logger.Warn("platform SRK already enrolled under another PIN; enrolment refused, SRK kept")
+			return ErrPlatformSRKEnrolledOtherPIN
+		}
+		return err
+	}
+	if err := pks.pinBackend.SetUserPIN(soPIN, userPIN); err != nil {
+		return errors.Join(ErrPlatformKeyStoreSetUserPIN, err)
+	}
+	pks.authReady.Store(true)
+	pks.logger.Info("platform SRK already enrolled under this PIN")
+	return ErrPlatformSRKAlreadyEnrolled
 }
 
 // ensureSRKAuth ensures PIN verification will work with the provided userPIN.

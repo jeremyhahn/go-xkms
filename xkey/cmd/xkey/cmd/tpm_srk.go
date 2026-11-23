@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -95,6 +96,60 @@ func runTPMSRKEnroll(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Two first enrolments must not both act on a probe that saw no SRK
+	// (Codex review 6000753682): the whole probe-then-create sequence runs
+	// under an exclusive lock beside the platform storage, and the probe is
+	// taken again under it.
+	unlock, err := lockSRKEnrollment()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrTPMSRKEnrollFailed, err)
+	}
+	defer unlock()
+	return enrollPlatformSRKLocked(cmd.OutOrStdout(), userPIN, soPIN)
+}
+
+// srkEnrollLockName is the enrolment lock file in the data directory, beside
+// the platform storage directory (<data dir>/tpm). It is not inside it: the
+// storage engine refuses a non-empty directory it did not write.
+const srkEnrollLockName = "tpm-srk-enroll.lock"
+
+// lockSRKEnrollment blocks until this caller holds the exclusive Platform SRK
+// enrolment lock and returns the function that releases it. The lock is an
+// OS file lock (flock) on srkEnrollLockName beside the platform storage, so
+// it serializes enrolments across processes and is dropped if a holder dies.
+func lockSRKEnrollment() (func(), error) {
+	dataDir, err := resolveDataDir("")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("enrolment lock directory: %w", err)
+	}
+	f, err := os.OpenFile(filepath.Join(dataDir, srkEnrollLockName), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open enrolment lock: %w", err)
+	}
+	if err := lockFileExclusive(f); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("take enrolment lock: %w", err)
+	}
+	return func() {
+		_ = unlockFile(f)
+		_ = f.Close()
+	}, nil
+}
+
+// enrollPlatformSRKLocked enrols the Platform SRK; the caller holds the
+// enrolment lock. AttachPlatformKeyStore probes the SRK handle here, under
+// the lock, so an SRK a concurrent enrolment created is seen and checked
+// against userPIN, never re-created.
+func enrollPlatformSRKLocked(out io.Writer, userPIN, soPIN string) error {
+	// The PIN policy runs before the TPM is opened: an SRK bound to a PIN
+	// the policy refuses would answer to a PIN nothing else accepts.
+	if err := checkSRKUserPINPolicy(userPIN); err != nil {
+		return fmt.Errorf("%w: %w", ErrTPMSRKEnrollFailed, err)
+	}
+
 	tpm, err := openTPM()
 	if err != nil {
 		return fmt.Errorf("%w: open TPM: %w", ErrTPMSRKEnrollFailed, err)
@@ -114,10 +169,11 @@ func runTPMSRKEnroll(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("%w: attach platform key store: %w", ErrTPMSRKEnrollFailed, err)
 	}
 
-	out := cmd.OutOrStdout()
-	// An SRK left by an earlier process is checked, never re-created: a
-	// mismatched PIN must not evict the SRK and the keys under it.
-	if pks.IsInitialized() && !pks.IsAuthReady() {
+	// An SRK that exists is checked against this PIN, never re-created: a
+	// mismatched PIN must not evict the SRK and the keys under it. The check
+	// runs even when the store reports auth ready, since that state may come
+	// from another enrolment that attached the store first.
+	if pks.IsInitialized() {
 		if verifyErr := pks.VerifyAuth(userPIN); verifyErr != nil {
 			if errors.Is(verifyErr, xkms.ErrTPMAuthFailed) {
 				return ErrTPMSRKEnrolledOtherPIN
@@ -135,10 +191,58 @@ func runTPMSRKEnroll(cmd *cobra.Command, _ []string) error {
 	case errors.Is(err, xkms.ErrPlatformSRKAlreadyEnrolled):
 		_, _ = fmt.Fprintln(out, "Platform SRK already enrolled")
 		return nil
+	case errors.Is(err, xkms.ErrTPMAuthFailed):
+		// The SRK appeared after the probe and answers to another PIN;
+		// enrolment refuses rather than evicting it.
+		return ErrTPMSRKEnrolledOtherPIN
 	default:
 		return fmt.Errorf("%w: enrol Platform SRK: %w", ErrTPMSRKEnrollFailed, err)
 	}
 }
+
+// checkSRKUserPINPolicy applies the user PIN policy pintpm2's SetUserPIN
+// applies, through SetUserPIN itself over a probe store, so the rule lives
+// in one place. SetUserPIN reaches the store only once the policy passed;
+// the probe records that and refuses, so nothing is verified or cached.
+func checkSRKUserPINPolicy(userPIN string) error {
+	probe := &srkPINPolicyProbe{}
+	backend := xkms.NewPINTPMBackend(probe)
+	err := backend.SetUserPIN("", userPIN)
+	if closeErr := backend.Close(); closeErr != nil {
+		return closeErr
+	}
+	if probe.reached {
+		return nil
+	}
+	return err
+}
+
+// errSRKPINPolicyProbe is the probe's refusal once the policy has passed.
+var errSRKPINPolicyProbe = errors.New("tpm srk enroll: PIN policy probe")
+
+// srkPINPolicyProbe is an xkms.TPMPlatformAuthProvider that holds no SRK:
+// it only records that SetUserPIN reached the store.
+type srkPINPolicyProbe struct{ reached bool }
+
+func (p *srkPINPolicyProbe) VerifyAuth(string) error {
+	p.reached = true
+	return errSRKPINPolicyProbe
+}
+
+func (p *srkPINPolicyProbe) ChangeAuth(string, string) error {
+	p.reached = true
+	return errSRKPINPolicyProbe
+}
+
+func (*srkPINPolicyProbe) GetLockoutInfo() (int, int, int, int, error) {
+	return 0, 0, 0, 0, errSRKPINPolicyProbe
+}
+
+func (*srkPINPolicyProbe) DictionaryAttackLockoutReset([]byte) error { return errSRKPINPolicyProbe }
+
+func (*srkPINPolicyProbe) IsProvisioned() bool { return true }
+
+func (*srkPINPolicyProbe) IsAuthReady() bool { return false }
 
 // resolveSRKEnrollPINs returns the user PIN (required) and the SO PIN (may
 // be empty) from the non-interactive sources, or prompts at a terminal.

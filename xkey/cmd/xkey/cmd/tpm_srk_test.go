@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -83,4 +84,44 @@ func TestTPMSRKEnrollNoPINNonInteractive(t *testing.T) {
 	c.SetOut(os.Stderr)
 	err := c.Execute()
 	require.ErrorIs(t, err, ErrTPMSRKNoPIN)
+}
+
+// TestSRKEnrollmentLockIsExclusive proves the enrolment lock, a lock file
+// beside the platform storage, admits one holder at a time: a second
+// acquisition (another process, or another open in this one) blocks until
+// the first is released.
+func TestSRKEnrollmentLockIsExclusive(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("XKEY_DATA_DIR", dataDir)
+
+	unlock, err := lockSRKEnrollment()
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dataDir, srkEnrollLockName))
+	assert.NoDirExists(t, filepath.Join(dataDir, "tpm"),
+		"the lock must not land inside the platform storage directory")
+
+	acquired := make(chan func(), 1)
+	go func() {
+		second, lockErr := lockSRKEnrollment()
+		if lockErr != nil {
+			acquired <- nil
+			return
+		}
+		acquired <- second
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("a second holder acquired the enrolment lock while it was held")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	unlock()
+	select {
+	case second := <-acquired:
+		require.NotNil(t, second, "the second acquisition must succeed once released")
+		second()
+	case <-time.After(10 * time.Second):
+		t.Fatal("the released enrolment lock was never acquired")
+	}
 }

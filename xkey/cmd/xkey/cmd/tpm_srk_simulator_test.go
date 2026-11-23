@@ -26,11 +26,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -50,6 +52,12 @@ func writeSRKPINFile(t *testing.T, pin string) string {
 // its output and error.
 func runSRKEnroll(t *testing.T, stdin string, args ...string) (string, error) {
 	t.Helper()
+	return executeSRKEnroll(stdin, args...)
+}
+
+// executeSRKEnroll runs `tpm srk enroll` on a fresh command without a
+// *testing.T, so a goroutine can call it and report over a channel.
+func executeSRKEnroll(stdin string, args ...string) (string, error) {
 	c := newTPMSRKCmd()
 	var out bytes.Buffer
 	c.SetOut(&out)
@@ -259,6 +267,62 @@ func TestTPMSRKEnrollIdempotent(t *testing.T) {
 	assert.Contains(t, out, "already enrolled")
 }
 
+// TestTPMSRKEnrollShortPINLeavesNoSRK: a PIN the shared PIN policy refuses
+// is refused before any persistent SRK exists, so a later enrolment with a
+// valid PIN creates the SRK rather than meeting one bound to the short PIN.
+func TestTPMSRKEnrollShortPINLeavesNoSRK(t *testing.T) {
+	installTPMForSRK(t)
+
+	_, err := runSRKEnroll(t, "", "--pin-file", writeSRKPINFile(t, "12345"))
+	require.ErrorIs(t, err, qrdbsdk.ErrPINTooShort)
+
+	out, err := runSRKEnroll(t, "", "--pin-file", writeSRKPINFile(t, testSRKUserPIN))
+	require.NoError(t, err)
+	assert.Contains(t, out, "Platform SRK enrolled")
+	assert.NotContains(t, out, "already enrolled")
+}
+
+// closeCountingTPM counts Close calls on the shared simulator TPM.
+type closeCountingTPM struct {
+	sharedTPM
+	closes *int
+}
+
+func (c closeCountingTPM) Close() error {
+	*c.closes++
+	return nil
+}
+
+// TestFIDO2TPM2BackendCloseClosesTPM: the fido2 tpm2 backend owns the TPM it
+// opened, so its Close closes that TPM once, and a second Close is a no-op.
+func TestFIDO2TPM2BackendCloseClosesTPM(t *testing.T) {
+	sim := installTPMForSRK(t)
+	pinFile := writeSRKPINFile(t, testSRKUserPIN)
+	_, err := runSRKEnroll(t, "", "--pin-file", pinFile)
+	require.NoError(t, err)
+
+	openFreshSRKTPM(t, sim)
+	closes := 0
+	savedOpenForDevice := openTPMForDevice
+	t.Cleanup(func() { openTPMForDevice = savedOpenForDevice })
+	openTPMForDevice = func(string) (xkms.TrustedPlatformModule, error) {
+		return closeCountingTPM{sharedTPM: newSharedTPM(t, sim.tpm), closes: &closes}, nil
+	}
+	setViperForTest(t, "fido2.pin_file", pinFile)
+	setViperForTest(t, "fido2.pin_stdin", false)
+	cfg := &FIDO2Config{TPMDevice: ""}
+	cfg.PlatformSRKPIN, cfg.PlatformSRKPINErr = resolveFIDO2PlatformSRKPIN()
+
+	backend, err := createFIDO2TPM2KeyBackend(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	require.Equal(t, 0, closes, "the TPM stays open while the backend is in use")
+
+	require.NoError(t, backend.Close())
+	assert.Equal(t, 1, closes, "Close closes the TPM the backend opened")
+	require.NoError(t, backend.Close())
+	assert.Equal(t, 1, closes, "a second Close does not close the TPM again")
+}
+
 // TestTPMSRKEnrollFreshOpenIdempotent: enrolling again from a fresh open of
 // an already-enrolled TPM (a second process) verifies the PIN and never
 // re-creates the SRK; another PIN is refused.
@@ -277,6 +341,52 @@ func TestTPMSRKEnrollFreshOpenIdempotent(t *testing.T) {
 	openFreshSRKTPM(t, sim)
 	_, err = runSRKEnroll(t, "", "--pin-file", writeSRKPINFile(t, "test-wrong-pin"))
 	require.ErrorIs(t, err, ErrTPMSRKEnrolledOtherPIN)
+
+	require.NoError(t, createSRKCredential(t, sim, pinFile, ""))
+}
+
+// TestTPMSRKEnrollConcurrentSerializesOnLock covers Codex review 6000753682
+// (P1): two first enrolments race on one storage directory. The second blocks
+// on the enrolment lock while the first enrols PIN A, then re-probes the SRK
+// under the lock and refuses with ErrTPMSRKEnrolledOtherPIN; PIN A survives.
+func TestTPMSRKEnrollConcurrentSerializesOnLock(t *testing.T) {
+	sim := installTPMForSRK(t)
+	pinFile := writeSRKPINFile(t, testSRKUserPIN)
+	otherPINFile := writeSRKPINFile(t, "test-other-pin")
+
+	unlock, err := lockSRKEnrollment()
+	require.NoError(t, err)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			unlock()
+		}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		// No t methods here: the result goes over done.
+		_, runErr := executeSRKEnroll("", "--pin-file", otherPINFile)
+		done <- runErr
+	}()
+
+	select {
+	case runErr := <-done:
+		t.Fatalf("enrolment ran while another process held the enrolment lock: %v", runErr)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// The lock holder enrols first, as the winning process would.
+	require.NoError(t, enrollPlatformSRKLocked(io.Discard, testSRKUserPIN, ""))
+	unlock()
+	released = true
+
+	select {
+	case runErr := <-done:
+		require.ErrorIs(t, runErr, ErrTPMSRKEnrolledOtherPIN)
+	case <-time.After(2 * time.Minute):
+		t.Fatal("the second enrolment never acquired the released lock")
+	}
 
 	require.NoError(t, createSRKCredential(t, sim, pinFile, ""))
 }

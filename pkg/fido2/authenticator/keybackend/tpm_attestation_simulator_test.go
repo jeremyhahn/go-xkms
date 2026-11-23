@@ -117,7 +117,7 @@ func simulatorTPM2AttestingBackend(t *testing.T) (*TPM2AttestingBackend, *x509.C
 	require.NoError(t, err, "the IAK must certify the LAK via TPM2_Certify")
 
 	lakCert := issueLAKCertificate(t, lakPub)
-	require.NoError(t, tpm.ProvisionLAKCert(lakCert), "installing the LAK certificate must succeed")
+	require.NoError(t, tpm.ProvisionLAKCert(nil, lakCert), "installing the LAK certificate must succeed")
 
 	// The certification evidence is exercised directly here (pkg/ca's own
 	// tests cover ca.IssueLAKCertificate's verification end to end); what

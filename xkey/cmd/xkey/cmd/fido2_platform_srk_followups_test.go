@@ -75,7 +75,7 @@ func TestFIDO2PlatformSRKPINIsSealed(t *testing.T) {
 func TestFIDO2PlatformSRKAuthRejectedExitCode(t *testing.T) {
 	sealed := mustSealPIN(t, testFollowupPIN)
 	cfg := &FIDO2Config{PlatformSRKPIN: sealed}
-	pks := &fakeSRKKeyStore{verifyErr: errors.New("TPM_RC_AUTH_FAIL")}
+	pks := &fakeSRKKeyStore{verifyErr: fmt.Errorf("%w: TPM_RC_AUTH_FAIL", xkms.ErrTPMAuthFailed)}
 	err := loadFIDO2PlatformSRKAuth(cfg, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
 	require.ErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuth)
 	require.ErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuthRejected)
@@ -91,6 +91,43 @@ func TestFIDO2PlatformSRKAuthRejectedExitCode(t *testing.T) {
 	assert.NotErrorIs(t, attachErr, ErrFIDO2TPMPlatformSRKAuthRejected)
 	assert.Equal(t, 1, ExitCode(attachErr))
 	assert.Equal(t, 0, ExitCode(nil))
+}
+
+// TestFIDO2PlatformSRKNonAuthErrorKeepsExit1 pins that only a TPM auth
+// failure is the SRK-rejected sentinel: a not-enrolled SRK or a transport
+// error exits 1, so systemd keeps restarting the service.
+func TestFIDO2PlatformSRKNonAuthErrorKeepsExit1(t *testing.T) {
+	for name, verifyErr := range map[string]error{
+		"not enrolled": errors.New("platform SRK not enrolled"),
+		"transport":    errors.New("tpm: session: transport closed"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &FIDO2Config{PlatformSRKPIN: mustSealPIN(t, testFollowupPIN)}
+			pks := &fakeSRKKeyStore{verifyErr: verifyErr}
+			err := loadFIDO2PlatformSRKAuth(cfg, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
+			require.ErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuth)
+			require.ErrorIs(t, err, verifyErr)
+			assert.NotErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuthRejected)
+			assert.Equal(t, 1, ExitCode(fmt.Errorf("fido2: %w", err)))
+		})
+	}
+}
+
+// TestFIDO2PlatformSRKPromptedPINIsWiped pins that a PIN read at the
+// terminal prompt is wiped once loadFIDO2PlatformSRKAuth returns.
+func TestFIDO2PlatformSRKPromptedPINIsWiped(t *testing.T) {
+	t.Setenv(pinEnvVar, "")
+	prevTerminal, prevPrompt := pinInputIsTerminal, promptFIDO2PlatformSRKPIN
+	t.Cleanup(func() { pinInputIsTerminal, promptFIDO2PlatformSRKPIN = prevTerminal, prevPrompt })
+	prompted := []byte(testFollowupPIN)
+	pinInputIsTerminal = func() bool { return true }
+	promptFIDO2PlatformSRKPIN = func() ([]byte, error) { return prompted, nil }
+
+	pks := &fakeSRKKeyStore{verifyErr: fmt.Errorf("%w: TPM_RC_AUTH_FAIL", xkms.ErrTPMAuthFailed)}
+	err := loadFIDO2PlatformSRKAuth(&FIDO2Config{}, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
+	require.ErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuthRejected)
+	assert.Equal(t, testFollowupPIN, pks.verified, "the prompted PIN reaches VerifyAuth")
+	assert.Equal(t, make([]byte, len(testFollowupPIN)), prompted, "the prompted PIN is wiped")
 }
 
 // TestXKeyUnitPreventsRestartOnSRKAuthRejected keeps the systemd unit and
