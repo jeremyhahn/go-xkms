@@ -40,6 +40,27 @@ rule falls through to a pattern rule that runs `test/integration/<dir>`
   run on its own, outside the `integration-test` aggregate, pending
   go-xkms#737: `make integration-test-acme-tpm` (`Makefile:2365`)
 
+### Touched Tests
+A local verify runs the tests a change touches (Tenant rulings 1170 and 1171).
+Both scripts read the mapping the Makefile already has; there is no second
+feature list.
+- `scripts/touched-features.sh <base> <tip>`: the features whose
+  `make integration-test-<feature>` must run. A feature is a
+  `test/integration/<feature>/` directory holding `_test.go` files. A changed
+  file under it, or a package its tests import (directly or transitively,
+  `go list -deps -test -tags integration`), selects it. A change to the
+  Makefile, `.github/`, `go.mod`/`go.sum`, `test/integration/common/` or a
+  file no feature reaches prints only `ALL`; a docs-only change prints nothing.
+- `scripts/touched-packages.sh <base> <tip>`: the repo-relative package
+  directories for `make test-pkg PKG=<dir>`, which runs `go test` on `./<dir>`
+  the way `test-%` does: each changed package plus its direct importers in the
+  root module.
+- Both count both sides of a rename and exit 2 on a bad revision.
+  `internal/buildgates/integration_targets_test.go` fails when a
+  `test/integration/` directory with tests has no `integration-test-<name>`
+  that runs it, or an explicit `integration-test-<name>` names a missing
+  directory.
+
 ## Testing Guides
 
 - [Docker Testing](docker-testing.md) - Using Docker for isolated integration tests
