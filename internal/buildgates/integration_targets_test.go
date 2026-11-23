@@ -1,6 +1,7 @@
 package buildgates
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -143,7 +144,7 @@ func explicitIntegrationTargets(makefile string) []string {
 // whole test/integration tree for "...") exists. A bare path resolves
 // against the repository root or a directory the recipe changes into
 // (`cd xkey && go test ./test/integration/uhid/...`).
-func integrationDirExists(prefix, name string, cdDirs []string) bool {
+func integrationDirExists(root, prefix, name string, cdDirs []string) bool {
 	bases := []string{prefix}
 	if prefix == "" || prefix == "./" {
 		bases = append([]string{""}, cdDirs...)
@@ -153,7 +154,7 @@ func integrationDirExists(prefix, name string, cdDirs []string) bool {
 		if name != "..." {
 			rel = filepath.Join(rel, name)
 		}
-		if fi, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil && fi.IsDir() {
+		if fi, err := os.Stat(filepath.Join(root, rel)); err == nil && fi.IsDir() {
 			return true
 		}
 	}
@@ -423,11 +424,20 @@ func TestNestedSuiteGateIgnoresNestedModuleRunners(t *testing.T) {
 
 func TestExplicitIntegrationTargetsNameExistingDirs(t *testing.T) {
 	mk := readMakefile(t)
-	targets := explicitIntegrationTargets(mk)
-	if len(targets) == 0 {
+	if len(explicitIntegrationTargets(mk)) == 0 {
 		t.Fatal("Makefile has no explicit integration-test-<name> rule")
 	}
-	for _, target := range targets {
+	for _, msg := range missingIntegrationRefs(mk, repoRoot) {
+		t.Error(msg)
+	}
+}
+
+// missingIntegrationRefs returns a message for each path under
+// test/integration, integration_dir call or $(MAKE) -C directory that an
+// explicit integration-test-* recipe of mk names and root does not hold.
+func missingIntegrationRefs(mk, root string) []string {
+	var out []string
+	for _, target := range explicitIntegrationTargets(mk) {
 		recipe, _ := makeRecipe(mk, target)
 		text := expandMakeVars(mk, recipe)
 		var cdDirs []string
@@ -437,23 +447,42 @@ func TestExplicitIntegrationTargetsNameExistingDirs(t *testing.T) {
 			}
 		}
 		for _, m := range integrationPathRef.FindAllStringSubmatch(text, -1) {
-			if !integrationDirExists(m[1], m[2], cdDirs) {
-				t.Errorf("%s names %stest/integration/%s, which does not exist", target, m[1], m[2])
+			if !integrationDirExists(root, m[1], m[2], cdDirs) {
+				out = append(out, fmt.Sprintf("%s names %stest/integration/%s, which does not exist", target, m[1], m[2]))
 			}
 		}
 		for _, m := range integrationDirCall.FindAllStringSubmatch(text, -1) {
-			if !integrationDirExists("", m[1], nil) {
-				t.Errorf("%s calls integration_dir,%s; test/integration/%s does not exist", target, m[1], m[1])
+			if !integrationDirExists(root, "", m[1], nil) {
+				out = append(out, fmt.Sprintf("%s calls integration_dir,%s; test/integration/%s does not exist", target, m[1], m[1]))
 			}
 		}
 		for _, m := range makeDashC.FindAllStringSubmatch(text, -1) {
 			if strings.Contains(m[1], "$") {
 				continue
 			}
-			if fi, err := os.Stat(filepath.Join(repoRoot, m[1])); err != nil || !fi.IsDir() {
-				t.Errorf("%s delegates to $(MAKE) -C %s, which is not a directory", target, m[1])
+			if fi, err := os.Stat(filepath.Join(root, m[1])); err != nil || !fi.IsDir() {
+				out = append(out, fmt.Sprintf("%s delegates to $(MAKE) -C %s, which is not a directory", target, m[1]))
 			}
 		}
+	}
+	return out
+}
+
+// A target naming a nested suite (test/integration/pkcs11/module) is checked
+// against that whole path, not just its feature directory.
+func TestIntegrationRefsCheckTheWholePath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "test", "integration", "pkcs11"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mk := "integration-test-pkcs11-module:\n" +
+		"\tgo test -tags integration ./test/integration/pkcs11/module\n" +
+		"\n" +
+		"integration-test-pkcs11-all:\n" +
+		"\tgo test -tags integration ./test/integration/pkcs11/...\n"
+	got := missingIntegrationRefs(mk, root)
+	if len(got) != 1 || !strings.Contains(got[0], "integration-test-pkcs11-module") || !strings.Contains(got[0], "pkcs11/module") {
+		t.Errorf("missing refs = %q, want one for integration-test-pkcs11-module naming test/integration/pkcs11/module", got)
 	}
 }
 
