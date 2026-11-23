@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -37,7 +38,8 @@ const maxDeltaSeconds = 2147483648
 
 var (
 	// ErrInvalidStatusListURL is returned for a status list URL that is not
-	// an absolute http or https URL.
+	// an absolute https URL (plaintext http only to a loopback IP literal),
+	// or a redirect that would leave that transport.
 	ErrInvalidStatusListURL = errors.New("android: invalid attestation status list URL")
 
 	// ErrStatusListHTTPStatus is the cause of an unavailable list whose
@@ -53,7 +55,8 @@ var (
 // HTTPStatusListOptions configures an HTTPStatusList. The zero value
 // fetches Google's list with the default bounds.
 type HTTPStatusListOptions struct {
-	// URL is the list's address. Empty means GoogleStatusListURL.
+	// URL is the list's address. Empty means GoogleStatusListURL. It must
+	// be https; plaintext http is accepted only to a loopback IP literal.
 	URL string
 
 	// Client sends the request. Nil means a client with no other timeout
@@ -138,10 +141,55 @@ func NewHTTPStatusList(opts HTTPStatusListOptions) (*HTTPStatusList, error) {
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrInvalidStatusListURL, Detail: err.Error()}
 	}
-	if (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+	if !statusListURLAllowed(u) {
 		return nil, &errs.Detail{Err: ErrInvalidStatusListURL, Detail: h.url}
 	}
+	h.client = refuseDowngradeRedirects(h.client, u.Scheme == "https")
 	return h, nil
+}
+
+// statusListURLAllowed reports whether u may be fetched. The list carries no
+// signature, so its integrity rests on the transport: a remote source must
+// be https, whose certificate the client verifies. Plaintext http is
+// accepted only to a loopback IP literal, which no network attacker reaches;
+// a host name, localhost included, is resolved and so is not. An offline
+// copy is loaded with LoadStatusListFile instead.
+func statusListURLAllowed(u *url.URL) bool {
+	if u.Host == "" {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		addr, err := netip.ParseAddr(u.Hostname())
+		return err == nil && addr.Unmap().IsLoopback()
+	default:
+		return false
+	}
+}
+
+// refuseDowngradeRedirects returns a copy of client whose redirects never
+// leave the transport the source was configured with: from an https source
+// only to https, from a loopback http source only to a URL
+// statusListURLAllowed accepts. The caller's redirect policy, if any, still
+// applies after that check; without one, Go's default limit of 10 does.
+func refuseDowngradeRedirects(client *http.Client, https bool) *http.Client {
+	guarded := *client
+	next := client.CheckRedirect
+	guarded.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if (https && req.URL.Scheme != "https") || !statusListURLAllowed(req.URL) {
+			return &errs.Detail{Err: ErrInvalidStatusListURL, Detail: "redirect to " + req.URL.Redacted()}
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("android: attestation status list stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &guarded
 }
 
 // URL returns the address the list is fetched from.
