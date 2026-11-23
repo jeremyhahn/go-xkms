@@ -1,0 +1,1 @@
+- **ssh:** `xkey ssh connect` and `xkey ssh console` send no key owner to an xkmsd server unless `--key-owner` or a profile gives one; the server resolves an omitted user-scope owner (keys, known hosts, authorized keys, session and console host-key pins) to the authenticated caller, and host keys `ssh connect` pins in the local store stay under `local` (#2284).
