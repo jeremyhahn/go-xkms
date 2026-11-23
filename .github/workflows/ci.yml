@@ -1,4 +1,5 @@
 # ci-template: v1.54 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# v1.60 runs-on (DS-10367): image, integration and soak take ci-template v1.60's CI_BIGDISK_ONLY runs-on (handbook 19549a76); the rest of the file stays at its version.
 # v1.54 (handbook 1ad68ab8, #104; Tenant Agent ruling 1137): the preflight
 # step `Balanced runner pool (ruling 1137)`, verbatim, replaces v1.48's
 # `Hosted or overflow runner (ruling 1024)` with the same `runner` and
@@ -1351,11 +1352,8 @@ jobs:
 
   image:
     name: Devcontainer image [lint, gosec, build, test]
-    # v1.48 (ruling 1024; replaces the #2240/#2241 routing, Codex #2323 P1):
-    # ubuntu-latest, or the bigdisk-docker pool when the preflight's
-    # `runner_docker` reports the hosted pool full; a fork pull request
-    # never overflows. Pinned by internal/buildgates/ci_sched_devcontainer_test.go.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}
+    # v1.60 (DS-10367): bigdisk-only when CI_BIGDISK_ONLY names this job; #2271's Integration died of "No space left on device" on ubuntu-latest.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(contains(format(' {0} ', vars.CI_BIGDISK_ONLY), ' image ') && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","linux","x64","bigdisk-docker"]' || needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.60 self-hosted: oversize: bigdisk-only when CI_BIGDISK_ONLY names image; a hosted runner's disk cannot hold its images
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     # v1.30: only on the guard's `run` (not `refused`, not `proven`). It keeps
@@ -1787,10 +1785,8 @@ jobs:
     # only on the schedule guard's `run`.
     needs: preflight   # v1.34
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    # v1.48 (ruling 1024; replaces the #2240 / ruling 740 routing):
-    # ubuntu-latest, or the bigdisk-docker pool when the preflight's
-    # `runner_docker` reports the hosted pool full.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    # v1.60 (DS-10367): bigdisk-only when CI_BIGDISK_ONLY names this job; #2271's Integration died of "No space left on device" on ubuntu-latest.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(contains(format(' {0} ', vars.CI_BIGDISK_ONLY), ' integration ') && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","linux","x64","bigdisk-docker"]' || needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.60 self-hosted: oversize: bigdisk-only when CI_BIGDISK_ONLY names integration; a hosted runner's disk cannot hold its images
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1904,10 +1900,8 @@ jobs:
     needs: preflight   # v1.34
     # v1.30: a dispatch off main is refused, so soak runs only on `run`.
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.preflight.outputs.verdict == 'run' }}
-    # v1.48 (ruling 1024; replaces the #2240 / ruling 740 routing):
-    # ubuntu-latest, or the bigdisk-docker pool when the preflight's
-    # `runner_docker` reports the hosted pool full.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    # v1.60 (DS-10367): bigdisk-only when CI_BIGDISK_ONLY names this job; #2271's Integration died of "No space left on device" on ubuntu-latest.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(contains(format(' {0} ', vars.CI_BIGDISK_ONLY), ' soak ') && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","linux","x64","bigdisk-docker"]' || needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.60 self-hosted: oversize: bigdisk-only when CI_BIGDISK_ONLY names soak; a hosted runner's disk cannot hold its images
     timeout-minutes: 210      # CUSTOMIZE (go-xkms): SOAK_MINUTES (30) plus one 180-minute iteration
     env:
       SOAK_MINUTES: 30        # CUSTOMIZE
