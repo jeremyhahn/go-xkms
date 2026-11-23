@@ -1015,7 +1015,7 @@ func TestActivateInvitePIV_RefusesCertificateOfAnotherTenant(t *testing.T) {
 
 	_, err = f.getInvite(tenant, token)
 	require.NoError(t, err, "a refused certificate must not spend the invitation")
-	u, err := f.svc.inviteUserClient().GetUser(bindInviteTenant(context.Background(), tenant), inviteFixtureQRDBUserID)
+	u, err := f.svc.inviteUserClient().GetUser(context.Background(), tenant, inviteFixtureQRDBUserID)
 	require.NoError(t, err)
 	assert.Equal(t, string(qrdbsdk.LifecyclePending), u.Lifecycle, "the account must stay pending")
 

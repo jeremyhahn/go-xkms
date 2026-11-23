@@ -90,7 +90,7 @@ func TestModuleHost_NodeUsers_WebAuthnFinishOverAuthNode(t *testing.T) {
 
 	// The finish wrote the user through the node user service: the invited
 	// account is now active.
-	got, err := users.GetUser(ctx, user.ID)
+	got, err := users.GetUser(ctx, qrdbsdk.SystemTenantID, user.ID)
 	require.NoError(t, err)
 	require.Equal(t, string(qrdbsdk.LifecycleActive), got.Lifecycle)
 }

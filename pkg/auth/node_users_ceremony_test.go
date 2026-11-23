@@ -107,7 +107,7 @@ func TestNodeUserClient_NonSystemRegistrationCeremony(t *testing.T) {
 	kv := qrdbsdk.NewMemoryKVStore()
 
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      auth.NewNodeUserClient(ceremonySource{users: users}),
+		Users:      auth.NewNodeUserClient(ceremonySource{users: users}).InTenant(ceremonyTenant),
 		DAOFactory: qrdbsdk.NewDAOFactory(func(uint64) qrdbkv.KVStore { return kv }),
 		TenantID:   ceremonyTenant,
 	})

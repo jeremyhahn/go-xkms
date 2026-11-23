@@ -75,7 +75,7 @@ func TestNodeUserClient_NonSystemTenantLookups(t *testing.T) {
 // session of a non-system tenant: the anonymous refresh route must bind the
 // validated token's tenant before the by-id lookup (Codex 5989079760).
 func TestQRDBUserResolver_NonSystemUserHandleRefresh(t *testing.T) {
-	resolver := NewQRDBUserResolver(NewNodeUserClient(routingSource{}))
+	resolver := NewNodeUserResolver(NewNodeUserClient(routingSource{}))
 
 	fresh, err := resolver.ResolveUser(context.Background(), &Identity{
 		Subject:  webAuthnHandleSubject(7),

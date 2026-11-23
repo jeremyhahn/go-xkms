@@ -55,6 +55,46 @@ func NewNodeUserClient(node NodeUserSource) *NodeUserClient {
 	return &NodeUserClient{node: node}
 }
 
+// TenantNodeUsers is a NodeUserClient fixed to one tenant: its by-id
+// methods take no tenant and run in the one it was built with. The WebAuthn
+// user store uses it with its configured scope (webauthn.QRDBUsers).
+type TenantNodeUsers struct {
+	client   *NodeUserClient
+	tenantID string
+}
+
+// InTenant returns the view of c fixed to tenantID, which callers take from
+// server-side configuration. An empty tenantID makes every by-id call fail
+// with ErrNodeUsersNoTenant.
+func (c *NodeUserClient) InTenant(tenantID string) *TenantNodeUsers {
+	return &TenantNodeUsers{client: c, tenantID: tenantID}
+}
+
+// GetUser retrieves a user by id in the view's tenant.
+func (u *TenantNodeUsers) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	return u.client.GetUser(ctx, u.tenantID, id)
+}
+
+// GetUserByEmail retrieves a user by tenant-scoped email login key.
+func (u *TenantNodeUsers) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	return u.client.GetUserByEmail(ctx, tenantID, email)
+}
+
+// CreateUser creates a passwordless user in the request's tenant.
+func (u *TenantNodeUsers) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+	return u.client.CreateUser(ctx, req)
+}
+
+// UpdateUser applies a partial update in the view's tenant.
+func (u *TenantNodeUsers) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	return u.client.UpdateUser(ctx, u.tenantID, req)
+}
+
+// DeleteUser removes a non-system user in the view's tenant.
+func (u *TenantNodeUsers) DeleteUser(ctx context.Context, id uint64) error {
+	return u.client.DeleteUser(ctx, u.tenantID, id)
+}
+
 func (c *NodeUserClient) service() (qrdbsdk.UserServicer, error) {
 	if c == nil || c.node == nil {
 		return nil, ErrNodeUsersNotServing
@@ -66,9 +106,28 @@ func (c *NodeUserClient) service() (qrdbsdk.UserServicer, error) {
 	return users, nil
 }
 
-// GetUser retrieves a user by id.
-func (c *NodeUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+// ErrNodeUsersNoTenant is returned by the by-id methods when they are
+// given no tenant: the node's routing user service would otherwise act on
+// whatever tenant ctx carries, or default to the system tenant.
+var ErrNodeUsersNoTenant = errors.New("auth: node user by-id call has no tenant")
+
+// tenantService returns the node's user service and ctx with tenantID
+// bound, refusing an empty tenantID before the service is reached.
+func (c *NodeUserClient) tenantService(ctx context.Context, tenantID string) (qrdbsdk.UserServicer, context.Context, error) {
+	if tenantID == "" {
+		return nil, ctx, ErrNodeUsersNoTenant
+	}
 	users, err := c.service()
+	if err != nil {
+		return nil, ctx, err
+	}
+	return users, bindTenant(ctx, tenantID), nil
+}
+
+// GetUser retrieves a user by id within tenantID. Callers take tenantID
+// from server-side state, never from the request.
+func (c *NodeUserClient) GetUser(ctx context.Context, tenantID string, id uint64) (*qrdbtransport.User, error) {
+	users, ctx, err := c.tenantService(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +191,8 @@ func (c *NodeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 
 // UpdateUser applies a partial update. Role bindings are not carried: no
 // public route changes them.
-func (c *NodeUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
-	users, err := c.service()
+func (c *NodeUserClient) UpdateUser(ctx context.Context, tenantID string, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	users, ctx, err := c.tenantService(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -164,8 +223,8 @@ func (c *NodeUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.Upda
 }
 
 // DeleteUser removes a non-system user.
-func (c *NodeUserClient) DeleteUser(ctx context.Context, id uint64) error {
-	users, err := c.service()
+func (c *NodeUserClient) DeleteUser(ctx context.Context, tenantID string, id uint64) error {
+	users, ctx, err := c.tenantService(ctx, tenantID)
 	if err != nil {
 		return err
 	}
@@ -173,8 +232,8 @@ func (c *NodeUserClient) DeleteUser(ctx context.Context, id uint64) error {
 }
 
 // AddCertBinding binds a certificate thumbprint to the user.
-func (c *NodeUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
-	users, err := c.service()
+func (c *NodeUserClient) AddCertBinding(ctx context.Context, tenantID string, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	users, ctx, err := c.tenantService(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -215,8 +274,8 @@ func nodeUser(u *qrdbsdk.User, err error) (*qrdbtransport.User, error) {
 // administrator's disable, for one) is refused with
 // *qrdbuser.AccountNotPendingError and nothing is written: an invitation
 // can never reinstate an account that is no longer pending.
-func (c *NodeUserClient) ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
-	users, err := c.service()
+func (c *NodeUserClient) ActivatePendingUser(ctx context.Context, tenantID string, userID uint64) (*qrdbtransport.User, error) {
+	users, ctx, err := c.tenantService(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -244,8 +303,8 @@ func requirePending(prior, _ *qrdbsdk.User) error {
 // conditional commit (qrdbuser.CertActivator). A node whose user service
 // lacks it is refused with ErrNodeUsersNoCertActivator: the binding and
 // the activation are never written apart.
-func (c *NodeUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
-	users, err := c.service()
+func (c *NodeUserClient) ActivateWithCertBinding(ctx context.Context, tenantID string, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	users, ctx, err := c.tenantService(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}

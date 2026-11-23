@@ -11,7 +11,6 @@ import (
 
 	"github.com/descope/virtualwebauthn"
 	"github.com/go-webauthn/webauthn/protocol"
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
@@ -120,7 +119,7 @@ func TestWebAuthnCeremony_NonSystemTenantOverRBACNode(t *testing.T) {
 	_, err = svc.FinishInviteRegistration(ctx, sessionID, handle, parsedAtt)
 	require.NoError(t, err, "finish registration in a non-system tenant")
 	// As xkms activates an invited account: on the invitation's tenant.
-	_, err = users.UpdateUser(qrdbtenant.WithTenantID(ctx, tenantID), &qrdbtransport.UpdateUserRequest{ID: invitee.ID, Lifecycle: string(qrdbsdk.LifecycleActive)})
+	_, err = users.UpdateUser(ctx, tenantID, &qrdbtransport.UpdateUserRequest{ID: invitee.ID, Lifecycle: string(qrdbsdk.LifecycleActive)})
 	require.NoError(t, err, "activate the invited account in a non-system tenant")
 
 	assertion, sessionID, err := svc.BeginLoginForEmail(ctx, email)

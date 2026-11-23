@@ -217,7 +217,7 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.inviteUserClient().GetUser(ctx, userID)
+	u, err := s.inviteUserClient().GetUser(ctx, req.TenantID, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -256,7 +256,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.inviteUserClient().GetUser(ctx, userID); err != nil {
+	if _, err := s.inviteUserClient().GetUser(ctx, req.TenantID, userID); err != nil {
 		return nil, ErrInviteUnusable
 	}
 
@@ -362,7 +362,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, ErrInviteUnusable
 	}
 
-	if err := s.activateInviteUser(ctx, userID); err != nil {
+	if err := s.activateInviteUser(ctx, req.TenantID, userID); err != nil {
 		return nil, err
 	}
 	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
@@ -433,7 +433,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrPIVCertRejected{Err: err}
 	}
 
-	u, err := s.inviteUserClient().GetUser(ctx, userID)
+	u, err := s.inviteUserClient().GetUser(ctx, req.TenantID, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -486,7 +486,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	// disable, for one) is refused with nothing bound, and stays as the
 	// administrator left it.
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	if _, err := s.inviteUserClient().ActivateWithCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+	if _, err := s.inviteUserClient().ActivateWithCertBinding(ctx, req.TenantID, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
 		releaseClaim()
 		if notPending := (*qrdbuser.AccountNotPendingError)(nil); errors.As(err, &notPending) {
 			return nil, ErrInviteUnusable
@@ -518,10 +518,10 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 // go-quicbaas's ActivateFIDO2Finish / PIVActivator.Activate. The re-read
 // follows only the guarded write, so it can never be what activates a
 // disabled account.
-func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) error {
+func (s *XKMSService) activateInviteUser(ctx context.Context, tenantID string, userID uint64) error {
 	active := string(qrdbsdk.LifecycleActive)
-	if _, err := s.inviteUserClient().ActivatePendingUser(ctx, userID); err != nil {
-		if u, gErr := s.inviteUserClient().GetUser(ctx, userID); gErr == nil && u != nil && u.Lifecycle == active {
+	if _, err := s.inviteUserClient().ActivatePendingUser(ctx, tenantID, userID); err != nil {
+		if u, gErr := s.inviteUserClient().GetUser(ctx, tenantID, userID); gErr == nil && u != nil && u.Lifecycle == active {
 			return nil
 		}
 		if notPending := (*qrdbuser.AccountNotPendingError)(nil); errors.Is(err, ErrInviteUnusable) || errors.As(err, &notPending) {
@@ -539,12 +539,40 @@ func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) err
 // account that is no longer pending is refused with
 // *qrdbuser.AccountNotPendingError and nothing is written.
 type InviteUserClient interface {
-	GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error)
-	// ActivatePendingUser moves a pending account to active.
-	ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error)
+	// GetUser reads a user by id within tenantID.
+	GetUser(ctx context.Context, tenantID string, id uint64) (*qrdbtransport.User, error)
+	// ActivatePendingUser moves a pending account in tenantID to active.
+	ActivatePendingUser(ctx context.Context, tenantID string, userID uint64) (*qrdbtransport.User, error)
 	// ActivateWithCertBinding binds a first certificate to a pending
-	// account holding no binding and activates it, in one commit.
+	// account in tenantID holding no binding and activates it, in one
+	// commit.
+	ActivateWithCertBinding(ctx context.Context, tenantID string, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+}
+
+// contextInviteUserClient is the shape of a user client that reads the
+// tenant from ctx (the credentialed qrdb client and its test doubles).
+type contextInviteUserClient interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error)
+	ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error)
 	ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+}
+
+// contextInviteUsers adapts a contextInviteUserClient to InviteUserClient
+// by binding the tenant on ctx.
+type contextInviteUsers struct {
+	users contextInviteUserClient
+}
+
+func (u contextInviteUsers) GetUser(ctx context.Context, tenantID string, id uint64) (*qrdbtransport.User, error) {
+	return u.users.GetUser(bindInviteTenant(ctx, tenantID), id)
+}
+
+func (u contextInviteUsers) ActivatePendingUser(ctx context.Context, tenantID string, userID uint64) (*qrdbtransport.User, error) {
+	return u.users.ActivatePendingUser(bindInviteTenant(ctx, tenantID), userID)
+}
+
+func (u contextInviteUsers) ActivateWithCertBinding(ctx context.Context, tenantID string, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	return u.users.ActivateWithCertBinding(bindInviteTenant(ctx, tenantID), userID, thumbprint, notAfterUnix)
 }
 
 // SetInviteUserClient wires the user client the invite routes use. The
@@ -576,8 +604,8 @@ func (s *XKMSService) inviteUserClient() InviteUserClient {
 	}
 	// A plain qrdb user client has no conditional activation: the invite
 	// routes stay unconfigured rather than activate unguarded.
-	if users, ok := s.users.(InviteUserClient); ok {
-		return users
+	if users, ok := s.users.(contextInviteUserClient); ok {
+		return contextInviteUsers{users: users}
 	}
 	return nil
 }

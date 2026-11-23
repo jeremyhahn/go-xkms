@@ -102,6 +102,24 @@ func (m *restMockUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.
 	return nil, errRestMockUnused
 }
 
+// ActivatePendingUser activates through the mock's updateUser, so the mock
+// serves the invite routes (xkms requires a guarded activator).
+func (m *restMockUserClient) ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
+	return m.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: "active"})
+}
+
+// ActivateWithCertBinding binds through the mock's addCertBinding, then
+// activates through its updateUser.
+func (m *restMockUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	if m.addCertBinding == nil {
+		return nil, errRestMockUnused
+	}
+	if _, err := m.addCertBinding(ctx, userID, thumbprint, notAfterUnix); err != nil {
+		return nil, err
+	}
+	return m.ActivatePendingUser(ctx, userID)
+}
+
 func (m *restMockUserClient) DeleteUser(ctx context.Context, id uint64) error {
 	if m.deleteUser != nil {
 		return m.deleteUser(ctx, id)

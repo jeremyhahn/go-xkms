@@ -226,7 +226,7 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		}
 		refreshStore = qs
 		if p.NodeUsers != nil {
-			userResolver = auth.NewQRDBUserResolver(auth.NewNodeUserClient(p.NodeUsers))
+			userResolver = auth.NewNodeUserResolver(auth.NewNodeUserClient(p.NodeUsers))
 		} else {
 			userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
 		}
@@ -447,8 +447,8 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	var users webauthn.QRDBUsers = p.QRDBClient.Users()
 	if p.NodeUsers != nil {
 		users = nodeWebAuthnUsers{
-			NodeUserClient: auth.NewNodeUserClient(p.NodeUsers),
-			creator:        users,
+			TenantNodeUsers: auth.NewNodeUserClient(p.NodeUsers).InTenant(tenantID),
+			creator:         users,
 		}
 	}
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
@@ -499,9 +499,10 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 // checks users:create. The node's routing user service checks no
 // permission, so creating through it would let anonymous registration/begin
 // persist an account the service principal is not granted to create (CA
-// ruling 602).
+// ruling 602). The by-id calls run in tenantID, the configured WebAuthn
+// scope, never a tenant the request chose.
 type nodeWebAuthnUsers struct {
-	*auth.NodeUserClient
+	*auth.TenantNodeUsers
 	creator webauthn.QRDBUsers
 }
 

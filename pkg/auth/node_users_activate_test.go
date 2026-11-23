@@ -68,12 +68,12 @@ func TestNodeUserClient_ActivatePendingUserIsGuarded(t *testing.T) {
 	ctx := context.Background()
 
 	pending := &guardedUsers{account: qrdbsdk.User{ID: 7, Lifecycle: qrdbsdk.LifecyclePending}}
-	u, err := auth.NewNodeUserClient(fixedSource{users: pending}).ActivatePendingUser(ctx, 7)
+	u, err := auth.NewNodeUserClient(fixedSource{users: pending}).ActivatePendingUser(ctx, "tenant-a", 7)
 	require.NoError(t, err)
 	assert.Equal(t, string(qrdbsdk.LifecycleActive), u.Lifecycle)
 
 	disabled := &guardedUsers{account: qrdbsdk.User{ID: 7, Lifecycle: qrdbsdk.LifecycleDisabled}}
-	_, err = auth.NewNodeUserClient(fixedSource{users: disabled}).ActivatePendingUser(ctx, 7)
+	_, err = auth.NewNodeUserClient(fixedSource{users: disabled}).ActivatePendingUser(ctx, "tenant-a", 7)
 	var notPending *qrdbuser.AccountNotPendingError
 	require.True(t, errors.As(err, &notPending), "want *AccountNotPendingError, got %v", err)
 	assert.Equal(t, qrdbsdk.LifecycleDisabled, disabled.account.Lifecycle)
@@ -85,13 +85,13 @@ func TestNodeUserClient_ActivateWithCertBinding(t *testing.T) {
 	ctx := context.Background()
 
 	activating := &certActivatingUsers{guardedUsers: &guardedUsers{account: qrdbsdk.User{ID: 7, Lifecycle: qrdbsdk.LifecyclePending}}}
-	u, err := auth.NewNodeUserClient(fixedSource{users: activating}).ActivateWithCertBinding(ctx, 7, "tp", 0)
+	u, err := auth.NewNodeUserClient(fixedSource{users: activating}).ActivateWithCertBinding(ctx, "tenant-a", 7, "tp", 0)
 	require.NoError(t, err)
 	assert.Equal(t, string(qrdbsdk.LifecycleActive), u.Lifecycle)
 	assert.Equal(t, "tp", activating.bound)
 
 	plain := &guardedUsers{account: qrdbsdk.User{ID: 7, Lifecycle: qrdbsdk.LifecyclePending}}
-	_, err = auth.NewNodeUserClient(fixedSource{users: plain}).ActivateWithCertBinding(ctx, 7, "tp", 0)
+	_, err = auth.NewNodeUserClient(fixedSource{users: plain}).ActivateWithCertBinding(ctx, "tenant-a", 7, "tp", 0)
 	require.ErrorIs(t, err, auth.ErrNodeUsersNoCertActivator)
 	require.ErrorIs(t, err, qrdbuser.ErrActivationUnsupported)
 	assert.Equal(t, qrdbsdk.LifecyclePending, plain.account.Lifecycle)
