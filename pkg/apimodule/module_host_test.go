@@ -256,6 +256,26 @@ func TestModule_NodeCORSBeforeClientPublishedKeepsPersistenceAndWebAuthn(t *test
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
 
+// A self-built module (WithCORS, no REST server resolver) hands its own
+// cross-origin policy to the node, so the node's outer CORS layer answers
+// the module's 401/403 refusals with readable CORS headers.
+func TestModule_NodeCORSSelfBuiltModuleMapsWithCORS(t *testing.T) {
+	m, err := NewModule(func() *xkms.XKMSService { return nil },
+		WithCORS(&rest.CORSOptions{
+			AllowedOrigins:   []string{"https://app.example.com"},
+			AllowCredentials: true,
+			MaxAgeSeconds:    600,
+		}))
+	require.NoError(t, err)
+
+	got, err := m.NodeCORS()
+	require.NoError(t, err)
+	require.Equal(t, []string{"https://app.example.com"}, got.AllowedOrigins)
+	require.True(t, got.AllowCredentials)
+	require.Equal(t, 600, got.MaxAge)
+	require.Equal(t, rest.CORSAllowedHeaders(), got.AllowedHeaders)
+}
+
 // TestModule_SelfBuiltSurfaceRegistersOnAnEnforcingNode drives the
 // self-built module host over an authentication-enforcing node, as a host
 // embedding the module wires it (serviceprincipal.Option(),
