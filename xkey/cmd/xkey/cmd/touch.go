@@ -59,6 +59,8 @@ func init() {
 	RootCmd.AddCommand(touchCmd)
 
 	touchCmd.Flags().String("password", "", "Name of password to type")
+	touchCmd.Flags().String("request-id", "", "Approve only the presence request with this ID")
+	_ = touchCmd.Flags().MarkHidden("request-id")
 }
 
 // runTouch executes the touch command. It connects to the daemon via IPC and
@@ -79,6 +81,8 @@ func runTouch(cmd *cobra.Command, args []string) (err error) {
 
 	if passwordName != "" {
 		resp, err = client.TypePassword(passwordName)
+	} else if requestID, _ := cmd.Flags().GetString("request-id"); requestID != "" {
+		resp, err = client.TouchRequest(requestID)
 	} else {
 		resp, err = client.Touch()
 	}

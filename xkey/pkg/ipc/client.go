@@ -53,6 +53,12 @@ func (c *Client) Touch() (*Response, error) {
 	return c.send(&Message{Type: MessageTypeTouch})
 }
 
+// TouchRequest approves only the presence request whose ID is requestID; a
+// touch for a request that has already ended approves nothing.
+func (c *Client) TouchRequest(requestID string) (*Response, error) {
+	return c.send(&Message{Type: MessageTypeTouch, RequestID: requestID})
+}
+
 // TypePassword sends a type_password message to the daemon and returns the
 // response.
 func (c *Client) TypePassword(name string) (*Response, error) {

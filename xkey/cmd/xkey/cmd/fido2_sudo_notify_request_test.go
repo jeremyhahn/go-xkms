@@ -10,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/presence"
 )
 
 // recordingRunner stands in for runuser: the dialog runs dialogBin, the
@@ -99,5 +102,62 @@ func TestSudoDialogNotifier_TouchNamesItsRequest(t *testing.T) {
 		"--socket", "/run/xkey.sock", "--request-id", "req-b"}
 	if !slices.Equal(got[1], want) {
 		t.Fatalf("touch argv = %q, want %q", got[1], want)
+	}
+}
+
+// idNotifier hands each published request ID to the test.
+type idNotifier struct{ ids chan string }
+
+func (n *idNotifier) NotifyTouchRequired(req *notify.TouchRequest) error {
+	n.ids <- req.RequestID
+	return nil
+}
+
+func (n *idNotifier) Close() error { return nil }
+
+// TestFIDO2Device_TouchRequestApprovesOnlyItsRequest drives the daemon's
+// touch handler: a touch naming a cancelled request leaves the next pending
+// request untouched, and a touch naming the pending request approves it.
+func TestFIDO2Device_TouchRequestApprovesOnlyItsRequest(t *testing.T) {
+	t.Parallel()
+	n := &idNotifier{ids: make(chan string, 2)}
+	h := presence.NewSocketHandler(n, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	d := &fido2Device{socketHandler: h}
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	doneA := make(chan struct{})
+	go func() {
+		defer close(doneA)
+		_, _ = h.RequestUserPresence(ctxA, &authenticator.UserPresenceRequest{Operation: "selection", Timeout: 10 * time.Second})
+	}()
+	idA := <-n.ids
+	cancelA()
+	<-doneA
+
+	doneB := make(chan error, 1)
+	go func() {
+		_, err := h.RequestUserPresence(context.Background(), &authenticator.UserPresenceRequest{Operation: "register", Timeout: 10 * time.Second})
+		doneB <- err
+	}()
+	idB := <-n.ids
+
+	resp, err := d.HandleTouchRequest(idA)
+	if err != nil || resp.Action != ipc.ActionNoPending {
+		t.Fatalf("touch for cancelled request A: resp=%+v err=%v, want %s", resp, err, ipc.ActionNoPending)
+	}
+	if !h.HasPending() {
+		t.Fatal("a touch naming request A resolved request B")
+	}
+	resp, err = d.HandleTouchRequest(idB)
+	if err != nil || resp.Action != ipc.ActionApprovedUP {
+		t.Fatalf("touch for request B: resp=%+v err=%v, want %s", resp, err, ipc.ActionApprovedUP)
+	}
+	select {
+	case err := <-doneB:
+		if err != nil {
+			t.Fatalf("request B: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("request B did not resolve")
 	}
 }

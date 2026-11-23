@@ -49,6 +49,17 @@ type TouchRequest struct {
 	// AuthenticatorName names the authenticator asking for the touch, so a
 	// user with several authenticators can tell which one it is.
 	AuthenticatorName string
+
+	// RequestID identifies the presence request this notification is for. A
+	// notifier that approves on the user's behalf (a dialog running
+	// "xkey touch") passes it on, so a late approval resolves only this
+	// request and never one that became pending after it ended.
+	RequestID string
+
+	// Done is closed when the presence request ends (approved, denied,
+	// timed out or cancelled). A notifier that keeps a prompt open stops it
+	// then. Nil means the request carries no lifetime.
+	Done <-chan struct{}
 }
 
 // Notifier defines the interface for sending touch-required notifications

@@ -96,14 +96,17 @@ var validMessageTypes = map[string]bool{
 
 // Message is sent from the client to the server over the Unix domain socket.
 type Message struct {
-	Type     string           `json:"type"`               // "touch", "type_password", "status", "pkcs11", "autofill", "pairing", "unlock", "state"
-	Name     string           `json:"name,omitempty"`     // password name (for type_password)
-	PKCS11   *PKCS11Payload   `json:"pkcs11,omitempty"`   // PKCS#11 payload (for pkcs11)
-	Autofill *AutofillPayload `json:"autofill,omitempty"` // autofill payload (for autofill)
-	Pairing  *PairingPayload  `json:"pairing,omitempty"`  // pairing payload (for pairing)
-	Unlock   *UnlockPayload   `json:"unlock,omitempty"`   // unlock payload (for unlock)
-	State    *StatePayload    `json:"state,omitempty"`    // live-state payload (for state)
-	Vault    *VaultPayload    `json:"vault,omitempty"`    // password-vault payload (for vault)
+	Type string `json:"type"`           // "touch", "type_password", "status", "pkcs11", "autofill", "pairing", "unlock", "state"
+	Name string `json:"name,omitempty"` // password name (for type_password)
+	// RequestID names the presence request a touch approves (for touch).
+	// Empty approves whatever request is pending.
+	RequestID string           `json:"request_id,omitempty"`
+	PKCS11    *PKCS11Payload   `json:"pkcs11,omitempty"`   // PKCS#11 payload (for pkcs11)
+	Autofill  *AutofillPayload `json:"autofill,omitempty"` // autofill payload (for autofill)
+	Pairing   *PairingPayload  `json:"pairing,omitempty"`  // pairing payload (for pairing)
+	Unlock    *UnlockPayload   `json:"unlock,omitempty"`   // unlock payload (for unlock)
+	State     *StatePayload    `json:"state,omitempty"`    // live-state payload (for state)
+	Vault     *VaultPayload    `json:"vault,omitempty"`    // password-vault payload (for vault)
 }
 
 // Response is sent from the server to the client over the Unix domain socket.

@@ -1180,6 +1180,16 @@ func (d *fido2Device) HandleTouch() (*ipc.Response, error) {
 	return ipc.OKResponse(ipc.ActionNoPending), nil
 }
 
+// HandleTouchRequest approves the pending WebAuthn UP request only if its ID
+// is requestID (the touch a sudo dialog runs for its own request). A late
+// touch for a request that has ended approves nothing and types no password.
+func (d *fido2Device) HandleTouchRequest(requestID string) (*ipc.Response, error) {
+	if d.socketHandler != nil && d.socketHandler.ApproveRequest(requestID) {
+		return ipc.OKResponse(ipc.ActionApprovedUP), nil
+	}
+	return ipc.OKResponse(ipc.ActionNoPending), nil
+}
+
 // HandleTypePassword implements ipc.Handler. It retrieves a named password
 // from the static password store and types it through the virtual keyboard.
 func (d *fido2Device) HandleTypePassword(name string) (*ipc.Response, error) {

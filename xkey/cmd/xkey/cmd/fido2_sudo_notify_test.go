@@ -97,8 +97,8 @@ func TestBuildSudoDialogArgv_HostileValuesStayInOneElement(t *testing.T) {
 }
 
 func TestBuildSudoTouchArgv(t *testing.T) {
-	argv := buildSudoTouchArgv("alice", "/usr/bin/xkey", "/run/user/1000/xkey.sock")
-	assert.Equal(t, []string{"runuser", "-u", "alice", "--", "/usr/bin/xkey", "touch", "--socket", "/run/user/1000/xkey.sock"}, argv)
+	argv := buildSudoTouchArgv("alice", "/usr/bin/xkey", "/run/user/1000/xkey.sock", "req-1")
+	assert.Equal(t, []string{"runuser", "-u", "alice", "--", "/usr/bin/xkey", "touch", "--socket", "/run/user/1000/xkey.sock", "--request-id", "req-1"}, argv)
 }
 
 func TestBuildSudoPassiveArgv(t *testing.T) {
@@ -205,7 +205,7 @@ func TestSudoDialogNotifier_ApprovedRunsTouchCommand(t *testing.T) {
 	t.Setenv("DIALOG_EXIT", "0")
 
 	n := newSudoDialogNotifier("alice", "/usr/bin/xkey", "/run/user/1000/xkey.sock", 30*time.Second, slog.Default())
-	req := &notify.TouchRequest{Operation: "register", RPID: "example.com", UserName: `bob'; rm -rf / #`}
+	req := &notify.TouchRequest{Operation: "register", RPID: "example.com", UserName: `bob'; rm -rf / #`, RequestID: "req-1"}
 	require.NoError(t, n.NotifyTouchRequired(req))
 
 	calls := waitForCalls(t, dumpFile, 2)
@@ -214,7 +214,7 @@ func TestSudoDialogNotifier_ApprovedRunsTouchCommand(t *testing.T) {
 	assert.Equal(t, []string{"-u", "alice", "--", "env", "DISPLAY=:0", "zenity"}, calls[0][:6])
 
 	// Second call: the touch approval, run only because the dialog exited 0.
-	assert.Equal(t, []string{"-u", "alice", "--", "/usr/bin/xkey", "touch", "--socket", "/run/user/1000/xkey.sock"}, calls[1])
+	assert.Equal(t, []string{"-u", "alice", "--", "/usr/bin/xkey", "touch", "--socket", "/run/user/1000/xkey.sock", "--request-id", "req-1"}, calls[1])
 }
 
 func TestSudoDialogNotifier_DeniedDoesNotRunTouchCommand(t *testing.T) {

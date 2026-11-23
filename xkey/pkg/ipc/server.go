@@ -49,6 +49,14 @@ type Handler interface {
 	HandleStatus() (*Response, error)
 }
 
+// TouchRequestHandler is implemented by handlers that can approve one named
+// presence request: HandleTouchRequest approves the pending request only if
+// its ID is requestID, so a touch issued for a request that has ended never
+// approves the one pending after it.
+type TouchRequestHandler interface {
+	HandleTouchRequest(requestID string) (*Response, error)
+}
+
 // PKCS11Handler processes PKCS#11 IPC requests. Implementations provide
 // access to barrier-protected keys and certificates via the running xkey
 // GUI instance. There is one method per xkms.PKCS11Transport operation,
@@ -137,8 +145,17 @@ type dispatchFunc func(context.Context, Handler, *Message) (*Response, error)
 
 // handlers maps message types to their dispatch functions for O(1) lookup.
 var handlers = map[string]dispatchFunc{
-	MessageTypeTouch: func(_ context.Context, h Handler, _ *Message) (*Response, error) {
-		return h.HandleTouch()
+	MessageTypeTouch: func(_ context.Context, h Handler, m *Message) (*Response, error) {
+		if m.RequestID == "" {
+			return h.HandleTouch()
+		}
+		// A touch that names its request must never fall back to approving
+		// whatever is pending: a handler that cannot match IDs refuses it.
+		rh, ok := h.(TouchRequestHandler)
+		if !ok {
+			return nil, &DetailError{Err: ErrHandlerFailed, Detail: ": handler does not implement TouchRequestHandler"}
+		}
+		return rh.HandleTouchRequest(m.RequestID)
 	},
 	MessageTypeTypePassword: func(_ context.Context, h Handler, m *Message) (*Response, error) {
 		return h.HandleTypePassword(m.Name)
