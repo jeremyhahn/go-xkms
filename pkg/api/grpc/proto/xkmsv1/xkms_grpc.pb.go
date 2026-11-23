@@ -207,6 +207,8 @@ const (
 	KeystoreService_ListAttestationReferenceValues_FullMethodName   = "/xkms.v1.KeystoreService/ListAttestationReferenceValues"
 	KeystoreService_DeleteAttestationReferenceValues_FullMethodName = "/xkms.v1.KeystoreService/DeleteAttestationReferenceValues"
 	KeystoreService_AppraiseAttestationQuote_FullMethodName         = "/xkms.v1.KeystoreService/AppraiseAttestationQuote"
+	KeystoreService_AppraiseAndroidKeyAttestation_FullMethodName    = "/xkms.v1.KeystoreService/AppraiseAndroidKeyAttestation"
+	KeystoreService_AppraiseEKCertificate_FullMethodName            = "/xkms.v1.KeystoreService/AppraiseEKCertificate"
 	KeystoreService_PKCS11StatePut_FullMethodName                   = "/xkms.v1.KeystoreService/PKCS11StatePut"
 	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName           = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
 	KeystoreService_PKCS11StateCAS_FullMethodName                   = "/xkms.v1.KeystoreService/PKCS11StateCAS"
@@ -711,6 +713,12 @@ type KeystoreServiceClient interface {
 	// AppraiseAttestationQuote appraises a TPM quote and returns the
 	// attestation result.
 	AppraiseAttestationQuote(ctx context.Context, in *AppraiseAttestationQuoteRequest, opts ...grpc.CallOption) (*AttestationResult, error)
+	// AppraiseAndroidKeyAttestation appraises an Android Key Attestation
+	// certificate chain and returns the attestation result.
+	AppraiseAndroidKeyAttestation(ctx context.Context, in *AppraiseAndroidKeyAttestationRequest, opts ...grpc.CallOption) (*AttestationResult, error)
+	// AppraiseEKCertificate appraises a TPM endorsement-key certificate
+	// against the stored EK roots and returns the attestation result.
+	AppraiseEKCertificate(ctx context.Context, in *AppraiseEKCertificateRequest, opts ...grpc.CallOption) (*AttestationResult, error)
 	PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error)
@@ -2633,6 +2641,26 @@ func (c *keystoreServiceClient) AppraiseAttestationQuote(ctx context.Context, in
 	return out, nil
 }
 
+func (c *keystoreServiceClient) AppraiseAndroidKeyAttestation(ctx context.Context, in *AppraiseAndroidKeyAttestationRequest, opts ...grpc.CallOption) (*AttestationResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttestationResult)
+	err := c.cc.Invoke(ctx, KeystoreService_AppraiseAndroidKeyAttestation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) AppraiseEKCertificate(ctx context.Context, in *AppraiseEKCertificateRequest, opts ...grpc.CallOption) (*AttestationResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttestationResult)
+	err := c.cc.Invoke(ctx, KeystoreService_AppraiseEKCertificate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PKCS11StatePutResponse)
@@ -3513,6 +3541,12 @@ type KeystoreServiceServer interface {
 	// AppraiseAttestationQuote appraises a TPM quote and returns the
 	// attestation result.
 	AppraiseAttestationQuote(context.Context, *AppraiseAttestationQuoteRequest) (*AttestationResult, error)
+	// AppraiseAndroidKeyAttestation appraises an Android Key Attestation
+	// certificate chain and returns the attestation result.
+	AppraiseAndroidKeyAttestation(context.Context, *AppraiseAndroidKeyAttestationRequest) (*AttestationResult, error)
+	// AppraiseEKCertificate appraises a TPM endorsement-key certificate
+	// against the stored EK roots and returns the attestation result.
+	AppraiseEKCertificate(context.Context, *AppraiseEKCertificateRequest) (*AttestationResult, error)
 	PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error)
@@ -4146,6 +4180,12 @@ func (UnimplementedKeystoreServiceServer) DeleteAttestationReferenceValues(conte
 }
 func (UnimplementedKeystoreServiceServer) AppraiseAttestationQuote(context.Context, *AppraiseAttestationQuoteRequest) (*AttestationResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method AppraiseAttestationQuote not implemented")
+}
+func (UnimplementedKeystoreServiceServer) AppraiseAndroidKeyAttestation(context.Context, *AppraiseAndroidKeyAttestationRequest) (*AttestationResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method AppraiseAndroidKeyAttestation not implemented")
+}
+func (UnimplementedKeystoreServiceServer) AppraiseEKCertificate(context.Context, *AppraiseEKCertificateRequest) (*AttestationResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method AppraiseEKCertificate not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PKCS11StatePut not implemented")
@@ -7606,6 +7646,42 @@ func _KeystoreService_AppraiseAttestationQuote_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_AppraiseAndroidKeyAttestation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppraiseAndroidKeyAttestationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).AppraiseAndroidKeyAttestation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_AppraiseAndroidKeyAttestation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).AppraiseAndroidKeyAttestation(ctx, req.(*AppraiseAndroidKeyAttestationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_AppraiseEKCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppraiseEKCertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).AppraiseEKCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_AppraiseEKCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).AppraiseEKCertificate(ctx, req.(*AppraiseEKCertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PKCS11StatePut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PKCS11StatePutRequest)
 	if err := dec(in); err != nil {
@@ -9104,6 +9180,14 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AppraiseAttestationQuote",
 			Handler:    _KeystoreService_AppraiseAttestationQuote_Handler,
+		},
+		{
+			MethodName: "AppraiseAndroidKeyAttestation",
+			Handler:    _KeystoreService_AppraiseAndroidKeyAttestation_Handler,
+		},
+		{
+			MethodName: "AppraiseEKCertificate",
+			Handler:    _KeystoreService_AppraiseEKCertificate_Handler,
 		},
 		{
 			MethodName: "PKCS11StatePut",

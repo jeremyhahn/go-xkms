@@ -195,6 +195,8 @@ var goldenRPCPermissions = map[string]string{
 	"ListAttestationReferenceValues":   "attestation_reference_values:list",
 	"DeleteAttestationReferenceValues": "attestation_reference_values:delete",
 	"AppraiseAttestationQuote":         "attestation_verifier:verify",
+	"AppraiseAndroidKeyAttestation":    "attestation_verifier:verify",
+	"AppraiseEKCertificate":            "attestation_verifier:verify",
 
 	"PeerAttestationChallenge": "peer_attestation:challenge",
 	"SubmitPeerAttestation":    "peer_attestation:submit",

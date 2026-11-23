@@ -15,7 +15,6 @@ package pbconv
 
 import (
 	"context"
-	"errors"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -242,6 +241,48 @@ func AppraiseAttestationQuoteRequestFromProto(r *pb.AppraiseAttestationQuoteRequ
 	}
 }
 
+// AppraiseAndroidKeyAttestationRequestToProto converts an Android Key
+// Attestation appraisal request to its protobuf message.
+func AppraiseAndroidKeyAttestationRequestToProto(r *transport.AppraiseAndroidKeyAttestationRequest) *pb.AppraiseAndroidKeyAttestationRequest {
+	if r == nil {
+		return nil
+	}
+	return &pb.AppraiseAndroidKeyAttestationRequest{ChainDer: r.ChainDER}
+}
+
+// AppraiseAndroidKeyAttestationRequestFromProto converts a protobuf Android
+// Key Attestation appraisal request.
+func AppraiseAndroidKeyAttestationRequestFromProto(r *pb.AppraiseAndroidKeyAttestationRequest) *transport.AppraiseAndroidKeyAttestationRequest {
+	if r == nil {
+		return nil
+	}
+	return &transport.AppraiseAndroidKeyAttestationRequest{ChainDER: r.GetChainDer()}
+}
+
+// AppraiseEKCertificateRequestToProto converts an EK certificate appraisal
+// request to its protobuf message.
+func AppraiseEKCertificateRequestToProto(r *transport.AppraiseEKCertificateRequest) *pb.AppraiseEKCertificateRequest {
+	if r == nil {
+		return nil
+	}
+	return &pb.AppraiseEKCertificateRequest{
+		CertificateDer:   r.CertificateDER,
+		IntermediatesDer: r.IntermediatesDER,
+	}
+}
+
+// AppraiseEKCertificateRequestFromProto converts a protobuf EK certificate
+// appraisal request.
+func AppraiseEKCertificateRequestFromProto(r *pb.AppraiseEKCertificateRequest) *transport.AppraiseEKCertificateRequest {
+	if r == nil {
+		return nil
+	}
+	return &transport.AppraiseEKCertificateRequest{
+		CertificateDER:   r.GetCertificateDer(),
+		IntermediatesDER: r.GetIntermediatesDer(),
+	}
+}
+
 // AttestationResultToProto converts an attestation result.
 func AttestationResultToProto(r *transport.AttestationResult) *pb.AttestationResult {
 	if r == nil {
@@ -386,14 +427,26 @@ func (c AttestationAppraisalClient) AppraiseAttestationQuote(ctx context.Context
 	return AttestationResultFromProto(resp), nil
 }
 
-// AppraiseAndroidKeyAttestation is not on the gRPC API yet.
-// slice B: replaced by the gRPC verb of row 1660.
-func (c AttestationAppraisalClient) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
-	return nil, errors.ErrUnsupported
+// AppraiseAndroidKeyAttestation appraises an Android Key Attestation chain.
+func (c AttestationAppraisalClient) AppraiseAndroidKeyAttestation(ctx context.Context, req *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	resp, err := c.Client.AppraiseAndroidKeyAttestation(ctx, AppraiseAndroidKeyAttestationRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	return AttestationResultFromProto(resp), nil
 }
 
-// AppraiseEKCertificate is not on the gRPC API yet.
-// slice B: replaced by the gRPC verb of row 1660.
-func (c AttestationAppraisalClient) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
-	return nil, errors.ErrUnsupported
+// AppraiseEKCertificate appraises a TPM endorsement-key certificate.
+func (c AttestationAppraisalClient) AppraiseEKCertificate(ctx context.Context, req *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	resp, err := c.Client.AppraiseEKCertificate(ctx, AppraiseEKCertificateRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	return AttestationResultFromProto(resp), nil
 }

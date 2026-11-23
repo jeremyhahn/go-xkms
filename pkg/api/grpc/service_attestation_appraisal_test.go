@@ -127,6 +127,10 @@ func TestAttestationAppraisalRPCs_WithoutAnAppraiser(t *testing.T) {
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 	_, err = unconfigured.ListAttestationEndorsements(ctx, &pb.ListAttestationEndorsementsRequest{})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
+	_, err = unconfigured.AppraiseAndroidKeyAttestation(ctx, &pb.AppraiseAndroidKeyAttestationRequest{ChainDer: [][]byte{{1}}})
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	_, err = unconfigured.AppraiseEKCertificate(ctx, &pb.AppraiseEKCertificateRequest{CertificateDer: []byte{1}})
+	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 // TestAttestationAppraisalRPCs_GateEachPermission proves each RPC asks the
@@ -169,6 +173,14 @@ func TestAttestationAppraisalRPCs_GateEachPermission(t *testing.T) {
 		}},
 		"appraise": {auth.ResourceAttestationVerifier, auth.ActionVerify, func() error {
 			_, err := s.AppraiseAttestationQuote(ctx, &pb.AppraiseAttestationQuoteRequest{ReferenceValues: "g"})
+			return err
+		}},
+		"appraise android key": {auth.ResourceAttestationVerifier, auth.ActionVerify, func() error {
+			_, err := s.AppraiseAndroidKeyAttestation(ctx, &pb.AppraiseAndroidKeyAttestationRequest{ChainDer: [][]byte{{1}}})
+			return err
+		}},
+		"appraise ek certificate": {auth.ResourceAttestationVerifier, auth.ActionVerify, func() error {
+			_, err := s.AppraiseEKCertificate(ctx, &pb.AppraiseEKCertificateRequest{CertificateDer: []byte{1}})
 			return err
 		}},
 	}

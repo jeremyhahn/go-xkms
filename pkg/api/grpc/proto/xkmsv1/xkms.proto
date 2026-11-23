@@ -1076,6 +1076,18 @@ service KeystoreService {
     option (qrdb.v1.permission) = "attestation_verifier:verify";
   }
 
+  // AppraiseAndroidKeyAttestation appraises an Android Key Attestation
+  // certificate chain and returns the attestation result.
+  rpc AppraiseAndroidKeyAttestation(AppraiseAndroidKeyAttestationRequest) returns (AttestationResult) {
+    option (qrdb.v1.permission) = "attestation_verifier:verify";
+  }
+
+  // AppraiseEKCertificate appraises a TPM endorsement-key certificate
+  // against the stored EK roots and returns the attestation result.
+  rpc AppraiseEKCertificate(AppraiseEKCertificateRequest) returns (AttestationResult) {
+    option (qrdb.v1.permission) = "attestation_verifier:verify";
+  }
+
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
@@ -4771,6 +4783,23 @@ message AppraiseAttestationQuoteRequest {
   bytes event_log = 6;
   // reference_values names the stored reference values to compare against.
   string reference_values = 7;
+}
+
+// AppraiseAndroidKeyAttestationRequest carries an Android Key Attestation
+// certificate chain to appraise.
+message AppraiseAndroidKeyAttestationRequest {
+  // chain_der is the DER certificate chain, leaf (the attested key) first.
+  repeated bytes chain_der = 1;
+}
+
+// AppraiseEKCertificateRequest carries a TPM endorsement-key certificate to
+// appraise.
+message AppraiseEKCertificateRequest {
+  // certificate_der is the DER EK certificate, as read from the TPM's NV EK
+  // certificate index.
+  bytes certificate_der = 1;
+  // intermediates_der are DER intermediate CA certificates, in any order.
+  repeated bytes intermediates_der = 2;
 }
 
 // AttestationAppraisalCheck is one check of an appraisal.

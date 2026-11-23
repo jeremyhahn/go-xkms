@@ -173,3 +173,33 @@ func (s *Service) AppraiseAttestationQuote(ctx context.Context, req *pb.Appraise
 		return pbconv.AttestationResultToProto(result), nil
 	})
 }
+
+// AppraiseAndroidKeyAttestation appraises an Android Key Attestation chain
+// against the stored Android attestation roots.
+func (s *Service) AppraiseAndroidKeyAttestation(ctx context.Context, req *pb.AppraiseAndroidKeyAttestationRequest) (*pb.AttestationResult, error) {
+	if err := s.authorize(ctx, auth.ResourceAttestationVerifier, auth.ActionVerify, ""); err != nil {
+		return nil, err
+	}
+	return attestationAppraisalCall(s, func(x *xkms.XKMSService) (*pb.AttestationResult, error) {
+		result, err := x.AppraiseAndroidKeyAttestation(ctx, pbconv.AppraiseAndroidKeyAttestationRequestFromProto(req))
+		if err != nil {
+			return nil, err
+		}
+		return pbconv.AttestationResultToProto(result), nil
+	})
+}
+
+// AppraiseEKCertificate appraises a TPM endorsement-key certificate against
+// the stored EK roots.
+func (s *Service) AppraiseEKCertificate(ctx context.Context, req *pb.AppraiseEKCertificateRequest) (*pb.AttestationResult, error) {
+	if err := s.authorize(ctx, auth.ResourceAttestationVerifier, auth.ActionVerify, ""); err != nil {
+		return nil, err
+	}
+	return attestationAppraisalCall(s, func(x *xkms.XKMSService) (*pb.AttestationResult, error) {
+		result, err := x.AppraiseEKCertificate(ctx, pbconv.AppraiseEKCertificateRequestFromProto(req))
+		if err != nil {
+			return nil, err
+		}
+		return pbconv.AttestationResultToProto(result), nil
+	})
+}

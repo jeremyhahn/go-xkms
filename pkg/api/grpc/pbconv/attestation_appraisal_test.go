@@ -164,6 +164,20 @@ func (s *appraisalRecordingServer) AppraiseAttestationQuote(_ context.Context, r
 	return &pb.AttestationResult{Verified: true, ReferenceValues: r.GetReferenceValues()}, nil
 }
 
+// TestDeviceAppraisalRequests_RoundTrip proves both device appraisal
+// requests survive the protobuf conversion, and nil stays nil.
+func TestDeviceAppraisalRequests_RoundTrip(t *testing.T) {
+	android := &transport.AppraiseAndroidKeyAttestationRequest{ChainDER: [][]byte{{1}, {2}}}
+	assert.Equal(t, android, AppraiseAndroidKeyAttestationRequestFromProto(AppraiseAndroidKeyAttestationRequestToProto(android)))
+	ek := &transport.AppraiseEKCertificateRequest{CertificateDER: []byte{3}, IntermediatesDER: [][]byte{{4}}}
+	assert.Equal(t, ek, AppraiseEKCertificateRequestFromProto(AppraiseEKCertificateRequestToProto(ek)))
+
+	assert.Nil(t, AppraiseAndroidKeyAttestationRequestToProto(nil))
+	assert.Nil(t, AppraiseAndroidKeyAttestationRequestFromProto(nil))
+	assert.Nil(t, AppraiseEKCertificateRequestToProto(nil))
+	assert.Nil(t, AppraiseEKCertificateRequestFromProto(nil))
+}
+
 // TestAttestationAppraisalClient_OverTheWire proves the client sends each
 // request and returns the server's answer, and the server's status error
 // unchanged.
