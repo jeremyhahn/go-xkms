@@ -40,14 +40,27 @@ for rev in "$base" "$tip"; do
 	fi
 done
 
-if ! status=$(git diff --name-status -M "$base" "$tip"); then
+difftmp=$(mktemp)
+pkgs=
+trap 'rm -f "$difftmp" ${pkgs:+"$pkgs"}' EXIT
+# -z: NUL-delimited records with paths unquoted (core.quotePath quotes a
+# non-ASCII path otherwise); a rename or copy record holds two paths.
+if ! git diff --name-status -z -M "$base" "$tip" >"$difftmp"; then
 	echo "$0: git diff $base $tip failed" >&2
 	exit 2
 fi
-files=$(printf '%s\n' "$status" | cut -f2- | tr '\t' '\n' | LC_ALL=C sort -u)
+files=()
+while IFS= read -r -d '' st; do
+	n=1
+	case "$st" in R* | C*) n=2 ;; esac
+	for ((i = 0; i < n; i++)); do
+		IFS= read -r -d '' p || break
+		files+=("$p")
+	done
+done <"$difftmp"
 
 candidates=()
-while IFS= read -r f; do
+for f in ${files[@]+"${files[@]}"}; do
 	[ -n "$f" ] || continue
 	case "$f" in
 	*.md | docs/* | .changelog/* | test/integration/*) continue ;;
@@ -55,7 +68,7 @@ while IFS= read -r f; do
 	*) continue ;; # a top-level file (Makefile, go.mod) is no package
 	esac
 	candidates+=("$f")
-done <<<"$files"
+done
 [ "${#candidates[@]}" -gt 0 ] || exit 0
 
 # recipe_tags <make args>: the -tags of the first go test line `make -n`
@@ -83,7 +96,6 @@ if ! tags=$(recipe_tags test-pkg PKG=.); then
 fi
 
 pkgs=$(mktemp)
-trap 'rm -f "$pkgs"' EXIT
 # <dir> TAB <import path> TAB <imports, test imports, xtest imports> TAB E
 # when the package or a dependency does not load
 if ! go list -e -tags "$tags" \
@@ -122,7 +134,7 @@ import_path() {
 	done
 }
 root_ip() { # root_ip <dir>: the import path of a root-module package dir
-	printf '%s\n' "$rel_pkgs" | awk -F'\t' -v d="$1" '$1 == d { print $2; exit }'
+	printf '%s\n' "$rel_pkgs" | d=$1 awk -F'\t' '$1 == ENVIRON["d"] { print $2; exit }'
 }
 
 out=()
