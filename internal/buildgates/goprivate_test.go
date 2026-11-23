@@ -91,14 +91,17 @@ func TestNoGoPrivateDefaultsToTheInHouseModulePath(t *testing.T) {
 }
 
 func TestGoPrivateDefaultProblemsCatchAnInHouseDefault(t *testing.T) {
+	// The fixtures name the path through the constant so that a tree-wide
+	// search for an in-house GO* default does not find this test.
+	glob := inHouseModulePath + "/*"
 	for _, line := range []string{
-		"GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)",
-		"GOMODAUTH_GOPRIVATE := github.com/jeremyhahn/*",
-		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+github.com/jeremyhahn/*}}",
-		"      GONOSUMDB: github.com/jeremyhahn/*",
-		"ENV GONOPROXY=github.com/jeremyhahn/*",
-		"ARG GOINSECURE=github.com/jeremyhahn/*",
-		`export GOPRIVATE="${GOPRIVATE:-github.com/jeremyhahn/*}"`,
+		"GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE)," + glob + ")",
+		"GOMODAUTH_GOPRIVATE := " + glob,
+		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+" + glob + "}}",
+		"      GONOSUMDB: " + glob,
+		"ENV GONOPROXY=" + glob,
+		"ARG GOINSECURE=" + glob,
+		`export GOPRIVATE="${GOPRIVATE:-` + glob + `}"`,
 	} {
 		if got := goPrivateDefaultProblems("f", line); len(got) != 1 {
 			t.Errorf("%q: got %d problems, want 1", line, len(got))
@@ -112,7 +115,7 @@ func TestGoPrivateDefaultProblemsAllowAPassThrough(t *testing.T) {
 		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-}",
 		`export GOPRIVATE="${GOPRIVATE:-}"`,
 		"                    -e GOPRIVATE='$(GOMODAUTH_GOPRIVATE)' \\",
-		"# GOPRIVATE=github.com/jeremyhahn/* was the old default",
+		"# GOPRIVATE=" + inHouseModulePath + "/* was the old default",
 		"\t$(call run_in_devcontainer,go env -json GOPRIVATE GONOSUMDB; ls /go/pkg/mod/cache/download/github.com/jeremyhahn/)",
 	} {
 		if got := goPrivateDefaultProblems("f", line); len(got) != 0 {
