@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // fakePKCS11Provider stands in for the PKCS#11 backend: only Close is used.
@@ -248,6 +249,20 @@ func TestManualBackendPIN_FromUnsealRequestNeverPersistedStopsAtSeal(t *testing.
 	require.False(t, started)
 	_, pinErr := s.backendPIN.PIN()
 	require.Error(t, pinErr)
+}
+
+// Manual must be operational (docs/SPEC.md:78): the PIN supplied with the
+// unseal request opens the token AND makes it reachable through the
+// service's keystores, not only through keyProviders. BLOCKED on a go-qrdb
+// seam: the sealed window's unseal request carries no backend PIN, and the
+// xkms service has no late keystore registration.
+func TestManualBackendPIN_UnsealedTokenReachesKeystores(t *testing.T) {
+	s, _, _ := backendPINTestServer(t, "manual", nil, false, true)
+	s.backends = map[string]xkms.Backend{}
+	require.NoError(t, s.resolveBackendPIN())
+	require.NoError(t, s.UnsealBackendPIN(context.Background(), []byte("operator-pin-1")))
+	_, ok := s.backends["pkcs11"]
+	require.True(t, ok, "manual PKCS#11 token registered as a keystore after unseal")
 }
 
 // backendPINUnsealedBarrier is a real, unsealed system barrier.
