@@ -3,6 +3,7 @@ package buildgates
 import (
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -231,8 +232,11 @@ func nestedIntegrationSuites(t *testing.T) []string {
 
 var (
 	goTestCommand = regexp.MustCompile(`(^|[^A-Za-z0-9_])(go|\$\(GO\))\s+test(\s|$)`)
-	goTestPath    = regexp.MustCompile(`test/integration/([A-Za-z0-9_.\-/]*)`)
+	goTestPath    = regexp.MustCompile(`(\S*?)test/integration/([A-Za-z0-9_.\-/]*)`)
 	shellCmdSep   = regexp.MustCompile(`&&|;|\|\|`)
+	// A YAML key or a Dockerfile instruction ends a folded go test command.
+	composeKeyOrInstr = regexp.MustCompile(`^\s*([A-Za-z_][\w-]*:(\s|$)|-\s|[A-Z]+\s)`)
+	shellCd           = regexp.MustCompile(`^[\s@(]*(?:\$\(call\s+[A-Za-z0-9_\-]+\s*,[\s@(]*)?cd\s+(\S+)`)
 )
 
 // goTestCovers reports whether a go test command in recipe runs the nested
@@ -243,12 +247,33 @@ func goTestCovers(recipe, dir string) bool {
 	recipe = integrationDirCall.ReplaceAllString(recipe, "./test/integration/$1")
 	recipe = strings.ReplaceAll(recipe, "\\\n", " ")
 	for _, line := range strings.Split(recipe, "\n") {
+		// Each recipe line is its own shell, starting at the repo root; a
+		// cd moves later commands (cd xkey: into another module).
+		cwd := "."
 		for _, seg := range shellCmdSep.Split(line, -1) {
+			if m := shellCd.FindStringSubmatch(seg); m != nil {
+				dest := strings.Trim(m[1], `"'`)
+				if strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "$") {
+					cwd = "."
+				} else {
+					cwd = path.Join(cwd, dest)
+				}
+				continue
+			}
 			if !goTestCommand.MatchString(seg) {
 				continue
 			}
 			for _, m := range goTestPath.FindAllStringSubmatch(seg, -1) {
-				p := strings.TrimSuffix(m[1], "/")
+				lead := strings.TrimLeft(m[1], `"'(`)
+				rel := "test/integration/" + m[2]
+				if !strings.HasPrefix(lead, "/") && !strings.HasPrefix(lead, "$") {
+					rel = path.Join(cwd, lead, rel)
+				}
+				p, ok := strings.CutPrefix(rel, "test/integration/")
+				if !ok {
+					continue
+				}
+				p = strings.TrimSuffix(p, "/")
 				if p == "..." {
 					return true
 				}
@@ -276,15 +301,72 @@ func TestEveryNestedIntegrationSuiteIsRun(t *testing.T) {
 	if _, ok := makeRecipe(mk, "integration-test-%"); !ok {
 		t.Fatal("Makefile has no integration-test-% pattern rule")
 	}
-	for _, d := range nestedSuitesWithoutRunner(mk, nestedIntegrationSuites(t)) {
-		t.Errorf("test/integration/%s holds _test.go files but neither integration-test-%s nor any explicit integration-test-* target runs go test on it (or a parent with /...)", d, strings.SplitN(d, "/", 2)[0])
+	suites := nestedIntegrationSuites(t)
+	delegated := map[string]string{}
+	for _, d := range suites {
+		feat := strings.SplitN(d, "/", 2)[0]
+		if _, ok := delegated[feat]; !ok {
+			delegated[feat] = composeGoTests(t, feat)
+		}
 	}
+	missing := map[string]bool{}
+	for _, d := range nestedSuitesWithoutRunner(mk, suites, delegated) {
+		missing[d] = true
+		if _, known := unrunNestedSuites[d]; !known {
+			t.Errorf("test/integration/%s holds _test.go files but neither integration-test-%s (nor the Compose files it runs) nor any explicit integration-test-* target runs go test on it (or a parent with /...)", d, strings.SplitN(d, "/", 2)[0])
+		}
+	}
+	for d := range unrunNestedSuites {
+		if !missing[d] {
+			t.Errorf("unrunNestedSuites lists %s, which a target now runs (or which is gone): drop the entry", d)
+		}
+	}
+}
+
+// unrunNestedSuites are the nested suites no make target runs today, each
+// with the reason. The gate fails when one gains a runner, so the list only
+// shrinks.
+var unrunNestedSuites = map[string]string{
+	"challenges/dns01":  "its own Compose stack (dns01/docker-compose.dns01.yml) builds against the pre-merge go-trusted-ca checkout; integration-test-challenges leaves it out (Makefile comment)",
+	"challenges/http01": "its own Compose stack (http01/docker-compose.http01.yml) builds against the pre-merge go-trusted-ca checkout; integration-test-challenges leaves it out (Makefile comment)",
+}
+
+// composeGoTests returns the go test commands in the docker-compose.yml and
+// Dockerfile of test/integration/<feat>, the files a target that delegates
+// to Compose runs, one command per line (a folded YAML command joined).
+func composeGoTests(t *testing.T, feat string) string {
+	t.Helper()
+	var out []string
+	for _, name := range []string{"docker-compose.yml", "Dockerfile"} {
+		b, err := os.ReadFile(filepath.Join(repoRoot, "test", "integration", feat, name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("read test/integration/%s/%s: %v", feat, name, err)
+		}
+		lines := strings.Split(string(b), "\n")
+		for i := 0; i < len(lines); i++ {
+			if !goTestCommand.MatchString(lines[i]) {
+				continue
+			}
+			cmd := lines[i]
+			for i+1 < len(lines) && strings.TrimSpace(lines[i+1]) != "" && !composeKeyOrInstr.MatchString(lines[i+1]) {
+				i++
+				cmd += " " + strings.TrimSpace(lines[i])
+			}
+			out = append(out, cmd)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // nestedSuitesWithoutRunner returns the nested suites (dirs relative to
 // test/integration) that neither their feature's target nor any explicit
-// integration-test-* target of mk runs go test on.
-func nestedSuitesWithoutRunner(mk string, suites []string) []string {
+// integration-test-* target of mk runs go test on. delegated maps a feature
+// to the go test commands of its Compose files, which count for a target
+// that runs docker compose.
+func nestedSuitesWithoutRunner(mk string, suites []string, delegated map[string]string) []string {
 	pattern, _ := makeRecipe(mk, "integration-test-%")
 	targets := explicitIntegrationTargets(mk)
 	var missing []string
@@ -298,6 +380,9 @@ func nestedSuitesWithoutRunner(mk string, suites []string) []string {
 			own = strings.ReplaceAll(pattern, "$*", feat)
 		}
 		if goTestCovers(own, d) {
+			continue
+		}
+		if strings.Contains(own, "compose") && goTestCovers(delegated[feat], d) {
 			continue
 		}
 		runner := ""
@@ -330,7 +415,7 @@ func TestNestedSuiteGateIgnoresNestedModuleRunners(t *testing.T) {
 		"\n" +
 		"integration-test-pkcs11-module:\n" +
 		"\tgo test -tags integration ./test/integration/pkcs11/module\n"
-	got := nestedSuitesWithoutRunner(mk, []string{"challenges/dns01", "pkcs11/module"})
+	got := nestedSuitesWithoutRunner(mk, []string{"challenges/dns01", "pkcs11/module"}, nil)
 	if len(got) != 1 || got[0] != "challenges/dns01" {
 		t.Errorf("nested suites without a runner = %q, want [challenges/dns01] (xkey's runner covers only xkey suites)", got)
 	}
