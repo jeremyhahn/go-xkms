@@ -118,6 +118,19 @@ export interface TPMPolicyListResponse {
 }
 
 /**
+ * The signed branch form of a PCR-policy update; mirrors the branch and
+ * reference_values fields of pkg/api/transport/types.go
+ * TPMPolicyUpdateRequest. The server refuses an update of a policy with a
+ * pcr condition unless both are set.
+ */
+export interface TPMPolicyBranchUpdate {
+  /** The name of the branch whose PCR values are replaced. */
+  branch: string;
+  /** Base64 of the COSE_Sign1 signed CoRIM carrying the branch's reference values. */
+  reference_values: string;
+}
+
+/**
  * Mirrors pkg/api/transport/types.go TPMPolicyDeleteRequest. Deletion is
  * refused (409) while any object is assigned to the policy.
  */

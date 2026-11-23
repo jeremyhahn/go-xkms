@@ -1248,10 +1248,14 @@ var TpmPolicyClient = class {
   get(name, tenantId) {
     return this.http.request("GET", policyPath(name), { query: { tenant_id: tenantId } });
   }
-  /** POST /api/v1/tpm/policies/{name}/update — re-captures and re-approves. */
-  update(name, tenantId) {
+  /**
+   * POST /api/v1/tpm/policies/{name}/update — re-captures and re-approves.
+   * A policy with a pcr condition needs branchUpdate: the branch and its
+   * signed reference values (pkg/api/transport.TPMPolicyUpdateRequest).
+   */
+  update(name, tenantId, branchUpdate) {
     return this.http.request("POST", policyPath(name, "update"), {
-      body: { tenant_id: tenantId, name }
+      body: { tenant_id: tenantId, name, ...branchUpdate }
     });
   }
   /** POST /api/v1/tpm/policies/{name}/revoke — withdraws the approval. */
