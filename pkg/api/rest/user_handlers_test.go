@@ -129,6 +129,17 @@ func (m *restMockUserClient) UnsuspendUser(ctx context.Context, id uint64) error
 	return m.unsuspendUser(ctx, id)
 }
 
+// The guarded activation methods make the mock an xkms.InviteUserClient,
+// as the node-local qrdb user client is: the invite routes and an invited
+// CreateUser refuse a client without them.
+func (m *restMockUserClient) ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
+	return nil, errRestMockUnused
+}
+
+func (m *restMockUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	return nil, errRestMockUnused
+}
+
 type restMockRoleClient struct {
 	getRole   func(ctx context.Context, id string) (*qrdbtransport.Role, error)
 	listRoles func(ctx context.Context, req *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error)

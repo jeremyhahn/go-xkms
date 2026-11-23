@@ -110,6 +110,17 @@ func (m *mcpMockUserClient) UnsuspendUser(ctx context.Context, id uint64) error 
 	return m.unsuspendUser(ctx, id)
 }
 
+// The guarded activation methods make the mock an xkms.InviteUserClient,
+// as the node-local qrdb user client is: CreateUser refuses an invited
+// account over a client without them.
+func (m *mcpMockUserClient) ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
+	return nil, errMCPMockUnused
+}
+
+func (m *mcpMockUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	return nil, errMCPMockUnused
+}
+
 // mcpMockRoleClient satisfies qrdbtransport.RoleClient with every method
 // reporting "unused" except ListRoles, which the role-name resolution path
 // calls when a request names a role; tests that leave Role empty never reach

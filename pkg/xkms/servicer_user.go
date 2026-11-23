@@ -149,7 +149,11 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	// Checked after the client-input validation above so a malformed
 	// request is still reported as one, not masked by a server
 	// misconfiguration that happens to be true at the same time.
-	if !req.WithoutEmailLoginKey && s.inviteStore == nil {
+	// A pending account needs both the invitation store and a user client
+	// with guarded activation (InviteUserClient): without the latter no
+	// invitation could ever activate it, so it is refused before anything
+	// is persisted (a qrdb transport client lacks guarded activation).
+	if !req.WithoutEmailLoginKey && (s.inviteStore == nil || s.inviteUserClient() == nil) {
 		return nil, ErrNotConfigured
 	}
 	roleID, err := s.roleNameToID(ctx, req.TenantID, req.Role)
