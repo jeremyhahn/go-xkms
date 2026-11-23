@@ -60,6 +60,27 @@ type mockUserClient struct {
 	unsuspendUser     func(ctx context.Context, id uint64) error
 	addCertBinding    func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
 	updateUser        func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
+	// activatePendingUser and activateWithCertBinding back the invite
+	// routes' conditional activations (InviteUserClient).
+	activatePendingUser     func(ctx context.Context, userID uint64) (*qrdbtransport.User, error)
+	activateWithCertBinding func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+}
+
+// ActivatePendingUser moves a pending account to active, refusing any other.
+func (m *mockUserClient) ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
+	if m.activatePendingUser != nil {
+		return m.activatePendingUser(ctx, userID)
+	}
+	return nil, errors.New("mock: ActivatePendingUser not configured")
+}
+
+// ActivateWithCertBinding binds a first certificate to a pending account
+// and activates it in one step, refusing any other account.
+func (m *mockUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	if m.activateWithCertBinding != nil {
+		return m.activateWithCertBinding(ctx, userID, thumbprint, notAfterUnix)
+	}
+	return nil, errors.New("mock: ActivateWithCertBinding not configured")
 }
 
 var _ qrdbtransport.UserClient = (*mockUserClient)(nil)

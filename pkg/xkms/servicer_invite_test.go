@@ -35,6 +35,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -93,6 +94,13 @@ type inviteFixture struct {
 	// setGetUserGate installs a hook run at the start of every GetUser;
 	// call it before any concurrent use.
 	setGetUserGate func(func())
+	// setBeforeWrite installs a hook run at the start of every account
+	// write, before the write reads the account; call it before any
+	// concurrent use.
+	setBeforeWrite func(func(userID uint64))
+	// setLifecycle sets an account's lifecycle, as an administrator's
+	// disable or enable would.
+	setLifecycle func(userID uint64, lifecycle qrdbsdk.Lifecycle)
 	// addAccount stores one more qrdb account; call it before any
 	// concurrent use.
 	addAccount func(*qrdbtransport.User)
@@ -145,9 +153,24 @@ func newInviteFixtureIn(t *testing.T, tenant string) *inviteFixture {
 	// getUserGate, when set (before any concurrent call), runs at the
 	// start of every GetUser: a test uses it as a barrier.
 	var getUserGate func()
+	// beforeWrite, when set, runs at the start of every write to an
+	// account, outside mu: a test uses it to change the account between
+	// the invite's pending check and its activation.
+	var beforeWrite func(userID uint64)
+	runBeforeWrite := func(userID uint64) {
+		if beforeWrite != nil {
+			beforeWrite(userID)
+		}
+	}
 	snapshot := func(u *qrdbtransport.User) *qrdbtransport.User {
 		c := *u
 		return &c
+	}
+	// notPending is qrdb's refusal of a conditional activation.
+	notPending := func(u *qrdbtransport.User) error {
+		return &qrdbuser.AccountNotPendingError{
+			ID: u.ID, Lifecycle: qrdbuser.Lifecycle(u.Lifecycle), HasCredential: len(bindings[u.ID]) > 0,
+		}
 	}
 	users := &mockUserClient{
 		getUser: func(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
@@ -173,6 +196,7 @@ func newInviteFixtureIn(t *testing.T, tenant string) *inviteFixture {
 			return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, email)}
 		},
 		updateUser: func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+			runBeforeWrite(req.ID)
 			mu.Lock()
 			defer mu.Unlock()
 			u, ok := accounts[req.ID]
@@ -185,6 +209,7 @@ func newInviteFixtureIn(t *testing.T, tenant string) *inviteFixture {
 			return snapshot(u), nil
 		},
 		addCertBinding: func(_ context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+			runBeforeWrite(userID)
 			mu.Lock()
 			defer mu.Unlock()
 			u, ok := accounts[userID]
@@ -192,6 +217,37 @@ func newInviteFixtureIn(t *testing.T, tenant string) *inviteFixture {
 				return nil, &qrdbtransport.UserNotFoundError{ID: userID}
 			}
 			bindings[userID] = append(bindings[userID], thumbprint)
+			return snapshot(u), nil
+		},
+		// The two conditional activations judge the account as they
+		// write it, under mu, as qrdb's conditional commit does.
+		activatePendingUser: func(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
+			runBeforeWrite(userID)
+			mu.Lock()
+			defer mu.Unlock()
+			u, ok := accounts[userID]
+			if !ok || inviteCallerTenant(ctx) != u.TenantID {
+				return nil, &qrdbtransport.UserNotFoundError{ID: userID}
+			}
+			if u.Lifecycle != string(qrdbsdk.LifecyclePending) {
+				return nil, notPending(u)
+			}
+			u.Lifecycle = string(qrdbsdk.LifecycleActive)
+			return snapshot(u), nil
+		},
+		activateWithCertBinding: func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+			runBeforeWrite(userID)
+			mu.Lock()
+			defer mu.Unlock()
+			u, ok := accounts[userID]
+			if !ok || inviteCallerTenant(ctx) != u.TenantID {
+				return nil, &qrdbtransport.UserNotFoundError{ID: userID}
+			}
+			if u.Lifecycle != string(qrdbsdk.LifecyclePending) || len(bindings[userID]) > 0 {
+				return nil, notPending(u)
+			}
+			bindings[userID] = append(bindings[userID], thumbprint)
+			u.Lifecycle = string(qrdbsdk.LifecycleActive)
 			return snapshot(u), nil
 		},
 	}
@@ -232,6 +288,14 @@ func newInviteFixtureIn(t *testing.T, tenant string) *inviteFixture {
 		credentials:  waStores.Credentials,
 		setGetUserGate: func(g func()) {
 			getUserGate = g
+		},
+		setBeforeWrite: func(h func(userID uint64)) {
+			beforeWrite = h
+		},
+		setLifecycle: func(userID uint64, lifecycle qrdbsdk.Lifecycle) {
+			mu.Lock()
+			defer mu.Unlock()
+			accounts[userID].Lifecycle = string(lifecycle)
 		},
 		addAccount: func(u *qrdbtransport.User) {
 			mu.Lock()
@@ -747,6 +811,58 @@ func TestActivateInvitePIV_Success(t *testing.T) {
 
 	_, err = f.getInvite(inviteFixtureTenant, token)
 	require.ErrorIs(t, err, ErrInviteUnusable)
+}
+
+// disableBeforeFirstWrite makes an administrator disable the invited
+// account after the invite's pending check and before its activation
+// writes anything: the first account write sees a disabled account.
+func (f *inviteFixture) disableBeforeFirstWrite(t *testing.T) {
+	t.Helper()
+	var once sync.Once
+	f.setBeforeWrite(func(userID uint64) {
+		once.Do(func() { f.setLifecycle(userID, qrdbsdk.LifecycleDisabled) })
+	})
+}
+
+// TestInviteRedemption_AccountDisabledDuringRedemptionStaysDisabled covers
+// an administrative disable landing between an invite finish's pending
+// check and its activation (Codex P1 on #2296): the activation is
+// conditional on the account still being pending, so the finish fails and
+// never reinstates the disabled account, for the passkey and the PIV path.
+func TestInviteRedemption_AccountDisabledDuringRedemptionStaysDisabled(t *testing.T) {
+	t.Run("passkey", func(t *testing.T) {
+		f := newInviteFixture(t)
+		token := f.mintInvite(t)
+
+		begin, err := f.beginRegistration(inviteFixtureTenant, token)
+		require.NoError(t, err)
+		attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+
+		f.disableBeforeFirstWrite(t)
+		_, err = f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+		require.Error(t, err)
+
+		assert.Equal(t, string(qrdbsdk.LifecycleDisabled), f.lifecycle(t, inviteFixtureQRDBUserID),
+			"a disable during redemption must not be undone by the activation")
+	})
+
+	t.Run("piv", func(t *testing.T) {
+		f := newInviteFixture(t)
+		token := f.mintInvite(t)
+
+		caCert, leafCert, err := generateInvitePIVChain(t)
+		require.NoError(t, err)
+		f.svc.SetCA(&mockCA{bundlePEM: pemEncodeCert(caCert)})
+
+		f.disableBeforeFirstWrite(t)
+		_, err = f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+		require.Error(t, err)
+
+		assert.Equal(t, string(qrdbsdk.LifecycleDisabled), f.lifecycle(t, inviteFixtureQRDBUserID),
+			"a disable during redemption must not be undone by the activation")
+		assert.Empty(t, f.certBindings(inviteFixtureQRDBUserID),
+			"a refused activation binds no certificate")
+	})
 }
 
 // mintInviteFor mints an invitation for the fixture account userID.
