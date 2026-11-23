@@ -14,7 +14,9 @@ Group=xkms
 # Optional XKMS_* settings (deploy/README.md)
 EnvironmentFile=-/etc/xkms/environment
 
-# Main service
+# Main service; relative config paths (xkms-data/...) resolve under the
+# state directory
+WorkingDirectory=/var/lib/xkms
 ExecStart=/usr/bin/xkmsd --config /etc/xkms/xkmsd.yaml
 
 # Reload configuration on SIGHUP
