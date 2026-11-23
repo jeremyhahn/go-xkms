@@ -27,6 +27,7 @@ import (
 	"io"
 	"log/slog"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/fxamacker/cbor/v2"
@@ -864,6 +865,28 @@ func uvConsentRPID(req *ClientPINRequest) string {
 	return req.RPID
 }
 
+// UserVerificationRPNameMaxLen bounds, in bytes, the RP name built-in user
+// verification shows the user. It equals pairingproto.VerifyUserRPNameMaxLen,
+// the bound of the phone verifier (pairingproto imports this package, so the
+// value is repeated here and pinned by a test).
+const UserVerificationRPNameMaxLen = 64
+
+// ValidateUserVerificationRPName reports ErrInvalidParameter for an RP name
+// the built-in verifier refuses before it asks the user: empty, longer than
+// UserVerificationRPNameMaxLen bytes, not UTF-8, or carrying a control
+// character. It applies the rules of pairingproto.ValidateVerifyUserRPName.
+func ValidateUserVerificationRPName(rpName string) error {
+	if rpName == "" || len(rpName) > UserVerificationRPNameMaxLen || !utf8.ValidString(rpName) {
+		return ErrInvalidParameter
+	}
+	for _, r := range rpName {
+		if unicode.IsControl(r) {
+			return ErrInvalidParameter
+		}
+	}
+	return nil
+}
+
 // handleGetPinUvAuthTokenUsingUvWithPermissions mints a pinUvAuthToken on the
 // strength of the key backend's built-in user verification (CTAP 2.1
 // §6.5.5.7.3, ruling 167). The token is minted only after the backend's
@@ -937,6 +960,15 @@ func (a *Authenticator) prepareUvTokenLocked(req *ClientPINRequest) ([]byte, err
 	// CTAP2_ERR_MISSING_PARAMETER (§8.2) before the user is asked instead.
 	if req.Permissions&(PINPermissionMakeCredential|PINPermissionGetAssertion) != 0 && req.RPID == "" {
 		return nil, ErrMissingRPID
+	}
+	// The built-in verifier shows the RP to the user and refuses a name it
+	// cannot show before it asks. Refused there, the request would spend a
+	// uvRetries count with no verification attempted, so it is refused here
+	// as an invalid parameter first.
+	if rpName := uvConsentRPID(req); rpName != "" {
+		if err := ValidateUserVerificationRPName(rpName); err != nil {
+			return nil, err
+		}
 	}
 	if a.state.UVRetries() <= 0 {
 		return nil, ErrUVBlocked
