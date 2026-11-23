@@ -7,6 +7,7 @@ import (
 	"crypto"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -184,6 +185,93 @@ func TestSaveKeyPair_ConcurrentCreatorsNeverMismatch(t *testing.T) {
 		require.NoError(t, bErr)
 		require.Equal(t, "public-B/private-B", pair)
 	}
+}
+
+// interruptingKeyBackend models a process that dies after its first
+// successful Save: every later Save and Delete fails and changes nothing.
+type interruptingKeyBackend struct {
+	store.KeyBackend
+	died bool
+}
+
+var errProcessDied = errors.New("injected: process died")
+
+func (b *interruptingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	if b.died {
+		return errProcessDied
+	}
+	err := b.KeyBackend.Save(attrs, data, ext, overwrite)
+	if err == nil {
+		b.died = true
+	}
+	return err
+}
+
+func (b *interruptingKeyBackend) Delete(attrs *types.KeyAttributes) error {
+	if b.died {
+		return errProcessDied
+	}
+	return b.KeyBackend.Delete(attrs)
+}
+
+// TestSaveKeyPair_InterruptedRecoveryLeavesNoMismatchedPair pins the Codex
+// round-2 P1 on session.go: a create-only save that recovers an incomplete
+// pair (private blob A, no public blob) and dies after its first write must
+// not leave a public blob beside another writer's private blob that a
+// reader, or a create-only retry after reopening, accepts as a complete key.
+func TestSaveKeyPair_InterruptedRecoveryLeavesNoMismatchedPair(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+
+	attrs := &types.KeyAttributes{CN: "interrupted-key", KeyType: types.KeyTypeTPM}
+	pair := func(name string) (tpm2.TPM2BPrivate, tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic]) {
+		return tpm2.TPM2BPrivate{Buffer: []byte("private-" + name)}, tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-" + name))
+	}
+	// A complete pair, or no public blob a reader takes for one.
+	requireNoMismatch := func(stage string) {
+		t.Helper()
+		pub, perr := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+		if perr != nil {
+			require.ErrorIs(t, perr, store.ErrBlobNotFound, stage)
+			return
+		}
+		name, isPublic := strings.CutPrefix(string(pub), "public-")
+		if !isPublic {
+			return
+		}
+		priv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+		require.NoError(t, err, stage)
+		require.Equal(t, "private-"+name, string(priv), "%s: public-%s beside %s", stage, name, priv)
+	}
+
+	// An earlier save stored private blob A and died before its public blob.
+	privA, _ := pair("A")
+	require.NoError(t, shared.Save(attrs, privA.Buffer, store.FSEXT_PRIVATE_BLOB, false))
+
+	// B recovers and dies after its first write.
+	privB, pubB := pair("B")
+	err = tpmImpl.SaveKeyPair(attrs, privB, pubB, &interruptingKeyBackend{KeyBackend: shared}, false)
+	require.Error(t, err)
+	requireNoMismatch("after the interrupted recovery")
+
+	// Reopened, a create-only retry either completes its own pair or
+	// refuses; it never completes a mismatched one.
+	privC, pubC := pair("C")
+	_ = tpmImpl.SaveKeyPair(attrs, privC, pubC, shared, false)
+	requireNoMismatch("after the create-only retry")
+
+	// An overwriting save repairs the key.
+	require.NoError(t, tpmImpl.SaveKeyPair(attrs, privC, pubC, shared, true))
+	requireNoMismatch("after the overwriting save")
+	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	require.Equal(t, "public-C", string(gotPub))
 }
 
 func TestSaveKeyPairWithNilBackend(t *testing.T) {
