@@ -23,7 +23,7 @@ var (
 	explicitIntegrationRule = regexp.MustCompile(`(?m)^(integration-test-[a-z0-9-]+):`)
 	makeVarAssign           = regexp.MustCompile(`(?m)^([A-Za-z0-9_]+)\s*[:?+]?=\s*(.*)$`)
 	makeVarRef              = regexp.MustCompile(`\$[({]([A-Za-z0-9_]+)[)}]`)
-	integrationPathRef      = regexp.MustCompile(`((?:[A-Za-z0-9_.-]+/)*)test/integration/([A-Za-z0-9_.-]+)`)
+	integrationPathRef      = regexp.MustCompile(`((?:[A-Za-z0-9_.-]+/)*)test/integration/([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)`)
 	integrationDirCall      = regexp.MustCompile(`\$\(call integration_dir,([A-Za-z0-9_.-]+)\)`)
 	makeDashC               = regexp.MustCompile(`\$\(MAKE\)[^\n;&|]*?\s-C\s+([^\s;&|]+)`)
 	makeConditional         = regexp.MustCompile(`^(ifeq|ifneq|ifdef|ifndef|else|endif)\b`)
@@ -145,6 +145,10 @@ func explicitIntegrationTargets(makefile string) []string {
 // against the repository root or a directory the recipe changes into
 // (`cd xkey && go test ./test/integration/uhid/...`).
 func integrationDirExists(root, prefix, name string, cdDirs []string) bool {
+	// The whole path counts (pkcs11/module, not pkcs11); only a recursive
+	// /... suffix is dropped. A named file (a suite's compose file) must
+	// exist too.
+	name = strings.TrimSuffix(name, "/...")
 	bases := []string{prefix}
 	if prefix == "" || prefix == "./" {
 		bases = append([]string{""}, cdDirs...)
@@ -154,7 +158,7 @@ func integrationDirExists(root, prefix, name string, cdDirs []string) bool {
 		if name != "..." {
 			rel = filepath.Join(rel, name)
 		}
-		if fi, err := os.Stat(filepath.Join(root, rel)); err == nil && fi.IsDir() {
+		if _, err := os.Stat(filepath.Join(root, rel)); err == nil {
 			return true
 		}
 	}
