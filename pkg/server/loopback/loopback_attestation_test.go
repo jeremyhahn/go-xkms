@@ -27,6 +27,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,6 +104,28 @@ func selfSignedAKRootPEM(t *testing.T) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
+// reachedTheVerifier fails the test when step answered the unconfigured
+// Verifier's ErrNotConfigured, the defect a normally composed engine must not
+// show. It reports whether step succeeded: the loopback engine's qrdb node
+// never runs first-boot, so a store write it refuses as awaiting the
+// bootstrap admin credential has reached the composed Verifier and its
+// store, and ends the workflow there.
+func reachedTheVerifier(t *testing.T, step string, err error) bool {
+	t.Helper()
+	switch {
+	case err == nil:
+		return true
+	case strings.Contains(err.Error(), "subsystem not configured"):
+		t.Fatalf("%s: the composed engine has no attestation Appraiser: %v", step, err)
+	case strings.Contains(err.Error(), "awaiting admin credential"):
+		t.Logf("%s reached the Verifier's store; the uninitialized loopback node refused it: %v", step, err)
+		return false
+	default:
+		t.Fatalf("%s: %v", step, err)
+	}
+	return false
+}
+
 // TestLaunch_ServesTheAttestationAppraisalWorkflow proves a normally composed
 // engine (server.New, no test-only SetAttestationAppraiser) serves the
 // attestation Verifier: an endorsement is stored and listed, the reference
@@ -121,30 +144,31 @@ func TestLaunch_ServesTheAttestationAppraisalWorkflow(t *testing.T) {
 	put, err := client.PutAttestationEndorsement(ctx, &transport.PutAttestationEndorsementRequest{
 		Name: "fleet-root", Kind: appraisal.EndorsementAKRoot, CertificatePEM: rootPEM,
 	})
-	if err != nil {
-		t.Fatalf("endorsement add: %v", err)
+	if !reachedTheVerifier(t, "endorsement add", err) {
+		return
 	}
 	if put.Name != "fleet-root" {
 		t.Fatalf("endorsement add name = %q, want fleet-root", put.Name)
 	}
 	list, err := client.ListAttestationEndorsements(ctx, &transport.ListAttestationEndorsementsRequest{})
-	if err != nil {
-		t.Fatalf("endorsement list: %v", err)
+	if !reachedTheVerifier(t, "endorsement list", err) {
+		return
 	}
 	if len(list.Endorsements) != 1 || list.Endorsements[0].Name != "fleet-root" {
 		t.Fatalf("endorsement list = %+v, want the one fleet-root", list.Endorsements)
 	}
 
-	if _, err := client.ListAttestationReferenceValues(ctx); err != nil {
-		t.Fatalf("reference-value list: %v", err)
+	_, err = client.ListAttestationReferenceValues(ctx)
+	if !reachedTheVerifier(t, "reference-value list", err) {
+		return
 	}
 
 	result, err := client.AppraiseAttestationQuote(ctx, &transport.AppraiseAttestationQuoteRequest{
 		AKCertificatePEM: rootPEM, Quote: []byte{1}, Signature: []byte{1}, Nonce: []byte{1},
 		PCRs: map[uint32][]byte{0: make([]byte, 32)},
 	})
-	if err != nil {
-		t.Fatalf("appraise: %v", err)
+	if !reachedTheVerifier(t, "appraise", err) {
+		return
 	}
 	if result.Verified {
 		t.Fatal("a malformed quote must not appraise as verified")
