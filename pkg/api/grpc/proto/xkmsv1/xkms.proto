@@ -4667,6 +4667,9 @@ message BeginAuthenticationRequest {
   // email is the canonical tenant-unique login key of the account whose
   // credentials are challenged.
   string email = 1;
+  // tenant_id is the tenant whose accounts the login is scoped to
+  // (go-xkms#2319, ruling 1234); empty means the system tenant.
+  string tenant_id = 2;
 }
 
 // BeginAuthenticationResponse carries the session ID and JSON-marshaled WebAuthn
@@ -4682,6 +4685,10 @@ message FinishAuthenticationRequest {
   // email is the login key of the account whose credentials are asserted.
   string email = 2;
   string assertion_json = 3;
+  // tenant_id is the tenant whose accounts the login is scoped to, the
+  // tenant the ceremony began in (go-xkms#2319, ruling 1234); empty means
+  // the system tenant.
+  string tenant_id = 4;
 }
 
 // FinishAuthenticationResponse contains the result of WebAuthn authentication.

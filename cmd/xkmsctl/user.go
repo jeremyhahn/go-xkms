@@ -352,6 +352,12 @@ Example:
 		timeout := fr.Duration("timeout")
 		devicePath := fr.String("device")
 		requireUV := fr.Bool("user-verification")
+		// An unset --tenant (or a command built without it) names no
+		// tenant: the server's system tenant serves the login.
+		var tenantID string
+		if f := cmd.Flags().Lookup(loginTenantFlag); f != nil {
+			tenantID = f.Value.String()
+		}
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
@@ -393,7 +399,8 @@ Example:
 		// GetUserByEmail. The server returns the challenge and the allow-list
 		// of registered credentials.
 		beginResp, err := cl.BeginAuthentication(ctx, &client.BeginAuthenticationRequest{
-			Email: email,
+			Email:    email,
+			TenantID: tenantID,
 		})
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrBeginAuthenticationFailed, Err: err})
@@ -430,11 +437,7 @@ Example:
 
 		// Step 4: Finish the ceremony. The server verifies the assertion
 		// signature and issues a JWT token on success.
-		finishResp, err := cl.FinishAuthentication(ctx, &client.FinishAuthenticationRequest{
-			SessionID:     beginResp.SessionID,
-			Email:         email,
-			AssertionJSON: string(assertion),
-		})
+		finishResp, err := cl.FinishAuthentication(ctx, loginFinishRequest(beginResp.SessionID, email, tenantID, assertion))
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrFinishAuthenticationFailed, Err: err})
 			return
@@ -1133,6 +1136,7 @@ func init() {
 	userLoginCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")
 	userLoginCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	userLoginCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
+	userLoginCmd.Flags().String(loginTenantFlag, "", "tenant whose accounts the login is scoped to (empty: the server's system tenant)")
 	addPINFlags(userLoginCmd)
 	addOriginFlag(userLoginCmd)
 
@@ -1144,6 +1148,21 @@ func init() {
 	userBindCertCmd.Flags().String("cert-file", "", "client certificate PEM file (thumbprint and expiry are computed)")
 	userBindCertCmd.Flags().String("thumbprint", "", "precomputed SPKI SHA-256 thumbprint (hex)")
 	userBindCertCmd.Flags().Int64("not-after", 0, "binding expiry as Unix seconds (with --thumbprint)")
+}
+
+// loginTenantFlag names the tenant a `user login` is scoped to
+// (go-xkms#2319, ruling 1234).
+const loginTenantFlag = "tenant"
+
+// loginFinishRequest builds the request that finishes a login ceremony, in
+// the same tenant the ceremony began in.
+func loginFinishRequest(sessionID, email, tenantID string, assertion []byte) *client.FinishAuthenticationRequest {
+	return &client.FinishAuthenticationRequest{
+		SessionID:     sessionID,
+		Email:         email,
+		AssertionJSON: string(assertion),
+		TenantID:      tenantID,
+	}
 }
 
 // validateLoginKey refuses a login key that is not an email address and
