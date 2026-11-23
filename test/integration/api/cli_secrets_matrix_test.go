@@ -158,6 +158,23 @@ func skipCell(t *testing.T, name, reason string) {
 	t.Run(name, func(t *testing.T) { t.Skip(reason) })
 }
 
+// setupID returns the "id" a setup cell printed. A setup cell that exited
+// zero must print valid JSON with a nonempty ID; when it does not, the
+// workflow fails here, so the dependent cells it then skips are never a
+// silent loss of coverage. A cell that failed already failed its subtest.
+func (w *secretsWorkflow) setupID(t *testing.T, name, out string, passed bool) string {
+	t.Helper()
+	if !passed {
+		return ""
+	}
+	id := jsonValue(out, "id")
+	if id == "" {
+		t.Errorf("[%s] %s exited zero without a JSON response carrying a nonempty id\nstdout: %s",
+			w.protocol, name, out)
+	}
+	return id
+}
+
 func (w *secretsWorkflow) password(t *testing.T) {
 	w.cell(t, "password-vault-status")
 
@@ -183,31 +200,31 @@ func (w *secretsWorkflow) password(t *testing.T) {
 	w.cell(t, "password-access-mode")
 
 	out, added := w.cell(t, "password-add")
-	entryID := jsonValue(out, "id")
+	entryID := w.setupID(t, "password-add", out, added)
 	entry := map[string]string{commands.ArgEntryID: entryID}
-	if added && entryID != "" {
+	if entryID != "" {
 		w.cell(t, "password-get", entry)
 		w.cell(t, "password-list")
 		w.cell(t, "password-update", entry)
 	} else {
 		for _, name := range []string{"password-get", "password-list", "password-update"} {
-			skipCell(t, name, "needs the entry \"password add\" creates, and that cell failed")
+			skipCell(t, name, "needs the entry ID \"password add\" returns, and that cell failed")
 		}
 	}
 	w.cell(t, "password-generate")
 
 	skipCell(t, "password-vault-enroll-passkey", skipPasskey)
 	out, enrolled := w.cell(t, "password-vault-enroll")
-	if factorID := jsonValue(out, "id"); enrolled && factorID != "" {
+	if factorID := w.setupID(t, "password-vault-enroll", out, enrolled); factorID != "" {
 		out, rotated := w.cell(t, "password-vault-rotate", map[string]string{"factor-id": factorID})
-		if rotatedID := jsonValue(out, "id"); rotated && rotatedID != "" {
+		if rotatedID := w.setupID(t, "password-vault-rotate", out, rotated); rotatedID != "" {
 			w.cell(t, "password-vault-remove", map[string]string{"factor-id": rotatedID})
 		} else {
-			skipCell(t, "password-vault-remove", "needs the factor \"password vault rotate\" returns, and that cell failed")
+			skipCell(t, "password-vault-remove", "needs the factor ID \"password vault rotate\" returns, and that cell failed")
 		}
 	} else {
-		skipCell(t, "password-vault-rotate", "needs the factor \"password vault enroll\" adds, and that cell failed")
-		skipCell(t, "password-vault-remove", "needs the factor \"password vault enroll\" adds, and that cell failed")
+		skipCell(t, "password-vault-rotate", "needs the factor ID \"password vault enroll\" returns, and that cell failed")
+		skipCell(t, "password-vault-remove", "needs the factor ID \"password vault enroll\" returns, and that cell failed")
 	}
 
 	skipCell(t, "password-vault-recover-passkey", skipPasskey)
@@ -222,10 +239,10 @@ func (w *secretsWorkflow) password(t *testing.T) {
 		}
 	}
 
-	if added && entryID != "" {
+	if entryID != "" {
 		w.cell(t, "password-delete", entry)
 	} else {
-		skipCell(t, "password-delete", "needs the entry \"password add\" creates, and that cell failed")
+		skipCell(t, "password-delete", "needs the entry ID \"password add\" returns, and that cell failed")
 	}
 	w.cell(t, "password-lock")
 }
