@@ -26,16 +26,18 @@ const (
 	runnerScheduleIf = "needs.preflight.outputs.verdict == 'run'"
 )
 
+// preflightRunnerDocker is the preflight output a Docker job's runs-on reads
+// on github.com (ci-template v1.48).
+const preflightRunnerDocker = "needs.preflight.outputs.runner_docker"
+
 var (
 	// dockerJobs are the jobs that run Docker.
 	dockerJobs = []string{"coverage", "integration"}
-	// ruling442Jobs are the Docker jobs under ruling 442 (#2050): a push to
-	// main and a same-repository PR run on bigdiskDockerLabels, any other
-	// event on hostedLabels. The coverage shards are this PR's own jobs and
-	// stay hosted on github.com.
-	ruling442Jobs       = []string{"integration"}
-	bigdiskDockerLabels = []string{"self-hosted", "linux", "x64", "bigdisk-docker"}
-	hostedLabels        = []string{"ubuntu-latest"}
+	// Ruling 442 (#2050) sent integration to bigdisk-docker for same-repository
+	// events; main's ci-template v1.48 (ruling 1024) replaced it: every Docker
+	// job reads preflightRunnerDocker on github.com, ubuntu-latest while the
+	// hosted pool has room.
+	hostedLabels = []string{"ubuntu-latest"}
 	// otherForgeLabels is what both jobs select off github.com.
 	otherForgeLabels = []string{"bigdisk"}
 	// unhostedRunsOn are the spellings, in lower case, that a runs-on needs to
@@ -87,6 +89,8 @@ func (e runnerEvent) context() map[string]string {
 		"github.ref":        e.ref,
 		"github.repository": runnerRepository,
 		"github.event.pull_request.head.repo.full_name": e.headRepo,
+		// v1.48: the preflight's Docker runner while the hosted pool has room.
+		preflightRunnerDocker: `"ubuntu-latest"`,
 	}
 }
 
@@ -266,16 +270,32 @@ func (p *exprParser) primary() (any, error) {
 			if _, err := p.expect("("); err != nil {
 				return nil, err
 			}
-			lit, err := p.expect("string")
-			if err != nil {
-				return nil, err
+			// v1.48: the argument is a literal or the preflight's runner
+			// output, a JSON string or string array.
+			var text string
+			switch p.peek() {
+			case "string":
+				text = p.toks[p.pos].text
+			case "name":
+				out, ok := p.ctx[p.toks[p.pos].text]
+				if !ok {
+					return nil, fmt.Errorf("fromJSON: unknown name %q", p.toks[p.pos].text)
+				}
+				text = out
+			default:
+				return nil, fmt.Errorf("token %d: want string or name, got %q", p.pos, p.peek())
 			}
+			p.pos++
 			if _, err := p.expect(")"); err != nil {
 				return nil, err
 			}
+			var label string
+			if err := json.Unmarshal([]byte(text), &label); err == nil && label != "" {
+				return label, nil
+			}
 			var labels []string
-			if err := json.Unmarshal([]byte(lit.text), &labels); err != nil || labels == nil {
-				return nil, fmt.Errorf("fromJSON(%q): not a string array (%v)", lit.text, err)
+			if err := json.Unmarshal([]byte(text), &labels); err != nil || labels == nil {
+				return nil, fmt.Errorf("fromJSON(%q): not a label or a string array (%v)", text, err)
 			}
 			return labels, nil
 		}
@@ -378,20 +398,18 @@ func TestCIDockerJobs_BigdiskForSameRepositoryHostedOtherwise(t *testing.T) {
 			t.Errorf("%s: runs-on is not a scalar", name)
 			continue
 		}
-		ruling442 := slices.Contains(ruling442Jobs, name)
-		if !ruling442 {
-			for _, word := range unhostedRunsOn {
-				if strings.Contains(strings.ToLower(j.RunsOn.Value), word) {
-					t.Errorf("%s: runs-on %q contains %q", name, j.RunsOn.Value, word)
-				}
+		// The preflight's runner output is the one sanctioned way off the
+		// hosted pool (v1.48 overflow); no other self-hosted spelling.
+		literal := strings.ReplaceAll(j.RunsOn.Value, "fromJSON("+preflightRunnerDocker+")", "")
+		for _, word := range unhostedRunsOn {
+			if strings.Contains(strings.ToLower(literal), word) {
+				t.Errorf("%s: runs-on %q contains %q", name, j.RunsOn.Value, word)
 			}
 		}
 		for _, tc := range cases {
 			var want []string
 			switch {
-			case ruling442 && tc.sameRepo:
-				want = bigdiskDockerLabels
-			case ruling442, tc.ev.serverURL == runnerGitHub:
+			case tc.ev.serverURL == runnerGitHub:
 				want = hostedLabels
 			default:
 				want = otherForgeLabels
