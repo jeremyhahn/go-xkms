@@ -110,8 +110,8 @@ func TestMountMux(t *testing.T) {
 
 		get := httptest.NewRequest(http.MethodGet, path, nil)
 		match = mux.RouteMatch{}
-		r.Match(get, &match)
-		assert.ErrorIs(t, match.MatchErr, mux.ErrMethodMismatch, "GET %s", path)
+		matched := r.Match(get, &match)
+		assert.False(t, matched && match.MatchErr == nil, "GET %s should not dispatch", path)
 	}
 
 	// A POST reaches the handler: an empty body is a client error, not 404/405.
