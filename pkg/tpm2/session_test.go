@@ -274,6 +274,105 @@ func TestSaveKeyPair_InterruptedRecoveryLeavesNoMismatchedPair(t *testing.T) {
 	require.Equal(t, "public-C", string(gotPub))
 }
 
+// pausingKeyBackend runs pause once, right after its first successful
+// private-blob save: a live writer stalled between its two writes.
+type pausingKeyBackend struct {
+	store.KeyBackend
+	pause func()
+}
+
+func (b *pausingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	err := b.KeyBackend.Save(attrs, data, ext, overwrite)
+	if err == nil && ext == store.FSEXT_PRIVATE_BLOB && b.pause != nil {
+		pause := b.pause
+		b.pause = nil
+		pause()
+	}
+	return err
+}
+
+// overwriteFailingKeyBackend fails every overwriting save; creates and
+// deletes go through.
+type overwriteFailingKeyBackend struct {
+	store.KeyBackend
+}
+
+var errOverwriteFailed = errors.New("injected: overwrite failed")
+
+func (b *overwriteFailingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	if overwrite {
+		return errOverwriteFailed
+	}
+	return b.KeyBackend.Save(attrs, data, ext, overwrite)
+}
+
+// TestSaveKeyPair_FailedRecoveryKeepsItsFenceFromALiveWriter is Codex
+// round-3 P1 2: create-only writer A pauses after its private blob;
+// recovery writer B fences the public blob, its overwrite fails and its
+// cleanup succeeds. A then resumes. A must not complete a public blob with
+// no private blob beside it, and no later create-only save may leave a
+// mismatched pair.
+func TestSaveKeyPair_FailedRecoveryKeepsItsFenceFromALiveWriter(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+
+	attrs := &types.KeyAttributes{CN: "fenced-key", KeyType: types.KeyTypeTPM}
+	pair := func(name string) (tpm2.TPM2BPrivate, tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic]) {
+		return tpm2.TPM2BPrivate{Buffer: []byte("private-" + name)}, tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-" + name))
+	}
+	// A public blob a reader accepts always has its own private blob.
+	requireNoMismatch := func(stage string) {
+		t.Helper()
+		pub, perr := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+		if perr != nil {
+			require.ErrorIs(t, perr, store.ErrBlobNotFound, stage)
+			return
+		}
+		name, isPublic := strings.CutPrefix(string(pub), "public-")
+		if !isPublic {
+			return
+		}
+		priv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+		require.NoError(t, err, "%s: public-%s with no private blob", stage, name)
+		require.Equal(t, "private-"+name, string(priv), "%s: public-%s beside %s", stage, name, priv)
+	}
+
+	privA, pubA := pair("A")
+	privB, pubB := pair("B")
+	var errB error
+	recovered := false
+	writerA := &pausingKeyBackend{KeyBackend: shared, pause: func() {
+		// A is between its writes: B meets a private blob with no public
+		// blob, fences it, fails to overwrite and cleans up.
+		recovered = true
+		errB = tpmImpl.SaveKeyPair(attrs, privB, pubB, &overwriteFailingKeyBackend{KeyBackend: shared}, false)
+	}}
+	errA := tpmImpl.SaveKeyPair(attrs, privA, pubA, writerA, false)
+	require.True(t, recovered, "B ran while A paused between its writes")
+	require.ErrorIs(t, errB, errOverwriteFailed, "B's recovery overwrite failed")
+	requireNoMismatch("after A resumed")
+	if errA == nil {
+		priv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+		require.NoError(t, err, "A reported success with no private blob")
+		require.Equal(t, "private-A", string(priv))
+	}
+
+	// A create-only save C never leaves a mismatched pair either.
+	privC, pubC := pair("C")
+	_ = tpmImpl.SaveKeyPair(attrs, privC, pubC, shared, false)
+	requireNoMismatch("after create-only save C")
+
+	// An overwriting save repairs the key.
+	require.NoError(t, tpmImpl.SaveKeyPair(attrs, privC, pubC, shared, true))
+	requireNoMismatch("after the overwriting save")
+}
+
 func TestSaveKeyPairWithNilBackend(t *testing.T) {
 	logger, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
