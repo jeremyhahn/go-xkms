@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -1247,6 +1248,11 @@ func (tpm *TPM2) SaveKeyPair(
 // algorithm ID), so no reader takes it for a public area.
 var keyPairRecoveryFence = []byte("xkms-tpm2-key-pair-recovery\x00")
 
+// keyPairRecoveryMu serialises create-only key pair recoveries across every
+// TPM2 and every key backend in the process. Recovery is rare (a private
+// blob without its public blob), so one lock costs nothing in practice.
+var keyPairRecoveryMu sync.Mutex
+
 // isKeyPairRecoveryFence reports whether a public-blob record is a recovery
 // fence rather than a public area.
 func isKeyPairRecoveryFence(pub []byte) bool {
@@ -1271,6 +1277,12 @@ func (tpm *TPM2) recoverKeyPair(
 	outPublic tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic],
 	backend store.KeyBackend,
 	exists error) error {
+
+	// Recoveries are serialised from the fence to the publication: without
+	// it a superseded recovery could resume after another one published
+	// and overwrite that pair's private blob before finding its fence gone.
+	keyPairRecoveryMu.Lock()
+	defer keyPairRecoveryMu.Unlock()
 
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
