@@ -752,6 +752,74 @@ func TestActivateInvitePIV_RefusedWhileWebAuthnFinishActivates(t *testing.T) {
 	assert.Zero(t, bindings, "the refused PIV activation bound no certificate")
 }
 
+// TestActivateInvitePIV_CommitOutcomeUnknownKeepsTheClaim pins the Codex
+// round-2 P1 on servicer_invite.go: qrdb's ActivateWithCertBinding can commit
+// and then return CommitOutcomeUnknownError (its reconciliation read failed).
+// The PIV activation must not release the first-credential claim on that
+// error: a WebAuthn finish that began before it must not claim afresh and
+// enrol a passkey on the now certificate-bound account. Whether the service's
+// own reconciliation read succeeds (the account is active: commit the claim)
+// or fails too (outcome still unknown: keep the fence), the finish is refused.
+func TestActivateInvitePIV_CommitOutcomeUnknownKeepsTheClaim(t *testing.T) {
+	for _, readFails := range []bool{false, true} {
+		name := "reconciled"
+		if readFails {
+			name = "unknown"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newInviteFixture(t)
+			token := f.mintInvite(t)
+			caCert, leafCert, err := generateInvitePIVChain(t)
+			require.NoError(t, err)
+			f.svc.SetCA(&mockCA{bundlePEM: pemEncodeCert(caCert)})
+
+			inPIV, committed := false, false
+			update := f.users.updateUser
+			f.users.updateUser = func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+				u, err := update(ctx, req)
+				if inPIV && err == nil && req.Lifecycle == string(qrdbsdk.LifecycleActive) {
+					committed = true
+					return nil, &qrdbuser.CommitOutcomeUnknownError{ID: req.ID, Err: errors.New("injected: reconciliation read failed")}
+				}
+				return u, err
+			}
+			// The PIV activation runs inside the finish's first account
+			// read: the finish has seen the account pending and goes on to
+			// claim, as an already-running finish would.
+			var pivErr error
+			inFinish, pivRan := false, false
+			get := f.users.getUser
+			f.users.getUser = func(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+				if inPIV && committed && readFails {
+					return nil, errors.New("injected: read failed")
+				}
+				u, err := get(ctx, id)
+				if inFinish && !pivRan && err == nil {
+					pivRan = true
+					snapshot := *u
+					inPIV = true
+					_, pivErr = f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+					inPIV = false
+					return &snapshot, nil
+				}
+				return u, err
+			}
+
+			begin, err := f.beginRegistration(inviteFixtureTenant, token)
+			require.NoError(t, err)
+			attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+			inFinish = true
+			_, err = f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+			inFinish = false
+
+			require.True(t, pivRan, "the PIV activation ran inside the WebAuthn finish")
+			require.True(t, committed, "the PIV activation committed")
+			require.Error(t, pivErr, "an unknown commit outcome is not a success")
+			require.Error(t, err, "the WebAuthn finish must not enrol a passkey on the certificate-bound account")
+		})
+	}
+}
+
 // TestActivateInvitePIV_RefusedAfterFailedWebAuthnActivation: once a
 // WebAuthn finish stored the account's passkey, a PIV activation cannot
 // sidestep the WebAuthn resume's possession proof.
