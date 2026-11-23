@@ -1377,10 +1377,16 @@ func deleteTenantLoginCAMaterial(ctx context.Context, base xkms.Backend, tenantI
 // ensureTenantLoginCACert makes sure the tenant's saved login CA certificate is
 // a valid CA certificate over the key attrs names, issuing and saving one if it
 // is missing or does not match. A certificate another node saved first wins.
+// tenantLoginCACertPublishHook runs after a pass finds the tenant's login CA
+// certificate missing or invalid and before it publishes one. Tests set it to
+// interleave passes; it is a no-op otherwise.
+var tenantLoginCACertPublishHook = func(string) {}
+
 func ensureTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string, signer crypto.Signer) error {
 	if tenantLoginCACertValid(ctx, scoped, signer.Public()) {
 		return nil
 	}
+	tenantLoginCACertPublishHook(tenantID)
 	cert, err := selfSignTenantLoginCA(tenantID, signer)
 	if err != nil {
 		return err
