@@ -131,6 +131,9 @@ func (s *Server) openPKCS11WithHeldPIN() error {
 	if err != nil {
 		return &ErrBackendInit{Backend: "PKCS#11", Err: err}
 	}
+	// PIN returns a fresh plaintext copy: wipe it once the opener returns,
+	// on success and failure (the opener keeps its own sealed copy).
+	defer clear(pin)
 	opener := s.pkcs11PINOpener
 	if opener == nil {
 		opener = s.defaultPKCS11PINOpener
