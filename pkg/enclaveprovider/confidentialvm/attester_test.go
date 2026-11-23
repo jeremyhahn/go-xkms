@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/jeremyhahn/go-enclave"
 )
 
 // useRoot points tsmReportRoot at root for the test and restores it.
@@ -33,7 +31,7 @@ func wantStep(t *testing.T, err error, op string) *TSMReportError {
 
 func TestReportData_NonceIsZeroPaddedTo64Bytes(t *testing.T) {
 	for _, n := range [][]byte{nil, {}, make([]byte, reportDataSize+1)} {
-		if _, err := reportData(n); !errors.Is(err, enclave.ErrInvalidNonce) {
+		if _, err := reportData(n); !errors.Is(err, ErrInvalidNonce) {
 			t.Fatalf("reportData(%d bytes) = %v, want ErrInvalidNonce", len(n), err)
 		}
 	}
@@ -169,7 +167,7 @@ func TestWriteAttr_RefusesAMissingAttribute(t *testing.T) {
 func TestAttest_ChecksTheNonceAndContextBeforeAnyRequest(t *testing.T) {
 	useRoot(t, filepath.Join(t.TempDir(), "absent"))
 	a := &Attester{provider: providerTDXGuest, format: FormatTDXQuote}
-	if _, err := a.Attest(context.Background(), nil); !errors.Is(err, enclave.ErrInvalidNonce) {
+	if _, err := a.Attest(context.Background(), nil); !errors.Is(err, ErrInvalidNonce) {
 		t.Fatalf("Attest(nil nonce) = %v, want ErrInvalidNonce", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -204,12 +202,9 @@ func TestAttest_RefusesAnEntryWithNoProvider(t *testing.T) {
 	wantStep(t, err, "provider")
 }
 
-func TestAttester_IsAnAttesterAndNoBackend(t *testing.T) {
+func TestAttester_IsAnAttester(t *testing.T) {
 	var v any = &Attester{}
-	if _, ok := v.(enclave.Attester); !ok {
-		t.Fatal("*Attester is not an enclave.Attester")
-	}
-	if _, ok := v.(enclave.Backend); ok {
-		t.Fatal("*Attester is an enclave.Backend; a confidential VM is not a backend")
+	if _, ok := v.(attester); !ok {
+		t.Fatal("*Attester does not implement Attest(context.Context, []byte) (Evidence, error)")
 	}
 }

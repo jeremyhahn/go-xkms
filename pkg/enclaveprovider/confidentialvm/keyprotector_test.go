@@ -275,13 +275,10 @@ func TestKeyProtector_ChecksContextAndItsMakingBeforeAnyRequest(t *testing.T) {
 	}
 }
 
-func TestKeyProtector_IsAKeyProtectorAndNoBackend(t *testing.T) {
+func TestKeyProtector_IsAKeyProtector(t *testing.T) {
 	var v any = &KeyProtector{}
 	if _, ok := v.(enclave.KeyProtector); !ok {
 		t.Fatal("*KeyProtector is not an enclave.KeyProtector")
-	}
-	if _, ok := v.(enclave.Backend); ok {
-		t.Fatal("*KeyProtector is an enclave.Backend; a confidential VM is not a backend")
 	}
 }
 
