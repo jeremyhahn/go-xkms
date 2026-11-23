@@ -254,6 +254,41 @@ func TestKeys_OmittedUserOwnerIsCaller(t *testing.T) {
 	require.Error(t, err, "delete with an omitted owner removes the caller's key")
 }
 
+// TestSession_OmittedKeyOwnerIsCaller dials with no key owner and no
+// host-key owner: the binding resolves both to the caller, so the dial
+// gets past the owner binding and fails only on the unreachable target.
+// Known-host Verify and Callback resolve an omitted owner the same way.
+func TestSession_OmittedKeyOwnerIsCaller(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	generate(t, c, aliceA, "user", "alice", "laptop")
+	generate(t, c, adminB, "tenant", tenantB, "b-key")
+
+	cases := map[string]struct {
+		id  *auth.Identity
+		req sdkssh.SessionDialRequest
+	}{
+		"omitted key owner": {aliceA, sdkssh.SessionDialRequest{KeyScope: "user", KeyName: "laptop"}},
+		"omitted key and host-key owner": {aliceA, sdkssh.SessionDialRequest{KeyScope: "user", KeyName: "laptop",
+			HostKeyScope: "user"}},
+		"user host keys under a tenant key": {adminB, sdkssh.SessionDialRequest{KeyScope: "tenant", KeyOwner: tenantB, KeyName: "b-key",
+			HostKeyScope: "user"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tc.req.Host, tc.req.Port, tc.req.User, tc.req.TimeoutSeconds = "127.0.0.1", 1, "u", 1
+			_, err := c.Session().Dial(as(tc.id), tc.req)
+			require.Error(t, err, "nothing listens on the target")
+			var refusal *OwnerBindingError
+			assert.False(t, errors.As(err, &refusal), "an omitted owner was refused: %v", err)
+		})
+	}
+
+	line, pub := publicLine(t)
+	require.NoError(t, c.KnownHosts().Add(as(aliceA), sdkssh.AddKnownHostRequest{Scope: "user", Host: "h.example.com", PublicKey: line}))
+	require.NoError(t, c.KnownHosts().Verify(as(aliceA), "user", "", "h.example.com", pub))
+	require.NoError(t, c.KnownHosts().Callback(as(aliceA), "user", "")("h.example.com:22", &net.TCPAddr{}, pub))
+}
+
 // TestKeys_ServiceScope proves a service-scoped key is reachable only with
 // the explicit ssh:service permission, only in the caller's own tenant, and
 // not at all when no permission checker is wired.
