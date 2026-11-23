@@ -31,7 +31,8 @@
 #     nowhere makes the suite unresolved (below). A binary that does not
 #     load prints ALL. A suite whose go test line calls a Makefile define
 #     (run_with_server, which starts xkmsd) is unresolved too: the helper's
-#     body is not expanded, so its binaries are unknown;
+#     body is not expanded, so its binaries are unknown, but the -tags of
+#     its go test line still pick the suite's tests;
 #   - a nested suite test/integration/<feature>/<dir> with _test.go files
 #     counts as run by integration-test-<feature> only when a go test line
 #     of that target tests <dir> or a parent with /...; a change in, or a
@@ -234,7 +235,8 @@ recipe_binaries() {
 	}
 	# First pass: the names of define helpers. A recipe line that calls one
 	# (run_with_server, say) runs a body that may build or start binaries
-	# the parser does not expand, so its suites get unreadable tags (U).
+	# the parser does not expand: its suites keep the -tags as written but
+	# their binaries are unresolved (B in <suites file>).
 	NR == FNR { if ($1 == "define" && $2 != "") { d = $2; sub(/[[:space:]]*[:+?!]?=.*$/, "", d); defs[d] = 1 }; next }
 	{
 		line = cont $0
@@ -275,7 +277,7 @@ recipe_binaries() {
 			isbuild = seg[s] ~ /(^|[^A-Za-z0-9_])(go|GO\))[[:space:]]+build([[:space:]]|$)/
 			istest = seg[s] ~ /(^|[^A-Za-z0-9_])(go|GO\))[[:space:]]+test([[:space:]]|$)/
 			btags = isbuild ? build_tags(seg[s]) : ""
-			texpr = (istest && !helper) ? raw_tags(seg[s]) : ""
+			texpr = istest ? raw_tags(seg[s]) : ""
 			for (i = first; i <= nt; i++) {
 				t = clean(tok[i])
 				if (isbuild && t ~ /^\.\.?\// && t ~ /(^|\/)cmd\/[^\/]/) {
@@ -286,7 +288,7 @@ recipe_binaries() {
 					if (r ~ /^test\/integration\/[^\/]+/) {
 						split(r, rp, "/"); feats[++nf] = rp[3]
 						cov = (t ~ /\/\.\.\.$/) ? r "/..." : r
-						for (k = 1; k <= nct; k++) if (ct[k] != "") print ct[k] "\t" rp[3] "\t" texpr "\t" cov > suites
+						for (k = 1; k <= nct; k++) if (ct[k] != "") print ct[k] "\t" rp[3] "\t" texpr "\t" cov "\t" (helper ? "B" : "") > suites
 					}
 				}
 			}
@@ -340,14 +342,16 @@ if [ "${#pending[@]}" -gt 0 ] || [ "${#nested[@]}" -gt 0 ]; then
 	# prerequisites, or "<feature> TAB U" when that recipe runs none (it
 	# delegates, to Compose say) or one whose tags cannot be read: such a
 	# suite's tests and binaries are unknown, so it is selected by any
-	# change that selects a feature.
+	# change that selects a feature. "<feature> TAB B" marks a go test line
+	# a define helper wraps: its tags stand (E), but the helper's binaries
+	# are unknown, so it too is selected by any change that selects one.
 	plan=$(awk -F'\t' -v feats="$featlist" '
 		FILENAME == ARGV[1] {
 			if ($1 == "H") { has[$2] = 1; pre[$2] = pre[$2] " " $3 }
 			else if ($1 == "R") rec[$2] = 1
 			next
 		}
-		{ n++; lt[n] = $1; lf[n] = $2; le[n] = $3; lc[n] = $4 }
+		{ n++; lt[n] = $1; lf[n] = $2; le[n] = $3; lc[n] = $4; lb[n] = $5 }
 		END {
 			m = split(feats, fs, " ")
 			for (i = 1; i <= m; i++) {
@@ -361,6 +365,7 @@ if [ "${#pending[@]}" -gt 0 ] || [ "${#nested[@]}" -gt 0 ]; then
 				for (j = 1; j <= n; j++) if (lf[j] == f && (lt[j] in in_)) {
 					found = 1
 					print f "\tC\t" lc[j]
+					if (lb[j] == "B") print f "\tB"
 					if (le[j] == "") bad = 1; else print f "\tE\t" le[j]
 				}
 				if (found && !bad) continue
@@ -368,7 +373,7 @@ if [ "${#pending[@]}" -gt 0 ] || [ "${#nested[@]}" -gt 0 ]; then
 				else print f "\tU"
 			}
 		}' "$rules" "$suites")
-	unresolved=$(printf '%s\n' "$plan" | awk -F'\t' '$2 == "U" { print $1 }')
+	unresolved=$(printf '%s\n' "$plan" | awk -F'\t' '$2 == "U" || $2 == "B" { print $1 }' | LC_ALL=C sort -u)
 	# A nested suite (test/integration/<feature>/<dir> with _test.go files)
 	# runs under make integration-test-<feature> only if a go test path of
 	# that target covers it: <dir> itself, or a parent ending in /... (the
