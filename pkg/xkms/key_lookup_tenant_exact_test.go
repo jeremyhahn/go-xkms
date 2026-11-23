@@ -234,23 +234,96 @@ func TestKeyLookup_TenantExact_DedicatedTenant(t *testing.T) {
 }
 
 func TestKeyLookup_TenantExact_NamedTenant(t *testing.T) {
-	svc, _ := setupSameCNKeys(t)
+	svc, tenants := setupSameCNKeys(t)
 	acme := identityCtx("acme")
 
 	_, err := svc.Sign(acme, &transport.SignRequest{Backend: "software", KeyID: "k", Data: []byte("d"), TenantID: "aaa"})
-	var denied *qrdbsdk.CrossTenantDeniedError
-	assert.True(t, errors.As(err, &denied), "acme naming aaa on Sign is refused: %v", err)
+	var refused *TenantBindingError
+	assert.True(t, errors.As(err, &refused), "acme naming aaa on Sign is refused: %v", err)
 
 	_, err = svc.GetPublicKey(acme, &transport.GetPublicKeyRequest{Backend: "software", KeyID: "k", TenantID: "aaa"})
-	denied = nil
-	assert.True(t, errors.As(err, &denied), "acme naming aaa on GetPublicKey is refused: %v", err)
+	refused = nil
+	assert.True(t, errors.As(err, &refused), "acme naming aaa on GetPublicKey is refused: %v", err)
+
+	_, err = svc.GetPublicKey(acme, &transport.GetPublicKeyRequest{Backend: "software", KeyID: "k", TenantID: "acme"})
+	require.NoError(t, err, "acme naming its own tenant resolves its key")
+
+	for name, ctx := range systemCtxs() {
+		_, err = svc.Sign(ctx, &transport.SignRequest{Backend: "software", KeyID: "k", Data: []byte("d"), TenantID: "acme"})
+		refused = nil
+		assert.True(t, errors.As(err, &refused), "%s caller naming acme on Sign is refused: %v", name, err)
+	}
+	assertTenantKeysUnchanged(t, svc, tenants)
+}
+
+// TestKeyLookup_TenantExact_OmittedTenantIsCaller pins that a request with
+// no TenantID resolves in the caller's own tenant: an acme caller reaches
+// acme's key, never the system tenant's same-named key, and a no-identity
+// caller reaches the system tenant's key.
+func TestKeyLookup_TenantExact_OmittedTenantIsCaller(t *testing.T) {
+	svc, tenants := setupSameCNKeys(t)
+	genKey(t, svc, "", "sysonly", "ecdsa", 0)
+	acme := identityCtx("acme")
 
 	own, err := svc.GetPublicKey(acme, &transport.GetPublicKeyRequest{Backend: "software", KeyID: "k", TenantID: "acme"})
 	require.NoError(t, err)
-	sys, err := svc.GetPublicKey(context.Background(), &transport.GetPublicKeyRequest{Backend: "software", KeyID: "k", TenantID: "acme"})
+	omitted, err := svc.GetPublicKey(acme, &transport.GetPublicKeyRequest{Backend: "software", KeyID: "k"})
 	require.NoError(t, err)
-	assert.Equal(t, own.PublicKey, sys.PublicKey, "a system-tenant caller naming acme resolves acme's key")
+	assert.Equal(t, own.PublicKey, omitted.PublicKey, "acme with no TenantID reads acme's key")
 
-	_, err = svc.Sign(context.Background(), &transport.SignRequest{Backend: "software", KeyID: "k", Data: []byte("d"), TenantID: "acme"})
-	assert.NoError(t, err)
+	vers, err := svc.ListKeyVersions(acme, &transport.ListKeyVersionsRequest{Backend: "software", KeyID: "k"})
+	require.NoError(t, err)
+	require.Len(t, vers.Versions, 1)
+	assert.Equal(t, tenants["acme"].pem, vers.Versions[0].PublicKeyPEM, "acme with no TenantID lists acme's versions")
+
+	_, err = svc.Sign(acme, &transport.SignRequest{Backend: "software", KeyID: "k", Data: []byte("d")})
+	require.NoError(t, err, "acme with no TenantID signs with acme's key")
+	_, err = svc.Sign(acme, &transport.SignRequest{Backend: "software", KeyID: "sysonly", Data: []byte("d")})
+	assert.Error(t, err, "acme with no TenantID never signs with a system-tenant key")
+	_, err = svc.GetPublicKey(acme, &transport.GetPublicKeyRequest{Backend: "software", KeyID: "sysonly"})
+	assert.Error(t, err, "acme with no TenantID never reads a system-tenant key")
+
+	sys, err := svc.GetPublicKey(context.Background(), &transport.GetPublicKeyRequest{Backend: "software", KeyID: "k"})
+	require.NoError(t, err)
+	assert.NotEqual(t, own.PublicKey, sys.PublicKey, "a no-identity caller with no TenantID reads the system key")
+	_, err = svc.Sign(context.Background(), &transport.SignRequest{Backend: "software", KeyID: "sysonly", Data: []byte("d")})
+	assert.NoError(t, err, "a no-identity caller signs with the system tenant's key")
+	assertTenantKeysUnchanged(t, svc, tenants)
+}
+
+// TestKeyLookup_TenantExact_SystemCallerNamesTenant pins that a system-tenant
+// caller naming a dedicated tenant is refused on every key path and the
+// tenant's key is left untouched.
+func TestKeyLookup_TenantExact_SystemCallerNamesTenant(t *testing.T) {
+	svc, tenants := setupSameCNKeys(t)
+	ctx := identityCtx(qrdbsdk.SystemTenantID)
+
+	calls := map[string]func() error{
+		"sign": func() error {
+			_, err := svc.Sign(ctx, &transport.SignRequest{Backend: "software", KeyID: "k", Data: []byte("d"), TenantID: "acme"})
+			return err
+		},
+		"get": func() error {
+			_, err := svc.GetPublicKey(ctx, &transport.GetPublicKeyRequest{Backend: "software", KeyID: "k", TenantID: "acme"})
+			return err
+		},
+		"versions": func() error {
+			_, err := svc.ListKeyVersions(ctx, &transport.ListKeyVersionsRequest{Backend: "software", KeyID: "k", TenantID: "acme"})
+			return err
+		},
+		"rotate": func() error {
+			_, err := svc.RotateKey(ctx, &transport.RotateKeyRequest{Backend: "software", KeyID: "k", TenantID: "acme"})
+			return err
+		},
+		"delete": func() error {
+			_, err := svc.RevokeKey(ctx, &transport.RevokeKeyRequest{Backend: "software", KeyID: "k", TenantID: "acme"})
+			return err
+		},
+	}
+	for op, call := range calls {
+		err := call()
+		var refused *TenantBindingError
+		assert.True(t, errors.As(err, &refused), "system caller naming acme on %s is refused: %v", op, err)
+	}
+	assertTenantKeysUnchanged(t, svc, tenants)
 }
