@@ -505,10 +505,61 @@ func (s *daoCredentialStore) committedClaimToken(ctx context.Context, userID str
 		}
 		return "", WrapError("read first-credential claim", err)
 	}
-	if claim.Pending {
+	if !claim.Pending {
+		return claim.Token, nil
+	}
+	if s.now().UnixNano() < claim.ExpiresAt {
+		// A live ceremony may still commit or release it.
 		return "", nil
 	}
-	return claim.Token, nil
+	// An expired claim whose claimer saved its credential and stopped before
+	// Commit: roll it forward here, so every read (and so the choice between
+	// a create and a get ceremony) sees the saved key, rather than only a
+	// later ClaimFirstCredential, which runs after a second key was created
+	// (Codex round-3 P1). The same token/CAS fence applies.
+	rolled, err := s.rollForwardSavedClaim(ctx, claim)
+	if err != nil {
+		return "", err
+	}
+	if rolled {
+		return claim.Token, nil
+	}
+	// Lost the swap: another reader rolled it forward, or a ceremony
+	// recovered or released it. Judge what is stored now.
+	current, err := s.claims.GetByNaturalKey(ctx, userID)
+	if err != nil {
+		if qrdbsdk.IsDAONotFound(err) {
+			return "", nil
+		}
+		return "", WrapError("read first-credential claim", err)
+	}
+	if current.Pending {
+		return "", nil
+	}
+	return current.Token, nil
+}
+
+// rollForwardSavedClaim commits the expired pending claim held when a
+// credential was saved under its token, by a compare-and-swap on held. It
+// reports whether this call committed it; false with a nil error means no
+// credential carries the token or the claim changed since held was read.
+func (s *daoCredentialStore) rollForwardSavedClaim(ctx context.Context, held *firstCredentialClaimEntity) (bool, error) {
+	saved, err := s.creds.Find(ctx).Where("UserID = ?", held.UserID).Execute()
+	if err != nil {
+		return false, WrapError("read first-credential claim credentials", err)
+	}
+	for _, e := range saved {
+		if e.ClaimToken != held.Token {
+			continue
+		}
+		committed := &firstCredentialClaimEntity{ID: held.ID, UserID: held.UserID, Token: held.Token}
+		swapped, err := s.claims.CompareAndSwap(ctx, held, committed)
+		if err != nil && !qrdbsdk.IsDAONotFound(err) {
+			return false, WrapError("commit first-credential claim", err)
+		}
+		return swapped, nil
+	}
+	return false, nil
 }
 
 // encodeID renders an arbitrary-byte credential or user ID in the lossless
