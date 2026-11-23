@@ -370,6 +370,9 @@ func keyInfoFromTransport(key transport.KeyInfo) KeyInfo {
 		Algorithm:    key.Algorithm,
 		Backend:      key.Backend,
 		PublicKeyPEM: key.PublicKeyPEM,
+		KeySize:      key.KeySize,
+		Curve:        key.Curve,
+		Partition:    key.Partition,
 		KeyVersion:   key.KeyVersion,
 	}
 }
