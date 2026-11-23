@@ -4060,14 +4060,25 @@ check-insecure-tls:
 # The pattern list is private, so it is an input: with neither variable set
 # the target refuses (exit 1) rather than pass without checking a literal, so
 # `make lint-gates` and every CI caller must hand it the list; with one set it
-# returns the script's own exit status.
+# returns the script's own exit status. The one opt-out is
+# PUBLIC_LITERALS_SKIP=fork-pr, which ci.yml sets only on a pull request whose
+# run has no RELEASABILITY_PATTERNS secret (a fork); the target announces the
+# skip and passes. Any other PUBLIC_LITERALS_SKIP value is refused.
 check-public-literals:
 	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (pattern list from input)...$(RESET)"
 	@if [ -z "$${RELEASABILITY_PATTERNS:-}" ] && [ -z "$${RELEASABILITY_PATTERNS_FILE:-}" ]; then \
+		if [ "$${PUBLIC_LITERALS_SKIP-unset}" = fork-pr ]; then \
+			echo "check-public-literals: skipped -- no pattern input on a pull request without the secret (PUBLIC_LITERALS_SKIP=fork-pr); pushes run the gate"; \
+			exit 0; \
+		fi; \
+		if [ -n "$${PUBLIC_LITERALS_SKIP+set}" ]; then \
+			echo "check-public-literals: refused -- PUBLIC_LITERALS_SKIP accepts only fork-pr" >&2; \
+			exit 1; \
+		fi; \
 		echo "check-public-literals: refused -- no pattern input: set RELEASABILITY_PATTERNS (class<TAB>regex lines) or RELEASABILITY_PATTERNS_FILE (a path to them)" >&2; \
 		exit 1; \
-	fi
-	@bash scripts/check-public-literals.sh
+	fi; \
+	bash scripts/check-public-literals.sh
 
 # GOFLAGS takes one comma-separated -tags value.
 EMPTY :=

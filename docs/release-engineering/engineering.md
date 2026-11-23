@@ -43,7 +43,16 @@ written in the repository: `RELEASABILITY_PATTERNS` holds the
 them. With neither set the gate refuses — the script exits 2 and
 `make check-public-literals` (so `make lint-gates` too) exits non-zero with a
 line naming both variables; it never skips and passes, so every caller must
-hand it the list. It scans tracked files only (`git grep`), reports each
+hand it the list. In CI the three callers (`.github/workflows/ci.yml`: the
+image job's "go-xkms checks" step, "make lint-gates" and "make lint-gates
+(native)") take `RELEASABILITY_PATTERNS` from the Actions secret of that name,
+and `scripts/in-toolchain-image.sh` forwards it into the toolchain container
+by name, never by value. Fork rule, as in the "Releasability (private
+patterns)" step: a push without the secret fails the step; any other run
+without it (a fork pull request) prints a `::notice::` and runs the gates with
+the one explicit opt-out, `PUBLIC_LITERALS_SKIP=fork-pr`, which the Make target
+announces as a skip. Any other `PUBLIC_LITERALS_SKIP` value, the empty one
+included, is refused. It scans tracked files only (`git grep`), reports each
 finding as `path:line` without the matched text, and excludes `.claude/`,
 `CLAUDE.md` and `AGENTS.md` — those are agent-instruction
 files the owner publishes on a separate schedule, not part of the scrub. A fleet

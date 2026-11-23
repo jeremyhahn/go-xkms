@@ -215,6 +215,12 @@ if [ "$network" = bridge ]; then
     if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
   done
 fi
+# make check-public-literals (alone or under make lint-gates) refuses without
+# its pattern input, on every network: the private pattern list and the fork
+# opt-out travel by name only, so the value never reaches the command line.
+for v in RELEASABILITY_PATTERNS PUBLIC_LITERALS_SKIP; do
+  if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
+done
 
 cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
