@@ -1546,9 +1546,8 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 	if params.DestKeyID == "" {
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "dest_key_id is required"}}
 	}
-	if params.Algorithm == "" {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "algorithm is required"}}
-	}
+	// An empty algorithm is not an error: the service picks the destination
+	// backend's default (go-xkms#2283).
 
 	// The copy is the service's, not this handler's. It resolves the source
 	// key's stored attributes -- exportability included -- from the backend's

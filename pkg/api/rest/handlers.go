@@ -1395,10 +1395,9 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	case req.DestKeyID == "":
 		writeError(w, &errs.Message{Msg: "missing dest_key_id"}, http.StatusBadRequest)
 		return
-	case req.Algorithm == "":
-		writeError(w, &errs.Message{Msg: "missing wrapping algorithm"}, http.StatusBadRequest)
-		return
 	}
+	// An empty algorithm is not an error: the service picks the destination
+	// backend's default (go-xkms#2283).
 
 	if h.xkmsService == nil {
 		mapKeyOpError(w, xkms.ErrNotInitialized)

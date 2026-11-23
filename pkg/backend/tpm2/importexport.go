@@ -59,7 +59,7 @@ type duplicationBlob struct {
 // importExportAlgorithm is the wrapping-algorithm label reported by the TPM2
 // backend's import/export surface. It denotes the TCG duplication protocol
 // (labeled encapsulation under the parent storage key), not an RSA family.
-const importExportAlgorithm = backend.WrappingAlgorithm("TPM2_DUPLICATE")
+const importExportAlgorithm = backend.WrappingAlgorithmTPM2Duplicate
 
 // srkPublicContents reads the public area of this backend's own storage
 // parent (b.srkAttrs -- the Platform SRK, see NewBackend) and returns its

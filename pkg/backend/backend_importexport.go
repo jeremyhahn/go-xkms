@@ -44,6 +44,13 @@ const (
 	WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256 = types.WrapRSAAESKWSHA256
 )
 
+// WrappingAlgorithmTPM2Duplicate is the only algorithm the TPM 2.0 backend's
+// import/export surface accepts: the TCG duplication protocol (labeled
+// encapsulation under the parent storage key), not an RSA family. It is the
+// default a key copy into a TPM 2.0 destination uses when the caller names
+// no algorithm (go-xkms#2283).
+const WrappingAlgorithmTPM2Duplicate = WrappingAlgorithm("TPM2_DUPLICATE")
+
 // GCP-specific hybrid algorithms. These stay declared here rather than in
 // pkg/types: they name a single cloud provider's import scheme, not a
 // construction the project's own vocabulary needs. They share the aliased
