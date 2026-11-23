@@ -20,7 +20,7 @@
 set -eu
 
 CERT_DIR="${CERT_DIR:-/etc/xkms/certs}"
-CONFIG_FILE="/etc/xkms/xkmsd.yaml"
+CONFIG_FILE="${CONFIG_FILE:-/etc/xkms/xkmsd.yaml}"
 DATA_DIR="${TEST_DATA_DIR:-/data}"
 DAYS_VALID=365
 HOSTNAME_SAN="bootstrap.test"
@@ -192,8 +192,35 @@ tls:
   key_file: ${CERT_DIR}/server.key
   ca_file: ${CERT_DIR}/ca.crt
 
+# cmd/xkmsd refuses to start on any config.ComplianceGaps finding, so the
+# test config names an authenticator and a CA the way the web and
+# webauthn-browser integration configs do.
 auth:
-  enabled: false
+  enabled: true
+  type: "composite"
+
+ca:
+  identity:
+    - subject:
+        cn: "go-xkms Bootstrap Test Root CA"
+        organization: "go-xkms Bootstrap Test"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: ${DATA_DIR}/ca
 
 ratelimit:
   enabled: false
@@ -210,6 +237,9 @@ health:
 storage:
   backend: file
   path: ${DATA_DIR}
+
+datastore:
+  path: ${DATA_DIR}/datastore
 
 rng:
   mode: software
