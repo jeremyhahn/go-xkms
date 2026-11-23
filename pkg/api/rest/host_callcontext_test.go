@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -284,6 +285,33 @@ func TestNewHostServer_AddPasskeyBeginOverEnforcingNode(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &options))
 	require.Equal(t, handle, options.PublicKey.User.ID, "the ceremony enrols the session's own account")
+}
+
+// TestNewHostServer_PublicRegistrationBeginRefusedOverEnforcingNode is the
+// Codex P1 on BuildWebAuthnService: with the node user adapter the user
+// store's Create ran on the node's routing user service, which checks no
+// users:create, so anonymous registration/begin persisted an active account
+// before any credential was verified. The service principal holds no
+// users:create (CA ruling 602), so even with public registration allowed the
+// begin is refused and no account exists afterwards.
+func TestNewHostServer_PublicRegistrationBeginRefusedOverEnforcingNode(t *testing.T) {
+	node := newEnforcingNode(t)
+	srv := newEnforcingHostServer(t, node)
+
+	const email = "anonymous-signup@example.com"
+	body, err := json.Marshal(map[string]string{"email": email, "display_name": "Anonymous"})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	require.Empty(t, w.Header().Get(webauthnhttp.HeaderSessionID), "a refused begin opens no ceremony")
+
+	u, err := auth.NewNodeUserClient(node).GetUserByEmail(context.Background(), DefaultWebAuthnTenant, email)
+	require.Error(t, err, "the refused begin must leave no account, found %+v", u)
+	require.True(t, webauthn.IsUserNotFound(err), "lookup after the refusal: %v", err)
 }
 
 // keysProbeModule mounts GET /api/v1/keys under keys:read on the unified
