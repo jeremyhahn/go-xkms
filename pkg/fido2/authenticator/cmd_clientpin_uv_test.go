@@ -449,7 +449,7 @@ func TestGetPinUvAuthTokenUsingUv_UnavailableSpendsNoRetry(t *testing.T) {
 // request spends a uvRetries count with no verification attempted.
 func TestGetPinUvAuthTokenUsingUv_InvalidRPNameSpendsNoRetry(t *testing.T) {
 	for name, rpID := range map[string]string{
-		"over 64 bytes":     strings.Repeat("a", 65),
+		"over 253 bytes":    strings.Repeat("a", 254),
 		"control character": "example.com\nApproved",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -481,6 +481,29 @@ func TestGetPinUvAuthTokenUsingUv_InvalidRPNameSpendsNoRetry(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, backend.calls)
 	})
+}
+
+// A valid RP ID may be longer than the 64 bytes WebAuthn L2 §5.4.1 lets an
+// authenticator truncate an RP display name to: a DNS name of several labels
+// is. The token request reaches the verifier with the full RP ID, and the
+// token binds to it.
+func TestGetPinUvAuthTokenUsingUv_AcceptsRPIDLongerThan64Bytes(t *testing.T) {
+	rpID := "login.accounts-and-identity-services.eu-central-region.example-corporation.com"
+	require.Greater(t, len(rpID), 64)
+
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+	auth := newVerifyingAuthenticator(t, backend)
+	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionMakeCredential, rpID)
+	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	require.Equal(t, 1, backend.calls)
+	require.Equal(t, rpID, backend.rpID, "the verifier is asked for the full RP ID")
+
+	auth.mu.RLock()
+	tokenRPID := auth.pinState.protocol.tokenRPID
+	auth.mu.RUnlock()
+	require.Equal(t, rpID, tokenRPID)
 }
 
 // TestGetPinUvAuthTokenUsingUv_MalformedRequestNeverPrompts pins that the

@@ -148,6 +148,30 @@ func TestValidateVerifyUserRPName(t *testing.T) {
 	})
 }
 
+// The RP name of a local.verifyUser request is the RP ID, which may be longer
+// than the 64 bytes a display name may be truncated to: the wire and the
+// transcript carry it whole, and only the text the phone shows is bounded.
+func TestVerifyUserCarriesRPIDLongerThan64Bytes(t *testing.T) {
+	rpID := "login.accounts-and-identity-services.eu-central-region.example-corporation.com"
+	require.Greater(t, len(rpID), 64)
+	require.NoError(t, ValidateVerifyUserRPName(rpID))
+
+	nonce := make([]byte, 32)
+	binding := make([]byte, 32)
+	fingerprint := make([]byte, 32)
+	transcript, err := BuildVerifyUserTranscript(rpID, nonce, binding, fingerprint)
+	require.NoError(t, err)
+	shorter, err := BuildVerifyUserTranscript(rpID[:64], nonce, binding, fingerprint)
+	require.NoError(t, err)
+	require.NotEqual(t, shorter, transcript, "the transcript binds the whole RP ID")
+
+	display := VerifyUserRPDisplayName(rpID)
+	require.LessOrEqual(t, len(display), VerifyUserRPDisplayMaxLen)
+	require.True(t, strings.HasPrefix(rpID, display))
+	require.Equal(t, "example.com", VerifyUserRPDisplayName("example.com"))
+	require.Equal(t, strings.Repeat("é", 32), VerifyUserRPDisplayName(strings.Repeat("é", 40)), "truncated on a UTF-8 boundary")
+}
+
 func TestBuildVerifyUserTranscript(t *testing.T) {
 	nonce := vecRamp(0x00)
 	binding := vecRamp(0x40)
