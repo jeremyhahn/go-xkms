@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -74,6 +75,59 @@ func TestMCPPort_ShippedConfigsMatchSDK(t *testing.T) {
 				t.Fatalf("server.mcp_port = %d, want SDK default %d", doc.Server.MCPPort, want)
 			}
 		})
+	}
+}
+
+// TestMCPPort_DevcontainerComposeMatchesSDK checks the devcontainer stack: the
+// xkms-server image runs configs/xkmsd-integration.yaml, so the clients' MCP
+// address and the published MCP port must name the same port as the SDK.
+func TestMCPPort_DevcontainerComposeMatchesSDK(t *testing.T) {
+	want := strconv.Itoa(sdkMCPPort(t))
+	data, err := os.ReadFile(filepath.Join("..", "..", "build", "docker", "devcontainer", "compose.yaml"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var doc struct {
+		Services map[string]struct {
+			// Services write environment as a list or a map; only the
+			// devcontainer's list form is decoded below.
+			Environment yaml.Node `yaml:"environment"`
+			Ports       []string  `yaml:"ports"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var env []string
+	devcontainer := doc.Services["devcontainer"].Environment
+	if err := devcontainer.Decode(&env); err != nil {
+		t.Fatalf("devcontainer environment: %v", err)
+	}
+
+	addr := ""
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "KEYSTORE_MCP_ADDR="); ok {
+			addr = v
+		}
+	}
+	if addr == "" {
+		t.Fatal("devcontainer: KEYSTORE_MCP_ADDR not set")
+	}
+	if _, port, err := net.SplitHostPort(addr); err != nil || port != want {
+		t.Fatalf("devcontainer KEYSTORE_MCP_ADDR = %q, want port %s", addr, want)
+	}
+
+	published := false
+	for _, p := range doc.Services["xkms-server"].Ports {
+		if strings.Contains(p, "XKMS_HOST_MCP_PORT") {
+			published = true
+			if i := strings.LastIndex(p, ":"); i < 0 || p[i+1:] != want {
+				t.Fatalf("xkms-server MCP port mapping = %q, want container port %s", p, want)
+			}
+		}
+	}
+	if !published {
+		t.Fatal("xkms-server: no XKMS_HOST_MCP_PORT mapping")
 	}
 }
 
