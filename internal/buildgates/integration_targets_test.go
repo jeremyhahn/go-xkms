@@ -418,7 +418,7 @@ func composeGoTests(t *testing.T, feat string) string {
 	execForm := strings.NewReplacer(`", "`, " ", `","`, " ")
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !(strings.HasPrefix(name, "docker-compose") || strings.HasPrefix(name, "Dockerfile")) {
+		if e.IsDir() || !strings.HasPrefix(name, "docker-compose") && !strings.HasPrefix(name, "Dockerfile") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(repoRoot, "test", "integration", feat, name))
