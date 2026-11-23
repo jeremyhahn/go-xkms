@@ -179,6 +179,7 @@ var goldenRESTPermissions = map[string]string{
 	"POST /api/v1/keys/{id}/verify":                              "keys:verify",
 	"POST /api/v1/ota-image-keys/{board}":                        "keys:create",
 	"POST /api/v1/ota-image-keys/{board}/rotate":                 "keys:rotate",
+	"GET /api/v1/ota-image-keys/{board}/public-key":              "keys:get",
 	"POST /api/v1/ota-image-keys/{board}/sign":                   "keys:sign",
 	"POST /api/v1/passwords/":                                    "passwords:write",
 	"POST /api/v1/passwords/access-mode":                         "passwords:write",

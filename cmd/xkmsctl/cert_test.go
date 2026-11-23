@@ -186,6 +186,10 @@ func (m *mockCertClient) RotateOTAImageKey(ctx context.Context, req *client.OTAI
 	return nil, nil
 }
 
+func (m *mockCertClient) ExportOTAImagePublicKey(ctx context.Context, req *client.OTAImageKeyRequest) (*client.OTAImagePublicKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockCertClient) SignOTAImage(ctx context.Context, req *client.OTAImageSignRequest) (*client.SignResponse, error) {
 	return nil, nil
 }

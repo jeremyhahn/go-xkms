@@ -120,6 +120,23 @@ The contract (board-id format, ES256 only, rotation and errors) is in
 | Create a board key | `POST /api/v1/ota-image-keys/{board}` | `CreateOTAImageKey` | same as REST | `xkms.createOTAImageKey` | `CreateOTAImageKey` | `keys:create` |
 | Rotate a board key | `POST /api/v1/ota-image-keys/{board}/rotate` | `RotateOTAImageKey` | same as REST | `xkms.rotateOTAImageKey` | `RotateOTAImageKey` | `keys:rotate` |
 | Sign an OTA image | `POST /api/v1/ota-image-keys/{board}/sign` | `SignOTAImage` | same as REST | `xkms.signOTAImage` | `SignOTAImage` | `keys:sign` |
+| Export a board public key | `GET /api/v1/ota-image-keys/{board}/public-key` | `ExportOTAImagePublicKey` | same as REST | `xkms.exportOTAImagePublicKey` | `ExportOTAImagePublicKey` | `keys:get` |
+
+The public key export returns `key_id`, `board_id`, `version` (the current
+key version), `raw` (the 64-byte X || Y, base64 in JSON) and `cose_key` (a
+COSE_Key with `kid` = the key id, base64 in JSON). A board with no key
+returns 404 on REST and a key-not-found error on MCP. Reading a public key
+takes `keys:get`, the same as `xkms.getPublicKey`. The REST backend comes
+from the `backend` query parameter. The REST route is at
+`pkg/api/rest/routes.go:197` (handler `pkg/api/rest/handlers_ota_image.go:134`),
+the MCP method at `pkg/api/mcp/server.go:275` (handler
+`pkg/api/mcp/handlers_ota_image.go:97`), and the server-side method on
+`transport.Servicer` at `pkg/api/transport/servicer.go:124`. The gRPC RPC
+is at `pkg/api/grpc/proto/xkmsv1/xkms.proto:78` (service method
+`pkg/api/grpc/service_ota_image.go:120`), and the client method on
+`transport.Client` at `pkg/api/transport/client.go:79`, carried by every
+client transport (gRPC, Unix, embedded, REST, QUIC and MCP). `xkmsctl key
+ota-image export <board-id>` calls it (`cmd/xkmsctl/key_ota_image.go:73`).
 
 Where each call is defined:
 

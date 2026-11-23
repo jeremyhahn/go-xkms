@@ -203,6 +203,10 @@ func (m *mockPIVClient) RotateOTAImageKey(_ context.Context, _ *transport.OTAIma
 	return nil, nil
 }
 
+func (m *mockPIVClient) ExportOTAImagePublicKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.OTAImagePublicKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockPIVClient) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }

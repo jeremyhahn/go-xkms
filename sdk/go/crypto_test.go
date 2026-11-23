@@ -518,6 +518,10 @@ func (n *noopClient) RotateOTAImageKey(context.Context, *transport.OTAImageKeyRe
 	return nil, nil
 }
 
+func (n *noopClient) ExportOTAImagePublicKey(context.Context, *transport.OTAImageKeyRequest) (*transport.OTAImagePublicKeyResponse, error) {
+	return nil, nil
+}
+
 func (n *noopClient) SignOTAImage(context.Context, *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }
