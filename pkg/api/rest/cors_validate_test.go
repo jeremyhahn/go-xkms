@@ -55,6 +55,12 @@ func TestCORSOptionsValidate(t *testing.T) {
 		"https://",
 		"https://app.example:0",
 		"https://app.example:99999",
+		"https://app.example:",
+		"https://[::1]:",
+		"https://[not-an-ip]",
+		"https://[1.2.3.4]",
+		"https://[fe80::1%25eth0]",
+		"https://[]",
 		"",
 	} {
 		t.Run("refused "+origin, func(t *testing.T) {
