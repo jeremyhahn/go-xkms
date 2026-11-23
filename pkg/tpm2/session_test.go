@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"
@@ -256,6 +257,86 @@ func TestSaveKeyPair_RecoveryCrashLeavesNoMismatch(t *testing.T) {
 	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	require.NoError(t, err)
 	require.Equal(t, "public-C/private-C", string(gotPub)+"/"+string(gotPriv))
+}
+
+// pausingKeyBackend runs beforePrivate once, just before the private-blob
+// overwrite of a recovering create-only save.
+type pausingKeyBackend struct {
+	store.KeyBackend
+	once          sync.Once
+	beforePrivate func()
+}
+
+func (b *pausingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, fsext types.FSExtension, overwrite bool) error {
+	if fsext == store.FSEXT_PRIVATE_BLOB && overwrite {
+		b.once.Do(b.beforePrivate)
+	}
+	return b.KeyBackend.Save(attrs, data, fsext, overwrite)
+}
+
+// Two recoveries of one private-only key overlap: A fences the pair and
+// pauses before its private overwrite while B runs. Whatever B does, A must
+// never overwrite the private blob of a pair B published.
+func TestSaveKeyPair_OverlappingRecoveriesNeverMismatch(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+
+	attrs := &types.KeyAttributes{
+		CN:      "overlapping-recovery-key",
+		KeyType: types.KeyTypeTPM,
+		Parent: &types.KeyAttributes{CN: "parent", KeyType: types.KeyTypeStorage,
+			TPMAttributes: &types.TPMAttributes{
+				Handle: tpm2.TPMHandle(0x81000001),
+				Name:   tpm2.TPM2BName{Buffer: []byte{0x00, 0x0b}},
+			}},
+	}
+	// An earlier save stopped between its two writes: private only.
+	require.NoError(t, shared.Save(attrs, []byte("private-0"), store.FSEXT_PRIVATE_BLOB, false))
+
+	privA := tpm2.TPM2BPrivate{Buffer: []byte("private-A")}
+	pubA := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-A"))
+	privB := tpm2.TPM2BPrivate{Buffer: []byte("private-B")}
+	pubB := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B"))
+
+	errB := make(chan error, 1)
+	paused := &pausingKeyBackend{KeyBackend: shared, beforePrivate: func() {
+		go func() { errB <- tpmImpl.SaveKeyPair(attrs, privB, pubB, shared, false) }()
+		// B either completes inside A's pause (no serialisation) or waits
+		// for A; give it time to do the former.
+		select {
+		case err := <-errB:
+			errB <- err
+		case <-time.After(300 * time.Millisecond):
+		}
+	}}
+	errA := tpmImpl.SaveKeyPair(attrs, privA, pubA, paused, false)
+	var errBRes error
+	select {
+	case errBRes = <-errB:
+	case <-time.After(10 * time.Second):
+		t.Fatal("recovery B never finished")
+	}
+
+	gotPriv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	pair := string(gotPub) + "/" + string(gotPriv)
+	require.Contains(t, []string{"public-A/private-A", "public-B/private-B"}, pair,
+		"overlapping recoveries must leave a matching pair")
+	if pair == "public-A/private-A" {
+		require.NoError(t, errA)
+		require.ErrorIs(t, errBRes, store.ErrBlobExists)
+	} else {
+		require.NoError(t, errBRes)
+		require.ErrorIs(t, errA, store.ErrBlobExists)
+	}
 }
 
 func TestSaveKeyPairWithNilBackend(t *testing.T) {
