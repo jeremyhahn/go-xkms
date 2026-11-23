@@ -1,6 +1,7 @@
 package buildgates
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -125,12 +126,14 @@ func TestMakefileLDFlagsTargetsExist(t *testing.T) {
 }
 
 // TestBinariesReportStampedVersion builds xkmsctl and xkmsd with the
-// Makefile's -X targets set to a probe value and asserts each prints it.
+// complete version target set (which the Makefile must stamp exactly), each
+// set to a distinct probe, and asserts each binary prints every probe in
+// its own field.
 func TestBinariesReportStampedVersion(t *testing.T) {
-	const probe = "v9.9.9"
+	requireStampedTargetSet(t, "Makefile LDFLAGS", makefileLDFlagsTargets(t))
 	var ldflags []string
-	for _, target := range makefileLDFlagsTargets(t) {
-		ldflags = append(ldflags, "-X", target+"="+probe)
+	for _, f := range stampedFields {
+		ldflags = append(ldflags, "-X", f.target+"="+f.probe)
 	}
 	bin := t.TempDir()
 	for _, b := range versionBinaries {
@@ -146,8 +149,124 @@ func TestBinariesReportStampedVersion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s %v: %v\n%s", b.pkg, b.args, err, msg)
 		}
-		if !strings.Contains(string(msg), probe) {
-			t.Errorf("%s %v does not print the stamped version %s:\n%s", b.pkg, b.args, probe, msg)
+		for _, f := range stampedFields {
+			label := f.labels[b.pkg]
+			got, ok := outputField(string(msg), label)
+			if !ok {
+				t.Errorf("%s %v prints no %q line for %s:\n%s", b.pkg, b.args, label, f.target, msg)
+				continue
+			}
+			if got != f.probe {
+				t.Errorf("%s %v: %q field = %q, want %q (stamped via %s)", b.pkg, b.args, label, got, f.probe, f.target)
+			}
+		}
+	}
+}
+
+// stampedFields is the complete set of -X targets every daemon and CLI
+// build path stamps, a distinct probe value per target, and the label under
+// which each binary prints that value.
+var stampedFields = []struct {
+	target string
+	probe  string
+	labels map[string]string
+}{
+	{"main.Version", "v9.9.9-probe", map[string]string{"cmd/xkmsctl": "xkmsctl version", "cmd/xkmsd": "Version:"}},
+	{"main.GitCommit", "c0ffee1-probe", map[string]string{"cmd/xkmsctl": "Git commit:", "cmd/xkmsd": "Git Commit:"}},
+	{"main.BuildDate", "2099-01-02T03:04:05Z", map[string]string{"cmd/xkmsctl": "Build date:", "cmd/xkmsd": "Built:"}},
+}
+
+// outputField returns the value printed after label on the first output
+// line that starts with it (leading whitespace ignored).
+func outputField(out, label string) (string, bool) {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, label); ok {
+			return strings.TrimSpace(rest), true
+		}
+	}
+	return "", false
+}
+
+// requireStampedTargetSet fails unless got names exactly the stampedFields
+// targets, each once.
+func requireStampedTargetSet(t *testing.T, source string, got []string) {
+	t.Helper()
+	want := map[string]bool{}
+	for _, f := range stampedFields {
+		want[f.target] = true
+	}
+	seen := map[string]bool{}
+	for _, g := range got {
+		if !want[g] {
+			t.Errorf("%s stamps %q, which is not one of the version targets", source, g)
+		}
+		if seen[g] {
+			t.Errorf("%s stamps %q twice", source, g)
+		}
+		seen[g] = true
+	}
+	for w := range want {
+		if !seen[w] {
+			t.Errorf("%s does not stamp %s", source, w)
+		}
+	}
+}
+
+// releaseBuildPaths are the files that build xkmsd or xkmsctl directly
+// with their own -ldflags rather than through the Makefile, with the
+// number of go build -ldflags definitions each must carry.
+var releaseBuildPaths = map[string]int{
+	".github/workflows/release.yml": 3,
+	"Dockerfile.cli":                1,
+	"Dockerfile.grpc":               1,
+	"Dockerfile.mcp":                1,
+	"Dockerfile.quic":               1,
+	"Dockerfile.rest":               1,
+	"Dockerfile.server":             1,
+}
+
+// TestReleaseLDFlagsStampVersionTargets guards the release workflow and the
+// Dockerfiles: each line that stamps package main must stamp exactly the
+// Version, GitCommit and BuildDate variables both binaries declare. The
+// linker ignores an -X target that names no variable, so a stale name
+// ships a release that reports dev (#2255).
+func TestReleaseLDFlagsStampVersionTargets(t *testing.T) {
+	paths := map[string]int{}
+	for p, n := range releaseBuildPaths {
+		paths[p] = n
+	}
+	extra, err := filepath.Glob(filepath.Join(repoRoot, "Dockerfile*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, abs := range extra {
+		rel := filepath.Base(abs)
+		if _, ok := paths[rel]; !ok {
+			paths[rel] = -1 // any count; checked only if it stamps main
+		}
+	}
+	for rel, wantLines := range paths {
+		data, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		lines := 0
+		for i, line := range strings.Split(string(data), "\n") {
+			var targets []string
+			for _, m := range ldflagsXTarget.FindAllStringSubmatch(line, -1) {
+				if strings.HasPrefix(m[1], "main.") {
+					targets = append(targets, m[1])
+				}
+			}
+			if len(targets) == 0 {
+				continue
+			}
+			lines++
+			requireStampedTargetSet(t, fmt.Sprintf("%s:%d", rel, i+1), targets)
+		}
+		if wantLines >= 0 && lines != wantLines {
+			t.Errorf("%s: %d lines stamp package main, want %d", rel, lines, wantLines)
 		}
 	}
 }
