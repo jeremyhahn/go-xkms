@@ -6,9 +6,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
@@ -24,6 +26,12 @@ type NodeUserSource interface {
 // ErrNodeUsersNotServing is returned while the node has not published its
 // user service yet (still booting or sealed).
 var ErrNodeUsersNotServing = errors.New("auth: qrdb node user service not serving")
+
+// ErrNodeUsersNoCertActivator is returned by ActivateWithCertBinding when
+// the node's user service lacks qrdb's conditional first-credential
+// activation (qrdbuser.CertActivator). It wraps
+// qrdbuser.ErrActivationUnsupported.
+var ErrNodeUsersNoCertActivator = fmt.Errorf("auth: qrdb node user service cannot activate with a certificate binding: %w", qrdbuser.ErrActivationUnsupported)
 
 // NodeUserClient looks users up through the embedded node's user service,
 // the path pkg/server's nodeCertUsers already resolves mTLS certificates
@@ -199,4 +207,51 @@ func nodeUser(u *qrdbsdk.User, err error) (*qrdbtransport.User, error) {
 		out.LastAuth = u.LastAuth.UTC().Format(time.RFC3339Nano)
 	}
 	return out, nil
+}
+
+// ActivatePendingUser moves a pending account to active in one conditional
+// write. The node judges the account it commits over with requirePending,
+// so an account that left pending after the caller's check (an
+// administrator's disable, for one) is refused with
+// *qrdbuser.AccountNotPendingError and nothing is written: an invitation
+// can never reinstate an account that is no longer pending.
+func (c *NodeUserClient) ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
+	users, err := c.service()
+	if err != nil {
+		return nil, err
+	}
+	return nodeUser(users.UpdateUser(ctx, &qrdbsdk.UpdateUserRequest{
+		ID:        userID,
+		Lifecycle: qrdbsdk.LifecycleActive,
+		Guard:     requirePending,
+	}))
+}
+
+// requirePending is ActivatePendingUser's UpdateUserRequest.Guard: it
+// refuses an update over any committed record that is not pending.
+func requirePending(prior, _ *qrdbsdk.User) error {
+	if prior == nil {
+		return errors.New("auth: activation guard saw no committed account")
+	}
+	if prior.Lifecycle != qrdbsdk.LifecyclePending {
+		return &qrdbuser.AccountNotPendingError{ID: prior.ID, Lifecycle: prior.Lifecycle}
+	}
+	return nil
+}
+
+// ActivateWithCertBinding binds a certificate thumbprint to a pending
+// account holding no binding and activates it, in qrdb's single
+// conditional commit (qrdbuser.CertActivator). A node whose user service
+// lacks it is refused with ErrNodeUsersNoCertActivator: the binding and
+// the activation are never written apart.
+func (c *NodeUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	users, err := c.service()
+	if err != nil {
+		return nil, err
+	}
+	activator, ok := users.(qrdbuser.CertActivator)
+	if !ok {
+		return nil, ErrNodeUsersNoCertActivator
+	}
+	return nodeUser(activator.ActivateWithCertBinding(ctx, userID, thumbprint, notAfterUnix))
 }

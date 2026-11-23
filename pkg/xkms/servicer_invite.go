@@ -27,6 +27,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 
 	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -480,14 +481,17 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, ErrInviteUnusable
 	}
 
+	// The binding and the activation are one conditional commit: an
+	// account that left pending after the check above (an administrator's
+	// disable, for one) is refused with nothing bound, and stays as the
+	// administrator left it.
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	if _, err := s.inviteUserClient().AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+	if _, err := s.inviteUserClient().ActivateWithCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
 		releaseClaim()
-		return nil, &ErrUserOperation{Operation: "bind piv certificate", Err: err}
-	}
-
-	if err := s.activateInviteUser(ctx, userID); err != nil {
-		return nil, err
+		if notPending := (*qrdbuser.AccountNotPendingError)(nil); errors.As(err, &notPending) {
+			return nil, ErrInviteUnusable
+		}
+		return nil, &ErrUserOperation{Operation: "activate invited user with piv certificate", Err: err}
 	}
 	if claim != nil {
 		// The activation is the commit point: the account is active, so no
@@ -498,7 +502,10 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	return &transport.ActivateInvitePIVResponse{UserID: userID}, nil
 }
 
-// activateInviteUser transitions userID from pending to active.
+// activateInviteUser transitions userID from pending to active, in a write
+// conditional on the account still being pending when it commits: an
+// account that left pending after the caller's check (an administrator's
+// disable, for one) is refused and stays as it is.
 //
 // A failed write does not prove the state did not land: a commit whose
 // response was lost reports failure on an account that IS now active.
@@ -508,14 +515,16 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 // write happened and the invite must still be redeemed by the caller; any
 // other outcome (including a failed re-read) keeps the fail-closed refusal,
 // which leaves the invitation intact and the account recoverable — mirrors
-// go-quicbaas's ActivateFIDO2Finish / PIVActivator.Activate.
+// go-quicbaas's ActivateFIDO2Finish / PIVActivator.Activate. The re-read
+// follows only the guarded write, so it can never be what activates a
+// disabled account.
 func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) error {
 	active := string(qrdbsdk.LifecycleActive)
-	if _, err := s.inviteUserClient().UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: active}); err != nil {
+	if _, err := s.inviteUserClient().ActivatePendingUser(ctx, userID); err != nil {
 		if u, gErr := s.inviteUserClient().GetUser(ctx, userID); gErr == nil && u != nil && u.Lifecycle == active {
 			return nil
 		}
-		if errors.Is(err, ErrInviteUnusable) {
+		if notPending := (*qrdbuser.AccountNotPendingError)(nil); errors.Is(err, ErrInviteUnusable) || errors.As(err, &notPending) {
 			return ErrInviteUnusable
 		}
 		return &ErrUserOperation{Operation: "activate invited user", Err: err}
@@ -523,13 +532,19 @@ func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) err
 	return nil
 }
 
-// InviteUserClient is the part of qrdbtransport.UserClient the invite
-// routes call: they read the invited user, bind a PIV certificate to it and
-// activate it.
+// InviteUserClient is what the invite routes call on qrdb: they read the
+// invited user and activate it. Both activations are conditional on the
+// account still being pending when they commit, so an administrator's
+// disable landing after the routes' pending check is never undone: an
+// account that is no longer pending is refused with
+// *qrdbuser.AccountNotPendingError and nothing is written.
 type InviteUserClient interface {
 	GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error)
-	UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
-	AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+	// ActivatePendingUser moves a pending account to active.
+	ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error)
+	// ActivateWithCertBinding binds a first certificate to a pending
+	// account holding no binding and activates it, in one commit.
+	ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
 }
 
 // SetInviteUserClient wires the user client the invite routes use. The
@@ -559,10 +574,12 @@ func (s *XKMSService) inviteUserClient() InviteUserClient {
 	if ref := s.inviteUsers.Load(); ref != nil {
 		return ref.client
 	}
-	if s.users == nil {
-		return nil
+	// A plain qrdb user client has no conditional activation: the invite
+	// routes stay unconfigured rather than activate unguarded.
+	if users, ok := s.users.(InviteUserClient); ok {
+		return users
 	}
-	return s.users
+	return nil
 }
 
 // bindInviteTenant binds the tenant an invite record was found in on ctx,

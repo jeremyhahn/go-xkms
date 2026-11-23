@@ -520,14 +520,14 @@ func TestFinishInviteRegistration_MismatchedSessionEnrolsNothing(t *testing.T) {
 // committing, as a qrdb write lost after the credential was persisted.
 func (f *inviteFixture) failActivationOnce(t *testing.T) {
 	t.Helper()
-	update := f.users.updateUser
+	activate := f.users.activatePendingUser
 	failed := false
-	f.users.updateUser = func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
-		if !failed && req.Lifecycle == string(qrdbsdk.LifecycleActive) {
+	f.users.activatePendingUser = func(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
+		if !failed {
 			failed = true
 			return nil, errors.New("injected: activation not committed")
 		}
-		return update(ctx, req)
+		return activate(ctx, userID)
 	}
 }
 
