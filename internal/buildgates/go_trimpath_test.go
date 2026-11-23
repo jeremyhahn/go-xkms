@@ -139,6 +139,54 @@ func TestDockerBuildsForwardGOFLAGS(t *testing.T) {
 	}
 }
 
+// TestDevcontainerHelpersForwardGOFLAGS pins Codex P2 on #2322 (Makefile:21):
+// the global export does not reach commands run through `docker compose
+// exec`, so run_in_devcontainer and run_with_server (integration-test-fido2,
+// integration-test-pkcs11-module, ...) must forward the exported GOFLAGS into
+// every exec and append them to the devcontainer's own (-mod=readonly).
+func TestDevcontainerHelpersForwardGOFLAGS(t *testing.T) {
+	lines := makeLogical(readMakefile(t))
+	const forward = `-e XKMS_CALLER_GOFLAGS="$$GOFLAGS"`
+	merge := ""
+	for _, l := range lines {
+		if regexp.MustCompile(`^devcontainer_goflags\s*:?=`).MatchString(l) {
+			merge = l
+		}
+	}
+	if !strings.Contains(merge, `export GOFLAGS=`) || !strings.Contains(merge, `XKMS_CALLER_GOFLAGS`) {
+		t.Errorf("devcontainer_goflags does not append XKMS_CALLER_GOFLAGS to the devcontainer's GOFLAGS: %q", merge)
+	}
+	for _, name := range []string{"run_in_devcontainer", "run_with_server"} {
+		in, execs := false, 0
+		for _, l := range lines {
+			if l == "define "+name {
+				in = true
+				continue
+			}
+			if !in {
+				continue
+			}
+			if l == "endef" {
+				break
+			}
+			parts := strings.Split(l, "$(DOCKER_COMPOSE) exec")
+			for _, p := range parts[1:] {
+				execs++
+				dev := strings.Index(p, " devcontainer ")
+				if dev < 0 || !strings.Contains(p[:dev], forward) {
+					t.Errorf("%s: compose exec does not forward GOFLAGS (%s): %q", name, forward, p)
+				}
+				if !strings.Contains(p, "$(devcontainer_goflags)") {
+					t.Errorf("%s: compose exec command does not apply $(devcontainer_goflags): %q", name, p)
+				}
+			}
+		}
+		if execs == 0 {
+			t.Errorf("%s has no $(DOCKER_COMPOSE) exec", name)
+		}
+	}
+}
+
 func TestCIWorkflowGOFLAGSTrimpath(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "ci.yml"))
 	if err != nil {
