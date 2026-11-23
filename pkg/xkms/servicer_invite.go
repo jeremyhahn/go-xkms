@@ -447,15 +447,23 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		}
 	}
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	if _, err := s.inviteUsers.ActivateWithCertBinding(qrdbsdk.ContextWithTenant(ctx, req.TenantID), userID, thumbprint, cert.NotAfter.Unix()); err != nil {
-		if claim != nil {
-			// Nothing was bound: a later activation, by either method, may
-			// claim afresh.
-			_ = claim.Release(context.WithoutCancel(ctx))
-		}
+	tenantCtx := qrdbsdk.ContextWithTenant(ctx, req.TenantID)
+	if _, err := s.inviteUsers.ActivateWithCertBinding(tenantCtx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
 		var notPending *qrdbuser.AccountNotPendingError
 		if errors.As(err, &notPending) {
+			// The conditional commit refused: nothing was bound, so a later
+			// activation, by either method, may claim afresh.
+			if claim != nil {
+				_ = claim.Release(context.WithoutCancel(ctx))
+			}
 			return nil, ErrInviteUnusable
+		}
+		if claim != nil {
+			// Any other error does not establish that nothing was bound:
+			// qrdb can commit and then report CommitOutcomeUnknownError
+			// (Codex round-2 P1). Reconcile against the persisted account
+			// before letting go of the claim.
+			s.settleInviteClaim(context.WithoutCancel(tenantCtx), claim, userID)
 		}
 		return nil, &ErrUserOperation{Operation: "activate invited user with piv certificate", Err: err}
 	}
@@ -469,6 +477,26 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrUserOperation{Operation: "redeem invite", Err: err}
 	}
 	return &transport.ActivateInvitePIVResponse{UserID: userID}, nil
+}
+
+// settleInviteClaim decides the first-credential claim of a PIV activation
+// whose conditional commit returned an error other than a refusal. The claim
+// is released only when the persisted account is still pending with no
+// certificate binding, which proves nothing was bound. An account that left
+// pending or holds a binding was activated by the commit: the claim is
+// committed with no credential, so no WebAuthn finish enrols it. When the
+// account cannot be read the outcome stays unknown and the claim is kept, as
+// a fence, for good.
+func (s *XKMSService) settleInviteClaim(ctx context.Context, claim xkmswebauthn.FirstCredentialClaim, userID uint64) {
+	u, err := s.inviteUsers.GetUser(ctx, userID)
+	switch {
+	case err != nil || u == nil:
+		// Outcome unknown: keep the fence.
+	case u.Lifecycle == qrdbsdk.LifecyclePending && len(u.CertBindings) == 0:
+		_ = claim.Release(ctx)
+	default:
+		_ = claim.Commit(ctx, nil)
+	}
 }
 
 // activateInviteUser transitions userID from pending to active.
