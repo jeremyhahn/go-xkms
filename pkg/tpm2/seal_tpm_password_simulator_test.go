@@ -73,3 +73,35 @@ func TestSealKey_TPMBackedPasswordDoesNotDeadlock(t *testing.T) {
 		return err
 	})
 }
+
+// TestSeal_UnreadablePlatformPasswordReturnsUnavailable seals under a
+// TPM-backed password whose secret was never sealed: the seal must fail with
+// ErrPlatformPasswordUnavailable and leave no object an empty credential opens.
+func TestSeal_UnreadablePlatformPasswordReturnsUnavailable(t *testing.T) {
+	h := newSimHarness(t, nil)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	password := NewPlatformPassword(logger, h.TPM,
+		sealedKeyAttrs(t, h, "tpm-password-never-sealed", false, mustPassword(t, []byte("source-pin"))),
+		h.Backend)
+
+	protected := sealedKeyAttrs(t, h, "tpm-password-unreadable", false, password)
+	protected.SealData = types.NewSealData([]byte("must-not-be-sealed"))
+	var err error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err = h.TPM.SealKey(protected, h.Backend, true)
+	}()
+	select {
+	case <-done:
+	case <-time.After(sealDeadline):
+		t.Fatalf("SealKey did not finish within %s", sealDeadline)
+	}
+	require.ErrorIs(t, err, ErrPlatformPasswordUnavailable)
+	assert.Same(t, password.(*PlatformPassword), protected.Password, "the caller's password must stay in place")
+
+	empty := sealedKeyAttrs(t, h, "tpm-password-unreadable", false, mustPassword(t, []byte{}))
+	_, err = h.TPM.UnsealKey(empty, h.Backend)
+	require.Error(t, err, "no sealed object may open with an empty credential")
+}
