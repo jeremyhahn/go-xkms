@@ -30,14 +30,12 @@ func TestReexport_OIDCCredentialConstructors(t *testing.T) {
 	require.Equal(t, reflect.ValueOf(credential.New).Pointer(), reflect.ValueOf(NewOIDCCredentialService).Pointer())
 	require.Equal(t, reflect.ValueOf(credential.RegistryBarriers).Pointer(), reflect.ValueOf(OIDCCredentialRegistryBarriers).Pointer())
 
-	var barriers OIDCCredentialBarriers = credential.RegistryBarriers(nil)
-	require.NotNil(t, barriers)
+	require.Equal(t, reflect.TypeFor[credential.Barriers](), reflect.TypeFor[OIDCCredentialBarriers]())
+	require.NotNil(t, OIDCCredentialRegistryBarriers(nil))
 }
 
 // TestReexport_PIVStorageError pins the PIV storage error type, so xkey
 // matches it with errors.As through sdk/go.
 func TestReexport_PIVStorageError(t *testing.T) {
-	var sdkErr *PIVStorageError
-	var pkgErr *pivcert.PIVStorageError = sdkErr
-	require.Nil(t, pkgErr)
+	require.Equal(t, reflect.TypeFor[*pivcert.PIVStorageError](), reflect.TypeFor[*PIVStorageError]())
 }
