@@ -193,3 +193,16 @@ type UserVerifier interface {
 	// RP-scoped (CTAP 2.1 §6.5.5.7.3).
 	VerifyUser(ctx context.Context, rpID string) error
 }
+
+// UserVerificationAvailability is implemented by a UserVerifier whose
+// on-demand verification depends on its configuration or its peer: a phone
+// backend with no verifier configured, or paired with a phone that signs but
+// does not implement local.verifyUser, implements UserVerifier and still
+// cannot verify a user. UserVerificationAvailable reports whether VerifyUser
+// can reach a decision now; when it returns false the authenticator treats
+// the backend as having no UserVerifier, so it neither advertises uv nor
+// serves getPinUvAuthTokenUsingUvWithPermissions (ruling 167). A UserVerifier
+// that does not implement it is always available.
+type UserVerificationAvailability interface {
+	UserVerificationAvailable() bool
+}

@@ -327,7 +327,8 @@ func (a *Authenticator) supportsPinUvAuthToken() bool {
 }
 
 // userVerifier returns the key backend's on-demand user verification method,
-// or nil when the backend has none (ruling 167).
+// or nil when the backend has none or reports it cannot verify a user now
+// (keybackend.UserVerificationAvailability, ruling 167).
 func (a *Authenticator) userVerifier() keybackend.UserVerifier {
 	backend := a.keyBackend
 	// NewAuthenticator decorates a non-attesting backend with an
@@ -337,6 +338,9 @@ func (a *Authenticator) userVerifier() keybackend.UserVerifier {
 	}
 	verifier, ok := backend.(keybackend.UserVerifier)
 	if !ok {
+		return nil
+	}
+	if availability, ok := verifier.(keybackend.UserVerificationAvailability); ok && !availability.UserVerificationAvailable() {
 		return nil
 	}
 	return verifier
