@@ -1,0 +1,1 @@
+- **`xkmsctl key copy` no longer sends a fixed wrapping algorithm.** Without `--algorithm` the request carries none; REST, gRPC and MCP accept an omitted `algorithm` and the service picks `TPM2_DUPLICATE` for a TPM2 destination and `RSAES_OAEP_SHA_256` otherwise (#2283).
