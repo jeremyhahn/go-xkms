@@ -61,6 +61,11 @@ var (
 
 	ErrPhoneConfigNil = errors.New("server: phone backend configuration is not set")
 
+	// ErrBackendPINNodeKeyBeforeUnseal refuses a Raft transport key on the
+	// PKCS#11 token with a backend PIN strategy other than tpm2: the token
+	// opens before unseal, and only tpm2 releases the PIN then.
+	ErrBackendPINNodeKeyBeforeUnseal = errors.New("server: a Raft key on the PKCS#11 token needs the tpm2 backend PIN strategy")
+
 	// ErrPhoneBackendCreate indicates the phone backend could not be created.
 	ErrPhoneBackendCreate = errors.New("server: failed to create phone backend")
 

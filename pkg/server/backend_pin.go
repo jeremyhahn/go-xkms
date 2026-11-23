@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
@@ -73,17 +74,39 @@ func (s *Server) resolveBackendPIN() error {
 	if !s.pkcs11Enabled() && !s.rngPKCS11PINActive() {
 		return nil
 	}
+	// A Raft key on the token resolved the strategy before the pre-node
+	// open (resolvePreNodeBackendPIN): install that one, never resolve twice.
+	if s.preNodeBackendPIN != "" {
+		s.installBackendPIN(s.preNodeBackendPIN)
+		return nil
+	}
+	strategy, err := s.resolveBackendPINStrategy(false)
+	if err != nil {
+		return err
+	}
+	s.installBackendPIN(strategy)
+	return nil
+}
+
+// resolveBackendPINStrategy resolves (and on a fresh install persists) the
+// backend PIN strategy. preNode raises the minimum to tpm2, so pinselect
+// refuses a weaker strategy before it persists a record.
+func (s *Server) resolveBackendPINStrategy(preNode bool) (pinselect.BackendPINStrategy, error) {
 	// Manual is refused before anything is persisted or released: no
 	// unseal request carries the PIN yet (ErrBackendPINManualUnavailable).
 	if s.config.BackendPIN.Strategy == string(pinselect.BackendPINManual) ||
 		s.config.BackendPIN.Minimum == string(pinselect.BackendPINManual) {
-		return ErrBackendPINManualUnavailable
+		return "", ErrBackendPINManualUnavailable
+	}
+	minimum := pinselect.BackendPINStrategy(s.config.BackendPIN.Minimum)
+	if preNode && (minimum == "" || minimum == pinselect.BackendPINSealed) {
+		minimum = pinselect.BackendPINTPM2
 	}
 	tpmPresent, barrierAvailable := s.probeBackendPIN()
 	strategy, err := pinselect.ResolveBackendPIN(pinselect.BackendPINConfig{
 		PINDir:   s.backendPINDir(),
 		Strategy: pinselect.BackendPINStrategy(s.config.BackendPIN.Strategy),
-		Minimum:  pinselect.BackendPINStrategy(s.config.BackendPIN.Minimum),
+		Minimum:  minimum,
 		// tpm2 is only available when the PIN is actually sealed to the
 		// TPM: a TPM beside a barrier-sealed PIN protects nothing, so it
 		// never satisfies strategy or minimum tpm2 (docs/SPEC.md:78).
@@ -92,14 +115,35 @@ func (s *Server) resolveBackendPIN() error {
 		SealerIsPKCS11:   s.sealerIsPKCS11(),
 	})
 	if err != nil {
-		return err
+		if preNode {
+			return "", preNodeBackendPINError(err)
+		}
+		return "", err
 	}
 	if strategy == pinselect.BackendPINManual {
 		// A record persisted as manual by an earlier release.
-		return ErrBackendPINManualUnavailable
+		return "", ErrBackendPINManualUnavailable
 	}
-	s.installBackendPIN(strategy)
-	return nil
+	if preNode && strategy != pinselect.BackendPINTPM2 {
+		return "", fmt.Errorf("%w: resolved strategy %q", ErrBackendPINNodeKeyBeforeUnseal, strategy)
+	}
+	return strategy, nil
+}
+
+// preNodeBackendPINError marks a refusal of a weaker-than-tpm2 strategy
+// for the pre-node open with ErrBackendPINNodeKeyBeforeUnseal, keeping the
+// pinselect error in the chain. Before unseal there is no barrier, so a
+// sealed strategy is refused as unavailable.
+func preNodeBackendPINError(err error) error {
+	var below *pinselect.BackendPINBelowMinimumError
+	if errors.As(err, &below) {
+		return fmt.Errorf("%w: resolved strategy %q: %w", ErrBackendPINNodeKeyBeforeUnseal, below.Strategy, err)
+	}
+	var unavailable *pinselect.BackendPINUnavailableError
+	if errors.As(err, &unavailable) && unavailable.Strategy != pinselect.BackendPINTPM2 {
+		return fmt.Errorf("%w: resolved strategy %q: %w", ErrBackendPINNodeKeyBeforeUnseal, unavailable.Strategy, err)
+	}
+	return err
 }
 
 // installBackendPIN installs the in-memory holder for strategy and ties its

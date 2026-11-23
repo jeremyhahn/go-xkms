@@ -138,6 +138,10 @@ type Server struct {
 	// backendPIN holds the PKCS#11 backend PIN under the resolved
 	// backend_pin strategy (#2262); nil when no PKCS#11 backend is enabled.
 	backendPIN *pinselect.BackendPIN
+	// preNodeBackendPIN is the backend PIN strategy resolved before the
+	// pre-node PKCS#11 open (a Raft key on the token); resolveBackendPIN
+	// installs it instead of resolving a second time.
+	preNodeBackendPIN pinselect.BackendPINStrategy
 	// backendPINProbe reports (TPM present, barrier available) for the
 	// backend PIN resolution; nil uses the configured backends and barrier.
 	backendPINProbe func() (tpmPresent, barrierAvailable bool)
