@@ -267,6 +267,11 @@ type PhoneKeyBackend struct {
 
 	connected atomic.Bool
 	closed    atomic.Bool
+
+	// verifyUserUnsupported records that the paired phone answered
+	// local.verifyUser with method-not-found: it signs but cannot verify a
+	// user, so UV is no longer advertised for it.
+	verifyUserUnsupported atomic.Bool
 }
 
 // NewPhoneKeyBackend creates a new phone key backend using BLE transport.
@@ -826,6 +831,13 @@ func (b *PhoneKeyBackend) VerifyUser(ctx context.Context, rpName string) error {
 	// A phone's refusal is typed by its code, so the caller can tell a
 	// cancelled prompt from a lockout or a missing pairing (#1712).
 	var rpcErr *pairingproto.RPCError
+	if errors.As(err, &rpcErr) && rpcErr.Code == pairingproto.ErrorCodeMethodNotFound {
+		// The phone does not implement local.verifyUser: stop advertising
+		// UV, and spend no uvRetries on a method it will never answer.
+		b.verifyUserUnsupported.Store(true)
+		b.log.Warn("the paired phone does not implement local.verifyUser")
+		return userVerificationUnavailable(err)
+	}
 	if errors.As(err, &rpcErr) {
 		err = &SentinelCauseError{Sentinel: pairingproto.MapVerifyUserRPCError(rpcErr), Cause: err}
 	}
@@ -847,6 +859,13 @@ func (b *PhoneKeyBackend) verifyUserExchange(ctx context.Context, req *pairingpr
 
 // userVerificationUnavailable marks cause as a user verification that
 // reached no decision (keybackend.ErrUserVerificationUnavailable).
+// UserVerificationAvailable reports whether VerifyUser can verify a user: a
+// verifier is configured and the paired phone has not refused local.verifyUser
+// as an unknown method. The authenticator advertises uv only when it is true.
+func (b *PhoneKeyBackend) UserVerificationAvailable() bool {
+	return b.cfg != nil && b.cfg.VerifyUser != nil && !b.verifyUserUnsupported.Load()
+}
+
 func userVerificationUnavailable(cause error) error {
 	return &keybackend.SentinelCauseError{Sentinel: keybackend.ErrUserVerificationUnavailable, Cause: cause}
 }
