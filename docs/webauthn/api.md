@@ -62,6 +62,7 @@ account that already has a passkey like the browser route does.
 | Only an account in good standing authenticates: lifecycle `active`, and an auth-method policy that is empty or names `webauthn`. Login begin answers any other account with the decoy an unknown one gets; finish (browser, SDK, gRPC, discoverable, and the qrdb FIDO2 factor) refuses a valid assertion as `verification_failed`; registration begin and add-passkey refuse it with `ErrRegistrationRefused`. The response never names the account's state; the server log does. | `CheckAccountStanding` (`pkg/webauthn/account_standing.go`), `Service.beginLoginOrDecoy` / `finishLoginUser` / `beginRegistrationFor` |
 | No user identifier before a successful login. The `X-User-Id` header is gone from login begin and is no longer read on login finish; the user ID comes back in the finish response. | `pkg/webauthn/http/handler.go` |
 | A credential ID belongs to exactly one account. Creating one that is already registered, to any account, fails with `ErrCredentialAlreadyExists`. | `CredentialStore.Save` (every store) |
+| A credential enrolled under the shared pre-tenant keyspace (`__xkms:webauthn/credentials/`) moves into its owner's tenant store when the consumer opens that store: the consumer calls `MigrateWebAuthnLegacyCredentials` before serving a ceremony from it. The old key is deleted only after the save; a record that cannot be moved stays in place and is reported, never dropped. | `MigrateLegacyCredentials` (`pkg/webauthn/legacy_migration.go`), re-exported as `sdk/go.MigrateWebAuthnLegacyCredentials` |
 
 The decoy key is drawn at startup and kept only in memory; the WebAuthn
 configuration has no server secret. So decoys change on restart and differ
@@ -104,6 +105,31 @@ The `username` key, its parallel encoding, and the conflict-detection
 decoders have been removed outright: `email` is the only login key any
 decoder reads, and a body that still carries `username` has that key ignored
 rather than honoured.
+
+### Legacy credential migration (go-xkms#1749)
+
+```go
+report, err := xkms.MigrateWebAuthnLegacyCredentials(ctx, xkms.WebAuthnLegacyCredentialMigration{
+    Legacy:   kv,       // qrdb KVClient over the shared legacy keyspace
+    Users:    users,    // qrdb UserClient: resolves each credential's tenant
+    TenantID: tenantID, // the tenant whose store is being opened
+    Store:    store,    // that tenant's store from NewWebAuthnQRDBUserStoreAdapter
+})
+```
+
+`WebAuthnCredentialMigrationReport` counts `Migrated`, `Skipped` (another
+tenant's credential, left for that tenant's store open) and `Failed`, with one
+typed error per record left in place in `Failures`. A second run reports zero
+migrated. Errors:
+
+| Error | Meaning |
+|---|---|
+| `*WebAuthnCredentialMigrationConfigError` | a field is missing (`Field`); nothing is read |
+| `*WebAuthnLegacyCredentialScanError` | the legacy keyspace cannot be read (sealed barrier, transport fault) |
+| `*WebAuthnLegacyCredentialCorruptError` | a record does not decode to the credential its key names |
+| `*WebAuthnCredentialOwnerUnresolvedError` | the credential's user, or the user's tenant, cannot be resolved |
+| `*WebAuthnCredentialMoveError` | a save, existing-record read or legacy delete failed (`Op`) |
+| `*WebAuthnCredentialMigrationIncompleteError` | returned with the report whenever `Failed > 0`; unwraps to every failure |
 
 ## Related identity routes
 

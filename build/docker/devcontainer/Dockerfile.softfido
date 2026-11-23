@@ -4,11 +4,16 @@
 # Uses uhid (userspace HID) when available, falls back to socket-based protocol
 
 FROM debian:bookworm-slim AS builder
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner. With a proxy set,
+# apt's history log, which records the command line, goes to /dev/null.
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
+    apt-get $p update && apt-get $p install -y --no-install-recommends \
     git \
     build-essential \
     cmake \
@@ -49,11 +54,16 @@ RUN git clone --depth 1 https://github.com/nicholasgilpin/soft-webauthn.git || t
 
 # Runtime stage
 FROM debian:bookworm-slim
+# Ruling 888: the pool's LAN apt cache, the BuildKit secret apt_proxy (in no
+# layer and no history entry), empty on a hosted runner. With a proxy set,
+# apt's history log, which records the command line, goes to /dev/null.
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=secret,id=apt_proxy,env=APT_PROXY \
+    p=${APT_PROXY:+-o Acquire::http::Proxy=$APT_PROXY -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -o Dir::Log::History=/dev/null}; \
+    apt-get $p update && apt-get $p install -y --no-install-recommends \
     libcbor0.8 \
     libpcsclite1 \
     libssl3 \

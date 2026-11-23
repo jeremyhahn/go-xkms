@@ -125,7 +125,7 @@ func (f *faultTPM) Close() error {
 // wrapping the provisioned simulator until the test ends.
 func withFaultTPM(t *testing.T, sim *provisionedSimulator) *faultTPM {
 	t.Helper()
-	f := &faultTPM{sharedTPM: sharedTPM{sim.tpm}}
+	f := &faultTPM{sharedTPM: newSharedTPM(t, sim.tpm)}
 	setVar(t, &openTPM, func() (xkms.TrustedPlatformModule, error) { return f, nil })
 	setVar(t, &openTPMForProvisioningWithPCROverrides, func(string, []uint, []uint) (xkms.TrustedPlatformModule, error) {
 		return f, nil
@@ -488,7 +488,7 @@ func TestRunTPMQuote_TPMFailures(t *testing.T) {
 // handle, or the device (and the in-process simulator's lock) stays held.
 func TestRunTPMQuote_ClosesAnUninitializedTPM(t *testing.T) {
 	sim := withProvisionedSimulatorTPM(t)
-	f := &faultTPM{sharedTPM: sharedTPM{sim.tpm}}
+	f := &faultTPM{sharedTPM: newSharedTPM(t, sim.tpm)}
 	setVar(t, &openTPM, func() (xkms.TrustedPlatformModule, error) { return f, ErrTPMNotInitialized })
 	setVar(t, &quotePCRs, "0")
 	setVar(t, &quoteNonce, "")

@@ -289,6 +289,9 @@ func (m *mockCA) ImportCertificate(_ context.Context, _ *x509.Certificate) error
 func (m *mockCA) ImportCertificatePEM(_ context.Context, _ string, _ []byte) error { return nil }
 func (m *mockCA) ImportDistributionCRLs(_ *x509.Certificate) error                 { return nil }
 func (m *mockCA) ImportIssuingCAs(_ context.Context, _ *x509.Certificate) error    { return nil }
+func (m *mockCA) ImportIssuingCAsInto(_ context.Context, _ *x509.Certificate, _ certstore.CertStore) error {
+	return nil
+}
 func (m *mockCA) ImportLocalAttestation(_ context.Context, _ *types.KeyAttributes, _ *tpm2.Quote) error {
 	return nil
 }
