@@ -278,8 +278,11 @@ func (d *NativeVirtualDevice) Write(data []byte) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Process the HID packet through the handler
-	d.hidHandler.HandleMessage(data)
+	// Hand the packet to the handler without waiting for the command it
+	// completes: the mutex only orders Write against Close, so the caller's
+	// next report (a CTAPHID_CANCEL for a command waiting for presence) is
+	// delivered while the command runs.
+	d.hidHandler.Submit(data)
 
 	return len(data), nil
 }

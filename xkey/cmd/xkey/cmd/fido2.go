@@ -1318,8 +1318,10 @@ func (d *fido2Device) runHIDEventLoop(ctx context.Context, r hidReportReader) er
 				slog.String("cmd_or_seq", formatCmd(packet)),
 			)
 
-			// Process the HID packet through the CTAP-HID handler
-			d.hidHandler.HandleMessage(packet)
+			// Hand the packet to the CTAP-HID handler without waiting for
+			// the command it completes: the loop must keep reading so a
+			// CTAPHID_CANCEL reaches a command waiting for presence.
+			d.hidHandler.Submit(packet)
 		}
 	}
 }
