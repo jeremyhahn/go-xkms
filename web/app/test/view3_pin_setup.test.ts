@@ -148,6 +148,54 @@ describe("PinSetupView", () => {
     assertNoPinLeak();
   });
 
+  it("never shows an SO verdict under User when the role changes while verification awaits", async () => {
+    let resolve: (r: SuccessResponse) => void = () => {};
+    verifySO.mockReturnValue(new Promise<SuccessResponse>((r) => { resolve = r; }));
+    render(PinSetupView);
+
+    await fireEvent.click(screen.getByRole("radio", { name: "SO" }));
+    await type("PIN to verify", NEW_SO);
+    await fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await waitFor(() => expect(verifySO).toHaveBeenCalledOnce());
+
+    const user = screen.getByRole("radio", { name: "User" }) as HTMLInputElement;
+    expect(user.disabled).toBe(true);
+    // Force the switch past the disabled control: the verdict must still
+    // belong to the SO PIN that was submitted.
+    user.checked = true;
+    await fireEvent.change(user);
+    resolve({ success: true });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Verify" })).toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("PIN verified")).not.toBeInTheDocument();
+    expect(verifyUser).not.toHaveBeenCalled();
+  });
+
+  it("clears a finished verdict when the role or the PIN changes", async () => {
+    verifySO.mockResolvedValue({ success: true });
+    render(PinSetupView);
+
+    await fireEvent.click(screen.getByRole("radio", { name: "SO" }));
+    await type("PIN to verify", NEW_SO);
+    await fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    expect(await screen.findByText("PIN verified")).toBeInTheDocument();
+    expect(screen.getByText("Checked against the SO PIN.")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("radio", { name: "User" }));
+    expect(screen.queryByText("PIN verified")).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("radio", { name: "SO" }));
+    expect(screen.queryByText("PIN verified")).not.toBeInTheDocument();
+
+    await type("PIN to verify", NEW_SO);
+    await fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    expect(await screen.findByText("PIN verified")).toBeInTheDocument();
+    await type("PIN to verify", "1");
+    expect(screen.queryByText("PIN verified")).not.toBeInTheDocument();
+    expect(verifyUser).not.toHaveBeenCalled();
+  });
+
   it("reports a rejected user PIN with a lockout warning and clears the input", async () => {
     // The PIN handler's 401 body names qrdb's ErrPINInvalid (handlers_pin.go).
     verifyUser.mockRejectedValue(new ApiError(401, "pin: invalid PIN"));
