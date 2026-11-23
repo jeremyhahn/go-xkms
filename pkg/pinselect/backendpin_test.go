@@ -205,6 +205,35 @@ func TestResolveBackendPIN_StoreMismatchIsRefusedBeforePersist(t *testing.T) {
 	}
 }
 
+func TestResolveBackendPIN_TPM2WithTPMSealerAcceptsAnyStore(t *testing.T) {
+	// tpm2 with a TPM sealer seals the PIN to the TPM itself, whatever the
+	// PIN's storage: auto and explicit tpm2 resolve and persist tpm2.
+	for _, strategy := range []BackendPINStrategy{BackendPINAuto, BackendPINTPM2} {
+		cfg := backendPINCfg(t)
+		cfg.Strategy = strategy
+		cfg.TPMPresent = true
+		cfg.TPMSealerAvailable = true
+		cfg.Store = BackendPINSealed
+		if got, err := ResolveBackendPIN(cfg); err != nil || got != BackendPINTPM2 {
+			t.Fatalf("%s: ResolveBackendPIN = %q, %v; want tpm2", strategy, got, err)
+		}
+		if persisted, err := LoadBackendPINStrategy(cfg.PINDir); err != nil || persisted != BackendPINTPM2 {
+			t.Fatalf("%s: persisted = %q, %v; want tpm2", strategy, persisted, err)
+		}
+	}
+
+	// sealed is still checked against the store.
+	cfg := backendPINCfg(t)
+	cfg.Strategy = BackendPINSealed
+	cfg.TPMSealerAvailable = true
+	cfg.Store = BackendPINTPM2
+	var store *BackendPINStoreError
+	if _, err := ResolveBackendPIN(cfg); !errors.As(err, &store) {
+		t.Fatalf("err = %v, want BackendPINStoreError", err)
+	}
+	assertNoBackendPINRecord(t, cfg.PINDir)
+}
+
 func TestResolveBackendPIN_ExplicitDisagreeingWithRecordIsRefused(t *testing.T) {
 	cfg := backendPINCfg(t)
 	if err := SaveBackendPINStrategy(cfg.PINDir, BackendPINManual); err != nil {

@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -150,15 +151,92 @@ func TestResolveBackendPIN_AutoWithTPMSelectsTPM2(t *testing.T) {
 	persisted, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
 	require.NoError(t, err)
 	require.Equal(t, pinselect.BackendPINTPM2, persisted)
+}
 
-	s, _, _ = backendPINTestServer(t, "auto", []byte("backend-pin-1"), true, true)
-	s.config.Credentials.SealStrategy = "barrier"
+// backendPINSimulatorTPM configures s with a TPM 2.0 simulator
+// (backends.tpm2 use_simulator) the backend PIN can be sealed to, and
+// closes the TPM the server opens for it when the test ends.
+func backendPINSimulatorTPM(t *testing.T, s *Server) {
+	t.Helper()
+	s.logger = slog.New(slog.DiscardHandler)
+	s.config.Backends.TPM2 = &config.TPM2Config{Enabled: true, UseSimulator: true}
+	t.Cleanup(func() {
+		if s.platformStoreTPMClose != nil {
+			_ = s.platformStoreTPMClose()
+		}
+	})
+}
+
+// skipWithoutTPMSimulator skips when the build has no TPM simulator (no
+// tpm_simulator tag): the TPM seal then cannot run at all.
+func skipWithoutTPMSimulator(t *testing.T, err error) {
+	t.Helper()
+	// pkg/tpm2's ErrSimulatorNotAvailable exists only without the tag.
+	if err != nil && strings.Contains(err.Error(), "build with -tags tpm_simulator") {
+		t.Skip("needs the tpm_simulator build tag")
+	}
+}
+
+// TestResolveBackendPIN_AutoWithTPMAndBarrierStoreSealsToTPM proves auto
+// (and tpm2) on a TPM host start as tpm2 whatever credentials.seal_strategy
+// is: the configured PIN, stored under the barrier, is sealed to the TPM
+// and every release unseals it from there (Codex round 1, finding 3).
+func TestResolveBackendPIN_AutoWithTPMAndBarrierStoreSealsToTPM(t *testing.T) {
+	for _, strategy := range []string{"auto", "tpm2"} {
+		t.Run(strategy, func(t *testing.T) {
+			ctx := context.Background()
+			pin := []byte("backend-pin-1")
+			s, opened, _ := backendPINTestServer(t, strategy, pin, true, true)
+			require.Equal(t, "barrier", s.config.Credentials.SealStrategy)
+			backendPINSimulatorTPM(t, s)
+
+			err := s.resolveBackendPIN()
+			skipWithoutTPMSimulator(t, err)
+			require.NoError(t, err)
+			require.Equal(t, "tpm2", s.BackendPINStrategy())
+			persisted, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
+			require.NoError(t, err)
+			require.Equal(t, pinselect.BackendPINTPM2, persisted)
+
+			require.NoError(t, s.startPKCS11AfterUnseal())
+			require.Len(t, *opened, 1)
+			require.True(t, bytes.Equal(pin, (*opened)[0]), "backend opened with the configured PIN")
+
+			// The server keeps the TPM-sealed copy, not the plaintext: with
+			// the configured PIN gone, the next release still unseals the
+			// same PIN from the TPM.
+			require.NoError(t, s.SealBackendPIN())
+			s.config.Backends.PKCS11.Pin = nil
+			require.NoError(t, s.backendPIN.Unseal(ctx, nil))
+			got, err := s.backendPIN.PIN()
+			require.NoError(t, err)
+			require.True(t, bytes.Equal(pin, got), "released PIN unsealed from the TPM")
+		})
+	}
+}
+
+// TestResolveBackendPIN_AutoWithTPMWithoutTPMSealerFailsClosed proves a TPM
+// the PIN cannot be sealed to refuses start-up with a typed error, never
+// falling back to sealed, and persists nothing.
+func TestResolveBackendPIN_AutoWithTPMWithoutTPMSealerFailsClosed(t *testing.T) {
+	// The probe reports a TPM, but backends.tpm2 is not configured.
+	s, _, _ := backendPINTestServer(t, "auto", []byte("backend-pin-1"), true, true)
+	s.logger = slog.New(slog.DiscardHandler)
+	err := s.resolveBackendPIN()
+	var sealer *BackendPINTPMSealerError
+	require.True(t, errors.As(err, &sealer), "err = %v", err)
 	var store *pinselect.BackendPINStoreError
-	require.True(t, errors.As(s.resolveBackendPIN(), &store), "auto on a TPM host never selects sealed")
+	require.True(t, errors.As(err, &store), "err = %v", err)
 	require.Equal(t, pinselect.BackendPINTPM2, store.Strategy)
 	require.Equal(t, "", s.BackendPINStrategy())
 	_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s.backendPINDir()))
 	require.True(t, os.IsNotExist(statErr), "no sealed record persisted on a TPM host")
+
+	// sealed with a TPM-only store stays refused.
+	s, _, _ = backendPINTestServer(t, "sealed", []byte("backend-pin-1"), true, true)
+	s.config.Credentials.SealStrategy = "tpm2"
+	require.True(t, errors.As(s.resolveBackendPIN(), &store))
+	require.Equal(t, pinselect.BackendPINSealed, store.Strategy)
 }
 
 // sealed needs barrier-backed credential storage: a PIN stored elsewhere
