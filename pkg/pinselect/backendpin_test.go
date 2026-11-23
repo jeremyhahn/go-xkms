@@ -250,6 +250,45 @@ func TestLoadBackendPINStrategy_CorruptIsLoadError(t *testing.T) {
 	}
 }
 
+// An existing record with no strategy ({} or null) is a load error, never
+// "not persisted": ResolveBackendPIN must not treat it as a fresh install
+// and overwrite a pinned strategy (docs/SPEC.md:78, fail closed).
+func TestLoadBackendPINStrategy_EmptyRecordIsLoadError(t *testing.T) {
+	for _, body := range []string{"{}", "null", `{"strategy":""}`} {
+		dir := t.TempDir()
+		if err := os.WriteFile(BackendPINStrategyPath(dir), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadBackendPINStrategy(dir)
+		var loadErr *StrategyLoadError
+		if !errors.As(err, &loadErr) {
+			t.Fatalf("record %s: err = %v, want StrategyLoadError", body, err)
+		}
+		if errors.Is(err, ErrBackendPINStrategyNotPersisted) {
+			t.Fatalf("record %s: reported as not persisted", body)
+		}
+	}
+}
+
+func TestResolveBackendPIN_EmptyRecordIsNotOverwritten(t *testing.T) {
+	dir := t.TempDir()
+	path := BackendPINStrategyPath(dir)
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ResolveBackendPIN(BackendPINConfig{PINDir: dir, TPMPresent: true, BarrierAvailable: true})
+	if err == nil {
+		t.Fatal("ResolveBackendPIN accepted an empty strategy record")
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "{}" {
+		t.Fatalf("record overwritten: %s", got)
+	}
+}
+
 func TestBackendPINStrategyPath_DistinctFromQRDBStrategy(t *testing.T) {
 	dir := t.TempDir()
 	if BackendPINStrategyPath(dir) == StrategyPath(dir) {
