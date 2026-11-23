@@ -311,8 +311,10 @@ func TestMatrix_SliceETransports(t *testing.T) {
 			if cell.Runs != 0 || !strings.Contains(cell.Reason, ReasonEmbeddedNoPlatformStore) {
 				t.Errorf("(platform, embedded): runs=%d reason=%q, want the no-platform-store reason", cell.Runs, cell.Reason)
 			}
-		} else if cell.Runs != len(sliceEVerbs[CategoryPlatform]) {
-			t.Errorf("(platform, %s): %d of %d verbs run (%s)", p, cell.Runs, len(sliceEVerbs[CategoryPlatform]), cell.Reason)
+		} else if cell.Runs != 0 || !strings.Contains(cell.Reason, "credentials.seal_strategy") {
+			// The API fixture has no startable platform store strategy, so
+			// the server cells name it (TestMatrix_FixtureServicesDeclared).
+			t.Errorf("(platform, %s): runs=%d reason=%q, want the fixture seal-strategy reason", p, cell.Runs, cell.Reason)
 		}
 		for _, family := range []CommandCategory{CategoryServer, CategoryAlgorithms} {
 			if cell := runsOn(family, p); cell.Runs != len(sliceEVerbs[family]) {

@@ -125,17 +125,19 @@ barrier:
   strategy: "passphrase"
 
 # Services the integration-test-api-parity target drives on every server
-# transport (TestCLISecretsMatrix pin family, TestCLIPlatformMatrix,
-# TestCLIBootstrapMatrix bootstrap-show-keys). matrix_test.go
-# TestMatrix_FixtureServicesDeclared requires each one enabled here.
+# transport (TestCLISecretsMatrix pin family, TestCLIBootstrapMatrix
+# bootstrap-show-keys). matrix_test.go TestMatrix_FixtureServicesDeclared
+# requires each one enabled here, or its cells to name the key they lack.
 pin:
   enabled: true
   strategy: "software"
 
-# manual and barrier install no platform store (pkg/server/platform_store.go);
-# passphrase seals with the same passphrase source as the barrier.
+# manual installs no platform store, so TestCLIPlatformMatrix cells skip
+# naming credentials.seal_strategy: xkmsd refuses passphrase (no passphrase
+# source) and tpm2 needs an enrolled Platform SRK, and either would abort
+# startup (pkg/server/platform_store.go buildPlatformSealer).
 credentials:
-  seal_strategy: "passphrase"
+  seal_strategy: "manual"
 
 bootstrap:
   noise:

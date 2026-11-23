@@ -464,7 +464,8 @@ func commandOverrides(cmd CommandDefinition, protocol ProtocolType, runID int64,
 		// already exists". Including the protocol prevents collisions when two
 		// RunAllCommandsForProtocol calls share a runID (coarse clock).
 		if arg.Flag == "cn" && cmd.Category == CategoryCA {
-			overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
+			// BuildCommandArgs reads non-positional overrides by flag.
+			overrides[arg.Flag] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
 		}
 		if strings.Contains(arg.Value, MatrixWorkDir) {
 			key := arg.Flag
