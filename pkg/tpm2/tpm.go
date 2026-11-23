@@ -370,6 +370,10 @@ type TPM2 struct {
 	// flush a handle or session the first is still using, and the TPM then
 	// refuses the salted session start (TPM_RC_VALUE).
 	sealMu sync.Mutex
+	// keyPairMu serialises this TPM2's key pair replacements (recovery and
+	// overwrite, see replaceKeyPair); writers in other processes are
+	// ordered by the store's conditional writes.
+	keyPairMu sync.Mutex
 	TrustedPlatformModule
 }
 
