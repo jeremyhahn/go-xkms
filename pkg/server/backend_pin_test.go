@@ -29,7 +29,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // fakePKCS11Provider stands in for the PKCS#11 backend: only Close is used.
@@ -251,18 +250,36 @@ func TestManualBackendPIN_FromUnsealRequestNeverPersistedStopsAtSeal(t *testing.
 	require.Error(t, pinErr)
 }
 
-// Manual must be operational (docs/SPEC.md:78): the PIN supplied with the
-// unseal request opens the token AND makes it reachable through the
-// service's keystores, not only through keyProviders. BLOCKED on a go-qrdb
-// seam: the sealed window's unseal request carries no backend PIN, and the
-// xkms service has no late keystore registration.
-func TestManualBackendPIN_UnsealedTokenReachesKeystores(t *testing.T) {
-	s, _, _ := backendPINTestServer(t, "manual", nil, false, true)
-	s.backends = map[string]xkms.Backend{}
-	require.NoError(t, s.resolveBackendPIN())
-	require.NoError(t, s.UnsealBackendPIN(context.Background(), []byte("operator-pin-1")))
-	_, ok := s.backends["pkcs11"]
-	require.True(t, ok, "manual PKCS#11 token registered as a keystore after unseal")
+// Manual is refused until it can be operational (docs/SPEC.md:78): the
+// go-qrdb unseal request carries no backend PIN and the xkms service has no
+// late keystore registration. A manual strategy, a manual minimum, or a
+// persisted manual record fails closed at resolution with a named error,
+// before any strategy is persisted or any token is opened.
+func TestResolveBackendPIN_ManualRefusedUntilUnsealSeam(t *testing.T) {
+	for _, tc := range []struct{ strategy, minimum string }{
+		{"manual", ""}, {"manual", "manual"}, {"sealed", "manual"}, {"auto", "manual"},
+	} {
+		s, opened, _ := backendPINTestServer(t, tc.strategy, []byte("backend-pin-1"), false, true)
+		s.config.BackendPIN.Minimum = tc.minimum
+		err := s.resolveBackendPIN()
+		require.ErrorIs(t, err, ErrBackendPINManualUnavailable, "%+v", tc)
+		require.Nil(t, s.backendPIN, "%+v", tc)
+		require.Empty(t, *opened, "%+v", tc)
+		_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s.backendPINDir()))
+		require.ErrorIs(t, statErr, os.ErrNotExist, "nothing persisted for %+v", tc)
+	}
+
+	// A record persisted as manual by an earlier release is refused too.
+	s, opened, _ := backendPINTestServer(t, "", []byte("backend-pin-1"), false, true)
+	_, err := pinselect.ResolveBackendPIN(pinselect.BackendPINConfig{
+		PINDir:           s.backendPINDir(),
+		Strategy:         pinselect.BackendPINManual,
+		BarrierAvailable: true,
+	})
+	require.NoError(t, err)
+	require.ErrorIs(t, s.resolveBackendPIN(), ErrBackendPINManualUnavailable)
+	require.Nil(t, s.backendPIN)
+	require.Empty(t, *opened)
 }
 
 // backendPINUnsealedBarrier is a real, unsealed system barrier.

@@ -34,6 +34,12 @@ var errBackendPINNoConfiguredPIN = errors.New("server: backends.pkcs11.pin is no
 // to the TPM (credentials.seal_strategy is not tpm2).
 var errBackendPINNotTPMSealed = errors.New("server: backend PIN strategy tpm2 needs credentials.seal_strategy tpm2")
 
+// ErrBackendPINManualUnavailable refuses backend_pin.strategy manual (and
+// minimum manual) until manual can be operational: the go-qrdb unseal
+// request carries no backend PIN, and the xkms service cannot register a
+// keystore after start-up (docs/SPEC.md:78).
+var ErrBackendPINManualUnavailable = errors.New("server: backend PIN strategy manual is unavailable: the unseal request carries no backend PIN")
+
 // backendPINDir is <datastore>/pin, the directory pinselect persists the
 // backend PIN strategy record in (beside the qrdb PIN strategy record).
 func (s *Server) backendPINDir() string {
