@@ -18,8 +18,11 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 
+	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -30,10 +33,6 @@ var ErrBackendPINNotConfigured = errors.New("server: no backend PIN strategy (PK
 // errBackendPINNoConfiguredPIN reports a sealed/tpm2 release with no
 // resolved backends.pkcs11.pin or active rng.pkcs11.pin.
 var errBackendPINNoConfiguredPIN = errors.New("server: neither backends.pkcs11.pin nor rng.pkcs11.pin is set")
-
-// errBackendPINNotTPMSealed reports a tpm2 release whose PIN is not sealed
-// to the TPM (credentials.seal_strategy is not tpm2).
-var errBackendPINNotTPMSealed = errors.New("server: backend PIN strategy tpm2 needs credentials.seal_strategy tpm2")
 
 // errBackendPINNotBarrierSealed reports a sealed release whose PIN is not
 // stored under the barrier (credentials.seal_strategy is not barrier).
@@ -108,6 +107,18 @@ func (s *Server) resolveBackendPINStrategy(preNode bool) (pinselect.BackendPINSt
 		minimum = pinselect.BackendPINTPM2
 	}
 	tpmPresent, barrierAvailable := s.probeBackendPIN()
+	store := s.backendPINStore()
+	// A TPM PIN not stored in the TPM is sealed to it by the server
+	// (tpmSealedBackendPINRelease), so tpm2 needs no second setting. The
+	// pre-node release runs before unseal, when only a TPM-stored PIN is
+	// readable, so it keeps the store check.
+	var tpmSealerErr error
+	tpmSealerAvailable := false
+	if tpmPresent && !preNode && store != pinselect.BackendPINTPM2 && s.backendPINMayResolveTPM2() {
+		if _, tpmSealerErr = s.backendPINTPMSealer(); tpmSealerErr == nil {
+			tpmSealerAvailable = true
+		}
+	}
 	strategy, err := pinselect.ResolveBackendPIN(pinselect.BackendPINConfig{
 		PINDir:   s.backendPINDir(),
 		Strategy: pinselect.BackendPINStrategy(s.config.BackendPIN.Strategy),
@@ -118,11 +129,18 @@ func (s *Server) resolveBackendPINStrategy(preNode bool) (pinselect.BackendPINSt
 		// sealed a PIN stored under the barrier. Any other storage is
 		// refused before a record is persisted, and a persisted record is
 		// refused when the storage changed since (fail closed).
-		TPMPresent:       tpmPresent,
-		BarrierAvailable: barrierAvailable,
-		SealerIsPKCS11:   s.sealerIsPKCS11(),
-		Store:            s.backendPINStore(),
+		TPMPresent:         tpmPresent,
+		BarrierAvailable:   barrierAvailable,
+		SealerIsPKCS11:     s.sealerIsPKCS11(),
+		Store:              store,
+		TPMSealerAvailable: tpmSealerAvailable,
 	})
+	if err != nil && tpmSealerErr != nil {
+		var storeErr *pinselect.BackendPINStoreError
+		if errors.As(err, &storeErr) && storeErr.Strategy == pinselect.BackendPINTPM2 {
+			err = errors.Join(err, &BackendPINTPMSealerError{Err: tpmSealerErr})
+		}
+	}
 	if err != nil {
 		if preNode {
 			return "", preNodeBackendPINError(err)
@@ -137,6 +155,21 @@ func (s *Server) resolveBackendPINStrategy(preNode bool) (pinselect.BackendPINSt
 		return "", fmt.Errorf("%w: resolved strategy %q", ErrBackendPINNodeKeyBeforeUnseal, strategy)
 	}
 	return strategy, nil
+}
+
+// backendPINMayResolveTPM2 reports whether the backend PIN can resolve to
+// tpm2: tpm2 configured, or auto without a persisted strategy other than
+// tpm2. Only then is a TPM opened to seal the PIN to.
+func (s *Server) backendPINMayResolveTPM2() bool {
+	switch pinselect.BackendPINStrategy(s.config.BackendPIN.Strategy) {
+	case pinselect.BackendPINTPM2:
+		return true
+	case pinselect.BackendPINAuto, "":
+		persisted, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
+		return err != nil || persisted == pinselect.BackendPINTPM2
+	default:
+		return false
+	}
 }
 
 // preNodeBackendPINError marks a refusal of a weaker-than-tpm2 strategy
@@ -202,16 +235,83 @@ func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy) func(c
 	if strategy != pinselect.BackendPINTPM2 && strategy != pinselect.BackendPINSealed {
 		return s.releaseConfiguredPKCS11PIN
 	}
+	tpmSealed := s.tpmSealedBackendPINRelease()
 	return func(ctx context.Context) ([]byte, error) {
 		if store := s.backendPINStore(); store != strategy {
 			if strategy == pinselect.BackendPINTPM2 {
-				return nil, errBackendPINNotTPMSealed
+				// The PIN is not stored in the TPM: the server seals it there.
+				return tpmSealed(ctx)
 			}
 			return nil, errBackendPINNotBarrierSealed
 		}
 		return s.releaseConfiguredPKCS11PIN(ctx)
 	}
 }
+
+// tpmSealedBackendPINRelease releases a tpm2 backend PIN whose storage is
+// not the TPM: the first release reads the configured PIN (after unseal),
+// seals it to the TPM and wipes the plaintext; that release and every later
+// one unseal the PIN from the TPM-sealed copy, the only copy kept. Any TPM
+// failure fails closed with BackendPINTPMSealerError.
+func (s *Server) tpmSealedBackendPINRelease() func(context.Context) ([]byte, error) {
+	var (
+		mu     sync.Mutex
+		sealed *types.SealedData
+	)
+	return func(ctx context.Context) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		sealer, err := s.backendPINTPMSealer()
+		if err != nil {
+			return nil, &BackendPINTPMSealerError{Err: err}
+		}
+		if sealed == nil {
+			pin, err := s.releaseConfiguredPKCS11PIN(ctx)
+			if err != nil {
+				return nil, err
+			}
+			blob, err := sealer.Seal(ctx, pin, nil)
+			clear(pin)
+			if err != nil {
+				return nil, &BackendPINTPMSealerError{Err: err}
+			}
+			sealed = blob
+		}
+		pin, err := sealer.Unseal(ctx, sealed, nil)
+		if err != nil {
+			return nil, &BackendPINTPMSealerError{Err: err}
+		}
+		return pin, nil
+	}
+}
+
+// backendPINTPMSealer returns the Platform SRK sealer the backend PIN is
+// sealed to. It reuses the TPM an earlier call (or the platform store)
+// opened, so the TPM is opened at most once.
+func (s *Server) backendPINTPMSealer() (types.Sealer, error) {
+	backend, ok := s.platformStoreTPM.(*tpm2backend.Backend)
+	if !ok {
+		return s.buildTPM2PlatformSealer()
+	}
+	attrs, err := backend.TPM().PlatformSRKAttributes()
+	if err != nil {
+		return nil, err
+	}
+	return seal.NewPlatformPolicySealer(backend, platformStoreSealCN, attrs), nil
+}
+
+// BackendPINTPMSealerError reports that the tpm2 backend PIN strategy could
+// not seal the PIN to the TPM, or unseal it: start-up fails closed and
+// never falls back to sealed.
+type BackendPINTPMSealerError struct {
+	Err error
+}
+
+func (e *BackendPINTPMSealerError) Error() string {
+	return "server: backend PIN strategy tpm2 cannot seal the PIN to the TPM: " + e.Err.Error()
+}
+
+func (e *BackendPINTPMSealerError) Unwrap() error { return e.Err }
 
 // probeBackendPIN reports a usable TPM 2.0 and a barrier able to seal.
 func (s *Server) probeBackendPIN() (bool, bool) {

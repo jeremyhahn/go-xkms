@@ -140,6 +140,9 @@ type BackendPINConfig struct {
 	// persisted: the strategy never claims a protection the store lacks.
 	// Empty skips the check; manual, never stored, is not checked.
 	Store BackendPINStrategy
+	// TPMSealerAvailable reports a TPM the caller seals the PIN to itself
+	// (whatever Store is): tpm2 then needs no TPM-sealed Store.
+	TPMSealerAvailable bool
 }
 
 // BackendPINStoreError refuses a strategy that the PIN's actual storage
@@ -199,8 +202,10 @@ func ResolveBackendPIN(cfg BackendPINConfig) (BackendPINStrategy, error) {
 	if err := checkBackendPINAvailable(cfg, chosen); err != nil {
 		return "", err
 	}
-	// manual is never stored, so no store provides or contradicts it.
-	if cfg.Store != "" && chosen != BackendPINManual && chosen != cfg.Store {
+	// manual is never stored, so no store provides or contradicts it; tpm2
+	// with a TPM sealer seals the PIN to the TPM whatever the store.
+	tpmSealed := chosen == BackendPINTPM2 && cfg.TPMSealerAvailable
+	if cfg.Store != "" && chosen != BackendPINManual && chosen != cfg.Store && !tpmSealed {
 		return "", &BackendPINStoreError{Strategy: chosen, Store: cfg.Store}
 	}
 	if cfg.Minimum != "" && backendPINRank[chosen] < backendPINRank[cfg.Minimum] {
