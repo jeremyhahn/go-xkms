@@ -37,7 +37,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
-	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -311,7 +310,8 @@ func TestNewHostServer_PublicRegistrationBeginRefusedOverEnforcingNode(t *testin
 
 	u, err := auth.NewNodeUserClient(node).GetUserByEmail(context.Background(), DefaultWebAuthnTenant, email)
 	require.Error(t, err, "the refused begin must leave no account, found %+v", u)
-	require.True(t, webauthn.IsUserNotFound(err), "lookup after the refusal: %v", err)
+	var notFound *qrdbsdk.UserNotFoundError
+	require.True(t, errors.As(err, &notFound), "lookup after the refusal: %v", err)
 }
 
 // keysProbeModule mounts GET /api/v1/keys under keys:read on the unified
