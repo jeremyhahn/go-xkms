@@ -1,3 +1,5 @@
+//go:build codec_json
+
 package handlers
 
 import (
@@ -8,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -201,6 +204,111 @@ func TestOrderFinalizeHandler_StandardCommitHookAfterSuccess(t *testing.T) {
 	assert.True(t, finalizeRan)
 	require.Len(t, rec.errs, 1, "the commit hook runs once")
 	assert.NoError(t, rec.errs[0])
+	require.NotNil(t, rec.ctxs[0])
+	assert.False(t, rec.ctxs[0].IsTCGCSR)
+	assert.NotNil(t, rec.ctxs[0].Certificate)
+}
+
+// stagingThenVetoHooks registers a finalize hook that stages state and a
+// later finalize hook that vetoes issuance, plus a recording commit hook.
+func stagingThenVetoHooks(staged *int, veto error) (*OrderFinalizeHookRegistry, *OrderFinalizeCommitHookRegistry, *commitRecorder) {
+	hooks := NewOrderFinalizeHookRegistry()
+	hooks.Register(func(ctx *OrderFinalizeHookContext) error {
+		*staged++
+		return nil
+	})
+	hooks.Register(func(ctx *OrderFinalizeHookContext) error {
+		return veto
+	})
+	rec := &commitRecorder{}
+	commitHooks := NewOrderFinalizeCommitHookRegistry()
+	commitHooks.Register(rec.hook)
+	return hooks, commitHooks, rec
+}
+
+func TestFinalizeTCGCSR_CommitHookUndoesStagingOnVeto(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	t.Cleanup(cleanup)
+
+	const (
+		prodModel  = "xkms-node"
+		prodSerial = "SN-2282V"
+	)
+	iakDER := selfSignedDER(t, ca.IAKCommonName(prodModel, prodSerial), big.NewInt(51), 30*24*time.Hour)
+	idevidDER := selfSignedDER(t, prodModel+"-"+prodSerial, big.NewInt(52), 60*24*time.Hour)
+	setCA(t, service, &tcgEnrollmentCA{iakDER: iakDER, idevidDER: idevidDER})
+
+	staged := 0
+	veto := errors.New("policy veto")
+	hooks, commitHooks, rec := stagingThenVetoHooks(&staged, veto)
+	service.params.OrderFinalizeHooks = hooks
+	service.params.OrderFinalizeCommitHooks = commitHooks
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusReady
+	order.Identifiers = []entities.ACMEIdentifier{
+		{Type: common.AuthzTypePermanentIdentifier, Value: prodModel + "-" + prodSerial},
+	}
+
+	csrDER := packTCGCSR(t, prodModel, prodSerial, selfSignedDER(t, "ek-"+prodSerial, big.NewInt(53), 365*24*time.Hour))
+	req := httptest.NewRequest("POST", fmt.Sprintf("%s/acme/order/%d/finalize", service.baseRESTURI, order.ID), nil)
+
+	_, _, hookCtx, err := service.finalizeTCGCSR("198.51.100.23:4444", csrDER, req, account, order, nil)
+	require.Error(t, err, "the vetoing hook aborts issuance")
+	assert.Nil(t, hookCtx)
+	assert.Equal(t, 1, staged, "the staging hook ran before the veto")
+	require.Len(t, rec.errs, 1, "the commit hook runs once to undo the staged state")
+	assert.ErrorIs(t, rec.errs[0], veto)
+	require.NotNil(t, rec.ctxs[0])
+	assert.True(t, rec.ctxs[0].IsTCGCSR)
+	require.NotNil(t, rec.ctxs[0].TCGData)
+	assert.Equal(t, idevidDER, rec.ctxs[0].TCGData.IDevIDCertificateDER)
+}
+
+func TestOrderFinalizeHandler_StandardCommitHookUndoesStagingOnVeto(t *testing.T) {
+	service, _, cleanup := setupTestServiceWithMockCA(t)
+	defer cleanup()
+
+	staged := 0
+	veto := errors.New("policy veto")
+	hooks, commitHooks, rec := stagingThenVetoHooks(&staged, veto)
+	service.params = &Params{
+		OrderFinalizeHooks:       hooks,
+		OrderFinalizeCommitHooks: commitHooks,
+	}
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusReady
+
+	ctx := context.Background()
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	require.NoError(t, orderDAO.Save(ctx, order))
+
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject:  pkix.Name{CommonName: "example.com"},
+		DNSNames: []string{"example.com"},
+	}, csrKey)
+	require.NoError(t, err)
+
+	payload := OrderFinalizeRequest{CSR: base64.RawURLEncoding.EncodeToString(csrDER)}
+	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
+
+	resp := httptest.NewRecorder()
+	service.OrderFinalizeHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+	assert.Equal(t, 1, staged, "the staging hook ran before the veto")
+	require.Len(t, rec.errs, 1, "the commit hook runs once to undo the staged state")
+	assert.ErrorIs(t, rec.errs[0], veto)
 	require.NotNil(t, rec.ctxs[0])
 	assert.False(t, rec.ctxs[0].IsTCGCSR)
 	assert.NotNil(t, rec.ctxs[0].Certificate)
