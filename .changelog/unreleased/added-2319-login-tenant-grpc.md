@@ -1,0 +1,1 @@
+- **Login tenant on the gRPC wire and in xkmsctl (#2319, ruling 1234)** — `BeginAuthenticationRequest` and `FinishAuthenticationRequest` carry `tenant_id` (fields 2 and 4) on gRPC and Unix, and `xkmsctl user login --tenant` sets it on both, so a passkey login over every transport reaches the named tenant's relying party; empty means the system tenant.

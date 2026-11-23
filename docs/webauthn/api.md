@@ -289,4 +289,11 @@ Rules (`pkg/webauthn/tenant_router.go:122`):
 - The minted token carries the tenant.
 
 The SDK verbs `BeginAuthentication` and `FinishAuthentication` take the same
-optional `tenant_id` (`pkg/api/transport/types.go:1014`, `:1048`).
+optional `tenant_id` (`pkg/api/transport/types.go:1014`, `:1048`). On the
+gRPC and Unix wire it is `tenant_id` field 2 of `BeginAuthenticationRequest`
+and field 4 of `FinishAuthenticationRequest`
+(`pkg/api/grpc/proto/xkmsv1/xkms.proto:4666`, `:4683`); the server passes it
+to the tenant router (`pkg/api/grpc/service_fido2.go:115`, `:151`). An empty
+`tenant_id` means the system tenant. Send the same tenant on both calls.
+`xkmsctl user login <email> --tenant <id>` sets it on both
+(`cmd/xkmsctl/user.go:1139`).
