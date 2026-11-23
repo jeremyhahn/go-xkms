@@ -549,3 +549,51 @@ func TestGetInfo_UserVerifierAdvertisesUvWithToken(t *testing.T) {
 	require.True(t, options["uv"])
 	require.True(t, options["pinUvAuthToken"])
 }
+
+// unavailableVerifyingKeyBackend is a UserVerifier that reports it cannot
+// verify a user now: the phone backend with no configured verifier, or paired
+// with a phone that signs but does not implement local.verifyUser.
+type unavailableVerifyingKeyBackend struct {
+	verifyingKeyBackend
+}
+
+func (b *unavailableVerifyingKeyBackend) UserVerificationAvailable() bool { return false }
+
+// A backend that implements UserVerifier but cannot verify a user now does not
+// advertise uv, so a platform never selects the UV token path, and a UV token
+// request never reaches the verifier or spends a uvRetries count.
+func TestGetInfo_UnavailableUserVerifierAdvertisesNoUv(t *testing.T) {
+	for _, name := range []string{
+		"no configured verifier",
+		"paired phone lacks local.verifyUser",
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := &unavailableVerifyingKeyBackend{
+				verifyingKeyBackend: verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}},
+			}
+			auth, err := NewAuthenticator(&Config{
+				UserPresenceHandler:        NewAutoGrantHandler(),
+				Storage:                    NewMemoryStorage(),
+				EnablePIN:                  true,
+				EnableCredentialManagement: true,
+				PINMinLength:               4,
+				PINMaxRetries:              8,
+				SupportedAlgorithms:        []int{COSEAlgES256},
+				KeyBackend:                 backend,
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, auth.Close()) })
+
+			options := auth.getOptions()
+			require.False(t, options["uv"], "uv is not advertised without a verifier the phone supports")
+
+			require.NoError(t, initKeyAgreement(t, auth))
+			auth.state.SetUVRetries(3)
+			reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
+			resp, _ := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+			require.NotEqual(t, byte(StatusOK), resp[0])
+			require.Zero(t, backend.calls, "the verifier is never asked")
+			require.Equal(t, 3, auth.state.UVRetries(), "no uvRetries count is spent")
+		})
+	}
+}
