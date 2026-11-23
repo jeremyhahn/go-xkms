@@ -41,6 +41,19 @@ printf '%s\n' "${args//$'\n'/ }" >> "$FAKE_DOCKER_LOG"
 case "$1 ${2:-}" in
   "volume ls") cut -d' ' -f1 "$FAKE_SIZES"; exit 0 ;;
   "volume rm") exit 0 ;;
+esac
+# What scripts/in-toolchain-image.sh needs for a stage: cp drains the tar;
+# FAKE_STAGE_GATE: start marks <gate>.started, then runs until <gate> exists.
+case $1 in
+  cp) cat >/dev/null; exit 0 ;;
+  start)
+    if [ -n "${FAKE_STAGE_GATE:-}" ]; then
+      : > "$FAKE_STAGE_GATE.started"
+      while [ ! -e "$FAKE_STAGE_GATE" ]; do sleep 0.1; done
+    fi
+    exit 0 ;;
+esac
+case "$1 ${2:-}" in
   "ps -aq")
     v=
     for a in "$@"; do case $a in volume=*) v=${a#volume=} ;; esac; done
@@ -383,6 +396,57 @@ if grep -q "^skip " "$WORK_DIR/stdout"; then
 else
     pass "no skip once the lock is free"
 fi
+
+# --------------------------------------------------------------------------
+start_case "a build in another job container holding the volumes keeps the trim out"
+# Two job containers on one Docker daemon: each has its own local lock
+# directory (CI_CACHE_LOCK_DIR), but both reach the same cache volumes. A stage
+# of scripts/in-toolchain-image.sh runs in job A; the trim runs in job B and
+# must still see the volumes held.
+setup "p-ci-cache-pr-gobuild 1100000" "p-ci-cache-pr-golangci 300000"
+entry p-ci-cache-pr-gobuild aa "2026-01-01"
+entry p-ci-cache-pr-golangci ab "2026-05-01"
+mkdir -p "$WORK_DIR/job-a/locks" "$WORK_DIR/job-a/src" "$WORK_DIR/job-b/locks"
+gate="$WORK_DIR/job-a/stage-done"
+rm -f "$gate" "$gate.started"
+(
+    cd "$WORK_DIR/job-a/src" || exit 99
+    env -u GOPRIVATE -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+        PATH="$FAKE_BIN:$PATH" \
+        FAKE_DOCKER_LOG="$WORK_DIR/job-a/docker.log" FAKE_SIZES="$SIZES" \
+        FAKE_INUSE="" FAKE_ROOT="$VOLROOT" FAKE_STAGE_GATE="$gate" \
+        CI_STACK_PREFIX=p-ci- CI_CACHE_CLASS=pr IN_IMAGE_CPUS=2 IN_IMAGE_MEMORY=1g \
+        CI_CACHE_LOCK_DIR="$WORK_DIR/job-a/locks" \
+        bash "$REPO_ROOT/scripts/in-toolchain-image.sh" toolchain:test true \
+        >"$WORK_DIR/job-a/stdout" 2>&1
+) &
+stage=$!
+for _ in $(seq 100); do
+    [ -e "$gate.started" ] && break
+    sleep 0.1
+done
+if [ -e "$gate.started" ]; then
+    pass "the job A stage is running"
+else
+    fail "the job A stage never started: $(tr '\n' ' ' < "$WORK_DIR/job-a/stdout")"
+fi
+run_script 0 "p-ci-cache-pr-gobuild p-ci-cache-pr-golangci" \
+    CI_CACHE_LOCK_DIR="$WORK_DIR/job-b/locks"
+: > "$gate"
+wait "$stage"
+if grep -q -- "clean -cache" "$CALL_LOG" || ! has_files p-ci-cache-pr-gobuild ||
+   ! has_files p-ci-cache-pr-golangci; then
+    fail "trimmed a volume a build in another job container holds"
+else
+    pass "nothing cleaned or unlinked in the volumes job A holds"
+fi
+for v in gobuild golangci; do
+    if grep -q "^skip  p-ci-cache-pr-$v: a build holds it$" "$WORK_DIR/stdout"; then
+        pass "the $v volume held from job A is skipped"
+    else
+        fail "no skip line for the $v volume job A holds"
+    fi
+done
 
 # --------------------------------------------------------------------------
 start_case "REAP_DRY_RUN=1 removes and trims nothing"
