@@ -265,6 +265,20 @@ ALL) no "a suite a define helper wraps keeps its explicit tags: got ALL" ;;
 *omega*) ok "a suite a define helper wraps keeps its explicit tags" ;;
 *) no "a suite a define helper wraps keeps its explicit tags: got [$got]" ;;
 esac
+# Git quotes a non-ASCII path under the default core.quotePath: a change to
+# such a file below beta's package pkg/c, and a rename onto such a name, each
+# still select beta, never an empty or narrowed list, nor ALL: the path is
+# an ordinary file of a package beta imports.
+QA=$(commit_file "pkg/c/testdata/$(printf '\303\251').json" '{}')
+QB=$(move_file "pkg/c/testdata/$(printf '\303\251').json" "pkg/c/testdata/$(printf '\303\274').json")
+for qc in "$OC $QA a change to a file Git quotes" "$QA $QB a rename onto a name Git quotes"; do
+	read -r qf qt qd <<<"$qc"
+	got=$(run "$qf" "$qt")
+	case "$got" in
+	beta | beta$'\n'* | *$'\n'beta | *$'\n'beta$'\n'*) ok "$qd selects the suite importing its package" ;;
+	*) no "$qd selects the suite importing its package: got [$got]" ;;
+	esac
+done
 # lambda's only test file is gated on a tag no recipe passes (last, since
 # from here on every package change prints ALL).
 put test/integration/lambda/lambda_test.go '//go:build integration && neverset
