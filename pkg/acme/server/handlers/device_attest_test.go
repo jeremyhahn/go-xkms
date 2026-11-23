@@ -66,11 +66,18 @@ func newDICEAliasDeviceKey(t *testing.T) *ecdsa.PrivateKey {
 // a device identity in this evidence.
 func newDICEAliasCert(t *testing.T, key *ecdsa.PrivateKey, keyAuth string, ueid []byte) []byte {
 	t.Helper()
+	return newDICEAliasCertMeasuring(t, key, keyAuth, ueid, possessionMeasurements)
+}
+
+// newDICEAliasCertMeasuring is newDICEAliasCert with measurements as the
+// alias certificate's measurements claim.
+func newDICEAliasCertMeasuring(t *testing.T, key *ecdsa.PrivateKey, keyAuth string, ueid, measurements []byte) []byte {
+	t.Helper()
 
 	extensions := []pkix.Extension{}
 	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{
 		Nonce: deviceattest01.DICENonce(keyAuth),
-		Other: map[int64][]byte{dice.ClaimMeasurements: bytes.Clone(possessionMeasurements)},
+		Other: map[int64][]byte{dice.ClaimMeasurements: bytes.Clone(measurements)},
 	})
 	require.NoError(t, err)
 	extensions = append(extensions, uccs)
