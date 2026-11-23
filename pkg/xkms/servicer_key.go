@@ -375,7 +375,7 @@ func (s *XKMSService) GetKey(ctx context.Context, backendName, keyID string) (re
 		return nil, ErrInvalidKeyID
 	}
 
-	k, err := s.resolveKeyIn(ctx, backendName, scopedTenantIDFromContext(ctx), keyID)
+	k, err := s.resolveKeyIn(ctx, "GetKey", backendName, scopedTenantIDFromContext(ctx), keyID)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +410,7 @@ func (s *XKMSService) DeleteKey(ctx context.Context, backendName, keyID string) 
 		return ErrInvalidKeyID
 	}
 
-	k, err := s.resolveKeyIn(ctx, backendName, scopedTenantIDFromContext(ctx), keyID)
+	k, err := s.resolveKeyIn(ctx, "DeleteKey", backendName, scopedTenantIDFromContext(ctx), keyID)
 	if err != nil {
 		return err
 	}
@@ -589,7 +589,11 @@ func (s *XKMSService) RotateKey(ctx context.Context, req *transport.RotateKeyReq
 		return nil, ErrInvalidKeyID
 	}
 
-	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
+	tenant, err := ownTenant(ctx, "RotateKey", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, tenant)
 	if err != nil {
 		return nil, err
 	}

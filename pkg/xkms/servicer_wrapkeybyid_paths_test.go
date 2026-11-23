@@ -117,7 +117,7 @@ func TestWrapKeyByID_SymmetricCreatePaths(t *testing.T) {
 		},
 		"RotateKey": func(t *testing.T, svc *XKMSService, tenantID string) {
 			generateTarget(targetID, "secret", "aes-256-gcm", 0)(t, svc, tenantID)
-			resp, err := svc.RotateKey(context.Background(), &transport.RotateKeyRequest{
+			resp, err := svc.RotateKey(ctxFor(tenantID), &transport.RotateKeyRequest{
 				KeyID: targetID, Backend: "software", TenantID: tenantID,
 			})
 			require.NoError(t, err)

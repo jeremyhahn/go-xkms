@@ -268,13 +268,12 @@ func (k *versionedKey) listingMisses() bool {
 // the caller on ctx through auth.AdmitTenant first, so a cross-tenant reach
 // is always a named, admitted tenant; the refusal is its
 // *qrdbsdk.CrossTenantDeniedError.
-func (s *XKMSService) resolveKeyIn(ctx context.Context, backendName, tenantID, keyID string) (*versionedKey, error) {
-	if tenantID != "" {
-		if err := auth.AdmitTenant(ctx, "key.resolve", tenantID); err != nil {
-			return nil, err
-		}
+func (s *XKMSService) resolveKeyIn(ctx context.Context, op, backendName, tenantID, keyID string) (*versionedKey, error) {
+	tenant, err := ownTenant(ctx, op, tenantID)
+	if err != nil {
+		return nil, err
 	}
-	b, resolvedName, err := s.resolveTenantBackendWithName(backendName, tenantID)
+	b, resolvedName, err := s.resolveTenantBackendWithName(backendName, tenant)
 	if err != nil {
 		return nil, err
 	}

@@ -85,7 +85,7 @@ func (s *XKMSService) EncryptBatch(ctx context.Context, req *transport.EncryptBa
 		return nil, err
 	}
 
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "EncryptBatch", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (s *XKMSService) DecryptBatch(ctx context.Context, req *transport.DecryptBa
 		return nil, err
 	}
 
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "DecryptBatch", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +263,7 @@ func (s *XKMSService) GenerateHMAC(ctx context.Context, req *transport.GenerateH
 		return nil, err
 	}
 
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "GenerateHMAC", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +300,7 @@ func (s *XKMSService) VerifyHMAC(ctx context.Context, req *transport.VerifyHMACR
 		return nil, err
 	}
 
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "VerifyHMAC", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}

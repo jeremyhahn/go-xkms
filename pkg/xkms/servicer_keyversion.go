@@ -34,7 +34,7 @@ func (s *XKMSService) ListKeyVersions(ctx context.Context, req *transport.ListKe
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "ListKeyVersions", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}

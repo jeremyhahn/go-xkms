@@ -276,7 +276,7 @@ func TestBackendPublicKey(t *testing.T) {
 	require.NoError(t, err)
 	keyID, err := OTAImageKeyID("cm4")
 	require.NoError(t, err)
-	k, err := svc.resolveKeyIn(ctx, "software", "", keyID)
+	k, err := svc.resolveKeyIn(ctx, "test", "software", "", keyID)
 	require.NoError(t, err)
 	cur, err := k.current()
 	require.NoError(t, err)

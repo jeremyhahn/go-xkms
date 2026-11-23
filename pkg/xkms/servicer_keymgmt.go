@@ -125,7 +125,7 @@ func (s *XKMSService) GetPublicKey(ctx context.Context, req *transport.GetPublic
 	if req.Version > math.MaxUint32 {
 		return nil, &InvalidKeyPolicyError{Field: "version", Reason: "over " + strconv.FormatUint(math.MaxUint32, 10)}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "GetPublicKey", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func (s *XKMSService) RevokeKey(ctx context.Context, req *transport.RevokeKeyReq
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil revoke key request"}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "RevokeKey", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (s *XKMSService) UpdateKeyStatus(ctx context.Context, req *transport.Update
 	if !ok {
 		return nil, &InvalidKeyPolicyError{Field: "status", Reason: "want enabled or disabled; revoke a key with RevokeKey"}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "UpdateKeyStatus", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +254,7 @@ func (s *XKMSService) GetKeyMetadata(ctx context.Context, req *transport.KeyMana
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil key metadata request"}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "GetKeyMetadata", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +274,7 @@ func (s *XKMSService) UpdateKeyMetadata(ctx context.Context, req *transport.Upda
 	if _, empty := req.Tags[""]; empty {
 		return nil, &InvalidKeyPolicyError{Field: "tags", Reason: "a tag name is empty"}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "UpdateKeyMetadata", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +319,7 @@ func (s *XKMSService) SetKeyPolicy(ctx context.Context, req *transport.SetKeyPol
 	if req.Policy.ExpiresAt < 0 {
 		return nil, &InvalidKeyPolicyError{Field: "expires_at", Reason: "negative"}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "SetKeyPolicy", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +369,7 @@ func (s *XKMSService) GetKeyPolicy(ctx context.Context, req *transport.KeyManage
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil key policy request"}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "GetKeyPolicy", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +397,7 @@ func (s *XKMSService) SetKeyRotationPolicy(ctx context.Context, req *transport.S
 	if err := checkRotationPolicy(req.KeyID, req.Policy); err != nil {
 		return nil, err
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "SetKeyRotationPolicy", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +445,7 @@ func (s *XKMSService) GetKeyRotationPolicy(ctx context.Context, req *transport.K
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil key rotation policy request"}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "GetKeyRotationPolicy", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -477,7 +477,7 @@ func (s *XKMSService) SetKeySafety(ctx context.Context, req *transport.SetKeySaf
 	case req.WarningPercent < 0 || req.WarningPercent > 100:
 		return nil, &InvalidKeyPolicyError{Field: "warning_percent", Reason: "want 0 to 100"}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "SetKeySafety", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -513,7 +513,7 @@ func (s *XKMSService) clearPolicyField(ctx context.Context, req *transport.KeyMa
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil key management request"}
 	}
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "clearPolicyField", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
