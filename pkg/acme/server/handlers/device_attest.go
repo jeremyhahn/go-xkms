@@ -226,8 +226,19 @@ func (s *RestService) bindDeviceAttestationKey(ctx context.Context, rec *entitie
 	// A DICE device mints its request from the possession template, so the
 	// request itself must be that template: it is what proves the attested
 	// key answered this challenge (go-xkms#1441).
+	//
+	// The registry is read once: the possession request and the leaf are
+	// both checked against that one record, so a reference that changes
+	// between two reads cannot authorize evidence no record does.
+	var record *deviceattest01.ProvisionedDevice
 	if verified.Format == deviceattest01.FormatDICE {
-		reference, err := verified.ApplicationReference(ctx, s.deviceAttestationVerifier())
+		record, err = verified.RegistrySnapshot(ctx, s.deviceAttestationVerifier())
+		if err != nil {
+			s.logger.Warn("Refusing finalization: the device registry gave no record",
+				"error", err, "orderID", order.ID)
+			return common.Unauthorized("device-attest-01: the device's provisioning record no longer authorizes the attested key")
+		}
+		reference, err := verified.ApplicationReferenceIn(record)
 		if err != nil {
 			if errors.Is(err, deviceattest01.ErrPossessionApplicationEvidenceMismatch) {
 				return common.BadCSR("device-attest-01: certificate request is not the attested device's possession request: " + err.Error())
@@ -245,7 +256,7 @@ func (s *RestService) bindDeviceAttestationKey(ctx context.Context, rec *entitie
 	}
 	// The cause can carry the registry's own error, so it is logged rather
 	// than returned to the client.
-	if err := verified.ConfirmRegistration(ctx, s.deviceAttestationVerifier()); err != nil {
+	if err := verified.ConfirmRegistrationIn(record); err != nil {
 		s.logger.Warn("Refusing finalization: the device registry no longer vouches for the attested key",
 			"error", err, "orderID", order.ID)
 		return common.Unauthorized("device-attest-01: the device's provisioning record no longer authorizes the attested key")

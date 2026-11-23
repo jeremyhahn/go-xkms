@@ -113,6 +113,11 @@ type RegisteredDeviceVerifier interface {
 	// finalization for the device's registered application reference: nil
 	// for none, unless the policy requires one.
 	RegisteredApplicationReference(ctx context.Context, ueid string) ([]byte, error)
+
+	// RegisteredDevice reads the device's provisioning record once, for a
+	// finalization to check the possession request and the leaf against the
+	// same record (VerifiedAttestation.RegistrySnapshot).
+	RegisteredDevice(ctx context.Context, ueid string) (*ProvisionedDevice, error)
 }
 
 var _ RegisteredDeviceVerifier = (*TrustAnchorVerifier)(nil)
@@ -151,6 +156,27 @@ func (v *TrustAnchorVerifier) ConfirmRegisteredDevice(ctx context.Context, ueid 
 	if err != nil {
 		return err
 	}
+	return confirmRecord(record, attestedSPKI, leaf)
+}
+
+// RegisteredDevice implements RegisteredDeviceVerifier: one read of the
+// registry, copied so a later change to the registry's record cannot reach it.
+func (v *TrustAnchorVerifier) RegisteredDevice(ctx context.Context, ueid string) (*ProvisionedDevice, error) {
+	record, err := v.resolve(ctx, ueid)
+	if err != nil {
+		return nil, err
+	}
+	return &ProvisionedDevice{
+		DeviceIDKey:          bytes.Clone(record.DeviceIDKey),
+		DeviceIDCertificate:  bytes.Clone(record.DeviceIDCertificate),
+		ApplicationReference: bytes.Clone(record.ApplicationReference),
+	}, nil
+}
+
+// confirmRecord refuses a record whose key is no longer attestedSPKI, or
+// whose registered application reference leaf's application evidence does
+// not match.
+func confirmRecord(record *ProvisionedDevice, attestedSPKI []byte, leaf *x509.Certificate) error {
 	current, err := record.deviceIDSPKI()
 	if err != nil {
 		return notAuthorized(err)
@@ -207,6 +233,12 @@ func (v *TrustAnchorVerifier) RegisteredApplicationReference(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
+	return recordApplicationReference(record)
+}
+
+// recordApplicationReference is the application reference record registers;
+// a record without one is refused.
+func recordApplicationReference(record *ProvisionedDevice) ([]byte, error) {
 	if len(record.ApplicationReference) == 0 {
 		return nil, &errs.Detail{Err: ErrPossessionApplicationEvidenceMismatch, Detail: "no application reference is registered for the device"}
 	}
@@ -388,4 +420,61 @@ func (v *VerifiedAttestation) ApplicationReference(ctx context.Context, verifier
 		return nil, notAuthorized(err)
 	}
 	return registry.RegisteredApplicationReference(ctx, ueid)
+}
+
+// RegistrySnapshot reads, for FormatDICE, the attested device's provisioning
+// record from verifier's registry once. A finalization checks the possession
+// request (ApplicationReferenceIn) and the registration (ConfirmRegistrationIn)
+// against this one record, so a registry change between two reads cannot
+// authorize evidence no single record does. It is nil for FormatTPM.
+func (v *VerifiedAttestation) RegistrySnapshot(ctx context.Context, verifier AttestationVerifier) (*ProvisionedDevice, error) {
+	if v == nil {
+		return nil, ErrNoVerifiedAttestation
+	}
+	if v.Format != FormatDICE {
+		return nil, nil
+	}
+	registry, ok := verifier.(RegisteredDeviceVerifier)
+	if !ok {
+		return nil, notAuthorized(ErrNoDeviceResolver)
+	}
+	ueid, err := v.DeviceIdentity()
+	if err != nil {
+		return nil, notAuthorized(err)
+	}
+	return registry.RegisteredDevice(ctx, ueid)
+}
+
+// ApplicationReferenceIn is ApplicationReference read from record, a
+// RegistrySnapshot.
+func (v *VerifiedAttestation) ApplicationReferenceIn(record *ProvisionedDevice) ([]byte, error) {
+	if v == nil {
+		return nil, ErrNoVerifiedAttestation
+	}
+	if v.Format != FormatDICE {
+		return nil, nil
+	}
+	if record == nil {
+		return nil, notAuthorized(ErrNoDeviceResolver)
+	}
+	return recordApplicationReference(record)
+}
+
+// ConfirmRegistrationIn is ConfirmRegistration against record, a
+// RegistrySnapshot.
+func (v *VerifiedAttestation) ConfirmRegistrationIn(record *ProvisionedDevice) error {
+	if v == nil {
+		return ErrNoVerifiedAttestation
+	}
+	if v.Format != FormatDICE {
+		return nil
+	}
+	if record == nil {
+		return notAuthorized(ErrNoDeviceResolver)
+	}
+	leaf, err := v.verifiedLeaf()
+	if err != nil {
+		return notAuthorized(err)
+	}
+	return confirmRecord(record, v.AttestedSPKI, leaf)
 }
