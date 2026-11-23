@@ -68,6 +68,18 @@
   // its cause and never as "PIN not verified".
   let verifyErr = $state<string | null>(null);
   let verifyBusy = $state(false);
+  // The role the shown verdict (or error) answers for: recorded at submit, so
+  // a result is never shown under a role that was not verified.
+  let verifiedRole = $state<"so" | "user" | null>(null);
+  const ROLE_LABEL = { so: "SO", user: "user" } as const;
+  const showVerdict = $derived(verifiedRole !== null && verifiedRole === verifyRole);
+
+  // A changed role or PIN makes any finished verdict stale.
+  function clearVerdict(): void {
+    verified = null;
+    verifyErr = null;
+    verifiedRole = null;
+  }
 
   // Only the server's explicit invalid-PIN answer (401 from the PIN
   // handlers) is a verdict on the PIN itself.
@@ -82,13 +94,14 @@
   }
 
   async function verify(): Promise<void> {
-    verified = null;
-    verifyErr = null;
+    clearVerdict();
     verifyBusy = true;
     const pin = verifyPin;
+    const role = verifyRole;
+    verifiedRole = role;
     try {
       const client = getSDKClient().pin;
-      await (verifyRole === "so" ? client.verifySO({ pin }) : client.verifyUser({ pin }));
+      await (role === "so" ? client.verifySO({ pin }) : client.verifyUser({ pin }));
       verified = true;
     } catch (e) {
       if (isInvalidPIN(e)) verified = false;
@@ -137,11 +150,17 @@
   <section class="card bg-base-100 shadow-sm">
     <div class="card-body space-y-3">
       <h2 class="card-title text-base">Verify PIN</h2>
-      {#if verified === true}
-        <Alert kind="success"><span>PIN verified</span></Alert>
+      {#if !showVerdict || verifiedRole === null}
+        <!-- no verdict for the selected role -->
+      {:else if verified === true}
+        <Alert kind="success">
+          <span>PIN verified</span>
+          <span>Checked against the {ROLE_LABEL[verifiedRole]} PIN.</span>
+        </Alert>
       {:else if verified === false}
         <Alert kind="error">
           <span>PIN not verified</span>
+          <span>Checked against the {ROLE_LABEL[verifiedRole]} PIN.</span>
           <span>Each failed attempt counts toward the PIN lockout.</span>
         </Alert>
       {:else if verifyErr !== null}
@@ -152,15 +171,15 @@
       {/if}
       <div class="flex gap-4" role="radiogroup" aria-label="PIN to verify against">
         <label class="label cursor-pointer gap-2">
-          <input type="radio" class="radio radio-sm" name="verify-role" value="so" bind:group={verifyRole} />
+          <input type="radio" class="radio radio-sm" name="verify-role" value="so" bind:group={verifyRole} disabled={verifyBusy} onchange={clearVerdict} />
           <span>SO</span>
         </label>
         <label class="label cursor-pointer gap-2">
-          <input type="radio" class="radio radio-sm" name="verify-role" value="user" bind:group={verifyRole} />
+          <input type="radio" class="radio radio-sm" name="verify-role" value="user" bind:group={verifyRole} disabled={verifyBusy} onchange={clearVerdict} />
           <span>User</span>
         </label>
       </div>
-      <input class="input input-bordered w-full" type="password" autocomplete="off" aria-label="PIN to verify" placeholder="PIN" bind:value={verifyPin} />
+      <input class="input input-bordered w-full" type="password" autocomplete="off" aria-label="PIN to verify" placeholder="PIN" bind:value={verifyPin} oninput={clearVerdict} />
       <div class="card-actions justify-end">
         <button class="btn btn-primary btn-sm" onclick={verify} disabled={verifyBusy || verifyPin === ""}>Verify</button>
       </div>
