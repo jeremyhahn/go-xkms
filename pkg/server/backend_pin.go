@@ -76,7 +76,7 @@ func (s *Server) resolveBackendPIN() error {
 		// never satisfies strategy or minimum tpm2 (docs/SPEC.md:78).
 		TPMPresent:       tpmPresent && s.pinSealedToTPM(),
 		BarrierAvailable: barrierAvailable,
-		SealerIsPKCS11:   s.config.Credentials.SealStrategy == "pkcs11",
+		SealerIsPKCS11:   s.sealerIsPKCS11(),
 	})
 	if err != nil {
 		return err
@@ -106,6 +106,14 @@ func (s *Server) installBackendPIN(strategy pinselect.BackendPINStrategy) {
 // (credentials.seal_strategy tpm2), the protection strategy tpm2 asserts.
 func (s *Server) pinSealedToTPM() bool {
 	return s.config.Credentials.SealStrategy == "tpm2"
+}
+
+// sealerIsPKCS11 reports a PKCS#11 token as the actual sealer of a sealed
+// backend PIN: the barrier itself sealed by PKCS#11 (barrier.strategy
+// pkcs11), or credentials sealed directly to PKCS#11. Either way the token
+// would store its own PIN (docs/SPEC.md:78).
+func (s *Server) sealerIsPKCS11() bool {
+	return s.config.Barrier.Strategy == "pkcs11" || s.config.Credentials.SealStrategy == "pkcs11"
 }
 
 // backendPINRelease is the strategy-specific release: tpm2 re-checks at
