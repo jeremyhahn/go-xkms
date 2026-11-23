@@ -220,6 +220,18 @@ func TestNewUVK_MeetsTheProductionUserVerificationChecks(t *testing.T) {
 	}
 }
 
+// The phone-verify-user policy accepts the biometric alone: the successful
+// user-verification fixture must carry userAuthType 2 (fingerprint) and no
+// device-credential bit, or it can never pass the production check.
+func TestUserVerificationKeyClaims_AreBiometricOnly(t *testing.T) {
+	claims := UserVerificationKeyClaims()
+	require.Equal(t, uint64(xkms.AndroidUserAuthTypeFingerprint), uint64(claims.UserAuthType))
+
+	desc, err := xkms.ParseAndroidKeyAttestation(NewUVK(t, NewCA(t, "root"), claims).Leaf)
+	require.NoError(t, err)
+	require.NoError(t, xkms.RequireAndroidAttestedPerUseUserVerification(desc))
+}
+
 func TestNoRevocations_RevokesNothing(t *testing.T) {
 	list := NoRevocations()
 	require.NotNil(t, list)
