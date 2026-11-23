@@ -367,12 +367,12 @@ func UserVerificationGenesis() []byte {
 }
 
 // UserVerificationKeyClaims are DeviceKeyClaims plus what a UVK's
-// teeEnforced list must carry: userAuthType biometric or device credential
-// (AUTH_BIOMETRIC_STRONG | AUTH_DEVICE_CREDENTIAL, ruling 180), with no
+// teeEnforced list must carry: userAuthType 2, the biometric alone
+// (AUTH_BIOMETRIC_STRONG, no device-credential bit; docs/SPEC.md), with no
 // authTimeout, so every signature needs a fresh user verification.
 func UserVerificationKeyClaims() *xkms.AndroidAttestationExtensionOptions {
 	claims := DeviceKeyClaims()
-	claims.UserAuthType = xkms.AndroidUserAuthTypeFingerprint | xkms.AndroidUserAuthTypePassword
+	claims.UserAuthType = xkms.AndroidUserAuthTypeFingerprint
 	claims.RootOfTrust = AttestedBootState()
 	return claims
 }
