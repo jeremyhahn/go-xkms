@@ -330,6 +330,21 @@ func (a *Authenticator) supportsPinUvAuthToken() bool {
 // or nil when the backend has none or reports it cannot verify a user now
 // (keybackend.UserVerificationAvailability, ruling 167).
 func (a *Authenticator) userVerifier() keybackend.UserVerifier {
+	verifier := a.configuredUserVerifier()
+	if verifier == nil {
+		return nil
+	}
+	if availability, ok := verifier.(keybackend.UserVerificationAvailability); ok && !availability.UserVerificationAvailable() {
+		return nil
+	}
+	return verifier
+}
+
+// configuredUserVerifier returns the backend's built-in user verifier whether
+// or not it can verify a user now. Authorization checks use it: a verifier
+// that is unavailable at the moment may become available, so its absence of
+// availability never lowers the authentication a command requires.
+func (a *Authenticator) configuredUserVerifier() keybackend.UserVerifier {
 	backend := a.keyBackend
 	// NewAuthenticator decorates a non-attesting backend with an
 	// AttestingBackend, whose method set hides the inner VerifyUser.
@@ -338,9 +353,6 @@ func (a *Authenticator) userVerifier() keybackend.UserVerifier {
 	}
 	verifier, ok := backend.(keybackend.UserVerifier)
 	if !ok {
-		return nil
-	}
-	if availability, ok := verifier.(keybackend.UserVerificationAvailability); ok && !availability.UserVerificationAvailable() {
 		return nil
 	}
 	return verifier
