@@ -16,24 +16,23 @@ package loopback
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // attestationHTTPClient is the wire client of the attestation Verifier over
@@ -80,100 +79,107 @@ func attestationHTTPClient(t *testing.T, inst *Instance) wire.AttestationApprais
 	}}
 }
 
-// selfSignedAKRootPEM is a throwaway CA certificate to register as an AK
-// root endorsement.
-func selfSignedAKRootPEM(t *testing.T) []byte {
+// attestationWorkflowConfig is the loopback launch config with a first-boot
+// root CA. Authentication is always on, so the embedded node serves its data
+// plane, the Verifier's store included, only once first boot has issued and
+// bound the bootstrap admin's certificate from the CA.
+func attestationWorkflowConfig(t *testing.T) *config.Config {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
+	cfg := minimalLoopbackConfig(t)
+	cfg.CA = &ca.MultiIdentityCAConfig{
+		SelectedCA:          0,
+		DefaultValidityDays: 365,
+		Identity: []ca.Identity{{
+			IsRoot:  true,
+			Valid:   1,
+			Subject: ca.Subject{CommonName: "loopback test root CA", Organization: "go-xkms", Country: "US"},
+			Keys: []*types.KeyConfig{{
+				KeyAlgorithm: types.AlgorithmECDSA,
+				ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
+			}},
+		}},
 	}
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "loopback AK root"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("create certificate: %v", err)
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-}
-
-// reachedTheVerifier fails the test when step answered the unconfigured
-// Verifier's ErrNotConfigured, the defect a normally composed engine must not
-// show. It reports whether step succeeded: the loopback engine's qrdb node
-// never runs first-boot, so a store write it refuses as awaiting the
-// bootstrap admin credential has reached the composed Verifier and its
-// store, and ends the workflow there.
-func reachedTheVerifier(t *testing.T, step string, err error) bool {
-	t.Helper()
-	switch {
-	case err == nil:
-		return true
-	case strings.Contains(err.Error(), "subsystem not configured"):
-		t.Fatalf("%s: the composed engine has no attestation Appraiser: %v", step, err)
-	case strings.Contains(err.Error(), "awaiting admin credential"):
-		t.Logf("%s reached the Verifier's store; the uninitialized loopback node refused it: %v", step, err)
-		return false
-	default:
-		t.Fatalf("%s: %v", step, err)
-	}
-	return false
+	return cfg
 }
 
 // TestLaunch_ServesTheAttestationAppraisalWorkflow proves a normally composed
 // engine (server.New, no test-only SetAttestationAppraiser) serves the
-// attestation Verifier: an endorsement is stored and listed, the reference
-// values are listed, and evidence is appraised to a result rather than the
-// unconfigured Verifier's 503.
+// attestation Verifier over its real datastore: the trust anchors and signed
+// reference values are stored and listed, genuine TPM evidence appraises as
+// Verified, and tampered evidence is refused.
 func TestLaunch_ServesTheAttestationAppraisalWorkflow(t *testing.T) {
-	inst, err := Launch(context.Background(), Options{Config: minimalLoopbackConfig(t)})
-	if err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	inst, err := Launch(context.Background(), Options{Config: attestationWorkflowConfig(t)})
+	require.NoError(t, err, "Launch")
 	t.Cleanup(func() { _ = inst.Close(context.Background()) })
 	client := attestationHTTPClient(t, inst)
 	ctx := context.Background()
 
-	rootPEM := selfSignedAKRootPEM(t)
+	pcrs := appraisaltest.PCRValues(0, 4, 7)
+	akCA, err := appraisaltest.NewAuthority("loopback AK CA")
+	require.NoError(t, err)
+	rvCA, err := appraisaltest.NewAuthority("loopback Reference Value CA")
+	require.NoError(t, err)
+	ak, err := appraisaltest.IssueAttestationKey(akCA, true)
+	require.NoError(t, err)
+	signerCert, signerKey, err := appraisaltest.SignerUnder(rvCA)
+	require.NoError(t, err)
+	corim, err := appraisaltest.SignCoRIM(pcrs, signerKey, []*x509.Certificate{signerCert})
+	require.NoError(t, err)
+
 	put, err := client.PutAttestationEndorsement(ctx, &transport.PutAttestationEndorsementRequest{
-		Name: "fleet-root", Kind: appraisal.EndorsementAKRoot, CertificatePEM: rootPEM,
+		Name: "ak-ca", Kind: appraisal.EndorsementAKRoot, CertificatePEM: akCA.CertificatePEM(),
 	})
-	if !reachedTheVerifier(t, "endorsement add", err) {
-		return
-	}
-	if put.Name != "fleet-root" {
-		t.Fatalf("endorsement add name = %q, want fleet-root", put.Name)
-	}
+	require.NoError(t, err, "endorsement add (ak-ca)")
+	require.Equal(t, "ak-ca", put.Name)
+	_, err = client.PutAttestationEndorsement(ctx, &transport.PutAttestationEndorsementRequest{
+		Name: "rv-ca", Kind: appraisal.EndorsementReferenceSigner, CertificatePEM: rvCA.CertificatePEM(),
+	})
+	require.NoError(t, err, "endorsement add (rv-ca)")
+
 	list, err := client.ListAttestationEndorsements(ctx, &transport.ListAttestationEndorsementsRequest{})
-	if !reachedTheVerifier(t, "endorsement list", err) {
-		return
+	require.NoError(t, err, "endorsement list")
+	names := make([]string, 0, len(list.Endorsements))
+	for _, e := range list.Endorsements {
+		names = append(names, e.Name)
 	}
-	if len(list.Endorsements) != 1 || list.Endorsements[0].Name != "fleet-root" {
-		t.Fatalf("endorsement list = %+v, want the one fleet-root", list.Endorsements)
-	}
+	require.ElementsMatch(t, []string{"ak-ca", "rv-ca"}, names)
 
-	_, err = client.ListAttestationReferenceValues(ctx)
-	if !reachedTheVerifier(t, "reference-value list", err) {
-		return
-	}
-
-	result, err := client.AppraiseAttestationQuote(ctx, &transport.AppraiseAttestationQuoteRequest{
-		AKCertificatePEM: rootPEM, Quote: []byte{1}, Signature: []byte{1}, Nonce: []byte{1},
-		PCRs: map[uint32][]byte{0: make([]byte, 32)},
+	rv, err := client.PutAttestationReferenceValues(ctx, &transport.PutAttestationReferenceValuesRequest{
+		Name: "golden", SignedCoRIM: corim,
 	})
-	if !reachedTheVerifier(t, "appraise", err) {
-		return
+	require.NoError(t, err, "reference-value add")
+	require.Equal(t, "golden", rv.Name)
+	require.Equal(t, []uint32{0, 4, 7}, rv.PCRIndices)
+
+	rvList, err := client.ListAttestationReferenceValues(ctx)
+	require.NoError(t, err, "reference-value list")
+	require.Len(t, rvList.ReferenceValues, 1)
+	require.Equal(t, "golden", rvList.ReferenceValues[0].Name)
+
+	nonce := []byte("loopback-attestation-nonce-00000")
+	quote, err := appraisaltest.SignQuote(ak, pcrs, nonce)
+	require.NoError(t, err)
+	genuine := &transport.AppraiseAttestationQuoteRequest{
+		AKCertificatePEM: ak.CertificatePEM(),
+		Quote:            quote.Attest,
+		Signature:        quote.Signature,
+		Nonce:            nonce,
+		PCRs:             pcrs,
+		ReferenceValues:  "golden",
 	}
-	if result.Verified {
-		t.Fatal("a malformed quote must not appraise as verified")
+	result, err := client.AppraiseAttestationQuote(ctx, genuine)
+	require.NoError(t, err, "appraise genuine evidence")
+	require.True(t, result.Verified, "genuine evidence must appraise as verified: %+v", result)
+	require.NotEmpty(t, result.Checks)
+
+	tamperedPCRs := make(map[uint32][]byte, len(pcrs))
+	for i, v := range pcrs {
+		tamperedPCRs[i] = bytes.Clone(v)
 	}
-	if len(result.Checks) == 0 {
-		t.Fatal("appraise result names no checks")
-	}
+	tamperedPCRs[7][0] ^= 0xff
+	tampered := *genuine
+	tampered.PCRs = tamperedPCRs
+	refused, err := client.AppraiseAttestationQuote(ctx, &tampered)
+	require.NoError(t, err, "appraise tampered evidence")
+	require.False(t, refused.Verified, "tampered PCR values must not appraise as verified")
 }
