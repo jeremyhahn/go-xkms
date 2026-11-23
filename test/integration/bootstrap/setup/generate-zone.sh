@@ -3,8 +3,8 @@
 # This runs as a one-shot container after the xkms server is healthy.
 set -e
 
-CERT_FILE="/etc/xkms/certs/ca.crt"
-ZONE_FILE="/etc/coredns/zones/bootstrap.test.zone"
+CERT_FILE="${TLSA_CERT_FILE:-/etc/xkms/certs/ca.crt}"
+ZONE_FILE="${TLSA_ZONE_FILE:-/etc/coredns/zones/bootstrap.test.zone}"
 HOSTNAME="bootstrap.test"
 PORT="8443"
 
