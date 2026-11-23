@@ -38,6 +38,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	xkmstransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -818,6 +819,95 @@ func TestActivateInvitePIV_CommitOutcomeUnknownKeepsTheClaim(t *testing.T) {
 			require.Error(t, err, "the WebAuthn finish must not enrol a passkey on the certificate-bound account")
 		})
 	}
+}
+
+// TestActivateInvitePIV_RecoveredClaimFencesTheCertBinding is Codex round-3
+// P1 1: a PIV request claims the first credential and stalls before its
+// certificate-binding commit; its ten-minute lease runs out (controlled
+// clock), another ceremony recovers the claim while the account is pending,
+// saves and commits a passkey and pauses before activation. The stalled PIV
+// request then resumes. Having lost the claim, it must not bind its
+// certificate: one invitation must never enrol both credentials.
+func TestActivateInvitePIV_RecoveredClaimFencesTheCertBinding(t *testing.T) {
+	f := newInviteFixture(t)
+	token := f.mintInvite(t)
+	caCert, leafCert, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	f.svc.SetCA(&mockCA{bundlePEM: pemEncodeCert(caCert)})
+
+	// The WebAuthn side runs on a lease clock the test moves.
+	now := time.Now()
+	waUsers, waCreds, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
+		Users:      f.users,
+		DAOFactory: testutil.NewMemoryDAOFactory(),
+		TenantID:   webauthntest.TenantID,
+		Clock:      func() time.Time { return now },
+	})
+	require.NoError(t, err)
+	waSvc, err := webauthn.NewService(webauthn.ServiceParams{
+		Config: &webauthn.Config{
+			RPID:          f.rp.ID,
+			RPDisplayName: f.rp.Name,
+			RPOrigins:     []string{f.rp.Origin},
+		},
+		UserStore:       waUsers,
+		SessionStore:    webauthn.NewMemorySessionStore(),
+		CredentialStore: waCreds,
+	})
+	require.NoError(t, err)
+	f.svc.SetWebAuthn(waSvc)
+
+	var (
+		inPIV, inFinish         bool
+		finishRan, pivCommitted bool
+		pivReq                  *qrdbtransport.UpdateUserRequest
+		pivUser                 *qrdbtransport.User
+		pivCommitErr            error
+		finishErr               error
+	)
+	update := f.users.updateUser
+	f.users.updateUser = func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+		active := req.Lifecycle == string(qrdbsdk.LifecycleActive)
+		switch {
+		case inPIV && active && !finishRan:
+			// The PIV request stalls before its certificate-binding
+			// commit, past its claim's lease; another ceremony runs.
+			finishRan, inPIV, pivReq = true, false, req
+			now = now.Add(11 * time.Minute)
+			begin, err := f.beginRegistration(inviteFixtureTenant, token)
+			if err != nil {
+				finishErr = err
+			} else {
+				attestation := f.attestInvite(t, begin.OptionsJSON, newInviteEC2Credential(t))
+				inFinish = true
+				_, finishErr = f.finishRegistration(inviteFixtureTenant, token, begin.SessionID, attestation)
+				inFinish = false
+			}
+			if !pivCommitted {
+				return update(ctx, req)
+			}
+			return pivUser, pivCommitErr
+		case inFinish && active && !pivCommitted:
+			// The recovering ceremony saved and committed its passkey
+			// and pauses before activation: the stalled PIV request
+			// resumes and commits now.
+			pivCommitted = true
+			pivUser, pivCommitErr = update(ctx, pivReq)
+		}
+		return update(ctx, req)
+	}
+
+	inPIV = true
+	_, pivErr := f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+	inPIV = false
+
+	require.True(t, finishRan, "the PIV request stalled and another ceremony ran")
+	require.NoError(t, finishErr, "the expired claim was recovered and the passkey enrolled")
+	passkeys, err := waCreds.GetByUserID(context.Background(), webauthn.HandleFromUserID(inviteFixtureQRDBUserID))
+	require.NoError(t, err)
+	require.NotEmpty(t, passkeys, "the recovering ceremony saved its passkey")
+	pivBound := pivCommitted && pivCommitErr == nil
+	require.False(t, pivBound, "a PIV request that lost its claim must not bind its certificate: the invitation enrolled both a certificate and a passkey (PIV result: %v)", pivErr)
 }
 
 // TestActivateInvitePIV_RefusedAfterFailedWebAuthnActivation: once a

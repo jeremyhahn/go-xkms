@@ -19,6 +19,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -50,6 +51,11 @@ type QRDBUserStoreOptions struct {
 	// sign-up's registration/begin is anonymous). A bind error fails the
 	// call. Nil keeps the caller's context.
 	CallContext qrdbstorage.CallContext
+
+	// Clock is the time source first-credential claim leases are taken and
+	// judged by. Production leaves it nil (time.Now); it exists so tests
+	// can expire a lease deterministically.
+	Clock func() time.Time
 }
 
 // qrdbUserStore implements xkms's UserStore over qrdb's user records. A
@@ -92,6 +98,9 @@ func NewQRDBUserStoreAdapter(opts QRDBUserStoreOptions) (UserStore, CredentialSt
 	creds, err := newCredentialStore(opts.DAOFactory)
 	if err != nil {
 		return nil, nil, WrapError("build credential store", err)
+	}
+	if opts.Clock != nil {
+		creds.now = opts.Clock
 	}
 	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID, bind: opts.CallContext}
 	return users, creds, nil
