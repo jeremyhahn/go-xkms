@@ -52,3 +52,79 @@ type ACMEExternalAccountBinding = entities.ExternalAccountBinding
 
 // ACMETenant represents a tenant in a multi-tenant ACME deployment.
 type ACMETenant = entities.Tenant
+
+// TenantSettings is the per-tenant ACME policy of an ACMETenant.
+type TenantSettings = entities.TenantSettings
+
+// TenantRootCA is a tenant's root CA record.
+type TenantRootCA = entities.TenantRootCA
+
+// TenantIntermediateCA is a tenant's intermediate CA record.
+type TenantIntermediateCA = entities.TenantIntermediateCA
+
+// SigningCAInfo describes the CA that signs a tenant's certificates.
+type SigningCAInfo = entities.SigningCAInfo
+
+// EABDeviceInfo is the device binding of an external account binding.
+type EABDeviceInfo = entities.EABDeviceInfo
+
+// ExternalAccountBindingJWS is the flattened JWS of an externalAccountBinding.
+type ExternalAccountBindingJWS = entities.ExternalAccountBindingJWS
+
+// ExternalAccountBindingProtectedHeader is the protected header of an
+// ExternalAccountBindingJWS.
+type ExternalAccountBindingProtectedHeader = entities.ExternalAccountBindingProtectedHeader
+
+// SubProblem is an RFC 8555 §6.7.1 subproblem of an ACME problem document.
+type SubProblem = entities.SubProblem
+
+// InvalidSerialError reports a certificate serial that does not parse.
+type InvalidSerialError = entities.InvalidSerialError
+
+// NormalizeSerial returns the canonical form of a certificate serial.
+var NormalizeSerial = entities.NormalizeSerial
+
+// StringToEntityID hashes a string key to an entity ID.
+var StringToEntityID = entities.StringToEntityID
+
+// AUTHORIZATION_INDEX_URL is the index key for authorization URL lookups.
+const AUTHORIZATION_INDEX_URL = entities.AUTHORIZATION_INDEX_URL
+
+// Tenant statuses.
+const (
+	TenantStatusActive    = entities.TenantStatusActive
+	TenantStatusSuspended = entities.TenantStatusSuspended
+	TenantStatusDeleted   = entities.TenantStatusDeleted
+)
+
+// CA statuses, parent types and purposes.
+const (
+	CAStatusActive          = entities.CAStatusActive
+	CAStatusPendingRotation = entities.CAStatusPendingRotation
+	CAStatusRevoked         = entities.CAStatusRevoked
+	CAParentTypeGlobal      = entities.CAParentTypeGlobal
+	CAParentTypeTenant      = entities.CAParentTypeTenant
+	CAPurposeGeneral        = entities.CAPurposeGeneral
+	CAPurposeServerAuth     = entities.CAPurposeServerAuth
+	CAPurposeClientAuth     = entities.CAPurposeClientAuth
+	CAPurposeCodeSigning    = entities.CAPurposeCodeSigning
+	CAPurposeTPMEndorsement = entities.CAPurposeTPMEndorsement
+)
+
+// Signing CA types (SigningCAInfo.Type).
+const (
+	SigningCATypeIntermediate = entities.SigningCATypeIntermediate
+	SigningCATypeRoot         = entities.SigningCATypeRoot
+	SigningCATypeGlobal       = entities.SigningCATypeGlobal
+)
+
+// External account binding purposes and statuses.
+const (
+	EABPurposeAccountBinding = entities.EABPurposeAccountBinding
+	EABPurposeEndorse01      = entities.EABPurposeEndorse01
+	EABPurposeEnroll01       = entities.EABPurposeEnroll01
+	EABStatusActive          = entities.EABStatusActive
+	EABStatusUsed            = entities.EABStatusUsed
+	EABStatusRevoked         = entities.EABStatusRevoked
+	EABStatusExpired         = entities.EABStatusExpired
+)

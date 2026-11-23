@@ -99,4 +99,31 @@ var (
 	// KeyVersionName returns the backend key name of a version of a key:
 	// the key ID for version 1, "<key ID>--v<n>" after.
 	KeyVersionName = keyversion.Name
+
+	// ErrKeyVersionNilRecord reports a nil KeyVersionRecord.
+	ErrKeyVersionNilRecord = keyversion.ErrNilRecord
+
+	// KeyVersionBaseKeyID returns the key ID a backend key name belongs to:
+	// the name with any "--v<n>" version suffix removed.
+	KeyVersionBaseKeyID = keyversion.BaseKeyID
+
+	// KeyVersionIsReserved reports whether a key ID uses the reserved
+	// version suffix.
+	KeyVersionIsReserved = keyversion.IsReserved
+
+	// KeyVersionCheckKeyID returns a ReservedKeyIDError for a reserved key ID.
+	KeyVersionCheckKeyID = keyversion.CheckKeyID
+
+	// KeyVersionImplicit returns the implicit version-1 record of a key
+	// created before key versioning.
+	KeyVersionImplicit = keyversion.Implicit
+
+	// KeyVersionTenantSegment returns the store key segment of a tenant.
+	KeyVersionTenantSegment = keyversion.TenantSegment
 )
+
+// KeyVersionInvalidVersionError reports a version number out of range.
+type KeyVersionInvalidVersionError = keyversion.InvalidVersionError
+
+// KeyVersionInvalidRecordKeyError reports a malformed key version record key.
+type KeyVersionInvalidRecordKeyError = keyversion.InvalidRecordKeyError

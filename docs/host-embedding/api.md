@@ -47,6 +47,36 @@ module, err := xkmssdk.NewServiceModule(resolveXKMSService,
 serverOpts = append(serverOpts, qrdbsdk.WithModule(module))
 ```
 
+### Consumer re-exports
+
+A host imports go-xkms through `sdk/go` only. The symbols go-quicbaas
+used from internal packages are aliases there (SPEC row
+`sdk-consumer-exports`):
+
+- keyversion: `KeyVersionBaseKeyID`, `KeyVersionCheckKeyID`,
+  `KeyVersionImplicit`, `KeyVersionIsReserved`, `KeyVersionTenantSegment`,
+  `ErrKeyVersionNilRecord`, `KeyVersionInvalidVersionError`,
+  `KeyVersionInvalidRecordKeyError` (`sdk/go/keyversion.go`).
+- webauthn: `WebAuthnUserStore`, `WebAuthnUserIDFromHandle`,
+  `ErrWebAuthnCredentialNotFound`, `IsWebAuthnUserNotFound`,
+  `IsWebAuthnCredentialNotFound`; webauthn/http: `WebAuthnAuthResponse`,
+  `WebAuthnBeginLoginRequest`, `WebAuthnErrorResponse`,
+  `WebAuthnHeaderSessionID`, `WebAuthnErrorCode*`, `WebAuthnMountChi`,
+  `WebAuthnMountMux`, `WebAuthnMountStdlib`, `WebAuthnMuxRouter`,
+  `WebAuthnMuxRoute`, `WebAuthnRouteEntry` (`sdk/go/webauthn.go`).
+- ssh/scope: `SSHKind`, `SSHKindKeys`, `SSHKindKnownHosts`,
+  `SSHKindAuthorizedKeys`, `SSHBuildKeyID`, `SSHValidateFilter`,
+  `SSHScopeInvalidError`, `SSHKindInvalidError`, `SSHKeyIDMalformedError`
+  (`sdk/go/ssh.go`).
+- tpm2: `PCRBank`, `Quote`, `ParsePCRBankAlgID`, `ParsePCRBankCryptoHash`,
+  `PCRDigestSize` (`sdk/go/tpm.go`).
+- acme entities (`sdk/go/acme`): `TenantSettings`, `TenantRootCA`,
+  `TenantIntermediateCA`, `SigningCAInfo`, `EABDeviceInfo`,
+  `ExternalAccountBindingJWS`, `ExternalAccountBindingProtectedHeader`,
+  `SubProblem`, `InvalidSerialError`, `NormalizeSerial`, `StringToEntityID`,
+  `AUTHORIZATION_INDEX_URL` and the `TenantStatus*`, `CA*`, `SigningCAType*`
+  and `EAB*` constants (`sdk/go/acme/acme_entities.go`).
+
 The host's request chain around the node uses the same xkms pieces xkmsd
 uses (see [engineering.md](engineering.md#host-request-chain-sdkgo)):
 

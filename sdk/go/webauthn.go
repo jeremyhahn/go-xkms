@@ -121,6 +121,73 @@ type WebAuthnHTTPHandler = webauthnhttp.Handler
 // NewWebAuthnHTTPHandler constructs the WebAuthn ceremony HTTP handler.
 var NewWebAuthnHTTPHandler = webauthnhttp.NewHandler
 
+// WebAuthnUserStore is the user persistence contract a WebAuthnService
+// resolves users and credentials through.
+type WebAuthnUserStore = webauthn.UserStore
+
+// ErrWebAuthnCredentialNotFound reports a credential ID the user store
+// does not hold.
+var ErrWebAuthnCredentialNotFound = webauthn.ErrCredentialNotFound
+
+// IsWebAuthnUserNotFound reports whether err means the user does not exist.
+var IsWebAuthnUserNotFound = webauthn.IsUserNotFound
+
+// IsWebAuthnCredentialNotFound reports whether err means the credential
+// does not exist.
+var IsWebAuthnCredentialNotFound = webauthn.IsCredentialNotFound
+
+// WebAuthnUserIDFromHandle decodes a WebAuthn user handle into the numeric
+// user ID the QRDB user store assigns.
+var WebAuthnUserIDFromHandle = webauthn.UserIDFromHandle
+
+// WebAuthnAuthResponse is the ceremony HTTP response that carries the
+// session after a finished login or registration.
+type WebAuthnAuthResponse = webauthnhttp.AuthResponse
+
+// WebAuthnBeginLoginRequest is the ceremony HTTP body that starts a login.
+type WebAuthnBeginLoginRequest = webauthnhttp.BeginLoginRequest
+
+// WebAuthnErrorResponse is the ceremony HTTP error body.
+type WebAuthnErrorResponse = webauthnhttp.ErrorResponse
+
+// WebAuthnHeaderSessionID is the header that carries the ceremony session ID.
+const WebAuthnHeaderSessionID = webauthnhttp.HeaderSessionID
+
+// WebAuthn ceremony HTTP error codes (WebAuthnErrorResponse.Code).
+const (
+	WebAuthnErrorCodeInvalidRequest         = webauthnhttp.ErrorCodeInvalidRequest
+	WebAuthnErrorCodeInvalidSession         = webauthnhttp.ErrorCodeInvalidSession
+	WebAuthnErrorCodeSessionExpired         = webauthnhttp.ErrorCodeSessionExpired
+	WebAuthnErrorCodeUserNotFound           = webauthnhttp.ErrorCodeUserNotFound
+	WebAuthnErrorCodeNoCredentials          = webauthnhttp.ErrorCodeNoCredentials
+	WebAuthnErrorCodeVerificationFailed     = webauthnhttp.ErrorCodeVerificationFailed
+	WebAuthnErrorCodeRegistrationRefused    = webauthnhttp.ErrorCodeRegistrationRefused
+	WebAuthnErrorCodeSessionLimit           = webauthnhttp.ErrorCodeSessionLimit
+	WebAuthnErrorCodeInternalError          = webauthnhttp.ErrorCodeInternalError
+	WebAuthnErrorCodeUnauthenticated        = webauthnhttp.ErrorCodeUnauthenticated
+	WebAuthnErrorCodeSessionAccountMismatch = webauthnhttp.ErrorCodeSessionAccountMismatch
+	WebAuthnErrorCodeCredentialExists       = webauthnhttp.ErrorCodeCredentialExists
+)
+
+// WebAuthnMountChi mounts the ceremony routes on a chi router.
+var WebAuthnMountChi = webauthnhttp.MountChi
+
+// WebAuthnMuxRouter is the gorilla/mux-shaped router WebAuthnMountMux mounts on.
+type WebAuthnMuxRouter = webauthnhttp.MuxRouter
+
+// WebAuthnMuxRoute is the route a WebAuthnMuxRouter returns.
+type WebAuthnMuxRoute = webauthnhttp.MuxRoute
+
+// WebAuthnMountMux mounts the ceremony routes on a WebAuthnMuxRouter.
+var WebAuthnMountMux = webauthnhttp.MountMux
+
+// WebAuthnMountStdlib mounts the ceremony routes on a net/http ServeMux
+// under a prefix.
+var WebAuthnMountStdlib = webauthnhttp.MountStdlib
+
+// WebAuthnRouteEntry describes one ceremony route (method, path, handler).
+type WebAuthnRouteEntry = webauthnhttp.RouteEntry
+
 // NewWebAuthnFIDO2Servicer wraps a WebAuthnService in the canonical FIDO2
 // transport-servicer adapter — the same ceremony adaptation (options
 // marshaling, attestation/assertion parsing, user resolution) the
