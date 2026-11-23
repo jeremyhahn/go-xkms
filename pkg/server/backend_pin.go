@@ -70,6 +70,13 @@ func (s *Server) resolveBackendPIN() error {
 		return err
 	}
 	s.backendPIN = pinselect.NewBackendPIN(strategy, s.backendPINRelease(strategy))
+	// Zeroize at every seal of the running barrier, not only at shutdown:
+	// the barrier runs this before it wipes its own root key.
+	if s.barrier != nil {
+		s.barrier.OnSealing(func(context.Context) error {
+			return s.SealBackendPIN()
+		})
+	}
 	return nil
 }
 
