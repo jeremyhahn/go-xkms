@@ -18,6 +18,7 @@ package crypto_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"fmt"
 	"math"
 	"sync"
 	"testing"
@@ -104,12 +105,17 @@ func TestRandVariousSizesIntegration(t *testing.T) {
 	sizes := []int{1, 16, 32, 64, 128, 256, 512, 1024, 4096, 1024 * 1024}
 
 	for _, size := range sizes {
-		t.Run(string(rune(size))+" bytes", func(t *testing.T) {
+		t.Run(fmt.Sprintf("%d_bytes", size), func(t *testing.T) {
 			randomBytes, err := resolver.Rand(size)
 			require.NoError(t, err, "Failed to generate %d bytes", size)
 			require.Len(t, randomBytes, size, "Should generate exactly %d bytes", size)
 
-			// Verify not all zeros
+			// An all-zeros output is a legitimate draw with probability
+			// 2^(-8*size): 1/256 for one byte. Check it only from 16 bytes
+			// (2^-128), where a hit means a broken source, not chance.
+			if size < 16 {
+				return
+			}
 			allZeros := true
 			for _, b := range randomBytes {
 				if b != 0 {

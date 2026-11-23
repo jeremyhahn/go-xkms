@@ -62,10 +62,13 @@ other tenant-scoped operation in this service uses:
   `docs/tenancy` documents elsewhere in this service).
 - A system-tenant caller is bound the same way (go-xkms#1406): it may revoke
   only a certificate recorded for the system/platform scope (`""`) — the
-  server's own certificates and certificates issued through a path that
-  records no tenant at all (TCG EK/AK/IDevID, the CA's own
-  root/intermediate chain). A tenant's certificate answers it exactly like
-  an unknown serial.
+  server's own certificates and certificates that carry no tenant record
+  (the CA's own root/intermediate chain, a TCG EK/AK/IDevID certificate
+  signed by a caller-supplied Signer, a certificate issued before the record
+  existed). A TCG EK/AK/IDevID certificate the CA signs records the
+  request's tenant like any other issuance, so a tenant's EK/AK/IDevID
+  certificate, like any tenant's certificate, answers it exactly like an
+  unknown serial.
 - `IssueCertificate` binds `req.TenantID` against the caller's own tenant
   before forwarding it to `IssueCertificateRaw`, exactly as `SignCSR`
   already did for `SignCSRWithSPIFFE`'s tenant, so a tenant-scoped caller

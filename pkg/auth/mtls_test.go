@@ -113,7 +113,7 @@ func TestMTLSAuthenticator_AuthenticateHTTP_ValidCert(t *testing.T) {
 
 	req := &http.Request{
 		TLS: &tls.ConnectionState{
-			PeerCertificates: []*x509.Certificate{clientCert.Cert},
+			PeerCertificates: []*x509.Certificate{withTenant(t, clientCert.Cert, "acme")},
 		},
 		RemoteAddr: "192.168.1.1:12345",
 	}
@@ -123,6 +123,7 @@ func TestMTLSAuthenticator_AuthenticateHTTP_ValidCert(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, identity)
 	assert.Equal(t, "test-client", identity.Subject)
+	assert.Equal(t, "acme", identity.TenantID)
 	assert.Equal(t, "mtls", identity.Metadata["auth_method"])
 	assert.NotEmpty(t, identity.Metadata["cert_serial"])
 	assert.NotEmpty(t, identity.Metadata["cert_issuer"])
@@ -178,7 +179,7 @@ func TestMTLSAuthenticator_AuthenticateGRPC_ValidCert(t *testing.T) {
 		},
 		AuthInfo: credentials.TLSInfo{
 			State: tls.ConnectionState{
-				PeerCertificates: []*x509.Certificate{clientCert.Cert},
+				PeerCertificates: []*x509.Certificate{withTenant(t, clientCert.Cert, "acme")},
 			},
 		},
 	}
@@ -191,6 +192,7 @@ func TestMTLSAuthenticator_AuthenticateGRPC_ValidCert(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, identity)
 	assert.Equal(t, "grpc-client", identity.Subject)
+	assert.Equal(t, "acme", identity.TenantID)
 	assert.Equal(t, "mtls", identity.Metadata["auth_method"])
 	assert.NotEmpty(t, identity.Metadata["cert_serial"])
 	assert.NotEmpty(t, identity.Metadata["peer_addr"])
@@ -733,7 +735,7 @@ func TestMTLSAuthenticator_WithoutUserStore_NoChange(t *testing.T) {
 
 	req := &http.Request{
 		TLS: &tls.ConnectionState{
-			PeerCertificates: []*x509.Certificate{clientCert.Cert},
+			PeerCertificates: []*x509.Certificate{withTenant(t, clientCert.Cert, "acme")},
 		},
 		RemoteAddr: "10.0.0.7:443",
 	}
@@ -742,6 +744,7 @@ func TestMTLSAuthenticator_WithoutUserStore_NoChange(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "no-store-client", identity.Subject)
+	assert.Equal(t, "acme", identity.TenantID)
 }
 
 // Tests for TenantID extraction
@@ -784,7 +787,9 @@ func TestMTLSAuthenticator_TenantID_FromUserStore(t *testing.T) {
 }
 
 func TestMTLSAuthenticator_TenantID_FromOU(t *testing.T) {
-	// When no UserStore is configured, the first OU from the cert is used as TenantID.
+	// An OU is not a tenant on its own: qrdbsdk.TenantFromClientCert names a
+	// tenant only when the first OU and a SPIFFE SAN agree, so an OU-only
+	// certificate is refused rather than read as tenant-from-ou.
 	cert := &x509.Certificate{
 		Subject: pkix.Name{
 			CommonName:         "ou-client",
@@ -805,16 +810,15 @@ func TestMTLSAuthenticator_TenantID_FromOU(t *testing.T) {
 	}
 
 	identity, err := auth.AuthenticateHTTP(req)
-	require.NoError(t, err)
-	require.NotNil(t, identity)
-
-	assert.Equal(t, "ou-client", identity.Subject)
-	assert.Equal(t, "tenant-from-ou", identity.TenantID)
-	assert.False(t, IsCrossTenant(identity))
+	require.Error(t, err)
+	assert.Nil(t, identity)
+	assert.ErrorIs(t, err, qrdbsdk.ErrInvalidClientCertificate)
 }
 
 func TestMTLSAuthenticator_TenantID_NoOU(t *testing.T) {
-	// When no UserStore is configured and the cert has no OU, TenantID should be empty.
+	// With no UserStore, a cert with no OU names no tenant under go-qrdb's
+	// rule and is refused; it never becomes a tenantless (cross-tenant)
+	// identity.
 	cert := &x509.Certificate{
 		Subject: pkix.Name{
 			CommonName:         "no-ou-client",
@@ -835,12 +839,9 @@ func TestMTLSAuthenticator_TenantID_NoOU(t *testing.T) {
 	}
 
 	identity, err := auth.AuthenticateHTTP(req)
-	require.NoError(t, err)
-	require.NotNil(t, identity)
-
-	assert.Equal(t, "no-ou-client", identity.Subject)
-	assert.Empty(t, identity.TenantID)
-	assert.True(t, IsCrossTenant(identity))
+	require.Error(t, err)
+	assert.Nil(t, identity)
+	assert.True(t, errors.Is(err, qrdbsdk.ErrInvalidClientCertificate), "error %v must match qrdbsdk.ErrInvalidClientCertificate", err)
 }
 
 // TestMTLSAuthenticator_WithUserStore_NoEmail_OmitsKey proves a cert-bound

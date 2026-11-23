@@ -324,7 +324,7 @@ func TestTenantBinding_TenantCallerManagesOwnTenant(t *testing.T) {
 
 	_, err := svc.GetTenant(ctx, boundTenantA)
 	require.NoError(t, err)
-	require.NoError(t, svc.UpdateTenantStatus(ctx, boundTenantA, entities.TenantStatusActive))
+	assertTenantStatusUnsupported(t, svc.UpdateTenantStatus(ctx, boundTenantA, entities.TenantStatusActive))
 
 	role, err := svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleA.ID, Permissions: []string{"acme_orders:list"}})
 	require.NoError(t, err)
@@ -383,7 +383,7 @@ func TestTenantBinding_PlatformReachesEveryTenant(t *testing.T) {
 	svc := f.svc
 	ctx := platformCtx()
 
-	require.NoError(t, svc.UpdateTenantStatus(ctx, boundTenantB, entities.TenantStatusSuspended))
+	assertTenantStatusUnsupported(t, svc.UpdateTenantStatus(ctx, boundTenantB, entities.TenantStatusSuspended))
 	user, err := svc.UpdateTenantUser(ctx, boundTenantB, &db.UpdateUserRequest{ID: f.userB.ID, Name: "Renamed B"})
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed B", user.Name)

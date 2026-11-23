@@ -13,7 +13,11 @@
 
 package admin
 
-import "github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
+import (
+	stderrors "errors"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
+)
 
 // TenantNotFoundError indicates a tenant was not found.
 type TenantNotFoundError struct {
@@ -78,6 +82,33 @@ type IntermediateCAExistsError struct {
 // RevocationFailedError indicates a certificate revocation failed.
 type RevocationFailedError struct {
 	errors.CAError
+}
+
+// ErrTenantStatusUnsupported matches every TenantStatusUnsupportedError.
+// Until go-qrdb carries a tenant status, the admin client refuses a tenant
+// status set or filter with it (SPEC.md:129).
+var ErrTenantStatusUnsupported = stderrors.New("tenant status is not supported")
+
+// TenantStatusUnsupportedError indicates a tenant status was set or used as
+// a filter before go-qrdb carries it. Field names the refused field.
+type TenantStatusUnsupportedError struct {
+	errors.CAError
+	Field string
+}
+
+// Is reports whether target is ErrTenantStatusUnsupported or matches the
+// embedded CAError.
+func (e *TenantStatusUnsupportedError) Is(target error) bool {
+	if target == ErrTenantStatusUnsupported {
+		return true
+	}
+	return e.CAError.Is(target)
+}
+
+// Unwrap returns the embedded CAError, so errors.As and the errors package
+// code helpers such as IsInvalidInput see it.
+func (e *TenantStatusUnsupportedError) Unwrap() error {
+	return &e.CAError
 }
 
 // NewTenantNotFound creates a TenantNotFoundError.
@@ -168,6 +199,15 @@ func NewIntermediateCAExists(op, message string) *IntermediateCAExistsError {
 func NewRevocationFailed(op, message string) *RevocationFailedError {
 	return &RevocationFailedError{
 		CAError: *errors.NewInternal(op, message),
+	}
+}
+
+// NewTenantStatusUnsupported creates the typed refusal of a tenant status
+// set or filter for op; it is an invalid input error on the status field.
+func NewTenantStatusUnsupported(op string) *TenantStatusUnsupportedError {
+	return &TenantStatusUnsupportedError{
+		CAError: *errors.NewInvalidInput(op, "tenant status is not supported until go-qrdb carries it"),
+		Field:   "status",
 	}
 }
 
