@@ -53,6 +53,9 @@ func backendPINTestServer(t *testing.T, strategy string, pin []byte, tpm, barrie
 	cfg := &config.Config{}
 	cfg.Datastore.Path = t.TempDir()
 	cfg.BackendPIN.Strategy = strategy
+	// The PIN is stored under the barrier unless a test says otherwise:
+	// sealed needs barrier-backed credential storage.
+	cfg.Credentials.SealStrategy = "barrier"
 	pkcs11Cfg := &config.PKCS11Config{Enabled: true}
 	if pin != nil {
 		pv, err := types.NewLiteralSecretValue(ctx, pin)
@@ -117,13 +120,13 @@ func TestResolveBackendPIN_RefusedFailsClosed(t *testing.T) {
 // (credentials.seal_strategy tpm2): a TPM alone with a barrier-sealed PIN
 // never satisfies strategy or minimum tpm2 (docs/SPEC.md:78).
 func TestResolveBackendPIN_TPM2RequiresTPMSealedPIN(t *testing.T) {
-	for _, seal := range []string{"", "barrier", "manual"} {
+	for _, seal := range []string{"", "barrier", "manual", "awskms"} {
 		s, _, _ := backendPINTestServer(t, "tpm2", []byte("backend-pin-1"), true, true)
 		s.config.BackendPIN.Minimum = "tpm2"
 		s.config.Credentials.SealStrategy = seal
 		err := s.resolveBackendPIN()
-		var unavailable *pinselect.BackendPINUnavailableError
-		require.True(t, errors.As(err, &unavailable), "seal_strategy %q: err = %v", seal, err)
+		var store *pinselect.BackendPINStoreError
+		require.True(t, errors.As(err, &store), "seal_strategy %q: err = %v", seal, err)
 		require.Equal(t, "", s.BackendPINStrategy())
 		_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s.backendPINDir()))
 		require.True(t, os.IsNotExist(statErr), "nothing persisted for seal_strategy %q", seal)
@@ -136,11 +139,65 @@ func TestResolveBackendPIN_TPM2RequiresTPMSealedPIN(t *testing.T) {
 	require.Equal(t, "tpm2", s.BackendPINStrategy())
 }
 
-func TestResolveBackendPIN_AutoWithTPMButBarrierSealSelectsSealed(t *testing.T) {
+// auto selects tpm2 whenever a TPM 2.0 is present (docs/SPEC.md:78), and
+// never the weaker sealed: a TPM host whose PIN is stored under the barrier
+// is refused before a record is persisted, not downgraded to sealed.
+func TestResolveBackendPIN_AutoWithTPMSelectsTPM2(t *testing.T) {
 	s, _, _ := backendPINTestServer(t, "auto", []byte("backend-pin-1"), true, true)
+	s.config.Credentials.SealStrategy = "tpm2"
+	require.NoError(t, s.resolveBackendPIN())
+	require.Equal(t, "tpm2", s.BackendPINStrategy())
+	persisted, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
+	require.NoError(t, err)
+	require.Equal(t, pinselect.BackendPINTPM2, persisted)
+
+	s, _, _ = backendPINTestServer(t, "auto", []byte("backend-pin-1"), true, true)
 	s.config.Credentials.SealStrategy = "barrier"
+	var store *pinselect.BackendPINStoreError
+	require.True(t, errors.As(s.resolveBackendPIN(), &store), "auto on a TPM host never selects sealed")
+	require.Equal(t, pinselect.BackendPINTPM2, store.Strategy)
+	require.Equal(t, "", s.BackendPINStrategy())
+	_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s.backendPINDir()))
+	require.True(t, os.IsNotExist(statErr), "no sealed record persisted on a TPM host")
+}
+
+// sealed needs barrier-backed credential storage: a PIN stored elsewhere
+// (a cloud seal, the manual default) is refused before a record is
+// persisted, a persisted sealed record is refused once the storage changed,
+// and a release re-checks the storage.
+func TestResolveBackendPIN_SealedRequiresBarrierCredentialStorage(t *testing.T) {
+	for _, seal := range []string{"", "manual", "awskms", "tpm2"} {
+		s, opened, _ := backendPINTestServer(t, "sealed", []byte("backend-pin-1"), false, true)
+		s.config.Credentials.SealStrategy = seal
+		var store *pinselect.BackendPINStoreError
+		require.True(t, errors.As(s.resolveBackendPIN(), &store), "seal_strategy %q", seal)
+		require.Equal(t, pinselect.BackendPINSealed, store.Strategy)
+		require.Equal(t, "", s.BackendPINStrategy())
+		require.Empty(t, *opened)
+		_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s.backendPINDir()))
+		require.True(t, os.IsNotExist(statErr), "nothing persisted for seal_strategy %q", seal)
+	}
+
+	// A persisted sealed record does not survive a storage change on restart.
+	s, _, _ := backendPINTestServer(t, "auto", []byte("backend-pin-1"), false, true)
 	require.NoError(t, s.resolveBackendPIN())
 	require.Equal(t, "sealed", s.BackendPINStrategy())
+	dir := s.backendPINDir()
+	restarted, opened, _ := backendPINTestServer(t, "auto", []byte("backend-pin-1"), false, true)
+	restarted.config.Datastore.Path = s.config.Datastore.Path
+	require.Equal(t, dir, restarted.backendPINDir())
+	restarted.config.Credentials.SealStrategy = "awskms"
+	var store *pinselect.BackendPINStoreError
+	require.True(t, errors.As(restarted.resolveBackendPIN(), &store), "persisted sealed refused after the storage changed")
+	require.Empty(t, *opened)
+
+	// The release re-checks the storage the strategy asserts.
+	s, opened, _ = backendPINTestServer(t, "sealed", []byte("backend-pin-1"), false, true)
+	require.NoError(t, s.resolveBackendPIN())
+	s.config.Credentials.SealStrategy = "awskms"
+	err := s.startPKCS11AfterUnseal()
+	require.ErrorIs(t, err, errBackendPINNotBarrierSealed)
+	require.Empty(t, *opened)
 }
 
 // A barrier sealed by the PKCS#11 token would store the token's own PIN
@@ -206,6 +263,25 @@ func TestResolveBackendPIN_RNGPINWithoutKeyBackendEnforcesMinimum(t *testing.T) 
 	var below *pinselect.BackendPINBelowMinimumError
 	require.True(t, errors.As(s.resolveBackendPIN(), &below), "minimum tpm2 enforced for the RNG PIN")
 	require.Nil(t, s.backendPIN)
+}
+
+// An omitted rng.mode is auto (Config.GetRNGConfig, the RNG resolver), so
+// an rng.pkcs11.pin under it is held to the policy like mode auto.
+func TestResolveBackendPIN_RNGPINWithDefaultModeIsPolicyBound(t *testing.T) {
+	s, _ := rngPKCS11PINServer(t, "sealed", []byte("rng-pin-1"))
+	s.config.RNG.Mode = ""
+	s.config.BackendPIN.Minimum = "tpm2"
+	var below *pinselect.BackendPINBelowMinimumError
+	require.True(t, errors.As(s.resolveBackendPIN(), &below), "minimum enforced for the RNG PIN under the default mode")
+	require.Nil(t, s.backendPIN)
+
+	s, _ = rngPKCS11PINServer(t, "", []byte("rng-pin-1"))
+	s.config.RNG.Mode = ""
+	require.NoError(t, s.resolveBackendPIN())
+	require.Equal(t, "sealed", s.BackendPINStrategy())
+	persisted, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
+	require.NoError(t, err)
+	require.Equal(t, pinselect.BackendPINSealed, persisted)
 }
 
 // An active RNG PIN gets the release/seal lifecycle: released after

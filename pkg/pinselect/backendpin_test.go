@@ -163,6 +163,48 @@ func TestResolveBackendPIN_SealedWithoutBarrierFailsClosed(t *testing.T) {
 	assertNoBackendPINRecord(t, cfg.PINDir)
 }
 
+func TestResolveBackendPIN_StoreMismatchIsRefusedBeforePersist(t *testing.T) {
+	// auto on a TPM host resolves tpm2; a barrier-stored PIN does not
+	// provide it, so it is refused, never downgraded to sealed.
+	cfg := backendPINCfg(t)
+	cfg.TPMPresent = true
+	cfg.Store = BackendPINSealed
+	_, err := ResolveBackendPIN(cfg)
+	var store *BackendPINStoreError
+	if !errors.As(err, &store) || store.Strategy != BackendPINTPM2 || store.Store != BackendPINSealed {
+		t.Fatalf("err = %v, want BackendPINStoreError tpm2 under sealed", err)
+	}
+	assertNoBackendPINRecord(t, cfg.PINDir)
+
+	// sealed with a cloud-sealed PIN is refused.
+	cfg = backendPINCfg(t)
+	cfg.Strategy = BackendPINSealed
+	cfg.Store = "awskms"
+	if _, err := ResolveBackendPIN(cfg); !errors.As(err, &store) {
+		t.Fatalf("err = %v, want BackendPINStoreError", err)
+	}
+	assertNoBackendPINRecord(t, cfg.PINDir)
+
+	// A persisted record is refused once the storage changed.
+	cfg = backendPINCfg(t)
+	cfg.Store = BackendPINSealed
+	if got, err := ResolveBackendPIN(cfg); err != nil || got != BackendPINSealed {
+		t.Fatalf("ResolveBackendPIN = %q, %v; want sealed", got, err)
+	}
+	cfg.Store = "awskms"
+	if _, err := ResolveBackendPIN(cfg); !errors.As(err, &store) {
+		t.Fatalf("err = %v, want BackendPINStoreError for the persisted record", err)
+	}
+
+	// A matching store resolves.
+	cfg = backendPINCfg(t)
+	cfg.TPMPresent = true
+	cfg.Store = BackendPINTPM2
+	if got, err := ResolveBackendPIN(cfg); err != nil || got != BackendPINTPM2 {
+		t.Fatalf("ResolveBackendPIN = %q, %v; want tpm2", got, err)
+	}
+}
+
 func TestResolveBackendPIN_ExplicitDisagreeingWithRecordIsRefused(t *testing.T) {
 	cfg := backendPINCfg(t)
 	if err := SaveBackendPINStrategy(cfg.PINDir, BackendPINManual); err != nil {
