@@ -212,6 +212,48 @@ func TestKeys_OwnerBinding(t *testing.T) {
 	}
 }
 
+// TestKeys_OmittedUserOwnerIsCaller pins rulings 937/938 on the server path
+// (#2284): a user-scope request that names no owner addresses the
+// authenticated caller's own keys and pins, before authorization and storage
+// access, so a client that sends no --key-owner still reaches its own signer.
+func TestKeys_OmittedUserOwnerIsCaller(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	generate(t, c, bobA, "user", "bob", "bob-key")
+
+	created := generate(t, c, aliceA, "user", "", "laptop")
+	assert.Equal(t, "alice", created.Owner, "an omitted owner is stored as the caller")
+
+	own := sdkssh.GetKeyRequest{Scope: "user", Owner: "", Name: "laptop"}
+	got, err := c.Keys().Get(as(aliceA), own)
+	require.NoError(t, err)
+	assert.Equal(t, created.Fingerprint, got.Fingerprint)
+	signer, err := c.Keys().Signer(as(aliceA), own)
+	require.NoError(t, err)
+	require.NotNil(t, signer)
+	_, err = c.Keys().ExportPublic(as(aliceA), sdkssh.ExportRequest(own))
+	require.NoError(t, err)
+
+	// The omitted owner is the caller, never another user of the tenant.
+	_, err = c.Keys().Signer(as(aliceA), sdkssh.GetKeyRequest{Scope: "user", Name: "bob-key"})
+	require.Error(t, err, "alice reached bob's key through an omitted owner")
+
+	// A caller with no identity gets no owner filled in.
+	_, err = c.Keys().Signer(context.Background(), own)
+	require.Error(t, err)
+
+	// Known-host pins follow the same rule.
+	line, _ := publicLine(t)
+	require.NoError(t, c.KnownHosts().Add(as(aliceA), sdkssh.AddKnownHostRequest{Scope: "user", Host: "h.example.com", PublicKey: line}))
+	pins, err := c.KnownHosts().List(as(aliceA), sdkssh.ListKnownHostsRequest{Scope: "user", Owner: "alice"})
+	require.NoError(t, err)
+	require.Len(t, pins, 1)
+	assert.Equal(t, "alice", pins[0].Owner)
+
+	require.NoError(t, c.Keys().Delete(as(aliceA), sdkssh.DeleteKeyRequest(own)))
+	_, err = c.Keys().Get(as(aliceA), sdkssh.GetKeyRequest{Scope: "user", Owner: "alice", Name: "laptop"})
+	require.Error(t, err, "delete with an omitted owner removes the caller's key")
+}
+
 // TestKeys_ServiceScope proves a service-scoped key is reachable only with
 // the explicit ssh:service permission, only in the caller's own tenant, and
 // not at all when no permission checker is wired.
