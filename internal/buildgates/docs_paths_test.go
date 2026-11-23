@@ -188,6 +188,55 @@ func TestXkmsdUnitWorkingDirectoryWritable(t *testing.T) {
 	}
 }
 
+// docsPathsSteps splits the "Bootstrap a new server" numbered list into steps.
+func docsPathsSteps(t *testing.T, text string) []string {
+	t.Helper()
+	_, sec, ok := strings.Cut(text, "## Bootstrap a new server")
+	if !ok {
+		t.Fatal("user.md has no \"Bootstrap a new server\" section")
+	}
+	sec, _, _ = strings.Cut(sec, "\n## ")
+	num := regexp.MustCompile(`^\d+\. `)
+	var steps []string
+	for _, line := range strings.Split(sec, "\n") {
+		if num.MatchString(line) {
+			steps = append(steps, "")
+		}
+		if len(steps) > 0 {
+			steps[len(steps)-1] += line + "\n"
+		}
+	}
+	return steps
+}
+
+// TestInitCeremonySetsDatastorePathBeforeInit: init keeps a configured
+// datastore.path (resolveInitNodeConfig), so changing it after init splits
+// init and run across two datastores.
+func TestInitCeremonySetsDatastorePathBeforeInit(t *testing.T) {
+	steps := docsPathsSteps(t, docsPathsRead(t, "docs/init-ceremony/user.md"))
+	initStep, dsStep := -1, -1
+	for i, s := range steps {
+		if initStep < 0 && strings.Contains(s, "xkmsd init") {
+			initStep = i
+		}
+		if dsStep < 0 && strings.Contains(s, "datastore.path") {
+			dsStep = i
+		}
+	}
+	if initStep < 0 {
+		t.Fatal("user.md bootstrap list has no step running xkmsd init")
+	}
+	if dsStep < 0 || dsStep >= initStep {
+		t.Errorf("user.md must set datastore.path before step %d (xkmsd init); first mention is step %d", initStep+1, dsStep+1)
+	}
+	change := regexp.MustCompile(`(?i)\b(set|change|update|edit)\b[^.]*datastore\.path`)
+	for i := initStep + 1; i < len(steps); i++ {
+		if change.MatchString(steps[i]) {
+			t.Errorf("user.md step %d changes datastore.path after xkmsd init:\n%s", i+1, steps[i])
+		}
+	}
+}
+
 // unitFiles returns the base names of every systemd unit under deploy/ and
 // configs/.
 func unitFiles(t *testing.T) map[string]bool {
