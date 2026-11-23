@@ -157,7 +157,7 @@ func TestMatrix_ACMEAndAdminFamilies(t *testing.T) {
 		}
 	}
 
-	// Read-only admin cells run on every transport; admin-list skips only
+	// Read-only admin cells run on every server transport and skip only
 	// embedded, which installs no admin store.
 	for _, cmd := range AdminCommands() {
 		if cmd.Name != "admin-list" && cmd.Name != "admin-status" {
@@ -165,9 +165,9 @@ func TestMatrix_ACMEAndAdminFamilies(t *testing.T) {
 		}
 		for _, p := range CLIProtocols() {
 			r, skip := SkipReason(cmd, p, nil)
-			if cmd.Name == "admin-list" && p == ProtocolEmbedded {
+			if p == ProtocolEmbedded {
 				if !skip || r != ReasonEmbeddedNoAdmin {
-					t.Errorf("admin-list on embedded: skip=%v reason=%q, want %q", skip, r, ReasonEmbeddedNoAdmin)
+					t.Errorf("%s on embedded: skip=%v reason=%q, want %q", cmd.Name, skip, r, ReasonEmbeddedNoAdmin)
 				}
 				continue
 			}
@@ -335,13 +335,16 @@ func TestMatrix_SliceETransports(t *testing.T) {
 			}
 		}
 
-		// Bootstrap: show-keys is an SDK call and runs everywhere; the local
-		// verbs run once, on the embedded cell, and name the reason elsewhere.
+		// Bootstrap: show-keys is an SDK call and runs on every server
+		// transport (embedded runs no bootstrap listener); the local verbs
+		// run once, on the embedded cell, and name the reason elsewhere.
 		for _, def := range CommandsByCategory(CategoryBootstrap) {
 			r, skip := MatrixSkipReason(def, p, allTags)
 			sdk := slices.Equal(def.Command, []string{"bootstrap", "show-keys"})
 			switch {
-			case sdk && skip:
+			case sdk && p == ProtocolEmbedded && (!skip || r != ReasonEmbeddedNoBootstrap):
+				t.Errorf("(bootstrap, %s) %s: skip=%v reason %q, want %q", p, def.Name, skip, r, ReasonEmbeddedNoBootstrap)
+			case sdk && p != ProtocolEmbedded && skip:
 				t.Errorf("(bootstrap, %s) %s skipped: %s", p, def.Name, r)
 			case !sdk && def.Unsupported == "" && p == ProtocolEmbedded && skip:
 				t.Errorf("(bootstrap, %s) %s skipped: %s", p, def.Name, r)
@@ -532,6 +535,10 @@ func TestMatrix_EmbeddedCellsNameMissingSubsystem(t *testing.T) {
 		"user-list":               "user",
 		"credential-list":         "credential",
 		"credential-strategy":     "credential",
+		"admin-status":            "admin",
+		"user-status":             "user",
+		"oidc-list":               "OIDC",
+		"bootstrap-show-keys":     "bootstrap",
 	}
 	for name, subsystem := range cases {
 		def := matrixCommand(t, name)

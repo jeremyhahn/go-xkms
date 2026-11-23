@@ -1021,13 +1021,13 @@ func AdminCommands() []CommandDefinition {
 			Description:    "List administrator accounts",
 			RequiresServer: true,
 		}, ReasonEmbeddedNoAdmin),
-		{
+		limitToServer(CommandDefinition{
 			Name:           "admin-status",
 			Category:       CategoryAdmin,
 			Command:        []string{"admin", "status"},
 			Description:    "Show administrator status",
 			RequiresServer: true,
-		},
+		}, ReasonEmbeddedNoAdmin),
 	}
 }
 
@@ -1126,12 +1126,12 @@ func UserCommands() []CommandDefinition {
 			ArgDefinition{Flag: "enable", Description: "Enable the account", IsBoolean: true}),
 		chain("user-disable", []string{"user", "disable"}, "Disable a user"),
 		chain("user-enable", []string{"user", "enable"}, "Enable a user"),
-		{
+		limitToServer(CommandDefinition{
 			Name: "user-status", Category: CategoryUser,
 			Command:        []string{"user", "status"},
 			Description:    "Show user setup status",
 			RequiresServer: true,
-		},
+		}, ReasonEmbeddedNoUser),
 		chain("user-credentials", []string{"user", "credentials"}, "List a user's credentials"),
 		chain("user-bind-cert", []string{"user", "bind-cert"}, "Bind a client certificate to a user",
 			ArgDefinition{Flag: "thumbprint", Value: "abababababababababababababababababababababababababababababababab", Description: "SPKI SHA-256 thumbprint"},
@@ -1244,12 +1244,12 @@ func OIDCCommands() []CommandDefinition {
 			ArgDefinition{Flag: "token-endpoint", Value: "https://idp.example.com/token", Description: "Token endpoint"},
 			ArgDefinition{Flag: "access-token", Value: "it-access-token", Description: "Access token"},
 			ArgDefinition{Flag: "expires-at", Value: "2099-01-01T00:00:00Z", Description: "Token expiry"}),
-		{
+		limitToServer(CommandDefinition{
 			Name: "oidc-list", Category: CategoryOIDC,
 			Command:        []string{"oidc", "list"},
 			Description:    "List OIDC credentials",
 			RequiresServer: true,
-		},
+		}, ReasonEmbeddedNoOIDC),
 		chain("oidc-get", "get", "Show an OIDC credential"),
 		chain("oidc-token", "token", "Print an OIDC credential's access token"),
 		{

@@ -183,14 +183,14 @@ func BootstrapCommands() []CommandDefinition {
 	showTLSA.Unsupported = ReasonNoTLSAZone
 
 	return []CommandDefinition{
-		{
+		limitToServer(CommandDefinition{
 			Name:           "bootstrap-show-keys",
 			Category:       CategoryBootstrap,
 			Command:        []string{"bootstrap", "show-keys"},
 			Description:    "Show the server's bootstrap listener public keys",
 			RequiresServer: true,
 			Workflow:       WorkflowBootstrap,
-		},
+		}, ReasonEmbeddedNoBootstrap),
 		local("bootstrap-noise-generate-key", []string{"noise", "generate-key"}, "Generate a Noise_NK static key", file("output")),
 		local("bootstrap-noise-show-key", []string{"noise", "show-key"}, "Show a Noise_NK public key", file("key-file")),
 		local("bootstrap-noise-generate-p256-key", []string{"noise", "generate-p256-key"}, "Generate a P-256 static key", file("output")),

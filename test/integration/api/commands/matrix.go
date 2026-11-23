@@ -93,6 +93,14 @@ const (
 	ReasonEmbeddedNoUser       = "embedded service installs no user store (sdk/go/embedded.go)"
 	ReasonEmbeddedNoCredential = "embedded service installs no credential service (sdk/go/embedded.go)"
 
+	// ReasonEmbeddedNoOIDC: sdk/go/embedded.go installs no OIDC credential
+	// service, so oidc verbs return ErrNotConfigured there.
+	ReasonEmbeddedNoOIDC = "embedded service installs no OIDC service (sdk/go/embedded.go)"
+
+	// ReasonEmbeddedNoBootstrap: sdk/go/embedded.go runs no bootstrap
+	// listener, so bootstrap show-keys has no keys to report there.
+	ReasonEmbeddedNoBootstrap = "embedded service runs no bootstrap listener (sdk/go/embedded.go)"
+
 	// ReasonEmbeddedImportCeremony: each embedded CLI call starts a fresh
 	// SoftwareBackend, so the import token one step mints is gone by the
 	// next and the unwrap/import ceremony cannot complete.
