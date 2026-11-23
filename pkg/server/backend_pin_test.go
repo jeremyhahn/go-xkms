@@ -143,6 +143,22 @@ func TestResolveBackendPIN_AutoWithTPMButBarrierSealSelectsSealed(t *testing.T) 
 	require.Equal(t, "sealed", s.BackendPINStrategy())
 }
 
+// A barrier sealed by the PKCS#11 token would store the token's own PIN
+// under the token: sealed is refused for barrier.strategy pkcs11 whatever
+// credentials.seal_strategy is (docs/SPEC.md:78).
+func TestResolveBackendPIN_SealedUnderPKCS11BarrierIsSelfStore(t *testing.T) {
+	for _, credSeal := range []string{"barrier", ""} {
+		s, opened, _ := backendPINTestServer(t, "sealed", []byte("backend-pin-1"), false, true)
+		s.config.Barrier.Strategy = "pkcs11"
+		s.config.Credentials.SealStrategy = credSeal
+		require.ErrorIs(t, s.resolveBackendPIN(), pinselect.ErrBackendPINSelfStore, "seal_strategy=%q", credSeal)
+		require.Nil(t, s.backendPIN)
+		require.Empty(t, *opened)
+		_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s.backendPINDir()))
+		require.ErrorIs(t, statErr, os.ErrNotExist, "nothing persisted")
+	}
+}
+
 func TestResolveBackendPIN_BelowMinimumFailsClosed(t *testing.T) {
 	s, _, _ := backendPINTestServer(t, "sealed", []byte("backend-pin-1"), false, true)
 	// No TPM: sealed sits below a tpm2 minimum (manual is refused outright).
