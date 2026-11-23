@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
@@ -748,6 +749,44 @@ func TestPINService_ChangeUserPIN_PINFailureRestoresBarrier(t *testing.T) {
 	require.NoError(t, barrierSvc.Seal())
 	svc2 := NewBarrierService(barrierSvc.configDir, slog.Default())
 	require.NoError(t, svc2.Unseal("old-pin", "passphrase"))
+}
+
+// committedAuditFailLogger fails the audit write that follows a
+// committed barrier password change; every other entry is accepted.
+type committedAuditFailLogger struct {
+	audit.Logger
+}
+
+var errCommittedAudit = errors.New("audit store unavailable")
+
+func (committedAuditFailLogger) Log(e audit.Entry) error {
+	if e.Operation == audit.OpBarrierPasswordChanged && e.Success {
+		return errCommittedAudit
+	}
+	return nil
+}
+
+func TestPINService_ChangeUserPIN_CommittedResealAuditFailureKeepsNewPIN(t *testing.T) {
+	backend := &recordingPINBackend{mockPINBackend: &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}}
+	svc := newTestPINService(backend)
+
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("old-pin", "passphrase"))
+	barrierSvc.SetAuditLogger(committedAuditFailLogger{})
+	svc.SetBarrierService(barrierSvc)
+
+	// The barrier rewrite commits; only its audit record fails. The PIN
+	// must stay at the new value, matching the barrier.
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, errCommittedAudit)
+	assert.Equal(t, []string{"new-pin"}, backend.changes)
+
+	require.NoError(t, barrierSvc.Seal())
+	svc2 := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.NoError(t, svc2.Unseal("new-pin", "passphrase"))
 }
 
 func TestPINService_ChangeUserPIN_NoBarrierService(t *testing.T) {
