@@ -15,11 +15,13 @@ package xkms
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -101,25 +103,32 @@ func (s *XKMSService) RetireKeyVersion(ctx context.Context, req *transport.KeyVe
 	if req == nil {
 		return nil, ErrNilRequest
 	}
+	// The retirement is stored first, with the compare-and-put of
+	// updateVersions, and the key material goes only after that write
+	// succeeded: a stale read or a live rotation claim fails the write
+	// before anything is deleted, so the stored record never lists a
+	// version whose key is gone (Codex round 5, #2225). Should the delete
+	// then fail, the record already says retired, which no signer or
+	// verifier uses; a retry of the retirement finds the leftover key and
+	// finishes the delete.
+	finishing := false
 	k, err := s.updateVersions(ctx, req.Backend, req.TenantID, req.KeyID, func(k *versionedKey) (bool, error) {
-		if err := k.record.Retire(req.Version); err != nil {
-			return false, err
+		err := k.record.Retire(req.Version)
+		if _, left := k.present[req.Version]; left && errors.As(err, new(*keyversion.RetiredVersionError)) {
+			finishing = true
+			return false, nil
 		}
-		// The key material goes before the record says so. Should the
-		// record then fail to store, the version's key is gone while its
-		// record still lists it; a retry finds no key to delete and records
-		// the retirement.
-		if attrs, ok := k.present[req.Version]; ok {
-			if err := k.backend.DeleteKey(ctx, attrs); err != nil {
-				return false, &ErrKeyOperation{Operation: "retire key version", KeyID: keyversion.Name(k.keyID, req.Version), Err: err}
-			}
-		}
-		return true, nil
+		return err == nil, err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &transport.KeyVersionStateResponse{KeyID: k.keyID, Version: req.Version, State: string(keyversion.StateRetired), Changed: true}, nil
+	if attrs, ok := k.present[req.Version]; ok {
+		if err := k.backend.DeleteKey(ctx, attrs); err != nil && !errors.Is(err, backend.ErrKeyNotFound) {
+			return nil, &ErrKeyOperation{Operation: "retire key version", KeyID: keyversion.Name(k.keyID, req.Version), Err: err}
+		}
+	}
+	return &transport.KeyVersionStateResponse{KeyID: k.keyID, Version: req.Version, State: string(keyversion.StateRetired), Changed: !finishing}, nil
 }
 
 // EnableAllKeyVersions enables every disabled version of a key. Retired

@@ -319,3 +319,58 @@ func TestRetireKeyVersion_ConcurrentChangeNeverStrandsAnAdvertisedVersion(t *tes
 		})
 	}
 }
+
+// failDeleteBackend fails its next DeleteKey, modelling a crash between
+// storing a retirement and deleting the version's key material.
+type failDeleteBackend struct {
+	Backend
+	fail bool
+}
+
+func (b *failDeleteBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
+	if b.fail {
+		b.fail = false
+		return errors.New("injected delete failure")
+	}
+	return b.Backend.DeleteKey(ctx, attrs)
+}
+
+// A retirement whose key delete fails after the record said retired leaves
+// a record no signer or verifier uses; retrying the retirement finishes the
+// delete.
+func TestRetireKeyVersion_RetryFinishesAnInterruptedDelete(t *testing.T) {
+	ctx := context.Background()
+	inner, err := setupDeriveService(t).LookupBackend("software")
+	require.NoError(t, err)
+	fb := &failDeleteBackend{Backend: inner}
+	svc, err := NewService(&ServiceConfig{Backends: map[string]Backend{"software": fb}, DefaultBackend: "software"})
+	require.NoError(t, err)
+	store, err := keyversion.NewStore(dao.NewStoreFactory(qrdbsdk.NewMemoryKVStore()))
+	require.NoError(t, err)
+	svc.SetKeyVersionStore(store)
+	genKey(t, svc, "", "k", "ed25519", 0)
+	rotate(t, svc, "", "k")
+	data := []byte("signed under version 2")
+	sig := sign(t, svc, "k", data)
+
+	fb.fail = true
+	req := &transport.KeyVersionRequest{Backend: "software", KeyID: "k", Version: 1}
+	_, err = svc.RetireKeyVersion(ctx, req)
+	require.Error(t, err)
+	stored, found, err := store.Load(ctx, "", "software", "k")
+	require.NoError(t, err)
+	require.True(t, found)
+	v1, err := stored.Version(1)
+	require.NoError(t, err)
+	assert.Equal(t, keyversion.StateRetired, v1.State, "the retirement is stored before the delete")
+	resp, err := verify(svc, "k", data, sig.Signature, 0)
+	require.NoError(t, err)
+	assert.True(t, resp.Valid)
+
+	_, err = svc.RetireKeyVersion(ctx, req)
+	require.NoError(t, err, "the retry finishes the delete")
+	_, err = findKeyAttrs(ctx, inner, "k")
+	assert.ErrorIs(t, err, ErrKeyNotFound, "version 1's key material is gone")
+	_, err = svc.RetireKeyVersion(ctx, req)
+	assert.ErrorAs(t, err, new(*keyversion.RetiredVersionError), "a finished retirement is retired")
+}
