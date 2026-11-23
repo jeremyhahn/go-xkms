@@ -2731,6 +2731,11 @@ endif
 ci_sync_devcontainer_workspace = if [ "$(COMPOSE_RUN_ID)" != "local" ] && ! $(DOCKER_COMPOSE) exec -T devcontainer test -f /workspace/go.mod >/dev/null 2>&1; then echo "$(CYAN)$(BOLD)→ Populating devcontainer /workspace from this job's checkout (CI)...$(RESET)"; tar -cf - . | $(DOCKER_COMPOSE) exec -T devcontainer tar -xf - --no-same-owner -C /workspace; fi
 
 # Helper to run command in devcontainer (auto-starts if needed)
+# The global GOFLAGS export (-trimpath, #2309) stops at `docker compose exec`:
+# each exec below forwards it as XKMS_CALLER_GOFLAGS, and devcontainer_goflags
+# appends it to the devcontainer's own GOFLAGS (-mod=readonly) in the command.
+devcontainer_goflags = export GOFLAGS=\"\$${GOFLAGS:+\$$GOFLAGS }\$$XKMS_CALLER_GOFLAGS\";
+
 define run_in_devcontainer
 	@if [ -n "$$XKMS_DEVCONTAINER" ]; then \
 		$(1); \
@@ -2740,7 +2745,7 @@ define run_in_devcontainer
 		$(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; \
 		$(ci_sync_devcontainer_workspace); \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(1)"; \
+		$(DOCKER_COMPOSE) exec -T -e XKMS_CALLER_GOFLAGS="$$GOFLAGS" devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(devcontainer_goflags) $(1)"; \
 	fi
 endef
 
@@ -2802,7 +2807,7 @@ define run_with_server
 		{ $(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; } && \
 		$(ci_sync_devcontainer_workspace) && \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)" && \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -tags '$(call go_tags,$(BUILD_TAGS))' -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
+		$(DOCKER_COMPOSE) exec -T -e XKMS_CALLER_GOFLAGS="$$GOFLAGS" devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(devcontainer_goflags) mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -tags '$(call go_tags,$(BUILD_TAGS))' -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
 		echo "$(GREEN)✓ PKCS#11 module built in devcontainer$(RESET)" || \
 		{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
 	fi
@@ -2818,10 +2823,10 @@ define run_with_server
 		$(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && \
+		$(DOCKER_COMPOSE) exec -T -e XKMS_CALLER_GOFLAGS="$$GOFLAGS" devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(devcontainer_goflags) \
 			bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET)" || \
 			{ $(xkms_server_diagnostics); exit 1; }; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && \
+		$(DOCKER_COMPOSE) exec -T -e XKMS_CALLER_GOFLAGS="$$GOFLAGS" devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(devcontainer_goflags) \
 			bash build/docker/devcontainer/scripts/ensure-server-ca.sh && \
 			$(1)"; \
 	fi
