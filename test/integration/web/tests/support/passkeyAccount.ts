@@ -49,17 +49,26 @@ const OPERATOR_PERMISSIONS = ['keys:create', 'keys:sign', 'keys:delete'];
  * and the suite's testDir is <suite>/tests.
  */
 export function adminCredential(): { certPath: string; keyPath: string } {
-  const storage = `${test.info().project.testDir}/../.runtime/storage`;
+  // A config that boots its own daemon (playwright.node.config.ts) names its
+  // state directory in metadata.runtime; the default suite uses .runtime.
+  const runtime = (test.info().config.metadata?.runtime as string | undefined) ?? '.runtime';
+  const storage = `${test.info().project.testDir}/../${runtime}/storage`;
   return { certPath: `${storage}/admin-cert.pem`, keyPath: `${storage}/admin-key.pem` };
+}
+
+/** apiOrigin is the daemon the running config targets (its baseURL). */
+function apiOrigin(): string {
+  return new URL(test.info().project.use.baseURL ?? API_ORIGIN).origin;
 }
 
 /** adminRequest opens an API context that authenticates as the administrator over mTLS. */
 async function adminRequest(): Promise<APIRequestContext> {
   const { certPath, keyPath } = adminCredential();
+  const origin = apiOrigin();
   return request.newContext({
-    baseURL: API_ORIGIN,
+    baseURL: origin,
     ignoreHTTPSErrors: true,
-    clientCertificates: [{ origin: API_ORIGIN, certPath, keyPath }],
+    clientCertificates: [{ origin, certPath, keyPath }],
   });
 }
 

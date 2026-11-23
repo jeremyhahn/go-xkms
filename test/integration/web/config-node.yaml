@@ -27,8 +27,16 @@ logging:
 tls:
   enabled: true
   server_cn: "localhost"
+  # Request but do not require a client certificate: the suite's fixture
+  # (tests/support/passkeyAccount.ts) presents the init-ceremony admin
+  # credential (.runtime-node/storage/admin-cert.pem) to provision its
+  # operators, while the browser connects without one.
+  client_auth: verify
 
-# Adaptive: anonymous while zero users exist, required auth afterwards.
+# Composite auth, enforced: the embedded node refuses anonymous user
+# creation (its WebAuthn principal has no users:create), so the fixture
+# provisions each operator as admin and the operator redeems its invitation
+# with a passkey.
 auth:
   enabled: true
   type: "composite"

@@ -15,34 +15,36 @@
 // the public WebAuthn routes looked users up through the qrdb client with the
 // request's anonymous context, and the auth-enforcing embedded node refused
 // them, so registration/begin and login/begin answered 500 once the server
-// had users. auth.spec.ts only registers the first operator, while the server
-// is still in its zero-user anonymous mode, and never saw it. This spec makes
-// the server user-ful first, then registers and signs in another operator.
+// had users. The enforcing node refuses anonymous user creation (the WebAuthn
+// service principal has no users:create), so each operator is provisioned by
+// the administrator and redeems its invitation (provisionOperator). This spec
+// makes the server user-ful first, then provisions another operator and signs
+// it out and back in with the same passkey on the populated node.
 
 import { test, expect } from '@playwright/test';
 import { installVirtualAuthenticator } from './support/virtualAuthenticator.ts';
-import { loginOperator, registerOperator, uniqueOperator } from './support/operator.ts';
+import { loginOperator, uniqueOperator } from './support/operator.ts';
+import { provisionOperator } from './support/passkeyAccount.ts';
 
 test.describe.serial('Passkeys over an auth-enforcing embedded node', () => {
   const first = uniqueOperator('node-first');
   const second = uniqueOperator('node-second');
 
-  test('the first operator registers, so the server has users', async ({ page }) => {
+  test('the first operator is provisioned, so the server has users', async ({ page }) => {
     await installVirtualAuthenticator(page);
-    await registerOperator(page, first);
+    await provisionOperator(page, first);
   });
 
-  test('another operator registers and signs back in with the same passkey', async ({ page }) => {
+  test('another operator is provisioned and signs back in with the same passkey', async ({ page }) => {
     await installVirtualAuthenticator(page);
+    await provisionOperator(page, second);
 
     const begins: number[] = [];
     page.on('response', (res) => {
-      if (/\/api\/v1\/webauthn\/(registration|login)\/begin$/.test(new URL(res.url()).pathname)) {
+      if (/\/api\/v1\/webauthn\/login\/begin$/.test(new URL(res.url()).pathname)) {
         begins.push(res.status());
       }
     });
-
-    await registerOperator(page, second);
 
     await page.getByRole('button', { name: 'Sign out' }).click();
     await expect(page.getByRole('button', { name: 'Sign in with passkey' })).toBeVisible();
@@ -51,7 +53,7 @@ test.describe.serial('Passkeys over an auth-enforcing embedded node', () => {
     await loginOperator(page, second);
     await expect(page.getByText(second.displayName)).toBeVisible({ timeout: 10_000 });
 
-    // Both ceremonies began on the server, neither as a 500.
-    expect(begins).toEqual([200, 200]);
+    // The sign-in began on the populated node, not as a 500.
+    expect(begins).toEqual([200]);
   });
 });

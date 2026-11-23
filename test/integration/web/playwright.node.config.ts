@@ -27,6 +27,9 @@ export default defineConfig({
   ...base,
   testMatch: 'passkey-node.spec.ts',
   testIgnore: [],
+  // The daemon's state directory (run-server.sh XKMS_E2E_RUNTIME): the
+  // fixture reads the init-ceremony admin credential from <runtime>/storage.
+  metadata: { ...base.metadata, runtime: '.runtime-node' },
   outputDir: 'test-results-node',
   reporter: [
     ['list'],
