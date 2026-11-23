@@ -13,7 +13,8 @@
 # v1.48 (Tenant Agent ruling 1024 item 1; ruling 999: hosted by default): the
 # preflight step `Hosted or overflow runner (ruling 1024)` and its `runner` and
 # `runner_docker` outputs, the top-level HOSTED_JOBS_PER_REPO (12) and
-# HOSTED_QUEUE_GRACE_SECONDS (60), and the template's runs-on, verbatim: image,
+# HOSTED_QUEUE_GRACE_SECONDS (60), and the template's runs-on, verbatim: image
+# (since #2261 its coverage job; lint and image-build are hosted),
 # lint-gates, integration and soak read runner_docker, CI Gate reads runner
 # with the `|| '"ubuntu-latest"'` guard (preflight's runs-on: v1.49 below).
 # go-xkms's own routing (m2475, #2240, ruling 740), which sent main pushes and
@@ -46,7 +47,7 @@
 # advisory databases, so they turned main red with no change to the tree and
 # every PR inherited it. They leave this workflow on every event and run in
 # .github/workflows/scans.yml, on a schedule and on workflow_dispatch on main.
-# `make gosec` reads only the tree and now runs in the image job on every
+# `make gosec` reads only the tree and now runs in the lint job on every
 # event but a docs-only PR. Nothing else of v1.35 to v1.42 is taken yet: the
 # v1.35 Signatures job, v1.36 host-local caches and in-toolchain-image.sh v6,
 # v1.37 timeouts, v1.38 release label, v1.39/v1.40 scoped deps-check and
@@ -55,11 +56,11 @@
 #   - a ci-images job (ruling 169) publishes the toolchain and integration images on main and resolves main's on a pull request; every bigdisk job takes its image through scripts/ci-registry.sh use, not make docker-build;
 #   - so the v1.29.4/v1.29.5 Athens probe is a "Route the image build through Athens" step that exports GO_BUILD_PROXY to the job's environment ahead of ci-registry.sh, whose make docker-build-* reads it, in place of the template's ${bp:+"$bp"} argument;
 #   - the integration and soak jobs run no make docker-build (they take IT_IMAGE by name), so they have no Athens step;
-#   - ci-images takes the schedule guard as the image job does; the CUSTOMIZE jobs that need ci-images skip with it on a busy schedule run;
+#   - ci-images takes the schedule guard as the Devcontainer jobs (lint, image-build, coverage) do; the CUSTOMIZE jobs that need ci-images skip with it on a busy schedule run;
 #   - CUSTOMIZE jobs static-analysis, build, nested-module-build, nested-module-test, build-raft, race and tpm2-simulator, each in CI Gate's needs and results;
-#   - the image job folds Lint into its stages (timeout 240), and the integration (180) and soak (210) jobs keep longer bounds;
+#   - the template's image job is three jobs (#2261, rulings 833-835): lint (timeout 90, hosted), image-build (90, hosted) and coverage (150, runner_docker, needs image-build); the integration (180) and soak (210) jobs keep longer bounds;
 #   - scripts/in-toolchain-image.sh v4 already held the /var/tmp scratch volume (#1733) and keeps its CUSTOMIZE blocks; it takes v5's bridge GOPROXY (no `direct` entry, v1.34.1).
-#   - v1.30 fix 1 is ci-images (above): no publish-images job, no scripts/ci-image-cache.sh, and no separate lint job. The image job keeps Lint and the releasability test (and deps-check until the v1.42 hermetic gate moved it to scans.yml), so it runs on a docs-only PR (its build and coverage steps skip there) and CI Gate checks it as `pr`, not `code`; gosec joins it on the PR tier (`make gosec`, v1.30 fix 5).
+#   - v1.30 fix 1 is ci-images (above): no publish-images job, no scripts/ci-image-cache.sh, and (until #2261) no separate lint job. The lint job keeps Lint and the releasability test (and deps-check until the v1.42 hermetic gate moved it to scans.yml), so it runs on a docs-only PR and CI Gate checks it as `pr`; image-build and coverage skip on a docs-only PR and are `code`; gosec is in lint on the PR tier (`make gosec`, v1.30 fix 5).
 #   - the internal-name gate (v1.31 to v1.33.2) is a step of the lint-gates job, which is path-scoped by LINT_GATES_PATTERN (v1.30 fix 3, `scoped` in CI Gate).
 #   - v1.34's preflight job runs the steps of changes, schedule-guard and arch-gates (on ubuntu-latest since v1.48); arch-gates' layering steps are its last steps. v1.34's unit/race shard merge has nothing to merge: go-xkms has no shards.
 #   - the CUSTOMIZE full-tier jobs need ci-images, which carries the guard's verdict, so they skip with it on a refused, busy or proven run (v1.29.2 note).
@@ -196,8 +197,8 @@
 #     Gitea API on a schedule run only whether this workflow has a push run on
 #     main in progress or waiting, and sets `verdict`: `run`, `busy` or
 #     `unreadable`. On any other event, and on the github.com mirror, it sets
-#     `run` without a call. On a schedule run every bigdisk job (image,
-#     lint-gates, integration, soak, and any CUSTOMIZE job on bigdisk) runs
+#     `run` without a call. On a schedule run every bigdisk job (image, since
+#     #2261 lint, image-build and coverage; lint-gates, integration, soak, and any CUSTOMIZE job on bigdisk) runs
 #     only on `run`. On `busy` CI Gate skips as well, so `CI / CI Gate
 #     (schedule)` posts `skipped`, never a green nightly. On `unreadable` the
 #     bigdisk jobs skip and CI Gate fails, naming the guard: the guard fails
@@ -238,8 +239,9 @@
 # fd83b79ce, CVE-2026-92392, libcurl 8.23.0-r0). A new step, "Read the Alpine
 # package index", runs scripts/apk-index-sum.sh (v3 with apk-mirror.sh, both beside this file)
 # and puts its value in APK_INDEX_SUM. Every job that names the integration
-# image (image, lint-gates, integration, soak) runs it before "Name the
-# integration image", so none waits for the image job's serial stages. The
+# image (image, lint-gates, integration, soak; since v1.42 and #2261 no
+# Devcontainer job names it) runs it before "Name the integration image", so
+# none waits for the image job's serial stages. The
 # repository's `make -s it-image` hashes APK_INDEX_SUM, and `make
 # docker-build` passes it to the integration image's build as `--build-arg
 # APK_INDEX_SUM`. The Dockerfile's `integration` stage declares the ARG and
@@ -610,7 +612,7 @@
 # ci:full; its jobs carry CI_FULL_TIER's expression as `if:`. Soak is
 # nightly: the schedule and workflow_dispatch only (m751 (e)). Every job runs
 # its commands in the devcontainer images built at this commit: the five
-# stages are steps of the image job, and each CUSTOMIZE job builds the
+# stages are steps of the lint, image-build and coverage jobs (#2261), and each CUSTOMIZE job builds the
 # toolchain image and runs its make targets in it, as the integration job
 # does. Every job but changes, arch-gates and CI Gate carries the
 # timeout-minutes internal/buildgates requires (#1587).
@@ -1292,7 +1294,7 @@ jobs:
       # RELEASE_REGISTRY_USER and RELEASE_REGISTRY_TOKEN from the runner's
       # own environment (ruling 173); no step sets them. On GitHub it pushes
       # to GHCR with the run's token.
-      # v1.29.4, v1.29.5: Athens first, as in the image job.
+      # v1.29.4, v1.29.5: Athens first, as in the Devcontainer jobs.
       - name: Route the image build through Athens
         if: ${{ env.CI_PUBLISH == 'true' }}
         run: |
@@ -1346,19 +1348,23 @@ jobs:
           done
   # <<< CUSTOMIZE
 
-  image:
-    name: Devcontainer image [lint, gosec, build, test]
-    # v1.48 (ruling 1024; replaces the #2240/#2241 routing, Codex #2323 P1):
-    # ubuntu-latest, or the bigdisk-docker pool when the preflight's
-    # `runner_docker` reports the hosted pool full; a fork pull request
-    # never overflows. Pinned by internal/buildgates/ci_sched_devcontainer_test.go.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}
+  # Row #2261 (rulings 833-835): the Devcontainer stages run in three jobs,
+  # where the image job ran them in one 240-minute job that held one runner
+  # for the whole run although only coverage needs the 24 GB container
+  # (#2063). lint and image-build are hosted on github.com; coverage keeps
+  # the v1.48 runner_docker routing and needs image-build, so a failed build
+  # skips it (#2240). Pinned by internal/buildgates/ci_sched_devcontainer_test.go.
+  lint:
+    name: Devcontainer lint [lint, checks, gosec]
+    # Hosted on github.com: lint needs no 24 GB container, so it never
+    # takes a self-hosted runner, a fork's pull request included.
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: [preflight, ci-images] # v1.24 (CA m749, m751 (a)); v1.29.3; v1.34; CUSTOMIZE (go-xkms, ruling 169): ci-images
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
-    # v1.30: only on the guard's `run` (not `refused`, not `proven`). It keeps
-    # Lint, so unlike the template's it runs on a docs-only PR (header).
+    # v1.30: only on the guard's `run` (not `refused`, not `proven`). It is
+    # Lint, so unlike the template's image job it runs on a docs-only PR (header).
     if: ${{ needs.preflight.outputs.verdict == 'run' }}
-    timeout-minutes: 240      # CUSTOMIZE (go-xkms): the Lint (90) and image (150) jobs' bounds, now one job
+    timeout-minutes: 90       # CUSTOMIZE (go-xkms): the old Lint job's bound
     permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
       contents: read
       packages: read
@@ -1482,6 +1488,92 @@ jobs:
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.RELEASABILITY_TEST != '' && needs.preflight.outputs.docs_only == 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "go test -count=1 -tags '$GO_BUILD_TAGS' $RELEASABILITY_TEST"
 
+      - name: Tear down
+        if: always()
+        run: |
+          scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+  image-build:
+    name: Devcontainer build [build tags, make build]
+    # Hosted on github.com, as lint (#2261).
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    needs: [preflight, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
+    # The guard's `run`, and not on a docs-only PR (a `code` job in CI Gate).
+    if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
+    timeout-minutes: 90       # CUSTOMIZE (go-xkms, #2261): below coverage's bound
+    permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
+      contents: read
+      packages: read
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # v1.22: the cache volumes' trust class (see lint).
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
+      # any other step. The runner injects them as plain environment
+      # (dependency-resolution.md §6), which the log does not mask by itself,
+      # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
+      # as well.
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # CUSTOMIZE: host tuning a test needs (e.g. QUIC UDP buffers:
+      # sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032)
+      # goes here; the container shares the runner's kernel.
+
+      # v1.29.4: the build's module fetches go through Athens first when
+      # the runner sets DEVCACHE_GOPROXY and the cache answers, with the
+      # proxy.golang.org fallback. v1.29.5: the separator is `|`, so any
+      # error falls through; the Makefile quotes it on the docker build line.
+      # CUSTOMIZE (go-xkms, ruling 169): scripts/ci-registry.sh runs the
+      # build, so GO_BUILD_PROXY goes to the job's environment, which its
+      # make reads, in place of the template's ${bp:+"$bp"} argument.
+      - name: Route the image build through Athens
+        run: |
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org" >> "$GITHUB_ENV"
+          fi
+
+      # >>> CUSTOMIZE (go-xkms, ruling 169)
+      # The images come from ci-images: main's by digest, pulled and held
+      # until Tear down, or, when main has not published this content, built
+      # on this runner with no push and held by image ID. v1.42 (ruling 742
+      # (1)): the integration image was needed by the full tier's trivy image
+      # scan alone, which moved to scans.yml, so this job no longer takes it
+      # (nor reads the Alpine package index its tag hashes).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+      # <<< CUSTOMIZE
+
+      # v1.22: bound this repo's cache volumes on the host before the stages
+      # add to them (ci-standard.md §6). It never fails the job.
+      - name: Trim the CI caches
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"
+
       # v1.9.2, now in the image: the declared tag set must select code. Each
       # tag is checked by removal: if dropping it changes no selected file
       # (tests included), it is misspelled or dead. Compares files, not
@@ -1502,6 +1594,97 @@ jobs:
         # <<< CUSTOMIZE
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make build GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
+      - name: Tear down
+        if: always()
+        run: |
+          scripts/ci-registry.sh release "${TOOLCHAIN_HOLD:-}" # CUSTOMIZE (go-xkms, ruling 169)
+
+  coverage:
+    name: Devcontainer coverage [unit tests, race, threshold]
+    # v1.48 (ruling 1024; replaces the #2240/#2241 routing, Codex #2323 P1):
+    # ubuntu-latest, or the bigdisk-docker pool when the preflight's
+    # `runner_docker` reports the hosted pool full; a fork pull request
+    # never overflows. The measured reason it may overflow to bigdisk-docker:
+    # make coverage needs the 24 GB container (#2063).
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}
+    # #2240 at job level: needs image-build and no status function in if:,
+    # so a failed, cancelled or skipped build skips coverage.
+    needs: [preflight, ci-images, image-build] # CUSTOMIZE (go-xkms, ruling 169): ci-images
+    if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
+    timeout-minutes: 150      # CUSTOMIZE (go-xkms): the old image job's bound
+    permissions:              # CUSTOMIZE (go-xkms, ruling 169): pull main's CI images
+      contents: read
+      packages: read
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # v1.22: the cache volumes' trust class (see lint).
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
+      # any other step. The runner injects them as plain environment
+      # (dependency-resolution.md §6), which the log does not mask by itself,
+      # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
+      # as well.
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      # Ruling 887: the LAN addresses this runner's environment names, masked
+      # before any step that builds can print one.
+      # go-xkms deviation from v1.53 (on purpose): no repository variable in
+      # this step's env, since Actions prints a step's env unredacted before
+      # the step runs; an internal registry is a secret, never a variable.
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # CUSTOMIZE: host tuning a test needs (e.g. QUIC UDP buffers:
+      # sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032)
+      # goes here; the container shares the runner's kernel.
+
+      # v1.29.4: the build's module fetches go through Athens first when
+      # the runner sets DEVCACHE_GOPROXY and the cache answers, with the
+      # proxy.golang.org fallback. v1.29.5: the separator is `|`, so any
+      # error falls through; the Makefile quotes it on the docker build line.
+      # CUSTOMIZE (go-xkms, ruling 169): scripts/ci-registry.sh runs the
+      # build, so GO_BUILD_PROXY goes to the job's environment, which its
+      # make reads, in place of the template's ${bp:+"$bp"} argument.
+      - name: Route the image build through Athens
+        run: |
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org" >> "$GITHUB_ENV"
+          fi
+
+      # >>> CUSTOMIZE (go-xkms, ruling 169)
+      # The images come from ci-images: main's by digest, pulled and held
+      # until Tear down, or, when main has not published this content, built
+      # on this runner with no push and held by image ID. v1.42 (ruling 742
+      # (1)): the integration image was needed by the full tier's trivy image
+      # scan alone, which moved to scans.yml, so this job no longer takes it
+      # (nor reads the Alpine package index its tag hashes).
+      - name: Take the toolchain image
+        env:
+          TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+      # <<< CUSTOMIZE
+
+      # v1.22: bound this repo's cache volumes on the host before the stages
+      # add to them (ci-standard.md §6). It never fails the job.
+      - name: Trim the CI caches
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"
+
       # The test stage (m601 (c)): make coverage runs the whole unit suite with
       # -race (make test's flags), the PR tier's unit test and race checks in
       # one run (v1.23), and fails when total coverage is below
@@ -1509,8 +1692,7 @@ jobs:
       # Tags matter here too: without them tag-gated packages are neither
       # tested nor counted. The integration stage is its own job below.
       - name: make coverage (unit tests and the threshold)
-        # CUSTOMIZE (go-xkms, #2240): coverage does not run after a failed make build.
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' && steps.build.outcome != 'failure' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.preflight.outputs.docs_only != 'true' }}
         # >>> CUSTOMIZE (go-xkms)
         # test-web runs `npm ci` against the npm registry.
         env:
@@ -1533,14 +1715,14 @@ jobs:
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and
-  # module checks) runs in this job, in parallel with the image job's
-  # `make lint`, not in series after it, so Lint's wall time is the longer of
+  # module checks) runs in this job, in parallel with the lint job's
+  # `make lint` (the image job's until #2261), not in series after it, so Lint's wall time is the longer of
   # the two and not their sum. It runs only when the Makefile (or a tracked
   # *.mk) defines a lint-gates target; a repository without one gets an OK and
   # a green job, with no image built. `make lint` and `go vet` stay where they
   # are. A repository whose `make lint` lists lint-gates as a prerequisite
   # removes it from lint in the PR that adopts v1.27, or the gates run twice.
-  # The toolchain image comes from `make docker-build`, as in the image job,
+  # The toolchain image comes from `make docker-build`, as in the Devcontainer jobs,
   # which builds only a tag the daemon does not already hold (devcontainer.md
   # §6). A lint-class check, so it is on the PR tier and runs on a docs-only PR.
   # v1.29.1 (ruling 226(15), 108 repair): the step fails fast. `make
@@ -1567,7 +1749,7 @@ jobs:
     env:
       GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
-      # v1.22: the cache volumes' trust class (as in the image job).
+      # v1.22: the cache volumes' trust class (as in the Devcontainer jobs).
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -1613,7 +1795,7 @@ jobs:
         if: ${{ runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' }}
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # v1.29.4, v1.29.5: Athens first, as in the image job.
+      # v1.29.4, v1.29.5: Athens first, as in the Devcontainer jobs.
       - name: Route the image build through Athens
         if: runner.environment == 'github-hosted'
         run: |
@@ -1622,7 +1804,7 @@ jobs:
           fi
 
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
-      # (as in the image job).
+      # (as in the Devcontainer jobs).
       - name: Take the toolchain image
         if: ${{ runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' }}
         env:
@@ -1631,7 +1813,7 @@ jobs:
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
-      # v1.22: bound this repo's cache volumes (as in the image job). It never
+      # v1.22: bound this repo's cache volumes (as in the Devcontainer jobs). It never
       # fails the job and keeps every volume a container mounts.
       - name: Trim the CI caches
         if: ${{ !cancelled() && runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' && env.TOOLCHAIN_IMAGE != '' }}
@@ -1832,7 +2014,7 @@ jobs:
           sum=$(scripts/apk-index-sum.sh)
           echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
 
-      # v1.23: the content-addressed integration image (as in the image job).
+      # v1.23: the content-addressed integration image (as in the Devcontainer jobs).
       - name: Name the integration image
         run: echo "IT_IMAGE=$(make -s it-image)" >> "$GITHUB_ENV"
 
@@ -1947,7 +2129,7 @@ jobs:
           sum=$(scripts/apk-index-sum.sh)
           echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
 
-      # v1.23: the content-addressed integration image (as in the image job).
+      # v1.23: the content-addressed integration image (as in the Devcontainer jobs).
       - name: Name the integration image
         run: echo "IT_IMAGE=$(make -s it-image)" >> "$GITHUB_ENV"
 
@@ -2033,7 +2215,8 @@ jobs:
           rm -f "$RUNNER_TEMP/soak-project"
           [ -z "${IT_LEASE:-}" ] || docker rm "$IT_LEASE" >/dev/null || true
 
-  # CUSTOMIZE: further stages run in the image job as steps of the same
+  # CUSTOMIZE: further stages run in the Devcontainer jobs (lint, image-build,
+  # coverage; #2261) as steps of the same
   # shape (one `make` target in the toolchain image, `if: !cancelled()`). A
   # suite that needs its own runner or stack (tagged suites, cross-arch,
   # contrib modules) is a job of the integration job's shape and joins CI
@@ -2042,18 +2225,18 @@ jobs:
   # unit or race, which stay on the PR tier.
   # v1.29.2 (ruling 239(8)): a CUSTOMIZE job that runs only when certain
   # paths change (the changes job gains an output for them, `optee` here)
-  # needs the image job as well, and its `if:` tests an image job output
-  # that its build step sets (here `built`, which the image job declares in
+  # needs the image-build job as well, and its `if:` tests an image-build output
+  # that its build step sets (here `built`, which image-build declares in
   # `outputs:` when a repository adds such a job), never `needs.<job>.result`
   # and never the changes job's outputs alone. Reading `needs.preflight.outputs.*`
   # in the same `if:` is fine:
-  #   needs: [preflight, image]
-  #   if: ${{ !cancelled() && needs.image.outputs.built == 'true' && !github.event.pull_request.draft && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'pull_request' && needs.preflight.outputs.optee == 'true')) }}
+  #   needs: [preflight, image-build]
+  #   if: ${{ !cancelled() && needs.image-build.outputs.built == 'true' && !github.event.pull_request.draft && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'pull_request' && needs.preflight.outputs.optee == 'true')) }}
   # v1.29.3 (ruling 255(10)/(11)(c)): a CUSTOMIZE job on bigdisk adds
   # `preflight` to its needs (v1.34; `schedule-guard` before) and
   # `(github.event_name != 'schedule' || needs.preflight.outputs.verdict == 'run')`
   # to its `if:`, so it skips on a schedule run while main is busy. One that
-  # needs the image job skips with it already.
+  # needs image-build skips with it already.
   # v1.30: the test is `needs.preflight.outputs.verdict == 'run'` on
   # every event, so the job skips on a proven main push and on a refused run,
   # and its check line in CI Gate is full, pr or code as before: the gate
@@ -2115,7 +2298,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # v1.29.4, v1.29.5: Athens first, as in the image job.
+      # v1.29.4, v1.29.5: Athens first, as in the Devcontainer jobs.
       - name: Route the image build through Athens
         if: runner.environment == 'github-hosted'
         run: |
@@ -2124,7 +2307,7 @@ jobs:
           fi
 
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
-      # (as in the image job).
+      # (as in the Devcontainer jobs).
       - name: Take the toolchain image
         if: ${{ runner.environment == 'github-hosted' && needs.preflight.outputs.docs_only != 'true' }}
         env:
@@ -2232,7 +2415,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # v1.29.4, v1.29.5: Athens first, as in the image job.
+      # v1.29.4, v1.29.5: Athens first, as in the Devcontainer jobs.
       - name: Route the image build through Athens
         if: runner.environment == 'github-hosted'
         run: |
@@ -2241,7 +2424,7 @@ jobs:
           fi
 
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
-      # (as in the image job).
+      # (as in the Devcontainer jobs).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
         env:
@@ -2251,7 +2434,7 @@ jobs:
         run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # This job writes the shared cache volumes too, so it bounds them first,
-      # as the image job does (ci-standard.md §6). It never fails the job.
+      # as the Devcontainer jobs do (ci-standard.md §6). It never fails the job.
       - name: Trim the CI caches
         if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' }}
         run: scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"
@@ -2387,7 +2570,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # v1.29.4, v1.29.5: Athens first, as in the image job.
+      # v1.29.4, v1.29.5: Athens first, as in the Devcontainer jobs.
       - name: Route the image build through Athens
         if: runner.environment == 'github-hosted'
         run: |
@@ -2396,7 +2579,7 @@ jobs:
           fi
 
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
-      # (as in the image job).
+      # (as in the Devcontainer jobs).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
         env:
@@ -2502,7 +2685,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # v1.29.4, v1.29.5: Athens first, as in the image job.
+      # v1.29.4, v1.29.5: Athens first, as in the Devcontainer jobs.
       - name: Route the image build through Athens
         if: runner.environment == 'github-hosted'
         run: |
@@ -2511,7 +2694,7 @@ jobs:
           fi
 
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
-      # (as in the image job).
+      # (as in the Devcontainer jobs).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
         env:
@@ -2660,7 +2843,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # v1.29.4, v1.29.5: Athens first, as in the image job.
+      # v1.29.4, v1.29.5: Athens first, as in the Devcontainer jobs.
       - name: Route the image build through Athens
         if: runner.environment == 'github-hosted'
         run: |
@@ -2669,7 +2852,7 @@ jobs:
           fi
 
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
-      # (as in the image job).
+      # (as in the Devcontainer jobs).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
         env:
@@ -2771,7 +2954,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # v1.29.4, v1.29.5: Athens first, as in the image job.
+      # v1.29.4, v1.29.5: Athens first, as in the Devcontainer jobs.
       - name: Route the image build through Athens
         if: runner.environment == 'github-hosted'
         run: |
@@ -2780,7 +2963,7 @@ jobs:
           fi
 
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
-      # (as in the image job).
+      # (as in the Devcontainer jobs).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
         env:
@@ -2899,7 +3082,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # v1.29.4, v1.29.5: Athens first, as in the image job.
+      # v1.29.4, v1.29.5: Athens first, as in the Devcontainer jobs.
       - name: Route the image build through Athens
         if: runner.environment == 'github-hosted'
         run: |
@@ -2908,7 +3091,7 @@ jobs:
           fi
 
       # CUSTOMIZE (go-xkms, ruling 169): the toolchain image from ci-images
-      # (as in the image job).
+      # (as in the Devcontainer jobs).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
         env:
@@ -2985,7 +3168,7 @@ jobs:
     timeout-minutes: 5        # v1.30
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
-    needs: [preflight, image, lint-gates, integration, soak, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
+    needs: [preflight, lint, image-build, coverage, lint-gates, integration, soak, static-analysis, build, nested-module-build, nested-module-test, build-raft, race, tpm2-simulator, ci-images] # CUSTOMIZE (go-xkms, ruling 169): ci-images
     steps:
       - name: Fail closed on any non-success
         env:
@@ -3048,7 +3231,9 @@ jobs:
           # workflow_dispatch is nightly; every other job is pr. v1.30: a job
           # that skips on a docs-only PR is code, and lint-gates is scoped.
           check preflight   "${{ needs.preflight.result }}" pr
-          check image       "${{ needs.image.result }}" pr
+          check lint        "${{ needs.lint.result }}" pr
+          check image-build "${{ needs.image-build.result }}" code
+          check coverage    "${{ needs.coverage.result }}" code
           check lint-gates  "${{ needs.lint-gates.result }}" scoped
           check integration "${{ needs.integration.result }}" full
           check soak        "${{ needs.soak.result }}" nightly
