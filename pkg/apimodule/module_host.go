@@ -193,14 +193,14 @@ func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
 // published, would cache stores without persistence and a server without
 // WebAuthn or the session store.
 func (m *Module) NodeCORS() (qrdbsdk.DaemonCORSConfig, error) {
-	if m.resolveREST == nil {
-		return qrdbsdk.DaemonCORSConfig{}, nil
+	if m.resolveREST != nil {
+		if srv := m.resolveREST(); srv != nil {
+			return DaemonCORS(srv.CORSOptions()), nil
+		}
 	}
-	srv := m.resolveREST()
-	if srv == nil {
-		return qrdbsdk.DaemonCORSConfig{}, nil
-	}
-	return DaemonCORS(srv.CORSOptions()), nil
+	// A self-built module has no REST server to ask: its policy is the one
+	// WithCORS gave it, mapped without constructing the server.
+	return DaemonCORS(m.cors), nil
 }
 
 // selfBuilds reports whether the module composes its own surfaces from host
