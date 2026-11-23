@@ -609,6 +609,38 @@ func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (er
 	return nil
 }
 
+// PasswordBound reports whether password unseals the live barrier root key,
+// without changing any barrier state. Setup may give the barrier its own
+// password, independent of the user PIN; a PIN change uses this to decide
+// whether the barrier must be resealed with the new PIN.
+//
+// Returns ErrBarrierNotInitialized when no barrier is open and
+// ErrBarrierResealFailed when the barrier is sealed (there is no live key
+// to compare against). Any other refusal of password, including a
+// mismatch, reports (false, nil).
+func (s *BarrierService) PasswordBound(password string) (bound bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.barrier == nil {
+		return false, ErrBarrierNotInitialized
+	}
+	if s.barrier.IsSealed() {
+		return false, ErrBarrierResealFailed
+	}
+
+	ctx := s.context()
+	creds, credErr := xkms.CredentialsFor(ctx, []byte(password))
+	if credErr != nil {
+		return false, nil
+	}
+	defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
+
+	// go-qrdb v0.58.5: VerifyCredentials unseals a candidate key and
+	// compares it with the live one; it never alters barrier state.
+	return s.barrier.VerifyCredentials(ctx, creds) == nil, nil
+}
+
 // Status returns the current barrier status. If the barrier has not been
 // initialized, a zero-value BarrierStatus is returned.
 func (s *BarrierService) Status() *xkms.BarrierStatus {
