@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -640,8 +641,8 @@ func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (er
 //
 // Returns ErrBarrierNotInitialized when no barrier is open and
 // ErrBarrierResealFailed when the barrier is sealed (there is no live key
-// to compare against). Any other refusal of password, including a
-// mismatch, reports (false, nil).
+// to compare against). A credential mismatch reports (false, nil); any
+// other verification failure is returned.
 func (s *BarrierService) PasswordBound(password string) (bound bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -656,13 +657,24 @@ func (s *BarrierService) PasswordBound(password string) (bound bool, err error) 
 	ctx := s.context()
 	creds, credErr := xkms.CredentialsFor(ctx, []byte(password))
 	if credErr != nil {
-		return false, nil
+		return false, credErr
 	}
 	defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
 
 	// go-qrdb v0.58.5: VerifyCredentials unseals a candidate key and
-	// compares it with the live one; it never alters barrier state.
-	return s.barrier.VerifyCredentials(ctx, creds) == nil, nil
+	// compares it with the live one; it never alters barrier state. Only a
+	// confirmed mismatch means the barrier has a password of its own;
+	// every other failure (storage read, corrupt root key, missing
+	// strategy) is operational and stops the caller.
+	verr := s.barrier.VerifyCredentials(ctx, creds)
+	switch {
+	case verr == nil:
+		return true, nil
+	case errors.Is(verr, qrdbseal.ErrCredentialMismatch):
+		return false, nil
+	default:
+		return false, verr
+	}
 }
 
 // Status returns the current barrier status. If the barrier has not been
