@@ -152,3 +152,54 @@ func TestFinishInviteRegistration_FailedSaveReleasesFirstCredentialClaim(t *test
 	require.NoError(t, err)
 	assert.Len(t, creds, 1)
 }
+
+// saveRecordingCredStore is a write-through decorator, as an embedder
+// writes one: it embeds CredentialStore and overrides Save only.
+type saveRecordingCredStore struct {
+	CredentialStore
+	saved [][]byte
+}
+
+func (r *saveRecordingCredStore) Save(ctx context.Context, cred *Credential) error {
+	if err := r.CredentialStore.Save(ctx, cred); err != nil {
+		return err
+	}
+	r.saved = append(r.saved, append([]byte(nil), cred.ID...))
+	return nil
+}
+
+// TestFinishInviteRegistration_DecoratedSaveSeesTheFencedWrite pins the Codex
+// round-2 P1 on service.go: the invitation ceremony's fenced first-credential
+// write goes through the configured store's Save, so a decorator that
+// overrides Save sees it, and the credential is still bound to the claim
+// (readable once the ceremony commits it).
+func TestFinishInviteRegistration_DecoratedSaveSeesTheFencedWrite(t *testing.T) {
+	ctx := context.Background()
+	f := newEnrollFixture(t, false)
+	recorder := &saveRecordingCredStore{CredentialStore: f.creds}
+	svc, err := NewService(ServiceParams{
+		Config:          validTestConfig(),
+		UserStore:       f.users,
+		SessionStore:    NewMemorySessionStore(),
+		CredentialStore: recorder,
+	})
+	require.NoError(t, err)
+
+	u := f.mustCreatePending(t, "decorated@example.com")
+	options, sessionID, err := svc.BeginInviteRegistration(ctx, u.WebAuthnID())
+	require.NoError(t, err)
+	parsed, err := parseAttestationResponse(f.inviteAttestation(t, options, newEC2Credential(t)))
+	require.NoError(t, err)
+	_, err = svc.FinishInviteRegistration(ctx, sessionID, u.WebAuthnID(), parsed)
+	require.NoError(t, err)
+
+	creds, err := f.creds.GetByUserID(ctx, u.WebAuthnID())
+	require.NoError(t, err)
+	require.Len(t, creds, 1)
+	require.Len(t, recorder.saved, 1, "the decorator's Save saw the invitation ceremony's credential")
+	assert.Equal(t, creds[0].ID, recorder.saved[0])
+
+	// The write stayed fenced: a second claim for the account is refused.
+	_, err = f.creds.ClaimFirstCredential(ctx, u.WebAuthnID())
+	require.ErrorIs(t, err, ErrFirstCredentialClaimed)
+}
