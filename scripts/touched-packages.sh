@@ -11,8 +11,8 @@
 # module (sdk/go, xkey, web/desktop) is not printed itself, but its
 # root-module importers are; test/integration/ is touched-features.sh's.
 #
-# Renames count on both sides. Imports come from the working tree, with the
-# Makefile's TEST_TAGS. A docs-only change (*.md, docs/, .changelog/) or an
+# Renames count on both sides. Imports come from the working tree, under the
+# tags `make test-pkg` passes (read from `make -n`). A docs-only change (*.md, docs/, .changelog/) or an
 # empty diff prints nothing. Exit 2 on a bad argument or revision.
 set -euo pipefail
 
@@ -56,10 +56,28 @@ while IFS= read -r f; do
 done <<<"$files"
 [ "${#candidates[@]}" -gt 0 ] || exit 0
 
-tags=
-if [ -f Makefile ]; then
-	tt=$(sed -n 's/^TEST_TAGS[[:space:]]*:\{0,1\}=[[:space:]]*//p' Makefile | head -1)
-	tags=$(printf '%s' "$tt" | tr -s ' ' ',')
+# recipe_tags <make args>: the -tags of the first go test line `make -n`
+# prints, comma-separated, so the tags are the recipe's after every +=.
+recipe_tags() {
+	local out line re_dq re_sq re_bare
+	out=$(env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -n -s --no-print-directory "$@" 2>/dev/null) || return 1
+	re_dq='-tags[= ]+"([^"]*)"'
+	re_sq="-tags[= ]+'([^']*)'"
+	re_bare='-tags[= ]+([^[:space:]]+)'
+	while IFS= read -r line; do
+		case "$line" in *" test "*) ;; *) continue ;; esac
+		if [[ $line =~ $re_dq ]] || [[ $line =~ $re_sq ]] || [[ $line =~ $re_bare ]]; then
+			printf '%s\n' "${BASH_REMATCH[1]}" | tr -s ' ,' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -
+			return 0
+		fi
+	done <<<"$out"
+	return 1
+}
+
+# The unit-test tags make test-pkg passes.
+if ! tags=$(recipe_tags test-pkg PKG=.); then
+	echo "$0: no go test -tags line in make -n test-pkg; reading imports without tags" >&2
+	tags=
 fi
 
 pkgs=$(mktemp)

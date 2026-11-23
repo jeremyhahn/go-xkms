@@ -48,13 +48,18 @@ feature list.
   `make integration-test-<feature>` must run. A feature is a
   `test/integration/<feature>/` directory holding `_test.go` files. A changed
   file under it, or a package its tests import (directly or transitively,
-  `go list -deps -test -tags integration`), selects it. A change to the
+  `go list -deps -test` under the tags `make -n integration-test-<feature>`
+  prints, so conditional `BUILD_TAGS +=` tags count), selects it. So does a
+  change to a binary the suite builds and runs, or to one of its deps: a
+  quoted `.../cmd/<name>` path in the suite's Go files, or a recipe line that
+  builds `./cmd/<name>` (after any `cd`, so `xkey/cmd/xkey` counts) and tests
+  `./test/integration/<feature>`. A change to the
   Makefile, `.github/`, `go.mod`/`go.sum`, `test/integration/common/` or a
   file no feature reaches prints only `ALL`; a docs-only change prints nothing.
 - `scripts/touched-packages.sh <base> <tip>`: the repo-relative package
-  directories for `make test-pkg PKG=<dir>`, which runs `go test` on `./<dir>`
-  the way `test-%` does: each changed package plus its direct importers in the
-  root module.
+  directories for `make test-pkg PKG=<dir>`, which runs `go test $(TEST_FLAGS)`
+  (the unit-test tags of `TEST_TAGS`) on `./<dir>`: each changed package plus
+  its direct importers in the root module, read under the same tags.
 - Both count both sides of a rename and exit 2 on a bad revision.
   `internal/buildgates/integration_targets_test.go` fails when a
   `test/integration/` directory with tests has no `integration-test-<name>`

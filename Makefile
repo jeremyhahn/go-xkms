@@ -5440,8 +5440,9 @@ integration_dir = $(or $(wildcard ./test/integration/$(1)),$(error ./test/integr
 # build it first, as test-go, race and coverage-full do.
 test-acme coverage-acme: agsim
 
-# Unit tests of one package directory, the way test-% runs them (handbook
-# testing-guidelines.md section 4): make test-pkg PKG=pkg/acme/admin.
+# Unit tests of one package directory under the unit-test flags and tags
+# ($(TEST_FLAGS), from $(TEST_TAGS)) (handbook testing-guidelines.md
+# section 4): make test-pkg PKG=pkg/acme/admin.
 # scripts/touched-packages.sh <base> <tip> prints the PKG values a diff needs.
 .PHONY: test-pkg
 test-pkg: $(if $(filter pkg/acme/%,$(PKG)/),agsim)
@@ -5449,7 +5450,7 @@ test-pkg: $(if $(filter pkg/acme/%,$(PKG)/),agsim)
 		echo "usage: make test-pkg PKG=<package dir>, e.g. PKG=pkg/acme/admin" >&2; exit 2; \
 	fi
 	@echo "$(CYAN)→ Running tests for ./$(PKG)...$(RESET)"
-	@$(GO) test -v $(TAG_FLAGS) ./$(PKG)
+	@$(GO) test $(TEST_FLAGS) ./$(PKG)
 	@echo "$(GREEN)✓ Tests passed for ./$(PKG)$(RESET)"
 
 # Dynamic test target for individual packages and binaries
