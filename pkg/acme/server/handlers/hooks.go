@@ -99,20 +99,22 @@ type TCGEnrollmentData struct {
 	ProdCaData []byte
 }
 
-// OrderFinalizeHook is a function that gets called after an order has been
-// successfully finalized and a certificate has been issued. Hooks receive
-// contextual information about the order and certificate.
+// OrderFinalizeHook is a function that gets called once a certificate has
+// been issued for an order, before the certificate and the order are
+// persisted. Hooks receive contextual information about the order and
+// certificate.
 //
-// Hooks should return an error if they fail. When a hook returns an error,
-// the finalization process will be rolled back and the order will not be
-// marked as valid.
+// A hook may veto issuance by returning an error: the certificate is then
+// neither saved nor delivered and the order is not marked as valid. Because
+// the hook runs before persistence, a later certificate or order save can
+// still fail; state that must only exist for a delivered certificate belongs
+// in an OrderFinalizeCommitHook, which runs after the saves and is told
+// whether they succeeded.
 //
 // Example use cases for hooks:
-//   - Registering DNS records for issued certificates
-//   - Recording device enrollment in a device inventory system
-//   - Sending notifications about certificate issuance
 //   - Enforcing custom policy checks
-//   - Logging certificate issuance events
+//   - Validating device enrollment data before issuance
+//   - Staging state that an OrderFinalizeCommitHook commits or undoes
 type OrderFinalizeHook func(ctx *OrderFinalizeHookContext) error
 
 // OrderFinalizeHookRegistry manages registered order finalization hooks.
@@ -145,6 +147,45 @@ func (r *OrderFinalizeHookRegistry) Execute(ctx *OrderFinalizeHookContext) error
 
 // Count returns the number of registered hooks.
 func (r *OrderFinalizeHookRegistry) Count() int {
+	return len(r.hooks)
+}
+
+// OrderFinalizeCommitHook is a function that gets called once per finalized
+// order after the certificate save and the order save were attempted, with
+// the same context the OrderFinalizeHooks saw. persistErr is nil when both
+// saves succeeded, and the save error when either failed, so the consumer
+// commits the state its finalize hook staged or undoes it. The hook cannot
+// change the response: a persisted certificate cannot be withdrawn.
+type OrderFinalizeCommitHook func(ctx *OrderFinalizeHookContext, persistErr error)
+
+// OrderFinalizeCommitHookRegistry manages registered order finalize commit
+// hooks.
+type OrderFinalizeCommitHookRegistry struct {
+	hooks []OrderFinalizeCommitHook
+}
+
+// NewOrderFinalizeCommitHookRegistry creates a new commit hook registry.
+func NewOrderFinalizeCommitHookRegistry() *OrderFinalizeCommitHookRegistry {
+	return &OrderFinalizeCommitHookRegistry{
+		hooks: make([]OrderFinalizeCommitHook, 0),
+	}
+}
+
+// Register adds a new commit hook to the registry.
+func (r *OrderFinalizeCommitHookRegistry) Register(hook OrderFinalizeCommitHook) {
+	r.hooks = append(r.hooks, hook)
+}
+
+// Execute runs every registered commit hook in order with the persistence
+// outcome.
+func (r *OrderFinalizeCommitHookRegistry) Execute(ctx *OrderFinalizeHookContext, persistErr error) {
+	for _, hook := range r.hooks {
+		hook(ctx, persistErr)
+	}
+}
+
+// Count returns the number of registered commit hooks.
+func (r *OrderFinalizeCommitHookRegistry) Count() int {
 	return len(r.hooks)
 }
 
