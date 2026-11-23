@@ -289,6 +289,27 @@ func TestSession_OmittedKeyOwnerIsCaller(t *testing.T) {
 	require.NoError(t, c.KnownHosts().Callback(as(aliceA), "user", "")("h.example.com:22", &net.TCPAddr{}, pub))
 }
 
+// TestConsole_OmittedKeyOwnerIsCaller covers `xkey ssh console` against a
+// server: it sends no key owner, and the server keeps the console's
+// authentication key and host-key pins under the caller.
+func TestConsole_OmittedKeyOwnerIsCaller(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	generate(t, c, aliceA, "user", "alice", "laptop")
+	generate(t, c, bobA, "user", "bob", "bob-key")
+	cfg := sdkssh.ConsoleConfig{Term: "xterm", Rows: 24, Cols: 80}
+
+	_, err := c.Console(as(aliceA), sdkssh.ConsoleConnectRequest{KeyScope: "user", KeyName: "laptop",
+		Host: "127.0.0.1", Port: 1, User: "u"}, cfg)
+	require.Error(t, err, "nothing listens on the target")
+	var refusal *OwnerBindingError
+	assert.False(t, errors.As(err, &refusal), "an omitted owner was refused: %v", err)
+
+	_, err = c.Console(as(aliceA), sdkssh.ConsoleConnectRequest{KeyScope: "user", KeyName: "bob-key",
+		Host: "127.0.0.1", Port: 1, User: "u"}, cfg)
+	var notFound *pkgkeys.KeyNotFoundError
+	require.True(t, errors.As(err, &notFound), "alice reached bob's key through an omitted owner: %v", err)
+}
+
 // TestKeys_ServiceScope proves a service-scoped key is reachable only with
 // the explicit ssh:service permission, only in the caller's own tenant, and
 // not at all when no permission checker is wired.
