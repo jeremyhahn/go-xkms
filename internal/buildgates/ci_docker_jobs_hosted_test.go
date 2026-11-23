@@ -29,11 +29,12 @@ const (
 var (
 	// dockerJobs are the jobs that run Docker.
 	dockerJobs = []string{"coverage", "integration"}
-	// ruling442Jobs are the Docker jobs under ruling 442 (#2050): a push to
-	// main and a same-repository PR run on bigdiskDockerLabels, any other
-	// event on hostedLabels. The coverage shards are this PR's own jobs and
-	// stay hosted on github.com.
-	ruling442Jobs       = []string{"integration"}
+	// poolJobs are the Docker jobs main (ci-template v1.48, #2346, rulings
+	// 999 and 1024) routes by the preflight's runner_docker output on
+	// github.com: ubuntu-latest, or bigdiskDockerLabels when the preflight
+	// reports the hosted pool full, whatever the event. They replace the
+	// ruling 442 same-repository split. The coverage shards stay hosted.
+	poolJobs            = []string{"integration"}
 	bigdiskDockerLabels = []string{"self-hosted", "linux", "x64", "bigdisk-docker"}
 	hostedLabels        = []string{"ubuntu-latest"}
 	// otherForgeLabels is what both jobs select off github.com.
@@ -266,16 +267,22 @@ func (p *exprParser) primary() (any, error) {
 			if _, err := p.expect("("); err != nil {
 				return nil, err
 			}
-			lit, err := p.expect("string")
+			// The argument is a string literal or a context value such as
+			// needs.preflight.outputs.runner_docker (main's #2346 routing).
+			arg, err := p.or()
 			if err != nil {
 				return nil, err
 			}
 			if _, err := p.expect(")"); err != nil {
 				return nil, err
 			}
+			text, ok := arg.(string)
+			if !ok {
+				return nil, fmt.Errorf("fromJSON(%#v): argument is not a string", arg)
+			}
 			var labels []string
-			if err := json.Unmarshal([]byte(lit.text), &labels); err != nil || labels == nil {
-				return nil, fmt.Errorf("fromJSON(%q): not a string array (%v)", lit.text, err)
+			if err := json.Unmarshal([]byte(text), &labels); err != nil || labels == nil {
+				return nil, fmt.Errorf("fromJSON(%q): not a string array (%v)", text, err)
 			}
 			return labels, nil
 		}
@@ -291,6 +298,16 @@ func (p *exprParser) primary() (any, error) {
 // runsOnLabels evaluates a runs-on scalar for one event and returns the
 // runner labels it selects.
 func runsOnLabels(runsOn string, ev runnerEvent) ([]string, error) {
+	return runsOnLabelsPool(runsOn, ev, "")
+}
+
+// preflightRunnerDocker is the preflight output a pool job's runs-on reads
+// (ci-template v1.48 / #2346): the runs-on JSON of the Docker runner pool.
+const preflightRunnerDocker = "needs.preflight.outputs.runner_docker"
+
+// runsOnLabelsPool evaluates runsOn as runsOnLabels does, with the
+// preflight's runner_docker output set to runnerDocker when it is not empty.
+func runsOnLabelsPool(runsOn string, ev runnerEvent, runnerDocker string) ([]string, error) {
 	if !strings.Contains(runsOn, "${{") {
 		return []string{runsOn}, nil
 	}
@@ -305,7 +322,11 @@ func runsOnLabels(runsOn string, ev runnerEvent) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &exprParser{toks: toks, ctx: ev.context()}
+	ctx := ev.context()
+	if runnerDocker != "" {
+		ctx[preflightRunnerDocker] = runnerDocker
+	}
+	p := &exprParser{toks: toks, ctx: ctx}
 	v, err := p.or()
 	if err != nil {
 		return nil, err
@@ -346,27 +367,36 @@ func workflowTriggers(on yaml.Node) []string {
 
 func TestCIDockerJobs_BigdiskForSameRepositoryHostedOtherwise(t *testing.T) {
 	wf := readRunnerWorkflow(t)
-	// sameRepo marks a push to main or a same-repository PR, the events
-	// ruling 442 sends to bigdisk-docker, and a schedule or workflow_dispatch
-	// run on main, which ruling 740 (#2240) sends there too.
+	// Main's #2346 routing does not split by event: a pool job follows the
+	// preflight's runner_docker on github.com, every Docker job runs on
+	// otherForgeLabels elsewhere. The events below (same-repository and fork
+	// pull requests, pushes, schedule, dispatch) prove no event changes that.
 	cases := []struct {
-		name     string
-		ev       runnerEvent
-		sameRepo bool
+		name string
+		ev   runnerEvent
 	}{
-		{"github.com push to main", runnerEvent{runnerGitHub, "push", "refs/heads/main", ""}, true},
-		{"github.com same-repo PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", runnerRepository}, true},
-		{"github.com fork PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", "mallory/go-xkms"}, false},
-		{"github.com PR with an empty head repository", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", ""}, false},
-		{"github.com push to refs/heads/main-x", runnerEvent{runnerGitHub, "push", "refs/heads/main-x", ""}, false},
-		{"github.com push to refs/tags/main", runnerEvent{runnerGitHub, "push", "refs/tags/main", ""}, false},
-		{"github.com workflow_dispatch", runnerEvent{runnerGitHub, "workflow_dispatch", "refs/heads/main", ""}, true},
-		{"github.com schedule", runnerEvent{runnerGitHub, "schedule", "refs/heads/main", ""}, true},
-		{"another forge push to main", runnerEvent{runnerOtherForge, "push", "refs/heads/main", ""}, true},
-		{"another forge same-repo PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", runnerRepository}, true},
-		{"another forge fork PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", "mallory/go-xkms"}, false},
-		{"another forge workflow_dispatch", runnerEvent{runnerOtherForge, "workflow_dispatch", "refs/heads/main", ""}, true},
-		{"another forge schedule", runnerEvent{runnerOtherForge, "schedule", "refs/heads/main", ""}, true},
+		{"github.com push to main", runnerEvent{runnerGitHub, "push", "refs/heads/main", ""}},
+		{"github.com same-repo PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", runnerRepository}},
+		{"github.com fork PR", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", "mallory/go-xkms"}},
+		{"github.com PR with an empty head repository", runnerEvent{runnerGitHub, "pull_request", "refs/pull/7/merge", ""}},
+		{"github.com push to refs/heads/main-x", runnerEvent{runnerGitHub, "push", "refs/heads/main-x", ""}},
+		{"github.com push to refs/tags/main", runnerEvent{runnerGitHub, "push", "refs/tags/main", ""}},
+		{"github.com workflow_dispatch", runnerEvent{runnerGitHub, "workflow_dispatch", "refs/heads/main", ""}},
+		{"github.com schedule", runnerEvent{runnerGitHub, "schedule", "refs/heads/main", ""}},
+		{"another forge push to main", runnerEvent{runnerOtherForge, "push", "refs/heads/main", ""}},
+		{"another forge same-repo PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", runnerRepository}},
+		{"another forge fork PR", runnerEvent{runnerOtherForge, "pull_request", "refs/pull/7/head", "mallory/go-xkms"}},
+		{"another forge workflow_dispatch", runnerEvent{runnerOtherForge, "workflow_dispatch", "refs/heads/main", ""}},
+		{"another forge schedule", runnerEvent{runnerOtherForge, "schedule", "refs/heads/main", ""}},
+	}
+	// pools are the preflight's runner_docker states: the hosted pool has
+	// room, or it is full and the run overflows to the bigdisk-docker pool.
+	pools := []struct {
+		name   string
+		labels []string
+	}{
+		{"hosted pool", hostedLabels},
+		{"hosted pool full", bigdiskDockerLabels},
 	}
 	for _, name := range dockerJobs {
 		j, ok := wf.Jobs[name]
@@ -378,33 +408,43 @@ func TestCIDockerJobs_BigdiskForSameRepositoryHostedOtherwise(t *testing.T) {
 			t.Errorf("%s: runs-on is not a scalar", name)
 			continue
 		}
-		ruling442 := slices.Contains(ruling442Jobs, name)
-		if !ruling442 {
+		pool := slices.Contains(poolJobs, name)
+		if !pool {
 			for _, word := range unhostedRunsOn {
 				if strings.Contains(strings.ToLower(j.RunsOn.Value), word) {
 					t.Errorf("%s: runs-on %q contains %q", name, j.RunsOn.Value, word)
 				}
 			}
 		}
-		for _, tc := range cases {
-			var want []string
-			switch {
-			case ruling442 && tc.sameRepo:
-				want = bigdiskDockerLabels
-			case ruling442, tc.ev.serverURL == runnerGitHub:
-				want = hostedLabels
-			default:
-				want = otherForgeLabels
-			}
-			t.Run(name+"/"+tc.name, func(t *testing.T) {
-				got, err := runsOnLabels(j.RunsOn.Value, tc.ev)
+		for _, ps := range pools {
+			runnerDocker := ""
+			if pool {
+				b, err := json.Marshal(ps.labels)
 				if err != nil {
-					t.Fatalf("evaluate runs-on: %v", err)
+					t.Fatal(err)
 				}
-				if !slices.Equal(got, want) {
-					t.Errorf("runs on %v, want %v", got, want)
+				runnerDocker = string(b)
+			}
+			for _, tc := range cases {
+				var want []string
+				switch {
+				case tc.ev.serverURL != runnerGitHub:
+					want = otherForgeLabels
+				case pool:
+					want = ps.labels
+				default:
+					want = hostedLabels
 				}
-			})
+				t.Run(name+"/"+ps.name+"/"+tc.name, func(t *testing.T) {
+					got, err := runsOnLabelsPool(j.RunsOn.Value, tc.ev, runnerDocker)
+					if err != nil {
+						t.Fatalf("evaluate runs-on: %v", err)
+					}
+					if !slices.Equal(got, want) {
+						t.Errorf("runs on %v, want %v", got, want)
+					}
+				})
+			}
 		}
 	}
 }
