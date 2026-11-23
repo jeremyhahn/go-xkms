@@ -832,6 +832,14 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
+		// Only KMS's NotFoundException (no key behind the alias or ID) is
+		// absence; any other failure stays a lookup failure, so a caller
+		// that provisions on absence never generates over a key it could
+		// not read.
+		var notFound *awstypes.NotFoundException
+		if errors.As(err, &notFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get public key: %v", err)}
+		}
 		return nil, &errs.Wrapped{Msg: "failed to get public key", Err: err}
 	}
 

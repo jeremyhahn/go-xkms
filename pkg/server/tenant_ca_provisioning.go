@@ -146,6 +146,15 @@ func provisionTenantCAKeysWith(ctx context.Context, svc qrdbsdk.ServiceTenantSer
 			return &TenantProvisionError{TenantID: id, Err: err}
 		}
 	}
+	// Tenants go-qrdb deleted natively left their login CA material: the
+	// boot pass reclaims it (see tenantCAKeyFactory.ReclaimWithdrawnTenants).
+	if r, ok := keys.(interface {
+		ReclaimWithdrawnTenants(context.Context) error
+	}); ok {
+		if err := r.ReclaimWithdrawnTenants(ctx); err != nil {
+			return &TenantProvisionError{Err: err}
+		}
+	}
 	return nil
 }
 

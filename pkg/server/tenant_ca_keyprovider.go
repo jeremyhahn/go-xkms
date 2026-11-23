@@ -229,6 +229,11 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		if err := f.EnsureTenant(context.Background(), tenantID); err != nil {
 			return nil, err
 		}
+		// Each native onboarding also reclaims the material of tenants
+		// deleted natively since, so tenant churn cannot fill the token. A
+		// failure here does not fail this tenant's onboarding: the next
+		// onboarding and the boot pass (which reports it) retry it.
+		_ = f.ReclaimWithdrawnTenants(context.Background())
 	}
 	return qrdbsdk.CAKeyAdapter{
 		SignerFunc: func(ctx context.Context) (crypto.Signer, error) {
@@ -274,6 +279,90 @@ func (f *tenantCAKeyFactory) TenantIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// ReclaimWithdrawnTenants removes the login CA material of every tenant that
+// holds some but that the node's tenant service no longer knows. go-qrdb's
+// native DELETE /v1/tenants/{id} deletes a tenant through the node's own
+// service, which never reaches RemoveTenant, so its key and certificates
+// would outlive it. Each removal goes through RemoveTenant's tombstone and
+// cleanup lease, then ReviveTenant clears the tombstone so the ID can be
+// created again. A tenant counts as gone only when a complete ListTenants
+// omits it. The system tenant is never reclaimed.
+func (f *tenantCAKeyFactory) ReclaimWithdrawnTenants(ctx context.Context) error {
+	f.mu.RLock()
+	svc, _ := f.tenants.(tenantLister)
+	f.mu.RUnlock()
+	if svc == nil {
+		return nil
+	}
+	base, err := f.backend()
+	if err != nil {
+		return err
+	}
+	keys, err := base.ListKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("tenant login CA key factory: list keys: %w", err)
+	}
+	held := make(map[string]struct{})
+	for _, attrs := range keys {
+		if id, ok := tenantLoginCAKeyTenant(attrs); ok && id != scope.TenantName(qrdbsdk.SystemTenantID) {
+			held[id] = struct{}{}
+		}
+	}
+	if len(held) == 0 {
+		return nil
+	}
+	// Only a complete listing proves a tenant gone: a GetTenant that fails
+	// for any other reason must never cost a live tenant its CA.
+	live, err := liveTenantNames(ctx, svc)
+	if err != nil {
+		return fmt.Errorf("tenant login CA key factory: list tenants: %w", err)
+	}
+	ids := make([]string, 0, len(held))
+	for id := range held {
+		if _, ok := live[id]; !ok {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	var errs []error
+	for _, id := range ids {
+		if err := f.RemoveTenant(ctx, id); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		// The material is gone. go-qrdb may create this ID again natively,
+		// which never calls ReviveTenant, so a reclaim leaves no tombstone:
+		// the revive moves the generation, which still fences any late
+		// pass of the removed tenant, and a pass that starts now is refused
+		// for as long as the node does not list the tenant.
+		if err := f.ReviveTenant(ctx, id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// tenantLister is the tenant service's complete listing, which
+// ReclaimWithdrawnTenants needs to prove a tenant gone.
+type tenantLister interface {
+	ListTenants(ctx context.Context) ([]qrdbsdk.ServiceTenantInfo, error)
+}
+
+// liveTenantNames returns the scoped names of the tenants svc lists.
+func liveTenantNames(ctx context.Context, svc tenantLister) (map[string]struct{}, error) {
+	infos, err := svc.ListTenants(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]struct{}, len(infos))
+	for i := range infos {
+		if infos[i].ID != "" {
+			names[scope.TenantName(infos[i].ID)] = struct{}{}
+		}
+	}
+	return names, nil
+}
+
 // EnsureTenant provisions tenantID's login CA once: a P-256 signing key in the
 // tenant's scope and a self-signed CA certificate over it, saved under the same
 // name. An existing key is kept and its certificate validated, or issued if
@@ -314,8 +403,24 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 		if baseErr != nil {
 			return errors.Join(fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved), baseErr)
 		}
-		errs := deleteTenantLoginCAMaterial(ctx, base, tenantID)
-		return errors.Join(append([]error{fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved)}, errs...)...)
+		claims, claimsErr := f.claimStorage()
+		if claimsErr != nil {
+			return errors.Join(fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved), claimsErr)
+		}
+		// Between the read above and the deletes, the tenant may have been
+		// removed, created again and given a fresh key: the cleanup lease
+		// keeps that revive out for the whole of the deletes, and a cleanup
+		// that finds the tombstone gone deletes nothing.
+		cleaned, errs := f.cleanTenantLoginCAMaterial(ctx, claims, base, tenantID)
+		errs = append([]error{fmt.Errorf("tenant %q: %w", tenantID, errTenantLoginCARemoved)}, errs...)
+		if !cleaned && fence.wrote.Load() {
+			if current, genErr := f.tenantLoginCAGeneration(ctx, tenantID); genErr != nil {
+				errs = append(errs, genErr)
+			} else if current != generation {
+				errs = append(errs, f.repairRevivedTenantLoginCA(ctx, tenantID)...)
+			}
+		}
+		return errors.Join(errs...)
 	}
 	current, err := f.tenantLoginCAGeneration(ctx, tenantID)
 	if err != nil {
@@ -958,10 +1063,30 @@ func (f *tenantCAKeyFactory) RemoveTenant(ctx context.Context, tenantID string) 
 	if err := f.tombstoneTenantLoginCAClaim(ctx, claims, tenantID); err != nil {
 		return fmt.Errorf("tenant login CA key factory: remove tenant %q: tombstone claim: %w", tenantID, err)
 	}
-	if errs := deleteTenantLoginCAMaterial(ctx, base, tenantID); len(errs) > 0 {
-		return fmt.Errorf("tenant login CA key factory: remove tenant %q: %w", tenantID, errors.Join(errs...))
+	for {
+		cleaned, errs := f.cleanTenantLoginCAMaterial(ctx, claims, base, tenantID)
+		if len(errs) > 0 {
+			return fmt.Errorf("tenant login CA key factory: remove tenant %q: %w", tenantID, errors.Join(errs...))
+		}
+		if cleaned {
+			return nil
+		}
+		// Another cleanup holds the lease, or the tenant was created again
+		// after the tombstone: wait for the lease, and leave a revived
+		// tenant's material alone.
+		removed, err := f.tenantLoginCARemoved(ctx, tenantID)
+		if err != nil {
+			return fmt.Errorf("tenant login CA key factory: remove tenant %q: %w", tenantID, err)
+		}
+		if !removed {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("tenant login CA key factory: remove tenant %q: wait for cleanup lease: %w", tenantID, ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
-	return nil
 }
 
 // ReviveTenant clears the teardown tombstone of a tenant created again under
@@ -986,10 +1111,39 @@ func (f *tenantCAKeyFactory) ReviveTenant(ctx context.Context, tenantID string) 
 	if err := bumpTenantLoginCAGeneration(ctx, claims, tenantID); err != nil {
 		return fmt.Errorf("tenant login CA key factory: revive tenant %q: bump generation: %w", tenantID, err)
 	}
-	if err := claims.Delete(ctx, tenantLoginCAClaimKey(tenantID)); err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return fmt.Errorf("tenant login CA key factory: revive tenant %q: %w", tenantID, err)
+	key := tenantLoginCAClaimKey(tenantID)
+	deleter, ok := claims.(storage.CompareAndDeleter)
+	if !ok {
+		if err := claims.Delete(ctx, key); err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return fmt.Errorf("tenant login CA key factory: revive tenant %q: %w", tenantID, err)
+		}
+		return nil
 	}
-	return nil
+	// Only a plain tombstone, or the lease of a cleanup that stopped, goes:
+	// a live cleanup deletes the removed generation's material by tenant and
+	// name, and a fresh key provisioned beside it would go with it.
+	for {
+		held, err := claims.Get(ctx, key)
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("tenant login CA key factory: revive tenant %q: %w", tenantID, err)
+		}
+		if !tenantLoginCAClaimIsRemoved(held) {
+			return nil
+		}
+		if holder := tenantLoginCAClaimCleanupOwner(held); holder != "" && !tenantLoginCAHolderStopped(holder) && !f.fencedHolder(holder) {
+			return fmt.Errorf("tenant login CA key factory: revive tenant %q: %w (cleanup holder %s)", tenantID, errTenantLoginCAClaimHeld, holder)
+		}
+		deleted, err := deleter.CompareAndDelete(ctx, key, held)
+		if err != nil {
+			return fmt.Errorf("tenant login CA key factory: revive tenant %q: %w", tenantID, err)
+		}
+		if deleted {
+			return nil
+		}
+	}
 }
 
 // errTenantLoginCARemoved reports a tenant whose login CA RemoveTenant tore
@@ -1002,7 +1156,70 @@ const tenantLoginCAClaimRemovedValue = "removed"
 
 // tenantLoginCAClaimIsRemoved reports whether claim is a teardown tombstone.
 func tenantLoginCAClaimIsRemoved(claim []byte) bool {
-	return string(claim) == tenantLoginCAClaimRemovedValue
+	return string(claim) == tenantLoginCAClaimRemovedValue || strings.HasPrefix(string(claim), tenantLoginCAClaimCleanupPrefix)
+}
+
+// tenantLoginCAClaimCleanupPrefix marks a tombstone a cleanup holds as its
+// lease: "removed cleanup <owner>". The tenant stays removed while it is held,
+// and ReviveTenant refuses to clear it, so no new generation provisions while
+// the cleanup deletes the removed one's material.
+const tenantLoginCAClaimCleanupPrefix = tenantLoginCAClaimRemovedValue + " cleanup "
+
+// tenantLoginCAClaimCleanupOwner returns the owner of a cleanup lease, or ""
+// when claim is not one.
+func tenantLoginCAClaimCleanupOwner(claim []byte) string {
+	owner, ok := strings.CutPrefix(string(claim), tenantLoginCAClaimCleanupPrefix)
+	if !ok {
+		return ""
+	}
+	return owner
+}
+
+// cleanTenantLoginCAMaterial deletes a removed tenant's login CA material
+// under a cleanup lease: it swaps the plain tombstone for one naming this
+// pass, deletes, and puts the plain tombstone back. ReviveTenant clears only a
+// plain tombstone (or the lease of a stopped holder), so a revive and a fresh
+// key cannot land while this deletes by tenant and name. cleaned is false when
+// the tombstone was no longer plain: the tenant was revived (its material
+// belongs to the new generation) or another cleanup holds the lease.
+func (f *tenantCAKeyFactory) cleanTenantLoginCAMaterial(ctx context.Context, claims storage.Backend, base xkms.Backend, tenantID string) (cleaned bool, errs []error) {
+	swapper, ok := claims.(storage.CompareAndSwapper)
+	if !ok {
+		// Claim storage without a guarded swap cannot hold a lease; it
+		// cannot fence a revive either (see ReviveTenant).
+		return true, deleteTenantLoginCAMaterial(ctx, base, tenantID)
+	}
+	owner, err := newTenantLoginCAClaimOwner()
+	if err != nil {
+		return false, []error{err}
+	}
+	key := tenantLoginCAClaimKey(tenantID)
+	removed := []byte(tenantLoginCAClaimRemovedValue)
+	lease := []byte(tenantLoginCAClaimCleanupPrefix + owner)
+	tenantLoginCALiveOwners.Store(owner, struct{}{})
+	defer tenantLoginCALiveOwners.Delete(owner)
+	expected := removed
+	if held, getErr := claims.Get(ctx, key); getErr == nil {
+		// The lease of a cleanup that stopped before it put the plain
+		// tombstone back is taken over.
+		if holder := tenantLoginCAClaimCleanupOwner(held); holder != "" && (tenantLoginCAHolderStopped(holder) || f.fencedHolder(holder)) {
+			expected = held
+		}
+	}
+	swapped, _, err := swapper.CompareAndSwap(ctx, key, expected, lease)
+	if err != nil {
+		return false, []error{fmt.Errorf("tenant login CA key factory: lease cleanup of tenant %q: %w", tenantID, err)}
+	}
+	if !swapped {
+		return false, nil
+	}
+	errs = deleteTenantLoginCAMaterial(ctx, base, tenantID)
+	if _, _, err := swapper.CompareAndSwap(context.WithoutCancel(ctx), key, lease, removed); err != nil {
+		// The lease stays; once this pass returns its holder is stopped,
+		// and ReviveTenant clears it then.
+		errs = append(errs, fmt.Errorf("tenant login CA key factory: release cleanup lease of tenant %q: %w", tenantID, err))
+	}
+	return true, errs
 }
 
 // tombstoneTenantLoginCAClaim replaces the tenant's claim with the teardown
