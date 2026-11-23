@@ -476,6 +476,25 @@ func TestHTTPStatusList_ExplicitlyExpiredResponseIsRefused(t *testing.T) {
 	assert.EqualValues(t, 2, e.requests.Load(), "revalidated once, not more")
 }
 
+// An origin answering max-age=0 asks to be contacted on every use; it does
+// not invalidate the representation it just sent (RFC 9111 §4.2, §4.3.3).
+// The revalidated response satisfies the current check and is never cached.
+func TestHTTPStatusList_ImmediatelyExpiringOriginResponseIsUsedUncached(t *testing.T) {
+	e := newStatusEndpoint(t, googleExampleList, map[string]string{"Cache-Control": "max-age=0"})
+	source := newSource(t, e, nil, HTTPStatusListOptions{})
+
+	list, err := source.Current()
+	require.NoError(t, err)
+	require.NotNil(t, list)
+	assert.Equal(t, 2, list.Len())
+	assert.EqualValues(t, 2, e.requests.Load(), "validated with the origin once")
+
+	again, err := source.Current()
+	require.NoError(t, err)
+	assert.NotSame(t, list, again, "a response that expires on arrival is not cached")
+	assert.EqualValues(t, 4, e.requests.Load(), "every use contacts the origin")
+}
+
 func TestParseDeltaSeconds(t *testing.T) {
 	seconds, ok := parseDeltaSeconds("99999999999999999999999")
 	assert.True(t, ok)
