@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -1265,6 +1266,13 @@ func isKeyPairRecoveryFence(pub []byte) bool {
 // at any point leaves the fence, never a real public blob beside a foreign
 // private blob: LoadKeyPair reports the fenced key as incomplete, and the
 // next create-only save takes the fence over and finishes the pair.
+//
+// A live recovery's fence looks the same as a crashed one's, so a second
+// recovery may take it over. Every write that replaces a blob (taking a
+// fence over, the private write, publication) therefore runs only while this
+// recovery holds the fence, checked and written under keyPairRecoveryMu: a
+// recovery that lost its fence never writes either blob, and the pair stays
+// the one the fence's owner stores.
 func (tpm *TPM2) recoverKeyPair(
 	keyAttrs *types.KeyAttributes,
 	outPrivate tpm2.TPM2BPrivate,
@@ -1278,37 +1286,66 @@ func (tpm *TPM2) recoverKeyPair(
 	}
 	fence := append(append([]byte{}, keyPairRecoveryFence...), nonce...)
 
-	pub, perr := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
-	switch {
-	case errors.Is(perr, store.ErrBlobNotFound):
-		if err := backend.Save(keyAttrs, fence, store.FSEXT_PUBLIC_BLOB, false); err != nil {
-			// A writer published or fenced the pair first: leave it to it.
-			return err
-		}
-	case perr == nil && isKeyPairRecoveryFence(pub):
-		// An earlier recovery never finished: take its fence over.
-		if err := backend.Save(keyAttrs, fence, store.FSEXT_PUBLIC_BLOB, true); err != nil {
-			return err
-		}
-	default:
-		return exists
+	if err := claimKeyPairFence(keyAttrs, backend, fence, exists); err != nil {
+		return err
 	}
 	tpm.logger.Warn("tpm: replacing an incomplete key pair (private blob without public blob)",
 		slog.String("cn", keyAttrs.CN))
 
-	if err := backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, true); err != nil {
-		// The fence stays: the next create-only save takes the pair over.
+	// The fence stays on a failed write: the next create-only save takes the
+	// pair over.
+	if err := saveFenced(keyAttrs, backend, fence, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, exists); err != nil {
 		return err
 	}
-	// Publish only while this save still holds the fence: a later save
-	// that took a stalled recovery over owns the pair now.
-	if cur, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB); err != nil || !bytes.Equal(cur, fence) {
-		if err != nil {
-			return errors.Join(exists, err)
-		}
+	return saveFenced(keyAttrs, backend, fence, outPublic.Bytes(), store.FSEXT_PUBLIC_BLOB, exists)
+}
+
+// keyPairRecoveryMu makes each check of a recovery fence and the write it
+// guards one step for every recovery in this process.
+var keyPairRecoveryMu sync.Mutex
+
+// claimKeyPairFence stores fence as the public blob: create-only when there is
+// none, or over an earlier recovery's fence. A real public blob means the key
+// is complete, and claimKeyPairFence returns exists.
+func claimKeyPairFence(keyAttrs *types.KeyAttributes, backend store.KeyBackend, fence []byte, exists error) error {
+	pub, perr := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
+	if errors.Is(perr, store.ErrBlobNotFound) {
+		// Create-only: a writer that published or fenced the pair first
+		// keeps it.
+		return backend.Save(keyAttrs, fence, store.FSEXT_PUBLIC_BLOB, false)
+	}
+	if perr != nil || !isKeyPairRecoveryFence(pub) {
 		return exists
 	}
-	return backend.Save(keyAttrs, outPublic.Bytes(), store.FSEXT_PUBLIC_BLOB, true)
+	keyPairRecoveryMu.Lock()
+	defer keyPairRecoveryMu.Unlock()
+	cur, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		return errors.Join(exists, err)
+	}
+	if !bytes.Equal(cur, pub) {
+		// Another recovery took the fence over, or published, first.
+		return exists
+	}
+	// An earlier recovery never finished: take its fence over.
+	return backend.Save(keyAttrs, fence, store.FSEXT_PUBLIC_BLOB, true)
+}
+
+// saveFenced writes the ext blob only while the public blob is still fence;
+// a recovery that lost its fence gets exists and writes nothing.
+func saveFenced(keyAttrs *types.KeyAttributes, backend store.KeyBackend, fence, data []byte,
+	ext types.FSExtension, exists error) error {
+
+	keyPairRecoveryMu.Lock()
+	defer keyPairRecoveryMu.Unlock()
+	cur, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		return errors.Join(exists, err)
+	}
+	if !bytes.Equal(cur, fence) {
+		return exists
+	}
+	return backend.Save(keyAttrs, data, ext, true)
 }
 
 // Deletes the requested encrypted public and private blobs from
