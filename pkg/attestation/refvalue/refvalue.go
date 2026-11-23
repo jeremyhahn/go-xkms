@@ -41,11 +41,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/veraison/corim/comid"
 	"github.com/veraison/corim/corim"
 	"github.com/veraison/corim/cots"
@@ -506,7 +505,7 @@ func checkTag(tag corim.Tag) (err error) {
 		if err := s.FromCBOR(body); err != nil {
 			return &errs.Joined{Lead: ErrMalformed, Cause: err}
 		}
-		if err := checkCoSWID(&s); err != nil {
+		if err := checkCoSWID(&s, body); err != nil {
 			return &errs.Joined{Lead: ErrMalformed, Cause: err}
 		}
 		return nil
@@ -529,7 +528,7 @@ func checkTag(tag corim.Tag) (err error) {
 // (a decoded zero TagID marshals as CBOR null), a software-name, and at
 // least one entity, each named with a valid role, one of them the
 // tag-creator.
-func checkCoSWID(s *swid.SoftwareIdentity) error {
+func checkCoSWID(s *swid.SoftwareIdentity, body []byte) error {
 	id, err := s.TagID.MarshalCBOR()
 	if err != nil || bytes.Equal(id, []byte{0xf6}) || s.TagID.String() == "" {
 		return errors.New("coswid: tag-id is required")
@@ -540,7 +539,6 @@ func checkCoSWID(s *swid.SoftwareIdentity) error {
 	if len(s.Entities) == 0 {
 		return errors.New("coswid: entity is required")
 	}
-	tagCreator := false
 	for i, e := range s.Entities {
 		if e.EntityName == "" {
 			return fmt.Errorf("coswid: entity %d: entity-name is required", i)
@@ -548,18 +546,74 @@ func checkCoSWID(s *swid.SoftwareIdentity) error {
 		if err := e.Roles.Check(); err != nil {
 			return fmt.Errorf("coswid: entity %d: %w", i, err)
 		}
-		roles := strings.Fields(e.Roles.String())
-		if len(roles) == 0 {
-			return fmt.Errorf("coswid: entity %d: role is required", i)
-		}
-		if slices.Contains(roles, "tagCreator") {
-			tagCreator = true
-		}
+	}
+	tagCreator, err := coswidHasTagCreator(body)
+	if err != nil {
+		return fmt.Errorf("coswid: %w", err)
 	}
 	if !tagCreator {
 		return errors.New("coswid: an entity with the tag-creator role is required")
 	}
 	return nil
+}
+
+// CoSWID map keys (RFC 9393) read from the raw tag.
+const (
+	coswidKeyEntity = 2
+	coswidKeyRole   = 33
+)
+
+// coswidHasTagCreator reports whether an entity of the raw concise-swid-tag
+// body holds the registered tag-creator role, code point 1
+// (swid.RoleTagCreator). It reads the wire form because the swid decoder
+// turns the text "tagCreator" into code point 1 and swid.Roles.String joins
+// code points and free text alike: only the unsigned integer 1 counts, a
+// text role never does, whatever it spells.
+func coswidHasTagCreator(body []byte) (bool, error) {
+	var tag map[any]cbor.RawMessage
+	if err := cbor.Unmarshal(body, &tag); err != nil {
+		return false, err
+	}
+	entities, err := cborOneOrMany(tag[uint64(coswidKeyEntity)])
+	if err != nil {
+		return false, fmt.Errorf("entity: %w", err)
+	}
+	for i, raw := range entities {
+		var entity map[any]cbor.RawMessage
+		if err := cbor.Unmarshal(raw, &entity); err != nil {
+			return false, fmt.Errorf("entity %d: %w", i, err)
+		}
+		roles, err := cborOneOrMany(entity[uint64(coswidKeyRole)])
+		if err != nil {
+			return false, fmt.Errorf("entity %d: role: %w", i, err)
+		}
+		for _, r := range roles {
+			var v any
+			if err := cbor.Unmarshal(r, &v); err != nil {
+				return false, fmt.Errorf("entity %d: role: %w", i, err)
+			}
+			if n, ok := v.(uint64); ok && n == uint64(swid.RoleTagCreator) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// cborOneOrMany splits a CoSWID "one-or-more" value: a CBOR array yields
+// its items, any other item is the only value, and an absent key none.
+func cborOneOrMany(raw cbor.RawMessage) ([]cbor.RawMessage, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if raw[0]>>5 != 4 { // not CBOR major type 4 (array)
+		return []cbor.RawMessage{raw}, nil
+	}
+	var items []cbor.RawMessage
+	if err := cbor.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 // convertReferenceValue maps one Veraison reference-value triple.
