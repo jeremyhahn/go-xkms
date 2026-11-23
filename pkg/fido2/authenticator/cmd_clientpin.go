@@ -865,11 +865,15 @@ func uvConsentRPID(req *ClientPINRequest) string {
 	return req.RPID
 }
 
-// UserVerificationRPNameMaxLen bounds, in bytes, the RP name built-in user
-// verification shows the user. It equals pairingproto.VerifyUserRPNameMaxLen,
-// the bound of the phone verifier (pairingproto imports this package, so the
-// value is repeated here and pinned by a test).
-const UserVerificationRPNameMaxLen = 64
+// UserVerificationRPNameMaxLen bounds, in bytes, the RP ID built-in user
+// verification is asked for: 253, the longest domain name in text form
+// (RFC 1035 §2.3.4), so every valid RP ID passes whole. Only the text the
+// verifier displays is truncated, to the 64 bytes WebAuthn L2 §5.4.1 allows
+// for a name; that truncation never applies to the identifier. It equals
+// pairingproto.VerifyUserRPNameMaxLen, the bound of the phone verifier
+// (pairingproto imports this package, so the value is repeated here and
+// pinned by a test).
+const UserVerificationRPNameMaxLen = 253
 
 // ValidateUserVerificationRPName reports ErrInvalidParameter for an RP name
 // the built-in verifier refuses before it asks the user: empty, longer than

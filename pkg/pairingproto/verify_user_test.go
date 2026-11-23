@@ -126,12 +126,13 @@ func TestValidateVerifyUserRPName(t *testing.T) {
 	t.Run("refuses a name over the bound", func(t *testing.T) {
 		err := ValidateVerifyUserRPName(strings.Repeat("a", VerifyUserRPNameMaxLen+1))
 		require.ErrorIs(t, err, ErrVerifyUserRPName)
-		assert.Contains(t, err.Error(), "65 bytes")
+		assert.Contains(t, err.Error(), "254 bytes")
 	})
 
 	t.Run("counts bytes, not characters", func(t *testing.T) {
-		// 33 two-byte characters: 33 runes, 66 bytes.
-		require.ErrorIs(t, ValidateVerifyUserRPName(strings.Repeat("é", 33)), ErrVerifyUserRPName)
+		// 127 two-byte characters: 127 runes, 254 bytes.
+		require.ErrorIs(t, ValidateVerifyUserRPName(strings.Repeat("é", 127)), ErrVerifyUserRPName)
+		require.NoError(t, ValidateVerifyUserRPName(strings.Repeat("é", 126)))
 	})
 
 	t.Run("refuses an empty name", func(t *testing.T) {

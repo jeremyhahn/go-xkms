@@ -75,10 +75,18 @@ const (
 	UserVerificationGenesisChallenge = "xkey-user-verification-v1"
 
 	// VerifyUserRPNameMaxLen bounds LocalVerifyUserParams.RPName, in bytes of
-	// UTF-8. It is the 64 bytes WebAuthn L2 §5.4.1 lets an authenticator
-	// truncate an RP entity's name to, so a name the authenticator would
-	// keep always fits.
-	VerifyUserRPNameMaxLen = 64
+	// UTF-8. RPName carries the RP ID whole, on the wire and in the
+	// transcript, and an RP ID is a domain (WebAuthn L2 §4), at most 253
+	// bytes in text form (RFC 1035 §2.3.4). The 64-byte truncation WebAuthn
+	// L2 §5.4.1 allows concerns only the displayed name
+	// (VerifyUserRPDisplayMaxLen), never the identifier.
+	VerifyUserRPNameMaxLen = 253
+
+	// VerifyUserRPDisplayMaxLen bounds the RP text the phone shows in its
+	// prompt, in bytes of UTF-8: the 64 bytes WebAuthn L2 §5.4.1 lets an
+	// authenticator truncate an RP entity's name to. VerifyUserRPDisplayName
+	// applies it; the signed transcript still binds the whole RPName.
+	VerifyUserRPDisplayMaxLen = 64
 )
 
 var (
@@ -111,9 +119,10 @@ type LocalVerifyUserParams struct {
 	// Nonce is the verifier's fresh 32-byte challenge.
 	Nonce []byte `json:"nonce"`
 
-	// RPName names the relying party the verification is for; the phone
-	// shows it in the prompt. It is required, and ValidateVerifyUserRPName
-	// bounds it. The transcript binds it (BuildVerifyUserTranscript).
+	// RPName names the relying party the verification is for: the full RP
+	// ID. It is required, and ValidateVerifyUserRPName bounds it. The
+	// transcript binds it whole (BuildVerifyUserTranscript); the phone's
+	// prompt shows VerifyUserRPDisplayName of it.
 	RPName string `json:"rpName"`
 }
 
@@ -144,6 +153,22 @@ type LocalVerifyUserResult struct {
 func VerifyUserVerificationGenesisChallenge(challenge []byte) error {
 	return verifyGenesisPrefix(challenge, UserVerificationGenesisChallenge,
 		ErrUserVerificationGenesisChallenge, "user-verification")
+}
+
+// VerifyUserRPDisplayName returns the RP text the phone's prompt shows for
+// rpName: rpName itself when it fits VerifyUserRPDisplayMaxLen, otherwise its
+// longest prefix within that bound that ends on a UTF-8 boundary. Only the
+// displayed text is bounded; the request and the transcript keep the whole
+// RP name.
+func VerifyUserRPDisplayName(rpName string) string {
+	if len(rpName) <= VerifyUserRPDisplayMaxLen {
+		return rpName
+	}
+	end := VerifyUserRPDisplayMaxLen
+	for end > 0 && !utf8.RuneStart(rpName[end]) {
+		end--
+	}
+	return rpName[:end]
 }
 
 // ValidateVerifyUserRPName checks the RP name of a local.verifyUser request.
