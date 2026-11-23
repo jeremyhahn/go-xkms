@@ -76,6 +76,19 @@ func (a *Authenticator) clearPresenceGrant() {
 	a.grantMu.Unlock()
 }
 
+// revokePresenceGrantForChannel drops the grant when it is bound to cid.
+// The CTAPHID transport calls it when a command on cid ends without
+// reaching the authenticator (CTAPHID_CANCEL, or a deferred GetAssertion
+// that ends by cancel or safety timeout), so the grant cannot outlive the
+// ceremony it was given for and skip presence on a later operation.
+func (a *Authenticator) revokePresenceGrantForChannel(cid uint32) {
+	a.grantMu.Lock()
+	defer a.grantMu.Unlock()
+	if a.presenceGrant != nil && a.presenceGrant.channel == cid {
+		a.presenceGrant = nil
+	}
+}
+
 // consumePresenceGrant reports whether a live grant exists for the channel of
 // ctx, and removes any grant it finds: a grant is used at most once.
 func (a *Authenticator) consumePresenceGrant(ctx context.Context) bool {

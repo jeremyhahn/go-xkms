@@ -496,6 +496,10 @@ func (h *CTAPHIDHandler) handleCancel(cid uint32) {
 		h.cancelCBOR = nil
 	}
 
+	// A cancelled ceremony on this channel ends any Selection presence
+	// grant bound to it.
+	h.authenticator.revokePresenceGrantForChannel(cid)
+
 	// Reset channel state.
 	h.channels[cid] = &channelState{cid: cid}
 }
@@ -605,6 +609,12 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 
 		cancel()
 		h.cancelCBOR = nil
+
+		// The GetAssertion never reached the authenticator, so it did not
+		// consume a Selection presence grant on this channel. Revoke it on
+		// both exits (cancel and safety timeout): the ceremony it was given
+		// for has ended, and a later credential operation must ask again.
+		h.authenticator.revokePresenceGrantForChannel(cid)
 
 		if h.logger != nil {
 			h.logger.Info("GetAssertion no-credentials deferral ended",

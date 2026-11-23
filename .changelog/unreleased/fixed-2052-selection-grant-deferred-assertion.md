@@ -1,0 +1,1 @@
+FIDO2: a Selection presence grant is revoked when CTAPHID_CANCEL arrives on its channel or a deferred no-credential GetAssertion ends by cancel or safety timeout, so a later MakeCredential or GetAssertion on that channel asks for user presence again (#2052).
