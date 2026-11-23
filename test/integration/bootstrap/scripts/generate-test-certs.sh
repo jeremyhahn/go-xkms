@@ -254,6 +254,11 @@ backends:
 barrier:
   enabled: true
   root_key_path: ${DATA_DIR}/barrier
+  # "none": the qrdb node's own barrier auto-unseals unattended at startup,
+  # as in test/integration/acmeadmin. The default "passphrase" boots sealed
+  # behind a sealed-window listener that refuses server.host=0.0.0.0 and
+  # answers /health 503 until an unseal ceremony, which this suite lacks.
+  strategy: "none"
 
 bootstrap:
   noise:

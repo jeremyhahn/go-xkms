@@ -31,20 +31,7 @@ services:
       # This suite exercises the bootstrap trust protocol (Noise handshake, SPKI
       # pin, admin mTLS) using generated test certs at the transport layer.
       # scripts/generate-test-certs.sh writes a config with no config.ComplianceGaps finding (setup/config_compliance_test.go).
-      # go-xkms#653: the generated config enables a barrier
-      # (passphrase strategy). go-xkms#653 removed the config-sourced
-      # boot-time barrier secret entirely (matching go-qrdb's own SealConfig,
-      # which carries none either), and XKMS_BARRIER_PASSPHRASE along with it
-      # -- setting it now fails config.Load with a typed RemovedFieldError,
-      # which would crash-loop this container, so it cannot be restored here.
-      # Without it the qrdb node barrier no longer auto-unseals at startup:
-      # the data plane boots sealed, and tenant operations (including the
-      # TenantBarrierInit/Unseal tests this suite exercises) fail with
-      # "barrier is sealed" until an unseal ceremony runs against the node's
-      # sealed-window listener. Wiring the passphrase/shamir strategies into
-      # the qrdb node's own barrier behind that ceremony (so this suite can
-      # drive it, matching go-qrdb's own qrdbd boot sequence) is scoped as an
-      # owner-approved follow-up to #653, not invented here.
+      # Its barrier strategy is "none" (auto-unseal at startup), since this stack has no unseal ceremony.
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
       - XKMS_BOOTSTRAP_NOISE_ENABLED=true
