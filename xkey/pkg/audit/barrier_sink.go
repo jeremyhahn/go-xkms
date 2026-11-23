@@ -110,6 +110,10 @@ func OpenBarrierSink(ctx context.Context, backend xkms.StorageBackend, ringCapac
 		return nil, err
 	}
 	s.seq, s.head = seq, head
+	if err := s.checkCheckpoint(ctx, true); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
 	if err := s.migrateLegacy(ctx, migrated); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -222,6 +226,9 @@ func (s *BarrierSink) Emit(ctx context.Context, ev xkms.QRDBNodeAuditEvent) erro
 	}
 	s.seq++
 	s.head = digest(raw)
+	if err := s.writeCheckpoint(ctx); err != nil {
+		return err
+	}
 	return s.ring.Emit(ctx, ev)
 }
 
@@ -257,7 +264,72 @@ func (s *BarrierSink) VerifyChain(ctx context.Context) error {
 	if seq != s.seq || head != s.head {
 		return &ChainBrokenError{Key: recordKey(seq), Reason: "stored chain does not end at the last record written"}
 	}
+	return s.checkCheckpoint(ctx, false)
+}
+
+// checkpointKey holds the chain head (last sequence number and record
+// digest), written through the barrier after every record. The barrier
+// seals it, so it cannot be forged without the barrier key, and it is kept
+// apart from the record sequence: deleting records from the tail while xkey
+// is stopped leaves a checkpoint ahead of the stored chain, and the reopen
+// refuses it.
+const checkpointKey = "checkpoint"
+
+type chainCheckpoint struct {
+	Seq  uint64 `json:"seq"`
+	Head string `json:"head"`
+}
+
+func (s *BarrierSink) writeCheckpoint(ctx context.Context) error {
+	raw, err := json.Marshal(chainCheckpoint{Seq: s.seq, Head: s.head})
+	if err != nil {
+		return fmt.Errorf("audit: encode chain checkpoint: %w", err)
+	}
+	if err := s.backend.Put(ctx, checkpointKey, raw); err != nil {
+		return fmt.Errorf("audit: persist chain checkpoint through the barrier: %w", err)
+	}
 	return nil
+}
+
+// checkCheckpoint compares the stored chain (s.seq, s.head) with the sealed
+// checkpoint. A chain with records needs a checkpoint, and it must name the
+// last record. On open (repair=true) one case is repaired: a crash between
+// a record's write and its checkpoint's leaves the checkpoint exactly one
+// record behind, naming that record's predecessor; the checkpoint is then
+// rewritten. Every other mismatch is a ChainBrokenError.
+func (s *BarrierSink) checkCheckpoint(ctx context.Context, repair bool) error {
+	raw, err := s.backend.Get(ctx, checkpointKey)
+	if err != nil {
+		exists, existsErr := s.backend.Exists(ctx, checkpointKey)
+		if existsErr == nil && !exists {
+			if s.seq == 0 {
+				return nil // a fresh chain: nothing written yet
+			}
+			return &ChainBrokenError{Key: checkpointKey, Reason: "chain checkpoint is missing"}
+		}
+		return fmt.Errorf("audit: read chain checkpoint: %w", err)
+	}
+	var cp chainCheckpoint
+	if err := json.Unmarshal(raw, &cp); err != nil {
+		return &ChainBrokenError{Key: checkpointKey, Reason: "chain checkpoint does not decode"}
+	}
+	if cp.Seq == s.seq && cp.Head == s.head {
+		return nil
+	}
+	if repair && s.seq == cp.Seq+1 {
+		last, err := s.backend.Get(ctx, recordKey(s.seq))
+		if err != nil {
+			return fmt.Errorf("audit: read sealed record %s: %w", recordKey(s.seq), err)
+		}
+		var ev xkms.QRDBNodeAuditEvent
+		if err := json.Unmarshal(last, &ev); err == nil && ev.PrevHash == cp.Head {
+			return s.writeCheckpoint(ctx)
+		}
+	}
+	if cp.Seq > s.seq {
+		return &ChainBrokenError{Key: recordKey(s.seq), Reason: fmt.Sprintf("chain truncated: checkpoint names record %d", cp.Seq)}
+	}
+	return &ChainBrokenError{Key: checkpointKey, Reason: "chain checkpoint does not match the last record"}
 }
 
 // walk reads the persisted records in sequence order, checks each link and
@@ -276,6 +348,9 @@ func (s *BarrierSink) walk(ctx context.Context, fn func(xkms.QRDBNodeAuditEvent)
 	for _, key := range keys {
 		if _, _, legacy := parseLegacyKey(key); legacy {
 			continue // migrated by migrateLegacy on open
+		}
+		if key[strings.LastIndex(key, "/")+1:] == checkpointKey {
+			continue // the chain head, checked by checkCheckpoint
 		}
 		n, err := strconv.ParseUint(key[strings.LastIndex(key, "/")+1:], 10, 64)
 		if err != nil {

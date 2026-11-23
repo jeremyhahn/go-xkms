@@ -83,6 +83,102 @@ func TestBarrierSink_DeletedRecordBreaksTheChain(t *testing.T) {
 	assert.True(t, errors.As(s.VerifyChain(ctx), &broken), "a gap is detected")
 }
 
+// TestBarrierSink_TailDeletedWhileStoppedFailsReopen proves the sealed
+// checkpoint keeps the chain head across a restart: records deleted from the
+// tail while the sink is closed are refused on reopen, and so is a deleted
+// checkpoint.
+func TestBarrierSink_TailDeletedWhileStoppedFailsReopen(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("tail deleted", func(t *testing.T) {
+		be := newSinkBackend(t)
+		s, err := OpenBarrierSink(ctx, be, 100)
+		require.NoError(t, err)
+		emitN(t, s, 4)
+		require.NoError(t, s.Close())
+
+		require.NoError(t, be.Delete(ctx, recordKey(4)))
+		require.NoError(t, be.Delete(ctx, recordKey(3)))
+		_, err = OpenBarrierSink(ctx, be, 100)
+		var broken *ChainBrokenError
+		require.ErrorAs(t, err, &broken)
+		assert.Contains(t, broken.Reason, "truncated")
+	})
+
+	t.Run("checkpoint deleted", func(t *testing.T) {
+		be := newSinkBackend(t)
+		s, err := OpenBarrierSink(ctx, be, 100)
+		require.NoError(t, err)
+		emitN(t, s, 2)
+		require.NoError(t, s.Close())
+
+		require.NoError(t, be.Delete(ctx, checkpointKey))
+		_, err = OpenBarrierSink(ctx, be, 100)
+		var broken *ChainBrokenError
+		require.ErrorAs(t, err, &broken)
+		assert.Contains(t, broken.Reason, "missing")
+	})
+
+	t.Run("all records deleted", func(t *testing.T) {
+		be := newSinkBackend(t)
+		s, err := OpenBarrierSink(ctx, be, 100)
+		require.NoError(t, err)
+		emitN(t, s, 2)
+		require.NoError(t, s.Close())
+
+		require.NoError(t, be.Delete(ctx, recordKey(1)))
+		require.NoError(t, be.Delete(ctx, recordKey(2)))
+		_, err = OpenBarrierSink(ctx, be, 100)
+		var broken *ChainBrokenError
+		require.ErrorAs(t, err, &broken)
+	})
+
+	t.Run("intact chain reopens and verifies", func(t *testing.T) {
+		be := newSinkBackend(t)
+		s, err := OpenBarrierSink(ctx, be, 100)
+		require.NoError(t, err)
+		emitN(t, s, 3)
+		require.NoError(t, s.Close())
+
+		s, err = OpenBarrierSink(ctx, be, 100)
+		require.NoError(t, err)
+		defer func() { _ = s.Close() }()
+		require.NoError(t, s.VerifyChain(ctx))
+	})
+}
+
+// TestBarrierSink_CrashBeforeCheckpointReopens proves the one repair the
+// reopen makes: a record persisted whose checkpoint write was lost (a crash
+// between the two writes) is accepted and the checkpoint rewritten.
+func TestBarrierSink_CrashBeforeCheckpointReopens(t *testing.T) {
+	ctx := context.Background()
+	be := newSinkBackend(t)
+	s, err := OpenBarrierSink(ctx, be, 100)
+	require.NoError(t, err)
+	emitN(t, s, 2)
+	stale, err := be.Get(ctx, checkpointKey)
+	require.NoError(t, err)
+	emitN(t, s, 1)
+	require.NoError(t, s.Close())
+	require.NoError(t, be.Put(ctx, checkpointKey, stale)) // checkpoint of record 2
+
+	s, err = OpenBarrierSink(ctx, be, 100)
+	require.NoError(t, err)
+	defer func() { _ = s.Close() }()
+	require.NoError(t, s.VerifyChain(ctx))
+
+	// A checkpoint two records behind is not a crash: it is refused.
+	require.NoError(t, s.Close())
+	emitless, err := OpenBarrierSink(ctx, be, 100)
+	require.NoError(t, err)
+	emitN(t, emitless, 1)
+	require.NoError(t, emitless.Close())
+	require.NoError(t, be.Put(ctx, checkpointKey, stale))
+	_, err = OpenBarrierSink(ctx, be, 100)
+	var broken *ChainBrokenError
+	require.ErrorAs(t, err, &broken)
+}
+
 func TestBarrierSink_NilBackend(t *testing.T) {
 	_, err := OpenBarrierSink(context.Background(), nil, 1)
 	assert.ErrorIs(t, err, ErrNilBarrierBackend)
