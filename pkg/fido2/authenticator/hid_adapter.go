@@ -567,6 +567,12 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 
 	if cmd == CmdGetAssertion && parseable && !hasMatch && !hasPINAuth && !isU2FAppID(assertionRPID) {
 		debugHIDLog("processCBORCommandLocked: GetAssertion no matching credentials, deferring until CANCEL")
+		// This GetAssertion never reaches ProcessCBORWithContext, so apply
+		// its Selection grant rules here: a command from another channel
+		// ends the grant, and the credential operation ends it on whatever
+		// status the deferral answers.
+		h.authenticator.dropForeignPresenceGrant(ctx)
+		defer h.authenticator.endPresenceGrantAfter()()
 		if h.logger != nil {
 			h.logger.Info("GetAssertion: no matching credentials, waiting for CTAPHID_CANCEL",
 				slog.String("cid", fmt.Sprintf("0x%08X", cid)),
