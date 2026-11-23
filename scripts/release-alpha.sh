@@ -427,6 +427,18 @@ case $BUMP in
 esac
 
 # ---------------------------------------------------------------------------
+# Every tool this script runs is checked here, before its first git command,
+# scratch file or forge call. jq matters most: pr_html_url reads the forge's
+# answer only after the branch is pushed and the pull request opened, so a
+# host without it would otherwise publish first and fail to report after.
+# ---------------------------------------------------------------------------
+
+for tool in "$GIT" "$GO" "$CURL" jq mktemp grep sed awk find tr cp mkdir dirname diff rm; do
+	command -v "$tool" >/dev/null 2>&1 ||
+		die "'$tool' is not installed (not on PATH); install it and run again. Nothing was run"
+done
+
+# ---------------------------------------------------------------------------
 # Preconditions that need neither the network nor the fetched tip.
 # ---------------------------------------------------------------------------
 
