@@ -1867,7 +1867,7 @@ coverage-xkmsctl:
 # integration-test-bootstrap runs first (ruling 981): Make runs prerequisites
 # in order, and a bootstrap image build failure at the end of the list used to
 # cost the whole two-hour suite; first, it costs minutes.
-integration-test: clean-test-containers integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
+integration-test: clean-test-containers integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-fido2-hidraw integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 # run-image-refs sets the shell variable refs to this run's images: each
@@ -2966,6 +2966,16 @@ devcontainer-server-wait:
 # post-start.sh's in-container modprobe cannot (no /lib/modules).
 integration-test-fido2:
 	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -timeout 10m && $(GO) test -c -tags='$(call go_tags,linux)' -o build/bin/fido2-uhid.test ./pkg/fido2/ && { [ -c /dev/uhid ] || sudo mknod -m 600 /dev/uhid c 10 239; } && sudo XKMS_REQUIRE_UHID=1 build/bin/fido2-uhid.test -test.v -test.count=1 -test.run TestLinuxHIDDevice_UHIDRoundTrip,integration-test-fido2)
+
+.PHONY: integration-test-fido2-hidraw
+## integration-test-fido2-hidraw: Run the FIDO2 hidraw report-ID suite against a UHID device (runs in devcontainer)
+# The suite (#2052) creates a UHID device and writes CTAPHID packets through
+# pkg/fido2's hidraw transport, so it needs root for /dev/uhid and the hidraw
+# node: it runs under sudo with the full go path, as integration-test-uhid
+# and integration-test-logins do. The /dev/uhid node is made when missing,
+# for the reason integration-test-fido2 gives.
+integration-test-fido2-hidraw:
+	$(call run_in_devcontainer,{ [ -c /dev/uhid ] || sudo mknod -m 600 /dev/uhid c 10 239; } && sudo -E /usr/local/go/bin/go test -v -count=1 -tags='$(call go_tags,integration$(comma)linux)' ./test/integration/fido2hidraw/... -timeout 5m,integration-test-fido2-hidraw)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
