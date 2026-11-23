@@ -187,27 +187,45 @@ args=(
 modcache=/tmp/gomodcache
 if [ "$cache" = on ]; then
   vols="${prefix}cache-${class}"
-  # Each cache volume's lock, held shared until this script exits (the whole
-  # stage): scripts/trim-ci-caches.sh takes it exclusively before it cleans or
-  # unlinks anything in an in-use volume, so it never evicts an entry a running
-  # build has already resolved. A lock that cannot be taken never blocks the
-  # build: it warns and runs unlocked.
-  lockdir=${CI_CACHE_LOCK_DIR:-/var/lock/ci-caches}
-  if command -v flock >/dev/null && mkdir -p "$lockdir" 2>/dev/null; then
-    for v in gobuild golangci gomod; do
-      if { exec {lockfd}>>"$lockdir/$vols-$v.lock"; } 2>/dev/null && flock -s "$lockfd"; then
-        :
-      else
-        echo "in-toolchain-image: warn: cache lock $lockdir/$vols-$v.lock not taken; running unlocked" >&2
-      fi
-    done
-  else
-    echo "in-toolchain-image: warn: cache lock dir $lockdir not usable; running unlocked" >&2
-  fi
   docker run --rm --network none --cap-drop ALL --cap-add CHOWN \
     --security-opt no-new-privileges:true --user 0:0 \
     -v "$vols-gobuild:/c/gobuild" -v "$vols-golangci:/c/golangci" -v "$vols-gomod:/c/gomod" \
     "$image" sh -c "for d in /c/*; do [ \"\$(stat -c %u:%g \"\$d\")\" = $uid:$uid ] || chown $uid:$uid \"\$d\"; done" >/dev/null
+  # Each cache volume's lock, held shared until this script exits (the whole
+  # stage): scripts/trim-ci-caches.sh takes it exclusively before it cleans or
+  # unlinks anything in an in-use volume, so it never evicts an entry a running
+  # build has already resolved. The lock lives in the volume itself,
+  # <volume>/.ci-cache.lock, so the trim in another job container on this
+  # daemon reaches the same inode; a one-shot holder container mounting the
+  # volume (after the chown above, so the lock file is the build uid's) takes
+  # it and keeps it until its stdin, this script's fd, closes at exit. A lock
+  # that cannot be taken never blocks the build: it warns and runs unlocked.
+  # hold: the same script as in scripts/trim-ci-caches.sh.
+  # shellcheck disable=SC2016
+  hold='command -v flock >/dev/null || exit 0
+{ exec 3>>"$1/.ci-cache.lock"; } 2>/dev/null || exit 0
+flock "$2" 3 || { echo held; exit 0; }
+echo locked
+read -r _ || :'
+  lockfifo=$(mktemp -d 2>/dev/null) || lockfifo=
+  lockfds=()
+  lockpids=()
+  for v in gobuild golangci gomod; do
+    state=
+    if [ -n "$lockfifo" ] && mkfifo "$lockfifo/$v.in" "$lockfifo/$v.out" 2>/dev/null; then
+      docker run -i --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+        --user "$uid:$uid" -v "$vols-$v:/c" --entrypoint sh "$image" -c "$hold" ci-cache-lock /c -s \
+        <"$lockfifo/$v.in" >"$lockfifo/$v.out" 2>/dev/null &
+      lockpids+=("$!")
+      exec {lockfd}>"$lockfifo/$v.in"
+      lockfds+=("$lockfd")
+      read -r state <"$lockfifo/$v.out" || state=
+    fi
+    if [ "$state" != locked ]; then
+      echo "in-toolchain-image: warn: cache lock in volume $vols-$v not taken; running unlocked" >&2
+    fi
+  done
+  [ -z "$lockfifo" ] || rm -rf "$lockfifo"
   args+=(
     -v "$vols-gobuild:/cache/gobuild" --env GOCACHE=/cache/gobuild
     -v "$vols-golangci:/cache/golangci" --env GOLANGCI_LINT_CACHE=/cache/golangci
@@ -232,7 +250,13 @@ if [ "$network" = bridge ]; then
   done
 fi
 
-cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
+cleanup() {
+  docker rm -f -v "$name" >/dev/null 2>&1 || true
+  # Release the cache-volume locks: each holder exits at the end of its stdin.
+  local fd
+  for fd in ${lockfds[@]+"${lockfds[@]}"}; do exec {fd}>&-; done
+  [ -z "${lockpids[*]:-}" ] || wait "${lockpids[@]}" 2>/dev/null || true
+}
 trap cleanup EXIT
 
 # A scratch directory the image lacks, or the run's user cannot write, fails

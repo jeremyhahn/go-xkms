@@ -28,7 +28,24 @@ cat >"$WORK/bin/docker" <<'EOF'
 # Fake docker: create records its arguments, the --env values and the
 # `sh -c` command; start runs that command with only those values set.
 case $1 in
-  run) exit 0 ;;
+  run)
+    # A cache-lock holder (`sh -c <hold> ci-cache-lock /c <mode>`) runs here
+    # on FAKE_ROOT/<volume>, the volume on the daemon host; any other run
+    # does nothing.
+    shift
+    vol=
+    while [ "$#" -gt 0 ]; do
+      case $1 in
+        -v) vol=${2%%:*}; shift 2 ;;
+        --entrypoint) shift 3; break ;;
+        *) shift ;;
+      esac
+    done
+    if [ "${1:-}" = -c ] && [ "${3:-}" = ci-cache-lock ]; then
+      mkdir -p "$FAKE_ROOT/$vol" 2>/dev/null
+      exec sh -c "$2" "$3" "$FAKE_ROOT/$vol" "$5"
+    fi
+    exit 0 ;;
   cp) cat >/dev/null; exit 0 ;;
   rm) shift; printf '%s\n' "$@" >"$FAKE_STATE/rm.args"; exit 0 ;;
   create)
@@ -76,7 +93,7 @@ run() {
 	mkdir -p "$FAKE_STATE"
 	OUT=$(cd "$WORK/src" && env -u GOPRIVATE -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
 		PATH="$WORK/bin:$PATH" IN_IMAGE_CPUS=2 IN_IMAGE_NETWORK=bridge \
-		CI_CACHE_LOCK_DIR="$WORK/locks" "$@" \
+		FAKE_ROOT="$WORK/vols" "$@" \
 		"$SCRIPT" toolchain:test trivy image --input it-image.tar --exit-code 1 2>&1)
 	RC=$?
 }
@@ -128,20 +145,22 @@ eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo y
 
 # --- each cache volume is held shared for the whole run ----------------------
 # scripts/trim-ci-caches.sh takes a volume's lock exclusively before it cleans
-# or unlinks anything in it, so a held lock keeps it off a running build.
+# or unlinks anything in it, so a held lock keeps it off a running build. The
+# lock is <volume>/.ci-cache.lock, on the daemon host (FAKE_ROOT here), so the
+# trim in another job container sees it.
 section "cache volume locks"
 for v in gobuild golangci gomod; do
-	run FAKE_LOCK="$WORK/locks/src-ci-cache-pr-$v.lock"
+	run FAKE_LOCK="$WORK/vols/src-ci-cache-pr-$v/.ci-cache.lock"
 	eq "the stage exits 0 ($v)" "0" "$RC"
 	eq "the $v volume's lock is held while the stage runs" "held" "$(cat "$FAKE_STATE/lock" 2>/dev/null)"
 done
-run FAKE_LOCK="$WORK/locks/src-ci-cache-pr-gobuild.lock"
+run FAKE_LOCK="$WORK/vols/src-ci-cache-pr-gobuild/.ci-cache.lock"
 eq "the lock is released when the script exits" "free" \
-	"$(if flock -n -x "$WORK/locks/src-ci-cache-pr-gobuild.lock" true; then echo free; else echo held; fi)"
-run CI_CACHE_LOCK_DIR=/proc/no-such-lock-dir
-eq "an unwritable lock dir never blocks the build" "0" "$RC"
+	"$(if flock -n -x "$WORK/vols/src-ci-cache-pr-gobuild/.ci-cache.lock" true; then echo free; else echo held; fi)"
+run FAKE_ROOT=/proc/no-such-volume-root
+eq "a lock that cannot be taken never blocks the build" "0" "$RC"
 eq "it warns and runs unlocked" "yes" \
-	"$(case $OUT in *"in-toolchain-image: warn: cache lock dir /proc/no-such-lock-dir"*) echo yes ;; *) echo no ;; esac)"
+	"$(case $OUT in *"in-toolchain-image: warn: cache lock in volume src-ci-cache-pr-gobuild not taken; running unlocked"*) echo yes ;; *) echo no ;; esac)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

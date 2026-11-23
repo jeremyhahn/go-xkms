@@ -26,10 +26,10 @@ FAKE_BIN="$WORK_DIR/bin"
 CALL_LOG="$WORK_DIR/docker-calls.log"
 SIZES="$WORK_DIR/sizes"
 VOLROOT="$WORK_DIR/volumes"
-# The host-wide volume locks scripts/in-toolchain-image.sh holds shared for a
-# build's whole run (CI_CACHE_LOCK_DIR/<volume>.lock).
-LOCK_DIR="$WORK_DIR/locks"
-mkdir -p "$FAKE_BIN" "$LOCK_DIR"
+# The volume locks scripts/in-toolchain-image.sh holds shared for a build's
+# whole run live in each volume, $FAKE_ROOT/<volume>/.ci-cache.lock here, and a
+# lock holder is a `sh -c ... ci-cache-lock /c <mode>` run on it.
+mkdir -p "$FAKE_BIN"
 
 cat > "$FAKE_BIN/docker" <<'FAKE'
 #!/bin/bash
@@ -73,7 +73,10 @@ done
 # A read-write run (trim or clean) marks the volume; FAKE_AFTER: lines
 # "<volume> <KiB>", the size du reports once the volume was cleaned (a
 # concurrent build refilled it). Without a line du keeps the canned size.
-case $ep in sh | go) : > "$FAKE_ROOT/.cleaned-$vol" ;; esac
+case "$ep $args" in
+  *" ci-cache-lock "*) ;;   # a lock holder cleans nothing
+  "sh "* | "go "*) : > "$FAKE_ROOT/.cleaned-$vol" ;;
+esac
 case $ep in
   du)
     if [ -e "$FAKE_ROOT/.cleaned-$vol" ] && [ -f "${FAKE_AFTER:-}" ]; then
@@ -86,6 +89,8 @@ case $ep in
     [ "$1" = -c ] || exit 1
     script=$2 name=$3
     shift 4
+    # A volume always has its directory on the daemon host.
+    [ "$name" != ci-cache-lock ] || mkdir -p "$FAKE_ROOT/$vol"
     [ -d "$FAKE_ROOT/$vol" ] || { echo 0; exit 0; }
     exec sh -c "$script" "$name" "$FAKE_ROOT/$vol" "$@" ;;
 esac
@@ -135,7 +140,6 @@ run_script() {
             DOCKER_HOST="tcp://127.0.0.1:1" \
             FAKE_DOCKER_LOG="$CALL_LOG" FAKE_SIZES="$SIZES" \
             FAKE_INUSE="$inuse" FAKE_ROOT="$VOLROOT" \
-            CI_CACHE_LOCK_DIR="$LOCK_DIR" \
             "$@" \
             bash "$SCRIPT_UNDER_TEST" p-ci- toolchain:test 1 >"$WORK_DIR/stdout" 2>"$WORK_DIR/stderr"
     )
@@ -147,8 +151,8 @@ run_script() {
 }
 
 # rw_mounted <volume>: a container mounted <volume> read-write.
-rw_mounted() { grep -q -- "-v $1:/c " "$CALL_LOG"; }
-has_files() { [ -n "$(find "$VOLROOT/$1" -type f)" ]; }
+rw_mounted() { grep -- "-v $1:/c " "$CALL_LOG" | grep -qv " ci-cache-lock "; }
+has_files() { [ -n "$(find "$VOLROOT/$1" -type f ! -name .ci-cache.lock)" ]; }
 
 # 1 GiB bound = 1048576 KiB. Totals are set a few KiB over it, so the trim must
 # free real KiB out of the local stand-in.
@@ -354,7 +358,7 @@ setup "p-ci-cache-t-gobuild 1100000" "p-ci-cache-t-golangci 300000"
 entry p-ci-cache-t-gobuild aa "2026-01-01"
 entry p-ci-cache-t-golangci ab "2026-05-01"
 echo "p-ci-cache-t-golangci 0" > "$WORK_DIR/after"
-exec 9>>"$LOCK_DIR/p-ci-cache-t-gobuild.lock"
+exec 9>>"$VOLROOT/p-ci-cache-t-gobuild/.ci-cache.lock"
 flock -s 9
 run_script 0 "p-ci-cache-t-gobuild p-ci-cache-t-golangci" FAKE_AFTER="$WORK_DIR/after"
 if rw_mounted p-ci-cache-t-gobuild || grep -q -- "clean -cache" "$CALL_LOG" ||

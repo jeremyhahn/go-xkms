@@ -124,9 +124,10 @@ find $buckets -type f -exec stat -c "%Y %s %n" {} + | sort -n | {
   done
   echo "$freed"
 }'
-# golangci-lint cache clean: the whole cache directory's content goes.
+# golangci-lint cache clean: the whole cache directory's content goes, but
+# for the volume's lock file (below), which a holder may have open.
 # shellcheck disable=SC2016
-golangci_clean='find "$1" -mindepth 1 -maxdepth 1 -exec rm -rf {} + && echo cleaned'
+golangci_clean='find "$1" -mindepth 1 -maxdepth 1 ! -name .ci-cache.lock -exec rm -rf {} + && echo cleaned'
 
 # in_volume <volume> <args...>: run <args> in <image> with <volume> on /c, read-write.
 in_volume() {
@@ -138,22 +139,54 @@ in_volume() {
 
 # Cache volumes are shared by every job of this repo and trust class on the
 # host, so an in-use volume can belong to another job that is compiling or
-# linking from it. scripts/in-toolchain-image.sh holds each mounted volume's
-# lock, CI_CACHE_LOCK_DIR/<volume>.lock, shared for its whole stage; this
-# takes it exclusively, without waiting, before it cleans or unlinks anything
-# in the volume, and holds it until the volume is remeasured. A held volume is
-# skipped and keeps its size in the total. Without a usable lock dir nothing
-# in use is trimmed inside. A dry run only reports and takes no lock.
-lockdir=${CI_CACHE_LOCK_DIR:-/var/lock/ci-caches}
-if ! command -v flock >/dev/null || ! mkdir -p "$lockdir" 2>/dev/null; then
-  lockdir=
-fi
-lockfd=
+# linking from it. Each volume's lock lives in the volume itself,
+# <volume>/.ci-cache.lock: the jobs are separate containers that reach the
+# volumes only through the daemon, so a lock file in a job's own filesystem
+# would exclude nothing across jobs, while every container mounting the
+# volume sees the same inode. A one-shot holder container of <image> mounting
+# the volume takes the lock and keeps it until its stdin closes:
+# scripts/in-toolchain-image.sh holds each mounted volume's lock shared for its
+# whole stage; this takes it exclusively, without waiting, before it cleans or
+# unlinks anything in the volume, and holds it until the volume is remeasured.
+# A held volume is skipped and keeps its size in the total. A lock that cannot
+# be taken (no flock in the image, an unwritable volume) means nothing in use
+# is trimmed inside. A dry run only reports and takes no lock.
+# hold <mount> <flock mode>: prints locked (then holds until stdin closes),
+# held, or nothing when no lock can be taken. Same script in
+# scripts/in-toolchain-image.sh.
+# shellcheck disable=SC2016
+hold='command -v flock >/dev/null || exit 0
+{ exec 3>>"$1/.ci-cache.lock"; } 2>/dev/null || exit 0
+flock "$2" 3 || { echo held; exit 0; }
+echo locked
+read -r _ || :'
+lockfifo=$(mktemp -d)
+lockin= lockpid= lockstate=
 unlock() {
-  if [ -n "$lockfd" ]; then
-    exec {lockfd}>&-
-    lockfd=
+  if [ -n "$lockin" ]; then
+    exec {lockin}>&-
+    lockin=
   fi
+  if [ -n "$lockpid" ]; then
+    wait "$lockpid" 2>/dev/null || true
+    lockpid=
+  fi
+}
+trap 'unlock; rm -rf "$list" "$inuse" "$lockfifo"' EXIT
+# lock_volume <volume>: take <volume>'s lock exclusively, without waiting;
+# sets lockstate to locked, held or none. unlock releases it.
+lock_volume() {
+  lockstate=none
+  rm -f "$lockfifo/in" "$lockfifo/out"
+  mkfifo "$lockfifo/in" "$lockfifo/out" 2>/dev/null || return 0
+  docker run -i --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+    --user "$uid:$uid" -v "$1:/c" --entrypoint sh "$image" -c "$hold" ci-cache-lock /c -nx \
+    <"$lockfifo/in" >"$lockfifo/out" 2>/dev/null &
+  lockpid=$!
+  exec {lockin}>"$lockfifo/in"
+  local state=
+  read -r state <"$lockfifo/out" || state=
+  case $state in locked | held) lockstate=$state ;; esac
 }
 
 trimmed=0
@@ -164,16 +197,20 @@ while read -r kib vol; do
   case $dry:$vol in
     1:* | *:*-gomod) ;;
     *)
-      if [ -z "$lockdir" ] || ! { exec {lockfd}>>"$lockdir/$vol.lock"; } 2>/dev/null; then
-        lockfd=
-        echo "warn  $vol: no cache lock; not trimmed inside"
-        continue
-      fi
-      if ! flock -n -x "$lockfd"; then
-        unlock
-        echo "skip  $vol: a build holds it"
-        continue
-      fi
+      lock_volume "$vol"
+      case $lockstate in
+        locked) ;;
+        held)
+          unlock
+          echo "skip  $vol: a build holds it"
+          continue
+          ;;
+        *)
+          unlock
+          echo "warn  $vol: no cache lock; not trimmed inside"
+          continue
+          ;;
+      esac
       ;;
   esac
   case $vol in
