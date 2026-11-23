@@ -28,7 +28,7 @@ func TestValidateUserVerificationRPName_MatchesProductionVerifier(t *testing.T) 
 		"example\xff.com",
 		"example.com\nApproved by your bank",
 		"example\u0085.com",
-		"example‮.com",
+		"example" + string(rune(0x202e)) + ".com", // a format character, not a control: accepted by both
 	} {
 		verifierErr := pairingproto.ValidateVerifyUserRPName(name)
 		authErr := authenticator.ValidateUserVerificationRPName(name)
