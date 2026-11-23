@@ -30,6 +30,10 @@ var ErrBackendPINNotConfigured = errors.New("server: no backend PIN strategy (PK
 // resolved backends.pkcs11.pin.
 var errBackendPINNoConfiguredPIN = errors.New("server: backends.pkcs11.pin is not set")
 
+// errBackendPINNotTPMSealed reports a tpm2 release whose PIN is not sealed
+// to the TPM (credentials.seal_strategy is not tpm2).
+var errBackendPINNotTPMSealed = errors.New("server: backend PIN strategy tpm2 needs credentials.seal_strategy tpm2")
+
 // backendPINDir is <datastore>/pin, the directory pinselect persists the
 // backend PIN strategy record in (beside the qrdb PIN strategy record).
 func (s *Server) backendPINDir() string {
@@ -52,18 +56,42 @@ func (s *Server) resolveBackendPIN() error {
 	}
 	tpmPresent, barrierAvailable := s.probeBackendPIN()
 	strategy, err := pinselect.ResolveBackendPIN(pinselect.BackendPINConfig{
-		PINDir:           s.backendPINDir(),
-		Strategy:         pinselect.BackendPINStrategy(s.config.BackendPIN.Strategy),
-		Minimum:          pinselect.BackendPINStrategy(s.config.BackendPIN.Minimum),
-		TPMPresent:       tpmPresent,
+		PINDir:   s.backendPINDir(),
+		Strategy: pinselect.BackendPINStrategy(s.config.BackendPIN.Strategy),
+		Minimum:  pinselect.BackendPINStrategy(s.config.BackendPIN.Minimum),
+		// tpm2 is only available when the PIN is actually sealed to the
+		// TPM: a TPM beside a barrier-sealed PIN protects nothing, so it
+		// never satisfies strategy or minimum tpm2 (docs/SPEC.md:78).
+		TPMPresent:       tpmPresent && s.pinSealedToTPM(),
 		BarrierAvailable: barrierAvailable,
 		SealerIsPKCS11:   s.config.Credentials.SealStrategy == "pkcs11",
 	})
 	if err != nil {
 		return err
 	}
-	s.backendPIN = pinselect.NewBackendPIN(strategy, s.releaseConfiguredPKCS11PIN)
+	s.backendPIN = pinselect.NewBackendPIN(strategy, s.backendPINRelease(strategy))
 	return nil
+}
+
+// pinSealedToTPM reports backend credentials sealed to the TPM
+// (credentials.seal_strategy tpm2), the protection strategy tpm2 asserts.
+func (s *Server) pinSealedToTPM() bool {
+	return s.config.Credentials.SealStrategy == "tpm2"
+}
+
+// backendPINRelease is the strategy-specific release: tpm2 re-checks at
+// every release that the PIN is still sealed to the TPM, so a holder never
+// releases a PIN whose protection is weaker than the persisted strategy.
+func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy) func(context.Context) ([]byte, error) {
+	if strategy != pinselect.BackendPINTPM2 {
+		return s.releaseConfiguredPKCS11PIN
+	}
+	return func(ctx context.Context) ([]byte, error) {
+		if !s.pinSealedToTPM() {
+			return nil, errBackendPINNotTPMSealed
+		}
+		return s.releaseConfiguredPKCS11PIN(ctx)
+	}
 }
 
 // probeBackendPIN reports a usable TPM 2.0 and a barrier able to seal.
