@@ -263,7 +263,7 @@ func TestCIImagesBuildsOnceOnThePoolForSameRepoPRs(t *testing.T) {
 const poolStubDocker = `#!/bin/sh
 echo "docker $*" >> "$STUB_DIR/calls"
 case "$1" in
-  pull) case "$*" in *@sha256:*) exit 0 ;; *) exit 1 ;; esac ;;
+  pull) [ -z "${STUB_PULL_FAIL:-}" ] || exit 1; case "$*" in *@sha256:*) exit 0 ;; *) exit 1 ;; esac ;;
   image)
     case "$*" in
       *RepoDigests*) echo "reg.example:5000/ci/go-xkms-ci-toolchain@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
