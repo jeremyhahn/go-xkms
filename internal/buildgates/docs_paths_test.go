@@ -214,9 +214,10 @@ func docsPathsSteps(t *testing.T, text string) []string {
 // init and run across two datastores.
 func TestInitCeremonySetsDatastorePathBeforeInit(t *testing.T) {
 	steps := docsPathsSteps(t, docsPathsRead(t, "docs/init-ceremony/user.md"))
+	runsInit := regexp.MustCompile(`(?m)^\s*xkmsd init\b`)
 	initStep, dsStep := -1, -1
 	for i, s := range steps {
-		if initStep < 0 && strings.Contains(s, "xkmsd init") {
+		if initStep < 0 && runsInit.MatchString(s) {
 			initStep = i
 		}
 		if dsStep < 0 && strings.Contains(s, "datastore.path") {
