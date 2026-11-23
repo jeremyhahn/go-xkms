@@ -60,16 +60,29 @@ eq "names RELEASABILITY_PATTERNS_FILE" "1" "$(grep -c 'RELEASABILITY_PATTERNS_FI
 # `make lint-gates` and the CI callers run the target: a notice-and-pass with
 # no input would let them go green without checking a single literal.
 section "the check-public-literals Make target needs the pattern input"
-OUT=$(env -u RELEASABILITY_PATTERNS -u RELEASABILITY_PATTERNS_FILE make --no-print-directory -C "$ROOT" check-public-literals 2>&1); RC=$?
+OUT=$(env -u RELEASABILITY_PATTERNS -u RELEASABILITY_PATTERNS_FILE -u PUBLIC_LITERALS_SKIP make --no-print-directory -C "$ROOT" check-public-literals 2>&1); RC=$?
 eq "the target exits non-zero with neither input set" "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
 eq "the refusal names RELEASABILITY_PATTERNS" "1" "$(grep -c 'refused.*RELEASABILITY_PATTERNS ' <<<"$OUT")"
 eq "the refusal names RELEASABILITY_PATTERNS_FILE" "1" "$(grep -c 'refused.*RELEASABILITY_PATTERNS_FILE' <<<"$OUT")"
+
+# A fork pull request has no secret: the CI caller sets the one documented
+# opt-out, PUBLIC_LITERALS_SKIP=fork-pr, and the target announces the skip and
+# passes. Any other value still refuses, so a typo never turns the gate off.
+section "the fork opt-out is explicit"
+OUT=$(env -u RELEASABILITY_PATTERNS -u RELEASABILITY_PATTERNS_FILE PUBLIC_LITERALS_SKIP=fork-pr make --no-print-directory -C "$ROOT" check-public-literals 2>&1); RC=$?
+eq "PUBLIC_LITERALS_SKIP=fork-pr passes" "0" "$RC"
+eq "the skip is announced" "1" "$(grep -c 'check-public-literals: skipped.*PUBLIC_LITERALS_SKIP=fork-pr' <<<"$OUT")"
+OUT=$(env -u RELEASABILITY_PATTERNS -u RELEASABILITY_PATTERNS_FILE PUBLIC_LITERALS_SKIP=yes make --no-print-directory -C "$ROOT" check-public-literals 2>&1); RC=$?
+eq "any other PUBLIC_LITERALS_SKIP value still refuses" "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
+eq "the wrong value is refused by name" "1" "$(grep -c 'refused.*PUBLIC_LITERALS_SKIP' <<<"$OUT")"
+OUT=$(env -u RELEASABILITY_PATTERNS -u RELEASABILITY_PATTERNS_FILE PUBLIC_LITERALS_SKIP= make --no-print-directory -C "$ROOT" check-public-literals 2>&1); RC=$?
+eq "an empty PUBLIC_LITERALS_SKIP still refuses" "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
 eq "the target never reports a skip" "0" "$(grep -ci 'skipped' <<<"$OUT")"
 # With an input set the target hands the script's exit status through: a
 # malformed list fails it, a list that matches nothing in the tree passes.
-env -u RELEASABILITY_PATTERNS_FILE RELEASABILITY_PATTERNS="no-tab-here" make --no-print-directory -C "$ROOT" check-public-literals >/dev/null 2>&1; RC=$?
+env -u RELEASABILITY_PATTERNS_FILE -u PUBLIC_LITERALS_SKIP RELEASABILITY_PATTERNS="no-tab-here" make --no-print-directory -C "$ROOT" check-public-literals >/dev/null 2>&1; RC=$?
 eq "the target fails when the script fails" "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
-env -u RELEASABILITY_PATTERNS_FILE RELEASABILITY_PATTERNS="lab-host${TAB}zq-nomatch-[0-9]{12}q" make --no-print-directory -C "$ROOT" check-public-literals >/dev/null 2>&1
+env -u RELEASABILITY_PATTERNS_FILE -u PUBLIC_LITERALS_SKIP RELEASABILITY_PATTERNS="lab-host${TAB}zq-nomatch-[0-9]{12}q" make --no-print-directory -C "$ROOT" check-public-literals >/dev/null 2>&1
 eq "the target passes when the script passes" "0" "$?"
 
 PFILE="$WORK/patterns.tsv"
