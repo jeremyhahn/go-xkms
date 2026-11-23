@@ -96,17 +96,24 @@ backend_pin:
 
 | Strategy | Where the PIN lives | When the backend starts |
 |---|---|---|
-| `auto` | `tpm2` when a TPM 2.0 is present and the PIN is sealed to it, otherwise `sealed` | as the chosen strategy |
+| `auto` | `tpm2` when a TPM 2.0 is present, otherwise `sealed` | as the chosen strategy |
 | `tpm2` | sealed to the TPM; needs `credentials.seal_strategy: tpm2` | at start |
-| `sealed` | sealed under the barrier, released at unseal | after unseal |
-| `manual` | refused at start-up today (see below) | — |
+| `sealed` | sealed under the barrier, released at unseal; needs `credentials.seal_strategy: barrier` | after unseal |
+| `manual` | not available yet: refused at start-up (see below) | — |
 
 - **auto** picks `tpm2` when a TPM is present, otherwise `sealed`
-  (`pkg/pinselect/backendpin.go:171-175`). The server reports a TPM only
-  when `credentials.seal_strategy` is `tpm2`
-  (`pkg/server/backend_pin.go:110-113,164-166`), so a TPM beside a
-  barrier-sealed PIN gives `sealed`. The i.MX 95 has no TPM and gets
-  `sealed`.
+  (`pkg/pinselect/backendpin.go`, `ResolveBackendPIN`). It never picks
+  `sealed` on a TPM host. The i.MX 95 has no TPM and gets `sealed`.
+- **The strategy must match where the PIN is stored.** The PIN is a
+  `credential://` reference stored under `credentials.seal_strategy`:
+  `tpm2` needs `tpm2`, and `sealed` needs `barrier`. Any other storage, such
+  as a cloud KMS seal or the unset `manual` default, is refused with
+  `BackendPINStoreError` before a record is written
+  (`Server.backendPINStore`, `pkg/server/backend_pin.go`). So on a TPM host
+  `auto` with `credentials.seal_strategy: barrier` refuses to start. Set
+  `credentials.seal_strategy: tpm2`, or choose `strategy: sealed` explicitly.
+  A persisted record is refused too if the storage has changed since it was
+  written. Every release checks the storage again.
 - **Minimum.** `minimum` orders `sealed` < `tpm2` < `manual`. A resolved
   strategy below it is refused with `BackendPINBelowMinimumError`
   (`pkg/pinselect/backendpin.go:183-185`).
@@ -131,8 +138,9 @@ backend_pin:
   `pkg/server/backend_pin_test.go`).
 - **rng.pkcs11.pin.** An active RNG PIN is held to the same policy even
   without the PKCS#11 key backend. It counts as active when `rng.pkcs11.pin`
-  is set and `rng.mode` is `pkcs11` or `auto`, or `rng.fallback_mode` is
-  `pkcs11` (`pkg/server/backend_pin.go:58-64,74-76`).
+  is set and `rng.mode` is `pkcs11`, `auto` or unset (unset means `auto`),
+  or `rng.fallback_mode` is `pkcs11` (`rngPKCS11PINActive`,
+  `pkg/server/backend_pin.go`).
 - **manual is refused at start-up.** `strategy: manual`, `minimum: manual`
   and a `manual` record left by an earlier release all fail with
   `ErrBackendPINManualUnavailable`. This happens before anything is
