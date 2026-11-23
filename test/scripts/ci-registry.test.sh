@@ -1060,10 +1060,20 @@ not_called "docker push"
 not_called "$LAN"
 
 start_case "use: CI_IMAGE_REGISTRY on a closed port builds as before, with no pull and no push"
-run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_CURL_RC=7
+# #2243 Codex round 2 P1: a valid digest ref, so lan_pull passes its
+# missing-digest guard and reaches the probe the closed port answers.
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_CURL_RC=7
+called "curl -fsS --max-time 5 -o /dev/null http://$LAN/v2/"
+stderr_has "CI_IMAGE_REGISTRY does not answer; not used"
 called "docker-build-toolchain"
-not_called "docker pull"
+not_called "docker pull --quiet $LAN_TC"
+not_called "docker tag $TOOLCHAIN_TAG $LAN_TC"
 not_called "docker push"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE from the fallback build"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
 
 # #2243 Codex P1-1: a LAN image is accepted for a ref only when its digest is
 # the ref's; otherwise use pulls the ref from the forge (and builds, DS-9239).
