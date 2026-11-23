@@ -56,6 +56,22 @@ eq "exits 2 with neither input set" "2" "$RC"
 eq "names RELEASABILITY_PATTERNS" "1" "$(grep -c 'RELEASABILITY_PATTERNS ' <<<"$OUT")"
 eq "names RELEASABILITY_PATTERNS_FILE" "1" "$(grep -c 'RELEASABILITY_PATTERNS_FILE' <<<"$OUT")"
 
+# --- the Make target refuses without a pattern input (it never skips) ----------
+# `make lint-gates` and the CI callers run the target: a notice-and-pass with
+# no input would let them go green without checking a single literal.
+section "the check-public-literals Make target needs the pattern input"
+OUT=$(env -u RELEASABILITY_PATTERNS -u RELEASABILITY_PATTERNS_FILE make --no-print-directory -C "$ROOT" check-public-literals 2>&1); RC=$?
+eq "the target exits non-zero with neither input set" "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
+eq "the refusal names RELEASABILITY_PATTERNS" "1" "$(grep -c 'refused.*RELEASABILITY_PATTERNS ' <<<"$OUT")"
+eq "the refusal names RELEASABILITY_PATTERNS_FILE" "1" "$(grep -c 'refused.*RELEASABILITY_PATTERNS_FILE' <<<"$OUT")"
+eq "the target never reports a skip" "0" "$(grep -ci 'skipped' <<<"$OUT")"
+# With an input set the target hands the script's exit status through: a
+# malformed list fails it, a list that matches nothing in the tree passes.
+env -u RELEASABILITY_PATTERNS_FILE RELEASABILITY_PATTERNS="no-tab-here" make --no-print-directory -C "$ROOT" check-public-literals >/dev/null 2>&1; RC=$?
+eq "the target fails when the script fails" "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
+env -u RELEASABILITY_PATTERNS_FILE RELEASABILITY_PATTERNS="lab-host${TAB}zq-nomatch-[0-9]{12}q" make --no-print-directory -C "$ROOT" check-public-literals >/dev/null 2>&1
+eq "the target passes when the script passes" "0" "$?"
+
 PFILE="$WORK/patterns.tsv"
 printf '%s\n' "$PATTERNS" > "$PFILE"
 DIRTYF="$WORK/dirtyf"

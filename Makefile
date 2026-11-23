@@ -4058,15 +4058,16 @@ check-insecure-tls:
 .PHONY: check-public-literals
 ## check-public-literals: Public-release readiness gate -- no listed internal literal (go-xkms#1030); patterns from RELEASABILITY_PATTERNS or RELEASABILITY_PATTERNS_FILE
 # The pattern list is private, so it is an input: with neither variable set
-# the target skips with a notice (CI's `Releasability (private patterns)` step
-# runs the same list on pushes to main); the script itself fails without one.
+# the target refuses (exit 1) rather than pass without checking a literal, so
+# `make lint-gates` and every CI caller must hand it the list; with one set it
+# returns the script's own exit status.
 check-public-literals:
 	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (pattern list from input)...$(RESET)"
 	@if [ -z "$${RELEASABILITY_PATTERNS:-}" ] && [ -z "$${RELEASABILITY_PATTERNS_FILE:-}" ]; then \
-		echo "check-public-literals: skipped -- set RELEASABILITY_PATTERNS or RELEASABILITY_PATTERNS_FILE to run the gate"; \
-	else \
-		bash scripts/check-public-literals.sh; \
+		echo "check-public-literals: refused -- no pattern input: set RELEASABILITY_PATTERNS (class<TAB>regex lines) or RELEASABILITY_PATTERNS_FILE (a path to them)" >&2; \
+		exit 1; \
 	fi
+	@bash scripts/check-public-literals.sh
 
 # GOFLAGS takes one comma-separated -tags value.
 EMPTY :=
