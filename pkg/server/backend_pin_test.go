@@ -111,6 +111,36 @@ func TestResolveBackendPIN_RefusedFailsClosed(t *testing.T) {
 	require.Empty(t, *opened)
 }
 
+// tpm2 is reported only when the PIN is actually sealed to the TPM
+// (credentials.seal_strategy tpm2): a TPM alone with a barrier-sealed PIN
+// never satisfies strategy or minimum tpm2 (docs/SPEC.md:78).
+func TestResolveBackendPIN_TPM2RequiresTPMSealedPIN(t *testing.T) {
+	for _, seal := range []string{"", "barrier", "manual"} {
+		s, _, _ := backendPINTestServer(t, "tpm2", []byte("backend-pin-1"), true, true)
+		s.config.BackendPIN.Minimum = "tpm2"
+		s.config.Credentials.SealStrategy = seal
+		err := s.resolveBackendPIN()
+		var unavailable *pinselect.BackendPINUnavailableError
+		require.True(t, errors.As(err, &unavailable), "seal_strategy %q: err = %v", seal, err)
+		require.Equal(t, "", s.BackendPINStrategy())
+		_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s.backendPINDir()))
+		require.True(t, os.IsNotExist(statErr), "nothing persisted for seal_strategy %q", seal)
+	}
+
+	s, _, _ := backendPINTestServer(t, "tpm2", []byte("backend-pin-1"), true, true)
+	s.config.BackendPIN.Minimum = "tpm2"
+	s.config.Credentials.SealStrategy = "tpm2"
+	require.NoError(t, s.resolveBackendPIN())
+	require.Equal(t, "tpm2", s.BackendPINStrategy())
+}
+
+func TestResolveBackendPIN_AutoWithTPMButBarrierSealSelectsSealed(t *testing.T) {
+	s, _, _ := backendPINTestServer(t, "auto", []byte("backend-pin-1"), true, true)
+	s.config.Credentials.SealStrategy = "barrier"
+	require.NoError(t, s.resolveBackendPIN())
+	require.Equal(t, "sealed", s.BackendPINStrategy())
+}
+
 func TestResolveBackendPIN_BelowMinimumFailsClosed(t *testing.T) {
 	s, _, _ := backendPINTestServer(t, "sealed", []byte("backend-pin-1"), false, true)
 	s.config.BackendPIN.Minimum = "manual"
