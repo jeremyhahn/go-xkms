@@ -190,6 +190,46 @@ TC=$(commit_file sub/cmd/cli/main.go '// tau')
 eq "a nested-module binary a suite builds from its module prints that suite" "$(printf 'tau\nxi\nzeta')" "$(run "$TT" "$TC")"
 TU=$(commit_file pkg/u/u.go '// tau')
 eq "a dep of a nested-module binary a suite builds prints that suite" "$(printf 'tau\nxi\nzeta')" "$(run "$TC" "$TU")"
+# upsilon's target runs its suite through the with_server define, which builds
+# and starts ./cmd/server (the run_with_server/logins shape); phi's test names
+# ./cmd/server itself. A change to the server is selected with upsilon (or ALL).
+cat >>"$REPO/Makefile" <<'EOF'
+
+define with_server
+	go build -o build/server ./cmd/server && build/server &
+	$(1)
+endef
+
+integration-test-upsilon:
+	$(call with_server,go test -tags "integration $(BUILD_TAGS)" ./test/integration/upsilon/...)
+EOF
+put cmd/server/main.go 'package main
+
+func main() {}'
+put test/integration/upsilon/upsilon_test.go '//go:build integration
+
+package upsilon
+
+import "testing"
+
+func TestUpsilon(t *testing.T) {}'
+put test/integration/phi/phi_test.go '//go:build integration
+
+package phi
+
+import (
+	"os/exec"
+	"testing"
+)
+
+func TestPhi(t *testing.T) { _ = exec.Command("go", "build", "./cmd/server").Run() }'
+UT=$(commit_all "upsilon and phi")
+UC=$(commit_file cmd/server/main.go '// upsilon')
+got=$(run "$UT" "$UC")
+case "$got" in
+ALL | *upsilon*) ok "a binary a define helper of a suite's recipe builds selects that suite" ;;
+*) no "a binary a define helper of a suite's recipe builds selects that suite: got [$got]" ;;
+esac
 # lambda's only test file is gated on a tag no recipe passes (last, since
 # from here on every package change prints ALL).
 put test/integration/lambda/lambda_test.go '//go:build integration && neverset
