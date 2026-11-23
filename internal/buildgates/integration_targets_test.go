@@ -191,7 +191,7 @@ func TestEveryIntegrationFeatureDirHasATarget(t *testing.T) {
 			delegated[d] = composeGoTests(t, d)
 		}
 	}
-	for _, d := range featureDirsNotRun(mk, dirs, delegated) {
+	for _, d := range featureDirsNotRun(mk, dirs, nestedIntegrationSuites(t), delegated) {
 		t.Errorf("test/integration/%s holds _test.go files but the explicit integration-test-%s rule shadows the pattern rule and never runs go test on that directory (nor do the Compose files it runs)", d, d)
 	}
 }
@@ -200,16 +200,30 @@ func TestEveryIntegrationFeatureDirHasATarget(t *testing.T) {
 // integration-test-<d> rule shadows the pattern rule without running go test
 // on test/integration/<d> (or, for a rule that hands off to Compose, without
 // the Compose files in delegated[d] running it).
-func featureDirsNotRun(mk string, dirs []string, delegated map[string]string) []string {
+func featureDirsNotRun(mk string, dirs, suites []string, delegated map[string]string) []string {
 	var missing []string
 	for _, d := range dirs {
 		target := "integration-test-" + d
 		if _, explicit := makeRecipe(mk, target); !explicit {
 			continue // the integration-test-% pattern rule runs test/integration/<d>
 		}
+		// The rule runs the feature when go test covers its directory or one
+		// of its nested suites (a feature whose tests all sit in suites).
+		runs := []string{d}
+		for _, s := range suites {
+			if strings.HasPrefix(s, d+"/") {
+				runs = append(runs, s)
+			}
+		}
 		text := expandMakeVars(mk, integrationRuleText(mk, target, map[string]bool{}))
-		if !strings.Contains(text, "test/integration/"+d) &&
-			!strings.Contains(text, "$(call integration_dir,"+d+")") {
+		run := false
+		for _, s := range runs {
+			if goTestCovers(text, s) || (strings.Contains(text, "compose") && goTestCovers(delegated[d], s)) {
+				run = true
+				break
+			}
+		}
+		if !run {
 			missing = append(missing, d)
 		}
 	}
@@ -237,12 +251,15 @@ func TestFeatureDirGateNeedsARunningCommand(t *testing.T) {
 		"\tdocker compose -f test/integration/composed/docker-compose.yml up --exit-code-from tests\n" +
 		"\n" +
 		"integration-test-echoed:\n" +
-		"\tdocker compose -f test/integration/echoed/docker-compose.yml up --exit-code-from tests\n"
+		"\tdocker compose -f test/integration/echoed/docker-compose.yml up --exit-code-from tests\n" +
+		"\n" +
+		"integration-test-nested:\n" +
+		"\tgo test -tags integration ./test/integration/nested/inner/...\n"
 	delegated := map[string]string{
 		"composed": "      go test -tags integration ./test/integration/composed",
 		"echoed":   "",
 	}
-	got := featureDirsNotRun(mk, []string{"signing", "sign", "runs", "composed", "echoed", "patterned"}, delegated)
+	got := featureDirsNotRun(mk, []string{"signing", "sign", "runs", "composed", "echoed", "nested", "patterned"}, []string{"nested/inner"}, delegated)
 	want := []string{"signing", "sign", "echoed"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("feature dirs not run = %q, want %q", got, want)
@@ -393,15 +410,22 @@ var unrunNestedSuites = map[string]string{
 func composeGoTests(t *testing.T, feat string) string {
 	t.Helper()
 	var out []string
-	for _, name := range []string{"docker-compose.yml", "Dockerfile"} {
-		b, err := os.ReadFile(filepath.Join(repoRoot, "test", "integration", feat, name))
-		if os.IsNotExist(err) {
+	entries, err := os.ReadDir(filepath.Join(repoRoot, "test", "integration", feat))
+	if err != nil {
+		t.Fatalf("read test/integration/%s: %v", feat, err)
+	}
+	// An exec-form CMD ["go", "test", ...] reads as one shell command.
+	execForm := strings.NewReplacer(`", "`, " ", `","`, " ")
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !(strings.HasPrefix(name, "docker-compose") || strings.HasPrefix(name, "Dockerfile")) {
 			continue
 		}
+		b, err := os.ReadFile(filepath.Join(repoRoot, "test", "integration", feat, name))
 		if err != nil {
 			t.Fatalf("read test/integration/%s/%s: %v", feat, name, err)
 		}
-		lines := strings.Split(string(b), "\n")
+		lines := strings.Split(execForm.Replace(string(b)), "\n")
 		for i := 0; i < len(lines); i++ {
 			if !goTestCommand.MatchString(lines[i]) {
 				continue
