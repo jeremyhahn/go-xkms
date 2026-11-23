@@ -77,8 +77,11 @@ func TestSelection_GrantDoesNotSurviveUnmatchedHIDGetAssertion(t *testing.T) {
 		0x02: clientDataHash[:],
 	})
 	require.NoError(t, err)
+	// The Selection sent keepalives too: wait for one the GetAssertion's
+	// deferral sends, or the cancel can land before the deferral starts.
+	keepalivesBefore := len(d.probe.keepaliveStatuses(d.cid))
 	gaDone := d.sendCBOR(CmdGetAssertion, ga)
-	require.Eventually(t, func() bool { return len(d.probe.keepaliveStatuses(d.cid)) > 0 },
+	require.Eventually(t, func() bool { return len(d.probe.keepaliveStatuses(d.cid)) > keepalivesBefore },
 		3*time.Second, 5*time.Millisecond, "unmatched GetAssertion must enter the deferral")
 	d.hid.HandleMessage(selHIDPacket(d.cid, CTAPHIDCancel, nil))
 	select {
