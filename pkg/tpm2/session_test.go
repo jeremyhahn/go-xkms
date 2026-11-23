@@ -186,6 +186,78 @@ func TestSaveKeyPair_ConcurrentCreatorsNeverMismatch(t *testing.T) {
 	}
 }
 
+// errPairCrash stands in for the process dying inside a backend write.
+var errPairCrash = errors.New("simulated crash inside a key pair write")
+
+// crashingKeyBackend panics (a crash: no cleanup runs after it) on the
+// first private-blob overwrite, the write that replaces an incomplete pair's
+// private blob during a create-only recovery.
+type crashingKeyBackend struct {
+	store.KeyBackend
+}
+
+func (b *crashingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	if ext == store.FSEXT_PRIVATE_BLOB && overwrite {
+		panic(errPairCrash)
+	}
+	return b.KeyBackend.Save(attrs, data, ext, overwrite)
+}
+
+// TestSaveKeyPair_RecoveryCrashLeavesNoMismatch: a create-only save that
+// recovers an incomplete pair (private blob A, no public blob) and crashes
+// before its private blob B is durable leaves no apparently complete pair:
+// LoadKeyPair reports the key as incomplete instead of handing the TPM a
+// public/private mismatch, and the next create-only save recovers the key
+// instead of refusing it with ErrBlobExists.
+func TestSaveKeyPair_RecoveryCrashLeavesNoMismatch(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+
+	attrs := &types.KeyAttributes{
+		CN:      "crashed-recovery-key",
+		KeyType: types.KeyTypeTPM,
+		Parent: &types.KeyAttributes{CN: "parent", KeyType: types.KeyTypeStorage,
+			TPMAttributes: &types.TPMAttributes{
+				Handle: tpm2.TPMHandle(0x81000001),
+				Name:   tpm2.TPM2BName{Buffer: []byte{0x00, 0x0b}},
+			}},
+	}
+	// An earlier save stopped between its two writes: private A only.
+	require.NoError(t, shared.Save(attrs, []byte("private-A"), store.FSEXT_PRIVATE_BLOB, false))
+
+	privB := tpm2.TPM2BPrivate{Buffer: []byte("private-B")}
+	pubB := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B"))
+	func() {
+		defer func() {
+			r := recover()
+			require.Equal(t, errPairCrash, r, "the recovering save must reach the private overwrite")
+		}()
+		_ = tpmImpl.SaveKeyPair(attrs, privB, pubB, &crashingKeyBackend{KeyBackend: shared}, false)
+	}()
+
+	session := tpm2.PasswordAuth(nil)
+	_, err = tpmImpl.LoadKeyPair(attrs, &session, shared)
+	require.ErrorIs(t, err, store.ErrBlobNotFound,
+		"a crashed recovery must read as an incomplete pair, never as a complete one")
+
+	privC := tpm2.TPM2BPrivate{Buffer: []byte("private-C")}
+	pubC := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-C"))
+	require.NoError(t, tpmImpl.SaveKeyPair(attrs, privC, pubC, shared, false),
+		"a create-only save after a crashed recovery must recover the key")
+
+	gotPriv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	require.Equal(t, "public-C/private-C", string(gotPub)+"/"+string(gotPriv))
+}
+
 func TestSaveKeyPairWithNilBackend(t *testing.T) {
 	logger, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
