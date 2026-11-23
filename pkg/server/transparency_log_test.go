@@ -132,6 +132,9 @@ func TestEmbeddedNode_LogCheckpointSignedWithCAKey(t *testing.T) {
 	svcs := s.qrdbNode.Services()
 	require.NotNil(t, svcs)
 	if svcs.Log == nil {
+		if vlogBuiltIn {
+			t.Fatalf("built with qrdb_vlog, but the embedded node exposes no verifiable-log service (Services().Log is nil)")
+		}
 		t.Skip("the node's verifiable-log service is compiled in only with the qrdb_vlog build tag")
 	}
 	owner, err := svcs.Role.GetRoleByName(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID),
