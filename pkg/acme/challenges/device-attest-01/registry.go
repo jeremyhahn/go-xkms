@@ -103,11 +103,13 @@ type RegisteredDeviceVerifier interface {
 	// verified chain's DiceTcbInfo declares.
 	VerifyRegisteredDevice(ctx context.Context, leaf *x509.Certificate, keyAuthorization string) (*VerifiedAttestation, error)
 
-	// ConfirmRegisteredDevice re-queries the registry at finalization and
-	// refuses a device whose record is gone, whose key is no longer
-	// attestedSPKI, or whose registered application reference the leaf's
-	// application evidence no longer matches.
-	ConfirmRegisteredDevice(ctx context.Context, ueid string, attestedSPKI []byte, leaf *x509.Certificate) error
+	// ConfirmRegisteredDevice authorizes the device at finalization against
+	// record, the provisioning record the finalization read once
+	// (VerifiedAttestation.RegistrySnapshot), and refuses, under
+	// ErrDeviceNotAuthorized, a device whose key is no longer attestedSPKI or
+	// whose registered application reference the leaf's application evidence
+	// no longer matches. A nil record re-queries the registry for ueid.
+	ConfirmRegisteredDevice(ctx context.Context, record *ProvisionedDevice, ueid string, attestedSPKI []byte, leaf *x509.Certificate) error
 
 	// RegisteredApplicationReference re-queries the registry at
 	// finalization for the device's registered application reference: nil
@@ -151,10 +153,13 @@ func (v *TrustAnchorVerifier) VerifyRegisteredDevice(ctx context.Context, leaf *
 }
 
 // ConfirmRegisteredDevice implements RegisteredDeviceVerifier.
-func (v *TrustAnchorVerifier) ConfirmRegisteredDevice(ctx context.Context, ueid string, attestedSPKI []byte, leaf *x509.Certificate) error {
-	record, err := v.resolve(ctx, ueid)
-	if err != nil {
-		return err
+func (v *TrustAnchorVerifier) ConfirmRegisteredDevice(ctx context.Context, record *ProvisionedDevice, ueid string, attestedSPKI []byte, leaf *x509.Certificate) error {
+	if record == nil {
+		resolved, err := v.resolve(ctx, ueid)
+		if err != nil {
+			return err
+		}
+		record = resolved
 	}
 	return confirmRecord(record, attestedSPKI, leaf)
 }
@@ -373,11 +378,15 @@ func notAuthorized(reason error) error {
 	return &errs.Joined{Lead: ErrDeviceNotAuthorized, Cause: reason}
 }
 
-// ConfirmRegistration re-queries the device registry for a "dice" attestation
-// at finalization (go-xkms#1441) and refuses, under ErrDeviceNotAuthorized, a
-// device whose record is gone or whose key is no longer the attested SPKI. A
-// format that is not anchored in the registry has nothing to confirm.
-func (v *VerifiedAttestation) ConfirmRegistration(ctx context.Context, verifier AttestationVerifier) error {
+// ConfirmRegistration asks verifier's RegisteredDeviceVerifier to confirm a
+// "dice" attestation at finalization (go-xkms#1441); it refuses, under
+// ErrDeviceNotAuthorized, a device the verifier no longer authorizes. record
+// is the finalization's RegistrySnapshot, so the possession request and the
+// registration are checked against the same record while the verifier keeps
+// the authorization decision; a nil record lets the verifier read the
+// registry. A format that is not anchored in the registry has nothing to
+// confirm.
+func (v *VerifiedAttestation) ConfirmRegistration(ctx context.Context, verifier AttestationVerifier, record *ProvisionedDevice) error {
 	if v == nil {
 		return ErrNoVerifiedAttestation
 	}
@@ -396,7 +405,7 @@ func (v *VerifiedAttestation) ConfirmRegistration(ctx context.Context, verifier 
 	if err != nil {
 		return notAuthorized(err)
 	}
-	return registry.ConfirmRegisteredDevice(ctx, ueid, v.AttestedSPKI, leaf)
+	return registry.ConfirmRegisteredDevice(ctx, record, ueid, v.AttestedSPKI, leaf)
 }
 
 // ApplicationReference returns, for FormatDICE, the application reference
@@ -424,7 +433,7 @@ func (v *VerifiedAttestation) ApplicationReference(ctx context.Context, verifier
 
 // RegistrySnapshot reads, for FormatDICE, the attested device's provisioning
 // record from verifier's registry once. A finalization checks the possession
-// request (ApplicationReferenceIn) and the registration (ConfirmRegistrationIn)
+// request (ApplicationReferenceIn) and the registration (ConfirmRegistration)
 // against this one record, so a registry change between two reads cannot
 // authorize evidence no single record does. It is nil for FormatTPM.
 func (v *VerifiedAttestation) RegistrySnapshot(ctx context.Context, verifier AttestationVerifier) (*ProvisionedDevice, error) {
@@ -458,23 +467,4 @@ func (v *VerifiedAttestation) ApplicationReferenceIn(record *ProvisionedDevice) 
 		return nil, notAuthorized(ErrNoDeviceResolver)
 	}
 	return recordApplicationReference(record)
-}
-
-// ConfirmRegistrationIn is ConfirmRegistration against record, a
-// RegistrySnapshot.
-func (v *VerifiedAttestation) ConfirmRegistrationIn(record *ProvisionedDevice) error {
-	if v == nil {
-		return ErrNoVerifiedAttestation
-	}
-	if v.Format != FormatDICE {
-		return nil
-	}
-	if record == nil {
-		return notAuthorized(ErrNoDeviceResolver)
-	}
-	leaf, err := v.verifiedLeaf()
-	if err != nil {
-		return notAuthorized(err)
-	}
-	return confirmRecord(record, v.AttestedSPKI, leaf)
 }

@@ -456,7 +456,7 @@ func TestTrustAnchorVerifierDrivesVerifyAttestation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, hex.EncodeToString(diceUeid), identity)
 	require.NoError(t, verified.BindCSRKey(csrFor(t, fixture.key)), "the device's own key binds")
-	require.NoError(t, verified.ConfirmRegistration(context.Background(), verifier), "the registry still vouches for it")
+	require.NoError(t, verified.ConfirmRegistration(context.Background(), verifier, nil), "the registry still vouches for it")
 
 	software, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)

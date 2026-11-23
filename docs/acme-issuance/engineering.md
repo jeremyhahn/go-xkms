@@ -866,9 +866,12 @@ request whose SubjectPublicKeyInfo is not byte-equal to it (`diceCSREvidence`,
 `binding.go:184`).
 
 A request that passes is then **re-confirmed against the device registry**
-(`ConfirmRegistration`, `registry.go:298`, called from
-`bindDeviceAttestationKey`, `handlers/device_attest.go:238`). The server looks
-the device's UEID up again and refuses, as `unauthorized`, a device whose
+(`ConfirmRegistration`, `registry.go:389`, called from
+`bindDeviceAttestationKey`, `handlers/device_attest.go:261`). The confirmation
+goes through the injected verifier's `RegisteredDeviceVerifier`
+`ConfirmRegisteredDevice`, handed the provisioning record the finalization
+read once, so a verifier that overrides it to deny a device is honoured on the
+same snapshot the possession request was checked against. It refuses, as `unauthorized`, a device whose
 provisioning record was deleted or whose provisioned key is no longer
 `AttestedSPKI`. The CSR is judged first, so a request for the wrong key is
 `badCSR` whatever the registry says. The registry's error can name internal

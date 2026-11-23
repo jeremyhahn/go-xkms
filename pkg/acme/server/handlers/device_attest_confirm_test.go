@@ -40,7 +40,7 @@ type denyingVerifier struct {
 	calls int
 }
 
-func (d *denyingVerifier) ConfirmRegisteredDevice(_ context.Context, _ string, _ []byte, _ *x509.Certificate) error {
+func (d *denyingVerifier) ConfirmRegisteredDevice(_ context.Context, _ *deviceattest01.ProvisionedDevice, _ string, _ []byte, _ *x509.Certificate) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.calls++

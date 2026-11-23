@@ -256,7 +256,9 @@ func (s *RestService) bindDeviceAttestationKey(ctx context.Context, rec *entitie
 	}
 	// The cause can carry the registry's own error, so it is logged rather
 	// than returned to the client.
-	if err := verified.ConfirmRegistrationIn(record); err != nil {
+	// The injected verifier authorizes the device against the record read
+	// above, so an override that denies it is honoured on the same snapshot.
+	if err := verified.ConfirmRegistration(ctx, s.deviceAttestationVerifier(), record); err != nil {
 		s.logger.Warn("Refusing finalization: the device registry no longer vouches for the attested key",
 			"error", err, "orderID", order.ID)
 		return common.Unauthorized("device-attest-01: the device's provisioning record no longer authorizes the attested key")

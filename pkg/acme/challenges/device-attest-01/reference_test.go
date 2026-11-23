@@ -142,11 +142,11 @@ func TestConfirmRegistrationHoldsTheApplicationReference(t *testing.T) {
 	verified := &VerifiedAttestation{Format: FormatDICE, LeafDER: leaf.Raw, AttestedSPKI: validated.AttestedSPKI}
 
 	t.Run("an unchanged reference confirms", func(t *testing.T) {
-		require.NoError(t, verified.ConfirmRegistration(ctx, referencedFor(t, deviceKey, registered)))
+		require.NoError(t, verified.ConfirmRegistration(ctx, referencedFor(t, deviceKey, registered), nil))
 	})
 
 	t.Run("a reference changed after validation is refused", func(t *testing.T) {
-		err := verified.ConfirmRegistration(ctx, referencedFor(t, deviceKey, bytes.Repeat([]byte{0x5a}, 32)))
+		err := verified.ConfirmRegistration(ctx, referencedFor(t, deviceKey, bytes.Repeat([]byte{0x5a}, 32)), nil)
 		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 		assert.ErrorIs(t, err, dice.ErrApplicationEvidenceMismatch)
 	})
