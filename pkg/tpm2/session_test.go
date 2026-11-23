@@ -4,6 +4,7 @@
 package tpm2
 
 import (
+	"bytes"
 	"crypto"
 	"errors"
 	"log/slog"
@@ -336,6 +337,173 @@ func TestSaveKeyPair_OverlappingRecoveriesNeverMismatch(t *testing.T) {
 	} else {
 		require.NoError(t, errBRes)
 		require.ErrorIs(t, errA, store.ErrBlobExists)
+	}
+}
+
+// swappingKeyBackend gives a KeyBackend the atomic conditional write a
+// shared store (qrdb, a replicated backend) offers. Its hook runs once, at
+// the first private-blob write (plain overwrite or conditional), before the
+// store touches the blob: the writer has decided to write and is paused.
+type swappingKeyBackend struct {
+	store.KeyBackend
+	mu     sync.Mutex
+	hookMu sync.Mutex
+	hook   func()
+}
+
+// fire disarms the hook and runs it, so writes made inside it pass.
+func (b *swappingKeyBackend) fire(fsext types.FSExtension) {
+	if fsext != store.FSEXT_PRIVATE_BLOB {
+		return
+	}
+	b.hookMu.Lock()
+	hook := b.hook
+	b.hook = nil
+	b.hookMu.Unlock()
+	if hook != nil {
+		hook()
+	}
+}
+
+func (b *swappingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, fsext types.FSExtension, overwrite bool) error {
+	if overwrite {
+		b.fire(fsext)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.KeyBackend.Save(attrs, data, fsext, overwrite)
+}
+
+func (b *swappingKeyBackend) Get(attrs *types.KeyAttributes, fsext types.FSExtension) ([]byte, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.KeyBackend.Get(attrs, fsext)
+}
+
+func (b *swappingKeyBackend) CompareAndSwapBlob(attrs *types.KeyAttributes, fsext types.FSExtension, expected, next []byte) (bool, error) {
+	b.fire(fsext)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	cur, err := b.KeyBackend.Get(attrs, fsext)
+	if errors.Is(err, store.ErrBlobNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !bytes.Equal(cur, expected) {
+		return false, nil
+	}
+	return true, b.KeyBackend.Save(attrs, next, fsext, true)
+}
+
+// keyPairRaceAttrs is a key whose earlier save stopped between its two
+// writes (private only), so the next create-only save recovers it.
+func keyPairRaceAttrs(t *testing.T, cn string, backend store.KeyBackend) *types.KeyAttributes {
+	t.Helper()
+	attrs := &types.KeyAttributes{
+		CN:      cn,
+		KeyType: types.KeyTypeTPM,
+		Parent: &types.KeyAttributes{CN: "parent", KeyType: types.KeyTypeStorage,
+			TPMAttributes: &types.TPMAttributes{
+				Handle: tpm2.TPMHandle(0x81000001),
+				Name:   tpm2.TPM2BName{Buffer: []byte{0x00, 0x0b}},
+			}},
+	}
+	require.NoError(t, backend.Save(attrs, []byte("private-0"), store.FSEXT_PRIVATE_BLOB, false))
+	return attrs
+}
+
+// requireMatchingPair asserts the stored pair is one writer's whole pair,
+// never public-B/private-A, which LoadKeyPair cannot load and a later
+// recovery refuses.
+func requireMatchingPair(t *testing.T, backend store.KeyBackend, attrs *types.KeyAttributes) string {
+	t.Helper()
+	gotPriv, err := backend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+	gotPub, err := backend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	pair := string(gotPub) + "/" + string(gotPriv)
+	require.Contains(t, []string{"public-A/private-A", "public-B/private-B"}, pair,
+		"a recovery racing an overwrite must leave a matching pair")
+	return pair
+}
+
+func TestSaveKeyPair_RecoveryRacingOverwriteNeverMismatch(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+	attrs := keyPairRaceAttrs(t, "recovery-vs-overwrite-key", shared)
+
+	privA := tpm2.TPM2BPrivate{Buffer: []byte("private-A")}
+	pubA := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-A"))
+	privB := tpm2.TPM2BPrivate{Buffer: []byte("private-B")}
+	pubB := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B"))
+
+	// Recovery A pauses after its fence, at its private-blob write, while
+	// writer B replaces the pair with overwrite=true.
+	errB := make(chan error, 1)
+	paused := &pausingKeyBackend{KeyBackend: shared, beforePrivate: func() {
+		go func() { errB <- tpmImpl.SaveKeyPair(attrs, privB, pubB, shared, true) }()
+		select {
+		case err := <-errB:
+			errB <- err
+		case <-time.After(300 * time.Millisecond):
+		}
+	}}
+	errA := tpmImpl.SaveKeyPair(attrs, privA, pubA, paused, false)
+	var errBRes error
+	select {
+	case errBRes = <-errB:
+	case <-time.After(10 * time.Second):
+		t.Fatal("overwrite B never finished")
+	}
+
+	pair := requireMatchingPair(t, shared, attrs)
+	if pair == "public-A/private-A" {
+		require.NoError(t, errA)
+		require.Error(t, errBRes)
+	} else {
+		require.NoError(t, errBRes)
+	}
+}
+
+func TestSaveKeyPair_RecoveryRacingSecondProcessNeverMismatch(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+	// A second process: its own TPM2 and its own in-process guard over the
+	// same store, so only the store can order the two writers.
+	other := &TPM2{logger: tpmImpl.logger}
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := &swappingKeyBackend{KeyBackend: factory.KeyBackend()}
+	attrs := keyPairRaceAttrs(t, "recovery-vs-second-process-key", shared)
+
+	privA := tpm2.TPM2BPrivate{Buffer: []byte("private-A")}
+	pubA := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-A"))
+	privB := tpm2.TPM2BPrivate{Buffer: []byte("private-B")}
+	pubB := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B"))
+
+	// Recovery A (this process) pauses at its private-blob write; the
+	// other process overwrites the pair to completion meanwhile.
+	var errB error
+	shared.hook = func() { errB = other.SaveKeyPair(attrs, privB, pubB, shared, true) }
+	errA := tpmImpl.SaveKeyPair(attrs, privA, pubA, shared, false)
+
+	pair := requireMatchingPair(t, shared, attrs)
+	if pair == "public-B/private-B" {
+		require.NoError(t, errB)
+		require.ErrorIs(t, errA, store.ErrBlobExists)
+	} else {
+		require.NoError(t, errA)
 	}
 }
 
