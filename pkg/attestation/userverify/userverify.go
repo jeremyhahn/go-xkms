@@ -107,8 +107,8 @@ func (c *Challenge) consume() error {
 //  4. the leaf's attestation challenge marks it a UVK, so a DAK chain cannot
 //     stand in for one;
 //  5. the leaf's teeEnforced list binds every use to a fresh user
-//     verification: userAuthType 1 (device credential), 2 (biometric) or 3
-//     (either), as ruling 180 reads CTAP 2.1; no authTimeout, no
+//     verification: userAuthType 2 (the biometric alone), the fresh
+//     biometric signature phone-verify-user requires; no authTimeout, no
 //     allowWhileOnBody, no noAuthRequired;
 //  6. the UVK signed the verify-user transcript rebuilt from this challenge's
 //     nonce, binding and RP name and the verified leaf's fingerprint, as

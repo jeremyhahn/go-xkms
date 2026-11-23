@@ -107,7 +107,7 @@ func uvkClaims() *android.AttestationExtensionOptions {
 			Packages:         []android.AttestationPackageInfo{{Name: appPackage, Version: 1}},
 			SignatureDigests: [][]byte{appDigest},
 		},
-		UserAuthType: android.UserAuthTypeFingerprint | android.UserAuthTypePassword,
+		UserAuthType: android.UserAuthTypeFingerprint,
 		RootOfTrust: &android.RootOfTrust{
 			VerifiedBootKey:   []byte("verified-boot-key"),
 			DeviceLocked:      true,

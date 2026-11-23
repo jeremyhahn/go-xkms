@@ -66,18 +66,20 @@ func TestNewChallenge_RefusesAnInvalidRPName(t *testing.T) {
 	}
 }
 
-// TestVerify_AcceptsAPerUseUserVerificationKey accepts every userAuthType
-// ruling 180 allows: device credential, biometric, or either.
+// TestVerify_AcceptsAPerUseUserVerificationKey accepts the biometric alone,
+// the fresh biometric signature phone-verify-user requires, and refuses a
+// key the device credential unlocks, alone or beside the biometric.
 func TestVerify_AcceptsAPerUseUserVerificationKey(t *testing.T) {
 	ca := newCA(t, "Trusted Attestation Root")
 
 	tests := []struct {
 		name         string
 		userAuthType int
+		want         error
 	}{
-		{"device credential", android.UserAuthTypePassword},
-		{"biometric", android.UserAuthTypeFingerprint},
-		{"biometric or device credential", android.UserAuthTypeFingerprint | android.UserAuthTypePassword},
+		{"device credential", android.UserAuthTypePassword, android.ErrKeyUserAuthTypeNotUserVerification},
+		{"biometric", android.UserAuthTypeFingerprint, nil},
+		{"biometric or device credential", android.UserAuthTypeFingerprint | android.UserAuthTypePassword, android.ErrKeyUserAuthTypeNotUserVerification},
 	}
 
 	for _, tt := range tests {
@@ -89,7 +91,12 @@ func TestVerify_AcceptsAPerUseUserVerificationKey(t *testing.T) {
 
 			result := uvk.respond(t, challenge.Nonce, challenge.ChannelBinding, rpName)
 
-			require.NoError(t, userverify.Verify(result, challenge, trustOf(ca)))
+			err := userverify.Verify(result, challenge, trustOf(ca))
+			if tt.want == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tt.want)
+			}
 		})
 	}
 }
