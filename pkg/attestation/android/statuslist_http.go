@@ -220,7 +220,9 @@ func (h *HTTPStatusList) Current() (*StatusList, error) {
 	if err != nil {
 		return nil, &StatusListUnavailableError{Source: h.url, Cause: err}
 	}
-	h.cached.Store(&cachedStatusList{list: list, freshUntil: freshUntil})
+	if h.now().Before(freshUntil) {
+		h.cached.Store(&cachedStatusList{list: list, freshUntil: freshUntil})
+	}
 	return list, nil
 }
 
@@ -234,7 +236,9 @@ func (h *HTTPStatusList) fresh() *StatusList {
 }
 
 // download fetches and parses the list, returning when it stops being
-// fresh. A response that is stale on arrival fails with ErrStatusListStale.
+// fresh. A response that is stale on arrival fails with ErrStatusListStale,
+// except the origin's own answer to a forced validation, which is returned
+// with a zero freshness so it serves this check and is never cached.
 // revalidate sends Cache-Control: no-cache, so that no cache on the path
 // answers from a stored response without validating it with the origin
 // (RFC 9111 §5.2.1.4).
@@ -279,6 +283,14 @@ func (h *HTTPStatusList) download(revalidate bool) (_ *StatusList, _ time.Time, 
 
 	received := h.now()
 	until, stale := freshUntil(resp.Header, requested, received)
+	if stale && revalidate && originAnswered(resp.Header) {
+		// The origin itself answered the forced validation with a list
+		// that expires on arrival (max-age=0, a past Expires): it asks to
+		// be contacted on every use, which it just was. The validated
+		// response satisfies this check (RFC 9111 §4.2, §4.3.3); its
+		// zero freshness keeps it out of the cache.
+		return list, time.Time{}, nil
+	}
 	if stale {
 		return nil, time.Time{}, &errs.Detail{Err: ErrStatusListStale, Detail: fmt.Sprintf("not fresh on arrival (Cache-Control %q, Expires %q, Age %q)", resp.Header.Get("Cache-Control"), resp.Header.Get("Expires"), resp.Header.Get("Age"))}
 	}
@@ -361,6 +373,18 @@ func freshnessLifetime(header http.Header, received time.Time) (_ time.Duration,
 // larger of the apparent_age the Date field implies and the corrected
 // age_value, the Age field (§5.1), or 0 without a valid one, plus the
 // response_delay of the request's round trip.
+// originAnswered reports whether a response carries no positive Age field
+// (RFC 9111 §5.1), so no cache on the path served it from storage. A stale
+// response with a positive Age came from a cache and is still refused.
+func originAnswered(header http.Header) bool {
+	field := header.Get("Age")
+	if field == "" {
+		return true
+	}
+	seconds, ok := parseDeltaSeconds(field)
+	return ok && seconds == 0
+}
+
 func initialAge(header http.Header, requested, received time.Time) time.Duration {
 	var apparentAge time.Duration
 	if date, err := http.ParseTime(header.Get("Date")); err == nil {
